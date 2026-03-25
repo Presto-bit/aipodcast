@@ -1,0 +1,7 @@
+Speaker1: 你有没有发现，现在AI的声音，越来越像真人了
+Speaker2: <break time="500ms" />我刚刚听了一段，说实话，有点离谱。
+Speaker1: <break time="500ms" />真的假的，我之前听的都挺假的。
+Speaker2: 我一开始也是这么想的，但这次不太一样。
+Speaker1: <break time="500ms" />哦？哪儿不一样？
+Speaker2: 它有停顿，有语气，甚至还有点情绪。
+Speaker1: <break time="500ms" />那不是，已经很接近真人了？

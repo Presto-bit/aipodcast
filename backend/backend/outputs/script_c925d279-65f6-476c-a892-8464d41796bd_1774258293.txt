@@ -1,0 +1,1 @@
+Speaker1: 回归全可选背景音\nSpeaker2: BGM全部关闭

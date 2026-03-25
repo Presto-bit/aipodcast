@@ -1,0 +1,1 @@
+Speaker1: 仅支持两位说话人：Speaker1 / Speaker2。未标注说话人的行会默认归为 Speaker1。
