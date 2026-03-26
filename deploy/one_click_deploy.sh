@@ -22,6 +22,12 @@
 #==============================================================================
 set -euo pipefail
 
+# 在脚本开头加入
+export PYTHON_EXECUTABLE=/usr/local/bin/python3.12
+
+# 然后在下方创建环境时使用
+$PYTHON_EXECUTABLE -m venv venv
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_DEPLOY_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 

@@ -11,6 +11,13 @@
 #   SKIP_APT=1
 set -euo pipefail
 
+
+# 在脚本开头加入
+export PYTHON_EXECUTABLE=/usr/local/bin/python3.12
+
+# 然后在下方创建环境时使用
+$PYTHON_EXECUTABLE -m venv venv
+
 # 检查 Python 3.12 路径
 PYTHON_BIN="/usr/local/bin/python3.12"
 if [[ ! -f "$PYTHON_BIN" ]]; then
