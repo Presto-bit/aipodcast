@@ -95,9 +95,15 @@ function AppShell() {
   const { t } = useI18n();
   const {
     authRequired,
+    inviteRequired,
+    inviteHint,
+    passwordResetEnabled,
+    passwordResetDebug,
     token,
     login,
     register,
+    requestPasswordReset,
+    resetPassword,
     logout,
     user,
   } = useAuth();
@@ -154,7 +160,18 @@ function AppShell() {
   }
 
   if (authRequired && !token) {
-    return <LoginScreen onLogin={login} onRegister={register} />;
+    return (
+      <LoginScreen
+        onLogin={login}
+        onRegister={register}
+        inviteRequired={inviteRequired}
+        inviteHint={inviteHint}
+        passwordResetEnabled={passwordResetEnabled}
+        passwordResetDebug={passwordResetDebug}
+        onForgotPassword={requestPasswordReset}
+        onResetPassword={resetPassword}
+      />
+    );
   }
 
   const showPhone = user?.phone && user.phone !== 'local';
