@@ -1,91 +1,48 @@
-# 🚀 云服务器部署指南
+# 云服务器部署指南
 
-## 服务器信息
-- **IP**: 47.103.24.213
-- **用户**: mibo
-- **系统**: Linux (推测 Ubuntu/CentOS)
+## 一键部署（推荐，Ubuntu / Debian）
 
-## 部署步骤
-
-### 1️⃣ 连接服务器
+在服务器上进入**项目根目录**（含 `frontend`、`backend`、`requirements.txt`），执行：
 
 ```bash
-ssh mibo@47.103.24.213
+sudo bash deploy.sh
 ```
 
-### 2️⃣ 安装必要环境
+按提示输入：
+
+- 运行服务的 **Linux 用户名**（不要用 `root`，例如 `ubuntu`）
+- **Nginx server_name**（填公网 IP 或域名；不确定可填 `_`）
+- **项目根目录**（默认为当前仓库路径）
+
+脚本会：安装/检查依赖（nginx、Node、ffmpeg、Python venv）、`pip install -r requirements.txt`、生产构建前端、注册 **systemd** 服务 `aipodcast-backend`、写入 **Nginx** 站点并 `reload`。
+
+**完全非交互**（适合重复发布）：
 
 ```bash
-# 更新包管理器
-sudo apt update  # Ubuntu/Debian
-# 或
-sudo yum update  # CentOS/RHEL
-
-# 安装 Git
-sudo apt install git -y
-
-# 安装 Python 3 和 pip
-sudo apt install python3 python3-pip python3-venv -y
-
-# 安装 Node.js
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install nodejs -y
-
-# 安装 Nginx
-sudo apt install nginx -y
-
-# 安装 PM2
-sudo npm install -g pm2
+cp deploy/deploy.env.example deploy/deploy.env
+# 编辑 deploy/deploy.env 后：
+sudo bash deploy.sh --yes
 ```
 
-### 3️⃣ 克隆代码
+或一行参数：
 
 ```bash
-cd ~
-git clone https://github.com/MMMibo/ai_podcast_v1.git
-cd ai_podcast_v1
+sudo bash deploy.sh --yes --user ubuntu --server-name 你的IP或域名 --root /opt/minimax_aipodcast
 ```
 
-### 4️⃣ 配置后端
+常用排查：
 
 ```bash
-cd ~/ai_podcast_v1/backend
-python3 -m venv venv
-source venv/bin/activate
-pip install Flask Flask-Cors requests pydub PyPDF2 beautifulsoup4 lxml
+curl -s http://127.0.0.1:5001/api/ping
+systemctl status aipodcast-backend
+journalctl -u aipodcast-backend -n 80 --no-pager
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### 5️⃣ 配置前端
+浏览器访问：`http://<公网IP或域名>`（安全组需放行 **80** / **443**）。
 
-```bash
-cd ~/ai_podcast_v1/frontend
-npm install
+---
 
-# 创建生产环境配置（使用相对路径，通过 Nginx 反向代理）
-cat > .env.production << 'EOF'
-# 留空表示使用同源请求，通过 Nginx 反向代理到后端
-REACT_APP_API_URL=
-EOF
+## 手动分步部署（非 Debian 或需自定义时）
 
-# 构建前端
-npm run build
-```
-
-> **说明**：使用相对路径配置，前端将通过 Nginx 反向代理访问后端 API，无需硬编码服务器地址，更安全且易于维护。
-
-### 6️⃣ 启动服务
-
-```bash
-# 启动后端 (使用 PM2)
-cd ~/ai_podcast_v1/backend
-pm2 start app.py --interpreter ./venv/bin/python3 --name podcast-backend
-pm2 save
-pm2 startup
-
-# 配置 Nginx (详见文档)
-```
-
-## 访问地址
-http://47.103.24.213
-
-更多详情请查看完整版文档。
+安装 Git、Python 3.12/3.11 venv、Node LTS、Nginx、ffmpeg → 克隆代码 → 在项目根创建 `.venv` 并 `pip install -r requirements.txt` → 在 `frontend` 设置 `REACT_APP_API_URL=` 后 `npm run build` → 在 `backend` 运行 `app.py`（监听 `5001`）→ Nginx 将 `/api/`、`/download/`、`/static/`、`/health` 反代到本机 `5001`，`root` 指向 `frontend/build`。
