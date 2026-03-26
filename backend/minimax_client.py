@@ -217,6 +217,80 @@ class MinimaxClient:
         logger.info(f"音色克隆上传前已转码: {audio_file_path} -> {tmp_path}")
         return tmp_path, tmp_path
 
+    def _compose_article_script_prompt(
+        self,
+        *,
+        content: str,
+        target_chars: int,
+        script_style: str,
+        script_language: str,
+        program_name: str,
+        constraints_block: str,
+        segment_role: Optional[str],
+        segment_position: Optional[str],
+    ) -> str:
+        """普通文章（非双人播客对话）生成提示。"""
+        pos_note = f"（{segment_position}）" if segment_position else ""
+        if segment_role in ("middle", "last"):
+            segment_banner = f"""
+【长文章分段·接续写作{pos_note}】
+下方「材料内容」中含「已生成上文」区块：你必须在该文之后续写，不要重复已有段落或句子。
+严禁：再次写与上文重复的全文导语、标题或开篇套话；严禁使用 Speaker1/Speaker2 或对话体。
+必须：首段紧接上文末段语气与论点自然推进；术语与事实与上文一致。
+"""
+        elif segment_role == "first":
+            segment_banner = f"""
+【长文章分段·开篇部分{pos_note}】
+本段为长文的前段：需要清晰引入主题并展开论述；若非全文最后一段，末尾不要做「全文总结、致谢、再见」式收尾。
+"""
+        else:
+            segment_banner = ""
+
+        if segment_role == "first":
+            rules_tail = """7. 开篇吸引读者并进入主题；本段末尾若后文仍有段落，不要做全篇总结或告别语。
+8. 只输出文章正文，不要输出任务说明或元话语。
+9. 禁止使用 Speaker1:/Speaker2: 行、禁止播客主持/听众口吻。
+10. 严格遵守字数上限；可使用 Markdown 标题与列表辅助结构。"""
+        elif segment_role == "middle":
+            rules_tail = """7. 本段为中途续写：禁止重复文章标题与开篇；禁止对话体。
+8. 只输出文章正文。
+9. 禁止使用 Speaker 行；承接上文末段继续论述。
+10. 严格遵守字数上限；本段末尾若非全文末段，不要做全篇总结。"""
+        elif segment_role == "last":
+            rules_tail = """7. 本段为收尾段：承接上文完成论证，并做简洁收束。
+8. 只输出文章正文。
+9. 禁止使用 Speaker 行；可做小结但不要编造上文未出现的新事实。
+10. 严格遵守字数上限。"""
+        else:
+            rules_tail = """7. 结构完整：有引入、展开与收束（视篇幅调整详略）。
+8. 只输出文章正文，不要输出任务说明。
+9. 禁止使用 Speaker1:/Speaker2:、禁止播客/对话脚本格式。
+10. 严格遵守字数上限；接近收尾时自然收束。"""
+
+        return f"""你是专业文章写作助手。请基于以下材料，写出一篇普通文章（非双人对话、非播客脚本）。
+{segment_banner}
+【篇幅】全文汉字量请控制在约 {target_chars} 字以内，充实但不堆砌；材料不足时可略短。
+
+文稿信息：
+- 主题/标题参考：{program_name}
+- 语言：{script_language}
+- 文风：{script_style}
+- 用户与体裁约束：{constraints_block}
+
+硬性要求：
+1. 输出为连续可读的文章：可使用多级标题、段落、列表；允许使用 Markdown。
+2. 不要写成两人问答；不要出现「Speaker1」「Speaker2」「主持人」「听众」「欢迎收听」等播客用语。
+3. 基于材料写作，避免无根据编造；专业术语前后一致。
+4. 不要以剧本、台词、对话行形式排版。
+5. 不要单独输出「以下是正文」等提示语。
+6. 若材料中有用户给出的结构要求（如分点、小结），请尽量满足。
+{rules_tail}
+
+材料内容：
+{content}
+
+请直接输出文章正文。"""
+
     def generate_script_stream(self,
                                content: str,
                                target_chars: int = 200,
@@ -228,7 +302,8 @@ class MinimaxClient:
                                speaker2_persona: str = "稳重专业，深度分析",
                                script_constraints: str = "对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本。",
                                segment_role: Optional[str] = None,
-                               segment_position: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+                               segment_position: Optional[str] = None,
+                               output_mode: str = "dialogue") -> Iterator[Dict[str, Any]]:
         """
         流式生成播客脚本
 
@@ -242,12 +317,6 @@ class MinimaxClient:
         Yields:
             包含脚本 chunk 和 trace_id 的字典
         """
-        logger.info(
-            f"开始生成播客脚本，内容长度: {len(content)} 字符，目标正文字数约: {target_chars}，"
-            f"风格: {script_style}，语言: {script_language}，"
-            f"segment_role={segment_role!r} segment_position={segment_position!r}"
-        )
-
         # 文本模型使用用户提供的 API Key
         url = self.endpoints["text_completion"]
         headers = self._get_headers("text", api_key=api_key)
@@ -276,58 +345,80 @@ class MinimaxClient:
 
         constraints_block = normalized_constraints if normalized_constraints else "无额外约束。"
 
-        pos_note = f"（{segment_position}）" if segment_position else ""
-        if segment_role in ("middle", "last"):
-            segment_banner = f"""
+        output_mode = (output_mode or "dialogue").strip().lower()
+        if output_mode == "article":
+            logger.info(
+                f"开始生成文章稿，内容长度: {len(content)} 字符，目标约 {target_chars} 字，"
+                f"segment_role={segment_role!r} segment_position={segment_position!r}"
+            )
+            prompt = self._compose_article_script_prompt(
+                content=content,
+                target_chars=target_chars,
+                script_style=normalized_style,
+                script_language=normalized_language,
+                program_name=normalized_program_name,
+                constraints_block=constraints_block,
+                segment_role=segment_role,
+                segment_position=segment_position,
+            )
+        else:
+            logger.info(
+                f"开始生成播客脚本，内容长度: {len(content)} 字符，目标正文字数约: {target_chars}，"
+                f"风格: {script_style}，语言: {script_language}，"
+                f"segment_role={segment_role!r} segment_position={segment_position!r}"
+            )
+            pos_note = f"（{segment_position}）" if segment_position else ""
+            if segment_role in ("middle", "last"):
+                segment_banner = f"""
 【长文案分段·接续写作{pos_note}】
 下方「材料内容」中含「已生成上文」区块：那是已定稿的对话结尾。你必须输出**紧接该块最后一行之后**的新对话。
 严禁：复制或改述「已生成上文」里已有句子；再次完整开场（如「大家好」「欢迎收听」「今天我们来聊」等）；像新开一期那样重讲大纲。
 必须：你输出的第一行对话在话题、指代与语气上与「已生成上文」最后一行自然衔接；人设与参考素材一致。
 """
-        elif segment_role == "first":
-            segment_banner = f"""
+            elif segment_role == "first":
+                segment_banner = f"""
 【长文案分段·开篇段{pos_note}】
 本段是同一期长节目的前半；开场要吸引人并进入主题，但末尾不要写全篇结束语（勿写「以上就是今天全部内容」「感谢收听再见」等），便于下一段接续。
 """
-        else:
-            segment_banner = ""
+            else:
+                segment_banner = ""
 
-        if segment_role == "first":
-            rules_7_10 = """7. 开场白要吸引人，快速进入主题；本段末尾只收束到小节点或自然停顿，不要写全篇总结或告别语。
+            if segment_role == "first":
+                rules_7_10 = """7. 开场白要吸引人，快速进入主题；本段末尾只收束到小节点或自然停顿，不要写全篇总结或告别语。
 8. 不要有多余的说明文字，只输出对话内容
 9. 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
 10. 严格遵守上述字数上限；本段结尾为「待续」感，不要宣称节目已结束"""
-        elif segment_role == "middle":
-            rules_7_10 = """7. 本段为中途接续：禁止问候听众、禁止重复节目开场与主题引入；从「已生成上文」末句自然延伸。
+            elif segment_role == "middle":
+                rules_7_10 = """7. 本段为中途接续：禁止问候听众、禁止重复节目开场与主题引入；从「已生成上文」末句自然延伸。
 8. 不要有多余的说明文字，只输出对话内容
 9. 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
 10. 严格遵守上述字数上限；本段末尾仍不要做全篇总结，保留空间给下一段"""
-        elif segment_role == "last":
-            rules_7_10 = """7. 本段为收尾接续：禁止重新开场问候、禁止重复前文已出现过的完整开场套话；承接「已生成上文」末句继续展开，并在全段末尾用对话做简短小结，自然收束本期话题。
+            elif segment_role == "last":
+                rules_7_10 = """7. 本段为收尾接续：禁止重新开场问候、禁止重复前文已出现过的完整开场套话；承接「已生成上文」末句继续展开，并在全段末尾用对话做简短小结，自然收束本期话题。
 8. 不要有多余的说明文字，只输出对话内容
 9. 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
 10. 严格遵守上述字数上限；接近本段收尾时做简洁总结，结束要自然，勿突兀截断"""
-        else:
-            rules_7_10 = """7. 开场白要吸引人，结尾要有总结
+            else:
+                rules_7_10 = """7. 开场白要吸引人，结尾要有总结
 8. 不要有多余的说明文字，只输出对话内容
 9. 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
 10. 严格遵守上述字数上限，接近收尾时主动收束、做简短总结，不要突然超长发挥"""
 
-        if segment_role in ("middle", "last"):
-            format_example = """格式示例（接续结构示意，勿照抄）：
+            if segment_role in ("middle", "last"):
+                format_example = """格式示例（接续结构示意，勿照抄）：
 Speaker1: 那我们接着刚才这点往下说。
 Speaker2: 对，我补充一个具体例子。"""
-        else:
-            format_example = """格式示例（仅示意结构，勿照抄内容）：
+            else:
+                format_example = """格式示例（仅示意结构，勿照抄内容）：
 Speaker1: 大家好，欢迎收听本期节目。
 Speaker2: 今天咱们聊聊这个话题。"""
 
-        tail_remind = ""
-        if segment_role in ("middle", "last"):
-            tail_remind = "请从「已生成上文」最后一行之后开始写，第一行必须是 Speaker1: 或 Speaker2:，且与上一行话题连贯。"
+            tail_remind = ""
+            if segment_role in ("middle", "last"):
+                tail_remind = "请从「已生成上文」最后一行之后开始写，第一行必须是 Speaker1: 或 Speaker2:，且与上一行话题连贯。"
 
-        # 构建 prompt
-        prompt = f"""你是一个专业的播客脚本编写助手。请基于以下材料，生成一段双人播客对话脚本。
+            # 构建 prompt
+            prompt = f"""你是一个专业的播客脚本编写助手。请基于以下材料，生成一段双人播客对话脚本。
 {segment_banner}
 【篇幅要求】统计字数时只计算对话正文，不要计入每行开头的 “Speaker1:” / “Speaker2:” 前缀。
 全文对话正文字数请控制在约 {target_chars} 字以内，尽量写满但不要明显超过该上限；若材料不足可适当缩短，避免无意义的冗长堆砌。
@@ -562,6 +653,69 @@ Speaker2: 今天咱们聊聊这个话题。"""
         except Exception as e:
             logger.warning("段间衔接 API 调用失败: %s", e)
             return {"success": False, "replacement_head": "", "error": str(e), "trace_id": trace_id}
+
+    def polish_text_for_tts(
+        self,
+        text: str,
+        *,
+        api_key: Optional[str] = None,
+        language: str = "中文",
+    ) -> Dict[str, Any]:
+        """
+        将长文本润色为更适合 TTS 朗读的口语稿（非流式）。
+        """
+        raw = (text or "").strip()
+        if not raw:
+            return {"success": False, "text": "", "error": "empty text", "trace_id": None}
+        if len(raw) > 12000:
+            raw = raw[:12000]
+        lang = (language or "中文").strip()
+        prompt = f"""你是口语朗读稿编辑。请将下列文字润色为适合「语音合成朗读」的文稿：断句自然、语气顺畅，不改变事实与数字，不编造内容。
+语言：{lang}。
+只输出润色后的正文，不要标题、不要前言、不要 Markdown、不要引号包裹。"""
+        url = self.endpoints["text_completion"]
+        headers = self._get_headers("text", api_key=api_key)
+        payload = {
+            "model": self.models["text"],
+            "messages": [
+                {"role": "system", "name": "MiniMax AI"},
+                {"role": "user", "content": f"{prompt}\n\n---\n\n{raw}"},
+            ],
+            "stream": False,
+        }
+        timeout = TIMEOUTS.get("polish_tts_text", 60)
+        trace_id = None
+        try:
+            resp = self._post_with_proxy_fallback(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            trace_id = self._extract_trace_id(resp)
+            resp.raise_for_status()
+            data = resp.json()
+            base_resp = data.get("base_resp", {})
+            if base_resp.get("status_code") not in (None, 0):
+                return {
+                    "success": False,
+                    "text": "",
+                    "error": base_resp.get("status_msg", "polish failed"),
+                    "trace_id": trace_id,
+                }
+            out = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+            out = out.strip()
+            if not out:
+                return {
+                    "success": False,
+                    "text": "",
+                    "error": "empty model output",
+                    "trace_id": trace_id,
+                }
+            return {"success": True, "text": out, "error": "", "trace_id": trace_id}
+        except Exception as e:
+            logger.warning("TTS 润色 API 失败: %s", e)
+            return {"success": False, "text": "", "error": str(e), "trace_id": trace_id}
 
     def synthesize_speech_stream(self, text: str, voice_id: str, api_key: Optional[str] = None) -> Iterator[Dict[str, Any]]:
         """
@@ -1000,7 +1154,8 @@ Speaker2: 今天咱们聊聊这个话题。"""
                                 program_name: str = "MiniMax AI 播客节目",
                                 speaker1_persona: str = "活泼亲切，引导话题",
                                 speaker2_persona: str = "稳重专业，深度分析",
-                                script_constraints: str = "") -> Dict[str, Any]:
+                                script_constraints: str = "",
+                                output_mode: str = "dialogue") -> Dict[str, Any]:
         """
         先生成结构化总纲（JSON），用于长文案分段一致性。
         """
@@ -1010,7 +1165,36 @@ Speaker2: 今天咱们聊聊这个话题。"""
         if len(constraints) > 1200:
             constraints = constraints[:1200]
 
-        prompt = f"""请先为播客正文生成“分段总纲”，不要输出正文台词。
+        om = (output_mode or "dialogue").strip().lower()
+        if om == "article":
+            prompt = f"""请先为长文章生成“分段总纲”，不要输出正文。
+输出必须是 JSON（不要 markdown 代码块），结构如下：
+{{
+  "segments":[
+    {{
+      "id": 1,
+      "title": "章节标题",
+      "target_chars": 1200,
+      "must_include": ["要点1","要点2"],
+      "transition_hint": "与上一章如何衔接"
+    }}
+  ]
+}}
+
+要求：
+1) 各段 target_chars 之和接近 {total_target_chars}。
+2) 在总字数允许的前提下，优先使用较少段数；每章写得更完整。
+3) 结构循序渐进：背景与问题 -> 核心论点/定义 -> 展开论证 -> 案例或数据 -> 小结与展望（按需）。
+4) 每段必须含 transition_hint。
+5) 语言={script_language}，风格={script_style}，文稿主题={program_name}。
+6) 这是文章结构（非双人对话），各段为章节脉络。
+7) 约束（参考）：{constraints or "无"}。
+
+素材：
+{content}
+"""
+        else:
+            prompt = f"""请先为播客正文生成“分段总纲”，不要输出正文台词。
 输出必须是 JSON（不要 markdown 代码块），结构如下：
 {{
   "segments":[

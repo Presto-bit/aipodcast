@@ -17,16 +17,39 @@ export function getApiBaseUrl() {
   const proto = window.location.protocol || 'http:';
   const host = window.location.hostname || 'localhost';
 
+  // 直连后端 :5001 时，多数开发/本地后端为 http。
+  // 若页面运行在 https（例如静态站 https 部署），直接用 https://host:5001 会触发证书/握手失败，表现为 Failed to fetch。
+  const directProto = proto === 'https:' ? 'http:' : proto;
+
   // CRA 开发服务器：避免走 devServer proxy 导致 /api/generate_script_draft 等流式接口 404
   const craDevPorts = ['3000', '3001'];
   if (craDevPorts.includes(port)) {
-    return `${proto}//${host}:5001`;
+    return `${directProto}//${host}:5001`;
   }
 
   const staticDevPorts = ['8000', '8080', '5500', '5501', '4173', '8888'];
   if (staticDevPorts.includes(port)) {
-    return `${proto}//${host}:5001`;
+    return `${directProto}//${host}:5001`;
   }
 
   return '';
+}
+
+/**
+ * 拼接可请求的 API 完整 URL。path 须以 / 开头，例如 apiPath('/api/ping')。
+ * 全站统一用此函数，避免各组件手写 `${base}/api/...` 导致联调时漏写或双斜杠。
+ */
+export function apiPath(path) {
+  const p = path.startsWith('/') ? path : `/${path}`;
+  return `${getApiBaseUrl()}${p}`;
+}
+
+/**
+ * 将后端返回的相对资源路径转为完整 URL（已是 http(s) 则原样返回）。
+ */
+export function resolveMediaUrl(maybeUrl) {
+  if (!maybeUrl) return '';
+  const u = String(maybeUrl).trim();
+  if (u.startsWith('http://') || u.startsWith('https://')) return u;
+  return `${getApiBaseUrl()}${u.startsWith('/') ? u : `/${u}`}`;
 }
