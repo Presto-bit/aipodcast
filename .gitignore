@@ -54,6 +54,7 @@ backend/backend/outputs/*
 # 环境变量
 .env
 .env.local
+deploy/deploy.env
 
 # 会话数据
 backend/outputs/session_*.json
