@@ -13,6 +13,7 @@
 #   INSTALL_APT=1          # 0=跳过 apt 装依赖
 #   GIT_PULL=1             # 0=不执行 git pull
 #   NODE_MAJOR=20          # NodeSource 主版本
+#   BACKEND_ENV_FILE=       # 可选，systemd 注入环境变量文件（如 /etc/default/aipodcast）
 #
 # 也可用 CLI 传参（非交互）：
 #   sudo bash deploy/one_click_deploy.sh --yes \
@@ -35,6 +36,7 @@ INSTALL_APT="${INSTALL_APT:-}"
 GIT_PULL="${GIT_PULL:-}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
 ASSUME_YES="${ASSUME_YES:-0}"
+BACKEND_ENV_FILE="${BACKEND_ENV_FILE:-}"
 
 # ------------ parse CLI ------------
 while [[ $# -gt 0 ]]; do
@@ -48,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --no-git-pull) GIT_PULL=0; shift ;;
     --git-pull) GIT_PULL=1; shift ;;
     --node-major) NODE_MAJOR="$2"; shift 2 ;;
+    --backend-env-file) BACKEND_ENV_FILE="$2"; shift 2 ;;
     -h|--help)
       sed -n '1,25p' "$0"
       exit 0
@@ -110,6 +113,12 @@ if [[ ! -f "$DEPLOY_ROOT/requirements.txt" || ! -f "$DEPLOY_ROOT/backend/app.py"
   exit 1
 fi
 
+if [[ ! -x "$DEPLOY_ROOT" ]]; then
+  echo "目录不可访问：$DEPLOY_ROOT"
+  echo "请确认目录权限（尤其不要放在 /root 下给普通用户运行）。"
+  exit 1
+fi
+
 if [[ -z "${INSTALL_APT:-}" ]]; then
   if [[ "$ASSUME_YES" == 1 ]]; then
     INSTALL_APT=1
@@ -161,7 +170,9 @@ done
 
 # Git 更新
 if [[ "$GIT_PULL" == 1 && -d "$DEPLOY_ROOT/.git" ]]; then
-  sudo -u "$APP_USER" -H git -C "$DEPLOY_ROOT" pull --ff-only || echo "（警告）git pull 失败，继续用当前代码。"
+  if ! sudo -u "$APP_USER" -H git -C "$DEPLOY_ROOT" pull --ff-only; then
+    echo "（警告）git pull 失败，继续用当前代码。若仓库为公开仓库可考虑改 HTTPS remote，或下次执行 --no-git-pull。"
+  fi
 fi
 
 # Python：选 3.12 > 3.11 > python3
@@ -182,15 +193,23 @@ fi
 sudo -u "$APP_USER" -H "$VENV/bin/pip" install -q -U pip
 sudo -u "$APP_USER" -H "$VENV/bin/pip" install -q -r "$DEPLOY_ROOT/requirements.txt"
 
-# 可写目录
-install -d -o "$APP_USER" -g "$APP_USER" -m 755 "$DEPLOY_ROOT/backend/uploads" "$DEPLOY_ROOT/backend/outputs" || true
+# 可写目录（兼容 backend/ 与 backend/backend/ 两种结构）
+install -d -o "$APP_USER" -g "$APP_USER" -m 755 \
+  "$DEPLOY_ROOT/backend/uploads" \
+  "$DEPLOY_ROOT/backend/outputs" \
+  "$DEPLOY_ROOT/backend/backend/uploads" \
+  "$DEPLOY_ROOT/backend/backend/outputs" || true
 
 # 前端生产构建
 sudo -u "$APP_USER" -H bash -c "
   set -e
   cd \"$DEPLOY_ROOT/frontend\"
   printf '%s\n' 'REACT_APP_API_URL=' > .env.production
-  npm install
+  if [[ -f package-lock.json ]]; then
+    npm ci
+  else
+    npm install
+  fi
   npm run build
 "
 
@@ -210,6 +229,7 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=$VENV/bin/python app.py
 Restart=on-failure
 RestartSec=4
+$( [[ -n "$BACKEND_ENV_FILE" ]] && echo "EnvironmentFile=$BACKEND_ENV_FILE" )
 
 [Install]
 WantedBy=multi-user.target
@@ -218,6 +238,12 @@ EOF
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"
+systemctl is-active --quiet "$SERVICE_NAME" || {
+  echo "后端服务启动失败：$SERVICE_NAME"
+  systemctl status "$SERVICE_NAME" --no-pager || true
+  journalctl -u "$SERVICE_NAME" -n 120 --no-pager || true
+  exit 1
+}
 
 # Nginx
 NGINX_CFG="/etc/nginx/sites-available/${NGINX_SITE}.conf"
@@ -280,6 +306,31 @@ fi
 nginx -t
 systemctl reload nginx
 
+# 健康检查
+check_health() {
+  local url="$1"
+  local i
+  for i in {1..20}; do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+if ! check_health "http://127.0.0.1:${BACKEND_PORT}/api/ping"; then
+  echo "后端健康检查失败：http://127.0.0.1:${BACKEND_PORT}/api/ping"
+  journalctl -u "$SERVICE_NAME" -n 120 --no-pager || true
+  exit 1
+fi
+
+if ! check_health "http://127.0.0.1/"; then
+  echo "Nginx 健康检查失败：http://127.0.0.1/"
+  nginx -t || true
+  exit 1
+fi
+
 # 防火墙（可选）
 if command -v ufw >/dev/null 2>&1; then
   ufw allow 80/tcp 2>/dev/null || true
@@ -295,4 +346,5 @@ echo "  日志:     journalctl -u $SERVICE_NAME -f"
 echo "  Nginx:   $NGINX_CFG"
 echo "  浏览器访问: http://${SERVER_NAME// /} （若 server_name 为 _ 则用公网 IP 访问）"
 echo "  自检: curl -s http://127.0.0.1:${BACKEND_PORT}/api/ping"
+echo "  阿里云安全组需放行: 80/443（SSH 用 22）"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
