@@ -95,6 +95,14 @@ def build_global_constitution(script_language, script_style, program_name, speak
     )
 
 
+def build_article_constitution(script_language, script_style, program_name):
+    return (
+        f"语言={script_language}；风格={script_style}；文稿主题={program_name}。\n"
+        "全局硬规则：输出为普通文章（非对话脚本）；禁止 Speaker1/Speaker2、禁止主持人/听众等播客口吻；"
+        "可使用标题与段落，必要时使用 Markdown；术语叫法前后一致。"
+    )
+
+
 # 与 post_edit_script_for_coherence 中段间「重复开场」检测保持一致
 SEGMENT_RESTART_BODY_RE = re.compile(
     r"(大家好|欢迎收听|今天我们来聊|这一期我们来聊|欢迎收听本期|本期节目|我是主持人)"

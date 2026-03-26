@@ -1,6 +1,12 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { getApiBaseUrl } from '../apiBaseUrl';
-import { buildGroupedSelectOptions } from '../voiceCatalogUtils';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { useAuth } from '../AuthContext';
+import { getApiBaseUrl, apiPath, resolveMediaUrl } from '../apiBaseUrl';
+import { downloadWorkBundleZip } from '../workBundleDownload';
+import {
+  buildGroupedSelectOptions,
+  filterGroupedVoiceGroups,
+  uniqueLangShortsFromVoiceGroups,
+} from '../voiceCatalogUtils';
 import {
   readEnabledPresetKeys,
   writeSpeakerDefaultVoiceKeys,
@@ -12,39 +18,86 @@ import {
   SPEAKER_DEFAULT_VOICE_KEYS_KEY,
   SPEAKER_CLONED_VOICE_IDS_KEY
 } from '../presetVoicesStorage';
+import WorkCoverImg from './WorkCoverImg';
+import { getWorkCoverSrc } from '../workCoverImageUrl';
+import './podcastWorkCards.css';
 import './PodcastGenerator.css';
 
-/** 文案接口返回 HTML 404 时的可读说明 */
-function formatScriptDraftHttpError(status, errText, apiBase, pageHost) {
-  const body = errText || '';
-  const looksLikeHtml404 =
-    status === 404 && (/<!doctype html/i.test(body) || /<h1>Not Found<\/h1>/i.test(body));
-  const base = (apiBase || '').trim() || '（空：走当前网页同源，需 npm start 代理或 Nginx 反代）';
-  if (looksLikeHtml404) {
-    return [
-      '接口 404：请求没有到达带「文案生成」路由的 Flask 服务。',
-      `当前 API 基址：${base}；页面地址：${pageHost || '—'}。`,
-      '请：① backend 用最新代码重启：../.venv/bin/python app.py；',
-      '② 访问 http://127.0.0.1:5001/api/ping 应返回 {"ok":true}；',
-      '③ npm start 已默认直连 :5001（见 .env.development / apiBaseUrl.js）；若仍为空请设 REACT_APP_API_URL 后重启 npm start。'
-    ].join(' ');
-  }
-  return `HTTP ${status} ${body.replace(/\s+/g, ' ').slice(0, 200)}`;
-}
+// 已移除“仅生成文案”能力，相关错误格式化不再需要
 
 /** 脚本目标正文字数（与服务端 PODCAST_CONFIG、模型可稳定输出上限一致） */
 const SCRIPT_TARGET_CHARS_MIN = 200;
-const SCRIPT_TARGET_CHARS_DEFAULT = 200;
-const SCRIPT_TARGET_CHARS_MAX = 5000;
+const SCRIPT_TARGET_CHARS_DEFAULT = 2000;
+const SCRIPT_TARGET_CHARS_MAX = 9999;
+const DURATION_PRESET_TO_CHARS = {
+  short: 800,
+  medium: 2000,
+  long: 4500,
+};
+const DURATION_PRESET_TO_HINT = {
+  short: '约 3-4 分钟',
+  medium: '约 7-9 分钟',
+  long: '约 15-18 分钟',
+};
 const DEFAULT_SCRIPT_CONSTRAINTS = '对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本。';
 
-function parseScriptTargetCharsInput(raw) {
-  const n = parseInt(String(raw ?? '').trim(), 10);
-  if (!Number.isFinite(n)) return null;
-  if (n < SCRIPT_TARGET_CHARS_MIN) return null;
-  if (n > SCRIPT_TARGET_CHARS_MAX) return null;
-  return n;
+/** 笔记房间「生成播客」体裁：前缀写入 text_input，script_style / program_name 覆盖默认（custom 用界面状态） */
+const PODCAST_ROOM_PRESETS = {
+  custom: {
+    label: '自定义模式',
+    textPrefix: '',
+    scriptStyle: null,
+    programName: null,
+  },
+  deep_dive: {
+    label: '学霸模式',
+    textPrefix:
+      '【体裁：知识分享 Deep Dive】请将笔记材料转化为知识讲解类播客：结构清晰、循序渐进，帮助听众建立系统理解。',
+    scriptStyle: '深入浅出、条理清晰、适合系统学习的知识分享类播客',
+    programName: '学霸模式 · Deep Dive',
+  },
+  critique: {
+    label: '锐评频道',
+    textPrefix:
+      '【体裁：观点点评】请基于笔记材料做有态度、有观点的播客点评，观点可鲜明，但保持可听性与基本尊重。',
+    scriptStyle: '观点鲜明、有态度、点评类播客',
+    programName: '锐评频道 · Critique',
+  },
+  debate: {
+    label: '左右互搏',
+    textPrefix:
+      '【体裁：双人对辩】请以两位角色就材料中的争议点或对立观点展开讨论与辩论，有交锋、有来回，保持可听性。',
+    scriptStyle: '观点交锋、对话张力、辩论型双人播客',
+    programName: '左右互搏 · Debate',
+  },
+};
+
+const PODCAST_WORKS_STORAGE_KEY = 'fym_podcast_works_v1';
+
+function loadPodcastWorks() {
+  try {
+    const raw = window.localStorage.getItem(PODCAST_WORKS_STORAGE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    return [];
+  }
 }
+
+function savePodcastWorks(list) {
+  try {
+    window.localStorage.setItem(PODCAST_WORKS_STORAGE_KEY, JSON.stringify((list || []).slice(0, 30)));
+  } catch (e) {
+    // ignore
+  }
+}
+
+/** 参考 ListenHub 等产品的提示词示例 */
+const LISTENHUB_EXAMPLE_PROMPTS = [
+  '将你最感兴趣的一本书或一篇文章，做成一期深度闲聊播客。',
+  '把最近一周的科技新闻，整理成一期「划重点」对话节目。',
+  '用轻松语气讲解一个职业或技能入门，面向完全外行听众。',
+];
 
 /** 开始生成播客时使用：校验最小值与上限 */
 function parseScriptTargetCharsForGenerate(raw) {
@@ -61,15 +114,25 @@ const FALLBACK_DEFAULT_VOICES_MAP = {
   max: { name: 'Max', gender: 'male', description: '男声 - 稳重专业', voice_id: '' }
 };
 
-function GroupedDefaultVoiceSelect({ groups, value, onChange, id }) {
+function GroupedDefaultVoiceSelect({ groups, value, onChange, id, className }) {
   if (!groups || groups.length === 0) return null;
+  const inList = groups.some((g) => g.voices.some((v) => v.key === value));
+  const selectVal = inList ? value : '';
   return (
     <select
       id={id}
-      className="default-voice-grouped-select"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
+      className={`default-voice-grouped-select ${className || ''}`}
+      value={selectVal}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (v) onChange(v);
+      }}
     >
+      {!inList && (
+        <option value="" disabled>
+          当前为克隆，选下列切换预设
+        </option>
+      )}
       {groups.map((g) => (
         <optgroup key={g.label} label={g.label}>
           {g.voices.map((v) => (
@@ -83,7 +146,135 @@ function GroupedDefaultVoiceSelect({ groups, value, onChange, id }) {
   );
 }
 
-const PodcastGenerator = ({ showApiConfig = true }) => {
+const SCRIPT_LANG_LABELS = {
+  中文: '中文（普通话）',
+  English: 'English',
+  日本語: '日本語',
+};
+
+function PodcastTbIcon({ children, className }) {
+  return (
+    <span className={`podcast-tb-ico ${className || ''}`} aria-hidden>
+      {children}
+    </span>
+  );
+}
+
+function IcoUser() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+function IcoUsers() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+
+function IcoGlobe() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  );
+}
+
+function IcoWave() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <path d="M4 14c2-4 6-4 8 0s6 4 8 0M4 10c2 4 6 4 8 0s6-4 8 0" />
+    </svg>
+  );
+}
+
+function IcoBulb() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 13v2h8v-2a7 7 0 0 0-4-13z" />
+    </svg>
+  );
+}
+
+function IcoClock() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </svg>
+  );
+}
+
+function IcoLayers() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+    </svg>
+  );
+}
+
+function IcoBrackets() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <path d="M8 5H5v14h3M16 5h3v14h-3" />
+    </svg>
+  );
+}
+
+function IcoSend() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.25" strokeLinecap="round">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+/** 笔记房间弹窗底部：生成（仅图标） */
+function IcoRoomGenSend() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" aria-hidden>
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+function IcoRoomGenStop() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+    </svg>
+  );
+}
+
+function IcoRoomGenLoading() {
+  return (
+    <svg className="notes-modal-gen-btn-spinner" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray="42 48" />
+    </svg>
+  );
+}
+
+const PodcastGenerator = ({
+  showApiConfig = true,
+  onNavigateToTts,
+  notesPodcastMode = false,
+  roomConfigModal = false,
+  roomNotebookName = '',
+  roomSelectedNoteIds = null,
+  onRoomGenerationComplete,
+  roomPodcastKind = null,
+  roomPodcastPrompt = '',
+  roomPromptSlot = null,
+}) => {
+  const { ensureFeatureUnlocked, getAuthHeaders } = useAuth();
   // 状态管理
   const [apiKey, setApiKey] = useState('');
   const [rememberApiKey, setRememberApiKey] = useState(true);
@@ -92,13 +283,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
   const [urlInputDraft, setUrlInputDraft] = useState('');
   const [pdfFiles, setPdfFiles] = useState([]);
 
-  // 加工模式：默认 AI，可切换到用户加工
-  const [editMode, setEditMode] = useState('ai');
-  const [manualScript, setManualScript] = useState('');
-  const [manualCoverText, setManualCoverText] = useState('');
-  const [manualCoverFile, setManualCoverFile] = useState(null);
   const [scriptTargetChars, setScriptTargetChars] = useState(String(SCRIPT_TARGET_CHARS_DEFAULT));
-  const [longScriptMode, setLongScriptMode] = useState(false);
   const [scriptStyle, setScriptStyle] = useState('轻松幽默，自然流畅');
   const [scriptLanguage, setScriptLanguage] = useState('中文');
   const [programName, setProgramName] = useState('AI播客节目');
@@ -111,8 +296,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     readSpeakerClonedVoiceIds().speaker1 ? 'custom' : 'default'
   );
   const [speaker1Voice, setSpeaker1Voice] = useState(() => readSpeakerDefaultVoiceKeys().speaker1);
-  const [speaker1Audio, setSpeaker1Audio] = useState(null);
-  const [speaker1CustomMode, setSpeaker1CustomMode] = useState('upload');
+  const [speaker1CustomMode, setSpeaker1CustomMode] = useState('saved');
   const [speaker1SavedVoiceId, setSpeaker1SavedVoiceId] = useState(
     () => readSpeakerClonedVoiceIds().speaker1 || ''
   );
@@ -121,18 +305,17 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     readSpeakerClonedVoiceIds().speaker2 ? 'custom' : 'default'
   );
   const [speaker2Voice, setSpeaker2Voice] = useState(() => readSpeakerDefaultVoiceKeys().speaker2);
-  const [speaker2Audio, setSpeaker2Audio] = useState(null);
-  const [speaker2CustomMode, setSpeaker2CustomMode] = useState('upload');
+  const [speaker2CustomMode, setSpeaker2CustomMode] = useState('saved');
   const [speaker2SavedVoiceId, setSpeaker2SavedVoiceId] = useState(
     () => readSpeakerClonedVoiceIds().speaker2 || ''
   );
   const [savedCustomVoices, setSavedCustomVoices] = useState([]);
   const [savedBgms, setSavedBgms] = useState([]);
 
-  const [audioStyleMode, setAudioStyleMode] = useState('default');
+  const [audioStyleMode, setAudioStyleMode] = useState('custom');
   const [introText, setIntroText] = useState('');
   const [endingText, setEndingText] = useState('');
-  const [introVoiceMode, setIntroVoiceMode] = useState('default');
+  const [introVoiceMode, setIntroVoiceMode] = useState('speaker1');
   const [introVoiceName, setIntroVoiceName] = useState('max');
   const [introCustomVoiceId, setIntroCustomVoiceId] = useState('');
   const [endingVoiceMode, setEndingVoiceMode] = useState('default');
@@ -147,7 +330,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
   const [endingBgm1Mode, setEndingBgm1Mode] = useState('default');
   const [endingBgm1SavedId, setEndingBgm1SavedId] = useState('');
   const [endingBgm1File, setEndingBgm1File] = useState(null);
-  const [endingBgm2Mode, setEndingBgm2Mode] = useState('default');
+  const [endingBgm2Mode, setEndingBgm2Mode] = useState('none');
   const [endingBgm2SavedId, setEndingBgm2SavedId] = useState('');
   const [endingBgm2File, setEndingBgm2File] = useState(null);
   const [audioStylePresets, setAudioStylePresets] = useState([]);
@@ -157,23 +340,15 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState('');
-  const [logs, setLogs] = useState([]);
-  const [script, setScript] = useState([]);
+  const [progressEta, setProgressEta] = useState('');
+  const progressStartAtRef = useRef(0);
+  const [podcastWorksTemplatesTab, setPodcastWorksTemplatesTab] = useState('works');
+  const [, setScript] = useState([]);
+  const scriptRef = useRef([]);
   const [coverImage, setCoverImage] = useState('');
-  const [traceIds, setTraceIds] = useState([]);
 
   const [audioUrl, setAudioUrl] = useState('');
-  const [scriptUrl, setScriptUrl] = useState('');
-
-  const [showLogs, setShowLogs] = useState(false);
-  const [downloadBusy, setDownloadBusy] = useState(false);
   const [showFinalCopyModal, setShowFinalCopyModal] = useState(false);
-  const [finalCopyText, setFinalCopyText] = useState('');
-  const [finalCopyLoading, setFinalCopyLoading] = useState(false);
-  const [finalCopyTitle, setFinalCopyTitle] = useState('💡 加入创意');
-  const [finalCopyLlmGenerating, setFinalCopyLlmGenerating] = useState(false);
-  const [finalCopyDraftStatus, setFinalCopyDraftStatus] = useState('');
-  const [finalCopyReadyToPickVoice, setFinalCopyReadyToPickVoice] = useState(false);
 
   // 渐进式播放相关状态 - 双缓冲方案
   const [activePlayer, setActivePlayer] = useState(0);  // 当前激活的播放器 (0 或 1)
@@ -182,12 +357,105 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
 
   // URL 解析警告
   const [urlWarning, setUrlWarning] = useState(null);  // {message: string, error_code: string}
+  const [pdfDropActive, setPdfDropActive] = useState(false);
   const [selectedNoteIds, setSelectedNoteIds] = useState([]);
   const [selectedNoteItems, setSelectedNoteItems] = useState([]);
   const [availableNotes, setAvailableNotes] = useState([]);
-  const [noteToAddId, setNoteToAddId] = useState('');
+  const [availableNotebooks, setAvailableNotebooks] = useState([]);
+  const [noteNotebookFilter, setNoteNotebookFilter] = useState('默认笔记本');
+  const [podcastSpeakerMode, setPodcastSpeakerMode] = useState('dual');
+  const [podcastUploadOpen, setPodcastUploadOpen] = useState(false);
+  const podcastUploadRef = useRef(null);
+  const [podcastTbModeOpen, setPodcastTbModeOpen] = useState(false);
+  const [podcastTbVoiceOpen, setPodcastTbVoiceOpen] = useState(false);
+  // 播客时长：短/中/长（映射为目标正文字数）
+  const [durationPreset, setDurationPreset] = useState('medium');
+  // 时长选择模式：预设短/中/长 或 自定义字数（长文模式）
+  const [durationMode, setDurationMode] = useState('preset'); // 'preset' | 'text'
+  const [podcastTbDurationOpen, setPodcastTbDurationOpen] = useState(false);
+  const [podcastVoiceGenderFilter, setPodcastVoiceGenderFilter] = useState('all');
+  const [podcastVoiceLangFilter, setPodcastVoiceLangFilter] = useState('all');
+  const podcastTbModeRef = useRef(null);
+  const podcastTbVoiceRef = useRef(null);
+  const podcastTbDurationRef = useRef(null);
+  const [showPodcastIntroModal, setShowPodcastIntroModal] = useState(false);
   const [defaultVoicesMap, setDefaultVoicesMap] = useState(FALLBACK_DEFAULT_VOICES_MAP);
   const [enabledPresetKeys, setEnabledPresetKeys] = useState(() => readEnabledPresetKeys());
+
+  const [podcastWorks, setPodcastWorks] = useState(() => loadPodcastWorks());
+  const [podcastWorkMenuOpenId, setPodcastWorkMenuOpenId] = useState(null);
+  const [podcastWorkZipBusyId, setPodcastWorkZipBusyId] = useState(null);
+  const [podcastWorkRates, setPodcastWorkRates] = useState({});
+  const podcastWorkAudioRefs = useRef({});
+  /** 笔记出播客：1 仅选笔记 · 2 配置与补充话题 · 3 生成 */
+  const [notesPodcastStep, setNotesPodcastStep] = useState(1);
+  const podcastWorkMenuRefs = useRef({});
+  const [podcastWorkPlayingId, setPodcastWorkPlayingId] = useState(null);
+  const podcastWorkInlineAudioRef = useRef(null);
+  const [podcastWorkDurations, setPodcastWorkDurations] = useState({});
+  const [podcastWorkMenuDir, setPodcastWorkMenuDir] = useState({});
+  const roomGenMetaRef = useRef({ programName: '', topic: '' });
+
+  const formatDuration = useCallback((sec) => {
+    const n = Number(sec);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    const s = Math.round(n);
+    const mm = Math.floor(s / 60);
+    const ss = s % 60;
+    if (mm <= 0) return `${ss}s`;
+    return `${mm}:${String(ss).padStart(2, '0')}`;
+  }, []);
+
+  const formatCreatedAt = useCallback((iso) => {
+    const raw = String(iso || '').trim();
+    if (!raw) return '';
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return '';
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${mm}-${dd} ${hh}:${mi}`;
+  }, []);
+
+  const pauseOtherPodcastWorks = useCallback((keepId) => {
+    const keep = String(keepId ?? '');
+    const refs = podcastWorkAudioRefs.current || {};
+    Object.keys(refs).forEach((k) => {
+      if (k === keep) return;
+      const el = refs[k];
+      if (!el) return;
+      try {
+        if (!el.paused) el.pause();
+      } catch (e) {
+        // ignore
+      }
+    });
+  }, []);
+
+  const onToggleWorkPlay = useCallback(
+    (workId) => {
+      const sid = String(workId);
+      if (!sid) return;
+      setPodcastWorkMenuOpenId(null);
+      setPodcastWorkPlayingId((cur) => {
+        const curId = cur ? String(cur) : null;
+        return curId === sid ? null : sid;
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!podcastWorkPlayingId) return;
+    const el = podcastWorkInlineAudioRef.current;
+    if (!el) return;
+    try {
+      el.play();
+    } catch (e) {
+      // ignore (autoplay may be blocked)
+    }
+  }, [podcastWorkPlayingId]);
 
   const displayVoicesMap = useMemo(() => {
     const enabled = new Set(enabledPresetKeys);
@@ -208,14 +476,31 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     [displayVoicesMap]
   );
 
+  const podcastComposerLangChips = useMemo(
+    () => uniqueLangShortsFromVoiceGroups(defaultVoiceGroups),
+    [defaultVoiceGroups]
+  );
+
+  const podcastComposerFilteredGroups = useMemo(
+    () => filterGroupedVoiceGroups(defaultVoiceGroups, podcastVoiceGenderFilter, podcastVoiceLangFilter),
+    [defaultVoiceGroups, podcastVoiceGenderFilter, podcastVoiceLangFilter]
+  );
+
+  useEffect(() => {
+    if (!podcastTbVoiceOpen) {
+      setPodcastVoiceGenderFilter('all');
+      setPodcastVoiceLangFilter('all');
+    }
+  }, [podcastTbVoiceOpen]);
+
   const defaultVoicesMapRef = useRef(defaultVoicesMap);
   defaultVoicesMapRef.current = defaultVoicesMap;
 
   const audioRef0 = useRef(null);
   const audioRef1 = useRef(null);
-  const voiceSectionRef = useRef(null);
+  const podcastPdfInputRef = useRef(null);
   const generateAbortRef = useRef(null);
-  const draftAbortRef = useRef(null);
+  // 已移除“仅生成文案（SSE）”能力，因此不再需要 draftAbortRef
 
   const API_KEY_STORAGE_KEY = 'minimax_aipodcast_api_key';
   const SAVED_CUSTOM_VOICES_KEY = 'minimax_aipodcast_saved_custom_voices';
@@ -223,14 +508,13 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
   const AUDIO_STYLE_PRESETS_KEY = 'minimax_aipodcast_audio_style_presets';
   const AI_ADVANCED_CONFIG_KEY = 'minimax_aipodcast_ai_advanced_config';
   const SELECTED_NOTES_KEY = 'minimax_aipodcast_selected_notes';
-  const FINAL_COPY_DRAFT_KEY = 'minimax_aipodcast_final_copy_draft_text';
+  // 加入创意弹窗不再生成/缓存“播客对话脚本”，仅保存高级配置
 
   // 默认 Key（可选）：用于部署时注入，不建议写死在代码仓库里
   const DEFAULT_API_KEY = process.env.REACT_APP_DEFAULT_API_KEY || '';
 
   // API 根地址：见 src/apiBaseUrl.js（8000/8080 静态站会指向当前主机名的 :5001，支持 127.0.0.1 / 局域网 IP）
   const API_URL = getApiBaseUrl();
-  const apiPath = (path) => `${API_URL}${path}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -249,30 +533,241 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     return () => {
       cancelled = true;
     };
-  }, [API_URL]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   useEffect(() => {
-    try {
-      const savedDraft = window.localStorage.getItem(FINAL_COPY_DRAFT_KEY);
-      if (typeof savedDraft === 'string' && savedDraft.length > 0) {
-        setFinalCopyText(savedDraft);
-      }
-    } catch (e) {
-      // ignore
+    if (podcastSpeakerMode !== 'single') return;
+    setSpeaker2Voice(speaker1Voice);
+  }, [podcastSpeakerMode, speaker1Voice]);
+
+  useEffect(() => {
+    if (
+      !podcastUploadOpen &&
+      !podcastTbModeOpen &&
+      !podcastTbVoiceOpen &&
+      !podcastTbDurationOpen
+    ) {
+      return undefined;
     }
+    const onDoc = (e) => {
+      if (podcastUploadRef.current && !podcastUploadRef.current.contains(e.target)) {
+        setPodcastUploadOpen(false);
+      }
+      if (podcastTbModeRef.current && !podcastTbModeRef.current.contains(e.target)) {
+        setPodcastTbModeOpen(false);
+      }
+      if (podcastTbVoiceRef.current && !podcastTbVoiceRef.current.contains(e.target)) {
+        setPodcastTbVoiceOpen(false);
+      }
+      if (podcastTbDurationRef.current && !podcastTbDurationRef.current.contains(e.target)) {
+        setPodcastTbDurationOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [
+    podcastUploadOpen,
+    podcastTbModeOpen,
+    podcastTbVoiceOpen,
+    podcastTbDurationOpen,
+  ]);
+
+  const closePodcastTbPopovers = useCallback(() => {
+    setPodcastTbModeOpen(false);
+    setPodcastTbVoiceOpen(false);
+    setPodcastUploadOpen(false);
+    setPodcastTbDurationOpen(false);
   }, []);
 
   useEffect(() => {
-    try {
-      if (finalCopyText && finalCopyText.trim()) {
-        window.localStorage.setItem(FINAL_COPY_DRAFT_KEY, finalCopyText);
-      } else {
-        window.localStorage.removeItem(FINAL_COPY_DRAFT_KEY);
+    if (!podcastWorkMenuOpenId) return undefined;
+    const onDoc = (e) => {
+      const id = podcastWorkMenuOpenId;
+      const wrap = podcastWorkMenuRefs.current?.[String(id)];
+      if (wrap && wrap.contains(e.target)) return;
+      setPodcastWorkMenuOpenId(null);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [podcastWorkMenuOpenId]);
+
+  const deletePodcastWork = useCallback(
+    (id) => {
+      const sid = String(id || '').trim();
+      if (!sid) return;
+      const target = (podcastWorks || []).find((w) => String(w.id) === sid);
+      const label = (target?.title || '').trim() || '该项目';
+      // eslint-disable-next-line no-restricted-globals
+      if (!window.confirm(`确定删除「${label}」吗？`)) return;
+      const next = (podcastWorks || []).filter((w) => String(w.id) !== sid);
+      setPodcastWorks(next);
+      savePodcastWorks(next);
+      setPodcastWorkMenuOpenId((cur) => (String(cur) === sid ? null : cur));
+      setPodcastWorkRates((prev) => {
+        const n = { ...(prev || {}) };
+        delete n[sid];
+        return n;
+      });
+    },
+    [podcastWorks]
+  );
+
+  const renamePodcastWork = useCallback(
+    (id) => {
+      const sid = String(id || '').trim();
+      if (!sid) return;
+      const target = (podcastWorks || []).find((w) => String(w.id) === sid);
+      const nextTitleRaw = window.prompt('输入新名称', target?.title || '');
+      const nextTitle = String(nextTitleRaw || '').trim();
+      if (!nextTitle) return;
+      const next = (podcastWorks || []).map((w) => (String(w.id) === sid ? { ...w, title: nextTitle } : w));
+      setPodcastWorks(next);
+      savePodcastWorks(next);
+      setPodcastWorkMenuOpenId(null);
+    },
+    [podcastWorks]
+  );
+
+  const copyPodcastWorkScript = useCallback(
+    async (id) => {
+      const sid = String(id || '').trim();
+      if (!sid) return;
+      const target = (podcastWorks || []).find((w) => String(w.id) === sid);
+      let txt = String(target?.scriptText || '').trim();
+      if (!txt && target?.scriptUrl) {
+        try {
+          const res = await fetch(resolveMediaUrl(target.scriptUrl), {
+            headers: getAuthHeaders(),
+          });
+          if (res.ok) txt = String(await res.text()).trim();
+        } catch (e) {
+          // ignore and fall back to alert
+        }
       }
-    } catch (e) {
-      // ignore
+      if (!txt) {
+        alert('暂无脚本可复制（请先生成播客并确保已生成文稿）。');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(txt);
+        setPodcastWorkMenuOpenId(null);
+      } catch (e) {
+        alert('复制失败，请检查浏览器权限或使用 HTTPS 页面。');
+      }
+    },
+    [podcastWorks, getAuthHeaders]
+  );
+
+  const downloadPodcastWorkBundle = useCallback(
+    async (id) => {
+      const sid = String(id || '').trim();
+      if (!sid) return;
+      const target = (podcastWorks || []).find((w) => String(w.id) === sid);
+      if (!target?.audioUrl) {
+        alert('没有可下载的音频');
+        return;
+      }
+      setPodcastWorkZipBusyId(sid);
+      setPodcastWorkMenuOpenId(null);
+      try {
+        await downloadWorkBundleZip({
+          title: target.title || '未命名',
+          audioUrl: target.audioUrl,
+          scriptText: target.scriptText,
+          scriptUrl: target.scriptUrl,
+          coverRaw: target.coverImage,
+          getAuthHeaders,
+        });
+      } catch (e) {
+        alert(e?.message || String(e));
+      } finally {
+        setPodcastWorkZipBusyId(null);
+      }
+    },
+    [podcastWorks, getAuthHeaders]
+  );
+
+  const setPodcastWorkPlaybackRate = useCallback((id, rate) => {
+    const sid = String(id || '').trim();
+    if (!sid) return;
+    const r = Number(rate);
+    if (!Number.isFinite(r) || r <= 0) return;
+    setPodcastWorkRates((prev) => ({ ...(prev || {}), [sid]: r }));
+    const el = podcastWorkAudioRefs.current?.[sid];
+    if (el) {
+      try {
+        el.playbackRate = r;
+      } catch (e) {
+        // ignore
+      }
     }
-  }, [finalCopyText]);
+  }, []);
+
+  const pickPodcastComposerClone = useCallback(
+    (which, voiceId) => {
+      const id = String(voiceId || '').trim();
+      if (!id) return;
+      if (podcastSpeakerMode === 'single') {
+        setSpeaker1Type('custom');
+        setSpeaker1CustomMode('saved');
+        setSpeaker1SavedVoiceId(id);
+        setSpeaker2Type('custom');
+        setSpeaker2CustomMode('saved');
+        setSpeaker2SavedVoiceId(id);
+        return;
+      }
+      if (which === '1') {
+        setSpeaker1Type('custom');
+        setSpeaker1CustomMode('saved');
+        setSpeaker1SavedVoiceId(id);
+      } else if (which === '2') {
+        setSpeaker2Type('custom');
+        setSpeaker2CustomMode('saved');
+        setSpeaker2SavedVoiceId(id);
+      }
+    },
+    [podcastSpeakerMode]
+  );
+
+  const voiceToolbarLabel = useMemo(() => {
+    const cloneName = (id) =>
+      savedCustomVoices.find((x) => String(x.voiceId) === String(id))?.displayName || id;
+    const n1 =
+      speaker1Type === 'custom' && speaker1CustomMode === 'saved' && speaker1SavedVoiceId
+        ? cloneName(speaker1SavedVoiceId)
+        : defaultVoicesMap[speaker1Voice]?.name || speaker1Voice;
+    if (podcastSpeakerMode === 'single') return n1;
+    const n2 =
+      speaker2Type === 'custom' && speaker2CustomMode === 'saved' && speaker2SavedVoiceId
+        ? cloneName(speaker2SavedVoiceId)
+        : defaultVoicesMap[speaker2Voice]?.name || speaker2Voice;
+    return `${n1} · ${n2}`;
+  }, [
+    defaultVoicesMap,
+    speaker1Voice,
+    speaker2Voice,
+    podcastSpeakerMode,
+    speaker1Type,
+    speaker2Type,
+    speaker1CustomMode,
+    speaker2CustomMode,
+    speaker1SavedVoiceId,
+    speaker2SavedVoiceId,
+    savedCustomVoices,
+  ]);
+
+  const durationToolbarLabel = useMemo(() => {
+    if (roomConfigModal) {
+      const n = parseInt(String(scriptTargetChars || '').trim(), 10);
+      if (Number.isFinite(n)) return `约 ${n} 字`;
+      return '字数';
+    }
+    if (durationMode === 'text') return '字数';
+    if (durationPreset === 'short') return '短';
+    if (durationPreset === 'long') return '长';
+    return '中';
+  }, [durationPreset, durationMode, roomConfigModal, scriptTargetChars]);
 
   useEffect(() => {
     const syncFromStorage = () => {
@@ -317,6 +812,43 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
       window.removeEventListener('storage', onStorage);
     };
   }, []);
+
+  useEffect(() => {
+    if (notesPodcastMode) {
+      setNotesPodcastStep(1);
+    }
+  }, [notesPodcastMode]);
+
+  const roomIdsSerialized =
+    roomConfigModal && Array.isArray(roomSelectedNoteIds) ? JSON.stringify(roomSelectedNoteIds) : null;
+
+  useEffect(() => {
+    if (!roomConfigModal) return;
+    const nb = (roomNotebookName || '').trim();
+    if (nb) setNoteNotebookFilter(nb);
+  }, [roomConfigModal, roomNotebookName]);
+
+  useEffect(() => {
+    if (roomIdsSerialized == null) return;
+    try {
+      const ids = JSON.parse(roomIdsSerialized);
+      if (!Array.isArray(ids)) return;
+      setSelectedNoteIds(ids.map((id) => String(id)));
+    } catch (e) {
+      // ignore
+    }
+  }, [roomIdsSerialized]);
+
+  useEffect(() => {
+    if (roomConfigModal) {
+      setDurationMode('text');
+    }
+  }, [roomConfigModal]);
+
+  useEffect(() => {
+    if (!roomConfigModal || roomPodcastKind !== 'debate') return;
+    setPodcastSpeakerMode('dual');
+  }, [roomConfigModal, roomPodcastKind]);
 
   useEffect(() => {
     writeSpeakerDefaultVoiceKeys(speaker1Voice, speaker2Voice);
@@ -412,7 +944,6 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     try {
       const forceAi = window.localStorage.getItem('minimax_aipodcast_force_ai_mode');
       if (forceAi === '1') {
-        setEditMode('ai');
         window.localStorage.removeItem('minimax_aipodcast_force_ai_mode');
       }
     } catch (e) {
@@ -436,7 +967,19 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
   useEffect(() => {
     const loadSelectedNotes = async () => {
       try {
-        const resp = await fetch(apiPath('/api/notes'));
+        // 先拉笔记本列表，再按笔记本筛选拉笔记
+        const nbResp = await fetch(apiPath('/api/notebooks'));
+        if (nbResp.ok) {
+          const nbData = await nbResp.json().catch(() => ({}));
+          const nbs = Array.isArray(nbData?.notebooks) ? nbData.notebooks : [];
+          setAvailableNotebooks(nbs);
+          if (nbs.length > 0 && !nbs.includes(noteNotebookFilter)) {
+            setNoteNotebookFilter(nbs[0]);
+          }
+        }
+
+        const qs = noteNotebookFilter ? `?notebook=${encodeURIComponent(noteNotebookFilter)}` : '';
+        const resp = await fetch(apiPath(`/api/notes${qs}`));
         if (!resp.ok) return;
         const data = await resp.json();
         const allNotes = Array.isArray(data?.notes) ? data.notes : [];
@@ -463,7 +1006,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
       }
     };
     loadSelectedNotes();
-  }, [selectedNoteIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedNoteIds, noteNotebookFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     try {
@@ -471,10 +1014,12 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
       if (!raw) return;
       const c = JSON.parse(raw);
       if (!c || typeof c !== 'object') return;
-      setAudioStyleMode(c.audioStyleMode || 'default');
+      setAudioStyleMode(
+        c.audioStyleMode === 'default' || c.audioStyleMode === 'custom' ? c.audioStyleMode : 'custom'
+      );
       setIntroText(c.introText || '');
       setEndingText(c.endingText || '');
-      setIntroVoiceMode(c.introVoiceMode || 'default');
+      setIntroVoiceMode(c.introVoiceMode || 'speaker1');
       setIntroVoiceName(c.introVoiceName || 'max');
       setIntroCustomVoiceId(c.introCustomVoiceId || '');
       setEndingVoiceMode(c.endingVoiceMode || 'default');
@@ -486,7 +1031,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
       setIntroBgm2SavedId(c.introBgm2SavedId || '');
       setEndingBgm1Mode(c.endingBgm1Mode || 'default');
       setEndingBgm1SavedId(c.endingBgm1SavedId || '');
-      setEndingBgm2Mode(c.endingBgm2Mode || 'default');
+      setEndingBgm2Mode(c.endingBgm2Mode || 'none');
       setEndingBgm2SavedId(c.endingBgm2SavedId || '');
     } catch (e) {
       // ignore
@@ -585,7 +1130,6 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
           setScriptTargetChars(String(clamped));
         }
       }
-      if (cfg.longScriptMode !== undefined) setLongScriptMode(Boolean(cfg.longScriptMode));
       if (cfg.scriptStyle) setScriptStyle(cfg.scriptStyle);
       if (cfg.scriptLanguage) setScriptLanguage(cfg.scriptLanguage);
       if (cfg.programName) setProgramName(cfg.programName);
@@ -598,20 +1142,37 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     }
   }, []);
 
+  // 让顶部“短/中/长”与当前 scriptTargetChars 保持一致（不反向写回 scriptTargetChars）
+  useEffect(() => {
+    if (durationMode !== 'preset') return;
+    const v = parseInt(String(scriptTargetChars || '').trim(), 10);
+    if (!Number.isFinite(v)) return;
+    const entries = Object.entries(DURATION_PRESET_TO_CHARS);
+    let bestKey = durationPreset;
+    let bestDist = Infinity;
+    entries.forEach(([k, num]) => {
+      const dist = Math.abs(num - v);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestKey = k;
+      }
+    });
+    if (bestKey && bestKey !== durationPreset) setDurationPreset(bestKey);
+  }, [scriptTargetChars, durationMode, durationPreset]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const n = parseInt(String(scriptTargetChars).trim(), 10);
     const payload = {
       scriptTargetChars: Number.isFinite(n)
         ? Math.max(SCRIPT_TARGET_CHARS_MIN, Math.min(SCRIPT_TARGET_CHARS_MAX, n))
         : SCRIPT_TARGET_CHARS_DEFAULT,
-      longScriptMode,
       scriptStyle,
       scriptLanguage,
       programName,
       speaker1Persona,
       speaker2Persona,
       scriptConstraints,
-      useRag
+      useRag,
     };
     try {
       window.localStorage.setItem(AI_ADVANCED_CONFIG_KEY, JSON.stringify(payload));
@@ -620,7 +1181,6 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     }
   }, [
     scriptTargetChars,
-    longScriptMode,
     scriptStyle,
     scriptLanguage,
     programName,
@@ -753,10 +1313,12 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
   });
 
   const applyAudioStyleConfigPayload = (c = {}) => {
-    setAudioStyleMode(c.audioStyleMode || 'default');
+    setAudioStyleMode(
+      c.audioStyleMode === 'default' || c.audioStyleMode === 'custom' ? c.audioStyleMode : 'custom'
+    );
     setIntroText(c.introText || '');
     setEndingText(c.endingText || '');
-    setIntroVoiceMode(c.introVoiceMode || 'default');
+    setIntroVoiceMode(c.introVoiceMode || 'speaker1');
     setIntroVoiceName(c.introVoiceName || 'max');
     setIntroCustomVoiceId(c.introCustomVoiceId || '');
     setEndingVoiceMode(c.endingVoiceMode || 'default');
@@ -768,7 +1330,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     setIntroBgm2SavedId(c.introBgm2SavedId || '');
     setEndingBgm1Mode(c.endingBgm1Mode || 'default');
     setEndingBgm1SavedId(c.endingBgm1SavedId || '');
-    setEndingBgm2Mode(c.endingBgm2Mode || 'default');
+    setEndingBgm2Mode(c.endingBgm2Mode || 'none');
     setEndingBgm2SavedId(c.endingBgm2SavedId || '');
     // 上传型文件无法持久化，加载预设时需用户手动补传
     setIntroBgm1File(null);
@@ -920,9 +1482,8 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     setRememberApiKey(false);
   };
 
-  // 处理文件上传
-  const handlePdfChange = (e) => {
-    const files = Array.from(e.target.files || []);
+  const mergePdfFilesFromList = (fileList) => {
+    const files = Array.from(fileList || []);
     if (!files.length) return;
     const allowedExt = ['.pdf', '.doc', '.docx', '.epub', '.txt', '.md', '.markdown'];
     const validFiles = files.filter((file) => {
@@ -930,7 +1491,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
       return allowedExt.some((ext) => fileName.endsWith(ext));
     });
     if (!validFiles.length) {
-      alert('请上传支持格式：pdf/doc/docx/epub/txt/md');
+      alert('请上传支持格式：pdf / doc / docx / epub / txt / md');
       return;
     }
     setPdfFiles((prev) => {
@@ -943,7 +1504,30 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
       });
       return next;
     });
+  };
+
+  const handlePdfChange = (e) => {
+    mergePdfFilesFromList(e.target.files);
     e.target.value = '';
+  };
+
+  const handlePdfDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPdfDropActive(true);
+  };
+
+  const handlePdfDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPdfDropActive(false);
+  };
+
+  const handlePdfDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPdfDropActive(false);
+    mergePdfFilesFromList(e.dataTransfer.files);
   };
 
   const addUrlInput = () => {
@@ -965,34 +1549,6 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     setPdfFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleSpeaker1AudioChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setSpeaker1Audio(file);
-    }
-  };
-
-  const handleSpeaker2AudioChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setSpeaker2Audio(file);
-    }
-  };
-
-  const handleManualCoverChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) {
-      setManualCoverFile(null);
-      return;
-    }
-    const allowed = ['image/png', 'image/jpeg', 'image/webp'];
-    if (!allowed.includes(file.type)) {
-      alert('请上传 PNG/JPG/WEBP 图片作为封面');
-      return;
-    }
-    setManualCoverFile(file);
-  };
-
   const handleBgmFileChange = (setter) => (e) => {
     const file = e.target.files[0];
     if (!file) {
@@ -1002,15 +1558,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     setter(file);
   };
 
-  // 添加日志
-  const addLog = (message) => {
-    setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), message }]);
-  };
-
-  // 添加 Trace ID
-  const addTraceId = (api, traceId) => {
-    setTraceIds(prev => [...prev, { api, traceId }]);
-  };
+  const addLog = () => {};
 
   // 双缓冲播放器 - 后端已控制更新频率，前端直接更新即可
   const updateProgressiveAudio = (newUrl) => {
@@ -1068,53 +1616,75 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
       alert('请输入 MiniMax API Key');
       return;
     }
+    const featureOk = await ensureFeatureUnlocked();
+    if (!featureOk) return;
 
     addLog('🚀 已开始生成流程，准备发起请求...');
 
-    if (editMode === 'manual') {
-      if (!manualScript.trim()) {
-        alert('用户加工模式下，请先填写对话脚本');
-        return;
-      }
-    } else {
-      const hasSelectedNotes = Array.isArray(selectedNoteIds) && selectedNoteIds.length > 0;
-      const topicOk = (textInput || '').trim();
-      if (!topicOk && urlInputs.length === 0 && pdfFiles.length === 0 && !hasSelectedNotes) {
-        alert('请至少提供一种输入内容（文本/网址/文件/知识库勾选笔记）');
-        return;
-      }
-      const chars = parseScriptTargetCharsForGenerate(scriptTargetChars);
-      if (chars === null) {
-        alert(`目标正文字数请输入 ${SCRIPT_TARGET_CHARS_MIN}~${SCRIPT_TARGET_CHARS_MAX} 的整数`);
+    if (roomConfigModal) {
+      if (!roomPodcastKind || !PODCAST_ROOM_PRESETS[roomPodcastKind]) {
+        alert('请先选择一种播客体裁（上方四个小卡片）');
         return;
       }
     }
 
+    const hasSelectedNotes = Array.isArray(selectedNoteIds) && selectedNoteIds.length > 0;
+    const presetRoom = roomConfigModal && roomPodcastKind ? PODCAST_ROOM_PRESETS[roomPodcastKind] : null;
+    const effectiveTopic = presetRoom
+      ? [presetRoom.textPrefix || '', String(roomPodcastPrompt || '').trim()]
+          .filter(Boolean)
+          .join('\n\n')
+          .trim()
+      : (textInput || '').trim();
+    const effectiveScriptStyle = presetRoom?.scriptStyle != null ? presetRoom.scriptStyle : scriptStyle;
+    const effectiveProgramName = presetRoom?.programName != null ? presetRoom.programName : programName;
+
+    if (roomConfigModal) {
+      roomGenMetaRef.current = {
+        programName: String(effectiveProgramName || '').trim(),
+        topic: effectiveTopic,
+      };
+    } else {
+      roomGenMetaRef.current = { programName: '', topic: '' };
+    }
+
+    if (
+      !effectiveTopic &&
+      urlInputs.length === 0 &&
+      pdfFiles.length === 0 &&
+      !hasSelectedNotes
+    ) {
+      alert('请至少提供一种输入内容（文本/网址/文件/知识库勾选笔记）');
+      return;
+    }
+    const chars = parseScriptTargetCharsForGenerate(scriptTargetChars);
+    if (chars === null) {
+      alert(`目标正文字数请输入 ${SCRIPT_TARGET_CHARS_MIN}~${SCRIPT_TARGET_CHARS_MAX} 的整数`);
+      return;
+    }
+
     if (speaker1Type === 'custom') {
-      if (speaker1CustomMode === 'saved') {
-        if (!speaker1SavedVoiceId.trim()) {
-          alert('Speaker1 已选择自定义音色，请选择一个已保存的音色ID');
-          return;
-        }
-      } else if (!speaker1Audio) {
-        alert('Speaker1 已选择自定义音色，请上传音频文件');
+      if (speaker1CustomMode !== 'saved') {
+        alert('请先在侧栏「你的声音」完成克隆，再在工具栏选择已保存音色');
+        return;
+      }
+      if (!speaker1SavedVoiceId.trim()) {
+        alert('Speaker1 已选择自定义音色，请在工具栏选择一个已保存的克隆音色');
         return;
       }
     }
 
     if (speaker2Type === 'custom') {
-      if (speaker2CustomMode === 'saved') {
-        if (!speaker2SavedVoiceId.trim()) {
-          alert('Speaker2 已选择自定义音色，请选择一个已保存的音色ID');
-          return;
-        }
-      } else if (!speaker2Audio) {
-        alert('Speaker2 已选择自定义音色，请上传音频文件');
+      if (speaker2CustomMode !== 'saved') {
+        alert('请先在侧栏「你的声音」完成克隆，再在工具栏选择已保存音色');
+        return;
+      }
+      if (!speaker2SavedVoiceId.trim()) {
+        alert('Speaker2 已选择自定义音色，请在工具栏选择一个已保存的克隆音色');
         return;
       }
     }
 
-    if (audioStyleMode === 'custom') {
       if (introVoiceMode === 'custom' && !introCustomVoiceId.trim()) {
         alert('开头语音色选择了已保存音色，请选择音色名称');
         return;
@@ -1155,15 +1725,12 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
         alert('结尾背景音2 选择了上传，请先选择文件');
         return;
       }
-    }
 
     // 清空之前的状态
-    setLogs([]);
     setScript([]);
-    setTraceIds([]);
+    scriptRef.current = [];
     setCoverImage('');
     setAudioUrl('');
-    setScriptUrl('');
     setPlayer0Url('');
     setPlayer1Url('');
     setActivePlayer(0);
@@ -1172,11 +1739,14 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     const generateAbortController = new AbortController();
     generateAbortRef.current = generateAbortController;
     setIsGenerating(true);
+    setProgress('正在准备生成…');
+    setProgressEta('预计 2-4 分钟');
+    progressStartAtRef.current = Date.now();
 
     // 构建 FormData
     const formData = new FormData();
     formData.append('api_key', apiKey);
-    const topicTrimmed = (textInput || '').trim();
+    const topicTrimmed = effectiveTopic;
     if (topicTrimmed) formData.append('text_input', topicTrimmed);
     if (urlInputs.length > 0) {
       formData.append('url', urlInputs[0]);
@@ -1184,49 +1754,36 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     }
     pdfFiles.forEach((file) => formData.append('pdf_files', file));
 
-    // 新增：用户加工模式参数（默认不影响现有流程）
-    if (editMode === 'manual') {
-      formData.append('script_mode', 'manual');
-      formData.append('manual_script', manualScript);
-      formData.append('cover_mode', 'manual');
-      formData.append('manual_cover_text', manualCoverText);
-      if (manualCoverFile) formData.append('manual_cover_file', manualCoverFile);
-    } else {
-      formData.append('script_mode', 'ai');
-      formData.append('cover_mode', 'ai');
-      formData.append('selected_note_ids', JSON.stringify(selectedNoteIds));
-      formData.append(
-        'script_target_chars',
-        String(parseScriptTargetCharsForGenerate(scriptTargetChars) ?? SCRIPT_TARGET_CHARS_DEFAULT)
-      );
-      formData.append('use_rag', useRag ? '1' : '0');
-      formData.append('script_style', scriptStyle);
-      formData.append('script_language', scriptLanguage);
-      formData.append('program_name', programName);
-      formData.append('speaker1_persona', speaker1Persona);
-      formData.append('speaker2_persona', speaker2Persona);
-      formData.append('script_constraints', scriptConstraints);
-    }
+    formData.append('script_mode', 'ai');
+    formData.append('cover_mode', 'ai');
+    formData.append('selected_note_ids', JSON.stringify(selectedNoteIds));
+    formData.append(
+      'script_target_chars',
+      String(parseScriptTargetCharsForGenerate(scriptTargetChars) ?? SCRIPT_TARGET_CHARS_DEFAULT)
+    );
+    formData.append('use_rag', useRag ? '1' : '0');
+    // 参考文本字数（rag_text_chars）仅在「加入创意」高级配置中维护；当前生成流程不从此处传递
+    formData.append('script_style', effectiveScriptStyle);
+    formData.append('script_language', scriptLanguage);
+    formData.append('program_name', effectiveProgramName);
+    formData.append('speaker1_persona', speaker1Persona);
+    formData.append('speaker2_persona', speaker2Persona);
+    formData.append('script_constraints', scriptConstraints);
 
     formData.append('speaker1_type', speaker1Type);
     if (speaker1Type === 'default') {
       formData.append('speaker1_voice_name', speaker1Voice);
-    } else if (speaker1CustomMode === 'saved') {
+    } else {
       formData.append('speaker1_custom_voice_id', speaker1SavedVoiceId.trim());
-    } else if (speaker1Audio) {
-      formData.append('speaker1_audio', speaker1Audio);
     }
 
     formData.append('speaker2_type', speaker2Type);
     if (speaker2Type === 'default') {
       formData.append('speaker2_voice_name', speaker2Voice);
-    } else if (speaker2CustomMode === 'saved') {
+    } else {
       formData.append('speaker2_custom_voice_id', speaker2SavedVoiceId.trim());
-    } else if (speaker2Audio) {
-      formData.append('speaker2_audio', speaker2Audio);
     }
 
-    if (audioStyleMode === 'custom') {
       formData.append('intro_text', introText);
       formData.append('ending_text', endingText);
       formData.append('intro_voice_mode', introVoiceMode);
@@ -1247,15 +1804,15 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
       formData.append('ending_bgm2_mode', endingBgm2Mode);
       formData.append('ending_bgm2_saved_id', endingBgm2SavedId);
       if (endingBgm2Mode === 'upload' && endingBgm2File) formData.append('ending_bgm2_file', endingBgm2File);
-    }
 
     // 建立 SSE 连接
     try {
       addLog(`🌐 正在请求: ${API_URL || '(同源)'} /api/generate_podcast`);
-      const response = await fetch(`${API_URL}/api/generate_podcast`, {
+      const response = await fetch(apiPath('/api/generate_podcast'), {
         method: 'POST',
         body: formData,
-        signal: generateAbortController.signal
+        signal: generateAbortController.signal,
+        headers: getAuthHeaders(),
       });
 
       addLog(`✅ 已收到响应: HTTP ${response.status} ${response.statusText}`);
@@ -1345,198 +1902,22 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     }
   };
 
-  const addNoteAsReferenceFile = () => {
-    const id = String(noteToAddId || '').trim();
-    if (!id) {
-      alert('请先选择一个笔记');
-      return;
-    }
-    if (selectedNoteIds.includes(id)) {
-      alert('该笔记已在文件列表中');
-      return;
-    }
-    const nextIds = [...selectedNoteIds, id];
+  const toggleNoteSelected = (noteId) => {
+    const id = String(noteId || '').trim();
+    if (!id) return;
+    const has = selectedNoteIds.includes(id);
+    const nextIds = has ? selectedNoteIds.filter((x) => x !== id) : [...selectedNoteIds, id];
     setSelectedNoteIds(nextIds);
     try {
       window.localStorage.setItem(SELECTED_NOTES_KEY, JSON.stringify(nextIds));
     } catch (e) {
       // ignore
     }
-    setNoteToAddId('');
   };
 
-  const importDraftToManualMode = () => {
-    const t = (finalCopyText || '').trim();
-    if (!t) {
-      alert('文案为空，请先生成大模型文案或自行粘贴内容');
-      return;
-    }
-    setManualScript(t);
-    setEditMode('manual');
+  const saveAiAdvancedConfigAndClose = () => {
     setShowFinalCopyModal(false);
-    addLog('✓ 已导入「用户加工模式」：可继续编辑脚本后生成播客（不再调用 AI 写脚本）。');
-  };
-
-  const skipToVoiceSection = () => {
-    voiceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    addLog('✓ 🤖 AI自动生成：已滚动到「选择音色」');
-  };
-
-  const runScriptDraftLLM = async () => {
-    if (!apiKey.trim()) {
-      alert('请先填写 MiniMax API Key');
-      return;
-    }
-    const hasNotes = Array.isArray(selectedNoteIds) && selectedNoteIds.length > 0;
-    if (!textInput && urlInputs.length === 0 && pdfFiles.length === 0 && !hasNotes) {
-      alert('请至少提供一种参考内容（文本/网址/文件/知识库勾选笔记）');
-      return;
-    }
-    const targetChars = parseScriptTargetCharsInput(scriptTargetChars);
-    if (targetChars === null) {
-      alert(`目标正文字数请输入 ${SCRIPT_TARGET_CHARS_MIN}~${SCRIPT_TARGET_CHARS_MAX} 的整数`);
-      return;
-    }
-
-    draftAbortRef.current?.abort();
-    const draftAbortController = new AbortController();
-    draftAbortRef.current = draftAbortController;
-
-    setFinalCopyLlmGenerating(true);
-    setFinalCopyDraftStatus('正在连接服务器…');
-    setFinalCopyTitle('💡 加入创意 · 生成中…');
-    setFinalCopyText('');
-    setFinalCopyReadyToPickVoice(false);
-
-    const formData = new FormData();
-    formData.append('api_key', apiKey.trim());
-    if (textInput) formData.append('text_input', textInput);
-    if (urlInputs.length > 0) {
-      formData.append('url', urlInputs[0]);
-      formData.append('url_list', JSON.stringify(urlInputs));
-    }
-    pdfFiles.forEach((file) => formData.append('pdf_files', file));
-    formData.append('selected_note_ids', JSON.stringify(selectedNoteIds));
-    formData.append('script_target_chars', String(targetChars));
-    formData.append('long_script_mode', longScriptMode ? '1' : '0');
-    formData.append('use_rag', useRag ? '1' : '0');
-    formData.append('script_style', scriptStyle);
-    formData.append('script_language', scriptLanguage);
-    formData.append('program_name', programName);
-    formData.append('speaker1_persona', speaker1Persona);
-    formData.append('speaker2_persona', speaker2Persona);
-    formData.append('script_constraints', scriptConstraints);
-
-    try {
-      addLog(`🌐 请求仅生成文案: ${API_URL || '(同源)'} /api/generate_script_draft`);
-      const response = await fetch(`${API_URL}/api/generate_script_draft`, {
-        method: 'POST',
-        body: formData,
-        signal: draftAbortController.signal
-      });
-      if (!response.ok || !response.body) {
-        const errText = await response.text().catch(() => '');
-        throw new Error(
-          formatScriptDraftHttpError(
-            response.status,
-            errText,
-            API_URL,
-            typeof window !== 'undefined' ? window.location.host : ''
-          )
-        );
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-        for (const line of lines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine.startsWith('data:')) continue;
-          const jsonStr = trimmedLine.substring(6).trim();
-          if (!jsonStr) continue;
-          try {
-            const data = JSON.parse(jsonStr);
-            switch (data.type) {
-              case 'draft_script_chunk':
-                if (data.content) {
-                  setFinalCopyText((prev) => prev + data.content);
-                }
-                break;
-              case 'progress':
-                setFinalCopyDraftStatus(data.message || '');
-                break;
-              case 'log':
-                addLog(data.message);
-                break;
-              case 'url_parse_warning':
-                addLog(`⚠️ ${data.message}`);
-                setUrlWarning({
-                  message: data.message,
-                  error_code: data.error_code
-                });
-                break;
-              case 'draft_script_complete':
-                setFinalCopyDraftStatus('生成完成，可直接编辑或导入用户加工模式');
-                addLog('✓ 大模型播客文案已生成');
-                setFinalCopyReadyToPickVoice(true);
-                break;
-              case 'draft_script_replace':
-                if (data.content) {
-                  setFinalCopyText(data.content);
-                  addLog('✓ 已应用后端一致性收口校对');
-                }
-                break;
-              case 'error':
-                addLog(`❌ ${data.message}`);
-                alert(data.message);
-                setFinalCopyDraftStatus('');
-                setFinalCopyLlmGenerating(false);
-                setFinalCopyTitle('💡 加入创意');
-                setFinalCopyReadyToPickVoice(false);
-                return;
-              default:
-                break;
-            }
-          } catch (e) {
-            console.error('文案 SSE 解析失败', e);
-          }
-        }
-      }
-      if (sseBuffer.trim().startsWith('data:')) {
-        try {
-          const data = JSON.parse(sseBuffer.trim().substring(6).trim());
-          if (data.type === 'draft_script_chunk' && data.content) {
-            setFinalCopyText((prev) => prev + data.content);
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-    } catch (e) {
-      if (e && e.name === 'AbortError') {
-        addLog('⏹ 已停止文案生成（连接已中断）');
-        setFinalCopyDraftStatus('');
-        setFinalCopyReadyToPickVoice(false);
-      } else {
-        addLog(`❌ 文案生成失败: ${e.message}`);
-        alert(`文案生成失败：${e.message}`);
-        setFinalCopyDraftStatus('');
-        setFinalCopyReadyToPickVoice(false);
-      }
-    } finally {
-      if (draftAbortRef.current === draftAbortController) {
-        draftAbortRef.current = null;
-      }
-      setFinalCopyLlmGenerating(false);
-      setFinalCopyTitle('💡 加入创意');
-    }
+    addLog('✓ 已保存 AI 加工高级配置（生成时将自动应用）');
   };
 
   const refineScriptConstraints = () => {
@@ -1584,21 +1965,8 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     addLog(`✨ 已智能提炼脚本约束：${raw.length} → ${refined.length} 字`);
   };
 
-  const stopScriptDraftLLM = () => {
-    draftAbortRef.current?.abort();
-  };
-
-  const clearDraftAndConstraints = () => {
-    if (finalCopyLlmGenerating) return;
-    setFinalCopyText('');
+  const clearAdvancedConstraints = () => {
     setScriptConstraints(DEFAULT_SCRIPT_CONSTRAINTS);
-    setFinalCopyDraftStatus('');
-    setFinalCopyReadyToPickVoice(false);
-    try {
-      window.localStorage.removeItem(FINAL_COPY_DRAFT_KEY);
-    } catch (e) {
-      // ignore
-    }
   };
 
   // 处理 SSE 事件
@@ -1606,6 +1974,13 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     switch (data.type) {
       case 'progress':
         setProgress(data.message);
+        if (progressStartAtRef.current) {
+          const elapsedSec = Math.max(0, Math.round((Date.now() - progressStartAtRef.current) / 1000));
+          // 粗略 ETA：脚本+封面+合成通常在 60~240s；这里动态展示“已用时 + 预计剩余”
+          const baselineTotal = 180;
+          const remain = Math.max(15, baselineTotal - elapsedSec);
+          setProgressEta(`已用时 ${elapsedSec}s · 预计剩余 ${remain}s`);
+        }
         addLog(data.message);
         break;
 
@@ -1614,11 +1989,14 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
         break;
 
       case 'script_chunk':
-        setScript(prev => [...prev, data.full_line]);
+        setScript((prev) => {
+          const next = [...prev, data.full_line];
+          scriptRef.current = next;
+          return next;
+        });
         break;
 
       case 'trace_id':
-        addTraceId(data.api, data.trace_id);
         break;
 
       case 'voice_ready':
@@ -1644,7 +2022,24 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
 
       case 'progressive_audio':
         // 收到渐进式音频更新 - 使用双缓冲策略
-        const progressiveUrl = `${API_URL}${data.audio_url}`;
+        const progressiveUrl = resolveMediaUrl(data.audio_url);
+
+        // 实时刷新“正在生成”的进度文案（有些后端只在 progressive_audio 推进度）
+        if (data && (data.message || data.sentence_number || data.duration_ms)) {
+          if (data.message) {
+            setProgress(String(data.message));
+          } else if (data.sentence_number) {
+            setProgress(`已生成第 ${data.sentence_number} 句…`);
+          } else {
+            setProgress('正在生成播客…');
+          }
+          if (progressStartAtRef.current) {
+            const elapsedSec = Math.max(0, Math.round((Date.now() - progressStartAtRef.current) / 1000));
+            const baselineTotal = 180;
+            const remain = Math.max(15, baselineTotal - elapsedSec);
+            setProgressEta(`已用时 ${elapsedSec}s · 预计剩余 ${remain}s`);
+          }
+        }
 
         // 调用双缓冲更新函数（会自动累积并平滑切换）
         updateProgressiveAudio(progressiveUrl);
@@ -1663,12 +2058,39 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
 
       case 'complete':
         // 不覆盖 progressiveAudioUrl，因为渐进式文件已经是最终版本
-        // 只设置 audioUrl 和 scriptUrl 用于下载按钮
         setAudioUrl(data.audio_url);
-        setScriptUrl(data.script_url);
         setIsGenerating(false);
         setProgress('播客生成完成！');
-        addLog('🎉 播客生成完成！可以下载了');
+        setProgressEta('');
+        addLog('🎉 播客生成完成！可在「我的作品」中试听或打包下载');
+        setPodcastWorks((prev) => {
+          const nowId = `${Date.now()}`;
+          const titleRaw =
+            roomConfigModal && roomGenMetaRef.current?.programName
+              ? roomGenMetaRef.current.programName
+              : (programName || '').trim() || (textInput || '').trim();
+          const title = titleRaw ? titleRaw.slice(0, 40) + (titleRaw.length > 40 ? '…' : '') : `播客-${nowId}`;
+          const entry = {
+            id: nowId,
+            title,
+            audioUrl: data.audio_url || '',
+            scriptUrl: data.script_url || '',
+            coverImage: data.cover_image || coverImage || '',
+            scriptText: Array.isArray(scriptRef.current) && scriptRef.current.length ? scriptRef.current.join('\n') : '',
+            createdAt: new Date().toISOString(),
+            speakers: voiceToolbarLabel,
+            durationHint: durationMode === 'preset' ? (DURATION_PRESET_TO_HINT[durationPreset] || '') : '',
+          };
+          const next = [entry, ...(Array.isArray(prev) ? prev : [])].slice(0, 30);
+          savePodcastWorks(next);
+          if (
+            roomConfigModal &&
+            typeof onRoomGenerationComplete === 'function'
+          ) {
+            queueMicrotask(() => onRoomGenerationComplete(entry));
+          }
+          return next;
+        });
         break;
 
       case 'url_parse_warning':
@@ -1687,6 +2109,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
         addLog(`❌ 错误: ${data.message}`);
         setIsGenerating(false);
         setProgress('');
+        setProgressEta('');
         break;
 
       default:
@@ -1694,120 +2117,19 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
     }
   };
 
-  const resolveMediaUrl = (maybeUrl) => {
-    if (!maybeUrl) return '';
-    if (maybeUrl.startsWith('http://') || maybeUrl.startsWith('https://')) return maybeUrl;
-    return `${API_URL}${maybeUrl}`;
-  };
-
-  /**
-   * 跨域时 <a download> 会被浏览器忽略（安全策略），导致点击后只播放/打开而不保存。
-   * 通过 fetch 拉取 Blob 再触发本地下载，本地开发（3000/8000 → 5001）与生产同源均可使用。
-   */
-  const pickFilenameFromContentDisposition = (header) => {
-    if (!header) return null;
-    const m = /filename\*?=(?:UTF-8'')?([^;\n]+)/i.exec(header);
-    if (!m) return null;
-    let raw = m[1].trim().replace(/^["']|["']$/g, '');
-    try {
-      return decodeURIComponent(raw);
-    } catch {
-      return raw;
-    }
-  };
-
-  const pickFilenameFromUrl = (fullUrl) => {
-    try {
-      const u = fullUrl.startsWith('http') ? new URL(fullUrl) : new URL(fullUrl, window.location.origin);
-      const seg = u.pathname.split('/').filter(Boolean).pop();
-      return seg ? seg.split('?')[0] : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const downloadFileByFetch = async (fullUrl, suggestedFilename) => {
-    if (!fullUrl || downloadBusy) return;
-    setDownloadBusy(true);
-    try {
-      addLog(`⬇️ 正在准备下载…`);
-      const res = await fetch(fullUrl, { mode: 'cors' });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const fromHeader = pickFilenameFromContentDisposition(res.headers.get('Content-Disposition'));
-      const filename =
-        fromHeader || suggestedFilename || pickFilenameFromUrl(fullUrl) || 'download';
-      const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(objectUrl);
-      addLog(`✓ 已保存：${filename}`);
-    } catch (e) {
-      addLog(`❌ 下载失败: ${e.message}。已在新标签页打开链接，可右键「另存为」。`);
-      window.open(fullUrl, '_blank', 'noopener,noreferrer');
-    } finally {
-      setDownloadBusy(false);
-    }
-  };
-
   const openFinalCopyModal = async () => {
     setShowFinalCopyModal(true);
-    setFinalCopyDraftStatus('');
-    setFinalCopyReadyToPickVoice(false);
-    setFinalCopyLoading(true);
-    try {
-      if (scriptUrl) {
-        setFinalCopyTitle('📝 已生成的播客脚本（可编辑）');
-        const resp = await fetch(resolveMediaUrl(scriptUrl));
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`);
-        }
-        const text = await resp.text();
-        setFinalCopyText(text || '（脚本为空）');
-      } else if (script.length > 0) {
-        setFinalCopyTitle('📝 已生成的播客脚本（可编辑）');
-        setFinalCopyText(script.join('\n'));
-      } else {
-        let cachedDraft = '';
-        try {
-          cachedDraft = window.localStorage.getItem(FINAL_COPY_DRAFT_KEY) || '';
-        } catch (e) {
-          cachedDraft = '';
-        }
-        setFinalCopyTitle('💡 加入创意');
-        setFinalCopyText(cachedDraft);
-      }
-    } catch (e) {
-      const fallback = script.length > 0 ? script.join('\n') : '';
-      if (fallback) {
-        setFinalCopyTitle('📝 已生成的播客脚本（可编辑）');
-        setFinalCopyText(fallback);
-      } else if (scriptUrl) {
-        setFinalCopyTitle('📝 已生成的播客脚本（可编辑）');
-        setFinalCopyText(`从服务器加载脚本失败：${e.message}`);
-      } else {
-        let cachedDraft = '';
-        try {
-          cachedDraft = window.localStorage.getItem(FINAL_COPY_DRAFT_KEY) || '';
-        } catch (err) {
-          cachedDraft = '';
-        }
-        setFinalCopyTitle('💡 加入创意');
-        setFinalCopyText(cachedDraft);
-      }
-    } finally {
-      setFinalCopyLoading(false);
-    }
   };
 
+  const npS1 = notesPodcastMode && !roomConfigModal && notesPodcastStep === 1;
+  const npS2 = notesPodcastMode && !roomConfigModal && notesPodcastStep === 2;
+  const npS3 = notesPodcastMode && !roomConfigModal && notesPodcastStep === 3;
+  const showNotesComposer = !notesPodcastMode || npS2 || roomConfigModal;
+  const hideMaterialsInNotesFlow = notesPodcastMode && !roomConfigModal;
+  const hideToolbarGenerateInNotesFlow = (notesPodcastMode && npS2) || roomConfigModal;
+
   return (
-    <div className="podcast-generator">
+    <div className={`podcast-generator${roomConfigModal ? ' podcast-generator--room-modal' : ''}`}>
       {showApiConfig && (
         <div className="section">
           <h2>🔑 API Key 配置</h2>
@@ -1847,660 +2169,1120 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
         </div>
       )}
 
-      {/* 加工模式切换 */}
-      <div className="section">
-        <h2>🧩 加工模式</h2>
-        <div className="mode-tabs">
-          <button
-            type="button"
-            className={`mode-tab ${editMode === 'ai' ? 'active' : ''}`}
-            onClick={() => setEditMode('ai')}
-          >
-            🤖 AI加工模式
-          </button>
-          <button
-            type="button"
-            className={`mode-tab ${editMode === 'manual' ? 'active' : ''}`}
-            onClick={() => setEditMode('manual')}
-          >
-            ✍️ 用户加工模式
-          </button>
-        </div>
+      <div className="section section--listenhub">
+        {!roomConfigModal && (
+          <h2 className="section-title">{notesPodcastMode ? '笔记出播客' : '创作'}</h2>
+        )}
+        <div className="input-content lh-ai-flow">
+            {!roomConfigModal && (
+            <div className="lh-hero">
+              <h1 className="lh-hero-title">{notesPodcastMode ? '笔记出播客' : 'AI 播客'}</h1>
+              <p className="lh-hero-subtitle">
+                {notesPodcastMode
+                  ? '① 选择笔记 → ② 配置与创作 → ③ 生成播客'
+                  : '解说万物，一键生成播客'}
+              </p>
+            </div>
+            )}
 
-        {editMode === 'ai' ? (
-          <div className="input-content">
-            <p className="input-hint">AI 将根据你输入的内容自动生成脚本和封面。</p>
-            <div className="input-group">
-              <label className="input-label">💬 话题文本</label>
+            <div
+              className={`podcast-composer-outer ${pdfDropActive ? 'podcast-composer-outer--drop' : ''}`}
+              onDragOver={
+                notesPodcastMode && !roomConfigModal && (npS1 || npS3)
+                  ? (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }
+                  : handlePdfDragOver
+              }
+              onDragLeave={notesPodcastMode && !roomConfigModal && (npS1 || npS3) ? (e) => e.preventDefault() : handlePdfDragLeave}
+              onDrop={
+                notesPodcastMode && !roomConfigModal && (npS1 || npS3)
+                  ? (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }
+                  : handlePdfDrop
+              }
+            >
+              {notesPodcastMode && !roomConfigModal && (
+                <div className="notes-podcast-stepper" role="navigation" aria-label="笔记出播客步骤">
+                  <button
+                    type="button"
+                    className={`notes-podcast-step-btn ${notesPodcastStep === 1 ? 'is-active' : ''}`}
+                    onClick={() => setNotesPodcastStep(1)}
+                  >
+                    ① 选择笔记
+                  </button>
+                  <span className="notes-podcast-step-arrow" aria-hidden>
+                    →
+                  </span>
+                  <button
+                    type="button"
+                    className={`notes-podcast-step-btn ${notesPodcastStep === 2 ? 'is-active' : ''}`}
+                    onClick={() => setNotesPodcastStep(2)}
+                  >
+                    ② 配置与创作
+                  </button>
+                  <span className="notes-podcast-step-arrow" aria-hidden>
+                    →
+                  </span>
+                  <button
+                    type="button"
+                    className={`notes-podcast-step-btn ${notesPodcastStep === 3 ? 'is-active' : ''}`}
+                    onClick={() => setNotesPodcastStep(3)}
+                  >
+                    ③ 生成播客
+                  </button>
+                </div>
+              )}
+              {npS1 && (
+                <div className="notes-podcast-step1-panel">
+                  <p className="notes-podcast-step1-lead">本步仅选择笔记，不包含链接、文件与其它选项。</p>
+                  <div className="podcast-notes-col">
+                    <select
+                      className="podcast-notebook-select"
+                      value={noteNotebookFilter}
+                      onChange={(e) => setNoteNotebookFilter(e.target.value)}
+                      aria-label="选择笔记本"
+                    >
+                      {(availableNotebooks.length > 0 ? availableNotebooks : ['默认笔记本']).map((nb) => (
+                        <option key={nb} value={nb}>
+                          {nb}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="podcast-notes-checklist" role="listbox" aria-label="从笔记库选择">
+                      {availableNotes.length === 0 ? (
+                        <div className="podcast-notes-checklist-empty">暂无笔记，请先在「笔记管理」中上传。</div>
+                      ) : (
+                        availableNotes.map((n) => {
+                          const id = String(n.noteId || '').trim();
+                          if (!id) return null;
+                          const checked = selectedNoteIds.includes(id);
+                          const label = n.title || n.fileName || id;
+                          return (
+                            <label key={id} className={`podcast-note-check-item ${checked ? 'is-on' : ''}`}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleNoteSelected(id)} />
+                              <span className="podcast-note-check-text">{label}</span>
+                            </label>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                  <div className="notes-podcast-step-nav">
+                    <button type="button" className="podcast-quick-flow-btn-primary" onClick={() => setNotesPodcastStep(2)}>
+                      下一步
+                    </button>
+                  </div>
+                </div>
+              )}
+              {npS3 && (
+                <div className="notes-podcast-step3-panel" role="region" aria-label="生成播客">
+                  <p className="notes-podcast-step3-title">确认并生成</p>
+                  <ul className="notes-podcast-step3-summary">
+                    <li>已选笔记：{selectedNoteIds.length} 篇</li>
+                    <li>补充话题：约 {String(textInput || '').trim().length} 字</li>
+                    <li>篇幅：{durationToolbarLabel}</li>
+                    <li>
+                      模式：{podcastSpeakerMode === 'single' ? '单人' : '双人'} ·{' '}
+                      {SCRIPT_LANG_LABELS[scriptLanguage] || scriptLanguage} · 音色：{voiceToolbarLabel}
+                    </li>
+                  </ul>
+                  <div className="notes-podcast-step-nav">
+                    <button type="button" className="podcast-quick-flow-btn-secondary" onClick={() => setNotesPodcastStep(2)}>
+                      上一步
+                    </button>
+                    <button
+                      type="button"
+                      className="podcast-quick-flow-btn-primary"
+                      disabled={isGenerating}
+                      onClick={() => {
+                        closePodcastTbPopovers();
+                        handleGenerate();
+                      }}
+                    >
+                      {isGenerating ? '生成中…' : '生成播客'}
+                    </button>
+                  </div>
+                  {isGenerating && (
+                    <button type="button" className="notes-podcast-step3-stop" onClick={stopGenerate}>
+                      <span className="podcast-tb-stop-btn-inner" aria-hidden>
+                        ■
+                      </span>{' '}
+                      停止生成
+                    </button>
+                  )}
+                </div>
+              )}
+              {showNotesComposer && (
+                <div
+                  className={`podcast-composer ${pdfDropActive ? 'podcast-composer--drop' : ''}${
+                    roomConfigModal ? ' podcast-composer--room-config' : ''
+                  }`}
+                >
+              {!roomConfigModal && (
               <textarea
-                placeholder="输入你想讨论的话题..."
+                id="lh-topic-input"
+                className="podcast-composer-input"
+                placeholder={
+                  notesPodcastMode
+                    ? '可选：补充你希望播客强调的方向、话题或听众（也可留空，仅用笔记生成）'
+                    : '输入文字、上传文件或粘贴链接，我们帮你生成播客'
+                }
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
-                rows={5}
+                rows={notesPodcastMode ? 5 : 8}
               />
-            </div>
+              )}
 
-            <div className="input-group upload-unified-card">
-              <label className="input-label">📄 参考资料</label>
-              <div className="notes-inline-picker">
-                <input
-                  type="text"
-                  placeholder="输入网址 URL..."
-                  value={urlInputDraft}
-                  onChange={(e) => setUrlInputDraft(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="api-key-clear-btn"
-                  onClick={addUrlInput}
-                  disabled={!String(urlInputDraft || '').trim()}
-                >
-                  添加网址
-                </button>
-              </div>
-              <div className="file-upload">
-                <label htmlFor="pdf-upload" className="upload-label">
-                  本地文件
-                </label>
-                <input
-                  id="pdf-upload"
-                  type="file"
-                  multiple
-                  accept=".pdf,.doc,.docx,.epub,.txt,.md,.markdown"
-                  onChange={handlePdfChange}
-                  style={{ display: 'none' }}
-                />
-              </div>
-              <div className="notes-inline-picker">
-                <select
-                  value={noteToAddId}
-                  onChange={(e) => setNoteToAddId(e.target.value)}
-                >
-                  <option value="">笔记文件</option>
-                  {availableNotes
-                    .filter((n) => !selectedNoteIds.includes(String(n.noteId || '')))
-                    .map((n) => (
-                      <option key={n.noteId} value={n.noteId}>
-                        {n.title || n.fileName}
-                      </option>
-                    ))}
-                </select>
-                <button
-                  type="button"
-                  className="api-key-clear-btn"
-                  onClick={addNoteAsReferenceFile}
-                  disabled={!noteToAddId}
-                >
-                  加入文件
-                </button>
-              </div>
-              <div className="script-box" style={{ maxHeight: 180 }}>
-                {urlInputs.length === 0 && pdfFiles.length === 0 && selectedNoteItems.length === 0 ? (
-                  <p className="input-description" style={{ margin: 0 }}>当前未添加文件或网址</p>
-                ) : (
-                  <>
-                    {urlInputs.map((url, idx) => (
-                      <div key={`${url}_${idx}`} className="settings-voice-item" style={{ borderBottom: 'none', padding: '4px 0' }}>
-                        <p style={{ margin: 0 }}>🔗 {url}</p>
+              <div className={`podcast-composer-toolbar${roomConfigModal ? ' podcast-composer-toolbar--room' : ''}`}>
+                <div className={`podcast-toolbar-bar${roomConfigModal ? ' podcast-toolbar-bar--room' : ''}`}>
+                  <div className="podcast-toolbar-pill" role="toolbar" aria-label="创作选项">
+                    <div className="podcast-tb-item-wrap" ref={podcastTbModeRef}>
+                      <button
+                        type="button"
+                        className={`podcast-tb-item ${podcastTbModeOpen ? 'is-on' : ''}`}
+                        onClick={() => {
+                          setPodcastTbModeOpen((o) => !o);
+                          setPodcastTbVoiceOpen(false);
+                          setPodcastUploadOpen(false);
+                        }}
+                        aria-expanded={podcastTbModeOpen}
+                        aria-haspopup="listbox"
+                      >
+                        <PodcastTbIcon>{podcastSpeakerMode === 'single' ? <IcoUser /> : <IcoUsers />}</PodcastTbIcon>
+                        <span className="podcast-tb-item-text">
+                          {podcastSpeakerMode === 'single' ? '单人' : '双人'}
+                        </span>
+                      </button>
+                      {podcastTbModeOpen && (
+                        <div className="podcast-tb-popover" role="listbox">
+                          <button
+                            type="button"
+                            className={podcastSpeakerMode === 'single' ? 'is-active' : ''}
+                            onClick={() => {
+                              setPodcastSpeakerMode('single');
+                              setSpeaker1Type('default');
+                              setSpeaker2Type('default');
+                              setPodcastTbModeOpen(false);
+                            }}
+                          >
+                            单人
+                          </button>
+                          <button
+                            type="button"
+                            className={podcastSpeakerMode === 'dual' ? 'is-active' : ''}
+                            onClick={() => {
+                              setPodcastSpeakerMode('dual');
+                              setPodcastTbModeOpen(false);
+                            }}
+                          >
+                            双人
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <span className="podcast-tb-divider" aria-hidden />
+                    <label className="podcast-tb-item podcast-tb-item--lang">
+                      <PodcastTbIcon>
+                        <IcoGlobe />
+                      </PodcastTbIcon>
+                      <span className="podcast-tb-item-text podcast-tb-item-text--select">
+                        {SCRIPT_LANG_LABELS[scriptLanguage] || scriptLanguage}
+                      </span>
+                      <select
+                        className="podcast-tb-item-native-select"
+                        value={scriptLanguage}
+                        onChange={(e) => setScriptLanguage(e.target.value)}
+                        aria-label="脚本语言"
+                      >
+                        <option value="中文">中文</option>
+                        <option value="English">English</option>
+                        <option value="日本語">日本語</option>
+                      </select>
+                    </label>
+                    <span className="podcast-tb-divider" aria-hidden />
+                    <div className="podcast-tb-item-wrap" ref={podcastTbVoiceRef}>
+                      <button
+                        type="button"
+                        className={`podcast-tb-item podcast-tb-item--voice ${podcastTbVoiceOpen ? 'is-on' : ''}`}
+                        onClick={() => {
+                          setPodcastTbVoiceOpen((o) => !o);
+                          setPodcastTbModeOpen(false);
+                          setPodcastUploadOpen(false);
+                        }}
+                        aria-expanded={podcastTbVoiceOpen}
+                        title={voiceToolbarLabel}
+                      >
+                        <PodcastTbIcon>
+                          <IcoWave />
+                        </PodcastTbIcon>
+                        <span className="podcast-tb-item-text podcast-tb-item-text--truncate">{voiceToolbarLabel}</span>
+                      </button>
+                      {podcastTbVoiceOpen && (
+                        <div className="podcast-tb-popover podcast-tb-popover--wide" role="dialog" aria-label="选择音色">
+                          <div className="podcast-voice-popover-inner">
+                            {savedCustomVoices.length > 0 && (
+                              <div className="podcast-voice-block">
+                                <div className="podcast-voice-block-title">克隆音色</div>
+                                {podcastSpeakerMode === 'single' ? (
+                                  <div className="podcast-voice-chip-row">
+                                    {savedCustomVoices.map((cv) => {
+                                      const id = String(cv.voiceId || '').trim();
+                                      const active =
+                                        speaker1Type === 'custom' &&
+                                        speaker1CustomMode === 'saved' &&
+                                        speaker1SavedVoiceId === id;
+                                      return (
+                                        <button
+                                          key={id}
+                                          type="button"
+                                          className={`podcast-voice-chip ${active ? 'podcast-voice-chip--on' : ''}`}
+                                          onClick={() => pickPodcastComposerClone('1', id)}
+                                        >
+                                          {cv.displayName || id}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="podcast-voice-block-sub">Speaker 1</div>
+                                    <div className="podcast-voice-chip-row">
+                                      {savedCustomVoices.map((cv) => {
+                                        const id = String(cv.voiceId || '').trim();
+                                        const active =
+                                          speaker1Type === 'custom' &&
+                                          speaker1CustomMode === 'saved' &&
+                                          speaker1SavedVoiceId === id;
+                                        return (
+                                          <button
+                                            key={`1-${id}`}
+                                            type="button"
+                                            className={`podcast-voice-chip ${active ? 'podcast-voice-chip--on' : ''}`}
+                                            onClick={() => pickPodcastComposerClone('1', id)}
+                                          >
+                                            {cv.displayName || id}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                    <div className="podcast-voice-block-sub">Speaker 2</div>
+                                    <div className="podcast-voice-chip-row">
+                                      {savedCustomVoices.map((cv) => {
+                                        const id = String(cv.voiceId || '').trim();
+                                        const active =
+                                          speaker2Type === 'custom' &&
+                                          speaker2CustomMode === 'saved' &&
+                                          speaker2SavedVoiceId === id;
+                                        return (
+                                          <button
+                                            key={`2-${id}`}
+                                            type="button"
+                                            className={`podcast-voice-chip ${active ? 'podcast-voice-chip--on' : ''}`}
+                                            onClick={() => pickPodcastComposerClone('2', id)}
+                                          >
+                                            {cv.displayName || id}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                            <details className="podcast-voice-preset-details">
+                              <summary className="podcast-voice-preset-summary">预设音色（默认折叠，展开后可按类型筛选）</summary>
+                              <div className="podcast-voice-filters">
+                                <span className="podcast-voice-filter-label">性别</span>
+                                <div className="podcast-voice-filter-row">
+                                  {[
+                                    { k: 'all', t: '全部' },
+                                    { k: 'male', t: '男' },
+                                    { k: 'female', t: '女' },
+                                    { k: 'other', t: '其他' },
+                                  ].map(({ k, t }) => (
+                                    <button
+                                      key={k}
+                                      type="button"
+                                      className={`podcast-voice-filter-chip ${podcastVoiceGenderFilter === k ? 'podcast-voice-filter-chip--on' : ''}`}
+                                      onClick={() => setPodcastVoiceGenderFilter(k)}
+                                    >
+                                      {t}
+                                    </button>
+                                  ))}
+                                </div>
+                                {podcastComposerLangChips.length > 0 && (
+                                  <>
+                                    <span className="podcast-voice-filter-label">语言</span>
+                                    <div className="podcast-voice-filter-row">
+                                      <button
+                                        type="button"
+                                        className={`podcast-voice-filter-chip ${podcastVoiceLangFilter === 'all' ? 'podcast-voice-filter-chip--on' : ''}`}
+                                        onClick={() => setPodcastVoiceLangFilter('all')}
+                                      >
+                                        全部
+                                      </button>
+                                      {podcastComposerLangChips.map((lang) => (
+                                        <button
+                                          key={lang}
+                                          type="button"
+                                          className={`podcast-voice-filter-chip ${podcastVoiceLangFilter === lang ? 'podcast-voice-filter-chip--on' : ''}`}
+                                          onClick={() => setPodcastVoiceLangFilter(lang)}
+                                        >
+                                          {lang}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                              {podcastComposerFilteredGroups.length === 0 ? (
+                                <p className="podcast-voice-filter-empty">当前筛选下暂无预设，请选「全部」或调整类型。</p>
+                              ) : podcastSpeakerMode === 'single' ? (
+                                <GroupedDefaultVoiceSelect
+                                  groups={podcastComposerFilteredGroups}
+                                  value={speaker1Voice}
+                                  onChange={(v) => {
+                                    setSpeaker1Type('default');
+                                    setSpeaker2Type('default');
+                                    setSpeaker1Voice(v);
+                                    setSpeaker2Voice(v);
+                                  }}
+                                  id="podcast-composer-voice-single"
+                                  className="podcast-tb-voice-select"
+                                />
+                              ) : (
+                                <div className="podcast-tb-voice-dual">
+                                  <label className="podcast-tb-voice-field">
+                                    <span>Speaker 1</span>
+                                    <GroupedDefaultVoiceSelect
+                                      groups={podcastComposerFilteredGroups}
+                                      value={speaker1Voice}
+                                      onChange={(v) => {
+                                        setSpeaker1Type('default');
+                                        setSpeaker1Voice(v);
+                                      }}
+                                      id="podcast-composer-voice-1"
+                                      className="podcast-tb-voice-select"
+                                    />
+                                  </label>
+                                  <label className="podcast-tb-voice-field">
+                                    <span>Speaker 2</span>
+                                    <GroupedDefaultVoiceSelect
+                                      groups={podcastComposerFilteredGroups}
+                                      value={speaker2Voice}
+                                      onChange={(v) => {
+                                        setSpeaker2Type('default');
+                                        setSpeaker2Voice(v);
+                                      }}
+                                      id="podcast-composer-voice-2"
+                                      className="podcast-tb-voice-select"
+                                    />
+                                  </label>
+                                </div>
+                              )}
+                            </details>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <span className="podcast-tb-divider" aria-hidden />
+                    <button
+                      type="button"
+                      className="podcast-tb-item"
+                      onClick={() => {
+                        openFinalCopyModal();
+                        closePodcastTbPopovers();
+                      }}
+                      disabled={isGenerating}
+                    >
+                      <PodcastTbIcon>
+                        <IcoBulb />
+                      </PodcastTbIcon>
+                      <span className="podcast-tb-item-text">加入创意</span>
+                    </button>
+                    <span className="podcast-tb-divider" aria-hidden />
+                    <div className="podcast-tb-item-wrap" ref={podcastTbDurationRef}>
+                      <button
+                        type="button"
+                        className={`podcast-tb-item ${podcastTbDurationOpen ? 'is-on' : ''}`}
+                        onClick={() => {
+                          setPodcastTbDurationOpen((o) => !o);
+                          setPodcastTbModeOpen(false);
+                          setPodcastTbVoiceOpen(false);
+                          setPodcastUploadOpen(false);
+                        }}
+                        aria-expanded={podcastTbDurationOpen}
+                        title={roomConfigModal ? '目标字数' : '选择时长'}
+                        aria-haspopup="listbox"
+                      >
+                        <PodcastTbIcon>
+                          <IcoClock />
+                        </PodcastTbIcon>
+                        <span className="podcast-tb-item-text">{durationToolbarLabel}</span>
+                      </button>
+                      {podcastTbDurationOpen && (
+                        <div
+                          className={`podcast-tb-popover${roomConfigModal ? ' podcast-tb-popover--room-chars' : ''}`}
+                          role={roomConfigModal ? 'dialog' : 'listbox'}
+                          aria-label={roomConfigModal ? '目标字数' : '选择时长'}
+                        >
+                          {roomConfigModal ? (
+                            <div className="podcast-duration-text-input podcast-duration-text-input--room-only">
+                              <div className="podcast-duration-text-head">目标正文字数</div>
+                              <input
+                                type="number"
+                                min={SCRIPT_TARGET_CHARS_MIN}
+                                max={SCRIPT_TARGET_CHARS_MAX}
+                                step={50}
+                                className="podcast-duration-text-number"
+                                value={scriptTargetChars}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  // 允许先自由输入，避免“首位数字立即被夹断到最小值”导致无法编辑
+                                  if (raw === '') {
+                                    setScriptTargetChars('');
+                                    return;
+                                  }
+                                  if (!/^\d+$/.test(String(raw))) return;
+                                  setScriptTargetChars(String(raw));
+                                }}
+                                onBlur={() => {
+                                  const raw = String(scriptTargetChars || '').trim();
+                                  if (!raw) {
+                                    setScriptTargetChars(String(SCRIPT_TARGET_CHARS_DEFAULT));
+                                    return;
+                                  }
+                                  const n = parseInt(raw, 10);
+                                  if (!Number.isFinite(n)) {
+                                    setScriptTargetChars(String(SCRIPT_TARGET_CHARS_DEFAULT));
+                                    return;
+                                  }
+                                  const clamped = Math.max(
+                                    SCRIPT_TARGET_CHARS_MIN,
+                                    Math.min(SCRIPT_TARGET_CHARS_MAX, n)
+                                  );
+                                  setScriptTargetChars(String(clamped));
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.currentTarget.blur();
+                                  }
+                                }}
+                              />
+                              <p className="podcast-room-chars-hint">
+                                范围 {SCRIPT_TARGET_CHARS_MIN}～{SCRIPT_TARGET_CHARS_MAX} 字
+                              </p>
+                            </div>
+                          ) : (
+                            <>
+                              {(['short', 'medium', 'long']).map((k) => {
+                                const title = k === 'short' ? '短' : k === 'medium' ? '中' : '长';
+                                const hint = DURATION_PRESET_TO_HINT[k];
+                                const chars = String(DURATION_PRESET_TO_CHARS[k]);
+                                const active = durationMode === 'preset' && durationPreset === k;
+                                return (
+                                  <button
+                                    // eslint-disable-next-line react/no-array-index-key
+                                    key={k}
+                                    type="button"
+                                    className={active ? 'is-active' : ''}
+                                    onClick={() => {
+                                      setDurationMode('preset');
+                                      setDurationPreset(k);
+                                      setScriptTargetChars(chars);
+                                      setPodcastTbDurationOpen(false);
+                                    }}
+                                  >
+                                    <div className="podcast-duration-opt">
+                                      <div className="podcast-duration-opt-title">{title}</div>
+                                      <div className="podcast-duration-opt-sub">{hint}</div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                              <button
+                                type="button"
+                                className={durationMode === 'text' ? 'is-active' : ''}
+                                onClick={() => {
+                                  setDurationMode('text');
+                                }}
+                              >
+                                <div className="podcast-duration-opt">
+                                  <div className="podcast-duration-opt-title">长文模式</div>
+                                  <div className="podcast-duration-opt-sub">自定义目标字数（小于 1 万字）</div>
+                                </div>
+                              </button>
+                              {durationMode === 'text' && (
+                                <div className="podcast-duration-text-input">
+                                  <div className="podcast-duration-text-head">目标字数</div>
+                                  <input
+                                    type="number"
+                                    min={SCRIPT_TARGET_CHARS_MIN}
+                                    max={SCRIPT_TARGET_CHARS_MAX}
+                                    step={50}
+                                    className="podcast-duration-text-number"
+                                    value={scriptTargetChars}
+                                    onChange={(e) => {
+                                      const raw = e.target.value;
+                                      if (raw === '') {
+                                        setScriptTargetChars('');
+                                        return;
+                                      }
+                                      if (!/^\d+$/.test(String(raw))) return;
+                                      setScriptTargetChars(String(raw));
+                                    }}
+                                    onBlur={() => {
+                                      const raw = String(scriptTargetChars || '').trim();
+                                      if (!raw) {
+                                        setScriptTargetChars(String(SCRIPT_TARGET_CHARS_DEFAULT));
+                                        return;
+                                      }
+                                      const n = parseInt(raw, 10);
+                                      if (!Number.isFinite(n)) {
+                                        setScriptTargetChars(String(SCRIPT_TARGET_CHARS_DEFAULT));
+                                        return;
+                                      }
+                                      const clamped = Math.max(
+                                        SCRIPT_TARGET_CHARS_MIN,
+                                        Math.min(SCRIPT_TARGET_CHARS_MAX, n)
+                                      );
+                                      setScriptTargetChars(String(clamped));
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.currentTarget.blur();
+                                      }
+                                    }}
+                                  />
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <span className="podcast-tb-divider" aria-hidden />
+                    <button
+                      type="button"
+                      className="podcast-tb-item podcast-tb-item--ghost"
+                      onClick={() => {
+                        setShowPodcastIntroModal(true);
+                        closePodcastTbPopovers();
+                      }}
+                    >
+                      <PodcastTbIcon>
+                        <IcoBrackets />
+                      </PodcastTbIcon>
+                      <span className="podcast-tb-item-text">开场结尾</span>
+                    </button>
+                  </div>
+
+                  <div className="podcast-toolbar-trailing">
+                    {!hideMaterialsInNotesFlow && !roomConfigModal && (
+                      <>
+                        <input
+                          ref={podcastPdfInputRef}
+                          type="file"
+                          multiple
+                          accept=".pdf,.doc,.docx,.epub,.txt,.md,.markdown"
+                          onChange={handlePdfChange}
+                          className="podcast-composer-file"
+                          aria-hidden
+                        />
+                        <div className="podcast-upload-wrap" ref={podcastUploadRef}>
+                          <button
+                            type="button"
+                            className={`podcast-tb-item podcast-tb-item--ghost ${podcastUploadOpen ? 'is-on' : ''}`}
+                            onClick={() => {
+                              setPodcastUploadOpen((o) => !o);
+                              setPodcastTbModeOpen(false);
+                              setPodcastTbVoiceOpen(false);
+                            }}
+                            aria-expanded={podcastUploadOpen}
+                            title="链接、文件、笔记"
+                          >
+                            <PodcastTbIcon>
+                              <IcoLayers />
+                            </PodcastTbIcon>
+                            <span className="podcast-tb-item-text">资料</span>
+                          </button>
+                          {podcastUploadOpen && (
+                            <div className="podcast-upload-popover" role="dialog" aria-label="添加参考资料">
+                              <div className="podcast-composer-row">
+                                <input
+                                  type="text"
+                                  className="podcast-composer-url"
+                                  placeholder="粘贴网页 URL…"
+                                  value={urlInputDraft}
+                                  onChange={(e) => setUrlInputDraft(e.target.value)}
+                                />
+                                <button
+                                  type="button"
+                                  className="api-key-clear-btn"
+                                  onClick={addUrlInput}
+                                  disabled={!String(urlInputDraft || '').trim()}
+                                >
+                                  添加网址
+                                </button>
+                              </div>
+                              <div className="podcast-composer-row" style={{ marginTop: 8 }}>
+                                <button
+                                  type="button"
+                                  className="api-key-clear-btn podcast-composer-upload-btn"
+                                  onClick={() => podcastPdfInputRef.current?.click()}
+                                >
+                                  上传文件
+                                </button>
+                                {!roomConfigModal && (
+                                <div className="podcast-notes-col">
+                                  <select
+                                    className="podcast-notebook-select"
+                                    value={noteNotebookFilter}
+                                    onChange={(e) => setNoteNotebookFilter(e.target.value)}
+                                    aria-label="选择笔记本"
+                                  >
+                                    {(availableNotebooks.length > 0 ? availableNotebooks : ['默认笔记本']).map((nb) => (
+                                      <option key={nb} value={nb}>
+                                        {nb}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <div
+                                    className="podcast-notes-checklist"
+                                    role="listbox"
+                                    aria-label="从笔记库选择"
+                                  >
+                                    {availableNotes.length === 0 ? (
+                                      <div className="podcast-notes-checklist-empty">暂无笔记</div>
+                                    ) : (
+                                      availableNotes.map((n) => {
+                                        const id = String(n.noteId || '').trim();
+                                        if (!id) return null;
+                                        const checked = selectedNoteIds.includes(id);
+                                        const label = n.title || n.fileName || id;
+                                        return (
+                                          <label
+                                            key={id}
+                                            className={`podcast-note-check-item ${checked ? 'is-on' : ''}`}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              onChange={() => toggleNoteSelected(id)}
+                                            />
+                                            <span className="podcast-note-check-text">{label}</span>
+                                          </label>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                    {!hideToolbarGenerateInNotesFlow && (
+                      <>
                         <button
                           type="button"
-                          className="api-key-clear-btn"
-                          onClick={() => removeUrlInput(idx)}
+                          className="podcast-tb-generate-btn"
+                          disabled={isGenerating}
+                          onClick={() => {
+                            closePodcastTbPopovers();
+                            handleGenerate();
+                          }}
+                          title={isGenerating ? '生成中…' : '生成播客'}
+                          aria-label={isGenerating ? '生成中' : '生成播客'}
                         >
-                          删除
+                          {isGenerating ? <span className="podcast-tb-generate-busy">…</span> : <IcoSend />}
                         </button>
-                      </div>
-                    ))}
-                    {pdfFiles.map((file, idx) => (
-                      <div key={`${file.name}_${file.size}_${idx}`} className="settings-voice-item" style={{ borderBottom: 'none', padding: '4px 0' }}>
-                        <p style={{ margin: 0 }}>📎 {file.name}</p>
+                        {isGenerating && (
+                          <button
+                            type="button"
+                            className="podcast-tb-stop-btn"
+                            onClick={() => {
+                              closePodcastTbPopovers();
+                              stopGenerate();
+                            }}
+                            title="停止生成"
+                            aria-label="停止生成"
+                          >
+                            <span className="podcast-tb-stop-btn-inner" aria-hidden>
+                              ■
+                            </span>
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+                {!notesPodcastMode && !roomConfigModal && (
+                  <div className="podcast-composer-chips">
+                    <span className="lh-prompt-chips-label">试试这些主意</span>
+                    <div className="lh-prompt-chips-row">
+                      {LISTENHUB_EXAMPLE_PROMPTS.map((p) => (
                         <button
+                          key={p}
                           type="button"
-                          className="api-key-clear-btn"
-                          onClick={() => removeUploadedFile(idx)}
+                          className="lh-prompt-chip"
+                          onClick={() => setTextInput(p)}
                         >
-                          删除
+                          {p}
                         </button>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {!roomConfigModal && null}
+
+              {((!notesPodcastMode && (urlInputs.length > 0 || pdfFiles.length > 0 || selectedNoteItems.length > 0)) ||
+                (notesPodcastMode && selectedNoteItems.length > 0)) && (
+                <div className="podcast-composer-refs">
+                  <div className="script-box lh-script-box-list">
+                    {!notesPodcastMode &&
+                      urlInputs.map((url, idx) => (
+                        <div key={`${url}_${idx}`} className="settings-voice-item lh-ref-line" style={{ borderBottom: 'none', padding: '4px 0' }}>
+                          <p style={{ margin: 0 }}>🔗 {url}</p>
+                          <button type="button" className="api-key-clear-btn" onClick={() => removeUrlInput(idx)}>
+                            删除
+                          </button>
+                        </div>
+                      ))}
+                    {!notesPodcastMode &&
+                      pdfFiles.map((file, idx) => (
+                        <div key={`${file.name}_${file.size}_${idx}`} className="settings-voice-item lh-ref-line" style={{ borderBottom: 'none', padding: '4px 0' }}>
+                          <p style={{ margin: 0 }}>📎 {file.name}</p>
+                          <button type="button" className="api-key-clear-btn" onClick={() => removeUploadedFile(idx)}>
+                            删除
+                          </button>
+                        </div>
+                      ))}
                     {selectedNoteItems.map((n) => (
-                      <div key={n.noteId} className="settings-voice-item" style={{ borderBottom: 'none', padding: '4px 0' }}>
+                      <div key={n.noteId} className="settings-voice-item lh-ref-line" style={{ borderBottom: 'none', padding: '4px 0' }}>
                         <p style={{ margin: 0 }}>
                           📚 {n.title || n.fileName}
                           {n.notebook ? `（${n.notebook}）` : ''}
                         </p>
-                        <button
-                          type="button"
-                          className="api-key-clear-btn"
-                          onClick={() => removeSelectedNote(n.noteId)}
-                        >
+                        <button type="button" className="api-key-clear-btn" onClick={() => removeSelectedNote(n.noteId)}>
                           删除
                         </button>
                       </div>
                     ))}
-                  </>
-                )}
-              </div>
-            </div>
-
-            <div className="input-group">
-              <div className="final-copy-action-row" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-                <button
-                  type="button"
-                  className="api-key-clear-btn final-copy-btn"
-                  onClick={skipToVoiceSection}
-                  disabled={isGenerating}
-                  title="跳过文案编辑步骤，直接滚动到音色区，按当前素材走 AI 自动生成流程"
-                >
-                  🤖 AI自动生成
-                </button>
-                <button
-                  type="button"
-                  className="api-key-clear-btn final-copy-btn"
-                  onClick={openFinalCopyModal}
-                  disabled={isGenerating}
-                >
-                  💡 加入创意
-                </button>
-              </div>
-              <p className="input-description">
-                「🤖 AI自动生成」直接定位到下方「选择音色」，按当前参考素材走默认 AI 流程。「💡 加入创意」打开弹窗，可调整高级配置、生成或编辑脚本，并一键导入「用户加工模式」。
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="input-content">
-            <p className="input-hint">
-              对话脚本和封面文案/封面图完全由你提供，系统不再调用 AI 生成它们（但仍会继续做语音合成与音频合并）。
-            </p>
-            <div className="input-group">
-              <label className="input-label">📄 手工对话脚本</label>
-              <textarea
-                placeholder={`每句一行，格式示例：\nSpeaker1: 大家好，今天我们聊...\nSpeaker2: 没错，我补充一点...`}
-                value={manualScript}
-                onChange={(e) => setManualScript(e.target.value)}
-                rows={10}
-              />
-              <p className="input-description">
-                仅支持两位说话人：Speaker1 / Speaker2。未标注说话人的行会默认归为 Speaker1。
-              </p>
-            </div>
-
-            <div className="input-group">
-              <label className="input-label">🖼️ 手工封面文案（可选）</label>
-              <input
-                type="text"
-                placeholder="例如：本期主题：xxx（可留空）"
-                value={manualCoverText}
-                onChange={(e) => setManualCoverText(e.target.value)}
-              />
-            </div>
-
-            <div className="input-group">
-              <label className="input-label">🖼️ 上传封面图片（可选）</label>
-              <div className="file-upload">
-                <label htmlFor="manual-cover-upload" className="upload-label">
-                  {manualCoverFile ? `已选择: ${manualCoverFile.name}` : '点击选择封面图片（可不上传）'}
-                </label>
-                <input
-                  id="manual-cover-upload"
-                  type="file"
-                  accept=".png,.jpg,.jpeg,.webp"
-                  onChange={handleManualCoverChange}
-                  style={{ display: 'none' }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* 音色选择区 */}
-      <div className="section" ref={voiceSectionRef}>
-        <h2>🎤 选择音色</h2>
-        <p className="input-description" style={{ marginTop: '-0.5rem' }}>
-          下拉中仅显示 Mini / Max 及已在「设置 → 音色管理」中点击「使用」加入的预设；更多预设请在该页选择 Speaker1 或 Speaker2。
-        </p>
-        <div className="voice-config">
-          <div className="speaker-config">
-            <h3>Speaker 1</h3>
-            <div className="radio-group">
-              <label>
-                <input
-                  type="radio"
-                  checked={speaker1Type === 'default'}
-                  onChange={() => setSpeaker1Type('default')}
-                />
-                默认音色
-              </label>
-              {speaker1Type === 'default' && (
-                <GroupedDefaultVoiceSelect
-                  groups={defaultVoiceGroups}
-                  value={speaker1Voice}
-                  onChange={setSpeaker1Voice}
-                  id="speaker1-default-voice"
-                />
-              )}
-            </div>
-            <div className="radio-group">
-              <label>
-                <input
-                  type="radio"
-                  checked={speaker1Type === 'custom'}
-                  onChange={() => setSpeaker1Type('custom')}
-                />
-                自定义音色
-              </label>
-              {speaker1Type === 'custom' && (
-                <div>
-                  <select value={speaker1CustomMode} onChange={(e) => setSpeaker1CustomMode(e.target.value)}>
-                    <option value="upload">上传新音频并克隆</option>
-                    <option value="saved">选择已保存音色ID</option>
-                  </select>
-                  {speaker1CustomMode === 'upload' ? (
-                    <div className="file-upload">
-                      <label htmlFor="speaker1-audio" className="upload-label">
-                        {speaker1Audio ? speaker1Audio.name : '上传音频文件'}
-                      </label>
-                      <input
-                        id="speaker1-audio"
-                        type="file"
-                        accept=".wav,.mp3,.flac,.m4a,.ogg"
-                        onChange={handleSpeaker1AudioChange}
-                        style={{ display: 'none' }}
-                      />
-                    </div>
-                  ) : (
-                    <select
-                      value={speaker1SavedVoiceId}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setSpeaker1SavedVoiceId(value);
-                        if (value) upsertSavedVoice(value, 'speaker1');
-                      }}
-                    >
-                      <option value="">请选择已保存音色ID</option>
-                      {savedCustomVoices.map((voice) => (
-                        <option key={voice.voiceId} value={voice.voiceId}>
-                          {voice.displayName || voice.voiceId}
-                          {voice.displayName && voice.displayName !== voice.voiceId ? ` (${voice.voiceId})` : ''}
-                          {voice.sourceSpeaker ? ` | 来源:${voice.sourceSpeaker}` : ''}
-                          {voice.lastUsedAt ? ` | 最近:${new Date(voice.lastUsedAt).toLocaleString()}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                  </div>
                 </div>
               )}
-            </div>
-          </div>
 
-          <div className="speaker-config">
-            <h3>Speaker 2</h3>
-            <div className="radio-group">
-              <label>
-                <input
-                  type="radio"
-                  checked={speaker2Type === 'default'}
-                  onChange={() => setSpeaker2Type('default')}
-                />
-                默认音色
-              </label>
-              {speaker2Type === 'default' && (
-                <GroupedDefaultVoiceSelect
-                  groups={defaultVoiceGroups}
-                  value={speaker2Voice}
-                  onChange={setSpeaker2Voice}
-                  id="speaker2-default-voice"
-                />
-              )}
-            </div>
-            <div className="radio-group">
-              <label>
-                <input
-                  type="radio"
-                  checked={speaker2Type === 'custom'}
-                  onChange={() => setSpeaker2Type('custom')}
-                />
-                自定义音色
-              </label>
-              {speaker2Type === 'custom' && (
-                <div>
-                  <select value={speaker2CustomMode} onChange={(e) => setSpeaker2CustomMode(e.target.value)}>
-                    <option value="upload">上传新音频并克隆</option>
-                    <option value="saved">选择已保存音色ID</option>
-                  </select>
-                  {speaker2CustomMode === 'upload' ? (
-                    <div className="file-upload">
-                      <label htmlFor="speaker2-audio" className="upload-label">
-                        {speaker2Audio ? speaker2Audio.name : '上传音频文件'}
-                      </label>
-                      <input
-                        id="speaker2-audio"
-                        type="file"
-                        accept=".wav,.mp3,.flac,.m4a,.ogg"
-                        onChange={handleSpeaker2AudioChange}
-                        style={{ display: 'none' }}
-                      />
-                    </div>
-                  ) : (
-                    <select
-                      value={speaker2SavedVoiceId}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setSpeaker2SavedVoiceId(value);
-                        if (value) upsertSavedVoice(value, 'speaker2');
-                      }}
-                    >
-                      <option value="">请选择已保存音色ID</option>
-                      {savedCustomVoices.map((voice) => (
-                        <option key={voice.voiceId} value={voice.voiceId}>
-                          {voice.displayName || voice.voiceId}
-                          {voice.displayName && voice.displayName !== voice.voiceId ? ` (${voice.voiceId})` : ''}
-                          {voice.sourceSpeaker ? ` | 来源:${voice.sourceSpeaker}` : ''}
-                          {voice.lastUsedAt ? ` | 最近:${new Date(voice.lastUsedAt).toLocaleString()}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+              {npS2 && (
+                <div className="notes-podcast-step-nav notes-podcast-step-nav--inline">
+                  <button type="button" className="podcast-quick-flow-btn-secondary" onClick={() => setNotesPodcastStep(1)}>
+                    上一步
+                  </button>
+                  <button type="button" className="podcast-quick-flow-btn-primary" onClick={() => setNotesPodcastStep(3)}>
+                    下一步
+                  </button>
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* 开场/结尾配置 */}
-      <div className="section">
-        <h2>🎼 开场/结尾配置</h2>
-        <div className="input-group">
-          <div className="mode-tabs">
-            <button
-              type="button"
-              className={`mode-tab ${audioStyleMode === 'default' ? 'active' : ''}`}
-              onClick={() => setAudioStyleMode('default')}
-            >
-              使用默认配置
-            </button>
-            <button
-              type="button"
-              className={`mode-tab ${audioStyleMode === 'custom' ? 'active' : ''}`}
-              onClick={() => setAudioStyleMode('custom')}
-            >
-              使用自定义配置
-            </button>
-          </div>
-          <p className="input-description" style={{ marginTop: 10 }}>
-            播客默认使用背景音1+开头语+背景音2+主体内容+结束背景音1的格式，可以在下方自行配置想要的模式。
-          </p>
-          {audioStyleMode === 'custom' && (
-            <div className="audio-style-preset-bar">
-              <select
-                value={selectedAudioStylePresetId}
-                onChange={(e) => setSelectedAudioStylePresetId(e.target.value)}
-              >
-                <option value="">选择已保存配置</option>
-                {audioStylePresets.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="api-key-clear-btn"
-                onClick={loadAudioStylePreset}
-                disabled={!audioStylePresets.length}
-              >
-                加载配置
-              </button>
-              <button
-                type="button"
-                className="api-key-clear-btn"
-                onClick={openSaveAudioStylePresetModal}
-              >
-                保存当前配置
-              </button>
-            </div>
-          )}
-        </div>
+              {roomConfigModal && roomPromptSlot && (
+                <div className="notes-room-prompt-slot">{roomPromptSlot}</div>
+              )}
 
-        {audioStyleMode === 'custom' && (
-          <div className="audio-style-square-grid">
-            <div className="audio-style-square-card">
-              <h3>🎬 开场配置</h3>
-              <div className="input-group">
-                <label className="input-label">开头语文本（可选）</label>
-                <input
-                  type="text"
-                  value={introText}
-                  onChange={(e) => setIntroText(e.target.value)}
-                  placeholder="例如：欢迎收听本期节目（留空不使用开头语）"
-                />
-              </div>
-              <div className="input-group">
-                <label className="input-label">开头语音色（可选）</label>
-                <select value={introVoiceMode} onChange={(e) => setIntroVoiceMode(e.target.value)}>
-                  <option value="default">不配置（使用默认音色）</option>
-                  <option value="speaker1">跟随 Speaker1</option>
-                  <option value="speaker2">跟随 Speaker2</option>
-                  <option value="custom">已保存音色名称</option>
-                </select>
-                {introVoiceMode === 'default' && (
-                  <GroupedDefaultVoiceSelect
-                    groups={defaultVoiceGroups}
-                    value={introVoiceName}
-                    onChange={setIntroVoiceName}
-                    id="intro-default-voice"
-                  />
-                )}
-                {introVoiceMode === 'custom' && (
-                  <select
-                    value={introCustomVoiceId}
-                    onChange={(e) => setIntroCustomVoiceId(e.target.value)}
+              {roomConfigModal && (
+                <div className="notes-room-config-footer">
+                  {isGenerating && progress && (
+                    <div className="podcast-works-progress notes-room-config-progress" aria-live="polite">
+                      <div className="podcast-works-progress-title">正在生成播客</div>
+                      <div className="podcast-works-progress-msg">{progress}</div>
+                      {progressEta && <div className="podcast-works-progress-eta">{progressEta}</div>}
+                    </div>
+                  )}
+                  <div className="notes-modal-generate-bar">
+                    <div className="notes-room-config-actions">
+                      <button
+                        type="button"
+                        className="notes-modal-gen-btn notes-modal-gen-btn--podcast"
+                        disabled={isGenerating}
+                        onClick={() => {
+                          closePodcastTbPopovers();
+                          handleGenerate();
+                        }}
+                        aria-label={isGenerating ? '生成中' : '生成播客'}
+                        title={isGenerating ? '生成中' : '生成播客'}
+                      >
+                        {isGenerating ? <IcoRoomGenLoading /> : <IcoRoomGenSend />}
+                      </button>
+                      {isGenerating && (
+                        <button
+                          type="button"
+                          className="notes-modal-gen-btn notes-modal-gen-btn--stop"
+                          onClick={stopGenerate}
+                          aria-label="停止生成"
+                          title="停止生成"
+                        >
+                          <IcoRoomGenStop />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+              )}
+
+            {!roomConfigModal && (
+            <div className="tts-bottom-section">
+                <div className="tts-bottom-tabs" role="tablist">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={podcastWorksTemplatesTab === 'works'}
+                    className={`tts-bottom-tab ${podcastWorksTemplatesTab === 'works' ? 'tts-bottom-tab--active' : ''}`}
+                    onClick={() => {
+                      setPodcastWorksTemplatesTab('works');
+                      setPodcastWorkMenuOpenId(null);
+                    }}
                   >
-                    <option value="">请选择音色名称</option>
-                    {savedCustomVoices.map((voice) => (
-                      <option key={voice.voiceId} value={voice.voiceId}>
-                        {voice.displayName || voice.voiceId}
-                        {voice.displayName && voice.displayName !== voice.voiceId ? ` (${voice.voiceId})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <div className="input-group">
-                <label className="input-label">开场背景音1（可选）</label>
-                <select value={introBgm1Mode} onChange={(e) => setIntroBgm1Mode(e.target.value)}>
-                  <option value="none">不使用背景音1</option>
-                  <option value="default">默认 BGM1</option>
-                  <option value="saved">已保存 BGM</option>
-                  <option value="upload">上传新 BGM</option>
-                </select>
-                {introBgm1Mode === 'saved' && (
-                  <select value={introBgm1SavedId} onChange={(e) => setIntroBgm1SavedId(e.target.value)}>
-                    <option value="">请选择</option>
-                    {savedBgms.map((bgm) => (
-                      <option key={bgm.bgmId} value={bgm.bgmId}>{bgm.label || bgm.fileName}</option>
-                    ))}
-                  </select>
-                )}
-                {introBgm1Mode === 'upload' && (
-                  <div className="file-upload">
-                    <label htmlFor="intro-bgm1-upload" className="upload-label">
-                      {introBgm1File ? introBgm1File.name : '上传开场背景音1'}
-                    </label>
-                    <input
-                      id="intro-bgm1-upload"
-                      type="file"
-                      accept=".wav,.mp3,.flac,.m4a,.ogg"
-                      onChange={handleBgmFileChange(setIntroBgm1File)}
-                      style={{ display: 'none' }}
-                    />
-                  </div>
-                )}
-              </div>
-              <div className="input-group">
-                <label className="input-label">开场背景音2（可选）</label>
-                <select value={introBgm2Mode} onChange={(e) => setIntroBgm2Mode(e.target.value)}>
-                  <option value="none">不使用背景音2</option>
-                  <option value="default">默认 BGM2</option>
-                  <option value="saved">已保存 BGM</option>
-                  <option value="upload">上传新 BGM</option>
-                </select>
-                {introBgm2Mode === 'saved' && (
-                  <select value={introBgm2SavedId} onChange={(e) => setIntroBgm2SavedId(e.target.value)}>
-                    <option value="">请选择</option>
-                    {savedBgms.map((bgm) => (
-                      <option key={bgm.bgmId} value={bgm.bgmId}>{bgm.label || bgm.fileName}</option>
-                    ))}
-                  </select>
-                )}
-                {introBgm2Mode === 'upload' && (
-                  <div className="file-upload">
-                    <label htmlFor="intro-bgm2-upload" className="upload-label">
-                      {introBgm2File ? introBgm2File.name : '上传开场背景音2'}
-                    </label>
-                    <input
-                      id="intro-bgm2-upload"
-                      type="file"
-                      accept=".wav,.mp3,.flac,.m4a,.ogg"
-                      onChange={handleBgmFileChange(setIntroBgm2File)}
-                      style={{ display: 'none' }}
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="audio-style-square-card">
-              <h3>🏁 结尾配置</h3>
-              <div className="input-group">
-                <label className="input-label">结束语文本（可选）</label>
-                <input
-                  type="text"
-                  value={endingText}
-                  onChange={(e) => setEndingText(e.target.value)}
-                  placeholder="例如：感谢收听，我们下期再见（留空则不额外添加）"
-                />
-              </div>
-              <div className="input-group">
-                <label className="input-label">结束语音色（可选）</label>
-                <select value={endingVoiceMode} onChange={(e) => setEndingVoiceMode(e.target.value)}>
-                  <option value="default">不配置（使用默认音色）</option>
-                  <option value="speaker1">跟随 Speaker1</option>
-                  <option value="speaker2">跟随 Speaker2</option>
-                  <option value="custom">已保存音色名称</option>
-                </select>
-                {endingVoiceMode === 'default' && (
-                  <GroupedDefaultVoiceSelect
-                    groups={defaultVoiceGroups}
-                    value={endingVoiceName}
-                    onChange={setEndingVoiceName}
-                    id="ending-default-voice"
-                  />
-                )}
-                {endingVoiceMode === 'custom' && (
-                  <select
-                    value={endingCustomVoiceId}
-                    onChange={(e) => setEndingCustomVoiceId(e.target.value)}
+                    我的作品
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={podcastWorksTemplatesTab === 'templates'}
+                    className={`tts-bottom-tab ${podcastWorksTemplatesTab === 'templates' ? 'tts-bottom-tab--active' : ''}`}
+                    onClick={() => {
+                      setPodcastWorksTemplatesTab('templates');
+                      setPodcastWorkMenuOpenId(null);
+                    }}
                   >
-                    <option value="">请选择音色名称</option>
-                    {savedCustomVoices.map((voice) => (
-                      <option key={voice.voiceId} value={voice.voiceId}>
-                        {voice.displayName || voice.voiceId}
-                        {voice.displayName && voice.displayName !== voice.voiceId ? ` (${voice.voiceId})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <div className="input-group">
-                <label className="input-label">结尾背景音1（可选）</label>
-                <select value={endingBgm1Mode} onChange={(e) => setEndingBgm1Mode(e.target.value)}>
-                  <option value="none">不使用背景音1</option>
-                  <option value="default">默认 BGM1</option>
-                  <option value="saved">已保存 BGM</option>
-                  <option value="upload">上传新 BGM</option>
-                </select>
-                {endingBgm1Mode === 'saved' && (
-                  <select value={endingBgm1SavedId} onChange={(e) => setEndingBgm1SavedId(e.target.value)}>
-                    <option value="">请选择</option>
-                    {savedBgms.map((bgm) => (
-                      <option key={bgm.bgmId} value={bgm.bgmId}>{bgm.label || bgm.fileName}</option>
-                    ))}
-                  </select>
-                )}
-                {endingBgm1Mode === 'upload' && (
-                  <div className="file-upload">
-                    <label htmlFor="ending-bgm1-upload" className="upload-label">
-                      {endingBgm1File ? endingBgm1File.name : '上传结尾背景音1'}
-                    </label>
-                    <input
-                      id="ending-bgm1-upload"
-                      type="file"
-                      accept=".wav,.mp3,.flac,.m4a,.ogg"
-                      onChange={handleBgmFileChange(setEndingBgm1File)}
-                      style={{ display: 'none' }}
-                    />
+                    模板
+                  </button>
+                </div>
+                {isGenerating && progress && (
+                  <div className="podcast-works-progress" aria-live="polite">
+                    <div className="podcast-works-progress-title">正在生成播客</div>
+                    <div className="podcast-works-progress-msg">{progress}</div>
+                    {progressEta && <div className="podcast-works-progress-eta">{progressEta}</div>}
                   </div>
                 )}
+                <div className="tts-bottom-panel">
+                  {podcastWorksTemplatesTab === 'works' ? (
+                    <div className="tts-panel-block tts-panel-block--flat">
+                      {podcastWorks.length === 0 ? (
+                        <p className="tts-empty">暂无项目</p>
+                      ) : (
+                        <div className="podcast-work-cards">
+                          {podcastWorks.map((w) => {
+                            const sid = String(w.id);
+                            const dur = podcastWorkDurations[sid];
+                            const durText = formatDuration(dur);
+                            const voicesText = String(w.speakers || '').trim();
+                            const createdText = formatCreatedAt(w.createdAt);
+                            const durationText =
+                              String(w.durationHint || '').trim() || (durText ? `时长 ${durText}` : '');
+                            const metaParts = [voicesText, durationText, createdText].filter(Boolean);
+                            const metaText = metaParts.join(' · ');
+                            const coverSrc = getWorkCoverSrc(w.coverImage || w.cover_image);
+
+                            return (
+                              <div key={sid} className="podcast-work-card">
+                                <div className="podcast-work-card-cover">
+                                  <WorkCoverImg src={coverSrc} />
+                                </div>
+                                <div className="podcast-work-card-body">
+                                  <div className="podcast-work-card-title-row">
+                                    <div className="podcast-work-card-title" title={w.title}>
+                                      {w.title}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="podcast-work-card-play"
+                                      onClick={() => onToggleWorkPlay(w.id)}
+                                      aria-label="播放"
+                                      title="播放"
+                                      disabled={!w.audioUrl}
+                                    >
+                                      ▶
+                                    </button>
+                                    <div
+                                      className="tts-work-menu"
+                                      ref={(el) => {
+                                        if (!w?.id) return;
+                                        podcastWorkMenuRefs.current[String(w.id)] = el;
+                                      }}
+                                    >
+                                      <button
+                                        type="button"
+                                        className={`tts-work-more ${String(podcastWorkMenuOpenId) === String(w.id) ? 'tts-work-more--on' : ''}`}
+                                        onClick={() => {
+                                          const nextOpen =
+                                            String(podcastWorkMenuOpenId) === String(w.id) ? null : String(w.id);
+                                          if (nextOpen) {
+                                            try {
+                                              const anchor = podcastWorkMenuRefs.current?.[String(w.id)];
+                                              const rect = anchor?.getBoundingClientRect?.();
+                                              const vh = window.innerHeight || 800;
+                                              const spaceBelow = rect ? vh - rect.bottom : 9999;
+                                              const openUp = spaceBelow < 260;
+                                              setPodcastWorkMenuDir((prev) => ({
+                                                ...(prev || {}),
+                                                [String(w.id)]: openUp ? 'up' : 'down'
+                                              }));
+                                            } catch (e) {
+                                              // ignore
+                                            }
+                                          }
+                                          setPodcastWorkMenuOpenId(nextOpen);
+                                        }}
+                                        aria-label="更多"
+                                        title="更多"
+                                      >
+                                        …
+                                      </button>
+                                      {String(podcastWorkMenuOpenId) === String(w.id) && (
+                                        <div
+                                          className={`tts-work-dropdown ${
+                                            podcastWorkMenuDir[String(w.id)] === 'up' ? 'tts-work-dropdown--up' : ''
+                                          }`}
+                                          role="menu"
+                                          aria-label="作品操作"
+                                        >
+                                          {w.audioUrl && (
+                                            <button
+                                              type="button"
+                                              className="tts-work-dd-item"
+                                              role="menuitem"
+                                              disabled={String(podcastWorkZipBusyId) === String(w.id)}
+                                              onClick={() => downloadPodcastWorkBundle(w.id)}
+                                            >
+                                              {String(podcastWorkZipBusyId) === String(w.id) ? '打包中…' : '打包下载'}
+                                            </button>
+                                          )}
+                                          <button
+                                            type="button"
+                                            className="tts-work-dd-item"
+                                            onClick={() => renamePodcastWork(w.id)}
+                                            role="menuitem"
+                                          >
+                                            改名
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="tts-work-dd-item"
+                                            onClick={() => copyPodcastWorkScript(w.id)}
+                                            disabled={!w?.scriptText && !w?.scriptUrl}
+                                            role="menuitem"
+                                          >
+                                            复制文稿
+                                          </button>
+                                          <div className="tts-work-dd-item tts-work-dd-item--row" role="menuitem">
+                                            <span className="tts-work-dd-label">播放速度</span>
+                                            <select
+                                              className="tts-work-rate"
+                                              value={String(podcastWorkRates[String(w.id)] || 1)}
+                                              onChange={(e) => setPodcastWorkPlaybackRate(w.id, e.target.value)}
+                                              aria-label="播放速度"
+                                            >
+                                              {[0.75, 1, 1.25, 1.5, 2].map((r) => (
+                                                <option key={r} value={r}>
+                                                  {r}×
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            className="tts-work-dd-item tts-work-dd-danger"
+                                            onClick={() => deletePodcastWork(w.id)}
+                                            role="menuitem"
+                                          >
+                                            删除
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="podcast-work-card-meta">
+                                    {metaText ? (
+                                      <span className="podcast-work-card-meta-item podcast-work-card-meta-item--clamp" title={metaText}>
+                                        {metaText}
+                                      </span>
+                                    ) : (
+                                      <span className="podcast-work-card-meta-item podcast-work-card-meta-item--muted">—</span>
+                                    )}
+                                  </div>
+
+                                  {podcastWorkPlayingId === sid && w.audioUrl && (
+                                    <div className="podcast-work-card-inline-player">
+                                      <audio
+                                        className="podcast-work-card-inline-audio"
+                                        ref={podcastWorkInlineAudioRef}
+                                        controls
+                                        src={resolveMediaUrl(w.audioUrl)}
+                                        preload="none"
+                                        onPlay={() => pauseOtherPodcastWorks(w.id)}
+                                        onLoadedMetadata={(e) => {
+                                          const d = e?.currentTarget?.duration;
+                                          if (Number.isFinite(d) && d > 0) {
+                                            setPodcastWorkDurations((prev) => ({ ...(prev || {}), [sid]: d }));
+                                          }
+                                          const rate = Number(podcastWorkRates[sid] || 1) || 1;
+                                          try {
+                                            e.currentTarget.playbackRate = rate;
+                                          } catch (err) {
+                                            // ignore
+                                          }
+                                        }}
+                                      />
+                                      <div className="podcast-work-card-inline-actions">
+                                        <label className="podcast-work-card-inline-rate">
+                                          <span>倍速</span>
+                                          <select
+                                            value={String(podcastWorkRates[sid] || 1)}
+                                            onChange={(e) => setPodcastWorkPlaybackRate(w.id, e.target.value)}
+                                          >
+                                            {[0.75, 1, 1.25, 1.5, 2].map((r) => (
+                                              <option key={r} value={r}>
+                                                {r}×
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </label>
+                                        <button
+                                          type="button"
+                                          className="api-key-clear-btn podcast-work-card-inline-close"
+                                          onClick={() => setPodcastWorkPlayingId(null)}
+                                        >
+                                          收起
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="tts-panel-block tts-panel-block--flat">
+                      <p className="tts-templates-hint">（待接入）这里将展示可一键套用的节目模板</p>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="input-group">
-                <label className="input-label">结尾背景音2（可选）</label>
-                <select value={endingBgm2Mode} onChange={(e) => setEndingBgm2Mode(e.target.value)}>
-                  <option value="none">不使用背景音2</option>
-                  <option value="default">默认 BGM2</option>
-                  <option value="saved">已保存 BGM</option>
-                  <option value="upload">上传新 BGM</option>
-                </select>
-                {endingBgm2Mode === 'saved' && (
-                  <select value={endingBgm2SavedId} onChange={(e) => setEndingBgm2SavedId(e.target.value)}>
-                    <option value="">请选择</option>
-                    {savedBgms.map((bgm) => (
-                      <option key={bgm.bgmId} value={bgm.bgmId}>{bgm.label || bgm.fileName}</option>
-                    ))}
-                  </select>
-                )}
-                {endingBgm2Mode === 'upload' && (
-                  <div className="file-upload">
-                    <label htmlFor="ending-bgm2-upload" className="upload-label">
-                      {endingBgm2File ? endingBgm2File.name : '上传结尾背景音2'}
-                    </label>
-                    <input
-                      id="ending-bgm2-upload"
-                      type="file"
-                      accept=".wav,.mp3,.flac,.m4a,.ogg"
-                      onChange={handleBgmFileChange(setEndingBgm2File)}
-                      style={{ display: 'none' }}
-                    />
-                  </div>
-                )}
-              </div>
+            )}
             </div>
           </div>
-        )}
-      </div>
-
-      {/* 生成按钮 */}
-      <div className="generate-actions-row">
-        <button
-          type="button"
-          className="generate-btn"
-          onClick={handleGenerate}
-          disabled={isGenerating}
-        >
-          {isGenerating ? '🎙️ 生成中...' : '🚀 开始生成播客'}
-        </button>
-        {isGenerating && (
-          <button
-            type="button"
-            className="generate-stop-btn"
-            onClick={stopGenerate}
-          >
-            停止生成
-          </button>
-        )}
       </div>
 
       {/* URL 解析警告 */}
@@ -2518,7 +3300,7 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
                 <br />
                 2. 粘贴到上方的"话题文本"输入框中
                 <br />
-                3. 点击"开始生成播客"继续
+                3. 点击工具栏右侧生成按钮继续
               </div>
             )}
           </div>
@@ -2526,186 +3308,317 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
         </div>
       )}
 
-      {/* 进度显示 */}
-      {progress && (
-        <div className="progress-bar">
-          <div className="progress-text">{progress}</div>
+      {/* 渐进式合成仍依赖双缓冲 audio 节点；不在页面底部展示播放器（请到「我的作品」卡片内试听） */}
+      {(player0Url || player1Url || audioUrl) && (
+        <div className="podcast-progressive-audio-host" aria-hidden="true">
+          <audio
+            ref={audioRef0}
+            controls={false}
+            src={player0Url || (audioUrl && activePlayer === 0 ? resolveMediaUrl(audioUrl) : '')}
+            preload="metadata"
+            style={{ display: 'none' }}
+          />
+          <audio
+            ref={audioRef1}
+            controls={false}
+            src={player1Url || (audioUrl && activePlayer === 1 ? resolveMediaUrl(audioUrl) : '')}
+            preload="metadata"
+            style={{ display: 'none' }}
+          />
         </div>
       )}
 
-      {/* 播客播放器和封面 - 并排显示 */}
-      {((player0Url || player1Url || audioUrl) || coverImage) && (
-        <div className="player-cover-container">
-          {/* 播客封面 - 左侧 */}
-          {coverImage && (
-            <div className="cover-section">
-              <h2>🖼️ 播客封面</h2>
-              <img src={resolveMediaUrl(coverImage)} alt="播客封面" className="cover-image" />
-            </div>
-          )}
-
-          {/* 播客播放器 - 右侧 - 双缓冲 */}
-          {(player0Url || player1Url || audioUrl) && (
-            <div className="player-section">
-              <h2>🎧 播客播放器</h2>
-              {/* 播放器 0 */}
-              <audio
-                ref={audioRef0}
-                controls={activePlayer === 0}
-                className="audio-player"
-                src={player0Url || (audioUrl && activePlayer === 0 ? `${API_URL}${audioUrl}` : '')}
-                preload="metadata"
-                style={{ display: activePlayer === 0 ? 'block' : 'none' }}
-              />
-              {/* 播放器 1 */}
-              <audio
-                ref={audioRef1}
-                controls={activePlayer === 1}
-                className="audio-player"
-                src={player1Url || (audioUrl && activePlayer === 1 ? `${API_URL}${audioUrl}` : '')}
-                preload="metadata"
-                style={{ display: activePlayer === 1 ? 'block' : 'none' }}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 对话脚本 */}
-      {script.length > 0 && (
-        <div className="section">
-          <h2>📄 对话脚本</h2>
-          <div className="script-box">
-            {script.map((line, index) => (
-              <p key={index}>{line}</p>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 下载按钮 */}
-      {audioUrl && (
-        <div className="download-section">
-          <button
-            type="button"
-            className="download-btn"
-            disabled={downloadBusy}
-            onClick={() => downloadFileByFetch(resolveMediaUrl(audioUrl), 'podcast.mp3')}
+      {showPodcastIntroModal && (
+        <div className="voice-rename-modal-mask" onClick={() => setShowPodcastIntroModal(false)}>
+          <div
+            className="voice-rename-modal podcast-audio-style-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-labelledby="podcast-io-title"
           >
-            ⬇️ 下载音频
-          </button>
-          {scriptUrl && (
-            <button
-              type="button"
-              className="download-btn"
-              disabled={downloadBusy}
-              onClick={() => downloadFileByFetch(resolveMediaUrl(scriptUrl), 'podcast_script.txt')}
-            >
-              ⬇️ 下载脚本
-            </button>
-          )}
-          {coverImage && (
-            <button
-              type="button"
-              className="download-btn"
-              disabled={downloadBusy}
-              onClick={() => {
-                const fullUrl =
-                  coverImage.startsWith('http://') || coverImage.startsWith('https://')
-                    ? `${API_URL}/download/cover?url=${encodeURIComponent(coverImage)}`
-                    : resolveMediaUrl(coverImage);
-                downloadFileByFetch(fullUrl, `podcast_cover_${Date.now()}.jpg`);
-              }}
-            >
-              ⬇️ 下载封面
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* 详细日志 */}
-      <div className="section logs-section">
-        <h2 onClick={() => setShowLogs(!showLogs)} style={{ cursor: 'pointer' }}>
-          🔍 详细日志 {showLogs ? '▼' : '▶'}
-        </h2>
-        {showLogs && (
-          <div className="logs-box">
-            {logs.map((log, index) => (
-              <p key={index}>
-                <span className="log-time">[{log.time}]</span> {log.message}
+            <div className="podcast-audio-style-modal-header">
+              <h3 id="podcast-io-title">开场结尾配置</h3>
+              <p className="voice-rename-modal-subtitle" style={{ marginTop: 6, marginBottom: 0 }}>
+                自定义开场与结尾文案、音色路由与背景音；将写入本地并与生成请求同步。
               </p>
-            ))}
-          </div>
-        )}
-      </div>
+            </div>
+            <div className="podcast-audio-style-modal-body">
+              <div className="input-group">
+                <p className="input-description" style={{ marginTop: 10 }}>
+                  播客将按「背景音1+开头语+背景音2+主体内容+结束背景音1」的格式拼接，下方可逐项调整参数。
+                </p>
+                <div className="audio-style-preset-bar">
+                  <select
+                    value={selectedAudioStylePresetId}
+                    onChange={(e) => setSelectedAudioStylePresetId(e.target.value)}
+                  >
+                    <option value="">选择已保存配置</option>
+                    {audioStylePresets.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="api-key-clear-btn"
+                    onClick={loadAudioStylePreset}
+                    disabled={!audioStylePresets.length}
+                  >
+                    加载配置
+                  </button>
+                  <button type="button" className="api-key-clear-btn" onClick={openSaveAudioStylePresetModal}>
+                    保存当前配置
+                  </button>
+                </div>
+              </div>
 
-      {/* Trace IDs */}
-      {traceIds.length > 0 && (
-        <div className="trace-ids">
-          <h3>Trace IDs</h3>
-          {traceIds.map((trace, index) => (
-            <p key={index}>
-              <strong>{trace.api}:</strong> <code>{trace.traceId}</code>
-            </p>
-          ))}
+              <div className="audio-style-square-grid">
+                  <div className="audio-style-square-card">
+                    <h3>🎬 开场配置</h3>
+                    <div className="input-group">
+                      <label className="input-label">开头语文本（可选）</label>
+                      <input
+                        type="text"
+                        value={introText}
+                        onChange={(e) => setIntroText(e.target.value)}
+                        placeholder="例如：欢迎收听本期节目（留空不使用开头语）"
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label className="input-label">开头语音色（可选）</label>
+                      <select value={introVoiceMode} onChange={(e) => setIntroVoiceMode(e.target.value)}>
+                        <option value="default">不配置（使用默认音色）</option>
+                        <option value="speaker1">跟随 Speaker1</option>
+                        <option value="speaker2">跟随 Speaker2</option>
+                        <option value="custom">已保存音色名称</option>
+                      </select>
+                      {introVoiceMode === 'default' && (
+                        <GroupedDefaultVoiceSelect
+                          groups={defaultVoiceGroups}
+                          value={introVoiceName}
+                          onChange={setIntroVoiceName}
+                          id="intro-default-voice"
+                        />
+                      )}
+                      {introVoiceMode === 'custom' && (
+                        <select
+                          value={introCustomVoiceId}
+                          onChange={(e) => setIntroCustomVoiceId(e.target.value)}
+                        >
+                          <option value="">请选择音色名称</option>
+                          {savedCustomVoices.map((voice) => (
+                            <option key={voice.voiceId} value={voice.voiceId}>
+                              {voice.displayName || voice.voiceId}
+                              {voice.displayName && voice.displayName !== voice.voiceId ? ` (${voice.voiceId})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <div className="input-group">
+                      <label className="input-label">开场背景音1（可选）</label>
+                      <select value={introBgm1Mode} onChange={(e) => setIntroBgm1Mode(e.target.value)}>
+                        <option value="none">不使用背景音1</option>
+                        <option value="default">默认 BGM1</option>
+                        <option value="saved">已保存 BGM</option>
+                        <option value="upload">上传新 BGM</option>
+                      </select>
+                      {introBgm1Mode === 'saved' && (
+                        <select value={introBgm1SavedId} onChange={(e) => setIntroBgm1SavedId(e.target.value)}>
+                          <option value="">请选择</option>
+                          {savedBgms.map((bgm) => (
+                            <option key={bgm.bgmId} value={bgm.bgmId}>{bgm.label || bgm.fileName}</option>
+                          ))}
+                        </select>
+                      )}
+                      {introBgm1Mode === 'upload' && (
+                        <div className="file-upload">
+                          <label htmlFor="intro-bgm1-upload" className="upload-label">
+                            {introBgm1File ? introBgm1File.name : '上传开场背景音1'}
+                          </label>
+                          <input
+                            id="intro-bgm1-upload"
+                            type="file"
+                            accept=".wav,.mp3,.flac,.m4a,.ogg"
+                            onChange={handleBgmFileChange(setIntroBgm1File)}
+                            style={{ display: 'none' }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div className="input-group">
+                      <label className="input-label">开场背景音2（可选）</label>
+                      <select value={introBgm2Mode} onChange={(e) => setIntroBgm2Mode(e.target.value)}>
+                        <option value="none">不使用背景音2</option>
+                        <option value="default">默认 BGM2</option>
+                        <option value="saved">已保存 BGM</option>
+                        <option value="upload">上传新 BGM</option>
+                      </select>
+                      {introBgm2Mode === 'saved' && (
+                        <select value={introBgm2SavedId} onChange={(e) => setIntroBgm2SavedId(e.target.value)}>
+                          <option value="">请选择</option>
+                          {savedBgms.map((bgm) => (
+                            <option key={bgm.bgmId} value={bgm.bgmId}>{bgm.label || bgm.fileName}</option>
+                          ))}
+                        </select>
+                      )}
+                      {introBgm2Mode === 'upload' && (
+                        <div className="file-upload">
+                          <label htmlFor="intro-bgm2-upload" className="upload-label">
+                            {introBgm2File ? introBgm2File.name : '上传开场背景音2'}
+                          </label>
+                          <input
+                            id="intro-bgm2-upload"
+                            type="file"
+                            accept=".wav,.mp3,.flac,.m4a,.ogg"
+                            onChange={handleBgmFileChange(setIntroBgm2File)}
+                            style={{ display: 'none' }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="audio-style-square-card">
+                    <h3>🏁 结尾配置</h3>
+                    <div className="input-group">
+                      <label className="input-label">结束语文本（可选）</label>
+                      <input
+                        type="text"
+                        value={endingText}
+                        onChange={(e) => setEndingText(e.target.value)}
+                        placeholder="例如：感谢收听，我们下期再见（留空则不额外添加）"
+                      />
+                    </div>
+                    <div className="input-group">
+                      <label className="input-label">结束语音色（可选）</label>
+                      <select value={endingVoiceMode} onChange={(e) => setEndingVoiceMode(e.target.value)}>
+                        <option value="default">不配置（使用默认音色）</option>
+                        <option value="speaker1">跟随 Speaker1</option>
+                        <option value="speaker2">跟随 Speaker2</option>
+                        <option value="custom">已保存音色名称</option>
+                      </select>
+                      {endingVoiceMode === 'default' && (
+                        <GroupedDefaultVoiceSelect
+                          groups={defaultVoiceGroups}
+                          value={endingVoiceName}
+                          onChange={setEndingVoiceName}
+                          id="ending-default-voice"
+                        />
+                      )}
+                      {endingVoiceMode === 'custom' && (
+                        <select
+                          value={endingCustomVoiceId}
+                          onChange={(e) => setEndingCustomVoiceId(e.target.value)}
+                        >
+                          <option value="">请选择音色名称</option>
+                          {savedCustomVoices.map((voice) => (
+                            <option key={voice.voiceId} value={voice.voiceId}>
+                              {voice.displayName || voice.voiceId}
+                              {voice.displayName && voice.displayName !== voice.voiceId ? ` (${voice.voiceId})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <div className="input-group">
+                      <label className="input-label">结尾背景音1（可选）</label>
+                      <select value={endingBgm1Mode} onChange={(e) => setEndingBgm1Mode(e.target.value)}>
+                        <option value="none">不使用背景音1</option>
+                        <option value="default">默认 BGM1</option>
+                        <option value="saved">已保存 BGM</option>
+                        <option value="upload">上传新 BGM</option>
+                      </select>
+                      {endingBgm1Mode === 'saved' && (
+                        <select value={endingBgm1SavedId} onChange={(e) => setEndingBgm1SavedId(e.target.value)}>
+                          <option value="">请选择</option>
+                          {savedBgms.map((bgm) => (
+                            <option key={bgm.bgmId} value={bgm.bgmId}>{bgm.label || bgm.fileName}</option>
+                          ))}
+                        </select>
+                      )}
+                      {endingBgm1Mode === 'upload' && (
+                        <div className="file-upload">
+                          <label htmlFor="ending-bgm1-upload" className="upload-label">
+                            {endingBgm1File ? endingBgm1File.name : '上传结尾背景音1'}
+                          </label>
+                          <input
+                            id="ending-bgm1-upload"
+                            type="file"
+                            accept=".wav,.mp3,.flac,.m4a,.ogg"
+                            onChange={handleBgmFileChange(setEndingBgm1File)}
+                            style={{ display: 'none' }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div className="input-group">
+                      <label className="input-label">结尾背景音2（可选）</label>
+                      <select value={endingBgm2Mode} onChange={(e) => setEndingBgm2Mode(e.target.value)}>
+                        <option value="none">不使用背景音2</option>
+                        <option value="default">默认 BGM2</option>
+                        <option value="saved">已保存 BGM</option>
+                        <option value="upload">上传新 BGM</option>
+                      </select>
+                      {endingBgm2Mode === 'saved' && (
+                        <select value={endingBgm2SavedId} onChange={(e) => setEndingBgm2SavedId(e.target.value)}>
+                          <option value="">请选择</option>
+                          {savedBgms.map((bgm) => (
+                            <option key={bgm.bgmId} value={bgm.bgmId}>{bgm.label || bgm.fileName}</option>
+                          ))}
+                        </select>
+                      )}
+                      {endingBgm2Mode === 'upload' && (
+                        <div className="file-upload">
+                          <label htmlFor="ending-bgm2-upload" className="upload-label">
+                            {endingBgm2File ? endingBgm2File.name : '上传结尾背景音2'}
+                          </label>
+                          <input
+                            id="ending-bgm2-upload"
+                            type="file"
+                            accept=".wav,.mp3,.flac,.m4a,.ogg"
+                            onChange={handleBgmFileChange(setEndingBgm2File)}
+                            style={{ display: 'none' }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+              </div>
+            </div>
+            <div className="podcast-audio-style-modal-footer">
+              <button type="button" className="generate-btn" onClick={() => setShowPodcastIntroModal(false)}>
+                完成
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
       {showFinalCopyModal && (
         <div
           className="voice-rename-modal-mask"
-          onClick={() => {
-            if (!finalCopyLlmGenerating) setShowFinalCopyModal(false);
-          }}
+          onClick={() => setShowFinalCopyModal(false)}
         >
           <div
             className="voice-rename-modal final-copy-modal"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="final-copy-modal-header">
-              <h3>{finalCopyTitle}</h3>
+              <h3>💡 加入创意</h3>
               <p className="voice-rename-modal-subtitle final-copy-modal-lead">
-                可先编辑脚本；需要改风格、字数或人设时，展开「AI 加工高级配置」。配置满意后调用大模型生成，并可导入「用户加工模式」继续调整。
+                保存 AI 加工高级配置（风格/语言/人设/约束等）。保存后生成播客时会自动应用这些配置。
               </p>
             </div>
 
             <div className="final-copy-modal-body">
-              <details className="final-copy-summary-details ai-advanced-config-details">
-                <summary className="final-copy-summary-summary">⚙️ AI 加工高级配置</summary>
-                <div className="final-copy-summary-inner final-copy-advanced-config">
-                  <div className="input-group">
-                    <label className="input-label">目标正文字数</label>
-                    <input
-                      type="number"
-                      min={SCRIPT_TARGET_CHARS_MIN}
-                      max={SCRIPT_TARGET_CHARS_MAX}
-                      step={1}
-                      value={scriptTargetChars}
-                      onChange={(e) => setScriptTargetChars(e.target.value)}
-                      disabled={finalCopyLlmGenerating}
-                    />
-                    <label className="api-key-remember" style={{ marginTop: 4 }}>
-                      <input
-                        type="checkbox"
-                        checked={longScriptMode}
-                        onChange={(e) => setLongScriptMode(e.target.checked)}
-                        disabled={finalCopyLlmGenerating}
-                      />
-                      自动分段生成长文案模式
-                    </label>
-                    <p className="input-description">
-                      指对话正文总字数（不含每行 Speaker1:/Speaker2: 前缀）。
-                      当前范围 {SCRIPT_TARGET_CHARS_MIN}~{SCRIPT_TARGET_CHARS_MAX} 字。
-                      {longScriptMode ? '已启用分段生成，系统将自动分段并拼接以保持风格一致。' : '默认单次生成，适合短文案快速产出。'}
-                    </p>
-                  </div>
-
+              <div className="final-copy-summary-inner final-copy-advanced-config">
                   <div className="input-group">
                     <label className="input-label">脚本风格</label>
                     <select
                       value={scriptStyle}
                       onChange={(e) => setScriptStyle(e.target.value)}
-                      disabled={finalCopyLlmGenerating}
                     >
                       <option value="轻松幽默，自然流畅">轻松幽默</option>
                       <option value="专业严谨，结构清晰">专业严谨</option>
@@ -2720,27 +3633,11 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
                     <select
                       value={scriptLanguage}
                       onChange={(e) => setScriptLanguage(e.target.value)}
-                      disabled={finalCopyLlmGenerating}
                     >
                       <option value="中文">中文</option>
                       <option value="英文">英文</option>
                       <option value="中英混合">中英混合</option>
                     </select>
-                  </div>
-
-                  <div className="input-group">
-                    <label className="api-key-remember" style={{ marginTop: 0 }}>
-                      <input
-                        type="checkbox"
-                        checked={useRag}
-                        onChange={(e) => setUseRag(e.target.checked)}
-                        disabled={finalCopyLlmGenerating}
-                      />
-                      长参考资料检索模式（推荐开启）
-                    </label>
-                    <p className="input-description">
-                      当参考资料较长时，先分块检索再生成，可降低报错并提升相关性。
-                    </p>
                   </div>
 
                   <div className="input-group">
@@ -2750,7 +3647,6 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
                       value={programName}
                       onChange={(e) => setProgramName(e.target.value)}
                       placeholder="例如：AI科技快报"
-                      disabled={finalCopyLlmGenerating}
                     />
                   </div>
 
@@ -2761,7 +3657,6 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
                       value={speaker1Persona}
                       onChange={(e) => setSpeaker1Persona(e.target.value)}
                       placeholder="例如：活泼亲切，引导话题"
-                      disabled={finalCopyLlmGenerating}
                     />
                   </div>
 
@@ -2772,7 +3667,6 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
                       value={speaker2Persona}
                       onChange={(e) => setSpeaker2Persona(e.target.value)}
                       placeholder="例如：稳重专业，深度分析"
-                      disabled={finalCopyLlmGenerating}
                     />
                   </div>
 
@@ -2790,7 +3684,6 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
                         type="button"
                         className="api-key-clear-btn"
                         onClick={refineScriptConstraints}
-                        disabled={finalCopyLlmGenerating}
                         title="自动提炼为高优先级短规则"
                       >
                         智能提炼
@@ -2801,118 +3694,33 @@ const PodcastGenerator = ({ showApiConfig = true }) => {
                       onChange={(e) => setScriptConstraints(e.target.value)}
                       rows={4}
                       placeholder="例如：不要出现括号动作描述；每句控制在 30 字以内。"
-                      disabled={finalCopyLlmGenerating}
                     />
                     <p className="input-description">
                       当前约束长度：{(scriptConstraints || '').length} 字。建议控制在 1500 字以内；过长时后端会自动压缩后再请求模型，以降低报错概率。
                     </p>
+                    <button type="button" className="api-key-clear-btn" onClick={clearAdvancedConstraints}>
+                      恢复默认约束
+                    </button>
                   </div>
-                </div>
-              </details>
-
-              {(finalCopyDraftStatus || finalCopyLlmGenerating) && (
-                <div
-                  className={`final-copy-status-bar ${finalCopyLlmGenerating ? 'is-busy' : ''}`}
-                  role="status"
-                >
-                  {finalCopyLlmGenerating ? `⏳ ${finalCopyDraftStatus || '处理中…'}` : finalCopyDraftStatus}
-                </div>
-              )}
-
-              <div className="final-copy-editor-section">
-                <div className="final-copy-editor-head">
-                  <div>
-                    <label className="input-label" htmlFor="final-copy-textarea-main">
-                      播客对话脚本
-                    </label>
-                    <span className="input-description final-copy-editor-hint">
-                      每行一句，格式：Speaker1: … / Speaker2: …
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="api-key-clear-btn"
-                    onClick={clearDraftAndConstraints}
-                    disabled={finalCopyLlmGenerating}
-                    title="清空当前文案与脚本细节约束，并删除本地自动保存内容"
-                  >
-                    一键清除文案
-                  </button>
-                </div>
-                <p className="input-description" style={{ marginTop: 6, marginBottom: 8 }}>
-                  脚本细节约束与文案已自动保存到本地；点击上方「一键清除文案」可一起清空。
-                </p>
-                {finalCopyLoading ? (
-                  <p className="input-description">正在加载已生成脚本…</p>
-                ) : (
-                  <textarea
-                    id="final-copy-textarea-main"
-                    className="final-copy-textarea"
-                    rows={14}
-                    value={finalCopyText}
-                    onChange={(e) => setFinalCopyText(e.target.value)}
-                    placeholder="点击底部「调用大模型生成文案」自动生成；也可粘贴编辑后，右侧「导入人工」转入用户加工模式。"
-                    disabled={finalCopyLlmGenerating}
-                  />
-                )}
               </div>
             </div>
             <div className="final-copy-modal-footer final-copy-modal-footer-bar">
               <div className="final-copy-footer-side final-copy-footer-left">
-                <button
-                  type="button"
-                  className="api-key-clear-btn"
-                  onClick={() => {
-                    if (!finalCopyLlmGenerating) setShowFinalCopyModal(false);
-                  }}
-                  disabled={finalCopyLlmGenerating}
-                >
+                <button type="button" className="api-key-clear-btn" onClick={() => setShowFinalCopyModal(false)}>
                   关闭
                 </button>
               </div>
               <div className="final-copy-footer-center">
-                <div className="final-copy-llm-actions-row">
-                  <button
-                    type="button"
-                    className="final-copy-llm-main-btn"
-                    onClick={() => {
-                      if (finalCopyReadyToPickVoice && !finalCopyLlmGenerating) {
-                        setShowFinalCopyModal(false);
-                        skipToVoiceSection();
-                        return;
-                      }
-                      runScriptDraftLLM();
-                    }}
-                    disabled={finalCopyLlmGenerating || finalCopyLoading || isGenerating}
-                  >
-                    {finalCopyLlmGenerating
-                      ? '生成中…'
-                      : finalCopyReadyToPickVoice
-                        ? '去选择音色'
-                        : '调用大模型生成文案'}
-                  </button>
-                  {finalCopyLlmGenerating && (
-                    <button
-                      type="button"
-                      className="final-copy-llm-stop-btn"
-                      onClick={stopScriptDraftLLM}
-                    >
-                      停止生成
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="final-copy-footer-side final-copy-footer-right">
                 <button
                   type="button"
-                  className="final-copy-import-mini-btn"
-                  onClick={importDraftToManualMode}
-                  disabled={finalCopyLlmGenerating || finalCopyLoading}
-                  title="将当前正文导入「用户加工模式」，可继续编辑后再生成播客"
+                  className="final-copy-llm-main-btn"
+                  onClick={saveAiAdvancedConfigAndClose}
+                  disabled={isGenerating}
                 >
-                  导入人工
+                  保存
                 </button>
               </div>
+              <div className="final-copy-footer-side final-copy-footer-right" />
             </div>
           </div>
         </div>

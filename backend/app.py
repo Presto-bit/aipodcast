@@ -16,8 +16,11 @@ import zipfile
 import subprocess
 import shutil
 from flask import Flask, request, jsonify, Response, send_file, send_from_directory, stream_with_context
+
+import auth_service
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from urllib.parse import urlparse
 
 # 添加backend目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +31,70 @@ from voice_manager import voice_manager
 from podcast_generator import podcast_generator
 from minimax_client import minimax_client
 from audio_utils import hex_to_audio_segment
+
+TTS_BODY_MAX_CHARS = 10000
+TTS_INTRO_OUTRO_MAX = 800
+MAX_VOICE_CLONE_UPLOAD_BYTES = 20 * 1024 * 1024
+
+
+def _parse_tts_dialogue_lines(text: str):
+    """解析 Speaker1:/Speaker2: 对白，返回 [('1', chunk), ('2', chunk), ...]"""
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    pat = re.compile(r"^\s*Speaker\s*([12])\s*[:：]\s*(.*)$", re.I)
+    segments = []
+    current_sp = "1"
+    current_parts = []
+
+    def flush():
+        if not current_parts:
+            return
+        t = "\n".join(current_parts).strip()
+        current_parts.clear()
+        if t:
+            segments.append((current_sp, t))
+
+    for line in raw.split("\n"):
+        m = pat.match(line)
+        if m:
+            flush()
+            current_sp = m.group(1)
+            rest = (m.group(2) or "").strip()
+            current_parts = [rest] if rest else []
+        else:
+            current_parts.append(line)
+    flush()
+    if not segments and raw:
+        return [("1", raw)]
+    return segments
+
+
+def _tts_synthesize_to_segment(text: str, voice_id: str, api_key: str):
+    """单次 TTS，返回 pydub AudioSegment。"""
+    chunks = []
+    trace_id = None
+    for event in minimax_client.synthesize_speech_stream(text=text, voice_id=voice_id, api_key=api_key):
+        if event.get("type") == "audio_chunk":
+            chunks.append(event.get("audio", ""))
+        elif event.get("type") == "tts_complete":
+            trace_id = event.get("trace_id")
+        elif event.get("type") == "error":
+            raise RuntimeError(event.get("message", "合成失败"))
+    if not chunks:
+        raise RuntimeError("合成失败：未返回音频数据")
+    seg = hex_to_audio_segment("".join(chunks))
+    if seg is None:
+        raise RuntimeError("音频解码失败")
+    return seg, trace_id
+
+
+def _polish_tts_line(text: str, api_key: str, language: str):
+    pr = minimax_client.polish_text_for_tts(text, api_key=api_key, language=language)
+    if not pr.get("success"):
+        return (text, None, pr.get("error"))
+    out = (pr.get("text") or text).strip() or text
+    return (out, pr.get("trace_id"), None)
 from rag_utils import retrieve_top_chunks, build_retrieval_query, build_full_coverage_context, hybrid_rerank_chunks
 from rag_store import RagStore
 from cross_doc_reasoner import summarize_evidence, build_reasoned_context
@@ -41,6 +108,7 @@ from reasoner_utils import (
     tail_dialogue_for_continuation,
     build_structured_memory,
     build_global_constitution,
+    build_article_constitution,
     post_edit_script_for_coherence,
     parse_outline_segments,
     strip_premature_closing,
@@ -62,7 +130,13 @@ logger = logging.getLogger(__name__)
 
 # Flask 应用
 app = Flask(__name__)
-CORS(app)
+# 统一允许跨域（开发/静态站直连 :5001），并显式放行 Authorization 以避免预检失败导致 Failed to fetch
+CORS(
+    app,
+    resources={r"/api/*": {"origins": "*"}, r"/download/*": {"origins": "*"}, r"/health": {"origins": "*"}},
+    allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["Trace-Id", "Trace-ID"],
+)
 voice_store_lock = threading.Lock()
 bgm_store_lock = threading.Lock()
 note_store_lock = threading.Lock()
@@ -236,7 +310,7 @@ def save_saved_voices(voices):
         logger.error(f"写入已保存音色失败: {str(e)}")
 
 
-def upsert_saved_voice(voice_id, source_speaker=None):
+def upsert_saved_voice(voice_id, source_speaker=None, display_name=None):
     """服务端 upsert 一个音色ID记录"""
     normalized_voice_id = str(voice_id or '').strip()
     if not normalized_voice_id:
@@ -245,9 +319,12 @@ def upsert_saved_voice(voice_id, source_speaker=None):
         voices = load_saved_voices()
         existing = next((v for v in voices if v.get("voiceId") == normalized_voice_id), None)
         voices = [v for v in voices if v.get("voiceId") != normalized_voice_id]
+        dn = (display_name or "").strip() if display_name is not None else ""
+        if not dn:
+            dn = (existing or {}).get("displayName") or normalized_voice_id
         voices.insert(0, {
             "voiceId": normalized_voice_id,
-            "displayName": (existing or {}).get("displayName") or normalized_voice_id,
+            "displayName": dn,
             "lastUsedAt": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
             "sourceSpeaker": source_speaker
         })
@@ -521,6 +598,197 @@ def health_check():
     return jsonify({"status": "ok", "message": "AI 播客生成服务运行中"})
 
 
+@app.route('/api/auth/config', methods=['GET'])
+def api_auth_config():
+    return jsonify({"success": True, **auth_service.auth_config_dict()})
+
+
+@app.route('/api/auth/register', methods=['POST'])
+def api_auth_register():
+    if not auth_service.is_auth_enabled():
+        return jsonify({"success": False, "error": "认证未启用"}), 400
+    body = request.get_json(silent=True) or {}
+    phone = str(body.get("phone", "")).strip()
+    password = str(body.get("password", ""))
+    invite = str(body.get("invite_code", "")).strip()
+    token, err = auth_service.register_user(phone, password, invite)
+    if err:
+        return jsonify({"success": False, "error": err}), 400
+    return jsonify(
+        {
+            "success": True,
+            "token": token,
+            "user": auth_service.user_info_for_phone(phone),
+        }
+    )
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_auth_login():
+    if not auth_service.is_auth_enabled():
+        return jsonify({"success": False, "error": "认证未启用"}), 400
+    body = request.get_json(silent=True) or {}
+    phone = str(body.get("phone", "")).strip()
+    password = str(body.get("password", ""))
+    token, err = auth_service.login_user(phone, password)
+    if err:
+        return jsonify({"success": False, "error": err}), 400
+    return jsonify(
+        {
+            "success": True,
+            "token": token,
+            "user": auth_service.user_info_for_phone(phone),
+        }
+    )
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def api_auth_logout():
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        auth_service.delete_session(auth[7:].strip())
+    return jsonify({"success": True})
+
+
+@app.route('/api/auth/me', methods=['GET'])
+def api_auth_me():
+    if not auth_service.is_auth_enabled():
+        return jsonify({"success": True, "user": {"phone": "local", "plan": "free"}})
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return jsonify({"success": False, "error": "未登录"}), 401
+    token = auth[7:].strip()
+    sess = auth_service.get_session(token)
+    if not sess:
+        return jsonify({"success": False, "error": "未登录"}), 401
+    return jsonify({"success": True, "user": auth_service.user_info_for_phone(sess["phone"])})
+
+
+@app.route('/api/auth/status', methods=['GET'])
+def api_auth_status():
+    if not auth_service.is_auth_enabled():
+        return jsonify(
+            {
+                "success": True,
+                "feature_unlocked": True,
+                "feature_expires_in_sec": None,
+            }
+        )
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return jsonify({"success": False, "error": "未登录"}), 401
+    token = auth[7:].strip()
+    sess = auth_service.get_session(token)
+    if not sess:
+        return jsonify({"success": False, "error": "未登录"}), 401
+    now = time.time()
+    fu = sess.get("feature_unlock_expires")
+    unlocked = bool(sess.get("feature_unlocked")) and (not fu or now <= float(fu))
+    left = None
+    if unlocked and fu:
+        left = max(0, int(float(fu) - now))
+    return jsonify(
+        {
+            "success": True,
+            "feature_unlocked": unlocked,
+            "feature_expires_in_sec": left,
+        }
+    )
+
+
+@app.route('/api/auth/unlock_feature', methods=['POST'])
+def api_auth_unlock_feature():
+    if not auth_service.is_auth_enabled():
+        return jsonify({"success": True})
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return jsonify({"success": False, "error": "未登录"}), 401
+    token = auth[7:].strip()
+    body = request.get_json(silent=True) or {}
+    phone = str(body.get("phone", "")).strip()
+    password = str(body.get("password", ""))
+    ok, err = auth_service.unlock_feature(token, phone, password)
+    if not ok:
+        return jsonify({"success": False, "error": err or "验证失败"}), 400
+    return jsonify({"success": True})
+
+
+@app.route('/api/subscription/plans', methods=['GET'])
+def api_subscription_plans():
+    return jsonify(
+        {
+            "success": True,
+            "plans": [
+                {
+                    "id": "free",
+                    "name": "Free",
+                    "monthly_price_cents": 0,
+                    "yearly_price_cents": 0,
+                    "description": "基础体验",
+                },
+                {
+                    "id": "pro",
+                    "name": "Pro",
+                    "monthly_price_cents": None,
+                    "yearly_price_cents": None,
+                    "description": "专业创作（价格待定）",
+                },
+                {
+                    "id": "max",
+                    "name": "Max",
+                    "monthly_price_cents": None,
+                    "yearly_price_cents": None,
+                    "description": "团队与高级能力（价格待定）",
+                },
+            ],
+            "note": "pricing_pending",
+        }
+    )
+
+
+@app.route('/api/subscription/me', methods=['GET'])
+def api_subscription_me():
+    if not auth_service.is_auth_enabled():
+        return jsonify({"success": True, "plan": "free", "billing_cycle": None})
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return jsonify({"success": False, "error": "未登录"}), 401
+    token = auth[7:].strip()
+    sess = auth_service.get_session(token)
+    if not sess:
+        return jsonify({"success": False, "error": "未登录"}), 401
+    info = auth_service.user_info_for_phone(sess["phone"])
+    return jsonify({"success": True, **info})
+
+
+@app.route('/api/subscription/select', methods=['POST'])
+def api_subscription_select():
+    """占位：记录用户选择的套餐与周期，支付与计费逻辑待定。"""
+    if not auth_service.is_auth_enabled():
+        return jsonify({"success": True, "message": "本地模式未启用订阅鉴权"})
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return jsonify({"success": False, "error": "未登录"}), 401
+    token = auth[7:].strip()
+    sess = auth_service.get_session(token)
+    if not sess:
+        return jsonify({"success": False, "error": "未登录"}), 401
+    body = request.get_json(silent=True) or {}
+    tier = str(body.get("tier", "free")).strip().lower()
+    cycle = body.get("billing_cycle")
+    cycle = str(cycle).strip().lower() if cycle else None
+    ok, err = auth_service.set_user_subscription(sess["phone"], tier, cycle)
+    if not ok:
+        return jsonify({"success": False, "error": err}), 400
+    return jsonify(
+        {
+            "success": True,
+            "message": "已记录选择，支付与计费逻辑待定",
+            "user": auth_service.user_info_for_phone(sess["phone"]),
+        }
+    )
+
+
 @app.route('/api/default-voices', methods=['GET'])
 def get_default_voices():
     """获取默认音色列表"""
@@ -669,6 +937,38 @@ def create_notebook():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route('/api/notebooks/<notebook_name>', methods=['PATCH'])
+def rename_notebook(notebook_name):
+    """重命名笔记本：JSON { \"new_name\": \"新名称\" }，同步更新所有笔记的 notebook 字段。"""
+    try:
+        old = str(notebook_name or "").strip()
+        payload = request.get_json(silent=True) or {}
+        new_name = str(payload.get("new_name", "")).strip()
+        if not old or not new_name:
+            return jsonify({"success": False, "error": "名称不能为空"}), 400
+        if old == "默认笔记本":
+            return jsonify({"success": False, "error": "不能重命名默认笔记本"}), 400
+        if new_name == "默认笔记本":
+            return jsonify({"success": False, "error": "不能使用该名称"}), 400
+        with note_store_lock:
+            notebooks = load_notebooks()
+            if old not in notebooks:
+                return jsonify({"success": False, "error": "笔记本不存在"}), 404
+            if new_name in notebooks and new_name != old:
+                return jsonify({"success": False, "error": "该名称已存在"}), 400
+            notebooks = [new_name if n == old else n for n in notebooks]
+            notes = load_saved_notes()
+            for item in notes:
+                if str(item.get("notebook", "默认笔记本")).strip() == old:
+                    item["notebook"] = new_name
+            save_saved_notes(notes)
+            save_notebooks(notebooks)
+        return jsonify({"success": True, "old": old, "new": new_name})
+    except Exception as e:
+        logger.error(f"重命名笔记本失败: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route('/api/notebooks/<notebook_name>', methods=['DELETE'])
 def delete_notebook(notebook_name):
     try:
@@ -754,6 +1054,71 @@ def upload_note():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route('/api/notes/import_url', methods=['POST'])
+def import_note_from_url():
+    """从网页 URL 拉取正文并保存为 txt 笔记（与播客侧 URL 解析共用 content_parser）。"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        url = str(payload.get("url", "")).strip()
+        notebook = str(payload.get("notebook", "默认笔记本")).strip() or "默认笔记本"
+        custom_title = str(payload.get("title", "")).strip()
+        if not url:
+            return jsonify({"success": False, "error": "请提供 URL"}), 400
+
+        result = content_parser.parse_url(url)
+        if not result.get("success"):
+            err = result.get("error") or "解析失败"
+            return jsonify({"success": False, "error": err}), 400
+
+        content = (result.get("content") or "").strip()
+        if not content:
+            return jsonify({"success": False, "error": "未能从网页提取正文"}), 400
+
+        max_chars = 500_000
+        if len(content) > max_chars:
+            content = content[:max_chars] + "\n\n（内容已截断）"
+
+        pu = urlparse(url)
+        default_title = custom_title
+        if not default_title:
+            host = (pu.netloc or "").strip()
+            default_title = f"{host} 摘录" if host else "网页笔记"
+
+        note_id = f"note_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        file_name = f"{note_id}.txt"
+        file_path = os.path.join(NOTE_DIR, file_name)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        size = os.path.getsize(file_path) if os.path.exists(file_path) else None
+
+        note_item = {
+            "noteId": note_id,
+            "title": default_title,
+            "tag": "",
+            "notebook": notebook,
+            "fileName": file_name,
+            "ext": "txt",
+            "size": size,
+            "createdAt": created_at,
+            "relativePath": f"/download/note/{file_name}",
+            "sourceUrl": url,
+        }
+        with note_store_lock:
+            notes = load_saved_notes()
+            notes.insert(0, note_item)
+            save_saved_notes(notes[:500])
+            notebooks = load_notebooks()
+            if notebook not in notebooks:
+                notebooks.append(notebook)
+                save_notebooks(notebooks)
+        return jsonify({"success": True, "note": note_item})
+    except Exception as e:
+        logger.error(f"URL 导入笔记失败: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route('/api/notes/<note_id>', methods=['DELETE', 'PATCH'])
 def note_mutate(note_id):
     """删除笔记，或 PATCH 修改展示标题（不改磁盘文件名）。"""
@@ -803,6 +1168,9 @@ def note_mutate(note_id):
 @app.route('/api/preview_voice', methods=['POST'])
 def preview_voice():
     """音色试听（短句）"""
+    fail = auth_service.guard_feature_request(request)
+    if fail is not None:
+        return fail
     try:
         payload = request.get_json(silent=True) or {}
         api_key = str(payload.get("api_key", "")).strip()
@@ -847,6 +1215,325 @@ def preview_voice():
         })
     except Exception as e:
         logger.error(f"音色试听失败: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/text_to_speech', methods=['POST'])
+def text_to_speech_api():
+    """
+    文本转语音：单人整段或双人分段（Speaker1:/Speaker2:），可选开场/结尾、AI 润色。
+    JSON:
+      api_key, text, language (可选), ai_polish (bool)
+      tts_mode: single | dual（默认 single）
+      voice_id: 单人模式必填（MiniMax voice_id）
+      voice_id_1, voice_id_2: 双人模式必填
+      intro_text, outro_text: 可选；单人用 voice_id，双人默认用 voice_id_1 朗读
+      intro_voice_id, outro_voice_id: 可选；若提供则覆盖开场/结尾所用音色（MiniMax voice_id）
+    """
+    fail = auth_service.guard_feature_request(request)
+    if fail is not None:
+        return fail
+    try:
+        from pydub import AudioSegment
+        import re
+
+        def sanitize_for_tts(s: str) -> str:
+            """
+            将用户文本清洗为更适合朗读的格式：
+            - 去除括号/方括号/花括号/书名号/尖括号等包裹的舞台指令与注释
+            - 保留换行结构，但收敛多余空白与重复空行
+            """
+            if not s:
+                return ""
+            t = str(s)
+            # 常见中文“舞台指令”外壳（尽量短内容，避免误删长段正文）
+            t = re.sub(r"（[^）]{0,80}）", "", t)
+            t = re.sub(r"\([^)]{0,80}\)", "", t)
+            t = re.sub(r"\[[^\]]{0,80}\]", "", t)
+            t = re.sub(r"\{[^}]{0,80}\}", "", t)
+            t = re.sub(r"【[^】]{0,80}】", "", t)
+            t = re.sub(r"<[^>]{0,80}>", "", t)
+
+            # 统一标点空白
+            t = t.replace("\r\n", "\n").replace("\r", "\n")
+            t = re.sub(r"[ \t]+\n", "\n", t)
+            t = re.sub(r"\n{3,}", "\n\n", t)
+            t = re.sub(r"[ \t]{2,}", " ", t)
+            return t.strip()
+
+        payload = request.get_json(silent=True) or {}
+        api_key = str(payload.get("api_key", "")).strip()
+        text = str(payload.get("text", "")).strip()
+        intro_text = str(payload.get("intro_text", "")).strip()
+        outro_text = str(payload.get("outro_text", "")).strip()
+        language = str(payload.get("language", "中文")).strip()
+        ai_polish = bool(payload.get("ai_polish", False))
+        tts_mode = str(payload.get("tts_mode", "single")).strip().lower()
+        if tts_mode not in ("single", "dual"):
+            tts_mode = "single"
+
+        voice_id = str(payload.get("voice_id", "")).strip()
+        voice_id_1 = str(payload.get("voice_id_1", "")).strip()
+        voice_id_2 = str(payload.get("voice_id_2", "")).strip()
+
+        if not api_key:
+            return jsonify({"success": False, "error": "未提供 API Key"}), 400
+
+        if intro_text and len(intro_text) > TTS_INTRO_OUTRO_MAX:
+            intro_text = intro_text[:TTS_INTRO_OUTRO_MAX]
+        if outro_text and len(outro_text) > TTS_INTRO_OUTRO_MAX:
+            outro_text = outro_text[:TTS_INTRO_OUTRO_MAX]
+
+        if not text and not intro_text and not outro_text:
+            return jsonify({"success": False, "error": "文本为空"}), 400
+
+        if tts_mode == "dual":
+            if not voice_id_1 or not voice_id_2:
+                return jsonify({"success": False, "error": "双人模式需提供 voice_id_1 与 voice_id_2"}), 400
+        else:
+            if not voice_id:
+                return jsonify({"success": False, "error": "未提供音色 voice_id"}), 400
+
+        main_body = text
+        if len(main_body) > TTS_BODY_MAX_CHARS:
+            main_body = main_body[:TTS_BODY_MAX_CHARS]
+
+        polished = False
+        polish_trace_ids = []
+
+        # “AI 润色”改为：确定性清洗为可朗读文本（去括号/去舞台指令）
+        def maybe_polish(s: str):
+            nonlocal polished
+            if not s:
+                return s
+            if not ai_polish:
+                return s
+            polished = True
+            return sanitize_for_tts(s)
+
+        intro_final = maybe_polish(intro_text) if intro_text else ""
+        outro_final = maybe_polish(outro_text) if outro_text else ""
+
+        audio_parts = []
+        last_trace = None
+
+        def synth_one(content: str, vid: str):
+            nonlocal last_trace
+            if not content.strip():
+                return
+            seg, tid = _tts_synthesize_to_segment(content.strip(), vid, api_key)
+            audio_parts.append(seg)
+            last_trace = tid
+
+        intro_voice_override = str(payload.get("intro_voice_id", "")).strip()
+        outro_voice_override = str(payload.get("outro_voice_id", "")).strip()
+        if tts_mode == "single":
+            intro_voice = intro_voice_override or voice_id
+            outro_voice = outro_voice_override or voice_id
+        else:
+            intro_voice = intro_voice_override or voice_id_1
+            outro_voice = outro_voice_override or voice_id_1
+
+        if intro_final:
+            synth_one(intro_final, intro_voice)
+
+        if tts_mode == "single":
+            body = maybe_polish(main_body) if main_body else ""
+            if not body.strip() and not intro_final and not outro_final:
+                return jsonify({"success": False, "error": "正文为空"}), 400
+            if body.strip():
+                synth_one(body, voice_id)
+        else:
+            lines = _parse_tts_dialogue_lines(main_body)
+            if not lines:
+                if not intro_final and not outro_final:
+                    return jsonify({"success": False, "error": "正文为空"}), 400
+            for sp, chunk in lines:
+                c = maybe_polish(chunk) if chunk and chunk.strip() else chunk
+                vid = voice_id_1 if sp == "1" else voice_id_2
+                synth_one(c, vid)
+
+        if outro_final:
+            synth_one(outro_final, outro_voice)
+
+        if not audio_parts:
+            return jsonify({"success": False, "error": "没有可合成的音频内容"}), 500
+
+        combined = AudioSegment.empty()
+        for p in audio_parts:
+            combined += p
+
+        filename = f"tts_{int(time.time())}_{uuid.uuid4().hex[:8]}.mp3"
+        output_path = os.path.join(OUTPUT_DIR, filename)
+        combined.export(output_path, format="mp3")
+
+        preview_main = (main_body or "")[:400] + ("…" if len(main_body or "") > 400 else "")
+
+        # 可选：根据朗读文本生成配图封面（与播客共用 MiniMax 文生图链路）
+        cover_image_url = None
+        generate_cover = bool(payload.get("generate_cover", True))
+        if generate_cover and api_key:
+            try:
+                body_for_cover = maybe_polish(main_body) if (main_body and ai_polish) else (main_body or "")
+                chunks = []
+                if intro_final:
+                    chunks.append(str(intro_final)[:400])
+                if body_for_cover:
+                    chunks.append(str(body_for_cover)[:1000])
+                if outro_final:
+                    chunks.append(str(outro_final)[:400])
+                summary = "\n".join([c for c in chunks if c]).strip()
+                if not summary:
+                    summary = preview_main or "语音朗读内容"
+                if len(summary) > 1200:
+                    summary = summary[:1200] + "…"
+                cr = minimax_client.generate_cover_image(summary, api_key=api_key)
+                if cr.get("success") and cr.get("image_url"):
+                    cover_image_url = cr["image_url"]
+            except Exception as e:
+                logger.warning(f"TTS 配图生成跳过: {e}")
+
+        out = {
+            "success": True,
+            "audio_url": f"/download/audio/{filename}",
+            "trace_id": last_trace,
+            "polish_trace_ids": polish_trace_ids,
+            "polished": polished,
+            "tts_mode": tts_mode,
+            "text_used": preview_main,
+        }
+        if cover_image_url:
+            out["cover_image"] = cover_image_url
+        return jsonify(out)
+    except RuntimeError as e:
+        logger.error(f"文本转语音失败: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+    except Exception as e:
+        logger.error(f"文本转语音失败: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/tts_sanitize', methods=['POST'])
+def tts_sanitize_api():
+    """将文本清洗为更适合朗读的格式（不合成音频）。"""
+    fail = auth_service.guard_feature_request(request)
+    if fail is not None:
+        return fail
+    try:
+        payload = request.get_json(silent=True) or {}
+        text = str(payload.get("text", "")).strip()
+        if not text:
+            return jsonify({"success": False, "error": "文本为空"}), 400
+        # 复用 text_to_speech_api 内部的清洗逻辑：sanitize_for_tts
+        # 注意：sanitize_for_tts 定义在 text_to_speech_api 的 try 作用域内，为避免重复实现，这里做一次轻量同款实现
+        def sanitize_for_tts_preview(s: str) -> str:
+            if not s:
+                return ""
+            t = str(s)
+            t = re.sub(r"（[^）]{0,80}）", "", t)
+            t = re.sub(r"\([^)]{0,80}\)", "", t)
+            t = re.sub(r"\[[^\]]{0,80}\]", "", t)
+            t = re.sub(r"\{[^}]{0,80}\}", "", t)
+            t = re.sub(r"【[^】]{0,80}】", "", t)
+            t = re.sub(r"<[^>]{0,80}>", "", t)
+            t = t.replace("\r\n", "\n").replace("\r", "\n")
+            t = re.sub(r"[ \t]+\n", "\n", t)
+            t = re.sub(r"\n{3,}", "\n\n", t)
+            t = re.sub(r"[ \t]{2,}", " ", t)
+            return t.strip()
+
+        cleaned = sanitize_for_tts_preview(text)
+        return jsonify({"success": True, "text": cleaned})
+    except Exception as e:
+        logger.error(f"TTS 清洗失败: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/url_preview_text', methods=['POST'])
+def url_preview_text_api():
+    """从网址提取正文，供文本转语音「粘贴链接」使用（与播客 URL 解析同源）。"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        url = str(payload.get("url", "")).strip()
+        if not url:
+            return jsonify({"success": False, "error": "URL 为空"}), 400
+        result = content_parser.parse_url(url)
+        if not result.get("success"):
+            return jsonify({
+                "success": False,
+                "error": result.get("error", "网页解析失败"),
+            }), 400
+        text = str(result.get("content") or "").strip()
+        if not text:
+            return jsonify({"success": False, "error": "未提取到正文"}), 400
+        max_chars = 10000
+        if len(text) > max_chars:
+            text = text[:max_chars]
+        return jsonify({"success": True, "text": text})
+    except Exception as e:
+        logger.error(f"URL 正文预览失败: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/voice_clone', methods=['POST'])
+def voice_clone_api():
+    """上传音频并调用 MiniMax 克隆，写入 saved_voices。表单：audio, api_key, display_name（可选）。"""
+    fail = auth_service.guard_feature_request(request)
+    if fail is not None:
+        return fail
+    try:
+        if 'audio' not in request.files:
+            return jsonify({"success": False, "error": "未提供音频文件"}), 400
+        f = request.files['audio']
+        if not f or not getattr(f, 'filename', None):
+            return jsonify({"success": False, "error": "音频文件为空"}), 400
+        api_key = str(request.form.get("api_key", "")).strip()
+        display_name = str(request.form.get("display_name", "")).strip()
+        if not api_key:
+            return jsonify({"success": False, "error": "未提供 API Key"}), 400
+
+        data = f.read()
+        if len(data) > MAX_VOICE_CLONE_UPLOAD_BYTES:
+            mb = MAX_VOICE_CLONE_UPLOAD_BYTES // (1024 * 1024)
+            return jsonify({"success": False, "error": f"文件过大，单文件最大 {mb}MB"}), 400
+
+        raw_name = secure_filename(f.filename) or "audio"
+        ext = os.path.splitext(raw_name)[1].lower()
+        if ext not in ('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.webm', '.mpeg', '.mpga', '.aac', '.mp4'):
+            ext = '.wav'
+        fname = f"clone_upload_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
+        save_path = os.path.join(UPLOAD_DIR, fname)
+        with open(save_path, 'wb') as out:
+            out.write(data)
+
+        result = voice_manager.clone_custom_voice(save_path, api_key=api_key)
+        try:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+        except OSError:
+            pass
+
+        if not result.get("success"):
+            return jsonify({
+                "success": False,
+                "error": result.get("error", result.get("message", "克隆失败")),
+            }), 500
+
+        vid = str(result.get("voice_id", "")).strip()
+        if not vid:
+            return jsonify({"success": False, "error": "未返回 voice_id"}), 500
+
+        dup_name = display_name or vid
+        upsert_saved_voice(vid, source_speaker="clone", display_name=dup_name)
+        return jsonify({
+            "success": True,
+            "voice_id": vid,
+            "displayName": dup_name,
+            "upload_trace_id": result.get("upload_trace_id"),
+            "clone_trace_id": result.get("clone_trace_id"),
+        })
+    except Exception as e:
+        logger.error(f"语音克隆失败: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -949,6 +1636,10 @@ def _build_structured_memory(produced: str, max_lines: int = 20) -> str:
 
 def _build_global_constitution(script_language, script_style, program_name, speaker1_persona, speaker2_persona):
     return build_global_constitution(script_language, script_style, program_name, speaker1_persona, speaker2_persona)
+
+
+def _build_article_constitution(script_language, script_style, program_name):
+    return build_article_constitution(script_language, script_style, program_name)
 
 
 def _post_edit_script_for_coherence(text: str) -> str:
@@ -1089,9 +1780,24 @@ def _mid_segment_transition_bans(seg_role: str) -> str:
     return "\n" + "\n".join(lines)
 
 
-def _non_last_closing_rule(seg_no: int, segments: int) -> str:
+def _mid_segment_article_bans(seg_role: str) -> str:
+    if seg_role == "last":
+        return ""
+    lines = [
+        "【文章分段】非末段：禁止再次写与上文重复的全文导语、标题复述；换节须有过渡。",
+    ]
+    if seg_role == "middle":
+        lines.append("【中段】禁止突然跳到与上文无关的新话题；承接末段论点或案例再展开。")
+    return "\n" + "\n".join(lines)
+
+
+def _non_last_closing_rule(seg_no: int, segments: int, *, is_article: bool = False) -> str:
     if seg_no >= segments:
         return ""
+    if is_article:
+        return (
+            "\n若当前不是最后一段，严禁出现全文收束语（如「综上所述」「全文完」「以上便是本文全部内容」「感谢阅读」等）。"
+        )
     return (
         "\n若当前不是最后一段，严禁出现任何结束语（如“感谢收听”“下期再见”“今天就到这里”“再见”）。"
     )
@@ -1109,12 +1815,19 @@ def _merge_constraints_on_segment_retry(
     seg_opening_rule: str,
     bridge_sentence: str,
     mid_bans: str,
+    output_mode: str = "dialogue",
 ):
     """794/unknown 重试时保留衔接相关硬约束，避免只剩极简句导致断裂。"""
-    minimal = (
-        "只输出 Speaker1/Speaker2 对话，一行一句。"
-        "禁止动作和场景描述。保持主题一致并自然收尾。"
-    )
+    if (output_mode or "dialogue").lower() == "article":
+        minimal = (
+            "只输出普通文章正文，禁止 Speaker 对话行与播客口吻。"
+            "承接上文、保持主题一致并自然收尾。"
+        )
+    else:
+        minimal = (
+            "只输出 Speaker1/Speaker2 对话，一行一句。"
+            "禁止动作和场景描述。保持主题一致并自然收尾。"
+        )
     parts = [
         minimal,
         "【全局宪法】\n" + global_constitution,
@@ -1132,22 +1845,38 @@ def _merge_constraints_on_segment_retry(
         parts.append(seg_opening_rule.strip())
     if seg_no > 1 and bridge_sentence:
         parts.append(f"段间桥接句模板（优先用于本段前2句之一）：{bridge_sentence}")
-    parts.append(_non_last_closing_rule(seg_no, segments).strip())
-    parts.append("格式：每行 Speaker1: 或 Speaker2: 开头，一行一句。")
+    parts.append(
+        _non_last_closing_rule(
+            seg_no, segments, is_article=(output_mode or "dialogue").lower() == "article"
+        ).strip()
+    )
+    if (output_mode or "dialogue").lower() == "article":
+        parts.append("格式：普通文章段落；禁止 Speaker 前缀。")
+    else:
+        parts.append("格式：每行 Speaker1: 或 Speaker2: 开头，一行一句。")
     return "\n".join([p for p in parts if p]).strip()
 
 
-def _merge_constraints_on_single_retry(*, global_constitution: str, script_constraints: str) -> str:
+def _merge_constraints_on_single_retry(*, global_constitution: str, script_constraints: str, output_mode: str = "dialogue") -> str:
     """单次生成模式 794/unknown 重试时保留全局宪法与用户约束摘要。"""
-    minimal = (
-        "只输出 Speaker1/Speaker2 对话，一行一句。"
-        "禁止动作和场景描述。保持主题一致并自然收尾。"
-    )
+    if (output_mode or "dialogue").lower() == "article":
+        minimal = (
+            "只输出普通文章正文，禁止 Speaker 对话行与播客口吻。"
+            "保持主题一致并自然收尾。"
+        )
+    else:
+        minimal = (
+            "只输出 Speaker1/Speaker2 对话，一行一句。"
+            "禁止动作和场景描述。保持主题一致并自然收尾。"
+        )
     parts = [minimal, "【全局宪法】\n" + global_constitution]
     sc = (script_constraints or "").strip()
     if sc:
         parts.append("【用户约束摘要】\n" + sc[:800])
-    parts.append("格式：每行 Speaker1: 或 Speaker2: 开头，一行一句。")
+    if (output_mode or "dialogue").lower() == "article":
+        parts.append("格式：普通文章段落；禁止 Speaker 前缀。")
+    else:
+        parts.append("格式：每行 Speaker1: 或 Speaker2: 开头，一行一句。")
     return "\n".join(parts).strip()
 
 
@@ -1213,12 +1942,16 @@ def stream_script_draft_generation_events(merged_content,
                                           speaker1_persona,
                                           speaker2_persona,
                                           script_constraints,
-                                          long_script_mode=False):
+                                          long_script_mode=False,
+                                          output_mode="dialogue"):
     """
-    生成播客文案事件流：
-    - 普通模式：单次生成
+    生成播客或文章文案事件流：
+    - output_mode=dialogue：双人播客对话脚本
+    - output_mode=article：普通文章（非对话）
     - 长文案模式：按最大单段字数自动分段生成并拼接
     """
+    om = (output_mode or "dialogue").strip().lower()
+    is_article = om == "article"
     max_single = int(
         PODCAST_CONFIG.get(
             "script_target_chars_preferred_max",
@@ -1227,8 +1960,12 @@ def stream_script_draft_generation_events(merged_content,
     )
     # 超过单段稳定字数时自动分段；long_script_mode 仅作为显式偏好保留
     use_segmented = int(script_target_chars) > max_single or bool(long_script_mode)
-    global_constitution = _build_global_constitution(
-        script_language, script_style, program_name, speaker1_persona, speaker2_persona
+    global_constitution = (
+        _build_article_constitution(script_language, script_style, program_name)
+        if is_article
+        else _build_global_constitution(
+            script_language, script_style, program_name, speaker1_persona, speaker2_persona
+        )
     )
 
     if not use_segmented:
@@ -1250,6 +1987,7 @@ def stream_script_draft_generation_events(merged_content,
                 speaker1_persona=speaker1_persona,
                 speaker2_persona=speaker2_persona,
                 script_constraints=constraints_for_try,
+                output_mode=om,
             ):
                 if script_event["type"] == "script_chunk":
                     yield {"type": "draft_script_chunk", "content": script_event.get("content", "")}
@@ -1276,6 +2014,7 @@ def stream_script_draft_generation_events(merged_content,
                     constraints_for_try = _merge_constraints_on_single_retry(
                         global_constitution=global_constitution,
                         script_constraints=script_constraints,
+                        output_mode=om,
                     )
                 yield {
                     "type": "log",
@@ -1301,6 +2040,7 @@ def stream_script_draft_generation_events(merged_content,
         speaker1_persona=speaker1_persona,
         speaker2_persona=speaker2_persona,
         script_constraints=script_constraints,
+        output_mode=om,
     )
     if outline_result.get("success"):
         yield {"type": "log", "message": "已生成分段总纲，按总纲逐段生成正文。"}
@@ -1329,21 +2069,34 @@ def stream_script_draft_generation_events(merged_content,
             "message": f"开始生成第 {seg_no}/{segments} 段（{seg_title}），目标约 {current_target} 字"
         }
 
-        if seg_no == 1:
-            continuity_tip = (
-                "这是第一段：先用日常痛点/背景导入，再给核心定义，然后再进入方法展开。"
-                "不要一上来直接进入深层细节；本段末尾不要做全篇收尾。"
-            )
-            seg_role = "first"
-        elif seg_no < segments:
-            continuity_tip = "这是中间段：必须延续上文，不要重复开场，不要做最终总结。"
-            seg_role = "middle"
+        if is_article:
+            if seg_no == 1:
+                continuity_tip = (
+                    "这是文章开篇部分：引入背景与问题，明确核心议题；若后文还有段落，末段不要做全篇总结。"
+                )
+                seg_role = "first"
+            elif seg_no < segments:
+                continuity_tip = "这是文章中间部分：承接上文论点与术语，不重复开篇套话；不做全文最终总结。"
+                seg_role = "middle"
+            else:
+                continuity_tip = "这是文章最后部分：收束论证并给出结论或建议。"
+                seg_role = "last"
         else:
-            continuity_tip = "这是最后一段：延续上文并完成简洁收尾总结。"
-            seg_role = "last"
+            if seg_no == 1:
+                continuity_tip = (
+                    "这是第一段：先用日常痛点/背景导入，再给核心定义，然后再进入方法展开。"
+                    "不要一上来直接进入深层细节；本段末尾不要做全篇收尾。"
+                )
+                seg_role = "first"
+            elif seg_no < segments:
+                continuity_tip = "这是中间段：必须延续上文，不要重复开场，不要做最终总结。"
+                seg_role = "middle"
+            else:
+                continuity_tip = "这是最后一段：延续上文并完成简洁收尾总结。"
+                seg_role = "last"
 
         prev_outline_ctx = _prev_segment_outline_context(plan_segments, idx)
-        mid_bans = _mid_segment_transition_bans(seg_role)
+        mid_bans = _mid_segment_article_bans(seg_role) if is_article else _mid_segment_transition_bans(seg_role)
         seg_opening_rule = ""
         tail = ""
 
@@ -1356,13 +2109,21 @@ def stream_script_draft_generation_events(merged_content,
             tail_lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
             tail_anchor = tail_lines[-2:] if tail_lines else []
             if tail_anchor:
-                seg_opening_rule = (
-                    "\n【段首衔接硬约束】\n"
-                    "本段前2-3句必须紧接上文最后一句推进，不得重新寒暄或重新定义主题。\n"
-                    "请先回应/承接以下上文锚点，再自然展开新信息：\n"
-                    + "\n".join([f"- {x}" for x in tail_anchor])
-                    + "\n若需切换子话题，先用一句过渡句（如“顺着这个点，我们再看…”）后再展开。"
-                )
+                if is_article:
+                    seg_opening_rule = (
+                        "\n【段首衔接】\n"
+                        "本段开头须紧接上文末段推进，不得重复全文标题或与上文重复的导语。\n"
+                        "可参考上文末段锚点：\n"
+                        + "\n".join([f"- {x}" for x in tail_anchor])
+                    )
+                else:
+                    seg_opening_rule = (
+                        "\n【段首衔接硬约束】\n"
+                        "本段前2-3句必须紧接上文最后一句推进，不得重新寒暄或重新定义主题。\n"
+                        "请先回应/承接以下上文锚点，再自然展开新信息：\n"
+                        + "\n".join([f"- {x}" for x in tail_anchor])
+                        + "\n若需切换子话题，先用一句过渡句（如“顺着这个点，我们再看…”）后再展开。"
+                    )
             segment_material = (
                 "【参考素材（供事实与术语；接续时请优先紧接下方「已生成上文」末句，勿另起炉灶重讲开场）】\n"
                 f"{merged_content}\n\n"
@@ -1379,35 +2140,65 @@ def stream_script_draft_generation_events(merged_content,
             script_style,
             tail if seg_no > 1 else "",
         )
-        extra_constraints = (
-            (script_constraints or "").strip()
-            + "\n"
-            + "【全局宪法】\n"
-            + global_constitution
-            + "\n"
-            + continuity_tip
-            + "\n"
-            + (prev_outline_ctx.strip() if prev_outline_ctx else "")
-            + "\n"
-            + mid_bans.strip()
-            + "\n"
-            + "保持与已生成内容的人设、语气、术语一致，勿逐句复述「已生成上文」。"
-            + "\n"
-            + "严格遵守结构化记忆中的 term_dictionary / fact_anchors / forbidden_repeats："
-            + "术语保持同一叫法、事实锚点不改写、禁重复句不再复述。"
-            + "\n"
-            + f"本段标题：{seg_title}。"
-            + ("\n本段必须覆盖要点：" + "；".join(seg_must) if seg_must else "")
-            + (f"\n本段过渡提示：{seg_transition}" if seg_transition else "")
-            + _non_last_closing_rule(seg_no, segments)
-            + "\n"
-            + "格式：每行 Speaker1: 或 Speaker2: 开头，一行一句。"
-            + (
-                f"\n段间桥接句模板（优先用于本段前2句之一）：{bridge_sentence}"
-                if seg_no > 1 and bridge_sentence
-                else ""
-            )
-        ).strip()
+        if is_article:
+            extra_constraints = (
+                (script_constraints or "").strip()
+                + "\n"
+                + "【全局宪法】\n"
+                + global_constitution
+                + "\n"
+                + continuity_tip
+                + "\n"
+                + (prev_outline_ctx.strip() if prev_outline_ctx else "")
+                + "\n"
+                + mid_bans.strip()
+                + "\n"
+                + "保持与已生成上文语气、术语一致，勿逐句复述已有段落。"
+                + "\n"
+                + "严格遵守结构化记忆中的术语与事实锚点：同一叫法、事实不改写。"
+                + "\n"
+                + f"本段章节：{seg_title}。"
+                + ("\n本段须覆盖要点：" + "；".join(seg_must) if seg_must else "")
+                + (f"\n段间衔接提示：{seg_transition}" if seg_transition else "")
+                + _non_last_closing_rule(seg_no, segments, is_article=True)
+                + "\n"
+                + "格式：普通文章正文；禁止 Speaker1/Speaker2；允许 Markdown。"
+                + (
+                    f"\n过渡句参考（可用于段首）：{bridge_sentence}"
+                    if seg_no > 1 and bridge_sentence
+                    else ""
+                )
+            ).strip()
+        else:
+            extra_constraints = (
+                (script_constraints or "").strip()
+                + "\n"
+                + "【全局宪法】\n"
+                + global_constitution
+                + "\n"
+                + continuity_tip
+                + "\n"
+                + (prev_outline_ctx.strip() if prev_outline_ctx else "")
+                + "\n"
+                + mid_bans.strip()
+                + "\n"
+                + "保持与已生成内容的人设、语气、术语一致，勿逐句复述「已生成上文」。"
+                + "\n"
+                + "严格遵守结构化记忆中的 term_dictionary / fact_anchors / forbidden_repeats："
+                + "术语保持同一叫法、事实锚点不改写、禁重复句不再复述。"
+                + "\n"
+                + f"本段标题：{seg_title}。"
+                + ("\n本段必须覆盖要点：" + "；".join(seg_must) if seg_must else "")
+                + (f"\n本段过渡提示：{seg_transition}" if seg_transition else "")
+                + _non_last_closing_rule(seg_no, segments, is_article=False)
+                + "\n"
+                + "格式：每行 Speaker1: 或 Speaker2: 开头，一行一句。"
+                + (
+                    f"\n段间桥接句模板（优先用于本段前2句之一）：{bridge_sentence}"
+                    if seg_no > 1 and bridge_sentence
+                    else ""
+                )
+            ).strip()
 
         attempts = 0
         segment_done = False
@@ -1434,6 +2225,7 @@ def stream_script_draft_generation_events(merged_content,
                 script_constraints=extra_constraints_for_try,
                 segment_role=seg_role,
                 segment_position=seg_position,
+                output_mode=om,
             ):
                 if script_event["type"] == "script_chunk":
                     chunk = script_event.get("content", "")
@@ -1483,6 +2275,7 @@ def stream_script_draft_generation_events(merged_content,
                         seg_opening_rule=seg_opening_rule,
                         bridge_sentence=bridge_sentence,
                         mid_bans=mid_bans,
+                        output_mode=om,
                     )
                 yield {
                     "type": "log",
@@ -1501,7 +2294,7 @@ def stream_script_draft_generation_events(merged_content,
             yield {"type": "error", "message": error_message or "脚本分段生成失败"}
             return
 
-        if seg_no > 1 and PODCAST_CONFIG.get("segment_boundary_api_polish"):
+        if seg_no > 1 and PODCAST_CONFIG.get("segment_boundary_api_polish") and not is_article:
             prev_snap = produced_snapshot_before_segment
             heuristic_only = PODCAST_CONFIG.get("segment_boundary_api_heuristic_only", True)
             if not produced.startswith(prev_snap):
@@ -1556,10 +2349,11 @@ def stream_script_draft_generation_events(merged_content,
         "type": "draft_script_complete",
         "trace_id": trace_ids[-1] if trace_ids else None
     }
-    # 第三层：收口校对后回传替换稿（前端可用该稿覆盖）
-    polished = _post_edit_script_for_coherence(produced)
-    if polished and polished != produced:
-        yield {"type": "draft_script_replace", "content": polished}
+    # 第三层：对话脚本收口校对（文章模式不适用，避免把正文改成 Speaker 行）
+    if not is_article:
+        polished = _post_edit_script_for_coherence(produced)
+        if polished and polished != produced:
+            yield {"type": "draft_script_replace", "content": polished}
 
 
 @app.route('/api/ping', methods=['GET'])
@@ -1571,12 +2365,21 @@ def api_ping():
 @app.route('/api/generate_script_draft', methods=['POST'])
 def generate_script_draft():
     """
-    仅根据当前参考素材 + AI 高级配置调用大模型生成播客对话脚本（SSE）。
+    根据参考素材 + 配置流式生成文稿（SSE）。表单 output_mode：dialogue（默认，双人播客脚本）或 article（普通文章）。
     不合成语音、不生成封面。事件类型：
     - draft_script_chunk: { content }
     - draft_script_complete: { trace_id }
     - 其它与 generate_podcast 相同: log, url_parse_warning, error, progress
     """
+    fail = auth_service.guard_feature_request(request)
+    if fail is not None:
+        err = fail[0].get_json(silent=True) or {}
+        msg = err.get("error") or "鉴权失败"
+
+        def err_gen():
+            yield "data: " + json.dumps({"type": "error", "message": msg, "code": err.get("code")}) + "\n\n"
+
+        return Response(err_gen(), mimetype="text/event-stream")
     session_id = str(uuid.uuid4())
     user_api_key = request.form.get("api_key", "").strip()
     if not user_api_key:
@@ -1602,7 +2405,20 @@ def generate_script_draft():
         "对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本。",
     ).strip()
     long_script_mode = (request.form.get("long_script_mode", "0") or "0").strip() in ("1", "true", "True", "yes", "on")
+    output_mode = (request.form.get("output_mode", "dialogue") or "dialogue").strip().lower()
+    if output_mode not in ("dialogue", "article"):
+        output_mode = "dialogue"
     use_rag = (request.form.get("use_rag", "1") or "1").strip() in ("1", "true", "True", "yes", "on")
+    rag_text_mode = (request.form.get("rag_text_mode", "0") or "0").strip() in ("1", "true", "True", "yes", "on")
+    rag_text_chars_raw = str(request.form.get("rag_text_chars", "") or "").strip()
+    rag_text_chars = None
+    if rag_text_mode and rag_text_chars_raw:
+        try:
+            rag_text_chars_n = int(rag_text_chars_raw)
+            if rag_text_chars_n > 0:
+                rag_text_chars = rag_text_chars_n
+        except Exception:
+            rag_text_chars = None
     if long_script_mode:
         script_target_chars = parse_long_script_target_chars(raw_script_target_chars)
     selected_note_ids_raw = request.form.get("selected_note_ids", "[]").strip()
@@ -1637,7 +2453,11 @@ def generate_script_draft():
                 return
 
             # 长参考资料场景：自动启用轻量 RAG，降低上游报错并提升相关性
-            if use_rag and len(merged) >= RAG_TRIGGER_CHARS:
+            effective_ref_chars = len(merged)
+            if use_rag and rag_text_mode and rag_text_chars:
+                effective_ref_chars = rag_text_chars
+
+            if use_rag and effective_ref_chars >= RAG_TRIGGER_CHARS:
                 merged, rag_log = apply_long_reference_strategy(
                     merged,
                     user_api_key,
@@ -1652,7 +2472,12 @@ def generate_script_draft():
                 if rag_log:
                     yield f"data: {json.dumps({'type': 'log', 'message': rag_log})}\n\n"
 
-            yield f"data: {json.dumps({'type': 'progress', 'step': 'llm_script', 'message': '正在调用大模型生成播客文案...'})}\n\n"
+            llm_msg = (
+                "正在调用大模型生成文章…"
+                if output_mode == "article"
+                else "正在调用大模型生成播客文案…"
+            )
+            yield f"data: {json.dumps({'type': 'progress', 'step': 'llm_script', 'message': llm_msg})}\n\n"
 
             for draft_event in stream_script_draft_generation_events(
                 merged,
@@ -1665,6 +2490,7 @@ def generate_script_draft():
                 speaker2_persona,
                 script_constraints,
                 long_script_mode=long_script_mode,
+                output_mode=output_mode,
             ):
                 yield f"data: {json.dumps(draft_event)}\n\n"
                 if draft_event.get("type") == "error":
@@ -1704,6 +2530,15 @@ def generate_podcast():
     - speaker2_voice_name: "mini" 或 "max"（default 时）
     - speaker2_audio: 音频文件（custom 时）
     """
+    fail = auth_service.guard_feature_request(request)
+    if fail is not None:
+        err = fail[0].get_json(silent=True) or {}
+        msg = err.get("error") or "鉴权失败"
+
+        def auth_err_gen():
+            yield "data: " + json.dumps({"type": "error", "message": msg, "code": err.get("code")}) + "\n\n"
+
+        return Response(auth_err_gen(), mimetype="text/event-stream")
     # 在请求上下文中提取所有数据
     session_id = str(uuid.uuid4())
     logger.info(f"开始生成播客，Session ID: {session_id}")
@@ -1738,6 +2573,16 @@ def generate_podcast():
     speaker2_persona = request.form.get('speaker2_persona', '稳重专业，深度分析').strip()
     script_constraints = request.form.get('script_constraints', '对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本。').strip()
     use_rag = (request.form.get("use_rag", "1") or "1").strip() in ("1", "true", "True", "yes", "on")
+    rag_text_mode = (request.form.get("rag_text_mode", "0") or "0").strip() in ("1", "true", "True", "yes", "on")
+    rag_text_chars_raw = str(request.form.get("rag_text_chars", "") or "").strip()
+    rag_text_chars = None
+    if rag_text_mode and rag_text_chars_raw:
+        try:
+            rag_text_chars_n = int(rag_text_chars_raw)
+            if rag_text_chars_n > 0:
+                rag_text_chars = rag_text_chars_n
+        except Exception:
+            rag_text_chars = None
     selected_note_ids_raw = request.form.get('selected_note_ids', '[]').strip()
 
     try:
@@ -1944,7 +2789,11 @@ def generate_podcast():
                 yield f"data: {json.dumps({'type': 'error', 'message': '请至少提供一种可用参考内容（文本/网址/可解析文件/知识库勾选笔记）'})}\n\n"
                 return
 
-            if use_rag and script_mode != "manual" and len(merged_content) >= RAG_TRIGGER_CHARS:
+            effective_ref_chars = len(merged_content)
+            if use_rag and rag_text_mode and rag_text_chars:
+                effective_ref_chars = rag_text_chars
+
+            if use_rag and script_mode != "manual" and effective_ref_chars >= RAG_TRIGGER_CHARS:
                 merged_content, rag_log = apply_long_reference_strategy(
                     merged_content,
                     user_api_key,
@@ -2160,11 +3009,14 @@ def download_cover():
         import time
         filename = f"podcast_cover_{int(time.time())}.jpg"
 
-        # 返回图片数据，设置下载头
+        # 返回图片数据；inline 便于前端 <img> 展示，attachment 会导致部分浏览器不内联显示
         from flask import make_response
+        ct = (response.headers.get('Content-Type') or '').split(';')[0].strip() or 'image/jpeg'
+        if not ct.startswith('image/'):
+            ct = 'image/jpeg'
         resp = make_response(response.content)
-        resp.headers['Content-Type'] = 'image/jpeg'
-        resp.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        resp.headers['Content-Type'] = ct
+        resp.headers['Content-Disposition'] = f'inline; filename="{filename}"'
         return resp
 
     except Exception as e:

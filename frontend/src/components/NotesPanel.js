@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { getApiBaseUrl } from '../apiBaseUrl';
+import { apiPath } from '../apiBaseUrl';
+import './NotesPanel.css';
 
 const SELECTED_NOTES_KEY = 'minimax_aipodcast_selected_notes';
 
@@ -17,6 +18,10 @@ const NotesPanel = ({ onGoGenerator }) => {
   const [uploading, setUploading] = useState(false);
   const [deletingId, setDeletingId] = useState('');
   const [showNotebookModal, setShowNotebookModal] = useState(false);
+  const [showRenameNotebookModal, setShowRenameNotebookModal] = useState(false);
+  const [renameNotebookOld, setRenameNotebookOld] = useState('');
+  const [renameNotebookNew, setRenameNotebookNew] = useState('');
+  const [notebookMenuOpen, setNotebookMenuOpen] = useState(null);
   const [newNotebookName, setNewNotebookName] = useState('');
   const [selectedNotebook, setSelectedNotebook] = useState('默认笔记本');
   const [noteMenuOpenId, setNoteMenuOpenId] = useState(null);
@@ -31,15 +36,14 @@ const NotesPanel = ({ onGoGenerator }) => {
   const [previewTruncated, setPreviewTruncated] = useState(false);
 
   const menuAnchorRef = useRef(null);
-
-  const API_URL = getApiBaseUrl();
+  const notebookMenuRef = useRef(null);
 
   const loadNotes = async () => {
     try {
       const params = new URLSearchParams();
       if (selectedNotebook) params.set('notebook', selectedNotebook);
       const query = params.toString();
-      const resp = await fetch(`${API_URL}/api/notes${query ? `?${query}` : ''}`);
+      const resp = await fetch(apiPath(`/api/notes${query ? `?${query}` : ''}`));
       if (!resp.ok) return;
       const data = await resp.json();
       if (data?.success && Array.isArray(data.notes)) {
@@ -52,7 +56,7 @@ const NotesPanel = ({ onGoGenerator }) => {
 
   const loadNotebooks = async () => {
     try {
-      const resp = await fetch(`${API_URL}/api/notebooks`);
+      const resp = await fetch(apiPath('/api/notebooks'));
       if (!resp.ok) return;
       const data = await resp.json();
       if (data?.success && Array.isArray(data.notebooks)) {
@@ -101,6 +105,17 @@ const NotesPanel = ({ onGoGenerator }) => {
     return () => document.removeEventListener('click', onDoc);
   }, [noteMenuOpenId]);
 
+  useEffect(() => {
+    if (!notebookMenuOpen) return;
+    const onDoc = (e) => {
+      if (notebookMenuRef.current && !notebookMenuRef.current.contains(e.target)) {
+        setNotebookMenuOpen(null);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [notebookMenuOpen]);
+
   const toggleSelect = (noteId) => {
     setSelectedIds((prev) => (
       prev.includes(noteId) ? prev.filter((id) => id !== noteId) : [...prev, noteId]
@@ -120,7 +135,7 @@ const NotesPanel = ({ onGoGenerator }) => {
 
     setUploading(true);
     try {
-      const resp = await fetch(`${API_URL}/api/notes`, {
+      const resp = await fetch(apiPath('/api/notes'), {
         method: 'POST',
         body: formData
       });
@@ -145,7 +160,7 @@ const NotesPanel = ({ onGoGenerator }) => {
       return;
     }
     try {
-      const resp = await fetch(`${API_URL}/api/notebooks`, {
+      const resp = await fetch(apiPath('/api/notebooks'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name })
@@ -168,7 +183,7 @@ const NotesPanel = ({ onGoGenerator }) => {
     setDeletingId(noteId);
     setNoteMenuOpenId(null);
     try {
-      const resp = await fetch(`${API_URL}/api/notes/${encodeURIComponent(noteId)}`, {
+      const resp = await fetch(apiPath(`/api/notes/${encodeURIComponent(noteId)}`), {
         method: 'DELETE'
       });
       const data = await resp.json();
@@ -199,7 +214,7 @@ const NotesPanel = ({ onGoGenerator }) => {
       return;
     }
     try {
-      const resp = await fetch(`${API_URL}/api/notes/${encodeURIComponent(renameNoteId)}`, {
+      const resp = await fetch(apiPath(`/api/notes/${encodeURIComponent(renameNoteId)}`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title })
@@ -225,10 +240,10 @@ const NotesPanel = ({ onGoGenerator }) => {
     setPreviewLoading(true);
     setShowPreviewModal(true);
     try {
-      let resp = await fetch(`${API_URL}/api/notes/${encodeURIComponent(n.noteId)}/preview_text`);
+      let resp = await fetch(apiPath(`/api/notes/${encodeURIComponent(n.noteId)}/preview_text`));
       // 兼容部分部署对嵌套路由的转发问题，自动回退到单层路径
       if (resp.status === 404) {
-        resp = await fetch(`${API_URL}/api/note_preview_text?note_id=${encodeURIComponent(n.noteId)}`);
+        resp = await fetch(apiPath(`/api/note_preview_text?note_id=${encodeURIComponent(n.noteId)}`));
       }
       const data = await resp.json();
       if (!resp.ok || !data?.success) {
@@ -282,11 +297,46 @@ const NotesPanel = ({ onGoGenerator }) => {
     }
   };
 
+  const submitRenameNotebook = async () => {
+    const newName = renameNotebookNew.trim();
+    const oldName = renameNotebookOld;
+    if (!newName || !oldName) {
+      alert('请输入新名称');
+      return;
+    }
+    if (newName === oldName) {
+      setShowRenameNotebookModal(false);
+      return;
+    }
+    try {
+      const resp = await fetch(apiPath(`/api/notebooks/${encodeURIComponent(oldName)}`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_name: newName }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data?.success) {
+        throw new Error(data?.error || '重命名失败');
+      }
+      if (selectedNotebook === oldName) {
+        setSelectedNotebook(newName);
+      }
+      setShowRenameNotebookModal(false);
+      setRenameNotebookOld('');
+      setRenameNotebookNew('');
+      setNotebookMenuOpen(null);
+      await loadNotebooks();
+      await loadNotes();
+    } catch (e) {
+      alert(`重命名失败：${e.message}`);
+    }
+  };
+
   const deleteNotebook = async (name) => {
     if (!name || name === '默认笔记本') return;
     if (!window.confirm(`确认删除笔记本「${name}」吗？其中笔记将迁移到默认笔记本。`)) return;
     try {
-      const resp = await fetch(`${API_URL}/api/notebooks/${encodeURIComponent(name)}`, {
+      const resp = await fetch(apiPath(`/api/notebooks/${encodeURIComponent(name)}`), {
         method: 'DELETE'
       });
       const data = await resp.json();
@@ -334,30 +384,69 @@ const NotesPanel = ({ onGoGenerator }) => {
           </button>
         </div>
         <div className="notes-layout">
-          <div className="notes-notebook-sidebar">
-            <div className="input-label" style={{ marginBottom: 8 }}>笔记本</div>
+          <div className="notes-notebook-grid" ref={notebookMenuRef}>
             {notebooks.map((name) => (
-              <div key={name} className="settings-voice-item" style={{ borderBottom: 'none', padding: '0' }}>
-                <button
-                  type="button"
-                  className={`sidebar-item ${selectedNotebook === name ? 'active' : ''}`}
-                  onClick={() => setSelectedNotebook(name)}
-                  style={{ flex: 1 }}
-                >
-                  📁 {name}
-                </button>
-                {name !== '默认笔记本' && (
-                  <button
-                    type="button"
-                    className="api-key-clear-btn"
-                    onClick={() => deleteNotebook(name)}
-                    title="删除笔记本"
-                    aria-label={`删除笔记本 ${name}`}
-                    style={{ minWidth: 40 }}
-                  >
-                    🗑️
-                  </button>
-                )}
+              <div
+                key={name}
+                className={`notes-notebook-card ${selectedNotebook === name ? 'notes-notebook-card--active' : ''}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedNotebook(name)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setSelectedNotebook(name);
+                  }
+                }}
+              >
+                <div className="notes-notebook-card-head">
+                  <span className="notes-notebook-card-title" title={name}>
+                    📁 {name}
+                  </span>
+                  <div className="notes-notebook-card-actions">
+                    <button
+                      type="button"
+                      className="notes-notebook-more"
+                      aria-label="笔记本操作"
+                      title="更多"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setNotebookMenuOpen((o) => (o === name ? null : name));
+                      }}
+                    >
+                      ···
+                    </button>
+                    {notebookMenuOpen === name && (
+                      <div className="notes-notebook-dropdown">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenameNotebookOld(name);
+                            setRenameNotebookNew(name);
+                            setShowRenameNotebookModal(true);
+                            setNotebookMenuOpen(null);
+                          }}
+                        >
+                          重命名
+                        </button>
+                        {name !== '默认笔记本' && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setNotebookMenuOpen(null);
+                              deleteNotebook(name);
+                            }}
+                          >
+                            删除
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {selectedNotebook === name && <span className="notes-notebook-card-badge">当前</span>}
               </div>
             ))}
           </div>
@@ -455,6 +544,33 @@ const NotesPanel = ({ onGoGenerator }) => {
           </div>
         </div>
       </div>
+
+      {showRenameNotebookModal && (
+        <div className="voice-rename-modal-mask" onClick={() => setShowRenameNotebookModal(false)}>
+          <div className="voice-rename-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>重命名笔记本</h3>
+            <p className="input-description">原名称：{renameNotebookOld}</p>
+            <div className="input-group" style={{ marginTop: 10 }}>
+              <label className="input-label">新名称</label>
+              <input
+                type="text"
+                value={renameNotebookNew}
+                onChange={(e) => setRenameNotebookNew(e.target.value)}
+                placeholder="输入新名称"
+                autoFocus
+              />
+            </div>
+            <div className="voice-rename-modal-actions">
+              <button type="button" className="api-key-clear-btn" onClick={() => setShowRenameNotebookModal(false)}>
+                取消
+              </button>
+              <button type="button" className="download-btn" style={{ minWidth: 120 }} onClick={submitRenameNotebook}>
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showNotebookModal && (
         <div className="voice-rename-modal-mask" onClick={() => setShowNotebookModal(false)}>

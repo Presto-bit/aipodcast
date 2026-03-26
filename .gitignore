@@ -29,6 +29,12 @@ backend/outputs/*
 !backend/uploads/.gitkeep
 !backend/outputs/.gitkeep
 
+# working 目录在 backend/ 子路径下时的上传与生成物（与上一段规则一致）
+backend/backend/uploads/*
+backend/backend/outputs/*
+!backend/backend/uploads/.gitkeep
+!backend/backend/outputs/.gitkeep
+
 # IDE
 .vscode/
 .idea/
@@ -51,6 +57,7 @@ backend/outputs/*
 
 # 会话数据
 backend/outputs/session_*.json
+backend/backend/outputs/session_*.json
 
 # Node.js / React
 node_modules/

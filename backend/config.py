@@ -563,10 +563,10 @@ PODCAST_CONFIG = {
     # 脚本生成目标字数（正文，不含 Speaker 前缀）；与前端、大模型输出能力对齐
     "script_target_chars_default": 200,
     "script_target_chars_min": 200,
-    "script_target_chars_max": 5000,
+    "script_target_chars_max": 9999,
     # 单段生成的进阶目标：优先尝试更长单段，失败再自动降档
     "script_target_chars_preferred_max": 2800,
-    "long_script_target_chars_max": 10000,
+    "long_script_target_chars_max": 9999,
     "style": "轻松幽默",
     "speakers": ["Speaker1", "Speaker2"],
 }
@@ -574,6 +574,7 @@ PODCAST_CONFIG = {
 # ========== 超时配置（秒）==========
 TIMEOUTS = {
     "segment_boundary_polish": 55,
+    "polish_tts_text": 60,
     "url_parsing": 30,
     "pdf_parsing": 30,
     "voice_clone": 60,

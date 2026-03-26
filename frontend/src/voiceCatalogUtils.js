@@ -239,3 +239,36 @@ export function sortUniqueLanguages(langArray) {
 export function getLanguageShortLabel(language) {
   return compactLanguageLabel(language);
 }
+
+/**
+ * 按分组标签「性别 · 语言」筛选 buildGroupedSelectOptions 的结果
+ * @param {'all'|'male'|'female'|'other'} genderFilter
+ * @param {string} langFilter 语言短标签或 'all'
+ */
+export function filterGroupedVoiceGroups(groups, genderFilter, langFilter) {
+  if (!Array.isArray(groups)) return [];
+  return groups.filter((g) => {
+    const parts = String(g.label || '')
+      .split(' · ')
+      .map((s) => s.trim());
+    const gen = parts[0] || '';
+    const lang = parts[1] || '';
+    if (genderFilter === 'male' && gen !== '男') return false;
+    if (genderFilter === 'female' && gen !== '女') return false;
+    if (genderFilter === 'other' && gen !== '其他') return false;
+    if (langFilter !== 'all' && lang !== langFilter) return false;
+    return true;
+  });
+}
+
+/** 从分组标签中提取不重复的语言短标签 */
+export function uniqueLangShortsFromVoiceGroups(groups) {
+  const set = new Set();
+  for (const g of groups || []) {
+    const parts = String(g.label || '')
+      .split(' · ')
+      .map((s) => s.trim());
+    if (parts.length >= 2 && parts[1]) set.add(parts[1]);
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+}
