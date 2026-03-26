@@ -16,6 +16,10 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [authRequired, setAuthRequired] = useState(null);
+  const [inviteRequired, setInviteRequired] = useState(false);
+  const [inviteHint, setInviteHint] = useState('');
+  const [passwordResetEnabled, setPasswordResetEnabled] = useState(false);
+  const [passwordResetDebug, setPasswordResetDebug] = useState(false);
   const [token, setToken] = useState(() => {
     try {
       return (window.localStorage.getItem(AUTH_TOKEN_KEY) || '').trim();
@@ -45,9 +49,19 @@ export function AuthProvider({ children }) {
         const data = await res.json().catch(() => ({}));
         if (!cancelled) {
           setAuthRequired(!!data.auth_required);
+          setInviteRequired(!!data.invite_required);
+          setInviteHint(String(data.invite_hint || ''));
+          setPasswordResetEnabled(!!data.password_reset_enabled);
+          setPasswordResetDebug(!!data.password_reset_debug);
         }
       } catch (e) {
-        if (!cancelled) setAuthRequired(false);
+        if (!cancelled) {
+          setAuthRequired(false);
+          setInviteRequired(false);
+          setInviteHint('');
+          setPasswordResetEnabled(false);
+          setPasswordResetDebug(false);
+        }
       }
     })();
     return () => {
@@ -163,6 +177,39 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, [persistSession, token]);
 
+  const requestPasswordReset = useCallback(async (phoneInput) => {
+    const res = await fetch(apiPath('/api/auth/forgot_password'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: phoneInput }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || `发送验证码失败 ${res.status}`);
+    }
+    return {
+      message: data.message || '验证码已发送',
+      debugResetCode: data.debug_reset_code || '',
+    };
+  }, []);
+
+  const resetPassword = useCallback(async (phoneInput, resetCode, newPassword) => {
+    const res = await fetch(apiPath('/api/auth/reset_password'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone: phoneInput,
+        reset_code: resetCode,
+        new_password: newPassword,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || `重置密码失败 ${res.status}`);
+    }
+    return { message: data.message || '密码已重置，请重新登录' };
+  }, []);
+
   const getAuthHeaders = useCallback(() => {
     if (!authRequired || !token) return {};
     return { Authorization: `Bearer ${token}` };
@@ -228,22 +275,34 @@ export function AuthProvider({ children }) {
   const value = useMemo(
     () => ({
       authRequired,
+      inviteRequired,
+      inviteHint,
+      passwordResetEnabled,
+      passwordResetDebug,
       token,
       phone,
       user,
       login,
       register,
+      requestPasswordReset,
+      resetPassword,
       logout,
       getAuthHeaders,
       ensureFeatureUnlocked,
     }),
     [
       authRequired,
+      inviteRequired,
+      inviteHint,
+      passwordResetEnabled,
+      passwordResetDebug,
       token,
       phone,
       user,
       login,
       register,
+      requestPasswordReset,
+      resetPassword,
       logout,
       getAuthHeaders,
       ensureFeatureUnlocked,
@@ -305,11 +364,17 @@ export function useAuth() {
   if (!ctx) {
     return {
       authRequired: false,
+      inviteRequired: false,
+      inviteHint: '',
+      passwordResetEnabled: false,
+      passwordResetDebug: false,
       token: '',
       phone: '',
       user: null,
       login: async () => {},
       register: async () => {},
+      requestPasswordReset: async () => ({}),
+      resetPassword: async () => ({}),
       logout: async () => {},
       getAuthHeaders: () => ({}),
       ensureFeatureUnlocked: async () => true,

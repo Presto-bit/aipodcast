@@ -650,6 +650,38 @@ def api_auth_logout():
     return jsonify({"success": True})
 
 
+@app.route('/api/auth/forgot_password', methods=['POST'])
+def api_auth_forgot_password():
+    if not auth_service.is_auth_enabled():
+        return jsonify({"success": False, "error": "认证未启用"}), 400
+    body = request.get_json(silent=True) or {}
+    phone = str(body.get("phone", "")).strip()
+    ok, err, reset_code = auth_service.request_password_reset(phone)
+    if not ok:
+        status = 429 if ("频繁" in str(err or "")) else 400
+        return jsonify({"success": False, "error": err or "发送失败"}), status
+    # 对外保持统一响应，避免手机号枚举；仅 debug 模式返回 code 便于联调
+    payload = {"success": True, "message": "如手机号已注册，验证码已发送（10分钟内有效）"}
+    if reset_code:
+        payload["debug_reset_code"] = reset_code
+    return jsonify(payload)
+
+
+@app.route('/api/auth/reset_password', methods=['POST'])
+def api_auth_reset_password():
+    if not auth_service.is_auth_enabled():
+        return jsonify({"success": False, "error": "认证未启用"}), 400
+    body = request.get_json(silent=True) or {}
+    phone = str(body.get("phone", "")).strip()
+    reset_code = str(body.get("reset_code", "")).strip()
+    new_password = str(body.get("new_password", ""))
+    ok, err = auth_service.reset_password(phone, reset_code, new_password)
+    if not ok:
+        status = 429 if ("频繁" in str(err or "")) else 400
+        return jsonify({"success": False, "error": err or "重置失败"}), status
+    return jsonify({"success": True, "message": "密码已重置，请重新登录"})
+
+
 @app.route('/api/auth/me', methods=['GET'])
 def api_auth_me():
     if not auth_service.is_auth_enabled():
