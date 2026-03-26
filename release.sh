@@ -11,6 +11,21 @@
 #   SKIP_APT=1
 set -euo pipefail
 
+# 检查 Python 3.12 路径
+PYTHON_BIN="/usr/local/bin/python3.12"
+if [[ ! -f "$PYTHON_BIN" ]]; then
+  echo "❌ 找不到 Python 3.12，请检查安装路径"
+  exit 1
+fi
+
+# 确保 deploy.sh 有执行权限
+chmod +x deploy.sh
+
+echo "==> 执行一键部署"
+# 如果你的 deploy.sh 支持指定 python 路径，可以传参进去
+# 否则，确保 deploy.sh 内部创建 venv 时使用的是 $PYTHON_BIN
+
+
 APP_DIR="${APP_DIR:-/opt/aipodcast}"
 BRANCH="${BRANCH:-main}"
 DEPLOY_USER="${DEPLOY_USER:-${SUDO_USER:-$(whoami)}}"

@@ -14,6 +14,7 @@
 #   GIT_PULL=1             # 0=不执行 git pull
 #   NODE_MAJOR=20          # NodeSource 主版本
 #   BACKEND_ENV_FILE=       # 可选，systemd 注入环境变量文件（如 /etc/default/aipodcast）
+#   PYTHON_BIN=/usr/local/bin/python3.12   # 可选，指定 Python 解释器
 #
 # 也可用 CLI 传参（非交互）：
 #   sudo bash deploy/one_click_deploy.sh --yes \
@@ -37,6 +38,7 @@ GIT_PULL="${GIT_PULL:-}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
 ASSUME_YES="${ASSUME_YES:-0}"
 BACKEND_ENV_FILE="${BACKEND_ENV_FILE:-}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 
 # ------------ parse CLI ------------
 while [[ $# -gt 0 ]]; do
@@ -51,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --git-pull) GIT_PULL=1; shift ;;
     --node-major) NODE_MAJOR="$2"; shift 2 ;;
     --backend-env-file) BACKEND_ENV_FILE="$2"; shift 2 ;;
+    --python-bin) PYTHON_BIN="$2"; shift 2 ;;
     -h|--help)
       sed -n '1,25p' "$0"
       exit 0
@@ -175,11 +178,23 @@ if [[ "$GIT_PULL" == 1 && -d "$DEPLOY_ROOT/.git" ]]; then
   fi
 fi
 
-# Python：选 3.12 > 3.11 > python3
-PYTHON_BIN="python3"
-if command -v python3.12 &>/dev/null; then PYTHON_BIN="python3.12"
-elif command -v python3.11 &>/dev/null; then PYTHON_BIN="python3.11"
+# Python：优先 /usr/local/bin/python3.12，其次环境变量/CLI 指定，再回退自动探测
+if [[ -z "$PYTHON_BIN" ]]; then
+  if [[ -x /usr/local/bin/python3.12 ]]; then
+    PYTHON_BIN="/usr/local/bin/python3.12"
+  elif command -v python3.12 &>/dev/null; then
+    PYTHON_BIN="python3.12"
+  elif command -v python3.11 &>/dev/null; then
+    PYTHON_BIN="python3.11"
+  else
+    PYTHON_BIN="python3"
+  fi
 fi
+if [[ ! -x "$PYTHON_BIN" ]] && ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "指定的 Python 不可用: $PYTHON_BIN"
+  exit 1
+fi
+echo "使用 Python: $PYTHON_BIN"
 PY_MINOR="$($PYTHON_BIN -c 'import sys; print(sys.version_info.minor)')" || PY_MINOR=0
 if [[ "${PY_MINOR:-0}" -ge 13 ]]; then
   echo "需要 Python 3.12 或 3.11（3.13+ 不兼容 audioop）。"

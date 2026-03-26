@@ -188,6 +188,9 @@ sudo bash deploy.sh --yes --no-git-pull
 
 # 指定后端环境变量文件给 systemd
 sudo bash deploy.sh --yes --backend-env-file /etc/default/aipodcast
+
+# 指定 Python 路径（例如阿里云自装在 /usr/local/bin/python3.12）
+sudo bash deploy.sh --yes --python-bin /usr/local/bin/python3.12
 ```
 
 ### 4) 部署后验证
