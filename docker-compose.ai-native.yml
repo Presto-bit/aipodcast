@@ -57,6 +57,8 @@ services:
     build:
       context: .
       dockerfile: services/orchestrator/Dockerfile
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
     env_file:
       - .env.ai-native
     environment:
@@ -90,6 +92,8 @@ services:
     build:
       context: .
       dockerfile: workers/ai-worker/Dockerfile
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
     env_file:
       - .env.ai-native
     environment:
@@ -111,6 +115,8 @@ services:
     build:
       context: .
       dockerfile: workers/media-worker/Dockerfile
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
     env_file:
       - .env.ai-native
     environment:
@@ -132,6 +138,8 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-node:20-alpine}
     env_file:
       - .env.ai-native
     environment:

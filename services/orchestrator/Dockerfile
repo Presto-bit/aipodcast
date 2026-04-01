@@ -1,4 +1,6 @@
-FROM python:3.12-slim
+# 无法访问 docker.io 时：在 .env.ai-native 设 PYTHON_BASE_IMAGE=你的ACR地址/python:3.12-slim，或先 docker load 同名本地镜像
+ARG PYTHON_BASE_IMAGE=python:3.12-slim
+FROM ${PYTHON_BASE_IMAGE}
 
 WORKDIR /app
 
