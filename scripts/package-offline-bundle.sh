@@ -30,6 +30,8 @@ tar czvf "$SRC_TAR" \
   --exclude='node_modules' \
   --exclude='apps/web/node_modules' \
   --exclude='apps/web/.next' \
+  --exclude='aipodcast-full-stack-amd64.tar' \
+  --exclude='aipodcast-full-stack*.tar' \
   --exclude='.venv-ai-native' \
   --exclude='dist' \
   --exclude='__pycache__' \
@@ -60,6 +62,8 @@ if [[ "$WITH_PIP" == 1 ]]; then
     --exclude='node_modules' \
     --exclude='apps/web/node_modules' \
     --exclude='apps/web/.next' \
+    --exclude='aipodcast-full-stack-amd64.tar' \
+    --exclude='aipodcast-full-stack*.tar' \
     --exclude='.venv-ai-native' \
     --exclude='dist' \
     --exclude='__pycache__' \

@@ -67,6 +67,6 @@ docker save -o "$OUT_TAR" \
 ls -lh "$OUT_TAR"
 echo ""
 echo "服务器上: docker load -i $(basename "$OUT_TAR")"
-echo "然后解压同版本源码、配置 $ENV_FILE，执行:"
-echo "  docker compose -f docker-compose.ai-native.yml --env-file $ENV_FILE up -d"
+echo "然后解压同版本源码、配置 ${ENV_FILE}，执行:"
+echo "  docker compose -f docker-compose.ai-native.yml --env-file ${ENV_FILE} up -d"
 echo "（无需再 --build，除非改代码需重建）"

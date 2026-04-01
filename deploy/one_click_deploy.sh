@@ -14,6 +14,10 @@
 #
 #   sudo bash deploy/one_click_deploy.sh --yes \
 #     --user ubuntu --root /opt/minimax_aipodcast
+#
+# 离线 / 已 docker load 全栈 tar（无外网访问 registry-1.docker.io）：
+#   sudo bash deploy/one_click_deploy.sh --yes --offline --user ecs-user --root /opt/minimax_aipodcast
+#   或在 deploy/deploy.env 中设 OFFLINE_DEPLOY=1
 #==============================================================================
 set -euo pipefail
 
@@ -25,6 +29,8 @@ DEPLOY_ROOT="${DEPLOY_ROOT:-$DEFAULT_DEPLOY_ROOT}"
 INSTALL_APT="${INSTALL_APT:-}"
 GIT_PULL="${GIT_PULL:-}"
 ASSUME_YES="${ASSUME_YES:-0}"
+OFFLINE_DEPLOY="${OFFLINE_DEPLOY:-0}"
+OFFLINE_FROM_CLI=0
 COMPOSE_FILE="docker-compose.ai-native.yml"
 ENV_FILE=".env.ai-native"
 
@@ -37,8 +43,13 @@ while [[ $# -gt 0 ]]; do
     --with-apt) INSTALL_APT=1; shift ;;
     --no-git-pull) GIT_PULL=0; shift ;;
     --git-pull) GIT_PULL=1; shift ;;
+    --offline)
+      OFFLINE_DEPLOY=1
+      OFFLINE_FROM_CLI=1
+      shift
+      ;;
     -h|--help)
-      sed -n '1,22p' "$0"
+      sed -n '1,28p' "$0"
       exit 0
       ;;
     *) echo "未知参数: $1"; exit 1 ;;
@@ -71,6 +82,9 @@ fi
 if [[ -f "$DEPLOY_ROOT/deploy/deploy.env" ]]; then
   # shellcheck source=/dev/null
   source "$DEPLOY_ROOT/deploy/deploy.env"
+fi
+if [[ "$OFFLINE_FROM_CLI" == 1 ]]; then
+  OFFLINE_DEPLOY=1
 fi
 
 if [[ -z "$APP_USER" ]]; then
@@ -159,11 +173,20 @@ if getent group docker >/dev/null 2>&1; then
   usermod -aG docker "$APP_USER" 2>/dev/null || true
 fi
 
-sudo -u "$APP_USER" -H bash -c "
-  set -e
-  cd \"$DEPLOY_ROOT\"
-  docker compose -f \"$COMPOSE_FILE\" --env-file \"$ENV_FILE\" up -d --build
-"
+if [[ "$OFFLINE_DEPLOY" == 1 ]]; then
+  # 已 docker load 的镜像不要 --build，否则 BuildKit 会请求 registry-1.docker.io
+  sudo -u "$APP_USER" -H env DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 bash -c "
+    set -e
+    cd \"$DEPLOY_ROOT\"
+    docker compose -f \"$COMPOSE_FILE\" --env-file \"$ENV_FILE\" up -d
+  "
+else
+  sudo -u "$APP_USER" -H bash -c "
+    set -e
+    cd \"$DEPLOY_ROOT\"
+    docker compose -f \"$COMPOSE_FILE\" --env-file \"$ENV_FILE\" up -d --build
+  "
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
