@@ -7,6 +7,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Apple Silicon 上必须固定 amd64，否则 pull/build 易成 arm64，ECS 无法运行
+export DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
+
 ENV_FILE="${ENV_FILE:-.env.ai-native}"
 OUT_TAR="${1:-aipodcast-full-stack-amd64.tar}"
 COMPOSE=(docker compose -f docker-compose.ai-native.yml --env-file "$ENV_FILE")

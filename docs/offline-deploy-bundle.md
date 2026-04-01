@@ -79,7 +79,7 @@ bash scripts/package-offline-bundle.sh --pip-wheels
 
 ## 架构与变量提醒
 
-- 镜像与 wheel 须匹配 **linux/amd64**（Apple Silicon 打包时 `docker pull --platform linux/amd64`）。
+- 镜像与 wheel 须匹配 **linux/amd64**（Apple Silicon 打包时 `docker pull --platform linux/amd64`）。Compose 已为各服务设置 **`platform: linux/amd64`**；`save-full-stack-tar.sh` 默认 **`DOCKER_DEFAULT_PLATFORM=linux/amd64`**。若 ECS 报 arm64/amd64 不匹配，说明 tar 内仍是 arm64，需在打包机删掉相关镜像后重新打包。
 - 离线构建推荐 **`make up-offline`**（关闭 BuildKit，减少对 `registry-1.docker.io` 的 manifest 请求）；基础镜像须已 `docker load`。
 - **MinIO** 官方为 `minio/minio`，不要用 `library/minio`；DaoCloud 等对 minio 常有限制，优先自有 tar 或 ACR。
 

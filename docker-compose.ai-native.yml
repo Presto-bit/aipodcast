@@ -2,8 +2,10 @@
 # 需局域网直连调试时，可临时改为 "0.0.0.0:端口:端口" 或使用 SSH 隧道。
 # 默认使用 Docker Hub 短名，与「docker pull + docker save/load」离线包一致；国内/私有库可在 .env.ai-native 设 POSTGRES_IMAGE 等覆盖。
 # 离线构建勿访问 registry-1.docker.io：先 load 基础镜像，再用 scripts/docker-compose-offline.sh 或 make up-offline（DOCKER_BUILDKIT=0）。
+# 固定 amd64，与阿里云 ECS 一致；避免 Apple Silicon 默认打成 arm64 镜像后在服务器无法运行。
 services:
   postgres:
+    platform: linux/amd64
     image: ${POSTGRES_IMAGE:-postgres:16-alpine}
     env_file:
       - .env.ai-native
@@ -25,6 +27,7 @@ services:
     restart: unless-stopped
 
   redis:
+    platform: linux/amd64
     image: ${REDIS_IMAGE:-redis:7-alpine}
     ports:
       - "127.0.0.1:6379:6379"
@@ -36,6 +39,7 @@ services:
     restart: unless-stopped
 
   minio:
+    platform: linux/amd64
     image: ${MINIO_IMAGE:-minio/minio:latest}
     command: server /data --console-address ":9001"
     env_file:
@@ -56,6 +60,7 @@ services:
     restart: unless-stopped
 
   orchestrator:
+    platform: linux/amd64
     image: aipodcast-orchestrator:${AIPODCAST_IMAGE_TAG:-latest}
     build:
       context: .
@@ -93,6 +98,7 @@ services:
     restart: unless-stopped
 
   ai-worker:
+    platform: linux/amd64
     image: aipodcast-ai-worker:${AIPODCAST_IMAGE_TAG:-latest}
     build:
       context: .
@@ -118,6 +124,7 @@ services:
     restart: unless-stopped
 
   media-worker:
+    platform: linux/amd64
     image: aipodcast-media-worker:${AIPODCAST_IMAGE_TAG:-latest}
     build:
       context: .
@@ -143,6 +150,7 @@ services:
     restart: unless-stopped
 
   web:
+    platform: linux/amd64
     image: aipodcast-web:${AIPODCAST_IMAGE_TAG:-latest}
     build:
       context: .
