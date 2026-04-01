@@ -1,18 +1,30 @@
-# 无法访问 docker.io 时：在 .env.ai-native 设 PYTHON_BASE_IMAGE=你的ACR地址/python:3.12-slim，或先 docker load 同名本地镜像
+# 生产 ECS 多为 linux/amd64。若在 arm64（如 Apple Silicon）上 docker save，须先 pull --platform linux/amd64，否则会 exec format error。
 ARG PYTHON_BASE_IMAGE=python:3.12-slim
-FROM ${PYTHON_BASE_IMAGE}
+FROM --platform=linux/amd64 ${PYTHON_BASE_IMAGE}
 
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# 与 worker 一致：部分接口或调试路径会经 pydub 读音频；缺 ffmpeg 时易出现 ffprobe 报错
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+# 若 PYTHON_BASE_IMAGE 已含 ffmpeg（如 aipodcast/python-ffmpeg:3.12-slim-amd64），跳过 apt，适合服务器无法访问 Debian 源时构建
+RUN set -eux; \
+    if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then \
+      echo "ffmpeg/ffprobe already present, skip apt-get"; \
+    else \
+      apt-get update; \
+      apt-get install -y --no-install-recommends ffmpeg; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
 
 COPY services/orchestrator/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY docker/offline-pip-wheels /opt/pip-offline-wheels
+RUN n=$$(find /opt/pip-offline-wheels -maxdepth 1 -name '*.whl' 2>/dev/null | wc -l | tr -d ' '); \
+    if [ "$$n" -gt 0 ]; then \
+      pip install --no-index --find-links=/opt/pip-offline-wheels -r /app/requirements.txt; \
+    else \
+      pip install --no-cache-dir -r /app/requirements.txt; \
+    fi
 
 COPY services/orchestrator /app
 COPY legacy_backend /app/legacy_backend

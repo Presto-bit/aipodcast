@@ -56,6 +56,7 @@ services:
     restart: unless-stopped
 
   orchestrator:
+    image: aipodcast-orchestrator:${AIPODCAST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: services/orchestrator/Dockerfile
@@ -92,6 +93,7 @@ services:
     restart: unless-stopped
 
   ai-worker:
+    image: aipodcast-ai-worker:${AIPODCAST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: workers/ai-worker/Dockerfile
@@ -116,6 +118,7 @@ services:
     restart: unless-stopped
 
   media-worker:
+    image: aipodcast-media-worker:${AIPODCAST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: workers/media-worker/Dockerfile
@@ -140,6 +143,7 @@ services:
     restart: unless-stopped
 
   web:
+    image: aipodcast-web:${AIPODCAST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: apps/web/Dockerfile

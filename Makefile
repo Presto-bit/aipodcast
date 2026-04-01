@@ -1,4 +1,4 @@
-.PHONY: up up-offline build-offline down logs web orchestrator worker-ai worker-media worker-ai-simple worker-media-simple install-deps test-api-key-strip test-fallback-tag dev-infra dev-api dev-web dev-start complete-dev dev-worker-ai dev-worker-media dev dev-apps dev-install ci cleanup-outputs migrate-json-to-pg migrate-sessions-to-redis migrate-db retention-maintenance check-data-consistency
+.PHONY: up up-offline build-offline build-offline-bases package-offline-bundle save-full-stack-tar down logs web orchestrator worker-ai worker-media worker-ai-simple worker-media-simple install-deps test-api-key-strip test-fallback-tag dev-infra dev-api dev-web dev-start complete-dev dev-worker-ai dev-worker-media dev dev-apps dev-install ci cleanup-outputs migrate-json-to-pg migrate-sessions-to-redis migrate-db retention-maintenance check-data-consistency
 
 ci:
 	@test -d apps/web/node_modules || (echo "请先: make dev-install"; exit 1)
@@ -93,6 +93,18 @@ up-offline:
 
 build-offline:
 	bash scripts/docker-compose-offline.sh build
+
+# 在能访问 apt 的机器上构建「python + ffmpeg」基础镜像，供离线 save/load（见 docker/python-ffmpeg-base.Dockerfile）
+build-offline-bases:
+	bash scripts/build-offline-base-images.sh
+
+# 生成分发目录 dist/offline-deploy-*（源码 tar、可选 pip wheel、docker save 示例）；详见 docs/offline-deploy-bundle.md
+package-offline-bundle:
+	bash scripts/package-offline-bundle.sh
+
+# 在能访问 Hub 的机器上：pull + build 全栈并 docker save 为单个 tar（见 scripts/save-full-stack-tar.sh）
+save-full-stack-tar:
+	bash scripts/save-full-stack-tar.sh
 
 down:
 	docker compose -f docker-compose.ai-native.yml down
