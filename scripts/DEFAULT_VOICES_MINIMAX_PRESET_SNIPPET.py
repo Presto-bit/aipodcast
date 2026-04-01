@@ -1,4 +1,4 @@
-# 以下条目可粘贴到 backend/config.py 的 DEFAULT_VOICES 字典内（放在 mini / max 同级，注意末尾逗号）。
+# 以下条目可粘贴到 services/orchestrator/app/fyv_shared/config.py 的 DEFAULT_VOICES 字典内（放在 mini / max 同级，注意末尾逗号）。
 # 不建议一次合并 327 个：按需复制若干键即可；前端下拉会列出全部默认键。
 # 生成条目数: 327  |  源表: scripts/minimax_voice_table.md  |  重生成: python3 scripts/md_table_to_default_voices.py < scripts/minimax_voice_table.md > scripts/DEFAULT_VOICES_MINIMAX_PRESET_SNIPPET.py
 # gender 为脚本启发式推断，可手工改为 male / female。

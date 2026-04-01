@@ -1,0 +1,230 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* 明亮（默认产品主路径） */
+html.light,
+html:not(.dark) {
+  --dawn-canvas: #fdfcf8;
+  --dawn-surface: #ffffff;
+  --dawn-ink: #2d3436;
+  --dawn-muted: #636e72;
+  --dawn-brand: #6c5ce7;
+  --dawn-mint: #00b894;
+  --dawn-cta: #e17055;
+  --dawn-line: #efeee9;
+  --dawn-fill: #f5f4ef;
+  --dawn-track: #e8e6e1;
+  --dawn-danger: #e74c3c;
+  --dawn-danger-soft: rgba(231, 76, 60, 0.12);
+  /* 布局与圆角（与 Tailwind theme 对齐） */
+  --dawn-radius-sm: 0.375rem;
+  --dawn-radius-md: 0.5rem;
+  --dawn-radius-lg: 0.75rem;
+  --dawn-radius-xl: 1rem;
+  --dawn-space-card: 1rem;
+  --dawn-space-section: 1.5rem;
+  --dawn-space-page-x: clamp(1rem, 2vw, 1.5rem);
+  --dawn-space-page-y: clamp(1.25rem, 2.5vw, 2rem);
+  --dawn-font-sans:
+    "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+  --dawn-shadow-soft: 0 2px 10px rgb(15 23 42 / 0.05);
+  --dawn-shadow-card: 0 10px 26px rgb(15 23 42 / 0.07);
+  --dawn-shadow-modal: 0 24px 50px rgb(15 23 42 / 0.22);
+  --dawn-brand-gradient: linear-gradient(135deg, #6c5ce7 0%, #8e7dff 55%, #5e84ff 100%);
+}
+
+/* 夜间：柔和炭灰，非纯黑 */
+html.dark {
+  --dawn-canvas: #14141a;
+  --dawn-surface: #1e1e26;
+  --dawn-ink: #f0f0f3;
+  --dawn-muted: #9ca3af;
+  --dawn-brand: #a29bfe;
+  --dawn-mint: #26d9b4;
+  --dawn-cta: #ff8f73;
+  --dawn-line: #2e2e38;
+  --dawn-fill: #25252e;
+  --dawn-track: #3a3a44;
+  --dawn-danger: #ff6b6b;
+  --dawn-danger-soft: rgba(255, 107, 107, 0.15);
+  --dawn-radius-sm: 0.375rem;
+  --dawn-radius-md: 0.5rem;
+  --dawn-radius-lg: 0.75rem;
+  --dawn-radius-xl: 1rem;
+  --dawn-space-card: 1rem;
+  --dawn-space-section: 1.5rem;
+  --dawn-space-page-x: clamp(1rem, 2vw, 1.5rem);
+  --dawn-space-page-y: clamp(1.25rem, 2.5vw, 2rem);
+  --dawn-font-sans:
+    "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+  --dawn-shadow-soft: 0 2px 10px rgb(0 0 0 / 0.28);
+  --dawn-shadow-card: 0 10px 30px rgb(0 0 0 / 0.34);
+  --dawn-shadow-modal: 0 28px 56px rgb(0 0 0 / 0.48);
+  --dawn-brand-gradient: linear-gradient(135deg, #8a7dff 0%, #a29bfe 55%, #6ea4ff 100%);
+}
+
+html.light body,
+html:not(.dark) body {
+  background: var(--dawn-canvas);
+  color: var(--dawn-ink);
+}
+
+html.dark body {
+  background: var(--dawn-canvas);
+  color: var(--dawn-ink);
+}
+
+body {
+  font-family: var(--dawn-font-sans);
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    border-radius: var(--dawn-radius-md);
+    border: 1px solid var(--dawn-line);
+    background: var(--dawn-surface);
+    color: var(--dawn-ink);
+    transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: color-mix(in srgb, var(--dawn-muted) 88%, transparent);
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+  textarea:focus,
+  select:focus {
+    outline: none;
+    border-color: var(--dawn-brand);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dawn-brand) 22%, transparent);
+  }
+}
+
+@keyframes fym-fade-in {
+  from {
+    opacity: 0.92;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fym-page-enter {
+  animation: fym-fade-in 0.24s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fym-page-enter {
+    animation: none;
+  }
+}
+
+/* 可复用：卡片 / 表格外壳（与 Token 一致） */
+.fym-surface-card {
+  border-radius: var(--dawn-radius-xl);
+  border: 1px solid var(--dawn-line);
+  background-color: color-mix(in srgb, var(--dawn-surface) 88%, transparent);
+  box-shadow: var(--dawn-shadow-soft);
+}
+
+.fym-table-shell {
+  border-radius: var(--dawn-radius-xl);
+  border: 1px solid var(--dawn-line);
+  background-color: var(--dawn-surface);
+  box-shadow: var(--dawn-shadow-soft);
+}
+
+.fym-page-shell {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 80rem;
+  flex: 1;
+  padding-inline: var(--dawn-space-page-x);
+  padding-block: var(--dawn-space-page-y);
+}
+
+.fym-control {
+  width: 100%;
+  border-radius: var(--dawn-radius-md);
+  border: 1px solid var(--dawn-line);
+  background: var(--dawn-surface);
+  padding: 0.55rem 0.8rem;
+  font-size: 0.9rem;
+  color: var(--dawn-ink);
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+.fym-control::placeholder {
+  color: color-mix(in srgb, var(--dawn-muted) 88%, transparent);
+}
+
+.fym-control:hover {
+  border-color: color-mix(in srgb, var(--dawn-brand) 24%, var(--dawn-line));
+}
+
+.fym-control:focus {
+  border-color: var(--dawn-brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dawn-brand) 22%, transparent);
+}
+
+.fym-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.fym-modal-card {
+  border-radius: var(--dawn-radius-xl);
+  border: 1px solid var(--dawn-line);
+  background: var(--dawn-surface);
+  box-shadow: var(--dawn-shadow-modal);
+}
+
+.fym-empty-state {
+  border-radius: var(--dawn-radius-xl);
+  border: 1px dashed var(--dawn-line);
+  background: color-mix(in srgb, var(--dawn-fill) 82%, transparent);
+}
+
+.fym-spinner {
+  width: 1em;
+  height: 1em;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 9999px;
+  animation: fym-spin 0.65s linear infinite;
+}
+
+@keyframes fym-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fym-spinner {
+    animation: none;
+    border-top-color: transparent;
+    opacity: 0.6;
+  }
+}

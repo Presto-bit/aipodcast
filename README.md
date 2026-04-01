@@ -1,30 +1,19 @@
 # Presto AI Podcast（FindingYourVoice）
 
-一个面向内容创作的 AI 工作台：支持「笔记出播客」「AI 播客」「文本转语音」，并提供音色管理、作品归档、草稿管理与登录鉴权能力。
+面向内容创作的 AI 工作台：笔记出播客、AI 播客、文本转语音、音色与作品管理、登录鉴权等。
 
----
+本仓库**仅保留 AI Native 架构**：Next.js（`apps/web`）+ FastAPI 编排器（`services/orchestrator`）+ RQ Worker + PostgreSQL + Redis + MinIO，由 **Docker Compose** 编排。
 
-## 功能概览
-
-- **笔记出播客**：基于已选笔记生成播客或文章（支持文章模式与播客模式）。
-- **AI 播客**：输入话题 / 网页 / PDF，生成双人播客脚本与音频。
-- **文本转语音（TTS）**：文本润色 + 语音合成，支持下载与作品沉淀。
-- **音色管理**：合并「你的声音」与「音色管理」为统一页面，支持折叠管理。
-- **我的作品**：整合三类产物（笔记出播客 / AI 播客 / TTS），支持文件夹、筛选、移动、下载。
-- **登录鉴权（手机号+密码）**：
-  - 注册 / 登录
-  - 忘记密码 / 重置密码
-  - 登录限流（防暴力破解）
-  - 用户数据 SQLite 持久化
+共享业务逻辑（MiniMax 客户端、解析器、鉴权 `auth_service` 等）位于编排器内 **`services/orchestrator/app/fyv_shared/`**；与编排器代码一同发布，通过 **`import app.fyv_shared.*`** 引用。运行时上传/数据/产物默认仍落在仓库 **`legacy_backend/`** 目录（可用 `FYV_*` 环境变量覆盖），便于与既有部署路径兼容。
 
 ---
 
 ## 技术栈
 
-- **前端**：React（CRA）
-- **后端**：Flask
-- **鉴权存储**：SQLite（`backend/backend/outputs/auth.db`）
-- **其它**：SSE 流式返回、本地文件存储、音频处理（`ffmpeg`）
+- **前端**：Next.js（`apps/web`），BFF 由 Route Handlers 承担（见 `docs/architecture/bff.md`）
+- **API / 任务**：FastAPI、RQ、psycopg2、boto3（MinIO）
+- **数据**：PostgreSQL、Redis、对象存储（S3 兼容）
+- **音频**：pydub、系统 **ffmpeg** / ffprobe
 
 ---
 
@@ -32,216 +21,175 @@
 
 ```text
 minimax_aipodcast/
-├─ backend/
-│  ├─ app.py
-│  ├─ auth_service.py
-│  ├─ minimax_client.py
-│  └─ backend/
-│     ├─ uploads/
-│     └─ outputs/
-│        └─ auth.db
-├─ frontend/
-│  ├─ src/
-│  └─ build/                # 前端构建产物
-├─ deploy/
-│  ├─ one_click_deploy.sh
-│  ├─ deploy.env.example
-│  └─ aipodcast.env.example
-└─ deploy.sh                # 一键部署入口
+├─ apps/web/                 # Next.js 前端
+├─ services/orchestrator/    # FastAPI 编排器
+├─ workers/                  # ai-worker / media-worker
+├─ legacy_backend/           # 默认运行时目录（data/uploads/outputs；Python 源码已迁至 app/fyv_shared）
+├─ services/orchestrator/app/fyv_shared/  # 共享模块（config、minimax_client、auth_service…）
+├─ docker-compose.ai-native.yml
+├─ Makefile                  # make up / make down 等
+├─ requirements.txt          # 根入口：编排器 pip 依赖（请在仓库根目录 pip install -r）
+└─ infra/postgres/           # 数据库初始化
 ```
 
 ---
 
-## 本地开发
+## 本地开发（Docker，推荐）
 
-### 1) 环境要求
+### 环境要求
 
-- Python 3.11 / 3.12（推荐 3.12）
-- Node.js 18+
-- npm
-- ffmpeg
+- Docker / Docker Compose（含 compose v2）
+- 可选：Python 3.12 + venv（跑集成脚本、本地 `pip install -r requirements.txt`）
 
-### 2) 安装依赖
-
-在项目根目录：
+### 配置
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+cp .env.ai-native.example .env.ai-native
+# 编辑 .env.ai-native（至少配置 MINIMAX_API_KEY 等）
 ```
 
-前端：
+说明：当前 Docker Compose 部署默认读取 `.env.ai-native`。`/etc/default/aipodcast` 仅用于 systemd `EnvironmentFile` 启动场景。
+
+### 启动
 
 ```bash
-cd frontend
-npm install
-```
-
-### 3) 启动服务
-
-后端（新终端）：
-
-```bash
-cd /path/to/minimax_aipodcast
-./backend/run.sh
-```
-
-前端（新终端）：
-
-```bash
-cd /path/to/minimax_aipodcast/frontend
-npm start
+make up
+# 或
+docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d --build
 ```
 
 默认访问：
 
-- 前端：`http://localhost:3000`
-- 后端：`http://127.0.0.1:5001`
+- Web：`http://localhost:3000`
+- 编排器健康检查：`http://127.0.0.1:8008/health`
+
+常用：`make logs`、`make down`。详见根目录 `Makefile`。
+
+### 热重载开发（推荐改 UI / 编排器时）
+
+全栈用 Docker（`make up`）时，镜像内跑的是**构建产物**，改代码要**重建镜像**才能进容器，不适合频繁改。
+
+要**保存即刷新**，用「**基础设施 Docker + 应用本机**」：
+
+1. **先启动 Docker Desktop**（macOS），否则 `make dev` 无法拉取镜像、起 PG/Redis/MinIO。
+2. **环境变量**（`.env.ai-native`）：`DB_HOST`、`REDIS_URL`、`OBJECT_ENDPOINT` 指向本机（与 `.env.ai-native.example` 一致，一般为 `127.0.0.1`）；`ORCHESTRATOR_URL` / `NEXT_PUBLIC_ORCHESTRATOR_URL` 为 `http://127.0.0.1:8008`。
+3. **依赖**：`make install-deps`（Python）；本机需 **ffmpeg**。
+4. **若曾执行过全栈 `make up`**：请先 `make down`，避免本机 `8008`/`3000` 与容器里的 `orchestrator`/`web` 抢端口（本机热重载会占用这两个端口）。
+
+**完整启动（从零到热重载，推荐复制）**
+
+在**仓库根目录** `minimax_aipodcast/` 执行（勿在子目录里 `cd minimax_aipodcast` 拼错路径）：
+
+```bash
+cd /path/to/minimax_aipodcast
+
+# 1）环境文件（仅首次或没有时）
+test -f .env.ai-native || cp .env.ai-native.example .env.ai-native
+# 按需编辑 .env.ai-native 后保存
+
+# 2）依赖：Python + 根目录 / apps/web 的 npm
+make install-deps
+make dev-install
+
+# 3）一键热重载（已包含 Next，无需再 cd apps/web 执行 npm run dev）
+make dev
+```
+
+等价一条命令（脚本会：若无 `.env.ai-native` 则复制并**退出提示你先编辑**；有则连续执行 install-deps、dev-install、dev）：
+
+```bash
+cd /path/to/minimax_aipodcast && make complete-dev
+# 或直接：bash scripts/complete-dev.sh
+```
+
+带「释放 8008 + 约 8s 后自动打开浏览器（macOS）」：
+
+```bash
+make dev-start
+```
+
+说明：`make dev` = `docker compose` 起 PG/Redis/MinIO + 同时跑**编排器**（`npm run dev:api`）与 **Next**（`npm run dev:web`），与再执行一次 `cd apps/web && npm run dev` **重复**，一般不必。
+
+浏览器：**Next** 一般为 `http://localhost:3000`；编排器 `http://127.0.0.1:8008/health`。按 `Ctrl+C` 会结束本机 api/web，**Docker 里的 PG/Redis/MinIO 仍运行**。
+
+**分终端（与一键等价）**
+
+1. `make dev-infra` — 只起 PG / Redis / MinIO  
+2. `make dev-api` — 编排器热重载  
+3. `make dev-web` — Next 热更新  
+
+或：`make dev-infra` 后执行 `make dev-apps`（同目录下 `npm run dev`，同时起 api + web）。
+
+**Worker（按需）**：异步任务需要队列消费时，另开终端 `make dev-worker-ai` / `make dev-worker-media`。改 Worker 相关代码后需**手动重启**该进程（无 `--reload`）。
 
 ---
 
-## 登录鉴权配置
+## 服务器部署
 
-通过环境变量控制：
+见 [DEPLOYMENT.md](DEPLOYMENT.md)。一键脚本：`sudo bash deploy.sh`（内部调用 Docker Compose）。
 
-```bash
-# 开启登录体系
-export FYV_AUTH_ENABLED=1
+### 功能与本地检查
 
-# 是否要求注册邀请码（默认 0）
-export FYV_REQUIRE_INVITE=0
-
-# 邀请码内容（仅 FYV_REQUIRE_INVITE=1 时生效）
-export FYV_ADMIN_INVITE_CODE=fym-admin-2025
-
-# 重置密码调试模式（1 时 forgot_password 会返回 debug_reset_code）
-export FYV_AUTH_DEBUG_RESET_CODE=0
-```
-
-### 鉴权数据存储位置
-
-- SQLite 数据库：`backend/backend/outputs/auth.db`
-- 主要表：
-  - `users`
-  - `sessions`
-  - `auth_rate_limits`
-  - `password_resets`
+- **全站搜索**：侧栏「搜索」或 `/search`。
+- **作品导出**：`/works` 当前 Tab 支持导出 ZIP。
+- **播客内容模板**：`/podcast` 正文区模板下拉。
+- **后台用量**：管理员 `/admin/usage`（需 PG 已执行 `002_usage_events.sql`）。
+- **订阅策略执行手册**：见 `docs/product/subscription-experience-pricing-playbook.md`（体验门槛、升级触发、定价与埋点口径）。
+- **CI**：根目录 `make ci`（前端 `tsc`、编排器 pytest）；GitHub Actions 见 `.github/workflows/ci.yml`。
+- **用户 JSON → PG 镜像**：`python3 scripts/sync_users_to_pg.py`（可选，`--dry-run` 预览）。
 
 ---
 
-## 一键部署（阿里云 ECS 推荐）
+## 登录鉴权（文件型用户数据）
 
-### 0) 阿里云侧准备
+启用方式：`FYV_AUTH_ENABLED=1` 等环境变量（可写入 `.env.ai-native`）。鉴权由 **`app.fyv_shared.auth_service`** 实现；生产推荐 **`FYV_AUTH_UNIFIED_PG=1`**（PostgreSQL 为单一事实源，关闭 JSON 双写、JSON 仅只读备份）。默认数据目录仍为 **`legacy_backend/data/`**（可用 `FYV_DATA_DIR` 覆盖）。详见 `.env.ai-native.example`。
 
-- 安全组放行：`22`（SSH）、`80`（HTTP）、`443`（HTTPS 可选）
-- 建议使用普通用户（如 `ubuntu` / `ecs-user`），不要把项目放在 `/root`
+运行时目录建议：`data` 存用户/会话/订单/音色收藏等持久数据，`uploads` 存原始上传文件，`outputs` 仅存可再生成物。可通过 `FYV_RUNTIME_DIR` / `FYV_DATA_DIR` / `FYV_UPLOAD_DIR` / `FYV_OUTPUT_DIR` 自定义。
 
-### 1) 服务器上准备代码
+可使用 `make cleanup-outputs DAYS=30 DRY_RUN=1` 预览清理 30 天前产物，确认后执行 `DRY_RUN=0` 真删。
 
-```bash
-cd /opt
-sudo git clone https://github.com/Presto-bit/aipodcast.git
-sudo chown -R $USER:$USER /opt/aipodcast
-cd /opt/aipodcast
-```
+JSON -> PostgreSQL 迁移（users / payment_orders / saved_voices）：
 
-### 2) 交互式一键部署（推荐首跑）
+- 预览：`make migrate-json-to-pg DRY_RUN=1 PHONE=18101383358`
+- 执行：`make migrate-json-to-pg DRY_RUN=0 PHONE=18101383358`
 
-```bash
-sudo bash deploy.sh
-```
+说明：`PHONE` 仅用于 `saved_voices.json` 归属到指定用户；不传则跳过音色迁移。
 
-按提示填写：
+会话迁移到 Redis：
 
-- `APP_USER`：运行后端与前端构建的 Linux 用户（非 root）
-- `SERVER_NAME`：域名或公网 IP（不确定可填 `_`）
-- `DEPLOY_ROOT`：项目路径（示例 `/opt/aipodcast`）
+- 预览：`make migrate-sessions-to-redis DRY_RUN=1`
+- 执行：`make migrate-sessions-to-redis DRY_RUN=0`
 
-### 3) 非交互部署（适合重复发布）
+说明：`auth_service` 默认优先使用 Redis 会话（`REDIS_URL` 可用时），并保留文件回退；可用 `FYV_AUTH_SESSION_BACKEND=file` 强制走文件。
 
-```bash
-cp deploy/deploy.env.example deploy/deploy.env
-# 编辑 deploy/deploy.env
-sudo bash deploy.sh --yes
-```
+数据库迁移规范（SQL migration 主导）：
 
-### 3.5) 推荐：给后端单独环境文件（阿里云生产）
+- 所有结构变更优先写入 `infra/postgres/init/*.sql`
+- 执行入口：`make migrate-db`
+- 代码内 `ensure_*_schema` 仅做兼容兜底（不作为首选迁移手段）
 
-```bash
-sudo cp deploy/aipodcast.env.example /etc/default/aipodcast
-sudo nano /etc/default/aipodcast
-sudo chmod 600 /etc/default/aipodcast
-sudo bash deploy.sh --yes --backend-env-file /etc/default/aipodcast
-```
+认证与订阅审计新增：
 
-说明：
+- `user_auth_accounts`：认证主数据（密码哈希、状态、登录失败次数等）
+- `payment_webhook_deliveries`：支付回调投递审计（验签结果、payload hash、处理结果）
+- `subscription_current_state`：订阅当前态物化（由事件驱动更新）
 
-- `/etc/default/aipodcast` 会被 systemd 作为 `EnvironmentFile` 载入
-- 推荐把 `MINIMAX_API_KEY` 等敏感配置放在这里，不写入仓库
+鉴权开关（可选）：
 
-常用参数：
+- `FYV_AUTH_PG_PRIMARY=1`：认证主读 PG（默认开）
+- `FYV_AUTH_DUAL_WRITE=1`：登录/注册等双写 JSON+PG（观察期）
+- `FYV_AUTH_JSON_BACKUP_READONLY=1`：JSON 仅读备份（默认开）
 
-```bash
-# 跳过 git pull（网络或 SSH 不稳定时）
-sudo bash deploy.sh --yes --no-git-pull
+数据治理增强：
 
-# 指定后端环境变量文件给 systemd
-sudo bash deploy.sh --yes --backend-env-file /etc/default/aipodcast
-
-# 指定 Python 路径（例如阿里云自装在 /usr/local/bin/python3.12）
-sudo bash deploy.sh --yes --python-bin /usr/local/bin/python3.12
-```
-
-### 4) 部署后验证
-
-```bash
-systemctl status aipodcast-backend --no-pager
-curl -s http://127.0.0.1:5001/api/ping
-curl -I http://127.0.0.1/
-```
-
-若异常，查看日志：
-
-```bash
-journalctl -u aipodcast-backend -n 120 --no-pager
-```
-
----
-
-## 发布前检查清单（建议）
-
-- [ ] `.gitignore` 已忽略 `outputs` / `uploads` / `node_modules`
-- [ ] 不提交 `.env`、密钥、音频产物、数据库
-- [ ] 前端 `npm run build` 通过
-- [ ] 后端 `python3 -m py_compile backend/app.py backend/auth_service.py` 通过
-- [ ] `health` 与 `auth` 基础接口可用
-- [ ] 生产环境使用 `systemd + nginx`（不要用 Flask dev server 常驻）
-
----
-
-## 常见问题
-
-### 1) `git push` 提示 non-fast-forward
-
-先拉远程再推：
-
-```bash
-git pull origin main --allow-unrelated-histories
-git push -u origin main
-```
-
-### 2) 部署时报 `Permission denied: /root/...`
-
-不要把项目放在 `/root` 下给普通用户运行。建议放到 `/opt/aipodcast` 并修正所属用户。
-
-### 3) 5001 端口被占用
-
-检查旧进程并重启服务，避免“新代码没生效但接口仍在跑旧版本”。
+- 订阅事件类型标准化（`subscription_events.event_type`），并驱动 `subscription_current_state` 物化更新
+- 支付回调幂等增强：`payment_webhook_deliveries` 按 `(provider, event_id, payload_hash)` 聚合，累计 `delivery_count`
+- 审计追踪链路：`trace_id/request_id` 写入 `subscription_events/payment_orders/payment_webhook_deliveries`
+- 数据保留建议周期：webhook 180 天、usage/job_events 365 天、subscription_events 730 天
+- 维护命令：`make retention-maintenance DRY_RUN=1`（预览）/ `DRY_RUN=0`（执行）
 
 ---
 
 ## 免责声明
 
 请勿将敏感密钥硬编码到仓库。生产环境请使用环境变量或密钥管理服务。
-

@@ -1,83 +1,81 @@
 #!/usr/bin/env bash
-# 服务器快速发布脚本（阿里云 ECS）
+# 服务器快速发布（AI Native / Docker Compose）
+#
 # 用法：
 #   bash release.sh
+#
 # 可选环境变量：
-#   APP_DIR=/opt/aipodcast
+#   APP_DIR=/opt/minimax_aipodcast
 #   BRANCH=main
-#   DEPLOY_USER=presto
-#   USE_ENV_FILE=1
-#   ENV_FILE=/etc/default/aipodcast
-#   SKIP_APT=1
+#   REMOTE=origin
+#   GIT_PULL=0   跳过 git fetch/pull（离线或固定版本发布）
 set -euo pipefail
 
-
-# 在脚本开头加入
-export PYTHON_EXECUTABLE=/usr/local/bin/python3.12
-
-# 然后在下方创建环境时使用
-$PYTHON_EXECUTABLE -m venv venv
-
-# 检查 Python 3.12 路径
-PYTHON_BIN="/usr/local/bin/python3.12"
-if [[ ! -f "$PYTHON_BIN" ]]; then
-  echo "❌ 找不到 Python 3.12，请检查安装路径"
-  exit 1
-fi
-
-# 确保 deploy.sh 有执行权限
-chmod +x deploy.sh
-
-echo "==> 执行一键部署"
-# 如果你的 deploy.sh 支持指定 python 路径，可以传参进去
-# 否则，确保 deploy.sh 内部创建 venv 时使用的是 $PYTHON_BIN
-
-
-APP_DIR="${APP_DIR:-/opt/aipodcast}"
+APP_DIR="${APP_DIR:-/opt/minimax_aipodcast}"
+REMOTE="${REMOTE:-origin}"
 BRANCH="${BRANCH:-main}"
-DEPLOY_USER="${DEPLOY_USER:-${SUDO_USER:-$(whoami)}}"
-USE_ENV_FILE="${USE_ENV_FILE:-1}"
-ENV_FILE="${ENV_FILE:-/etc/default/aipodcast}"
-SKIP_APT="${SKIP_APT:-1}"
+GIT_PULL="${GIT_PULL:-1}"
+COMPOSE_FILE="docker-compose.ai-native.yml"
+ENV_FILE=".env.ai-native"
 
-if [[ ! -d "$APP_DIR" ]]; then
-  echo "❌ 项目目录不存在: $APP_DIR"
-  exit 1
+log() { echo "[$(date +'%F %T')] $*"; }
+die() { echo "❌ $*" >&2; exit 1; }
+
+command -v docker >/dev/null 2>&1 || die "未找到 docker 命令"
+docker compose version >/dev/null 2>&1 || die "未找到 docker compose（需 Docker Compose v2 插件）"
+command -v curl >/dev/null 2>&1 || die "未找到 curl（健康检查需要）"
+
+[[ -d "$APP_DIR" ]] || die "项目目录不存在: $APP_DIR"
+cd "$APP_DIR" || die "无法进入目录: $APP_DIR"
+
+[[ -f "$COMPOSE_FILE" ]] || die "缺少 $COMPOSE_FILE（当前目录：$APP_DIR）"
+[[ -f "$ENV_FILE" ]] || die "缺少 $ENV_FILE，请先复制 .env.ai-native.example 并配置"
+
+log "发布目录: $APP_DIR"
+log "远端/分支: $REMOTE/$BRANCH"
+
+if [[ "$GIT_PULL" == "1" ]]; then
+  log "拉取最新代码"
+  git fetch "$REMOTE" "$BRANCH" || die "git fetch 失败"
+  git pull --ff-only "$REMOTE" "$BRANCH" || die "git pull --ff-only 失败（请处理本地变更或合并冲突）"
+else
+  log "GIT_PULL=0，跳过 git fetch/pull"
 fi
 
-echo "==> 发布目录: $APP_DIR"
-echo "==> 分支: $BRANCH"
-echo "==> 部署用户: $DEPLOY_USER"
+log "构建并启动容器"
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build || die "docker compose up 失败"
 
-cd "$APP_DIR"
+log "健康检查"
+health_ok=0
+for i in 1 2 3 4 5 6; do
+  if curl -fsS --connect-timeout 3 --max-time 10 http://127.0.0.1:8008/health >/dev/null 2>&1; then
+    health_ok=1
+    break
+  fi
+  log "编排器 /health 未就绪（第 ${i}/6 次重试）…"
+  sleep 1
+done
+[[ "$health_ok" -eq 1 ]] || die "编排器 /health 在多次重试后仍不通"
 
-echo "==> 拉取最新代码"
-git fetch origin "$BRANCH"
-git checkout "$BRANCH"
-git pull --ff-only origin "$BRANCH"
+web_ok=0
+for i in 1 2 3 4; do
+  if curl -fsS --connect-timeout 3 --max-time 10 -o /dev/null http://127.0.0.1:3000/ 2>/dev/null; then
+    web_ok=1
+    break
+  fi
+  log "Web 3000 未就绪（第 ${i}/4 次重试）…"
+  sleep 1
+done
+[[ "$web_ok" -eq 1 ]] || die "Web 3000 在多次重试后仍不通"
 
-echo "==> 执行一键部署"
-DEPLOY_CMD=(sudo bash deploy.sh --yes)
-if [[ "$SKIP_APT" == "1" ]]; then
-  DEPLOY_CMD+=(--no-apt)
-fi
-if [[ "$USE_ENV_FILE" == "1" ]]; then
-  DEPLOY_CMD+=(--backend-env-file "$ENV_FILE")
-fi
-"${DEPLOY_CMD[@]}"
+log "检查核心容器是否为 running"
+for svc in orchestrator web ai-worker media-worker; do
+  if [[ -z "$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q --status running "$svc" 2>/dev/null || true)" ]]; then
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -a >&2 || true
+    die "容器 $svc 未处于 running，请查看: docker compose -f $COMPOSE_FILE --env-file $ENV_FILE logs $svc"
+  fi
+done
 
-echo "==> 服务状态检查"
-systemctl is-active --quiet aipodcast-backend || {
-  echo "❌ aipodcast-backend 未运行"
-  systemctl status aipodcast-backend --no-pager || true
-  journalctl -u aipodcast-backend -n 120 --no-pager || true
-  exit 1
-}
-
-echo "==> 健康检查"
-curl -fsS http://127.0.0.1:5001/api/ping >/dev/null
-curl -fsS http://127.0.0.1/ >/dev/null
-
-echo "✅ 发布成功"
-echo "   - 后端: http://127.0.0.1:5001"
-echo "   - 前端: http://$(hostname -I | awk '{print $1}')"
+log "发布成功"
+log "编排器: http://127.0.0.1:8008/health"
+log "Web: http://127.0.0.1:3000/"
