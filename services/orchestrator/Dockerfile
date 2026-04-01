@@ -19,8 +19,8 @@ RUN set -eux; \
 
 COPY services/orchestrator/requirements.txt /app/requirements.txt
 COPY docker/offline-pip-wheels /opt/pip-offline-wheels
-RUN n=$$(find /opt/pip-offline-wheels -maxdepth 1 -name '*.whl' 2>/dev/null | wc -l | tr -d ' '); \
-    if [ "$$n" -gt 0 ]; then \
+# 用 /bin/sh（dash）可解析的写法；勿用 $$ 变量以免 BuildKit 下报 Syntax error: "(" unexpected
+RUN if ls /opt/pip-offline-wheels/*.whl >/dev/null 2>&1; then \
       pip install --no-index --find-links=/opt/pip-offline-wheels -r /app/requirements.txt; \
     else \
       pip install --no-cache-dir -r /app/requirements.txt; \
