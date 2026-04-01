@@ -1,4 +1,4 @@
-.PHONY: up down logs web orchestrator worker-ai worker-media worker-ai-simple worker-media-simple install-deps test-api-key-strip test-fallback-tag dev-infra dev-api dev-web dev-start complete-dev dev-worker-ai dev-worker-media dev dev-apps dev-install ci cleanup-outputs migrate-json-to-pg migrate-sessions-to-redis migrate-db retention-maintenance check-data-consistency
+.PHONY: up up-offline build-offline down logs web orchestrator worker-ai worker-media worker-ai-simple worker-media-simple install-deps test-api-key-strip test-fallback-tag dev-infra dev-api dev-web dev-start complete-dev dev-worker-ai dev-worker-media dev dev-apps dev-install ci cleanup-outputs migrate-json-to-pg migrate-sessions-to-redis migrate-db retention-maintenance check-data-consistency
 
 ci:
 	@test -d apps/web/node_modules || (echo "请先: make dev-install"; exit 1)
@@ -86,6 +86,13 @@ dev-worker-media:
 
 up:
 	docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d --build
+
+# 已离线 load 基础镜像、ECS 访问不了 docker.io 时使用（关闭 BuildKit，避免解析 Hub manifest）
+up-offline:
+	bash scripts/docker-compose-offline.sh up -d --build
+
+build-offline:
+	bash scripts/docker-compose-offline.sh build
 
 down:
 	docker compose -f docker-compose.ai-native.yml down

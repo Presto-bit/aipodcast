@@ -1,9 +1,10 @@
 # 宿主机端口默认绑定 127.0.0.1，避免 Postgres/Redis/MinIO/编排器 对公网暴露（见 DEPLOYMENT.md）。
 # 需局域网直连调试时，可临时改为 "0.0.0.0:端口:端口" 或使用 SSH 隧道。
-# 默认镜像前缀：registry.cn-hangzhou.aliyuncs.com/acs/（须已在该命名空间同步或存在对应仓库；可通过 *_IMAGE / *_BASE_IMAGE 覆盖）
+# 默认使用 Docker Hub 短名，与「docker pull + docker save/load」离线包一致；国内/私有库可在 .env.ai-native 设 POSTGRES_IMAGE 等覆盖。
+# 离线构建勿访问 registry-1.docker.io：先 load 基础镜像，再用 scripts/docker-compose-offline.sh 或 make up-offline（DOCKER_BUILDKIT=0）。
 services:
   postgres:
-    image: docker.m.daocloud.io/library/postgres:16-alpine
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
     env_file:
       - .env.ai-native
     environment:
@@ -24,7 +25,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: docker.m.daocloud.io/library/redis:7-alpine
+    image: ${REDIS_IMAGE:-redis:7-alpine}
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -35,7 +36,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: docker.m.daocloud.io/library/minio:latest
+    image: ${MINIO_IMAGE:-minio/minio:latest}
     command: server /data --console-address ":9001"
     env_file:
       - .env.ai-native
@@ -60,7 +61,7 @@ services:
       dockerfile: services/orchestrator/Dockerfile
       pull: false
       args:
-        PYTHON_BASE_IMAGE: docker.m.daocloud.io/library/python:3.12-slim
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
     env_file:
       - .env.ai-native
     environment:
@@ -96,7 +97,7 @@ services:
       dockerfile: workers/ai-worker/Dockerfile
       pull: false
       args:
-        PYTHON_BASE_IMAGE: docker.m.daocloud.io/library/python:3.12-slim
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
     env_file:
       - .env.ai-native
     environment:
@@ -120,7 +121,7 @@ services:
       dockerfile: workers/media-worker/Dockerfile
       pull: false
       args:
-        PYTHON_BASE_IMAGE: docker.m.daocloud.io/library/python:3.12-slim
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
     env_file:
       - .env.ai-native
     environment:
@@ -144,7 +145,7 @@ services:
       dockerfile: apps/web/Dockerfile
       pull: false
       args:
-        NODE_BASE_IMAGE: docker.m.daocloud.io/library/node:20-alpine
+        NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-node:20-alpine}
     env_file:
       - .env.ai-native
     environment:
