@@ -1,0 +1,20 @@
+# AI Native：编排器（orchestrator）与 RQ worker（ai-worker / media-worker）共用依赖。
+# 本地/CI：请在仓库根目录执行 pip install -r requirements.txt（见根目录 requirements.txt）。
+# 共享业务代码位于 app/fyv_shared（随本仓库安装，无需单独 pip install -e）。
+# Docker：各 Dockerfile 均 COPY 本文件，避免 worker 与编排器 pip 不一致。
+fastapi==0.115.0
+uvicorn==0.30.6
+psycopg2-binary==2.9.9
+redis==5.1.1
+rq==1.16.2
+boto3==1.35.20
+pydantic==2.9.2
+python-dotenv==1.0.1
+httpx==0.27.2
+werkzeug==3.1.3
+pydub==0.25.1
+requests==2.32.3
+cryptography==43.0.3
+beautifulsoup4==4.12.2
+PyPDF2==3.0.1
+pytest==8.3.4

@@ -125,7 +125,7 @@ def main() -> None:
         sys.exit(1)
 
     used_keys: Dict[str, bool] = {}
-    print("# 以下片段可合并进 backend/config.py 的 DEFAULT_VOICES（勿重复 mini/max 键名）")
+    print("# 以下片段可合并进 services/orchestrator/app/fyv_shared/config.py 的 DEFAULT_VOICES（勿重复 mini/max 键名）")
     print("# 生成条目数:", len(parsed))
     print()
 
@@ -147,4 +147,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except BrokenPipeError:
+            pass
+        raise SystemExit(0)

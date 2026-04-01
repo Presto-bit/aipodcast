@@ -1,3 +1,6 @@
+# Python（本仓库推荐 .venv-ai-native，见 Makefile dev-install）
+.venv-ai-native/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -23,17 +26,13 @@ wheels/
 .installed.cfg
 *.egg
 
-# 上传和生成的文件
-backend/uploads/*
-backend/outputs/*
-!backend/uploads/.gitkeep
-!backend/outputs/.gitkeep
-
-# working 目录在 backend/ 子路径下时的上传与生成物（与上一段规则一致）
-backend/backend/uploads/*
-backend/backend/outputs/*
-!backend/backend/uploads/.gitkeep
-!backend/backend/outputs/.gitkeep
+# legacy_backend：上传与生成物（与 legacy_backend/config 中 OUTPUT_DIR / UPLOAD_DIR 一致）
+legacy_backend/uploads/*
+legacy_backend/outputs/*
+legacy_backend/data/*
+!legacy_backend/uploads/.gitkeep
+!legacy_backend/outputs/.gitkeep
+!legacy_backend/data/.gitkeep
 
 # IDE
 .vscode/
@@ -54,23 +53,18 @@ backend/backend/outputs/*
 # 环境变量
 .env
 .env.local
+.env.ai-native
 deploy/deploy.env
 
-# 会话数据
-backend/outputs/session_*.json
-backend/backend/outputs/session_*.json
+# 运行时中间文件
+legacy_backend/outputs/tmp/
 
-# Node.js / React
+# Node.js / Next.js
 node_modules/
-frontend/node_modules/
+apps/web/node_modules/
+apps/web/.next/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-frontend/build/
-frontend/.env.local
-frontend/.env.development.local
-frontend/.env.test.local
-frontend/.env.production.local
 package-lock.json
-frontend/package-lock.json
-
+apps/web/package-lock.json

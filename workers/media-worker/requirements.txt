@@ -1,0 +1,2 @@
+# 指向编排器统一依赖（勿在此重复钉版本）
+-r ../../services/orchestrator/requirements.txt

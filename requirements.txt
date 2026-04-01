@@ -1,8 +1,3 @@
-Flask==3.0.0
-flask-cors==4.0.0
-requests==2.31.0
-beautifulsoup4==4.12.2
-PyPDF2==3.0.1
-pydub==0.25.1
-Werkzeug==3.0.1
-
+# 唯一入口：编排器与 RQ worker 共用同一套依赖（本地 venv / pip）
+# 在仓库根目录执行：pip install -r requirements.txt
+-r services/orchestrator/requirements.txt

@@ -1,0 +1,157 @@
+# 宿主机端口默认绑定 127.0.0.1，避免 Postgres/Redis/MinIO/编排器 对公网暴露（见 DEPLOYMENT.md）。
+# 需局域网直连调试时，可临时改为 "0.0.0.0:端口:端口" 或使用 SSH 隧道。
+services:
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - .env.ai-native
+    environment:
+      POSTGRES_USER: ${DB_USER:-aipodcast}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-aipodcast}
+      POSTGRES_DB: ${DB_NAME:-aipodcast}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      # 使用容器内已注入的 POSTGRES_*（与 environment 块一致）
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    env_file:
+      - .env.ai-native
+    environment:
+      MINIO_ROOT_USER: ${OBJECT_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${OBJECT_SECRET_KEY:-minioadmin}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    env_file:
+      - .env.ai-native
+    environment:
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      OBJECT_ENDPOINT: http://minio:9000
+    ports:
+      - "127.0.0.1:8008:8008"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health', timeout=5).read()",
+        ]
+      interval: 10s
+      timeout: 6s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  ai-worker:
+    build:
+      context: .
+      dockerfile: workers/ai-worker/Dockerfile
+    env_file:
+      - .env.ai-native
+    environment:
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      OBJECT_ENDPOINT: http://minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
+    restart: unless-stopped
+
+  media-worker:
+    build:
+      context: .
+      dockerfile: workers/media-worker/Dockerfile
+    env_file:
+      - .env.ai-native
+    environment:
+      DB_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      OBJECT_ENDPOINT: http://minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    env_file:
+      - .env.ai-native
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_NAME: AI Native Studio
+      # 容器内 BFF 必须走编排器服务名，不能用 127.0.0.1（那会指向 web 容器自身）
+      ORCHESTRATOR_URL: http://orchestrator:8008
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  minio_data:

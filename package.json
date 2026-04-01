@@ -1,0 +1,14 @@
+{
+  "name": "minimax-aipodcast-dev",
+  "private": true,
+  "description": "本地热重载：与 Makefile 的 make dev 配合，仅用于开发，不参与生产构建",
+  "scripts": {
+    "postinstall": "npm install --prefix apps/web --no-audit --no-fund",
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "bash scripts/dev-api.sh",
+    "dev:web": "bash scripts/dev-web.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

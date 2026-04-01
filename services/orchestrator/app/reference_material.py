@@ -1,0 +1,319 @@
+"""
+多来源参考材料合并 + 长文压缩（P2 / P2+）。
+P2+：reference_rag_mode = keyword | full_coverage | hybrid（见 rag_core：关键词 + 可选向量混合）。
+"""
+from __future__ import annotations
+
+import io
+import json
+import logging
+import os
+import re
+import tempfile
+import zipfile
+from typing import Any
+
+from .legacy_bridge import parse_url_content
+from .models import get_note_by_id
+from .object_store import get_object_bytes
+
+logger = logging.getLogger(__name__)
+
+
+def _choose_auto_rag_top_k(total_chars: int) -> int:
+    n = int(total_chars or 0)
+    if n < 20_000:
+        return 8
+    if n < 50_000:
+        return 12
+    if n < 100_000:
+        return 16
+    return 20
+
+
+def _docx_bytes_to_text(data: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
+            xml_data = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+        text = re.sub(r"</w:p>", "\n", xml_data)
+        text = re.sub(r"<[^>]+>", "", text)
+        return re.sub(r"\n{2,}", "\n", text).strip()
+    except Exception:
+        return ""
+
+
+def _note_file_bytes_to_text(data: bytes, ext: str) -> str:
+    e = (ext or "txt").lower().lstrip(".")
+    if e in ("txt", "md", "markdown"):
+        return data.decode("utf-8", errors="ignore")
+    if e == "docx":
+        return _docx_bytes_to_text(data)
+
+    suffix = f".{e}" if e else ".bin"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+        f.write(data)
+        path = f.name
+    try:
+        from app.fyv_shared.content_parser import content_parser
+
+        if e == "pdf":
+            r = content_parser.parse_pdf(path)
+            return str(r.get("content") or "").strip() if r.get("success") else ""
+        if e == "epub":
+            r = content_parser.parse_epub(path)
+            return str(r.get("content") or "").strip() if r.get("success") else ""
+    except Exception as exc:
+        logger.warning("note_file parse (%s): %s", e, exc)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    return ""
+
+
+def load_note_text_for_script(note_id: str, user_ref: str | None = None) -> tuple[str, str]:
+    """返回 (正文, 标题或 id)。"""
+    row = get_note_by_id((note_id or "").strip(), user_ref=user_ref)
+    if not row:
+        return "", note_id
+    md = row.get("metadata") or {}
+    if isinstance(md, str):
+        try:
+            md = json.loads(md)
+        except Exception:
+            md = {}
+    title = str(md.get("title") or note_id)
+    it = str(row.get("input_type") or "")
+    if it == "note_text":
+        return str(row.get("content_text") or "").strip(), title
+    if it == "note_file":
+        key = row.get("file_object_key")
+        ext = str(md.get("ext") or "txt").lower()
+        if not key:
+            return "", title
+        try:
+            raw = get_object_bytes(str(key))
+        except Exception as exc:
+            logger.warning("get_object_bytes %s: %s", key, exc)
+            return "", title
+        txt = _note_file_bytes_to_text(raw, ext)
+        return txt.strip(), title
+    return "", title
+
+
+def compress_long_reference(text: str, max_chars: int) -> str:
+    """长参考朴素压缩：头 + 中 + 尾（非向量检索）。"""
+    if len(text) <= max_chars:
+        return text
+    head = max_chars // 3
+    tail = max_chars // 3
+    mid = max(0, max_chars - head - tail - 120)
+    mid_start = max(0, len(text) // 2 - mid // 2)
+    return (
+        text[:head]
+        + "\n\n【…中间省略长参考材料…】\n\n"
+        + text[mid_start : mid_start + mid]
+        + "\n\n【…】\n\n"
+        + text[-tail:]
+    )
+
+
+# 与 legacy 侧 RAG_TRIGGER_CHARS 对齐：低于此长度不跑向量混合（改走 keyword 等）
+RAG_HYBRID_TRIGGER_CHARS = 12_000
+
+
+def merge_reference_for_script(
+    payload: dict[str, Any],
+    source_text: str,
+    source_url: str,
+    api_key: str | None = None,
+    *,
+    max_note_refs: int | None = None,
+    user_ref: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """
+    合并用户输入、主 URL、多 URL、选中笔记、附加参考段落；可选长文压缩。
+    reference_rag_mode=hybrid 且合并后足够长时走向量 + 关键词混合（需 MINIMAX_API_KEY）。
+    """
+    note_cap = max_note_refs if max_note_refs is not None and max_note_refs > 0 else 24
+
+    meta: dict[str, Any] = {
+        "notes_loaded": 0,
+        "reference_snippets": 0,
+        "extra_urls": 0,
+        "rag_compressed": False,
+        "max_note_refs": note_cap,
+    }
+    parts: list[str] = []
+
+    base = (source_text or "").strip()
+    if base:
+        parts.append(base)
+
+    u0 = (source_url or "").strip()
+    if u0:
+        p = parse_url_content(u0)
+        if p:
+            parts.append(f"【参考网页】\n{p.strip()}")
+
+    raw_list = payload.get("url_list")
+    if isinstance(raw_list, list):
+        # 最多 8 条：减少串行拉取与解析（可显式合并材料）
+        for u in raw_list[:8]:
+            if not isinstance(u, str):
+                continue
+            u = u.strip()
+            if not u:
+                continue
+            p = parse_url_content(u)
+            if p:
+                parts.append(f"【参考网页】\n{p.strip()}")
+                meta["extra_urls"] += 1
+
+    note_ids = payload.get("selected_note_ids")
+    if isinstance(note_ids, list):
+        if len(note_ids) > note_cap:
+            meta["note_ids_truncated"] = len(note_ids) - note_cap
+        for nid in note_ids[:note_cap]:
+            if not isinstance(nid, str) or not nid.strip():
+                continue
+            body, title = load_note_text_for_script(nid.strip(), user_ref=user_ref)
+            if body:
+                parts.append(f"【笔记：{title}】\n{body}")
+                meta["notes_loaded"] += 1
+
+    ref_texts = payload.get("reference_texts")
+    if isinstance(ref_texts, list):
+        for i, t in enumerate(ref_texts[:16]):
+            if not isinstance(t, str) or not t.strip():
+                continue
+            parts.append(f"【附加参考 {i + 1}】\n{t.strip()}")
+            meta["reference_snippets"] += 1
+
+    merged = "\n\n".join(parts).strip()
+    if not merged:
+        merged = (base or "请介绍 AI Native 应用架构").strip()
+
+    hard_max = 200_000
+    if len(merged) > hard_max:
+        merged = merged[:hard_max] + "\n\n【…参考材料过长已硬截断…】"
+        meta["hard_truncated"] = True
+
+    use_rag = payload.get("use_rag")
+    if use_rag is None:
+        use_compress = True
+    else:
+        use_compress = bool(use_rag)
+
+    raw_cap = payload.get("rag_max_chars")
+    try:
+        # 默认 20_000：长文更早截断/压缩，利于下游脚本与速度；可用 payload 调大
+        rag_cap = int(raw_cap) if raw_cap is not None else 20_000
+    except (TypeError, ValueError):
+        rag_cap = 20_000
+    rag_cap = max(8_000, min(120_000, rag_cap))
+    meta["rag_max_chars"] = rag_cap
+
+    mode = str(payload.get("reference_rag_mode") or "truncate").strip().lower()
+    if mode not in ("truncate", "keyword", "full_coverage", "hybrid"):
+        mode = "truncate"
+    meta["reference_rag_mode"] = mode
+
+    if not use_compress:
+        return merged, meta
+
+    if mode == "hybrid" and len(merged) >= RAG_HYBRID_TRIGGER_CHARS:
+        try:
+            from .rag_core import apply_hybrid_vector_rag
+
+            merged, log_msg = apply_hybrid_vector_rag(merged, payload, api_key)
+            meta["rag_hybrid"] = True
+            if log_msg:
+                meta["rag_hybrid_log"] = str(log_msg)[:800]
+        except Exception as exc:
+            logger.warning("hybrid vector RAG: %s", exc)
+            meta["rag_hybrid_error"] = str(exc)[:400]
+            if len(merged) > rag_cap:
+                merged = compress_long_reference(merged, rag_cap)
+                meta["rag_compressed"] = True
+        if len(merged) > rag_cap:
+            merged = merged[:rag_cap] + "\n【…截断…】"
+            meta["rag_final_trim"] = True
+        return merged, meta
+
+    if len(merged) <= rag_cap:
+        return merged, meta
+
+    rest_mode = mode
+    if mode == "hybrid":
+        meta["rag_hybrid_skipped"] = f"below_{RAG_HYBRID_TRIGGER_CHARS}_chars_fallback_keyword"
+        rest_mode = "keyword"
+
+    if rest_mode == "truncate":
+        merged = compress_long_reference(merged, rag_cap)
+        meta["rag_compressed"] = True
+        return merged, meta
+
+    topic_hint = str(payload.get("text") or merged[:1200])[:1200]
+    try:
+        from .rag_core import build_retrieval_query
+
+        query = build_retrieval_query(
+            topic_hint,
+            str(payload.get("script_style") or ""),
+            str(payload.get("script_language") or "中文"),
+            str(payload.get("program_name") or ""),
+            str(payload.get("speaker1_persona") or ""),
+            str(payload.get("speaker2_persona") or ""),
+            str(payload.get("script_constraints") or ""),
+        )
+    except Exception as exc:
+        logger.warning("build_retrieval_query failed: %s", exc)
+        merged = compress_long_reference(merged, rag_cap)
+        meta["rag_compressed"] = True
+        return merged, meta
+
+    if rest_mode == "keyword":
+        try:
+            from .rag_core import retrieve_top_chunks
+
+            top_k = _choose_auto_rag_top_k(len(merged))
+            top_chunks, chunk_count = retrieve_top_chunks(merged, query, top_k=top_k)
+            if top_chunks:
+                selected = [
+                    f"【检索片段 {c['chunk_index']} | score={c['score']:.3f}】\n{c['content']}" for c in top_chunks
+                ]
+                merged = "\n\n".join(selected)
+                meta["rag_keyword"] = True
+                meta["rag_chunks_total"] = chunk_count
+                meta["rag_chunks_selected"] = len(top_chunks)
+            else:
+                merged = compress_long_reference(merged, rag_cap)
+                meta["rag_compressed"] = True
+        except Exception as exc:
+            logger.warning("keyword RAG: %s", exc)
+            merged = compress_long_reference(merged, rag_cap)
+            meta["rag_compressed"] = True
+    elif rest_mode == "full_coverage":
+        try:
+            from .rag_core import build_full_coverage_context
+
+            phase1, chunk_count = build_full_coverage_context(merged, query, max_total_chars=min(rag_cap, 16_000))
+            if phase1:
+                merged = phase1
+                meta["rag_full_coverage"] = True
+                meta["rag_chunks_total"] = chunk_count
+            else:
+                merged = compress_long_reference(merged, rag_cap)
+                meta["rag_compressed"] = True
+        except Exception as exc:
+            logger.warning("full_coverage RAG: %s", exc)
+            merged = compress_long_reference(merged, rag_cap)
+            meta["rag_compressed"] = True
+
+    if len(merged) > rag_cap:
+        merged = merged[:rag_cap] + "\n【…截断…】"
+        meta["rag_final_trim"] = True
+
+    return merged, meta
