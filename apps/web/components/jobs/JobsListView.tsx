@@ -9,6 +9,7 @@ import { cancelJob, listJobs } from "../../lib/api";
 import { jobsListLoadErrorPresentation } from "../../lib/jobsListErrors";
 import { listRememberedJobIds } from "../../lib/jobRecent";
 import type { JobRecord, JobStatus } from "../../lib/types";
+import { useI18n } from "../../lib/I18nContext";
 
 const PAGE_SIZE = 40;
 
@@ -16,9 +17,9 @@ function statusBadge(status: string) {
   const m: Record<string, string> = {
     queued: "bg-track text-ink",
     running: "bg-fill text-brand",
-    succeeded: "bg-emerald-100 text-emerald-900",
-    failed: "bg-rose-100 text-rose-900",
-    cancelled: "bg-amber-100 text-amber-900"
+    succeeded: "bg-success-soft text-success-ink",
+    failed: "bg-danger-soft text-danger-ink",
+    cancelled: "bg-warning-soft text-warning-ink"
   };
   return m[status] || "bg-track text-ink";
 }
@@ -31,6 +32,7 @@ type JobsListViewProps = {
 
 /** 创作记录列表（站内 / 管理后台复用） */
 export default function JobsListView({ variant }: JobsListViewProps) {
+  const { t } = useI18n();
   const basePath = variant === "admin" ? "/admin/jobs" : "/jobs";
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [filter, setFilter] = useState<JobStatus | "">("");
@@ -75,8 +77,8 @@ export default function JobsListView({ variant }: JobsListViewProps) {
   const extraRemembered = useMemo(() => remembered.filter((id) => !idsOnPage.has(id)), [remembered, idsOnPage]);
   const errPresentation = useMemo(() => {
     if (!err) return null;
-    return jobsListLoadErrorPresentation(err);
-  }, [err]);
+    return jobsListLoadErrorPresentation(err, t);
+  }, [err, t]);
 
   async function stopJob(id: string) {
     setStoppingId(id);
@@ -112,16 +114,12 @@ export default function JobsListView({ variant }: JobsListViewProps) {
       {isAdmin ? (
         <>
           <h1 className="text-2xl font-semibold text-ink">创作记录</h1>
-          <p className="mt-2 text-sm text-muted">
-            在后台查看生成任务列表与状态；点击详情进入本条记录（仍使用站内详情能力）。管理员可见全站任务。
-          </p>
+          <p className="mt-2 text-sm text-muted">全站任务列表与状态。</p>
         </>
       ) : (
         <div className="mb-6 text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-ink">创作记录</h1>
-          <p className="mt-2 text-sm text-muted">
-            你发起的播客生成、文本转语音、笔记转化等都会出现在这里。可查看进度、下载成品；排队或生成中表示系统正在处理，请稍候刷新。
-          </p>
+          <p className="mt-2 text-sm text-muted">进度与成品；排队 / 运行中请稍后刷新。</p>
         </div>
       )}
 
@@ -150,7 +148,7 @@ export default function JobsListView({ variant }: JobsListViewProps) {
         <div
           className={
             errPresentation.variant === "connectivity"
-              ? "mt-4 rounded-dawn-lg border border-amber-500/35 bg-amber-500/10 px-3 py-3 text-sm"
+              ? "mt-4 rounded-dawn-lg border border-warning/40 bg-warning-soft0/10 px-3 py-3 text-sm"
               : errPresentation.variant === "auth"
                 ? "mt-4 rounded-dawn-lg border border-line bg-fill px-3 py-3 text-sm"
                 : "mt-4 rounded-dawn-lg border border-danger/35 bg-danger-soft px-3 py-3 text-sm"
@@ -160,7 +158,7 @@ export default function JobsListView({ variant }: JobsListViewProps) {
           <p
             className={
               errPresentation.variant === "connectivity"
-                ? "font-medium text-amber-100"
+                ? "font-medium text-warning-ink"
                 : errPresentation.variant === "auth"
                   ? "font-medium text-ink"
                   : "font-medium text-danger"
@@ -176,7 +174,7 @@ export default function JobsListView({ variant }: JobsListViewProps) {
       {!isAdmin && extraRemembered.length > 0 ? (
         <section className="mt-6 rounded-2xl border border-line bg-fill/80 p-4">
           <h2 className="text-xs font-medium uppercase tracking-wide text-muted">本机最近创建</h2>
-          <p className="mt-1 text-xs text-muted">若列表里暂时看不到，可点此打开对应详情（可能仍在排队）。</p>
+          <p className="mt-1 text-xs text-muted">列表未显示时可从此打开详情。</p>
           <ul className="mt-2 flex flex-wrap gap-2 text-xs">
             {extraRemembered.map((id) => (
               <li key={id}>
@@ -197,17 +195,13 @@ export default function JobsListView({ variant }: JobsListViewProps) {
       ) : jobs.length === 0 ? (
         <EmptyState
           className="mt-6"
-          title="还没有创作记录"
+          title={t("empty.jobsList.title")}
           showBrandGlyph={!isAdmin}
-          description={
-            isAdmin
-              ? "当前筛选条件下没有任务，或系统尚无生成记录。"
-              : "去生成一期播客、把文字转成语音，或从笔记出节目后，记录会出现在这里。"
-          }
+          description={isAdmin ? t("empty.jobsList.desc.admin") : t("empty.jobsList.desc.user")}
           action={
             isAdmin ? undefined : (
-              <Link href="/podcast" className="text-sm text-brand underline">
-                去制作 AI 播客
+              <Link href="/create" className="text-sm font-medium text-brand underline underline-offset-2 hover:opacity-90">
+                {t("empty.jobsList.cta")}
               </Link>
             )
           }

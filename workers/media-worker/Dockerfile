@@ -11,7 +11,7 @@ RUN set -eux; \
       echo "ffmpeg/ffprobe already present, skip apt-get"; \
     else \
       apt-get update; \
-      apt-get install -y --no-install-recommends ffmpeg; \
+      apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk; \
       rm -rf /var/lib/apt/lists/*; \
     fi
 

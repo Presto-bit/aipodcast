@@ -8,14 +8,14 @@ export function BillingToggle({ cycle, onChange, yearlyDiscountPercent }: Props)
   return (
     <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
       <div
-        className="inline-flex rounded-xl border border-line bg-fill/60 p-1 shadow-sm"
+        className="inline-flex rounded-xl border border-line bg-fill/60 p-1 shadow-soft"
         role="group"
         aria-label="计费周期"
       >
         <button
           type="button"
           className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-            cycle === "monthly" ? "bg-brand text-white shadow-sm" : "text-muted hover:text-ink"
+            cycle === "monthly" ? "bg-brand text-brand-foreground shadow-soft" : "text-muted hover:text-ink"
           }`}
           onClick={() => onChange("monthly")}
         >
@@ -24,7 +24,7 @@ export function BillingToggle({ cycle, onChange, yearlyDiscountPercent }: Props)
         <button
           type="button"
           className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-            cycle === "yearly" ? "bg-brand text-white shadow-sm" : "text-muted hover:text-ink"
+            cycle === "yearly" ? "bg-brand text-brand-foreground shadow-soft" : "text-muted hover:text-ink"
           }`}
           onClick={() => onChange("yearly")}
         >

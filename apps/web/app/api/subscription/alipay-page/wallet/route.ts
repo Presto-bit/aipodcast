@@ -3,7 +3,7 @@ import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../../
 
 export async function POST(req: NextRequest) {
   const raw = await req.text();
-  return proxyJsonFromOrchestrator("/api/v1/subscription/wechat/native/subscription", {
+  return proxyJsonFromOrchestrator("/api/v1/subscription/alipay/page/wallet", {
     method: "POST",
     payload: raw || "{}",
     body: raw || "{}",

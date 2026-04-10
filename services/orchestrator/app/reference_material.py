@@ -138,6 +138,13 @@ def merge_reference_for_script(
     """
     note_cap = max_note_refs if max_note_refs is not None and max_note_refs > 0 else 24
 
+    raw_cap_early = payload.get("rag_max_chars")
+    try:
+        rag_cap_early = int(raw_cap_early) if raw_cap_early is not None else 20_000
+    except (TypeError, ValueError):
+        rag_cap_early = 20_000
+    rag_cap_early = max(8_000, min(120_000, rag_cap_early))
+
     meta: dict[str, Any] = {
         "notes_loaded": 0,
         "reference_snippets": 0,
@@ -175,13 +182,51 @@ def merge_reference_for_script(
     if isinstance(note_ids, list):
         if len(note_ids) > note_cap:
             meta["note_ids_truncated"] = len(note_ids) - note_cap
-        for nid in note_ids[:note_cap]:
-            if not isinstance(nid, str) or not nid.strip():
-                continue
-            body, title = load_note_text_for_script(nid.strip(), user_ref=user_ref)
-            if body:
-                parts.append(f"【笔记：{title}】\n{body}")
-                meta["notes_loaded"] += 1
+        capped_raw = note_ids[:note_cap]
+        capped_nids = [str(n).strip() for n in capped_raw if isinstance(n, str) and str(n).strip()]
+
+        from .note_rag_service import NOTE_LAYERED_RAG, build_layered_reference_block, count_rag_chunks_for_notes
+        from .rag_core import build_retrieval_query
+
+        layered_block: str | None = None
+        if (
+            NOTE_LAYERED_RAG
+            and capped_nids
+            and not bool(payload.get("notes_reference_full_text"))
+            and count_rag_chunks_for_notes(capped_nids) > 0
+        ):
+            topic_text = str(payload.get("text") or "").strip()
+            qh = build_retrieval_query(
+                topic_text[:2000] if topic_text else "",
+                str(payload.get("script_style") or ""),
+                str(payload.get("script_language") or "中文"),
+                str(payload.get("program_name") or ""),
+                str(payload.get("speaker1_persona") or ""),
+                str(payload.get("speaker2_persona") or ""),
+                str(payload.get("script_constraints") or ""),
+            ) or (topic_text[:1200] if topic_text else "资料要点")
+            lb, lmeta = build_layered_reference_block(
+                note_ids=capped_nids,
+                query_hint=qh,
+                user_ref=user_ref,
+                summary_budget=min(20_000, max(10_000, rag_cap_early // 2)),
+                retrieval_budget=min(120_000, max(32_000, int(rag_cap_early * 1.85))),
+                top_k=80,
+            )
+            meta["notes_layered_rag_meta"] = lmeta
+            layered_block = lb
+
+        if layered_block:
+            parts.append("【勾选笔记·摘要与向量检索】\n" + layered_block)
+            meta["notes_loaded"] = len(capped_nids)
+        else:
+            for nid in capped_raw:
+                if not isinstance(nid, str) or not nid.strip():
+                    continue
+                body, title = load_note_text_for_script(nid.strip(), user_ref=user_ref)
+                if body:
+                    parts.append(f"【笔记：{title}】\n{body}")
+                    meta["notes_loaded"] += 1
 
     ref_texts = payload.get("reference_texts")
     if isinstance(ref_texts, list):
@@ -195,7 +240,7 @@ def merge_reference_for_script(
     if not merged:
         merged = (base or "请介绍 AI Native 应用架构").strip()
 
-    hard_max = 200_000
+    hard_max = 400_000
     if len(merged) > hard_max:
         merged = merged[:hard_max] + "\n\n【…参考材料过长已硬截断…】"
         meta["hard_truncated"] = True
@@ -206,13 +251,7 @@ def merge_reference_for_script(
     else:
         use_compress = bool(use_rag)
 
-    raw_cap = payload.get("rag_max_chars")
-    try:
-        # 默认 20_000：长文更早截断/压缩，利于下游脚本与速度；可用 payload 调大
-        rag_cap = int(raw_cap) if raw_cap is not None else 20_000
-    except (TypeError, ValueError):
-        rag_cap = 20_000
-    rag_cap = max(8_000, min(120_000, rag_cap))
+    rag_cap = rag_cap_early
     meta["rag_max_chars"] = rag_cap
 
     mode = str(payload.get("reference_rag_mode") or "truncate").strip().lower()
@@ -299,7 +338,7 @@ def merge_reference_for_script(
         try:
             from .rag_core import build_full_coverage_context
 
-            phase1, chunk_count = build_full_coverage_context(merged, query, max_total_chars=min(rag_cap, 16_000))
+            phase1, chunk_count = build_full_coverage_context(merged, query, max_total_chars=min(rag_cap, 24_000))
             if phase1:
                 merged = phase1
                 meta["rag_full_coverage"] = True
@@ -317,3 +356,37 @@ def merge_reference_for_script(
         meta["rag_final_trim"] = True
 
     return merged, meta
+
+
+def effective_article_script_target_chars(
+    requested: int,
+    *,
+    merged_chars: int,
+    notes_loaded: int,
+    tier_cap: int,
+) -> int:
+    """
+    按合并后参考材料规模与勾选笔记数，收敛「笔记文章」目标字数，避免薄材料硬写超长稿。
+
+    材料与条数足够时不压降，保留套餐上限内用户所选目标（如 Max 档 5 万字）。
+    """
+    try:
+        req = max(200, min(int(tier_cap), int(requested)))
+    except (TypeError, ValueError):
+        return max(200, min(int(tier_cap), 2000))
+    mc = max(0, int(merged_chars))
+    nl = max(0, int(notes_loaded))
+    if mc < 3500 and nl <= 1:
+        # 极薄材料：短目标仍用紧上限；用户显式要万字级以上时不应压到 ~mc*3+2k（易与「要 2 万字」预期严重不符）
+        tight = max(2500, min(12_000, mc * 3 + 2000))
+        if req <= 8000:
+            return min(req, tight)
+        relaxed = max(10_000, min(req, mc * 7 + 5000))
+        return min(req, max(tight, relaxed))
+    if req >= 12_000 and mc < 6000:
+        return min(req, max(8000, min(req, int(mc * 1.7) + 5000)))
+    if req >= 28_000 and mc < 16_000:
+        return min(req, max(16_000, min(req, int(mc * 1.25) + 8000)))
+    if req >= 42_000 and not (mc >= 22_000 or nl >= 5):
+        return min(req, max(24_000, min(req, int(mc * 1.15) + 10_000)))
+    return req

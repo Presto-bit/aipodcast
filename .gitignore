@@ -34,6 +34,9 @@ legacy_backend/data/*
 !legacy_backend/outputs/.gitkeep
 !legacy_backend/data/.gitkeep
 
+##密码文件
+secrets/
+
 # IDE
 .vscode/
 .idea/
@@ -67,6 +70,9 @@ legacy_backend/outputs/tmp/
 node_modules/
 apps/web/node_modules/
 apps/web/.next/
+apps/web/playwright-report/
+apps/web/test-results/
+apps/web/blob-report/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

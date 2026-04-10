@@ -8,21 +8,18 @@ import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
 import { useAuth } from "../../lib/auth";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
+import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
+import { sanitizeShareEpisodeTitle } from "../../lib/sharePublishDefaults";
 import { downloadJobBundleZip } from "../../lib/workBundleDownload";
-import {
-  listRssChannels,
-  listRssPublicationsByJobIds,
-  publishWorkToRss,
-  type RssChannel,
-  type RssPublication
-} from "../../lib/api";
+import { listRssPublicationsByJobIds, type RssPublication } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
+import { useI18n } from "../../lib/I18nContext";
 
 const PODCAST_TYPES = new Set(["podcast_generate", "podcast"]);
 const TTS_TYPES = new Set(["text_to_speech"]);
-/** 笔记播客出稿（script_draft） */
+/** 笔记本出稿（script_draft） */
 const NOTES_WORK_TYPES = new Set(["script_draft"]);
-/** 笔记播客页：成片 + 文章出稿 */
+/** 笔记本页：成片 + 文章出稿 */
 const NOTES_STUDIO_TYPES = new Set(["podcast_generate", "podcast", "script_draft"]);
 
 type GalleryKeys = {
@@ -69,11 +66,14 @@ function galleryStorageKeys(variant: "podcast" | "tts" | "notes" | "notes_studio
 }
 
 /** 外链封面常因防盗链无法在浏览器直接显示，走同源代理 */
-function coverImageSrc(url: string | undefined | null): string {
+function coverImageSrc(url: string | undefined | null, cacheBust?: number): string {
   const u = String(url || "").trim();
   if (!u) return "";
-  if (u.startsWith("data:") || u.startsWith("/")) return u;
-  return `/api/image-proxy?url=${encodeURIComponent(u)}`;
+  let base = u.startsWith("data:") || u.startsWith("/") ? u : `/api/image-proxy?url=${encodeURIComponent(u)}`;
+  if (cacheBust && base.startsWith("/")) {
+    base += `${base.includes("?") ? "&" : "?"}v=${cacheBust}`;
+  }
+  return base;
 }
 
 function loadHiddenIds(hiddenKey: string): Set<string> {
@@ -170,7 +170,7 @@ function CircularPlayControl({
         disabled={disabled}
         onClick={onClick}
         aria-label={playing ? "暂停" : "播放"}
-        className="relative z-[1] flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-surface text-brand shadow-card-sm outline-none ring-offset-2 hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-wait disabled:opacity-60"
+        className="relative z-[1] flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-surface text-brand shadow-soft outline-none ring-offset-2 hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-wait disabled:opacity-60"
       >
         {playing ? (
           <svg className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="currentColor">
@@ -196,11 +196,85 @@ type Props = {
   onDismissError?: () => void;
   /** 服务端删除成功后回调（用于刷新列表） */
   onWorkDeleted?: () => void;
-  /** 播客成片（默认）、TTS、笔记出稿、笔记播客页合并列表，或首页「全部类型」 */
+  /** 播客成片（默认）、TTS、笔记本出稿、笔记本页合并列表，或首页「全部类型」 */
   variant?: "podcast" | "tts" | "notes" | "notes_studio" | "all";
   /** 仅在作品管理页开启：支持批量下载入口 */
   enableBatchActions?: boolean;
+  /** 笔记页侧栏：仅展示前 N 条，其余通过「更多」跳转我的作品 */
+  sidebarMaxItems?: number;
 };
+
+const NOTE_TITLE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function humanNoteSourceLabel(raw: string): string {
+  const s = String(raw || "").trim();
+  if (!s || NOTE_TITLE_UUID_RE.test(s)) return "未命名笔记";
+  return s;
+}
+
+/** 文章出稿卡片：单行来源 + 悬停/聚焦浮层展示笔记本、引用笔记全名等 */
+function ScriptWorkSourceSummary({ w }: { w: PodcastWorkRow }) {
+  const rawTitles = Array.isArray(w.notesSourceTitles) ? w.notesSourceTitles : [];
+  const titles = rawTitles.map((t) => humanNoteSourceLabel(String(t)));
+  const nTotal =
+    typeof w.notesSourceNoteCount === "number" && w.notesSourceNoteCount > 0
+      ? w.notesSourceNoteCount
+      : titles.length;
+  const joined = titles.join(" · ");
+  const moreHint =
+    nTotal > titles.length ? `共勾选 ${nTotal} 条，以下仅列出前 ${titles.length} 条名称。` : "";
+  const sourceOneLine =
+    titles.length > 0
+      ? `来源：${joined}`
+      : nTotal > 0
+        ? `来源：已勾选 ${nTotal} 条笔记（名称未记录）`
+        : "来源：—";
+  const nb = String(w.notesSourceNotebook || "").trim();
+  const showHoverPanel = titles.length > 0 || nTotal > 0 || Boolean(nb);
+
+  return (
+    <>
+      <div
+        className={`group/source relative min-w-0 outline-none ${showHoverPanel ? "cursor-default" : ""}`}
+        tabIndex={showHoverPanel ? 0 : undefined}
+        aria-label={showHoverPanel ? "来源详情：悬停或按 Tab 聚焦后查看" : undefined}
+      >
+        <p className="truncate text-[11px] leading-snug text-ink/90">{sourceOneLine}</p>
+        {showHoverPanel ? (
+          <div
+            className="invisible absolute left-0 top-full z-[60] pt-1 opacity-0 transition-opacity duration-150 group-hover/source:visible group-hover/source:opacity-100 group-focus-within/source:visible group-focus-within/source:opacity-100"
+            role="tooltip"
+          >
+            <div className="w-max max-w-[min(18rem,calc(100vw-2rem))] rounded-lg border border-line bg-surface px-2.5 py-2 text-left text-[11px] leading-relaxed text-ink shadow-card ring-1 ring-line/60">
+              <div className="font-semibold text-ink">来源详情</div>
+              {nb ? (
+                <p className="mt-1.5 text-muted">
+                  笔记本 <span className="text-ink/90">「{nb}」</span>
+                </p>
+              ) : null}
+              {titles.length > 0 ? (
+                <>
+                  <p className="mt-2 font-medium text-ink/90">引用笔记</p>
+                  <ul className="mt-1 list-inside list-disc space-y-0.5 text-ink">
+                    {titles.map((t, idx) => (
+                      <li key={`${idx}-${t.slice(0, 24)}`}>{t}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : nTotal > 0 ? (
+                <p className="mt-2 text-muted">已选 {nTotal} 条（无标题）</p>
+              ) : null}
+              {moreHint ? (
+                <p className="mt-2 border-t border-line/80 pt-2 text-[10px] text-muted">{moreHint}</p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
 
 const PODCAST_REUSE_TEMPLATE_KEY = "fym_reuse_template_podcast_v1";
 const TTS_REUSE_TEMPLATE_KEY = "fym_reuse_template_tts_v1";
@@ -213,8 +287,10 @@ export default function PodcastWorksGallery({
   onDismissError,
   onWorkDeleted,
   variant = "podcast",
-  enableBatchActions = false
+  enableBatchActions = false,
+  sidebarMaxItems
 }: Props) {
+  const { t } = useI18n();
   const router = useRouter();
   const { getAuthHeaders } = useAuth();
   const { hiddenKey, titlesKey, allowedTypes } = useMemo(() => galleryStorageKeys(variant), [variant]);
@@ -237,20 +313,12 @@ export default function PodcastWorksGallery({
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
-  const [rssChannels, setRssChannels] = useState<RssChannel[]>([]);
-  const [rssLoading, setRssLoading] = useState(false);
-  const [publishOpen, setPublishOpen] = useState(false);
-  const [publishBusy, setPublishBusy] = useState(false);
-  const [publishError, setPublishError] = useState("");
-  const [publishSuccess, setPublishSuccess] = useState("");
-  const [publishWorkId, setPublishWorkId] = useState("");
-  const [publishChannelId, setPublishChannelId] = useState("");
-  const [publishTitle, setPublishTitle] = useState("");
-  const [publishSummary, setPublishSummary] = useState("");
-  const [publishNotes, setPublishNotes] = useState("");
-  const [publishAt, setPublishAt] = useState("");
-  const [confirmRepublish, setConfirmRepublish] = useState(false);
   const [publicationsByJobId, setPublicationsByJobId] = useState<Record<string, RssPublication[]>>({});
+
+  const [coverBustById, setCoverBustById] = useState<Record<string, number>>({});
+  const [coverUploadBusy, setCoverUploadBusy] = useState<string | null>(null);
+  const coverFileInputRef = useRef<HTMLInputElement | null>(null);
+  const coverUploadTargetIdRef = useRef<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
@@ -273,9 +341,26 @@ export default function PodcastWorksGallery({
     });
     return list.map((w) => ({
       ...w,
-      displayTitle: (w.id && titleOverrides[w.id]) || w.title || w.id || "未命名"
+      displayTitle:
+        (w.id && titleOverrides[w.id]) ||
+        sanitizeShareEpisodeTitle(String(w.title || ""), "") ||
+        String(w.title || "").trim() ||
+        w.id ||
+        "未命名"
     }));
   }, [works, hidden, titleOverrides, allowedTypes]);
+
+  const visibleItems = useMemo(() => {
+    const cap = typeof sidebarMaxItems === "number" && sidebarMaxItems > 0 ? sidebarMaxItems : 0;
+    if (variant !== "notes_studio" || cap < 1) return items;
+    return items.slice(0, cap);
+  }, [items, variant, sidebarMaxItems]);
+
+  const sidebarMoreCount = useMemo(() => {
+    const cap = typeof sidebarMaxItems === "number" && sidebarMaxItems > 0 ? sidebarMaxItems : 0;
+    if (variant !== "notes_studio" || cap < 1) return 0;
+    return Math.max(0, items.length - cap);
+  }, [items.length, variant, sidebarMaxItems]);
 
   useEffect(() => {
     const ids = items.map((x) => String(x.id || "").trim()).filter(Boolean);
@@ -457,20 +542,29 @@ export default function PodcastWorksGallery({
   );
 
   const onDownload = useCallback(async (row: PodcastWorkRow) => {
-    if (!row.id) return;
-    setZipBusy(row.id);
+    const id = String(row.id || "").trim();
+    if (!id) return;
+    setMenuOpenId(null);
+    setZipBusy(id);
     try {
-      await downloadJobBundleZip({ jobId: row.id, title: row.displayTitle || row.title || row.id });
-    } catch {
-      // silent; could surface toast
+      await downloadJobBundleZip({
+        jobId: id,
+        title: String(row.displayTitle || row.title || id).trim() || id
+      });
+    } catch (e) {
+      setPlayErrorById((prev) => ({
+        ...prev,
+        [id]: `下载失败：${e instanceof Error ? e.message : String(e)}`
+      }));
     } finally {
       setZipBusy(null);
-      setMenuOpenId(null);
     }
   }, []);
 
   function downloadLabelForWorkType(type: string | undefined): string {
-    return String(type || "") === "script_draft" ? "下载（文稿·配图）" : "下载（音频·文稿·配图）";
+    const t = String(type || "");
+    if (t === "script_draft") return "下载（文稿）";
+    return "下载（音频·文稿·配图）";
   }
 
   const commitRename = useCallback(() => {
@@ -506,9 +600,10 @@ export default function PodcastWorksGallery({
         let lastErr = "";
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
           try {
-            // 使用 POST /delete 代理：部分环境对 DELETE /api/jobs/:id 返回 405 Method Not Allowed
-            res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/delete`, {
+            // 成品走硬删（purge），避免仅软删未生效时刷新仍出现；与「进行中」任务删除同一套接口
+            res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/purge`, {
               method: "POST",
+              credentials: "same-origin",
               headers: { "Content-Type": "application/json", ...getAuthHeaders() },
               body: "{}"
             });
@@ -657,74 +752,48 @@ export default function PodcastWorksGallery({
   const selectedCount = selectedIds.size;
   const selectedRows = items.filter((x) => x.id && selectedIds.has(x.id));
 
-  async function ensureRssChannelsLoaded() {
-    if (rssChannels.length > 0 || rssLoading) return;
-    setRssLoading(true);
-    setPublishError("");
-    try {
-      const rows = await listRssChannels();
-      setRssChannels(rows);
-      if (rows.length > 0 && !publishChannelId) setPublishChannelId(String(rows[0]!.id || ""));
-    } catch (e) {
-      setPublishError(String(e instanceof Error ? e.message : e));
-    } finally {
-      setRssLoading(false);
-    }
-  }
-
-  async function openPublish(work: PodcastWorkRow) {
-    const id = String(work.id || "").trim();
-    if (!id) return;
-    setMenuOpenId(null);
-    setPublishWorkId(id);
-    setPublishTitle(String(work.displayTitle || work.title || "未命名单集"));
-    setPublishSummary(String(work.scriptText || "").slice(0, 200));
-    setPublishNotes(String(work.scriptText || ""));
-    setPublishError("");
-    setPublishSuccess("");
-    setPublishAt("");
-    setConfirmRepublish(false);
-    setPublishOpen(true);
-    await ensureRssChannelsLoaded();
-  }
-
-  async function submitPublish() {
-    if (!publishWorkId) return;
-    if (!publishChannelId) {
-      setPublishError("请先在设置页完成 RSS 发布配置");
-      return;
-    }
-    if (!publishTitle.trim()) {
-      setPublishError("单集标题不能为空");
-      return;
-    }
-    setPublishBusy(true);
-    setPublishError("");
-    setPublishSuccess("");
-    try {
-      await publishWorkToRss({
-        channel_id: publishChannelId,
-        job_id: publishWorkId,
-        title: publishTitle.trim(),
-        summary: publishSummary.trim(),
-        show_notes: publishNotes.trim(),
-        explicit: false,
-        publish_at: publishAt ? new Date(publishAt).toISOString() : undefined,
-        force_republish: confirmRepublish
-      });
-      setPublishSuccess("已写入 RSS，等待小宇宙抓取更新");
-      const ids = items.map((x) => String(x.id || "").trim()).filter(Boolean);
-      const rows = await listRssPublicationsByJobIds(ids);
-      setPublicationsByJobId(rows);
-    } catch (e) {
-      const msg = String(e instanceof Error ? e.message : e);
-      if (msg.includes("already_published_same_channel")) {
-        setPublishError("该作品已发布到这个频道。若要覆盖发布时间与文案，请勾选“允许重复发布覆盖”后再提交。");
-      } else {
-        setPublishError(msg);
+  const goToSharePage = useCallback(
+    (work: PodcastWorkRow) => {
+      const id = String(work.id || "").trim();
+      if (!id) return;
+      setMenuOpenId(null);
+      try {
+        sessionStorage.setItem(`fym_share_display_title:${id}`, work.displayTitle);
+      } catch {
+        /* ignore */
       }
+      router.push(`/works/share/${id}`);
+    },
+    [router]
+  );
+
+  async function uploadCoverForJob(jobId: string, file: File) {
+    if (file.size > 8 * 1024 * 1024) {
+      window.alert("封面图片需不超过 8MB");
+      return;
+    }
+    setCoverUploadBusy(jobId);
+    setMenuOpenId(null);
+    try {
+      const jpegBlob = await cropSquareToPodcastCoverJpeg(file);
+      const { base64: image_base64 } = await blobToDataUrlBase64(jpegBlob);
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cover`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          image_base64,
+          content_type: "image/jpeg"
+        })
+      });
+      const data = (await res.json().catch(() => ({}))) as { detail?: string };
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      setCoverBustById((prev) => ({ ...prev, [jobId]: Date.now() }));
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "封面上传失败");
     } finally {
-      setPublishBusy(false);
+      setCoverUploadBusy(null);
+      coverUploadTargetIdRef.current = null;
     }
   }
 
@@ -734,6 +803,9 @@ export default function PodcastWorksGallery({
       const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) throw new Error("读取作品参数失败");
       const jobType = String(row.job_type || "").trim();
+      if (jobType === "podcast_short_video") {
+        throw new Error("短视频功能已下线，请从播客成片或语音作品直接复用参数。");
+      }
       const payload = (row.payload || {}) as Record<string, unknown>;
       const result = (row.result || {}) as Record<string, unknown>;
 
@@ -816,7 +888,7 @@ export default function PodcastWorksGallery({
       <SmallConfirmModal
         open={deleteConfirmId != null}
         title="删除作品"
-        message={`确定删除「${pendingDeleteTitle}」吗？作品会移入回收站；本机显示名称缓存会清除。`}
+        message={`确定删除「${pendingDeleteTitle}」吗？将从服务器彻底移除该作品，不可恢复；本机显示名称缓存会清除。`}
         confirmLabel="确认删除"
         cancelLabel="取消"
         danger
@@ -843,98 +915,22 @@ export default function PodcastWorksGallery({
         preload="metadata"
         playsInline
       />
-
-      {publishOpen ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 px-3">
-          <div className="w-full max-w-lg rounded-xl border border-line bg-surface p-4 shadow-lg">
-            <p className="text-sm font-semibold text-ink">发布到 RSS</p>
-            <p className="mt-1 text-xs text-muted">确认后将写入节目源，小宇宙会按抓取节奏收录。</p>
-            <div className="mt-3 space-y-2">
-              <label className="block text-xs text-muted">
-                频道
-                <select
-                  className="mt-1 w-full rounded-lg border border-line bg-fill px-2 py-2 text-sm text-ink"
-                  value={publishChannelId}
-                  onChange={(e) => setPublishChannelId(e.target.value)}
-                >
-                  <option value="">{rssLoading ? "加载频道中…" : "请选择频道（先在设置页配置）"}</option>
-                  {rssChannels.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-xs text-muted">
-                单集标题
-                <input
-                  className="mt-1 w-full rounded-lg border border-line bg-fill px-2 py-2 text-sm text-ink"
-                  value={publishTitle}
-                  onChange={(e) => setPublishTitle(e.target.value)}
-                />
-              </label>
-              <label className="block text-xs text-muted">
-                摘要
-                <textarea
-                  className="mt-1 w-full rounded-lg border border-line bg-fill px-2 py-2 text-sm text-ink"
-                  rows={2}
-                  value={publishSummary}
-                  onChange={(e) => setPublishSummary(e.target.value)}
-                />
-              </label>
-              <label className="block text-xs text-muted">
-                Show Notes
-                <textarea
-                  className="mt-1 w-full rounded-lg border border-line bg-fill px-2 py-2 text-sm text-ink"
-                  rows={4}
-                  value={publishNotes}
-                  onChange={(e) => setPublishNotes(e.target.value)}
-                />
-              </label>
-              <label className="block text-xs text-muted">
-                定时发布时间（可选）
-                <input
-                  type="datetime-local"
-                  className="mt-1 w-full rounded-lg border border-line bg-fill px-2 py-2 text-sm text-ink"
-                  value={publishAt}
-                  onChange={(e) => setPublishAt(e.target.value)}
-                />
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted">
-                <input
-                  type="checkbox"
-                  checked={confirmRepublish}
-                  onChange={(e) => setConfirmRepublish(e.target.checked)}
-                />
-                允许重复发布覆盖（同频道同作品）
-              </label>
-            </div>
-            {publishError ? <p className="mt-2 text-xs text-rose-600">{publishError}</p> : null}
-            {publishSuccess ? <p className="mt-2 text-xs text-emerald-700">{publishSuccess}</p> : null}
-            <div className="mt-3 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill"
-                onClick={() => setPublishOpen(false)}
-                disabled={publishBusy}
-              >
-                关闭
-              </button>
-              <button
-                type="button"
-                className="rounded-md bg-brand px-3 py-1.5 text-sm text-white hover:opacity-95 disabled:opacity-60"
-                onClick={() => void submitPublish()}
-                disabled={publishBusy}
-              >
-                {publishBusy ? "发布中…" : "确认发布"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <input
+        ref={coverFileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        className="hidden"
+        aria-hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          const jid = coverUploadTargetIdRef.current;
+          e.target.value = "";
+          if (f && jid) void uploadCoverForJob(jid, f);
+        }}
+      />
 
       {fetchError ? (
-        <p className="mb-2 text-sm text-rose-600">
+        <p className="mb-2 text-sm text-danger-ink">
           {fetchError}
           {onDismissError ? (
             <button type="button" className="ml-2 underline" onClick={onDismissError}>
@@ -982,31 +978,34 @@ export default function PodcastWorksGallery({
                 清空选择
               </button>
             </>
-          ) : (
-            <span className="text-muted">用于批量下载当前列表作品</span>
-          )}
+          ) : null}
         </div>
       ) : null}
 
       {loading ? (
-        <div className="rounded-2xl border border-line bg-fill/50 py-10 text-center text-sm text-muted">
-          正在加载作品，请稍候…
-        </div>
+        <div className="fym-empty-state py-10 text-center text-sm text-muted">{t("gallery.loading")}</div>
       ) : items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-line bg-fill/50 py-14 text-center text-sm text-muted">
+        <div className="fym-empty-state py-14 text-center text-sm leading-relaxed text-muted">
           {variant === "tts"
-            ? "暂无文本转语音作品；合成成功后将出现在此列表"
+            ? t("gallery.empty.tts")
             : variant === "notes"
-              ? "还没有从笔记生成的节目；在笔记播客里生成底稿成功后，会出现在这里"
+              ? t("gallery.empty.notes")
               : variant === "notes_studio"
-                ? "暂无笔记播客作品；在本页生成播客或文章成功后将出现在此列表"
+                ? t("gallery.empty.notesStudio")
                 : variant === "all"
-                  ? "暂无已完成作品；生成成功后将出现在这里，也可在「我的作品」中统一管理"
-                  : "暂无 AI 播客成片；生成成功后将出现在此列表"}
+                  ? t("gallery.empty.all")
+                  : t("gallery.empty.podcast")}
         </div>
       ) : (
-        <ul className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {items.map((w) => {
+        <>
+        <ul
+          className={
+            variant === "notes_studio"
+              ? "grid grid-cols-2 gap-2"
+              : "grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+          }
+        >
+          {visibleItems.map((w) => {
             const id = w.id!;
             const isScriptDraft = String(w.type || "") === "script_draft";
             const isActive = activeJobId === id;
@@ -1025,13 +1024,24 @@ export default function PodcastWorksGallery({
             const durationCaption = isScriptDraft ? "文章出稿（无音频）" : `时长 ${durationLine}`;
             const created = w.createdAt ? new Date(w.createdAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—";
             const publications = publicationsByJobId[id] || [];
-            const publishedText = publications.length > 0 ? `已发布 ${publications.length} 次 · ${publications[0]?.channel_title || ""}` : "";
-            const publishActionText = publications.length > 0 ? "已发布" : "发布";
+            const publishedText =
+              publications.length > 0
+                ? `已在 ${publications.length} 处发布 · ${publications[0]?.channel_title || ""}`
+                : "";
+            const publishActionText = publications.length > 0 ? "已发过" : "分享";
+            const scriptCharCountDisplay =
+              typeof w.scriptCharCount === "number" &&
+              Number.isFinite(w.scriptCharCount) &&
+              w.scriptCharCount > 0
+                ? Math.round(w.scriptCharCount)
+                : null;
 
             return (
               <li
                 key={id}
-                className="flex w-full max-w-full flex-col overflow-hidden rounded-xl border border-line bg-white shadow-sm"
+                className={`flex w-full max-w-full flex-col rounded-xl border border-line bg-surface shadow-soft ${
+                  isScriptDraft ? "overflow-visible" : "overflow-hidden"
+                }`}
               >
                 {enableBatchActions && batchMode ? (
                   <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-3 py-1.5 text-xs text-ink">
@@ -1043,15 +1053,25 @@ export default function PodcastWorksGallery({
                     选择此作品
                   </label>
                 ) : null}
-                <div className="relative aspect-[4/3] w-full overflow-hidden bg-gradient-to-br from-fill to-fill">
-                  {w.coverImage ? (
-                    <>
-                      <div className="absolute inset-0 flex items-center justify-center text-[10px] text-muted">无配图</div>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                {isScriptDraft ? (
+                  <div className="border-b border-success/25 bg-gradient-to-br from-success-soft/95 to-success/[0.08] px-3 py-2">
+                    <div className="flex gap-2">
+                      <span className="shrink-0 text-base leading-none" aria-hidden>
+                        📝
+                      </span>
+                      <div className="min-w-0 flex-1 space-y-1 text-[11px] leading-snug text-success-ink/85">
+                        <ScriptWorkSourceSummary w={w} />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="relative aspect-[4/3] w-full overflow-hidden bg-gradient-to-br from-fill to-fill">
+                    {w.coverImage ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
                       <img
-                        src={coverImageSrc(w.coverImage)}
+                        src={coverImageSrc(w.coverImage, coverBustById[id])}
                         alt=""
-                        className="h-full w-full object-cover"
+                        className="relative z-[1] h-full w-full object-cover"
                         referrerPolicy="no-referrer"
                         loading="lazy"
                         onError={(e) => {
@@ -1065,11 +1085,11 @@ export default function PodcastWorksGallery({
                           el.style.display = "none";
                         }}
                       />
-                    </>
-                  ) : (
-                    <div className="flex h-full min-h-[3rem] items-center justify-center text-[10px] text-muted">无配图</div>
-                  )}
-                </div>
+                    ) : (
+                      <div className="flex h-full min-h-[3rem] items-center justify-center text-[10px] text-muted">无配图</div>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex min-h-[4.25rem] shrink-0 flex-row items-center gap-2 border-t border-line px-3 py-2.5">
                   <div className="min-w-0 flex-1">
@@ -1079,6 +1099,14 @@ export default function PodcastWorksGallery({
                     <p className="mt-1 truncate text-xs text-muted" title={durationCaption}>
                       {durationCaption}
                     </p>
+                    {scriptCharCountDisplay !== null ? (
+                      <p
+                        className="mt-0.5 truncate text-[11px] tabular-nums text-muted"
+                        title={`正文约 ${scriptCharCountDisplay.toLocaleString()} 字`}
+                      >
+                        约 {scriptCharCountDisplay.toLocaleString()} 字
+                      </p>
+                    ) : null}
                     <p className="mt-0.5 truncate text-[11px] text-muted" title={created}>
                       {created}
                     </p>
@@ -1102,7 +1130,7 @@ export default function PodcastWorksGallery({
                         <span className="text-base leading-none">⋯</span>
                       </button>
                       {menuOpenId === id ? (
-                        <div className="absolute bottom-full right-0 z-50 mb-1 min-w-[9.5rem] rounded-md border border-line bg-white py-0.5 text-[11px] shadow-lg">
+                        <div className="absolute bottom-full right-0 z-50 mb-1 min-w-[9.5rem] rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card">
                           <button
                             type="button"
                             className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
@@ -1121,15 +1149,28 @@ export default function PodcastWorksGallery({
                           {!isScriptDraft ? (
                             <button
                               type="button"
+                              className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-50"
+                              disabled={coverUploadBusy === id}
+                              onClick={() => {
+                                coverUploadTargetIdRef.current = id;
+                                coverFileInputRef.current?.click();
+                              }}
+                            >
+                              {coverUploadBusy === id ? "处理封面中…" : "上传封面（裁 1400²）"}
+                            </button>
+                          ) : null}
+                          {!isScriptDraft ? (
+                            <button
+                              type="button"
                               className="block w-full px-3 py-2 text-left hover:bg-fill"
-                              onClick={() => void openPublish(w)}
+                              onClick={() => goToSharePage(w)}
                             >
                               {publishActionText}
                             </button>
                           ) : null}
                           <button
                             type="button"
-                            className="block w-full px-3 py-2 text-left text-rose-600 hover:bg-rose-50"
+                            className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
                             onClick={() => requestDelete(id)}
                           >
                             删除
@@ -1154,7 +1195,7 @@ export default function PodcastWorksGallery({
                 ) : null}
                 {playErrorById[id] ? (
                   <p
-                    className="border-t border-rose-100 bg-rose-50/90 px-2 py-0.5 text-[9px] leading-tight text-rose-700"
+                    className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-tight text-danger-ink"
                     role="status"
                   >
                     {playErrorById[id]}
@@ -1164,11 +1205,20 @@ export default function PodcastWorksGallery({
                   {!isScriptDraft ? (
                     <button
                       type="button"
-                      className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
+                      className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
                       disabled={audioLoadingId === id}
                       onClick={() => void togglePlay(id)}
                     >
                       {isActive && isPlayingAudio ? "暂停" : "播放"}
+                    </button>
+                  ) : null}
+                  {!isScriptDraft ? (
+                    <button
+                      type="button"
+                      className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:opacity-50"
+                      onClick={() => goToSharePage(w)}
+                    >
+                      {publishActionText}
                     </button>
                   ) : null}
                   <button
@@ -1186,23 +1236,26 @@ export default function PodcastWorksGallery({
                   >
                     复用
                   </button>
-                  {!isScriptDraft ? (
-                    <button
-                      type="button"
-                      className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                      onClick={() => void openPublish(w)}
-                    >
-                      {publishActionText}
-                    </button>
-                  ) : null}
                   {publications.length > 0 ? (
-                    <span className="ml-auto rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">{publishedText}</span>
+                    <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">{publishedText}</span>
                   ) : null}
                 </div>
               </li>
             );
           })}
         </ul>
+        {sidebarMoreCount > 0 ? (
+          <div className="mt-3 flex justify-center">
+            <Link
+              href="/works"
+              className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/5"
+            >
+              更多作品
+              <span className="tabular-nums text-muted">+{sidebarMoreCount}</span>
+            </Link>
+          </div>
+        ) : null}
+        </>
       )}
     </div>
   );

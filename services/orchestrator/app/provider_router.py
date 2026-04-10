@@ -13,7 +13,8 @@ from .legacy_bridge import (
     synthesize_tts_with_minimax,
 )
 from .providers.http_provider_misc import image_via_http_json, tts_via_http_json, voice_clone_via_http_json
-from .providers.openai_compat_text import generate_script_openai_compatible
+from .providers.openai_compat_text import chat_completion_openai_compatible, generate_script_openai_compatible
+from .fyv_shared.minimax_client import minimax_client
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +22,16 @@ _TEXT_PROVIDER_ENV = "TEXT_PROVIDER"
 _TTS_PROVIDER_ENV = "TTS_PROVIDER"
 _IMAGE_PROVIDER_ENV = "IMAGE_PROVIDER"
 _VOICE_CLONE_PROVIDER_ENV = "VOICE_CLONE_PROVIDER"
+# TTS / 图像 / 克隆等未设置时的默认（文本单独见 _TEXT_DEFAULT_PROVIDER）
 _DEFAULT_PROVIDER = "minimax"
+# 未设置 TEXT_PROVIDER 时：先 DeepSeek（OpenAI 兼容），失败再 MiniMax（见 _safe_call_with_minimax_fallback）
+_TEXT_DEFAULT_PROVIDER = "deepseek"
 
 
-def _effective_provider(env_name: str) -> str:
+def _effective_provider(env_name: str, *, default_if_unset: str = _DEFAULT_PROVIDER) -> str:
     raw = str(os.getenv(env_name) or "").strip().lower()
     if not raw:
-        return _DEFAULT_PROVIDER
+        return default_if_unset
     return raw
 
 
@@ -38,7 +42,7 @@ def _safe_call_with_minimax_fallback(
     run_selected: Callable[[], Any],
     run_minimax: Callable[[], Any],
 ) -> Any:
-    if provider == _DEFAULT_PROVIDER:
+    if provider == "minimax":
         return run_minimax()
     try:
         return run_selected()
@@ -48,11 +52,69 @@ def _safe_call_with_minimax_fallback(
 
 
 def script_provider() -> str:
-    p = _effective_provider(_TEXT_PROVIDER_ENV)
+    p = _effective_provider(_TEXT_PROVIDER_ENV, default_if_unset=_TEXT_DEFAULT_PROVIDER)
     if p in ("minimax", "deepseek", "qwen"):
         return p
     logger.warning("%s=%s 未实现，静默回退 minimax", _TEXT_PROVIDER_ENV, p)
     return "minimax"
+
+
+def invoke_llm_chat_messages_with_minimax_fallback(
+    messages: list[dict[str, Any]],
+    *,
+    temperature: float = 0.45,
+    api_key: str | None = None,
+    timeout_sec: int = 120,
+) -> tuple[str, str | None]:
+    """
+    中文长文 / 摘要 / 按材料问答等：TEXT_PROVIDER=deepseek|qwen 时先走 OpenAI 兼容，失败再 MiniMax。
+    TEXT_PROVIDER=minimax 时仅走 MiniMax。
+    """
+    prov = script_provider()
+
+    def _run_minimax() -> tuple[str, str | None]:
+        key = (api_key or "").strip() or str(os.getenv("MINIMAX_API_KEY") or "").strip()
+        if not key:
+            raise RuntimeError("minimax_api_key_missing")
+        raw, tid = minimax_client.chat_completion_messages(
+            messages,
+            api_key=key,
+            temperature=float(temperature),
+        )
+        return str(raw or "").strip(), (str(tid) if tid else None)
+
+    if prov == "minimax":
+        return _run_minimax()
+
+    def _run_openai_compat() -> tuple[str, None]:
+        if prov == "deepseek":
+            key = str(os.getenv("DEEPSEEK_API_KEY") or "").strip()
+            base = str(os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
+            model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-chat").strip()
+        else:
+            key = str(os.getenv("QWEN_API_KEY") or "").strip()
+            base = str(os.getenv("QWEN_BASE_URL") or "").strip()
+            model = str(os.getenv("QWEN_TEXT_MODEL") or "qwen-plus").strip()
+        if not key or not base:
+            raise RuntimeError(f"text_provider_{prov}_config_missing")
+        out = chat_completion_openai_compatible(
+            messages=messages,
+            api_base=base,
+            api_key=key,
+            model=model,
+            temperature=float(temperature),
+            timeout_sec=int(timeout_sec),
+        )
+        return str(out or "").strip(), None
+
+    try:
+        text, _tid = _run_openai_compat()
+        if not text:
+            raise RuntimeError("openai_compatible_empty_content")
+        return text, None
+    except Exception as exc:
+        logger.warning("invoke_llm_chat_messages provider=%s failed, fallback minimax: %s", prov, exc)
+        return _run_minimax()
 
 
 def tts_provider() -> str:
@@ -127,12 +189,26 @@ def build_script(
             subscription_tier=tier_norm,
         )
 
-    return _safe_call_with_minimax_fallback(
-        domain="text",
-        provider=provider,
-        run_selected=_run_openai_compat,
-        run_minimax=_run_minimax,
-    )
+    def _build() -> dict[str, Any]:
+        return _safe_call_with_minimax_fallback(
+            domain="text",
+            provider=provider,
+            run_selected=_run_openai_compat,
+            run_minimax=_run_minimax,
+        )
+
+    if on_script_delta is None:
+        from .script_cache import get_or_build
+
+        return get_or_build(
+            text=text,
+            opts=opts,
+            tier=tier_norm,
+            provider=provider,
+            force_fallback=force_fallback,
+            builder=_build,
+        )
+    return _build()
 
 
 def synthesize_tts(text: str, voice_id: str, api_key: str | None = None) -> dict[str, Any]:

@@ -42,7 +42,7 @@ type DetailModel =
   | { kind: "cloned"; voice: Voice }
   | { kind: "orphan"; voiceId: string };
 
-const panel = "rounded-2xl border border-line bg-white p-4 shadow-sm";
+const panel = "rounded-2xl border border-line bg-surface p-4 shadow-soft";
 
 function parseLibraryTab(raw: string | null): LibraryTab {
   if (raw === "my") return "my";
@@ -411,7 +411,7 @@ export default function MyVoicesPanel() {
   const subTabBtn = (active: boolean) =>
     [
       "min-w-0 flex-1 whitespace-nowrap rounded-xl px-2 py-2.5 text-center text-sm font-medium transition-colors sm:px-3",
-      active ? "bg-brand text-white shadow-sm" : "text-muted hover:bg-white/80 hover:text-ink"
+      active ? "bg-brand text-brand-foreground shadow-soft" : "text-muted hover:bg-surface/80 hover:text-ink"
     ].join(" ");
 
   function openDetailFromResolved(entry: DetailModel) {
@@ -466,7 +466,7 @@ export default function MyVoicesPanel() {
     const style = entry.kind === "preset" ? entry.meta.style || "—" : "—";
     const playing = playingCardKey === key;
     return (
-      <div key={key} className="relative rounded-xl border border-line bg-white px-3 py-2.5 shadow-sm">
+      <div key={key} className="relative rounded-xl border border-line bg-surface px-3 py-2.5 shadow-soft">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -502,7 +502,7 @@ export default function MyVoicesPanel() {
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
-              className="rounded-lg border border-line bg-white px-2 py-1.5 text-xs font-medium text-ink"
+              className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-medium text-ink"
               disabled={busyRename}
               onClick={() => {
                 if (usePresetKey) {
@@ -516,14 +516,14 @@ export default function MyVoicesPanel() {
             </button>
             <button
               type="button"
-              className="rounded-lg border border-line bg-white px-2 py-1.5 text-xs font-medium text-ink"
+              className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-medium text-ink"
               onClick={() => void copyVoiceId(voiceId)}
             >
               复制 ID
             </button>
             <button
               type="button"
-              className={`rounded-lg p-1.5 transition-colors ${fav ? "text-amber-500" : "text-muted hover:text-amber-600"}`}
+              className={`rounded-lg p-1.5 transition-colors ${fav ? "text-warning" : "text-muted hover:text-warning-ink"}`}
               title={fav ? "取消收藏" : "收藏"}
               aria-label={fav ? "取消收藏" : "收藏"}
               onClick={() => onToggleFavorite(voiceId)}
@@ -535,7 +535,7 @@ export default function MyVoicesPanel() {
             <div className="relative">
               <button
                 type="button"
-                className="rounded-lg p-1.5 text-muted hover:bg-white hover:text-ink"
+                className="rounded-lg p-1.5 text-muted hover:bg-surface hover:text-ink"
                 aria-label="更多"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -550,7 +550,7 @@ export default function MyVoicesPanel() {
               </button>
               {isMenuOpen ? (
                 <div
-                  className="absolute right-0 top-full z-20 mt-1 w-36 rounded-xl border border-line bg-white py-1 text-sm shadow-lg ring-1 ring-black/5"
+                  className="absolute right-0 top-full z-20 mt-1 w-36 rounded-xl border border-line bg-surface py-1 text-sm shadow-card ring-1 ring-line/50"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button
@@ -571,7 +571,7 @@ export default function MyVoicesPanel() {
 
   return (
     <div>
-      <div className="mt-0 flex gap-1 rounded-2xl border border-line bg-fill/50 p-1 shadow-sm" role="tablist" aria-label="音色库分区">
+      <div className="mt-0 flex gap-1 rounded-2xl border border-line bg-fill/50 p-1 shadow-soft" role="tablist" aria-label="音色库分区">
         <button type="button" role="tab" aria-selected={libraryTab === "explore"} className={subTabBtn(libraryTab === "explore")} onClick={() => setLibraryTabAndUrl("explore")}>
           探索
         </button>
@@ -704,20 +704,20 @@ export default function MyVoicesPanel() {
 
       {assignOpen ? (
         <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <div className="pointer-events-auto w-full max-w-sm rounded-xl border border-line bg-white p-4 text-sm shadow-2xl ring-1 ring-black/5">
+          <div className="pointer-events-auto w-full max-w-sm rounded-xl border border-line bg-surface p-4 text-sm shadow-modal ring-1 ring-line/50">
             <p className="font-medium text-ink">使用音色</p>
             <p className="mt-1 text-xs text-muted">{assignOpen.label}</p>
             <div className="mt-4 flex gap-2">
               <button
                 type="button"
-                className="flex-1 rounded-lg bg-brand py-2.5 text-white hover:bg-brand"
+                className="flex-1 rounded-lg bg-brand py-2.5 text-brand-foreground hover:bg-brand"
                 onClick={() => confirmAssign("speaker1")}
               >
                 Speaker1
               </button>
               <button
                 type="button"
-                className="flex-1 rounded-lg bg-brand py-2.5 text-white hover:bg-brand"
+                className="flex-1 rounded-lg bg-brand py-2.5 text-brand-foreground hover:bg-brand"
                 onClick={() => confirmAssign("speaker2")}
               >
                 Speaker2
@@ -749,7 +749,7 @@ export default function MyVoicesPanel() {
           }}
         >
           <div
-            className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-2xl"
+            className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-modal"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
@@ -857,7 +857,7 @@ export default function MyVoicesPanel() {
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            className="rounded-lg bg-brand px-3 py-1.5 text-xs text-white"
+                            className="rounded-lg bg-brand px-3 py-1.5 text-xs text-brand-foreground"
                             disabled={!!renamingVoiceId}
                             onClick={() => void submitRenameSavedVoice(detailOpen.voice.voiceId)}
                           >
@@ -927,7 +927,7 @@ export default function MyVoicesPanel() {
               </button>
               <button
                 type="button"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line bg-white text-ink shadow-sm disabled:opacity-50"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink shadow-soft disabled:opacity-50"
                 title="试听"
                 aria-label="试听"
                 disabled={detailPreviewLoading}
@@ -952,7 +952,7 @@ export default function MyVoicesPanel() {
               {detailOpen.kind === "preset" ? (
                 <button
                   type="button"
-                  className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white"
+                  className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-brand-foreground"
                   onClick={() => {
                     setAssignOpen({ kind: "preset", key: detailOpen.meta.key, label: detailOpen.meta.name });
                     try {
@@ -972,7 +972,7 @@ export default function MyVoicesPanel() {
               {detailOpen.kind === "cloned" ? (
                 <button
                   type="button"
-                  className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white"
+                  className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-brand-foreground"
                   onClick={() => {
                     setAssignOpen({
                       kind: "cloned",

@@ -6,22 +6,23 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..schemas import (
+    AlipayPageSubscriptionCreateRequest,
+    AlipayPageWalletCreateRequest,
     SubscriptionSelectRequest,
+    SubscriptionWalletPayRequest,
     WalletTopupCheckoutCompleteRequest,
     WalletTopupCheckoutCreateRequest,
-    WechatNativeSubscriptionCreateRequest,
-    WechatNativeWalletCreateRequest,
 )
 from ..security import verify_internal_signature
 from .. import auth_bridge
 from .. import models
-from ..entitlement_matrix import jobs_terminal_monthly_quota
+from ..entitlement_matrix import monthly_minutes_product_target, tier_ai_polish_monthly_quota
 from ..plan_catalog import (
     amount_cents_for_subscription,
     build_subscription_plans_response,
     is_valid_wallet_topup_amount_cents,
 )
-from ..wechat_pay_native import WechatPayNativeConfig, create_native_order, new_out_trade_no
+from ..alipay_page_pay import AlipayPagePayConfig, build_page_pay_url, new_out_trade_no
 
 _log = logging.getLogger(__name__)
 
@@ -35,10 +36,6 @@ def _simulated_wallet_checkout_enabled() -> bool:
         or "1"
     ).strip().lower()
     return v not in ("0", "false", "off", "no")
-
-
-def _plan_monthly_quota(tier: str) -> int:
-    return jobs_terminal_monthly_quota(tier)
 
 
 @router.get("/plans")
@@ -60,23 +57,24 @@ def subscription_me_api(request: Request):
     sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
     if not sess:
         raise HTTPException(status_code=401, detail="未登录")
-    phone = str(sess.get("phone") or "")
+    phone = auth_bridge.session_principal(sess)
     info = auth_bridge.user_info_for_phone(phone)
     tier = str(info.get("plan") or "free")
-    quota = _plan_monthly_quota(tier)
     usage_raw = models.user_usage_for_phone(phone, 30)
-    jt = int(usage_raw.get("jobs_terminal") or 0)
-    pct = min(100, int(jt * 100 / quota)) if quota > 0 else 0
+    period_days = int(usage_raw.get("period_days") or 30)
+    media_usage = models.subscription_media_usage_for_phone(phone, period_days)
+    polish_cap_raw = int(tier_ai_polish_monthly_quota(tier))
     orders = auth_bridge.list_payment_orders(phone, 40)
     bal = models.wallet_balance_cents_for_phone(phone)
     return {
         "success": True,
         **info,
         "usage": {
-            "period_days": int(usage_raw.get("period_days") or 30),
-            "jobs_terminal": jt,
-            "quota": quota,
-            "percent": pct,
+            "period_days": period_days,
+            "monthly_audio_minutes_cap": int(monthly_minutes_product_target(tier)),
+            "monthly_audio_minutes_used": round(float(media_usage.get("audio_minutes_used") or 0), 2),
+            "monthly_text_polish_used": int(media_usage.get("text_polish_used") or 0),
+            "monthly_text_polish_cap": None if polish_cap_raw < 0 else int(polish_cap_raw),
         },
         "orders": orders,
         "wallet_balance_cents": bal,
@@ -91,7 +89,7 @@ def subscription_select_api(request: Request, body: SubscriptionSelectRequest):
     sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
     if not sess:
         raise HTTPException(status_code=401, detail="未登录")
-    phone = str(sess.get("phone") or "")
+    phone = auth_bridge.session_principal(sess)
     tid = body.tier.strip().lower()
     cycle = str(body.billing_cycle or "").strip().lower() if body.billing_cycle else None
     if tid == "free":
@@ -114,8 +112,8 @@ def subscription_select_api(request: Request, body: SubscriptionSelectRequest):
         }
     if tid not in ("basic", "pro", "max"):
         raise HTTPException(status_code=400, detail="invalid_tier")
-    if cycle not in ("monthly", "yearly"):
-        raise HTTPException(status_code=400, detail="billing_cycle_required_for_paid_tier")
+    if cycle != "monthly":
+        raise HTTPException(status_code=400, detail="billing_cycle_must_be_monthly")
     ok_m, err_m = models.merge_user_preferences_for_phone(
         phone,
         {"subscription_checkout_intent_v1": {"tier": tid, "billing_cycle": cycle}},
@@ -124,8 +122,60 @@ def subscription_select_api(request: Request, body: SubscriptionSelectRequest):
         raise HTTPException(status_code=400, detail=err_m or "intent_save_failed")
     return {
         "success": True,
-        "message": "已保存订阅意向，须完成支付后才会生效；请使用微信扫码支付或内测收银。",
+        "message": "已保存订阅意向，须完成支付后才会生效；请使用支付宝电脑网站支付或内测收银。",
         "user": auth_bridge.user_info_for_phone(phone),
+        "subscription_checkout_intent": models.get_subscription_checkout_intent_for_api(phone),
+    }
+
+
+@router.post("/pay-with-wallet")
+def subscription_pay_with_wallet_api(request: Request, body: SubscriptionWalletPayRequest):
+    """登录用户：从账户余额扣款并立即生效月付订阅（与支付宝支付成功后的订单效果一致）。"""
+    if not auth_bridge.is_auth_enabled():
+        raise HTTPException(status_code=400, detail="本地体验模式不支持余额支付")
+    sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
+    if not sess:
+        raise HTTPException(status_code=401, detail="未登录")
+    phone = auth_bridge.session_principal(sess)
+    tid = body.tier.strip().lower()
+    cycle = (str(body.billing_cycle or "monthly").strip().lower() or "monthly")
+    if tid not in ("basic", "pro", "max"):
+        raise HTTPException(status_code=400, detail="invalid_tier")
+    if cycle != "monthly":
+        raise HTTPException(status_code=400, detail="billing_cycle_must_be_monthly")
+    amt = amount_cents_for_subscription(tid, cycle)
+    if amt <= 0:
+        raise HTTPException(status_code=400, detail="invalid_amount")
+
+    ok_debit, _bal_after = models.wallet_try_debit_cents(phone, amt)
+    if not ok_debit:
+        raise HTTPException(
+            status_code=400,
+            detail="账户余额不足，请先充值或使用支付宝支付",
+        )
+
+    eid = f"wsub_{secrets.token_hex(12)}"
+    ok_ev, err_ev, _row = auth_bridge.apply_payment_event(
+        eid,
+        phone,
+        tid,
+        cycle,
+        "paid",
+        amt,
+        "wallet_balance",
+        source="subscription_pay_with_wallet",
+    )
+    if not ok_ev:
+        models.wallet_credit_cents(phone, amt)
+        _log.warning("subscription_pay_with_wallet apply_event failed phone=%s err=%s", phone[:4], err_ev)
+        raise HTTPException(status_code=400, detail="订阅入账失败，已退回余额")
+
+    models.merge_user_preferences_for_phone(phone, {"subscription_checkout_intent_v1": {}})
+    return {
+        "success": True,
+        "message": "已使用账户余额支付并开通订阅",
+        "user": auth_bridge.user_info_for_phone(phone),
+        "wallet_balance_cents": models.wallet_balance_cents_for_phone(phone),
         "subscription_checkout_intent": models.get_subscription_checkout_intent_for_api(phone),
     }
 
@@ -140,7 +190,7 @@ def subscription_wallet_checkout_create(request: Request, body: WalletTopupCheck
         raise HTTPException(status_code=401, detail="未登录")
     if not _simulated_wallet_checkout_enabled():
         raise HTTPException(status_code=403, detail="simulated_wallet_checkout_disabled")
-    phone = str(sess.get("phone") or "").strip()
+    phone = auth_bridge.session_principal(sess).strip()
     if not phone:
         raise HTTPException(status_code=400, detail="invalid_session")
     amt = int(body.amount_cents)
@@ -170,7 +220,7 @@ def subscription_wallet_checkout_complete(request: Request, body: WalletTopupChe
         raise HTTPException(status_code=401, detail="未登录")
     if not _simulated_wallet_checkout_enabled():
         raise HTTPException(status_code=403, detail="simulated_wallet_checkout_disabled")
-    phone = str(sess.get("phone") or "").strip()
+    phone = auth_bridge.session_principal(sess).strip()
     if not phone:
         raise HTTPException(status_code=400, detail="invalid_session")
     cid = body.checkout_id.strip()
@@ -211,90 +261,92 @@ def subscription_wallet_checkout_complete(request: Request, body: WalletTopupChe
     }
 
 
-@router.post("/wechat/native/subscription")
-def wechat_native_subscription_create(request: Request, body: WechatNativeSubscriptionCreateRequest):
-    """登录用户：微信 Native 订阅下单，返回 code_url 供前端生成二维码。"""
-    cfg = WechatPayNativeConfig.from_env()
+@router.post("/alipay/page/subscription")
+def alipay_page_subscription_create(request: Request, body: AlipayPageSubscriptionCreateRequest):
+    """登录用户：支付宝电脑网站订阅下单，返回 pay_page_url（弹窗或新窗口打开）。"""
+    cfg = AlipayPagePayConfig.from_env()
     if not cfg:
-        raise HTTPException(status_code=403, detail="wechat_native_disabled")
+        raise HTTPException(status_code=403, detail="alipay_page_pay_disabled")
     if not auth_bridge.is_auth_enabled():
         raise HTTPException(status_code=400, detail="auth_disabled")
     sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
     if not sess:
         raise HTTPException(status_code=401, detail="未登录")
-    phone = str(sess.get("phone") or "").strip()
+    phone = auth_bridge.session_principal(sess).strip()
     if not phone:
         raise HTTPException(status_code=400, detail="invalid_session")
     tid = body.tier.strip().lower()
     bc = body.billing_cycle.strip().lower()
-    if tid not in ("basic", "pro", "max") or bc not in ("monthly", "yearly"):
+    if tid not in ("basic", "pro", "max") or bc != "monthly":
         raise HTTPException(status_code=400, detail="invalid_tier_or_cycle")
     amount = amount_cents_for_subscription(tid, bc)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="invalid_plan_amount")
     out_trade_no = new_out_trade_no()
-    if not models.wechat_native_create_checkout_session(phone, out_trade_no, "subscription", amount, tid, bc):
-        raise HTTPException(status_code=500, detail="wechat_session_persist_failed")
+    if not models.alipay_page_create_checkout_session(phone, out_trade_no, "subscription", amount, tid, bc):
+        raise HTTPException(status_code=500, detail="alipay_session_persist_failed")
     desc = f"订阅套餐 {tid} {bc}"
-    ok, err, payload = create_native_order(
+    amt_yuan = f"{amount / 100:.2f}"
+    ok, err, pay_url = build_page_pay_url(
         cfg,
         out_trade_no=out_trade_no,
-        description=desc,
-        amount_total_cents=amount,
+        subject=desc,
+        total_amount_yuan_str=amt_yuan,
     )
-    if not ok:
-        models.wechat_native_delete_checkout_session(out_trade_no)
-        _log.warning("wechat native subscription unifiedorder failed: %s", err)
-        raise HTTPException(status_code=502, detail="wechat_unifiedorder_failed")
+    if not ok or not pay_url:
+        models.alipay_page_delete_checkout_session(out_trade_no)
+        _log.warning("alipay page subscription build failed: %s", err)
+        raise HTTPException(status_code=502, detail="alipay_page_pay_failed")
     return {
         "success": True,
-        "provider": "wechat_native",
-        "code_url": payload.get("code_url"),
+        "provider": "alipay_page",
+        "pay_page_url": pay_url,
         "out_trade_no": out_trade_no,
         "amount_cents": amount,
         "currency": "CNY",
         "tier": tid,
         "billing_cycle": bc,
-        "message": "请使用微信扫一扫完成支付",
+        "message": "正在跳转支付宝收银台，请使用手机支付宝扫码完成支付",
     }
 
 
-@router.post("/wechat/native/wallet")
-def wechat_native_wallet_create(request: Request, body: WechatNativeWalletCreateRequest):
-    """登录用户：微信 Native 钱包充值下单。"""
-    cfg = WechatPayNativeConfig.from_env()
+@router.post("/alipay/page/wallet")
+def alipay_page_wallet_create(request: Request, body: AlipayPageWalletCreateRequest):
+    """登录用户：支付宝电脑网站钱包充值下单。"""
+    cfg = AlipayPagePayConfig.from_env()
     if not cfg:
-        raise HTTPException(status_code=403, detail="wechat_native_disabled")
+        raise HTTPException(status_code=403, detail="alipay_page_pay_disabled")
     if not auth_bridge.is_auth_enabled():
         raise HTTPException(status_code=400, detail="auth_disabled")
     sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
     if not sess:
         raise HTTPException(status_code=401, detail="未登录")
-    phone = str(sess.get("phone") or "").strip()
+    phone = auth_bridge.session_principal(sess).strip()
     if not phone:
         raise HTTPException(status_code=400, detail="invalid_session")
     amt = int(body.amount_cents)
     if not is_valid_wallet_topup_amount_cents(amt):
         raise HTTPException(status_code=400, detail="invalid_topup_amount")
     out_trade_no = new_out_trade_no()
-    if not models.wechat_native_create_checkout_session(phone, out_trade_no, "wallet", amt, None, None):
-        raise HTTPException(status_code=500, detail="wechat_session_persist_failed")
-    ok, err, payload = create_native_order(
+    if not models.alipay_page_create_checkout_session(phone, out_trade_no, "wallet", amt, None, None):
+        raise HTTPException(status_code=500, detail="alipay_session_persist_failed")
+    amt_yuan = f"{amt / 100:.2f}"
+    ok, err, pay_url = build_page_pay_url(
         cfg,
         out_trade_no=out_trade_no,
-        description="账户余额充值",
-        amount_total_cents=amt,
+        subject="账户余额充值",
+        total_amount_yuan_str=amt_yuan,
     )
-    if not ok:
-        models.wechat_native_delete_checkout_session(out_trade_no)
-        _log.warning("wechat native wallet unifiedorder failed: %s", err)
-        raise HTTPException(status_code=502, detail="wechat_unifiedorder_failed")
+    if not ok or not pay_url:
+        models.alipay_page_delete_checkout_session(out_trade_no)
+        _log.warning("alipay page wallet build failed: %s", err)
+        raise HTTPException(status_code=502, detail="alipay_page_pay_failed")
     return {
         "success": True,
-        "provider": "wechat_native",
-        "code_url": payload.get("code_url"),
+        "provider": "alipay_page",
+        "pay_page_url": pay_url,
         "out_trade_no": out_trade_no,
         "amount_cents": amt,
         "currency": "CNY",
-        "message": "请使用微信扫一扫完成支付",
+        "message": "正在跳转支付宝收银台，请使用手机支付宝扫码完成支付",
     }

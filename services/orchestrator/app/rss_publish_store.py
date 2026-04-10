@@ -7,6 +7,11 @@ from xml.sax.saxutils import escape
 
 from .db import get_conn, get_cursor
 from .models import get_job
+from .show_notes_convert import (
+    markdown_show_notes_to_html,
+    plain_summary_fallback_from_markdown,
+    rss_cdata_fragment,
+)
 
 
 def _now_utc() -> datetime:
@@ -211,6 +216,15 @@ def _extract_work_audio_and_cover(job_row: dict[str, Any]) -> tuple[str, str, in
         result = {}
     audio_url = str(result.get("audio_url") or "").strip()
     if not audio_url:
+        akey = str(result.get("audio_object_key") or "").strip()
+        if akey:
+            try:
+                from .object_store import presigned_get_url
+
+                audio_url = presigned_get_url(akey, expires_in=86400 * 7)
+            except Exception:
+                audio_url = ""
+    if not audio_url:
         raise ValueError("work_audio_missing")
     cover = str(result.get("cover_image") or result.get("coverImage") or "").strip()
     dur_raw = result.get("audio_duration_sec")
@@ -384,8 +398,13 @@ def build_rss_feed_xml(feed_slug: str, public_base_url: str | None = None) -> st
 
     for ep in episodes:
         title = escape(str(ep.get("title") or "未命名单集"))
-        summary = escape(str(ep.get("summary") or ""))
-        notes = escape(str(ep.get("show_notes") or ""))
+        notes_md = str(ep.get("show_notes") or "")
+        notes_html = markdown_show_notes_to_html(notes_md)
+        notes_cdata = rss_cdata_fragment(notes_html)
+        sum_plain = str(ep.get("summary") or "").strip()
+        if not sum_plain:
+            sum_plain = plain_summary_fallback_from_markdown(notes_md)
+        summary_esc = escape(sum_plain)
         audio_url = escape(str(ep.get("audio_url") or ""))
         ep_img = escape(str(ep.get("image_url") or ""))
         guid = escape(str(ep.get("guid") or ""))
@@ -397,14 +416,26 @@ def build_rss_feed_xml(feed_slug: str, public_base_url: str | None = None) -> st
             m = (dur % 3600) // 60
             s = dur % 60
             dur_text = f"{h:02d}:{m:02d}:{s:02d}"
+        # itunes:subtitle 宜短，便于 Apple Podcasts / 部分客户端列表副标题
+        sub_src = sum_plain.replace("\n", " ").strip()
+        sub_esc = escape((sub_src[:255] + ("…" if len(sub_src) > 255 else "")) if sub_src else "")
+        sum_itunes_esc = escape(sum_plain[:4000]) if sum_plain else ""
         lines.extend(
             [
                 "<item>",
                 f"<title>{title}</title>",
                 f"<guid isPermaLink=\"false\">{guid}</guid>",
                 f"<pubDate>{escape(ep_pub)}</pubDate>",
-                f"<description>{summary or notes}</description>",
-                f"<content:encoded xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">{notes}</content:encoded>",
+                f"<description>{summary_esc}</description>",
+            ]
+        )
+        if sum_itunes_esc:
+            lines.append(f"<itunes:summary>{sum_itunes_esc}</itunes:summary>")
+        if sub_esc:
+            lines.append(f"<itunes:subtitle>{sub_esc}</itunes:subtitle>")
+        lines.extend(
+            [
+                f"<content:encoded xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">{notes_cdata}</content:encoded>",
                 f"<enclosure url=\"{audio_url}\" type=\"audio/mpeg\" />",
             ]
         )

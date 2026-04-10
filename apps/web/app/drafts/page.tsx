@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TTS_IMPORT_SCRIPT_KEY } from "../../lib/ttsImport";
 
@@ -36,10 +37,9 @@ function nowIso() {
 }
 
 const card =
-  "rounded-2xl border border-line bg-white shadow-sm";
+  "rounded-2xl border border-line bg-surface shadow-soft";
 
-const storageHint =
-  "草稿仅保存在本机浏览器：不会上传账号、也不会跨设备同步。清理站点数据或更换浏览器后可能丢失，重要内容请自行备份。";
+const storageHint = "仅保存在本机浏览器，清数据或换设备会丢失。";
 
 export default function DraftsPage() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -147,16 +147,14 @@ export default function DraftsPage() {
     <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-10 sm:px-4">
       <div className="mb-6 text-center">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">播客草稿箱</h1>
-        <p className="mt-2 text-sm text-muted">
-          多份文稿本地管理，布局接近 AI 播客编辑区；写好片段可一键送到「文本转语音」继续合成。
-        </p>
+        <p className="mt-2 text-sm text-muted">本地文稿；可送到「文字转语音」。</p>
         <p className="mt-1 text-xs text-muted">{storageHint}</p>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <button
           type="button"
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand"
+          className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground shadow-soft hover:bg-brand"
           onClick={createDraft}
         >
           新建草稿
@@ -168,7 +166,20 @@ export default function DraftsPage() {
           <p className="text-xs font-medium text-muted">本地草稿列表</p>
           <ul className="mt-2 max-h-[min(60vh,520px)] space-y-1 overflow-auto text-sm">
             {sortedDrafts.length === 0 ? (
-              <li className="text-muted">暂无草稿，点击上方「新建草稿」开始</li>
+              <li className="rounded-lg border border-dashed border-line bg-fill/40 p-3 text-xs leading-relaxed text-muted">
+                <p className="font-medium text-ink">还没有本地草稿</p>
+                <p className="mt-1">点下方「新建草稿」写一版，或从</p>
+                <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <Link href="/create" className="text-brand hover:underline">
+                    开始创作
+                  </Link>
+                  <span className="text-muted">·</span>
+                  <Link href="/notes" className="text-brand hover:underline">
+                    笔记本
+                  </Link>
+                </p>
+                <p className="mt-1 text-muted">写好后可用右侧「送到文字转语音」。</p>
+              </li>
             ) : null}
             {sortedDrafts.map((d) => (
               <li key={d.id}>
@@ -210,17 +221,17 @@ export default function DraftsPage() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs text-rose-700 hover:bg-rose-50"
+                  className="rounded-lg border border-danger/30 px-3 py-1.5 text-xs text-danger-ink hover:bg-danger-soft"
                   onClick={() => deleteDraftById(activeDraft.id)}
                 >
                   删除
                 </button>
                 <button
                   type="button"
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs text-white hover:bg-emerald-500"
+                  className="rounded-lg bg-mint px-3 py-1.5 text-xs text-mint-foreground hover:bg-mint/90"
                   onClick={importToTts}
                 >
-                  送到文本转语音
+                  送到文字转语音
                 </button>
               </div>
               <textarea
@@ -232,10 +243,10 @@ export default function DraftsPage() {
                 }}
                 placeholder="可写大纲、口播要点或整段口播稿…"
               />
-              {dirty ? <p className="mt-2 text-xs text-amber-700">未保存的修改将在约 0.8 秒后自动写入本机</p> : null}
+              {dirty ? <p className="mt-2 text-xs text-warning-ink">将自动保存到本机</p> : null}
             </>
           ) : (
-            <p className="text-sm text-muted">请在左侧选择草稿，或点击「新建草稿」</p>
+            <p className="text-sm text-muted">请选择或新建草稿</p>
           )}
         </div>
       </div>

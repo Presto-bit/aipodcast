@@ -1,5 +1,5 @@
--- 微信 Native 扫码：商户单号 out_trade_no 与本地会话绑定，支付回调验额后履约。
-CREATE TABLE IF NOT EXISTS wechat_native_checkout_sessions (
+-- 支付宝电脑网站支付：商户单号 out_trade_no 与本地会话绑定，异步通知验额后履约。
+CREATE TABLE IF NOT EXISTS alipay_page_checkout_sessions (
   out_trade_no TEXT PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   phone TEXT NOT NULL,
@@ -9,5 +9,5 @@ CREATE TABLE IF NOT EXISTS wechat_native_checkout_sessions (
   billing_cycle TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_wechat_native_checkout_user_created
-  ON wechat_native_checkout_sessions (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alipay_page_checkout_user_created
+  ON alipay_page_checkout_sessions (user_id, created_at DESC);

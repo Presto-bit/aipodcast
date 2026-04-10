@@ -17,11 +17,11 @@ const base =
 
 const variants: Record<ButtonVariant, string> = {
   primary:
-    "bg-brand text-white shadow-[var(--dawn-shadow-soft)] hover:bg-brand/90 hover:shadow-[var(--dawn-shadow-card)] disabled:opacity-45",
+    "bg-brand text-brand-foreground shadow-soft hover:bg-brand/90 hover:shadow-card disabled:opacity-45",
   secondary:
-    "border border-line bg-surface text-ink shadow-[var(--dawn-shadow-soft)] hover:bg-fill disabled:opacity-45 dark:bg-surface/80",
+    "border border-line bg-surface text-ink shadow-soft hover:bg-fill disabled:opacity-45 dark:bg-surface/80",
   danger:
-    "border border-danger/40 bg-danger-soft text-danger shadow-[var(--dawn-shadow-soft)] hover:bg-danger/20 disabled:opacity-45 dark:text-rose-200",
+    "border border-danger/40 bg-danger-soft text-danger-ink shadow-soft hover:bg-danger/20 disabled:opacity-45",
   ghost: "text-ink hover:bg-fill disabled:opacity-45"
 };
 

@@ -23,7 +23,7 @@ function CollapsibleCreativeSection({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-line bg-fill/40 shadow-sm">
+    <div className="rounded-2xl border border-line bg-fill/40 shadow-soft">
       <button
         type="button"
         className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-fill/80"
@@ -138,10 +138,10 @@ export default function UserTemplatesPage() {
       <h1 className="text-2xl font-semibold text-ink">加入创意</h1>
 
       <form className="mt-6 space-y-4" onSubmit={onAdd}>
-        <div className="rounded-2xl border border-line bg-white p-4">
+        <div className="rounded-2xl border border-line bg-surface p-4">
           <h2 className="text-sm font-semibold text-ink">加入创意</h2>
           <p className="mt-1 text-[11px] text-muted">
-            至少填写一项后保存为方案；在 AI 播客 / 笔记播客「加入创意」下拉里可选中该自定义方案。
+            至少填写一项后保存为方案；在 AI 播客 / 笔记本「加入创意」下拉里可选中该自定义方案。
           </p>
           <label className="mt-3 block text-xs text-muted">
             脚本风格
@@ -182,7 +182,7 @@ export default function UserTemplatesPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button type="submit" className="rounded-lg bg-brand px-4 py-2 text-sm text-white hover:bg-brand">
+          <button type="submit" className="rounded-lg bg-brand px-4 py-2 text-sm text-brand-foreground hover:bg-brand">
             保存方案
           </button>
           {msg ? <p className="text-xs text-muted">{msg}</p> : null}
@@ -199,7 +199,7 @@ export default function UserTemplatesPage() {
           {BUILTIN_CREATIVE_PRESETS.map((preset) => {
             const bundle = creativeBundleFromPreset(preset);
             return (
-              <div key={preset.id} className="rounded-xl border border-line bg-white p-3.5 shadow-card-sm">
+              <div key={preset.id} className="rounded-xl border border-line bg-surface p-3.5 shadow-soft">
                 <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/80 pb-2">
                   <div className="min-w-0">
                     <p className="font-medium text-ink">{preset.label}</p>
@@ -236,7 +236,7 @@ export default function UserTemplatesPage() {
             items.map((t) => {
               const bundle = creativeBundleFromPreset(t);
               return (
-                <div key={t.id} className="rounded-xl border border-line bg-white p-3.5 shadow-card-sm">
+                <div key={t.id} className="rounded-xl border border-line bg-surface p-3.5 shadow-soft">
                   <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/80 pb-2">
                     <div className="min-w-0">
                       <p className="font-medium text-ink">{t.label}</p>
@@ -253,7 +253,7 @@ export default function UserTemplatesPage() {
                       </Link>
                       <button
                         type="button"
-                        className="text-xs text-rose-600 hover:underline"
+                        className="text-xs text-danger-ink hover:underline"
                         onClick={() => {
                           if (window.confirm("删除该方案？")) {
                             removeUserTemplate(t.id);

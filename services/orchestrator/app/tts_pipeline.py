@@ -8,6 +8,7 @@ import io
 import math
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 from .audio_mix import _resolve_bgm_path
@@ -21,8 +22,10 @@ from .provider_router import (
 
 try:
     from app.fyv_shared.config import TTS_ASYNC_TEXT_MAX_CHARS as TTS_BODY_MAX_CHARS
+    from app.fyv_shared.config import TTS_SYNC_TEXT_MAX_CHARS as TTS_CHUNK_CEILING_CHARS
 except ImportError:
     TTS_BODY_MAX_CHARS = 50_000
+    TTS_CHUNK_CEILING_CHARS = 10_000
 TTS_INTRO_OUTRO_MAX = 800
 # 开场+收场总长度在此阈值内且均非空时，尝试单次模型调用合并润色（失败则回退为两次独立润色）
 _INTRO_OUTRO_BUNDLE_MAX_COMBINED_CHARS = 1400
@@ -31,8 +34,8 @@ def _tts_sanitize_after_polish_enabled() -> bool:
     raw = str(os.getenv("TTS_SANITIZE_AFTER_POLISH") or "").strip().lower()
     return raw in ("1", "true", "yes", "on")
 
-# 与 podcast_generator 入队单句长度同量级：过长时在软标点处再切；默认偏大以减少 API 往返
-_DEFAULT_TTS_MAX_CHUNK_CHARS = 2000
+# 与 podcast_generator 入队单句长度同量级：过长时在软标点处再切；默认偏大以减少 API 往返（≤ 同步 T2A 单段上限）
+_DEFAULT_TTS_MAX_CHUNK_CHARS = 9000
 # 句边界：中文句读 + 英文「.!? + 空格 + 大写」避免误切小数
 _TTS_SENTENCE_SPLIT_RE = re.compile(
     r"(?<=[。！？!?；;…])\s*"
@@ -451,8 +454,8 @@ def run_extended_tts(
         tts_max_chunk_chars = int(payload.get("tts_max_chunk_chars") or _DEFAULT_TTS_MAX_CHUNK_CHARS)
     except (TypeError, ValueError):
         tts_max_chunk_chars = _DEFAULT_TTS_MAX_CHUNK_CHARS
-    # 单段不超过 3000 时走同步非流式更稳；>3000 由 minimax_client 自动 stream=true
-    tts_max_chunk_chars = max(120, min(3000, tts_max_chunk_chars))
+    # 单段不超过 TTS_SYNC_TEXT_MAX_CHARS；较长时由 minimax_client 对同步 T2A 使用 stream=true
+    tts_max_chunk_chars = max(120, min(int(TTS_CHUNK_CEILING_CHARS), tts_max_chunk_chars))
     tts_mode = str(payload.get("tts_mode") or "single").strip().lower()
     if tts_mode not in ("single", "dual"):
         tts_mode = "single"
@@ -549,6 +552,7 @@ def run_extended_tts(
     from pydub import AudioSegment  # type: ignore
 
     audio_parts: list[Any] = []
+    part_titles: list[str] = []
     last_trace: str | None = None
     last_upstream: int | None = None
     retries_total = 0
@@ -560,25 +564,43 @@ def run_extended_tts(
     auto_degraded = False
     auto_degrade_reason = ""
 
-    def synth_one(content: str, vid: str) -> None:
-        nonlocal last_trace, last_upstream, retries_total
+    def _tts_synth_chunk_return(
+        content: str, vid: str, chapter_title: str
+    ) -> tuple[Any, str, str | None, int | None, int, list[dict[str, Any]]]:
         if not content.strip():
-            return
+            raise ValueError("empty_chunk")
         text_in = _tts_segment_text_cleanup(content.strip())
         if not text_in.strip():
-            return
+            raise ValueError("empty_after_cleanup")
         tts = synthesize_tts(text_in, voice_id=vid, api_key=api_key)
         hx = str(tts.get("audio_hex") or "")
         seg = _hex_to_segment(hx)
         if seg is None:
             raise RuntimeError("音频解码失败")
+        ttl = (chapter_title or "段落").strip()[:200] or "段落"
+        tr_raw = str(tts.get("trace_id") or "").strip()
+        tr: str | None = tr_raw if tr_raw else None
+        up = tts.get("upstream_status_code")
+        up_i = int(up) if up is not None else None
+        rtry = int(tts.get("retries") or 0)
+        aerr = list(tts.get("attempt_errors") or []) if tts.get("attempt_errors") else []
+        return seg, ttl, tr, up_i, rtry, aerr
+
+    def synth_one(content: str, vid: str, chapter_title: str) -> None:
+        nonlocal last_trace, last_upstream, retries_total
+        try:
+            seg, ttl, tr, up_i, rtry, aerr = _tts_synth_chunk_return(content, vid, chapter_title)
+        except ValueError:
+            return
         audio_parts.append(seg)
-        last_trace = str(tts.get("trace_id") or last_trace or "")
-        if tts.get("upstream_status_code") is not None:
-            last_upstream = int(tts.get("upstream_status_code"))
-        retries_total += int(tts.get("retries") or 0)
-        if tts.get("attempt_errors"):
-            attempt_errors.extend(tts.get("attempt_errors") or [])
+        part_titles.append(ttl)
+        if tr:
+            last_trace = tr
+        if up_i is not None:
+            last_upstream = up_i
+        retries_total += rtry
+        if aerr:
+            attempt_errors.extend(aerr)
 
     effective_tts_mode = tts_mode
     effective_voice_id_single = voice_id
@@ -592,13 +614,15 @@ def run_extended_tts(
     seg_intro_bgm1 = _optional_bgm_segment(payload, "intro_bgm1")
     if seg_intro_bgm1 is not None:
         audio_parts.append(seg_intro_bgm1)
+        part_titles.append("片头垫乐")
 
     if intro_final:
-        synth_one(intro_final, intro_voice)
+        synth_one(intro_final, intro_voice, "开场")
 
     seg_intro_bgm2 = _optional_bgm_segment(payload, "intro_bgm2")
     if seg_intro_bgm2 is not None:
         audio_parts.append(seg_intro_bgm2)
+        part_titles.append("过场垫乐")
 
     if tts_mode == "single":
         body = (main_body or "").strip() if main_body else ""
@@ -609,13 +633,42 @@ def run_extended_tts(
                 chunks = split_text_into_tts_sentence_chunks(
                     body, max_chunk_chars=tts_max_chunk_chars
                 )
-                single_sentence_chunk_count = len([c for c in chunks if c.strip()])
+                chunk_jobs: list[tuple[int, str, str, str]] = []
+                chunk_idx = 0
                 for ch in chunks:
                     c = ch.strip()
                     if c:
-                        synth_one(c, voice_id)
+                        chunk_idx += 1
+                        chunk_jobs.append((chunk_idx, c, voice_id, f"段落 {chunk_idx}"))
+                single_sentence_chunk_count = len(chunk_jobs)
+                max_workers = max(1, min(8, int(os.getenv("TTS_SYNTH_MAX_WORKERS", "2") or "2")))
+                if len(chunk_jobs) > 1 and max_workers > 1:
+
+                    def _single_parallel(job: tuple[int, str, str, str]) -> tuple[int, Any, str, str | None, int | None, int, list]:
+                        sort_i, c, vid, title = job
+                        seg, ttl, tr, up_i, rtry, aerr = _tts_synth_chunk_return(c, vid, title)
+                        return sort_i, seg, ttl, tr, up_i, rtry, aerr
+
+                    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                        futures = [ex.submit(_single_parallel, j) for j in chunk_jobs]
+                        for fu in futures:
+                            _si, seg, ttl, tr, up_i, rtry, aerr = fu.result()
+                            audio_parts.append(seg)
+                            part_titles.append(ttl)
+                            if tr:
+                                last_trace = tr
+                            if up_i is not None:
+                                last_upstream = up_i
+                            retries_total += rtry
+                            if aerr:
+                                attempt_errors.extend(aerr)
+                    if progress_hook and single_sentence_chunk_count:
+                        progress_hook(94, f"分段合成完成（{single_sentence_chunk_count} 段）")
+                else:
+                    for sort_i, c, vid, title in chunk_jobs:
+                        synth_one(c, vid, title)
             else:
-                synth_one(body, voice_id)
+                synth_one(body, voice_id, "正文")
     else:
         lines = parse_tts_dialogue_lines(main_body)
         dialogue_segments_original = len(lines)
@@ -663,24 +716,68 @@ def run_extended_tts(
                 if not intro_final and not outro_final:
                     raise RuntimeError("正文为空")
             n_lines = len(lines)
+            dual_jobs: list[tuple[int, str, str, str]] = []
             for idx, (sp, chunk) in enumerate(lines):
-                if progress_hook and n_lines:
-                    pct = 62 + int(28 * (idx + 1) / max(n_lines, 1))
-                    progress_hook(min(pct, 94), f"双人对话合成 {idx + 1}/{n_lines}")
                 c = (chunk or "").strip() if chunk and chunk.strip() else chunk
                 vid = voice_id_1 if sp == "1" else voice_id_2
-                synth_one(c, vid)
+                stub = (c or "").replace("\n", " ").strip()
+                if len(stub) > 42:
+                    stub = stub[:42] + "…"
+                label = f"说话人{sp}"
+                if stub:
+                    label = f"{label} · {stub}"
+                dual_jobs.append((idx, c, vid, label))
+            max_workers_dual = max(1, min(8, int(os.getenv("TTS_SYNTH_MAX_WORKERS", "2") or "2")))
+            if len(dual_jobs) > 1 and max_workers_dual > 1:
+
+                def _dual_parallel(
+                    item: tuple[int, str, str, str],
+                ) -> tuple[int, Any, str, str | None, int | None, int, list]:
+                    _idx, c2, vid2, label2 = item
+                    seg, ttl, tr, up_i, rtry, aerr = _tts_synth_chunk_return(c2, vid2, label2)
+                    return _idx, seg, ttl, tr, up_i, rtry, aerr
+
+                with ThreadPoolExecutor(max_workers=max_workers_dual) as ex:
+                    futures = [ex.submit(_dual_parallel, j) for j in dual_jobs]
+                    for fu in futures:
+                        _idx, seg, ttl, tr, up_i, rtry, aerr = fu.result()
+                        audio_parts.append(seg)
+                        part_titles.append(ttl)
+                        if tr:
+                            last_trace = tr
+                        if up_i is not None:
+                            last_upstream = up_i
+                        retries_total += rtry
+                        if aerr:
+                            attempt_errors.extend(aerr)
+                if progress_hook and n_lines:
+                    progress_hook(94, f"双人对话合成 {n_lines}/{n_lines}")
+            else:
+                for idx, (sp, chunk) in enumerate(lines):
+                    if progress_hook and n_lines:
+                        pct = 62 + int(28 * (idx + 1) / max(n_lines, 1))
+                        progress_hook(min(pct, 94), f"双人对话合成 {idx + 1}/{n_lines}")
+                    c = (chunk or "").strip() if chunk and chunk.strip() else chunk
+                    vid = voice_id_1 if sp == "1" else voice_id_2
+                    stub = (c or "").replace("\n", " ").strip()
+                    if len(stub) > 42:
+                        stub = stub[:42] + "…"
+                    label = f"说话人{sp}"
+                    if stub:
+                        label = f"{label} · {stub}"
+                    synth_one(c, vid, label)
         else:
             body = (main_body or "").strip() if main_body else ""
             if body.strip():
-                synth_one(body, effective_voice_id_single)
+                synth_one(body, effective_voice_id_single, "正文")
 
     if outro_final:
-        synth_one(outro_final, outro_voice)
+        synth_one(outro_final, outro_voice, "结尾")
 
     seg_outro_bgm3 = _optional_bgm_segment(payload, "outro_bgm3")
     if seg_outro_bgm3 is not None:
         audio_parts.append(seg_outro_bgm3)
+        part_titles.append("片尾垫乐")
 
     if not audio_parts:
         raise RuntimeError("没有可合成的音频内容")
@@ -690,6 +787,18 @@ def run_extended_tts(
         combined += p
 
     out_hex = _segment_to_hex(combined)
+
+    audio_chapters: list[dict[str, Any]] = []
+    cursor_ms = 0
+    for seg, ttl in zip(audio_parts, part_titles):
+        try:
+            seg_len = int(len(seg))
+        except Exception:
+            seg_len = 0
+        if seg_len <= 0:
+            continue
+        audio_chapters.append({"title": ttl, "start_ms": cursor_ms, "end_ms": cursor_ms + seg_len})
+        cursor_ms += seg_len
 
     cover_image: str | None = None
     cover_error: str | None = None
@@ -733,4 +842,6 @@ def run_extended_tts(
     out["tts_main_body"] = (main_body or "").strip()
     out["tts_intro_text"] = intro_final
     out["tts_outro_text"] = outro_final
+    if audio_chapters:
+        out["audio_chapters"] = audio_chapters
     return out

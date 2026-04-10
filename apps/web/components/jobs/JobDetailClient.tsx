@@ -7,9 +7,11 @@ import { Button } from "../ui/Button";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { cancelJob, getJob, retryJob } from "../../lib/api";
 import { classifyErrorTone, errorPageCopy } from "../../lib/errorCopy";
-import { classifyJobError, failureCopy } from "../../lib/jobFailure";
+import { useI18n } from "../../lib/I18nContext";
+import { classifyJobError, failureCopy, failureRecoveryLink } from "../../lib/jobFailure";
 import { deriveJobStage, type StreamPayload } from "../../lib/jobStage";
 import { supportMailtoWithJob } from "../../lib/supportLink";
+import { JOB_SECTION_SURFACE_CARD } from "../../lib/jobSectionClasses";
 import type { JobArtifactRecord, JobRecord } from "../../lib/types";
 
 function extractPreviewText(result: Record<string, unknown> | undefined): string {
@@ -36,6 +38,13 @@ function pickArtifactIdByKeyword(artifacts: JobArtifactRecord[] | undefined, key
   return id ? String(id) : null;
 }
 
+function jobShareDisplayTitle(job: JobRecord): string {
+  const r = job.result || {};
+  const p = job.payload || {};
+  const t = String(r.title || (p as { title?: string }).title || (p as { project_name?: string }).project_name || "").trim();
+  return t || `作品 ${job.id.slice(0, 8)}…`;
+}
+
 function jobUiCacheKey(jobId: string): string {
   return `fym_job_ui_cache_v1:${jobId}`;
 }
@@ -48,6 +57,7 @@ export type JobDetailClientProps = {
 
 export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps) {
   const router = useRouter();
+  const { t } = useI18n();
   const [job, setJob] = useState<JobRecord | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -166,6 +176,32 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
     if (prev) setStreamingTail((t) => (t.length < prev.length ? prev : t));
   }, [job?.result]);
 
+  /** script_draft：result.preview 仅约 240 字；成功后应从 script 工件拉全文，否则界面/复制只有摘要。 */
+  const scriptArtifactId = useMemo(() => pickScriptArtifactId(job?.artifacts), [job?.artifacts]);
+  useEffect(() => {
+    if (!jobId || String(job?.job_type || "") !== "script_draft") return;
+    if (String(job?.status || "") !== "succeeded") return;
+    const aid = scriptArtifactId;
+    if (!aid) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/jobs/${jobId}/artifacts/${encodeURIComponent(aid)}/download`, {
+          credentials: "same-origin"
+        });
+        if (!res.ok || cancelled) return;
+        const full = (await res.text()).trim();
+        if (!full || cancelled) return;
+        setStreamingTail((t) => (full.length > t.length ? full : t));
+      } catch {
+        /* 保留 SSE / 预览已有内容 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, job?.job_type, job?.status, scriptArtifactId]);
+
   useEffect(() => {
     return () => {
       if (copyManuscriptHintTimerRef.current) clearTimeout(copyManuscriptHintTimerRef.current);
@@ -177,24 +213,32 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
     setCopyManuscriptHint(null);
     setCopyManuscriptBusy(true);
     try {
-      let text = (streamingTail || "").trim();
-      if (!text) {
-        const aid = pickScriptArtifactId(job?.artifacts);
-        if (aid) {
-          const res = await fetch(`/api/jobs/${jobId}/artifacts/${encodeURIComponent(aid)}/download`, {
-            credentials: "same-origin"
-          });
-          if (res.ok) text = (await res.text()).trim();
-          else throw new Error(`读取文稿失败 HTTP ${res.status}`);
-        }
+      let text = "";
+      const isDraft = String(job?.job_type || "") === "script_draft";
+      const succeeded = String(job?.status || "") === "succeeded";
+      const aid = scriptArtifactId;
+      if (isDraft && succeeded && aid) {
+        const res = await fetch(`/api/jobs/${jobId}/artifacts/${encodeURIComponent(aid)}/download`, {
+          credentials: "same-origin"
+        });
+        if (res.ok) text = (await res.text()).trim();
+        else throw new Error(`读取文稿失败 HTTP ${res.status}`);
+      }
+      if (!text) text = (streamingTail || "").trim();
+      if (!text && aid) {
+        const res = await fetch(`/api/jobs/${jobId}/artifacts/${encodeURIComponent(aid)}/download`, {
+          credentials: "same-origin"
+        });
+        if (res.ok) text = (await res.text()).trim();
+        else if (!text) throw new Error(`读取文稿失败 HTTP ${res.status}`);
       }
       if (!text && job?.result) text = extractPreviewText(job.result);
       if (!text) {
-        window.alert("暂无可复制的文稿；若任务刚完成请刷新页面后再试。");
+        window.alert("暂无文稿；完成后请刷新重试。");
         return;
       }
       await navigator.clipboard.writeText(text);
-      setCopyManuscriptHint("已复制到剪贴板");
+      setCopyManuscriptHint("已复制");
       if (copyManuscriptHintTimerRef.current) clearTimeout(copyManuscriptHintTimerRef.current);
       copyManuscriptHintTimerRef.current = setTimeout(() => setCopyManuscriptHint(null), 2500);
     } catch (e) {
@@ -202,16 +246,15 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
     } finally {
       setCopyManuscriptBusy(false);
     }
-  }, [jobId, streamingTail, job?.artifacts, job?.result]);
+  }, [jobId, streamingTail, job?.artifacts, job?.result, job?.job_type, job?.status, scriptArtifactId]);
 
   const stage = useMemo(() => deriveJobStage(job, events), [job, events]);
   const previewText = useMemo(() => extractPreviewText(job?.result), [job?.result]);
   const audioArtifactId = useMemo(() => pickArtifactIdByKeyword(job?.artifacts, "audio"), [job?.artifacts]);
-  const scriptArtifactId = useMemo(() => pickScriptArtifactId(job?.artifacts), [job?.artifacts]);
   const loadErrCopy = useMemo(() => {
     if (!loadErr) return null;
-    return errorPageCopy(classifyErrorTone(loadErr));
-  }, [loadErr]);
+    return errorPageCopy(classifyErrorTone(loadErr), t);
+  }, [loadErr, t]);
 
   const traceId =
     job?.result && typeof job.result.trace_id === "string" ? job.result.trace_id : null;
@@ -245,21 +288,21 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
   async function onCopyPreview() {
     const text = (previewText || streamingTail || "").trim();
     if (!text) {
-      window.alert("暂无可复制文案摘要，请稍后再试。");
+      window.alert("暂无摘要。");
       return;
     }
     try {
       await navigator.clipboard.writeText(text);
-      window.alert("已复制文案摘要");
+      window.alert("已复制");
     } catch {
-      window.alert("复制失败，请检查浏览器权限后重试。");
+      window.alert("复制失败");
     }
   }
 
   function goPartialRedo() {
     const text = (previewText || streamingTail || "").trim();
     if (!text) {
-      window.alert("暂无可用于局部重做的文稿，请稍后再试。");
+      window.alert("暂无文稿。");
       return;
     }
     try {
@@ -274,7 +317,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       );
       router.push("/podcast");
     } catch {
-      window.alert("暂存局部重做内容失败，请稍后重试。");
+      window.alert("暂存失败，请重试。");
     }
   }
 
@@ -307,7 +350,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       ) : null}
 
       {job ? (
-        <section className="fym-surface-card mt-6 p-[var(--dawn-space-card)] text-sm">
+        <section className={`${JOB_SECTION_SURFACE_CARD} text-sm`}>
           <div className="flex flex-wrap gap-2">
             <span className="rounded-dawn-sm bg-fill px-2 py-0.5 text-xs text-ink">{job.status}</span>
             <span className="text-muted">类型 {job.job_type}</span>
@@ -315,62 +358,103 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
             <span className="text-muted">通道 {job.queue_name}</span>
             <span className="text-muted tabular-nums">进度 {job.progress}%</span>
           </div>
+          {(job.status === "queued" || job.status === "running") && typeof job.progress === "number" ? (
+            <div className="mt-3">
+              <div className="mb-1 flex justify-between text-[11px] text-muted">
+                <span>总体进度（后端上报，各类型含义可能略有不同）</span>
+                <span className="tabular-nums">{Math.min(100, Math.max(0, job.progress))}%</span>
+              </div>
+              <div
+                className="h-2 w-full overflow-hidden rounded-full bg-fill"
+                data-testid="job-detail-progressbar"
+                role="progressbar"
+                aria-valuenow={Math.min(100, Math.max(0, job.progress))}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label="任务进度"
+              >
+                <div
+                  className="h-full rounded-full bg-brand transition-[width] duration-500 ease-out"
+                  style={{ width: `${Math.min(100, Math.max(0, job.progress))}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
           {job.status === "queued" || job.status === "running" ? (
-            <div className="mt-4 rounded-dawn-lg border border-line bg-fill/90 p-3">
+            <div
+              className="mt-4 rounded-dawn-lg border border-line bg-fill/90 p-3"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               <p className="text-sm font-medium text-ink">当前阶段 · {stage.stageLabel}</p>
               <p className="mt-1 text-xs leading-relaxed text-muted">{stage.nextStep}</p>
               {stage.detail ? (
                 <p className="mt-2 border-t border-line pt-2 text-xs text-muted">{stage.detail}</p>
               ) : null}
-              <p className="mt-2 text-[11px] text-muted">进度百分比仅供参考，具体以下方阶段说明为准。</p>
+            </div>
+          ) : null}
+          {job.status === "queued" || job.status === "running" ? (
+            <div className="mt-3 rounded-lg border border-line bg-surface/90 px-3 py-2 text-[11px] leading-relaxed text-muted" role="status">
+              <p className="text-muted">
+                {job.status === "queued"
+                  ? "排队中，请稍候。"
+                  : "生成中；久无进展可刷新或点「停止创作」后重试。"}
+              </p>
+              <p className="mt-1.5">
+                无需一直停在本页：可先去写笔记或处理其他事，完成后到{" "}
+                <Link href="/works?tab=active" className="font-medium text-brand hover:underline">
+                  我的作品 → 进行中
+                </Link>{" "}
+                或刷新本页查看结果。
+              </p>
             </div>
           ) : null}
           {job.error_message ? (
-            <p className="mt-3 rounded border border-rose-800/50 bg-rose-950/20 px-3 py-2 text-xs text-rose-200">{job.error_message}</p>
-          ) : null}
-          {job.status === "queued" || job.status === "running" ? (
-            <div className="mt-3 rounded-lg border border-line bg-fill/80 p-3 text-xs text-muted" role="status">
-              <p>
-                {job.status === "queued"
-                  ? "前面可能还有其他朋友在生成，请稍候。若长时间停在这一步，可刷新页面；仍无变化请联系客服。"
-                  : "正在为你生成内容。若长时间没有新进展，可能是网络或服务繁忙，可稍后再来看，或取消后重试。"}
-              </p>
-            </div>
+            <p className="mt-3 rounded border border-danger/40 bg-danger-soft/80 px-3 py-2 text-xs text-danger-ink">{job.error_message}</p>
           ) : null}
           {job.status === "failed" ? (
-            <div className="mt-3 space-y-2 rounded border border-rose-900/40 bg-rose-950/25 p-3 text-xs" role="alert">
+            <div className="mt-3 space-y-2 rounded border border-danger/40 bg-danger-soft p-3 text-xs" role="alert">
               {(() => {
                 const k = classifyJobError(job.error_message);
                 const fc = failureCopy(k);
+                const recovery = failureRecoveryLink(k);
                 return (
                   <>
-                    <p className="font-medium text-rose-100">{fc.title}</p>
-                    <p className="text-rose-200/90">{fc.hint}</p>
+                    <p className="font-medium text-danger-ink">{fc.title}</p>
+                    <p className="text-danger-ink/90">{fc.hint}</p>
+                    {recovery ? (
+                      <Link
+                        href={recovery.href}
+                        className="inline-block font-medium text-brand underline hover:text-brand/80"
+                      >
+                        {recovery.label} →
+                      </Link>
+                    ) : null}
                   </>
                 );
               })()}
-              <p className="text-amber-200/90">
-                可点击下方「用相同设置再试一次」重新生成；若客服询问，请提供下方的追踪编号（如有）。
-              </p>
+              <p className="break-all font-mono text-[10px] text-muted">记录 ID：{jobId}</p>
+              <p className="text-warning-ink/90">可先重试下方按钮；联系客服时请附记录 ID 或追踪编号。</p>
               <a
                 href={supportMailtoWithJob(jobId)}
                 className="inline-block font-medium text-brand underline hover:text-brand/80"
               >
-                发邮件联系客服（已自动附带记录编号）
+                邮件客服（含记录编号）
               </a>
             </div>
           ) : null}
           {traceId ? (
             <p className="mt-3 text-xs text-muted">
-              追踪编号（便于客服排查）：{" "}
+              追踪编号{" "}
               <button
                 type="button"
                 className="text-brand hover:underline"
                 onClick={() => void navigator.clipboard.writeText(traceId)}
+                title="复制"
               >
                 {traceId}
-              </button>{" "}
-              （点一下复制）
+              </button>
             </p>
           ) : null}
           <div className="mt-4 flex flex-wrap gap-2">
@@ -393,7 +477,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
                 停止创作
               </Button>
             ) : null}
-            {job.status !== "running" && job.status !== "queued" ? (
+            {job.status === "failed" || job.status === "cancelled" ? (
               <Button
                 type="button"
                 variant="primary"
@@ -408,15 +492,30 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
           </div>
           {job.status === "succeeded" ? (
             <div className="mt-4 rounded-dawn-lg border border-line bg-fill/75 p-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted">结果页快捷操作</p>
+              <p className="text-xs font-medium text-muted">成品</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {audioArtifactId ? (
                   <a
-                    className="rounded-dawn-sm bg-brand px-2.5 py-1.5 text-xs text-white hover:bg-brand/90"
+                    className="rounded-dawn-sm bg-brand px-2.5 py-1.5 text-xs font-medium text-brand-foreground hover:bg-brand/90"
                     href={`/api/jobs/${jobId}/artifacts/${audioArtifactId}/download`}
                   >
                     播放 / 下载音频
                   </a>
+                ) : null}
+                {audioArtifactId ? (
+                  <Link
+                    href={`/works/share/${jobId}`}
+                    className="rounded-dawn-sm border border-brand/50 bg-brand/10 px-2.5 py-1.5 text-xs font-medium text-brand hover:bg-brand/15"
+                    onClick={() => {
+                      try {
+                        sessionStorage.setItem(`fym_share_display_title:${jobId}`, jobShareDisplayTitle(job));
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                  >
+                    发给朋友
+                  </Link>
                 ) : null}
                 {scriptArtifactId ? (
                   <a
@@ -445,20 +544,19 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
           ) : null}
         </section>
       ) : !loadErr ? (
-        <p className="mt-6 text-sm text-muted">正在加载任务详情，请稍候…</p>
+        <p className="mt-6 text-sm text-muted">加载中…</p>
       ) : null}
 
       {job?.artifacts && job.artifacts.length > 0 ? (
         <section className="fym-table-shell mt-6 p-[var(--dawn-space-card)]">
           <h2 className="text-sm font-medium text-ink">生成结果</h2>
-          <p className="mt-1 text-xs text-muted">可直接下载成品；如效果不满意，可使用相同设置再试一次。</p>
           <ul className="mt-2 space-y-2 text-xs">
             {job.artifacts.map((a) => (
               <li key={a.id} className="rounded border border-line bg-fill p-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-muted">{a.artifact_type}</span>
                   <a
-                    className="rounded-dawn-sm bg-brand px-2 py-1 text-[11px] text-white hover:bg-brand/90"
+                    className="rounded-dawn-sm bg-brand px-2 py-1 text-[11px] text-brand-foreground hover:bg-brand/90"
                     href={`/api/jobs/${jobId}/artifacts/${a.id}/download`}
                   >
                     下载文件
@@ -474,11 +572,10 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       {(streamingTail ||
         job?.status === "running" ||
         (job && ["script_draft", "podcast_generate", "podcast"].includes(job.job_type))) && (
-        <section className="fym-surface-card mt-6 p-[var(--dawn-space-card)]">
+        <section className={JOB_SECTION_SURFACE_CARD}>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
               <h2 className="text-sm font-medium text-ink">文案预览</h2>
-              <p className="mt-1 text-xs text-muted">文稿会随生成过程逐步出现，便于你快速确认内容方向。</p>
             </div>
             {job?.job_type === "script_draft" ? (
               <Button
@@ -494,17 +591,17 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
             ) : null}
           </div>
           {job?.job_type === "script_draft" && copyManuscriptHint ? (
-            <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400" role="status">
+            <p className="mt-2 text-xs text-success-ink dark:text-success-ink" role="status">
               {copyManuscriptHint}
             </p>
           ) : null}
           <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded border border-line bg-fill p-3 text-xs text-ink">
-            {streamingTail || "（正在撰写，请稍候…）"}
+            {streamingTail || "撰写中…"}
           </pre>
           {job?.status === "succeeded" ? (
             <div className="mt-3 rounded border border-line bg-surface p-3">
-              <p className="text-xs font-medium text-ink">局部重做增强</p>
-              <p className="mt-1 text-xs text-muted">先选择要重做的片段，再输入要求；系统会提示尽量保留其余段落不变。</p>
+              <p className="text-xs font-medium text-ink">局部重做</p>
+              <p className="mt-1 text-xs text-muted">选范围后输入修改要求。</p>
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                 <button
                   type="button"
@@ -575,7 +672,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
         </section>
       )}
 
-      <section className="fym-surface-card mt-6 p-[var(--dawn-space-card)]">
+      <section className={JOB_SECTION_SURFACE_CARD}>
         <h2 className="text-sm font-medium text-ink">处理记录</h2>
         <p className="mt-1 text-xs text-muted">以下为后台步骤摘要，完成后本页会自动更新。</p>
         <div className="mt-3 max-h-80 space-y-2 overflow-auto text-xs">

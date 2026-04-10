@@ -7,11 +7,11 @@ import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .. import auth_bridge
 from .. import models
-from ..wechat_pay_native import WechatPayNativeConfig, decrypt_notify_resource, verify_notify_signature
+from ..alipay_page_pay import AlipayPagePayConfig, verify_notify_params
 
 router = APIRouter(prefix="/api/v1", tags=["webhooks"])
 _log = logging.getLogger(__name__)
@@ -66,9 +66,6 @@ def _normalize_currency(raw_currency: str) -> str:
 def _normalize_channel(raw_channel: str) -> str:
     s = (raw_channel or "").strip().lower() or "unknown"
     mapping = {
-        "wx": "wechat",
-        "wechatpay": "wechat",
-        "wechat": "wechat",
         "alipay": "alipay",
         "ali": "alipay",
         "stripe": "stripe",
@@ -78,7 +75,7 @@ def _normalize_channel(raw_channel: str) -> str:
         "google": "google",
     }
     normalized = mapping.get(s, s)
-    allowed = {"wechat", "alipay", "stripe", "apple", "google", "unknown"}
+    allowed = {"alipay", "stripe", "apple", "google", "unknown"}
     return normalized if normalized in allowed else "unknown"
 
 
@@ -322,50 +319,70 @@ async def payment_webhook(request: Request):
     return JSONResponse({"success": True, "reason": reason, "order": row})
 
 
-def _parse_wechat_success_time(raw: object) -> datetime | None:
+def _parse_alipay_notify_time(raw: object) -> datetime | None:
     s = str(raw or "").strip()
     if not s:
         return None
     try:
         normalized = s.replace("Z", "+00:00") if s.endswith("Z") else s
-        return datetime.fromisoformat(normalized)
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+
+        dt2 = parsedate_to_datetime(s)
+        if dt2.tzinfo is None:
+            dt2 = dt2.replace(tzinfo=timezone.utc)
+        return dt2
     except Exception:
         return None
 
 
-def _wechat_ack_ok() -> JSONResponse:
-    return JSONResponse({"code": "SUCCESS", "message": "成功"})
-
-
-def _handle_wechat_transaction_success(cfg: WechatPayNativeConfig, plain: dict) -> JSONResponse:
-    if str(plain.get("trade_state") or "") != "SUCCESS":
-        return _wechat_ack_ok()
-    if str(plain.get("appid") or "") != cfg.app_id or str(plain.get("mchid") or "") != cfg.mch_id:
-        _log.warning("wechat pay mch/app mismatch out_trade_no=%s", plain.get("out_trade_no"))
-        return _wechat_ack_ok()
-    out_trade_no = str(plain.get("out_trade_no") or "").strip()
-    transaction_id = str(plain.get("transaction_id") or "").strip()
-    amt_obj = plain.get("amount") if isinstance(plain.get("amount"), dict) else {}
+def _alipay_total_amount_to_cents(total_amount: str) -> int | None:
     try:
-        total = int(amt_obj.get("total") or 0)
+        return int(round(float(str(total_amount or "").strip()) * 100))
     except (TypeError, ValueError):
-        total = 0
-    if not out_trade_no or total <= 0:
-        return _wechat_ack_ok()
-    paid_at = _parse_wechat_success_time(plain.get("success_time"))
-    if paid_at and paid_at.tzinfo is None:
-        paid_at = paid_at.replace(tzinfo=timezone.utc)
-    row_sess = models.wechat_native_get_checkout_session(out_trade_no)
+        return None
+
+
+def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]) -> PlainTextResponse:
+    trade_status = str(params.get("trade_status") or "").strip().upper()
+    if trade_status not in ("TRADE_SUCCESS", "TRADE_FINISHED"):
+        return PlainTextResponse("success")
+    if str(params.get("app_id") or "").strip() != cfg.app_id:
+        _log.warning("alipay notify app_id mismatch out_trade_no=%s", params.get("out_trade_no"))
+        return PlainTextResponse("success")
+    out_trade_no = str(params.get("out_trade_no") or "").strip()
+    trade_no = str(params.get("trade_no") or "").strip()
+    notify_cents = _alipay_total_amount_to_cents(params.get("total_amount") or "")
+    if not out_trade_no or notify_cents is None or notify_cents <= 0:
+        return PlainTextResponse("success")
+    paid_at = _parse_alipay_notify_time(params.get("gmt_payment") or params.get("notify_time"))
+    row_sess = models.alipay_page_get_checkout_session(out_trade_no)
     if not row_sess:
-        return _wechat_ack_ok()
-    if int(row_sess.get("amount_cents") or 0) != total:
+        existing = models.get_payment_order_by_event_id(out_trade_no)
+        if existing and str(existing.get("status") or "").strip().lower() in (
+            "paid",
+            "success",
+            "succeeded",
+            "captured",
+        ):
+            return PlainTextResponse("success")
+        _log.warning("alipay notify: no session and no paid order out_trade_no=%s", out_trade_no)
+        return PlainTextResponse("success")
+    session_cents = int(row_sess.get("amount_cents") or 0)
+    if session_cents != notify_cents:
         _log.error(
-            "wechat amount_mismatch out_trade_no=%s session_cents=%s notify_cents=%s — ack OK to stop retries, manual reconcile",
+            "alipay amount_mismatch out_trade_no=%s session_cents=%s notify_cents=%s",
             out_trade_no,
-            row_sess.get("amount_cents"),
-            total,
+            session_cents,
+            notify_cents,
         )
-        return _wechat_ack_ok()
+        return PlainTextResponse("success")
     phone = str(row_sess.get("phone") or "").strip()
     kind = str(row_sess.get("kind") or "").strip().lower()
     if kind == "wallet":
@@ -375,19 +392,19 @@ def _handle_wechat_transaction_success(cfg: WechatPayNativeConfig, plain: dict) 
             "free",
             None,
             "paid",
-            total,
-            "wechat_pay",
-            channel="wechat",
-            provider_order_id=transaction_id or None,
+            notify_cents,
+            "alipay",
+            channel="alipay",
+            provider_order_id=trade_no or None,
             currency="CNY",
             paid_at=paid_at,
             product_snapshot={
                 "kind": "wallet_topup",
-                "topup_cents": total,
-                "source": "wechat_native_wallet",
-                "amount_cents": total,
+                "topup_cents": notify_cents,
+                "source": "alipay_page_wallet",
+                "amount_cents": notify_cents,
             },
-            source="wechat_native_notify",
+            source="alipay_page_notify",
         )
     elif kind == "subscription":
         tier_s = str(row_sess.get("tier") or "free").strip().lower()
@@ -399,135 +416,48 @@ def _handle_wechat_transaction_success(cfg: WechatPayNativeConfig, plain: dict) 
             tier_s,
             bc_s,
             "paid",
-            total,
-            "wechat_pay",
-            channel="wechat",
-            provider_order_id=transaction_id or None,
+            notify_cents,
+            "alipay",
+            channel="alipay",
+            provider_order_id=trade_no or None,
             currency="CNY",
             paid_at=paid_at,
             product_snapshot={
-                "source": "wechat_native",
+                "source": "alipay_page",
                 "tier": tier_s,
                 "billing_cycle": bc_s,
-                "amount_cents": total,
+                "amount_cents": notify_cents,
             },
-            source="wechat_native_notify",
+            source="alipay_page_notify",
         )
     else:
-        return _wechat_ack_ok()
+        return PlainTextResponse("success")
     if not ok:
-        return JSONResponse(
-            {"code": "FAIL", "message": str(reason or "apply_failed")[:120]},
-            status_code=500,
-        )
-    models.wechat_native_delete_checkout_session(out_trade_no)
+        _log.error("alipay notify apply failed out_trade_no=%s reason=%s", out_trade_no, reason)
+        return PlainTextResponse("fail", status_code=500)
+    models.alipay_page_delete_checkout_session(out_trade_no)
     if kind == "subscription" and phone:
         models.merge_user_preferences_for_phone(phone, {"subscription_checkout_intent_v1": {}})
-    return _wechat_ack_ok()
+    return PlainTextResponse("success")
 
 
-def _handle_wechat_refund_success(cfg: WechatPayNativeConfig, plain: dict) -> JSONResponse:
-    rst = str(plain.get("refund_status") or plain.get("status") or "").strip().upper()
-    if rst and rst != "SUCCESS":
-        return _wechat_ack_ok()
-    if str(plain.get("mchid") or "") != cfg.mch_id:
-        _log.warning("wechat refund mch mismatch out_trade_no=%s", plain.get("out_trade_no"))
-        return _wechat_ack_ok()
-    out_trade_no = str(plain.get("out_trade_no") or "").strip()
-    out_refund_no = str(plain.get("out_refund_no") or "").strip()
-    amt_obj = plain.get("amount") if isinstance(plain.get("amount"), dict) else {}
-    try:
-        refund_cents = int(amt_obj.get("refund") or amt_obj.get("payer_refund") or amt_obj.get("total") or 0)
-    except (TypeError, ValueError):
-        refund_cents = 0
-    if not out_trade_no or not out_refund_no or refund_cents <= 0:
-        return _wechat_ack_ok()
-    prov = "wechat_pay"
-    if models.payment_refund_exists(prov, out_refund_no):
-        return _wechat_ack_ok()
-    order = models.get_payment_order_by_event_id(out_trade_no)
-    if not order:
-        _log.warning("wechat refund: no local order out_trade_no=%s", out_trade_no)
-        return _wechat_ack_ok()
-    order_amt = int(order.get("amount_cents") or 0)
-    prior = models.sum_refunded_cents_for_order(out_trade_no)
-    total_after = prior + refund_cents
-    new_st = "refunded" if total_after >= order_amt else "partially_refunded"
-    phone = str(order.get("phone") or "").strip()
-    tier_o = str(order.get("tier") or "free").strip().lower()
-    bc_raw = order.get("billing_cycle")
-    bc_o = str(bc_raw).strip().lower() if bc_raw else None
-    snap = order.get("product_snapshot")
-    if isinstance(snap, str):
-        try:
-            snap = json.loads(snap)
-        except Exception:
-            snap = {}
-    if not isinstance(snap, dict):
-        snap = {}
-    refunded_at = _parse_wechat_success_time(plain.get("success_time"))
-    if refunded_at and refunded_at.tzinfo is None:
-        refunded_at = refunded_at.replace(tzinfo=timezone.utc)
-    poid = str(order.get("provider_order_id") or "").strip() or None
-    ok, reason, _row = auth_bridge.apply_payment_event(
-        out_trade_no,
-        phone,
-        tier_o,
-        bc_o,
-        new_st,
-        order_amt,
-        str(order.get("provider") or prov),
-        channel="wechat",
-        provider_order_id=poid,
-        currency=str(order.get("currency") or "CNY") or "CNY",
-        refunded_at=refunded_at,
-        refunded_amount_cents=refund_cents,
-        refund_id=out_refund_no,
-        refund_reason="wechat_refund_notify",
-        product_snapshot=snap,
-        source="wechat_native_refund_notify",
-    )
-    if not ok:
-        _log.error("wechat refund apply failed out_trade_no=%s reason=%s", out_trade_no, reason)
-        return JSONResponse({"code": "FAIL", "message": "apply_failed"}, status_code=500)
-    return _wechat_ack_ok()
-
-
-@router.post("/webhooks/wechat")
-async def wechat_native_payment_notify(request: Request):
+@router.post("/webhooks/alipay")
+async def alipay_page_payment_notify(request: Request):
     """
-    微信支付 Native APIv3 结果通知（支付成功 TRANSACTION.SUCCESS、退款成功 REFUND.SUCCESS）。
-    商户平台配置的 notify_url 须指向本接口的绝对 HTTPS URL，例如：
-    https://你的域名/api/v1/webhooks/wechat
+    支付宝电脑网站支付异步通知（application/x-www-form-urlencoded）。
+    开放平台应用「授权回调地址 / 应用网关」或产品签约的 notify_url 须指向公网 HTTPS，例如：
+    https://你的域名/api/v1/webhooks/alipay
     """
-    cfg = WechatPayNativeConfig.from_env()
-    raw = await request.body()
-    body_text = raw.decode("utf-8")
+    cfg = AlipayPagePayConfig.from_env()
     if not cfg:
-        return JSONResponse({"code": "FAIL", "message": "wechat_disabled"}, status_code=503)
-    ts = (request.headers.get("wechatpay-timestamp") or "").strip()
-    nonce = (request.headers.get("wechatpay-nonce") or "").strip()
-    sig = (request.headers.get("wechatpay-signature") or "").strip()
-    if not verify_notify_signature(cfg, timestamp=ts, nonce=nonce, body_text=body_text, signature_b64=sig):
-        return JSONResponse({"code": "FAIL", "message": "invalid_signature"}, status_code=401)
-    try:
-        envelope = json.loads(body_text or "{}")
-    except Exception:
-        return JSONResponse({"code": "FAIL", "message": "invalid_json"}, status_code=400)
-    if not isinstance(envelope, dict):
-        return JSONResponse({"code": "FAIL", "message": "invalid_body"}, status_code=400)
-    event_type = str(envelope.get("event_type") or "")
-    resource = envelope.get("resource")
-    if not isinstance(resource, dict):
-        return JSONResponse({"code": "FAIL", "message": "bad_resource"}, status_code=400)
-    try:
-        plain = decrypt_notify_resource(cfg, resource)
-    except Exception:
-        return JSONResponse({"code": "FAIL", "message": "decrypt_failed"}, status_code=500)
-    if not isinstance(plain, dict):
-        return JSONResponse({"code": "FAIL", "message": "bad_plaintext"}, status_code=400)
-    if event_type == "TRANSACTION.SUCCESS":
-        return _handle_wechat_transaction_success(cfg, plain)
-    if event_type == "REFUND.SUCCESS":
-        return _handle_wechat_refund_success(cfg, plain)
-    return _wechat_ack_ok()
+        return PlainTextResponse("fail", status_code=503)
+    form = await request.form()
+    params: dict[str, str] = {}
+    for k, v in form.multi_items():
+        params[str(k)] = str(v)
+    signature = str(params.pop("sign", "") or "").strip()
+    verify_copy = dict(params)
+    if not verify_notify_params(cfg, verify_copy, signature):
+        _log.warning("alipay notify signature verification failed out_trade_no=%s", params.get("out_trade_no"))
+        return PlainTextResponse("fail", status_code=400)
+    return _handle_alipay_trade_notify(cfg, params)

@@ -206,7 +206,7 @@ export default function AdminModelsPage() {
         <span className="text-xs text-muted">
           去重任务：{distinctJobsTotal} · 终态事件：{terminalEventsTotal}
           {usageSource === "jobs_fallback" ? (
-            <span className="ml-2 rounded border border-amber-400/40 bg-amber-500/10 px-1.5 py-0.5 text-amber-200/90">
+            <span className="ml-2 rounded border border-warning/40 bg-warning-soft/10 px-1.5 py-0.5 text-warning-ink/90">
               jobs 回退
             </span>
           ) : null}
@@ -217,11 +217,11 @@ export default function AdminModelsPage() {
         </span>
       </div>
 
-      {err ? <p className="mt-4 text-sm text-rose-400">{err}</p> : null}
+      {err ? <p className="mt-4 text-sm text-danger-ink">{err}</p> : null}
 
       <div className="mt-5 grid gap-3 md:grid-cols-3">
         {categorySummary.map((c) => (
-          <section key={c.category} className="rounded-xl border border-line bg-surface/60 p-4 text-sm text-ink shadow-sm">
+          <section key={c.category} className="rounded-xl border border-line bg-surface/60 p-4 text-sm text-ink shadow-soft">
             <h2 className="text-sm font-semibold text-ink">{c.category}</h2>
             <p className="mt-2 text-xs">
               <span className="text-muted">估算费用：</span>

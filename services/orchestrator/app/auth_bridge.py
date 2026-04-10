@@ -21,29 +21,72 @@ def get_session_by_bearer(auth_header: str) -> dict[str, Any] | None:
     return dict(sess)
 
 
+def _sync_profile_from_info(info: dict[str, Any]) -> None:
+    try:
+        from .models import sync_user_profile_to_pg
+
+        uid = str(info.get("user_id") or "").strip()
+        ph = str(info.get("phone") or "").strip()
+        sync_user_profile_to_pg(
+            ph,
+            user_id=uid or None,
+            display_name=str(info.get("display_name") or ph or uid),
+            role=str(info.get("role") or "user"),
+            plan=str(info.get("plan") or "free"),
+            billing_cycle=(str(info.get("billing_cycle") or "").strip() or None),
+        )
+    except Exception:
+        pass
+
+
 def user_info_for_phone(phone: str) -> dict[str, Any]:
-    base = dict(auth_service.user_info_for_phone(phone))
+    base = dict(auth_service.user_info_for_principal(phone))
     try:
         from .models import get_user_profile_from_pg
 
-        pg_row = get_user_profile_from_pg(phone)
-        if pg_row:
-            for key in ("display_name", "role", "plan", "billing_cycle"):
-                if key in pg_row and pg_row.get(key) is not None:
-                    base[key] = pg_row.get(key)
+        ph_key = str(base.get("phone") or "").strip()
+        if ph_key:
+            pg_row = get_user_profile_from_pg(ph_key)
+            if pg_row:
+                for key in ("display_name", "role", "plan", "billing_cycle"):
+                    if key in pg_row and pg_row.get(key) is not None:
+                        base[key] = pg_row.get(key)
     except Exception:
         pass
     return base
 
 
-def update_display_name(phone: str, display_name: str) -> tuple[bool, str | None]:
-    ok, err = auth_service.update_display_name(phone, display_name)
+def user_info_for_session_token(token: str) -> dict[str, Any]:
+    """
+    与 subscription/me 一致：auth_service 用户档 + PG user_profiles 覆盖（plan、billing_cycle 等）。
+    用于 /auth/me、登录/注册响应，避免前端个人资料与订阅页方案不一致。
+    """
+    sess = get_session(token)
+    if not isinstance(sess, dict):
+        return {}
+    p = session_principal(sess)
+    if not p:
+        return {}
+    return user_info_for_phone(p)
+
+
+def update_display_name(principal: str, display_name: str) -> tuple[bool, str | None]:
+    ok, err = auth_service.update_display_name(principal, display_name)
     if not ok:
         return False, err
     try:
-        from .models import sync_user_profile_to_pg
+        _sync_profile_from_info(auth_service.user_info_for_principal(principal))
+    except Exception:
+        pass
+    return True, None
 
-        sync_user_profile_to_pg(phone, display_name=(display_name or "").strip() or phone)
+
+def update_username(principal: str, username: str) -> tuple[bool, str | None]:
+    ok, err = auth_service.update_username(principal, (username or "").strip())
+    if not ok:
+        return False, err
+    try:
+        _sync_profile_from_info(auth_service.user_info_for_principal(principal))
     except Exception:
         pass
     return True, None
@@ -53,27 +96,45 @@ def auth_config_dict() -> dict[str, Any]:
     return dict(auth_service.auth_config_dict())
 
 
-def register_user(phone: str, password: str, invite_code: str) -> tuple[str | None, str | None]:
-    token, err = auth_service.register_user(phone, password, invite_code)
+def register_user(
+    password: str,
+    invite_code: str,
+    *,
+    phone: str | None = None,
+    email: str | None = None,
+    username: str | None = None,
+) -> tuple[str | None, str | None, dict[str, Any]]:
+    token, err, meta = auth_service.register_user(
+        password, invite_code, phone=phone, email=email, username=username
+    )
     if token and not err:
         try:
-            info = auth_service.user_info_for_phone(phone)
-            from .models import sync_user_profile_to_pg
-
-            sync_user_profile_to_pg(
-                phone,
-                display_name=str(info.get("display_name") or phone),
-                role=str(info.get("role") or "user"),
-                plan=str(info.get("plan") or "free"),
-                billing_cycle=(str(info.get("billing_cycle") or "").strip() or None),
-            )
+            _sync_profile_from_info(auth_service.user_info_from_session_token(token))
         except Exception:
             pass
-    return token, err
+    return token, err, meta
 
 
-def login_user(phone: str, password: str) -> tuple[str | None, str | None]:
-    return auth_service.login_user(phone, password)
+def register_send_otp(email: str, username: str, invite_code: str) -> tuple[bool, str, dict[str, Any]]:
+    return auth_service.register_send_otp(email, username, invite_code)
+
+
+def register_verify_otp(email: str, code: str) -> tuple[str | None, str]:
+    return auth_service.register_verify_otp(email, code)
+
+
+def register_complete_with_ticket(ticket: str, password: str) -> tuple[str | None, str | None, dict[str, Any]]:
+    token, err, meta = auth_service.register_complete_with_ticket(ticket, password)
+    if token and not err:
+        try:
+            _sync_profile_from_info(auth_service.user_info_from_session_token(token))
+        except Exception:
+            pass
+    return token, err, meta
+
+
+def login_user(login_id: str, password: str) -> tuple[str | None, str | None]:
+    return auth_service.login_user(login_id, password)
 
 
 def delete_session(token: str) -> None:
@@ -87,8 +148,17 @@ def get_session(token: str) -> dict[str, Any] | None:
     return dict(sess)
 
 
-def unlock_feature(token: str, phone: str, password: str) -> tuple[bool, str | None]:
-    return auth_service.unlock_feature(token, phone, password)
+def session_principal(sess: dict[str, Any]) -> str:
+    """API 用户主引用：PG 主模式下为 users.id(UUID)；本地 JSON 会话回退为 phone。"""
+    return str(auth_service.session_effective_user_id(sess)).strip()
+
+
+def user_info_from_session_token(token: str) -> dict[str, Any]:
+    return dict(auth_service.user_info_from_session_token(token))
+
+
+def unlock_feature(token: str, password: str, login_id: str = "") -> tuple[bool, str | None]:
+    return auth_service.unlock_feature(token, password, login_id=login_id)
 
 
 def set_user_subscription(
@@ -104,18 +174,13 @@ def set_user_subscription(
     if not ok:
         return ok, err
     try:
-        from .models import record_subscription_event, sync_user_profile_to_pg
+        from .models import record_subscription_event
 
-        info = auth_service.user_info_for_phone(phone)
-        sync_user_profile_to_pg(
-            phone,
-            display_name=str(info.get("display_name") or phone),
-            role=str(info.get("role") or "user"),
-            plan=str(info.get("plan") or "free"),
-            billing_cycle=(str(info.get("billing_cycle") or "").strip() or None),
-        )
+        info = auth_service.user_info_for_principal(phone)
+        _sync_profile_from_info(info)
+        sub_key = str(info.get("phone") or info.get("user_id") or phone or "").strip()
         record_subscription_event(
-            phone,
+            sub_key,
             str(info.get("plan") or tier or "free"),
             (str(info.get("billing_cycle") or "").strip() or None),
             event_type="subscription_set",
@@ -141,21 +206,25 @@ def active_sessions_summary() -> dict[str, int]:
     """
     返回当前有效会话概览（用于管理员看板）：
     - active_sessions: 会话总数
-    - active_users: 去重用户数（按 phone）
+    - active_users: 去重用户数（优先 user_id）
     """
     try:
         sessions = auth_service._load_sessions()  # type: ignore[attr-defined]  # noqa: SLF001
         auth_service._purge_expired_sessions(sessions)  # type: ignore[attr-defined]  # noqa: SLF001
-        phone_set: set[str] = set()
+        seen: set[str] = set()
         for raw in sessions.values():
             if not isinstance(raw, dict):
                 continue
-            p = str(raw.get("phone") or "").strip()
-            if p:
-                phone_set.add(p)
+            u = str(auth_service.session_effective_user_id(raw)).strip()
+            if u:
+                seen.add(u)
+            else:
+                p = str(raw.get("phone") or "").strip()
+                if p:
+                    seen.add("p:" + p)
         return {
             "active_sessions": int(len(sessions)),
-            "active_users": int(len(phone_set)),
+            "active_users": int(len(seen)),
         }
     except Exception:
         return {"active_sessions": 0, "active_users": 0}
@@ -177,16 +246,7 @@ def admin_create_user(
     )
     if ok:
         try:
-            info = auth_service.user_info_for_phone(phone)
-            from .models import sync_user_profile_to_pg
-
-            sync_user_profile_to_pg(
-                phone,
-                display_name=str(info.get("display_name") or phone),
-                role=str(info.get("role") or role or "user"),
-                plan=str(info.get("plan") or plan or "free"),
-                billing_cycle=(str(info.get("billing_cycle") or "").strip() or billing_cycle),
-            )
+            _sync_profile_from_info(auth_service.user_info_for_principal(phone))
         except Exception:
             pass
     return ok, err
@@ -196,16 +256,7 @@ def set_user_role(phone: str, role: str) -> tuple[bool, str | None]:
     ok, err = auth_service.set_user_role(phone, role)
     if ok:
         try:
-            info = auth_service.user_info_for_phone(phone)
-            from .models import sync_user_profile_to_pg
-
-            sync_user_profile_to_pg(
-                phone,
-                display_name=str(info.get("display_name") or phone),
-                role=str(info.get("role") or role or "user"),
-                plan=str(info.get("plan") or "free"),
-                billing_cycle=(str(info.get("billing_cycle") or "").strip() or None),
-            )
+            _sync_profile_from_info(auth_service.user_info_for_principal(phone))
         except Exception:
             pass
     return ok, err
@@ -278,7 +329,7 @@ def apply_payment_event(
     snap_kind = str((product_snapshot or {}).get("kind") or "").strip().lower() if isinstance(product_snapshot, dict) else ""
     skips_subscription_from_product = snap_kind in ("payg_minutes", "wallet_topup")
     try:
-        from .models import process_payment_event_transaction, sync_user_profile_to_pg
+        from .models import process_payment_event_transaction
 
         tx_ok = process_payment_event_transaction(
             event_id=event_id,
@@ -342,14 +393,7 @@ def apply_payment_event(
             # 部分退款不自动降级，避免误伤仍有效的订阅周期；全额退款走 refunded 分支。
             pass
 
-        info = auth_service.user_info_for_phone(phone)
-        sync_user_profile_to_pg(
-            phone,
-            display_name=str(info.get("display_name") or phone),
-            role=str(info.get("role") or "user"),
-            plan=str(info.get("plan") or "free"),
-            billing_cycle=(str(info.get("billing_cycle") or "").strip() or None),
-        )
+        _sync_profile_from_info(auth_service.user_info_for_principal(str(phone or "").strip()))
     except Exception:
         return False, "payment_event_tx_exception", base_row
 

@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useState,
+  type ReactNode,
+  type SetStateAction
+} from "react";
 import {
   DEFAULT_CREATIVE_TEMPLATE_VALUE,
   formatCreativeTemplateChip,
@@ -27,22 +36,20 @@ import {
   resolveScriptTargetCharsForJob,
   DURATION_PRESETS,
   LANG_OPTIONS,
-  refsFromUrlBlock,
   resolveVoiceId
 } from "../../lib/podcastStudioCommon";
-import { useAuth } from "../../lib/auth";
+import { formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
+import { useAuth, userAccountRef } from "../../lib/auth";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
-import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import FloatingPopover from "../ui/FloatingPopover";
 import {
   CREATIVE_CHIP_HOVER_HINT
 } from "../../lib/studioHoverHints";
 
-type PanelId = "mode" | "lang" | "voice" | "duration" | "intro" | "creative" | "library" | null;
+type PanelId = "mode" | "lang" | "voice" | "duration" | "intro" | "creative" | null;
 
-const MAIN_TEXT_PLACEHOLDER =
-  "体裁模板已填入；可在此补充说明、大纲或要点。将结合下方已选笔记与资料库链接生成。";
+const MAIN_TEXT_PLACEHOLDER = "可补充要点；将结合已选笔记生成。";
 
 export type NotesPodcastRoomModalProps = {
   open: boolean;
@@ -56,23 +63,59 @@ export type NotesPodcastRoomModalProps = {
   presetKey: PodcastRoomPresetKey;
   /** 创建 podcast_generate 任务成功后交给父级监听进度 */
   onPodcastJobCreated: (jobId: string) => void;
+  /** 嵌入创作页：无遮罩，仅占位块 */
+  layout?: "modal" | "inline";
+  /** 由父级提供正文（与顶部统一输入框联动） */
+  externalPrompt?: string;
+  onExternalPromptChange?: (value: string) => void;
+  /** 主按钮改由父级左侧触发 */
+  hideGenerateButton?: boolean;
+  /** 成功后是否关闭（内联布局通常为 false） */
+  closeOnSuccess?: boolean;
+  /** 内联布局：同步忙碌状态给父级（左侧操作区） */
+  onBusyChange?: (busy: boolean) => void;
 };
 
-export default function NotesPodcastRoomModal({
-  open,
-  onClose,
-  notebookName,
-  lockedNoteIds,
-  maxLockedNotes = 10,
-  noteTitleById,
-  presetKey,
-  onPodcastJobCreated
-}: NotesPodcastRoomModalProps) {
-  const { user, phone, getAuthHeaders } = useAuth();
-  const createdByPhone = String(user?.phone || phone || "").trim();
+export type NotesPodcastRoomModalHandle = {
+  generate: () => void;
+};
 
-  const [text, setText] = useState("");
-  const [referenceUrlsBlock, setReferenceUrlsBlock] = useState("");
+const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodcastRoomModalProps>(
+  function NotesPodcastRoomModal(
+    {
+      open,
+      onClose,
+      notebookName,
+      lockedNoteIds,
+      noteTitleById,
+      maxLockedNotes = 10,
+      presetKey,
+      onPodcastJobCreated,
+      layout = "modal",
+      externalPrompt: controlledPrompt,
+      onExternalPromptChange,
+      hideGenerateButton = false,
+      closeOnSuccess = true,
+      onBusyChange
+    },
+    ref
+  ) {
+  const { user, phone, getAuthHeaders } = useAuth();
+  const createdByPhone = userAccountRef(user) || String(phone || "").trim();
+
+  const [internalPrompt, setInternalPrompt] = useState("");
+  const text = controlledPrompt !== undefined ? controlledPrompt : internalPrompt;
+  const setText = useCallback(
+    (next: SetStateAction<string>) => {
+      if (controlledPrompt !== undefined) {
+        const v = typeof next === "function" ? (next as (p: string) => string)(controlledPrompt) : next;
+        onExternalPromptChange?.(v);
+      } else {
+        setInternalPrompt(next);
+      }
+    },
+    [controlledPrompt, onExternalPromptChange]
+  );
   const [scriptTargetChars, setScriptTargetChars] = useState(800);
   const [scriptTargetCharsInput, setScriptTargetCharsInput] = useState("800");
   const [creativeTemplateValue, setCreativeTemplateValue] = useState(DEFAULT_CREATIVE_TEMPLATE_VALUE);
@@ -80,6 +123,10 @@ export default function NotesPodcastRoomModal({
   const creativeBundle = useMemo(() => resolveCreativeBundle(creativeTemplateValue), [creativeTemplateValue]);
   const [generateCover] = useState(true);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
 
   const [speakerMode, setSpeakerMode] = useState<"single" | "dual">("dual");
   const [introText, setIntroText] = useState("");
@@ -104,9 +151,6 @@ export default function NotesPodcastRoomModal({
   const [voiceKey2, setVoiceKey2] = useState("max");
   const [activePanel, setActivePanel] = useState<PanelId>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
-  const uploadInputRef = useRef<HTMLInputElement>(null);
-  const [uploadBusy, setUploadBusy] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   const stopPanelPointer = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -230,7 +274,6 @@ export default function NotesPodcastRoomModal({
     const preset = PODCAST_ROOM_PRESETS[presetKey];
     const prefix = preset.textPrefix.trim();
     setText(prefix ? `${prefix}\n\n` : "");
-    setReferenceUrlsBlock("");
     setCreativeTemplateValue(DEFAULT_CREATIVE_TEMPLATE_VALUE);
   }, [open, presetKey]);
 
@@ -291,26 +334,25 @@ export default function NotesPodcastRoomModal({
       setScriptTargetCharsInput(String(scriptTargetChars));
       return;
     }
-    const clamped = Math.min(9999, Math.max(200, Math.round(parsed)));
+    const clamped = Math.min(50000, Math.max(200, Math.round(parsed)));
     setScriptTargetChars(clamped);
     setScriptTargetCharsInput(String(clamped));
   }
 
   function refPayloadMinimal() {
-    const { urlListText } = refsFromUrlBlock(referenceUrlsBlock);
     return buildReferenceJobFields({
-      urlListText,
+      urlListText: "",
       selectedNoteIds: lockedNoteIds,
+      selectedNoteTitles: lockedNoteIds.map((id) => (noteTitleById[id] || "").trim()),
       referenceExtra: "",
       useRag: true,
-      ragMaxChars: 28_000,
+      ragMaxChars: 56_000,
       referenceRagMode: "truncate"
     });
   }
 
   async function buildPodcastPayload(scriptCharsForJob: number) {
     const preset = PODCAST_ROOM_PRESETS[presetKey];
-    const { url } = refsFromUrlBlock(referenceUrlsBlock);
     const b1 = await bgmSegmentPayloadFromState(introBgm1Mode, introBgm1File, introBgm1StoredHex);
     const b2 = await bgmSegmentPayloadFromState(introBgm2Mode, introBgm2File, introBgm2StoredHex);
     const b3 = await bgmSegmentPayloadFromState(outroBgm3Mode, outroBgm3File, outroBgm3StoredHex);
@@ -330,7 +372,7 @@ export default function NotesPodcastRoomModal({
     const programName = (preset.programName && preset.programName.trim()) || DEFAULT_PROGRAM_NAME;
     const bodyText = text.trim() || "请根据所选笔记与体裁要求生成播客。";
     return buildScriptPayload(
-      { text: bodyText, url: url || undefined },
+      { text: bodyText },
       {
         scriptTargetChars: scriptCharsForJob,
         scriptStyle: creativeBundle.scriptStyle,
@@ -353,25 +395,6 @@ export default function NotesPodcastRoomModal({
     );
   }
 
-  async function uploadNoteFile(file: File | null) {
-    if (!file) return;
-    setUploadBusy(true);
-    setUploadProgress(0);
-    try {
-      const r = await uploadNoteFileWithProgress(file, {
-        notebook: notebookName,
-        title: file.name,
-        onProgress: (p) => setUploadProgress(p)
-      });
-      if (!r.ok) window.alert(r.error);
-    } catch (e) {
-      window.alert(String(e));
-    } finally {
-      setUploadBusy(false);
-      setUploadProgress(null);
-    }
-  }
-
   async function runPodcast() {
     setBusy(true);
     try {
@@ -380,6 +403,22 @@ export default function NotesPodcastRoomModal({
       setScriptTargetCharsInput(String(effectiveChars));
       const payload = await buildPodcastPayload(effectiveChars);
       (payload as Record<string, unknown>).notes_notebook = notebookName;
+      try {
+        const prev = await previewMediaJob({
+          project_name: NOTES_PODCAST_PROJECT_NAME,
+          job_type: "podcast_generate",
+          queue_name: "media",
+          payload,
+          ...(createdByPhone ? { created_by: createdByPhone } : {})
+        });
+        if (prev.allowed === false) {
+          window.alert(prev.detail || "余额或套餐不足，请前往「订阅与订单」处理。");
+          return;
+        }
+      } catch (pe) {
+        window.alert(String(pe instanceof Error ? pe.message : pe));
+        return;
+      }
       const createRes = await fetch("/api/jobs", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -392,7 +431,8 @@ export default function NotesPodcastRoomModal({
         })
       });
       if (!createRes.ok) {
-        window.alert(`创建失败: HTTP ${createRes.status}`);
+        const errText = await createRes.text();
+        window.alert(formatOrchestratorErrorText(errText) || `创建失败: HTTP ${createRes.status}`);
         return;
       }
       const created = (await createRes.json().catch(() => ({}))) as { id?: string };
@@ -405,7 +445,7 @@ export default function NotesPodcastRoomModal({
       setActiveGenerationJob("podcast", jobId);
       setActivePanel(null);
       onPodcastJobCreated(jobId);
-      onClose();
+      if (closeOnSuccess) onClose();
     } catch (err) {
       window.alert(`错误: ${String(err)}`);
     } finally {
@@ -430,20 +470,17 @@ export default function NotesPodcastRoomModal({
       ? "已设"
       : "未设";
   const creativeSummary = formatCreativeTemplateChip(creativeTemplateValue);
-  const refUrlLines = referenceUrlsBlock.split(/\n/).map((l) => l.trim()).filter(Boolean);
-  const librarySummary =
-    refUrlLines.length > 0 || lockedNoteIds.length > 0 ? `链接${refUrlLines.length}·笔记${lockedNoteIds.length}` : "默认";
 
   const panelClassAnchorMobile =
-    "z-[320] w-[min(100vw-1.25rem,26rem)] max-w-[min(100vw-1.25rem,26rem)] overflow-y-auto overscroll-contain rounded-lg border border-line bg-white p-2.5 shadow-lg sm:p-3 " +
+    "z-[320] w-[min(100vw-1.25rem,26rem)] max-w-[min(100vw-1.25rem,26rem)] overflow-y-auto overscroll-contain rounded-lg border border-line bg-surface p-2.5 shadow-card sm:p-3 " +
     "fixed left-3 right-3 top-auto bottom-[max(0.75rem,env(safe-area-inset-bottom))] mx-auto max-h-[min(52dvh,300px)]";
   const panelClassIntroAnchorMobile =
-    "z-[320] w-[min(100vw-1.25rem,40rem)] max-w-[min(100vw-1.25rem,40rem)] overflow-y-auto overscroll-contain rounded-lg border border-line bg-white p-3 shadow-lg sm:p-4 " +
+    "z-[320] w-[min(100vw-1.25rem,40rem)] max-w-[min(100vw-1.25rem,40rem)] overflow-y-auto overscroll-contain rounded-lg border border-line bg-surface p-3 shadow-card sm:p-4 " +
     "fixed left-3 right-3 top-auto bottom-[max(0.75rem,env(safe-area-inset-bottom))] mx-auto max-h-[min(68dvh,520px)]";
   const panelClassAnchorDesktop =
-    "z-[360] w-[min(100vw-1.25rem,26rem)] max-w-[min(100vw-1.25rem,26rem)] overflow-y-auto overscroll-contain rounded-lg border border-line bg-white p-2.5 shadow-2xl sm:p-3";
+    "z-[360] w-[min(100vw-1.25rem,26rem)] max-w-[min(100vw-1.25rem,26rem)] overflow-y-auto overscroll-contain rounded-lg border border-line bg-surface p-2.5 shadow-modal sm:p-3";
   const panelClassIntroAnchorDesktop =
-    "z-[360] w-[min(100vw-1.25rem,40rem)] max-w-[min(100vw-1.25rem,40rem)] overflow-y-auto overscroll-contain rounded-lg border border-line bg-white p-3 shadow-2xl sm:p-4";
+    "z-[360] w-[min(100vw-1.25rem,40rem)] max-w-[min(100vw-1.25rem,40rem)] overflow-y-auto overscroll-contain rounded-lg border border-line bg-surface p-3 shadow-modal sm:p-4";
   const renderFloatingPanel = useCallback(
     (panelId: Exclude<PanelId, null>, mobileClass: string, desktopClass: string, ariaLabel: string, children: ReactNode) => {
       if (activePanel !== panelId) return null;
@@ -471,61 +508,63 @@ export default function NotesPodcastRoomModal({
     [activePanel, isMobileViewport, stopPanelPointer]
   );
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      generate: () => {
+        void runPodcast();
+      }
+    }),
+    [runPodcast]
+  );
+
   const presetLabel = PODCAST_ROOM_PRESETS[presetKey].label;
+
+  const cardClass =
+    layout === "inline"
+      ? "flex min-h-[18rem] w-full flex-col overflow-visible rounded-2xl border border-line bg-surface shadow-soft"
+      : "mb-8 flex h-[min(58dvh,560px)] w-full max-w-[56rem] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-modal";
 
   if (!open) return null;
 
-  return (
-    <div
-      className="fixed inset-0 z-[280] overflow-y-auto overscroll-contain bg-black/50 p-3 py-6 sm:p-4 sm:py-10"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="notes-podcast-room-title"
-      onPointerDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose();
-      }}
-    >
-      <div
-        className="flex min-h-[calc(100dvh-3rem)] w-full items-start justify-center sm:min-h-[calc(100dvh-5rem)]"
-        onPointerDown={(e) => {
-          if (e.target === e.currentTarget && !busy) onClose();
-        }}
-      >
-        <div
-          className="mb-8 flex h-[min(42dvh,380px)] w-full max-w-[56rem] flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-        <div className="sticky top-0 z-[1] shrink-0 flex items-center justify-between gap-2 border-b border-line bg-white/95 px-4 py-3 backdrop-blur">
+  const cardInner = (
+        <div className={cardClass} onPointerDown={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 z-[1] shrink-0 flex items-center justify-between gap-2 border-b border-line bg-surface/95 px-4 py-3 backdrop-blur">
           <div>
             <h2 id="notes-podcast-room-title" className="text-base font-semibold text-ink">
-              笔记播客 · 生成器
+              笔记本 · 生成播客
             </h2>
-            <p className="text-xs text-muted">
-              体裁：{presetLabel} · 笔记本「{notebookName}」· 已选 {lockedNoteIds.length}/{maxLockedNotes} 条笔记
+            <p className="mt-0.5 text-xs text-muted">
+              {presetLabel} · 「{notebookName}」 · 已选 {lockedNoteIds.length}/{maxLockedNotes}
             </p>
           </div>
-          <button
-            type="button"
-            className="rounded-lg px-2 py-1 text-sm text-muted hover:bg-fill hover:text-ink"
-            onClick={() => !busy && onClose()}
-            disabled={busy}
-          >
-            关闭
-          </button>
+          {layout === "modal" ? (
+            <button
+              type="button"
+              className="rounded-lg px-2 py-1 text-sm text-muted hover:bg-fill hover:text-ink"
+              onClick={() => !busy && onClose()}
+              disabled={busy}
+            >
+              关闭
+            </button>
+          ) : null}
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-5">
-          <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-3 md:p-5">
-              <textarea
-                className="h-full min-h-[min(42dvh,340px)] w-full max-w-none resize-y rounded-xl border border-line bg-fill p-4 text-sm leading-relaxed text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
-                placeholder={MAIN_TEXT_PLACEHOLDER}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-              />
-            </div>
+          <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
+            {controlledPrompt === undefined || layout === "modal" ? (
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-3 md:p-5">
+                <textarea
+                  className="h-full min-h-[min(50dvh,480px)] w-full max-w-none resize-y rounded-xl border border-line bg-fill p-4 text-sm leading-relaxed text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                  rows={14}
+                  placeholder={MAIN_TEXT_PLACEHOLDER}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                />
+              </div>
+            ) : null}
 
-              <div className="relative z-10 shrink-0 overflow-visible border-t border-line bg-white/95 px-4 pb-4 pt-3 backdrop-blur md:px-5">
+              <div className="relative z-10 shrink-0 overflow-visible border-t border-line bg-surface/95 px-4 pb-4 pt-3 backdrop-blur md:px-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap gap-2">
@@ -543,14 +582,14 @@ export default function NotesPodcastRoomModal({
                             <div className="flex gap-2">
                               <button
                                 type="button"
-                                className={`rounded-lg px-4 py-2 text-sm ${speakerMode === "single" ? "bg-brand text-white" : "border border-line"}`}
+                                className={`rounded-lg px-4 py-2 text-sm ${speakerMode === "single" ? "bg-brand text-brand-foreground" : "border border-line"}`}
                                 onClick={() => setSpeakerMode("single")}
                               >
                                 单人
                               </button>
                               <button
                                 type="button"
-                                className={`rounded-lg px-4 py-2 text-sm ${speakerMode === "dual" ? "bg-brand text-white" : "border border-line"}`}
+                                className={`rounded-lg px-4 py-2 text-sm ${speakerMode === "dual" ? "bg-brand text-brand-foreground" : "border border-line"}`}
                                 onClick={() => setSpeakerMode("dual")}
                               >
                                 双人
@@ -575,7 +614,7 @@ export default function NotesPodcastRoomModal({
                                 <button
                                   key={l}
                                   type="button"
-                                  className={`rounded-lg px-3 py-1.5 text-sm ${scriptLanguage === l ? "bg-brand text-white" : "border border-line"}`}
+                                  className={`rounded-lg px-3 py-1.5 text-sm ${scriptLanguage === l ? "bg-brand text-brand-foreground" : "border border-line"}`}
                                   onClick={() => setScriptLanguage(l)}
                                 >
                                   {l}
@@ -596,9 +635,8 @@ export default function NotesPodcastRoomModal({
                           "音色设置",
                           <>
                             <p className="mb-1 text-sm font-medium">音色</p>
-                            <p className="mb-3 text-xs text-muted">克隆音色优先列出；无克隆时使用预设。</p>
                             {voiceOptions.length === 0 ? (
-                              <p className="text-xs text-amber-700">正在加载音色列表…</p>
+                              <p className="text-xs text-warning-ink">正在加载音色列表…</p>
                             ) : null}
                             {speakerMode === "single" ? (
                               <label className="block text-xs">
@@ -645,14 +683,11 @@ export default function NotesPodcastRoomModal({
                               ))}
                             </div>
                             <label className="mt-3 block text-xs">
-                              <span>
-                                精确字数（200–9999）
-                                <span className="text-muted">，回车确认输入</span>
-                              </span>
+                              <span>字数（200–50000，以套餐为准）</span>
                               <input
                                 type="number"
                                 min={200}
-                                max={9999}
+                                max={50000}
                                 className="mt-1 w-full rounded-lg border border-line p-2"
                                 value={scriptTargetCharsInput}
                                 onChange={(e) => setScriptTargetCharsInput(e.target.value)}
@@ -681,9 +716,7 @@ export default function NotesPodcastRoomModal({
                           "开场与结尾",
                           <>
                             <p className="mb-1 text-sm font-medium">开场 / 结尾</p>
-                            <p className="mb-3 text-xs text-muted">
-                              音频拼接顺序：背景音1 → 开场语 → 背景音2 → 正文 → 结尾语 → 背景音3（均为可选）。
-                            </p>
+                            <p className="mb-3 text-xs text-muted">开场 / 正文 / 结尾与背景音均可选。</p>
                             <IntroOutroPresetBar
                               scope="notes_room"
                               buildSnapshot={buildIntroOutroSnapshotNow}
@@ -709,7 +742,7 @@ export default function NotesPodcastRoomModal({
                                 <label className="mt-3 block text-xs">
                                   开场语
                                   <textarea
-                                    className="mt-1 min-h-[4.5rem] w-full rounded-lg border border-line bg-white p-2 text-sm"
+                                    className="mt-1 min-h-[4.5rem] w-full rounded-lg border border-line bg-surface p-2 text-sm"
                                     rows={3}
                                     value={introText}
                                     onChange={(e) => setIntroText(e.target.value)}
@@ -719,7 +752,7 @@ export default function NotesPodcastRoomModal({
                                 <div className="mt-3 space-y-2">
                                   <span className="text-xs font-medium text-ink">音色</span>
                                   <select
-                                    className="w-full rounded-lg border border-line bg-white p-2 text-sm"
+                                    className="w-full rounded-lg border border-line bg-surface p-2 text-sm"
                                     value={introVoiceFollow ? "follow" : "custom"}
                                     onChange={(e) => setIntroVoiceFollow(e.target.value === "follow")}
                                   >
@@ -750,7 +783,7 @@ export default function NotesPodcastRoomModal({
                                 <label className="block text-xs">
                                   结尾语
                                   <textarea
-                                    className="mt-1 min-h-[4.5rem] w-full rounded-lg border border-line bg-white p-2 text-sm"
+                                    className="mt-1 min-h-[4.5rem] w-full rounded-lg border border-line bg-surface p-2 text-sm"
                                     rows={3}
                                     value={outroText}
                                     onChange={(e) => setOutroText(e.target.value)}
@@ -760,7 +793,7 @@ export default function NotesPodcastRoomModal({
                                 <div className="mt-3 space-y-2">
                                   <span className="text-xs font-medium text-ink">音色</span>
                                   <select
-                                    className="w-full rounded-lg border border-line bg-white p-2 text-sm"
+                                    className="w-full rounded-lg border border-line bg-surface p-2 text-sm"
                                     value={outroVoiceFollow ? "follow" : "custom"}
                                     onChange={(e) => setOutroVoiceFollow(e.target.value === "follow")}
                                   >
@@ -807,107 +840,56 @@ export default function NotesPodcastRoomModal({
                           <CreativeTemplatePicker value={creativeTemplateValue} onChange={setCreativeTemplateValue} />
                         )}
                       </span>
-                      <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="library" className="relative inline-block align-top">
-                        <button type="button" className={chipClass(activePanel === "library")} onClick={() => setActivePanel((p) => (p === "library" ? null : "library"))}>
-                          资料库 · {librarySummary}
-                        </button>
-                        {renderFloatingPanel(
-                          "library",
-                          panelClassAnchorMobile,
-                          panelClassAnchorDesktop,
-                          "资料库",
-                          <div className="flex flex-col gap-2">
-                            <div className="rounded-lg border border-line bg-fill/70 p-2.5">
-                              <p className="mb-1.5 text-xs font-medium text-ink">网页链接</p>
-                              <textarea
-                                className="w-full rounded-lg border border-line bg-white p-2 font-mono text-sm leading-snug text-ink placeholder:text-muted"
-                                rows={3}
-                                value={referenceUrlsBlock}
-                                onChange={(e) => setReferenceUrlsBlock(e.target.value)}
-                                placeholder={"https://…\n（首行主 URL）"}
-                              />
-                            </div>
-                            <div className="flex flex-col rounded-lg border border-line bg-fill/70 p-2.5">
-                              <p className="mb-1.5 text-xs font-medium text-ink">本地上传</p>
-                              <input
-                                ref={uploadInputRef}
-                                type="file"
-                                accept=".txt,.md,.markdown,.pdf,.doc,.docx,.epub"
-                                className="hidden"
-                                onChange={(e) => void uploadNoteFile(e.target.files?.[0] || null)}
-                                disabled={uploadBusy}
-                              />
-                              <button
-                                type="button"
-                                className="w-full rounded-lg border border-line bg-white py-2 text-sm font-medium text-ink hover:bg-fill disabled:opacity-50"
-                                disabled={uploadBusy}
-                                title={uploadBusy ? "上传过程中请稍候" : undefined}
-                                onClick={() => uploadInputRef.current?.click()}
-                              >
-                                {uploadBusy
-                                  ? uploadProgress != null && uploadProgress < 100
-                                    ? `上传中 ${uploadProgress}%`
-                                    : "处理中…"
-                                  : "上传资料"}
-                              </button>
-                              {uploadBusy && uploadProgress != null ? (
-                                <div className="mt-2 space-y-1">
-                                  <div
-                                    className="h-1.5 w-full overflow-hidden rounded-full bg-track"
-                                    role="progressbar"
-                                    aria-valuenow={uploadProgress}
-                                    aria-valuemin={0}
-                                    aria-valuemax={100}
-                                  >
-                                    <div className="h-full bg-brand transition-all duration-150" style={{ width: `${uploadProgress}%` }} />
-                                  </div>
-                                  <p className="text-xs text-muted">
-                                    {uploadProgress < 100 ? "正在上传…" : "正在解析与保存…"}
-                                  </p>
-                                </div>
-                              ) : null}
-                            </div>
-                            <div className="rounded-lg border border-line bg-fill/70 p-2.5">
-                              <p className="mb-1.5 text-xs font-medium text-ink">笔记选择</p>
-                              <p className="mb-1.5 text-xs text-muted">在笔记本中勾选的笔记将用于生成（最多 {maxLockedNotes} 本）</p>
-                              <div className="max-h-[5.5rem] overflow-auto text-sm text-ink">
-                                {lockedNoteIds.length === 0 ? (
-                                  <p className="text-sm text-amber-700">尚未勾选笔记</p>
-                                ) : (
-                                  <>
-                                    <p className="mb-1 text-xs text-muted">已选 {lockedNoteIds.length}/{maxLockedNotes} 本</p>
-                                    {lockedNoteIds.map((id) => (
-                                      <div key={id} className="truncate py-0.5 leading-snug">
-                                        · {noteTitleById[id] || id}
-                                      </div>
-                                    ))}
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </span>
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    data-podcast-toolbar-gen
-                    disabled={busy || lockedNoteIds.length === 0}
-                    onClick={() => void runPodcast()}
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center self-end rounded-full bg-emerald-600 text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-40 sm:ml-1 sm:self-start"
-                    aria-label="生成播客"
-                    title={lockedNoteIds.length === 0 ? "请先勾选笔记" : "生成播客"}
-                  >
-                    {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <PlayIcon className="h-4 w-4 translate-x-px" />}
-                  </button>
+                  {!hideGenerateButton ? (
+                    <button
+                      type="button"
+                      data-podcast-toolbar-gen
+                      disabled={busy || lockedNoteIds.length === 0}
+                      onClick={() => void runPodcast()}
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center self-end rounded-full bg-mint text-mint-foreground shadow-soft transition hover:bg-mint/90 disabled:opacity-40 sm:ml-1 sm:self-start"
+                      aria-label="生成播客"
+                      title={lockedNoteIds.length === 0 ? "请先勾选笔记" : "生成播客"}
+                    >
+                      {busy ? (
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      ) : (
+                        <PlayIcon className="h-4 w-4 translate-x-px" />
+                      )}
+                    </button>
+                  ) : null}
                 </div>
               </div>
           </section>
         </div>
         </div>
+  );
+
+  if (layout === "inline") {
+    return <div className="w-full min-w-0">{cardInner}</div>;
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[280] overflow-y-auto overscroll-contain bg-black/50 p-3 py-6 sm:p-4 sm:py-10"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="notes-podcast-room-title"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose();
+      }}
+    >
+      <div
+        className="flex min-h-[calc(100dvh-3rem)] w-full items-start justify-center sm:min-h-[calc(100dvh-5rem)]"
+        onPointerDown={(e) => {
+          if (e.target === e.currentTarget && !busy) onClose();
+        }}
+      >
+        {cardInner}
       </div>
     </div>
   );
-}
+});
+export default NotesPodcastRoomModal;

@@ -1,5 +1,7 @@
 # 部署指南（AI Native / Docker）
 
+日常运维、**PostgreSQL 单一事实源检查清单**、数据治理与 E2E 说明的索引见 [`docs/operations/README.md`](docs/operations/README.md)。
+
 ## 前提
 
 - 服务器已安装 **Docker** 与 **Docker Compose**（插件 `docker compose`）
@@ -109,8 +111,8 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 ## 支付回调
 
 - **入口（公网）**：支付平台或网关应 POST 至 **Next 对外域名** 下的 BFF 路径（由 `apps/web` 路由转发），由 BFF 将**原始 body** 与 **`X-Payment-Signature`** 转发到编排器 **`POST /api/v1/webhooks/payment`**。
-- **编排器**：实现 JSON 解析、**`PAYMENT_WEBHOOK_SECRET` 下 HMAC-SHA256(body)** 验签、投递审计表、订单/订阅字段归一及幂等处理；微信支付 Native 回调为 **`POST /api/v1/webhooks/wechat`**（APIv3 验签与解密，见 `wechat_pay_native` 与商户平台「回调地址」配置）。
-- 配置示例见 `.env.ai-native.example` 中 `PAYMENT_WEBHOOK_SECRET` / `WECHAT_*`。本地联调可临时 `PAYMENT_WEBHOOK_ALLOW_UNSIGNED=1`，**不得用于生产**。
+- **编排器**：实现 JSON 解析、**`PAYMENT_WEBHOOK_SECRET` 下 HMAC-SHA256(body)** 验签、投递审计表、订单/订阅字段归一及幂等处理；支付宝电脑网站支付异步通知为 **`POST /api/v1/webhooks/alipay`**（`application/x-www-form-urlencoded`，RSA2 验签，见 `alipay_page_pay`）。公网域名建议配置 **`ALIPAY_NOTIFY_URL=https://你的域名/api/webhooks/alipay`**，由 Next BFF 原样转发 body 至编排器。
+- 配置示例见 `.env.ai-native.example` 中 `PAYMENT_WEBHOOK_SECRET` / `ALIPAY_*`。本地联调可临时 `PAYMENT_WEBHOOK_ALLOW_UNSIGNED=1`，**不得用于生产**。
 
 ## 媒体 Worker（非播客类型）
 

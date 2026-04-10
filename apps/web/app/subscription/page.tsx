@@ -1,21 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import QRCode from "qrcode";
 import { useAuth } from "../../lib/auth";
 import { FaqAccordion } from "../../components/subscription/FaqAccordion";
+import { FALLBACK_SUBSCRIPTION_PLANS } from "../../components/subscription/fallbackPlans";
 import { PricingHero } from "../../components/subscription/PricingHero";
 import { PricingPlansGrid } from "../../components/subscription/PricingPlansGrid";
 import { WalletUsageReference } from "../../components/subscription/WalletUsageReference";
 import type { PricingPlan, WalletTopupPayload } from "../../components/subscription/types";
 import { TrustFooter } from "../../components/subscription/TrustFooter";
-
-type Usage = {
-  period_days?: number;
-  jobs_terminal?: number;
-  quota?: number;
-  percent?: number;
-};
 
 type OrderRow = {
   event_id?: string;
@@ -32,9 +25,10 @@ type PlansPayload = {
   plans?: PricingPlan[];
   addons?: unknown[];
   wallet_topup?: WalletTopupPayload;
+  billing_monthly_only?: boolean;
   yearly_discount_percent?: number;
   payment_channels?: {
-    wechat_native?: { enabled?: boolean; label_zh?: string };
+    alipay_page?: { enabled?: boolean; label_zh?: string };
   };
 };
 
@@ -43,32 +37,33 @@ type WalletCheckoutState = {
   amount_cents: number;
 };
 
-type WechatPaySession =
+type AlipayPaySession =
   | {
       kind: "subscription";
-      code_url: string;
+      pay_page_url: string;
       out_trade_no: string;
       amount_cents: number;
       tier: string;
     }
-  | { kind: "wallet"; code_url: string; out_trade_no: string; amount_cents: number };
+  | { kind: "wallet"; pay_page_url: string; out_trade_no: string; amount_cents: number };
 
-const FALLBACK_PLANS: PricingPlan[] = [
-  { id: "free", name: "Free", monthly_price_cents: 0, yearly_price_cents: 0, description: "入门体验" },
-  { id: "basic", name: "Basic", monthly_price_cents: 990, yearly_price_cents: 97900, description: "轻量订阅" },
-  { id: "pro", name: "Pro", monthly_price_cents: 7900, yearly_price_cents: 77700, description: "专业创作" },
-  { id: "max", name: "Creator（Max）", monthly_price_cents: 19900, yearly_price_cents: 195800, description: "高阶能力" }
-];
+type UsageSnapshot = {
+  period_days: number;
+  monthly_audio_minutes_cap: number;
+  monthly_audio_minutes_used: number;
+  monthly_text_polish_used: number;
+  monthly_text_polish_cap: number | null;
+};
 
 export default function SubscriptionPage() {
-  const { getAuthHeaders, refreshMe } = useAuth();
-  const [cycle, setCycle] = useState<"monthly" | "yearly">("monthly");
+  const { getAuthHeaders, refreshMe, user } = useAuth();
+  const [cycle] = useState<"monthly" | "yearly">("monthly");
   const [plans, setPlans] = useState<PricingPlan[]>([]);
   const [yearlyDisc, setYearlyDisc] = useState<number | undefined>(undefined);
+  const [billingMonthlyOnly, setBillingMonthlyOnly] = useState(true);
   const [walletTopupInfo, setWalletTopupInfo] = useState<PlansPayload["wallet_topup"]>(undefined);
   const [currentPlan, setCurrentPlan] = useState("free");
   const [billingCycle, setBillingCycle] = useState<string | null>(null);
-  const [usage, setUsage] = useState<Usage | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [walletBalanceCents, setWalletBalanceCents] = useState<number | null>(null);
   const [checkoutIntent, setCheckoutIntent] = useState<{ tier: string; billing_cycle: string } | null>(null);
@@ -78,20 +73,52 @@ export default function SubscriptionPage() {
   const [walletCheckout, setWalletCheckout] = useState<WalletCheckoutState | null>(null);
   const [walletCreating, setWalletCreating] = useState(false);
   const [walletPaying, setWalletPaying] = useState(false);
-  const [wechatNativeEnabled, setWechatNativeEnabled] = useState(false);
-  const [wechatLoadingTier, setWechatLoadingTier] = useState<string | null>(null);
-  const [wechatWalletLoading, setWechatWalletLoading] = useState(false);
-  const [wechatPay, setWechatPay] = useState<WechatPaySession | null>(null);
-  const [wechatQrDataUrl, setWechatQrDataUrl] = useState("");
+  const [alipayPageEnabled, setAlipayPageEnabled] = useState(false);
+  const [alipayLoadingTier, setAlipayLoadingTier] = useState<string | null>(null);
+  const [alipayWalletLoading, setAlipayWalletLoading] = useState(false);
+  const [alipaySession, setAlipaySession] = useState<AlipayPaySession | null>(null);
+  const [usageSnapshot, setUsageSnapshot] = useState<UsageSnapshot | null>(null);
+  const [walletPayBusyTier, setWalletPayBusyTier] = useState<string | null>(null);
+
+  const mergedWalletTopup = useMemo((): WalletTopupPayload => {
+    const base: WalletTopupPayload = {
+      enabled: true,
+      checkout_supported: true,
+      min_amount_cents: 1000,
+      max_amount_cents: 10_000_000,
+      description:
+        "充值进入账户余额（人民币），按实际使用扣减；单次充值最低 ¥10，不设过期；不改变当前订阅档位。",
+      usage_reference: {
+        podcast_yuan_per_minute: 0.25,
+        voice_clone_payg_cents: 1290,
+        disclaimer_zh: "余额实际扣减以任务完成时执行为准。"
+      }
+    };
+    if (!walletTopupInfo || typeof walletTopupInfo !== "object") return base;
+    const urIn = walletTopupInfo.usage_reference;
+    return {
+      ...base,
+      ...walletTopupInfo,
+      usage_reference: {
+        ...base.usage_reference,
+        ...(urIn && typeof urIn === "object" ? urIn : {})
+      }
+    };
+  }, [walletTopupInfo]);
+
+  const showWalletRechargeSection =
+    mergedWalletTopup.enabled !== false &&
+    (alipayPageEnabled || mergedWalletTopup.checkout_supported !== false);
 
   const loadPlans = useCallback(async () => {
     try {
       const pr = await fetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
       const pd = (await pr.json().catch(() => ({}))) as PlansPayload;
       if (pd.success && Array.isArray(pd.plans)) setPlans(pd.plans);
+      setBillingMonthlyOnly(pd.billing_monthly_only !== false);
       if (typeof pd.yearly_discount_percent === "number") setYearlyDisc(pd.yearly_discount_percent);
       if (pd.wallet_topup && typeof pd.wallet_topup === "object") setWalletTopupInfo(pd.wallet_topup);
-      setWechatNativeEnabled(pd.payment_channels?.wechat_native?.enabled === true);
+      setAlipayPageEnabled(pd.payment_channels?.alipay_page?.enabled === true);
     } catch {
       // ignore
     }
@@ -104,24 +131,49 @@ export default function SubscriptionPage() {
         success?: boolean;
         plan?: string;
         billing_cycle?: string | null;
-        usage?: Usage | null;
         orders?: OrderRow[];
         wallet_balance_cents?: number;
         subscription_checkout_intent?: { tier?: string; billing_cycle?: string } | null;
+        usage?: {
+          period_days?: number;
+          monthly_audio_minutes_cap?: number;
+          monthly_audio_minutes_used?: number;
+          monthly_text_polish_used?: number;
+          monthly_text_polish_cap?: number | null;
+        };
       };
       if (mr.ok && md.success) {
         setCurrentPlan(md.plan?.trim() ? md.plan : "free");
         setBillingCycle(md.billing_cycle ?? null);
-        setUsage(md.usage ?? null);
         setOrders(Array.isArray(md.orders) ? md.orders : []);
         if (typeof md.wallet_balance_cents === "number") setWalletBalanceCents(md.wallet_balance_cents);
         else setWalletBalanceCents(null);
+        const u = md.usage;
+        if (u && typeof u === "object") {
+          setUsageSnapshot({
+            period_days: typeof u.period_days === "number" ? u.period_days : 30,
+            monthly_audio_minutes_cap:
+              typeof u.monthly_audio_minutes_cap === "number" ? u.monthly_audio_minutes_cap : 0,
+            monthly_audio_minutes_used:
+              typeof u.monthly_audio_minutes_used === "number" ? u.monthly_audio_minutes_used : 0,
+            monthly_text_polish_used:
+              typeof u.monthly_text_polish_used === "number" ? u.monthly_text_polish_used : 0,
+            monthly_text_polish_cap:
+              u.monthly_text_polish_cap === null || typeof u.monthly_text_polish_cap === "number"
+                ? u.monthly_text_polish_cap
+                : null
+          });
+        } else {
+          setUsageSnapshot(null);
+        }
         const ci = md.subscription_checkout_intent;
         if (ci && typeof ci.tier === "string" && ci.tier.trim() && typeof ci.billing_cycle === "string") {
           setCheckoutIntent({ tier: ci.tier.trim(), billing_cycle: ci.billing_cycle.trim() });
         } else {
           setCheckoutIntent(null);
         }
+      } else {
+        setUsageSnapshot(null);
       }
     } catch {
       // ignore
@@ -133,49 +185,48 @@ export default function SubscriptionPage() {
     void loadMe();
   }, [loadPlans, loadMe]);
 
+  /** 支付宝同步回跳（GET）常带 out_trade_no / trade_no；刷新订单并清理地址栏避免重复提示。 */
   useEffect(() => {
-    const url = wechatPay?.code_url;
-    if (!url) {
-      setWechatQrDataUrl("");
-      return;
-    }
-    let cancelled = false;
-    void QRCode.toDataURL(url, { width: 220, margin: 2, errorCorrectionLevel: "M" })
-      .then((data) => {
-        if (!cancelled) setWechatQrDataUrl(data);
-      })
-      .catch(() => {
-        if (!cancelled) setWechatQrDataUrl("");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [wechatPay?.code_url]);
+    if (typeof window === "undefined") return;
+    const q = new URLSearchParams(window.location.search);
+    if (!q.get("out_trade_no") && !q.get("trade_no")) return;
+    void loadMe();
+    void refreshMe();
+    setMsg("支付已完成或处理中，正在同步订单…");
+    window.history.replaceState({}, "", window.location.pathname);
+  }, [loadMe, refreshMe]);
 
   useEffect(() => {
-    if (!wechatPay) return;
+    if (!alipaySession) return;
     const id = window.setInterval(() => {
       void loadMe();
     }, 2500);
     return () => window.clearInterval(id);
-  }, [wechatPay, loadMe]);
+  }, [alipaySession, loadMe]);
 
   useEffect(() => {
-    if (!wechatPay) return;
-    const id = wechatPay.out_trade_no;
+    if (!alipaySession) return;
+    const oid = alipaySession.out_trade_no;
     const hit = orders.some((o) => {
-      if (!o.event_id || o.event_id !== id) return false;
+      if (!o.event_id || o.event_id !== oid) return false;
       const st = String(o.status || "").toLowerCase();
       return st === "paid" || st === "success" || st === "succeeded";
     });
     if (hit) {
-      setWechatPay(null);
-      setMsg("微信支付已成功入账");
+      setAlipaySession(null);
+      setMsg("支付宝支付已成功入账");
       void refreshMe();
     }
-  }, [orders, wechatPay, refreshMe]);
+  }, [orders, alipaySession, refreshMe]);
 
-  const shownPlans = useMemo(() => (plans.length ? plans : FALLBACK_PLANS), [plans]);
+  const shownPlans = useMemo(() => (plans.length ? plans : FALLBACK_SUBSCRIPTION_PLANS), [plans]);
+
+  const walletPayEnabled = Boolean(user && typeof user.phone === "string" && user.phone !== "" && user.phone !== "local");
+
+  const busyPayOrWallet =
+    (submittingTier != null && submittingTier !== "") ||
+    (alipayLoadingTier != null && alipayLoadingTier !== "") ||
+    (walletPayBusyTier != null && walletPayBusyTier !== "");
 
   function fmtOrderTime(ts?: number) {
     if (!ts) return "—";
@@ -191,6 +242,46 @@ export default function SubscriptionPage() {
     return `¥${(cents / 100).toFixed(2)}`;
   }
 
+  async function payWithWalletForTier(tier: string) {
+    if (tier === "free") return;
+    setWalletPayBusyTier(tier);
+    setMsg("");
+    try {
+      const res = await fetch("/api/subscription/pay-with-wallet", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ tier, billing_cycle: "monthly" })
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        detail?: unknown;
+        error?: string;
+        message?: string;
+        wallet_balance_cents?: number;
+      };
+      if (!res.ok || !data.success) {
+        const d = data.detail;
+        const detailStr =
+          typeof d === "string"
+            ? d
+            : typeof data.error === "string"
+              ? data.error
+              : Array.isArray(d)
+                ? String(d[0] || "")
+                : `请求失败 ${res.status}`;
+        throw new Error(detailStr || `请求失败 ${res.status}`);
+      }
+      setMsg(data.message || "已使用账户余额支付并开通订阅");
+      if (typeof data.wallet_balance_cents === "number") setWalletBalanceCents(data.wallet_balance_cents);
+      await loadMe();
+      await refreshMe();
+    } catch (err) {
+      setMsg(String(err instanceof Error ? err.message : err));
+    } finally {
+      setWalletPayBusyTier(null);
+    }
+  }
+
   async function selectPlan(tier: string) {
     setSubmittingTier(tier);
     setMsg("");
@@ -198,7 +289,7 @@ export default function SubscriptionPage() {
       const res = await fetch("/api/subscription/select", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ tier, billing_cycle: tier === "free" ? null : cycle })
+        body: JSON.stringify({ tier, billing_cycle: tier === "free" ? null : "monthly" })
       });
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
@@ -219,47 +310,61 @@ export default function SubscriptionPage() {
     }
   }
 
-  async function createWechatSubscription(tier: string) {
+  async function createAlipaySubscription(tier: string) {
     if (tier === "free") return;
-    setWechatLoadingTier(tier);
+    const popup =
+      typeof window !== "undefined"
+        ? window.open("", "alipayPay", "width=920,height=760,scrollbars=yes")
+        : null;
+    setAlipayLoadingTier(tier);
     setMsg("");
     setWalletCheckout(null);
     try {
-      const res = await fetch("/api/subscription/wechat-native/subscription", {
+      const res = await fetch("/api/subscription/alipay-page/subscription", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ tier, billing_cycle: cycle })
+        body: JSON.stringify({ tier, billing_cycle: "monthly" })
       });
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
-        code_url?: string;
+        pay_page_url?: string;
         out_trade_no?: string;
         amount_cents?: number;
         detail?: string;
         error?: string;
         message?: string;
       };
-      if (!res.ok || !data.success || !data.code_url || !data.out_trade_no) {
-        throw new Error(data.detail || data.error || `微信下单失败 ${res.status}`);
+      if (!res.ok || !data.success || !data.pay_page_url || !data.out_trade_no) {
+        popup?.close();
+        throw new Error(data.detail || data.error || `支付宝下单失败 ${res.status}`);
       }
-      setWechatPay({
+      setAlipaySession({
         kind: "subscription",
-        code_url: data.code_url,
+        pay_page_url: data.pay_page_url,
         out_trade_no: data.out_trade_no,
         amount_cents: Number(data.amount_cents ?? 0),
         tier
       });
-      setMsg(data.message || "请使用微信扫码完成支付");
+      if (popup) {
+        popup.location.href = data.pay_page_url;
+      }
+      setMsg(
+        (data.message || "请在支付宝收银台完成支付。") +
+          (popup ? "" : " 未检测到弹窗时，请在下方弹层内点击「打开支付宝收银台」。")
+      );
     } catch (err) {
+      popup?.close();
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
-      setWechatLoadingTier(null);
+      setAlipayLoadingTier(null);
     }
   }
 
   function parseTopupAmountCents(): { ok: true; cents: number } | { ok: false; error: string } {
-    const minC = typeof walletTopupInfo?.min_amount_cents === "number" ? walletTopupInfo.min_amount_cents : 1000;
-    const maxC = typeof walletTopupInfo?.max_amount_cents === "number" ? walletTopupInfo.max_amount_cents : 10_000_000;
+    const minC =
+      typeof mergedWalletTopup.min_amount_cents === "number" ? mergedWalletTopup.min_amount_cents : 1000;
+    const maxC =
+      typeof mergedWalletTopup.max_amount_cents === "number" ? mergedWalletTopup.max_amount_cents : 10_000_000;
     const y = Number(String(topupYuanInput || "").replace(/,/g, "").trim());
     if (!Number.isFinite(y) || y <= 0) return { ok: false, error: "请输入有效的充值金额（元）" };
     const cents = Math.round(y * 100);
@@ -337,44 +442,56 @@ export default function SubscriptionPage() {
     }
   }
 
-  async function createWechatWalletTopup() {
+  async function createAlipayWalletTopup() {
     const parsed = parseTopupAmountCents();
     if (!parsed.ok) {
       setMsg(parsed.error);
       return;
     }
-    setWechatWalletLoading(true);
+    const popup =
+      typeof window !== "undefined"
+        ? window.open("", "alipayPay", "width=920,height=760,scrollbars=yes")
+        : null;
+    setAlipayWalletLoading(true);
     setMsg("");
     setWalletCheckout(null);
     try {
-      const res = await fetch("/api/subscription/wechat-native/wallet", {
+      const res = await fetch("/api/subscription/alipay-page/wallet", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ amount_cents: parsed.cents })
       });
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
-        code_url?: string;
+        pay_page_url?: string;
         out_trade_no?: string;
         amount_cents?: number;
         detail?: string;
         error?: string;
         message?: string;
       };
-      if (!res.ok || !data.success || !data.code_url || !data.out_trade_no) {
-        throw new Error(data.detail || data.error || `微信充值下单失败 ${res.status}`);
+      if (!res.ok || !data.success || !data.pay_page_url || !data.out_trade_no) {
+        popup?.close();
+        throw new Error(data.detail || data.error || `支付宝充值下单失败 ${res.status}`);
       }
-      setWechatPay({
+      setAlipaySession({
         kind: "wallet",
-        code_url: data.code_url,
+        pay_page_url: data.pay_page_url,
         out_trade_no: data.out_trade_no,
         amount_cents: Number(data.amount_cents ?? parsed.cents)
       });
-      setMsg(data.message || "请使用微信扫码完成充值");
+      if (popup) {
+        popup.location.href = data.pay_page_url;
+      }
+      setMsg(
+        (data.message || "请在支付宝收银台完成充值。") +
+          (popup ? "" : " 未检测到弹窗时，请在下方弹层内点击「打开支付宝收银台」。")
+      );
     } catch (err) {
+      popup?.close();
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
-      setWechatWalletLoading(false);
+      setAlipayWalletLoading(false);
     }
   }
 
@@ -385,8 +502,8 @@ export default function SubscriptionPage() {
       <PricingHero />
 
       <p className="mx-auto mt-4 max-w-2xl text-center text-sm text-muted">
-        选择适合你的方案。<strong className="text-ink">支付成功并完成入账后</strong>
-        ，会员权益会自动更新；如有延迟，请稍候刷新本页。
+        各档位权益说明见下方卡片；<strong className="text-ink">支付成功或余额扣款成功后</strong>
+        ，会员权益会自动更新。超额创作可充值账户余额按量扣费（与月配额并行）。
       </p>
 
       {checkoutIntent ? (
@@ -397,121 +514,154 @@ export default function SubscriptionPage() {
         </div>
       ) : null}
 
-      {usage ? (
+      {walletPayEnabled && (usageSnapshot != null || walletBalanceCents != null) ? (
         <section className="mx-auto mt-8 max-w-2xl rounded-xl border border-line bg-surface/50 p-4">
-          <h2 className="text-sm font-semibold text-ink">本月用量</h2>
-          <p className="mt-2 text-sm text-muted">
-            近 {usage.period_days ?? 30} 天内，已完成创作次数：{" "}
-            <span className="font-mono text-ink">
-              {usage.jobs_terminal ?? 0} / {usage.quota ?? "—"}
-            </span>
-            {typeof usage.percent === "number" ? (
-              <span className="text-muted">（已用约 {usage.percent}%）</span>
-            ) : null}
-          </p>
-          {walletBalanceCents != null ? (
-            <p className="mt-2 text-sm text-muted">
-              账户余额：{" "}
+          <h2 className="text-sm font-semibold text-ink">账户与用量</h2>
+          {usageSnapshot ? (
+            <div className="mt-3 space-y-2 text-sm text-muted">
+              <p>
+                近 {usageSnapshot.period_days} 天音频生成：{" "}
+                <span className="font-mono text-ink">
+                  {usageSnapshot.monthly_audio_minutes_used} / {usageSnapshot.monthly_audio_minutes_cap} 分钟
+                </span>
+              </p>
+              <p>
+                AI 润色（TTS 前）：{" "}
+                <span className="font-mono text-ink">
+                  {usageSnapshot.monthly_text_polish_used} /{" "}
+                  {usageSnapshot.monthly_text_polish_cap == null
+                    ? "不限"
+                    : usageSnapshot.monthly_text_polish_cap}
+                </span>
+              </p>
+            </div>
+          ) : null}
+          {typeof walletBalanceCents === "number" ? (
+            <p className={`text-sm text-muted ${usageSnapshot ? "mt-2" : "mt-3"}`}>
+              账户余额（用于超额按量计费或余额支付月费）：{" "}
               <span className="font-mono text-ink">{fmtMoneyYuan(walletBalanceCents)}</span>
             </p>
           ) : null}
-          <p className="mt-1 text-xs text-muted">次数仅作会员档位参考，与第三方单独计费无关。</p>
         </section>
       ) : null}
 
       <PricingPlansGrid
         plans={shownPlans}
         cycle={cycle}
-        onCycleChange={setCycle}
+        onCycleChange={() => {}}
+        hideBillingCycleToggle={billingMonthlyOnly}
         yearlyDiscountPercent={yearlyDisc}
         currentPlanId={currentPlan}
         submittingTier={submittingTier}
         onSelectPlan={(tier) => void selectPlan(tier)}
-        wechatNativeEnabled={wechatNativeEnabled}
-        wechatLoadingTier={wechatLoadingTier}
-        onWechatPay={(tier) => void createWechatSubscription(tier)}
+        alipayPageEnabled={alipayPageEnabled}
+        alipayLoadingTier={alipayLoadingTier}
+        onAlipayPay={(tier) => void createAlipaySubscription(tier)}
+        walletPayEnabled={walletPayEnabled}
+        walletPayBusyTier={walletPayBusyTier}
+        onWalletPay={(tier) => void payWithWalletForTier(tier)}
       />
 
-      {wechatPay ? (
-        <section className="mx-auto mt-10 max-w-md rounded-xl border border-line bg-surface/80 p-5 shadow-sm">
-          <h2 className="text-center text-sm font-semibold text-ink">微信扫码支付</h2>
-          <p className="mt-2 text-center text-xs text-muted">
-            {wechatPay.kind === "subscription"
-              ? `订阅 ${wechatPay.tier} · ${fmtMoneyYuan(wechatPay.amount_cents)}`
-              : `钱包充值 · ${fmtMoneyYuan(wechatPay.amount_cents)}`}
-          </p>
-          <p className="mt-1 text-center font-mono text-[10px] text-muted">商户单号 {wechatPay.out_trade_no}</p>
-          <div className="mt-4 flex justify-center">
-            {wechatQrDataUrl ? (
-              <img src={wechatQrDataUrl} width={220} height={220} className="rounded-lg border border-line bg-white p-2" alt="微信收款码" />
-            ) : (
-              <p className="text-sm text-muted">正在生成二维码…</p>
-            )}
-          </div>
-          <p className="mt-3 text-center text-xs text-muted">打开微信扫一扫，支付完成后本页会自动更新订单；也可手动刷新。</p>
-          <div className="mt-4 flex justify-center">
-            <button
-              type="button"
-              className="rounded-lg border border-line px-3 py-1.5 text-xs text-muted hover:bg-fill"
-              onClick={() => {
-                setWechatPay(null);
-                setWechatQrDataUrl("");
-              }}
-            >
-              关闭二维码
-            </button>
-          </div>
-        </section>
+      {alipaySession ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-[1px]">
+          <section className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-xl">
+            <h2 className="text-center text-sm font-semibold text-ink">支付宝扫码支付</h2>
+            <p className="mt-2 text-center text-xs text-muted">
+              {alipaySession.kind === "subscription"
+                ? `订阅 ${alipaySession.tier} · ${fmtMoneyYuan(alipaySession.amount_cents)}`
+                : `钱包充值 · ${fmtMoneyYuan(alipaySession.amount_cents)}`}
+            </p>
+            <p className="mt-1 text-center font-mono text-[10px] text-muted">商户单号 {alipaySession.out_trade_no}</p>
+            <p className="mt-3 text-center text-xs text-muted">
+              已尝试打开支付窗口。请在窗口内使用手机支付宝扫码或登录付款；支付成功后本页会自动刷新订单。
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <a
+                href={alipaySession.pay_page_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block rounded-xl bg-cta py-2.5 text-center text-sm font-medium text-cta-foreground hover:bg-cta/90"
+              >
+                打开支付宝收银台
+              </a>
+              <button
+                type="button"
+                className="rounded-xl border border-line py-2 text-sm text-muted hover:bg-fill"
+                onClick={() => setAlipaySession(null)}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="mt-4">
+              <p className="mb-2 text-center text-[10px] text-muted">若支付宝允许内嵌，可在此预览（部分环境会空白，请用上方按钮打开）</p>
+              <iframe
+                title="支付宝收银台"
+                src={alipaySession.pay_page_url}
+                className="h-[min(420px,50vh)] w-full rounded-lg border border-line bg-canvas"
+                sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation-by-user-activation"
+              />
+            </div>
+          </section>
+        </div>
       ) : null}
 
-      {walletTopupInfo?.checkout_supported !== false && walletTopupInfo ? (
+      {showWalletRechargeSection ? (
         <section className="mt-12 rounded-xl border border-dashed border-line bg-fill/30 p-5">
           <h2 className="text-sm font-semibold text-ink">账户余额充值</h2>
           <p className="mt-1 text-xs text-muted">
-            {walletTopupInfo.description ||
+            {mergedWalletTopup.description ||
               "充值进入钱包（单位：人民币），用多少扣多少；单次最低 ¥10；不改变订阅档位。"}
           </p>
-          <WalletUsageReference refData={walletTopupInfo.usage_reference} />
+          <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-muted">充值金额（元）</span>
               <input
                 type="number"
-                min={(walletTopupInfo.min_amount_cents ?? 1000) / 100}
+                min={(mergedWalletTopup.min_amount_cents ?? 1000) / 100}
                 step="1"
                 className="w-full max-w-[12rem] rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-ink"
                 value={topupYuanInput}
                 onChange={(e) => setTopupYuanInput(e.target.value)}
               />
             </label>
-            <button
-              type="button"
-              className="rounded-lg bg-cta px-4 py-2 text-sm font-medium text-white hover:bg-cta/90 disabled:opacity-50"
-              disabled={walletCreating || walletPaying || wechatWalletLoading || wechatLoadingTier != null}
-              onClick={() => void createWalletOrder()}
-            >
-              {walletCreating ? "创建订单中…" : "去支付（模拟）"}
-            </button>
-            {wechatNativeEnabled ? (
+            {mergedWalletTopup.checkout_supported !== false ? (
+              <button
+                type="button"
+                className="rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50"
+                disabled={
+                  walletCreating || walletPaying || alipayWalletLoading || busyPayOrWallet || !walletPayEnabled
+                }
+                onClick={() => void createWalletOrder()}
+              >
+                {walletCreating ? "创建订单中…" : "去支付（模拟）"}
+              </button>
+            ) : null}
+            {alipayPageEnabled ? (
               <button
                 type="button"
                 className="rounded-lg border border-line bg-canvas px-4 py-2 text-sm font-medium text-ink hover:bg-fill disabled:opacity-50"
-                disabled={walletCreating || walletPaying || wechatWalletLoading || wechatLoadingTier != null}
-                onClick={() => void createWechatWalletTopup()}
+                disabled={
+                  walletCreating || walletPaying || alipayWalletLoading || busyPayOrWallet || !walletPayEnabled
+                }
+                onClick={() => void createAlipayWalletTopup()}
               >
-                {wechatWalletLoading ? "创建微信订单中…" : "微信扫码充值"}
+                {alipayWalletLoading ? "创建支付宝订单中…" : "支付宝扫码充值"}
               </button>
             ) : null}
           </div>
+          {!walletPayEnabled ? (
+            <p className="mt-3 text-xs text-muted">请登录后即可充值账户余额。</p>
+          ) : null}
           {walletCheckout ? (
-            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/80 p-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+            <div className="mt-4 rounded-lg border border-warning/30 bg-warning-soft/80 p-3 dark:border-warning/40 dark:bg-warning-soft/35">
               <p className="text-xs text-muted">
                 待支付 <span className="font-mono text-ink">{walletCheckout.checkout_id}</span> ·{" "}
                 {fmtMoneyYuan(walletCheckout.amount_cents)}
               </p>
               <button
                 type="button"
-                className="mt-2 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                className="mt-2 rounded-lg bg-mint px-3 py-1.5 text-xs font-medium text-mint-foreground hover:bg-mint/85 disabled:opacity-50"
                 disabled={walletPaying}
                 onClick={() => void confirmWalletOrder()}
               >

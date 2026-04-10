@@ -7,7 +7,7 @@ export function TrustFooter({ supportEmail }: Props) {
   return (
     <footer className="mt-10 flex flex-col items-center gap-3 border-t border-line pt-8 text-center text-sm text-muted">
       <div className="flex flex-wrap items-center justify-center gap-4">
-        <span>支付宝 / 微信（以实际上线为准）</span>
+        <span>支付宝（电脑网站扫码支付）</span>
         <span className="hidden sm:inline">·</span>
         <span>订阅可随时在周期结束后调整</span>
       </div>

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .config import settings
+from .e2e_smoke import e2e_smoke_secret_configured
 from .models import (
     ensure_payment_refunds_schema,
     ensure_payment_orders_schema,
@@ -14,15 +15,19 @@ from .models import (
     ensure_saved_voices_schema,
     ensure_subscription_current_state_schema,
     ensure_subscription_events_schema,
+    ensure_usage_events_user_id_schema,
     ensure_user_preferences_schema,
     ensure_users_profile_columns,
-    ensure_wechat_native_checkout_schema,
+    ensure_alipay_page_checkout_schema,
 )
 from .object_store import ensure_bucket_exists
+from .startup_security import assert_production_security_or_exit
+from .middleware.request_id import RequestIdMiddleware
 from .rss_publish_store import ensure_rss_publish_schema
 from .routes import (
     admin_routes,
     auth_routes,
+    e2e_smoke_routes,
     health,
     jobs_routes,
     notes_routes,
@@ -47,6 +52,7 @@ def _startup_step(label: str, fn: Callable[[], None]) -> None:
 
 
 def run_startup_tasks() -> None:
+    assert_production_security_or_exit()
     _startup_step("object_store.ensure_bucket_exists", ensure_bucket_exists)
     notes_routes.ensure_notebooks_schema_startup(strict=settings.strict_schema_startup)
     jobs_routes.ensure_jobs_trash_schema_startup(strict=settings.strict_schema_startup)
@@ -54,6 +60,7 @@ def run_startup_tasks() -> None:
     _startup_step("ensure_user_preferences_schema", ensure_user_preferences_schema)
     _startup_step("ensure_users_profile_columns", ensure_users_profile_columns)
     _startup_step("ensure_subscription_events_schema", ensure_subscription_events_schema)
+    _startup_step("ensure_usage_events_user_id_schema", ensure_usage_events_user_id_schema)
     _startup_step("ensure_payment_orders_schema", ensure_payment_orders_schema)
     _startup_step(
         "ensure_payment_webhook_deliveries_schema",
@@ -64,7 +71,7 @@ def run_startup_tasks() -> None:
         ensure_subscription_current_state_schema,
     )
     _startup_step("ensure_payment_refunds_schema", ensure_payment_refunds_schema)
-    _startup_step("ensure_wechat_native_checkout_schema", ensure_wechat_native_checkout_schema)
+    _startup_step("ensure_alipay_page_checkout_schema", ensure_alipay_page_checkout_schema)
     _startup_step("ensure_rss_publish_schema", ensure_rss_publish_schema)
 
 
@@ -75,6 +82,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="AI Native Orchestrator", version="0.1.0", lifespan=_lifespan)
+app.add_middleware(RequestIdMiddleware)
 
 app.include_router(health.router)
 app.include_router(auth_routes.router)
@@ -88,3 +96,5 @@ app.include_router(search_routes.router)
 app.include_router(webhooks_routes.router)
 app.include_router(rss_routes.private_router)
 app.include_router(rss_routes.public_router)
+if e2e_smoke_secret_configured():
+    app.include_router(e2e_smoke_routes.router)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAuth } from "../../../lib/auth";
+import { useAuth, userAccountRef } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
 import { useTheme } from "../../../lib/ThemeContext";
 import { listRssChannels, upsertRssChannel } from "../../../lib/api";
@@ -24,7 +24,7 @@ export default function MeGeneralPage() {
   const [rssCopyHint, setRssCopyHint] = useState("");
 
   useEffect(() => {
-    if (!authRequired || !user?.phone || String(user.phone) === "local") return;
+    if (!authRequired || !userAccountRef(user) || String(user?.phone) === "local") return;
     let canceled = false;
     async function run() {
       setRssLoading(true);
@@ -51,7 +51,7 @@ export default function MeGeneralPage() {
     return () => {
       canceled = true;
     };
-  }, [authRequired, user?.phone]);
+  }, [authRequired, user]);
 
   async function saveRssSettings() {
     if (!rssTitle.trim()) {
@@ -100,7 +100,7 @@ export default function MeGeneralPage() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-card-sm">
+      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <h2 className="text-sm font-semibold text-ink">{t("settings.account")}</h2>
         <p className="mt-1 text-xs text-muted">主题与界面语言。</p>
         {prefsSavedHint ? <p className="mt-2 text-xs text-muted">{prefsSavedHint}</p> : null}
@@ -111,14 +111,14 @@ export default function MeGeneralPage() {
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className={`rounded-lg px-3 py-1.5 text-sm ${theme === "light" ? "bg-brand text-white" : "border border-line"}`}
+                className={`rounded-lg px-3 py-1.5 text-sm ${theme === "light" ? "bg-brand text-brand-foreground" : "border border-line"}`}
                 onClick={() => setTheme("light")}
               >
                 {t("theme.light")}
               </button>
               <button
                 type="button"
-                className={`rounded-lg px-3 py-1.5 text-sm ${theme === "dark" ? "bg-brand text-white" : "border border-line"}`}
+                className={`rounded-lg px-3 py-1.5 text-sm ${theme === "dark" ? "bg-brand text-brand-foreground" : "border border-line"}`}
                 onClick={() => setTheme("dark")}
               >
                 {t("theme.dark")}
@@ -148,18 +148,18 @@ export default function MeGeneralPage() {
         </div>
       </section>
 
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-card-sm">
+      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <div className="flex items-center gap-1.5">
           <h2 className="text-sm font-semibold text-ink">RSS 发布设置（小宇宙接入）</h2>
           <div className="group relative inline-flex">
             <button
               type="button"
-              className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-300 bg-amber-100 text-[12px] leading-none text-amber-700"
+              className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-warning/40 bg-warning-soft text-[12px] leading-none text-warning-ink"
               aria-label="查看 RSS 使用说明"
             >
               💡
             </button>
-            <div className="pointer-events-none absolute left-0 top-6 z-20 hidden w-[min(32rem,88vw)] rounded-lg border border-line bg-surface px-3 py-2 text-[11px] leading-5 text-muted shadow-card-sm group-hover:block group-focus-within:block">
+            <div className="pointer-events-none absolute left-0 top-6 z-20 hidden w-[min(32rem,88vw)] rounded-lg border border-line bg-surface px-3 py-2 text-[11px] leading-5 text-muted shadow-soft group-hover:block group-focus-within:block">
               <p className="font-medium text-ink">RSS怎么用</p>
               <p className="mt-1">
                 你可以把RSS理解成“节目更新清单”。你在本站发布一集后，清单里会新增这一集；小宇宙会定时读取这份清单并更新节目
@@ -177,7 +177,7 @@ export default function MeGeneralPage() {
         <p className="mt-1 text-[11px] text-muted">
           首次配置后会生成节目源地址，把它提交到小宇宙创作者后台即可。后续在“我的作品”中可直接发布新集。
         </p>
-        {!authRequired || !user?.phone || String(user.phone) === "local" ? (
+        {!authRequired || !userAccountRef(user) || String(user?.phone) === "local" ? (
           <p className="mt-4 text-sm text-muted">使用 RSS 发布需先登录账号。</p>
         ) : (
           <>
@@ -217,7 +217,7 @@ export default function MeGeneralPage() {
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:opacity-95 disabled:opacity-50"
+                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50"
                 disabled={rssSaving || rssLoading}
                 onClick={() => void saveRssSettings()}
               >
@@ -225,7 +225,7 @@ export default function MeGeneralPage() {
               </button>
               {rssLoading ? <span className="text-xs text-muted">加载中…</span> : null}
             </div>
-            {rssError ? <p className="mt-2 text-xs text-rose-600">{rssError}</p> : null}
+            {rssError ? <p className="mt-2 text-xs text-danger-ink">{rssError}</p> : null}
             {rssFeedSlug ? (
               <div className="mt-2 rounded-lg border border-line bg-fill/50 px-3 py-2 text-xs text-muted">
                 <p className="font-medium text-ink">节目源地址</p>

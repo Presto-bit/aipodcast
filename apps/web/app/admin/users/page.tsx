@@ -5,13 +5,21 @@ import SmallConfirmModal from "../../../components/ui/SmallConfirmModal";
 import { useAuth } from "../../../lib/auth";
 
 type AdminUser = {
+  user_id?: string;
   phone: string;
+  email?: string;
+  username?: string;
   role?: string;
   plan?: string;
   billing_cycle?: string | null;
   has_password?: boolean;
   created_at?: number;
+  email_verified?: boolean;
 };
+
+function rowKey(u: AdminUser): string {
+  return (u.user_id || u.phone || u.email || u.username || "").trim();
+}
 
 function formatRegisteredAt(ts: number | undefined) {
   if (ts == null || !Number.isFinite(ts) || ts <= 0) return "—";
@@ -54,14 +62,16 @@ export default function AdminUsersPage() {
     setRowPlans((prev) => {
       const next = { ...prev };
       for (const u of list) {
-        if (next[u.phone] === undefined) next[u.phone] = u.plan || "free";
+        const k = rowKey(u);
+        if (k && next[k] === undefined) next[k] = u.plan || "free";
       }
       return next;
     });
     setRowBilling((prev) => {
       const next = { ...prev };
       for (const u of list) {
-        if (next[u.phone] === undefined) next[u.phone] = (u.billing_cycle as string) || "monthly";
+        const k = rowKey(u);
+        if (k && next[k] === undefined) next[k] = (u.billing_cycle as string) || "monthly";
       }
       return next;
     });
@@ -97,7 +107,7 @@ export default function AdminUsersPage() {
     const res = await fetch("/api/admin/users/role", {
       method: "POST",
       headers: { "content-type": "application/json", ...getAuthHeaders() },
-      body: JSON.stringify({ phone: u.phone, role: next }),
+      body: JSON.stringify({ phone: rowKey(u), role: next }),
     });
     const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
     if (!res.ok || !data.success) throw new Error(data.error || data.detail || `设置失败 ${res.status}`);
@@ -119,7 +129,7 @@ export default function AdminUsersPage() {
       const res = await fetch("/api/admin/users", {
         method: "DELETE",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ phone: deleteTarget.phone }),
+        body: JSON.stringify({ phone: rowKey(deleteTarget) }),
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
       if (!res.ok || !data.success) throw new Error(data.error || data.detail || `删除失败 ${res.status}`);
@@ -134,16 +144,17 @@ export default function AdminUsersPage() {
   }
 
   async function saveSubscription(u: AdminUser) {
-    const tier = (rowPlans[u.phone] ?? u.plan ?? "free").trim().toLowerCase();
-    const cycleRaw = rowBilling[u.phone] ?? u.billing_cycle ?? "monthly";
+    const rk = rowKey(u);
+    const tier = (rowPlans[rk] ?? u.plan ?? "free").trim().toLowerCase();
+    const cycleRaw = rowBilling[rk] ?? u.billing_cycle ?? "monthly";
     const billing_cycle = tier === "free" ? null : String(cycleRaw).toLowerCase();
-    setSavingPhone(u.phone);
+    setSavingPhone(rk);
     setMsg("");
     try {
       const res = await fetch("/api/admin/users/subscription", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ phone: u.phone, tier, billing_cycle }),
+        body: JSON.stringify({ phone: rk, tier, billing_cycle }),
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
       if (!res.ok || !data.success) throw new Error(data.error || data.detail || `保存失败 ${res.status}`);
@@ -187,7 +198,7 @@ export default function AdminUsersPage() {
             <option value="yearly">yearly</option>
           </select>
           <button
-            className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-500"
+            className="rounded bg-brand px-3 py-2 text-sm text-brand-foreground hover:bg-brand/90"
             onClick={() => void createUser().catch((e) => setMsg(String(e?.message || e)))}
           >
             新增
@@ -206,7 +217,7 @@ export default function AdminUsersPage() {
           <table className="w-full min-w-[920px] border-separate border-spacing-0 text-left text-sm">
             <thead className="text-xs text-muted">
               <tr>
-                <th className="px-2 py-2">用户名称（手机号）</th>
+                <th className="px-2 py-2">账号</th>
                 <th className="px-2 py-2">注册时间</th>
                 <th className="px-2 py-2">用户等级</th>
                 <th className="px-2 py-2">计费周期</th>
@@ -216,14 +227,21 @@ export default function AdminUsersPage() {
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.phone} className="border-t border-line text-ink">
-                  <td className="px-2 py-2 font-mono text-xs">{u.phone}</td>
+                <tr key={rowKey(u)} className="border-t border-line text-ink">
+                  <td className="px-2 py-2 font-mono text-xs">
+                    <div className="space-y-0.5">
+                      {u.user_id ? <div className="text-[10px] text-muted">id {u.user_id}</div> : null}
+                      {u.phone ? <div>{u.phone}</div> : null}
+                      {u.email ? <div>{u.email}</div> : null}
+                      {u.username ? <div>@{u.username}</div> : null}
+                    </div>
+                  </td>
                   <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{formatRegisteredAt(u.created_at)}</td>
                   <td className="px-2 py-2">
                     <select
                       className="max-w-[7rem] rounded border border-line bg-canvas px-1.5 py-1 text-xs"
-                      value={rowPlans[u.phone] ?? u.plan ?? "free"}
-                      onChange={(e) => setRowPlans((m) => ({ ...m, [u.phone]: e.target.value }))}
+                      value={rowPlans[rowKey(u)] ?? u.plan ?? "free"}
+                      onChange={(e) => setRowPlans((m) => ({ ...m, [rowKey(u)]: e.target.value }))}
                     >
                       <option value="free">free</option>
                       <option value="basic">basic</option>
@@ -234,9 +252,9 @@ export default function AdminUsersPage() {
                   <td className="px-2 py-2">
                     <select
                       className="max-w-[7rem] rounded border border-line bg-canvas px-1.5 py-1 text-xs"
-                      value={rowBilling[u.phone] ?? u.billing_cycle ?? "monthly"}
-                      onChange={(e) => setRowBilling((m) => ({ ...m, [u.phone]: e.target.value }))}
-                      disabled={(rowPlans[u.phone] ?? u.plan ?? "free") === "free"}
+                      value={rowBilling[rowKey(u)] ?? u.billing_cycle ?? "monthly"}
+                      onChange={(e) => setRowBilling((m) => ({ ...m, [rowKey(u)]: e.target.value }))}
+                      disabled={(rowPlans[rowKey(u)] ?? u.plan ?? "free") === "free"}
                     >
                       <option value="monthly">monthly</option>
                       <option value="yearly">yearly</option>
@@ -248,10 +266,10 @@ export default function AdminUsersPage() {
                       <button
                         type="button"
                         className="rounded border border-brand/60 px-2 py-1 text-xs text-brand hover:bg-fill disabled:opacity-50"
-                        disabled={savingPhone === u.phone}
+                        disabled={savingPhone === rowKey(u)}
                         onClick={() => void saveSubscription(u)}
                       >
-                        {savingPhone === u.phone ? "保存中…" : "保存套餐"}
+                        {savingPhone === rowKey(u) ? "保存中…" : "保存套餐"}
                       </button>
                       <button
                         type="button"
@@ -262,7 +280,7 @@ export default function AdminUsersPage() {
                       </button>
                       <button
                         type="button"
-                        className="rounded border border-rose-700/80 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-500/70 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                        className="rounded border border-danger/50 px-2 py-1 text-xs text-danger-ink hover:bg-danger-soft dark:border-danger/45 dark:text-danger-ink dark:hover:bg-danger-soft"
                         onClick={() => {
                           setDeleteError(null);
                           setDeleteTarget(u);
@@ -286,7 +304,7 @@ export default function AdminUsersPage() {
         title="确认删除用户"
         message={
           deleteTarget
-            ? `确定删除用户「${deleteTarget.phone}」？删除后不可恢复，请谨慎操作。`
+            ? `确定删除用户「${rowKey(deleteTarget)}」？删除后不可恢复，请谨慎操作。`
             : ""
         }
         confirmLabel="确认删除"

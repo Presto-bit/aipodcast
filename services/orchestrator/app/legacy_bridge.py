@@ -3,16 +3,23 @@ import os
 import re
 import tempfile
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from app.fyv_shared.config import DEFAULT_VOICES, PODCAST_CONFIG
 from app.fyv_shared.content_parser import content_parser
+
+from .entitlement_matrix import normalize_script_target_input
 
 logger = logging.getLogger(__name__)
 
 # 与 legacy 播客生成表单默认 script_constraints 一致（双人播客）
 DEFAULT_SCRIPT_CONSTRAINTS_DIALOGUE = (
     "对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本。"
+)
+# 续写轮次：与 MiniMax generate_script_stream 第二段起一致，强化行首 Speaker 格式（OpenAI 兼容路径复用）
+DIALOGUE_SPEAKER_RETRY_CONSTRAINTS = (
+    "必须输出双人对话；每行以 Speaker1: 或 Speaker2: 开头，一行一句。"
+    "台词正文不要出现英文 Speaker、Mini、Max 等标签字样。"
 )
 
 
@@ -43,6 +50,90 @@ def parse_url_content(url: str) -> str:
     if not result.get("success"):
         return ""
     return str(result.get("content") or "").strip()
+
+
+def _podcast_cfg_int(key: str, default: int) -> int:
+    try:
+        return int(PODCAST_CONFIG.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _podcast_cfg_float(key: str, default: float) -> float:
+    try:
+        return float(PODCAST_CONFIG.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _script_continuation_tail(script_so_far: str, tail_max: int) -> str:
+    t = (script_so_far or "").strip()
+    if len(t) <= tail_max:
+        return t
+    return t[-tail_max:]
+
+
+def merge_script_continuation_material(
+    base_ref: str,
+    script_so_far: str,
+    *,
+    tail_max: int,
+    reference_tail_max: int,
+) -> str:
+    """在参考材料后附加「已生成上文」，供第二轮及后续续写。参考书极长时截末尾，减轻第三轮起拒写/空返。"""
+    ref = (base_ref or "").rstrip()
+    rtm = max(0, int(reference_tail_max))
+    if rtm > 0 and len(ref) > rtm:
+        ref = (
+            f"【参考材料节选·全文较长已截取末尾约 {rtm} 字，供衔接事实与术语】\n"
+            f"{ref[-rtm:]}"
+        )
+    tail = _script_continuation_tail(script_so_far, tail_max)
+    return (
+        f"{ref}\n\n【已生成上文】\n{tail}\n\n"
+        "（请紧接上文最后一两句续写：首句须自然承接上文语义与指代；不要重复已有段落；"
+        "不要重新写开篇套话或再介绍一遍主题；不要输出「续写」「下一段」等编排标记。）"
+    )
+
+
+def _join_script_continued(accumulated: str, piece: str, output_mode: str) -> str:
+    a = accumulated.rstrip()
+    p = piece.lstrip()
+    if not p:
+        return accumulated
+    sep = "\n" if output_mode == "dialogue" else "\n\n"
+    return a + sep + p
+
+
+def _consume_minimax_script_stream(
+    stream_it: Iterator[dict[str, Any]],
+    *,
+    on_script_delta: Callable[[str, str], None] | None,
+    accumulated_prefix: str,
+) -> tuple[str, str | None, str | None]:
+    """
+    消费 generate_script_stream 事件。
+    返回 (本轮正文, finish_reason, 最后一帧 trace_id)。
+    on_script_delta 收到的是 accumulated_prefix + 本轮已拼片段。
+    """
+    chunks: list[str] = []
+    finish_reason: str | None = None
+    last_trace: str | None = None
+    for ev in stream_it:
+        tid = ev.get("trace_id")
+        if tid:
+            last_trace = str(tid)
+        if ev.get("type") == "script_chunk":
+            c = str(ev.get("content") or "")
+            chunks.append(c)
+            if on_script_delta:
+                on_script_delta(accumulated_prefix + "".join(chunks), c)
+        elif ev.get("type") == "error":
+            raise RuntimeError(str(ev.get("message") or "script_generation_failed"))
+        elif ev.get("type") == "script_complete":
+            finish_reason = str(ev.get("finish_reason") or "stop")
+    piece = "".join(chunks).strip()
+    return piece, finish_reason, last_trace
 
 
 def _extract_upstream_status_code(msg: str) -> int | None:
@@ -216,14 +307,9 @@ def script_generation_options_from_payload(payload: dict[str, Any]) -> dict[str,
         v = payload.get(k)
         if isinstance(v, str) and v.strip():
             out[k] = v.strip()
-    raw = payload.get("script_target_chars")
-    if raw is not None:
-        try:
-            n = int(raw)
-            if 200 <= n <= 20_000:
-                out["script_target_chars"] = n
-        except (TypeError, ValueError):
-            pass
+    n = normalize_script_target_input(payload.get("script_target_chars"))
+    if n is not None:
+        out["script_target_chars"] = n
     if "oral_for_tts" in payload:
         out["oral_for_tts"] = bool(payload.get("oral_for_tts"))
     return out
@@ -291,12 +377,6 @@ def build_script_with_minimax(
         first_constraints = user_c
     else:
         first_constraints = user_c if user_c else DEFAULT_SCRIPT_CONSTRAINTS_DIALOGUE
-    # 双人模式重试时仍约束行格式，避免模型输出无 Speaker 行导致整段被当作单人朗读（podcast_generator 按行解析）
-    retry_constraints_dialogue = (
-        "必须输出双人对话；每行以 Speaker1: 或 Speaker2: 开头，一行一句。"
-        "台词正文不要出现英文 Speaker、Mini、Max 等标签字样。"
-    )
-
     if output_mode == "article":
         attempts = [
             {"target_chars": base, "script_constraints": first_constraints},
@@ -306,44 +386,129 @@ def build_script_with_minimax(
     else:
         attempts = [
             {"target_chars": base, "script_constraints": first_constraints},
-            {"target_chars": max(200, base - 200), "script_constraints": retry_constraints_dialogue},
-            {"target_chars": max(200, base - 400), "script_constraints": retry_constraints_dialogue},
+            {"target_chars": max(200, base - 200), "script_constraints": DIALOGUE_SPEAKER_RETRY_CONSTRAINTS},
+            {"target_chars": max(200, base - 400), "script_constraints": DIALOGUE_SPEAKER_RETRY_CONSTRAINTS},
         ]
     errors: list[str] = []
     attempt_errors: list[dict[str, Any]] = []
     trace_id: str | None = None
     last_upstream_status_code: int | None = None
+    max_continue = _podcast_cfg_int("script_generation_max_continue_rounds", 12)
+    shortfall_ratio = _podcast_cfg_float("script_generation_shortfall_ratio", 0.82)
+    min_round_gain = _podcast_cfg_int("script_continue_min_round_gain_chars", 80)
+    tail_max = _podcast_cfg_int("script_continue_material_tail_max_chars", 64_000)
+    ref_tail_max = _podcast_cfg_int("script_continue_reference_tail_max_chars", 24_000)
+    seg_cap = _podcast_cfg_int("script_generation_segment_target_chars_max", 4200)
+    seg_cap = max(800, min(12_000, seg_cap))
+
     for idx, cfg in enumerate(attempts, start=1):
-        chunks: list[str] = []
         try:
-            for ev in minimax_client.generate_script_stream(
-                text,
-                target_chars=cfg["target_chars"],
-                api_key=api_key,
-                script_style=script_style,
-                script_language=script_language,
-                program_name=program_name,
-                speaker1_persona=speaker1,
-                speaker2_persona=speaker2,
-                script_constraints=cfg["script_constraints"],
-                output_mode=output_mode,
-                oral_for_tts=oral_for_tts,
-            ):
-                ev_trace_id = ev.get("trace_id")
-                if ev_trace_id:
-                    trace_id = str(ev_trace_id)
-                if ev.get("type") == "script_chunk":
-                    chunk = str(ev.get("content") or "")
-                    chunks.append(chunk)
-                    if on_script_delta:
-                        on_script_delta("".join(chunks), chunk)
-                elif ev.get("type") == "error":
-                    err_msg = str(ev.get("message") or "script_generation_failed")
-                    code = _extract_upstream_status_code(err_msg)
-                    if code is not None:
-                        last_upstream_status_code = code
-                    raise RuntimeError(err_msg)
-            script = "".join(chunks).strip()
+            goal = int(cfg["target_chars"])
+            accumulated = ""
+            material = text
+            continuity_round = 0
+            last_fr: str | None = None
+            continuation_shrink_pass = 0
+
+            while continuity_round < max_continue:
+                remaining = goal - len(accumulated)
+                if remaining <= min_round_gain:
+                    break
+
+                ref_budget = ref_tail_max
+                if continuation_shrink_pass == 1:
+                    ref_budget = max(4000, min(12_000, ref_tail_max // 2))
+                elif continuation_shrink_pass >= 2:
+                    ref_budget = max(2000, min(6000, ref_tail_max // 4))
+
+                if accumulated:
+                    material = merge_script_continuation_material(
+                        text, accumulated, tail_max=tail_max, reference_tail_max=ref_budget
+                    )
+
+                seg_target = min(remaining, seg_cap)
+                if not accumulated:
+                    segment_role = "first" if goal > seg_cap else None
+                else:
+                    segment_role = "last" if remaining <= seg_cap else "middle"
+                # 文章模式勿把「续写第N段」等写入 segment_position，易被模型抄进正文；双人播客仍保留便于分段提示
+                if output_mode == "article":
+                    segment_position = None
+                elif not accumulated:
+                    segment_position = (
+                        f"第 1 段 · 全文目标约 {goal} 字" if goal > seg_cap else None
+                    )
+                else:
+                    segment_position = f"续写第 {continuity_round + 1} 段 · 全文目标约 {goal} 字"
+
+                if continuity_round == 0:
+                    dialogue_or_article_c = cfg["script_constraints"]
+                else:
+                    dialogue_or_article_c = (
+                        DIALOGUE_SPEAKER_RETRY_CONSTRAINTS if output_mode == "dialogue" else ""
+                    )
+
+                piece, fr, ev_trace = _consume_minimax_script_stream(
+                    minimax_client.generate_script_stream(
+                        material,
+                        target_chars=seg_target,
+                        api_key=api_key,
+                        script_style=script_style,
+                        script_language=script_language,
+                        program_name=program_name,
+                        speaker1_persona=speaker1,
+                        speaker2_persona=speaker2,
+                        script_constraints=dialogue_or_article_c,
+                        output_mode=output_mode,
+                        oral_for_tts=oral_for_tts,
+                        segment_role=segment_role,
+                        segment_position=segment_position,
+                        full_goal_chars=goal if goal > seg_target else None,
+                    ),
+                    on_script_delta=on_script_delta,
+                    accumulated_prefix=accumulated,
+                )
+                if ev_trace:
+                    trace_id = ev_trace
+                last_fr = fr
+
+                plen = len(piece.strip())
+                if plen < min_round_gain:
+                    if not accumulated.strip():
+                        empty_msg = "上游返回空内容（0 chunk）"
+                        errors.append(empty_msg)
+                        attempt_errors.append({"attempt": idx, "message": empty_msg, "trace_id": trace_id})
+                        break
+                    still_need = goal - len(accumulated)
+                    if still_need > max(400, goal // 10) and continuation_shrink_pass < 2:
+                        continuation_shrink_pass += 1
+                        logger.warning(
+                            "脚本续写过短（%s 字）且距目标还差约 %s 字，将收缩参考材料末尾后重试（第 %s 次）",
+                            plen,
+                            still_need,
+                            continuation_shrink_pass,
+                        )
+                        continue
+                    break
+
+                continuation_shrink_pass = 0
+
+                if not accumulated:
+                    accumulated = piece
+                else:
+                    accumulated = _join_script_continued(accumulated, piece, output_mode)
+
+                continuity_round += 1
+                if len(accumulated) >= goal:
+                    break
+                # 避免 len 恰好等于 goal*ratio（如 3600==4000×0.9）时误停：应用「>」而非「>=」式语义
+                if fr == "length":
+                    continue
+                if len(accumulated) > goal * shortfall_ratio:
+                    break
+                continue
+
+            script = accumulated.strip()
             if script:
                 return {
                     "script": script,
@@ -353,10 +518,9 @@ def build_script_with_minimax(
                     "upstream_status_code": last_upstream_status_code,
                     "attempt_errors": attempt_errors,
                     "error_message": "",
+                    "script_continue_rounds": continuity_round,
+                    "script_finish_reason": last_fr,
                 }
-            empty_msg = "上游返回空内容（0 chunk）"
-            errors.append(empty_msg)
-            attempt_errors.append({"attempt": idx, "message": empty_msg, "trace_id": trace_id})
         except Exception as exc:
             msg = str(exc) or "script_generation_failed"
             errors.append(msg)

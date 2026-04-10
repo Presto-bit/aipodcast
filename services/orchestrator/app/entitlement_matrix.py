@@ -33,7 +33,7 @@ from .subscription_manifest import (
     VOICE_CLONE_PAYG_CENTS,
 )
 
-ENTITLEMENT_MATRIX_VERSION = "1.5.0"
+ENTITLEMENT_MATRIX_VERSION = "1.6.0"
 
 
 def _norm_tier(tier: str | None) -> str:
@@ -68,12 +68,12 @@ def tier_allows_ai_polish_entitlement(tier: str | None) -> bool:
 
 
 def max_note_refs_for_plan(tier: str | None) -> int:
-    """笔记播客 RAG 参考条数上限。"""
+    """笔记本 RAG 参考资料条数上限。"""
     return int(MAX_NOTE_REFS_BY_TIER[_norm_tier(tier)])
 
 
 def voice_clone_monthly_included(tier: str | None) -> int:
-    """套餐内每月含克隆次数（产品口径；扣费 enforcement 可后续接）。"""
+    """套餐内每月含克隆次数（上海自然月；超出后按 voice_clone_payg_cents 从钱包扣）。"""
     return int(VOICE_CLONE_MONTHLY_INCLUDED_BY_TIER[_norm_tier(tier)])
 
 
@@ -87,16 +87,32 @@ def long_form_script_chars_cap(tier: str | None) -> int:
     return int(LONG_FORM_SCRIPT_CHARS_CAP_BY_TIER[_norm_tier(tier)])
 
 
+def normalize_script_target_input(raw: Any) -> int | None:
+    """
+    将任务 payload / JSON 中的 script_target_chars 规范为整数（接受 int / float / 数字字符串）。
+    不在 [200, 50000] 内则返回 None。
+    """
+    if raw is None:
+        return None
+    try:
+        n = int(round(float(raw)))
+    except (TypeError, ValueError):
+        return None
+    if n < 200 or n > 50_000:
+        return None
+    return n
+
+
 def apply_script_options_subscription_caps(opts: dict[str, Any], tier: str | None) -> dict[str, Any]:
     """按档位裁剪 script_target_chars，供文本提供方（MiniMax / OpenAI 兼容）共用。"""
     cap = long_form_script_chars_cap(tier)
     out = dict(opts)
     if "script_target_chars" in out and out["script_target_chars"] is not None:
-        try:
-            n = int(out["script_target_chars"])
-            out["script_target_chars"] = max(200, min(cap, n))
-        except (TypeError, ValueError):
-            pass
+        norm = normalize_script_target_input(out["script_target_chars"])
+        if norm is None:
+            del out["script_target_chars"]
+        else:
+            out["script_target_chars"] = max(200, min(cap, norm))
     return out
 
 
@@ -115,14 +131,6 @@ def _row_monthly_minutes_product() -> dict[str, Any]:
         "key": "quota.monthly_minutes_product",
         "label": "月配额分钟（产品口径）",
         **_tier_cells(cell),
-    }
-
-
-def _row_jobs_terminal_monthly() -> dict[str, Any]:
-    return {
-        "key": "quota.jobs_terminal_monthly",
-        "label": "月完成创作次数上限（系统用量条）",
-        **_tier_cells(lambda t: str(JOBS_TERMINAL_MONTHLY_BY_TIER[t])),
     }
 
 
@@ -402,11 +410,11 @@ _BILLING_STATIC_ROWS: list[dict[str, Any]] = [
     },
     {
         "key": "pricing.annual_discount_max",
-        "label": "年付折扣上限",
+        "label": "年付",
         "free": "—",
-        "basic": "约 15–20%",
-        "pro": "约 15–20%",
-        "max": "约 15–20%",
+        "basic": "不提供",
+        "pro": "不提供",
+        "max": "不提供",
         "payg": "—",
     },
 ]
@@ -471,7 +479,6 @@ def _matrix_sections() -> list[dict[str, Any]]:
             "title": "配额与效率",
             "rows": [
                 _row_monthly_minutes_product(),
-                _row_jobs_terminal_monthly(),
                 *_QUOTA_STATIC_ROWS,
             ],
         },
@@ -502,7 +509,6 @@ def get_entitlement_matrix_payload() -> dict[str, Any]:
         "tier_labels": dict(TIER_LABELS),
         "sections": _matrix_sections(),
         "helpers": {
-            "jobs_terminal_monthly_quota": {k: jobs_terminal_monthly_quota(k) for k in TIER_KEYS},
             "monthly_minutes_product_target": {k: monthly_minutes_product_target(k) for k in TIER_KEYS},
             "tier_ai_polish_monthly_quota": {k: tier_ai_polish_monthly_quota(k) for k in TIER_KEYS},
             "max_note_refs_for_plan": {k: max_note_refs_for_plan(k) for k in TIER_KEYS},

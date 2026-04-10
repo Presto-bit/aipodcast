@@ -21,6 +21,7 @@ from .config import (
     MINIMAX_OTHER_API_KEY,
     MINIMAX_API_ENDPOINTS,
     MODELS,
+    PODCAST_CONFIG,
     TTS_AUDIO_SETTINGS,
     TTS_RATE_LIMIT_CONFIG,
     TTS_SYNC_TEXT_MAX_CHARS,
@@ -62,6 +63,11 @@ SCRIPT_GEN_TTS_ORAL_DIALOGUE_APPEND = """
 SCRIPT_GEN_TTS_ORAL_ARTICLE_APPEND = """
 【语音合成朗读向】该文稿将用于单人口播 TTS：请以连贯口语化段落为主，少用复杂 Markdown 标题层级与表格；避免用「1. 2. 3.」长列表代替完整论述；
 可适当用语气词衔接；可选用 `<#x#>` 停顿与白名单半角音效（如 (breath)）；勿用全角括号舞台说明；不要元话语套话。"""
+
+# 长文多段生成：减少繁体与「续写」类编排语泄漏（与 oral_for_tts 无关，文章路径始终叠用）
+ARTICLE_OUTPUT_QUALITY_ZH_APPEND = """
+【语言文字】若文稿为中文，须通篇使用大陆规范**简体中文**，勿使用繁体字或与繁体混排。
+【输出边界】只输出可发表正文；禁止出现「续写」「第几段」「（接续）」「【接上文】」「以下为第二部分」等编排说明或分段标签；不要复述提示中的【】标记句。"""
 
 
 class MinimaxClient:
@@ -281,6 +287,7 @@ class MinimaxClient:
         segment_role: Optional[str],
         segment_position: Optional[str],
         oral_for_tts: bool = False,
+        full_goal_chars: Optional[int] = None,
     ) -> str:
         """普通文章（非双人播客对话）生成提示。"""
         pos_note = f"（{segment_position}）" if segment_position else ""
@@ -289,7 +296,8 @@ class MinimaxClient:
 【长文章分段·接续写作{pos_note}】
 下方「材料内容」中含「已生成上文」区块：你必须在该文之后续写，不要重复已有段落或句子。
 严禁：再次写与上文重复的全文导语、标题或开篇套话；严禁使用 Speaker1/Speaker2 或对话体。
-必须：首段紧接上文末段语气与论点自然推进；术语与事实与上文一致。
+必须：本段从第一个字起即紧接「已生成上文」最后 1～2 句的话题、指代与语气（如同同一段落的自然延伸），禁止另起炉灶或再列提纲。
+术语与事实与上文一致；段首禁止出现「续写」「接下来」「第二部分」等自我说明用语。
 """
         elif segment_role == "first":
             segment_banner = f"""
@@ -305,9 +313,9 @@ class MinimaxClient:
 9. 禁止使用 Speaker1:/Speaker2: 行、禁止播客主持/听众口吻。
 10. 严格遵守字数上限；可使用 Markdown 标题与列表辅助结构。"""
         elif segment_role == "middle":
-            rules_tail = """7. 本段为中途续写：禁止重复文章标题与开篇；禁止对话体。
-8. 只输出文章正文。
-9. 禁止使用 Speaker 行；承接上文末段继续论述。
+            rules_tail = """7. 本段为中途续写：首句须直接承接上文末句语义，禁止重复标题与开篇、禁止对话体。
+8. 只输出文章正文，不要任何分段/续写标记或小标题式编排说明。
+9. 禁止使用 Speaker 行；论述与上文末段无缝衔接。
 10. 严格遵守字数上限；本段末尾若非全文末段，不要做全篇总结。"""
         elif segment_role == "last":
             rules_tail = """7. 本段为收尾段：承接上文完成论证，并做简洁收束。
@@ -316,13 +324,29 @@ class MinimaxClient:
 10. 严格遵守字数上限。"""
         else:
             rules_tail = """7. 结构完整：有引入、展开与收束（视篇幅调整详略）。
-8. 只输出文章正文，不要输出任务说明。
+8. 只输出文章正文，不要输出任务说明或分段标记。
 9. 禁止使用 Speaker1:/Speaker2:、禁止播客/对话脚本格式。
 10. 严格遵守字数上限；接近收尾时自然收束。"""
 
+        sl = (script_language or "").strip()
+        _zh_article_quality = ""
+        if "中文" in sl or sl.lower() in ("zh", "zh-cn", "简体", "简体中文"):
+            _zh_article_quality = ARTICLE_OUTPUT_QUALITY_ZH_APPEND
+
+        fg = int(full_goal_chars) if full_goal_chars is not None else 0
+        if segment_role in ("first", "middle", "last") and fg > target_chars:
+            span_block = (
+                f"【篇幅】本段汉字量请控制在约 {target_chars} 字以内，充实但不堆砌。"
+                f" 全文总目标约 {fg} 字，本段为多段之一：勿重复「已生成上文」已有内容。"
+            )
+        else:
+            span_block = (
+                f"【篇幅】全文汉字量请控制在约 {target_chars} 字以内，充实但不堆砌；材料不足时可略短。"
+            )
+
         return f"""你是专业文章写作助手。请基于以下材料，写出一篇普通文章（非双人对话、非播客脚本）。
 {segment_banner}
-【篇幅】全文汉字量请控制在约 {target_chars} 字以内，充实但不堆砌；材料不足时可略短。
+{span_block}
 
 文稿信息：
 - 主题/标题参考：{program_name}
@@ -338,6 +362,7 @@ class MinimaxClient:
 5. 不要单独输出「以下是正文」等提示语。
 6. 若材料中有用户给出的结构要求（如分点、小结），请尽量满足。
 {rules_tail}
+{_zh_article_quality}
 {SCRIPT_GEN_TTS_ORAL_ARTICLE_APPEND if oral_for_tts else ""}
 
 材料内容：
@@ -358,7 +383,8 @@ class MinimaxClient:
                                segment_role: Optional[str] = None,
                                segment_position: Optional[str] = None,
                                output_mode: str = "dialogue",
-                               oral_for_tts: bool = True) -> Iterator[Dict[str, Any]]:
+                               oral_for_tts: bool = True,
+                               full_goal_chars: Optional[int] = None) -> Iterator[Dict[str, Any]]:
         """
         流式生成播客脚本
 
@@ -369,6 +395,7 @@ class MinimaxClient:
             segment_role: 长文案分段时使用 first / middle / last；默认 None 表示单次完整生成
             segment_position: 可选，如「第 2/3 段」，写入提示便于模型理解任务
             oral_for_tts: True 时在提示中附加「语音合成朗读向」约束，便于下游少做二次润色
+            full_goal_chars: 多段续写时的全文目标字数；仅当大于本段 target_chars 时写入提示
 
         Yields:
             包含脚本 chunk 和 trace_id 的字典
@@ -417,6 +444,7 @@ class MinimaxClient:
                 segment_role=segment_role,
                 segment_position=segment_position,
                 oral_for_tts=oral_for_tts,
+                full_goal_chars=full_goal_chars,
             )
         else:
             logger.info(
@@ -474,11 +502,24 @@ Speaker2: 今天咱们聊聊这个话题。"""
             if segment_role in ("middle", "last"):
                 tail_remind = "请从「已生成上文」最后一行之后开始写，第一行必须是 Speaker1: 或 Speaker2:，且与上一行话题连贯。"
 
+            _fg = int(full_goal_chars) if full_goal_chars is not None else 0
+            if segment_role in ("first", "middle", "last") and _fg > target_chars:
+                span_dialogue = (
+                    f"【篇幅要求】统计字数时只计算对话正文，不要计入每行开头的 “Speaker1:” / “Speaker2:” 前缀。\n"
+                    f"本段对话正文字数请控制在约 {target_chars} 字以内；整期节目对话正文总目标约 {_fg} 字，本段为多段之一。"
+                    "尽量写满本段但不要明显超过本段上限；若材料不足可适当缩短。"
+                )
+            else:
+                span_dialogue = (
+                    "【篇幅要求】统计字数时只计算对话正文，不要计入每行开头的 “Speaker1:” / “Speaker2:” 前缀。\n"
+                    f"全文对话正文字数请控制在约 {target_chars} 字以内，尽量写满但不要明显超过该上限；"
+                    "若材料不足可适当缩短，避免无意义的冗长堆砌。"
+                )
+
             # 构建 prompt
             prompt = f"""你是一个专业的播客脚本编写助手。请基于以下材料，生成一段双人播客对话脚本。
 {segment_banner}
-【篇幅要求】统计字数时只计算对话正文，不要计入每行开头的 “Speaker1:” / “Speaker2:” 前缀。
-全文对话正文字数请控制在约 {target_chars} 字以内，尽量写满但不要明显超过该上限；若材料不足可适当缩短，避免无意义的冗长堆砌。
+{span_dialogue}
 
 播客节目信息：
 - 节目名称：{normalized_program_name}
@@ -505,13 +546,21 @@ Speaker2: 今天咱们聊聊这个话题。"""
             if oral_for_tts:
                 prompt = prompt.rstrip() + SCRIPT_GEN_TTS_ORAL_DIALOGUE_APPEND
 
+        try:
+            _mct = int(PODCAST_CONFIG.get("minimax_script_max_completion_tokens", 2048))
+        except (TypeError, ValueError):
+            _mct = 2048
+        # 与 MiniMax chatcompletion_v2 OpenAPI 一致：单轮 completion 上限 2048 tokens
+        max_completion_tokens = max(1, min(2048, _mct))
+
         payload = {
             "model": self.models["text"],
             "messages": [
                 {"role": "system", "name": "MiniMax AI"},
                 {"role": "user", "content": prompt}
             ],
-            "stream": True
+            "stream": True,
+            "max_completion_tokens": max_completion_tokens,
         }
 
         logger.info(f"发送脚本生成请求到: {url}")
@@ -538,12 +587,16 @@ Speaker2: 今天咱们聊聊这个话题。"""
 
             # 流式读取响应
             chunk_count = 0
+            finish_reason: Optional[str] = None
             for line in response.iter_lines():
                 if line:
                     line = line.decode('utf-8')
+                    raw_sse = line[5:].strip() if line.startswith('data:') else ""
+                    if line.startswith('data:') and raw_sse == '[DONE]':
+                        break
                     if line.startswith('data:'):
                         try:
-                            data = json.loads(line[5:].strip())
+                            data = json.loads(raw_sse)
 
                             # 检查是否有 base_resp 错误
                             if 'base_resp' in data:
@@ -564,6 +617,10 @@ Speaker2: 今天咱们聊聊这个话题。"""
                                 continue
 
                             first_choice = choices[0] if isinstance(choices[0], dict) else {}
+                            fr = first_choice.get('finish_reason')
+                            if fr:
+                                finish_reason = str(fr)
+
                             delta = first_choice.get('delta') or {}
                             if not isinstance(delta, dict):
                                 continue
@@ -585,7 +642,9 @@ Speaker2: 今天咱们聊聊这个话题。"""
                             logger.warning(f"JSON 解析失败: {line[:100]}")
                             continue
 
-            logger.info(f"脚本生成完成，共接收 {chunk_count} 个 chunk")
+            logger.info(
+                f"脚本生成完成，共接收 {chunk_count} 个 chunk，finish_reason={finish_reason!r}"
+            )
             if chunk_count == 0:
                 yield {
                     "type": "error",
@@ -597,7 +656,8 @@ Speaker2: 今天咱们聊聊这个话题。"""
             # 完成信号
             yield {
                 "type": "script_complete",
-                "trace_id": trace_id
+                "trace_id": trace_id,
+                "finish_reason": finish_reason or "stop",
             }
 
         except requests.exceptions.Timeout:
@@ -1698,6 +1758,54 @@ Speaker2: 今天咱们聊聊这个话题。"""
                 {"role": "user", "content": user_content},
             ],
             "stream": False,
+        }
+        resp = self._post_with_proxy_fallback(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=TIMEOUTS["script_generation"],
+        )
+        trace_id = self._extract_trace_id(resp)
+        resp.raise_for_status()
+        data = resp.json()
+        base = data.get("base_resp") or {}
+        if isinstance(base, dict) and base.get("status_code") not in (0, None):
+            raise RuntimeError(str(base.get("status_msg") or "upstream_error"))
+        txt = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+        return str(txt).strip(), trace_id
+
+    def chat_completion_messages(
+        self,
+        messages: list[Dict[str, Any]],
+        api_key: Optional[str] = None,
+        *,
+        temperature: float = 0.65,
+    ) -> Tuple[str, Optional[str]]:
+        """非流式多轮文本补全（结构化 JSON、运营文案等非播客脚本场景）。"""
+        url = self.endpoints["text_completion"]
+        headers = self._get_headers("text", api_key=api_key)
+        norm: list[Dict[str, Any]] = []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            role = str(m.get("role") or "user").strip().lower()
+            if role not in ("system", "user", "assistant"):
+                role = "user"
+            content = str(m.get("content") or "").strip()
+            if not content:
+                continue
+            entry: Dict[str, Any] = {"role": role, "content": content}
+            name = m.get("name")
+            if name:
+                entry["name"] = str(name)
+            norm.append(entry)
+        if not norm:
+            raise ValueError("chat_messages_empty")
+        payload = {
+            "model": self.models["text"],
+            "messages": norm,
+            "stream": False,
+            "temperature": float(temperature),
         }
         resp = self._post_with_proxy_fallback(
             url,

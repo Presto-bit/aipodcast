@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../../lib/auth";
-import { BillingToggle } from "../../../components/subscription/BillingToggle";
 import { FaqAccordion } from "../../../components/subscription/FaqAccordion";
 import { PricingHero } from "../../../components/subscription/PricingHero";
 import { PricingPlanCard } from "../../../components/subscription/PricingPlanCard";
@@ -45,9 +44,9 @@ type WalletCheckoutState = {
 
 const FALLBACK_PLANS: PricingPlan[] = [
   { id: "free", name: "Free", monthly_price_cents: 0, yearly_price_cents: 0, description: "入门体验" },
-  { id: "basic", name: "Basic", monthly_price_cents: 990, yearly_price_cents: 97900, description: "轻量订阅" },
-  { id: "pro", name: "Pro", monthly_price_cents: 7900, yearly_price_cents: 77700, description: "专业创作" },
-  { id: "max", name: "Creator（Max）", monthly_price_cents: 19900, yearly_price_cents: 195800, description: "高阶能力" }
+  { id: "basic", name: "Basic", monthly_price_cents: 1990, yearly_price_cents: 0, description: "轻量订阅 ¥19.9/月" },
+  { id: "pro", name: "Pro", monthly_price_cents: 7990, yearly_price_cents: 0, description: "专业创作 ¥79.9/月" },
+  { id: "max", name: "Creator（Max）", monthly_price_cents: 19900, yearly_price_cents: 0, description: "高阶能力 ¥199/月" }
 ];
 
 function fmtYuan(cents?: number | null) {
@@ -57,9 +56,7 @@ function fmtYuan(cents?: number | null) {
 
 export default function AdminSubscriptionPayPage() {
   const { getAuthHeaders, refreshMe } = useAuth();
-  const [cycle, setCycle] = useState<"monthly" | "yearly">("monthly");
   const [plans, setPlans] = useState<PricingPlan[]>([]);
-  const [yearlyDisc, setYearlyDisc] = useState<number | undefined>(undefined);
   const [walletTopupInfo, setWalletTopupInfo] = useState<PlansPayload["wallet_topup"]>(undefined);
   const [me, setMe] = useState<MePayload | null>(null);
   const [checkout, setCheckout] = useState<CheckoutCreate | null>(null);
@@ -77,7 +74,6 @@ export default function AdminSubscriptionPayPage() {
       const pr = await fetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
       const pd = (await pr.json().catch(() => ({}))) as PlansPayload;
       if (pd.success && Array.isArray(pd.plans)) setPlans(pd.plans);
-      if (typeof pd.yearly_discount_percent === "number") setYearlyDisc(pd.yearly_discount_percent);
       if (pd.wallet_topup && typeof pd.wallet_topup === "object") setWalletTopupInfo(pd.wallet_topup);
     } catch {
       // ignore
@@ -135,7 +131,7 @@ export default function AdminSubscriptionPayPage() {
       const res = await fetch("/api/admin/subscription-checkout/create", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ tier, billing_cycle: cycle })
+        body: JSON.stringify({ tier, billing_cycle: "monthly" })
       });
       const data = (await res.json().catch(() => ({}))) as CheckoutCreate;
       if (!res.ok || !data.success) {
@@ -290,13 +286,13 @@ export default function AdminSubscriptionPayPage() {
       </section>
 
       <div className="mt-10 space-y-8">
-        <BillingToggle cycle={cycle} onChange={setCycle} yearlyDiscountPercent={yearlyDisc} />
+        <p className="text-center text-sm text-muted">当前产品仅支持<strong className="text-ink">月付</strong>订阅。</p>
         <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
           {shownPlans.map((p) => (
             <PricingPlanCard
               key={p.id}
               plan={p}
-              cycle={cycle}
+              cycle="monthly"
               currentPlanId={me?.plan ?? "free"}
               submittingTier={null}
               primaryAction="custom"
@@ -313,7 +309,7 @@ export default function AdminSubscriptionPayPage() {
                 ) : (
                   <button
                     type="button"
-                    className="w-full rounded-xl bg-cta px-4 py-2.5 text-sm font-medium text-white transition hover:bg-cta/90 disabled:opacity-50"
+                    className="w-full rounded-xl bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground transition hover:bg-cta/90 disabled:opacity-50"
                     disabled={anyBusy}
                     onClick={() => void onCreateOrder(p.id)}
                   >
@@ -327,7 +323,7 @@ export default function AdminSubscriptionPayPage() {
       </div>
 
       {checkout?.checkout_id ? (
-        <section className="mt-8 rounded-xl border border-amber-200 bg-amber-50/80 p-4 dark:border-amber-900/50 dark:bg-amber-950/30">
+        <section className="mt-8 rounded-xl border border-warning/30 bg-warning-soft/80 p-4 dark:border-warning/40 dark:bg-warning-soft/35">
           <h2 className="text-sm font-semibold text-ink">待支付订单</h2>
           <dl className="mt-3 space-y-1 text-sm">
             <div className="flex flex-wrap gap-2">
@@ -341,7 +337,7 @@ export default function AdminSubscriptionPayPage() {
           </dl>
           <button
             type="button"
-            className="mt-4 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            className="mt-4 rounded-lg bg-mint px-4 py-2 text-sm font-medium text-mint-foreground hover:bg-mint/85 disabled:opacity-50"
             disabled={paying}
             onClick={() => void onConfirmPay()}
           >
@@ -356,7 +352,6 @@ export default function AdminSubscriptionPayPage() {
           <p className="mt-1 text-xs text-muted">
             {walletTopupInfo.description || "与公开页一致：入账钱包余额，单次最低 ¥10；不改变订阅档位。"}
           </p>
-          <WalletUsageReference refData={walletTopupInfo.usage_reference} />
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-muted">充值金额（元）</span>
@@ -371,7 +366,7 @@ export default function AdminSubscriptionPayPage() {
             </label>
             <button
               type="button"
-              className="rounded-lg bg-cta px-4 py-2 text-sm font-medium text-white hover:bg-cta/90 disabled:opacity-50"
+              className="rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50"
               disabled={anyBusy}
               onClick={() => void onCreateWalletTopup()}
             >
@@ -379,13 +374,13 @@ export default function AdminSubscriptionPayPage() {
             </button>
           </div>
           {walletCheckout ? (
-            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/80 p-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+            <div className="mt-4 rounded-lg border border-warning/30 bg-warning-soft/80 p-3 dark:border-warning/40 dark:bg-warning-soft/35">
               <p className="text-xs text-muted">
                 待支付 <span className="font-mono text-ink">{walletCheckout.checkout_id}</span> · {fmtYuan(walletCheckout.amount_cents)}
               </p>
               <button
                 type="button"
-                className="mt-2 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                className="mt-2 rounded-lg bg-mint px-3 py-1.5 text-xs font-medium text-mint-foreground hover:bg-mint/85 disabled:opacity-50"
                 disabled={walletPaying}
                 onClick={() => void onConfirmWalletTopup()}
               >
@@ -393,6 +388,7 @@ export default function AdminSubscriptionPayPage() {
               </button>
             </div>
           ) : null}
+          <WalletUsageReference refData={walletTopupInfo.usage_reference} />
         </section>
       ) : null}
 
@@ -401,7 +397,7 @@ export default function AdminSubscriptionPayPage() {
 
       {msg ? (
         <p
-          className={`mt-6 text-center text-sm ${msg.includes("失败") || msg.includes("403") || msg.includes("400") ? "text-rose-600" : "text-muted"}`}
+          className={`mt-6 text-center text-sm ${msg.includes("失败") || msg.includes("403") || msg.includes("400") ? "text-danger-ink" : "text-muted"}`}
         >
           {msg}
         </p>

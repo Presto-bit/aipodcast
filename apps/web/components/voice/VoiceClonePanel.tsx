@@ -19,7 +19,7 @@ const UPLOAD_HELP = [
 ];
 
 const card =
-  "rounded-2xl border border-line bg-white p-4 shadow-sm";
+  "rounded-2xl border border-line bg-surface p-4 shadow-soft";
 
 export default function VoiceClonePanel() {
   const { getAuthHeaders } = useAuth();
@@ -171,7 +171,7 @@ export default function VoiceClonePanel() {
             {!recording ? (
               <button
                 type="button"
-                className="rounded-lg bg-brand px-3 py-2 text-sm text-white disabled:opacity-50"
+                className="rounded-lg bg-brand px-3 py-2 text-sm text-brand-foreground disabled:opacity-50"
                 disabled={busy}
                 onClick={() => void startRecord()}
               >
@@ -180,7 +180,7 @@ export default function VoiceClonePanel() {
             ) : (
               <button
                 type="button"
-                className="rounded-lg bg-rose-600 px-3 py-2 text-sm text-white disabled:opacity-50"
+                className="rounded-lg bg-danger px-3 py-2 text-sm text-onStrong disabled:opacity-50"
                 disabled={busy}
                 onClick={() => void stopRecordAndClone()}
               >
@@ -188,7 +188,7 @@ export default function VoiceClonePanel() {
               </button>
             )}
           </div>
-          {recording ? <p className="mt-2 text-xs text-amber-700">录音中…</p> : null}
+          {recording ? <p className="mt-2 text-xs text-warning-ink">录音中…</p> : null}
         </section>
 
         <section className={card}>
@@ -211,7 +211,7 @@ export default function VoiceClonePanel() {
           />
           <button
             type="button"
-            className="mt-4 rounded-lg bg-brand px-3 py-2 text-sm text-white disabled:opacity-50"
+            className="mt-4 rounded-lg bg-brand px-3 py-2 text-sm text-brand-foreground disabled:opacity-50"
             disabled={busy}
             onClick={() => fileRef.current?.click()}
           >
@@ -220,12 +220,12 @@ export default function VoiceClonePanel() {
         </section>
       </div>
 
-      {error ? <p className="mt-6 text-sm text-rose-600">{error}</p> : null}
+      {error ? <p className="mt-6 text-sm text-danger-ink">{error}</p> : null}
 
       {result ? (
         <section className={`mt-6 ${card}`}>
           <h2 className="text-sm font-medium text-ink">结果</h2>
-          <p className="mt-2 text-sm text-emerald-700">
+          <p className="mt-2 text-sm text-success-ink">
             voice_id: {String(result.voice_id || "-")}
             {result.display_name ? ` · ${String(result.display_name)}` : ""}
           </p>

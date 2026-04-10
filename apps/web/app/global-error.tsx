@@ -17,19 +17,21 @@ export default function GlobalError({
 
   return (
     <html lang="zh-CN" suppressHydrationWarning>
-      <body className="bg-fill text-ink">
-        <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6">
-          <h1 className="text-lg font-semibold">应用出错</h1>
-          <p className="max-w-md text-center text-sm text-muted">
-            {error.message || "根级错误，请重试或刷新页面。"}
-          </p>
-          <button
-            type="button"
-            className="rounded-lg bg-brand px-4 py-2 text-sm text-white hover:bg-brand"
-            onClick={() => reset()}
-          >
-            重试
-          </button>
+      <body className="bg-canvas text-ink">
+        <div className="flex min-h-screen flex-col items-center justify-center px-6 py-12">
+          <div className="fym-surface-card max-w-md px-8 py-10 text-center">
+            <h1 className="text-base font-semibold text-ink">应用异常</h1>
+            <p className="mt-3 text-sm leading-relaxed text-muted">
+              {error.message || "发生未捕获错误。请重试或刷新页面。"}
+            </p>
+            <button
+              type="button"
+              className="mt-6 w-full rounded-lg bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground shadow-soft transition hover:bg-cta/90"
+              onClick={() => reset()}
+            >
+              重试
+            </button>
+          </div>
         </div>
       </body>
     </html>

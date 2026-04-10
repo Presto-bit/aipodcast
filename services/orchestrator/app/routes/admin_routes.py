@@ -29,7 +29,7 @@ def _require_admin_phone(request: Request) -> str:
     sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
     if not sess:
         raise HTTPException(status_code=401, detail="未登录")
-    actor_phone = str(sess.get("phone") or "").strip()
+    actor_phone = auth_bridge.session_principal(sess)
     if not actor_phone or not auth_bridge.is_admin_phone(actor_phone):
         raise HTTPException(status_code=403, detail="无管理员权限")
     return actor_phone
@@ -227,10 +227,10 @@ def admin_usage_users_api(
     return {"success": True, **payload}
 
 
-@router.get("/usage/users/{phone}")
+@router.get("/usage/users/{user_ref}")
 def admin_usage_user_detail_api(
     request: Request,
-    phone: str,
+    user_ref: str,
     days: int | None = Query(default=None, ge=1, le=365),
     date_from: str | None = Query(default=None, description="YYYY-MM-DD，与 date_to 同时有效"),
     date_to: str | None = Query(default=None, description="YYYY-MM-DD"),
@@ -238,7 +238,7 @@ def admin_usage_user_detail_api(
     _require_admin_phone(request)
     d, df, dt = _parse_usage_window(days, date_from, date_to)
     try:
-        payload = models.admin_usage_user_detail(phone=phone, days=d, date_from=df, date_to=dt)
+        payload = models.admin_usage_user_detail(user_ref=user_ref, days=d, date_from=df, date_to=dt)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)[:200]) from e
     return {"success": True, **payload}
@@ -271,6 +271,22 @@ def admin_usage_alerts_api(
     d, df, dt = _parse_usage_window(days, date_from, date_to)
     try:
         payload = models.admin_usage_alerts(days=d, date_from=df, date_to=dt)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)[:200]) from e
+    return {"success": True, **payload}
+
+
+@router.get("/usage/orders")
+def admin_usage_orders_api(
+    request: Request,
+    days: int | None = Query(default=None, ge=1, le=365),
+    date_from: str | None = Query(default=None, description="YYYY-MM-DD，与 date_to 同时有效"),
+    date_to: str | None = Query(default=None, description="YYYY-MM-DD"),
+):
+    _require_admin_phone(request)
+    d, df, dt = _parse_usage_window(days, date_from, date_to)
+    try:
+        payload = models.admin_orders_analytics(days=d, date_from=df, date_to=dt)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)[:200]) from e
     return {"success": True, **payload}
@@ -334,8 +350,8 @@ def admin_subscription_checkout_create(request: Request, body: AdminSubscription
     bc = body.billing_cycle.strip().lower()
     if tid not in ("basic", "pro", "max"):
         raise HTTPException(status_code=400, detail="仅支持 basic、pro 或 max 订阅支付")
-    if bc not in ("monthly", "yearly"):
-        raise HTTPException(status_code=400, detail="billing_cycle 须为 monthly 或 yearly")
+    if bc != "monthly":
+        raise HTTPException(status_code=400, detail="billing_cycle 须为 monthly（不提供年付）")
     amount = amount_cents_for_subscription(tid, bc)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="invalid_plan_amount")
@@ -364,7 +380,7 @@ def admin_subscription_checkout_complete(request: Request, body: AdminSubscripti
     cid = body.checkout_id.strip()
     if not cid.startswith("admchk_"):
         raise HTTPException(status_code=400, detail="invalid_checkout_id")
-    if tid not in ("basic", "pro", "max") or bc not in ("monthly", "yearly"):
+    if tid not in ("basic", "pro", "max") or bc != "monthly":
         raise HTTPException(status_code=400, detail="invalid_tier_or_cycle")
     expected = amount_cents_for_subscription(tid, bc)
     if expected <= 0:

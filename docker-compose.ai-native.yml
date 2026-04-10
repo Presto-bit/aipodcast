@@ -186,3 +186,5 @@ services:
 volumes:
   pg_data:
   minio_data:
+
+# E2E：叠加 `docker-compose.e2e.yml` 并加 `--profile e2e`（Redis 库隔离 + 就绪探测），见该文件注释与 docs/operations/README.md。

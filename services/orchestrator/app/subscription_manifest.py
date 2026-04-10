@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-SUBSCRIPTION_MANIFEST_VERSION = "1.2.1"
+SUBSCRIPTION_MANIFEST_VERSION = "1.3.3"
 
 # ---------------------------------------------------------------------------
 # 档位
@@ -29,18 +29,19 @@ USER_SUBSCRIPTION_TIERS: frozenset[str] = frozenset({"free", "basic", "pro", "ma
 # 权益数值（enforcement 与矩阵派生同源）
 # ---------------------------------------------------------------------------
 
+# 已取消「近 30 天完成创作次数」产品口径；保留字段供兼容，统一为 0（不在 UI/矩阵展示用量条）。
 JOBS_TERMINAL_MONTHLY_BY_TIER: dict[str, int] = {
-    "free": 12,
-    "basic": 85,
-    "pro": 380,
-    "max": 4200,
+    "free": 0,
+    "basic": 0,
+    "pro": 0,
+    "max": 0,
     "payg": 0,
 }
 
 MONTHLY_MINUTES_PRODUCT_BY_TIER: dict[str, int] = {
     "free": 20,
-    "basic": 75,
-    "pro": 250,
+    "basic": 80,
+    "pro": 400,
     "max": 800,
     "payg": 0,
 }
@@ -56,14 +57,14 @@ TIER_AI_POLISH_MONTHLY_BY_TIER: dict[str, int] = {
 MAX_NOTE_REFS_BY_TIER: dict[str, int] = {
     "free": 1,
     "basic": 3,
-    "pro": 6,
-    "max": 12,
+    "pro": 5,
+    "max": 10,
     "payg": 1,
 }
 
 VOICE_CLONE_MONTHLY_INCLUDED_BY_TIER: dict[str, int] = {
     "free": 0,
-    "basic": 0,
+    "basic": 1,
     "pro": 2,
     "max": 3,
     "payg": 0,
@@ -71,11 +72,11 @@ VOICE_CLONE_MONTHLY_INCLUDED_BY_TIER: dict[str, int] = {
 
 # 长文 / 长文播客：单次 script_target_chars 上限（产品口径，与 worker 脚本生成一致）
 LONG_FORM_SCRIPT_CHARS_CAP_BY_TIER: dict[str, int] = {
-    "free": 4000,
+    "free": 5000,
     "basic": 8000,
-    "pro": 10_000,
-    "max": 20_000,
-    "payg": 4000,
+    "pro": 20_000,
+    "max": 50_000,
+    "payg": 5000,
 }
 
 PAYWALL_RECOMMEND_USAGE_THRESHOLD_MINUTES = 120
@@ -84,18 +85,19 @@ PAYWALL_RECOMMEND_USAGE_THRESHOLD_MINUTES = 120
 # 价目（人民币分）与按次包规则
 # ---------------------------------------------------------------------------
 
-BASIC_MONTHLY_CENTS = 990
-BASIC_YEARLY_CENTS = 97900
-PRO_MONTHLY_CENTS = 7900
-PRO_YEARLY_CENTS = 77700
+# 仅月付；年付价为 0 表示不提供年付收银。
+BASIC_MONTHLY_CENTS = 1990
+BASIC_YEARLY_CENTS = 0
+PRO_MONTHLY_CENTS = 7990
+PRO_YEARLY_CENTS = 0
 MAX_MONTHLY_CENTS = 19900
-MAX_YEARLY_CENTS = 195800
+MAX_YEARLY_CENTS = 0
 
 # 历史：固定分钟包价目（矩阵展示可引用；收银已改为钱包充值）
 PAYG_30_MINUTES = 30
 PAYG_100_MINUTES = 100
-PAYG_30_CENTS = 1900
-PAYG_100_CENTS = 5900
+PAYG_30_CENTS = 750
+PAYG_100_CENTS = 2500
 
 # 钱包充值页「文本量→时长」展示用参考语速（字/分钟，口语近似），非扣费公式
 WALLET_REFERENCE_CHARS_PER_SPOKEN_MINUTE = 250
@@ -103,8 +105,11 @@ WALLET_REFERENCE_CHARS_PER_SPOKEN_MINUTE = 250
 PAYG_MINUTE_PACK_EXPIRE_DAYS = 90
 PAYG_EXPIRE_DAYS = PAYG_MINUTE_PACK_EXPIRE_DAYS
 
+# TTS / 播客成片：超出「月配额分钟」与「按次分钟包」后，钱包按分钟扣费；单价与 30 分钟包一致（分/分钟）。
+MEDIA_WALLET_CENTS_PER_MINUTE = max(1, int(PAYG_30_CENTS // max(1, PAYG_30_MINUTES)))
+
 # 钱包充值：人民币分，单次最低 10 元
 WALLET_TOPUP_MIN_CENTS = 1000
 WALLET_TOPUP_MAX_CENTS = 10_000_000
 
-VOICE_CLONE_PAYG_CENTS = 1900
+VOICE_CLONE_PAYG_CENTS = 1290

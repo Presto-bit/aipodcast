@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from .subscription_manifest import WALLET_TOPUP_MAX_CENTS, WALLET_TOPUP_MIN_CENTS
 
@@ -66,6 +66,31 @@ class NoteImportUrlRequest(BaseModel):
     title: str = Field(default="", max_length=300)
 
 
+class NotesAskRequest(BaseModel):
+    """对当前笔记本内已选笔记做轻量问答（基于正文摘录）。"""
+
+    notebook: str = Field(min_length=1, max_length=120)
+    note_ids: list[str] = Field(min_length=1, max_length=12)
+    question: str = Field(min_length=1, max_length=800)
+
+    @field_validator("note_ids")
+    @classmethod
+    def _normalize_note_ids(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in v:
+            s = str(raw or "").strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            out.append(s)
+        if not out:
+            raise ValueError("note_ids_required")
+        if len(out) > 12:
+            raise ValueError("too_many_notes")
+        return out
+
+
 class SavedVoicesWriteRequest(BaseModel):
     voices: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -87,6 +112,13 @@ class SubscriptionSelectRequest(BaseModel):
     billing_cycle: str | None = None
 
 
+class SubscriptionWalletPayRequest(BaseModel):
+    """使用账户余额一次性支付当前计费周期订阅（月付）。"""
+
+    tier: str = Field(min_length=1, max_length=20)
+    billing_cycle: str | None = Field(default="monthly")
+
+
 class AdminCreateUserRequest(BaseModel):
     phone: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=6, max_length=120)
@@ -96,7 +128,7 @@ class AdminCreateUserRequest(BaseModel):
 
 
 class AdminSetRoleRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=32)
+    phone: str = Field(min_length=1, max_length=64)
     role: str = Field(default="user", min_length=1, max_length=20)
 
 
@@ -108,13 +140,13 @@ class AdminTtsPolishPromptsPut(BaseModel):
 
 
 class AdminDeleteUserRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=32)
+    phone: str = Field(min_length=1, max_length=64)
 
 
 class AdminSetSubscriptionRequest(BaseModel):
     """管理员为用户设置套餐（升级/降级）。"""
 
-    phone: str = Field(min_length=1, max_length=32)
+    phone: str = Field(min_length=1, max_length=64)
     tier: str = Field(min_length=1, max_length=20)
     billing_cycle: str | None = None
 
@@ -146,37 +178,86 @@ class WalletTopupCheckoutCompleteRequest(BaseModel):
     checkout_id: str = Field(min_length=8, max_length=200)
 
 
-class WechatNativeSubscriptionCreateRequest(BaseModel):
-    """微信 Native：创建订阅扫码单（PC 展示 code_url 二维码）。"""
+class AlipayPageSubscriptionCreateRequest(BaseModel):
+    """支付宝电脑网站支付：创建订阅收银跳转 URL。"""
 
     tier: str = Field(min_length=1, max_length=20)
     billing_cycle: str = Field(min_length=1, max_length=20)
 
 
-class WechatNativeWalletCreateRequest(BaseModel):
-    """微信 Native：创建钱包充值扫码单。"""
+class AlipayPageWalletCreateRequest(BaseModel):
+    """支付宝电脑网站支付：创建钱包充值收银跳转 URL。"""
 
     amount_cents: int = Field(ge=WALLET_TOPUP_MIN_CENTS, le=WALLET_TOPUP_MAX_CENTS)
 
 
 class AuthRegisterRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=1, max_length=120)
     invite_code: str = Field(default="", max_length=120)
+    phone: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=160)
+    username: str | None = Field(default=None, max_length=32)
+
+
+class AuthRegisterSendCodeRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=160)
+    username: str = Field(min_length=3, max_length=32)
+    invite_code: str = Field(default="", max_length=120)
+
+    @field_validator("email")
+    @classmethod
+    def _register_send_code_email(cls, v: str) -> str:
+        from app.fyv_shared.auth_service import register_email_format_ok
+
+        s = (v or "").strip().lower()
+        if not register_email_format_ok(s):
+            raise ValueError("邮箱格式不正确，请填写含 @ 与域名后缀的有效地址（如 name@example.com）")
+        return s
+
+
+class AuthRegisterVerifyCodeRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=160)
+    # 允许含空格/短输入，由 auth_service._normalize_register_otp_code 统一校验 6 位数字
+    code: str = Field(min_length=1, max_length=32)
+
+
+class AuthRegisterCompleteRequest(BaseModel):
+    registration_ticket: str = Field(min_length=8, max_length=200)
+    password: str = Field(min_length=6, max_length=120)
 
 
 class AuthLoginRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=1, max_length=120)
+    identifier: str = Field(
+        min_length=1,
+        max_length=160,
+        validation_alias=AliasChoices("identifier", "phone", "login"),
+    )
 
 
 class AuthUnlockFeatureRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=1, max_length=120)
+    phone: str = Field(default="", max_length=160)
+
+
+class AuthVerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=8, max_length=200)
+
+
+class AuthForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=160)
+
+
+class AuthResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=8, max_length=200)
+    new_password: str = Field(min_length=6, max_length=120)
 
 
 class AuthProfilePatchRequest(BaseModel):
-    display_name: str = Field(min_length=1, max_length=48)
+    """PATCH 时至少提供其一；未传的字段不更新。"""
+
+    display_name: str | None = Field(default=None, max_length=48)
+    username: str | None = Field(default=None, max_length=32)
 
 
 class UserPreferencesPatchRequest(BaseModel):
@@ -193,6 +274,21 @@ class RssChannelUpsertRequest(BaseModel):
     image_url: str = Field(default="", max_length=4000)
 
 
+class SocialViralCopyRequest(BaseModel):
+    """根据播客源任务生成小红书/抖音配套爆款文案。"""
+
+    source_job_id: str = Field(min_length=8, max_length=64)
+    platform: str = Field(min_length=1, max_length=24)
+
+    @field_validator("platform")
+    @classmethod
+    def _norm_platform(cls, v: str) -> str:
+        p = (v or "").strip().lower()
+        if p not in ("xiaohongshu", "douyin"):
+            raise ValueError("platform_must_be_xiaohongshu_or_douyin")
+        return p
+
+
 class RssPublishRequest(BaseModel):
     channel_id: str = Field(min_length=1, max_length=64)
     job_id: str = Field(min_length=1, max_length=64)
@@ -202,3 +298,19 @@ class RssPublishRequest(BaseModel):
     explicit: bool = Field(default=False)
     publish_at: str | None = None
     force_republish: bool = Field(default=False)
+
+
+class JobAudioExportRequest(BaseModel):
+    """导出带 ID3 与可选章节的 MP3。"""
+
+    title: str = Field(default="", max_length=300)
+    artist: str = Field(default="", max_length=120)
+    album: str = Field(default="", max_length=120)
+    embed_chapters: bool = Field(default=True)
+
+
+class JobCoverDataRequest(BaseModel):
+    """Base64 图片正文，供 BFF JSON 签名透传。"""
+
+    image_base64: str = Field(min_length=1, max_length=12_000_000)
+    content_type: str = Field(default="image/jpeg", max_length=120)

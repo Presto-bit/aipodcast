@@ -101,7 +101,7 @@ export default function AdminTtsPolishPage() {
       <div className="mt-6 flex flex-wrap gap-2">
         <button
           type="button"
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-90 disabled:opacity-50"
           disabled={busy}
           onClick={() => void save()}
         >
@@ -117,7 +117,7 @@ export default function AdminTtsPolishPage() {
         </button>
         <button
           type="button"
-          className="rounded-lg border border-amber-600/50 px-4 py-2 text-sm text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+          className="rounded-lg border border-warning/45 px-4 py-2 text-sm text-warning-ink hover:bg-warning-soft disabled:opacity-50"
           disabled={busy}
           onClick={() => void reset()}
         >
@@ -125,8 +125,8 @@ export default function AdminTtsPolishPage() {
         </button>
       </div>
 
-      {msg ? <p className="mt-3 text-sm text-emerald-600">{msg}</p> : null}
-      {err ? <p className="mt-3 text-sm text-rose-500">{err}</p> : null}
+      {msg ? <p className="mt-3 text-sm text-success-ink">{msg}</p> : null}
+      {err ? <p className="mt-3 text-sm text-danger-ink">{err}</p> : null}
 
       <div className="mt-6 space-y-6">
         <label className="block">

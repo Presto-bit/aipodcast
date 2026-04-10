@@ -17,9 +17,13 @@ type Props = {
   primaryAction?: "select" | "custom";
   customButton?: ReactNode;
   onSelect?: (tier: string) => void;
-  wechatNativeEnabled?: boolean;
-  wechatLoadingTier?: string | null;
-  onWechatPay?: (tier: string) => void;
+  alipayPageEnabled?: boolean;
+  alipayLoadingTier?: string | null;
+  onAlipayPay?: (tier: string) => void;
+  /** 已登录真实账号时展示「余额支付月费」 */
+  walletPayEnabled?: boolean;
+  walletPayBusyTier?: string | null;
+  onWalletPay?: (tier: string) => void;
 };
 
 export function PricingPlanCard({
@@ -31,9 +35,12 @@ export function PricingPlanCard({
   primaryAction = "select",
   customButton,
   onSelect,
-  wechatNativeEnabled,
-  wechatLoadingTier,
-  onWechatPay
+  alipayPageEnabled,
+  alipayLoadingTier,
+  onAlipayPay,
+  walletPayEnabled,
+  walletPayBusyTier,
+  onWalletPay
 }: Props) {
   const p = plan;
   const monthly = p.monthly_price_cents ?? null;
@@ -45,8 +52,10 @@ export function PricingPlanCard({
   const starter = p.badge === "starter";
   const isSubmittingThis = submittingTier === p.id;
   const anySubmitting = submittingTier != null && submittingTier !== "";
-  const wechatLoadingThis = wechatLoadingTier === p.id;
-  const wechatBusy = wechatLoadingTier != null && wechatLoadingTier !== "";
+  const alipayLoadingThis = alipayLoadingTier === p.id;
+  const alipayBusy = alipayLoadingTier != null && alipayLoadingTier !== "";
+  const walletBusyThis = walletPayBusyTier === p.id;
+  const walletBusy = walletPayBusyTier != null && walletPayBusyTier !== "";
 
   const showYearly = cycle === "yearly" && !isFree && yearly != null && yearly > 0;
   const displayMainCents = showYearly ? equiv : monthly;
@@ -59,17 +68,17 @@ export function PricingPlanCard({
   return (
     <article
       className={[
-        "relative flex h-full flex-col rounded-2xl border bg-surface/70 p-5 shadow-sm transition",
-        popular ? "border-brand/50 ring-1 ring-brand/20" : starter ? "border-emerald-500/35 ring-1 ring-emerald-500/15" : "border-line"
+        "relative flex h-full flex-col rounded-2xl border bg-surface/70 p-5 shadow-soft transition",
+        popular ? "border-brand/50 ring-1 ring-brand/20" : starter ? "border-mint/35 ring-1 ring-mint/15" : "border-line"
       ].join(" ")}
     >
       {popular ? (
-        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-brand px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-brand px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-foreground">
           最受欢迎
         </span>
       ) : null}
       {starter && !popular ? (
-        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-emerald-600/90 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-mint/90 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-mint-foreground">
           入门
         </span>
       ) : null}
@@ -99,7 +108,7 @@ export function PricingPlanCard({
             {showYearly ? `按年付费，${fmtYuan(yearly)}/年` : `按年付费 ${fmtYuan(yearly)}/年（约 ${fmtYuan(equiv)}/月）`}
           </p>
         ) : isFree ? (
-          <p className="mt-1 text-xs text-muted">按年同样免费</p>
+          <p className="mt-1 text-xs text-muted">基础能力，无需绑卡</p>
         ) : null}
       </div>
 
@@ -131,8 +140,8 @@ export function PricingPlanCard({
         ) : (
           <button
             type="button"
-            className="w-full rounded-xl bg-cta px-4 py-2.5 text-sm font-medium text-white transition hover:bg-cta/90 disabled:opacity-50"
-            disabled={anySubmitting || wechatBusy || isCurrent}
+            className="w-full rounded-xl bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground transition hover:bg-cta/90 disabled:opacity-50"
+            disabled={anySubmitting || alipayBusy || walletBusy || isCurrent}
             onClick={() => onSelect?.(p.id)}
           >
             {isSubmittingThis
@@ -142,14 +151,26 @@ export function PricingPlanCard({
                 : ctaLabel || (isFree ? "选用 Free" : `订阅 ${p.name || p.id}`)}
           </button>
         )}
-        {!isFree && wechatNativeEnabled && onWechatPay ? (
+        {!isFree && walletPayEnabled && onWalletPay ? (
+          <button
+            type="button"
+            className="mt-2 w-full rounded-xl border border-mint/40 bg-mint/10 px-4 py-2 text-sm font-medium text-mint-foreground transition hover:bg-mint/20 disabled:opacity-50"
+            disabled={anySubmitting || alipayBusy || walletBusy || isCurrent}
+            onClick={() => onWalletPay(p.id)}
+          >
+            {walletBusyThis
+              ? "扣款中…"
+              : `余额支付月费（${fmtYuan(monthly)}）`}
+          </button>
+        ) : null}
+        {!isFree && alipayPageEnabled && onAlipayPay ? (
           <button
             type="button"
             className="mt-2 w-full rounded-xl border border-line bg-canvas px-4 py-2 text-sm font-medium text-ink transition hover:bg-fill disabled:opacity-50"
-            disabled={anySubmitting || wechatBusy || isCurrent}
-            onClick={() => onWechatPay(p.id)}
+            disabled={anySubmitting || alipayBusy || walletBusy || isCurrent}
+            onClick={() => onAlipayPay(p.id)}
           >
-            {wechatLoadingThis ? "正在创建订单…" : "微信扫码支付"}
+            {alipayLoadingThis ? "正在创建订单…" : "支付宝扫码支付"}
           </button>
         ) : null}
       </div>

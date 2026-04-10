@@ -27,6 +27,15 @@ def _parse_jsonish(val: Any) -> dict[str, Any]:
     return {}
 
 
+def _want_generate_cover_for_billing(payload: dict[str, Any], job_type: str) -> bool:
+    """与 worker_tasks._payload_wants_generate_cover 一致：文章默认不配封面估算。"""
+    om = str(payload.get("output_mode") or "").strip().lower()
+    jt = str(job_type or "").strip()
+    if om == "article" and jt in ("script_draft", "podcast_generate", "podcast"):
+        return bool(payload.get("generate_cover"))
+    return bool(payload.get("generate_cover", True))
+
+
 def minimax_billing_chars(text: str) -> int:
     """语音计费字符：1 汉字=2，其余（字母、标点、空格等）=1。"""
     n = 0
@@ -149,14 +158,14 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
     result = _parse_jsonish(job.get("result"))
     jt = str(job.get("job_type") or "").strip()
     text_model = str(os.getenv("MINIMAX_TEXT_MODEL") or "MiniMax-M2.7").strip()
-    tts_model = str(os.getenv("MINIMAX_TTS_MODEL") or "speech-2.8-hd").strip()
+    tts_model = str(os.getenv("MINIMAX_TTS_MODEL") or "speech-2.8-turbo").strip()
     image_model = str(os.getenv("MINIMAX_IMAGE_MODEL") or "image-01-live").strip()
 
     llm = 0.0
     tts = 0.0
     img = 0.0
 
-    want_cover = bool(payload.get("generate_cover", True))
+    want_cover = _want_generate_cover_for_billing(payload, jt)
 
     if jt in ("voice_clone", "clone_voice"):
         pass

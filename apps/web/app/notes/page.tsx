@@ -6,6 +6,7 @@ import InlineTextPrompt from "../../components/ui/InlineTextPrompt";
 import SmallPromptModal from "../../components/ui/SmallPromptModal";
 import EmptyState from "../../components/ui/EmptyState";
 import NoteMarkdownPreview from "../../components/notes/NoteMarkdownPreview";
+import { NotesAskAnswerDisplay } from "../../components/notes/NotesAskAnswerDisplay";
 import NotesPodcastRoomModal from "../../components/notes/NotesPodcastRoomModal";
 import PodcastWorksGallery from "../../components/podcast/PodcastWorksGallery";
 import { createJob, cancelJob } from "../../lib/api";
@@ -16,6 +17,11 @@ import { buildReferenceJobFields, type ReferenceRagMode } from "../../lib/jobRef
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
 import { ART_KIND_PRESETS, type ArtKindKey } from "../../lib/artKindPresets";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
+import {
+  NOTES_NAV_WORKBENCH_EVENT,
+  pickNotebookForWorkbench,
+  writeLastNotebookName
+} from "../../lib/notesLastNotebook";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { useAuth } from "../../lib/auth";
 import { maxNotesForReferencePlan } from "../../lib/noteReferenceLimits";
@@ -31,6 +37,8 @@ type NoteItem = {
   createdAt?: string;
   sourceUrl?: string;
   inputType?: string;
+  sourceReady?: boolean;
+  sourceHint?: string;
 };
 
 type NotesResp = {
@@ -49,43 +57,44 @@ type PreviewResp = {
 };
 
 const card =
-  "rounded-2xl border border-line bg-white p-4 shadow-sm";
+  "rounded-2xl border border-line bg-surface p-4 shadow-soft";
 const inputCls =
   "rounded-lg border border-line bg-fill p-2 text-sm text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20";
 
 const LANG_OPTIONS_ART = ["中文", "English", "日本語"] as const;
 const NOTE_PAGE = 30;
 const NOTEBOOK_STATS_PAGE = 500;
+
 const NOTEBOOK_CARD_THEMES = [
   {
-    card: "border-sky-200/80 bg-gradient-to-br from-sky-50 via-white to-cyan-100/60",
-    iconWrap: "bg-sky-100 text-sky-700",
-    chip: "bg-sky-100/80 text-sky-800"
+    card: "border-info/35 bg-gradient-to-br from-info/[0.08] via-surface to-info/[0.15]",
+    iconWrap: "bg-info-soft text-info-ink",
+    chip: "bg-info-soft/90 text-info-ink"
   },
   {
-    card: "border-violet-200/80 bg-gradient-to-br from-violet-50 via-white to-fuchsia-100/60",
-    iconWrap: "bg-violet-100 text-violet-700",
-    chip: "bg-violet-100/80 text-violet-800"
+    card: "border-brand/35 bg-gradient-to-br from-brand/[0.08] via-surface to-brand/[0.15]",
+    iconWrap: "bg-brand/15 text-brand",
+    chip: "bg-brand/12 text-brand"
   },
   {
-    card: "border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-lime-100/60",
-    iconWrap: "bg-emerald-100 text-emerald-700",
-    chip: "bg-emerald-100/80 text-emerald-800"
+    card: "border-success/35 bg-gradient-to-br from-success/[0.08] via-surface to-success/[0.15]",
+    iconWrap: "bg-success-soft text-success-ink",
+    chip: "bg-success-soft/90 text-success-ink"
   },
   {
-    card: "border-amber-200/80 bg-gradient-to-br from-amber-50 via-white to-orange-100/60",
-    iconWrap: "bg-amber-100 text-amber-700",
-    chip: "bg-amber-100/80 text-amber-800"
+    card: "border-warning/35 bg-gradient-to-br from-warning/[0.08] via-surface to-warning/[0.15]",
+    iconWrap: "bg-warning-soft text-warning-ink",
+    chip: "bg-warning-soft/90 text-warning-ink"
   },
   {
-    card: "border-rose-200/80 bg-gradient-to-br from-rose-50 via-white to-pink-100/60",
-    iconWrap: "bg-rose-100 text-rose-700",
-    chip: "bg-rose-100/80 text-rose-800"
+    card: "border-danger/35 bg-gradient-to-br from-danger/[0.08] via-surface to-danger/[0.12]",
+    iconWrap: "bg-danger-soft text-danger-ink",
+    chip: "bg-danger-soft/90 text-danger-ink"
   },
   {
-    card: "border-indigo-200/80 bg-gradient-to-br from-indigo-50 via-white to-blue-100/60",
-    iconWrap: "bg-indigo-100 text-indigo-700",
-    chip: "bg-indigo-100/80 text-indigo-800"
+    card: "border-cta/35 bg-gradient-to-br from-cta/[0.08] via-surface to-cta/[0.15]",
+    iconWrap: "bg-cta/15 text-cta",
+    chip: "bg-cta/12 text-cta"
   }
 ] as const;
 const NOTEBOOK_ICONS = ["📘", "📙", "🗂️", "🧠", "🧪", "🪄", "🛰️", "📝"] as const;
@@ -147,14 +156,22 @@ function FreshNoteSparkleIcon({ className }: { className?: string }) {
 export default function NotesPage() {
   const { user, phone, getAuthHeaders } = useAuth();
   const noteRefCap = useMemo(() => maxNotesForReferencePlan(String(user?.plan)), [user?.plan]);
-  const createdByPhone = useMemo(() => String(user?.phone || phone || "").trim(), [user?.phone, phone]);
+  const createdByPhone = useMemo(() => {
+    const uid = typeof user?.user_id === "string" ? user.user_id.trim() : "";
+    if (uid) return uid;
+    return String(user?.phone || user?.username || user?.email || phone || "").trim();
+  }, [user?.user_id, user?.phone, user?.username, user?.email, phone]);
 
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [notebooks, setNotebooks] = useState<string[]>([]);
+  /** 避免首屏 notebooks=[] 时误判为「用户没有任何笔记本」 */
+  const [notebooksReady, setNotebooksReady] = useState(false);
   const [notebookVisualByName, setNotebookVisualByName] = useState<Record<string, NotebookVisual>>({});
   const [notebookMetaByName, setNotebookMetaByName] = useState<Record<string, NotebookMeta>>({});
   const [selectedNotebook, setSelectedNotebook] = useState("");
   const [hubView, setHubView] = useState(true);
+  /** 用户主动回到笔记本卡片列表时为 true，避免再次自动进入工作台 */
+  const userPrefersNotebookHubRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [newNotebookName, setNewNotebookName] = useState("");
@@ -249,6 +266,14 @@ export default function NotesPage() {
   const [artChars, setArtChars] = useState(2000);
   const [artCharsInput, setArtCharsInput] = useState("2000");
   const [artText, setArtText] = useState("");
+  /** 右侧资料区底部输入：带入播客/文章，不在此自动扩写全文 */
+  const [notesStudioPrompt, setNotesStudioPrompt] = useState("");
+  const [notesAskQuestion, setNotesAskQuestion] = useState("");
+  const [notesAskAnswer, setNotesAskAnswer] = useState("");
+  const [notesAskBusy, setNotesAskBusy] = useState(false);
+  const [notesAskError, setNotesAskError] = useState("");
+  const [sourcesPanelCollapsed, setSourcesPanelCollapsed] = useState(false);
+  const [studioPanelCollapsed, setStudioPanelCollapsed] = useState(false);
 
   useEffect(() => {
     setArtCharsInput(String(artChars));
@@ -316,11 +341,17 @@ export default function NotesPage() {
     return m;
   }, [notes]);
 
-  /** 仅本页（notes-podcast-studio 项目）产出的成片与文章 */
-  const notesStudioWorks = useMemo(
-    () => podcastWorks.filter((w) => w.projectName === NOTES_PODCAST_PROJECT_NAME),
-    [podcastWorks]
-  );
+  /** 当前笔记本下、且仍绑定该笔记本的作品（删除笔记本后进回收站再恢复的不再出现于此） */
+  const notesStudioWorks = useMemo(() => {
+    const nb = selectedNotebook.trim();
+    return podcastWorks.filter((w) => {
+      if (w.projectName !== NOTES_PODCAST_PROJECT_NAME) return false;
+      if (String(w.type || "") === "note_rag_index") return false;
+      if (w.notesNotebookStudioDetached) return false;
+      if (!nb) return false;
+      return String(w.notesSourceNotebook || "").trim() === nb;
+    });
+  }, [podcastWorks, selectedNotebook]);
 
   /** 与 orchestrator list_notebooks 排序一致（zh-CN 字典序） */
   const mergeNotebookName = useCallback((list: string[], name: string) => {
@@ -336,6 +367,8 @@ export default function NotesPage() {
       }
     } catch {
       // ignore
+    } finally {
+      setNotebooksReady(true);
     }
   }, [getAuthHeaders]);
 
@@ -393,16 +426,55 @@ export default function NotesPage() {
   }, [getAuthHeaders]);
 
   useEffect(() => {
+    if (!notebooksReady) return;
     if (notebooks.length === 0) {
       setSelectedNotebook("");
-      setHubView(true);
+      setHubView(false);
       return;
     }
     if (selectedNotebook && !notebooks.includes(selectedNotebook)) {
+      userPrefersNotebookHubRef.current = true;
       setSelectedNotebook(notebooks[0] ?? "");
       setHubView(true);
     }
-  }, [notebooks, selectedNotebook]);
+  }, [notebooks, selectedNotebook, notebooksReady]);
+
+  useEffect(() => {
+    if (!notebooksReady) return;
+    if (userPrefersNotebookHubRef.current) return;
+    if (notebooks.length === 0) return;
+    if (!hubView) return;
+    try {
+      if (new URLSearchParams(typeof window !== "undefined" ? window.location.search : "").get("note")) return;
+    } catch {
+      // ignore
+    }
+    const name = pickNotebookForWorkbench(notebooks);
+    if (!name) return;
+    setSelectedNotebook(name);
+    setHubView(false);
+    setError("");
+  }, [notebooks, hubView, notebooksReady]);
+
+  useEffect(() => {
+    const onNavWorkbench = () => {
+      if (!notebooksReady) return;
+      if (notebooks.length === 0) {
+        setHubView(false);
+        setError("");
+        return;
+      }
+      userPrefersNotebookHubRef.current = false;
+      const name = pickNotebookForWorkbench(notebooks);
+      if (!name) return;
+      writeLastNotebookName(name);
+      setSelectedNotebook(name);
+      setHubView(false);
+      setError("");
+    };
+    window.addEventListener(NOTES_NAV_WORKBENCH_EVENT, onNavWorkbench);
+    return () => window.removeEventListener(NOTES_NAV_WORKBENCH_EVENT, onNavWorkbench);
+  }, [notebooks, notebooksReady]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -490,7 +562,7 @@ export default function NotesPage() {
       const lang = String(parsed.script_language || "").trim();
       if (lang) setArtLang(lang);
       const chars = Number(parsed.script_target_chars || 0);
-      if (Number.isFinite(chars) && chars >= 200 && chars <= 9999) {
+      if (Number.isFinite(chars) && chars >= 200 && chars <= 50000) {
         setArtChars(Math.round(chars));
         setArtCharsInput(String(Math.round(chars)));
       }
@@ -549,8 +621,11 @@ export default function NotesPage() {
   }, [loadNotes, hubView, selectedNotebook]);
 
   useEffect(() => {
-    if (!hubView && !selectedNotebook.trim()) setHubView(true);
-  }, [hubView, selectedNotebook]);
+    if (!notebooksReady) return;
+    if (!hubView && !selectedNotebook.trim() && notebooks.length > 0) {
+      setHubView(true);
+    }
+  }, [hubView, selectedNotebook, notebooks.length, notebooksReady]);
 
   useEffect(() => {
     setDraftSelectedNoteIds([]);
@@ -795,7 +870,7 @@ export default function NotesPage() {
       const status = String(terminal.status || "");
       const err = String(terminal.error_message || "");
       if (status === "succeeded") {
-        setDraftMessage(`生成完成（${jobId.slice(0, 8)}…）。可在侧栏「创作记录」或右侧「笔记播客作品」里查看。`);
+        setDraftMessage(`生成完成（${jobId.slice(0, 8)}…）。可在侧栏「创作记录」或右侧「笔记本作品」里查看。`);
       } else {
         setDraftMessage(`处理结果：${status}${err ? ` — ${err}` : ""}`);
       }
@@ -858,7 +933,10 @@ export default function NotesPage() {
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "创建笔记本失败"));
+      writeLastNotebookName(name);
+      userPrefersNotebookHubRef.current = false;
       setSelectedNotebook(name);
+      setHubView(false);
       setNewNotebookName("");
       setShowNotebookModal(false);
       setError("");
@@ -904,7 +982,10 @@ export default function NotesPage() {
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "重命名失败"));
-      if (selectedNotebook === oldN) setSelectedNotebook(newN);
+      if (selectedNotebook === oldN) {
+        setSelectedNotebook(newN);
+        writeLastNotebookName(newN);
+      }
       setShowRenameNotebook(false);
       await loadNotebooks();
       await loadNotebookMeta();
@@ -978,6 +1059,7 @@ export default function NotesPage() {
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "删除失败"));
       if (selectedNotebook === target) {
+        userPrefersNotebookHubRef.current = true;
         setSelectedNotebook("");
         setHubView(true);
       }
@@ -1027,12 +1109,78 @@ export default function NotesPage() {
     setDraftSelectedNoteIds((prev) => {
       if (prev.includes(noteId)) return prev.filter((x) => x !== noteId);
       if (prev.length >= noteRefCap) {
-        setError(`当前套餐最多勾选 ${noteRefCap} 本笔记作为资料（基础 1 / Pro 5 / Max 10）`);
+        setError(`当前套餐最多勾选 ${noteRefCap} 本笔记作为资料（Free 1 / Basic 3 / Pro 6 / Max 12）`);
         return prev;
       }
       setError("");
       return [...prev, noteId];
     });
+  }
+
+  function toggleSelectAllOnPage() {
+    const pageIds = notesSorted.map((n) => n.noteId);
+    if (pageIds.length === 0) return;
+    const allOn = pageIds.every((id) => draftSelectedNoteIds.includes(id));
+    if (allOn) {
+      setDraftSelectedNoteIds((prev) => prev.filter((id) => !pageIds.includes(id)));
+      return;
+    }
+    setDraftSelectedNoteIds((prev) => {
+      const next = [...prev];
+      for (const id of pageIds) {
+        if (next.length >= noteRefCap) {
+          setError(`当前套餐最多勾选 ${noteRefCap} 本笔记作为资料（Free 1 / Basic 3 / Pro 6 / Max 12）`);
+          break;
+        }
+        if (!next.includes(id)) next.push(id);
+      }
+      if (next.length > prev.length) setError("");
+      return next;
+    });
+  }
+
+  async function submitNotesAsk() {
+    const nb = selectedNotebook.trim();
+    if (!nb) {
+      setNotesAskError("请先进入某一笔记本");
+      return;
+    }
+    if (draftSelectedNoteIds.length === 0) {
+      setNotesAskError("请先在「来源」中勾选至少一条笔记");
+      return;
+    }
+    const q = notesAskQuestion.trim();
+    if (!q) {
+      setNotesAskError("请输入要问资料的问题");
+      return;
+    }
+    setNotesAskError("");
+    setNotesAskBusy(true);
+    setNotesAskAnswer("");
+    try {
+      const res = await fetch("/api/notes/ask", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          notebook: nb,
+          note_ids: draftSelectedNoteIds,
+          question: q
+        })
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        answer?: string;
+        error?: string;
+        detail?: unknown;
+      };
+      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "问答失败"));
+      setNotesAskAnswer(String(data.answer || "").trim());
+    } catch (err) {
+      setNotesAskError(String(err instanceof Error ? err.message : err));
+    } finally {
+      setNotesAskBusy(false);
+    }
   }
 
   async function submitArticleDraft() {
@@ -1059,14 +1207,15 @@ export default function NotesPage() {
         created_by: createdByPhone || undefined,
         payload: {
           text: body,
-          script_target_chars: Math.min(9999, Math.max(200, artChars)),
+          script_target_chars: Math.min(50000, Math.max(200, artChars)),
           notes_notebook: selectedNotebook.trim(),
           ...buildReferenceJobFields({
             urlListText: "",
             selectedNoteIds: draftSelectedNoteIds,
+            selectedNoteTitles: draftSelectedNoteIds.map((id) => (noteTitleById[id] || "").trim()),
             referenceExtra: "",
             useRag: true,
-            ragMaxChars: 28_000,
+            ragMaxChars: 56_000,
             referenceRagMode: "truncate" as ReferenceRagMode
           }),
           script_style: "简洁清晰，重点突出",
@@ -1075,7 +1224,8 @@ export default function NotesPage() {
           speaker1_persona: "主持人",
           speaker2_persona: "分析师",
           script_constraints: "",
-          output_mode: "article"
+          output_mode: "article",
+          generate_cover: false
         }
       });
       rememberJobId(data.id);
@@ -1173,6 +1323,8 @@ export default function NotesPage() {
   }, [previewText, previewKw]);
 
   function openNotebook(name: string) {
+    userPrefersNotebookHubRef.current = false;
+    writeLastNotebookName(name);
     setSelectedNotebook(name);
     setHubView(false);
     setError("");
@@ -1184,7 +1336,7 @@ export default function NotesPage() {
       return;
     }
     if (draftSelectedNoteIds.length === 0) {
-      setError("生成播客：请先在笔记列表中勾选至少一条笔记");
+      setError("生成播客：请先在「来源」中勾选至少一条笔记");
       return;
     }
     setError("");
@@ -1197,7 +1349,7 @@ export default function NotesPage() {
       return;
     }
     if (draftSelectedNoteIds.length === 0) {
-      setError("生成文章：请先在笔记列表中勾选至少一条笔记");
+      setError("生成文章：请先在「来源」中勾选至少一条笔记");
       return;
     }
     setError("");
@@ -1205,14 +1357,18 @@ export default function NotesPage() {
     setArtKind("custom");
     setArtLang("中文");
     setArtChars(2000);
-    setArtText("");
     setShowArticleModal(true);
   }
 
   function pickArticleKind(k: ArtKindKey) {
     setArtKind(k);
-    if (k === "custom") setArtText("");
-    else setArtText(ART_KIND_PRESETS[k].textPrefix);
+    const extra = notesStudioPrompt.trim();
+    if (k === "custom") {
+      setArtText(extra || "");
+    } else {
+      const prefix = ART_KIND_PRESETS[k].textPrefix;
+      setArtText(extra ? `${prefix}\n\n${extra}` : prefix);
+    }
     setArticleModalStep("form");
   }
 
@@ -1222,14 +1378,10 @@ export default function NotesPage() {
       setArtCharsInput(String(artChars));
       return;
     }
-    const clamped = Math.min(9999, Math.max(200, Math.round(parsed)));
+    const clamped = Math.min(50000, Math.max(200, Math.round(parsed)));
     setArtChars(clamped);
     setArtCharsInput(String(clamped));
   }
-
-  const modeCard =
-    "flex min-h-[5.5rem] flex-col justify-center rounded-xl border p-4 text-left transition-colors " +
-    "border-line bg-fill/80 hover:border-brand/40";
 
   const podcastEtaMinutes =
     podcastBusy || podcastProgressPct > 0
@@ -1241,15 +1393,15 @@ export default function NotesPage() {
   const showPodcastTaskPanel = podcastBusy || podcastPhase.length > 0;
 
   return (
-    <main className="mx-auto min-h-0 w-full max-w-[min(100%,1800px)] px-3 pb-10 sm:px-4">
-      <div className="mb-6 text-center">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">笔记播客</h1>
-        <p className="mt-2 text-sm text-muted">
-          每一个想法，都自带频率。输入文稿，此刻，全世界都在听你
-        </p>
-      </div>
-
-      {error ? <p className="mb-4 text-sm text-rose-600">{error}</p> : null}
+    <main
+      data-notes-workbench={hubView ? undefined : ""}
+      className={
+        hubView
+          ? "mx-auto min-h-0 w-full max-w-[min(100%,1800px)] px-3 pb-10 sm:px-4"
+          : "min-h-0 w-full max-w-none pb-10"
+      }
+    >
+      {error ? <p className="mb-4 text-sm text-danger-ink">{error}</p> : null}
 
       {/* 在笔记本列表页无法看到右侧「我的作品」时，仍显示文章/底稿生成日志（如页面恢复未完成 job） */}
       {hubView && draftMessage ? (
@@ -1257,7 +1409,7 @@ export default function NotesPage() {
           className={`mb-4 rounded-xl border px-3 py-2 text-xs ${
             draftBusy
               ? "border-brand/25 bg-fill/90 text-brand"
-              : "border-emerald-200/80 bg-emerald-50/80 text-emerald-900"
+              : "border-success/35 bg-success-soft/80 text-success-ink"
           }`}
           role="status"
           aria-live="polite"
@@ -1268,10 +1420,30 @@ export default function NotesPage() {
 
       {hubView ? (
         <section className={card}>
-          <h2 className="text-base font-semibold text-ink">笔记本</h2>
-          <p className="mt-1 text-xs text-muted">点击加号新建你的笔记本，上传笔记。</p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base font-semibold text-ink">笔记本</h2>
+            </div>
+            {notebooks.length === 0 ? (
+              <button
+                type="button"
+                className="shrink-0 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-brand-foreground shadow-soft transition-opacity hover:opacity-95"
+                onClick={() => {
+                  setNotebookModalError("");
+                  setNewNotebookName("");
+                  setShowNotebookModal(true);
+                }}
+              >
+                新建笔记本
+              </button>
+            ) : null}
+          </div>
           {notebooks.length === 0 ? (
-            <p className="mt-3 text-sm text-muted">暂无笔记本，请先点下方「新建笔记本」添加。</p>
+            <EmptyState
+              title="还没有笔记本"
+              description="新建笔记本 → 添加资料 → 右侧提问或生成。"
+              className="mt-4 border-dashed border-line bg-fill/40 py-8"
+            />
           ) : null}
           <div className="mt-4 flex gap-3 overflow-x-auto pb-2">
             <button
@@ -1296,7 +1468,7 @@ export default function NotesPage() {
               return (
                 <div
                   key={nb}
-                  className={`relative flex min-h-[170px] min-w-[188px] max-w-[240px] shrink-0 flex-col rounded-2xl border p-3 shadow-sm ${visual.theme.card}`}
+                  className={`relative flex min-h-[170px] min-w-[188px] max-w-[240px] shrink-0 flex-col rounded-2xl border p-3 shadow-soft ${visual.theme.card}`}
                 >
                 <div className="absolute right-2 top-2">
                   <span className="relative flex" data-notebook-card-overflow-menu>
@@ -1310,7 +1482,7 @@ export default function NotesPage() {
                       ⋯
                     </button>
                     {notebookCardMenu === nb ? (
-                      <div className="absolute right-0 top-full z-20 mt-0.5 min-w-[7rem] rounded-md border border-line bg-white py-0.5 text-[11px] shadow-lg">
+                      <div className="absolute right-0 top-full z-20 mt-0.5 min-w-[7rem] rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card">
                         <button
                           type="button"
                           className="block w-full px-2 py-1.5 text-left hover:bg-fill"
@@ -1325,7 +1497,7 @@ export default function NotesPage() {
                         </button>
                         <button
                           type="button"
-                          className="block w-full px-2 py-1.5 text-left text-rose-600 hover:bg-rose-50"
+                          className="block w-full px-2 py-1.5 text-left text-danger-ink hover:bg-danger-soft"
                           onClick={() => {
                             setDeleteNotebookTarget(nb);
                             setDeleteNotebookConfirm(true);
@@ -1352,7 +1524,7 @@ export default function NotesPage() {
                     </span>
                     <p className="mt-2 line-clamp-2 text-sm font-semibold text-ink">{nb}</p>
                   </div>
-                  <div className="mt-3 space-y-1.5 text-[11px] text-slate-600">
+                  <div className="mt-3 space-y-1.5 text-[11px] text-muted">
                     <p>创建时间：{formatDisplayDate(meta?.createdAt)}</p>
                     <div className="flex flex-wrap gap-1.5">
                       <span className={`rounded-full px-2 py-0.5 ${visual.theme.chip}`}>
@@ -1362,7 +1534,6 @@ export default function NotesPage() {
                         笔记 {meta?.noteCount ?? 0}
                       </span>
                     </div>
-                    <p className="text-muted">点击进入</p>
                   </div>
                 </button>
               </div>
@@ -1372,69 +1543,221 @@ export default function NotesPage() {
         </section>
       ) : (
         <>
-          <div className="mb-4">
+          <div
+            className={[
+              "mb-4 flex min-w-0 items-center gap-2",
+              sourcesPanelCollapsed
+                ? "w-full"
+                : "w-full lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
+            ].join(" ")}
+          >
             <button
               type="button"
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-white text-lg text-ink hover:bg-fill"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-lg text-ink hover:bg-fill"
               aria-label="返回笔记本列表"
               title="返回笔记本列表"
-              onClick={() => setHubView(true)}
+              onClick={() => {
+                userPrefersNotebookHubRef.current = true;
+                setHubView(true);
+              }}
             >
               ←
             </button>
+            {notebooks.length >= 1 ? (
+              <div className="min-w-0 flex-1">
+                <select
+                  className={`block w-full ${inputCls}`}
+                  value={selectedNotebook}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "__new_notebook__") {
+                      setNotebookModalError("");
+                      setNewNotebookName("");
+                      setShowNotebookModal(true);
+                      return;
+                    }
+                    openNotebook(v);
+                  }}
+                  aria-label="筛选并切换笔记本，可选新建笔记本"
+                >
+                  {notebooks.map((nb) => (
+                    <option key={nb} value={nb}>
+                      {nb}
+                    </option>
+                  ))}
+                  <option value="__new_notebook__">+ 新建笔记本</option>
+                </select>
+              </div>
+            ) : selectedNotebook.trim() ? (
+              <h1 className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight text-ink" title={selectedNotebook}>
+                {selectedNotebook}
+              </h1>
+            ) : (
+              <button
+                type="button"
+                className={`min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm font-semibold text-brand ring-1 ring-brand/30 transition-colors hover:bg-brand/5`}
+                onClick={() => {
+                  setNotebookModalError("");
+                  setNewNotebookName("");
+                  setShowNotebookModal(true);
+                }}
+              >
+                + 新建笔记本
+              </button>
+            )}
           </div>
 
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch lg:gap-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-3">
             <section
-              className={`${card} flex min-h-[min(100vh-12rem,920px)] flex-col lg:w-1/4 lg:max-w-[25%] lg:shrink-0`}
+              className={`flex shrink-0 flex-col rounded-3xl border border-line/70 bg-fill/15 shadow-soft ${
+                sourcesPanelCollapsed
+                  ? "w-full max-lg:min-h-0 lg:min-h-[min(100vh-12rem,920px)] lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
+                  : "min-h-[min(100vh-12rem,920px)] w-full p-4 lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
+              }`}
+              aria-label="来源"
             >
-              <div className="flex shrink-0 items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h2 className="text-base font-semibold text-ink">笔记本内容</h2>
+              {sourcesPanelCollapsed ? (
+                <button
+                  type="button"
+                  className="flex w-full flex-1 flex-row items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-surface/60 lg:min-h-0 lg:flex-col lg:items-center lg:justify-start lg:gap-5 lg:px-1 lg:py-8"
+                  aria-label="向右展开来源"
+                  title="展开来源"
+                  onClick={() => setSourcesPanelCollapsed(false)}
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    className="shrink-0 text-muted"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    aria-hidden
+                  >
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                    <path d="M9 4v16" />
+                  </svg>
+                  <span className="text-sm font-semibold text-ink lg:text-xs lg:[writing-mode:vertical-rl]">来源</span>
+                  <svg
+                    width="18"
+                    height="18"
+                    className="shrink-0 text-ink"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M9 6l6 6-6 6" />
+                  </svg>
+                </button>
+              ) : (
+                <>
+                  {notebooks.length === 0 ? (
+                    <div className="mb-3 shrink-0 rounded-xl border border-brand/35 bg-gradient-to-br from-brand/[0.08] to-brand/[0.06] px-3 py-3 shadow-soft ring-1 ring-brand/10">
+                      <p className="text-xs font-semibold text-ink">新建笔记本</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-muted">创建后可添加资料并在右侧使用。</p>
+                      <button
+                        type="button"
+                        className="mt-2.5 w-full rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-foreground shadow-soft transition-opacity hover:opacity-95"
+                        onClick={() => {
+                          setNotebookModalError("");
+                          setNewNotebookName("");
+                          setShowNotebookModal(true);
+                        }}
+                      >
+                        新建笔记本
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-3">
+                    <h2 className="text-lg font-semibold tracking-tight text-ink">来源</h2>
+                    <button
+                      type="button"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface/80 hover:text-ink"
+                      aria-expanded
+                      aria-label="收起来源（向左折叠）"
+                      title="向左收起"
+                      onClick={() => setSourcesPanelCollapsed(true)}
+                    >
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden
+                      >
+                        <path d="M15 18l-6-6 6-6" />
+                      </svg>
+                    </button>
                 </div>
                 <button
                   type="button"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-fill text-xl font-medium text-ink shadow-sm hover:bg-fill"
-                  aria-label="添加笔记"
-                  title="添加笔记"
+                  disabled={notebooks.length === 0}
+                  title={notebooks.length === 0 ? "请先新建笔记本" : undefined}
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line/90 bg-surface py-2.5 text-sm font-medium text-ink shadow-soft transition-colors hover:border-brand/35 hover:bg-fill/50 disabled:cursor-not-allowed disabled:opacity-45"
                   onClick={() => {
                     setImportUrlError("");
                     setShowAddNoteModal(true);
                   }}
                 >
-                  +
+                  <span className="text-base leading-none text-brand">+</span>
+                  添加笔记
                 </button>
-              </div>
 
-              <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-xs font-medium text-muted">笔记</h3>
-                  <span className="text-right text-[11px] leading-snug text-muted">
-                    资料上限 {draftSelectedNoteIds.length}/{noteRefCap} · 本页 {stats.total} 条
-                    {hasMoreNotes ? " · 仍有更多" : ""}
-                  </span>
-                </div>
-                {loading ? <p className="text-sm text-muted">加载中…</p> : null}
-                <div className="mt-2 space-y-2">
+                  <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-0.5">
+                <p className="text-[11px] leading-snug text-muted">
+                  {notebooks.length === 0
+                    ? "创建笔记本后即可添加资料。"
+                    : `资料 ${draftSelectedNoteIds.length}/${noteRefCap} · 本页 ${stats.total} 条${hasMoreNotes ? " · 仍有更多" : ""}`}
+                </p>
+                {notesSorted.length > 0 ? (
+                  <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink hover:bg-surface/70">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 accent-brand"
+                      checked={
+                        notesSorted.length > 0 && notesSorted.every((x) => draftSelectedNoteIds.includes(x.noteId))
+                      }
+                      onChange={() => toggleSelectAllOnPage()}
+                    />
+                    选择本页全部
+                  </label>
+                ) : null}
+                {loading ? <p className="mt-2 text-sm text-muted">加载中…</p> : null}
+                <div className="mt-2 space-y-1.5">
                   {notesSorted.map((n) => (
                     <div
                       key={n.noteId}
                       data-note-id={n.noteId}
-                      className="rounded-xl border border-line bg-fill/80 p-2.5"
+                      className="rounded-xl border border-line/80 bg-surface/95 p-2.5 shadow-soft"
                     >
                       <div className="flex items-start gap-2">
-                        <input
-                          type="checkbox"
-                          className="mt-1 h-4 w-4 shrink-0 accent-brand"
-                          checked={draftSelectedNoteIds.includes(n.noteId)}
-                          onChange={() => toggleDraftNote(n.noteId)}
-                        />
                         <div className="min-w-0 flex-1">
-                          <div className="flex min-w-0 items-center gap-1">
+                          <div className="flex min-w-0 flex-wrap items-center gap-1">
+                            <span className="shrink-0 rounded bg-fill px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
+                              {n.ext || "txt"}
+                            </span>
                             <p className="min-w-0 truncate text-sm font-medium text-ink">{n.title || n.noteId}</p>
+                            <span
+                              className={`shrink-0 rounded px-1 py-0 text-[9px] font-medium ${
+                                n.sourceReady === false
+                                  ? "bg-warning-soft text-warning-ink"
+                                  : "bg-success-soft text-success-ink"
+                              }`}
+                              title={n.sourceHint || (n.sourceReady === false ? "正文过短或未抽取" : "可作资料摘录")}
+                            >
+                              {n.sourceReady === false ? "待充实" : "可摘录"}
+                            </span>
                             {freshNoteIds.includes(n.noteId) ? (
                               <span
-                                className="inline-flex shrink-0 text-amber-500"
+                                className="inline-flex shrink-0 text-warning"
                                 title="刚加入，可作播客资料"
                                 role="img"
                                 aria-label="刚加入的资料"
@@ -1445,7 +1768,8 @@ export default function NotesPage() {
                           </div>
                           <p className="mt-0.5 text-[10px] text-muted">{(n.ext || "-") + " · " + (n.createdAt || "-")}</p>
                         </div>
-                        <div className="relative shrink-0" data-note-overflow-menu>
+                        <div className="flex shrink-0 items-start gap-0.5">
+                          <div className="relative" data-note-overflow-menu>
                           <button
                             type="button"
                             className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-track"
@@ -1456,7 +1780,7 @@ export default function NotesPage() {
                             ⋯
                           </button>
                           {noteMenuOpenId === n.noteId ? (
-                            <div className="absolute right-0 top-full z-10 mt-0.5 min-w-[7rem] rounded-md border border-line bg-white py-0.5 text-[11px] shadow-lg">
+                            <div className="absolute right-0 top-full z-10 mt-0.5 min-w-[7rem] rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card">
                               <button
                                 type="button"
                                 className="block w-full px-2 py-1.5 text-left hover:bg-fill"
@@ -1481,7 +1805,7 @@ export default function NotesPage() {
                               </button>
                               <button
                                 type="button"
-                                className="block w-full px-2 py-1.5 text-left text-rose-600 hover:bg-rose-50"
+                                className="block w-full px-2 py-1.5 text-left text-danger-ink hover:bg-danger-soft"
                                 onClick={() => {
                                   setDeleteNoteId(n.noteId);
                                   setRenameNoteId(null);
@@ -1492,6 +1816,14 @@ export default function NotesPage() {
                               </button>
                             </div>
                           ) : null}
+                          </div>
+                          <input
+                            type="checkbox"
+                            className="mt-1.5 h-4 w-4 accent-brand"
+                            checked={draftSelectedNoteIds.includes(n.noteId)}
+                            onChange={() => toggleDraftNote(n.noteId)}
+                            aria-label={`将「${n.title || n.noteId}」纳入资料`}
+                          />
                         </div>
                       </div>
                       {renameNoteId === n.noteId ? (
@@ -1517,7 +1849,7 @@ export default function NotesPage() {
                             danger
                             onConfirm={() => void confirmDeleteNote(n.noteId)}
                             onCancel={() => setDeleteNoteId(null)}
-                            className="border-rose-200/50 bg-rose-950/30"
+                            className="border-danger/35 bg-danger-soft"
                           />
                         </div>
                       ) : null}
@@ -1525,8 +1857,8 @@ export default function NotesPage() {
                   ))}
                   {!loading && notesSorted.length === 0 ? (
                     <EmptyState
-                      title="暂无笔记"
-                      description="使用右上角「+」添加文件或文本，或从 URL 导入。"
+                      title="这个笔记本里还没有笔记"
+                      description="「添加笔记」导入；勾选纳入资料。"
                       className="mt-2 border-none bg-transparent py-8"
                     />
                   ) : null}
@@ -1553,29 +1885,206 @@ export default function NotesPage() {
                   ) : null}
                 </div>
               </div>
+                </>
+              )}
             </section>
 
-            <div className="flex min-w-0 flex-1 flex-col gap-4 lg:w-3/4">
-              <section className={card}>
-                <h2 className="text-base font-semibold text-ink">工作坊</h2>
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <button type="button" className={modeCard} onClick={() => openPodcastFlow()}>
-                    <span className="text-sm font-semibold text-ink">生成播客</span>
+            <section
+              className="flex min-h-[min(100vh-12rem,920px)] min-w-0 flex-1 flex-col rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft"
+              role="region"
+              aria-label="对话"
+            >
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-3">
+                <h2 className="text-lg font-semibold tracking-tight text-ink">对话</h2>
+                <span className="text-muted opacity-60" aria-hidden>
+                  ⋮
+                </span>
+              </div>
+              <p className="mt-2 shrink-0 text-xs text-muted">勾选左侧资料后提问</p>
+
+              <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+                {notesAskError ? (
+                  <p className="shrink-0 text-xs text-danger-ink" role="alert">
+                    {notesAskError}
+                  </p>
+                ) : null}
+                <div className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-xl border border-line/80 bg-surface/80 p-3.5">
+                  {notesAskAnswer ? (
+                    <NotesAskAnswerDisplay text={notesAskAnswer} />
+                  ) : (
+                    <p className="text-xs text-muted">勾选资料后提问</p>
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-row flex-wrap items-center justify-start gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openPodcastFlow()}
+                    className="inline-flex max-w-full flex-none flex-row items-center gap-1.5 rounded-xl border border-brand/35 bg-gradient-to-br from-brand/15 to-brand/[0.06] px-2.5 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98]"
+                  >
+                    <span
+                      className="inline-block origin-left text-sm leading-none scale-x-150"
+                      aria-hidden
+                    >
+                      🎧
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold leading-tight text-ink">音频</div>
+                      <div className="text-[9px] leading-tight text-brand/80">生成播客</div>
+                    </div>
                   </button>
-                  <button type="button" className={modeCard} onClick={() => openArticleFlow()}>
-                    <span className="text-sm font-semibold text-ink">生成文章</span>
+                  <button
+                    type="button"
+                    onClick={() => openArticleFlow()}
+                    className="inline-flex max-w-full flex-none flex-row items-center gap-1.5 rounded-xl border border-success/35 bg-gradient-to-br from-success-soft/90 to-success/[0.08] px-2.5 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98]"
+                  >
+                    <span
+                      className="inline-block origin-left text-sm leading-none scale-x-150"
+                      aria-hidden
+                    >
+                      📝
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold leading-tight text-ink">文章</div>
+                      <div className="text-[9px] leading-tight text-success-ink/80">生成长文</div>
+                    </div>
                   </button>
                 </div>
-              </section>
+                <div
+                  className={`flex shrink-0 items-end gap-2 rounded-2xl border border-line/90 px-3 py-2 shadow-soft ring-1 ring-line/60 ${
+                    draftSelectedNoteIds.length === 0
+                      ? "bg-fill/50"
+                      : "bg-surface"
+                  }`}
+                >
+                  <textarea
+                    className="max-h-32 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
+                    placeholder={
+                      draftSelectedNoteIds.length === 0 ? "请先在左侧「来源」中勾选资料…" : "向资料提问…"
+                    }
+                    value={notesAskQuestion}
+                    onChange={(e) => setNotesAskQuestion(e.target.value)}
+                    disabled={notesAskBusy || draftSelectedNoteIds.length === 0}
+                    aria-label={
+                      draftSelectedNoteIds.length === 0 ? "需先勾选资料后再向资料提问" : "向资料提问"
+                    }
+                    title={
+                      draftSelectedNoteIds.length === 0 ? "请先在左侧「来源」中勾选至少一条笔记" : undefined
+                    }
+                    rows={1}
+                  />
+                  <span className="mb-1 shrink-0 rounded-full bg-fill px-2 py-0.5 text-[10px] font-medium text-muted tabular-nums">
+                    {draftSelectedNoteIds.length} 条
+                  </span>
+                  <button
+                    type="button"
+                    className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-soft transition-opacity disabled:opacity-40"
+                    disabled={
+                      notesAskBusy ||
+                      draftSelectedNoteIds.length === 0 ||
+                      !notesAskQuestion.trim()
+                    }
+                    title={
+                      draftSelectedNoteIds.length === 0 ? "请先勾选资料" : "提问"
+                    }
+                    aria-label="发送提问"
+                    onClick={() => void submitNotesAsk()}
+                  >
+                    {notesAskBusy ? (
+                      <span className="text-xs">…</span>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path
+                          d="M5 12h14M13 8l6 6-6 6"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </section>
 
-              <section className={`${card} min-h-0 flex-1`}>
-              <h2 className="text-lg font-semibold text-ink">我的作品</h2>
+            <section
+              className={`flex shrink-0 flex-col rounded-3xl border border-line/70 bg-fill/15 shadow-soft ${
+                studioPanelCollapsed
+                  ? "w-full max-lg:min-h-0 lg:min-h-[min(100vh-12rem,920px)] lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
+                  : "min-h-[min(100vh-12rem,920px)] w-full p-4 lg:w-1/4 lg:max-w-[25%]"
+              }`}
+              aria-label="我的作品"
+            >
+              {studioPanelCollapsed ? (
+                <button
+                  type="button"
+                  className="flex w-full flex-1 flex-row items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-surface/60 lg:min-h-0 lg:flex-col lg:items-center lg:justify-start lg:gap-5 lg:px-1 lg:py-8"
+                  aria-label="向左展开我的作品"
+                  title="展开我的作品"
+                  onClick={() => setStudioPanelCollapsed(false)}
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    className="shrink-0 text-ink"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M15 18l-6-6 6-6" />
+                  </svg>
+                  <span className="text-sm font-semibold text-ink lg:text-[11px] lg:[writing-mode:vertical-rl]">我的作品</span>
+                  <svg
+                    width="20"
+                    height="20"
+                    className="shrink-0 text-muted"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    aria-hidden
+                  >
+                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                    <path d="M15 4v16" />
+                  </svg>
+                </button>
+              ) : (
+                <>
+                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-3">
+                    <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
+                    <button
+                      type="button"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface/80 hover:text-ink"
+                      aria-expanded
+                      aria-label="收起我的作品（向右折叠）"
+                      title="向右收起"
+                      onClick={() => setStudioPanelCollapsed(true)}
+                    >
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden
+                      >
+                        <path d="M9 6l6 6-6 6" />
+                      </svg>
+                    </button>
+                  </div>
               {draftMessage ? (
                 <div
-                  className={`mt-4 rounded-xl border px-3 py-2 text-xs ${
+                  className={`mt-3 rounded-xl border px-3 py-2 text-xs ${
                     draftBusy
                       ? "border-brand/25 bg-fill/90 text-brand"
-                      : "border-emerald-200/80 bg-emerald-50/80 text-emerald-900"
+                      : "border-success/35 bg-success-soft/80 text-success-ink"
                   }`}
                   role="status"
                   aria-live="polite"
@@ -1584,13 +2093,13 @@ export default function NotesPage() {
                 </div>
               ) : null}
               {showPodcastTaskPanel ? (
-                <div className="mt-4 rounded-2xl border border-brand/25 bg-fill/90 p-4 shadow-sm">
+                <div className="mt-3 rounded-2xl border border-brand/25 bg-fill/90 p-4 shadow-soft">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">生成进度</h3>
                     {podcastBusy ? (
                       <button
                         type="button"
-                        className="rounded-lg border border-rose-200 px-2 py-1 text-[11px] text-rose-700 hover:bg-rose-50"
+                        className="rounded-lg border border-danger/30 px-2 py-1 text-[11px] text-danger-ink hover:bg-danger-soft"
                         onClick={() => void stopPodcastGeneration()}
                       >
                         停止
@@ -1598,11 +2107,6 @@ export default function NotesPage() {
                     ) : null}
                   </div>
                   <p className="mt-2 text-sm text-ink">{podcastPhase || (podcastBusy ? "处理中…" : "—")}</p>
-                  {podcastBusy || podcastProgressPct > 0 ? (
-                    <p className="mt-1 text-[11px] leading-relaxed text-muted">
-                      阶段含：参考汇总 → 脚本生成 → 语音合成（含开场/结尾）→ 封面；长稿或网络素材会更久。
-                    </p>
-                  ) : null}
                   <div className="mt-3">
                     <div className="h-2.5 w-full overflow-hidden rounded-full bg-track/90">
                       <div
@@ -1623,7 +2127,7 @@ export default function NotesPage() {
                   </div>
                 </div>
               ) : null}
-              <div className="mt-6">
+                  <div className="mt-4 min-h-0 flex-1">
               <PodcastWorksGallery
                 works={notesStudioWorks}
                 loading={podcastWorksLoading}
@@ -1631,10 +2135,12 @@ export default function NotesPage() {
                 onDismissError={() => setPodcastWorksError("")}
                 onWorkDeleted={() => void fetchPodcastWorks()}
                 variant="notes_studio"
+                sidebarMaxItems={4}
               />
               </div>
+                </>
+              )}
             </section>
-            </div>
           </div>
         </>
       )}
@@ -1650,7 +2156,7 @@ export default function NotesPage() {
           }}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-line bg-white p-4 shadow-xl"
+            className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal"
             onPointerDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-2">
@@ -1666,7 +2172,6 @@ export default function NotesPage() {
                 关闭
               </button>
             </div>
-            <p className="mt-2 text-xs text-muted">从链接导入或上传本地文件，将保存到当前笔记本。</p>
             <div className="mt-4 space-y-2">
               <label className="block text-xs text-ink">
                 网页链接
@@ -1698,7 +2203,7 @@ export default function NotesPage() {
               </label>
               <button
                 type="button"
-                className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
+                className="w-full rounded-lg bg-mint px-3 py-2 text-sm text-mint-foreground shadow-soft hover:bg-mint/90 disabled:opacity-50"
                 disabled={importBusy}
                 onClick={() => void submitUrlImport()}
               >
@@ -1731,9 +2236,7 @@ export default function NotesPage() {
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-track" role="progressbar" aria-valuenow={uploadProgress} aria-valuemin={0} aria-valuemax={100}>
                     <div className="h-full bg-brand transition-all duration-150" style={{ width: `${uploadProgress}%` }} />
                   </div>
-                  <p className="text-[11px] text-muted">
-                    {uploadProgress < 100 ? "正在将文件传至服务器…" : "已完成传输，正在解析与保存…"}
-                  </p>
+                  <p className="text-[11px] text-muted">{uploadProgress < 100 ? "上传中…" : "处理中…"}</p>
                 </div>
               ) : null}
             </div>
@@ -1788,7 +2291,7 @@ export default function NotesPage() {
             setDeleteNotebookConfirm(false);
             setDeleteNotebookTarget(null);
           }}
-          className="border-rose-200/50 bg-rose-950/30"
+          className="border-danger/35 bg-danger-soft"
         />
       ) : null}
 
@@ -1803,19 +2306,18 @@ export default function NotesPage() {
           }}
         >
           <div
-            className="w-full max-w-lg rounded-2xl border border-line bg-white p-4 shadow-xl"
+            className="w-full max-w-lg rounded-2xl border border-line bg-surface p-4 shadow-modal"
             onPointerDown={(e) => e.stopPropagation()}
           >
             <h2 id="genre-title" className="text-base font-semibold text-ink">
               选择播客体裁
             </h2>
-            <p className="mt-1 text-xs text-muted">点选一种体裁后将直接打开参数配置（与主站 AI 播客同款）。</p>
             <div className="mt-4 grid grid-cols-2 gap-2">
               {(Object.keys(PODCAST_ROOM_PRESETS) as PodcastRoomPresetKey[]).map((k) => (
                 <button
                   key={k}
                   type="button"
-                  className="rounded-xl border border-line bg-fill/90 p-3 text-left transition-colors hover:border-brand/50 hover:bg-white"
+                  className="rounded-xl border border-line bg-fill/90 p-3 text-left transition-colors hover:border-brand/50 hover:bg-surface"
                   onClick={() => {
                     setPodcastRoomPresetKey(k);
                     setShowPodcastGenreModal(false);
@@ -1849,6 +2351,8 @@ export default function NotesPage() {
         noteTitleById={noteTitleById}
         presetKey={podcastRoomPresetKey}
         onPodcastJobCreated={onPodcastJobCreated}
+        externalPrompt={notesStudioPrompt}
+        onExternalPromptChange={setNotesStudioPrompt}
       />
 
       {showArticleModal ? (
@@ -1865,7 +2369,7 @@ export default function NotesPage() {
           }}
         >
           <div
-            className="max-h-[min(90vh,720px)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-xl"
+            className="max-h-[min(90vh,720px)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-4 shadow-modal"
             onPointerDown={(e) => e.stopPropagation()}
           >
             {articleModalStep === "pick" ? (
@@ -1873,13 +2377,12 @@ export default function NotesPage() {
                 <h2 id="article-modal-title" className="text-base font-semibold text-ink">
                   选择文章体裁
                 </h2>
-                <p className="mt-1 text-xs text-muted">点选体裁后进入参数与提词编辑。</p>
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   {(Object.keys(ART_KIND_PRESETS) as ArtKindKey[]).map((k) => (
                     <button
                       key={k}
                       type="button"
-                      className="rounded-xl border border-line bg-fill/90 p-3 text-left transition-colors hover:border-violet-400 hover:bg-white"
+                      className="rounded-xl border border-line bg-fill/90 p-3 text-left transition-colors hover:border-brand/50 hover:bg-surface"
                       onClick={() => pickArticleKind(k)}
                     >
                       <span className="text-sm font-semibold text-ink">{ART_KIND_PRESETS[k].label}</span>
@@ -1905,9 +2408,7 @@ export default function NotesPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h2 className="text-base font-semibold text-ink">生成文章</h2>
-                    <p className="mt-1 text-xs text-muted">
-                      体裁：{ART_KIND_PRESETS[artKind].label} · 可编辑 AI 提词
-                    </p>
+                    <p className="mt-1 text-xs text-muted">{ART_KIND_PRESETS[artKind].label}</p>
                   </div>
                   <button
                     type="button"
@@ -1933,11 +2434,11 @@ export default function NotesPage() {
                     </select>
                   </label>
                   <label className="block text-xs text-ink">
-                    目标字数（200–9999）
+                    目标字数（200–50000，实际以上限以套餐为准）
                     <input
                       type="number"
                       min={200}
-                      max={9999}
+                      max={50000}
                       className={`mt-1 block w-full ${inputCls}`}
                       value={artCharsInput}
                       onChange={(e) => setArtCharsInput(e.target.value)}
@@ -1976,7 +2477,7 @@ export default function NotesPage() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-lg bg-violet-600 px-3 py-2 text-sm text-white hover:bg-violet-500 disabled:opacity-50"
+                    className="rounded-lg bg-brand px-3 py-2 text-sm text-brand-foreground hover:bg-brand/90 disabled:opacity-50"
                     disabled={draftBusy}
                     onClick={() => void submitArticleDraft()}
                   >

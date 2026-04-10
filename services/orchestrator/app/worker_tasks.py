@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -23,7 +24,13 @@ from .provider_router import (
 )
 from .audio_mix import maybe_mix_podcast_bgm
 from .auth_bridge import user_info_for_phone
-from .reference_material import merge_reference_for_script
+from .entitlement_matrix import (
+    long_form_script_chars_cap,
+    normalize_script_target_input,
+    voice_clone_monthly_included,
+    voice_clone_payg_cents,
+)
+from .reference_material import effective_article_script_target_chars, merge_reference_for_script
 from .subscription_limits import max_note_refs_for_plan, tier_allows_ai_polish
 from .tts_pipeline import (
     dialogue_speaker_format_issues,
@@ -34,17 +41,82 @@ from .models import (
     add_artifact,
     append_cloned_voice_for_user_uuid,
     append_job_event,
+    count_succeeded_voice_clone_jobs_for_user_uuid,
     finalize_job_terminal_unless_cancelled,
     get_job,
+    media_billing_try_debit_estimated_minutes,
+    payg_restore_minutes_from_log,
+    phone_for_job_created_by,
     try_mark_job_running,
     update_job_status,
+    wallet_credit_cents,
+    wallet_try_debit_cents,
 )
-from .object_store import upload_bytes, upload_text
+from .object_store import presigned_get_url, upload_bytes, upload_text
 from .storage_paths import job_artifact_base, job_cover_object_key
+from .note_work_meta import snapshot_notes_source_titles
 
 logger = logging.getLogger(__name__)
 
 VOICE_CLONE_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _refund_media_wallet_job(phone: str, meta: dict[str, Any]) -> None:
+    """语音任务失败或取消后退回本次从钱包扣的分与按次分钟包。"""
+    p = (phone or "").strip()
+    if not p or not isinstance(meta, dict):
+        return
+    wc = int(meta.get("wallet_cents") or 0)
+    pr = meta.get("payg_restores")
+    if wc <= 0 and not (isinstance(pr, list) and pr):
+        return
+    if wc > 0:
+        wallet_credit_cents(p, wc)
+    if isinstance(pr, list) and pr:
+        payg_restore_minutes_from_log(p, pr)
+
+
+def _attach_result_audio_duration_sec(result: dict[str, Any]) -> None:
+    """从 result.audio_hex（MP3 hex）写入 audio_duration_sec，与订阅用量 / 扣费 used 统计口径一致。"""
+    try:
+        from .audio_mix import mp3_hex_duration_sec
+
+        d = mp3_hex_duration_sec(str(result.get("audio_hex") or ""))
+        if d is not None and d > 0:
+            result["audio_duration_sec"] = round(float(d), 2)
+    except Exception:
+        pass
+
+
+def _terminal_result_dict(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            j = json.loads(raw)
+            return j if isinstance(j, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _enrich_result_script_notes_meta(result: dict[str, Any], payload: dict[str, Any], script_body: str) -> None:
+    """写入全文字数与笔记本来源摘要，供作品列表卡片展示。"""
+    body = (script_body or "").strip()
+    if body:
+        result["script_char_count"] = len(body)
+    nb = str(payload.get("notes_notebook") or "").strip()
+    sn = payload.get("selected_note_ids")
+    n = sum(1 for x in (sn if isinstance(sn, list) else []) if isinstance(x, str) and str(x).strip())
+    if nb:
+        result["notes_source_notebook"] = nb
+    if n > 0:
+        result["notes_source_note_count"] = n
+    titles = snapshot_notes_source_titles(payload if isinstance(payload, dict) else {})
+    if titles:
+        result["notes_source_titles"] = titles
+
+
 _COVER_MAX_BYTES = 8 * 1024 * 1024
 
 
@@ -137,7 +209,7 @@ def _persist_cover_for_job(job_id: str, created_by: Any, cover_url: str) -> tupl
 
 
 def _max_note_refs_for_job(created_by: str | None) -> int:
-    phone = (created_by or "").strip()
+    phone = phone_for_job_created_by(created_by)
     if not phone:
         return 1
     try:
@@ -148,7 +220,7 @@ def _max_note_refs_for_job(created_by: str | None) -> int:
 
 
 def _subscription_tier_for_job(created_by: str | None) -> str:
-    phone = (created_by or "").strip()
+    phone = phone_for_job_created_by(created_by)
     if not phone:
         return "free"
     try:
@@ -208,6 +280,15 @@ def _make_script_delta_handler(job_id: str):
     return _on_delta
 
 
+def _payload_wants_generate_cover(payload: dict[str, Any], job_type: str) -> bool:
+    """文章 output_mode 默认不配图；显式 generate_cover=true 才生成。对话类保持原默认（未传则 True）。"""
+    om = str(payload.get("output_mode") or "").strip().lower()
+    jt = (job_type or "").strip().lower()
+    if om == "article" and jt in ("script_draft", "podcast_generate", "podcast"):
+        return bool(payload.get("generate_cover"))
+    return bool(payload.get("generate_cover", True))
+
+
 def run_ai_job(job_id: str) -> dict[str, Any]:
     if _guard_cancelled(job_id):
         return {"status": "cancelled"}
@@ -228,6 +309,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
         created_by = str(created_by)
     note_ref_cap = _max_note_refs_for_job(created_by)
     job_type = str(job.get("job_type") or "").strip()
+    logger.info("rq_ai_job_run job_id=%s job_type=%s queue=ai", job_id, job_type or "?")
     source_text = str(payload.get("text") or "").strip()
     source_url = str(payload.get("url") or "").strip()
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
@@ -239,11 +321,43 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             display_name = str(payload.get("display_name") or "").strip() or None
             if not audio_b64:
                 raise RuntimeError("缺少音频数据")
+            tier = _subscription_tier_for_job(created_by)
+            included = voice_clone_monthly_included(tier)
+            used = count_succeeded_voice_clone_jobs_for_user_uuid(created_by)
+            pay_cents = voice_clone_payg_cents()
+            need_pay = used >= included
+            clone_phone = phone_for_job_created_by(created_by) if need_pay else ""
+            debited = False
+            if need_pay:
+                if not clone_phone:
+                    raise RuntimeError(
+                        "套餐内克隆次数已用完，单次克隆需从钱包扣费，但未找到绑定手机号账户，请重新登录后重试"
+                    )
+                ok_debit, bal_after = wallet_try_debit_cents(clone_phone, pay_cents)
+                if not ok_debit:
+                    bal_show = max(0, bal_after) / 100.0 if bal_after >= 0 else 0.0
+                    raise RuntimeError(
+                        f"套餐内克隆次数已用完，单次克隆需 ¥{pay_cents / 100:.2f}，"
+                        f"钱包余额不足（当前约 ¥{bal_show:.2f}）"
+                    )
+                debited = True
+                append_job_event(
+                    job_id,
+                    "log",
+                    "套餐内克隆次数已用尽，已从钱包扣除单次克隆费用",
+                    {"cents": pay_cents, "monthly_included": included, "succeeded_this_month_before": used},
+                )
             append_job_event(job_id, "progress", "正在上传音频并克隆音色", {"progress": 60})
-            audio_bytes = base64.b64decode(audio_b64)
-            if len(audio_bytes) > VOICE_CLONE_MAX_BYTES:
-                raise RuntimeError("音频文件过大，最大支持 20MB")
-            out = clone_voice(audio_bytes=audio_bytes, filename=filename, display_name=display_name, api_key=api_key)
+            try:
+                audio_bytes = base64.b64decode(audio_b64)
+                if len(audio_bytes) > VOICE_CLONE_MAX_BYTES:
+                    raise RuntimeError("音频文件过大，最大支持 20MB")
+                out = clone_voice(audio_bytes=audio_bytes, filename=filename, display_name=display_name, api_key=api_key)
+            except Exception:
+                if debited and clone_phone:
+                    wallet_credit_cents(clone_phone, pay_cents)
+                    append_job_event(job_id, "log", "克隆未成功，已退回钱包扣款", {"cents": pay_cents})
+                raise
             result = {
                 "voice_id": out.get("voice_id"),
                 "display_name": display_name,
@@ -252,6 +366,9 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 "message": out.get("message"),
             }
             if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
+                if debited and clone_phone:
+                    wallet_credit_cents(clone_phone, pay_cents)
+                    append_job_event(job_id, "log", "任务已取消，已退回单次克隆扣款", {"cents": pay_cents})
                 append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
                 return {"status": "cancelled"}
             v_id = str(out.get("voice_id") or "").strip()
@@ -275,6 +392,8 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             return result
 
         if job_type in ("text_to_speech", "tts"):
+            from .media_wallet import MEDIA_USAGE_PERIOD_DAYS, estimate_spoken_minutes_tts
+
             _mini, _ = default_podcast_voice_ids()
             voice_id = str(payload.get("voice_id") or "").strip() or _mini
             if not source_text:
@@ -287,95 +406,167 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 or bool(str(payload.get("outro_text") or "").strip())
                 or want_polish
             )
-            append_job_event(job_id, "progress", "正在调用模型进行语音合成", {"progress": 60})
-            if use_extended:
-                pl = dict(payload)
-                pl["text"] = source_text
-                pl["ai_polish"] = want_polish
+            phone_m = phone_for_job_created_by(created_by)
+            media_bill_meta: dict[str, Any] = {}
+            try:
+                if phone_m:
+                    est_m = estimate_spoken_minutes_tts(payload if isinstance(payload, dict) else {}, source_text)
+                    ok_m, _wcm, media_bill_meta = media_billing_try_debit_estimated_minutes(
+                        phone_m,
+                        _subscription_tier_for_job(created_by),
+                        est_m,
+                        period_days=MEDIA_USAGE_PERIOD_DAYS,
+                    )
+                    if not ok_m:
+                        raise RuntimeError(str(media_bill_meta.get("message") or "media billing failed"))
+                    if int(media_bill_meta.get("wallet_cents") or 0) > 0 or float(
+                        media_bill_meta.get("from_payg_minutes") or 0
+                    ) > 0:
+                        append_job_event(
+                            job_id,
+                            "log",
+                            "已按预估语音分钟结算套餐外用量（失败或取消将退回）",
+                            {
+                                "estimated_minutes": round(est_m, 4),
+                                "wallet_cents": int(media_bill_meta.get("wallet_cents") or 0),
+                                "from_payg_minutes": float(media_bill_meta.get("from_payg_minutes") or 0),
+                            },
+                        )
 
-                def _tts_prog(pct: int, msg: str) -> None:
-                    if _guard_cancelled(job_id):
-                        return
-                    append_job_event(job_id, "progress", msg, {"progress": pct})
+                append_job_event(job_id, "progress", "正在调用模型进行语音合成", {"progress": 60})
+                if use_extended:
+                    pl = dict(payload)
+                    pl["text"] = source_text
+                    pl["ai_polish"] = want_polish
 
-                tts = run_extended_tts(pl, api_key=api_key, progress_hook=_tts_prog)
-                _fm = str(tts.get("tts_main_body") or source_text or "").strip()
-                result = {
-                    "audio_hex": tts.get("audio_hex"),
-                    "voice_id": voice_id,
-                    "trace_id": tts.get("trace_id"),
-                    "upstream_status_code": tts.get("upstream_status_code"),
-                    "retries": int(tts.get("retries") or 0),
-                    "nonfatal_errors": tts.get("nonfatal_errors") or [],
-                    "polished": bool(tts.get("polished")),
-                    "tts_mode": tts.get("tts_mode") or tts_mode,
-                    "script_text": _fm,
-                    "script_preview": _fm[:240],
-                    "preview": _fm[:240],
-                }
-                _it = str(tts.get("tts_intro_text") or "").strip()
-                _ot = str(tts.get("tts_outro_text") or "").strip()
-                if _it:
-                    result["tts_intro_text"] = _it
-                if _ot:
-                    result["tts_outro_text"] = _ot
-                if tts.get("cover_image"):
-                    result["cover_image"] = tts.get("cover_image")
-                    cov_key, cov_ct, cov_err = _persist_cover_for_job(job_id, created_by, str(tts.get("cover_image") or ""))
-                    if cov_key:
-                        result["cover_object_key"] = cov_key
-                        result["cover_content_type"] = cov_ct or "image/jpeg"
-                        result["cover_image"] = f"/api/jobs/{job_id}/cover"
-                    elif cov_err:
-                        append_job_event(job_id, "log", "封面持久化失败，继续使用外链", {"detail": cov_err[:500]})
-                elif bool(payload.get("generate_cover", True)) and tts.get("cover_error"):
+                    def _tts_prog(pct: int, msg: str) -> None:
+                        if _guard_cancelled(job_id):
+                            return
+                        append_job_event(job_id, "progress", msg, {"progress": pct})
+
+                    tts = run_extended_tts(pl, api_key=api_key, progress_hook=_tts_prog)
+                    _fm = str(tts.get("tts_main_body") or source_text or "").strip()
+                    result = {
+                        "audio_hex": tts.get("audio_hex"),
+                        "voice_id": voice_id,
+                        "trace_id": tts.get("trace_id"),
+                        "upstream_status_code": tts.get("upstream_status_code"),
+                        "retries": int(tts.get("retries") or 0),
+                        "nonfatal_errors": tts.get("nonfatal_errors") or [],
+                        "polished": bool(tts.get("polished")),
+                        "tts_mode": tts.get("tts_mode") or tts_mode,
+                        "script_text": _fm,
+                        "script_preview": _fm[:240],
+                        "preview": _fm[:240],
+                    }
+                    _it = str(tts.get("tts_intro_text") or "").strip()
+                    _ot = str(tts.get("tts_outro_text") or "").strip()
+                    if _it:
+                        result["tts_intro_text"] = _it
+                    if _ot:
+                        result["tts_outro_text"] = _ot
+                    if _fm:
+                        result["script_char_count"] = len(_fm)
+                    if isinstance(tts.get("audio_chapters"), list):
+                        result["audio_chapters"] = tts.get("audio_chapters")
+                    if tts.get("cover_image"):
+                        result["cover_image"] = tts.get("cover_image")
+                        cov_key, cov_ct, cov_err = _persist_cover_for_job(
+                            job_id, created_by, str(tts.get("cover_image") or "")
+                        )
+                        if cov_key:
+                            result["cover_object_key"] = cov_key
+                            result["cover_content_type"] = cov_ct or "image/jpeg"
+                            result["cover_image"] = f"/api/jobs/{job_id}/cover"
+                        elif cov_err:
+                            append_job_event(job_id, "log", "封面持久化失败，继续使用外链", {"detail": cov_err[:500]})
+                    elif bool(payload.get("generate_cover", True)) and tts.get("cover_error"):
+                        append_job_event(
+                            job_id,
+                            "log",
+                            "封面生成未成功",
+                            {"detail": str(tts.get("cover_error") or "")[:500]},
+                        )
+                    _attach_result_audio_duration_sec(result)
+                else:
+                    tts = synthesize_tts(source_text, voice_id=voice_id, api_key=api_key)
+                    _plain_body = (source_text or "").strip()
+                    result = {
+                        "audio_hex": tts.get("audio_hex"),
+                        "voice_id": voice_id,
+                        "trace_id": tts.get("trace_id"),
+                        "upstream_status_code": tts.get("upstream_status_code"),
+                        "retries": int(tts.get("retries") or 0),
+                        "nonfatal_errors": tts.get("attempt_errors") or [],
+                    }
+                    if _plain_body:
+                        result["script_char_count"] = len(_plain_body)
+                    _attach_result_audio_duration_sec(result)
+                    ad_sec = float(result.get("audio_duration_sec") or 0)
+                    if ad_sec > 0:
+                        end_ms = int(round(ad_sec * 1000))
+                        result["audio_chapters"] = [{"title": "全文", "start_ms": 0, "end_ms": max(end_ms, 1)}]
+                    if bool(payload.get("generate_cover", True)):
+                        if not api_key:
+                            append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
+                        else:
+                            s = (source_text or "").strip()[:1200]
+                            if s:
+                                ci, cerr = generate_cover_image(s, api_key)
+                                if ci:
+                                    result["cover_image"] = ci
+                                elif cerr:
+                                    append_job_event(
+                                        job_id,
+                                        "log",
+                                        "封面生成未成功",
+                                        {"detail": cerr[:500]},
+                                    )
+                if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
+                    _refund_media_wallet_job(phone_m, media_bill_meta)
+                    append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
+                    return {"status": "cancelled"}
+                append_job_event(
+                    job_id,
+                    "complete",
+                    "语音合成完成",
+                    {
+                        "progress": 100,
+                        "trace_id": result.get("trace_id"),
+                        "retries": int(result.get("retries") or 0),
+                        "upstream_status_code": result.get("upstream_status_code"),
+                    },
+                )
+                return result
+            except Exception:
+                if phone_m:
+                    _refund_media_wallet_job(phone_m, media_bill_meta)
                     append_job_event(
                         job_id,
                         "log",
-                        "封面生成未成功",
-                        {"detail": str(tts.get("cover_error") or "")[:500]},
+                        "语音合成未成功，已退回本次套餐外扣费",
+                        {"wallet_cents": int(media_bill_meta.get("wallet_cents") or 0)},
                     )
-            else:
-                tts = synthesize_tts(source_text, voice_id=voice_id, api_key=api_key)
-                result = {
-                    "audio_hex": tts.get("audio_hex"),
-                    "voice_id": voice_id,
-                    "trace_id": tts.get("trace_id"),
-                    "upstream_status_code": tts.get("upstream_status_code"),
-                    "retries": int(tts.get("retries") or 0),
-                    "nonfatal_errors": tts.get("attempt_errors") or [],
-                }
-                if bool(payload.get("generate_cover", True)):
-                    if not api_key:
-                        append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
-                    else:
-                        s = (source_text or "").strip()[:1200]
-                        if s:
-                            ci, cerr = generate_cover_image(s, api_key)
-                            if ci:
-                                result["cover_image"] = ci
-                            elif cerr:
-                                append_job_event(
-                                    job_id,
-                                    "log",
-                                    "封面生成未成功",
-                                    {"detail": cerr[:500]},
-                                )
-            if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
+                raise
+
+        if job_type == "note_rag_index":
+            nid = str(payload.get("note_id") or "").strip()
+            if not nid:
+                raise RuntimeError("note_id_required")
+            append_job_event(job_id, "progress", "正在为笔记建立向量索引与摘要", {"progress": 25})
+            from .note_rag_service import index_note_for_rag
+
+            out = index_note_for_rag(nid, user_ref=created_by, api_key=api_key)
+            if not out.get("ok"):
+                err = str(out.get("error") or "note_rag_index_failed")
+                if finalize_job_terminal_unless_cancelled(job_id, "failed", progress=100, error_message=err[:500]):
+                    append_job_event(job_id, "error", "笔记索引失败", {"progress": 100, "error": err[:500]})
+                return {"status": "failed", "error": err}
+            if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=out):
                 append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
                 return {"status": "cancelled"}
-            append_job_event(
-                job_id,
-                "complete",
-                "语音合成完成",
-                {
-                    "progress": 100,
-                    "trace_id": result.get("trace_id"),
-                    "retries": int(result.get("retries") or 0),
-                    "upstream_status_code": result.get("upstream_status_code"),
-                },
-            )
-            return result
+            append_job_event(job_id, "complete", "笔记索引完成", {"progress": 100})
+            return out
 
         append_job_event(job_id, "progress", "正在汇总参考材料（多 URL / 笔记 / 附加文本）", {"progress": 18})
         source_text, ref_meta = merge_reference_for_script(
@@ -391,11 +582,40 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
 
         append_job_event(job_id, "progress", "正在调用模型生成脚本", {"progress": 60})
         force_fb = bool(payload.get("integration_force_fallback"))
+        script_opts = script_generation_options_from_payload(payload)
+        if script_opts.get("script_target_chars") is None:
+            _st = normalize_script_target_input(payload.get("script_target_chars"))
+            if _st is not None:
+                script_opts["script_target_chars"] = _st
+        if job_type == "script_draft" and str(payload.get("output_mode") or "").strip().lower() == "article":
+            tier = _subscription_tier_for_job(created_by)
+            tcap = long_form_script_chars_cap(tier)
+            raw_tc = script_opts.get("script_target_chars")
+            if raw_tc is not None:
+                try:
+                    req_int = int(raw_tc)
+                except (TypeError, ValueError):
+                    req_int = 2000
+                adj = effective_article_script_target_chars(
+                    req_int,
+                    merged_chars=len(source_text.strip()),
+                    notes_loaded=int(ref_meta.get("notes_loaded") or 0),
+                    tier_cap=tcap,
+                )
+                if adj != req_int:
+                    append_job_event(
+                        job_id,
+                        "log",
+                        "文章目标字数已按参考材料规模调整",
+                        {"requested": req_int, "effective": adj, "merged_chars": len(source_text.strip())},
+                    )
+                script_opts["script_target_chars"] = adj
+
         gen = build_script(
             source_text,
             api_key=api_key,
             force_fallback=force_fb,
-            script_options=script_generation_options_from_payload(payload),
+            script_options=script_opts,
             on_script_delta=_make_script_delta_handler(job_id),
             subscription_tier=_subscription_tier_for_job(created_by),
         )
@@ -439,7 +659,8 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             "retries": retries,
             "nonfatal_errors": attempt_errors,
         }
-        if bool(payload.get("generate_cover", True)) and api_key:
+        _enrich_result_script_notes_meta(result, payload if isinstance(payload, dict) else {}, script)
+        if _payload_wants_generate_cover(payload, job_type) and api_key:
             ci, cerr = generate_cover_image(script[:1200], api_key)
             if ci:
                 result["cover_image"] = ci
@@ -452,7 +673,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     append_job_event(job_id, "log", "封面持久化失败，继续使用外链", {"detail": cov_err[:500]})
             elif cerr:
                 append_job_event(job_id, "log", "封面生成未完全成功", {"detail": cerr[:500]})
-        elif bool(payload.get("generate_cover", True)) and not api_key:
+        elif _payload_wants_generate_cover(payload, job_type) and not api_key:
             append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
         if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
             append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
@@ -502,12 +723,20 @@ def run_media_job(job_id: str) -> dict[str, Any]:
     if created_by is not None:
         created_by = str(created_by)
     note_ref_cap = _max_note_refs_for_job(created_by)
-    job_type = str(job.get("job_type") or "").strip()
+    job_type = str(job.get("job_type") or "").strip().lower()
+    logger.info("rq_media_job_run job_id=%s job_type=%s queue=media", job_id, job_type or "?")
     source_text = str(payload.get("text") or "").strip()
     source_url = str(payload.get("url") or "").strip()
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
 
     try:
+        if job_type == "podcast_short_video":
+            err = "短视频合成功能已移除，无法执行该任务。"
+            logger.warning("podcast_short_video removed job_id=%s", job_id)
+            if finalize_job_terminal_unless_cancelled(job_id, "failed", progress=100, error_message=err[:500]):
+                append_job_event(job_id, "error", err, {"progress": 100})
+            return {"status": "failed", "error": err}
+
         if job_type in ("podcast_generate", "podcast"):
             append_job_event(job_id, "progress", "正在汇总参考材料（多 URL / 笔记 / 附加文本）", {"progress": 18})
             source_text, ref_meta = merge_reference_for_script(
@@ -555,7 +784,7 @@ def run_media_job(job_id: str) -> dict[str, Any]:
             voice_id_2 = str(payload.get("voice_id_2") or "").strip() or _def_max
             intro_text = str(payload.get("intro_text") or "").strip()
             outro_text = str(payload.get("outro_text") or str(payload.get("ending_text") or "")).strip()
-            gen_cover = bool(payload.get("generate_cover", True))
+            gen_cover = _payload_wants_generate_cover(payload, job_type)
 
             if output_mode == "article":
                 tts_pl: dict[str, Any] = {
@@ -567,8 +796,8 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                     "generate_cover": gen_cover,
                     # 与 podcast_generator 一致：正文按句切块多次 TTS 再拼接，听感更自然
                     "tts_sentence_chunks": bool(payload.get("tts_sentence_chunks", True)),
-                    # 默认 2000：减少 TTS 往返；可通过 payload 覆盖
-                    "tts_max_chunk_chars": 2000,
+                    # 默认 9000：减少 TTS 往返（≤ 同步单段上限）；可通过 payload 覆盖
+                    "tts_max_chunk_chars": 9000,
                 }
                 _mc = payload.get("tts_max_chunk_chars")
                 if _mc is not None and str(_mc).strip() != "":
@@ -604,70 +833,122 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                 payload.get("force_tts_text_polish_main", False)
             )
 
-            def _media_tts_prog(pct: int, msg: str) -> None:
-                if _guard_cancelled(job_id):
-                    return
-                append_job_event(job_id, "progress", msg, {"progress": pct})
+            from .media_wallet import MEDIA_USAGE_PERIOD_DAYS, estimate_spoken_minutes_tts
 
-            tts = run_extended_tts(tts_pl, api_key=api_key, progress_hook=_media_tts_prog)
-            raw_hex = str(tts.get("audio_hex") or "")
-            audio_hex = maybe_mix_podcast_bgm(raw_hex, payload)
-            if bool(payload.get("mix_bgm")) and audio_hex != raw_hex:
-                append_job_event(job_id, "log", "已尝试 BGM 混音", {"bgm_slot": str(payload.get("bgm_slot") or "bgm01")})
-
-            script_after_tts = str(tts.get("tts_main_body") or "").strip() or script
-            upload_text(script_key, script_after_tts)
-
-            primary_voice = voice_id if output_mode == "article" else voice_id_1
-            result = {
-                "preview": script_after_tts[:240],
-                "script_preview": script_after_tts[:240],
-                "script_text": script_after_tts,
-                "script_url": "",
-                "script_object_key": script_key,
-                "audio_hex": audio_hex,
-                "voice_id": primary_voice,
-                "trace_id": tts.get("trace_id") or gen.get("trace_id"),
-                "fallback": bool(gen.get("fallback")),
-                "retries": int(gen.get("retries") or 0) + int(tts.get("retries") or 0),
-                "upstream_status_code": tts.get("upstream_status_code"),
-                "nonfatal_errors": (gen.get("attempt_errors") or []) + (tts.get("nonfatal_errors") or []),
-                "polished": bool(tts.get("polished")),
-            }
-            _it = str(tts.get("tts_intro_text") or "").strip()
-            _ot = str(tts.get("tts_outro_text") or "").strip()
-            if _it:
-                result["tts_intro_text"] = _it
-            if _ot:
-                result["tts_outro_text"] = _ot
-            if tts.get("tts_sentence_chunk_count") is not None:
-                result["tts_sentence_chunk_count"] = tts.get("tts_sentence_chunk_count")
-            if tts.get("cover_image"):
-                result["cover_image"] = tts.get("cover_image")
-                cov_key, cov_ct, cov_err = _persist_cover_for_job(job_id, created_by, str(tts.get("cover_image") or ""))
-                if cov_key:
-                    result["cover_object_key"] = cov_key
-                    result["cover_content_type"] = cov_ct or "image/jpeg"
-                    result["cover_image"] = f"/api/jobs/{job_id}/cover"
-                elif cov_err:
-                    append_job_event(job_id, "log", "封面持久化失败，继续使用外链", {"detail": cov_err[:500]})
-            elif tts.get("cover_error"):
-                append_job_event(job_id, "log", "封面生成未完全成功", {"detail": str(tts.get("cover_error") or "")[:500]})
-            elif gen_cover and not api_key:
-                append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
+            phone_pm = phone_for_job_created_by(created_by)
+            media_bill_meta: dict[str, Any] = {}
             try:
-                from .audio_mix import mp3_hex_duration_sec
+                if phone_pm:
+                    est_m = estimate_spoken_minutes_tts(tts_pl, script)
+                    ok_m, _wcm, media_bill_meta = media_billing_try_debit_estimated_minutes(
+                        phone_pm,
+                        _subscription_tier_for_job(created_by),
+                        est_m,
+                        period_days=MEDIA_USAGE_PERIOD_DAYS,
+                    )
+                    if not ok_m:
+                        raise RuntimeError(str(media_bill_meta.get("message") or "media billing failed"))
+                    if int(media_bill_meta.get("wallet_cents") or 0) > 0 or float(
+                        media_bill_meta.get("from_payg_minutes") or 0
+                    ) > 0:
+                        append_job_event(
+                            job_id,
+                            "log",
+                            "已按预估语音分钟结算套餐外用量（失败或取消将退回）",
+                            {
+                                "estimated_minutes": round(est_m, 4),
+                                "wallet_cents": int(media_bill_meta.get("wallet_cents") or 0),
+                                "from_payg_minutes": float(media_bill_meta.get("from_payg_minutes") or 0),
+                            },
+                        )
 
-                _dur = mp3_hex_duration_sec(str(result.get("audio_hex") or ""))
-                if _dur is not None:
-                    result["audio_duration_sec"] = round(_dur, 2)
+                def _media_tts_prog(pct: int, msg: str) -> None:
+                    if _guard_cancelled(job_id):
+                        return
+                    append_job_event(job_id, "progress", msg, {"progress": pct})
+
+                tts = run_extended_tts(tts_pl, api_key=api_key, progress_hook=_media_tts_prog)
+                raw_hex = str(tts.get("audio_hex") or "")
+                audio_hex = maybe_mix_podcast_bgm(raw_hex, payload)
+                if bool(payload.get("mix_bgm")) and audio_hex != raw_hex:
+                    append_job_event(job_id, "log", "已尝试 BGM 混音", {"bgm_slot": str(payload.get("bgm_slot") or "bgm01")})
+                
+                script_after_tts = str(tts.get("tts_main_body") or "").strip() or script
+                upload_text(script_key, script_after_tts)
+                
+                primary_voice = voice_id if output_mode == "article" else voice_id_1
+                result = {
+                    "preview": script_after_tts[:240],
+                    "script_preview": script_after_tts[:240],
+                    "script_text": script_after_tts,
+                    "script_url": "",
+                    "script_object_key": script_key,
+                    "audio_hex": audio_hex,
+                    "voice_id": primary_voice,
+                    "trace_id": tts.get("trace_id") or gen.get("trace_id"),
+                    "fallback": bool(gen.get("fallback")),
+                    "retries": int(gen.get("retries") or 0) + int(tts.get("retries") or 0),
+                    "upstream_status_code": tts.get("upstream_status_code"),
+                    "nonfatal_errors": (gen.get("attempt_errors") or []) + (tts.get("nonfatal_errors") or []),
+                    "polished": bool(tts.get("polished")),
+                }
+                _it = str(tts.get("tts_intro_text") or "").strip()
+                _ot = str(tts.get("tts_outro_text") or "").strip()
+                if _it:
+                    result["tts_intro_text"] = _it
+                if _ot:
+                    result["tts_outro_text"] = _ot
+                if tts.get("tts_sentence_chunk_count") is not None:
+                    result["tts_sentence_chunk_count"] = tts.get("tts_sentence_chunk_count")
+                if isinstance(tts.get("audio_chapters"), list):
+                    result["audio_chapters"] = tts.get("audio_chapters")
+                if tts.get("cover_image"):
+                    result["cover_image"] = tts.get("cover_image")
+                    cov_key, cov_ct, cov_err = _persist_cover_for_job(job_id, created_by, str(tts.get("cover_image") or ""))
+                    if cov_key:
+                        result["cover_object_key"] = cov_key
+                        result["cover_content_type"] = cov_ct or "image/jpeg"
+                        result["cover_image"] = f"/api/jobs/{job_id}/cover"
+                    elif cov_err:
+                        append_job_event(job_id, "log", "封面持久化失败，继续使用外链", {"detail": cov_err[:500]})
+                elif tts.get("cover_error"):
+                    append_job_event(job_id, "log", "封面生成未完全成功", {"detail": str(tts.get("cover_error") or "")[:500]})
+                elif gen_cover and not api_key:
+                    append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
+                _enrich_result_script_notes_meta(result, payload if isinstance(payload, dict) else {}, script_after_tts)
+                _attach_result_audio_duration_sec(result)
+                _hx_ep = str(result.get("audio_hex") or "").strip()
+                if _hx_ep and len(_hx_ep) % 2 == 0:
+                    try:
+                        _raw_mp3 = bytes.fromhex(_hx_ep)
+                        if _raw_mp3:
+                            _ep_key = f"{_mbase}/episode_audio.mp3"
+                            upload_bytes(_ep_key, _raw_mp3, "audio/mpeg")
+                            result["audio_object_key"] = _ep_key
+                            result["audio_url"] = presigned_get_url(_ep_key, expires_in=86400 * 7)
+                    except Exception as _up_exc:
+                        append_job_event(
+                            job_id,
+                            "log",
+                            "成片 MP3 写入对象存储失败，RSS 仍可能依赖 audio_hex",
+                            {"detail": str(_up_exc)[:240]},
+                        )
+                if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
+                    _refund_media_wallet_job(phone_pm, media_bill_meta)
+                    append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
+                    return {"status": "cancelled"}
+                append_job_event(job_id, "complete", "播客生成完成", {"progress": 100, "trace_id": result.get("trace_id")})
+                return result
             except Exception:
-                pass
-            if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
-                append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
-                return {"status": "cancelled"}
-            append_job_event(job_id, "complete", "播客生成完成", {"progress": 100, "trace_id": result.get("trace_id")})
-            return result
+                if phone_pm:
+                    _refund_media_wallet_job(phone_pm, media_bill_meta)
+                    append_job_event(
+                        job_id,
+                        "log",
+                        "播客语音合成未成功，已退回本次套餐外扣费",
+                        {"wallet_cents": int(media_bill_meta.get("wallet_cents") or 0)},
+                    )
+                raise
 
         fail_non_podcast = os.getenv("MEDIA_WORKER_FAIL_ON_NON_PODCAST", "").strip().lower() in (
             "1",

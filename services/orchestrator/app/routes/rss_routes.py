@@ -26,7 +26,7 @@ def _current_phone_or_401(request: Request) -> str:
     sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
     if not sess:
         raise HTTPException(status_code=401, detail="未登录")
-    phone = str(sess.get("phone") or "").strip()
+    phone = auth_bridge.session_principal(sess)
     if not phone:
         raise HTTPException(status_code=401, detail="未登录")
     return phone

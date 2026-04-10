@@ -1,8 +1,10 @@
-.PHONY: up up-offline build-offline build-offline-bases package-offline-bundle save-full-stack-tar down logs web orchestrator worker-ai worker-media worker-ai-simple worker-media-simple install-deps test-api-key-strip test-fallback-tag dev-infra dev-api dev-web dev-start complete-dev dev-worker-ai dev-worker-media dev dev-apps dev-install ci cleanup-outputs migrate-json-to-pg migrate-sessions-to-redis migrate-db retention-maintenance check-data-consistency
+.PHONY: up up-offline build-offline build-offline-bases package-offline-bundle save-full-stack-tar down logs web orchestrator worker-ai worker-media worker-ai-simple worker-media-simple install-deps test-api-key-strip test-fallback-tag dev-infra dev-api dev-web dev-start complete-dev dev-worker-ai dev-worker-media dev-worker-ai-watch dev-worker-media-watch dev dev-apps dev-install ci e2e-install e2e e2e-up e2e-down cleanup-outputs migrate-json-to-pg migrate-sessions-to-redis migrate-db retention-maintenance check-data-consistency
 
 ci:
 	@test -d apps/web/node_modules || (echo "请先: make dev-install"; exit 1)
 	@cd apps/web && npx tsc --noEmit
+	@cd apps/web && npm run lint
+	@cd apps/web && npm run build
 	@$(MAKE) install-deps
 	@cd services/orchestrator && ../../.venv-ai-native/bin/python -m pytest tests/ -q
 
@@ -83,6 +85,33 @@ dev-worker-ai:
 
 dev-worker-media:
 	python3 workers/media-worker/worker.py
+
+# Worker 开发热重载：监听 orchestrator/app 与 workers 下变更并重启（中断进行中任务，仅本地）
+dev-worker-ai-watch:
+	@test -x .venv-ai-native/bin/python || (echo "请先: make install-deps"; exit 1)
+	.venv-ai-native/bin/python scripts/dev_worker_watch.py ai
+
+dev-worker-media-watch:
+	@test -x .venv-ai-native/bin/python || (echo "请先: make install-deps"; exit 1)
+	.venv-ai-native/bin/python scripts/dev_worker_watch.py media
+
+# Playwright：需本机已起基础设施 + orchestrator + web（或 Docker 全栈），编排器默认 http://127.0.0.1:8008
+e2e-install:
+	@test -f apps/web/package.json || (echo "请在仓库根目录执行"; exit 1)
+	cd apps/web && npm install && npx playwright install --with-deps chromium
+
+e2e:
+	@test -d apps/web/node_modules/@playwright || (echo "请先: make e2e-install"; exit 1)
+	@test -f .env.ai-native || true
+	cd apps/web && ORCHESTRATOR_URL=$${ORCHESTRATOR_URL:-http://127.0.0.1:8008} PLAYWRIGHT_BASE_URL=$${PLAYWRIGHT_BASE_URL:-http://127.0.0.1:3000} npx playwright test
+
+# Docker 全栈（E2E）：叠加 docker-compose.e2e.yml + --profile e2e（Redis DB 1 + e2e-ready 探测）；与默认 make up 互斥端口，勿并行
+e2e-up:
+	@test -f .env.ai-native || (echo "请先: cp .env.ai-native.example .env.ai-native"; exit 1)
+	docker compose -f docker-compose.ai-native.yml -f docker-compose.e2e.yml --env-file .env.ai-native --profile e2e up -d --build
+
+e2e-down:
+	docker compose -f docker-compose.ai-native.yml -f docker-compose.e2e.yml --env-file .env.ai-native down
 
 up:
 	docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d --build

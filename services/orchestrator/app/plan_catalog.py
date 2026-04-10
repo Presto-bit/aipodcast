@@ -7,11 +7,9 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from .entitlement_matrix import (
-    jobs_terminal_monthly_quota,
     long_form_script_chars_cap,
     max_note_refs_for_plan,
     monthly_minutes_product_target,
@@ -33,47 +31,26 @@ from .subscription_manifest import (
     WALLET_TOPUP_MAX_CENTS,
     WALLET_TOPUP_MIN_CENTS,
 )
-from .usage_billing import estimate_llm_cost_cny
-from .wechat_pay_native import wechat_native_ready
+from .alipay_page_pay import alipay_page_pay_ready
 
 
 def _wallet_usage_reference() -> dict[str, Any]:
     """
-    供前端充值区展示：
-    - 播客时长：文本+合成至成片（按成片分钟），不含克隆；单价锚点与历史按次分钟包一致。
-    - 文章字数：仅 LLM 写稿参考（与 usage_billing 同源模型与价目表），不含 TTS。
+    供前端充值区「扣费参考」：
+    - 播客：按历史分钟包折算的「最优」成片单价（元/分钟）。
+    - 克隆：manifest 按次价（分）。
     """
     m30, c30 = PAYG_30_MINUTES, PAYG_30_CENTS
     m100, c100 = PAYG_100_MINUTES, PAYG_100_CENTS
     r30 = c30 / float(m30)
     r100 = c100 / float(m100)
-    low_cpm_cents = min(r30, r100)
-    high_cpm_cents = max(r30, r100)
-
-    text_model = str(os.environ.get("MINIMAX_TEXT_MODEL") or "MiniMax-M2.7").strip()
-    # 每生成约 1000 字文稿：输入规模取常见区间，仅 LLM 分项
-    llm_low = estimate_llm_cost_cny(text_model=text_model, prompt_chars=1_000, completion_chars=1_000)
-    llm_high = estimate_llm_cost_cny(text_model=text_model, prompt_chars=6_000, completion_chars=1_000)
-    yuan_low, yuan_high = min(llm_low, llm_high), max(llm_low, llm_high)
+    best_cpm_cents = min(r30, r100)
+    podcast_yuan_per_minute = round(best_cpm_cents / 100.0, 2)
 
     return {
-        "audio_yuan_per_minute_range": {
-            "low": round(low_cpm_cents / 100.0, 2),
-            "high": round(high_cpm_cents / 100.0, 2),
-        },
-        "text_generation_only": {
-            "thousand_output_chars_yuan_range": {
-                # LLM 分项多为分厘级，保留三位避免与 TTS 分钟价混淆且区间可读
-                "low": round(yuan_low, 3),
-                "high": round(yuan_high, 3),
-            },
-        },
+        "podcast_yuan_per_minute": podcast_yuan_per_minute,
         "voice_clone_payg_cents": int(VOICE_CLONE_PAYG_CENTS),
-        "disclaimer_zh": (
-            "播客时长参考含文稿与语音合成至成片、按成片音频分钟计，不含音色克隆。"
-            "文章字数参考仅大模型写稿，不含语音合成。"
-            "以上为价目与模型价表推导；余额实际扣减以任务完成时执行为准。"
-        ),
+        "disclaimer_zh": "余额实际扣减以任务完成时执行为准。",
     }
 
 
@@ -143,19 +120,19 @@ def _summary_quotas_for_tier(tier: str) -> list[dict[str, str]]:
     rows.extend(
         [
             {
-                "key": "jobs",
-                "label": "近30天完成创作上限",
-                "value": f"{jobs_terminal_monthly_quota(tid)} 次",
-            },
-            {
                 "key": "clones",
                 "label": "每月含音色克隆",
                 "value": f"{voice_clone_monthly_included(tid)} 次",
             },
             {
                 "key": "note_refs",
-                "label": "笔记播客参考笔记条数",
+                "label": "笔记本可参考资料条数",
                 "value": f"{max_note_refs_for_plan(tid)} 条",
+            },
+            {
+                "key": "long_form",
+                "label": "长文/长文播客单次目标字数上限",
+                "value": f"{long_form_script_chars_cap(tid)} 字",
             },
         ]
     )
@@ -167,20 +144,20 @@ def _feature_bullets_for_tier(tier: str) -> tuple[str | None, list[str]]:
     if tid == "free":
         return None, [
             "基础音色与标准导出，单任务创作",
-            "笔记播客可参考少量笔记完成成稿",
-            "每月目标生成时长见上表（无额外一次性礼包）",
+            "笔记本可参考少量资料完成成稿",
+            "每月目标生成时长见上表（按自然月，产品口径）",
             "升级后解锁更长单次成稿字数、更高配额与 Pro 级能力",
         ]
     if tid == "basic":
         return "相对 Free 的提升：", [
-            f"月配额与创作次数更高（仍低于 Pro）；单次长文/长文播客上限约 {long_form_script_chars_cap('basic')} 字",
+            f"月目标生成时长更高；单次长文/长文播客上限约 {long_form_script_chars_cap('basic')} 字",
             "标准导出（mp3）；不含去水印与 AI 润色（Pro 起）",
-            "音色克隆需按次购买；升级 Pro 含每月克隆额度",
-            "适合轻量周更：入门价锁定基础创作节奏",
+            "每月含 1 次音色克隆（超出可按 ¥9.9/次购买）",
+            "适合轻量周更",
         ]
     if tid == "pro":
         return "Basic+ 的核心升级：", [
-            "更高月配额与创作次数上限（见上表）",
+            "更高月目标生成时长（见上表）",
             f"长文与长文播客单次目标字数上限 {long_form_script_chars_cap('pro')} 字",
             "高质量导出、去水印",
             f"AI 润色（TTS 前）{_ai_polish_label('pro')}",
@@ -189,7 +166,7 @@ def _feature_bullets_for_tier(tier: str) -> tuple[str | None, list[str]]:
         ]
     if tid == "max":
         return "Pro 的全部权益，另含：", [
-            "顶配月配额与创作次数上限",
+            "顶配月目标生成时长（见上表）",
             f"长文与长文播客单次目标字数上限 {long_form_script_chars_cap('max')} 字",
             "批量处理、更高队列优先级（产品口径）",
             f"AI 润色（TTS 前）{_ai_polish_label('max')}",
@@ -238,10 +215,7 @@ def _plan_entry(
 
 def build_subscription_plans_response() -> dict[str, Any]:
     """公开套餐列表 + 钱包充值说明；含 ListenHub 式卡片扩展字段。"""
-    disc_basic = _yearly_discount_percent(BASIC_MONTHLY_CENTS, BASIC_YEARLY_CENTS)
-    disc_pro = _yearly_discount_percent(PRO_MONTHLY_CENTS, PRO_YEARLY_CENTS)
-    disc_max = _yearly_discount_percent(MAX_MONTHLY_CENTS, MAX_YEARLY_CENTS)
-    headline_yearly_discount = max(disc_basic, disc_pro, disc_max)
+    headline_yearly_discount = 0
 
     plans = [
         _plan_entry(
@@ -256,27 +230,28 @@ def build_subscription_plans_response() -> dict[str, Any]:
             "Basic",
             BASIC_MONTHLY_CENTS,
             BASIC_YEARLY_CENTS,
-            "轻量订阅 · ¥9.9/月 起 · 介于 Free 与 Pro 之间",
+            "轻量订阅 · ¥19.9/月",
         ),
         _plan_entry(
             "pro",
             "Pro",
             PRO_MONTHLY_CENTS,
             PRO_YEARLY_CENTS,
-            "个人创作者首选 · 稳定周更",
+            "个人创作者首选 · 稳定周更 · ¥79.9/月",
         ),
         _plan_entry(
             "max",
             "Creator（Max）",
             MAX_MONTHLY_CENTS,
             MAX_YEARLY_CENTS,
-            "重度创作 · 批量与更高优先级",
+            "重度创作 · 批量与更高优先级 · ¥199/月",
         ),
     ]
 
     return {
         "success": True,
         "currency": "CNY",
+        "billing_monthly_only": True,
         "yearly_discount_percent": headline_yearly_discount,
         "plans": plans,
         "addons": [],
@@ -290,9 +265,9 @@ def build_subscription_plans_response() -> dict[str, Any]:
             "usage_reference": _wallet_usage_reference(),
         },
         "payment_channels": {
-            "wechat_native": {
-                "enabled": bool(wechat_native_ready()),
-                "label_zh": "微信扫码支付（PC）",
+            "alipay_page": {
+                "enabled": bool(alipay_page_pay_ready()),
+                "label_zh": "支付宝扫码支付（电脑网站）",
             },
         },
         "note": "prices_from_subscription_manifest",

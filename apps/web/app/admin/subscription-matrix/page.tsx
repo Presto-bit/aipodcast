@@ -102,7 +102,7 @@ export default function AdminSubscriptionMatrixPage() {
       </div>
 
       {err ? (
-        <p className="mt-4 text-sm text-rose-600" role="alert">
+        <p className="mt-4 text-sm text-danger-ink" role="alert">
           {err}
         </p>
       ) : null}

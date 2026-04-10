@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import PodcastWorksGallery from "../../components/podcast/PodcastWorksGallery";
 import WorksActiveJobsPanel from "../../components/works/WorksActiveJobsPanel";
@@ -9,8 +8,8 @@ import { chipClass } from "../../components/studio/chipStyles";
 import EmptyState from "../../components/ui/EmptyState";
 import type { WorkItem } from "../../lib/worksTypes";
 import { useAuth } from "../../lib/auth";
-import { listJobs, retryJob } from "../../lib/api";
-import type { JobRecord } from "../../lib/types";
+import { useI18n } from "../../lib/I18nContext";
+import { listJobs } from "../../lib/api";
 
 const WORKS_LIMIT = 60;
 
@@ -23,24 +22,21 @@ const ACTIVE_JOBS_LIMIT = 80;
 
 export default function WorksPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { t } = useI18n();
   const { getAuthHeaders, ready } = useAuth();
   const [ai, setAi] = useState<WorkItem[]>([]);
   const [tts, setTts] = useState<WorkItem[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"active" | "podcast" | "notes" | "tts">("podcast");
+  /** 音频 / 文稿为已结束成品；进行中为队列任务 */
+  const [worksView, setWorksView] = useState<"audio" | "script" | "active">("audio");
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  /** null = 尚未拉取进行中任务列表 */
   const [activeJobCount, setActiveJobCount] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [recentOnly, setRecentOnly] = useState(false);
-  const [failedJobs, setFailedJobs] = useState<JobRecord[]>([]);
-  const [failedJobsLoading, setFailedJobsLoading] = useState(false);
-  const [failedJobsError, setFailedJobsError] = useState("");
-  const [retryLatestBusy, setRetryLatestBusy] = useState(false);
-  const [retryBusyId, setRetryBusyId] = useState<string | null>(null);
 
   const refreshActiveJobCount = useCallback(async () => {
     if (!ready) {
@@ -57,29 +53,6 @@ export default function WorksPage() {
       setActiveJobCount(jobs.length);
     } catch {
       setActiveJobCount(null);
-    }
-  }, [ready]);
-
-  const refreshFailedJobs = useCallback(async () => {
-    if (!ready) {
-      setFailedJobs([]);
-      return;
-    }
-    setFailedJobsLoading(true);
-    setFailedJobsError("");
-    try {
-      const { jobs } = await listJobs({
-        limit: 6,
-        offset: 0,
-        status: "failed",
-        slim: true
-      });
-      setFailedJobs(jobs);
-    } catch (e) {
-      setFailedJobsError(String(e instanceof Error ? e.message : e));
-      setFailedJobs([]);
-    } finally {
-      setFailedJobsLoading(false);
     }
   }, [ready]);
 
@@ -122,18 +95,14 @@ export default function WorksPage() {
       } finally {
         setLoading(false);
         setLoadingMore(false);
-        if (!append) {
-          void refreshActiveJobCount();
-          void refreshFailedJobs();
-        }
+        if (!append) void refreshActiveJobCount();
       }
     },
-    [offset, getAuthHeaders, refreshActiveJobCount, refreshFailedJobs]
+    [offset, getAuthHeaders, refreshActiveJobCount]
   );
 
   useEffect(() => {
     void fetchWorks(false);
-    // 仅随登录态重载；勿依赖 fetchWorks（其含 offset，会导致分页后误触发全量刷新）
   }, [getAuthHeaders]);
 
   useEffect(() => {
@@ -141,43 +110,28 @@ export default function WorksPage() {
   }, [refreshActiveJobCount]);
 
   useEffect(() => {
-    void refreshFailedJobs();
-  }, [refreshFailedJobs]);
+    const t = searchParams.get("tab");
+    if (t === "active") {
+      setWorksView("active");
+    } else {
+      setWorksView((v) => (v === "active" ? "audio" : v));
+    }
+  }, [searchParams]);
 
   useEffect(() => {
-    if (tab === "active") void refreshActiveJobCount();
-  }, [tab, refreshActiveJobCount]);
+    if (worksView === "active") void refreshActiveJobCount();
+  }, [worksView, refreshActiveJobCount]);
 
   const onActiveJobsChanged = useCallback(() => {
     setActiveJobCount((c) => (typeof c === "number" && c > 0 ? c - 1 : c));
     void refreshActiveJobCount();
   }, [refreshActiveJobCount]);
 
-  async function retryFailedJob(jobId: string) {
-    setRetryBusyId(jobId);
-    setFailedJobsError("");
-    try {
-      const next = await retryJob(jobId);
-      const nextId = String(next.id || "").trim();
-      void refreshFailedJobs();
-      if (nextId) router.push(`/jobs/${nextId}`);
-    } catch (e) {
-      setFailedJobsError(String(e instanceof Error ? e.message : e));
-    } finally {
-      setRetryBusyId(null);
-    }
-  }
-
-  async function retryLatestFailedJob() {
-    const latest = failedJobs[0];
-    if (!latest?.id) return;
-    setRetryLatestBusy(true);
-    await retryFailedJob(latest.id);
-    setRetryLatestBusy(false);
-  }
-
   const aiPodcastWorks = useMemo(
-    () => ai.filter((w) => ["podcast_generate", "podcast"].includes(String(w.type || ""))),
+    () =>
+      ai.filter((w) =>
+        ["podcast_generate", "podcast"].includes(String(w.type || ""))
+      ),
     [ai]
   );
   const notesDraftWorks = useMemo(() => ai.filter((w) => String(w.type || "") === "script_draft"), [ai]);
@@ -193,159 +147,129 @@ export default function WorksPage() {
   }
 
   const filteredNotesWorks = useMemo(() => notesDraftWorks.filter(matchesFilter), [notesDraftWorks, keyword, recentOnly, recentThresholdMs]);
-  const filteredPodcastWorks = useMemo(() => aiPodcastWorks.filter(matchesFilter), [aiPodcastWorks, keyword, recentOnly, recentThresholdMs]);
-  const filteredTtsWorks = useMemo(() => tts.filter(matchesFilter), [tts, keyword, recentOnly, recentThresholdMs]);
+  const audioFinishedWorks = useMemo(() => {
+    const merged = [...aiPodcastWorks, ...tts];
+    merged.sort((a, b) => {
+      const ta = new Date(String(a.createdAt || 0)).getTime();
+      const tb = new Date(String(b.createdAt || 0)).getTime();
+      const na = Number.isFinite(ta) ? ta : 0;
+      const nb = Number.isFinite(tb) ? tb : 0;
+      return nb - na;
+    });
+    return merged;
+  }, [aiPodcastWorks, tts]);
+  const filteredAudioFinishedWorks = useMemo(
+    () => audioFinishedWorks.filter(matchesFilter),
+    [audioFinishedWorks, keyword, recentOnly, recentThresholdMs]
+  );
 
   const emptyAll = !loading && ai.length === 0 && tts.length === 0;
-  const worksStatsPending = loading && ai.length === 0 && tts.length === 0;
   const totalLoaded = ai.length + tts.length;
 
   return (
-    <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-10 sm:px-4">
-      <div className="mb-6 text-center">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">我的作品</h1>
-        <p className="mt-2 text-sm text-muted">生成完成后可在这里播放、下载、重试和继续编辑。</p>
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-center justify-center gap-2 sm:gap-2.5">
-        <button type="button" className={chipClass(tab === "notes", "sm")} onClick={() => setTab("notes")}>
-          笔记播客
-        </button>
-        <button type="button" className={chipClass(tab === "podcast", "sm")} onClick={() => setTab("podcast")}>
-          AI 播客
-        </button>
-        <button type="button" className={chipClass(tab === "tts", "sm")} onClick={() => setTab("tts")}>
-          文本转语音
-        </button>
-        <button type="button" className={chipClass(tab === "active", "sm")} onClick={() => setTab("active")}>
-          进行中任务
-        </button>
-      </div>
-
-      {tab !== "active" ? (
-        <div className="mb-4 flex flex-wrap items-center justify-center gap-2">
-          <input
-            className="w-full max-w-xs rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink"
-            placeholder="搜索作品标题或编号"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <button
-            type="button"
-            className={chipClass(recentOnly, "sm")}
-            onClick={() => setRecentOnly((v) => !v)}
-          >
-            近 14 天
-          </button>
+    <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-8 pt-2 sm:px-4">
+      <div className="mb-2 flex flex-col gap-1 border-b border-line/80 pb-2 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">我的作品</h1>
+          <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">成品与进行中任务</p>
         </div>
-      ) : null}
-
-      <div className="mb-6 rounded-xl border border-line bg-fill/60 px-3 py-2.5 text-xs leading-relaxed text-muted">
-        <p className="font-medium text-ink">作品概览</p>
-        <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-          <span>
-            总量{" "}
-            <span className="font-medium tabular-nums text-ink">{worksStatsPending ? "…" : totalLoaded}</span>
-            件
-            {hasMore && !worksStatsPending ? <span className="ml-0.5 text-[11px]">（还可加载更多）</span> : null}
-          </span>
-          <span>
-            笔记播客{" "}
-            <span className="font-medium tabular-nums text-ink">{worksStatsPending ? "…" : notesDraftWorks.length}</span>
-          </span>
-          <span>
-            AI 播客{" "}
-            <span className="font-medium tabular-nums text-ink">{worksStatsPending ? "…" : aiPodcastWorks.length}</span>
-          </span>
-          <span>
-            文本转语音{" "}
-            <span className="font-medium tabular-nums text-ink">{worksStatsPending ? "…" : tts.length}</span>
-          </span>
-          <span>
-            进行中{" "}
-            <span className="font-medium tabular-nums text-ink">{activeJobCount === null ? "…" : activeJobCount}</span>
-          </span>
-        </p>
+        {(worksView === "audio" || worksView === "script") && !loading ? (
+          <p className="shrink-0 text-xs text-muted">
+            已加载 <span className="font-medium tabular-nums text-ink">{totalLoaded}</span> 件
+            {hasMore ? <span className="text-muted"> · 更多</span> : null}
+          </p>
+        ) : null}
       </div>
 
-      {tab !== "active" ? (
-        <section className="mb-6 rounded-xl border border-line bg-rose-50/50 px-3 py-3 text-xs">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <p className="font-medium text-ink">失败重试</p>
-              <p className="mt-1 text-muted">快速处理失败任务，减少手动排查路径。</p>
-            </div>
-            <button
-              type="button"
-              className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"
-              disabled={retryLatestBusy || failedJobsLoading || failedJobs.length === 0}
-              onClick={() => void retryLatestFailedJob()}
-            >
-              {retryLatestBusy ? "正在重试…" : "重试最近失败任务"}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5 gap-y-2">
+        <button
+          type="button"
+          className={chipClass(worksView === "audio", "sm")}
+          onClick={() => {
+            setWorksView("audio");
+            router.replace("/works", { scroll: false });
+          }}
+        >
+          音频
+        </button>
+        <button
+          type="button"
+          className={chipClass(worksView === "script", "sm")}
+          onClick={() => {
+            setWorksView("script");
+            router.replace("/works", { scroll: false });
+          }}
+        >
+          文稿
+        </button>
+        <button
+          type="button"
+          className={[chipClass(worksView === "active", "sm"), "inline-flex items-center"].join(" ")}
+          onClick={() => {
+            setWorksView("active");
+            router.replace("/works?tab=active", { scroll: false });
+          }}
+        >
+          进行中
+          {activeJobCount != null && activeJobCount > 0 ? (
+            <span className="ml-1 rounded-full bg-brand/15 px-1.5 py-px text-[10px] font-medium tabular-nums text-brand">
+              {activeJobCount}
+            </span>
+          ) : null}
+        </button>
+        {worksView === "audio" || worksView === "script" ? (
+          <>
+            <span className="hidden h-4 w-px bg-line sm:inline-block" aria-hidden />
+            <input
+              className="min-w-[8rem] flex-1 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-ink sm:max-w-[11rem]"
+              placeholder="搜索标题…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="搜索作品"
+            />
+            <button type="button" className={chipClass(recentOnly, "sm")} onClick={() => setRecentOnly((v) => !v)}>
+              14 天内
             </button>
-          </div>
-          {failedJobsError ? <p className="mt-2 text-rose-700">{failedJobsError}</p> : null}
-          {failedJobsLoading ? (
-            <p className="mt-2 text-muted">正在加载失败任务…</p>
-          ) : failedJobs.length === 0 ? (
-            <p className="mt-2 text-muted">最近没有失败任务。</p>
-          ) : (
-            <ul className="mt-2 space-y-1.5">
-              {failedJobs.slice(0, 3).map((j) => (
-                <li key={j.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-white px-2.5 py-2">
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-ink">{j.job_type}</p>
-                    <p className="truncate text-muted">{j.id.slice(0, 8)}…</p>
-                    <p className="truncate text-muted">
-                      失败时间：{j.completed_at?.replace("T", " ").slice(0, 19) || j.created_at?.replace("T", " ").slice(0, 19) || "未知"}
-                    </p>
-                    <p className="truncate text-rose-700" title={String(j.error_message || "暂无失败原因")}>
-                      原因：{String(j.error_message || "暂无失败原因").slice(0, 80)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Link href={`/jobs/${j.id}`} className="text-brand hover:underline">
-                      详情
-                    </Link>
-                    <button
-                      type="button"
-                      className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
-                      disabled={retryBusyId === j.id}
-                      onClick={() => void retryFailedJob(j.id)}
-                    >
-                      {retryBusyId === j.id ? "重试中…" : "重试"}
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+          </>
+        ) : null}
+      </div>
+
+      {worksView === "active" ? <WorksActiveJobsPanel onActiveJobsChanged={onActiveJobsChanged} /> : null}
+
+      {(worksView === "audio" || worksView === "script") && error ? (
+        <p className="mb-2 text-sm text-danger-ink">{error}</p>
       ) : null}
 
-      {tab === "active" ? <WorksActiveJobsPanel onActiveJobsChanged={onActiveJobsChanged} /> : null}
-
-      {tab !== "active" && error ? <p className="mb-4 text-sm text-rose-600">{error}</p> : null}
-
-      {tab !== "active" && loading ? (
-        <p className="text-center text-sm text-muted">正在加载作品，请稍候…</p>
-      ) : tab !== "active" && emptyAll ? (
+      {(worksView === "audio" || worksView === "script") && loading ? (
+        <p className="py-6 text-center text-sm text-muted">{t("common.loading")}</p>
+      ) : (worksView === "audio" || worksView === "script") && emptyAll ? (
         <EmptyState
-          title="暂无作品"
-          description="生成完成的播客与语音作品会集中在这里。"
+          title={t("empty.worksFinished.title")}
+          description={t("empty.worksFinished.desc")}
           action={
             <button
               type="button"
               className="text-sm text-brand underline"
               onClick={() => void fetchWorks(false)}
             >
-              刷新
+              {t("common.refresh")}
             </button>
           }
         />
       ) : null}
 
-      {tab !== "active" && !emptyAll && tab === "notes" ? (
+      {worksView === "audio" && !emptyAll ? (
+        <PodcastWorksGallery
+          variant="all"
+          works={filteredAudioFinishedWorks}
+          loading={loading}
+          fetchError={error}
+          onDismissError={() => setError("")}
+          onWorkDeleted={() => void fetchWorks(false)}
+          enableBatchActions
+        />
+      ) : null}
+      {worksView === "script" && !emptyAll ? (
         <PodcastWorksGallery
           variant="notes"
           works={filteredNotesWorks}
@@ -356,38 +280,16 @@ export default function WorksPage() {
           enableBatchActions
         />
       ) : null}
-      {tab !== "active" && !emptyAll && tab === "podcast" ? (
-        <PodcastWorksGallery
-          variant="podcast"
-          works={filteredPodcastWorks}
-          loading={loading}
-          fetchError={error}
-          onDismissError={() => setError("")}
-          onWorkDeleted={() => void fetchWorks(false)}
-          enableBatchActions
-        />
-      ) : null}
-      {tab !== "active" && !emptyAll && tab === "tts" ? (
-        <PodcastWorksGallery
-          variant="tts"
-          works={filteredTtsWorks}
-          loading={loading}
-          fetchError={error}
-          onDismissError={() => setError("")}
-          onWorkDeleted={() => void fetchWorks(false)}
-          enableBatchActions
-        />
-      ) : null}
 
-      {tab !== "active" && !loading && !emptyAll && hasMore ? (
-        <div className="mt-6 flex justify-center">
+      {(worksView === "audio" || worksView === "script") && !loading && !emptyAll && hasMore ? (
+        <div className="mt-4 flex justify-center">
           <button
             type="button"
             disabled={loadingMore}
-            className="rounded-lg border border-line px-4 py-2 text-sm text-ink hover:bg-fill disabled:opacity-50"
+            className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-fill disabled:opacity-50"
             onClick={() => void fetchWorks(true)}
           >
-            {loadingMore ? "正在加载…" : "加载更多作品"}
+            {loadingMore ? "加载中…" : "加载更多"}
           </button>
         </div>
       ) : null}

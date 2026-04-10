@@ -38,13 +38,13 @@ export default function BgmControlRow({
         <input
           type="file"
           accept="audio/*,.mp3,.wav,.m4a"
-          className="block w-full text-xs text-muted file:mr-2 file:rounded file:border file:border-line file:bg-white file:px-2 file:py-1"
+          className="block w-full text-xs text-muted file:mr-2 file:rounded file:border file:border-line file:bg-surface file:px-2 file:py-1"
           onChange={(e) => onFileChange(e.target.files?.[0] || null)}
         />
       ) : null}
       {file ? <p className="text-[11px] text-muted">{file.name}</p> : null}
       {mode === "upload" && !file && uploadRestoredHint ? (
-        <p className="text-[11px] text-amber-800/90">已恢复上次缓存的音频数据，可直接生成；也可重新选择文件替换。</p>
+        <p className="text-[11px] text-warning-ink/90">已恢复上次缓存的音频数据，可直接生成；也可重新选择文件替换。</p>
       ) : null}
     </div>
   );

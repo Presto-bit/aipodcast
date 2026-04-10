@@ -72,7 +72,7 @@ docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d -
 要**保存即刷新**，用「**基础设施 Docker + 应用本机**」：
 
 1. **先启动 Docker Desktop**（macOS），否则 `make dev` 无法拉取镜像、起 PG/Redis/MinIO。
-2. **环境变量**（`.env.ai-native`）：`DB_HOST`、`REDIS_URL`、`OBJECT_ENDPOINT` 指向本机（与 `.env.ai-native.example` 一致，一般为 `127.0.0.1`）；`ORCHESTRATOR_URL` / `NEXT_PUBLIC_ORCHESTRATOR_URL` 为 `http://127.0.0.1:8008`。
+2. **环境变量**（`.env.ai-native`）：`DB_HOST`、`REDIS_URL`、`OBJECT_ENDPOINT` 指向本机（与 `.env.ai-native.example` 一致，一般为 `127.0.0.1`）；`ORCHESTRATOR_URL` / `NEXT_PUBLIC_ORCHESTRATOR_URL` 为 `http://127.0.0.1:8008`。文本模型（`TEXT_PROVIDER` / DeepSeek·千问）、RAG 嵌入与笔记分层索引等见 **`.env.ai-native.example`** 内注释。
 3. **依赖**：`make install-deps`（Python）；本机需 **ffmpeg**。
 4. **若曾执行过全栈 `make up`**：请先 `make down`，避免本机 `8008`/`3000` 与容器里的 `orchestrator`/`web` 抢端口（本机热重载会占用这两个端口）。
 
@@ -120,7 +120,7 @@ make dev-start
 
 或：`make dev-infra` 后执行 `make dev-apps`（同目录下 `npm run dev`，同时起 api + web）。
 
-**Worker（按需）**：异步任务需要队列消费时，另开终端 `make dev-worker-ai` / `make dev-worker-media`。改 Worker 相关代码后需**手动重启**该进程（无 `--reload`）。
+**Worker（按需）**：异步任务需要队列消费时，另开终端 `make dev-worker-ai` / `make dev-worker-media`。开发时可改用 **`make dev-worker-ai-watch` / `make dev-worker-media-watch`**，在编排器 `app/` 与 `workers/` 代码变更时自动重启 Worker（会中断进行中的任务，勿用于生产）。
 
 ---
 
@@ -128,14 +128,19 @@ make dev-start
 
 见 [DEPLOYMENT.md](DEPLOYMENT.md)。一键脚本：`sudo bash deploy.sh`（内部调用 Docker Compose）。
 
+**运维与 PG 化、切流、数据治理** 的统一索引：[docs/operations/README.md](docs/operations/README.md)。
+
 ### 功能与本地检查
+
+**产品文档索引**（定位、能力表、订阅手册与路线图入口）：[`docs/product/README.md`](docs/product/README.md)。
 
 - **全站搜索**：侧栏「搜索」或 `/search`。
 - **作品导出**：`/works` 当前 Tab 支持导出 ZIP。
 - **播客内容模板**：`/podcast` 正文区模板下拉。
 - **后台用量**：管理员 `/admin/usage`（需 PG 已执行 `002_usage_events.sql`）。
 - **订阅策略执行手册**：见 `docs/product/subscription-experience-pricing-playbook.md`（体验门槛、升级触发、定价与埋点口径）。
-- **CI**：根目录 `make ci`（前端 `tsc`、编排器 pytest）；GitHub Actions 见 `.github/workflows/ci.yml`。
+- **产品想法与后期规划（ backlog，仅记录不执行）**：见 [`docs/product/future-roadmap.md`](docs/product/future-roadmap.md)（多平台管家、内容再造、叙事剪辑师等方向）。
+- **CI**：根目录 `make ci`（前端 `tsc`、编排器 pytest）；GitHub Actions 见 `.github/workflows/ci.yml`；**端到端**（`docker-compose.e2e.yml` + **`--profile e2e`** + Playwright）见 `.github/workflows/e2e.yml`；本地见 `make e2e-up`、`make e2e-install`、`make e2e`（说明见 [`docs/operations/README.md`](docs/operations/README.md) §5）。
 - **用户 JSON → PG 镜像**：`python3 scripts/sync_users_to_pg.py`（可选，`--dry-run` 预览）。
 
 ---

@@ -1,15 +1,44 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../lib/auth";
+import { useI18n } from "../lib/I18nContext";
 
 const STORAGE_KEY = "fym_onboarding_v1_seen";
 
 export default function OnboardingModal() {
+  const { t } = useI18n();
   const { user, ready } = useAuth();
   const isAdmin = ready && String((user as { role?: string })?.role || "") === "admin";
   const [open, setOpen] = useState(false);
+
+  const steps = useMemo(
+    () => [
+      {
+        n: 1,
+        title: t("onboarding.step1Title"),
+        body: t("onboarding.step1Body"),
+        href: "/notes",
+        cta: t("onboarding.step1Cta")
+      },
+      {
+        n: 2,
+        title: t("onboarding.step2Title"),
+        body: t("onboarding.step2Body"),
+        href: "/create",
+        cta: t("onboarding.step2Cta")
+      },
+      {
+        n: 3,
+        title: t("onboarding.step3Title"),
+        body: t("onboarding.step3Body"),
+        href: "/works",
+        cta: t("onboarding.step3Cta")
+      }
+    ],
+    [t]
+  );
 
   useEffect(() => {
     try {
@@ -38,39 +67,52 @@ export default function OnboardingModal() {
       aria-modal="true"
       aria-labelledby="onb-title"
     >
-      <div className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-2xl">
+      <div className="w-full max-w-lg rounded-2xl border border-line bg-surface p-6 shadow-modal">
         <h2 id="onb-title" className="text-lg font-semibold text-ink">
-          欢迎使用 FindingYourVoice
+          {t("onboarding.title")}
         </h2>
-        <p className="mt-3 text-sm leading-relaxed text-muted">
-          先用<strong className="text-ink">笔记</strong>整理好素材，再到{" "}
-          <strong className="text-ink">AI 播客</strong> 或{" "}
-          <strong className="text-ink">文本转语音</strong>
-          里生成节目。生成需要一点时间，可在<strong className="text-ink">创作记录</strong>
-          里查看进度，完成后在<strong className="text-ink">我的作品</strong>收听或下载。
-        </p>
-        <ul className="mt-4 list-inside list-disc space-y-1 text-sm text-muted">
-          {isAdmin ? (
-            <li>
-              侧栏<strong>会员与套餐</strong>可查看方案与本月用量。
+        <p className="mt-2 text-sm text-muted">{t("onboarding.intro")}</p>
+        <ol className="mt-5 space-y-4">
+          {steps.map((s) => (
+            <li key={s.n} className="flex gap-3 rounded-xl border border-line bg-fill/40 p-3">
+              <span
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand/15 text-sm font-semibold text-brand"
+                aria-hidden
+              >
+                {s.n}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-ink">{s.title}</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted">{s.body}</p>
+                <Link
+                  href={s.href}
+                  className="mt-2 inline-block text-xs font-medium text-brand hover:underline"
+                  onClick={dismiss}
+                >
+                  {s.cta} →
+                </Link>
+              </div>
             </li>
-          ) : null}
-          <li>若生成失败，可在详情页重试；仍无法解决时，欢迎发邮件联系客服（邮件里会自动附上记录编号）。</li>
-        </ul>
+          ))}
+        </ol>
+        <p className="mt-4 text-xs text-muted">
+          {t("onboarding.footer")}
+          {isAdmin ? <> {t("onboarding.footerAdmin")}</> : null}
+        </p>
         <div className="mt-6 flex flex-wrap gap-2">
-          <Link
-            href="/notes"
-            className="flex-1 rounded-lg bg-brand px-3 py-2 text-center text-sm font-medium text-white hover:bg-brand min-[360px]:flex-none"
-            onClick={dismiss}
-          >
-            去写笔记
-          </Link>
           <button
             type="button"
-            className="flex-1 rounded-lg border border-line px-3 py-2 text-sm text-ink hover:bg-fill min-[360px]:flex-none"
+            className="flex-1 rounded-lg bg-brand px-3 py-2 text-center text-sm font-medium text-brand-foreground hover:bg-brand min-[400px]:flex-none"
             onClick={dismiss}
           >
-            知道了
+            {t("onboarding.dismiss")}
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-line px-3 py-2 text-sm text-muted hover:bg-fill"
+            onClick={dismiss}
+          >
+            {t("onboarding.close")}
           </button>
         </div>
       </div>

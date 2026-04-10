@@ -1,13 +1,24 @@
+"use client";
+
 import Link from "next/link";
+import { useI18n } from "../lib/I18nContext";
 
 export default function NotFound() {
+  const { t } = useI18n();
+
   return (
-    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 px-4 text-center">
-      <p className="text-4xl font-semibold text-muted">404</p>
-      <p className="text-sm text-muted">未找到该页面。请从首页进入，或检查地址是否含多余路径（例如 /zh/app/…）。</p>
-      <Link href="/" className="rounded-lg bg-brand px-4 py-2 text-sm text-white hover:bg-brand">
-        返回首页
-      </Link>
+    <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-12">
+      <div className="fym-surface-card w-full max-w-md px-8 py-10 text-center">
+        <p className="font-mono text-3xl font-semibold tabular-nums text-muted">404</p>
+        <h1 className="mt-3 text-base font-semibold text-ink">{t("notFound.title")}</h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted">{t("notFound.desc")}</p>
+        <Link
+          href="/"
+          className="mt-6 inline-flex rounded-lg bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground shadow-soft transition hover:bg-cta/90"
+        >
+          {t("notFound.cta")}
+        </Link>
+      </div>
     </div>
   );
 }

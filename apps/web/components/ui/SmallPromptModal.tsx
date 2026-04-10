@@ -110,7 +110,7 @@ export default function SmallPromptModal({
           }}
         />
         {error ? (
-          <p className="mt-2 text-[11px] text-rose-700" role="alert">
+          <p className="mt-2 text-[11px] text-danger-ink" role="alert">
             {error}
           </p>
         ) : null}

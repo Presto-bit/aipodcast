@@ -1,0 +1,44 @@
+# E2E / Playwright 专用覆盖（与 docker-compose.ai-native.yml 叠加使用）。
+#
+# 用法：
+#   docker compose -f docker-compose.ai-native.yml -f docker-compose.e2e.yml \
+#     --env-file .env.ai-native --profile e2e up -d --build
+#
+# - 编排器与 Worker 使用 Redis 逻辑库 1，避免与本机默认栈（库 0）抢同一 RQ 队列。
+# - --profile e2e 会额外启动一次性容器 e2e-ready：在 web / orchestrator 健康后探测 HTTP，失败则非零退出（便于 CI）。
+services:
+  orchestrator:
+    environment:
+      REDIS_URL: redis://redis:6379/1
+      E2E_SMOKE_SECRET: ${E2E_SMOKE_SECRET:-ci-e2e-smoke-local}
+      E2E_SMOKE_LOGIN_PASSWORD: ${E2E_SMOKE_LOGIN_PASSWORD:-E2eSmoke!ci900}
+      FYV_AUTH_ENABLED: "1"
+      FYV_AUTH_UNIFIED_PG: "1"
+      FYV_AUTH_PG_PRIMARY: "1"
+
+  ai-worker:
+    environment:
+      REDIS_URL: redis://redis:6379/1
+
+  media-worker:
+    environment:
+      REDIS_URL: redis://redis:6379/1
+
+  e2e-ready:
+    profiles: [e2e]
+    image: curlimages/curl:8.10.1
+    restart: "no"
+    depends_on:
+      web:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "e2e-ready: probing web + orchestrator..."
+        curl -sf --retry 40 --retry-delay 3 --retry-connrefused http://web:3000/ >/dev/null
+        curl -sf --retry 20 --retry-delay 2 --retry-connrefused http://orchestrator:8008/health >/dev/null
+        echo "e2e-ready: ok"

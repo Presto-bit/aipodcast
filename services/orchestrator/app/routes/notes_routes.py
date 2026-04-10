@@ -19,7 +19,9 @@ from ..note_constants import (
     NOTE_PREVIEW_TEXT_MAX,
 )
 from ..models import (
+    NOTES_PODCAST_STUDIO_PROJECT,
     create_file_note,
+    create_job,
     create_notebook_only,
     create_text_note,
     delete_note,
@@ -38,9 +40,13 @@ from ..models import (
     restore_note,
     update_note_title,
 )
+from ..queue import ai_queue
+from ..worker_tasks import run_ai_job
 from ..storage_paths import note_upload_object_key
 from ..note_file_parse import parse_note_temp_path
 from ..object_store import delete_object_key, get_object_bytes, upload_bytes
+from ..notes_ask import answer_notes_question
+from ..note_rag_service import ensure_note_rag_schema
 from ..schemas import (
     NoteCreateRequest,
     NoteImportUrlRequest,
@@ -48,6 +54,7 @@ from ..schemas import (
     NoteUploadJsonRequest,
     NotebookCreateRequest,
     NotebookRenameRequest,
+    NotesAskRequest,
 )
 
 _notes_startup_logger = logging.getLogger(__name__)
@@ -55,6 +62,16 @@ from ..security import verify_internal_signature
 
 router = APIRouter(prefix="/api/v1", tags=["notes"], dependencies=[Depends(verify_internal_signature)])
 NOTE_TRASH_RETENTION_DAYS = 7
+
+
+def _try_enqueue_note_rag_index(note_id: str, user_ref: str | None) -> None:
+    """异步：切块嵌入 + 摘要，供勾选范围内向量检索。"""
+    try:
+        pid = ensure_default_project(NOTES_PODCAST_STUDIO_PROJECT, created_by=user_ref)
+        jid = create_job(pid, "note_rag_index", "ai", {"note_id": note_id}, user_ref)
+        ai_queue.enqueue(run_ai_job, jid, job_timeout="15m")
+    except Exception as exc:
+        _notes_startup_logger.warning("note_rag_index enqueue failed note_id=%s: %s", note_id, exc)
 
 
 def _current_user_ref_or_401(request: Request) -> str | None:
@@ -65,7 +82,7 @@ def _current_user_ref_or_401(request: Request) -> str | None:
     sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
     if not sess:
         raise HTTPException(status_code=401, detail="未登录")
-    phone = str(sess.get("phone") or "").strip()
+    phone = auth_bridge.session_principal(sess)
     if not phone:
         raise HTTPException(status_code=401, detail="未登录")
     return phone
@@ -106,6 +123,13 @@ def list_notes_api(
         ext = str(md.get("ext") or ("txt" if it == "note_text" else "")).lower()
         note_uuid = str(r.get("id"))
         file_key = r.get("file_object_key")
+        ct = str(r.get("content_text") or "").strip()
+        if it == "note_text":
+            source_ready = len(ct) > 0
+            source_hint = "文本笔记，可作资料摘录" if source_ready else "正文为空"
+        else:
+            source_ready = len(ct) >= 20
+            source_hint = "正文已抽取，可作资料" if source_ready else "正文过短或未抽取，建议预览或重新上传"
         notes.append(
             {
                 "noteId": note_uuid,
@@ -116,6 +140,8 @@ def list_notes_api(
                 "createdAt": str(r.get("created_at") or ""),
                 "sourceUrl": str(r.get("source_url") or md.get("sourceUrl") or ""),
                 "inputType": it,
+                "sourceReady": source_ready,
+                "sourceHint": source_hint,
             }
         )
     has_more = len(rows) >= limit
@@ -144,6 +170,13 @@ def list_trash_notes_api(
         ext = str(md.get("ext") or ("txt" if it == "note_text" else "")).lower()
         note_uuid = str(r.get("id"))
         file_key = r.get("file_object_key")
+        ct = str(r.get("content_text") or "").strip()
+        if it == "note_text":
+            source_ready = len(ct) > 0
+            source_hint = "文本笔记，可作资料摘录" if source_ready else "正文为空"
+        else:
+            source_ready = len(ct) >= 20
+            source_hint = "正文已抽取，可作资料" if source_ready else "正文过短或未抽取，建议预览或重新上传"
         notes.append(
             {
                 "noteId": note_uuid,
@@ -155,6 +188,8 @@ def list_trash_notes_api(
                 "deletedAt": str(r.get("deleted_at") or ""),
                 "sourceUrl": str(r.get("source_url") or md.get("sourceUrl") or ""),
                 "inputType": it,
+                "sourceReady": source_ready,
+                "sourceHint": source_hint,
             }
         )
     has_more = len(rows) >= limit
@@ -181,7 +216,36 @@ def create_note_api(req: NoteCreateRequest, request: Request):
         if str(e) == "notebook_required":
             raise HTTPException(status_code=400, detail="notebook_required") from e
         raise
+    _try_enqueue_note_rag_index(note_id, user_ref)
     return {"success": True, "noteId": note_id}
+
+
+@router.post("/notes/ask")
+def notes_ask_api(body: NotesAskRequest, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    try:
+        out = answer_notes_question(
+            notebook=body.notebook.strip(),
+            note_ids=body.note_ids,
+            question=body.question.strip(),
+            user_ref=user_ref,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if msg == "note_not_found":
+            raise HTTPException(status_code=404, detail=msg) from e
+        if msg in (
+            "notebook_required",
+            "question_required",
+            "note_ids_required",
+            "too_many_notes",
+            "note_notebook_mismatch",
+        ):
+            raise HTTPException(status_code=400, detail=msg) from e
+        raise HTTPException(status_code=400, detail=msg) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"success": True, **out}
 
 
 @router.patch("/notes/{note_id}")
@@ -313,6 +377,7 @@ def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
     except Exception:
         delete_object_key(object_key)
         raise
+    _try_enqueue_note_rag_index(row_id, user_ref)
     return {
         "success": True,
         "note": {
@@ -362,6 +427,7 @@ def import_note_from_url_api(body: NoteImportUrlRequest, request: Request):
         if str(e) == "notebook_required":
             raise HTTPException(status_code=400, detail="notebook_required") from e
         raise
+    _try_enqueue_note_rag_index(note_id, user_ref)
     return {"success": True, "noteId": note_id, "title": title, "notebook": notebook}
 
 
@@ -439,6 +505,7 @@ def delete_notebook_api(notebook_name: str, request: Request):
 def ensure_notebooks_schema_startup(*, strict: bool = False) -> None:
     try:
         ensure_notebooks_schema()
+        ensure_note_rag_schema()
         purge_expired_trashed_notes(retention_days=NOTE_TRASH_RETENTION_DAYS, max_rows=500)
     except Exception:
         _notes_startup_logger.exception("notebooks schema startup failed")

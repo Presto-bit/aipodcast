@@ -138,7 +138,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: "/admin/hub", label: "概览", desc: "快捷入口与说明", icon: "hub" as const },
     { href: "/admin/users", label: "用户管理", desc: "用户、角色与套餐", icon: "users" as const },
     { href: "/admin/models", label: "模型管理", desc: "模型与费用说明", icon: "models" as const },
-    { href: "/admin/usage", label: "总览看板", desc: "总览/用户/作品/告警 四合一", icon: "usage" as const },
+    { href: "/admin/usage", label: "总览看板", desc: "总览/订单/用户/作品/告警", icon: "usage" as const },
     { href: "/admin/jobs", label: "创作记录", desc: "生成记录列表与详情", icon: "jobs" as const },
     { href: "/admin/tts-polish", label: "TTS 润色", desc: "AI 润色条款（单/双人）", icon: "polish" as const },
     { href: "/admin/subscription-matrix", label: "订阅矩阵", desc: "权限开关与计费口径（只读）", icon: "matrix" as const },
@@ -213,14 +213,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         : isActive
                           ? "border-brand/80 bg-fill text-ink"
                           : "border-transparent text-ink hover:bg-fill hover:text-ink",
-                      collapsed && isActive ? "shadow-[inset_0_0_0_1px_rgba(108,92,231,0.18)] dark:shadow-[inset_0_0_0_1px_rgba(162,155,254,0.28)]" : "",
+                      collapsed && isActive ? "shadow-inset-brand" : "",
                     ].join(" ")}
                   >
                     <span
                       className={[
                         "flex h-8 w-8 shrink-0 items-center justify-center rounded-dawn-md transition-colors",
                         isActive
-                          ? "bg-brand/18 text-brand shadow-[inset_0_0_0_1px_rgba(108,92,231,0.22)] dark:bg-brand/22"
+                          ? "bg-brand/18 text-brand shadow-inset-brand dark:bg-brand/22"
                           : "bg-fill text-muted group-hover:bg-track group-hover:text-ink",
                       ].join(" ")}
                     >

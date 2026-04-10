@@ -4,7 +4,12 @@ import json
 from typing import Any, Callable
 from urllib import request
 
-from ..entitlement_matrix import long_form_script_chars_cap
+from ..entitlement_matrix import long_form_script_chars_cap, normalize_script_target_input
+from ..fyv_shared.config import PODCAST_CONFIG, TIMEOUTS
+from ..legacy_bridge import (
+    DEFAULT_SCRIPT_CONSTRAINTS_DIALOGUE,
+    DIALOGUE_SPEAKER_RETRY_CONSTRAINTS,
+)
 
 
 def _http_post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeout_sec: int = 60) -> dict[str, Any]:
@@ -25,6 +30,72 @@ def _content_from_response(resp: dict[str, Any]) -> str:
     return ""
 
 
+def _finish_reason_from_response(resp: dict[str, Any]) -> str:
+    choices = resp.get("choices") or []
+    if not isinstance(choices, list) or not choices:
+        return ""
+    c0 = choices[0]
+    if not isinstance(c0, dict):
+        return ""
+    return str(c0.get("finish_reason") or "")
+
+
+def _cfg_int(key: str, default: int) -> int:
+    try:
+        return int(PODCAST_CONFIG.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _cfg_float(key: str, default: float) -> float:
+    try:
+        return float(PODCAST_CONFIG.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _max_tokens_for_target_chars(target_chars: int, cap: int) -> int:
+    """中文长稿：粗略按字数估 completion tokens，夹到厂商允许上限。"""
+    try:
+        est = int(target_chars * 1.2) + 320
+    except (TypeError, ValueError):
+        est = 2048
+    return max(256, min(cap, est))
+
+
+def _merge_continue_material_local(
+    base_ref: str,
+    script_so_far: str,
+    *,
+    tail_max: int,
+    reference_tail_max: int,
+) -> str:
+    ref = (base_ref or "").rstrip()
+    rtm = max(0, int(reference_tail_max))
+    if rtm > 0 and len(ref) > rtm:
+        ref = (
+            f"【参考材料节选·全文较长已截取末尾约 {rtm} 字，供衔接事实与术语】\n"
+            f"{ref[-rtm:]}"
+        )
+    t = (script_so_far or "").strip()
+    if len(t) > tail_max:
+        t = t[-tail_max:]
+    return (
+        f"{ref}\n\n【已生成上文】\n{t}\n\n"
+        "（请紧接上文最后一两句续写：首句须自然承接上文语义与指代；不要重复已有段落；"
+        "不要重新写开篇套话或再介绍一遍主题；不要输出「续写」「下一段」等编排标记。）"
+    )
+
+
+def _join_script_continued_local(accumulated: str, piece: str, output_mode: str) -> str:
+    a = accumulated.rstrip()
+    p = piece.lstrip()
+    if not p:
+        return accumulated
+    sep = "\n" if output_mode == "dialogue" else "\n\n"
+    return a + sep + p
+
+
 def generate_script_openai_compatible(
     *,
     text: str,
@@ -40,16 +111,31 @@ def generate_script_openai_compatible(
     language = str(opts.get("script_language") or "中文").strip()
     program_name = str(opts.get("program_name") or "AI 播客节目").strip()
     output_mode = str(opts.get("output_mode") or "dialogue").strip().lower()
+    if output_mode not in ("dialogue", "article"):
+        output_mode = "dialogue"
     cap = long_form_script_chars_cap(subscription_tier)
     raw_tc = opts.get("script_target_chars")
-    if raw_tc is not None:
-        try:
-            target_chars = max(200, min(cap, int(raw_tc)))
-        except (TypeError, ValueError):
-            target_chars = max(200, min(cap, 1000))
+    norm = normalize_script_target_input(raw_tc)
+    if norm is not None:
+        goal = max(200, min(cap, norm))
     else:
-        target_chars = max(200, min(cap, 1000))
-    constraints = str(opts.get("script_constraints") or "").strip()
+        # 与 legacy_bridge 未显式传目标时一致：默认篇幅 × preferred 上限，避免误用 1000 导致长文任务只出千字级
+        try:
+            _dft = int(PODCAST_CONFIG.get("script_target_chars_default", 800))
+        except (TypeError, ValueError):
+            _dft = 800
+        try:
+            _pref = int(PODCAST_CONFIG.get("script_target_chars_preferred_max", 2400))
+        except (TypeError, ValueError):
+            _pref = 2400
+        implicit = min(_dft, _pref, cap)
+        goal = max(200, int(implicit))
+    user_constraints = str(opts.get("script_constraints") or "").strip()
+    # 与 build_script_with_minimax 一致：双人且未传约束时用默认「纯对话、无舞台说明」
+    if output_mode == "dialogue":
+        first_script_constraints = user_constraints or DEFAULT_SCRIPT_CONSTRAINTS_DIALOGUE
+    else:
+        first_script_constraints = user_constraints
     oral_for_tts = bool(opts.get("oral_for_tts", True))
     oral_extra = ""
     if oral_for_tts:
@@ -64,15 +150,171 @@ def generate_script_openai_compatible(
             )
 
     mode_hint = "双人对话，每行以 Speaker1: / Speaker2: 开头" if output_mode != "article" else "输出完整文章"
-    prompt = (
-        f"请基于材料生成{program_name}脚本。\n"
-        f"- 语言：{language}\n"
-        f"- 风格：{style}\n"
-        f"- 输出形式：{mode_hint}\n"
-        f"- 目标字数：约{target_chars}字\n"
-        f"- 额外约束：{constraints or '无'}{oral_extra}\n\n"
-        f"材料如下：\n{text}"
-    )
+    tok_cap = _cfg_int("openai_compat_script_max_tokens_cap", 8192)
+    max_rounds = _cfg_int("script_generation_max_continue_rounds", 12)
+    shortfall_ratio = _cfg_float("script_generation_shortfall_ratio", 0.82)
+    min_gain = _cfg_int("script_continue_min_round_gain_chars", 80)
+    tail_max = _cfg_int("script_continue_material_tail_max_chars", 64_000)
+    ref_tail_max = _cfg_int("script_continue_reference_tail_max_chars", 24_000)
+    seg_cap = _cfg_int("openai_compat_script_segment_target_chars_max", 4500)
+    seg_cap = max(800, min(24_000, seg_cap))
+    timeout_sec = int(TIMEOUTS.get("script_generation_openai_compat", 240))
+
+    base = api_base.rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    def _constraints_for_round(material: str) -> str:
+        """续写轮与 MiniMax 对齐：双人仅保留 Speaker 行约束；文章续写不再叠约束。"""
+        if "【已生成上文】" not in material:
+            return first_script_constraints
+        if output_mode == "dialogue":
+            return DIALOGUE_SPEAKER_RETRY_CONSTRAINTS
+        return ""
+
+    def _user_prompt(material: str, segment_target: int) -> str:
+        cont = ""
+        if "【已生成上文】" in material:
+            cont = (
+                "\n- 材料中若含【已生成上文】：请只输出紧接其后的新增正文，不要复述、不要从头重写；"
+                "段首须直接承接上文最后一两句的话题与指代。\n"
+            )
+        total_line = ""
+        if goal > seg_cap:
+            if output_mode == "article":
+                total_line = (
+                    f"- 全文总目标约 {goal} 字；本段约 {segment_target} 字（同一篇文章的后续段落，勿写「续写」「第几段」等标记）。\n"
+                )
+            else:
+                total_line = f"- 全文总目标约 {goal} 字；本段先完成约 {segment_target} 字（多轮续写拼接）。\n"
+        article_zh = ""
+        if output_mode == "article":
+            ll = language.lower()
+            if "中文" in language or ll in ("zh", "zh-cn", "简体", "简体中文"):
+                article_zh = (
+                    "- 中文须通篇使用大陆规范简体中文，勿使用繁体字或与繁体混排。\n"
+                    "- 正文禁止出现「续写」「第几段」「（接续）」等编排说明；勿复述提示用语。\n"
+                )
+        round_c = _constraints_for_round(material).strip()
+        return (
+            f"请基于材料生成{program_name}脚本。\n"
+            f"- 语言：{language}\n"
+            f"- 风格：{style}\n"
+            f"- 输出形式：{mode_hint}\n"
+            f"{article_zh}"
+            f"{total_line}"
+            f"- 本段目标字数：约{segment_target}字（未达全文目标可再补段，勿重复已写内容）\n"
+            f"- 额外约束：{round_c or '无'}{oral_extra}{cont}\n\n"
+            f"材料如下：\n{material}"
+        )
+
+    full_script = ""
+    material = text
+    trace_id = ""
+    last_finish = ""
+    api_calls = 0
+    http_round = 0
+    continuation_shrink_pass = 0
+
+    while http_round < max_rounds:
+        remaining = goal - len(full_script)
+        if remaining <= min_gain:
+            break
+
+        http_round += 1
+        ref_budget = ref_tail_max
+        if continuation_shrink_pass == 1:
+            ref_budget = max(4000, min(12_000, ref_tail_max // 2))
+        elif continuation_shrink_pass >= 2:
+            ref_budget = max(2000, min(6000, ref_tail_max // 4))
+        if full_script.strip():
+            material = _merge_continue_material_local(
+                text, full_script, tail_max=tail_max, reference_tail_max=ref_budget
+            )
+
+        segment_target = min(remaining, seg_cap)
+        prompt = _user_prompt(material, segment_target)
+        max_tokens = _max_tokens_for_target_chars(segment_target, tok_cap)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "你是播客脚本助手。"},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.7,
+            "max_tokens": max_tokens,
+        }
+        resp = _http_post_json(url, headers, payload, timeout_sec=timeout_sec)
+        trace_id = str(resp.get("id") or trace_id)
+        piece = _content_from_response(resp)
+        fr = _finish_reason_from_response(resp)
+        if fr:
+            last_finish = fr
+        if not piece.strip():
+            if not full_script.strip():
+                raise RuntimeError("openai_compatible_empty_content")
+            still_need = goal - len(full_script)
+            if still_need > max(400, goal // 10) and continuation_shrink_pass < 2:
+                continuation_shrink_pass += 1
+                continue
+            break
+
+        plen = len(piece.strip())
+        if plen < min_gain and full_script.strip():
+            still_need = goal - len(full_script)
+            if still_need > max(400, goal // 10) and continuation_shrink_pass < 2:
+                continuation_shrink_pass += 1
+                continue
+            break
+
+        continuation_shrink_pass = 0
+        api_calls += 1
+
+        if not full_script.strip():
+            full_script = piece.strip()
+        else:
+            full_script = _join_script_continued_local(full_script, piece, output_mode)
+
+        if on_script_delta:
+            on_script_delta(full_script, piece)
+
+        if len(full_script) >= goal:
+            break
+        if last_finish == "length":
+            continue
+        if len(full_script) > goal * shortfall_ratio:
+            break
+        continue
+
+    if not full_script.strip():
+        raise RuntimeError("openai_compatible_empty_content")
+
+    return {
+        "script": full_script,
+        "fallback": False,
+        "retries": 0,
+        "trace_id": trace_id,
+        "upstream_status_code": None,
+        "attempt_errors": [],
+        "error_message": "",
+        "script_continue_rounds": api_calls,
+        "script_finish_reason": last_finish or None,
+    }
+
+
+def chat_completion_openai_compatible(
+    *,
+    messages: list[dict[str, str]],
+    api_base: str,
+    api_key: str,
+    model: str,
+    temperature: float = 0.65,
+    timeout_sec: int = 120,
+) -> str:
+    """OpenAI 兼容 Chat Completions，不做播客提示词包装（供运营文案等使用）。"""
     base = api_base.rstrip("/")
     url = f"{base}/chat/completions"
     headers = {
@@ -81,25 +323,12 @@ def generate_script_openai_compatible(
     }
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": "你是播客脚本助手。"},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.7,
+        "messages": messages,
+        "temperature": float(temperature),
     }
-    resp = _http_post_json(url, headers, payload)
+    resp = _http_post_json(url, headers, payload, timeout_sec=timeout_sec)
     content = _content_from_response(resp)
     if not content:
         raise RuntimeError("openai_compatible_empty_content")
-    if on_script_delta:
-        on_script_delta(content, content)
-    return {
-        "script": content,
-        "fallback": False,
-        "retries": 0,
-        "trace_id": str(resp.get("id") or ""),
-        "upstream_status_code": None,
-        "attempt_errors": [],
-        "error_message": "",
-    }
+    return content
 

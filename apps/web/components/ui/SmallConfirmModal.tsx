@@ -62,7 +62,7 @@ export default function SmallConfirmModal({
         </h2>
         <p className="mt-2 text-xs leading-relaxed text-muted">{message}</p>
         {error ? (
-          <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] text-rose-800" role="alert">
+          <p className="mt-2 rounded-md border border-danger/30 bg-danger-soft px-2 py-1.5 text-[11px] text-danger-ink" role="alert">
             {error}
           </p>
         ) : null}

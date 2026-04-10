@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { cancelJob, deleteJob, listJobs } from "../../lib/api";
+import { useI18n } from "../../lib/I18nContext";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cancelJob, HttpStatusError, listJobs, purgeJob } from "../../lib/api";
 import { jobTypeLabel } from "../../lib/jobStage";
 import { summarizeActiveJobPayload } from "../../lib/jobPayloadSummary";
 import type { JobRecord, JobStatus } from "../../lib/types";
@@ -34,6 +35,7 @@ type WorksActiveJobsPanelProps = {
 };
 
 export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiveJobsPanelProps = {}) {
+  const { t } = useI18n();
   const { phone, ready } = useAuth();
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,9 +45,6 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
   const visibleRef = useRef(true);
-  /** 删成功后若列表接口短暂仍返回该 job，过滤掉，避免整表覆盖导致「删了还在」 */
-  const suppressedIdsRef = useRef(new Set<string>());
-
   const load = useCallback(async () => {
     setErr("");
     try {
@@ -55,13 +54,7 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
         status: "queued,running",
         slim: false
       });
-      const suppressed = suppressedIdsRef.current;
-      for (const jid of [...suppressed]) {
-        if (!list.some((j) => String(j.id) === jid)) {
-          suppressed.delete(jid);
-        }
-      }
-      setJobs(list.filter((j) => !suppressed.has(String(j.id))));
+      setJobs(list);
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
@@ -91,7 +84,10 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
     return () => window.clearInterval(id);
   }, [load, ready]);
 
-  const errCopy = err ? errorPageCopy(classifyErrorTone(err)) : null;
+  const errCopy = useMemo(
+    () => (err ? errorPageCopy(classifyErrorTone(err), t) : null),
+    [err, t]
+  );
 
   async function stopJob(id: string) {
     setStoppingId(id);
@@ -114,38 +110,34 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
     const id = deleteTarget.id;
     const mayNeedCancel = deleteTarget.status === "queued" || deleteTarget.status === "running";
     try {
-      // 软删优先：仅 SQL，避免先 await cancel（编排器会扫全队列 job_ids，任务多时极慢/超时导致永远也走不到 delete）
-      try {
-        await deleteJob(id);
-      } catch (e) {
-        const raw = String(e instanceof Error ? e.message : e);
-        if (!mayNeedCancel || !/delete_failed|409/i.test(raw)) throw e;
-        try {
-          await Promise.race([
-            cancelJob(id),
-            new Promise<never>((_, rej) => {
-              window.setTimeout(() => rej(new Error("cancel_timeout")), 12_000);
-            })
-          ]);
-        } catch {
-          /* 取消失败或超时也再试删一次 */
-        }
-        await deleteJob(id);
+      // 先取消队列/Worker，再硬删；否则仅 DELETE 行时 RQ 仍可能写回或表现为「删了又出现」
+      if (mayNeedCancel) {
+        await cancelJob(id).catch(() => {});
       }
-      suppressedIdsRef.current.add(String(id));
+      try {
+        await purgeJob(id);
+      } catch (pe) {
+        if (pe instanceof HttpStatusError && pe.status === 404) {
+          const { jobs: refreshed } = await listJobs({
+            limit: LIST_LIMIT,
+            offset: 0,
+            status: "queued,running",
+            slim: false
+          });
+          if (refreshed.some((j) => String(j.id) === String(id))) {
+            throw pe;
+          }
+        } else {
+          throw pe;
+        }
+      }
       setDeleteTarget(null);
       setJobs((prev) => prev.filter((j) => String(j.id) !== String(id)));
       onActiveJobsChanged?.();
       await load();
-      // 已移出列表后后台再尝试取消 RQ，不阻塞界面
-      if (mayNeedCancel) {
-        void cancelJob(id).catch(() => {});
-      }
     } catch (e) {
       const raw = String(e instanceof Error ? e.message : e);
-      setDeleteErr(
-        /delete_failed|409/i.test(raw) ? "删除未完成，请稍后重试或先点「停止」再删。" : raw
-      );
+      setDeleteErr(/purge_failed|502|503|job_not_in_trash/i.test(raw) ? "删除未完成，请稍后重试或先点「停止」再删。" : raw);
     } finally {
       setDeleteBusy(false);
     }
@@ -162,10 +154,8 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
   }
 
   return (
-    <div className="mt-2">
-      <p className="mb-4 text-center text-sm text-muted">
-        显示排队与执行中的创作任务；摘要来自提交内容，进度会周期性自动刷新。
-      </p>
+    <div className="mt-1">
+      <p className="mb-3 text-center text-xs leading-snug text-muted">{t("empty.activeJobs.banner")}</p>
 
       {errCopy ? (
         <div className="mb-4 rounded-dawn-lg border border-danger/35 bg-danger-soft px-3 py-3 text-sm" role="alert">
@@ -177,18 +167,15 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
 
       {jobs.length === 0 ? (
         <EmptyState
-          title="没有进行中的任务"
-          description="新建 AI 播客、文本转语音或笔记出稿后，会在这里看到队列与生成进度。"
+          title={t("empty.activeJobs.title")}
+          description={t("empty.activeJobs.desc")}
           action={
-            <div className="flex flex-wrap justify-center gap-3">
-              <Link href="/podcast" className="text-sm text-brand underline">
-                AI 播客
+            <div className="flex flex-wrap justify-center gap-4">
+              <Link href="/create" className="text-sm font-medium text-brand underline underline-offset-2 hover:opacity-90">
+                {t("empty.jobsList.cta")}
               </Link>
-              <Link href="/tts" className="text-sm text-brand underline">
-                文本转语音
-              </Link>
-              <Link href="/notes" className="text-sm text-brand underline">
-                笔记播客
+              <Link href="/notes" className="text-sm font-medium text-brand underline underline-offset-2 hover:opacity-90">
+                {t("nav.notes")}
               </Link>
             </div>
           }
@@ -202,7 +189,7 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
             return (
               <li
                 key={j.id}
-                className="rounded-2xl border border-line bg-fill/60 p-4 shadow-sm backdrop-blur-sm sm:p-5"
+                className="rounded-2xl border border-line bg-fill/60 p-4 shadow-soft backdrop-blur-sm sm:p-5"
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
@@ -239,7 +226,7 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
                     <Button
                       type="button"
                       variant="secondary"
-                      className="!border-rose-300 !px-3 !py-1.5 !text-xs !text-rose-800 hover:!bg-rose-50"
+                      className="!border-danger/40 !px-3 !py-1.5 !text-xs !text-danger-ink hover:!bg-danger-soft"
                       onClick={() => {
                         setDeleteErr(null);
                         setDeleteTarget(j);
@@ -275,8 +262,8 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
         title="删除任务？"
         message={
           deleteTarget && (deleteTarget.status === "queued" || deleteTarget.status === "running")
-            ? "该任务仍在排队或执行。删除后将移入回收站并从列表隐藏；若未先停止，后台仍可能短暂继续处理。确定删除？"
-            : "将把该任务移入回收站。确定删除？"
+            ? "任务进行中。删除将停止并永久移除，确定？"
+            : "永久删除该记录，确定？"
         }
         confirmLabel="删除"
         cancelLabel="取消"

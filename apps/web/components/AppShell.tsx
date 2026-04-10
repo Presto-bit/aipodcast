@@ -2,28 +2,56 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentType,
+  type MouseEvent,
+  type ReactNode
+} from "react";
 import {
   IconAdmin,
+  IconCreate,
   IconDraft,
   IconGrid,
   IconHome,
-  IconMic,
   IconNotes,
-  IconSearch,
   IconSubscription,
   IconUser,
   IconTemplate,
   IconTrash,
-  IconTts,
   IconVoice
 } from "./NavIcons";
 import { useAuth } from "../lib/auth";
+import { APP_SIDEBAR_COLLAPSED_KEY as COLLAPSE_KEY, APP_SIDEBAR_COLLAPSE_EVENT } from "../lib/appSidebarCollapse";
 import { useI18n } from "../lib/I18nContext";
 import OnboardingModal from "./OnboardingModal";
+import SidebarPlanStrip from "./SidebarPlanStrip";
 import BrandGlyph from "./brand/BrandGlyph";
-
-const COLLAPSE_KEY = "fym_web_sidebar_collapsed";
+import { dispatchNotesOpenWorkbench } from "../lib/notesLastNotebook";
+import {
+  FOOTER_LINK_CLASS,
+  NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
+  NAV_SECTION_LABEL_CLASS,
+  ADMIN_ROLE,
+  NAV_SCROLL_MAX_HEIGHT,
+  SIDEBAR_COLLAPSED_STORAGE,
+  SIDEBAR_EXPANDED_STORAGE,
+  SIDEBAR_WIDTH_COLLAPSED_CLASS,
+  SIDEBAR_WIDTH_EXPANDED_CLASS
+} from "../lib/appShellLayout";
+import {
+  isAuthPublicPath,
+  matchesAdminConsole,
+  matchesNotesWorkbench,
+  matchesProductStudio,
+  normalizePathname,
+  NOTES_TEMPLATES_PREFIX,
+  NOTES_TRASH_PREFIX,
+  pathMatchesRoot
+} from "../lib/navPaths";
 
 type NavItem = {
   href: string;
@@ -32,6 +60,8 @@ type NavItem = {
   Icon: ComponentType<object>;
   /** 自定义高亮（例如子路由需与父入口同时高亮） */
   activeMatch?: (pathname: string) => boolean;
+  /** 点击时拦截默认跳转（如已在目标页需重复进入某状态） */
+  onNavigate?: (e: MouseEvent<HTMLAnchorElement>) => void;
 };
 
 function Chevron({ collapsed }: { collapsed: boolean }) {
@@ -42,18 +72,25 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function navButtonClass(active: boolean, collapsed: boolean) {
+function navButtonClass(active: boolean, collapsed: boolean): string {
+  const base = "group flex w-full items-center rounded-dawn-md py-2 text-sm transition-colors";
+  if (collapsed) {
+    return [base, "justify-center px-0", active ? "bg-fill text-ink" : "text-muted hover:bg-fill"].join(" ");
+  }
   return [
-    "group flex w-full items-center rounded-dawn-md py-2 text-sm transition-colors",
-    collapsed ? "justify-center px-0" : "gap-2.5 border-l-2 pl-1.5 pr-2",
-    collapsed
-      ? ""
-      : active
-        ? "border-brand/80 bg-fill text-ink"
-        : "border-transparent text-muted hover:bg-fill hover:text-ink",
-    collapsed && active ? "bg-fill text-ink" : "",
-    collapsed && !active ? "text-muted hover:bg-fill" : ""
+    base,
+    "gap-2.5 border-l-2 pl-1.5 pr-2",
+    active ? "border-brand/80 bg-fill text-ink" : "border-transparent text-muted hover:bg-fill hover:text-ink"
   ].join(" ");
+}
+
+function NavSectionHeader({ collapsed, children }: { collapsed: boolean; children: React.ReactNode }) {
+  if (collapsed) return <div className={NAV_SECTION_DIVIDER_COLLAPSED_CLASS} aria-hidden />;
+  return (
+    <p className={NAV_SECTION_LABEL_CLASS} role="presentation">
+      {children}
+    </p>
+  );
 }
 
 function NavIconBox({ active, children }: { active: boolean; children: ReactNode }) {
@@ -62,7 +99,7 @@ function NavIconBox({ active, children }: { active: boolean; children: ReactNode
       className={[
         "flex h-8 w-8 shrink-0 items-center justify-center rounded-dawn-md transition-colors",
         active
-          ? "bg-brand/18 text-brand shadow-[inset_0_0_0_1px_rgba(108,92,231,0.22)] dark:bg-brand/22"
+          ? "bg-brand/18 text-brand shadow-inset-brand dark:bg-brand/22"
           : "bg-fill text-muted group-hover:bg-track group-hover:text-ink"
       ].join(" ")}
     >
@@ -80,13 +117,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!ready || authRequired !== true) return;
     if (user) return;
-    const authLanding =
-      pathname === "/" ||
-      pathname === "/me" ||
-      (pathname?.startsWith("/me/") ?? false) ||
-      pathname === "/settings" ||
-      (pathname?.startsWith("/settings/") ?? false);
-    if (!pathname || authLanding) return;
+    if (!pathname || isAuthPublicPath(pathname)) return;
     router.replace("/");
   }, [ready, authRequired, user, pathname, router]);
   const { t } = useI18n();
@@ -96,30 +127,46 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     () => [{ href: "/", label: t("nav.home"), short: "首", Icon: IconHome }],
     [t]
   );
-  const notesNavMain = useMemo<NavItem>(
-    () => ({
-      href: "/notes",
-      label: t("nav.notes"),
-      short: "笔",
-      Icon: IconNotes,
-      activeMatch: (p) => p === "/notes" || p === "/notes/"
-    }),
-    [t]
-  );
   const navProducts = useMemo<NavItem[]>(
     () => [
-      { href: "/podcast", label: t("nav.podcast"), short: "播", Icon: IconMic },
-      { href: "/tts", label: t("nav.tts"), short: "读", Icon: IconTts },
+      {
+        href: "/create",
+        label: t("nav.create"),
+        short: t("nav.createShort"),
+        Icon: IconCreate,
+        activeMatch: (p) => matchesProductStudio(p)
+      },
+      {
+        href: "/notes",
+        label: t("nav.notes"),
+        short: "笔",
+        Icon: IconNotes,
+        activeMatch: (p) => matchesNotesWorkbench(p),
+        onNavigate: (e) => {
+          const p = pathname || "";
+          if (p.startsWith(NOTES_TEMPLATES_PREFIX) || p.startsWith(NOTES_TRASH_PREFIX)) return;
+          if (normalizePathname(p) === "/notes") {
+            e.preventDefault();
+            dispatchNotesOpenWorkbench();
+          }
+        }
+      },
       {
         href: "/voice",
         label: t("nav.voice"),
         short: "音",
         Icon: IconVoice,
-        activeMatch: (p) => p === "/voice" || p === "/voice/"
+        activeMatch: (p) => pathMatchesRoot(p, "/voice")
       },
-      { href: "/notes/templates", label: t("nav.templates"), short: "创", Icon: IconTemplate }
+      {
+        href: "/notes/templates",
+        label: t("nav.templates"),
+        short: "风",
+        Icon: IconTemplate,
+        activeMatch: (p) => pathMatchesRoot(p, NOTES_TEMPLATES_PREFIX)
+      }
     ],
-    [t]
+    [t, pathname]
   );
   const navLibrary = useMemo<NavItem[]>(
     () => [
@@ -129,10 +176,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         label: t("nav.drafts"),
         short: "草",
         Icon: IconDraft,
-        activeMatch: (p) => p === "/drafts" || p === "/drafts/"
+        activeMatch: (p) => pathMatchesRoot(p, "/drafts")
       },
-      { href: "/notes/trash", label: t("nav.trash"), short: "删", Icon: IconTrash },
-      { href: "/search", label: t("nav.search"), short: "搜", Icon: IconSearch }
+      { href: "/notes/trash", label: t("nav.trash"), short: "删", Icon: IconTrash }
     ],
     [t]
   );
@@ -140,17 +186,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const v = window.localStorage.getItem(COLLAPSE_KEY);
-      if (v === "1") setCollapsed(true);
+      if (v === SIDEBAR_COLLAPSED_STORAGE) setCollapsed(true);
     } catch {
       // ignore
     }
+  }, []);
+
+  useEffect(() => {
+    const onRequestCollapse = () => setCollapsed(true);
+    window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
+    return () => window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
   }, []);
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => {
       const next = !c;
       try {
-        window.localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
+        window.localStorage.setItem(COLLAPSE_KEY, next ? SIDEBAR_COLLAPSED_STORAGE : SIDEBAR_EXPANDED_STORAGE);
       } catch {
         // ignore
       }
@@ -167,11 +219,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   // 会话已解析且无用户时在首页全屏登录；设置页内嵌登录保留侧栏
-  if (authRequired && !user && pathname === "/" && ready) {
+  if (authRequired && !user && pathname === "/") {
     return <>{children}</>;
   }
 
-  const isAdmin = String((user as { role?: string })?.role || "") === "admin";
+  const isAdmin = String((user as { role?: string })?.role || "") === ADMIN_ROLE;
 
   function linkActive(item: NavItem): boolean {
     if (item.activeMatch) return item.activeMatch(pathname);
@@ -183,7 +235,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const label = collapsed && item.short ? item.short : item.label;
     const Ic = item.Icon;
     return (
-      <Link key={item.href} href={item.href} className={navButtonClass(active, collapsed)} title={item.label}>
+      <Link
+        key={item.href}
+        href={item.href}
+        className={navButtonClass(active, collapsed)}
+        title={item.label}
+        onClick={item.onNavigate}
+      >
         <NavIconBox active={active}>
           <Ic />
         </NavIconBox>
@@ -196,13 +254,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="relative flex min-h-screen bg-canvas text-ink">
       <a
         href="#main-content"
-        className="absolute left-[-9999px] z-[300] focus:left-4 focus:top-4 focus:rounded-md focus:bg-brand focus:px-3 focus:py-2 focus:text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand/30"
+        className="absolute left-[-9999px] z-[300] focus:left-4 focus:top-4 focus:rounded-md focus:bg-brand focus:px-3 focus:py-2 focus:text-sm focus:text-brand-foreground focus:outline-none focus:ring-2 focus:ring-brand/30"
       >
         {t("nav.skipToContent")}
       </a>
       <aside
         className={`flex h-svh min-h-0 flex-shrink-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width] duration-200 ease-out motion-reduce:transition-none ${
-          collapsed ? "w-[72px]" : "w-[232px]"
+          collapsed ? SIDEBAR_WIDTH_COLLAPSED_CLASS : SIDEBAR_WIDTH_EXPANDED_CLASS
         }`}
       >
         <div className={`flex shrink-0 items-start border-b border-line py-2 ${collapsed ? "justify-center px-2" : "gap-2 px-2.5"}`}>
@@ -226,28 +284,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         <nav
           className="mx-1.5 mt-1 min-h-0 shrink-0 overflow-y-auto overflow-x-hidden px-0.5 py-1 [scrollbar-gutter:stable]"
-          style={{ maxHeight: "min(calc(100dvh - 15rem), 28rem)" }}
+          style={{ maxHeight: NAV_SCROLL_MAX_HEIGHT }}
           aria-label={t("nav.mainNavLabel")}
         >
           {navPrimary.map(renderLink)}
-          {!collapsed ? (
-            <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted/90" role="presentation">
-              {t("nav.products")}
-            </p>
-          ) : (
-            <div className="my-0.5 border-t border-line" aria-hidden />
-          )}
-          {renderLink(notesNavMain)}
+          <NavSectionHeader collapsed={collapsed}>{t("nav.products")}</NavSectionHeader>
           {navProducts.map(renderLink)}
-          {!collapsed ? (
-            <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted/90" role="presentation">
-              {t("nav.library")}
-            </p>
-          ) : (
-            <div className="my-0.5 border-t border-line" aria-hidden />
-          )}
+          <NavSectionHeader collapsed={collapsed}>{t("nav.library")}</NavSectionHeader>
           {navLibrary.map(renderLink)}
         </nav>
+
+        <SidebarPlanStrip collapsed={collapsed} />
 
         {isAdmin ? (
           <div className="mx-1.5 mt-1 shrink-0 space-y-0.5 border-t border-line/90 px-0.5 pb-1 pt-2">
@@ -257,19 +304,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               label: t("nav.console"),
               short: "后",
               Icon: IconAdmin,
-              activeMatch: (p) =>
-                p === "/admin/hub" ||
-                p.startsWith("/admin/users") ||
-                p.startsWith("/admin/models") ||
-                p.startsWith("/admin/usage") ||
-                p.startsWith("/admin/usage-users") ||
-                p.startsWith("/admin/usage-works") ||
-                p.startsWith("/admin/usage-alerts") ||
-                p.startsWith("/admin/tts-polish") ||
-                p.startsWith("/admin/subscription-matrix") ||
-                p.startsWith("/admin/subscription-pay") ||
-                p === "/jobs" ||
-                p.startsWith("/jobs/")
+              activeMatch: (p) => matchesAdminConsole(p)
             })}
           </div>
         ) : null}
@@ -280,7 +315,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             label: t("nav.my"),
             short: "我",
             Icon: IconUser,
-            activeMatch: (p) => p === "/me" || p.startsWith("/me/")
+            activeMatch: (p) => pathMatchesRoot(p, "/me")
           })}
         </div>
       </aside>
@@ -296,15 +331,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               className="flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-muted"
               aria-label={t("footer.linksNavLabel")}
             >
-              <Link href="/help#docs" className="text-brand hover:underline">
-                {t("footer.linkDocs")}
-              </Link>
-              <Link href="/help#status" className="text-brand hover:underline">
-                {t("footer.linkStatus")}
-              </Link>
-              <Link href="/help#legal" className="text-brand hover:underline">
-                {t("footer.linkLegal")}
-              </Link>
+              {(
+                [
+                  { href: "/help#docs", labelKey: "footer.linkDocs" },
+                  { href: "/help#status", labelKey: "footer.linkStatus" },
+                  { href: "/help#legal", labelKey: "footer.linkLegal" }
+                ] as const
+              ).map(({ href, labelKey }) => (
+                <Link key={href} href={href} className={FOOTER_LINK_CLASS}>
+                  {t(labelKey)}
+                </Link>
+              ))}
             </nav>
             <div className="text-center">
               <p className="text-xs tracking-wide text-muted">{t("footer.pageBrandLine")}</p>

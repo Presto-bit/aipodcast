@@ -2,14 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "../../../lib/auth";
-
-type Usage = {
-  period_days?: number;
-  jobs_terminal?: number;
-  quota?: number;
-  percent?: number;
-};
+import { useAuth, userAccountRef } from "../../../lib/auth";
 
 type OrderRow = {
   event_id?: string;
@@ -39,7 +32,6 @@ export default function MeSubscriptionPage() {
   const { ready, authRequired, user, getAuthHeaders } = useAuth();
   const [currentPlan, setCurrentPlan] = useState<string>("—");
   const [billingCycle, setBillingCycle] = useState<string | null>(null);
-  const [usage, setUsage] = useState<Usage | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [walletBalanceCents, setWalletBalanceCents] = useState<number | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -52,14 +44,12 @@ export default function MeSubscriptionPage() {
         success?: boolean;
         plan?: string;
         billing_cycle?: string | null;
-        usage?: Usage | null;
         orders?: OrderRow[];
         wallet_balance_cents?: number;
       };
       if (mr.ok && md.success) {
         setCurrentPlan(md.plan || "—");
         setBillingCycle(md.billing_cycle ?? null);
-        setUsage(md.usage ?? null);
         setOrders(Array.isArray(md.orders) ? md.orders : []);
         if (typeof md.wallet_balance_cents === "number") setWalletBalanceCents(md.wallet_balance_cents);
         else setWalletBalanceCents(null);
@@ -72,9 +62,9 @@ export default function MeSubscriptionPage() {
   }, [getAuthHeaders]);
 
   useEffect(() => {
-    if (!ready || !authRequired || !user?.phone || user.phone === "local") return;
+    if (!ready || !authRequired || !userAccountRef(user)) return;
     void loadMe();
-  }, [ready, authRequired, user?.phone, user?.plan, user?.billing_cycle, loadMe]);
+  }, [ready, authRequired, user, user?.plan, user?.billing_cycle, loadMe]);
 
   if (!ready) {
     return <p className="py-12 text-center text-sm text-muted">正在加载…</p>;
@@ -82,7 +72,7 @@ export default function MeSubscriptionPage() {
 
   if (!authRequired || user?.phone === "local") {
     return (
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-card-sm">
+      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <p className="text-sm text-muted">当前为本地体验模式，无订阅与余额数据。登录账号后可查看套餐与钱包余额。</p>
       </section>
     );
@@ -90,7 +80,7 @@ export default function MeSubscriptionPage() {
 
   if (!user) {
     return (
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-card-sm">
+      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <p className="text-sm text-muted">请先登录后查看订阅信息。</p>
       </section>
     );
@@ -100,10 +90,12 @@ export default function MeSubscriptionPage() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-card-sm">
+      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <h2 className="text-sm font-semibold text-ink">订阅与余额概览</h2>
-        <p className="mt-1 text-xs text-muted">当前会员档位、用量与账户余额（钱包）。升级套餐或充值请前往会员页。</p>
-        {loadError ? <p className="mt-2 text-xs text-rose-600">{loadError}</p> : null}
+        <p className="mt-1 text-xs text-muted">
+          当前会员档位与账户余额（钱包）。侧栏在「我的」上方也有方案与钱包摘要，与本页一致；升级套餐或充值请前往会员页。
+        </p>
+        {loadError ? <p className="mt-2 text-xs text-danger-ink">{loadError}</p> : null}
 
         <dl className="mt-4 space-y-3 text-sm">
           <div className="flex flex-wrap gap-x-2 gap-y-1">
@@ -120,31 +112,17 @@ export default function MeSubscriptionPage() {
           </div>
         </dl>
 
-        {usage ? (
-          <div className="mt-4 rounded-xl border border-line bg-fill/40 px-3 py-3">
-            <p className="text-xs font-medium text-ink">用量（参考）</p>
-            <p className="mt-2 text-sm text-muted">
-              近 {usage.period_days ?? 30} 天内，已完成创作次数：{" "}
-              <span className="font-mono text-ink">
-                {usage.jobs_terminal ?? 0} / {usage.quota ?? "—"}
-              </span>
-              {typeof usage.percent === "number" ? <span className="text-muted">（约 {usage.percent}%）</span> : null}
-            </p>
-            <p className="mt-1 text-[11px] text-muted">次数与会员档位相关说明以会员页为准。</p>
-          </div>
-        ) : null}
-
         <div className="mt-4">
           <Link
             href="/subscription"
-            className="inline-flex rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:opacity-95"
+            className="inline-flex rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-95"
           >
             前往会员与套餐
           </Link>
         </div>
       </section>
 
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-card-sm">
+      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <h2 className="text-sm font-semibold text-ink">最近订单</h2>
         <p className="mt-1 text-xs text-muted">最近 5 条；完整记录请在会员页查看。</p>
         <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-fill/30">

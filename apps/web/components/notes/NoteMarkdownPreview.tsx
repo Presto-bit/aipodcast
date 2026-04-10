@@ -75,7 +75,7 @@ export default function NoteMarkdownPreview({
   }, [filteredText]);
 
   return (
-    <div className="flex max-h-[min(92vh,800px)] w-full max-w-5xl flex-col rounded-2xl border border-line bg-white shadow-2xl">
+    <div className="flex max-h-[min(92vh,800px)] w-full max-w-5xl flex-col rounded-2xl border border-line bg-surface shadow-modal">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
         <h3 id="note-preview-title" className="text-base font-semibold text-ink">
           {title || "笔记预览"}
@@ -95,10 +95,10 @@ export default function NoteMarkdownPreview({
           onChange={(e) => onKeywordChange(e.target.value)}
           aria-label="关键字过滤"
         />
-        {truncated ? <p className="mt-2 text-xs text-amber-700">内容已截断展示</p> : null}
+        {truncated ? <p className="mt-2 text-xs text-warning-ink">内容已截断展示</p> : null}
         {loading ? <p className="mt-3 text-sm text-muted">加载中…</p> : null}
 
-        <div className="markdown-body mt-3 max-h-[min(65vh,28rem)] min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-white p-3">
+        <div className="markdown-body mt-3 max-h-[min(65vh,28rem)] min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-surface p-3">
           {mdBody}
         </div>
       </div>

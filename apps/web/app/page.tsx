@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import PodcastWorksGallery from "../components/podcast/PodcastWorksGallery";
 import { IconNotes, IconTts, IconVoice, IconGrid } from "../components/NavIcons";
 import type { WorkItem } from "../lib/worksTypes";
-import { useAuth } from "../lib/auth";
+import { useAuth, userAccountRef } from "../lib/auth";
+import { useI18n } from "../lib/I18nContext";
+import { isRegisterEmailFormatOk } from "../lib/registerEmail";
 
 const HOME_WORKS_LIMIT = 80;
 const HOME_WORKS_PREVIEW = 10;
@@ -27,18 +29,28 @@ function mergeWorksByRecency(ai: WorkItem[], tts: WorkItem[], notes: WorkItem[])
 }
 
 export default function HomePage() {
-  const { ready, authRequired, user, login, register, getAuthHeaders } = useAuth();
+  const { t } = useI18n();
+  const { ready, authRequired, user, login, registerSendCode, registerVerifyCode, registerComplete, getAuthHeaders } =
+    useAuth();
+  const homeAccountKey = userAccountRef(user);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authPhone, setAuthPhone] = useState("");
   const [authPassword, setAuthPassword] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
+  const [regEmail, setRegEmail] = useState("");
+  const [regUsername, setRegUsername] = useState("");
+  const [regCodeSent, setRegCodeSent] = useState(false);
+  const [regOtp, setRegOtp] = useState("");
+  const [regDispatchHint, setRegDispatchHint] = useState("");
+  const [regSendCodeBusy, setRegSendCodeBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [regA11ySuccess, setRegA11ySuccess] = useState("");
   const [overview, setOverview] = useState({
     latestJobId: "",
-    latestJobStatus: "暂无",
+    latestJobStatus: "—",
     worksCount: 0,
-    notesCount: 0
+    notesCount: 0,
+    activeJobsCount: 0
   });
   const [homeWorks, setHomeWorks] = useState<WorkItem[]>([]);
   const [worksLoading, setWorksLoading] = useState(false);
@@ -50,8 +62,13 @@ export default function HomePage() {
       const authHdr = getAuthHeaders();
       setWorksLoading(true);
       setWorksFetchErr("");
-      const [jobsRes, worksRes, notesRes] = await Promise.all([
+      const [jobsRes, activeJobsRes, worksRes, notesRes] = await Promise.all([
         fetch("/api/jobs?limit=1", { cache: "no-store", credentials: "same-origin", headers: { ...authHdr } }),
+        fetch("/api/jobs?limit=80&offset=0&status=queued,running&slim=1", {
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { ...authHdr }
+        }),
         fetch(`/api/works?limit=${HOME_WORKS_LIMIT}&offset=0`, {
           cache: "no-store",
           credentials: "same-origin",
@@ -60,6 +77,7 @@ export default function HomePage() {
         fetch("/api/notes", { cache: "no-store", credentials: "same-origin", headers: { ...authHdr } })
       ]);
       const jobsData = (await jobsRes.json().catch(() => ({}))) as { jobs?: Array<{ id?: string; status?: string }> };
+      const activeJobsData = (await activeJobsRes.json().catch(() => ({}))) as { jobs?: unknown[] };
       const worksData = (await worksRes.json().catch(() => ({}))) as {
         ai?: WorkItem[];
         tts?: WorkItem[];
@@ -77,12 +95,14 @@ export default function HomePage() {
       const tts = Array.isArray(worksData.tts) ? worksData.tts : [];
       const notesWorks = Array.isArray(worksData.notes) ? worksData.notes : [];
       const merged = mergeWorksByRecency(ai, tts, notesWorks);
+      const activeList = Array.isArray(activeJobsData.jobs) ? activeJobsData.jobs : [];
       setHomeWorks(merged);
       setOverview({
         latestJobId: String(latest?.id || "").trim(),
-        latestJobStatus: String(latest?.status || "暂无"),
+        latestJobStatus: String(latest?.status || "—"),
         worksCount: merged.length,
-        notesCount: Array.isArray(notesData.notes) ? notesData.notes.length : 0
+        notesCount: Array.isArray(notesData.notes) ? notesData.notes.length : 0,
+        activeJobsCount: activeList.length
       });
     } catch {
       setWorksFetchErr("加载失败，请稍后重试");
@@ -93,18 +113,96 @@ export default function HomePage() {
 
   useEffect(() => {
     void refreshHomeOverview();
-  }, [refreshHomeOverview, worksRefreshKey]);
+  }, [refreshHomeOverview, worksRefreshKey, homeAccountKey]);
+
+  useEffect(() => {
+    if (!regA11ySuccess) return;
+    const t = window.setTimeout(() => setRegA11ySuccess(""), 5000);
+    return () => window.clearTimeout(t);
+  }, [regA11ySuccess]);
+
+  const createCards = useMemo(
+    () =>
+      [
+        { href: "/tts", title: "文字转语音", desc: "文字 → 语音", Icon: IconTts, badge: undefined },
+        { href: "/notes", title: "笔记本", desc: "资料 → 长文 / 播客", Icon: IconNotes, badge: undefined },
+        {
+          href: "/voice?tab=clone",
+          title: t("nav.voice"),
+          desc: t("home.entryVoice.desc"),
+          Icon: IconVoice,
+          badge: undefined
+        }
+      ] as const,
+    [t]
+  );
+
+  async function sendRegisterCode() {
+    setAuthError("");
+    setRegA11ySuccess("");
+    if (!isRegisterEmailFormatOk(regEmail)) {
+      setAuthError("请填写有效的邮箱地址（需含 @ 与域名后缀，如 name@example.com）");
+      return;
+    }
+    setRegSendCodeBusy(true);
+    try {
+      const sendRes = await registerSendCode({
+        email: regEmail.trim().toLowerCase(),
+        username: regUsername.trim()
+      });
+      setRegCodeSent(true);
+      setRegOtp("");
+      setRegDispatchHint(
+        sendRes.devOtpLogged
+          ? "当前为日志发码：请到运行编排器的终端查看 [auth] register OTP 行（生产请配置 SMTP 并关闭 FYV_AUTH_EMAIL_LOG_TOKEN）。"
+          : ""
+      );
+      setRegA11ySuccess(
+        sendRes.devOtpLogged
+          ? "验证码已生成。当前为日志模式，未发送真实邮件，请到服务器日志查看。"
+          : "验证码已发送，请查收邮箱。"
+      );
+    } catch (err) {
+      setAuthError(String(err instanceof Error ? err.message : err));
+    } finally {
+      setRegSendCodeBusy(false);
+    }
+  }
 
   async function submitAuth(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (authMode === "login") {
+      setAuthBusy(true);
+      setAuthError("");
+      try {
+        await login(authPhone.trim(), authPassword);
+      } catch (err) {
+        setAuthError(String(err instanceof Error ? err.message : err));
+      } finally {
+        setAuthBusy(false);
+      }
+      return;
+    }
+    if (!regCodeSent) {
+      setAuthError("请先发送验证码");
+      return;
+    }
+    if (!regOtp.trim()) {
+      setAuthError("请填写验证码");
+      return;
+    }
     setAuthBusy(true);
     setAuthError("");
     try {
-      if (authMode === "login") {
-        await login(authPhone.trim(), authPassword);
-      } else {
-        await register(authPhone.trim(), authPassword, inviteCode.trim());
-      }
+      const { registration_ticket } = await registerVerifyCode({
+        email: regEmail.trim().toLowerCase(),
+        code: regOtp
+      });
+      await registerComplete({ registration_ticket, password: authPassword });
+      setRegCodeSent(false);
+      setRegOtp("");
+      setRegDispatchHint("");
+      setAuthPassword("");
     } catch (err) {
       setAuthError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -123,136 +221,304 @@ export default function HomePage() {
   if (authRequired && !user) {
     return (
       <main className="mx-auto min-h-screen max-w-md p-8">
-        <h1 className="text-2xl font-semibold">Finding Your Voice</h1>
-        <p className="mt-2 text-sm text-muted">使用手机号即可登录或注册</p>
+        <h1 className="text-2xl font-semibold text-ink">Finding Your Voice</h1>
         <div className="mt-5 flex gap-2">
           <button
             type="button"
-            className={`rounded px-3 py-1 text-sm ${authMode === "login" ? "bg-blue-600" : "bg-fill"}`}
-            onClick={() => setAuthMode("login")}
+            className={`rounded-lg px-3 py-1.5 text-sm transition ${
+              authMode === "login"
+                ? "bg-surface font-medium text-ink ring-1 ring-brand/35 shadow-sm"
+                : "bg-fill text-muted hover:bg-fill hover:text-ink"
+            }`}
+            onClick={() => {
+              setAuthMode("login");
+              setAuthError("");
+              setRegCodeSent(false);
+              setRegOtp("");
+              setRegDispatchHint("");
+            }}
           >
             登录
           </button>
           <button
             type="button"
-            className={`rounded px-3 py-1 text-sm ${authMode === "register" ? "bg-blue-600" : "bg-fill"}`}
-            onClick={() => setAuthMode("register")}
+            className={`rounded-lg px-3 py-1.5 text-sm transition ${
+              authMode === "register"
+                ? "bg-surface font-medium text-ink ring-1 ring-brand/35 shadow-sm"
+                : "bg-fill text-muted hover:bg-fill hover:text-ink"
+            }`}
+            onClick={() => {
+              setAuthMode("register");
+              setAuthError("");
+              setRegCodeSent(false);
+              setRegOtp("");
+              setRegDispatchHint("");
+              setAuthPassword("");
+            }}
           >
             注册
           </button>
         </div>
         <form className="mt-4 space-y-3" onSubmit={submitAuth}>
-          <input
-            className="w-full rounded border border-line bg-canvas p-3 text-sm"
-            placeholder="手机号"
-            value={authPhone}
-            onChange={(e) => setAuthPhone(e.target.value)}
-            required
-          />
-          <input
-            className="w-full rounded border border-line bg-canvas p-3 text-sm"
-            type="password"
-            placeholder="密码"
-            value={authPassword}
-            onChange={(e) => setAuthPassword(e.target.value)}
-            required
-            minLength={6}
-          />
-          {authMode === "register" ? (
+          {authMode === "login" ? (
             <input
               className="w-full rounded border border-line bg-canvas p-3 text-sm"
-              placeholder="邀请码（注册需要）"
-              value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value)}
+              placeholder="手机号、邮箱或用户名"
+              value={authPhone}
+              onChange={(e) => setAuthPhone(e.target.value)}
               required
+              autoComplete="username"
+              aria-label="账号"
             />
           ) : null}
-          {authError ? <p className="text-sm text-rose-300">{authError}</p> : null}
-          <button type="submit" className="w-full rounded bg-blue-600 px-4 py-2 text-sm disabled:opacity-50" disabled={authBusy}>
-            {authBusy ? "提交中..." : authMode === "login" ? "登录" : "注册"}
+          {authMode === "register" ? (
+            <>
+              <input
+                className="w-full rounded border border-line bg-canvas p-3 text-sm"
+                placeholder="用户名（3～32 位字母、数字或下划线）"
+                value={regUsername}
+                onChange={(e) => {
+                  setRegUsername(e.target.value);
+                  setRegCodeSent(false);
+                  setRegDispatchHint("");
+                }}
+                required
+                minLength={3}
+                maxLength={32}
+                autoComplete="username"
+                aria-label="用户名"
+              />
+              <input
+                className="w-full rounded border border-line bg-canvas p-3 text-sm"
+                type="email"
+                placeholder="邮箱"
+                value={regEmail}
+                onChange={(e) => {
+                  setRegEmail(e.target.value);
+                  setRegCodeSent(false);
+                  setRegDispatchHint("");
+                }}
+                required
+                autoComplete="email"
+                aria-label="邮箱"
+              />
+              <div className="flex w-full items-stretch overflow-hidden rounded border border-line bg-canvas shadow-sm transition focus-within:border-brand focus-within:ring-1 focus-within:ring-brand/25">
+                <input
+                  className="min-w-0 flex-1 border-0 bg-transparent px-3 py-2.5 text-sm text-ink outline-none ring-0 placeholder:text-muted focus:ring-0"
+                  inputMode="numeric"
+                  placeholder="请输入 6 位验证码"
+                  value={regOtp}
+                  onChange={(e) => setRegOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  autoComplete="one-time-code"
+                  aria-label="验证码"
+                />
+                <button
+                  type="button"
+                  className="shrink-0 border-l border-line bg-fill px-3 py-2.5 text-sm text-ink transition hover:bg-canvas disabled:opacity-50"
+                  disabled={regSendCodeBusy}
+                  onClick={() => void sendRegisterCode()}
+                >
+                  {regSendCodeBusy ? "提交中…" : regCodeSent ? (regDispatchHint ? "已生成" : "已发送") : "发送验证码"}
+                </button>
+              </div>
+              {regDispatchHint ? <p className="text-xs text-muted">{regDispatchHint}</p> : null}
+              <input
+                className="w-full rounded border border-line bg-canvas p-3 text-sm"
+                type="password"
+                placeholder="密码（至少 6 位）"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                required
+                minLength={6}
+                maxLength={128}
+                autoComplete="new-password"
+                aria-label="密码"
+              />
+            </>
+          ) : null}
+          {authMode === "login" ? (
+            <input
+              className="w-full rounded border border-line bg-canvas p-3 text-sm"
+              type="password"
+              placeholder="密码"
+              value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)}
+              required
+              minLength={6}
+              autoComplete="current-password"
+              aria-label="密码"
+            />
+          ) : null}
+          {authError ? (
+            <p className="text-sm text-danger-ink" role="alert" aria-live="assertive">
+              {authError}
+            </p>
+          ) : null}
+          {authMode === "register" && regA11ySuccess ? (
+            <span className="sr-only" aria-live="polite">
+              {regA11ySuccess}
+            </span>
+          ) : null}
+          <button
+            type="submit"
+            className="w-full rounded-lg bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground shadow-soft transition hover:bg-cta/90 disabled:opacity-50"
+            disabled={authBusy}
+          >
+            {authBusy ? "提交中…" : authMode === "login" ? "登录" : "注册"}
           </button>
+          {authMode === "login" ? (
+            <p className="text-center text-sm">
+              <Link href="/forgot-password" className="text-brand underline underline-offset-2 hover:opacity-90">
+                忘记密码
+              </Link>
+            </p>
+          ) : null}
         </form>
       </main>
     );
   }
 
-  const createCards = [
-    { href: "/tts", title: "文本转语音", desc: "把文字变成自然流畅的人声", Icon: IconTts, badge: undefined },
-    { href: "/notes", title: "笔记转播客", desc: "读书笔记、会议纪要一键变成节目", Icon: IconNotes, badge: undefined },
-    {
-      href: "/voice?tab=clone",
-      title: "复刻我的声音",
-      desc: "几分钟完成声音采样，随时用你的音色做语音合成",
-      Icon: IconVoice,
-      badge: undefined
-    }
-  ] as const;
+  const isReturningVisitor = overview.worksCount > 0 || overview.activeJobsCount > 0;
 
   return (
-    <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-10 pt-1 sm:px-4">
-      <div className="mb-5 rounded-2xl border border-line bg-gradient-to-br from-surface to-fill p-5 shadow-sm sm:p-6">
-        <div className="mt-1 flex flex-wrap items-start justify-between gap-4">
-          <div className="max-w-xl">
-            <h1 className="text-2xl font-semibold tracking-tight text-ink">把内容变成可发布播客</h1>
-            <p className="mt-2 text-sm text-muted">上传或粘贴内容，几分钟生成音频与文案。</p>
-            <div className="mt-4 flex flex-wrap items-center gap-2.5">
-              <Link
-                href="/podcast"
-                className="inline-flex items-center rounded-lg bg-cta px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-cta/90"
-              >
-                开始生成播客
-              </Link>
-              <Link
-                href="/works"
-                className="inline-flex items-center rounded-lg border border-line bg-white px-4 py-2 text-sm font-medium text-ink transition hover:bg-fill"
-              >
-                查看我的作品
-              </Link>
-              {overview.latestJobId ? (
-                <Link
-                  href={`/jobs/${overview.latestJobId}`}
-                  className="text-xs font-medium text-brand hover:underline"
-                >
-                  继续上次任务
-                </Link>
-              ) : null}
-            </div>
-            <p className="mt-3 text-xs text-muted">3 步完成首次生成：输入内容 → 选择风格 → 开始生成</p>
+    <main className="mx-auto min-h-0 w-full max-w-6xl space-y-6 px-3 pb-12 pt-2 sm:space-y-8 sm:px-4 sm:pt-4">
+      <div className="fym-surface-card fym-tech-cap p-5 sm:p-8">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between lg:gap-10">
+          <div className="min-w-0 max-w-xl flex-1">
+            {isReturningVisitor ? (
+              <>
+                <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">欢迎回来</h1>
+                <p className="mt-3 text-sm leading-relaxed text-muted">
+                  查看成品与进行中任务，或开始新稿。长任务无需驻留本页，进度请在「我的作品 → 进行中」查看。
+                </p>
+                <div className="mt-5 flex flex-wrap items-center gap-2 sm:gap-3">
+                  <Link
+                    href="/works"
+                    className="inline-flex items-center rounded-lg bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground shadow-soft transition hover:bg-cta/90"
+                  >
+                    我的作品
+                  </Link>
+                  <Link
+                    href="/works?tab=active"
+                    className={`inline-flex items-center rounded-lg border px-4 py-2.5 text-sm font-medium transition ${
+                      overview.activeJobsCount > 0
+                        ? "border-brand/40 bg-brand/8 text-ink hover:bg-brand/12"
+                        : "border-line bg-surface text-ink hover:bg-fill"
+                    }`}
+                  >
+                    进行中
+                    {overview.activeJobsCount > 0 ? (
+                      <span className="ml-1.5 rounded-full bg-brand/18 px-1.5 py-px text-xs tabular-nums text-brand">
+                        {overview.activeJobsCount}
+                      </span>
+                    ) : null}
+                  </Link>
+                  <Link
+                    href="/create"
+                    className="inline-flex items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-fill"
+                  >
+                    开始创作
+                  </Link>
+                  {overview.latestJobId ? (
+                    <Link
+                      href={`/jobs/${overview.latestJobId}`}
+                      className="text-sm font-medium text-brand hover:underline"
+                    >
+                      打开最近一条任务
+                    </Link>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <>
+                <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">开始创作</h1>
+                <p className="mt-3 text-sm leading-relaxed text-muted">
+                  建议流程：笔记本整理素材 → 创作页选题与生成。长任务可切换页面，队列与状态在「我的作品 → 进行中」。
+                </p>
+                <ol className="mt-4 list-inside list-decimal space-y-1.5 text-sm leading-relaxed text-muted">
+                  <li>
+                    <Link href="/notes" className="text-brand hover:underline">
+                      笔记本
+                    </Link>{" "}
+                    写素材或成稿
+                  </li>
+                  <li>
+                    <Link href="/create" className="text-brand hover:underline">
+                      开始创作
+                    </Link>{" "}
+                    做播客或配音
+                  </li>
+                  <li>
+                    <Link href="/works" className="text-brand hover:underline">
+                      我的作品
+                    </Link>{" "}
+                    收听、下载或分享
+                  </li>
+                </ol>
+                <div className="mt-5 flex flex-wrap items-center gap-2 sm:gap-3">
+                  <Link
+                    href="/create"
+                    className="inline-flex items-center rounded-lg bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground shadow-soft transition hover:bg-cta/90"
+                  >
+                    开始创作
+                  </Link>
+                  <Link
+                    href="/notes"
+                    className="inline-flex items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-fill"
+                  >
+                    打开笔记本
+                  </Link>
+                  <Link
+                    href="/works"
+                    className="inline-flex items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-fill"
+                  >
+                    我的作品
+                  </Link>
+                  <Link
+                    href="/works?tab=active"
+                    className="text-sm font-medium text-brand underline decoration-brand/35 underline-offset-2 hover:opacity-90"
+                  >
+                    进行中
+                  </Link>
+                </div>
+              </>
+            )}
           </div>
-          <div className="grid min-w-[230px] grid-cols-2 gap-2 text-xs">
-            <div className="rounded-lg border border-line bg-white/80 px-3 py-2">
-              <p className="text-muted">最近任务</p>
-              <p className="mt-1 truncate font-medium text-ink">
-                {overview.latestJobId ? `${overview.latestJobId.slice(0, 8)}…` : "还没有"}
-              </p>
+
+          <dl className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-3 border-t border-line pt-5 text-sm lg:w-52 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0 xl:w-56">
+            <div>
+              <dt className="text-xs font-medium text-muted">最近任务</dt>
+              <dd
+                className="mt-0.5 truncate font-medium tabular-nums text-ink"
+                title={overview.latestJobId || undefined}
+              >
+                {overview.latestJobId ? `${overview.latestJobId.slice(0, 8)}…` : "—"}
+              </dd>
             </div>
-            <div className="rounded-lg border border-line bg-white/80 px-3 py-2">
-              <p className="text-muted">进度</p>
-              <p className="mt-1 font-medium text-ink">{overview.latestJobStatus}</p>
+            <div>
+              <dt className="text-xs font-medium text-muted">状态</dt>
+              <dd className="mt-0.5 font-medium text-ink">{overview.latestJobStatus}</dd>
             </div>
-            <div className="rounded-lg border border-line bg-white/80 px-3 py-2">
-              <p className="text-muted">已发布作品</p>
-              <p className="mt-1 font-medium text-ink">{overview.worksCount}</p>
+            <div>
+              <dt className="text-xs font-medium text-muted">成品件数</dt>
+              <dd className="mt-0.5 font-medium tabular-nums text-ink">{overview.worksCount}</dd>
             </div>
-            <div className="rounded-lg border border-line bg-white/80 px-3 py-2">
-              <p className="text-muted">我的笔记</p>
-              <p className="mt-1 font-medium text-ink">{overview.notesCount}</p>
+            <div>
+              <dt className="text-xs font-medium text-muted">笔记篇数</dt>
+              <dd className="mt-0.5 font-medium tabular-nums text-ink">{overview.notesCount}</dd>
             </div>
-          </div>
+          </dl>
         </div>
       </div>
 
-      <section className="rounded-2xl border border-line bg-white p-5 shadow-sm sm:p-6">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-ink">更多创作工具</h2>
-          <span className="text-xs text-muted">常用入口</span>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <section className="fym-surface-card p-5 sm:p-8">
+        <h2 className="text-base font-semibold tracking-tight text-ink">其他入口</h2>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {createCards.map((c) => (
             <Link
               key={c.href}
               href={c.href}
-              className="group flex flex-col rounded-xl border border-line bg-surface p-4 transition-colors hover:border-brand/40 hover:bg-fill"
+              className="group flex flex-col rounded-xl border border-line/80 bg-fill/35 p-4 transition-colors hover:border-brand/35 hover:bg-fill/60 dark:border-line dark:bg-fill/25 dark:hover:bg-fill/40"
             >
               <div className="flex items-center justify-between gap-2">
                 <span
@@ -264,16 +530,16 @@ export default function HomePage() {
                 >
                   <c.Icon className="shrink-0" width={20} height={20} />
                 </span>
-                {c.badge ? <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] text-brand">{c.badge}</span> : null}
+                {c.badge ? <span className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand">{c.badge}</span> : null}
               </div>
               <span className="mt-2 font-medium text-ink group-hover:text-brand">{c.title}</span>
-              <span className="mt-1 text-xs text-muted">{c.desc}</span>
+              <span className="mt-1 text-sm text-muted">{c.desc}</span>
             </Link>
           ))}
         </div>
       </section>
 
-      <section className="mt-5 rounded-2xl border border-line bg-white p-5 shadow-sm sm:p-6">
+      <section className="fym-surface-card p-5 sm:p-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span
@@ -283,15 +549,20 @@ export default function HomePage() {
               <IconGrid width={20} height={20} />
             </span>
             <div>
-              <h2 className="text-sm font-semibold text-ink">我的作品</h2>
-              <p className="text-xs text-muted">全部类型合并，按生成时间从新到旧</p>
+              <h2 className="text-base font-semibold tracking-tight text-ink">最近成品</h2>
+              <p className="mt-0.5 text-sm text-muted">
+                队列与进度 ·
+                <Link href="/works?tab=active" className="ml-1 font-medium text-brand hover:underline">
+                  进行中
+                </Link>
+              </p>
             </div>
           </div>
           <Link
             href="/works"
-            className="text-xs font-medium text-brand hover:underline"
+            className="text-sm font-medium text-brand hover:underline"
           >
-            查看全部
+            去我的作品
           </Link>
         </div>
         <div className="mt-4">
@@ -305,10 +576,10 @@ export default function HomePage() {
           />
         </div>
         {!worksLoading && homeWorks.length > HOME_WORKS_PREVIEW ? (
-          <p className="mt-2 text-center text-xs text-muted">
-            仅展示最近 {HOME_WORKS_PREVIEW} 条，
-            <Link href="/works" className="ml-1 font-medium text-brand hover:underline">
-              在「我的作品」查看全部
+          <p className="mt-2 text-center text-sm text-muted">
+            最近 {HOME_WORKS_PREVIEW} 条 ·{" "}
+            <Link href="/works" className="font-medium text-brand hover:underline">
+              查看全部
             </Link>
           </p>
         ) : null}

@@ -4,14 +4,17 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from psycopg2 import IntegrityError
 
 from .db import get_conn, get_cursor
-from .subscription_manifest import USER_SUBSCRIPTION_TIERS
+from .subscription_manifest import MONTHLY_MINUTES_PRODUCT_BY_TIER, USER_SUBSCRIPTION_TIERS
 from .usage_billing import build_usage_event_meta
 
 logger = logging.getLogger(__name__)
+
+_usage_events_user_id_schema_ready = False
 
 LEGACY_DEFAULT_NOTEBOOK = "默认笔记本"
 # 笔记播客页创建的任务 project_name（与 apps/web/lib/notesProject 一致）
@@ -41,7 +44,8 @@ def _resolve_user_uuid_from_ref(cur: Any, user_ref: str | None) -> str | None:
     """
     Resolve `created_by` to real users.id(UUID):
     1) if input looks like UUID and exists in users.id -> use it
-    2) else lookup by users.phone -> return matched id
+    2) else lookup by users.phone / phone_normalized
+    3) else lookup by lower(email) / lower(username)
     """
     raw = (user_ref or "").strip()
     if not raw:
@@ -62,7 +66,45 @@ def _resolve_user_uuid_from_ref(cur: Any, user_ref: str | None) -> str | None:
     row = cur.fetchone()
     if row and row.get("id") is not None:
         return str(row["id"])
+    if "@" in raw:
+        cur.execute(
+            "SELECT id FROM users WHERE lower(btrim(email)) = lower(btrim(%s)) LIMIT 1",
+            (raw,),
+        )
+        row = cur.fetchone()
+        if row and row.get("id") is not None:
+            return str(row["id"])
+    cur.execute(
+        "SELECT id FROM users WHERE lower(btrim(username)) = lower(btrim(%s)) LIMIT 1",
+        (raw,),
+    )
+    row = cur.fetchone()
+    if row and row.get("id") is not None:
+        return str(row["id"])
     return None
+
+
+def phone_for_job_created_by(created_by: str | None) -> str:
+    """
+    `jobs.created_by` 存的是 `users.id`（UUID）。Worker 里做套餐/笔记条数等需调用
+    `user_info_for_phone` 时，应先把 UUID 解析为手机号；若已是手机号则原样返回。
+    """
+    raw = (created_by or "").strip()
+    if not raw:
+        return ""
+    uid = _normalize_user_uuid(raw)
+    if not uid:
+        return raw
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                cur.execute("SELECT phone FROM users WHERE id = %s::uuid LIMIT 1", (uid,))
+                row = cur.fetchone()
+        if row and row.get("phone"):
+            return str(row["phone"]).strip()
+    except Exception:
+        pass
+    return ""
 
 
 def _resolve_user_uuid_or_none(cur: Any, user_ref: str | None) -> str | None:
@@ -242,6 +284,43 @@ def update_job_status(
             conn.commit()
     if status in ("succeeded", "failed", "cancelled"):
         _try_record_usage_on_terminal(job_id, status)
+
+
+def _coerce_job_result_dict(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            j = json.loads(raw)
+            return dict(j) if isinstance(j, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def merge_job_result(job_id: str, user_ref: str | None, patch: dict[str, Any]) -> str | None:
+    """
+    将 patch 浅层合并进 jobs.result（仅终态任务）。
+    成功返回 None；失败返回错误码字符串。
+    """
+    jid = (job_id or "").strip()
+    if not jid or not patch:
+        return "invalid_args"
+    row = get_job(jid, user_ref=user_ref)
+    if not row:
+        return "job_not_found"
+    if str(row.get("status") or "") != "succeeded":
+        return "job_not_succeeded"
+    merged = _coerce_job_result_dict(row.get("result"))
+    merged.update(patch)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                "UPDATE jobs SET result = %s::jsonb, updated_at = NOW() WHERE id = %s",
+                (json.dumps(merged, ensure_ascii=False, default=str), jid),
+            )
+            conn.commit()
+    return None
 
 
 def get_job(job_id: str, user_ref: str | None = None) -> dict[str, Any] | None:
@@ -532,7 +611,10 @@ def trash_jobs_for_notes_notebook(notebook_name: str, user_ref: str | None = Non
             cur.execute(
                 """
                 UPDATE jobs j
-                SET deleted_at = NOW(), updated_at = NOW()
+                SET deleted_at = NOW(),
+                    updated_at = NOW(),
+                    payload = COALESCE(j.payload::jsonb, '{}'::jsonb)
+                      || jsonb_build_object('notes_notebook_studio_detach', true)
                 FROM projects p
                 WHERE j.project_id = p.id
                   AND p.user_id = %s::uuid
@@ -756,7 +838,8 @@ def get_note_by_id(note_id: str, include_deleted: bool = False, user_ref: str | 
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
             cur.execute(
                 f"""
-                SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type, i.deleted_at
+                SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type, i.deleted_at,
+                       i.note_summary, i.note_rag_body_hash
                 FROM inputs i
                 JOIN projects p ON p.id = i.project_id
                 WHERE i.id = %s AND i.input_type IN ('note_text', 'note_file')
@@ -1084,30 +1167,81 @@ def purge_expired_trashed_works(retention_days: int = 7, max_rows: int = 200) ->
     return deleted_count
 
 
-def list_recent_works(limit: int = 120, offset: int = 0, user_ref: str | None = None) -> list[dict[str, Any]]:
+def list_recent_works(
+    limit: int = 120,
+    offset: int = 0,
+    user_ref: str | None = None,
+    *,
+    slim_result: bool = True,
+) -> list[dict[str, Any]]:
+    """
+    成功态作品列表。slim_result=True 时仅在 SQL 层投影 result 白名单，避免巨大 audio_hex 进入 API 进程。
+    """
     lim = max(1, min(200, int(limit)))
     off = max(0, min(10_000, int(offset)))
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
-            cur.execute(
-                """
-                SELECT j.id, j.job_type, j.status, j.result, j.created_at, j.completed_at, j.project_id
-                FROM jobs j
-                LEFT JOIN projects p ON p.id = j.project_id
-                WHERE j.status = 'succeeded'
-                  AND j.deleted_at IS NULL
-                  AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
-                ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
-                LIMIT %s OFFSET %s
-                """,
-                (user_uuid, user_uuid, lim, off),
-            )
+            if slim_result:
+                cur.execute(
+                    """
+                    SELECT j.id, j.job_type, j.status,
+                      CASE
+                        WHEN j.result IS NULL OR jsonb_typeof(j.result) != 'object' THEN '{}'::jsonb
+                        ELSE jsonb_strip_nulls(
+                          jsonb_build_object(
+                            'preview', j.result->'preview',
+                            'script_preview', j.result->'script_preview',
+                            'title', j.result->'title',
+                            'audio_url', j.result->'audio_url',
+                            'script_url', j.result->'script_url',
+                            'audio_duration_sec', j.result->'audio_duration_sec',
+                            'cover_image', COALESCE(j.result->'cover_image', j.result->'coverImage'),
+                            'audio_object_key', j.result->'audio_object_key',
+                            'script_char_count', j.result->'script_char_count',
+                            'notes_source_notebook', j.result->'notes_source_notebook',
+                            'notes_source_note_count', j.result->'notes_source_note_count',
+                            'notes_source_titles', j.result->'notes_source_titles',
+                            'has_audio_hex', to_jsonb(
+                              (j.result ? 'audio_hex' AND COALESCE(LENGTH(j.result->>'audio_hex'), 0) > 0)
+                              OR (
+                                (j.result ? 'audio_object_key')
+                                AND LENGTH(TRIM(COALESCE(j.result->>'audio_object_key', ''))) > 0
+                              )
+                            )
+                          )
+                        )
+                      END AS result,
+                      j.payload, j.created_at, j.completed_at, j.project_id
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    WHERE j.status = 'succeeded'
+                      AND j.deleted_at IS NULL
+                      AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
+                    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (user_uuid, user_uuid, lim, off),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT j.id, j.job_type, j.status, j.result, j.payload, j.created_at, j.completed_at, j.project_id
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    WHERE j.status = 'succeeded'
+                      AND j.deleted_at IS NULL
+                      AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
+                    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (user_uuid, user_uuid, lim, off),
+                )
             return [dict(x) for x in cur.fetchall()]
 
 
 def user_usage_for_phone(phone: str, days: int = 30) -> dict[str, Any]:
-    """统计周期内任务终态用量（usage_events，需 002 迁移）。"""
+    """统计周期内任务终态用量（usage_events；主键匹配 user_id，兼容 phone 旧行）。"""
     p = (phone or "").strip()
     d = max(1, min(366, int(days)))
     if not p:
@@ -1115,6 +1249,7 @@ def user_usage_for_phone(phone: str, days: int = 30) -> dict[str, Any]:
     try:
         with get_conn() as conn:
             with get_cursor(conn) as cur:
+                uid = _resolve_user_uuid_from_ref(cur, p)
                 cur.execute(
                     """
                     SELECT COUNT(*)::bigint AS n
@@ -1123,18 +1258,125 @@ def user_usage_for_phone(phone: str, days: int = 30) -> dict[str, Any]:
                       AND ue.created_at >= NOW() - (%s * INTERVAL '1 day')
                       AND (
                         ue.phone = %s
-                        OR EXISTS (
-                          SELECT 1 FROM users u WHERE u.phone = %s AND u.id::text = ue.phone
-                        )
+                        OR (%s IS NOT NULL AND ue.user_id = %s::uuid)
+                        OR (%s IS NOT NULL AND NULLIF(TRIM(ue.phone), '') = %s::text)
                       )
                     """,
-                    (d, p, p),
+                    (d, p, uid, uid, uid, uid),
                 )
                 row = cur.fetchone()
                 n = int(row["n"] or 0) if row else 0
                 return {"jobs_terminal": n, "period_days": d}
     except Exception:
         return {"jobs_terminal": 0, "period_days": d}
+
+
+def subscription_media_usage_for_phone(phone: str, days: int = 30) -> dict[str, Any]:
+    """
+    会员页用量条：近 N 天已成功任务聚合。
+    - 音频：TTS / 播客类任务的 result.audio_duration_sec 合计换算为分钟。
+    - 文字（AI 润色）：播客类任务且 payload.ai_polish 为真的成功次数（与权益矩阵「润色月上限」口径一致）。
+    """
+    p = (phone or "").strip()
+    d = max(1, min(366, int(days)))
+    if not p:
+        return {"audio_minutes_used": 0.0, "text_polish_used": 0}
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _resolve_user_uuid_from_ref(cur, p)
+                if not uid:
+                    return {"audio_minutes_used": 0.0, "text_polish_used": 0}
+                cur.execute(
+                    """
+                    SELECT COALESCE(
+                             SUM(
+                               CASE
+                                 WHEN j.result::jsonb ? 'audio_duration_sec'
+                                      AND NULLIF(btrim(j.result::jsonb->>'audio_duration_sec'), '') IS NOT NULL
+                                   THEN (j.result::jsonb->>'audio_duration_sec')::double precision
+                                 ELSE 0::double precision
+                               END
+                             ),
+                             0::double precision
+                           )
+                           / 60.0 AS audio_minutes
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    WHERE j.deleted_at IS NULL
+                      AND j.status = 'succeeded'
+                      AND j.job_type = ANY(%s::text[])
+                      AND j.completed_at >= NOW() - (%s * INTERVAL '1 day')
+                      AND COALESCE(j.created_by, p.user_id) = %s::uuid
+                    """,
+                    (
+                        ["text_to_speech", "tts", "podcast_generate", "podcast"],
+                        d,
+                        uid,
+                    ),
+                )
+                row_a = cur.fetchone()
+                audio_min = float(row_a["audio_minutes"] or 0) if row_a else 0.0
+
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::bigint AS n
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    WHERE j.deleted_at IS NULL
+                      AND j.status = 'succeeded'
+                      AND j.job_type = ANY(%s::text[])
+                      AND j.completed_at >= NOW() - (%s * INTERVAL '1 day')
+                      AND COALESCE(j.created_by, p.user_id) = %s::uuid
+                      AND COALESCE((j.payload::jsonb->>'ai_polish')::boolean, false) IS TRUE
+                    """,
+                    (["podcast_generate", "podcast"], d, uid),
+                )
+                row_t = cur.fetchone()
+                n_polish = int(row_t["n"] or 0) if row_t else 0
+                return {"audio_minutes_used": audio_min, "text_polish_used": n_polish}
+    except Exception:
+        return {"audio_minutes_used": 0.0, "text_polish_used": 0}
+
+
+def shanghai_calendar_month_start_utc() -> datetime:
+    """当前「上海时区」自然月 1 日 00:00 对应的 UTC 时刻（用于套餐内月度克隆次数）。"""
+    sh = ZoneInfo("Asia/Shanghai")
+    now = datetime.now(sh)
+    start_local = datetime(now.year, now.month, 1, tzinfo=sh)
+    return start_local.astimezone(timezone.utc)
+
+
+def count_succeeded_voice_clone_jobs_for_user_uuid(user_uuid: str | None) -> int:
+    """
+    本月（上海自然月）已成功结束的音色克隆任务数；与套餐内「含 N 次」对齐。
+    仅统计终态 succeeded；不含当前进行中任务。
+    """
+    uid = _normalize_user_uuid(user_uuid)
+    if not uid:
+        return 0
+    try:
+        start_utc = shanghai_calendar_month_start_utc()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::bigint AS n
+                    FROM jobs j
+                    WHERE j.deleted_at IS NULL
+                      AND j.status = 'succeeded'
+                      AND j.job_type IN ('voice_clone', 'clone_voice')
+                      AND j.created_by = %s::uuid
+                      AND j.completed_at IS NOT NULL
+                      AND j.completed_at >= %s
+                    """,
+                    (uid, start_utc),
+                )
+                row = cur.fetchone()
+                return int(row["n"] or 0) if row else 0
+    except Exception:
+        logger.exception("count_succeeded_voice_clone_jobs_for_user_uuid failed")
+        return 0
 
 
 def list_jobs(
@@ -1261,6 +1503,32 @@ def get_job_artifact(job_id: str, artifact_id: str) -> dict[str, Any] | None:
             return dict(row) if row else None
 
 
+def ensure_usage_events_user_id_schema() -> None:
+    """运行时补齐 usage_events.user_id（与 022 迁移一致）；全进程仅执行一次 ALTER。"""
+    global _usage_events_user_id_schema_ready
+    if _usage_events_user_id_schema_ready:
+        return
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                cur.execute(
+                    """
+                    ALTER TABLE usage_events
+                    ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_usage_events_user_id_created
+                    ON usage_events(user_id, created_at DESC)
+                    """
+                )
+            conn.commit()
+        _usage_events_user_id_schema_ready = True
+    except Exception:
+        logger.exception("ensure_usage_events_user_id_schema 失败")
+
+
 def record_usage_event(
     job_id: str | None,
     phone: str | None,
@@ -1269,17 +1537,21 @@ def record_usage_event(
     status: str | None = None,
     quantity: float = 1,
     meta: dict[str, Any] | None = None,
+    *,
+    user_id: str | None = None,
 ) -> None:
-    """写入用量事件表（表不存在时静默跳过，兼容未跑迁移的旧库）。"""
+    """写入用量事件表；user_id 为 users.id(UUID)，phone 仅作展示/兼容旧统计。"""
+    ensure_usage_events_user_id_schema()
+    uid = _normalize_user_uuid(user_id)
     try:
         with get_conn() as conn:
             with get_cursor(conn) as cur:
                 cur.execute(
                     """
-                    INSERT INTO usage_events (job_id, phone, job_type, metric, status, quantity, meta)
-                    VALUES (%s::uuid, %s, %s, %s, %s, %s, %s::jsonb)
+                    INSERT INTO usage_events (job_id, phone, user_id, job_type, metric, status, quantity, meta)
+                    VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s::jsonb)
                     """,
-                    (job_id, phone, job_type, metric, status, quantity, json.dumps(meta or {})),
+                    (job_id, phone, uid, job_type, metric, status, quantity, json.dumps(meta or {})),
                 )
                 conn.commit()
     except Exception:
@@ -1287,7 +1559,7 @@ def record_usage_event(
 
 
 def _usage_event_phone_for_job(row: dict[str, Any]) -> str | None:
-    """usage_events.phone 存登录手机号，便于订阅用量统计；与 jobs.created_by（UUID）区分。"""
+    """由 jobs.created_by（UUID）解析展示用手机号；用量主键用 user_id。"""
     cb = row.get("created_by")
     if cb is None:
         return None
@@ -1313,11 +1585,22 @@ def _try_record_usage_on_terminal(job_id: str, status: str) -> None:
     if not row:
         return
     phone = _usage_event_phone_for_job(row)
+    cb = row.get("created_by")
+    job_user_id = _normalize_user_uuid(str(cb) if cb is not None else "")
     jt = str(row.get("job_type") or "")
     meta = build_usage_event_meta(row, status)
     if phone is None and row.get("created_by"):
         meta = {**meta, "created_by_uuid": str(row.get("created_by"))}
-    record_usage_event(job_id, phone, jt, "job_terminal", status=status, quantity=1, meta=meta)
+    record_usage_event(
+        job_id,
+        phone,
+        jt,
+        "job_terminal",
+        status=status,
+        quantity=1,
+        meta=meta,
+        user_id=job_user_id,
+    )
 
 
 def search_global(query: str, limit: int = 40, user_ref: str | None = None) -> dict[str, Any]:
@@ -1638,7 +1921,7 @@ def admin_usage_dashboard(
                   COUNT(*) FILTER (WHERE ue.status = 'succeeded')::bigint AS succeeded_events,
                   COUNT(*) FILTER (WHERE ue.status = 'failed')::bigint AS failed_events,
                   COUNT(*) FILTER (WHERE ue.status = 'cancelled')::bigint AS cancelled_events,
-                  COUNT(DISTINCT NULLIF(TRIM(ue.phone), ''))::bigint AS active_users,
+                  COUNT(DISTINCT NULLIF(TRIM(COALESCE(ue.user_id::text, ue.phone)), ''))::bigint AS active_users,
                   COUNT(DISTINCT ue.job_id) FILTER (WHERE ue.job_id IS NOT NULL)::bigint AS distinct_jobs,
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'llm_cost_cny'), '')::numeric), 0::numeric) AS llm_cost_cny,
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'tts_cost_cny'), '')::numeric), 0::numeric) AS tts_cost_cny,
@@ -1677,7 +1960,7 @@ def admin_usage_dashboard(
                   COUNT(*)::bigint AS events,
                   COUNT(*) FILTER (WHERE ue.status = 'succeeded')::bigint AS succeeded,
                   COUNT(*) FILTER (WHERE ue.status = 'failed')::bigint AS failed,
-                  COUNT(DISTINCT NULLIF(TRIM(ue.phone), ''))::bigint AS users,
+                  COUNT(DISTINCT NULLIF(TRIM(COALESCE(ue.user_id::text, ue.phone)), ''))::bigint AS users,
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'cost_total_cny'), '')::numeric), 0::numeric) AS cost_total_cny
                 FROM usage_events ue
                 WHERE ue.metric = 'job_terminal'
@@ -1724,7 +2007,7 @@ def admin_usage_dashboard(
                   (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date AS day,
                   COUNT(*)::bigint AS events,
                   COUNT(*) FILTER (WHERE ue.status = 'succeeded')::bigint AS succeeded,
-                  COUNT(DISTINCT NULLIF(TRIM(ue.phone), ''))::bigint AS users,
+                  COUNT(DISTINCT NULLIF(TRIM(COALESCE(ue.user_id::text, ue.phone)), ''))::bigint AS users,
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'cost_total_cny'), '')::numeric), 0::numeric) AS cost_total_cny
                 FROM usage_events ue
                 WHERE ue.metric = 'job_terminal'
@@ -1740,16 +2023,23 @@ def admin_usage_dashboard(
             cur.execute(
                 """
                 SELECT
-                  COALESCE(NULLIF(TRIM(ue.phone), ''), '(unknown)') AS phone,
+                  COALESCE(ue.user_id::text, NULLIF(TRIM(ue.phone), ''), '(unknown)') AS user_key,
+                  MAX(ue.user_id::text) AS user_id,
+                  MAX(COALESCE(
+                    NULLIF(TRIM(u.phone), ''),
+                    NULLIF(TRIM(ue.phone), ''),
+                    ue.user_id::text
+                  )) AS phone,
                   COUNT(*)::bigint AS events,
                   COUNT(*) FILTER (WHERE ue.status = 'succeeded')::bigint AS succeeded,
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'cost_total_cny'), '')::numeric), 0::numeric) AS cost_total_cny,
                   MAX(ue.created_at) AS last_event_at
                 FROM usage_events ue
+                LEFT JOIN users u ON u.id = ue.user_id
                 WHERE ue.metric = 'job_terminal'
                   AND ue.created_at >= %s
                   AND ue.created_at <= %s
-                GROUP BY COALESCE(NULLIF(TRIM(ue.phone), ''), '(unknown)')
+                GROUP BY COALESCE(ue.user_id::text, NULLIF(TRIM(ue.phone), ''), '(unknown)')
                 ORDER BY events DESC, last_event_at DESC
                 LIMIT 20
                 """,
@@ -1760,7 +2050,7 @@ def admin_usage_dashboard(
             cur.execute(
                 """
                 SELECT COUNT(*)::bigint AS login_count,
-                       COUNT(DISTINCT NULLIF(TRIM(phone), ''))::bigint AS login_users
+                       COUNT(DISTINCT NULLIF(TRIM(COALESCE(user_id::text, phone)), ''))::bigint AS login_users
                 FROM usage_events
                 WHERE metric = 'auth_login'
                   AND created_at >= %s
@@ -1771,6 +2061,220 @@ def admin_usage_dashboard(
             login_row = dict(cur.fetchone() or {})
             out["overview"]["login_count"] = _safe_int(login_row.get("login_count"))
             out["overview"]["login_users"] = _safe_int(login_row.get("login_users"))
+    return out
+
+
+def admin_orders_analytics(
+    *,
+    days: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    """
+    管理端订单分析（payment_orders，按 created_at 落入时间窗）：
+    - overview: 下单/成交/在途/失败笔数，成交 GMV、退款、净额、付费人数
+    - by_status / by_provider / by_product: 分布
+    - by_day: 趋势
+    - recent_orders: 最近订单明细（限额）
+    """
+    start_dt, end_dt = _admin_resolve_date_window(days=days, date_from=date_from, date_to=date_to)
+    out: dict[str, Any] = {
+        "window": {"start_at": start_dt.isoformat(), "end_at": end_dt.isoformat()},
+        "overview": {},
+        "by_status": [],
+        "by_provider": [],
+        "by_product": [],
+        "by_day": [],
+        "recent_orders": [],
+    }
+    ensure_payment_orders_schema()
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT
+                  COUNT(*)::bigint AS total_orders,
+                  COUNT(*) FILTER (
+                    WHERE lower(COALESCE(status, '')) IN ('paid', 'partially_refunded')
+                  )::bigint AS settled_orders,
+                  COUNT(*) FILTER (WHERE lower(COALESCE(status, '')) = 'failed')::bigint AS failed_orders,
+                  COUNT(*) FILTER (
+                    WHERE lower(COALESCE(status, '')) IN ('created', 'pending_payment', 'authorized', 'unknown')
+                  )::bigint AS open_orders,
+                  COALESCE(
+                    SUM(
+                      CASE
+                        WHEN lower(COALESCE(status, '')) IN ('paid', 'partially_refunded')
+                        THEN COALESCE(paid_cents, payable_cents, amount_cents)
+                        ELSE 0
+                      END
+                    ),
+                    0
+                  )::bigint AS gross_settled_cents,
+                  COALESCE(
+                    SUM(COALESCE(refunded_amount_cents, 0)) FILTER (
+                      WHERE lower(COALESCE(status, '')) IN ('paid', 'partially_refunded', 'refunded')
+                    ),
+                    0
+                  )::bigint AS refunded_cents,
+                  COUNT(DISTINCT phone) FILTER (
+                    WHERE lower(COALESCE(status, '')) IN ('paid', 'partially_refunded')
+                  )::bigint AS payer_phones
+                FROM payment_orders
+                WHERE created_at >= %s
+                  AND created_at <= %s
+                """,
+                (start_dt, end_dt),
+            )
+            ov = dict(cur.fetchone() or {})
+            gross = int(ov.get("gross_settled_cents") or 0)
+            ref = int(ov.get("refunded_cents") or 0)
+            settled = int(ov.get("settled_orders") or 0)
+            net = max(0, gross - ref)
+            out["overview"] = {
+                "total_orders": _safe_int(ov.get("total_orders")),
+                "settled_orders": settled,
+                "failed_orders": _safe_int(ov.get("failed_orders")),
+                "open_orders": _safe_int(ov.get("open_orders")),
+                "gross_settled_cents": gross,
+                "refunded_cents": ref,
+                "net_revenue_cents": net,
+                "payer_phones": _safe_int(ov.get("payer_phones")),
+                "aov_net_cents": int(round(net / settled)) if settled else 0,
+            }
+
+            cur.execute(
+                """
+                SELECT
+                  lower(COALESCE(status, 'unknown')) AS status,
+                  COUNT(*)::bigint AS orders,
+                  COALESCE(
+                    SUM(
+                      CASE
+                        WHEN lower(COALESCE(status, '')) IN ('paid', 'partially_refunded')
+                        THEN COALESCE(paid_cents, payable_cents, amount_cents)
+                        ELSE 0
+                      END
+                    ),
+                    0
+                  )::bigint AS settled_amount_cents
+                FROM payment_orders
+                WHERE created_at >= %s
+                  AND created_at <= %s
+                GROUP BY lower(COALESCE(status, 'unknown'))
+                ORDER BY orders DESC
+                """,
+                (start_dt, end_dt),
+            )
+            out["by_status"] = [dict(x) for x in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                  COALESCE(NULLIF(TRIM(provider), ''), 'unknown') AS provider,
+                  COUNT(*)::bigint AS orders,
+                  COALESCE(
+                    SUM(
+                      CASE
+                        WHEN lower(COALESCE(status, '')) IN ('paid', 'partially_refunded')
+                        THEN COALESCE(paid_cents, payable_cents, amount_cents)
+                        ELSE 0
+                      END
+                    ),
+                    0
+                  )::bigint AS settled_amount_cents
+                FROM payment_orders
+                WHERE created_at >= %s
+                  AND created_at <= %s
+                GROUP BY COALESCE(NULLIF(TRIM(provider), ''), 'unknown')
+                ORDER BY orders DESC
+                """,
+                (start_dt, end_dt),
+            )
+            out["by_provider"] = [dict(x) for x in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                  COALESCE(NULLIF(TRIM(tier), ''), 'unknown') AS tier,
+                  COALESCE(NULLIF(TRIM(billing_cycle), ''), '-') AS billing_cycle,
+                  COUNT(*)::bigint AS orders,
+                  COALESCE(
+                    SUM(
+                      CASE
+                        WHEN lower(COALESCE(status, '')) IN ('paid', 'partially_refunded')
+                        THEN COALESCE(paid_cents, payable_cents, amount_cents)
+                        ELSE 0
+                      END
+                    ),
+                    0
+                  )::bigint AS settled_amount_cents
+                FROM payment_orders
+                WHERE created_at >= %s
+                  AND created_at <= %s
+                GROUP BY 1, 2
+                ORDER BY orders DESC
+                """,
+                (start_dt, end_dt),
+            )
+            out["by_product"] = [dict(x) for x in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                  (created_at AT TIME ZONE 'Asia/Shanghai')::date AS day,
+                  COUNT(*)::bigint AS orders,
+                  COUNT(*) FILTER (
+                    WHERE lower(COALESCE(status, '')) IN ('paid', 'partially_refunded')
+                  )::bigint AS settled_orders,
+                  COALESCE(
+                    SUM(
+                      CASE
+                        WHEN lower(COALESCE(status, '')) IN ('paid', 'partially_refunded')
+                        THEN COALESCE(paid_cents, payable_cents, amount_cents)
+                        ELSE 0
+                      END
+                    ),
+                    0
+                  )::bigint AS gross_settled_cents
+                FROM payment_orders
+                WHERE created_at >= %s
+                  AND created_at <= %s
+                GROUP BY day
+                ORDER BY day ASC
+                """,
+                (start_dt, end_dt),
+            )
+            out["by_day"] = [dict(x) for x in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                  event_id,
+                  COALESCE(NULLIF(TRIM(phone), ''), '—') AS phone,
+                  COALESCE(NULLIF(TRIM(tier), ''), 'unknown') AS tier,
+                  billing_cycle,
+                  lower(COALESCE(status, 'unknown')) AS status,
+                  amount_cents,
+                  COALESCE(paid_cents, payable_cents, amount_cents) AS effective_amount_cents,
+                  COALESCE(refunded_amount_cents, 0)::bigint AS refunded_amount_cents,
+                  COALESCE(NULLIF(TRIM(provider), ''), 'unknown') AS provider,
+                  COALESCE(NULLIF(TRIM(channel), ''), 'unknown') AS channel,
+                  created_at
+                FROM payment_orders
+                WHERE created_at >= %s
+                  AND created_at <= %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT 40
+                """,
+                (start_dt, end_dt),
+            )
+            recent = [dict(x) for x in cur.fetchall()]
+            for r in recent:
+                ca = r.get("created_at")
+                if hasattr(ca, "isoformat"):
+                    r["created_at"] = ca.isoformat()
+            out["recent_orders"] = recent
     return out
 
 
@@ -1789,7 +2293,13 @@ def admin_usage_users(
             cur.execute(
                 """
                 SELECT
-                  COALESCE(NULLIF(TRIM(ue.phone), ''), '(unknown)') AS phone,
+                  COALESCE(ue.user_id::text, NULLIF(TRIM(ue.phone), ''), '(unknown)') AS user_key,
+                  MAX(ue.user_id::text) AS user_id,
+                  MAX(COALESCE(
+                    NULLIF(TRIM(u.phone), ''),
+                    NULLIF(TRIM(ue.phone), ''),
+                    ue.user_id::text
+                  )) AS phone,
                   COUNT(*)::bigint AS events,
                   COUNT(*) FILTER (WHERE ue.status = 'succeeded')::bigint AS succeeded,
                   COUNT(*) FILTER (WHERE ue.status = 'failed')::bigint AS failed,
@@ -1798,10 +2308,11 @@ def admin_usage_users(
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'cost_total_cny'), '')::numeric), 0::numeric) AS cost_total_cny,
                   MAX(ue.created_at) AS last_event_at
                 FROM usage_events ue
+                LEFT JOIN users u ON u.id = ue.user_id
                 WHERE ue.metric = 'job_terminal'
                   AND ue.created_at >= %s
                   AND ue.created_at <= %s
-                GROUP BY COALESCE(NULLIF(TRIM(ue.phone), ''), '(unknown)')
+                GROUP BY COALESCE(ue.user_id::text, NULLIF(TRIM(ue.phone), ''), '(unknown)')
                 ORDER BY events DESC, last_event_at DESC
                 LIMIT %s
                 """,
@@ -1815,18 +2326,29 @@ def admin_usage_users(
 
 
 def admin_usage_user_detail(
-    phone: str,
+    user_ref: str,
     *,
     days: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict[str, Any]:
-    p = (phone or "").strip()
+    """user_ref 可为 users.id(UUID)、手机号或登录标识（与列表行 user_key 一致）。"""
+    p = (user_ref or "").strip()
     if not p:
-        return {"phone": "", "window": {}, "overview": {}, "by_feature": [], "recent_events": []}
+        return {
+            "phone": "",
+            "user_id": "",
+            "user_key": "",
+            "window": {},
+            "overview": {},
+            "by_feature": [],
+            "recent_events": [],
+        }
     start_dt, end_dt = _admin_resolve_date_window(days=days, date_from=date_from, date_to=date_to)
     out: dict[str, Any] = {
         "phone": p,
+        "user_id": "",
+        "user_key": p,
         "window": {"start_at": start_dt.isoformat(), "end_at": end_dt.isoformat()},
         "overview": {},
         "by_feature": [],
@@ -1834,6 +2356,9 @@ def admin_usage_user_detail(
     }
     with get_conn() as conn:
         with get_cursor(conn) as cur:
+            uid_resolved = _resolve_user_uuid_from_ref(cur, p)
+            uid_literal = _normalize_user_uuid(p)
+            filter_uid = uid_resolved or uid_literal
             cur.execute(
                 """
                 SELECT
@@ -1845,11 +2370,14 @@ def admin_usage_user_detail(
                   MAX(created_at) AS last_event_at
                 FROM usage_events
                 WHERE metric = 'job_terminal'
-                  AND phone = %s
                   AND created_at >= %s
                   AND created_at <= %s
+                  AND (
+                    phone = %s
+                    OR (%s IS NOT NULL AND user_id = %s::uuid)
+                  )
                 """,
-                (p, start_dt, end_dt),
+                (start_dt, end_dt, p, filter_uid, filter_uid),
             )
             out["overview"] = dict(cur.fetchone() or {})
 
@@ -1862,13 +2390,16 @@ def admin_usage_user_detail(
                   COALESCE(SUM(NULLIF(TRIM(meta->>'cost_total_cny'), '')::numeric), 0::numeric) AS cost_total_cny
                 FROM usage_events
                 WHERE metric = 'job_terminal'
-                  AND phone = %s
                   AND created_at >= %s
                   AND created_at <= %s
+                  AND (
+                    phone = %s
+                    OR (%s IS NOT NULL AND user_id = %s::uuid)
+                  )
                 GROUP BY job_type
                 ORDER BY events DESC
                 """,
-                (p, start_dt, end_dt),
+                (start_dt, end_dt, p, filter_uid, filter_uid),
             )
             out["by_feature"] = [dict(x) for x in cur.fetchall()]
 
@@ -1882,15 +2413,30 @@ def admin_usage_user_detail(
                   job_id
                 FROM usage_events
                 WHERE metric = 'job_terminal'
-                  AND phone = %s
                   AND created_at >= %s
                   AND created_at <= %s
+                  AND (
+                    phone = %s
+                    OR (%s IS NOT NULL AND user_id = %s::uuid)
+                  )
                 ORDER BY created_at DESC
                 LIMIT 50
                 """,
-                (p, start_dt, end_dt),
+                (start_dt, end_dt, p, filter_uid, filter_uid),
             )
             out["recent_events"] = [dict(x) for x in cur.fetchall()]
+
+            effective_uid = str(uid_resolved or uid_literal or "").strip()
+            out["user_id"] = effective_uid
+            if effective_uid:
+                cur.execute(
+                    "SELECT phone FROM users WHERE id = %s::uuid LIMIT 1",
+                    (effective_uid,),
+                )
+                ur = cur.fetchone()
+                ph = (ur or {}).get("phone")
+                if ph and str(ph).strip():
+                    out["phone"] = str(ph).strip()
     return out
 
 
@@ -2483,12 +3029,20 @@ def sync_user_display_name_to_pg(phone: str, display_name: str) -> None:
 
 
 def _ensure_user_id_for_phone_conn(conn, phone: str) -> str | None:
-    """确保 PG 存在该手机号的用户行并返回 UUID（偏好与收藏音色等依赖）。"""
+    """解析 users.id：支持 UUID、手机号；必要时为合法手机号插入占位行。"""
     p = (phone or "").strip()
-    p_norm = _normalize_phone_digits(p)
     if not p:
         return None
     with get_cursor(conn) as cur:
+        try:
+            u = uuid.UUID(p)
+            cur.execute("SELECT id FROM users WHERE id = %s::uuid LIMIT 1", (str(u),))
+            row0 = cur.fetchone()
+            if row0 and row0.get("id") is not None:
+                return str(row0["id"])
+        except Exception:
+            pass
+        p_norm = _normalize_phone_digits(p)
         cur.execute(
             "SELECT id FROM users WHERE phone = %s OR (phone_normalized IS NOT NULL AND phone_normalized = %s) LIMIT 1",
             (p, p_norm),
@@ -2496,18 +3050,22 @@ def _ensure_user_id_for_phone_conn(conn, phone: str) -> str | None:
         row = cur.fetchone()
         if row and row.get("id") is not None:
             return str(row["id"])
-        cur.execute(
-            """
-            INSERT INTO users (phone, phone_normalized, display_name, role, updated_at)
-            VALUES (%s, %s, %s, 'user', NOW())
-            ON CONFLICT (phone) DO UPDATE SET updated_at = NOW()
-            RETURNING id
-            """,
-            (p, p_norm, p),
-        )
-        ins = cur.fetchone()
-        if ins and ins.get("id") is not None:
-            return str(ins["id"])
+        if not p_norm or len(p_norm) < 11:
+            return None
+        try:
+            cur.execute(
+                """
+                INSERT INTO users (phone, phone_normalized, display_name, role, updated_at)
+                VALUES (%s, %s, %s, 'user', NOW())
+                RETURNING id
+                """,
+                (p, p_norm, p),
+            )
+            ins = cur.fetchone()
+            if ins and ins.get("id") is not None:
+                return str(ins["id"])
+        except IntegrityError:
+            pass
         cur.execute(
             "SELECT id FROM users WHERE phone = %s OR (phone_normalized IS NOT NULL AND phone_normalized = %s) LIMIT 1",
             (p, p_norm),
@@ -2550,9 +3108,7 @@ def get_subscription_checkout_intent_for_api(phone: str) -> dict[str, Any] | Non
         return None
     bc_raw = raw.get("billing_cycle")
     bc = str(bc_raw).strip().lower() if bc_raw else None
-    if bc not in ("monthly", "yearly", None, ""):
-        bc = None
-    if not bc:
+    if bc != "monthly":
         return None
     return {"tier": tid, "billing_cycle": bc}
 
@@ -2606,26 +3162,37 @@ def merge_user_preferences_for_phone(phone: str, patch: dict[str, Any]) -> tuple
 
 
 def ensure_users_profile_columns() -> None:
-    """为 users 表补充档位字段（兼容旧库）。"""
+    """为 users 表补充档位与按手机号解析用户所需列（兼容旧库、未跑 011 迁移的实例）。"""
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free'")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_cycle TEXT")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_normalized TEXT")
+            cur.execute(
+                """
+                UPDATE users
+                SET phone_normalized = regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g')
+                WHERE (phone_normalized IS NULL OR phone_normalized = '')
+                  AND phone IS NOT NULL AND btrim(phone) <> ''
+                """
+            )
             conn.commit()
 
 
 def sync_user_profile_to_pg(
-    phone: str,
+    phone: str = "",
     *,
+    user_id: str | None = None,
     display_name: str | None = None,
     role: str | None = None,
     plan: str | None = None,
     billing_cycle: str | None = None,
 ) -> None:
-    """将用户核心档案同步到 PG users（仅覆盖传入字段）。"""
+    """将用户核心档案同步到 PG users（仅覆盖传入字段）；优先按 user_id 更新。"""
+    uid = (user_id or "").strip()
     p = (phone or "").strip()
     p_norm = _normalize_phone_digits(p)
-    if not p:
+    if not uid and not p:
         return
     dn = (display_name or "").strip()
     rl = (role or "").strip().lower()
@@ -2635,23 +3202,46 @@ def sync_user_profile_to_pg(
         rl = "user"
     if pl and pl not in USER_SUBSCRIPTION_TIERS:
         pl = "free"
+    if uid:
+        try:
+            uuid.UUID(uid)
+        except Exception:
+            uid = ""
     try:
         ensure_users_profile_columns()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
+                if uid:
+                    cur.execute(
+                        """
+                        UPDATE users SET
+                          display_name = COALESCE(NULLIF(%s, ''), display_name),
+                          role = COALESCE(NULLIF(%s, ''), role),
+                          plan = COALESCE(NULLIF(%s, ''), plan),
+                          billing_cycle = CASE WHEN %s IS NULL THEN billing_cycle ELSE %s END,
+                          updated_at = NOW()
+                        WHERE id = %s::uuid
+                        """,
+                        (dn, rl or None, pl or None, bc, bc, uid),
+                    )
+                    if cur.rowcount and cur.rowcount > 0:
+                        conn.commit()
+                        return
+                if not p:
+                    conn.commit()
+                    return
                 cur.execute(
                     """
-                    INSERT INTO users (phone, phone_normalized, display_name, role, plan, billing_cycle, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (phone) DO UPDATE SET
-                      phone_normalized = COALESCE(NULLIF(%s, ''), users.phone_normalized),
-                      display_name = COALESCE(NULLIF(%s, ''), users.display_name),
-                      role = COALESCE(NULLIF(%s, ''), users.role),
-                      plan = COALESCE(NULLIF(%s, ''), users.plan),
-                      billing_cycle = CASE WHEN %s IS NULL THEN users.billing_cycle ELSE %s END,
+                    UPDATE users SET
+                      phone_normalized = COALESCE(NULLIF(%s, ''), phone_normalized),
+                      display_name = COALESCE(NULLIF(%s, ''), display_name),
+                      role = COALESCE(NULLIF(%s, ''), role),
+                      plan = COALESCE(NULLIF(%s, ''), plan),
+                      billing_cycle = CASE WHEN %s IS NULL THEN billing_cycle ELSE %s END,
                       updated_at = NOW()
+                    WHERE phone = %s OR (phone_normalized IS NOT NULL AND phone_normalized = %s)
                     """,
-                    (p, p_norm, dn or p, rl or "user", pl or "free", bc, p_norm, dn, rl, pl, bc, bc),
+                    (p_norm, dn, rl or None, pl or None, bc, bc, p, p_norm),
                 )
             conn.commit()
     except Exception:
@@ -2806,7 +3396,7 @@ def _normalize_currency_code(currency: str | None) -> str:
 
 def _normalize_channel(channel: str | None) -> str:
     raw = (channel or "unknown").strip().lower()
-    allowed = {"wechat", "alipay", "stripe", "apple", "google", "unknown"}
+    allowed = {"alipay", "stripe", "apple", "google", "unknown"}
     return raw if raw in allowed else "unknown"
 
 
@@ -3244,11 +3834,21 @@ def ensure_user_payg_minute_grants_schema() -> None:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_user_payg_grants_user_expires ON user_payg_minute_grants (user_id, expires_at DESC)"
             )
+            cur.execute(
+                "ALTER TABLE user_payg_minute_grants ADD COLUMN IF NOT EXISTS minutes_remaining NUMERIC(12, 2)"
+            )
+            cur.execute(
+                """
+                UPDATE user_payg_minute_grants
+                SET minutes_remaining = minutes
+                WHERE minutes_remaining IS NULL
+                """
+            )
             conn.commit()
 
 
 def payg_minutes_remaining_for_phone(phone: str) -> float:
-    """未过期按次分钟包合计（尚未在任务侧扣减时等于购入总和）。"""
+    """未过期按次分钟包剩余分钟合计（`minutes_remaining`，旧行回退为 `minutes`）。"""
     p = (phone or "").strip()
     if not p:
         return 0.0
@@ -3261,9 +3861,11 @@ def payg_minutes_remaining_for_phone(phone: str) -> float:
                     return 0.0
                 cur.execute(
                     """
-                    SELECT COALESCE(SUM(minutes), 0) AS s
+                    SELECT COALESCE(SUM(COALESCE(minutes_remaining, minutes)), 0) AS s
                     FROM user_payg_minute_grants
-                    WHERE user_id = %s AND expires_at > NOW()
+                    WHERE user_id = %s
+                      AND expires_at > NOW()
+                      AND COALESCE(minutes_remaining, minutes) > 0
                     """,
                     (uid,),
                 )
@@ -3274,6 +3876,194 @@ def payg_minutes_remaining_for_phone(phone: str) -> float:
                 return float(Decimal(str(raw)))
     except Exception:
         return 0.0
+
+
+def _subscription_audio_minutes_used_for_uid_cur(cur: Any, uid: str, days: int = 30) -> float:
+    """与 subscription_media_usage_for_phone 音频口径一致，供扣费事务内读取（避免读到未提交数据外的不一致）。"""
+    d = max(1, min(366, int(days)))
+    cur.execute(
+        """
+        SELECT COALESCE(
+                 SUM(
+                   CASE
+                     WHEN j.result::jsonb ? 'audio_duration_sec'
+                          AND NULLIF(btrim(j.result::jsonb->>'audio_duration_sec'), '') IS NOT NULL
+                       THEN (j.result::jsonb->>'audio_duration_sec')::double precision
+                     ELSE 0::double precision
+                   END
+                 ),
+                 0::double precision
+               )
+               / 60.0 AS audio_minutes
+        FROM jobs j
+        LEFT JOIN projects p ON p.id = j.project_id
+        WHERE j.deleted_at IS NULL
+          AND j.status = 'succeeded'
+          AND j.job_type = ANY(%s::text[])
+          AND j.completed_at >= NOW() - (%s * INTERVAL '1 day')
+          AND COALESCE(j.created_by, p.user_id) = %s::uuid
+        """,
+        (["text_to_speech", "tts", "podcast_generate", "podcast"], d, uid),
+    )
+    row = cur.fetchone()
+    return float(row["audio_minutes"] or 0) if row else 0.0
+
+
+def _payg_try_consume_minutes_cur(cur: Any, user_id: str, need: float) -> tuple[float, list[tuple[str, Decimal]]]:
+    """按过期时间 FIFO 扣减按次分钟包；返回 (实际扣减分钟, 回滚日志)。"""
+    if need <= 1e-12:
+        return 0.0, []
+    need_dec = Decimal(str(need))
+    total = Decimal("0")
+    log: list[tuple[str, Decimal]] = []
+    while need_dec > Decimal("0.0001"):
+        cur.execute(
+            """
+            SELECT id, COALESCE(minutes_remaining, minutes) AS rem
+            FROM user_payg_minute_grants
+            WHERE user_id = %s::uuid
+              AND expires_at > NOW()
+              AND COALESCE(minutes_remaining, minutes) > 0.0001
+            ORDER BY expires_at ASC
+            FOR UPDATE
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            break
+        gid = str(row["id"])
+        rem = Decimal(str(row["rem"] or 0))
+        if rem <= 0:
+            break
+        take = min(rem, need_dec)
+        new_rem = rem - take
+        cur.execute(
+            """
+            UPDATE user_payg_minute_grants
+            SET minutes_remaining = %s
+            WHERE id = %s::uuid
+            """,
+            (new_rem, gid),
+        )
+        need_dec -= take
+        total += take
+        log.append((gid, take))
+    return float(total), log
+
+
+def payg_restore_minutes_from_log(phone: str, restores: list[tuple[str, float]]) -> None:
+    """任务失败后将已扣的按次分钟包加回（与钱包退款配合使用）。"""
+    p = (phone or "").strip()
+    if not p or not restores:
+        return
+    try:
+        ensure_user_payg_minute_grants_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return
+                for gid, amt in restores:
+                    if amt <= 1e-12:
+                        continue
+                    cur.execute(
+                        """
+                        UPDATE user_payg_minute_grants
+                        SET minutes_remaining = COALESCE(minutes_remaining, minutes) + %s
+                        WHERE id = %s::uuid AND user_id = %s::uuid
+                        """,
+                        (Decimal(str(amt)), gid, uid),
+                    )
+            conn.commit()
+    except Exception:
+        logger.exception("payg_restore_minutes_from_log failed phone=%s", p[:4] if p else "")
+
+
+def media_billing_try_debit_estimated_minutes(
+    phone: str,
+    tier: str | None,
+    est_minutes: float,
+    *,
+    period_days: int = 30,
+) -> tuple[bool, int, dict[str, Any]]:
+    """
+    事务内：按预估分钟先扣按次包再扣钱包（与会员页「近 N 天音频用量」同一周期）。
+    返回 (是否成功, 实际从钱包扣的分, meta)。
+    meta: payg_restores, wallet_cents, from_payg_minutes, message(失败时)
+    """
+    from . import media_wallet as _mw
+
+    base_meta: dict[str, Any] = {
+        "payg_restores": [],
+        "wallet_cents": 0,
+        "from_payg_minutes": 0.0,
+    }
+    if not _mw.media_wallet_billing_enabled():
+        return True, 0, dict(base_meta)
+    p = (phone or "").strip()
+    if not p or float(est_minutes) <= 1e-9:
+        return True, 0, dict(base_meta)
+    ensure_user_payg_minute_grants_schema()
+    ensure_user_wallet_schema()
+    tnorm = (tier or "free").strip().lower()
+    cap = int(MONTHLY_MINUTES_PRODUCT_BY_TIER.get(tnorm, MONTHLY_MINUTES_PRODUCT_BY_TIER["free"]))
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return False, 0, {
+                        **base_meta,
+                        "reason": "no_user",
+                        "message": "未找到账户，无法结算语音用量",
+                    }
+                used = _subscription_audio_minutes_used_for_uid_cur(cur, uid, period_days)
+                sub_room = max(0.0, float(cap) - float(used))
+                from_sub = min(float(est_minutes), sub_room)
+                rem = float(est_minutes) - from_sub
+                payg_log: list[tuple[str, Decimal]] = []
+                consumed_payg = 0.0
+                if rem > 1e-9:
+                    consumed_payg, payg_log = _payg_try_consume_minutes_cur(cur, uid, rem)
+                wallet_min = max(0.0, rem - consumed_payg)
+                cents = int(_mw.wallet_cents_for_overage_minutes(wallet_min))
+                meta = {
+                    **base_meta,
+                    "from_payg_minutes": float(consumed_payg),
+                    "payg_restores": [(str(gid), float(amt)) for gid, amt in payg_log],
+                    "wallet_cents": cents,
+                }
+                if cents > 0:
+                    cur.execute(
+                        """
+                        UPDATE user_wallet_balance
+                        SET balance_cents = balance_cents - %s,
+                            phone = %s,
+                            updated_at = NOW()
+                        WHERE user_id = %s::uuid AND balance_cents >= %s
+                        RETURNING balance_cents
+                        """,
+                        (cents, p, uid, cents),
+                    )
+                    row_w = cur.fetchone()
+                    if not row_w:
+                        conn.rollback()
+                        return False, 0, {
+                            **base_meta,
+                            "reason": "insufficient_wallet",
+                            "message": (
+                                f"钱包余额不足：此次预估超出套餐/分钟包约 {wallet_min:.2f} 分钟，"
+                                f"需约 ¥{cents / 100:.2f}，请充值后再试。"
+                            ),
+                        }
+                    meta["balance_cents_after"] = int(row_w.get("balance_cents") or 0)
+                conn.commit()
+                return True, cents, meta
+    except Exception as exc:
+        logger.exception("media_billing_try_debit_estimated_minutes failed")
+        return False, 0, {**base_meta, "reason": "error", "message": str(exc)[:300]}
 
 
 def ensure_user_wallet_schema() -> None:
@@ -3382,6 +4172,51 @@ def wallet_try_debit_cents(phone: str, cents: int) -> tuple[bool, int]:
         return False, -1
 
 
+def wallet_credit_cents(phone: str, cents: int) -> bool:
+    """
+    增加钱包余额（用于克隆失败/取消后退回已扣的按次费）。
+    """
+    p = (phone or "").strip()
+    try:
+        credit = int(cents)
+    except (TypeError, ValueError):
+        return False
+    if not p or credit <= 0:
+        return False
+    try:
+        ensure_user_wallet_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return False
+                cur.execute(
+                    """
+                    UPDATE user_wallet_balance
+                    SET balance_cents = balance_cents + %s,
+                        phone = %s,
+                        updated_at = NOW()
+                    WHERE user_id = %s
+                    RETURNING balance_cents
+                    """,
+                    (credit, p, uid),
+                )
+                row = cur.fetchone()
+                if not row:
+                    cur.execute(
+                        """
+                        INSERT INTO user_wallet_balance (user_id, phone, balance_cents, updated_at)
+                        VALUES (%s, %s, %s, NOW())
+                        """,
+                        (uid, p, credit),
+                    )
+                conn.commit()
+                return True
+    except Exception:
+        logger.exception("wallet_credit_cents failed phone=%s", p[:4] if p else "")
+        return False
+
+
 def wallet_create_checkout_session(phone: str, checkout_id: str, amount_cents: int) -> bool:
     """写入模拟收银会话（金额与 checkout 绑定）。"""
     p = (phone or "").strip()
@@ -3468,14 +4303,14 @@ def wallet_delete_checkout_session(phone: str, checkout_id: str) -> None:
         return
 
 
-def ensure_wechat_native_checkout_schema() -> None:
-    """微信 Native 待支付会话（与 out_trade_no 对齐，供回调验额与履约）。"""
+def ensure_alipay_page_checkout_schema() -> None:
+    """支付宝电脑网站支付待支付会话（与 out_trade_no 对齐，供异步通知验额与履约）。"""
     ensure_user_wallet_schema()
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS wechat_native_checkout_sessions (
+                CREATE TABLE IF NOT EXISTS alipay_page_checkout_sessions (
                   out_trade_no TEXT PRIMARY KEY,
                   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                   phone TEXT NOT NULL,
@@ -3488,13 +4323,13 @@ def ensure_wechat_native_checkout_schema() -> None:
                 """
             )
             cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_wechat_native_checkout_user_created "
-                "ON wechat_native_checkout_sessions (user_id, created_at DESC)"
+                "CREATE INDEX IF NOT EXISTS idx_alipay_page_checkout_user_created "
+                "ON alipay_page_checkout_sessions (user_id, created_at DESC)"
             )
             conn.commit()
 
 
-def wechat_native_create_checkout_session(
+def alipay_page_create_checkout_session(
     phone: str,
     out_trade_no: str,
     kind: str,
@@ -3514,25 +4349,24 @@ def wechat_native_create_checkout_session(
     if amt <= 0:
         return False
     try:
-        ensure_wechat_native_checkout_schema()
+        ensure_alipay_page_checkout_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
                 uid = _ensure_user_id_for_phone_conn(conn, p)
                 if not uid:
                     return False
                 cur.execute(
-                    "DELETE FROM wechat_native_checkout_sessions WHERE user_id = %s AND created_at < NOW() - INTERVAL '48 hours'",
+                    "DELETE FROM alipay_page_checkout_sessions WHERE user_id = %s AND created_at < NOW() - INTERVAL '48 hours'",
                     (uid,),
                 )
-                # 同一用户同类型仅保留最新预下单，避免多枚二维码竞态付错档
                 cur.execute(
-                    "DELETE FROM wechat_native_checkout_sessions WHERE user_id = %s AND kind = %s",
+                    "DELETE FROM alipay_page_checkout_sessions WHERE user_id = %s AND kind = %s",
                     (uid, k),
                 )
-                cur.execute("DELETE FROM wechat_native_checkout_sessions WHERE out_trade_no = %s", (oid,))
+                cur.execute("DELETE FROM alipay_page_checkout_sessions WHERE out_trade_no = %s", (oid,))
                 cur.execute(
                     """
-                    INSERT INTO wechat_native_checkout_sessions
+                    INSERT INTO alipay_page_checkout_sessions
                       (out_trade_no, user_id, phone, kind, amount_cents, tier, billing_cycle)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
@@ -3544,18 +4378,18 @@ def wechat_native_create_checkout_session(
         return False
 
 
-def wechat_native_get_checkout_session(out_trade_no: str) -> dict | None:
+def alipay_page_get_checkout_session(out_trade_no: str) -> dict | None:
     oid = (out_trade_no or "").strip()
     if not oid:
         return None
     try:
-        ensure_wechat_native_checkout_schema()
+        ensure_alipay_page_checkout_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
                 cur.execute(
                     """
                     SELECT out_trade_no, phone, kind, amount_cents, tier, billing_cycle, user_id::text AS user_id
-                    FROM wechat_native_checkout_sessions
+                    FROM alipay_page_checkout_sessions
                     WHERE out_trade_no = %s
                     LIMIT 1
                     """,
@@ -3569,15 +4403,15 @@ def wechat_native_get_checkout_session(out_trade_no: str) -> dict | None:
         return None
 
 
-def wechat_native_delete_checkout_session(out_trade_no: str) -> None:
+def alipay_page_delete_checkout_session(out_trade_no: str) -> None:
     oid = (out_trade_no or "").strip()
     if not oid:
         return
     try:
-        ensure_wechat_native_checkout_schema()
+        ensure_alipay_page_checkout_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                cur.execute("DELETE FROM wechat_native_checkout_sessions WHERE out_trade_no = %s", (oid,))
+                cur.execute("DELETE FROM alipay_page_checkout_sessions WHERE out_trade_no = %s", (oid,))
             conn.commit()
     except Exception:
         return
@@ -4101,11 +4935,12 @@ def process_payment_event_transaction(
                         exp_at = effective_at + timedelta(days=exp_days)
                         cur.execute(
                             """
-                            INSERT INTO user_payg_minute_grants (user_id, phone, minutes, expires_at, payment_event_id)
-                            VALUES (%s, %s, %s, %s, %s)
+                            INSERT INTO user_payg_minute_grants
+                              (user_id, phone, minutes, minutes_remaining, expires_at, payment_event_id)
+                            VALUES (%s, %s, %s, %s, %s, %s)
                             ON CONFLICT (payment_event_id) DO NOTHING
                             """,
-                            (uid, p, mval, exp_at, eid),
+                            (uid, p, mval, mval, exp_at, eid),
                         )
 
                 if is_wallet and st == "paid":

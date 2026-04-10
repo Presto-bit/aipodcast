@@ -74,28 +74,19 @@ WELCOME_VOICE_ID = DEFAULT_VOICES["mini"]["voice_id"]  # 使用 Mini 音色
 
 # ========== MiniMax API 端点配置 ==========
 MINIMAX_API_BASE = "https://api.minimax.chat/v1"
-MINIMAX_API_ENDPOINTS = {
-    "text_completion": "https://api.minimax.chat/v1/text/chatcompletion_v2",
-    "embeddings": "https://api.minimax.chat/v1/embeddings",
-    "tts": "https://api.minimax.chat/v1/t2a_v2",
+_MINIMAX_API_PATHS = {
+    "text_completion": "/text/chatcompletion_v2",
+    "embeddings": "/embeddings",
+    "tts": "/t2a_v2",
     # 长文本异步语音：[创建任务](https://platform.minimaxi.com/docs/api-reference/speech-t2a-async-create)
-    "tts_async_create": "https://api.minimax.chat/v1/t2a_async_v2",
-    "tts_async_query": "https://api.minimax.chat/v1/query/t2a_async_query_v2",
-    "file_retrieve_content": "https://api.minimax.chat/v1/files/retrieve_content",
-    "voice_clone": "https://api.minimax.chat/v1/voice_clone",
-    "file_upload": "https://api.minimax.chat/v1/files/upload",
-    "image_generation": "https://api.minimax.chat/v1/image_generation"
+    "tts_async_create": "/t2a_async_v2",
+    "tts_async_query": "/query/t2a_async_query_v2",
+    "file_retrieve_content": "/files/retrieve_content",
+    "voice_clone": "/voice_clone",
+    "file_upload": "/files/upload",
+    "image_generation": "/image_generation",
 }
-
-
-# MINIMAX_API_BASE = "https://api.minimax.chat/v1"
-# MINIMAX_API_ENDPOINTS = {
-#     "text_completion": "https://api.minimax.chat/v1/text/chatcompletion_v2",
-#     "tts": "https://api.minimax.chat/v1/t2a_v2",
-#     "voice_clone": "https://api.minimax.chat/v1/voice_clone",
-#     "file_upload": "https://api.minimax.chat/v1/files/upload",
-#     "image_generation": "https://api.minimax.chat/v1/image_generation"
-# }
+MINIMAX_API_ENDPOINTS = {k: f"{MINIMAX_API_BASE}{path}" for k, path in _MINIMAX_API_PATHS.items()}
 
 # ========== 模型配置 ==========
 # 可通过环境变量覆盖（推荐写入仓库根目录 .env.ai-native），未设置时使用下列默认值。
@@ -108,12 +99,13 @@ def _model_from_env(env_name: str, default: str) -> str:
 
 MODELS = {
     "text": _model_from_env("MINIMAX_TEXT_MODEL", "MiniMax-M2-Preview"),
-    "tts": _model_from_env("MINIMAX_TTS_MODEL", "speech-2.5-hd-preview"),
+    "tts": _model_from_env("MINIMAX_TTS_MODEL", "speech-2.8-turbo"),
     "voice_clone": _model_from_env("MINIMAX_VOICE_CLONE_MODEL", "speech-02-turbo"),
     "image": _model_from_env("MINIMAX_IMAGE_MODEL", "image-01-live"),
 }
 
 # ========== 播客生成配置 ==========
+_SCRIPT_TARGET_CHARS_MAX = 50_000
 PODCAST_CONFIG = {
     # 长文案分段：是否在每段生成后（第 2 段起）可选调用 API，用「边界补丁」优化段首衔接
     # heuristic_only=True 时仅在检测到重复开场倾向时调用，节省费用
@@ -123,14 +115,33 @@ PODCAST_CONFIG = {
     # 未显式传目标字数时的默认篇幅（与常见单集时长对齐）；显式传值上限于 hard_cap
     "script_target_chars_default": 800,
     "script_target_chars_min": 200,
-    "script_target_chars_max": 9999,
+    "script_target_chars_max": _SCRIPT_TARGET_CHARS_MAX,
     # 未显式传 script_target_chars 时上限（避免暗含过长目标拖慢生成）
     "script_target_chars_preferred_max": 2400,
     # 客户端显式传入时的服务端上限（仍需长稿可提高该值）
     "script_target_chars_hard_cap": 4000,
-    "long_script_target_chars_max": 9999,
+    "long_script_target_chars_max": _SCRIPT_TARGET_CHARS_MAX,
     "style": "轻松幽默",
     "speakers": ["Speaker1", "Speaker2"],
+    # 脚本生成：上游 max_tokens / 轻量续写（材料内「已生成上文」）
+    # MiniMax chatcompletion_v2 文档：max_completion_tokens 上限 2048
+    "minimax_script_max_completion_tokens": 2048,
+    # OpenAI 兼容（DeepSeek-V3.2 chat 等）：官方 max output 常见 8K 量级，勿超过文档
+    "openai_compat_script_max_tokens_cap": 8192,
+    # 单轮提示中的「本段目标字数」上限：与 minimax_script_max_completion_tokens 对齐（中文约 3k 量级）
+    "script_generation_segment_target_chars_max": 4200,
+    # OpenAI 兼容路径单段上限（常见 8K output，略放宽）
+    "openai_compat_script_segment_target_chars_max": 4500,
+    # 多轮续写上限略抬高，便于 MiniMax 2048t/轮 拼至 5 万言长文
+    # Max 档 5 万言需多轮续写（MiniMax 单轮 completion 上限约 2048 tokens）
+    "script_generation_max_continue_rounds": 32,
+    # 未达目标且 finish_reason≠length 时：仅当当前字数 ≥ goal*ratio 才停续写（调高则更愿多续几轮）
+    "script_generation_shortfall_ratio": 0.90,
+    # 续写轮过短阈值略降，减少「略低于 80 字」被误判截断（仍防噪声）
+    "script_continue_min_round_gain_chars": 60,
+    "script_continue_material_tail_max_chars": 64_000,
+    # 续写轮参考书截尾略增，平衡「有后文依据」与上下文体积
+    "script_continue_reference_tail_max_chars": 28_000,
 }
 
 # ========== 超时配置（秒）==========
@@ -140,7 +151,8 @@ TIMEOUTS = {
     "url_parsing": 30,
     "pdf_parsing": 30,
     "voice_clone": 60,
-    "script_generation": 120,
+    "script_generation": 180,
+    "script_generation_openai_compat": 300,
     "tts_per_sentence": 30,
     # 同步 T2A stream=true 时读超时（connect, read 由调用方组合）
     "tts_stream_read": 300,

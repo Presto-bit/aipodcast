@@ -2,8 +2,8 @@ import "./globals.css";
 import Providers from "./providers";
 
 export const metadata = {
-  title: "FindingYourVoice · AI Native Studio",
-  description: "FindingYourVoice — 发现你声音的力量"
+  title: "Finding Your Voice · AI Native Studio",
+  description: "Finding Your Voice — 语音与播客创作工作台"
 };
 
 const THEME_BOOT = `(function(){try{var t=localStorage.getItem('fym_theme');if(t==='dark'){document.documentElement.classList.add('dark');document.documentElement.classList.remove('light');}else{document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');}}catch(e){document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');}})();`;

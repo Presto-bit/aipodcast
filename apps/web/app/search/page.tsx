@@ -70,12 +70,12 @@ export default function SearchPage() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="输入关键词…"
-          className="min-w-[200px] flex-1 rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink"
+          className="min-w-[200px] flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink"
           autoComplete="off"
         />
         <button
           type="button"
-          className="rounded-lg bg-brand px-4 py-2 text-sm text-white hover:bg-brand disabled:opacity-50"
+          className="rounded-lg bg-brand px-4 py-2 text-sm text-brand-foreground hover:bg-brand disabled:opacity-50"
           disabled={loading}
           onClick={() => void run()}
         >
@@ -83,7 +83,7 @@ export default function SearchPage() {
         </button>
       </div>
 
-      {err ? <p className="mt-3 text-sm text-rose-600">{err}</p> : null}
+      {err ? <p className="mt-3 text-sm text-danger-ink">{err}</p> : null}
 
       <section className="mt-8">
         <h2 className="text-sm font-semibold text-ink">笔记</h2>
@@ -92,7 +92,7 @@ export default function SearchPage() {
             <li className="text-sm text-muted">{q.trim().length >= 2 && !loading ? "无匹配笔记" : "—"}</li>
           ) : (
             notes.map((n) => (
-              <li key={n.id} className="rounded-lg border border-line bg-white p-3 text-sm">
+              <li key={n.id} className="rounded-lg border border-line bg-surface p-3 text-sm">
                 <Link
                   href={`/notes?note=${encodeURIComponent(n.id)}`}
                   className="font-medium text-brand hover:underline"
@@ -114,7 +114,7 @@ export default function SearchPage() {
             <li className="text-sm text-muted">{q.trim().length >= 2 && !loading ? "没有匹配的生成记录" : "—"}</li>
           ) : (
             jobs.map((j) => (
-              <li key={j.id} className="rounded-lg border border-line bg-white p-3 text-sm">
+              <li key={j.id} className="rounded-lg border border-line bg-surface p-3 text-sm">
                 <Link href={`/jobs/${j.id}`} className="font-mono text-brand hover:underline">
                   {j.id.slice(0, 8)}…
                 </Link>

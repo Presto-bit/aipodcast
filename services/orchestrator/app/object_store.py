@@ -63,6 +63,26 @@ def get_object_bytes(object_key: str) -> bytes:
     return obj["Body"].read()
 
 
+def presigned_get_url(object_key: str, *, expires_in: int = 3600) -> str:
+    """
+    生成对象 GET 的预签名 URL，便于客户端直拉 MP3/封面/视频，减轻编排器流式代理压力。
+    expires_in：秒，S3/MinIO 常见上限 7 天以内（视配置而定）。
+    """
+    key = (object_key or "").strip()
+    if not key:
+        raise ValueError("object_key_empty")
+    exp = int(expires_in)
+    if exp < 60:
+        raise ValueError("expires_in_too_small")
+    if exp > 86400 * 7:
+        exp = 86400 * 7
+    return _s3().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": settings.object_bucket, "Key": key},
+        ExpiresIn=exp,
+    )
+
+
 def delete_object_key(object_key: str) -> bool:
     """删除对象存储中的单个 key；不存在或失败时返回 False（调用方可忽略）。"""
     key = (object_key or "").strip()
