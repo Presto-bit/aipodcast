@@ -63,7 +63,7 @@
 | 主题 | 说明 |
 |------|------|
 | 运行时目录 | `FYV_RUNTIME_DIR` / `FYV_DATA_DIR` / `FYV_UPLOAD_DIR` / `FYV_OUTPUT_DIR`（见 `.env.ai-native.example`） |
-| 保留周期 | README 中 webhook、usage、job_events、subscription_events 建议周期；执行入口 `make retention-maintenance` |
+| 保留周期 | `.env.ai-native.example` 中 `RETENTION_*` 默认建议（webhook / usage / job_events / subscription_events）；执行入口 `make retention-maintenance` |
 | 媒体队列「占位成功」 | 生产建议 `MEDIA_WORKER_FAIL_ON_NON_PODCAST=1`（见 `DEPLOYMENT.md`） |
 
 ---
@@ -103,5 +103,5 @@ docker compose -f docker-compose.ai-native.yml -f docker-compose.e2e.yml \
 
 ## 与根文档的关系
 
-- [`README.md`](../../README.md)：开发者入门、目录结构、功能列表。  
+- [`README.md`](../../README.md)：快速开始、热重载入口、文档链接。  
 - **运维与切流**：优先打开 **本页**，再跳到对应专题。

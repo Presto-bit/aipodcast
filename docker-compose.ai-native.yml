@@ -100,6 +100,9 @@ services:
       timeout: 6s
       retries: 5
       start_period: 45s
+    volumes:
+      # 支付宝 PEM 等：仓库根目录 secrets/（gitignore），与 .env.ai-native 中 ALIPAY_*_PATH 相对 /app 一致
+      - ./secrets:/app/secrets:ro
     restart: unless-stopped
 
   ai-worker:
