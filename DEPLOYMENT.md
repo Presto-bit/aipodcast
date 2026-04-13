@@ -18,15 +18,15 @@
 ### 首次发布（新机器 / 首次上线）
 
 1. **目录与用户**  
-   - 将仓库放到固定目录（推荐 **`/opt/minimax_aipodcast`** 等），由**普通用户**（如 `ubuntu`）持有目录与 Git 工作区；避免仅用 `/root` 长期跑栈，减少权限与卷挂载问题。
+   - 将仓库放到固定目录（生产推荐 **`/opt/FYV`**；其他路径发版时设置 `APP_DIR`），由**普通用户**（如 `ubuntu`）持有目录与 Git 工作区；避免仅用 `/root` 长期跑栈，减少权限与卷挂载问题。
 
 2. **获取代码**  
-   - **在线**：`git clone <你的仓库 URL> /opt/minimax_aipodcast`  
+   - **在线**：`git clone <你的仓库 URL> /opt/FYV`  
    - **离线**：按 [`docs/offline-deploy-bundle.md`](docs/offline-deploy-bundle.md) 准备镜像与源码包，解压到同一路径并配置 `.env.ai-native`。
 
 3. **配置环境变量**（在仓库根目录）  
    ```bash
-   cd /opt/minimax_aipodcast
+   cd /opt/FYV
    cp .env.ai-native.example .env.ai-native
    nano .env.ai-native   # 或 vim；至少补齐密钥与 DB/对象存储等
    ```
@@ -34,13 +34,13 @@
 4. **启动全栈（二选一）**  
    - **方式 A：一键脚本（推荐新机器）** — 以 root/sudo 执行，可选 **apt 安装 Docker**、将运行用户加入 `docker` 组、在 Git 仓库内 **`git pull --ff-only`**（若存在 `.git`）、再 **`docker compose up -d --build`**（离线模式见脚本 `--offline`）：  
      ```bash
-     cd /opt/minimax_aipodcast
-     sudo bash deploy.sh --yes --user ubuntu --root /opt/minimax_aipodcast
+     cd /opt/FYV
+     sudo bash deploy.sh --yes --user ubuntu --root /opt/FYV
      ```  
      等价入口为 [`deploy/one_click_deploy.sh`](deploy/one_click_deploy.sh)；可用 `--no-apt` 跳过 apt、`--no-git-pull` 跳过拉代码。  
    - **方式 B：已有 Docker** — 无需重装 Docker 时，在**具有 docker 权限的用户**下：  
      ```bash
-     cd /opt/minimax_aipodcast
+     cd /opt/FYV
      docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d --build
      ```
 
@@ -67,7 +67,7 @@
 2. **服务器侧**（SSH 登录，使用**能执行 `docker compose` 的用户**，通常为部署用户且已在 `docker` 组内）  
    - 进入项目目录，执行仓库根目录的 **[`release.sh`](release.sh)**：  
      ```bash
-     cd /opt/minimax_aipodcast
+     cd /opt/FYV
      bash release.sh
      ```  
    - 脚本默认行为：`git fetch` + **`git pull --ff-only`**（与 `REMOTE`/`BRANCH` 一致）→ **`docker compose ... up -d --build`** → 检查编排器 `/health`、Web `3000`、以及 `orchestrator` / `web` / `ai-worker` / `media-worker` 是否为 **running**。
@@ -76,7 +76,7 @@
 
    | 变量 | 默认 | 说明 |
    |------|------|------|
-   | `APP_DIR` | `/opt/minimax_aipodcast` | 项目根目录 |
+   | `APP_DIR` | `/opt/FYV` | 项目根目录（与仓库实际路径一致；否则 `export APP_DIR=…`） |
    | `REMOTE` | `origin` | Git 远端名 |
    | `BRANCH` | `main` | 拉取分支；生产若用其他分支，发版前 `export BRANCH=…` |
    | `GIT_PULL` | `1` | 设为 `0` 则**不**执行 `git fetch/pull`（离线、手工覆盖目录、或打 tag 固定版本时） |
@@ -111,7 +111,7 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 1. **在仍在运行的 Postgres 容器里**，用当前能连上的账号执行改密（把 `aipodcast` 换成你的 `DB_USER`，密码按实际替换）：
 
    ```bash
-   cd /path/to/minimax_aipodcast
+   cd /opt/FYV
    docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native exec postgres \
      psql -U aipodcast -d postgres \
      -c "ALTER USER aipodcast WITH PASSWORD '此处填新密码';"

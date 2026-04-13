@@ -5,13 +5,13 @@
 #   bash release.sh
 #
 # 可选环境变量：
-#   APP_DIR=/opt/minimax_aipodcast
+#   APP_DIR=/opt/FYV   （仓库所在目录；与一键部署的 --root 一致）
 #   BRANCH=main
 #   REMOTE=origin
 #   GIT_PULL=0   跳过 git fetch/pull（离线或固定版本发布）
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/opt/minimax_aipodcast}"
+APP_DIR="${APP_DIR:-/opt/FYV}"
 REMOTE="${REMOTE:-origin}"
 BRANCH="${BRANCH:-main}"
 GIT_PULL="${GIT_PULL:-1}"

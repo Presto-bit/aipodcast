@@ -3,20 +3,20 @@
 # AI Native：Docker Compose 一键部署（需 sudo，用于安装 Docker 与拉起栈）
 #
 # 用法：
-#   cd /path/to/minimax_aipodcast
+#   cd /path/to/FYV
 #   sudo bash deploy/one_click_deploy.sh
 #
 # 非交互（可写入 deploy/deploy.env 后 source，或 export 以下变量）：
 #   APP_USER=ubuntu
-#   DEPLOY_ROOT=/path/to/minimax_aipodcast
+#   DEPLOY_ROOT=/path/to/FYV
 #   INSTALL_APT=1          # 0=跳过 apt 安装 docker.io
 #   GIT_PULL=1             # 0=不执行 git pull
 #
 #   sudo bash deploy/one_click_deploy.sh --yes \
-#     --user ubuntu --root /opt/minimax_aipodcast
+#     --user ubuntu --root /opt/FYV
 #
 # 离线 / 已 docker load 全栈 tar（无外网访问 registry-1.docker.io）：
-#   sudo bash deploy/one_click_deploy.sh --yes --offline --user ecs-user --root /opt/minimax_aipodcast
+#   sudo bash deploy/one_click_deploy.sh --yes --offline --user ecs-user --root /opt/FYV
 #   或在 deploy/deploy.env 中设 OFFLINE_DEPLOY=1
 #==============================================================================
 set -euo pipefail
