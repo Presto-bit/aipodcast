@@ -1,23 +1,29 @@
+# syntax=docker/dockerfile:1
 ARG PYTHON_BASE_IMAGE=python:3.12-slim
 FROM --platform=linux/amd64 ${PYTHON_BASE_IMAGE}
+
+ARG USE_APT_MIRROR=1
+ENV USE_APT_MIRROR=${USE_APT_MIRROR}
 
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-RUN set -eux; \
+COPY --chmod=755 docker/debian-apt-bootstrap.sh /usr/local/bin/debian-apt-bootstrap.sh
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    set -eux; \
     if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then \
       echo "ffmpeg/ffprobe already present, skip apt-get"; \
     else \
-      apt-get update; \
-      apt-get install -y --no-install-recommends ffmpeg; \
-      rm -rf /var/lib/apt/lists/*; \
+      debian-apt-bootstrap.sh ffmpeg; \
     fi
 
 COPY services/orchestrator/requirements.txt /app/requirements.txt
 COPY docker/offline-pip-wheels /opt/pip-offline-wheels
 COPY docker/pip.conf /etc/pip.conf
-RUN if ls /opt/pip-offline-wheels/*.whl >/dev/null 2>&1; then \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if ls /opt/pip-offline-wheels/*.whl >/dev/null 2>&1; then \
       pip install --no-index --find-links=/opt/pip-offline-wheels -r /app/requirements.txt; \
     else \
       pip install --no-cache-dir -r /app/requirements.txt; \

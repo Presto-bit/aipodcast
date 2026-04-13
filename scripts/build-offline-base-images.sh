@@ -12,6 +12,7 @@ TAG="${OFFLINE_PYTHON_FFMPEG_TAG:-aipodcast/python-ffmpeg:3.12-slim-amd64}"
 docker build \
   --platform linux/amd64 \
   -f docker/python-ffmpeg-base.Dockerfile \
+  --build-arg "USE_APT_MIRROR=${USE_APT_MIRROR:-1}" \
   -t "${TAG}" \
   .
 

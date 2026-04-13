@@ -1,7 +1,7 @@
 # 宿主机端口默认绑定 127.0.0.1，避免 Postgres/Redis/MinIO/编排器 对公网暴露（见 DEPLOYMENT.md）。
 # 需局域网直连调试时，可临时改为 "0.0.0.0:端口:端口" 或使用 SSH 隧道。
 # 默认使用 Docker Hub 短名，与「docker pull + docker save/load」离线包一致；国内/私有库可在 .env.ai-native 设 POSTGRES_IMAGE 等覆盖。
-# 离线构建勿访问 registry-1.docker.io：先 load 基础镜像，再用 scripts/docker-compose-offline.sh 或 make up-offline（DOCKER_BUILDKIT=0）。
+# 离线构建勿访问 registry-1.docker.io：先 load 基础镜像，再用 scripts/docker-compose-offline.sh 或 make up-offline（脚本默认 DOCKER_BUILDKIT=1，以启用 apt/pip 缓存 mount）。
 # 固定 amd64，与阿里云 ECS 一致；避免 Apple Silicon 默认打成 arm64 镜像后在服务器无法运行。
 services:
   postgres:
@@ -73,6 +73,7 @@ services:
       pull: false
       args:
         PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+        USE_APT_MIRROR: ${USE_APT_MIRROR:-1}
     env_file:
       - .env.ai-native
     environment:
@@ -114,6 +115,7 @@ services:
       pull: false
       args:
         PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+        USE_APT_MIRROR: ${USE_APT_MIRROR:-1}
     env_file:
       - .env.ai-native
     environment:
@@ -140,6 +142,7 @@ services:
       pull: false
       args:
         PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+        USE_APT_MIRROR: ${USE_APT_MIRROR:-1}
     env_file:
       - .env.ai-native
     environment:
