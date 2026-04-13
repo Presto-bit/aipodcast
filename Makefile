@@ -34,7 +34,8 @@ install-deps:
 	if [ ! -x .venv-ai-native/bin/python ]; then \
 	  $$PY_BIN -m venv .venv-ai-native; \
 	fi
-	@.venv-ai-native/bin/pip install -r requirements.txt
+	@PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+		.venv-ai-native/bin/pip install -r requirements.txt
 
 # ---------- 热重载开发：仅 Docker 跑 PG/Redis/MinIO，应用在本机跑 ----------
 # 一键：make dev-install && make dev
