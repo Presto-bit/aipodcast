@@ -9,7 +9,7 @@ import {
   computeSharePublishHints,
   AUTO_PROGRAM_SUMMARY_MAX,
   defaultSummaryFromJobResult,
-  deriveProgramSummaryOverallMax50,
+  deriveProgramSummaryOverallMax30,
   formatChapterMarkdownLines,
   loadShareFormDraft,
   promotePlainTimestampLinesInMarkdown,
@@ -32,6 +32,7 @@ import {
 } from "../../lib/publishPlatforms";
 import { resolveJobScriptBodyText, SCRIPT_TEXT_LIKELY_FULL_MIN_LEN } from "../../lib/jobScriptText";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
+import { buildWorksSharePageUrl } from "../../lib/rssPublicBase";
 
 type Props = {
   jobId: string;
@@ -124,7 +125,9 @@ export function SharePublishClient({ jobId }: Props) {
     setShareOrigin(typeof window !== "undefined" ? window.location.origin : "");
   }, []);
 
-  const sharePageFullUrl = shareOrigin ? `${shareOrigin}/works/share/${encodeURIComponent(jobId)}` : "";
+  const sharePageFullUrl =
+    buildWorksSharePageUrl(jobId) ||
+    (shareOrigin ? `${shareOrigin}/works/share/${encodeURIComponent(jobId)}` : "");
 
   const copySharePageLink = useCallback(async () => {
     if (!sharePageFullUrl) return;
@@ -478,7 +481,7 @@ export function SharePublishClient({ jobId }: Props) {
   function fillSummaryFromScript() {
     const ctx = shareGenContextRef.current;
     const extra = ctx ? String(ctx.payload.text || "") : "";
-    const s = deriveProgramSummaryOverallMax50(scriptTextForLead, extra);
+    const s = deriveProgramSummaryOverallMax30(scriptTextForLead, extra);
     if (!s.trim()) {
       window.alert("没有口播稿，请手写简介。");
       return;
@@ -619,7 +622,7 @@ export function SharePublishClient({ jobId }: Props) {
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">发给朋友听</h1>
           {jobTitle ? <span className="max-w-[min(100%,14rem)] truncate text-xs text-muted sm:max-w-xs">{jobTitle}</span> : null}
         </div>
-        <p className="text-xs text-muted">复制链接分享；RSS 见下方「发到播客平台」。</p>
+        <p className="text-xs text-muted">复制链接分享（使用站点公网域名）；下方可发布到播客平台。</p>
       </div>
 
       <audio ref={audioRef} className="hidden" preload="metadata" playsInline />
@@ -649,7 +652,7 @@ export function SharePublishClient({ jobId }: Props) {
       {!blocked && sharePageFullUrl ? (
         <section className="mb-5 rounded-2xl border border-brand/35 bg-brand/10 px-4 py-4 shadow-soft dark:bg-brand/15">
           <p className="text-sm font-semibold text-ink">先复制本页链接</p>
-          <p className="mt-1 text-xs text-muted">收件人需登录本站打开链接。</p>
+          <p className="mt-1 text-xs text-muted">收件人需登录本站打开链接；链接已固定为公网域名，便于转发。</p>
           <input
             readOnly
             value={sharePageFullUrl}
@@ -691,7 +694,7 @@ export function SharePublishClient({ jobId }: Props) {
             aria-expanded={advancedPublishOpen}
             onClick={() => setAdvancedPublishOpen((o) => !o)}
           >
-            <span className="pr-2">播客平台（RSS）</span>
+            <span className="pr-2">发布到播客平台</span>
             <span className="shrink-0 text-xs text-muted">{advancedPublishOpen ? "收起" : "展开"}</span>
           </button>
         </div>
@@ -809,11 +812,11 @@ export function SharePublishClient({ jobId }: Props) {
                     disabled={busy || !scriptTextForLead || scriptResolvePending}
                     onClick={() => fillSummaryFromScript()}
                   >
-                    重写（约 {AUTO_PROGRAM_SUMMARY_MAX} 字）
+                    重写（约 {AUTO_PROGRAM_SUMMARY_MAX} 字内）
                   </button>
                 </div>
                 <p className="mt-1 text-[11px] text-muted/90">
-                  从口播与素材中抽取重点句（已增强对白行、逐句与首段线索）；不满意可点「重写」或手改。
+                  提炼本期讨论主线，约 {AUTO_PROGRAM_SUMMARY_MAX} 字以内、通俗有吸引力；不满意可点「重写」或手改。
                 </p>
                 {scriptBodyHint ? <p className="mt-1 text-[11px] text-muted/90">{scriptBodyHint}</p> : null}
                 <textarea
@@ -823,7 +826,7 @@ export function SharePublishClient({ jobId }: Props) {
                   onChange={(e) => setSummary(e.target.value)}
                   disabled={busy}
                   maxLength={4000}
-                  placeholder={`列表摘要，约 ${AUTO_PROGRAM_SUMMARY_MAX} 字为佳`}
+                  placeholder={`列表摘要，建议 ${AUTO_PROGRAM_SUMMARY_MAX} 字以内`}
                 />
                 <span className="mt-0.5 flex justify-end text-[11px] tabular-nums text-muted/80">
                   <span
@@ -869,7 +872,7 @@ export function SharePublishClient({ jobId }: Props) {
               </div>
               {notesTab === "edit" ? (
                 <p className="text-[11px] text-muted/90">
-                  支持 Markdown；节目简介与时间轴之间预留了两段「##」小标题，可自行改成章节名并填写正文。时间跳转{" "}
+                  默认包含：本期主题、关键收获、时间轴、金句与资源；支持 Markdown。时间跳转{" "}
                   <code className="rounded bg-fill px-1">[3:20 标题](t:200)</code>
                   {audioReady ? "，预览里可点。" : "。"}
                 </p>

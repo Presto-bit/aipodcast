@@ -5,9 +5,11 @@ import Link from "next/link";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 import { useI18n } from "../../../lib/I18nContext";
+import { useTheme } from "../../../lib/ThemeContext";
 
 export default function MeProfilePage() {
-  const { t } = useI18n();
+  const { t, lang, setLang } = useI18n();
+  const { theme, setTheme } = useTheme();
   const { ready, authRequired, logout, user, login, registerSendCode, registerVerifyCode, registerComplete, refreshMe } =
     useAuth();
   const showLogout = isLoggedInAccountUser(user);
@@ -24,9 +26,6 @@ export default function MeProfilePage() {
   const [authError, setAuthError] = useState("");
   const [regPasswordConfirm, setRegPasswordConfirm] = useState("");
   const [regA11ySuccess, setRegA11ySuccess] = useState("");
-  const [usernameEdit, setUsernameEdit] = useState("");
-  const [usernameSaveBusy, setUsernameSaveBusy] = useState(false);
-  const [usernameSaveMsg, setUsernameSaveMsg] = useState("");
 
   async function submitAuth(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -124,44 +123,7 @@ export default function MeProfilePage() {
     user?.user_id,
     user?.phone,
     user?.email,
-    user?.username
   ]);
-
-  useEffect(() => {
-    if (!user || user.phone === "local") return;
-    const hint = String(user.username ?? user.phone ?? "").trim();
-    setUsernameEdit(hint);
-  }, [user?.username, user?.phone, user?.user_id]);
-
-  async function saveUsername() {
-    const next = usernameEdit.trim();
-    if (!next) {
-      setUsernameSaveMsg("用户名不能为空");
-      return;
-    }
-    setUsernameSaveBusy(true);
-    setUsernameSaveMsg("");
-    try {
-      const res = await fetch("/api/auth/profile", {
-        method: "PATCH",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username: next })
-      });
-      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
-      if (!res.ok || !data.success) {
-        setUsernameSaveMsg(String(data.detail || `保存失败 ${res.status}`));
-        return;
-      }
-      setUsernameSaveMsg("已保存");
-      await refreshMe();
-      window.setTimeout(() => setUsernameSaveMsg(""), 2000);
-    } catch {
-      setUsernameSaveMsg("请求失败，请稍后重试");
-    } finally {
-      setUsernameSaveBusy(false);
-    }
-  }
 
   if (!ready) {
     return <p className="py-12 text-center text-sm text-muted">正在加载…</p>;
@@ -223,33 +185,52 @@ export default function MeProfilePage() {
         )}
       </section>
 
-      {showLogout && user ? (
-        <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
-          <h2 className="text-sm font-semibold text-ink">登录用户名</h2>
-          <p className="mt-1 text-xs leading-relaxed text-muted">
-            用于「用户名」登录，须为 3～32 位字母、数字或下划线。注册时填写的用户名也可在此修改（须未被占用）。
-          </p>
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <input
-              className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm font-mono text-ink sm:max-w-md"
-              value={usernameEdit}
-              onChange={(e) => setUsernameEdit(e.target.value)}
-              placeholder="用户名"
-              autoComplete="username"
-              maxLength={32}
-            />
-            <button
-              type="button"
-              className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50"
-              disabled={usernameSaveBusy}
-              onClick={() => void saveUsername()}
-            >
-              {usernameSaveBusy ? "保存中…" : "保存"}
-            </button>
+      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
+        <h2 className="text-sm font-semibold text-ink">{t("settings.account")}</h2>
+        <p className="mt-1 text-xs text-muted">主题与界面语言。</p>
+
+        <div className="mt-4 space-y-4">
+          <div>
+            <p className="text-xs font-medium text-ink">{t("settings.theme")}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1.5 text-sm ${theme === "light" ? "bg-brand text-brand-foreground" : "border border-line"}`}
+                onClick={() => setTheme("light")}
+              >
+                {t("theme.light")}
+              </button>
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1.5 text-sm ${theme === "dark" ? "bg-brand text-brand-foreground" : "border border-line"}`}
+                onClick={() => setTheme("dark")}
+              >
+                {t("theme.dark")}
+              </button>
+            </div>
           </div>
-          {usernameSaveMsg ? <p className="mt-2 text-xs text-muted">{usernameSaveMsg}</p> : null}
-        </section>
-      ) : null}
+
+          <div>
+            <p className="text-xs font-medium text-ink">{t("settings.language")}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className={`rounded-lg border px-3 py-1.5 text-sm ${lang === "zh" ? "border-brand bg-fill" : "border-line"}`}
+                onClick={() => setLang("zh")}
+              >
+                {t("lang.zh")}
+              </button>
+              <button
+                type="button"
+                className={`rounded-lg border px-3 py-1.5 text-sm ${lang === "en" ? "border-brand bg-fill" : "border-line"}`}
+                onClick={() => setLang("en")}
+              >
+                {t("lang.en")}
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <h2 className="text-sm font-semibold text-ink">{t("settings.logoutTitle")}</h2>

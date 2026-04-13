@@ -18,7 +18,7 @@ TIER_LABELS: dict[str, str] = {
     "free": "Free",
     "basic": "Basic",
     "pro": "Pro",
-    "max": "Creator（max）",
+    "max": "Max",
     "payg": "按次（无订阅）",
 }
 

@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, userAccountRef } from "../../../lib/auth";
-import { useI18n } from "../../../lib/I18nContext";
-import { useTheme } from "../../../lib/ThemeContext";
 import { listRssChannels, upsertRssChannel, type RssChannel } from "../../../lib/api";
 import { rssFeedUrlForSlug, RSS_PUBLIC_BASE_URL } from "../../../lib/rssPublicBase";
 
@@ -162,10 +160,7 @@ function RssChannelEditor({ channel, isNew, disabledGlobal, onSaved, onCancelNew
 }
 
 export default function MeGeneralPage() {
-  const { t, lang, setLang } = useI18n();
   const { ready, authRequired, user } = useAuth();
-  const { theme, setTheme } = useTheme();
-  const [prefsSavedHint, setPrefsSavedHint] = useState("");
   const [rssLoading, setRssLoading] = useState(false);
   const [rssError, setRssError] = useState("");
   const [channels, setChannels] = useState<RssChannel[]>([]);
@@ -200,8 +195,6 @@ export default function MeGeneralPage() {
       next[idx] = row;
       return next;
     });
-    setPrefsSavedHint("RSS 已保存");
-    window.setTimeout(() => setPrefsSavedHint(""), 1200);
   }
 
   if (!ready) {
@@ -210,54 +203,6 @@ export default function MeGeneralPage() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
-        <h2 className="text-sm font-semibold text-ink">{t("settings.account")}</h2>
-        <p className="mt-1 text-xs text-muted">主题与界面语言。</p>
-        {prefsSavedHint ? <p className="mt-2 text-xs text-muted">{prefsSavedHint}</p> : null}
-
-        <div className="mt-4 space-y-4">
-          <div>
-            <p className="text-xs font-medium text-ink">{t("settings.theme")}</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1.5 text-sm ${theme === "light" ? "bg-brand text-brand-foreground" : "border border-line"}`}
-                onClick={() => setTheme("light")}
-              >
-                {t("theme.light")}
-              </button>
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1.5 text-sm ${theme === "dark" ? "bg-brand text-brand-foreground" : "border border-line"}`}
-                onClick={() => setTheme("dark")}
-              >
-                {t("theme.dark")}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <p className="text-xs font-medium text-ink">{t("settings.language")}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className={`rounded-lg border px-3 py-1.5 text-sm ${lang === "zh" ? "border-brand bg-fill" : "border-line"}`}
-                onClick={() => setLang("zh")}
-              >
-                {t("lang.zh")}
-              </button>
-              <button
-                type="button"
-                className={`rounded-lg border px-3 py-1.5 text-sm ${lang === "en" ? "border-brand bg-fill" : "border-line"}`}
-                onClick={() => setLang("en")}
-              >
-                {t("lang.en")}
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-1.5">

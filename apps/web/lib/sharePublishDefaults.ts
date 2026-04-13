@@ -1,25 +1,29 @@
 /**
  * RSS / 小宇宙 等客户端常见映射：
  * - 单集标题 → item.title（列表与详情页主标题）
- * - 节目简介 → item.description / itunes:summary（短文案，用于订阅列表、卡片摘要）
- * - Show Notes → content:encoded（长文案：时间轴、链接、章节等，勿整篇贴口播稿）
+ * - 节目简介 → item.description / itunes:summary（约 30 字：主线提炼、偏吸引力）
+ * - Show Notes → content:encoded（结构化：主题、关键收获、时间轴、金句、资源；勿整篇贴口播稿）
  */
 
 const SUMMARY_SOFT_MAX = 600;
 
 /** 小宇宙/列表卡片常见舒适长度参考（非硬性限制） */
 export const SHARE_TITLE_SOFT_MAX = 36;
-export const SHARE_SUMMARY_IDEAL_MAX = 280;
-export const SHARE_SUMMARY_WARN_MAX = 520;
+/** 节目简介（列表摘要）以约 30 字为佳 */
+export const SHARE_SUMMARY_IDEAL_MAX = 30;
+export const SHARE_SUMMARY_WARN_MAX = 45;
 
 /** 自动生成单集标题目标长度（字） */
 export const AUTO_EPISODE_TITLE_TARGET = 10;
 export const AUTO_EPISODE_TITLE_MAX = 14;
 
-/** 自动生成节目简介上限（字） */
-export const AUTO_PROGRAM_SUMMARY_MAX = 50;
+/** 自动生成节目简介上限（字）：列表卡片摘要，偏短、有吸引力 */
+export const AUTO_PROGRAM_SUMMARY_MAX = 30;
 
 const KNOWN_DEFAULT_PROGRAM_NAMES = new Set(["MiniMax AI 播客节目"]);
+
+/** 偏「引发点击」的通俗表述（简介打分加权） */
+const CLICK_HOOK_RE = /为什么|如何|怎样|秘诀|价值|干货|必读|值得|颠覆|真相|区别|误区|建议|别错过|一文|盘点|核心/;
 
 /** 行首双人/多轮对白标记（与 TTS Speaker1:/Speaker2: 一致） */
 const SPEAKER_LINE_PREFIX_RE = /^\s*(?:Speaker\s*[12]|说话人\s*[12]|S\s*[12])\s*[:：]\s*/i;
@@ -211,6 +215,7 @@ function scoreSentenceForSummary(
   let sc = 0;
   if (SUMMARY_GREETING_RE.test(s)) sc -= 2.5;
   if (SUMMARY_SUBSTANCE_RE.test(s)) sc += 2.8;
+  if (CLICK_HOOK_RE.test(s)) sc += 1.4;
   if (/[\d%％〇零一二三四五六七八九十百千万两]+/.test(s)) sc += 0.6;
   if (/[A-Za-z]{3,}/.test(s)) sc += 0.3;
 
@@ -227,8 +232,9 @@ function scoreSentenceForSummary(
   sc += Math.min(5, ph);
 
   const len = s.length;
-  if (len >= 14 && len <= 48) sc += 1.2;
-  else if (len > 52) sc -= 0.8;
+  if (len >= 12 && len <= AUTO_PROGRAM_SUMMARY_MAX) sc += 2.2;
+  else if (len > AUTO_PROGRAM_SUMMARY_MAX && len <= 48) sc += 0.6;
+  else if (len > 52) sc -= 1.2;
 
   if (total > 2) {
     const pos = index / Math.max(1, total - 1);
@@ -274,9 +280,9 @@ function collectSummaryCandidateSentences(scriptRaw: string, userSourceText: str
 }
 
 /**
- * 节目简介：≤50 字；优先与创作素材主题重合高、含观点/结构信号、弱化开场套话的句子，必要时补一句次高分句。
+ * 节目简介：≤30 字；提炼主要讨论点，通俗、有吸引力；优先与素材主题重合、含观点/结构信号、弱化开场套话。
  */
-export function deriveProgramSummaryOverallMax50(scriptRaw: string, userSourceText: string): string {
+export function deriveProgramSummaryOverallMax30(scriptRaw: string, userSourceText: string): string {
   const a = stripDialogueMarkersFromBlurb(scriptRaw);
   const scriptFlat = stripTtsInlineArtifacts(a).replace(/\s+/g, "");
   const merged = stripTtsInlineArtifacts(
@@ -321,13 +327,13 @@ export function deriveProgramSummaryOverallMax50(scriptRaw: string, userSourceTe
       out = leadFallback;
     }
   }
-  if (out.length < 26 && scored.length >= 2) {
+  if (out.length < 18 && scored.length >= 2) {
     const second = scored.slice(1).find(
       (x) => normalizeSummarySentence(x.raw).length >= 10 && x.score >= top.score - 2
     );
     if (second) {
       const p2 = normalizeSummarySentence(second.raw);
-      const tail = p2.length > 22 ? truncateSmart(p2, 22) : p2;
+      const tail = p2.length > 14 ? truncateSmart(p2, 14) : p2;
       const combined = `${out}，${tail}`;
       out =
         combined.length <= AUTO_PROGRAM_SUMMARY_MAX
@@ -338,6 +344,9 @@ export function deriveProgramSummaryOverallMax50(scriptRaw: string, userSourceTe
 
   return out;
 }
+
+/** @deprecated 使用 deriveProgramSummaryOverallMax30 */
+export const deriveProgramSummaryOverallMax50 = deriveProgramSummaryOverallMax30;
 
 function humanizeAudioChapterTitle(raw: string): string {
   const t = String(raw || "").trim();
@@ -462,7 +471,7 @@ export type BuildShareCopyOptions = {
   audioDurationSec?: number | null;
   /** 各类用户标题都不可用时的兜底 */
   fallbackTitle: string;
-  /** 无正文时的简介兜底（会截到 50 字内） */
+  /** 无正文时的简介兜底（会截到 AUTO_PROGRAM_SUMMARY_MAX 字内） */
   fallbackSummary: string;
 };
 
@@ -472,8 +481,139 @@ function truncateSummaryToAutoMax(s: string): string {
   return `${t.slice(0, AUTO_PROGRAM_SUMMARY_MAX - 1)}…`;
 }
 
+function deriveKeyTakeawaysFromScript(
+  scriptRaw: string,
+  userSourceText: string,
+  summaryUsed: string,
+  maxItems: number
+): string[] {
+  const sentences = collectSummaryCandidateSentences(scriptRaw, userSourceText).filter((s) => s.length >= 10);
+  if (sentences.length === 0) return [];
+  const a = stripDialogueMarkersFromBlurb(scriptRaw);
+  const scriptFlat = stripTtsInlineArtifacts(a).replace(/\s+/g, "");
+  const materialBigrams = extractMaterialBigrams(userSourceText);
+  const topicPhrases = extractTopicPhrasesAnchoredInScript(userSourceText, scriptFlat);
+  const scored = sentences.map((s, i) => ({
+    raw: s,
+    score: scoreSentenceForSummary(s, materialBigrams, topicPhrases, i, sentences.length)
+  }));
+  scored.sort((x, y) => y.score - x.score);
+  const sumPrefix = (summaryUsed || "").replace(/\s+/g, "").slice(0, 28);
+  const out: string[] = [];
+  for (const { raw } of scored) {
+    const n = normalizeSummarySentence(raw);
+    if (n.length < 12) continue;
+    const pfx = n.replace(/\s+/g, "").slice(0, 28);
+    if (sumPrefix.length >= 12 && (pfx === sumPrefix || pfx.startsWith(sumPrefix.slice(0, 16)))) continue;
+    if (out.some((x) => x.slice(0, 20) === n.slice(0, 20))) continue;
+    out.push(truncateSmart(n, 56));
+    if (out.length >= maxItems) break;
+  }
+  for (const { raw } of scored) {
+    if (out.length >= 3) break;
+    const n = normalizeSummarySentence(raw);
+    if (n.length < 12) continue;
+    const line = truncateSmart(n, 56);
+    if (out.some((x) => x.slice(0, 18) === line.slice(0, 18))) continue;
+    out.push(line);
+  }
+  return out.slice(0, maxItems);
+}
+
+function deriveGoldenQuotesFromScript(scriptRaw: string, userSourceText: string, max: number): string[] {
+  const sentences = collectSummaryCandidateSentences(scriptRaw, userSourceText).filter(
+    (s) => s.length >= 10 && s.length <= 120
+  );
+  if (sentences.length === 0) return [];
+  const a = stripDialogueMarkersFromBlurb(scriptRaw);
+  const scriptFlat = stripTtsInlineArtifacts(a).replace(/\s+/g, "");
+  const materialBigrams = extractMaterialBigrams(userSourceText);
+  const topicPhrases = extractTopicPhrasesAnchoredInScript(userSourceText, scriptFlat);
+  const scored = sentences.map((s, i) => ({
+    raw: s,
+    score: scoreSentenceForSummary(s, materialBigrams, topicPhrases, i, sentences.length)
+  }));
+  scored.sort((x, y) => y.score - x.score);
+  const out: string[] = [];
+  for (const { raw } of scored) {
+    const n = normalizeSummarySentence(raw);
+    if (n.length < 12 || n.length > 88) continue;
+    const line = truncateSmart(n, 72);
+    if (out.some((o) => o.slice(0, 24) === line.slice(0, 24))) continue;
+    out.push(line);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function deriveResourceBulletsFromPayload(payload: Record<string, unknown>, scriptRaw: string): string[] {
+  const links = extractReferenceLinksFromPayload(payload);
+  const lines = String(scriptRaw)
+    .split(/\r?\n/)
+    .map((l) => stripSpeakerLinePrefix(l).trim())
+    .filter(Boolean);
+  const hints: string[] = [];
+  for (const line of lines) {
+    if (
+      /(?:工具|软件|方法|API|插件|模型|官网|网站|平台|资源|框架|书籍|论文|报告)/.test(line) &&
+      line.length < 140
+    ) {
+      hints.push(truncateSmart(line.replace(/^[-*]\s*/, "").trim(), 100));
+    }
+  }
+  const linkLines = links.map((u) => `链接：${u}`);
+  const merged = [...linkLines, ...hints];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of merged) {
+    const k = m.slice(0, 36);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(m);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function buildStructuredShowNotesMarkdown(
+  summaryLine: string,
+  scriptRaw: string,
+  payload: Record<string, unknown>,
+  timelineLines: string[]
+): string {
+  const theme = summaryLine.trim() || "（请补充本期主题）";
+  const payloadText = String(payload.text || "");
+  const takeaways = deriveKeyTakeawaysFromScript(scriptRaw, payloadText, summaryLine, 5);
+  const quotes = deriveGoldenQuotesFromScript(scriptRaw, payloadText, 4);
+  const resources = deriveResourceBulletsFromPayload(payload, scriptRaw);
+
+  const parts: string[] = [
+    "## 本期主题（一句话）",
+    "",
+    theme,
+    "",
+    "## 关键收获",
+    "",
+    ...(takeaways.length ? takeaways.map((t) => `- ${t}`) : ["- （可据文稿补充 3～5 条干货要点）"]),
+    "",
+    "## 时间轴",
+    "",
+    ...(timelineLines.length ? timelineLines : ["- [0:00 开篇](t:0)"]),
+    "",
+    "## 关键观点 / 金句",
+    "",
+    ...(quotes.length ? quotes.map((q) => `- ${q}`) : ["- （可提炼适合传播的短句）"]),
+    "",
+    "## 提到的工具 / 方法 / 资源",
+    "",
+    ...(resources.length ? resources.map((r) => `- ${r}`) : ["- （暂无）"]),
+    ""
+  ];
+  return parts.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /**
- * 根据口播稿、任务 payload、音频章节与时长生成：≤50 字简介、小宇宙常用结构 Show Notes。
+ * 根据口播稿、任务 payload、音频章节与时长生成：≤30 字简介、结构化 Show Notes。
  * 节目标题由用户在发布页自行填写，此处 `episodeTitle` 恒为空字符串。
  */
 export function buildSharePublishCopyFromScriptAndPayload(opts: BuildShareCopyOptions): ShareFormFields {
@@ -483,7 +623,7 @@ export function buildSharePublishCopyFromScriptAndPayload(opts: BuildShareCopyOp
 
   let summary = "";
   if (script.length > 0 || payloadText.trim().length > 0) {
-    summary = deriveProgramSummaryOverallMax50(script, payloadText);
+    summary = deriveProgramSummaryOverallMax30(script, payloadText);
   }
   if (!summary.trim()) {
     summary = truncateSummaryToAutoMax(opts.fallbackSummary || defaultSummaryFromJobResult(result));
@@ -502,23 +642,7 @@ export function buildSharePublishCopyFromScriptAndPayload(opts: BuildShareCopyOp
 
   const timelineLines = buildChapterTimelineMarkdownLines(script, chaptersParsed, opts.audioDurationSec ?? null);
 
-  const showNotes = [
-    "## 节目简介",
-    "",
-    summary || "（请在上方填写节目简介，本段将与之同步）",
-    "",
-    "##",
-    "",
-    "##",
-    "",
-    "## 时间轴 / 章节",
-    "",
-    ...timelineLines,
-    ""
-  ]
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  const showNotes = buildStructuredShowNotesMarkdown(summary, script, opts.payload, timelineLines);
 
   return {
     episodeTitle: "",
@@ -577,7 +701,7 @@ export function computeSharePublishHints(title: string, summary: string, showNot
     summaryOverIdeal: s.length > SHARE_SUMMARY_IDEAL_MAX,
     summaryOverWarn: s.length > SHARE_SUMMARY_WARN_MAX,
     summaryLooksLikeDialogue: dialoguePattern.test(s) && s.length > 80,
-    showNotesVeryShort: n.length > 0 && n.length < 80
+    showNotesVeryShort: n.length > 0 && n.length < 180
   };
 }
 

@@ -71,7 +71,7 @@ export const FALLBACK_SUBSCRIPTION_PLANS: PricingPlan[] = [
   },
   {
     id: "max",
-    name: "Creator（Max）",
+    name: "Max",
     monthly_price_cents: 19900,
     yearly_price_cents: 0,
     description: "重度创作 · 批量与更高优先级 · ¥199/月",

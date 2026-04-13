@@ -37,14 +37,6 @@ type WalletCheckoutState = {
   amount_cents: number;
 };
 
-type UsageSnapshot = {
-  period_days: number;
-  monthly_audio_minutes_cap: number;
-  monthly_audio_minutes_used: number;
-  monthly_text_polish_used: number;
-  monthly_text_polish_cap: number | null;
-};
-
 export default function SubscriptionPage() {
   const { getAuthHeaders, refreshMe, user } = useAuth();
   const [cycle] = useState<"monthly" | "yearly">("monthly");
@@ -55,8 +47,6 @@ export default function SubscriptionPage() {
   const [currentPlan, setCurrentPlan] = useState("free");
   const [billingCycle, setBillingCycle] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [walletBalanceCents, setWalletBalanceCents] = useState<number | null>(null);
-  const [checkoutIntent, setCheckoutIntent] = useState<{ tier: string; billing_cycle: string } | null>(null);
   const [topupYuanInput, setTopupYuanInput] = useState("10");
   const [msg, setMsg] = useState("");
   const [submittingTier, setSubmittingTier] = useState<string | null>(null);
@@ -66,15 +56,13 @@ export default function SubscriptionPage() {
   const [alipayPageEnabled, setAlipayPageEnabled] = useState(false);
   const [alipayLoadingTier, setAlipayLoadingTier] = useState<string | null>(null);
   const [alipayWalletLoading, setAlipayWalletLoading] = useState(false);
-  const [usageSnapshot, setUsageSnapshot] = useState<UsageSnapshot | null>(null);
-  const [walletPayBusyTier, setWalletPayBusyTier] = useState<string | null>(null);
   const [plansConfigLoaded, setPlansConfigLoaded] = useState(false);
 
   const mergedWalletTopup = useMemo((): WalletTopupPayload => {
     const base: WalletTopupPayload = {
       enabled: true,
-      /** 默认不展示模拟充值，待 /subscription/plans 返回后再由编排器覆盖（避免首屏误显「模拟」） */
-      checkout_supported: false,
+      /** 编排器未返回前：允许内测模拟充值；若已接支付宝则由 plans 覆盖为 checkout_supported=false */
+      checkout_supported: true,
       min_amount_cents: 1000,
       max_amount_cents: 10_000_000,
       description:
@@ -97,10 +85,8 @@ export default function SubscriptionPage() {
     };
   }, [walletTopupInfo]);
 
-  const showWalletRechargeSection =
-    plansConfigLoaded &&
-    mergedWalletTopup.enabled !== false &&
-    (alipayPageEnabled || mergedWalletTopup.checkout_supported !== false);
+  /** 与编排器约定：未接支付宝时 checkout_supported=true 走内测模拟；接支付宝后仍展示「支付宝充值」入口 */
+  const showWalletRechargeSection = plansConfigLoaded && mergedWalletTopup.enabled !== false;
 
   const loadPlans = useCallback(async () => {
     try {
@@ -128,48 +114,11 @@ export default function SubscriptionPage() {
         plan?: string;
         billing_cycle?: string | null;
         orders?: OrderRow[];
-        wallet_balance_cents?: number;
-        subscription_checkout_intent?: { tier?: string; billing_cycle?: string } | null;
-        usage?: {
-          period_days?: number;
-          monthly_audio_minutes_cap?: number;
-          monthly_audio_minutes_used?: number;
-          monthly_text_polish_used?: number;
-          monthly_text_polish_cap?: number | null;
-        };
       };
       if (mr.ok && md.success) {
         setCurrentPlan(md.plan?.trim() ? md.plan : "free");
         setBillingCycle(md.billing_cycle ?? null);
         setOrders(Array.isArray(md.orders) ? md.orders : []);
-        if (typeof md.wallet_balance_cents === "number") setWalletBalanceCents(md.wallet_balance_cents);
-        else setWalletBalanceCents(null);
-        const u = md.usage;
-        if (u && typeof u === "object") {
-          setUsageSnapshot({
-            period_days: typeof u.period_days === "number" ? u.period_days : 30,
-            monthly_audio_minutes_cap:
-              typeof u.monthly_audio_minutes_cap === "number" ? u.monthly_audio_minutes_cap : 0,
-            monthly_audio_minutes_used:
-              typeof u.monthly_audio_minutes_used === "number" ? u.monthly_audio_minutes_used : 0,
-            monthly_text_polish_used:
-              typeof u.monthly_text_polish_used === "number" ? u.monthly_text_polish_used : 0,
-            monthly_text_polish_cap:
-              u.monthly_text_polish_cap === null || typeof u.monthly_text_polish_cap === "number"
-                ? u.monthly_text_polish_cap
-                : null
-          });
-        } else {
-          setUsageSnapshot(null);
-        }
-        const ci = md.subscription_checkout_intent;
-        if (ci && typeof ci.tier === "string" && ci.tier.trim() && typeof ci.billing_cycle === "string") {
-          setCheckoutIntent({ tier: ci.tier.trim(), billing_cycle: ci.billing_cycle.trim() });
-        } else {
-          setCheckoutIntent(null);
-        }
-      } else {
-        setUsageSnapshot(null);
       }
     } catch {
       // ignore
@@ -198,9 +147,7 @@ export default function SubscriptionPage() {
   const walletPayEnabled = isLoggedInAccountUser(user);
 
   const busyPayOrWallet =
-    (submittingTier != null && submittingTier !== "") ||
-    (alipayLoadingTier != null && alipayLoadingTier !== "") ||
-    (walletPayBusyTier != null && walletPayBusyTier !== "");
+    (submittingTier != null && submittingTier !== "") || (alipayLoadingTier != null && alipayLoadingTier !== "");
 
   function fmtOrderTime(ts?: number) {
     if (!ts) return "—";
@@ -214,46 +161,6 @@ export default function SubscriptionPage() {
   function fmtMoneyYuan(cents?: number | null) {
     if (cents == null || typeof cents !== "number") return "—";
     return `¥${(cents / 100).toFixed(2)}`;
-  }
-
-  async function payWithWalletForTier(tier: string) {
-    if (tier === "free") return;
-    setWalletPayBusyTier(tier);
-    setMsg("");
-    try {
-      const res = await fetch("/api/subscription/pay-with-wallet", {
-        method: "POST",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ tier, billing_cycle: "monthly" })
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        detail?: unknown;
-        error?: string;
-        message?: string;
-        wallet_balance_cents?: number;
-      };
-      if (!res.ok || !data.success) {
-        const d = data.detail;
-        const detailStr =
-          typeof d === "string"
-            ? d
-            : typeof data.error === "string"
-              ? data.error
-              : Array.isArray(d)
-                ? String(d[0] || "")
-                : `请求失败 ${res.status}`;
-        throw new Error(detailStr || `请求失败 ${res.status}`);
-      }
-      setMsg(data.message || "已使用账户余额支付并开通订阅");
-      if (typeof data.wallet_balance_cents === "number") setWalletBalanceCents(data.wallet_balance_cents);
-      await loadMe();
-      await refreshMe();
-    } catch (err) {
-      setMsg(String(err instanceof Error ? err.message : err));
-    } finally {
-      setWalletPayBusyTier(null);
-    }
   }
 
   async function selectPlan(tier: string) {
@@ -304,7 +211,7 @@ export default function SubscriptionPage() {
         error?: string;
         message?: string;
       };
-      if (!res.ok || !data.success || !data.pay_page_url || !data.out_trade_no) {
+      if (!res.ok || !data.success) {
         const d = data.detail;
         const detailStr =
           typeof d === "string"
@@ -316,8 +223,15 @@ export default function SubscriptionPage() {
                 : "";
         throw new Error(detailStr || `支付宝下单失败 ${res.status}`);
       }
+      const payUrl = typeof data.pay_page_url === "string" ? data.pay_page_url.trim() : "";
+      if (!payUrl) {
+        throw new Error("收银台未返回有效支付链接，请稍后重试或联系客服");
+      }
+      if (!data.out_trade_no) {
+        throw new Error("订单号缺失，请重试");
+      }
       /** 当前页跳转支付宝网关，避免先开空白窗再赋值被浏览器拦截 */
-      window.location.href = data.pay_page_url;
+      window.location.assign(payUrl);
     } catch (err) {
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
@@ -397,7 +311,6 @@ export default function SubscriptionPage() {
       }
       setMsg("余额已入账（订阅档位不变；实际业务扣款需在任务侧调用扣减接口）");
       setWalletCheckout(null);
-      if (typeof data.wallet_balance_cents === "number") setWalletBalanceCents(data.wallet_balance_cents);
       await loadMe();
       await refreshMe();
     } catch (err) {
@@ -431,7 +344,7 @@ export default function SubscriptionPage() {
         error?: string;
         message?: string;
       };
-      if (!res.ok || !data.success || !data.pay_page_url || !data.out_trade_no) {
+      if (!res.ok || !data.success) {
         const d = data.detail;
         const detailStr =
           typeof d === "string"
@@ -443,7 +356,10 @@ export default function SubscriptionPage() {
                 : "";
         throw new Error(detailStr || `支付宝充值下单失败 ${res.status}`);
       }
-      window.location.href = data.pay_page_url;
+      const payUrl = typeof data.pay_page_url === "string" ? data.pay_page_url.trim() : "";
+      if (!payUrl) throw new Error("收银台未返回有效支付链接，请稍后重试或联系客服");
+      if (!data.out_trade_no) throw new Error("订单号缺失，请重试");
+      window.location.assign(payUrl);
     } catch (err) {
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
@@ -457,50 +373,6 @@ export default function SubscriptionPage() {
     <main className="min-h-0 max-w-6xl">
       <PricingHero />
 
-      <p className="mx-auto mt-4 max-w-2xl text-center text-sm text-muted">
-        各档位权益说明见下方卡片；<strong className="text-ink">支付成功或余额扣款成功后</strong>
-        ，会员权益会自动更新。超额创作可充值账户余额按量扣费（与月配额并行）。
-      </p>
-
-      {checkoutIntent ? (
-        <div className="mx-auto mt-4 max-w-2xl rounded-lg border border-brand/30 bg-brand/5 px-4 py-3 text-center text-sm text-ink">
-          已选开通意向：<span className="font-mono font-medium">{checkoutIntent.tier}</span> ·{" "}
-          <span className="font-mono">{checkoutIntent.billing_cycle}</span>
-          <span className="block text-xs text-muted">须完成支付后才会生效；Free 档无需支付。</span>
-        </div>
-      ) : null}
-
-      {walletPayEnabled && (usageSnapshot != null || walletBalanceCents != null) ? (
-        <section className="mx-auto mt-8 max-w-2xl rounded-xl border border-line bg-surface/50 p-4">
-          <h2 className="text-sm font-semibold text-ink">账户与用量</h2>
-          {usageSnapshot ? (
-            <div className="mt-3 space-y-2 text-sm text-muted">
-              <p>
-                近 {usageSnapshot.period_days} 天音频生成：{" "}
-                <span className="font-mono text-ink">
-                  {usageSnapshot.monthly_audio_minutes_used} / {usageSnapshot.monthly_audio_minutes_cap} 分钟
-                </span>
-              </p>
-              <p>
-                AI 润色（TTS 前）：{" "}
-                <span className="font-mono text-ink">
-                  {usageSnapshot.monthly_text_polish_used} /{" "}
-                  {usageSnapshot.monthly_text_polish_cap == null
-                    ? "不限"
-                    : usageSnapshot.monthly_text_polish_cap}
-                </span>
-              </p>
-            </div>
-          ) : null}
-          {typeof walletBalanceCents === "number" ? (
-            <p className={`text-sm text-muted ${usageSnapshot ? "mt-2" : "mt-3"}`}>
-              账户余额（用于超额按量计费或余额支付月费）：{" "}
-              <span className="font-mono text-ink">{fmtMoneyYuan(walletBalanceCents)}</span>
-            </p>
-          ) : null}
-        </section>
-      ) : null}
-
       <PricingPlansGrid
         plans={shownPlans}
         cycle={cycle}
@@ -513,9 +385,6 @@ export default function SubscriptionPage() {
         alipayPageEnabled={alipayPageEnabled}
         alipayLoadingTier={alipayLoadingTier}
         onAlipayPay={(tier) => void createAlipaySubscription(tier)}
-        walletPayEnabled={walletPayEnabled}
-        walletPayBusyTier={walletPayBusyTier}
-        onWalletPay={(tier) => void payWithWalletForTier(tier)}
       />
 
       {showWalletRechargeSection ? (

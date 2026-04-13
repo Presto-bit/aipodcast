@@ -14,6 +14,14 @@ type OrderRow = {
   created_at?: number;
 };
 
+type UsageSnapshot = {
+  period_days: number;
+  monthly_audio_minutes_cap: number;
+  monthly_audio_minutes_used: number;
+  monthly_text_polish_used: number;
+  monthly_text_polish_cap: number | null;
+};
+
 function fmtMoneyYuan(cents?: number | null) {
   if (cents == null || typeof cents !== "number") return "—";
   return `¥${(cents / 100).toFixed(2)}`;
@@ -34,6 +42,7 @@ export default function MeSubscriptionPage() {
   const [billingCycle, setBillingCycle] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [walletBalanceCents, setWalletBalanceCents] = useState<number | null>(null);
+  const [usageSnapshot, setUsageSnapshot] = useState<UsageSnapshot | null>(null);
   const [loadError, setLoadError] = useState("");
 
   const loadMe = useCallback(async () => {
@@ -46,18 +55,45 @@ export default function MeSubscriptionPage() {
         billing_cycle?: string | null;
         orders?: OrderRow[];
         wallet_balance_cents?: number;
+        usage?: {
+          period_days?: number;
+          monthly_audio_minutes_cap?: number;
+          monthly_audio_minutes_used?: number;
+          monthly_text_polish_used?: number;
+          monthly_text_polish_cap?: number | null;
+        };
       };
       if (mr.ok && md.success) {
-        setCurrentPlan(md.plan || "—");
+        setCurrentPlan(md.plan?.trim() ? md.plan : "—");
         setBillingCycle(md.billing_cycle ?? null);
         setOrders(Array.isArray(md.orders) ? md.orders : []);
         if (typeof md.wallet_balance_cents === "number") setWalletBalanceCents(md.wallet_balance_cents);
         else setWalletBalanceCents(null);
+        const u = md.usage;
+        if (u && typeof u === "object") {
+          setUsageSnapshot({
+            period_days: typeof u.period_days === "number" ? u.period_days : 30,
+            monthly_audio_minutes_cap:
+              typeof u.monthly_audio_minutes_cap === "number" ? u.monthly_audio_minutes_cap : 0,
+            monthly_audio_minutes_used:
+              typeof u.monthly_audio_minutes_used === "number" ? u.monthly_audio_minutes_used : 0,
+            monthly_text_polish_used:
+              typeof u.monthly_text_polish_used === "number" ? u.monthly_text_polish_used : 0,
+            monthly_text_polish_cap:
+              u.monthly_text_polish_cap === null || typeof u.monthly_text_polish_cap === "number"
+                ? u.monthly_text_polish_cap
+                : null
+          });
+        } else {
+          setUsageSnapshot(null);
+        }
       } else if (!mr.ok) {
         setLoadError(`加载失败（${mr.status}）`);
+        setUsageSnapshot(null);
       }
     } catch (e) {
       setLoadError(String(e instanceof Error ? e.message : e));
+      setUsageSnapshot(null);
     }
   }, [getAuthHeaders]);
 
@@ -87,30 +123,57 @@ export default function MeSubscriptionPage() {
   }
 
   const recentOrders = orders.slice(0, 5);
+  const polishCapLabel =
+    usageSnapshot?.monthly_text_polish_cap == null
+      ? "不限"
+      : String(usageSnapshot.monthly_text_polish_cap);
 
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <h2 className="text-sm font-semibold text-ink">订阅与余额概览</h2>
         <p className="mt-1 text-xs text-muted">
-          当前会员档位与账户余额（钱包）。侧栏「订阅」进入会员与套餐；升级套餐或充值请在该页完成。
+          当前会员档位、账户余额与近 {usageSnapshot?.period_days ?? 30} 天用量。升级套餐或充值请前往会员页。
         </p>
         {loadError ? <p className="mt-2 text-xs text-danger-ink">{loadError}</p> : null}
 
-        <dl className="mt-4 space-y-3 text-sm">
-          <div className="flex flex-wrap gap-x-2 gap-y-1">
-            <dt className="text-muted">当前方案</dt>
-            <dd className="font-mono text-ink">{currentPlan}</dd>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-line/80 bg-fill/20 px-3 py-2.5">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">当前方案</p>
+            <p className="mt-1 font-mono text-base text-ink">{currentPlan}</p>
           </div>
-          <div className="flex flex-wrap gap-x-2 gap-y-1">
-            <dt className="text-muted">付费周期</dt>
-            <dd className="text-ink">{billingCycle || "—"}</dd>
+          <div className="rounded-lg border border-line/80 bg-fill/20 px-3 py-2.5">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">付费周期</p>
+            <p className="mt-1 text-base text-ink">{billingCycle || "—"}</p>
           </div>
-          <div className="flex flex-wrap gap-x-2 gap-y-1">
-            <dt className="text-muted">账户余额</dt>
-            <dd className="font-mono text-ink">{fmtMoneyYuan(walletBalanceCents)}</dd>
+          <div className="rounded-lg border border-line/80 bg-fill/20 px-3 py-2.5">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">账户余额</p>
+            <p className="mt-1 font-mono text-base text-ink">{fmtMoneyYuan(walletBalanceCents)}</p>
           </div>
-        </dl>
+          {usageSnapshot ? (
+            <div className="rounded-lg border border-line/80 bg-fill/20 px-3 py-2.5 sm:col-span-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted">用量（本月）</p>
+              <div className="mt-2 flex flex-col gap-2 text-sm text-ink sm:flex-row sm:flex-wrap sm:gap-x-6">
+                <span>
+                  音频生成{" "}
+                  <span className="font-mono">
+                    {usageSnapshot.monthly_audio_minutes_used} / {usageSnapshot.monthly_audio_minutes_cap} 分钟
+                  </span>
+                </span>
+                <span>
+                  AI 润色（TTS 前）{" "}
+                  <span className="font-mono">
+                    {usageSnapshot.monthly_text_polish_used} / {polishCapLabel}
+                  </span>
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-line/80 px-3 py-2.5 text-xs text-muted sm:col-span-2">
+              用量数据暂不可用，请稍后刷新。
+            </div>
+          )}
+        </div>
 
         <div className="mt-4">
           <Link

@@ -320,7 +320,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div className="shrink-0 space-y-0.5 border-t border-line p-2">
           {navSubscription.map(renderLink)}
           {renderLink({
-            href: "/me",
+            href: "/me/subscription",
             label: t("nav.my"),
             short: "我",
             Icon: IconUser,

@@ -46,7 +46,7 @@ const FALLBACK_PLANS: PricingPlan[] = [
   { id: "free", name: "Free", monthly_price_cents: 0, yearly_price_cents: 0, description: "入门体验" },
   { id: "basic", name: "Basic", monthly_price_cents: 1990, yearly_price_cents: 0, description: "轻量订阅 ¥19.9/月" },
   { id: "pro", name: "Pro", monthly_price_cents: 7990, yearly_price_cents: 0, description: "专业创作 ¥79.9/月" },
-  { id: "max", name: "Creator（Max）", monthly_price_cents: 19900, yearly_price_cents: 0, description: "高阶能力 ¥199/月" }
+  { id: "max", name: "Max", monthly_price_cents: 19900, yearly_price_cents: 0, description: "高阶能力 ¥199/月" }
 ];
 
 function fmtYuan(cents?: number | null) {

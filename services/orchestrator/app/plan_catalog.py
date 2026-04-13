@@ -241,7 +241,7 @@ def build_subscription_plans_response() -> dict[str, Any]:
         ),
         _plan_entry(
             "max",
-            "Creator（Max）",
+            "Max",
             MAX_MONTHLY_CENTS,
             MAX_YEARLY_CENTS,
             "重度创作 · 批量与更高优先级 · ¥199/月",

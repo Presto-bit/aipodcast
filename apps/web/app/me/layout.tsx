@@ -15,8 +15,11 @@ export default function MeLayout({ children }: { children: React.ReactNode }) {
   ];
 
   function subNavActive(href: string): boolean {
+    if (href === "/me/subscription") {
+      return pathname === "/me/subscription" || pathname === "/me" || pathname === "/me/";
+    }
     if (href === "/me/profile") {
-      return pathname === "/me/profile" || pathname === "/me" || pathname === "/me/";
+      return pathname === "/me/profile";
     }
     return pathname === href || pathname.startsWith(`${href}/`);
   }
