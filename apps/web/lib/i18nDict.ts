@@ -4,7 +4,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
   zh: {
     "nav.home": "首页",
     "nav.jobs": "创作记录",
-    "nav.notes": "笔记本",
+    "nav.notes": "知识库",
     "nav.create": "创作",
     "nav.createShort": "创",
     "nav.podcast": "做一期播客",
@@ -131,7 +131,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
   en: {
     "nav.home": "Home",
     "nav.jobs": "Activity",
-    "nav.notes": "Notebook",
+    "nav.notes": "Knowledge base",
     "nav.create": "Create",
     "nav.createShort": "+",
     "nav.podcast": "Make a podcast",

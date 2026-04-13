@@ -109,7 +109,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const [outroBgm3StoredHex, setOutroBgm3StoredHex] = useState<string | null>(null);
   const [introOutroHydrated, setIntroOutroHydrated] = useState(false);
   const [generateCover, setGenerateCover] = useState(true);
-  /** 与「生成封面」一致：开关控制本次合成是否在服务端做 TTS 前润色（payload.ai_polish） */
+  /** 默认关闭：仅用户打开开关时才会在任务 payload 中携带 ai_polish；不会在未点击「AI 润色」时自动润色 */
   const [aiPolish, setAiPolish] = useState(false);
   const [busy, setBusy] = useState(false);
   const [polishing, setPolishing] = useState(false);

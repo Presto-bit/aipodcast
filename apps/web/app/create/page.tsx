@@ -33,6 +33,22 @@ function mergeWorksByRecency(ai: WorkItem[], tts: WorkItem[], notes: WorkItem[])
 
 const DRAFT_PLACEHOLDER = "输入主题或正文";
 
+/** 快捷话题：点击写入正文，可再选播客 / TTS 生成 */
+const CREATE_QUICK_TOPICS: { label: string; text: string }[] = [
+  {
+    label: "热点速递",
+    text: "请用适合口播的语言，概述近期值得关注的科技或商业动向（2～3 条），每条给听众一句能记住的 takeaway。"
+  },
+  {
+    label: "知识小测",
+    text: "围绕一个你熟悉的领域，设计 3 个「易误解」的知识点，用问答或对比方式写出口播大纲，语言通俗。"
+  },
+  {
+    label: "故事开场",
+    text: "写一个能抓住注意力的播客开场：一句钩子 + 本期将要讲清楚的三个层次，语气自然、口语化。"
+  }
+];
+
 export default function CreatePage() {
   const { t } = useI18n();
   const { getAuthHeaders } = useAuth();
@@ -192,6 +208,28 @@ export default function CreatePage() {
             </div>
           </div>
         ) : null}
+      </section>
+
+      <section className="mt-6">
+        <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted">快速选题</p>
+        <div className="flex flex-wrap gap-2">
+          {CREATE_QUICK_TOPICS.map((topic) => (
+            <button
+              key={topic.label}
+              type="button"
+              className="rounded-full border border-line bg-fill/40 px-3 py-1.5 text-left text-xs text-ink transition hover:border-brand/40 hover:bg-brand/5"
+              onClick={() =>
+                setDraftText((prev) => {
+                  const t = topic.text.trim();
+                  const p = prev.trim();
+                  return p ? `${p}\n\n${t}` : t;
+                })
+              }
+            >
+              {topic.label}
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="mt-8">

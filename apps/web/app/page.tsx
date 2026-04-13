@@ -125,7 +125,7 @@ export default function HomePage() {
     () =>
       [
         { href: "/tts", title: "文字转语音", desc: "文字 → 语音", Icon: IconTts, badge: undefined },
-        { href: "/notes", title: "笔记本", desc: "资料 → 长文 / 播客", Icon: IconNotes, badge: undefined },
+        { href: "/notes", title: "知识库", desc: "资料 → 长文 / 播客", Icon: IconNotes, badge: undefined },
         {
           href: "/voice?tab=clone",
           title: t("nav.voice"),
@@ -433,12 +433,12 @@ export default function HomePage() {
               <>
                 <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">开始创作</h1>
                 <p className="mt-3 text-sm leading-relaxed text-muted">
-                  建议流程：笔记本整理素材 → 创作页选题与生成。长任务可切换页面，队列与状态在「我的作品 → 进行中」。
+                  建议流程：知识库整理素材 → 创作页选题与生成。长任务可切换页面，队列与状态在「我的作品 → 进行中」。
                 </p>
                 <ol className="mt-4 list-inside list-decimal space-y-1.5 text-sm leading-relaxed text-muted">
                   <li>
                     <Link href="/notes" className="text-brand hover:underline">
-                      笔记本
+                      知识库
                     </Link>{" "}
                     写素材或成稿
                   </li>
@@ -466,7 +466,7 @@ export default function HomePage() {
                     href="/notes"
                     className="inline-flex items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-fill"
                   >
-                    打开笔记本
+                    打开知识库
                   </Link>
                   <Link
                     href="/works"

@@ -126,7 +126,7 @@ def _summary_quotas_for_tier(tier: str) -> list[dict[str, str]]:
             },
             {
                 "key": "note_refs",
-                "label": "笔记本可参考资料条数",
+                "label": "知识库可参考资料条数",
                 "value": f"{max_note_refs_for_plan(tid)} 条",
             },
             {
@@ -143,10 +143,9 @@ def _feature_bullets_for_tier(tier: str) -> tuple[str | None, list[str]]:
     tid = (tier or "free").strip().lower()
     if tid == "free":
         return None, [
-            "基础音色与标准导出，单任务创作",
-            "笔记本可参考少量资料完成成稿",
-            "每月目标生成时长见上表（按自然月，产品口径）",
-            "升级后解锁更长单次成稿字数、更高配额与 Pro 级能力",
+            "标准音色与导出，单任务创作",
+            "知识库可参考少量资料完成成稿",
+            "配额见上表，升级解锁更长单次成稿字数与更高额度",
         ]
     if tid == "basic":
         return "相对 Free 的提升：", [
@@ -223,7 +222,7 @@ def build_subscription_plans_response() -> dict[str, Any]:
             "Free",
             0,
             0,
-            "入门体验 · 含每月目标生成时长（产品口径）",
+            "",
         ),
         _plan_entry(
             "basic",

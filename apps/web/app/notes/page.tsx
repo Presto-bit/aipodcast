@@ -272,6 +272,7 @@ export default function NotesPage() {
   const [notesAskAnswer, setNotesAskAnswer] = useState("");
   const [notesAskBusy, setNotesAskBusy] = useState(false);
   const [notesAskError, setNotesAskError] = useState("");
+  const [notesAskPhase, setNotesAskPhase] = useState("");
   const [sourcesPanelCollapsed, setSourcesPanelCollapsed] = useState(false);
   const [studioPanelCollapsed, setStudioPanelCollapsed] = useState(false);
 
@@ -321,6 +322,21 @@ export default function NotesPage() {
       freshNoteTimeoutsRef.current.clear();
     };
   }, []);
+
+  useEffect(() => {
+    if (!notesAskBusy) {
+      setNotesAskPhase("");
+      return;
+    }
+    const phases = ["正在理解你的问题…", "正在检索已勾选资料…", "正在组织回答…"];
+    let i = 0;
+    setNotesAskPhase(phases[0]!);
+    const id = window.setInterval(() => {
+      i = (i + 1) % phases.length;
+      setNotesAskPhase(phases[i]!);
+    }, 1200);
+    return () => window.clearInterval(id);
+  }, [notesAskBusy]);
 
   const notesSorted = useMemo(() => {
     return [...notes].sort((a, b) => {
@@ -2004,6 +2020,11 @@ export default function NotesPage() {
                     )}
                   </button>
                 </div>
+                {notesAskBusy ? (
+                  <p className="mt-2 shrink-0 text-xs leading-relaxed text-brand/90" aria-live="polite">
+                    {notesAskPhase || "正在生成回答…"}
+                  </p>
+                ) : null}
               </div>
             </section>
 

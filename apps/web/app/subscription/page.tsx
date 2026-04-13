@@ -9,6 +9,7 @@ import { PricingPlansGrid } from "../../components/subscription/PricingPlansGrid
 import { WalletUsageReference } from "../../components/subscription/WalletUsageReference";
 import type { PricingPlan, WalletTopupPayload } from "../../components/subscription/types";
 import { TrustFooter } from "../../components/subscription/TrustFooter";
+import { parseSubscriptionErrorBody } from "../../lib/subscriptionError";
 
 type OrderRow = {
   event_id?: string;
@@ -194,34 +195,34 @@ export default function SubscriptionPage() {
   async function createAlipaySubscription(tier: string) {
     if (tier === "free") return;
     setAlipayLoadingTier(tier);
-    setMsg("");
+    setMsg("正在连接支付宝收银台…");
     setWalletCheckout(null);
+    let didNavigate = false;
     try {
       const res = await fetch("/api/subscription/alipay-page/subscription", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ tier, billing_cycle: "monthly" })
+        body: JSON.stringify({ tier, billing_cycle: "monthly" }),
+        credentials: "same-origin"
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        pay_page_url?: string;
-        out_trade_no?: string;
-        amount_cents?: number;
-        detail?: string;
-        error?: string;
-        message?: string;
-      };
+      const text = await res.text();
+      const data = (() => {
+        try {
+          return JSON.parse(text) as {
+            success?: boolean;
+            pay_page_url?: string;
+            out_trade_no?: string;
+            amount_cents?: number;
+            detail?: string;
+            error?: string;
+            message?: string;
+          };
+        } catch {
+          return {};
+        }
+      })();
       if (!res.ok || !data.success) {
-        const d = data.detail;
-        const detailStr =
-          typeof d === "string"
-            ? d
-            : typeof data.error === "string"
-              ? data.error
-              : Array.isArray(d)
-                ? String(d[0] || "")
-                : "";
-        throw new Error(detailStr || `支付宝下单失败 ${res.status}`);
+        throw new Error(parseSubscriptionErrorBody(text, `支付宝下单失败 ${res.status}`));
       }
       const payUrl = typeof data.pay_page_url === "string" ? data.pay_page_url.trim() : "";
       if (!payUrl) {
@@ -230,12 +231,12 @@ export default function SubscriptionPage() {
       if (!data.out_trade_no) {
         throw new Error("订单号缺失，请重试");
       }
-      /** 当前页跳转支付宝网关，避免先开空白窗再赋值被浏览器拦截 */
+      didNavigate = true;
       window.location.assign(payUrl);
     } catch (err) {
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
-      setAlipayLoadingTier(null);
+      if (!didNavigate) setAlipayLoadingTier(null);
     }
   }
 
@@ -326,6 +327,7 @@ export default function SubscriptionPage() {
       setMsg(parsed.error);
       return;
     }
+    let didNavigateWallet = false;
     setAlipayWalletLoading(true);
     setMsg("");
     setWalletCheckout(null);
@@ -333,37 +335,35 @@ export default function SubscriptionPage() {
       const res = await fetch("/api/subscription/alipay-page/wallet", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ amount_cents: parsed.cents })
+        body: JSON.stringify({ amount_cents: parsed.cents }),
+        credentials: "same-origin"
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        pay_page_url?: string;
-        out_trade_no?: string;
-        amount_cents?: number;
-        detail?: string;
-        error?: string;
-        message?: string;
-      };
+      const text = await res.text();
+      const data = (() => {
+        try {
+          return JSON.parse(text) as {
+            success?: boolean;
+            pay_page_url?: string;
+            out_trade_no?: string;
+            amount_cents?: number;
+          };
+        } catch {
+          return {};
+        }
+      })();
       if (!res.ok || !data.success) {
-        const d = data.detail;
-        const detailStr =
-          typeof d === "string"
-            ? d
-            : typeof data.error === "string"
-              ? data.error
-              : Array.isArray(d)
-                ? String(d[0] || "")
-                : "";
-        throw new Error(detailStr || `支付宝充值下单失败 ${res.status}`);
+        throw new Error(parseSubscriptionErrorBody(text, `支付宝充值下单失败 ${res.status}`));
       }
       const payUrl = typeof data.pay_page_url === "string" ? data.pay_page_url.trim() : "";
       if (!payUrl) throw new Error("收银台未返回有效支付链接，请稍后重试或联系客服");
       if (!data.out_trade_no) throw new Error("订单号缺失，请重试");
+      setMsg("正在跳转支付宝…");
+      didNavigateWallet = true;
       window.location.assign(payUrl);
     } catch (err) {
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
-      setAlipayWalletLoading(false);
+      if (!didNavigateWallet) setAlipayWalletLoading(false);
     }
   }
 
@@ -407,7 +407,18 @@ export default function SubscriptionPage() {
                 onChange={(e) => setTopupYuanInput(e.target.value)}
               />
             </label>
-            {mergedWalletTopup.checkout_supported !== false ? (
+            {alipayPageEnabled ? (
+              <button
+                type="button"
+                className="rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50"
+                disabled={
+                  walletCreating || walletPaying || alipayWalletLoading || busyPayOrWallet || !walletPayEnabled
+                }
+                onClick={() => void createAlipayWalletTopup()}
+              >
+                {alipayWalletLoading ? "正在跳转支付宝…" : "去支付"}
+              </button>
+            ) : mergedWalletTopup.checkout_supported !== false ? (
               <button
                 type="button"
                 className="rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50"
@@ -417,22 +428,6 @@ export default function SubscriptionPage() {
                 onClick={() => void createWalletOrder()}
               >
                 {walletCreating ? "创建订单中…" : "去支付（内测模拟）"}
-              </button>
-            ) : null}
-            {alipayPageEnabled ? (
-              <button
-                type="button"
-                className={`rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 ${
-                  mergedWalletTopup.checkout_supported === false
-                    ? "bg-cta text-cta-foreground hover:bg-cta/90"
-                    : "border border-line bg-canvas text-ink hover:bg-fill"
-                }`}
-                disabled={
-                  walletCreating || walletPaying || alipayWalletLoading || busyPayOrWallet || !walletPayEnabled
-                }
-                onClick={() => void createAlipayWalletTopup()}
-              >
-                {alipayWalletLoading ? "正在跳转支付宝…" : "支付宝扫码充值"}
               </button>
             ) : null}
           </div>

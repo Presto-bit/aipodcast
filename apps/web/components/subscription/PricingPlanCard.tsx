@@ -99,8 +99,6 @@ export function PricingPlanCard({
           <p className="mt-1 text-xs text-muted">
             {showYearly ? `按年付费，${fmtYuan(yearly)}/年` : `按年付费 ${fmtYuan(yearly)}/年（约 ${fmtYuan(equiv)}/月）`}
           </p>
-        ) : isFree ? (
-          <p className="mt-1 text-xs text-muted">基础能力，无需绑卡</p>
         ) : null}
       </div>
 

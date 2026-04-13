@@ -339,7 +339,14 @@ def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
     note_id = f"note_{int(time.time())}_{uuid.uuid4().hex[:8]}"
     owner_uuid = resolved_user_uuid_string(user_ref)
     object_key = note_upload_object_key(note_id, ext, owner_uuid)
-    upload_bytes(object_key, data, content_type=_mime_for_note_ext(ext))
+    try:
+        upload_bytes(object_key, data, content_type=_mime_for_note_ext(ext))
+    except Exception as exc:
+        _notes_startup_logger.exception("notes upload_json: object store upload failed")
+        raise HTTPException(
+            status_code=503,
+            detail="文件暂无法上传到存储，请确认对象存储可用后重试。",
+        ) from exc
     parsed = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
@@ -374,9 +381,13 @@ def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
         if str(e) == "notebook_required":
             raise HTTPException(status_code=400, detail="notebook_required") from e
         raise
-    except Exception:
+    except Exception as exc:
         delete_object_key(object_key)
-        raise
+        _notes_startup_logger.exception("notes upload_json: create_file_note failed")
+        raise HTTPException(
+            status_code=500,
+            detail="笔记保存失败，请稍后重试或联系管理员。",
+        ) from exc
     _try_enqueue_note_rag_index(row_id, user_ref)
     return {
         "success": True,
