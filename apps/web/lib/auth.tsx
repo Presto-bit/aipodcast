@@ -467,3 +467,16 @@ export function userAccountRef(user: AuthUser | null | undefined): string {
   if (uid) return uid;
   return String(user.phone || user.username || user.email || "").trim();
 }
+
+/**
+ * 已登录真实账号（非本地 guest），且具备可识别身份（邮箱/手机/用户名/user_id）。
+ * 订阅与支付宝下单以会话为准，不要求必须绑定手机号；勿仅用 `user.phone` 判断。
+ */
+export function isLoggedInAccountUser(user: AuthUser | null | undefined): boolean {
+  if (!user || user.phone === "local") return false;
+  if (typeof user.user_id === "string" && user.user_id.trim() !== "") return true;
+  if (typeof user.email === "string" && user.email.trim() !== "") return true;
+  if (typeof user.phone === "string" && user.phone !== "" && user.phone !== "local") return true;
+  if (typeof user.username === "string" && user.username.trim() !== "") return true;
+  return false;
+}

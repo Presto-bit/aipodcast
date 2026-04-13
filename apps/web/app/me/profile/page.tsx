@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useAuth } from "../../../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 import { useI18n } from "../../../lib/I18nContext";
 
@@ -10,9 +10,7 @@ export default function MeProfilePage() {
   const { t } = useI18n();
   const { ready, authRequired, logout, user, login, registerSendCode, registerVerifyCode, registerComplete, refreshMe } =
     useAuth();
-  const showLogout = Boolean(
-    user && user.phone !== "local" && !!(user.user_id || user.phone || user.email || user.username)
-  );
+  const showLogout = isLoggedInAccountUser(user);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authPhone, setAuthPhone] = useState("");
   const [authPassword, setAuthPassword] = useState("");

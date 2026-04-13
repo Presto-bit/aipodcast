@@ -9,8 +9,8 @@ export default function MeLayout({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
 
   const items: { href: string; labelKey: string }[] = [
-    { href: "/me/profile", labelKey: "me.navProfile" },
     { href: "/me/subscription", labelKey: "me.navSubscription" },
+    { href: "/me/profile", labelKey: "me.navProfile" },
     { href: "/me/general", labelKey: "me.navGeneral" }
   ];
 

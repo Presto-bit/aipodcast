@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAuth } from "../../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { FaqAccordion } from "../../components/subscription/FaqAccordion";
 import { FALLBACK_SUBSCRIPTION_PLANS } from "../../components/subscription/fallbackPlans";
 import { PricingHero } from "../../components/subscription/PricingHero";
@@ -68,11 +68,13 @@ export default function SubscriptionPage() {
   const [alipayWalletLoading, setAlipayWalletLoading] = useState(false);
   const [usageSnapshot, setUsageSnapshot] = useState<UsageSnapshot | null>(null);
   const [walletPayBusyTier, setWalletPayBusyTier] = useState<string | null>(null);
+  const [plansConfigLoaded, setPlansConfigLoaded] = useState(false);
 
   const mergedWalletTopup = useMemo((): WalletTopupPayload => {
     const base: WalletTopupPayload = {
       enabled: true,
-      checkout_supported: true,
+      /** 默认不展示模拟充值，待 /subscription/plans 返回后再由编排器覆盖（避免首屏误显「模拟」） */
+      checkout_supported: false,
       min_amount_cents: 1000,
       max_amount_cents: 10_000_000,
       description:
@@ -96,6 +98,7 @@ export default function SubscriptionPage() {
   }, [walletTopupInfo]);
 
   const showWalletRechargeSection =
+    plansConfigLoaded &&
     mergedWalletTopup.enabled !== false &&
     (alipayPageEnabled || mergedWalletTopup.checkout_supported !== false);
 
@@ -103,13 +106,17 @@ export default function SubscriptionPage() {
     try {
       const pr = await fetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
       const pd = (await pr.json().catch(() => ({}))) as PlansPayload;
-      if (pd.success && Array.isArray(pd.plans)) setPlans(pd.plans);
-      setBillingMonthlyOnly(pd.billing_monthly_only !== false);
-      if (typeof pd.yearly_discount_percent === "number") setYearlyDisc(pd.yearly_discount_percent);
-      if (pd.wallet_topup && typeof pd.wallet_topup === "object") setWalletTopupInfo(pd.wallet_topup);
-      setAlipayPageEnabled(pd.payment_channels?.alipay_page?.enabled === true);
+      if (pd.success) {
+        if (Array.isArray(pd.plans)) setPlans(pd.plans);
+        setBillingMonthlyOnly(pd.billing_monthly_only !== false);
+        if (typeof pd.yearly_discount_percent === "number") setYearlyDisc(pd.yearly_discount_percent);
+        setWalletTopupInfo(pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : {});
+        setAlipayPageEnabled(pd.payment_channels?.alipay_page?.enabled === true);
+      }
     } catch {
       // ignore
+    } finally {
+      setPlansConfigLoaded(true);
     }
   }, [getAuthHeaders]);
 
@@ -187,7 +194,8 @@ export default function SubscriptionPage() {
 
   const shownPlans = useMemo(() => (plans.length ? plans : FALLBACK_SUBSCRIPTION_PLANS), [plans]);
 
-  const walletPayEnabled = Boolean(user && typeof user.phone === "string" && user.phone !== "" && user.phone !== "local");
+  /** 邮箱注册用户无 `phone` 字段时也应可发起支付宝/余额支付（与编排器会话一致） */
+  const walletPayEnabled = isLoggedInAccountUser(user);
 
   const busyPayOrWallet =
     (submittingTier != null && submittingTier !== "") ||
@@ -297,10 +305,19 @@ export default function SubscriptionPage() {
         message?: string;
       };
       if (!res.ok || !data.success || !data.pay_page_url || !data.out_trade_no) {
-        throw new Error(data.detail || data.error || `支付宝下单失败 ${res.status}`);
+        const d = data.detail;
+        const detailStr =
+          typeof d === "string"
+            ? d
+            : typeof data.error === "string"
+              ? data.error
+              : Array.isArray(d)
+                ? String(d[0] || "")
+                : "";
+        throw new Error(detailStr || `支付宝下单失败 ${res.status}`);
       }
       /** 当前页跳转支付宝网关，避免先开空白窗再赋值被浏览器拦截 */
-      window.location.assign(data.pay_page_url);
+      window.location.href = data.pay_page_url;
     } catch (err) {
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
@@ -415,9 +432,18 @@ export default function SubscriptionPage() {
         message?: string;
       };
       if (!res.ok || !data.success || !data.pay_page_url || !data.out_trade_no) {
-        throw new Error(data.detail || data.error || `支付宝充值下单失败 ${res.status}`);
+        const d = data.detail;
+        const detailStr =
+          typeof d === "string"
+            ? d
+            : typeof data.error === "string"
+              ? data.error
+              : Array.isArray(d)
+                ? String(d[0] || "")
+                : "";
+        throw new Error(detailStr || `支付宝充值下单失败 ${res.status}`);
       }
-      window.location.assign(data.pay_page_url);
+      window.location.href = data.pay_page_url;
     } catch (err) {
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {

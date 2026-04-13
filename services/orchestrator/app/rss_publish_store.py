@@ -152,24 +152,28 @@ def upsert_rss_channel(user_phone: str, payload: dict[str, Any]) -> dict[str, An
     author = str(payload.get("author") or "").strip()
     language = str(payload.get("language") or "zh-cn").strip() or "zh-cn"
     image_url = str(payload.get("image_url") or "").strip()
+    requested_id = str(payload.get("id") or "").strip()
+
+    channel_id: str
 
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_from_phone(cur, user_phone)
             if not user_uuid:
                 raise ValueError("user_not_found")
-            cur.execute(
-                """
-                SELECT id
-                FROM rss_channels
-                WHERE user_id = %s::uuid
-                ORDER BY updated_at DESC, created_at DESC
-                LIMIT 1
-                """,
-                (user_uuid,),
-            )
-            row = cur.fetchone()
-            if row and row.get("id"):
+            if requested_id:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM rss_channels
+                    WHERE id = %s AND user_id = %s::uuid
+                    LIMIT 1
+                    """,
+                    (requested_id, user_uuid),
+                )
+                row = cur.fetchone()
+                if not row or not row.get("id"):
+                    raise ValueError("channel_not_found")
                 channel_id = str(row["id"])
                 cur.execute(
                     """
@@ -180,9 +184,9 @@ def upsert_rss_channel(user_phone: str, payload: dict[str, Any]) -> dict[str, An
                         language = %s,
                         image_url = %s,
                         updated_at = NOW()
-                    WHERE id = %s
+                    WHERE id = %s AND user_id = %s::uuid
                     """,
-                    (title, description, author, language, image_url, channel_id),
+                    (title, description, author, language, image_url, channel_id, user_uuid),
                 )
             else:
                 channel_id = uuid.uuid4().hex
@@ -198,9 +202,10 @@ def upsert_rss_channel(user_phone: str, payload: dict[str, Any]) -> dict[str, An
             conn.commit()
 
     channels = list_rss_channels(user_phone)
-    if not channels:
-        raise ValueError("channel_upsert_failed")
-    return channels[0]
+    for ch in channels:
+        if str(ch.get("id") or "") == channel_id:
+            return ch
+    raise ValueError("channel_upsert_failed")
 
 
 def _extract_work_audio_and_cover(job_row: dict[str, Any]) -> tuple[str, str, int | None]:

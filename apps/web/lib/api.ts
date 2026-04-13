@@ -225,6 +225,8 @@ export async function listRssChannels(): Promise<RssChannel[]> {
 }
 
 export async function upsertRssChannel(payload: {
+  /** 传入已有频道 id 为更新；省略则为新建 */
+  id?: string;
   title: string;
   description?: string;
   author?: string;

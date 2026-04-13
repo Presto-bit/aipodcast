@@ -267,6 +267,9 @@ class UserPreferencesPatchRequest(BaseModel):
 
 
 class RssChannelUpsertRequest(BaseModel):
+    """不传 id 时新建频道；传 id 时更新该用户名下已有频道。"""
+
+    id: str | None = Field(default=None, max_length=64)
     title: str = Field(min_length=1, max_length=180)
     description: str = Field(default="", max_length=4000)
     author: str = Field(default="", max_length=180)
