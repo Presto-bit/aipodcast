@@ -31,8 +31,8 @@ jobs:
   orchestrator:
     runs-on: ubuntu-latest
     env:
-      PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
-      PIP_TRUSTED_HOST: pypi.tuna.tsinghua.edu.cn
+      PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+      PIP_TRUSTED_HOST: mirrors.aliyun.com
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -50,8 +50,8 @@ echo "已生成: $SRC_TAR"
 if [[ "$WITH_PIP" == 1 ]]; then
   mkdir -p "${ROOT}/docker/offline-pip-wheels"
   docker run --rm --platform linux/amd64 \
-    -e PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-    -e PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+    -e PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    -e PIP_TRUSTED_HOST=mirrors.aliyun.com \
     -v "${ROOT}/docker/offline-pip-wheels:/w" \
     -v "${ROOT}/services/orchestrator/requirements.txt:/r.txt:ro" \
     python:3.12-slim \
