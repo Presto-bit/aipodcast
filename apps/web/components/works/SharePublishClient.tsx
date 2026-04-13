@@ -38,6 +38,18 @@ type Props = {
   jobId: string;
 };
 
+/** 成片可能只有对象存储 URL / key，不一定内联 audio_hex（大文件会省略 hex）。 */
+function jobResultHasPlayableAudio(result: Record<string, unknown>): boolean {
+  const hex = String(result.audio_hex || "").trim();
+  const url = String(result.audio_url || "").trim();
+  const key = String(result.audio_object_key || "").trim();
+  const durRaw = result.audio_duration_sec;
+  let dur = 0;
+  if (typeof durRaw === "number" && Number.isFinite(durRaw)) dur = durRaw;
+  else if (typeof durRaw === "string" && durRaw.trim()) dur = Number.parseFloat(durRaw);
+  return Boolean(hex || url || key || (Number.isFinite(dur) && dur > 0.4));
+}
+
 type FormSnapshot = ShareFormFields;
 
 const DRAFT_DEBOUNCE_MS = 600;
@@ -101,6 +113,8 @@ export function SharePublishClient({ jobId }: Props) {
   const [formOk, setFormOk] = useState("");
   const [chapterOutline, setChapterOutline] = useState<{ title: string; start_ms: number }[] | null>(null);
   const [hasAudio, setHasAudio] = useState(false);
+  /** 首次拉取任务详情完成前，勿把「无音频」提示当成最终态（避免闪错觉与长文案误报）。 */
+  const [shareJobHydrated, setShareJobHydrated] = useState(false);
   const [jobType, setJobType] = useState("");
   const [scriptTextForLead, setScriptTextForLead] = useState("");
   /** 任务内 script_text 偏短时，先拉 script 工件再允许「从文稿提炼」，避免用摘要误点。 */
@@ -170,7 +184,7 @@ export function SharePublishClient({ jobId }: Props) {
       const jt = String(row.job_type || "").trim();
       setJobType(jt);
       const hex = String(result.audio_hex || "").trim();
-      setHasAudio(Boolean(hex));
+      setHasAudio(jobResultHasPlayableAudio(result));
 
       const storedTitle = (() => {
         try {
@@ -213,13 +227,21 @@ export function SharePublishClient({ jobId }: Props) {
 
       queueMicrotask(() => {
         const a = audioRef.current;
-        if (!hex || !a) {
+        if (!a) {
           setAudioReady(false);
           return;
         }
+        const url = String(result.audio_url || "").trim();
         try {
-          a.src = hexToMp3DataUrl(hex);
-          setAudioReady(true);
+          if (hex) {
+            a.src = hexToMp3DataUrl(hex);
+            setAudioReady(true);
+          } else if (url) {
+            a.src = url;
+            setAudioReady(true);
+          } else {
+            setAudioReady(false);
+          }
         } catch {
           setAudioReady(false);
         }
@@ -232,6 +254,7 @@ export function SharePublishClient({ jobId }: Props) {
     let canceled = false;
     void (async () => {
       setLoadErr("");
+      setShareJobHydrated(false);
       setFormReady(false);
       setScriptBodyHint("");
       setScriptResolvePending(false);
@@ -354,6 +377,8 @@ export function SharePublishClient({ jobId }: Props) {
         }
       } catch (e) {
         if (!canceled) setLoadErr(String(e instanceof Error ? e.message : e));
+      } finally {
+        if (!canceled) setShareJobHydrated(true);
       }
     })();
     return () => {
@@ -610,7 +635,9 @@ export function SharePublishClient({ jobId }: Props) {
   }
 
   const scriptDraft = jobType === "script_draft";
-  const blocked = scriptDraft || !hasAudio;
+  const audioBlocked = scriptDraft || !hasAudio;
+  /** 未 hydration 前 blocked 为 false，避免误显分享区；仅 hydration 后才允许复制链接与发布表单。 */
+  const showShareAndPublish = shareJobHydrated && !audioBlocked;
 
   return (
     <main className="mx-auto min-h-0 w-full max-w-2xl px-3 pb-12 pt-5 sm:px-4">
@@ -631,6 +658,12 @@ export function SharePublishClient({ jobId }: Props) {
         <p className="mb-4 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger-ink">{loadErr}</p>
       ) : null}
 
+      {!loadErr && !shareJobHydrated ? (
+        <p className="mb-4 rounded-lg border border-line bg-fill/60 px-3 py-2 text-sm text-muted" role="status">
+          正在加载作品与音频信息…
+        </p>
+      ) : null}
+
       {draftBanner ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/35 bg-warning-soft/80 px-3 py-2 text-xs text-warning-ink">
           <span>有未保存的本地草稿</span>
@@ -649,7 +682,7 @@ export function SharePublishClient({ jobId }: Props) {
         <p className="mb-4 rounded-lg border border-success/35 bg-success-soft/70 px-3 py-2 text-xs text-success-ink">{publishedHint}</p>
       ) : null}
 
-      {!blocked && sharePageFullUrl ? (
+      {showShareAndPublish && sharePageFullUrl ? (
         <section className="mb-5 rounded-2xl border border-brand/35 bg-brand/10 px-4 py-4 shadow-soft dark:bg-brand/15">
           <p className="text-sm font-semibold text-ink">先复制本页链接</p>
           <p className="mt-1 text-xs text-muted">收件人需登录本站打开链接；链接已固定为公网域名，便于转发。</p>
@@ -678,15 +711,15 @@ export function SharePublishClient({ jobId }: Props) {
         </section>
       ) : null}
 
-      {blocked ? (
+      {shareJobHydrated && audioBlocked ? (
         <p className="mb-4 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-ink">
           {scriptDraft
             ? "该类型没有音频，无法在此页收听或发布；请从有口播成片的任务使用「发给朋友」。"
-            : "还没有音频，生成完成后再来发给朋友。"}
+            : "还没有可分享的音频（或成品尚未同步）。请确认任务已成功完成后再试。"}
         </p>
       ) : null}
 
-      {!blocked ? (
+      {showShareAndPublish ? (
         <div className="mb-4">
           <button
             type="button"
@@ -700,7 +733,7 @@ export function SharePublishClient({ jobId }: Props) {
         </div>
       ) : null}
 
-      {!blocked && advancedPublishOpen ? (
+      {showShareAndPublish && advancedPublishOpen ? (
         <>
           <div className="mb-5">
             <p className="mb-2 text-xs font-medium text-ink">发布平台</p>
@@ -926,7 +959,7 @@ export function SharePublishClient({ jobId }: Props) {
                 role="switch"
                 aria-checked={schedulePublish}
                 aria-label="定时发布"
-                disabled={busy || blocked}
+                disabled={busy || !showShareAndPublish}
                 onClick={() => {
                   if (schedulePublish) {
                     setSchedulePublish(false);
@@ -949,7 +982,7 @@ export function SharePublishClient({ jobId }: Props) {
                 <button
                   type="button"
                   className="max-w-[10rem] truncate text-xs text-brand underline decoration-brand/40 hover:decoration-brand disabled:opacity-50"
-                  disabled={busy || blocked}
+                  disabled={busy || !showShareAndPublish}
                   onClick={() => openScheduleModal()}
                 >
                   {formatSchedulePreview(publishAt)}
@@ -959,7 +992,7 @@ export function SharePublishClient({ jobId }: Props) {
             <button
               type="button"
               className="min-w-[7rem] rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50"
-              disabled={busy || blocked || publishPlatform !== "xiaoyuzhou"}
+              disabled={busy || !showShareAndPublish || publishPlatform !== "xiaoyuzhou"}
               onClick={() => void submit()}
             >
               {busy ? (schedulePublish ? "定时发布中…" : "发布中…") : schedulePublish ? "定时发布" : "发布"}

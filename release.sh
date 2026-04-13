@@ -9,6 +9,8 @@
 #   BRANCH=main
 #   REMOTE=origin
 #   GIT_PULL=0   跳过 git fetch/pull（离线或固定版本发布）
+#   ORCH_HEALTH_MAX_ATTEMPTS=12 ORCH_HEALTH_SLEEP=2   编排器 /health 探测（默认约 24s）
+#   WEB_HEALTH_MAX_ATTEMPTS=50 WEB_HEALTH_SLEEP=2      Web :3000 探测（默认约 100s，与 compose web healthcheck start_period 90s 对齐）
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/FYV}"
@@ -46,27 +48,36 @@ log "构建并启动容器"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build || die "docker compose up 失败"
 
 log "健康检查"
+ORCH_HEALTH_MAX_ATTEMPTS="${ORCH_HEALTH_MAX_ATTEMPTS:-12}"
+ORCH_HEALTH_SLEEP="${ORCH_HEALTH_SLEEP:-2}"
+WEB_HEALTH_MAX_ATTEMPTS="${WEB_HEALTH_MAX_ATTEMPTS:-50}"
+WEB_HEALTH_SLEEP="${WEB_HEALTH_SLEEP:-2}"
+
 health_ok=0
-for i in 1 2 3 4 5 6; do
+for ((i = 1; i <= ORCH_HEALTH_MAX_ATTEMPTS; i++)); do
   if curl -fsS --connect-timeout 3 --max-time 10 http://127.0.0.1:8008/health >/dev/null 2>&1; then
     health_ok=1
     break
   fi
-  log "编排器 /health 未就绪（第 ${i}/6 次重试）…"
-  sleep 1
+  log "编排器 /health 未就绪（第 ${i}/${ORCH_HEALTH_MAX_ATTEMPTS} 次重试）…"
+  sleep "$ORCH_HEALTH_SLEEP"
 done
 [[ "$health_ok" -eq 1 ]] || die "编排器 /health 在多次重试后仍不通"
 
 web_ok=0
-for i in 1 2 3 4; do
-  if curl -fsS --connect-timeout 3 --max-time 10 -o /dev/null http://127.0.0.1:3000/ 2>/dev/null; then
+for ((i = 1; i <= WEB_HEALTH_MAX_ATTEMPTS; i++)); do
+  if curl -fsS --connect-timeout 3 --max-time 15 -o /dev/null http://127.0.0.1:3000/ 2>/dev/null; then
     web_ok=1
     break
   fi
-  log "Web 3000 未就绪（第 ${i}/4 次重试）…"
-  sleep 1
+  log "Web 3000 未就绪（第 ${i}/${WEB_HEALTH_MAX_ATTEMPTS} 次重试，Next 冷启动可能需 1～2 分钟）…"
+  sleep "$WEB_HEALTH_SLEEP"
 done
-[[ "$web_ok" -eq 1 ]] || die "Web 3000 在多次重试后仍不通"
+if [[ "$web_ok" -ne 1 ]]; then
+  log "Web 仍不可用，最近 web 容器日志（便于排查）："
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail 120 web >&2 || true
+  die "Web 3000 在多次重试后仍不通（请检查 web 容器是否 OOM、构建失败或端口被占用；可增大 WEB_HEALTH_MAX_ATTEMPTS）"
+fi
 
 log "检查核心容器是否为 running"
 for svc in orchestrator web ai-worker media-worker; do

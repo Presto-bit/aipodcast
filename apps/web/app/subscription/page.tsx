@@ -59,6 +59,10 @@ export default function SubscriptionPage() {
   const [alipayWalletLoading, setAlipayWalletLoading] = useState(false);
   const [plansConfigLoaded, setPlansConfigLoaded] = useState(false);
 
+  /** 本地联调可选：NEXT_PUBLIC_ENABLE_MOCK_WALLET=1 才展示内测模拟充值；生产环境仅走支付宝。 */
+  const allowMockWallet =
+    typeof process !== "undefined" && process.env.NEXT_PUBLIC_ENABLE_MOCK_WALLET === "1";
+
   const mergedWalletTopup = useMemo((): WalletTopupPayload => {
     const base: WalletTopupPayload = {
       enabled: true,
@@ -182,7 +186,14 @@ export default function SubscriptionPage() {
       };
       if (!res.ok || !data.success) throw new Error(data.error || data.detail || `请求失败 ${res.status}`);
       setCurrentPlan(data.user?.plan || tier);
-      setMsg(data.message || "已保存");
+      if (tier !== "free" && !alipayPageEnabled) {
+        setMsg(
+          data.message ||
+            "已保存订阅意向（当前未完成支付宝签约）。请联系运营开通收银台，或稍后刷新页面重试。"
+        );
+      } else {
+        setMsg(data.message || "已保存");
+      }
       await loadMe();
       await refreshMe();
     } catch (err) {
@@ -198,12 +209,15 @@ export default function SubscriptionPage() {
     setMsg("正在连接支付宝收银台…");
     setWalletCheckout(null);
     let didNavigate = false;
+    const ac = new AbortController();
+    const payTimer = window.setTimeout(() => ac.abort(), 60_000);
     try {
       const res = await fetch("/api/subscription/alipay-page/subscription", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ tier, billing_cycle: "monthly" }),
-        credentials: "same-origin"
+        credentials: "same-origin",
+        signal: ac.signal
       });
       const text = await res.text();
       const data = (() => {
@@ -234,8 +248,14 @@ export default function SubscriptionPage() {
       didNavigate = true;
       window.location.assign(payUrl);
     } catch (err) {
-      setMsg(String(err instanceof Error ? err.message : err));
+      const name = err instanceof Error ? err.name : "";
+      if (name === "AbortError") {
+        setMsg("连接收银台超时，请检查网络或稍后重试。");
+      } else {
+        setMsg(String(err instanceof Error ? err.message : err));
+      }
     } finally {
+      clearTimeout(payTimer);
       if (!didNavigate) setAlipayLoadingTier(null);
     }
   }
@@ -328,6 +348,8 @@ export default function SubscriptionPage() {
       return;
     }
     let didNavigateWallet = false;
+    const wac = new AbortController();
+    const wTimer = window.setTimeout(() => wac.abort(), 60_000);
     setAlipayWalletLoading(true);
     setMsg("");
     setWalletCheckout(null);
@@ -336,7 +358,8 @@ export default function SubscriptionPage() {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ amount_cents: parsed.cents }),
-        credentials: "same-origin"
+        credentials: "same-origin",
+        signal: wac.signal
       });
       const text = await res.text();
       const data = (() => {
@@ -361,8 +384,14 @@ export default function SubscriptionPage() {
       didNavigateWallet = true;
       window.location.assign(payUrl);
     } catch (err) {
-      setMsg(String(err instanceof Error ? err.message : err));
+      const name = err instanceof Error ? err.name : "";
+      if (name === "AbortError") {
+        setMsg("连接支付宝超时，请检查网络或稍后重试。");
+      } else {
+        setMsg(String(err instanceof Error ? err.message : err));
+      }
     } finally {
+      clearTimeout(wTimer);
       if (!didNavigateWallet) setAlipayWalletLoading(false);
     }
   }
@@ -385,6 +414,7 @@ export default function SubscriptionPage() {
         alipayPageEnabled={alipayPageEnabled}
         alipayLoadingTier={alipayLoadingTier}
         onAlipayPay={(tier) => void createAlipaySubscription(tier)}
+        paidTierIntentOnly={!alipayPageEnabled}
       />
 
       {showWalletRechargeSection ? (
@@ -416,9 +446,9 @@ export default function SubscriptionPage() {
                 }
                 onClick={() => void createAlipayWalletTopup()}
               >
-                {alipayWalletLoading ? "正在跳转支付宝…" : "去支付"}
+                {alipayWalletLoading ? "正在跳转支付宝…" : "支付"}
               </button>
-            ) : mergedWalletTopup.checkout_supported !== false ? (
+            ) : allowMockWallet && mergedWalletTopup.checkout_supported !== false ? (
               <button
                 type="button"
                 className="rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50"
@@ -429,12 +459,17 @@ export default function SubscriptionPage() {
               >
                 {walletCreating ? "创建订单中…" : "去支付（内测模拟）"}
               </button>
-            ) : null}
+            ) : (
+              <p className="text-xs text-muted">
+                余额充值需开通支付宝：请在服务端配置 ALIPAY_* 并启用 <code className="rounded bg-fill px-1">payment_channels.alipay_page</code>
+                。
+              </p>
+            )}
           </div>
           {!walletPayEnabled ? (
             <p className="mt-3 text-xs text-muted">请登录后即可充值账户余额。</p>
           ) : null}
-          {walletCheckout ? (
+          {walletCheckout && allowMockWallet ? (
             <div className="mt-4 rounded-lg border border-warning/30 bg-warning-soft/80 p-3 dark:border-warning/40 dark:bg-warning-soft/35">
               <p className="text-xs text-muted">
                 待支付 <span className="font-mono text-ink">{walletCheckout.checkout_id}</span> ·{" "}

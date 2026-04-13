@@ -695,11 +695,53 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     );
   }
 
+  async function ensureDefaultStudioNotebook(): Promise<string | null> {
+    const existing = studioNotebooks[0]?.trim();
+    if (existing) return existing;
+    const name = "默认资料库";
+    try {
+      const res = await fetch("/api/notebooks", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ name })
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string; error?: string };
+      if (!res.ok || !data.success) {
+        const again = await fetch("/api/notebooks", {
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { ...getAuthHeaders() }
+        });
+        const ad = (await again.json().catch(() => ({}))) as { success?: boolean; notebooks?: string[] };
+        if (again.ok && ad.success && Array.isArray(ad.notebooks) && ad.notebooks.length) {
+          setStudioNotebooks(ad.notebooks);
+          return ad.notebooks.includes(name) ? name : ad.notebooks[0]!;
+        }
+        applyTaskFromEvent(
+          typeof data.detail === "string" ? data.detail : data.error || "无法自动创建资料笔记本"
+        );
+        return null;
+      }
+      const nb = await fetch("/api/notebooks", { cache: "no-store", credentials: "same-origin", headers: { ...getAuthHeaders() } });
+      const nbd = (await nb.json().catch(() => ({}))) as { success?: boolean; notebooks?: string[] };
+      if (nb.ok && nbd.success && Array.isArray(nbd.notebooks)) {
+        setStudioNotebooks(nbd.notebooks);
+        return name;
+      }
+      setStudioNotebooks((prev) => (prev.includes(name) ? prev : [name, ...prev]));
+      return name;
+    } catch (e) {
+      applyTaskFromEvent(String(e instanceof Error ? e.message : e));
+      return null;
+    }
+  }
+
   async function uploadNoteFile(file: File | null) {
     if (!file) return;
-    const targetNb = studioNotebooks[0]?.trim() || "";
+    const targetNb = (await ensureDefaultStudioNotebook())?.trim() || "";
     if (!targetNb) {
-      applyTaskFromEvent("请先在「笔记本」页新建笔记本，再上传资料文件");
+      applyTaskFromEvent("请先在「知识库」侧栏新建笔记本，或稍后重试上传");
       return;
     }
     setUploadBusy(true);
@@ -1161,6 +1203,13 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                   >
                     {showAdvanced ? "收起高级设置" : "展开高级设置"}
                   </button>
+                  {showAdvanced ? (
+                    <p className="mb-2 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2 text-xs leading-relaxed text-muted">
+                      以下为<strong className="text-ink">口播成片</strong>相关的高级项：音色、目标字数、片头片尾与 BGM 等仅影响
+                      <strong className="text-ink">下一次生成</strong>
+                      ；与资料勾选的修改一样，请确认后再点「做一期播客」。
+                    </p>
+                  ) : null}
                   {showAdvanced ? (
                     <>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="voice" className="relative inline-block align-top">

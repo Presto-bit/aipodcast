@@ -487,7 +487,7 @@ function deriveKeyTakeawaysFromScript(
   summaryUsed: string,
   maxItems: number
 ): string[] {
-  const sentences = collectSummaryCandidateSentences(scriptRaw, userSourceText).filter((s) => s.length >= 10);
+  const sentences = collectSummaryCandidateSentences(scriptRaw, userSourceText).filter((s) => s.length >= 12);
   if (sentences.length === 0) return [];
   const a = stripDialogueMarkersFromBlurb(scriptRaw);
   const scriptFlat = stripTtsInlineArtifacts(a).replace(/\s+/g, "");
@@ -500,22 +500,53 @@ function deriveKeyTakeawaysFromScript(
   scored.sort((x, y) => y.score - x.score);
   const sumPrefix = (summaryUsed || "").replace(/\s+/g, "").slice(0, 28);
   const out: string[] = [];
+  const tooSimilar = (a: string, b: string) => {
+    const x = a.replace(/\s+/g, "").slice(0, 22);
+    const y = b.replace(/\s+/g, "").slice(0, 22);
+    return x === y || (x.length >= 14 && y.startsWith(x.slice(0, 14)));
+  };
   for (const { raw } of scored) {
     const n = normalizeSummarySentence(raw);
-    if (n.length < 12) continue;
+    if (n.length < 16) continue;
     const pfx = n.replace(/\s+/g, "").slice(0, 28);
     if (sumPrefix.length >= 12 && (pfx === sumPrefix || pfx.startsWith(sumPrefix.slice(0, 16)))) continue;
-    if (out.some((x) => x.slice(0, 20) === n.slice(0, 20))) continue;
-    out.push(truncateSmart(n, 56));
+    if (out.some((x) => tooSimilar(x, n))) continue;
+    out.push(truncateSmart(n, 72));
     if (out.length >= maxItems) break;
   }
+  return out.slice(0, maxItems);
+}
+
+/** 最靠前的 1～2 条「主线句」，用于 Show Notes 开篇，避免整页碎片化列表。 */
+function deriveCoreThreadBullets(
+  scriptRaw: string,
+  userSourceText: string,
+  summaryLine: string,
+  maxItems: number
+): string[] {
+  const sentences = collectSummaryCandidateSentences(scriptRaw, userSourceText).filter((s) => s.length >= 14);
+  if (sentences.length === 0) return [];
+  const a = stripDialogueMarkersFromBlurb(scriptRaw);
+  const scriptFlat = stripTtsInlineArtifacts(a).replace(/\s+/g, "");
+  const materialBigrams = extractMaterialBigrams(userSourceText);
+  const topicPhrases = extractTopicPhrasesAnchoredInScript(userSourceText, scriptFlat);
+  const scored = sentences
+    .map((s, i) => ({
+      raw: s,
+      score: scoreSentenceForSummary(s, materialBigrams, topicPhrases, i, sentences.length)
+    }))
+    .filter((x) => x.score >= -0.3);
+  scored.sort((x, y) => y.score - x.score);
+  const sumN = (summaryLine || "").replace(/\s+/g, "").slice(0, 24);
+  const out: string[] = [];
   for (const { raw } of scored) {
-    if (out.length >= 3) break;
     const n = normalizeSummarySentence(raw);
-    if (n.length < 12) continue;
-    const line = truncateSmart(n, 56);
-    if (out.some((x) => x.slice(0, 18) === line.slice(0, 18))) continue;
-    out.push(line);
+    if (n.length < 16 || n.length > 96) continue;
+    const p = n.replace(/\s+/g, "").slice(0, 24);
+    if (sumN.length >= 10 && (p === sumN || p.startsWith(sumN.slice(0, 12)))) continue;
+    if (out.some((x) => x.slice(0, 16) === n.slice(0, 16))) continue;
+    out.push(truncateSmart(n, 88));
+    if (out.length >= maxItems) break;
   }
   return out.slice(0, maxItems);
 }
@@ -583,18 +614,25 @@ function buildStructuredShowNotesMarkdown(
 ): string {
   const theme = summaryLine.trim() || "（请补充本期主题）";
   const payloadText = String(payload.text || "");
-  const takeaways = deriveKeyTakeawaysFromScript(scriptRaw, payloadText, summaryLine, 5);
-  const quotes = deriveGoldenQuotesFromScript(scriptRaw, payloadText, 4);
+  const coreThread = deriveCoreThreadBullets(scriptRaw, payloadText, summaryLine, 2);
+  const takeaways = deriveKeyTakeawaysFromScript(scriptRaw, payloadText, summaryLine, 4);
+  const quotes = deriveGoldenQuotesFromScript(scriptRaw, payloadText, 3);
   const resources = deriveResourceBulletsFromPayload(payload, scriptRaw);
 
   const parts: string[] = [
+    "## 本期在讲什么",
+    "",
+    ...(coreThread.length
+      ? coreThread.map((t) => `- ${t}`)
+      : [`- ${truncateSmart(theme.replace(/。$/, ""), 80)}`]),
+    "",
     "## 本期主题（一句话）",
     "",
     theme,
     "",
-    "## 关键收获",
+    "## 关键要点",
     "",
-    ...(takeaways.length ? takeaways.map((t) => `- ${t}`) : ["- （可据文稿补充 3～5 条干货要点）"]),
+    ...(takeaways.length ? takeaways.map((t) => `- ${t}`) : ["- （可据文稿补充几条听得懂的要点）"]),
     "",
     "## 时间轴",
     "",

@@ -9,6 +9,11 @@ type UploadJson = {
 
 function parseError(data: UploadJson, status: number): string {
   if (typeof data.error === "string" && data.error.trim()) return data.error.trim();
+  const d = (data as { detail?: unknown }).detail;
+  if (typeof d === "string" && d.trim()) return d.trim();
+  if (Array.isArray(d) && d[0] && typeof (d[0] as { msg?: string }).msg === "string") {
+    return String((d[0] as { msg: string }).msg).trim();
+  }
   return `上传失败（HTTP ${status}）`;
 }
 

@@ -125,16 +125,33 @@ def resolved_user_uuid_string(user_ref: str | None) -> str | None:
 
 
 def ensure_default_project(project_name: str, created_by: str | None = None) -> str:
+    """按 (name, user_id) 复用已有项目行，避免重复 INSERT 与孤立 project 行导致笔记上传异常。"""
+    pn = (project_name or "").strip()
+    if not pn:
+        raise ValueError("project_name_required")
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             owner_user_id = _resolve_user_uuid_from_ref(cur, created_by)
+            cur.execute(
+                """
+                SELECT id FROM projects
+                WHERE name = %s AND (user_id IS NOT DISTINCT FROM %s)
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (pn, owner_user_id),
+            )
+            existing = cur.fetchone()
+            if existing and existing.get("id") is not None:
+                conn.commit()
+                return str(existing["id"])
             cur.execute(
                 """
                 INSERT INTO projects (name, user_id)
                 VALUES (%s, %s)
                 RETURNING id
                 """,
-                (project_name, owner_user_id),
+                (pn, owner_user_id),
             )
             row = cur.fetchone()
             conn.commit()
