@@ -17,6 +17,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+# Next.js 应用源码（勿与 Python venv 的 lib/ 混淆；上面 lib/ 会误伤此目录）
+!apps/web/lib/
+!apps/web/lib/**
 lib64/
 parts/
 sdist/
