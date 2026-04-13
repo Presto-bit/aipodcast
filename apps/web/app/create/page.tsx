@@ -153,7 +153,6 @@ export default function CreatePage() {
                   </button>
                 );
               })}
-              <span className="ml-auto hidden text-xs text-muted sm:inline">{t("create.notesSidebarHint")}</span>
             </div>
           </div>
 
@@ -219,11 +218,7 @@ export default function CreatePage() {
               type="button"
               className="rounded-full border border-line bg-fill/40 px-3 py-1.5 text-left text-xs text-ink transition hover:border-brand/40 hover:bg-brand/5"
               onClick={() =>
-                setDraftText((prev) => {
-                  const t = topic.text.trim();
-                  const p = prev.trim();
-                  return p ? `${p}\n\n${t}` : t;
-                })
+                setDraftText(`【${topic.label}】\n${topic.text.trim()}`)
               }
             >
               {topic.label}

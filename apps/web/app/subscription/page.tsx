@@ -58,6 +58,7 @@ export default function SubscriptionPage() {
   const [alipayLoadingTier, setAlipayLoadingTier] = useState<string | null>(null);
   const [alipayWalletLoading, setAlipayWalletLoading] = useState(false);
   const [plansConfigLoaded, setPlansConfigLoaded] = useState(false);
+  const [plansLoadError, setPlansLoadError] = useState("");
   const [walletBalanceCents, setWalletBalanceCents] = useState<number | null>(null);
 
   /** 本地联调可选：NEXT_PUBLIC_ENABLE_MOCK_WALLET=1 才展示内测模拟充值；生产环境仅走支付宝。 */
@@ -95,18 +96,33 @@ export default function SubscriptionPage() {
   const showWalletRechargeSection = plansConfigLoaded && mergedWalletTopup.enabled !== false;
 
   const loadPlans = useCallback(async () => {
+    setPlansLoadError("");
     try {
       const pr = await fetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
       const pd = (await pr.json().catch(() => ({}))) as PlansPayload;
+      if (!pr.ok) {
+        setPlans(FALLBACK_SUBSCRIPTION_PLANS);
+        setAlipayPageEnabled(false);
+        setPlansLoadError(`加载套餐配置失败（HTTP ${pr.status}），已显示参考价目。`);
+        return;
+      }
       if (pd.success) {
         if (Array.isArray(pd.plans)) setPlans(pd.plans);
         setBillingMonthlyOnly(pd.billing_monthly_only !== false);
         if (typeof pd.yearly_discount_percent === "number") setYearlyDisc(pd.yearly_discount_percent);
         setWalletTopupInfo(pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : {});
-        setAlipayPageEnabled(pd.payment_channels?.alipay_page?.enabled === true);
+        const wt = pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : null;
+        /** 与 plan_catalog：checkout_supported = not alipay_ready；两者任一为真均视为已接支付宝 Page Pay */
+        const fromChannel = pd.payment_channels?.alipay_page?.enabled === true;
+        const fromWallet = wt != null && wt.checkout_supported === false;
+        setAlipayPageEnabled(fromChannel || fromWallet);
+      } else {
+        setPlans(FALLBACK_SUBSCRIPTION_PLANS);
+        setAlipayPageEnabled(false);
+        setPlansLoadError("套餐接口返回异常，已显示参考价目，请稍后重试。");
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      setPlansLoadError(String(e instanceof Error ? e.message : e));
     } finally {
       setPlansConfigLoaded(true);
     }
@@ -351,7 +367,7 @@ export default function SubscriptionPage() {
     setMsg("正在连接支付宝…页面打开后请用手机扫码完成充值。");
     setWalletCheckout(null);
     try {
-      const res = await fetch("/api/subscription/alipay-page/wallet", {
+      const res = await fetch("/api/subscription/recharge", {
         method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ amount_cents: parsed.cents }),
@@ -398,6 +414,12 @@ export default function SubscriptionPage() {
     <main className="min-h-0 max-w-6xl">
       <PricingHero />
 
+      {plansLoadError ? (
+        <p className="mb-4 rounded-lg border border-warning/35 bg-warning-soft/90 px-3 py-2 text-sm text-warning-ink" role="alert">
+          {plansLoadError} 若编排器未启动或网络异常，将无法调起支付宝；本地开发请先启动 orchestrator。
+        </p>
+      ) : null}
+
       <PricingPlansGrid
         plans={shownPlans}
         cycle={cycle}
@@ -434,28 +456,38 @@ export default function SubscriptionPage() {
           ) : null}
           <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-            <label className="flex flex-col gap-1 text-sm">
+            <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm sm:max-w-[14rem]">
               <span className="text-muted">充值金额（元）</span>
               <input
                 type="number"
                 min={(mergedWalletTopup.min_amount_cents ?? 1000) / 100}
                 step="1"
-                className="w-full max-w-[12rem] rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-ink"
+                className="w-full rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-ink"
                 value={topupYuanInput}
                 onChange={(e) => setTopupYuanInput(e.target.value)}
               />
             </label>
             {alipayPageEnabled ? (
-              <button
-                type="button"
-                className="rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50"
-                disabled={
-                  walletCreating || walletPaying || alipayWalletLoading || busyPayOrWallet || !walletPayEnabled
-                }
-                onClick={() => void createAlipayWalletTopup()}
-              >
-                {alipayWalletLoading ? "正在跳转支付宝…" : "充值"}
-              </button>
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  className="w-full rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50 sm:w-auto"
+                  disabled={
+                    walletCreating || walletPaying || alipayWalletLoading || busyPayOrWallet || !walletPayEnabled
+                  }
+                  onClick={() => void createAlipayWalletTopup()}
+                >
+                  {alipayWalletLoading ? "正在跳转支付宝…" : "支付宝扫码充值"}
+                </button>
+                <button
+                  type="button"
+                  className="w-full rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-fill disabled:opacity-50 sm:w-auto"
+                  disabled={!walletPayEnabled}
+                  onClick={() => void loadMe()}
+                >
+                  刷新余额
+                </button>
+              </div>
             ) : allowMockWallet && mergedWalletTopup.checkout_supported !== false ? (
               <button
                 type="button"

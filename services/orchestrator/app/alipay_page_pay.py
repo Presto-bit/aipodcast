@@ -41,8 +41,12 @@ def _default_return_url_from_notify(notify_url: str) -> str:
 def _read_pem_from_path_or_env(path_env: str, pem_env: str) -> str:
     p = (os.getenv(path_env) or "").strip()
     if p:
-        with open(p, "r", encoding="utf-8") as f:
-            return f.read().strip()
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError as e:
+            _log.warning("alipay: cannot read PEM from %s (%s): %s", path_env, p, e)
+            return ""
     raw = (os.getenv(pem_env) or "").strip()
     if not raw:
         return ""
@@ -62,24 +66,28 @@ class AlipayPagePayConfig:
 
     @classmethod
     def from_env(cls) -> AlipayPagePayConfig | None:
-        if not _truthy("ALIPAY_PAY_ENABLED"):
+        try:
+            if not _truthy("ALIPAY_PAY_ENABLED"):
+                return None
+            app_id = (os.getenv("ALIPAY_APP_ID") or "").strip()
+            notify_url = (os.getenv("ALIPAY_NOTIFY_URL") or "").strip()
+            return_url = (os.getenv("ALIPAY_RETURN_URL") or "").strip() or _default_return_url_from_notify(notify_url)
+            priv = _read_pem_from_path_or_env("ALIPAY_APP_PRIVATE_KEY_PATH", "ALIPAY_APP_PRIVATE_KEY_PEM")
+            pub = _read_pem_from_path_or_env("ALIPAY_PUBLIC_KEY_PATH", "ALIPAY_PUBLIC_KEY_PEM")
+            sandbox = _truthy("ALIPAY_SANDBOX")
+            if not all([app_id, notify_url, return_url, priv, pub]):
+                return None
+            return cls(
+                app_id=app_id,
+                app_private_key_pem=priv,
+                alipay_public_key_pem=pub,
+                notify_url=notify_url,
+                return_url=return_url,
+                sandbox=sandbox,
+            )
+        except Exception as e:
+            _log.warning("alipay: from_env failed (treat as disabled): %s", e)
             return None
-        app_id = (os.getenv("ALIPAY_APP_ID") or "").strip()
-        notify_url = (os.getenv("ALIPAY_NOTIFY_URL") or "").strip()
-        return_url = (os.getenv("ALIPAY_RETURN_URL") or "").strip() or _default_return_url_from_notify(notify_url)
-        priv = _read_pem_from_path_or_env("ALIPAY_APP_PRIVATE_KEY_PATH", "ALIPAY_APP_PRIVATE_KEY_PEM")
-        pub = _read_pem_from_path_or_env("ALIPAY_PUBLIC_KEY_PATH", "ALIPAY_PUBLIC_KEY_PEM")
-        sandbox = _truthy("ALIPAY_SANDBOX")
-        if not all([app_id, notify_url, return_url, priv, pub]):
-            return None
-        return cls(
-            app_id=app_id,
-            app_private_key_pem=priv,
-            alipay_public_key_pem=pub,
-            notify_url=notify_url,
-            return_url=return_url,
-            sandbox=sandbox,
-        )
 
 
 def alipay_page_pay_ready() -> bool:

@@ -8,7 +8,13 @@ type UploadJson = {
 };
 
 function parseError(data: UploadJson, status: number): string {
-  if (typeof data.error === "string" && data.error.trim()) return data.error.trim();
+  if (typeof data.error === "string" && data.error.trim()) {
+    const err = data.error.trim();
+    if (err === "upstream_unreachable" || err === "orchestrator request failed") {
+      return "无法连接编排器或请求中断。请确认 orchestrator 已启动，且 Next 的 ORCHESTRATOR_URL 指向可访问地址（本机开发多为 http://127.0.0.1:8008；Docker 内多为 http://orchestrator:8008）。";
+    }
+    return err;
+  }
   const d = (data as { detail?: unknown }).detail;
   if (typeof d === "string" && d.trim()) return d.trim();
   if (Array.isArray(d) && d[0] && typeof (d[0] as { msg?: string }).msg === "string") {

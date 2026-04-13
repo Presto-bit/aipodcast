@@ -247,7 +247,10 @@ def build_subscription_plans_response() -> dict[str, Any]:
         ),
     ]
 
-    alipay_ready = alipay_page_pay_ready()
+    try:
+        alipay_ready = alipay_page_pay_ready()
+    except Exception:
+        alipay_ready = False
     return {
         "success": True,
         "currency": "CNY",

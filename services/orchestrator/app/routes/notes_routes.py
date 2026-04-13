@@ -7,6 +7,7 @@ import time
 import uuid
 from urllib.parse import urlparse
 
+import psycopg2
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
@@ -389,6 +390,11 @@ def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
     except Exception as exc:
         delete_object_key(object_key)
         _notes_startup_logger.exception("notes upload_json: create_file_note failed")
+        if isinstance(exc, psycopg2.ProgrammingError):
+            raise HTTPException(
+                status_code=503,
+                detail="数据库结构与当前版本不一致（常见于未执行迁移）。请联系运维更新数据库后重试。",
+            ) from exc
         raise HTTPException(
             status_code=500,
             detail="笔记保存失败，请稍后重试或联系管理员。",
