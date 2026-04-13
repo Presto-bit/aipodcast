@@ -4,7 +4,13 @@ const path = require("path");
 /**
  * Next 默认只加载 apps/web 下的 .env*；仓库常在根目录维护 `.env.ai-native`。
  * 在构建/启动时补齐未在环境中声明的键，避免 BFF 与 shell 手测环境不一致。
+ *
+ * `INTERNAL_SIGNING_SECRET` 必须与编排器（读根目录 `.env.ai-native`）一致，否则 BFF 请求会 401
+ * `invalid_internal_signature`。Next 会先加载 apps/web/.env.local，易误留占位值，故该键在根文件存在时
+ * 始终以根文件覆盖。
  */
+const OVERRIDE_FROM_ROOT_ENV_KEYS = new Set(["INTERNAL_SIGNING_SECRET"]);
+
 function mergeRootAiNativeEnv() {
   const rootEnvPath = path.resolve(__dirname, "../../.env.ai-native");
   if (!fs.existsSync(rootEnvPath)) return;
@@ -23,7 +29,12 @@ function mergeRootAiNativeEnv() {
     ) {
       val = val.slice(1, -1);
     }
-    if (process.env[key] === undefined) {
+    if (OVERRIDE_FROM_ROOT_ENV_KEYS.has(key)) {
+      process.env[key] = val;
+      continue;
+    }
+    const cur = process.env[key];
+    if (cur === undefined || cur === "") {
       process.env[key] = val;
     }
   }

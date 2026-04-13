@@ -12,6 +12,16 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _log_pg_operational_failure(exc: psycopg2.OperationalError) -> None:
+    """Log actionable context without echoing credentials."""
+    logger.error(
+        "PostgreSQL connection failed: %s. Ensure DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD in "
+        "repo root .env.ai-native match the running server; if the data directory was initialized "
+        "with another password, ALTER USER ... PASSWORD must match DB_PASSWORD (see DEPLOYMENT.md).",
+        exc,
+    )
+
 _pool: pg_pool.ThreadedConnectionPool | None = None
 
 
@@ -43,7 +53,11 @@ def _get_pool() -> pg_pool.ThreadedConnectionPool:
         return _pool
     minconn = max(1, int(os.getenv("DB_POOL_MIN", "1")))
     maxconn = max(minconn, int(os.getenv("DB_POOL_MAX", "20")))
-    _pool = pg_pool.ThreadedConnectionPool(minconn, maxconn, _dsn())
+    try:
+        _pool = pg_pool.ThreadedConnectionPool(minconn, maxconn, _dsn())
+    except psycopg2.OperationalError as exc:
+        _log_pg_operational_failure(exc)
+        raise
     atexit.register(_close_pool_quietly)
     logger.info("PostgreSQL connection pool ready (min=%s max=%s)", minconn, maxconn)
     return _pool
@@ -63,7 +77,11 @@ def _close_pool_quietly() -> None:
 @contextlib.contextmanager
 def get_conn() -> Iterator[psycopg2.extensions.connection]:
     if not _use_pool():
-        conn = psycopg2.connect(_dsn())
+        try:
+            conn = psycopg2.connect(_dsn())
+        except psycopg2.OperationalError as exc:
+            _log_pg_operational_failure(exc)
+            raise
         try:
             yield conn
         finally:
