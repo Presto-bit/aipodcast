@@ -166,6 +166,7 @@ services:
       pull: false
       args:
         NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-node:20-alpine}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     env_file:
       - .env.ai-native
     environment:
