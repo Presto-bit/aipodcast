@@ -49,6 +49,8 @@
 
 ## 3. 发布与部署
 
+**首次上线与后续发版（步骤清单、release.sh、环境变量）**：见根目录 [`DEPLOYMENT.md`](../../DEPLOYMENT.md) 中的 **「发布流程：首次上线与后续发版」**。
+
 | 主题 | 文档 |
 |------|------|
 | 服务器一键 / Compose / 端口与安全 | [`DEPLOYMENT.md`](../../DEPLOYMENT.md) |

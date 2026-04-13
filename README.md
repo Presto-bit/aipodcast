@@ -20,7 +20,7 @@ Docker 只起 PG / Redis / MinIO，应用跑在本机：`make install-deps && ma
 
 ## 文档
 
-- 部署：[DEPLOYMENT.md](DEPLOYMENT.md)
+- 部署：[DEPLOYMENT.md](DEPLOYMENT.md)（含首次发布与后续发版步骤）
 - 产品：[docs/product/README.md](docs/product/README.md)
 - 运维 / 迁移 / E2E：[docs/operations/README.md](docs/operations/README.md)
 

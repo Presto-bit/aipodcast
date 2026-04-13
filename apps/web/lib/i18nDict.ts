@@ -18,6 +18,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "nav.settings": "设置",
     "nav.my": "我的",
     "nav.subscription": "会员与套餐",
+    "nav.subscribe": "订阅",
     "me.pageTitle": "我的",
     "me.pageSubtitle": "资料与设置",
     "me.navProfile": "个人资料",
@@ -91,7 +92,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
       "成品在「我的作品」；排队与执行中的任务在「进行中」查看，无需一直停在详情页。",
     "onboarding.step3Cta": "我的作品",
     "onboarding.footer":
-      "登录后，侧栏「我的」上方显示当前方案与钱包摘要；可由此进入订阅与订单。升级请在会员页完成。",
+      "登录后，侧栏「订阅」可进入会员与套餐；「我的 → 订阅」查看订单与用量。升级请在会员页完成。",
     "onboarding.footerAdmin": "管理员还可从侧栏进入控制台。",
     "onboarding.dismiss": "知道了，开始使用",
     "onboarding.close": "关闭",
@@ -144,6 +145,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "nav.settings": "Settings",
     "nav.my": "Me",
     "nav.subscription": "Plans",
+    "nav.subscribe": "Subscribe",
     "me.pageTitle": "Me",
     "me.pageSubtitle": "Profile & settings",
     "me.navProfile": "Profile",
@@ -217,7 +219,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
       "Finished pieces live in My works; queued and running jobs appear under In progress—no need to wait on one screen.",
     "onboarding.step3Cta": "My works",
     "onboarding.footer":
-      "When signed in, your plan and wallet summary sits above Me in the sidebar with links to subscription and orders. Upgrades happen on the plans page.",
+      "When signed in, use Subscribe in the sidebar for plans; Me → Subscription shows orders and usage. Upgrades happen on the plans page.",
     "onboarding.footerAdmin": "Admins can open the console from the sidebar.",
     "onboarding.dismiss": "Got it",
     "onboarding.close": "Close",

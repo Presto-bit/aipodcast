@@ -93,7 +93,7 @@ export default function MeSubscriptionPage() {
       <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
         <h2 className="text-sm font-semibold text-ink">订阅与余额概览</h2>
         <p className="mt-1 text-xs text-muted">
-          当前会员档位与账户余额（钱包）。侧栏在「我的」上方也有方案与钱包摘要，与本页一致；升级套餐或充值请前往会员页。
+          当前会员档位与账户余额（钱包）。侧栏「订阅」进入会员与套餐；升级套餐或充值请在该页完成。
         </p>
         {loadError ? <p className="mt-2 text-xs text-danger-ink">{loadError}</p> : null}
 

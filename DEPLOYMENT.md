@@ -4,8 +4,96 @@
 
 ## 前提
 
-- 服务器已安装 **Docker** 与 **Docker Compose**（插件 `docker compose`）
+- 服务器已安装 **Docker** 与 **Docker Compose**（插件 `docker compose`）；若使用一键脚本，可在 **Ubuntu/Debian** 上由脚本通过 apt 安装 `docker.io` 与 **Compose v2 插件**。
 - **安全组**：对外只放行 **Web**（经 Nginx 后的 `80`/`443`，或内网访问 Docker 映射的 `3000`）。**编排器 `8008` 不应对公网开放**，仅本机 / Docker 内网 / BFF 可达。
+- **环境文件**：`.env.ai-native` **不提交 Git**。首次从 [`.env.ai-native.example`](.env.ai-native.example) 复制后按需填写（含 `MINIMAX_API_KEY` 等）。
+
+## 发布流程：首次上线与后续发版
+
+| 阶段 | 是否重装宿主机 Docker / 系统包 | 代码来源 | 典型命令 |
+|------|----------------------------------|----------|----------|
+| **首次发布** | 一键脚本可选安装 Docker；已有 Docker 则跳过 | `git clone` 或拷贝离线包 | `sudo bash deploy.sh --yes` 或见下文「方式 B」 |
+| **后续发版** | **不需要**重装环境（除非升级说明要求） | 远端 Git `pull`（或固定目录已同步的代码） | `bash release.sh`（或 `GIT_PULL=0` + 手动同步后同一套 `compose up`） |
+
+### 首次发布（新机器 / 首次上线）
+
+1. **目录与用户**  
+   - 将仓库放到固定目录（推荐 **`/opt/minimax_aipodcast`** 等），由**普通用户**（如 `ubuntu`）持有目录与 Git 工作区；避免仅用 `/root` 长期跑栈，减少权限与卷挂载问题。
+
+2. **获取代码**  
+   - **在线**：`git clone <你的仓库 URL> /opt/minimax_aipodcast`  
+   - **离线**：按 [`docs/offline-deploy-bundle.md`](docs/offline-deploy-bundle.md) 准备镜像与源码包，解压到同一路径并配置 `.env.ai-native`。
+
+3. **配置环境变量**（在仓库根目录）  
+   ```bash
+   cd /opt/minimax_aipodcast
+   cp .env.ai-native.example .env.ai-native
+   nano .env.ai-native   # 或 vim；至少补齐密钥与 DB/对象存储等
+   ```
+
+4. **启动全栈（二选一）**  
+   - **方式 A：一键脚本（推荐新机器）** — 以 root/sudo 执行，可选 **apt 安装 Docker**、将运行用户加入 `docker` 组、在 Git 仓库内 **`git pull --ff-only`**（若存在 `.git`）、再 **`docker compose up -d --build`**（离线模式见脚本 `--offline`）：  
+     ```bash
+     cd /opt/minimax_aipodcast
+     sudo bash deploy.sh --yes --user ubuntu --root /opt/minimax_aipodcast
+     ```  
+     等价入口为 [`deploy/one_click_deploy.sh`](deploy/one_click_deploy.sh)；可用 `--no-apt` 跳过 apt、`--no-git-pull` 跳过拉代码。  
+   - **方式 B：已有 Docker** — 无需重装 Docker 时，在**具有 docker 权限的用户**下：  
+     ```bash
+     cd /opt/minimax_aipodcast
+     docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d --build
+     ```
+
+5. **健康检查**  
+   ```bash
+   curl -s http://127.0.0.1:8008/health
+   curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/
+   ```
+
+6. **数据库与迁移**  
+   - 新库首次起栈时，`infra/postgres/init/` 会随 Compose 挂载执行；**已有旧库升级**时可能需手动执行**增量 SQL**，见下文 [数据库迁移](#数据库迁移)。  
+   - 生产建议的 PG 单一事实源与 `FYV_AUTH_*` 等见 [数据单一事实源](#数据单一事实源鉴权--用户) 与 [`docs/operations/README.md`](docs/operations/README.md)。
+
+7. **反向代理（生产）**  
+   - 宿主机前加 **Nginx**，`80`/`443` 反代到 **`127.0.0.1:3000`**；勿将数据库、Redis、MinIO、`8008` 暴露到公网，详见下文 [生产环境建议](#生产环境建议安全)。
+
+### 后续发版（代码已上线后的常规更新）
+
+**不需要**再次执行「安装 Docker / 系统依赖」类步骤；每次发版主要是 **更新代码 + 重建并启动容器**（`--build` 会在镜像内安装应用依赖，属正常构建）。
+
+1. **开发侧**  
+   - 本地修改 → `git commit` → `git push` 到远端（如 `origin/main`）。
+
+2. **服务器侧**（SSH 登录，使用**能执行 `docker compose` 的用户**，通常为部署用户且已在 `docker` 组内）  
+   - 进入项目目录，执行仓库根目录的 **[`release.sh`](release.sh)**：  
+     ```bash
+     cd /opt/minimax_aipodcast
+     bash release.sh
+     ```  
+   - 脚本默认行为：`git fetch` + **`git pull --ff-only`**（与 `REMOTE`/`BRANCH` 一致）→ **`docker compose ... up -d --build`** → 检查编排器 `/health`、Web `3000`、以及 `orchestrator` / `web` / `ai-worker` / `media-worker` 是否为 **running**。
+
+3. **常用环境变量（`release.sh`）**  
+
+   | 变量 | 默认 | 说明 |
+   |------|------|------|
+   | `APP_DIR` | `/opt/minimax_aipodcast` | 项目根目录 |
+   | `REMOTE` | `origin` | Git 远端名 |
+   | `BRANCH` | `main` | 拉取分支；生产若用其他分支，发版前 `export BRANCH=…` |
+   | `GIT_PULL` | `1` | 设为 `0` 则**不**执行 `git fetch/pull`（离线、手工覆盖目录、或打 tag 固定版本时） |
+
+   示例：非 `main` 分支、目录在非默认路径：  
+   `APP_DIR=/data/aipodcast BRANCH=production bash release.sh`
+
+4. **`git pull --ff-only` 失败时**  
+   - 多为服务器工作区有本地修改、冲突或非快进历史。处理完冲突或改为干净检出后重试；**不要**在不了解影响时强推覆盖生产机历史。
+
+5. **版本说明中的数据库变更**  
+   - 若发版说明要求执行新的 SQL 或 `make migrate-db`，在维护窗口内按 [数据库迁移](#数据库迁移) 与运维文档执行后再或同时发版。
+
+6. **`.env.ai-native`**  
+   - 一般无需每次发版都改；仅当新版本增加或变更配置项时，对比 `.env.ai-native.example` 后合并到服务器上的 `.env.ai-native`，再执行 `docker compose ... up -d`（或 `release.sh` 已包含 `up -d --build`）。
+
+---
 
 ## Compose 默认行为（`docker-compose.ai-native.yml`）
 
@@ -50,39 +138,6 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 **密码含单引号等特殊字符时**：在 SQL 里用 PostgreSQL 美元引用，例如 `ALTER USER aipodcast WITH PASSWORD $pwd$O'reilly$42$pwd$;`（把 `$pwd$…$pwd$` 中间换成你的新口令）。
 
 **无法接受停机或丢失数据的场景**：不要用「删卷重建」代替上述流程；仅在测试环境或确认可丢弃 `pg_data` 时才考虑重建卷。
-
-## 推荐流程
-
-1. 克隆代码到如 `/opt/minimax_aipodcast`，**不要用 root** 日常开发目录放在 `/root` 下给普通用户跑容器时易踩权限坑。
-2. 复制并编辑环境变量：
-
-   ```bash
-   cp .env.ai-native.example .env.ai-native
-   nano .env.ai-native
-   ```
-
-   说明：Docker Compose 部署默认读取项目根目录 `.env.ai-native`（包括 `MINIMAX_API_KEY` 等）。
-   仅当你采用 systemd `EnvironmentFile` 启动时，才需要改用 `/etc/default/aipodcast`。
-
-3. 启动：
-
-   ```bash
-   cd /opt/minimax_aipodcast
-   sudo bash deploy.sh --yes
-   ```
-
-   或直接使用：
-
-   ```bash
-   docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d --build
-   ```
-
-4. 验证：
-
-   ```bash
-   curl -s http://127.0.0.1:8008/health
-   curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/
-   ```
 
 ## 数据库迁移
 

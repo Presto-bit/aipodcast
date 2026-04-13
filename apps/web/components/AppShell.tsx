@@ -28,7 +28,6 @@ import { useAuth } from "../lib/auth";
 import { APP_SIDEBAR_COLLAPSED_KEY as COLLAPSE_KEY, APP_SIDEBAR_COLLAPSE_EVENT } from "../lib/appSidebarCollapse";
 import { useI18n } from "../lib/I18nContext";
 import OnboardingModal from "./OnboardingModal";
-import SidebarPlanStrip from "./SidebarPlanStrip";
 import BrandGlyph from "./brand/BrandGlyph";
 import { dispatchNotesOpenWorkbench } from "../lib/notesLastNotebook";
 import {
@@ -182,6 +181,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     ],
     [t]
   );
+  const navSubscription = useMemo<NavItem[]>(
+    () => [
+      {
+        href: "/subscription",
+        label: t("nav.subscribe"),
+        short: "订",
+        Icon: IconSubscription,
+        activeMatch: (p) => pathMatchesRoot(p, "/subscription")
+      }
+    ],
+    [t]
+  );
 
   useEffect(() => {
     try {
@@ -292,13 +303,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {navProducts.map(renderLink)}
           <NavSectionHeader collapsed={collapsed}>{t("nav.library")}</NavSectionHeader>
           {navLibrary.map(renderLink)}
+          {navSubscription.map(renderLink)}
         </nav>
-
-        <SidebarPlanStrip collapsed={collapsed} />
 
         {isAdmin ? (
           <div className="mx-1.5 mt-1 shrink-0 space-y-0.5 border-t border-line/90 px-0.5 pb-1 pt-2">
-            {renderLink({ href: "/subscription", label: t("nav.subscription"), short: "订", Icon: IconSubscription })}
             {renderLink({
               href: "/admin/hub",
               label: t("nav.console"),
