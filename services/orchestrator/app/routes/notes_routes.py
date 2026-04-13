@@ -319,6 +319,11 @@ def download_note_file_api(note_id: str, request: Request):
 @router.post("/notes/upload_json")
 def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
     user_ref = _current_user_ref_or_401(request)
+    try:
+        ensure_notebooks_schema()
+    except Exception as exc:
+        _notes_startup_logger.exception("notes upload_json: ensure_notebooks_schema failed")
+        raise HTTPException(status_code=503, detail="笔记存储未就绪，请稍后重试。") from exc
     raw_name = (body.filename or "").strip()
     if not raw_name or "." not in raw_name:
         raise HTTPException(status_code=400, detail="无效文件名")

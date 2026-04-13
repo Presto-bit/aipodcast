@@ -16,7 +16,7 @@ type Props = {
   alipayPageEnabled?: boolean;
   alipayLoadingTier?: string | null;
   onAlipayPay?: (tier: string) => void;
-  paidTierIntentOnly?: boolean;
+  onPaidTierWithoutAlipay?: (tier: string) => void;
 };
 
 export function PricingPlansGrid({
@@ -31,7 +31,7 @@ export function PricingPlansGrid({
   alipayPageEnabled,
   alipayLoadingTier,
   onAlipayPay,
-  paidTierIntentOnly
+  onPaidTierWithoutAlipay
 }: Props) {
   return (
     <div className="mt-10 space-y-8">
@@ -50,7 +50,7 @@ export function PricingPlansGrid({
             alipayPageEnabled={alipayPageEnabled}
             alipayLoadingTier={alipayLoadingTier}
             onAlipayPay={onAlipayPay}
-            paidTierIntentOnly={paidTierIntentOnly}
+            onPaidTierWithoutAlipay={onPaidTierWithoutAlipay}
           />
         ))}
       </div>

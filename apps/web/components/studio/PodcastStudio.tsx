@@ -1204,13 +1204,6 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                     {showAdvanced ? "收起高级设置" : "展开高级设置"}
                   </button>
                   {showAdvanced ? (
-                    <p className="mb-2 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2 text-xs leading-relaxed text-muted">
-                      以下为<strong className="text-ink">口播成片</strong>相关的高级项：音色、目标字数、片头片尾与 BGM 等仅影响
-                      <strong className="text-ink">下一次生成</strong>
-                      ；与资料勾选的修改一样，请确认后再点「做一期播客」。
-                    </p>
-                  ) : null}
-                  {showAdvanced ? (
                     <>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="voice" className="relative inline-block align-top">
                     <button type="button" className={chipClass(activePanel === "voice")} onClick={() => setActivePanel((p) => (p === "voice" ? null : "voice"))}>

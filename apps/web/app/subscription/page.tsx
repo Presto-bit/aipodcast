@@ -58,6 +58,7 @@ export default function SubscriptionPage() {
   const [alipayLoadingTier, setAlipayLoadingTier] = useState<string | null>(null);
   const [alipayWalletLoading, setAlipayWalletLoading] = useState(false);
   const [plansConfigLoaded, setPlansConfigLoaded] = useState(false);
+  const [walletBalanceCents, setWalletBalanceCents] = useState<number | null>(null);
 
   /** 本地联调可选：NEXT_PUBLIC_ENABLE_MOCK_WALLET=1 才展示内测模拟充值；生产环境仅走支付宝。 */
   const allowMockWallet =
@@ -119,11 +120,14 @@ export default function SubscriptionPage() {
         plan?: string;
         billing_cycle?: string | null;
         orders?: OrderRow[];
+        wallet_balance_cents?: number;
       };
       if (mr.ok && md.success) {
         setCurrentPlan(md.plan?.trim() ? md.plan : "free");
         setBillingCycle(md.billing_cycle ?? null);
         setOrders(Array.isArray(md.orders) ? md.orders : []);
+        if (typeof md.wallet_balance_cents === "number") setWalletBalanceCents(md.wallet_balance_cents);
+        else setWalletBalanceCents(null);
       }
     } catch {
       // ignore
@@ -186,14 +190,7 @@ export default function SubscriptionPage() {
       };
       if (!res.ok || !data.success) throw new Error(data.error || data.detail || `请求失败 ${res.status}`);
       setCurrentPlan(data.user?.plan || tier);
-      if (tier !== "free" && !alipayPageEnabled) {
-        setMsg(
-          data.message ||
-            "已保存订阅意向（当前未完成支付宝签约）。请联系运营开通收银台，或稍后刷新页面重试。"
-        );
-      } else {
-        setMsg(data.message || "已保存");
-      }
+      setMsg(data.message || "已保存");
       await loadMe();
       await refreshMe();
     } catch (err) {
@@ -206,7 +203,7 @@ export default function SubscriptionPage() {
   async function createAlipaySubscription(tier: string) {
     if (tier === "free") return;
     setAlipayLoadingTier(tier);
-    setMsg("正在连接支付宝收银台…");
+    setMsg("正在连接支付宝…页面打开后请用手机支付宝扫码完成支付，支付成功后将自动升级档位。");
     setWalletCheckout(null);
     let didNavigate = false;
     const ac = new AbortController();
@@ -351,7 +348,7 @@ export default function SubscriptionPage() {
     const wac = new AbortController();
     const wTimer = window.setTimeout(() => wac.abort(), 60_000);
     setAlipayWalletLoading(true);
-    setMsg("");
+    setMsg("正在连接支付宝…页面打开后请用手机扫码完成充值。");
     setWalletCheckout(null);
     try {
       const res = await fetch("/api/subscription/alipay-page/wallet", {
@@ -380,7 +377,6 @@ export default function SubscriptionPage() {
       const payUrl = typeof data.pay_page_url === "string" ? data.pay_page_url.trim() : "";
       if (!payUrl) throw new Error("收银台未返回有效支付链接，请稍后重试或联系客服");
       if (!data.out_trade_no) throw new Error("订单号缺失，请重试");
-      setMsg("正在跳转支付宝…");
       didNavigateWallet = true;
       window.location.assign(payUrl);
     } catch (err) {
@@ -414,16 +410,28 @@ export default function SubscriptionPage() {
         alipayPageEnabled={alipayPageEnabled}
         alipayLoadingTier={alipayLoadingTier}
         onAlipayPay={(tier) => void createAlipaySubscription(tier)}
-        paidTierIntentOnly={!alipayPageEnabled}
+        onPaidTierWithoutAlipay={() =>
+          setMsg("付费订阅需跳转支付宝完成付款后才会生效。请在服务器配置 ALIPAY_PAY_ENABLED、密钥与 ALIPAY_NOTIFY_URL，并确保异步通知可达。")
+        }
       />
 
       {showWalletRechargeSection ? (
         <section className="mt-12 rounded-xl border border-dashed border-line bg-fill/30 p-5">
           <h2 className="text-sm font-semibold text-ink">账户余额充值</h2>
+          {walletBalanceCents != null ? (
+            <p className="mt-1 text-sm text-ink">
+              当前余额：<span className="font-mono font-semibold">{fmtMoneyYuan(walletBalanceCents)}</span>
+            </p>
+          ) : null}
           <p className="mt-1 text-xs text-muted">
             {mergedWalletTopup.description ||
               "充值进入钱包（单位：人民币），用多少扣多少；单次最低 ¥10；不改变订阅档位。"}
           </p>
+          {alipayPageEnabled ? (
+            <p className="mt-2 text-xs text-muted">
+              跳转支付宝页后请用手机扫码付款，成功后余额会自动更新。套餐内用量用尽后，按量任务会从余额扣费（以服务端记录为准）。
+            </p>
+          ) : null}
           <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <label className="flex flex-col gap-1 text-sm">
@@ -446,7 +454,7 @@ export default function SubscriptionPage() {
                 }
                 onClick={() => void createAlipayWalletTopup()}
               >
-                {alipayWalletLoading ? "正在跳转支付宝…" : "支付"}
+                {alipayWalletLoading ? "正在跳转支付宝…" : "充值"}
               </button>
             ) : allowMockWallet && mergedWalletTopup.checkout_supported !== false ? (
               <button

@@ -20,8 +20,8 @@ type Props = {
   alipayPageEnabled?: boolean;
   alipayLoadingTier?: string | null;
   onAlipayPay?: (tier: string) => void;
-  /** 未开通支付宝时：付费档主按钮为「保存意向」，避免误以为可立即扣款 */
-  paidTierIntentOnly?: boolean;
+  /** 付费档且未接支付宝时：不调用「保存意向」接口，改由此回调提示用户 */
+  onPaidTierWithoutAlipay?: (tier: string) => void;
 };
 
 export function PricingPlanCard({
@@ -36,7 +36,7 @@ export function PricingPlanCard({
   alipayPageEnabled,
   alipayLoadingTier,
   onAlipayPay,
-  paidTierIntentOnly = false
+  onPaidTierWithoutAlipay
 }: Props) {
   const p = plan;
   const monthly = p.monthly_price_cents ?? null;
@@ -142,9 +142,13 @@ export function PricingPlanCard({
               }
               if (useAlipayCheckout) {
                 onAlipayPay?.(p.id);
-              } else {
-                onSelect?.(p.id);
+                return;
               }
+              if (onPaidTierWithoutAlipay) {
+                onPaidTierWithoutAlipay(p.id);
+                return;
+              }
+              onSelect?.(p.id);
             }}
           >
             {isFree
@@ -152,14 +156,12 @@ export function PricingPlanCard({
                 ? "处理中…"
                 : "选用 Free"
               : alipayLoadingThis
-                ? "正在跳转支付宝…"
+                ? "正在跳转支付宝收银台…"
                 : isSubmittingThis
-                  ? paidTierIntentOnly
-                    ? "保存中…"
-                    : "处理中…"
+                  ? "处理中…"
                   : isCurrent
                     ? "当前方案"
-                    : ctaLabel || (paidTierIntentOnly ? "保存订阅意向" : "订阅")}
+                    : ctaLabel || "订阅"}
           </button>
         )}
       </div>

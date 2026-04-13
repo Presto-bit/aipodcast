@@ -1194,6 +1194,7 @@ def list_recent_works(
     """
     成功态作品列表。slim_result=True 时仅在 SQL 层投影 result 白名单，避免巨大 audio_hex 进入 API 进程。
     """
+    ensure_jobs_trash_schema()
     lim = max(1, min(200, int(limit)))
     off = max(0, min(10_000, int(offset)))
     with get_conn() as conn:
@@ -1403,6 +1404,7 @@ def list_jobs(
     slim: bool = False,
     user_ref: str | None = None,
 ) -> list[dict[str, Any]]:
+    ensure_jobs_trash_schema()
     lim = max(1, min(500, int(limit)))
     off = max(0, min(50_000, int(offset)))
     allowed = ("queued", "running", "succeeded", "failed", "cancelled")
