@@ -303,7 +303,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {navProducts.map(renderLink)}
           <NavSectionHeader collapsed={collapsed}>{t("nav.library")}</NavSectionHeader>
           {navLibrary.map(renderLink)}
-          {navSubscription.map(renderLink)}
         </nav>
 
         {isAdmin ? (
@@ -318,7 +317,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         ) : null}
 
-        <div className="shrink-0 border-t border-line p-2">
+        <div className="shrink-0 space-y-0.5 border-t border-line p-2">
+          {navSubscription.map(renderLink)}
           {renderLink({
             href: "/me",
             label: t("nav.my"),

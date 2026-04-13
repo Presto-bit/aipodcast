@@ -37,16 +37,6 @@ type WalletCheckoutState = {
   amount_cents: number;
 };
 
-type AlipayPaySession =
-  | {
-      kind: "subscription";
-      pay_page_url: string;
-      out_trade_no: string;
-      amount_cents: number;
-      tier: string;
-    }
-  | { kind: "wallet"; pay_page_url: string; out_trade_no: string; amount_cents: number };
-
 type UsageSnapshot = {
   period_days: number;
   monthly_audio_minutes_cap: number;
@@ -76,7 +66,6 @@ export default function SubscriptionPage() {
   const [alipayPageEnabled, setAlipayPageEnabled] = useState(false);
   const [alipayLoadingTier, setAlipayLoadingTier] = useState<string | null>(null);
   const [alipayWalletLoading, setAlipayWalletLoading] = useState(false);
-  const [alipaySession, setAlipaySession] = useState<AlipayPaySession | null>(null);
   const [usageSnapshot, setUsageSnapshot] = useState<UsageSnapshot | null>(null);
   const [walletPayBusyTier, setWalletPayBusyTier] = useState<string | null>(null);
 
@@ -196,29 +185,6 @@ export default function SubscriptionPage() {
     window.history.replaceState({}, "", window.location.pathname);
   }, [loadMe, refreshMe]);
 
-  useEffect(() => {
-    if (!alipaySession) return;
-    const id = window.setInterval(() => {
-      void loadMe();
-    }, 2500);
-    return () => window.clearInterval(id);
-  }, [alipaySession, loadMe]);
-
-  useEffect(() => {
-    if (!alipaySession) return;
-    const oid = alipaySession.out_trade_no;
-    const hit = orders.some((o) => {
-      if (!o.event_id || o.event_id !== oid) return false;
-      const st = String(o.status || "").toLowerCase();
-      return st === "paid" || st === "success" || st === "succeeded";
-    });
-    if (hit) {
-      setAlipaySession(null);
-      setMsg("支付宝支付已成功入账");
-      void refreshMe();
-    }
-  }, [orders, alipaySession, refreshMe]);
-
   const shownPlans = useMemo(() => (plans.length ? plans : FALLBACK_SUBSCRIPTION_PLANS), [plans]);
 
   const walletPayEnabled = Boolean(user && typeof user.phone === "string" && user.phone !== "" && user.phone !== "local");
@@ -312,10 +278,6 @@ export default function SubscriptionPage() {
 
   async function createAlipaySubscription(tier: string) {
     if (tier === "free") return;
-    const popup =
-      typeof window !== "undefined"
-        ? window.open("", "alipayPay", "width=920,height=760,scrollbars=yes")
-        : null;
     setAlipayLoadingTier(tier);
     setMsg("");
     setWalletCheckout(null);
@@ -335,25 +297,11 @@ export default function SubscriptionPage() {
         message?: string;
       };
       if (!res.ok || !data.success || !data.pay_page_url || !data.out_trade_no) {
-        popup?.close();
         throw new Error(data.detail || data.error || `支付宝下单失败 ${res.status}`);
       }
-      setAlipaySession({
-        kind: "subscription",
-        pay_page_url: data.pay_page_url,
-        out_trade_no: data.out_trade_no,
-        amount_cents: Number(data.amount_cents ?? 0),
-        tier
-      });
-      if (popup) {
-        popup.location.href = data.pay_page_url;
-      }
-      setMsg(
-        (data.message || "请在支付宝收银台完成支付。") +
-          (popup ? "" : " 未检测到弹窗时，请在下方弹层内点击「打开支付宝收银台」。")
-      );
+      /** 当前页跳转支付宝网关，避免先开空白窗再赋值被浏览器拦截 */
+      window.location.assign(data.pay_page_url);
     } catch (err) {
-      popup?.close();
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
       setAlipayLoadingTier(null);
@@ -448,10 +396,6 @@ export default function SubscriptionPage() {
       setMsg(parsed.error);
       return;
     }
-    const popup =
-      typeof window !== "undefined"
-        ? window.open("", "alipayPay", "width=920,height=760,scrollbars=yes")
-        : null;
     setAlipayWalletLoading(true);
     setMsg("");
     setWalletCheckout(null);
@@ -471,24 +415,10 @@ export default function SubscriptionPage() {
         message?: string;
       };
       if (!res.ok || !data.success || !data.pay_page_url || !data.out_trade_no) {
-        popup?.close();
         throw new Error(data.detail || data.error || `支付宝充值下单失败 ${res.status}`);
       }
-      setAlipaySession({
-        kind: "wallet",
-        pay_page_url: data.pay_page_url,
-        out_trade_no: data.out_trade_no,
-        amount_cents: Number(data.amount_cents ?? parsed.cents)
-      });
-      if (popup) {
-        popup.location.href = data.pay_page_url;
-      }
-      setMsg(
-        (data.message || "请在支付宝收银台完成充值。") +
-          (popup ? "" : " 未检测到弹窗时，请在下方弹层内点击「打开支付宝收银台」。")
-      );
+      window.location.assign(data.pay_page_url);
     } catch (err) {
-      popup?.close();
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
       setAlipayWalletLoading(false);
@@ -562,49 +492,6 @@ export default function SubscriptionPage() {
         onWalletPay={(tier) => void payWithWalletForTier(tier)}
       />
 
-      {alipaySession ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-[1px]">
-          <section className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-xl">
-            <h2 className="text-center text-sm font-semibold text-ink">支付宝扫码支付</h2>
-            <p className="mt-2 text-center text-xs text-muted">
-              {alipaySession.kind === "subscription"
-                ? `订阅 ${alipaySession.tier} · ${fmtMoneyYuan(alipaySession.amount_cents)}`
-                : `钱包充值 · ${fmtMoneyYuan(alipaySession.amount_cents)}`}
-            </p>
-            <p className="mt-1 text-center font-mono text-[10px] text-muted">商户单号 {alipaySession.out_trade_no}</p>
-            <p className="mt-3 text-center text-xs text-muted">
-              已尝试打开支付窗口。请在窗口内使用手机支付宝扫码或登录付款；支付成功后本页会自动刷新订单。
-            </p>
-            <div className="mt-4 flex flex-col gap-2">
-              <a
-                href={alipaySession.pay_page_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block rounded-xl bg-cta py-2.5 text-center text-sm font-medium text-cta-foreground hover:bg-cta/90"
-              >
-                打开支付宝收银台
-              </a>
-              <button
-                type="button"
-                className="rounded-xl border border-line py-2 text-sm text-muted hover:bg-fill"
-                onClick={() => setAlipaySession(null)}
-              >
-                关闭
-              </button>
-            </div>
-            <div className="mt-4">
-              <p className="mb-2 text-center text-[10px] text-muted">若支付宝允许内嵌，可在此预览（部分环境会空白，请用上方按钮打开）</p>
-              <iframe
-                title="支付宝收银台"
-                src={alipaySession.pay_page_url}
-                className="h-[min(420px,50vh)] w-full rounded-lg border border-line bg-canvas"
-                sandbox="allow-forms allow-scripts allow-same-origin allow-top-navigation-by-user-activation"
-              />
-            </div>
-          </section>
-        </div>
-      ) : null}
-
       {showWalletRechargeSection ? (
         <section className="mt-12 rounded-xl border border-dashed border-line bg-fill/30 p-5">
           <h2 className="text-sm font-semibold text-ink">账户余额充值</h2>
@@ -634,19 +521,23 @@ export default function SubscriptionPage() {
                 }
                 onClick={() => void createWalletOrder()}
               >
-                {walletCreating ? "创建订单中…" : "去支付（模拟）"}
+                {walletCreating ? "创建订单中…" : "去支付（内测模拟）"}
               </button>
             ) : null}
             {alipayPageEnabled ? (
               <button
                 type="button"
-                className="rounded-lg border border-line bg-canvas px-4 py-2 text-sm font-medium text-ink hover:bg-fill disabled:opacity-50"
+                className={`rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50 ${
+                  mergedWalletTopup.checkout_supported === false
+                    ? "bg-cta text-cta-foreground hover:bg-cta/90"
+                    : "border border-line bg-canvas text-ink hover:bg-fill"
+                }`}
                 disabled={
                   walletCreating || walletPaying || alipayWalletLoading || busyPayOrWallet || !walletPayEnabled
                 }
                 onClick={() => void createAlipayWalletTopup()}
               >
-                {alipayWalletLoading ? "创建支付宝订单中…" : "支付宝扫码充值"}
+                {alipayWalletLoading ? "正在跳转支付宝…" : "支付宝扫码充值"}
               </button>
             ) : null}
           </div>

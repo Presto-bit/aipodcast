@@ -248,6 +248,7 @@ def build_subscription_plans_response() -> dict[str, Any]:
         ),
     ]
 
+    alipay_ready = alipay_page_pay_ready()
     return {
         "success": True,
         "currency": "CNY",
@@ -260,13 +261,14 @@ def build_subscription_plans_response() -> dict[str, Any]:
             "min_amount_cents": WALLET_TOPUP_MIN_CENTS,
             "max_amount_cents": WALLET_TOPUP_MAX_CENTS,
             "currency": "CNY",
-            "checkout_supported": True,
+            # 已配置支付宝真实收款时不再展示「模拟充值」入口，避免与真实支付混淆
+            "checkout_supported": not alipay_ready,
             "description": "充值进入账户余额（人民币），按实际使用扣减；单次充值最低 ¥10，不设过期；不改变当前订阅档位。",
             "usage_reference": _wallet_usage_reference(),
         },
         "payment_channels": {
             "alipay_page": {
-                "enabled": bool(alipay_page_pay_ready()),
+                "enabled": alipay_ready,
                 "label_zh": "支付宝扫码支付（电脑网站）",
             },
         },

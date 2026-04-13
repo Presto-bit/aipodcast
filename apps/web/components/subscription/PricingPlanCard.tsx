@@ -56,6 +56,8 @@ export function PricingPlanCard({
   const alipayBusy = alipayLoadingTier != null && alipayLoadingTier !== "";
   const walletBusyThis = walletPayBusyTier === p.id;
   const walletBusy = walletPayBusyTier != null && walletPayBusyTier !== "";
+  /** 已接支付宝时：主按钮走真实收银台，避免用户只点「订阅」却仅保存意向 */
+  const primaryAlipay = !isFree && Boolean(alipayPageEnabled && onAlipayPay);
 
   const showYearly = cycle === "yearly" && !isFree && yearly != null && yearly > 0;
   const displayMainCents = showYearly ? equiv : monthly;
@@ -137,6 +139,29 @@ export function PricingPlanCard({
       <div className="mt-6">
         {primaryAction === "custom" && customButton ? (
           customButton
+        ) : primaryAlipay ? (
+          <>
+            <button
+              type="button"
+              className="w-full rounded-xl bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground transition hover:bg-cta/90 disabled:opacity-50"
+              disabled={anySubmitting || alipayBusy || walletBusy || isCurrent}
+              onClick={() => onAlipayPay?.(p.id)}
+            >
+              {alipayLoadingThis ? "正在跳转支付宝…" : "支付宝扫码支付"}
+            </button>
+            <button
+              type="button"
+              className="mt-2 w-full rounded-xl border border-line bg-canvas px-4 py-2 text-sm font-medium text-muted transition hover:bg-fill disabled:opacity-50"
+              disabled={anySubmitting || alipayBusy || walletBusy || isCurrent}
+              onClick={() => onSelect?.(p.id)}
+            >
+              {isSubmittingThis
+                ? "处理中…"
+                : isCurrent
+                  ? "当前方案"
+                  : "仅保存意向（不扣款）"}
+            </button>
+          </>
         ) : (
           <button
             type="button"
@@ -163,7 +188,7 @@ export function PricingPlanCard({
               : `余额支付月费（${fmtYuan(monthly)}）`}
           </button>
         ) : null}
-        {!isFree && alipayPageEnabled && onAlipayPay ? (
+        {!isFree && !primaryAlipay && alipayPageEnabled && onAlipayPay ? (
           <button
             type="button"
             className="mt-2 w-full rounded-xl border border-line bg-canvas px-4 py-2 text-sm font-medium text-ink transition hover:bg-fill disabled:opacity-50"
