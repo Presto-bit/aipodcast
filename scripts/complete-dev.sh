@@ -11,18 +11,7 @@ cd "$ROOT"
 API_PORT="${ORCHESTRATOR_DEV_PORT:-8008}"
 WEB_PORT="${NEXT_DEV_PORT:-3000}"
 SKIP_INSTALL="${SKIP_INSTALL:-0}"
-WORKER_PIDS=""
 ENV_FILE=".env.ai-native"
-
-cleanup() {
-  if [ -n "${WORKER_PIDS}" ]; then
-    echo ">>> 停止后台 worker..."
-    for pid in ${WORKER_PIDS}; do
-      kill "${pid}" >/dev/null 2>&1 || true
-    done
-  fi
-}
-trap cleanup EXIT INT TERM
 
 kill_port_listeners() {
   local port="$1"
@@ -46,24 +35,6 @@ kill_port_listeners() {
       kill -KILL "${pid}" >/dev/null 2>&1 || true
     done
   fi
-}
-
-start_worker() {
-  local queue="$1"
-  local script="workers/${queue}-worker/worker.py"
-  local pybin="${ROOT}/.venv-ai-native/bin/python"
-  if [ ! -f "${script}" ]; then
-    echo "!!! 缺少 worker 脚本: ${script}" >&2
-    exit 1
-  fi
-  if [ -x "${pybin}" ]; then
-    "${pybin}" "${script}" &
-  else
-    python3 "${script}" &
-  fi
-  local pid="$!"
-  WORKER_PIDS="${WORKER_PIDS} ${pid}"
-  echo ">>> 已启动 ${queue} worker (pid=${pid})"
 }
 
 env_value_from_file() {
@@ -137,9 +108,5 @@ echo ">>> 重置基础设施容器（down/up）"
 make down || true
 make dev-infra
 
-echo ">>> 启动后台 worker（ai + media）"
-start_worker "ai"
-start_worker "media"
-
-echo ">>> 启动 api + web（前台）。Ctrl+C 退出时会自动停止后台 worker。"
-exec make dev-apps
+echo ">>> 启动 api + web（含 ai/media worker，见 scripts/dev-run-with-workers.sh）。Ctrl+C 退出时会结束 worker。"
+exec bash scripts/dev-run-with-workers.sh

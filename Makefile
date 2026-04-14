@@ -57,7 +57,8 @@ dev-apps:
 	@test -d node_modules/concurrently || npm install
 	npm run dev
 
-# 一键：起基础设施 + 本机 api + web 热重载（Ctrl+C 会结束 api/web；Docker 服务仍运行）
+# 一键：起基础设施 + 本机 api + web 热重载；默认同时起 ai/media worker（避免任务长期 queued）
+# 仅 api/web：SKIP_DEV_WORKERS=1 make dev  或  make dev-apps
 dev:
 	@test -f apps/web/package.json || (echo "请在仓库根目录执行 make dev（需要 apps/web）"; exit 1)
 	@test -f .env.ai-native || (echo "缺少 .env.ai-native，请先: cp .env.ai-native.example .env.ai-native"; exit 1)
@@ -65,7 +66,7 @@ dev:
 	@test -d node_modules/concurrently || npm install
 	@docker info >/dev/null 2>&1 || (echo "Docker 未运行：请先启动 Docker Desktop（或 Docker 守护进程），再执行 make dev。"; exit 1)
 	docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d postgres redis minio
-	npm run dev
+	bash scripts/dev-run-with-workers.sh
 
 dev-api:
 	bash scripts/dev-api.sh

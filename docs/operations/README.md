@@ -9,8 +9,8 @@
 | 动作 | 入口 |
 |------|------|
 | 全栈 Docker 启停 | 根目录 `Makefile`：`make up` / `make down` / `make logs` |
-| 本机热重载（PG/Redis/MinIO 在 Docker，应用在宿主机） | `make dev`、`make dev-api`、`make dev-web` |
-| Worker（生产消费队列） | `make dev-worker-ai`、`make dev-worker-media` |
+| 本机热重载（PG/Redis/MinIO 在 Docker，应用在宿主机） | `make dev`（**默认已起 ai + media worker**，见 `scripts/dev-run-with-workers.sh`）、`SKIP_DEV_WORKERS=1 make dev` 仅 api/web、`make dev-api`、`make dev-web` |
+| Worker（单独再起一份；一般不必，`make dev` 已含） | `make dev-worker-ai`、`make dev-worker-media` |
 | Worker（开发：代码变更自动重启） | `make dev-worker-ai-watch`、`make dev-worker-media-watch` |
 | SQL 迁移 | `make migrate-db`（脚本按 `infra/postgres/init` 顺序执行） |
 | 可再生产物清理预览/执行 | `make cleanup-outputs DAYS=30 DRY_RUN=1` / `DRY_RUN=0` |
