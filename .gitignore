@@ -56,6 +56,9 @@ secrets/
 *.temp
 .cache/
 
+# 本地导出的 MiniMax 系统音色清单（勿入库）
+minimax系统音色列表.txt
+
 # 离线构建：由 scripts/package-offline-bundle.sh 下载的 wheel，勿提交
 docker/offline-pip-wheels/*
 !docker/offline-pip-wheels/.gitkeep
