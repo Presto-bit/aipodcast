@@ -1,14 +1,14 @@
-/** 部分 CDN / 代理会先发 OPTIONS；显式允许 POST，避免误报 405。 */
-import { NextRequest } from "next/server";
-import { noteUploadOptionsResponse, postNoteUploadFromForm } from "../../../../lib/noteUploadRoute";
+import type { NextRequest } from "next/server";
+import { handleNoteUploadOPTIONS, handleNoteUploadPOST } from "../../../../lib/noteUploadOrchestratorProxy";
 
-/** 大文件 base64 + 编排器解析可能超过默认 Serverless 限时（如 Vercel 10s）。 */
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
 export async function OPTIONS() {
-  return noteUploadOptionsResponse();
+  return handleNoteUploadOPTIONS();
 }
 
 export async function POST(req: NextRequest) {
-  return postNoteUploadFromForm(req);
+  return handleNoteUploadPOST(req);
 }

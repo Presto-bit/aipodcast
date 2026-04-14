@@ -4,17 +4,14 @@ P2+：reference_rag_mode = keyword | full_coverage | hybrid（见 rag_core：关
 """
 from __future__ import annotations
 
-import io
 import json
 import logging
 import os
-import re
-import tempfile
-import zipfile
 from typing import Any
 
 from .legacy_bridge import parse_url_content
 from .models import get_note_by_id
+from .note_document_extract import extract_text_from_bytes
 from .object_store import get_object_bytes
 
 logger = logging.getLogger(__name__)
@@ -31,45 +28,13 @@ def _choose_auto_rag_top_k(total_chars: int) -> int:
     return 20
 
 
-def _docx_bytes_to_text(data: bytes) -> str:
-    try:
-        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
-            xml_data = zf.read("word/document.xml").decode("utf-8", errors="ignore")
-        text = re.sub(r"</w:p>", "\n", xml_data)
-        text = re.sub(r"<[^>]+>", "", text)
-        return re.sub(r"\n{2,}", "\n", text).strip()
-    except Exception:
-        return ""
-
-
 def _note_file_bytes_to_text(data: bytes, ext: str) -> str:
-    e = (ext or "txt").lower().lstrip(".")
-    if e in ("txt", "md", "markdown"):
-        return data.decode("utf-8", errors="ignore")
-    if e == "docx":
-        return _docx_bytes_to_text(data)
-
-    suffix = f".{e}" if e else ".bin"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
-        f.write(data)
-        path = f.name
+    """与上传解析共用 note_document_extract。"""
     try:
-        from app.fyv_shared.content_parser import content_parser
-
-        if e == "pdf":
-            r = content_parser.parse_pdf(path)
-            return str(r.get("content") or "").strip() if r.get("success") else ""
-        if e == "epub":
-            r = content_parser.parse_epub(path)
-            return str(r.get("content") or "").strip() if r.get("success") else ""
+        return extract_text_from_bytes(data, ext).text
     except Exception as exc:
-        logger.warning("note_file parse (%s): %s", e, exc)
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-    return ""
+        logger.warning("note_file extract (%s): %s", ext, exc)
+        return ""
 
 
 def load_note_text_for_script(note_id: str, user_ref: str | None = None) -> tuple[str, str]:
@@ -134,7 +99,7 @@ def merge_reference_for_script(
 ) -> tuple[str, dict[str, Any]]:
     """
     合并用户输入、主 URL、多 URL、选中笔记、附加参考段落；可选长文压缩。
-    reference_rag_mode=hybrid 且合并后足够长时走向量 + 关键词混合（需 MINIMAX_API_KEY）。
+    reference_rag_mode=hybrid 且合并后足够长时走向量 + 关键词混合（EmbeddingProvider / RAG_EMBEDDING_*）。
     """
     note_cap = max_note_refs if max_note_refs is not None and max_note_refs > 0 else 24
 

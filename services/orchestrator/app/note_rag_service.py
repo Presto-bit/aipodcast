@@ -1,8 +1,10 @@
 """
 勾选范围内的向量检索 + 异步摘要分层（笔记入库后由 RQ 建索引）。
 
-- 索引：按 content_text 切块、EmbeddingProvider 嵌入，写入 note_rag_chunks。
-- 摘要：异步 LLM 生成，写入 inputs.note_summary。
+- 索引：按 content_text 切块、EmbeddingProvider 嵌入，写入 note_rag_chunks；
+  inputs.note_rag_embedding_sig 记录 backend|dim|配置指纹，变更 env 后过期块检索时丢弃。
+- inputs.note_rag_index_error：最近一次索引失败原因（成功时清空）。
+- 摘要：异步 LLM 生成，写入 inputs.note_summary（标注为机器摘要）。
 - 问答 / 脚本参考：优先摘要 + 跨笔记向量检索 Top 块；无索引时回退旧逻辑。
 """
 from __future__ import annotations
@@ -29,6 +31,7 @@ _SUMMARY_SYSTEM = (
     "你是编辑助手。下面是一篇资料全文或长摘录。请用中文写一段结构化摘要："
     "主要观点、章节/话题脉络、关键术语；不要编造原文没有的内容。"
     "控制在约 800～1200 汉字以内，可用简短条目。"
+    "摘要仅供快速浏览，事实与细节以原文为准。"
 )
 
 
@@ -41,6 +44,9 @@ def ensure_note_rag_schema() -> None:
         with get_cursor(conn) as cur:
             cur.execute("ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_summary TEXT")
             cur.execute("ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_rag_body_hash TEXT")
+            cur.execute("ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_rag_embedding_sig TEXT")
+            cur.execute("ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_rag_index_error TEXT")
+            cur.execute("ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_rag_index_at TIMESTAMPTZ")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS note_rag_chunks (
@@ -105,26 +111,66 @@ def _load_chunks_for_notes(note_ids: list[str]) -> list[dict[str, Any]]:
         with get_cursor(conn) as cur:
             cur.execute(
                 """
-                SELECT input_id::text AS note_id, chunk_index, chunk_text, embedding
-                FROM note_rag_chunks
-                WHERE input_id = ANY(%s::uuid[])
-                ORDER BY input_id, chunk_index
+                SELECT n.input_id::text AS note_id, n.chunk_index, n.chunk_text, n.embedding,
+                       i.note_rag_embedding_sig AS note_sig
+                FROM note_rag_chunks n
+                JOIN inputs i ON i.id = n.input_id
+                WHERE n.input_id = ANY(%s::uuid[])
+                ORDER BY n.input_id, n.chunk_index
                 """,
                 (ids,),
             )
             return [dict(r) for r in cur.fetchall()]
 
 
-def _update_note_rag_meta(note_id: str, summary: str | None, body_hash: str) -> None:
+def _update_note_rag_after_success(
+    note_id: str,
+    summary: str | None,
+    body_hash: str,
+    embedding_sig: str,
+) -> None:
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
                 """
                 UPDATE inputs
-                SET note_summary = %s, note_rag_body_hash = %s
+                SET note_summary = %s, note_rag_body_hash = %s,
+                    note_rag_embedding_sig = %s, note_rag_index_error = NULL,
+                    note_rag_index_at = NOW()
                 WHERE id = %s::uuid
                 """,
-                (summary, body_hash, note_id),
+                (summary, body_hash, embedding_sig, note_id),
+            )
+            conn.commit()
+
+
+def _update_note_rag_index_error(note_id: str, error: str) -> None:
+    err = (error or "").strip()[:500]
+    if not err:
+        return
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE inputs SET note_rag_index_error = %s WHERE id = %s::uuid
+                """,
+                (err, note_id),
+            )
+            conn.commit()
+
+
+def _clear_note_rag_meta_short_body(note_id: str) -> None:
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE inputs
+                SET note_summary = NULL, note_rag_body_hash = %s,
+                    note_rag_embedding_sig = NULL, note_rag_index_error = NULL,
+                    note_rag_index_at = NULL
+                WHERE id = %s::uuid
+                """,
+                ("", note_id),
             )
             conn.commit()
 
@@ -139,7 +185,7 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     body = str(row.get("content_text") or "").strip()
     if len(body) < 80:
         delete_rag_chunks_for_note(note_id)
-        _update_note_rag_meta(note_id, None, "")
+        _clear_note_rag_meta_short_body(note_id)
         return {"ok": True, "skipped": "body_too_short", "chars": len(body)}
 
     h = _body_sha256(body)
@@ -149,6 +195,7 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
 
     chunks = split_text_into_chunks(body)[:MAX_CHUNKS_PER_NOTE]
     if not chunks:
+        _update_note_rag_index_error(note_id, "no_chunks")
         return {"ok": False, "error": "no_chunks"}
 
     emb_backend = "unknown"
@@ -163,9 +210,11 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
             embeddings.extend(ep.embed_texts([c[:8000] for c in chunks[i : i + batch]]))
     except Exception as exc:
         logger.warning("note_rag embed failed note_id=%s: %s", note_id, exc)
+        _update_note_rag_index_error(note_id, f"embed_failed:{exc}")
         return {"ok": False, "error": f"embed_failed:{exc}"[:200]}
 
     if len(embeddings) != len(chunks):
+        _update_note_rag_index_error(note_id, "embed_count_mismatch")
         return {"ok": False, "error": "embed_count_mismatch"}
 
     delete_rag_chunks_for_note(note_id)
@@ -181,6 +230,12 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
                 )
             conn.commit()
 
+    sig = ""
+    try:
+        sig = ep.embedding_signature(len(embeddings[0]))
+    except Exception:
+        sig = ""
+
     summary_text = ""
     try:
         summary_text = _invoke_llm_summary(body, api_key=api_key)[:_SUMMARY_OUTPUT_CHARS]
@@ -188,12 +243,13 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
         logger.warning("note_rag summary failed note_id=%s: %s", note_id, exc)
         summary_text = ""
 
-    _update_note_rag_meta(note_id, summary_text or None, h)
+    _update_note_rag_after_success(note_id, summary_text or None, h, sig or "")
     return {
         "ok": True,
         "chunks": len(chunks),
         "summary_chars": len(summary_text),
         "embedding_backend": emb_backend,
+        "embedding_sig": sig[:120] if sig else "",
     }
 
 
@@ -219,6 +275,26 @@ def _metadata_notebook(row: dict[str, Any]) -> str:
     if not isinstance(md, dict):
         return ""
     return str(md.get("notebook") or "").strip()
+
+
+def _chunk_allowed_for_embedding(
+    note_sig: Any,
+    vec: list[float],
+    qv: list[float],
+    current_sig: str,
+) -> bool:
+    """维度一致；若笔记存了 sig 则须与当前 embedding 配置一致（否则视为需重索引的过期向量）。"""
+    if len(vec) != len(qv):
+        return False
+    ns = (note_sig or "").strip() if isinstance(note_sig, str) else ""
+    if not ns:
+        return True
+    return ns == current_sig
+
+
+def _note_rag_vector_candidate_cap() -> int:
+    """向量精排前候选块硬上限，防止勾选过多笔记时 CPU/内存尖峰。"""
+    return max(200, min(8000, int(os.getenv("NOTE_RAG_VECTOR_CANDIDATE_CAP", "2500") or "2500")))
 
 
 def _note_rag_keyword_prefilter_cap(note_count: int, top_k: int) -> int:
@@ -279,8 +355,31 @@ def retrieve_chunks_across_notes(
         if not ch:
             continue
         vec = [float(x) for x in emb]
-        parsed.append({**r, "_vec": vec, "_ch": ch})
+        parsed.append({**r, "_vec": vec, "_ch": ch, "note_sig": r.get("note_sig")})
 
+    if not parsed:
+        return "", []
+
+    try:
+        from app.fyv_shared.embedding_provider import EmbeddingProvider
+
+        ep = EmbeddingProvider()
+        qv = ep.embed_texts([q[:8000]])[0]
+        current_sig = ep.embedding_signature(len(qv))
+    except Exception as exc:
+        logger.warning("retrieve query embed failed: %s", exc)
+        return "", []
+
+    filtered: list[dict[str, Any]] = []
+    dropped_stale = 0
+    for p in parsed:
+        if _chunk_allowed_for_embedding(p.get("note_sig"), p["_vec"], qv, current_sig):
+            filtered.append(p)
+        else:
+            dropped_stale += 1
+    parsed = filtered
+    if dropped_stale:
+        logger.info("note_rag retrieve dropped %s stale or dim-mismatch chunks", dropped_stale)
     if not parsed:
         return "", []
 
@@ -290,14 +389,11 @@ def retrieve_chunks_across_notes(
         scored_kw.sort(key=lambda x: -x[0])
         parsed = [p for _, p in scored_kw[:pref_cap]]
 
-    try:
-        from app.fyv_shared.embedding_provider import EmbeddingProvider
-
-        ep = EmbeddingProvider()
-        qv = ep.embed_texts([q[:8000]])[0]
-    except Exception as exc:
-        logger.warning("retrieve query embed failed: %s", exc)
-        return "", []
+    vec_cap = _note_rag_vector_candidate_cap()
+    if len(parsed) > vec_cap:
+        scored_kw2 = [(float(_keyword_score(q, p["_ch"])), p) for p in parsed]
+        scored_kw2.sort(key=lambda x: -x[0])
+        parsed = [p for _, p in scored_kw2[:vec_cap]]
 
     vectors = [p["_vec"] for p in parsed]
     sims = _batch_cosine_vs_query(qv, vectors)
@@ -309,6 +405,9 @@ def retrieve_chunks_across_notes(
     scored.sort(key=lambda x: -x[0])
     k = max(1, min(top_k, len(scored)))
     picked = scored[:k]
+    picked.sort(
+        key=lambda x: (str(x[1].get("note_id") or ""), int(x[1].get("chunk_index") or 0))
+    )
 
     parts: list[str] = []
     used = 0
@@ -358,7 +457,10 @@ def build_summaries_section(
         used += len(block) + 4
     if not parts:
         return ""
-    return "## 异步摘要（每条笔记一份，便于把握全书脉络）\n\n" + "\n\n---\n\n".join(parts)
+    return (
+        "## 异步摘要（机器生成，仅供参考；事实与细节以原文摘录为准）\n\n"
+        + "\n\n---\n\n".join(parts)
+    )
 
 
 def build_layered_notes_context(

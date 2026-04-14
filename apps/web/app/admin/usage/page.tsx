@@ -88,7 +88,7 @@ export default function AdminUsagePage(): JSX.Element {
   const { getAuthHeaders } = useAuth();
   const search = useSearchParams();
   const initialTab = useMemo(() => {
-    const t = String(search.get("tab") || "").toLowerCase();
+    const t = String(search?.get("tab") ?? "").toLowerCase();
     return (t === "overview" || t === "orders" || t === "users" || t === "works" || t === "alerts") ? (t as TabKey) : "overview";
   }, [search]);
   const today = useMemo(() => new Date(), []);

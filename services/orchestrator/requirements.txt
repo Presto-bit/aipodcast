@@ -18,6 +18,9 @@ cryptography==43.0.3
 python-alipay-sdk>=3.3.0,<4
 beautifulsoup4==4.12.2
 PyPDF2==3.0.1
+PyMuPDF==1.24.14
+charset-normalizer==3.4.0
+python-docx==1.1.2
 pytest==8.3.4
 # 本地 Worker 热重载（scripts/dev_worker_watch.py）；生产镜像可保留，体积小
 watchfiles==1.1.1

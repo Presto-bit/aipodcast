@@ -110,7 +110,7 @@ export default function WorksPage() {
   }, [refreshActiveJobCount]);
 
   useEffect(() => {
-    const t = searchParams.get("tab");
+    const t = searchParams?.get("tab");
     if (t === "active") {
       setWorksView("active");
     } else {

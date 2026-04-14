@@ -39,6 +39,14 @@ type NoteItem = {
   inputType?: string;
   sourceReady?: boolean;
   sourceHint?: string;
+  ragChunkCount?: number;
+  ragIndexError?: string;
+  ragIndexedAt?: string;
+  parseStatus?: string;
+  parseEngine?: string;
+  parseDetail?: string;
+  parseEncoding?: string;
+  parseOk?: boolean;
 };
 
 type NotesResp = {
@@ -54,6 +62,14 @@ type PreviewResp = {
   text?: string;
   truncated?: boolean;
   error?: string;
+  ragChunkCount?: number;
+  ragIndexError?: string;
+  ragIndexedAt?: string;
+  parseStatus?: string;
+  parseEngine?: string;
+  parseDetail?: string;
+  parseEncoding?: string;
+  parseOk?: boolean;
 };
 
 const card =
@@ -189,6 +205,7 @@ export default function NotesPage() {
   const [previewText, setPreviewText] = useState("");
   const [previewKw, setPreviewKw] = useState("");
   const [previewTruncated, setPreviewTruncated] = useState(false);
+  const [previewStatusLine, setPreviewStatusLine] = useState("");
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
   const [renameNoteTitle, setRenameNoteTitle] = useState("");
   const [importUrl, setImportUrl] = useState("");
@@ -1289,6 +1306,7 @@ export default function NotesPage() {
     setPreviewTitle("");
     setPreviewText("");
     setPreviewTruncated(false);
+    setPreviewStatusLine("");
     setPreviewKw("");
     try {
       const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}/preview_text`, {
@@ -1301,6 +1319,20 @@ export default function NotesPage() {
       setPreviewTitle(data.title || "");
       setPreviewText(data.text || "");
       setPreviewTruncated(!!data.truncated);
+      const statusParts: string[] = [];
+      if (data.parseStatus && data.parseStatus !== "ok") {
+        statusParts.push(
+          `正文解析：${data.parseStatus}${data.parseDetail ? ` — ${data.parseDetail.slice(0, 220)}` : ""}`
+        );
+      }
+      if (data.ragIndexError) {
+        statusParts.push(`向量索引失败：${data.ragIndexError}`);
+      } else if (typeof data.ragChunkCount === "number" && data.ragChunkCount > 0) {
+        statusParts.push(
+          `向量块 ${data.ragChunkCount} 条${data.ragIndexedAt ? ` · ${data.ragIndexedAt}` : ""}`
+        );
+      }
+      setPreviewStatusLine(statusParts.join(" · "));
     } catch (err) {
       setPreviewText(String(err instanceof Error ? err.message : err));
     } finally {
@@ -1779,6 +1811,22 @@ export default function NotesPage() {
                                 aria-label="刚加入的资料"
                               >
                                 <FreshNoteSparkleIcon />
+                              </span>
+                            ) : null}
+                            {n.ragIndexError ? (
+                              <span
+                                className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-danger-soft text-danger-ink"
+                                title={n.ragIndexError}
+                              >
+                                索引失败
+                              </span>
+                            ) : null}
+                            {n.inputType === "note_file" && n.parseOk === false ? (
+                              <span
+                                className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-warning-soft text-warning-ink"
+                                title={n.parseDetail || "正文解析未得到可见文本"}
+                              >
+                                解析异常
                               </span>
                             ) : null}
                           </div>
@@ -2527,6 +2575,7 @@ export default function NotesPage() {
               filteredText={filteredPreview}
               loading={previewLoading}
               truncated={previewTruncated}
+              statusLine={previewStatusLine}
               keyword={previewKw}
               onKeywordChange={setPreviewKw}
               onClose={() => setPreviewOpen(false)}

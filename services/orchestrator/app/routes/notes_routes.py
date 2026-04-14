@@ -2,7 +2,6 @@ import base64
 import json
 import logging
 import os
-import tempfile
 import time
 import uuid
 from urllib.parse import urlparse
@@ -44,10 +43,10 @@ from ..models import (
 from ..queue import ai_queue
 from ..worker_tasks import run_ai_job
 from ..storage_paths import note_upload_object_key
-from ..note_file_parse import parse_note_temp_path
+from ..note_document_extract import NoteParseResult, extract_text_from_bytes
 from ..object_store import delete_object_key, get_object_bytes, upload_bytes
 from ..notes_ask import answer_notes_question
-from ..note_rag_service import ensure_note_rag_schema
+from ..note_rag_service import count_rag_chunks_for_notes, ensure_note_rag_schema
 from ..schemas import (
     NoteCreateRequest,
     NoteImportUrlRequest,
@@ -102,6 +101,121 @@ def _mime_for_note_ext(ext: str) -> str:
     }.get(e, "application/octet-stream")
 
 
+def _persist_note_upload(
+    user_ref: str | None,
+    data: bytes,
+    raw_name: str,
+    title_in: str,
+    notebook: str,
+    project_name: str,
+) -> dict:
+    """写入对象存储、解析正文、落库；供 upload_json 与 upload_raw 共用。"""
+    try:
+        ensure_notebooks_schema()
+    except Exception as exc:
+        _notes_startup_logger.exception("notes upload: ensure_notebooks_schema failed")
+        raise HTTPException(status_code=503, detail="笔记存储未就绪，请稍后重试。") from exc
+    raw_name = (raw_name or "").strip()
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="无效文件名")
+    if "." not in raw_name:
+        raw_name = f"{raw_name}.txt"
+    ext = raw_name.rsplit(".", 1)[1].lower()
+    if ext not in ALLOWED_NOTE_EXT:
+        raise HTTPException(status_code=400, detail="笔记格式不支持")
+    if len(data) > MAX_NOTE_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="文件过大")
+    original_title = raw_name.rsplit(".", 1)[0].strip() if "." in raw_name else raw_name
+    title = (title_in or "").strip() or original_title or raw_name
+    notebook = (notebook or "").strip()
+    if not notebook:
+        raise HTTPException(status_code=400, detail="notebook_required")
+    note_id = f"note_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+    owner_uuid = resolved_user_uuid_string(user_ref)
+    object_key = note_upload_object_key(note_id, ext, owner_uuid)
+    try:
+        upload_bytes(object_key, data, content_type=_mime_for_note_ext(ext))
+    except Exception as exc:
+        _notes_startup_logger.exception("notes upload: object store upload failed")
+        raise HTTPException(
+            status_code=503,
+            detail="文件暂无法上传到存储，请确认对象存储可用后重试。",
+        ) from exc
+    try:
+        parse_result = extract_text_from_bytes(data, ext)
+    except Exception as exc:
+        _notes_startup_logger.exception("notes upload: extract_text_from_bytes failed")
+        parse_result = NoteParseResult(
+            text="",
+            status="error",
+            engine="exception",
+            detail=str(exc)[:400],
+        )
+    parsed = (parse_result.text or "").strip()
+    extra_meta: dict[str, object] = {
+        "parseStatus": parse_result.status,
+        "parseEngine": parse_result.engine,
+    }
+    if parse_result.detail:
+        extra_meta["parseDetail"] = str(parse_result.detail)[:500]
+    if parse_result.encoding:
+        extra_meta["parseEncoding"] = str(parse_result.encoding)[:120]
+    project_id = ensure_default_project(project_name, created_by=user_ref)
+    try:
+        row_id = create_file_note(
+            project_id=project_id,
+            title=title,
+            notebook=notebook,
+            content_text=parsed,
+            file_object_key=object_key,
+            ext=ext,
+            original_filename=raw_name,
+            size=len(data),
+            source_url=None,
+            user_ref=user_ref,
+            extra_metadata=extra_meta,
+        )
+    except ValueError as e:
+        delete_object_key(object_key)
+        if str(e) == "notebook_required":
+            raise HTTPException(status_code=400, detail="notebook_required") from e
+        raise
+    except Exception as exc:
+        delete_object_key(object_key)
+        _notes_startup_logger.exception("notes upload: create_file_note failed")
+        if isinstance(exc, psycopg2.ProgrammingError):
+            raise HTTPException(
+                status_code=503,
+                detail="数据库结构与当前版本不一致（常见于未执行迁移）。请联系运维更新数据库后重试。",
+            ) from exc
+        raise HTTPException(
+            status_code=500,
+            detail="笔记保存失败，请稍后重试或联系管理员。",
+        ) from exc
+    _try_enqueue_note_rag_index(row_id, user_ref)
+    parse_empty = bool(len(data) > 0 and not (parsed or "").strip())
+    out: dict = {
+        "success": True,
+        "note": {
+            "noteId": row_id,
+            "title": title,
+            "notebook": notebook,
+            "ext": ext,
+            "relativePath": f"/api/notes/{row_id}/file",
+            "createdAt": "",
+        },
+        "parse": {
+            "status": parse_result.status,
+            "engine": parse_result.engine,
+            "detail": (parse_result.detail or "")[:500],
+            "encoding": (parse_result.encoding or "")[:120],
+        },
+    }
+    if parse_empty:
+        out["parseEmpty"] = True
+    return out
+
+
 @router.get("/notes")
 def list_notes_api(
     request: Request,
@@ -131,6 +245,14 @@ def list_notes_api(
         else:
             source_ready = len(ct) >= 20
             source_hint = "正文已抽取，可作资料" if source_ready else "正文过短或未抽取，建议预览或重新上传"
+        rag_err = r.get("note_rag_index_error")
+        rag_chunks = int(r.get("rag_chunk_count") or 0)
+        p_st = str(md.get("parseStatus") or "").strip()
+        p_de = str(md.get("parseDetail") or "").strip()
+        if p_st:
+            parse_ok = p_st == "ok"
+        else:
+            parse_ok = (it == "note_text") or (it == "note_file" and source_ready)
         notes.append(
             {
                 "noteId": note_uuid,
@@ -143,6 +265,14 @@ def list_notes_api(
                 "inputType": it,
                 "sourceReady": source_ready,
                 "sourceHint": source_hint,
+                "ragChunkCount": rag_chunks,
+                "ragIndexError": (str(rag_err).strip() if rag_err else ""),
+                "ragIndexedAt": str(r.get("note_rag_index_at") or ""),
+                "parseStatus": p_st,
+                "parseEngine": str(md.get("parseEngine") or "").strip(),
+                "parseDetail": p_de,
+                "parseEncoding": str(md.get("parseEncoding") or "").strip(),
+                "parseOk": parse_ok,
             }
         )
     has_more = len(rows) >= limit
@@ -280,6 +410,9 @@ def preview_note_text_api(note_id: str, request: Request):
     if len(text) > NOTE_PREVIEW_TEXT_MAX:
         text = text[:NOTE_PREVIEW_TEXT_MAX]
         truncated = True
+    rag_n = count_rag_chunks_for_notes([str(note_id)])
+    p_st = str(md.get("parseStatus") or "").strip()
+    p_de = str(md.get("parseDetail") or "").strip()
     return {
         "success": True,
         "noteId": note_id,
@@ -287,6 +420,14 @@ def preview_note_text_api(note_id: str, request: Request):
         "text": text,
         "truncated": truncated,
         "ext": ext,
+        "ragChunkCount": rag_n,
+        "ragIndexError": str(row.get("note_rag_index_error") or "").strip(),
+        "ragIndexedAt": str(row.get("note_rag_index_at") or ""),
+        "parseStatus": p_st,
+        "parseEngine": str(md.get("parseEngine") or "").strip(),
+        "parseDetail": p_de,
+        "parseEncoding": str(md.get("parseEncoding") or "").strip(),
+        "parseOk": p_st == "ok" if p_st else True,
     }
 
 
@@ -321,96 +462,39 @@ def download_note_file_api(note_id: str, request: Request):
 def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
     user_ref = _current_user_ref_or_401(request)
     try:
-        ensure_notebooks_schema()
-    except Exception as exc:
-        _notes_startup_logger.exception("notes upload_json: ensure_notebooks_schema failed")
-        raise HTTPException(status_code=503, detail="笔记存储未就绪，请稍后重试。") from exc
-    raw_name = (body.filename or "").strip()
-    if not raw_name or "." not in raw_name:
-        raise HTTPException(status_code=400, detail="无效文件名")
-    ext = raw_name.rsplit(".", 1)[1].lower()
-    if ext not in ALLOWED_NOTE_EXT:
-        raise HTTPException(status_code=400, detail="笔记格式不支持")
-    try:
         data = base64.b64decode(body.data_base64, validate=True)
     except Exception:
         raise HTTPException(status_code=400, detail="文件数据无效")
-    if len(data) > MAX_NOTE_UPLOAD_BYTES:
-        raise HTTPException(status_code=400, detail="文件过大")
-    original_title = raw_name.rsplit(".", 1)[0].strip() if "." in raw_name else raw_name
-    title = (body.title or "").strip() or original_title or raw_name
+    raw_name = (body.filename or "").strip()
+    title = (body.title or "").strip()
     notebook = (body.notebook or "").strip()
-    if not notebook:
-        raise HTTPException(status_code=400, detail="notebook_required")
-    note_id = f"note_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-    owner_uuid = resolved_user_uuid_string(user_ref)
-    object_key = note_upload_object_key(note_id, ext, owner_uuid)
-    try:
-        upload_bytes(object_key, data, content_type=_mime_for_note_ext(ext))
-    except Exception as exc:
-        _notes_startup_logger.exception("notes upload_json: object store upload failed")
-        raise HTTPException(
-            status_code=503,
-            detail="文件暂无法上传到存储，请确认对象存储可用后重试。",
-        ) from exc
-    parsed = ""
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
-            tmp.write(data)
-            tmp.flush()
-            tmp_path = tmp.name
-        try:
-            parsed = parse_note_temp_path(tmp_path, ext) or ""
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-    except Exception:
-        parsed = ""
-    project_id = ensure_default_project(body.project_name, created_by=user_ref)
-    try:
-        row_id = create_file_note(
-            project_id=project_id,
-            title=title,
-            notebook=notebook,
-            content_text=parsed,
-            file_object_key=object_key,
-            ext=ext,
-            original_filename=raw_name,
-            size=len(data),
-            source_url=None,
-            user_ref=user_ref,
-        )
-    except ValueError as e:
-        delete_object_key(object_key)
-        if str(e) == "notebook_required":
-            raise HTTPException(status_code=400, detail="notebook_required") from e
-        raise
-    except Exception as exc:
-        delete_object_key(object_key)
-        _notes_startup_logger.exception("notes upload_json: create_file_note failed")
-        if isinstance(exc, psycopg2.ProgrammingError):
-            raise HTTPException(
-                status_code=503,
-                detail="数据库结构与当前版本不一致（常见于未执行迁移）。请联系运维更新数据库后重试。",
-            ) from exc
-        raise HTTPException(
-            status_code=500,
-            detail="笔记保存失败，请稍后重试或联系管理员。",
-        ) from exc
-    _try_enqueue_note_rag_index(row_id, user_ref)
-    return {
-        "success": True,
-        "note": {
-            "noteId": row_id,
-            "title": title,
-            "notebook": notebook,
-            "ext": ext,
-            "relativePath": f"/api/notes/{row_id}/file",
-            "createdAt": "",
-        },
-    }
+    project_name = (body.project_name or "default-notes").strip() or "default-notes"
+    return _persist_note_upload(user_ref, data, raw_name, title, notebook, project_name)
+
+
+@router.post("/notes/upload_raw")
+async def upload_note_raw_api(
+    request: Request,
+    notebook: str = Query(...),
+    filename: str = Query(...),
+    title: str = Query(default=""),
+    project_name: str = Query(default="default-notes"),
+):
+    """BFF 二进制转发：body 为原始文件字节，元数据在 query（避免对整段 multipart 做内部签名）。"""
+    user_ref = _current_user_ref_or_401(request)
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="空文件")
+    fname = (filename or "").strip()
+    pn = (project_name or "default-notes").strip() or "default-notes"
+    return _persist_note_upload(
+        user_ref,
+        data,
+        fname,
+        (title or "").strip(),
+        (notebook or "").strip(),
+        pn,
+    )
 
 
 @router.post("/notes/import_url")

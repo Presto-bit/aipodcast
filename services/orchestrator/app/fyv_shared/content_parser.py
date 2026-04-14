@@ -9,7 +9,6 @@ import zipfile
 import re
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
-from PyPDF2 import PdfReader
 from typing import Dict, Any
 from .config import TIMEOUTS
 
@@ -128,59 +127,20 @@ class ContentParser:
 
     def parse_pdf(self, pdf_path: str) -> Dict[str, Any]:
         """
-        解析 PDF 文件
-
-        Args:
-            pdf_path: PDF 文件路径
-
-        Returns:
-            包含解析文本和日志的字典
+        解析 PDF 文件（与笔记上传共用：PyMuPDF + PyPDF2 回退，见 note_document_extract）。
         """
-        logs = []
-        logs.append(f"开始解析 PDF: {pdf_path}")
+        from app.note_document_extract import extract_pdf_dict_for_legacy
 
+        logs = [f"开始解析 PDF: {pdf_path}"]
         try:
-            # 使用 PyPDF2 读取 PDF
-            reader = PdfReader(pdf_path)
-            num_pages = len(reader.pages)
-
-            logs.append(f"PDF 共 {num_pages} 页")
-
-            # 提取所有页面的文本
-            all_text = []
-            for i, page in enumerate(reader.pages):
-                try:
-                    text = page.extract_text()
-                    if text.strip():
-                        all_text.append(text)
-                        logs.append(f"成功提取第 {i + 1} 页内容")
-                    else:
-                        logs.append(f"警告: 第 {i + 1} 页无法提取文本（可能是扫描版）")
-                except Exception as e:
-                    logs.append(f"警告: 第 {i + 1} 页提取失败: {str(e)}")
-
-            if not all_text:
-                error_msg = "PDF 无法提取文本，可能是扫描版 PDF，不支持此格式"
-                logs.append(f"错误: {error_msg}")
-                return {
-                    "success": False,
-                    "error": error_msg,
-                    "logs": logs,
-                    "source": "pdf"
-                }
-
-            content = '\n'.join(all_text)
-
-            logs.append(f"成功提取文本，共 {len(content)} 字符")
-
-            return {
-                "success": True,
-                "content": content,
-                "logs": logs,
-                "source": "pdf",
-                "num_pages": num_pages
-            }
-
+            out = extract_pdf_dict_for_legacy(pdf_path)
+            if out.get("success"):
+                content = str(out.get("content") or "")
+                logs.append(f"成功提取文本，共 {len(content)} 字符")
+                return {**out, "logs": logs}
+            err = str(out.get("error") or "unknown")
+            logs.append(f"错误: {err}")
+            return {**out, "logs": logs}
         except Exception as e:
             error_msg = f"PDF 解析失败: {str(e)}"
             logs.append(f"错误: {error_msg}")
@@ -189,7 +149,7 @@ class ContentParser:
                 "success": False,
                 "error": error_msg,
                 "logs": logs,
-                "source": "pdf"
+                "source": "pdf",
             }
 
     def parse_epub(self, epub_path: str) -> Dict[str, Any]:

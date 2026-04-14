@@ -4,7 +4,7 @@
 - truncate：头中尾截断（在 reference_material.compress_long_reference）
 - keyword：分块 + 关键词打分检索 Top-K
 - full_coverage：按相关性优先拼接多块，直至字数上限
-- hybrid：关键词分数 + MiniMax（或本地/hash）embedding 余弦相似度加权混合
+- hybrid：关键词分数 + EmbeddingProvider（OpenAI 兼容 / MiniMax / 本地 / hash）余弦相似度加权混合
 
 向量库为「单次任务、内存内」索引：对当次合并后的长文切块并即时 embedding，不依赖历史持久化库。
 可选环境变量：RAG_HYBRID_VECTOR_WEIGHT / RAG_HYBRID_KEYWORD_WEIGHT（默认 0.55 / 0.45）、
@@ -25,20 +25,9 @@ _DEFAULT_CHUNK = 1100
 _DEFAULT_OVERLAP = 90
 
 
-def split_text_into_chunks(
-    text: str,
-    *,
-    max_chunk_chars: int | None = None,
-    overlap: int | None = None,
-) -> list[str]:
+def _split_plain_paragraphs(raw: str, mc: int, ov: int) -> list[str]:
     """按空行分段，再按长度切分，带少量重叠避免句断在边界。"""
-    raw = (text or "").strip()
-    if not raw:
-        return []
-    mc = max(400, int(max_chunk_chars or int(os.getenv("RAG_CHUNK_CHARS", str(_DEFAULT_CHUNK)))))
-    ov = max(0, min(mc // 4, int(overlap or int(os.getenv("RAG_CHUNK_OVERLAP", str(_DEFAULT_OVERLAP))))))
-
-    paragraphs = re.split(r"\n\s*\n+", raw)
+    paragraphs = re.split(r"\n\s*\n+", raw.strip())
     pieces: list[str] = []
     for p in paragraphs:
         p = p.strip()
@@ -57,6 +46,29 @@ def split_text_into_chunks(
                 break
             start = max(0, end - ov)
     return pieces
+
+
+def split_text_into_chunks(
+    text: str,
+    *,
+    max_chunk_chars: int | None = None,
+    overlap: int | None = None,
+) -> list[str]:
+    """优先在 Markdown 行首标题处切段，再按空行与长度切分，带少量重叠。"""
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    mc = max(400, int(max_chunk_chars or int(os.getenv("RAG_CHUNK_CHARS", str(_DEFAULT_CHUNK)))))
+    ov = max(0, min(mc // 4, int(overlap or int(os.getenv("RAG_CHUNK_OVERLAP", str(_DEFAULT_OVERLAP))))))
+
+    if re.search(r"(?m)^#{1,6}\s+\S", raw):
+        sections = [s.strip() for s in re.split(r"(?m)(?=^#{1,6}\s+\S)", raw) if s.strip()]
+        if len(sections) > 1:
+            pieces: list[str] = []
+            for sec in sections:
+                pieces.extend(_split_plain_paragraphs(sec, mc, ov))
+            return pieces
+    return _split_plain_paragraphs(raw, mc, ov)
 
 
 def build_retrieval_query(
@@ -205,12 +217,8 @@ def apply_hybrid_vector_rag(
 ) -> tuple[str, str | None]:
     """
     混合向量 RAG：对合并正文切块，关键词 + embedding 余弦混合打分，按分取块直至 rag_max_chars。
-    需可用 API Key（与 EmbeddingProvider 一致，可走 MINIMAX embeddings 或 hash 兜底）。
+    向量由 EmbeddingProvider 提供（RAG_EMBEDDING_* / 本地 / hash），不依赖 MINIMAX_API_KEY。
     """
-    key = (api_key or "").strip() or str(os.getenv("MINIMAX_API_KEY") or "").strip()
-    if not key:
-        raise RuntimeError("缺少 MINIMAX_API_KEY，无法执行混合向量 RAG")
-
     rag_cap = _payload_rag_cap(payload)
     chunks = split_text_into_chunks(merged_content)
     if not chunks:
@@ -237,6 +245,8 @@ def apply_hybrid_vector_rag(
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
         ep = EmbeddingProvider()
+        if ep.active_backend() == "hash":
+            logger.warning("hybrid RAG: embedding backend=hash，检索质量可能较差，建议配置 RAG_EMBEDDING_* 或本地模型")
         # 单批限制避免超大文档爆内存
         batch_size = 32
         qv = ep.embed_texts([query[:8000]])[0]

@@ -1,37 +1,62 @@
 import { getBearerAuthHeadersSync } from "./authHeaders";
+import { validateNoteFileMeta } from "./noteUploadConstants";
 
 type UploadJson = {
   success?: boolean;
   note?: { noteId?: string };
+  parseEmpty?: boolean;
+  /** 服务端正文解析结果（上传成功但可能解析为空） */
+  parse?: {
+    status?: string;
+    engine?: string;
+    detail?: string;
+    encoding?: string;
+  };
   detail?: unknown;
   error?: string;
 };
 
-function parseError(data: UploadJson, status: number): string {
+function parseError(data: UploadJson, status: number, rawText: string): string {
   if (typeof data.error === "string" && data.error.trim()) {
     const err = data.error.trim();
     if (err === "upstream_unreachable" || err === "orchestrator request failed") {
       return "无法连接编排器或请求中断。请确认 orchestrator 已启动，且 Next 的 ORCHESTRATOR_URL 指向可访问地址（本机开发多为 http://127.0.0.1:8008；Docker 内多为 http://orchestrator:8008）。";
     }
-    return err;
+  }
+  if (status === 413) {
+    return "请求体积超过服务端限制，请改用较小文件（≤15MB）或压缩后再传。";
+  }
+  if (status === 401) {
+    return "未登录或会话已失效，请重新登录后再上传。";
+  }
+  const lower = rawText.slice(0, 500).toLowerCase();
+  if (status >= 400 && (lower.includes("body exceeded") || lower.includes("body size"))) {
+    return "请求体积超过 Next 或反代单次限制。请调大 body 上限（建议 ≥25MB）或改用较小文件。";
+  }
+  if (typeof data.error === "string" && data.error.trim()) {
+    return data.error.trim();
   }
   const d = (data as { detail?: unknown }).detail;
   if (typeof d === "string" && d.trim()) return d.trim();
   if (Array.isArray(d) && d[0] && typeof (d[0] as { msg?: string }).msg === "string") {
     return String((d[0] as { msg: string }).msg).trim();
   }
+  if (rawText.trim() && !rawText.trim().startsWith("{")) {
+    return `上传失败（HTTP ${status}）。若持续出现，请查看 Next 终端或反代错误日志（响应非 JSON，多为 BFF/运行时异常）。`;
+  }
   return `上传失败（HTTP ${status}）`;
 }
 
 /**
- * 使用 XMLHttpRequest 以便展示浏览器 → BFF 的字节上传进度（大文件体感更明显）。
- * 服务端整包转发的耗时无法细分，进度在 100% 后仍可能短暂等待 JSON 响应。
+ * multipart → `/api/note-upload`，避免整文件 base64；XHR 仍可展示上传字节进度。
+ * 进度：0–99 为浏览器→Next；100 表示 Next 已收齐，编排器仍在解析/落库（与页面「处理中」文案一致）。
  */
 export function uploadNoteFileWithProgress(
   file: File,
   opts: {
     notebook?: string;
     title?: string;
+    projectName?: string;
     onProgress?: (percent0to100: number) => void;
   } = {}
 ): Promise<{ ok: true; data: UploadJson } | { ok: false; error: string }> {
@@ -39,6 +64,12 @@ export function uploadNoteFileWithProgress(
   if (!nb) {
     return Promise.resolve({ ok: false, error: "未指定笔记本" });
   }
+
+  const pre = validateNoteFileMeta(file);
+  if (!pre.ok) {
+    return Promise.resolve({ ok: false, error: pre.error });
+  }
+
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/note-upload");
@@ -51,14 +82,19 @@ export function uploadNoteFileWithProgress(
 
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable || !opts.onProgress) return;
-      const pct = Math.min(100, Math.max(0, Math.round((e.loaded / e.total) * 100)));
+      const pct = Math.min(99, Math.max(0, Math.round((e.loaded / e.total) * 100)));
       opts.onProgress(pct);
     };
 
+    xhr.upload.onload = () => {
+      opts.onProgress?.(100);
+    };
+
     xhr.onload = () => {
+      const rawText = xhr.responseText || "";
       let data: UploadJson = {};
       try {
-        data = JSON.parse(xhr.responseText || "{}") as UploadJson;
+        data = JSON.parse(rawText || "{}") as UploadJson;
       } catch {
         data = {};
       }
@@ -67,16 +103,17 @@ export function uploadNoteFileWithProgress(
         resolve({ ok: true, data });
         return;
       }
-      resolve({ ok: false, error: parseError(data, status) });
+      resolve({ ok: false, error: parseError(data, status, rawText) });
     };
 
     xhr.onerror = () => resolve({ ok: false, error: "网络异常，上传中断" });
     xhr.onabort = () => resolve({ ok: false, error: "上传已取消" });
 
     const form = new FormData();
-    form.append("note_file", file);
+    form.append("file", file, file.name || "note.txt");
     form.append("notebook", nb);
-    if (opts.title?.trim()) form.append("title", opts.title.trim());
+    form.append("title", (opts.title || "").trim());
+    form.append("project_name", (opts.projectName || "default-notes").trim() || "default-notes");
     xhr.send(form);
   });
 }

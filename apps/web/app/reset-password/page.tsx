@@ -6,7 +6,7 @@ import { useState } from "react";
 
 export default function ResetPasswordPage() {
   const sp = useSearchParams();
-  const tokenFromUrl = (sp.get("token") || "").trim();
+  const tokenFromUrl = (sp?.get("token") ?? "").trim();
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
   const [busy, setBusy] = useState(false);

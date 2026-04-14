@@ -777,6 +777,7 @@ def create_file_note(
     size: int | None,
     source_url: str | None = None,
     user_ref: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> str:
     nb = (notebook or "").strip()
     if not nb:
@@ -792,6 +793,13 @@ def create_file_note(
         metadata["size"] = size
     if source_url:
         metadata["sourceUrl"] = source_url
+    if extra_metadata:
+        for k, v in extra_metadata.items():
+            if v is None:
+                continue
+            if isinstance(v, str) and not v.strip():
+                continue
+            metadata[k] = v
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
@@ -819,7 +827,9 @@ def list_notes(
             if nb_filter:
                 cur.execute(
                     """
-                    SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type
+                    SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type,
+                           (SELECT COUNT(*)::int FROM note_rag_chunks c WHERE c.input_id = i.id) AS rag_chunk_count,
+                           i.note_rag_index_error, i.note_rag_embedding_sig, i.note_rag_index_at
                     FROM inputs i
                     JOIN projects p ON p.id = i.project_id
                     WHERE i.input_type IN ('note_text', 'note_file')
@@ -834,7 +844,9 @@ def list_notes(
             else:
                 cur.execute(
                     """
-                    SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type
+                    SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type,
+                           (SELECT COUNT(*)::int FROM note_rag_chunks c WHERE c.input_id = i.id) AS rag_chunk_count,
+                           i.note_rag_index_error, i.note_rag_embedding_sig, i.note_rag_index_at
                     FROM inputs i
                     JOIN projects p ON p.id = i.project_id
                     WHERE i.input_type IN ('note_text', 'note_file')
@@ -856,7 +868,8 @@ def get_note_by_id(note_id: str, include_deleted: bool = False, user_ref: str | 
             cur.execute(
                 f"""
                 SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type, i.deleted_at,
-                       i.note_summary, i.note_rag_body_hash
+                       i.note_summary, i.note_rag_body_hash,
+                       i.note_rag_embedding_sig, i.note_rag_index_error, i.note_rag_index_at
                 FROM inputs i
                 JOIN projects p ON p.id = i.project_id
                 WHERE i.id = %s AND i.input_type IN ('note_text', 'note_file')
@@ -1418,14 +1431,15 @@ def list_jobs(
             st = valid[0]
         elif len(valid) > 1:
             st_any = valid
+    # JOIN projects 后必须限定为 j.* / j.col，否则 id 等与 projects 列歧义
     cols = (
         """
-        id, project_id, status, job_type, queue_name, progress,
-        created_at, started_at, completed_at, updated_at, created_by,
-        LEFT(COALESCE(error_message, ''), 400) AS error_message
+        j.id, j.project_id, j.status, j.job_type, j.queue_name, j.progress,
+        j.created_at, j.started_at, j.completed_at, j.updated_at, j.created_by,
+        LEFT(COALESCE(j.error_message, ''), 400) AS error_message
         """
         if slim
-        else "*"
+        else "j.*"
     )
     with get_conn() as conn:
         with get_cursor(conn) as cur:

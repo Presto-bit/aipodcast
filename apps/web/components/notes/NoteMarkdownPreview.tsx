@@ -10,6 +10,8 @@ type Props = {
   filteredText: string;
   loading?: boolean;
   truncated?: boolean;
+  /** 向量索引状态等辅助说明 */
+  statusLine?: string;
   keyword: string;
   onKeywordChange: (v: string) => void;
   onClose?: () => void;
@@ -20,6 +22,7 @@ export default function NoteMarkdownPreview({
   filteredText,
   loading,
   truncated,
+  statusLine,
   keyword,
   onKeywordChange,
   onClose
@@ -96,6 +99,7 @@ export default function NoteMarkdownPreview({
           aria-label="关键字过滤"
         />
         {truncated ? <p className="mt-2 text-xs text-warning-ink">内容已截断展示</p> : null}
+        {statusLine ? <p className="mt-2 text-xs text-muted">{statusLine}</p> : null}
         {loading ? <p className="mt-3 text-sm text-muted">加载中…</p> : null}
 
         <div className="markdown-body mt-3 max-h-[min(65vh,28rem)] min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-surface p-3">

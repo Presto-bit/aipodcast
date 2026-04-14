@@ -1,6 +1,9 @@
 -- 笔记异步摘要 + 勾选范围内向量检索（编排器启动时亦会 IF NOT EXISTS 幂等补齐）
 ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_summary TEXT;
 ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_rag_body_hash TEXT;
+ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_rag_embedding_sig TEXT;
+ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_rag_index_error TEXT;
+ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_rag_index_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS note_rag_chunks (
   input_id UUID NOT NULL REFERENCES inputs(id) ON DELETE CASCADE,

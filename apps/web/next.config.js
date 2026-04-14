@@ -46,7 +46,14 @@ mergeRootAiNativeEnv();
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    typedRoutes: false
+    typedRoutes: false,
+    /**
+     * Server Actions 体积极限；Route Handler（如 /api/note-upload）在部分部署下另有默认上限。
+     * 大文件 multipart 若 413：请同步调大反代 `client_max_body_size` 与平台请求体限制。
+     */
+    serverActions: {
+      bodySizeLimit: "25mb"
+    }
   }
 };
 

@@ -148,7 +148,7 @@ export default function MyVoicesPanel() {
   }, [favoriteIds, allMetas, savedVoices]);
 
   useEffect(() => {
-    setLibraryTab(parseLibraryTab(searchParams.get("lib")));
+    setLibraryTab(parseLibraryTab(searchParams?.get("lib") ?? null));
   }, [searchParams]);
 
   useEffect(() => {

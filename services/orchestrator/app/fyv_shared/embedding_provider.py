@@ -6,6 +6,24 @@ import re
 from typing import List
 
 import requests
+
+
+def embedding_env_fingerprint() -> str:
+    """
+    与向量语义空间相关的配置指纹（不含 API Key）。
+    变更 RAG_EMBEDDING_* 后指纹变化，用于判定已入库向量是否需重索引。
+    """
+    parts = [
+        (os.getenv("RAG_EMBEDDING_PROVIDER") or "api").strip().lower(),
+        (os.getenv("RAG_EMBEDDING_API_URL") or "").strip(),
+        (os.getenv("RAG_EMBEDDING_MODEL") or "").strip(),
+        (os.getenv("RAG_EMBEDDING_OPENAI_COMPAT_BASE") or "").strip(),
+        (os.getenv("RAG_EMBEDDING_OPENAI_COMPAT_MODEL") or "").strip(),
+        (os.getenv("RAG_EMBEDDING_LOCAL_MODEL") or "").strip(),
+        (os.getenv("RAG_EMBEDDING_MINIMAX_FALLBACK_MODEL") or "").strip(),
+    ]
+    raw = "|".join(parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 from .config import MINIMAX_TEXT_API_KEY, MINIMAX_API_ENDPOINTS
 
 logger = logging.getLogger(__name__)
@@ -78,6 +96,15 @@ class EmbeddingProvider:
         if self._try_load_local():
             return "local"
         return "hash"
+
+    def embedding_signature(self, vector_dim: int) -> str:
+        """
+        与入库 note_rag_embedding_sig 比对；backend、维度或相关 env 变化即不匹配，应重索引。
+        """
+        dim = int(vector_dim)
+        if dim <= 0:
+            return ""
+        return f"v1|{self.active_backend()}|{dim}|{embedding_env_fingerprint()}"
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         texts = [str(t or "") for t in (texts or [])]

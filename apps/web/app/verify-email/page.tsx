@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 export default function VerifyEmailPage() {
   const sp = useSearchParams();
-  const token = (sp.get("token") || "").trim();
+  const token = (sp?.get("token") ?? "").trim();
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 

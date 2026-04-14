@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import type { IncomingHttpHeaders } from "http";
 import type { NextRequest } from "next/server";
 import { resolveOrchestratorBaseUrl } from "./orchestratorBase";
 
@@ -102,11 +103,15 @@ export function orchestratorUrl(path: string): string {
   return `${base}${p}`;
 }
 
-export function buildInternalHeaders(payload: string) {
+/**
+ * 内部签名：对 UTF-8 字符串或原始字节（如二进制上传）做 SHA256 后与时间戳一起 HMAC。
+ */
+export function buildInternalHeaders(payload: string | Buffer) {
   maybeWarnWeakProductionSecret();
   const signingSecret = getInternalSigningSecret();
   const timestamp = String(Date.now());
-  const payloadSha256 = crypto.createHash("sha256").update(payload, "utf8").digest("hex");
+  const buf = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
+  const payloadSha256 = crypto.createHash("sha256").update(buf).digest("hex");
   const signature = crypto
     .createHmac("sha256", signingSecret)
     .update(`${timestamp}:${payloadSha256}`, "utf8")
@@ -125,10 +130,11 @@ type FetchOrchestratorOptions = {
   /** 参与内部签名的负载；默认 "{}" */
   payload?: string;
   /**
-   * HTTP 请求体。与 `payload` 分离：`payload` 仅用于签名。
+   * HTTP 请求体。与 `payload` 分离：未传 `body` 时用 `payload` 作为请求体并参与签名。
+   * 传 `Buffer` 时按原始字节签名（二进制上传编排器）。
    * 传 `null` 表示不发送 body（如部分 DELETE / 无 body 的 POST）。
    */
-  body?: string | null;
+  body?: string | Buffer | null;
   headers?: Record<string, string>;
   timeoutMs?: number;
   /** 透传编排器 X-Request-ID（便于日志关联） */
@@ -179,32 +185,62 @@ export function incomingAuthHeadersFrom(req: NextRequest): Record<string, string
 }
 
 /**
+ * Pages Router / Node `IncomingMessage` 侧与会话转发（用于 multipart 等不走 `NextRequest` 的路径）。
+ */
+export function incomingAuthHeadersFromNodeHeaders(headers: IncomingHttpHeaders): Record<string, string> {
+  const authRaw = headers.authorization;
+  const auth = Array.isArray(authRaw) ? authRaw[0] : authRaw;
+  const authStr = typeof auth === "string" ? auth.trim() : "";
+  if (authStr) return { authorization: authStr };
+  const cookieRaw = headers.cookie;
+  const cookieHeader = Array.isArray(cookieRaw) ? cookieRaw.join("; ") : cookieRaw ?? "";
+  const fromCookie = sessionTokenFromCookieHeader(cookieHeader || null)?.trim();
+  if (fromCookie) return { authorization: `Bearer ${fromCookie}` };
+  return {};
+}
+
+/**
  * 统一编排器请求：默认超时 + GET 单次重试，降低瞬时抖动导致的接口失败。
  */
 export async function fetchOrchestrator(path: string, opts: FetchOrchestratorOptions = {}): Promise<Response> {
   const method = opts.method || "GET";
-  const payload = opts.payload ?? "{}";
+  const defaultPayload = opts.payload ?? "{}";
   const sse = opts.sse === true;
   const timeoutMs = sse ? 0 : Math.max(1000, opts.timeoutMs ?? 10_000);
   const maxAttempts =
     method === "GET" && opts.retryGetOnce !== false && !sse ? 2 : 1;
+
+  const bodyForFetch =
+    method === "GET" ? undefined : opts.body === null ? undefined : opts.body !== undefined ? opts.body : defaultPayload;
+
+  const signingMaterial: Buffer =
+    bodyForFetch === undefined
+      ? Buffer.from(defaultPayload, "utf8")
+      : Buffer.isBuffer(bodyForFetch)
+        ? bodyForFetch
+        : Buffer.from(String(bodyForFetch), "utf8");
+
   const headers: Record<string, string> = {
-    ...buildInternalHeaders(payload),
+    ...buildInternalHeaders(signingMaterial),
     ...(opts.headers || {})
   };
   const rid = (opts.requestId || "").trim();
   if (rid) headers["x-request-id"] = rid;
   let lastError: unknown;
 
-  const bodyForFetch =
-    method === "GET" ? undefined : opts.body === null ? undefined : opts.body ?? payload;
+  const bodyInit: BodyInit | undefined =
+    bodyForFetch === undefined
+      ? undefined
+      : Buffer.isBuffer(bodyForFetch)
+        ? new Uint8Array(bodyForFetch)
+        : bodyForFetch;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       const upstream = await fetch(orchestratorUrl(path), {
         method,
         headers,
-        body: bodyForFetch,
+        body: bodyInit,
         cache: opts.cache ?? "no-store",
         signal: sse ? undefined : AbortSignal.timeout(timeoutMs)
       });

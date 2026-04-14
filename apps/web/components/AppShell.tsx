@@ -109,6 +109,7 @@ function NavIconBox({ active, children }: { active: boolean; children: ReactNode
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const path = pathname ?? "";
   const router = useRouter();
   const { ready, authRequired, user } = useAuth();
 
@@ -142,7 +143,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         Icon: IconNotes,
         activeMatch: (p) => matchesNotesWorkbench(p),
         onNavigate: (e) => {
-          const p = pathname || "";
+          const p = path;
           if (p.startsWith(NOTES_TEMPLATES_PREFIX) || p.startsWith(NOTES_TRASH_PREFIX)) return;
           if (normalizePathname(p) === "/notes") {
             e.preventDefault();
@@ -165,7 +166,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         activeMatch: (p) => pathMatchesRoot(p, NOTES_TEMPLATES_PREFIX)
       }
     ],
-    [t, pathname]
+    [t, path]
   );
   const navLibrary = useMemo<NavItem[]>(
     () => [
@@ -230,15 +231,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   // 会话已解析且无用户时在首页全屏登录；设置页内嵌登录保留侧栏
-  if (authRequired && !user && pathname === "/") {
+  if (authRequired && !user && path === "/") {
     return <>{children}</>;
   }
 
   const isAdmin = String((user as { role?: string })?.role || "") === ADMIN_ROLE;
 
   function linkActive(item: NavItem): boolean {
-    if (item.activeMatch) return item.activeMatch(pathname);
-    return pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href + "/"));
+    if (item.activeMatch) return item.activeMatch(path);
+    return path === item.href || (item.href !== "/" && path.startsWith(item.href + "/"));
   }
 
   function renderLink(item: NavItem) {
@@ -331,7 +332,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       <div id="main-content" className="flex min-h-screen min-w-0 flex-1 flex-col" tabIndex={-1}>
         <OnboardingModal />
-        <div key={pathname} className="fym-page-enter fym-page-shell">
+        <div key={path} className="fym-page-enter fym-page-shell">
           {children}
         </div>
         <footer className="mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">

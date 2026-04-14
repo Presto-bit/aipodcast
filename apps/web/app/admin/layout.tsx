@@ -132,6 +132,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { user, ready } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  /** usePathname() 在部分类型下可为 null，导航比较需归一为 string */
+  const path = pathname ?? "";
   const [collapsed, setCollapsed] = useState(false);
   const isAdmin = String((user as { role?: string })?.role || "") === "admin";
   const navItems = [
@@ -195,8 +197,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             {navItems.map((item) => {
               const isActive =
                 item.href === "/admin/hub"
-                  ? navHrefActive(pathname, item.href) || pathname === "/admin"
-                  : navHrefActive(pathname, item.href);
+                  ? navHrefActive(path, item.href) || path === "/admin"
+                  : navHrefActive(path, item.href);
               return (
                 <li key={item.href}>
                   <Link
