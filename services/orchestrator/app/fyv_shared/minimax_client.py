@@ -16,6 +16,8 @@ import zipfile
 import tempfile
 from collections import deque
 from typing import Iterator, Dict, Any, Optional, Tuple
+from ..cover_image_style import coarse_cover_style_type
+
 from .config import (
     MINIMAX_TEXT_API_KEY,
     MINIMAX_OTHER_API_KEY,
@@ -1315,65 +1317,138 @@ Speaker2: 今天咱们聊聊这个话题。"""
                 except Exception:
                     pass
 
-    def generate_cover_image(self, content_summary: str, api_key: Optional[str] = None) -> Dict[str, Any]:
+    @staticmethod
+    def _clean_cover_visual_prompt(raw: str) -> str:
+        t = (raw or "").strip()
+        if not t:
+            return ""
+        t = re.sub(r"^(好的[，。]|以下是|封面描述[：:])\s*", "", t)
+        t = t.strip(" '\"「」").strip()
+        return t.strip()
+
+    @staticmethod
+    def default_cover_visual_prompt(program_name_fallback: str, content_snippet: str) -> str:
+        """文生图 prompt 兜底：尽量绑定节目名与素材片段，避免无关录音室摆拍。"""
+        pn = (program_name_fallback or "").strip()
+        sn = (content_snippet or "").replace("\n", " ").strip()
+        if len(sn) > 120:
+            sn = sn[:120] + "…"
+        if pn and sn:
+            return (
+                f"{pn}，画面隐喻与下列主题相关：{sn}；"
+                f"画风与主题气质一致、留白、方形播客封面构图"
+            )
+        if pn:
+            return f"{pn}，与节目主题相符的象征性场景，画风贴合内容气质，简洁构图，方形播客封面"
+        if sn:
+            return f"与下列主题相关的象征场景（{sn}），画风贴合内容气质，简洁构图，方形播客封面"
+        return "与播客主题相符的象征性视觉隐喻，画风贴合内容、简洁留白，方形封面"
+
+    def compose_cover_visual_prompt(
+        self,
+        content_bundle: str,
+        api_key: Optional[str] = None,
+        *,
+        program_name_fallback: str = "",
+    ) -> tuple[str, Optional[str]]:
         """
-        生成播客封面图
-
-        Args:
-            content_summary: 内容摘要
-            api_key: 可选的自定义 API Key
-
-        Returns:
-            包含图片 URL 和 trace_id 的字典
+        仅调用文本模型，把结构化素材压缩为一条文生图可用的画面描述。
+        供 MiniMax 文生图或其它需要短 prompt 的图片通道复用。
         """
-        # Step 1: 生成图片 prompt
-        prompt_generation_prompt = f"""基于以下播客内容摘要，生成一个简洁的图片描述 prompt。
+        bundle = (content_bundle or "").strip()
+        if not bundle:
+            return "", None
 
-要求：
-1. 描述要简洁直观，30字以内
+        text_trace_id: Optional[str] = None
 
-播客内容摘要：
-{content_summary}
+        prompt_generation_prompt = f"""你是播客封面视觉指导。请阅读下列「结构化素材」，写出 **唯一一条** 可直接用于文生图 API 的画面描述（中文为主，必要时夹少量英文专名）。
 
-请直接输出图片描述 prompt（不要有多余说明）："""
+硬性要求：
+1. 必须体现素材中的 **具体主题、领域、人物角色或核心意象**；禁止用「一男一女在录音室对谈」「两人坐在麦克风前」等与主题无关的泛化场景，除非素材本身明确在讨论播客制作或录音室话题。
+2. 写出可画出的 **场景、物体、氛围、时代感或隐喻符号**（例如城市夜景、古籍与钢笔、电路与植物、棋盘、数据图表等），避免空洞措辞（如「精彩内容」「深度讨论」）。
+3. **画风与视觉媒介须紧扣文稿主题**（例如科技/AI→赛博霓虹、低多边形或界面风；历史人文→水墨留白、版画或古籍卷轴；商业财经→扁平信息图或纪实摄影光；生活情感→温暖手绘或胶片色调等）。在同一条描述里用 10～24 字点明**具体画种/光影/质感**，禁止用「现代插画」「精美配图」等空泛套话。
+4. 长度约 80～140 字；可含分号串联的短语；不要序号、不要「封面描述：」等前缀。
+5. 只输出这一条画面描述，不要其它说明。
 
-        text_trace_id = None
+结构化素材：
+{bundle[:4000]}
+
+请直接输出画面描述："""
+
         try:
-            # Step 1: 调用 M2 生成 prompt（文本模型使用用户提供的 API Key）
-            logger.info("开始生成封面图 Prompt...")
+            logger.info("开始生成封面图 Prompt（compose）...")
             url_text = self.endpoints["text_completion"]
             headers_text = self._get_headers("text", api_key=api_key)
-
             payload_text = {
                 "model": self.models["text"],
                 "messages": [
                     {"role": "system", "name": "MiniMax AI"},
-                    {"role": "user", "content": prompt_generation_prompt}
+                    {"role": "user", "content": prompt_generation_prompt},
                 ],
-                "stream": False
+                "stream": False,
             }
-
-            logger.info(f"发送 Prompt 生成请求到: {url_text}")
             response_text = self._post_with_proxy_fallback(
                 url_text,
                 headers=headers_text,
                 json=payload_text,
-                timeout=TIMEOUTS["cover_prompt_generation"]
+                timeout=TIMEOUTS["cover_prompt_generation"],
+            )
+            text_trace_id = self._extract_trace_id(response_text)
+            response_text.raise_for_status()
+            text_result = response_text.json()
+            raw = text_result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            image_prompt = self._clean_cover_visual_prompt(str(raw or ""))
+            if not image_prompt:
+                image_prompt = self.default_cover_visual_prompt(
+                    program_name_fallback, bundle[:240]
+                )
+                logger.info("compose 为空，使用默认 Prompt: %s", image_prompt[:96])
+            else:
+                logger.info("生成的图片 Prompt: %s", image_prompt[:200])
+            return image_prompt, text_trace_id
+        except Exception as exc:
+            logger.warning("compose_cover_visual_prompt 失败: %s", exc)
+            return (
+                self.default_cover_visual_prompt(program_name_fallback, bundle[:240]),
+                text_trace_id,
             )
 
-            # 立即提取 Trace ID
-            text_trace_id = self._extract_trace_id(response_text)
-            logger.info(f"Prompt 生成响应状态码: {response_text.status_code}")
+    def generate_cover_image(
+        self,
+        content_summary: str,
+        api_key: Optional[str] = None,
+        *,
+        program_name_fallback: str = "",
+    ) -> Dict[str, Any]:
+        """
+        生成播客封面图
 
-            response_text.raise_for_status()
+        Args:
+            content_summary: 结构化素材或内容摘要（可与 build_cover_material 输出对接）
+            api_key: 可选的自定义 API Key
+            program_name_fallback: 节目名，用于文生图 prompt 兜底
 
-            text_result = response_text.json()
-            image_prompt = text_result.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-            logger.info(f"生成的图片 Prompt: {image_prompt}")
-
-            if not image_prompt:
-                image_prompt = "一男一女两个人坐在播客录音室里，漫画风格"
+        Returns:
+            包含图片 URL 和 trace_id 的字典
+        """
+        text_trace_id: Optional[str] = None
+        try:
+            bundle = (content_summary or "").strip()
+            if not bundle:
+                return {
+                    "success": False,
+                    "error": "empty_bundle",
+                    "message": "封面素材为空",
+                    "text_trace_id": None,
+                    "image_trace_id": None,
+                }
+            image_prompt, text_trace_id = self.compose_cover_visual_prompt(
+                bundle,
+                api_key,
+                program_name_fallback=program_name_fallback,
+            )
+            if not image_prompt.strip():
+                image_prompt = self.default_cover_visual_prompt(program_name_fallback, bundle[:240])
                 logger.info(f"使用默认 Prompt: {image_prompt}")
 
             # Step 2: 调用文生图 API
@@ -1381,6 +1456,15 @@ Speaker2: 今天咱们聊聊这个话题。"""
             url_image = self.endpoints["image_generation"]
             headers_image = self._get_headers("other", api_key=api_key)
 
+            _style_t = coarse_cover_style_type(
+                bundle,
+                image_prompt,
+                default_type=str(IMAGE_GENERATION_CONFIG.get("style_type") or "插画"),
+            )
+            try:
+                _style_w = float(IMAGE_GENERATION_CONFIG.get("style_weight", 0.38))
+            except (TypeError, ValueError):
+                _style_w = 0.38
             payload_image = {
                 "model": self.models["image"],
                 "prompt": image_prompt,
@@ -1389,9 +1473,9 @@ Speaker2: 今天咱们聊聊这个话题。"""
                 "n": IMAGE_GENERATION_CONFIG["n"],
                 "prompt_optimizer": IMAGE_GENERATION_CONFIG["prompt_optimizer"],
                 "style": {
-                    "style_type": IMAGE_GENERATION_CONFIG["style_type"],
-                    "style_weight": IMAGE_GENERATION_CONFIG["style_weight"]
-                }
+                    "style_type": _style_t,
+                    "style_weight": _style_w,
+                },
             }
 
             logger.info(f"图像生成 API: {url_image}")

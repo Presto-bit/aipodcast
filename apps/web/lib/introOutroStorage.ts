@@ -1,5 +1,6 @@
 import type { IntroOutroSnapshotV1 } from "./introOutroSnapshot";
 import { isIntroOutroSnapshotV1 } from "./introOutroSnapshot";
+import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
 
 export type IntroOutroScope = "podcast" | "tts" | "notes_room";
 
@@ -21,7 +22,7 @@ function namedKey(scope: IntroOutroScope) {
 
 export function readLastIntroOutro(scope: IntroOutroScope): IntroOutroSnapshotV1 | null {
   try {
-    const raw = localStorage.getItem(lastKey(scope));
+    const raw = readLocalStorageScoped(lastKey(scope));
     if (!raw) return null;
     const j = JSON.parse(raw) as unknown;
     return isIntroOutroSnapshotV1(j) ? j : null;
@@ -32,7 +33,7 @@ export function readLastIntroOutro(scope: IntroOutroScope): IntroOutroSnapshotV1
 
 export function writeLastIntroOutro(scope: IntroOutroScope, snap: IntroOutroSnapshotV1) {
   try {
-    localStorage.setItem(lastKey(scope), JSON.stringify(snap));
+    writeLocalStorageScoped(lastKey(scope), JSON.stringify(snap));
   } catch {
     // 配额已满等：静默失败
   }
@@ -40,7 +41,7 @@ export function writeLastIntroOutro(scope: IntroOutroScope, snap: IntroOutroSnap
 
 function readNamedRaw(scope: IntroOutroScope): IntroOutroNamedPreset[] {
   try {
-    const raw = localStorage.getItem(namedKey(scope));
+    const raw = readLocalStorageScoped(namedKey(scope));
     if (!raw) return [];
     const j = JSON.parse(raw) as unknown;
     if (!Array.isArray(j)) return [];
@@ -72,7 +73,7 @@ export function addIntroOutroNamed(scope: IntroOutroScope, label: string, snap: 
   };
   const items = [row, ...readNamedRaw(scope)].slice(0, MAX_NAMED);
   try {
-    localStorage.setItem(namedKey(scope), JSON.stringify(items));
+    writeLocalStorageScoped(namedKey(scope), JSON.stringify(items));
   } catch {
     // ignore
   }
@@ -84,7 +85,7 @@ export function removeIntroOutroNamed(scope: IntroOutroScope, id: string): boole
   const items = prev.filter((x) => x.id !== id);
   if (items.length === prev.length) return false;
   try {
-    localStorage.setItem(namedKey(scope), JSON.stringify(items));
+    writeLocalStorageScoped(namedKey(scope), JSON.stringify(items));
   } catch {
     return false;
   }
@@ -106,7 +107,7 @@ export function importManyIntroOutroNamed(scope: IntroOutroScope, entries: { lab
   });
   const merged = [...created, ...prev].slice(0, MAX_NAMED);
   try {
-    localStorage.setItem(namedKey(scope), JSON.stringify(merged));
+    writeLocalStorageScoped(namedKey(scope), JSON.stringify(merged));
   } catch {
     // ignore
   }

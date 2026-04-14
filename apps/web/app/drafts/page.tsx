@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TTS_IMPORT_SCRIPT_KEY } from "../../lib/ttsImport";
+import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
 
 const DRAFTS_STORAGE_KEY = "fym_podcast_drafts_v1";
 
@@ -16,7 +17,7 @@ type Draft = {
 
 function loadDrafts(): Draft[] {
   try {
-    const raw = window.localStorage.getItem(DRAFTS_STORAGE_KEY);
+    const raw = readLocalStorageScoped(DRAFTS_STORAGE_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr : [];
   } catch {
@@ -26,7 +27,7 @@ function loadDrafts(): Draft[] {
 
 function saveDrafts(list: Draft[]) {
   try {
-    window.localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify((list || []).slice(0, 100)));
+    writeLocalStorageScoped(DRAFTS_STORAGE_KEY, JSON.stringify((list || []).slice(0, 100)));
   } catch {
     // ignore
   }
@@ -136,7 +137,7 @@ export default function DraftsPage() {
       return;
     }
     try {
-      sessionStorage.setItem(TTS_IMPORT_SCRIPT_KEY, text);
+      writeSessionStorageScoped(TTS_IMPORT_SCRIPT_KEY, text);
     } catch {
       // ignore
     }

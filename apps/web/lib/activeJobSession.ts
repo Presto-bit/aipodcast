@@ -1,3 +1,5 @@
+import { readSessionStorageScoped, removeSessionStorageScoped, writeSessionStorageScoped } from "./userScopedStorage";
+
 const K_PODCAST = "fym_active_podcast_job_v1";
 const K_TTS = "fym_active_tts_job_v1";
 const K_SCRIPT_DRAFT = "fym_active_script_draft_job_v1";
@@ -12,7 +14,7 @@ function keyFor(kind: ActiveGenerationKind): string {
 
 export function setActiveGenerationJob(kind: ActiveGenerationKind, jobId: string) {
   try {
-    sessionStorage.setItem(keyFor(kind), jobId);
+    writeSessionStorageScoped(keyFor(kind), jobId);
   } catch {
     // ignore
   }
@@ -20,7 +22,7 @@ export function setActiveGenerationJob(kind: ActiveGenerationKind, jobId: string
 
 export function clearActiveGenerationJob(kind: ActiveGenerationKind) {
   try {
-    sessionStorage.removeItem(keyFor(kind));
+    removeSessionStorageScoped(keyFor(kind));
   } catch {
     // ignore
   }
@@ -28,7 +30,7 @@ export function clearActiveGenerationJob(kind: ActiveGenerationKind) {
 
 export function readActiveGenerationJob(kind: ActiveGenerationKind): string | null {
   try {
-    return sessionStorage.getItem(keyFor(kind));
+    return readSessionStorageScoped(keyFor(kind));
   } catch {
     return null;
   }

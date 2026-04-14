@@ -48,10 +48,10 @@ MONTHLY_MINUTES_PRODUCT_BY_TIER: dict[str, int] = {
 
 TIER_AI_POLISH_MONTHLY_BY_TIER: dict[str, int] = {
     "free": 0,
-    "basic": 0,
+    "basic": 15,
     "pro": 30,
     "max": -1,
-    "payg": 0,
+    "payg": 15,
 }
 
 MAX_NOTE_REFS_BY_TIER: dict[str, int] = {

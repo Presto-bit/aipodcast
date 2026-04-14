@@ -16,6 +16,9 @@ from rq.job import Job
 from .. import auth_bridge
 
 _jobs_startup_logger = logging.getLogger(__name__)
+
+# 无新 job_events 时每轮 sleep 3s；过小会在长脚本/长合成期间误断 SSE，表现为「进度卡住」。
+SSE_EVENT_IDLE_TICKS_MAX = 2400  # 约 2 小时
 from ..job_serialization import serialize_job
 from ..entitlement_matrix import voice_clone_monthly_included, voice_clone_payg_cents
 from ..media_wallet import (
@@ -447,6 +450,10 @@ def list_works_api(
             _dur_out = None
         _pid = str(row.get("project_id") or "").strip()
         _jid = str(row.get("id"))
+        _payload_dict = _coerce_row_payload(row.get("payload"))
+        _program_name = str(
+            _payload_dict.get("program_name") or result.get("program_name") or ""
+        ).strip()
         work = {
             "id": _jid,
             "title": title,
@@ -461,7 +468,9 @@ def list_works_api(
             "type": job_type,
             "projectName": project_name_for(_pid),
         }
-        work.update(_works_script_notes_extras(result, _coerce_row_payload(row.get("payload")), job_type))
+        if _program_name:
+            work["workProgramName"] = _program_name[:200]
+        work.update(_works_script_notes_extras(result, _payload_dict, job_type))
         if job_type in ("text_to_speech", "tts"):
             buckets["tts"].append(work)
         elif job_type in ("script_draft", "podcast_generate", "podcast", "podcast_short_video"):
@@ -1035,7 +1044,7 @@ def stream_job_events(job_id: str, request: Request, after_id: int = 0):
                 done_payload = {"type": "terminal", "status": row.get("status"), "job_id": job_id}
                 yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
                 break
-            if idle_ticks > 120:
+            if idle_ticks > SSE_EVENT_IDLE_TICKS_MAX:
                 break
             time.sleep(3)
 

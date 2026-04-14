@@ -14,6 +14,7 @@ import { apiErrorMessage } from "../../lib/apiError";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
 import { rememberJobId } from "../../lib/jobRecent";
 import { buildReferenceJobFields, type ReferenceRagMode } from "../../lib/jobReferencePayload";
+import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
 import { ART_KIND_PRESETS, type ArtKindKey } from "../../lib/artKindPresets";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
@@ -22,10 +23,28 @@ import {
   pickNotebookForWorkbench,
   writeLastNotebookName
 } from "../../lib/notesLastNotebook";
+import {
+  APP_SIDEBAR_COLLAPSED_KEY,
+  APP_SIDEBAR_COLLAPSE_EVENT,
+  APP_SIDEBAR_TOGGLE_EVENT
+} from "../../lib/appSidebarCollapse";
+import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { useAuth } from "../../lib/auth";
+import { useI18n } from "../../lib/I18nContext";
 import { maxNotesForReferencePlan } from "../../lib/noteReferenceLimits";
+import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
 import { PlanTierHint } from "../../components/PlanTierHint";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+import { normalizeNotesAskSources, type NotesAskSource } from "../../lib/notesAskCitation";
+import { loadNotesAskChat, saveNotesAskChat } from "../../lib/notesAskChatStorage";
+import {
+  accountKeyFromUser,
+  readLocalStorageScoped,
+  readSessionStorageScoped,
+  removeSessionStorageScoped,
+  writeLocalStorageScoped
+} from "../../lib/userScopedStorage";
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
 
@@ -39,6 +58,8 @@ type NotesAskTurn = {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+  /** 编排器 done 事件中的 sources，用于 [n] 脚注与内链 */
+  sources?: NotesAskSource[];
 };
 
 type NoteItem = {
@@ -183,7 +204,13 @@ function FreshNoteSparkleIcon({ className }: { className?: string }) {
 }
 
 export default function NotesPage() {
+  const { t } = useI18n();
   const { user, phone, getAuthHeaders } = useAuth();
+  /** 与 AuthProvider 中 userScopedStorage 同步；用于在切换账号时重载对话缓存 */
+  const storageAccountScope = useMemo(() => accountKeyFromUser(user), [user]);
+  const skipNotesAskSaveRef = useRef(true);
+  const notesAskMessagesSnapshotRef = useRef<NotesAskTurn[]>([]);
+  const prevNotebookForChatRef = useRef<string | null>(null);
   const noteRefCap = useMemo(() => maxNotesForReferencePlan(String(user?.plan)), [user?.plan]);
   const createdByPhone = useMemo(() => {
     const uid = typeof user?.user_id === "string" ? user.user_id.trim() : "";
@@ -305,6 +332,28 @@ export default function NotesPage() {
   const [notesAskNoteBusyId, setNotesAskNoteBusyId] = useState<string | null>(null);
   const [sourcesPanelCollapsed, setSourcesPanelCollapsed] = useState(false);
   const [studioPanelCollapsed, setStudioPanelCollapsed] = useState(false);
+  /** 与 AppShell 左侧主导航（首页 / 知识库 / 创作等）折叠状态同步 */
+  const [appNavCollapsed, setAppNavCollapsed] = useState(false);
+
+  useEffect(() => {
+    function syncAppNavCollapsedFromStorage() {
+      try {
+        const v = readLocalStorageScoped(APP_SIDEBAR_COLLAPSED_KEY);
+        setAppNavCollapsed(v === SIDEBAR_COLLAPSED_STORAGE);
+      } catch {
+        setAppNavCollapsed(false);
+      }
+    }
+    syncAppNavCollapsedFromStorage();
+    window.addEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncAppNavCollapsedFromStorage);
+    window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncAppNavCollapsedFromStorage);
+    window.addEventListener("storage", syncAppNavCollapsedFromStorage);
+    return () => {
+      window.removeEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncAppNavCollapsedFromStorage);
+      window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncAppNavCollapsedFromStorage);
+      window.removeEventListener("storage", syncAppNavCollapsedFromStorage);
+    };
+  }, [storageAccountScope]);
 
   useEffect(() => {
     setArtCharsInput(String(artChars));
@@ -358,6 +407,69 @@ export default function NotesPage() {
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [notesAskMessages]);
+
+  useEffect(() => {
+    notesAskMessagesSnapshotRef.current = notesAskMessages;
+  }, [notesAskMessages]);
+
+  useEffect(() => {
+    const nb = selectedNotebook.trim();
+    const prevNb = prevNotebookForChatRef.current;
+    if (prevNb && prevNb !== nb) {
+      const snap = notesAskMessagesSnapshotRef.current;
+      if (!snap.some((m) => m.streaming)) {
+        saveNotesAskChat(prevNb, snap);
+      }
+    }
+    prevNotebookForChatRef.current = nb || null;
+
+    if (!nb) {
+      setNotesAskMessages([]);
+      skipNotesAskSaveRef.current = true;
+      return;
+    }
+    const loaded = loadNotesAskChat(nb);
+    setNotesAskMessages(
+      loaded?.length ? loaded.map((m) => ({ ...m, streaming: false as boolean | undefined })) : []
+    );
+    skipNotesAskSaveRef.current = true;
+  }, [selectedNotebook, storageAccountScope]);
+
+  useEffect(() => {
+    if (skipNotesAskSaveRef.current) {
+      skipNotesAskSaveRef.current = false;
+      return;
+    }
+    const nb = selectedNotebook.trim();
+    if (!nb) return;
+    if (notesAskMessages.some((m) => m.streaming)) return;
+    const timer = window.setTimeout(() => {
+      saveNotesAskChat(nb, notesAskMessages);
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [notesAskMessages, selectedNotebook, storageAccountScope]);
+
+  const notesAskUnloadRef = useRef({
+    messages: [] as NotesAskTurn[],
+    nb: ""
+  });
+  useEffect(() => {
+    notesAskUnloadRef.current = {
+      messages: notesAskMessages,
+      nb: selectedNotebook.trim()
+    };
+  }, [notesAskMessages, selectedNotebook]);
+
+  useEffect(() => {
+    const onHide = () => {
+      const { messages, nb } = notesAskUnloadRef.current;
+      if (!nb) return;
+      if (messages.some((m) => m.streaming)) return;
+      saveNotesAskChat(nb, messages);
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, []);
 
   const notesSorted = useMemo(() => {
     return [...notes].sort((a, b) => {
@@ -518,7 +630,7 @@ export default function NotesPage() {
     let changed = false;
     let nextMap: Record<string, NotebookVisual> = {};
     try {
-      const cached = window.localStorage.getItem(NOTEBOOK_VISUAL_STORAGE_KEY);
+      const cached = readLocalStorageScoped(NOTEBOOK_VISUAL_STORAGE_KEY);
       if (cached) {
         const parsed = JSON.parse(cached) as Record<string, NotebookVisual>;
         if (parsed && typeof parsed === "object") nextMap = { ...parsed };
@@ -542,7 +654,7 @@ export default function NotesPage() {
     setNotebookVisualByName(nextMap);
     if (changed) {
       try {
-        window.localStorage.setItem(NOTEBOOK_VISUAL_STORAGE_KEY, JSON.stringify(nextMap));
+        writeLocalStorageScoped(NOTEBOOK_VISUAL_STORAGE_KEY, JSON.stringify(nextMap));
       } catch {
         // ignore
       }
@@ -581,7 +693,7 @@ export default function NotesPage() {
 
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem(NOTES_REUSE_TEMPLATE_KEY);
+      const raw = readSessionStorageScoped(NOTES_REUSE_TEMPLATE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
         notes_notebook?: string;
@@ -606,7 +718,7 @@ export default function NotesPage() {
       setArtKind("custom");
       setArticleModalStep("form");
       setShowArticleModal(true);
-      sessionStorage.removeItem(NOTES_REUSE_TEMPLATE_KEY);
+      removeSessionStorageScoped(NOTES_REUSE_TEMPLATE_KEY);
     } catch {
       // ignore
     }
@@ -716,6 +828,11 @@ export default function NotesPage() {
             podcastEventSourceRef.current = null;
             podcastResolveWaitRef.current = null;
             resolve();
+            return;
+          }
+          if (isJobEventLogOnlyForUi(data.type)) {
+            const p = data.payload?.progress;
+            if (typeof p === "number") setPodcastProgressPct(Math.min(100, Math.max(0, p)));
             return;
           }
           const msg = String(data.message || "").trim();
@@ -881,6 +998,7 @@ export default function NotesPage() {
             resolve();
             return;
           }
+          if (isJobEventLogOnlyForUi(data.type)) return;
           const msg = String(data.message || "").trim();
           if (msg) setDraftMessage(msg);
         } catch {
@@ -986,7 +1104,7 @@ export default function NotesPage() {
         const next = { ...prev, [name]: randomNotebookVisual() };
         if (typeof window !== "undefined") {
           try {
-            window.localStorage.setItem(NOTEBOOK_VISUAL_STORAGE_KEY, JSON.stringify(next));
+            writeLocalStorageScoped(NOTEBOOK_VISUAL_STORAGE_KEY, JSON.stringify(next));
           } catch {
             // ignore
           }
@@ -1263,11 +1381,16 @@ export default function NotesPage() {
               });
             } else if (ev.type === "done") {
               sawDone = true;
+              const doneSources = normalizeNotesAskSources(ev.sources);
               setNotesAskMessages((prev) => {
                 const next = [...prev];
                 const idx = next.findIndex((m) => m.id === assistantId);
                 if (idx < 0) return prev;
-                next[idx] = { ...next[idx]!, streaming: false };
+                next[idx] = {
+                  ...next[idx]!,
+                  streaming: false,
+                  ...(doneSources?.length ? { sources: doneSources } : {})
+                };
                 return next;
               });
             } else if (ev.type === "error") {
@@ -1578,12 +1701,15 @@ export default function NotesPage() {
     setArtCharsInput(String(clamped));
   }
 
-  const podcastEtaMinutes =
-    podcastBusy || podcastProgressPct > 0
-      ? podcastProgressPct >= 100
-        ? 0
-        : Math.max(1, Math.ceil(((100 - podcastProgressPct) / 100) * Math.max(5, Math.min(48, 25))))
-      : 0;
+  const podcastEtaMinutes = useMemo(() => {
+    if (!podcastBusy && podcastProgressPct <= 0) return null;
+    if (podcastProgressPct >= 100) return 0;
+    // 进度仍处排队/入口阶段时不展示「约 N 分钟」，避免固定乘出 ~25 分钟误导
+    if (podcastProgressPct < 12) return null;
+    const charEst = Math.max(800, notesStudioPrompt.length);
+    const totalMin = Math.max(5, Math.min(48, Math.round(5 + charEst / 420)));
+    return Math.max(1, Math.ceil(((100 - podcastProgressPct) / 100) * totalMin));
+  }, [podcastBusy, podcastProgressPct, notesStudioPrompt.length]);
 
   const showPodcastTaskPanel = podcastBusy || podcastPhase.length > 0;
 
@@ -1609,12 +1735,41 @@ export default function NotesPage() {
           role="status"
           aria-live="polite"
         >
-          {draftMessage}
+          <p className="leading-snug">{draftMessage}</p>
+          {messageSuggestsBillingTopUpOrSubscription(draftMessage) ? (
+            <BillingShortfallLinks className="mt-2 text-[11px] normal-case" />
+          ) : null}
         </div>
       ) : null}
 
       {hubView ? (
-        <section className={card}>
+        <>
+          <section
+            className="mb-4 rounded-2xl border border-line/90 bg-gradient-to-br from-brand/[0.06] via-surface to-surface p-4 shadow-soft sm:mb-5 sm:p-5"
+            aria-labelledby="notes-scheme-b-heading"
+          >
+            <p id="notes-scheme-b-heading" className="text-xs font-semibold uppercase tracking-wider text-muted">
+              {t("notes.schemeB.eyebrow")}
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              {(
+                [
+                  [t("notes.schemeB.pillar1Title"), t("notes.schemeB.pillar1Body")],
+                  [t("notes.schemeB.pillar2Title"), t("notes.schemeB.pillar2Body")],
+                  [t("notes.schemeB.pillar3Title"), t("notes.schemeB.pillar3Body")]
+                ] as const
+              ).map(([pillarTitle, pillarBody]) => (
+                <div
+                  key={pillarTitle}
+                  className="rounded-xl border border-line/80 bg-surface/90 p-3.5 shadow-sm dark:bg-surface/70"
+                >
+                  <p className="text-xs font-semibold text-ink">{pillarTitle}</p>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-muted sm:text-xs">{pillarBody}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className={card}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <h2 className="text-base font-semibold text-ink">笔记本</h2>
@@ -1736,6 +1891,7 @@ export default function NotesPage() {
             })}
           </div>
         </section>
+        </>
       ) : (
         <>
           <div
@@ -2086,8 +2242,15 @@ export default function NotesPage() {
               )}
             </section>
 
+            <div
+              className={`flex min-w-0 flex-1 ${
+                sourcesPanelCollapsed || appNavCollapsed ? "w-full" : "justify-center"
+              }`}
+            >
             <section
-              className="flex min-h-[min(100vh-12rem,920px)] min-w-0 flex-1 flex-col rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft"
+              className={`flex min-h-[min(100vh-12rem,920px)] w-full min-w-0 flex-col rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft ${
+                sourcesPanelCollapsed || appNavCollapsed ? "max-w-none" : "max-w-[min(100%,38rem)]"
+              }`}
               role="region"
               aria-label="对话"
             >
@@ -2116,13 +2279,15 @@ export default function NotesPage() {
                       {notesAskMessages.map((m) => (
                         <div
                           key={m.id}
-                          className={m.role === "user" ? "flex justify-end" : "flex justify-start"}
+                          className={
+                            m.role === "user" ? "flex justify-end" : "flex w-full min-w-0 justify-start"
+                          }
                         >
                           <div
                             className={
                               m.role === "user"
-                                ? "max-w-[min(92%,28rem)] rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm"
-                                : "max-w-[min(92%,28rem)] rounded-2xl border border-line/70 bg-fill/40 px-3 py-2 text-sm text-ink shadow-sm"
+                                ? "max-w-[min(92%,24rem)] rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm"
+                                : "w-full min-w-0 max-w-full px-0 py-1 text-sm leading-relaxed text-ink"
                             }
                           >
                             {m.role === "user" ? (
@@ -2131,9 +2296,9 @@ export default function NotesPage() {
                               <p className="text-muted">思考中…</p>
                             ) : (
                               <div className="min-w-0">
-                                <NotesAskAnswerDisplay text={m.content} />
+                                <NotesAskAnswerDisplay text={m.content} sources={m.sources} />
                                 {!m.streaming && (m.content || "").trim() ? (
-                                  <div className="mt-2 flex flex-wrap items-center gap-0.5 border-t border-line/60 pt-2">
+                                  <div className="mt-3 flex flex-wrap items-center gap-0.5 border-t border-line/40 pt-2">
                                     <button
                                       type="button"
                                       className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
@@ -2202,19 +2367,19 @@ export default function NotesPage() {
                     </div>
                   )}
                 </div>
-                <div className="flex shrink-0 flex-row flex-wrap items-center justify-start gap-2">
+                <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch">
                   <button
                     type="button"
                     onClick={() => openPodcastFlow()}
-                    className="inline-flex max-w-full flex-none flex-row items-center gap-1.5 rounded-xl border border-brand/35 bg-gradient-to-br from-brand/15 to-brand/[0.06] px-2.5 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98]"
+                    className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-brand/35 bg-gradient-to-br from-brand/15 to-brand/[0.06] px-3 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98] sm:w-auto sm:min-w-[10.125rem]"
                   >
                     <span
-                      className="inline-block origin-left text-sm leading-none scale-x-150"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-[1.125rem] leading-none"
                       aria-hidden
                     >
                       🎧
                     </span>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-[11px] font-semibold leading-tight text-ink">音频</div>
                       <div className="text-[9px] leading-tight text-brand/80">生成播客</div>
                     </div>
@@ -2222,15 +2387,15 @@ export default function NotesPage() {
                   <button
                     type="button"
                     onClick={() => openArticleFlow()}
-                    className="inline-flex max-w-full flex-none flex-row items-center gap-1.5 rounded-xl border border-success/35 bg-gradient-to-br from-success-soft/90 to-success/[0.08] px-2.5 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98]"
+                    className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-success/35 bg-gradient-to-br from-success-soft/90 to-success/[0.08] px-3 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98] sm:w-auto sm:min-w-[10.125rem]"
                   >
                     <span
-                      className="inline-block origin-left text-sm leading-none scale-x-150"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-success-soft/50 text-[1.125rem] leading-none"
                       aria-hidden
                     >
                       📝
                     </span>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-[11px] font-semibold leading-tight text-ink">文章</div>
                       <div className="text-[9px] leading-tight text-success-ink/80">生成长文</div>
                     </div>
@@ -2306,12 +2471,13 @@ export default function NotesPage() {
                 </div>
               </div>
             </section>
+            </div>
 
             <section
               className={`flex shrink-0 flex-col rounded-3xl border border-line/70 bg-fill/15 shadow-soft ${
                 studioPanelCollapsed
                   ? "w-full max-lg:min-h-0 lg:min-h-[min(100vh-12rem,920px)] lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
-                  : "min-h-[min(100vh-12rem,920px)] w-full p-4 lg:w-1/4 lg:max-w-[25%]"
+                  : "min-h-[min(100vh-12rem,920px)] w-full p-3 lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
               }`}
               aria-label="我的作品"
             >
@@ -2389,7 +2555,10 @@ export default function NotesPage() {
                   role="status"
                   aria-live="polite"
                 >
-                  {draftMessage}
+                  <p className="leading-snug">{draftMessage}</p>
+                  {messageSuggestsBillingTopUpOrSubscription(draftMessage) ? (
+                    <BillingShortfallLinks className="mt-2 text-[11px] normal-case" />
+                  ) : null}
                 </div>
               ) : null}
               {showPodcastTaskPanel ? (
@@ -2407,6 +2576,9 @@ export default function NotesPage() {
                     ) : null}
                   </div>
                   <p className="mt-2 text-sm text-ink">{podcastPhase || (podcastBusy ? "处理中…" : "—")}</p>
+                  {messageSuggestsBillingTopUpOrSubscription(podcastPhase || "") ? (
+                    <BillingShortfallLinks className="mt-2" />
+                  ) : null}
                   <div className="mt-3">
                     <div className="h-2.5 w-full overflow-hidden rounded-full bg-track/90">
                       <div
@@ -2420,7 +2592,9 @@ export default function NotesPage() {
                         {podcastBusy || podcastProgressPct > 0
                           ? podcastProgressPct >= 100
                             ? "已完成"
-                            : `预估剩余约 ${podcastEtaMinutes} 分钟`
+                            : podcastEtaMinutes != null && podcastEtaMinutes > 0
+                              ? `预估剩余约 ${podcastEtaMinutes} 分钟`
+                              : "排队与生成中，请稍候"
                           : ""}
                       </span>
                     </div>

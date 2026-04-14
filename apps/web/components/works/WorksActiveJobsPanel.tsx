@@ -13,6 +13,8 @@ import SmallConfirmModal from "../ui/SmallConfirmModal";
 import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
 import { classifyErrorTone, errorPageCopy } from "../../lib/errorCopy";
 import { useAuth } from "../../lib/auth";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 
 const POLL_MS = 5000;
 const LIST_LIMIT = 80;
@@ -162,6 +164,7 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
           <p className="font-medium text-danger">{errCopy.headline}</p>
           <p className="mt-1 text-xs text-muted">{errCopy.sub}</p>
           <p className="mt-2 break-words font-mono text-xs text-ink">{err}</p>
+          {messageSuggestsBillingTopUpOrSubscription(err) ? <BillingShortfallLinks className="mt-3" /> : null}
         </div>
       ) : null}
 

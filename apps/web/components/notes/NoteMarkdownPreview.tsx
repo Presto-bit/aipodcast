@@ -4,6 +4,7 @@ import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useMemo } from "react";
+import { sanitizeUserMarkdownHref } from "../../lib/safeMarkdownHref";
 
 type Props = {
   title: string;
@@ -65,11 +66,17 @@ export default function NoteMarkdownPreview({
               {children}
             </blockquote>
           ),
-          a: ({ href, children }) => (
-            <a href={href} className="text-brand underline" target="_blank" rel="noreferrer">
-              {children}
-            </a>
-          )
+          a: ({ href, children }) => {
+            const safe = sanitizeUserMarkdownHref(href);
+            if (!safe) {
+              return <span className="text-ink underline decoration-line">{children}</span>;
+            }
+            return (
+              <a href={safe} className="text-brand underline" target="_blank" rel="noreferrer">
+                {children}
+              </a>
+            );
+          }
         }}
       >
         {filteredText}

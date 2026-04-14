@@ -3,10 +3,24 @@ import os
 from typing import Any
 
 from app.fyv_shared.config import DEFAULT_VOICES, VOICE_STORE_FILE
+from app.fyv_shared.minimax_system_voices_data import SYSTEM_VOICES
 
 
 def get_default_voices() -> dict[str, Any]:
     return dict(DEFAULT_VOICES or {})
+
+
+def get_system_voices() -> dict[str, Any]:
+    """Minimax 官方系统音色表（与 minimax_system_voices_data 同源）；含 provider / voice_type 供前端展示与筛选。"""
+    out: dict[str, Any] = {}
+    for k, v in (SYSTEM_VOICES or {}).items():
+        if not isinstance(v, dict):
+            continue
+        item = dict(v)
+        item.setdefault("provider", "minimax")
+        item.setdefault("voice_type", "系统音色")
+        out[str(k)] = item
+    return out
 
 
 def get_saved_voices() -> list[dict[str, Any]]:

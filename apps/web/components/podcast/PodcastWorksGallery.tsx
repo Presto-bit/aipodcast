@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
 import { useAuth } from "../../lib/auth";
+import { planMayDownloadBundledWorks } from "../../lib/noteReferenceLimits";
+import { GatedSplitAction } from "../SubscriptionVipLink";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
 import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
 import { sanitizeShareEpisodeTitle } from "../../lib/sharePublishDefaults";
@@ -14,13 +17,54 @@ import { downloadJobBundleZip } from "../../lib/workBundleDownload";
 import { listRssPublicationsByJobIds, type RssPublication } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
 import { useI18n } from "../../lib/I18nContext";
+import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 
-const PODCAST_TYPES = new Set(["podcast_generate", "podcast"]);
-const TTS_TYPES = new Set(["text_to_speech"]);
+const PODCAST_TYPES = new Set(["podcast_generate", "podcast", "podcast_short_video"]);
+const TTS_TYPES = new Set(["text_to_speech", "tts"]);
 /** 笔记本出稿（script_draft） */
 const NOTES_WORK_TYPES = new Set(["script_draft"]);
 /** 笔记本页：成片 + 文章出稿 */
 const NOTES_STUDIO_TYPES = new Set(["podcast_generate", "podcast", "script_draft"]);
+
+/** 「我的作品」导航页音频合并列表：一级体裁 */
+function worksNavPrimaryKind(type: string | undefined): string {
+  const t = String(type || "");
+  if (t === "script_draft") return "文章";
+  if (TTS_TYPES.has(t)) return "文字转语音";
+  return "播客";
+}
+
+/** 二级体裁：payload.program_name；缺失时按一级给默认（播客→「播客」等） */
+function worksNavSecondaryLabel(w: WorkItem, primaryKind: string): string {
+  const p = String(w.workProgramName || "").trim();
+  if (p) return p;
+  if (primaryKind === "文章") return "文章";
+  if (primaryKind === "文字转语音") return "配音";
+  return "播客";
+}
+
+function worksNavMetricPart(
+  isScriptDraft: boolean,
+  durationLine: string,
+  scriptCharCountDisplay: number | null
+): string {
+  if (isScriptDraft) {
+    return scriptCharCountDisplay != null && scriptCharCountDisplay > 0
+      ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
+      : "—";
+  }
+  return durationLine !== "—" ? `时长 ${durationLine}` : "—";
+}
+
+function formatWorkCreatedDay(createdAt: string | undefined): string {
+  const raw = String(createdAt || "").trim();
+  if (!raw) return "—";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+}
 
 type GalleryKeys = {
   hiddenKey: string;
@@ -78,7 +122,7 @@ function coverImageSrc(url: string | undefined | null, cacheBust?: number): stri
 
 function loadHiddenIds(hiddenKey: string): Set<string> {
   try {
-    const raw = localStorage.getItem(hiddenKey);
+    const raw = readLocalStorageScoped(hiddenKey);
     if (!raw) return new Set();
     const arr = JSON.parse(raw) as unknown;
     if (!Array.isArray(arr)) return new Set();
@@ -90,7 +134,7 @@ function loadHiddenIds(hiddenKey: string): Set<string> {
 
 function saveHiddenIds(hiddenKey: string, s: Set<string>) {
   try {
-    localStorage.setItem(hiddenKey, JSON.stringify([...s]));
+    writeLocalStorageScoped(hiddenKey, JSON.stringify([...s]));
     scheduleCloudPreferencesPush();
   } catch {
     // ignore
@@ -99,7 +143,7 @@ function saveHiddenIds(hiddenKey: string, s: Set<string>) {
 
 function loadTitles(titlesKey: string): Record<string, string> {
   try {
-    const raw = localStorage.getItem(titlesKey);
+    const raw = readLocalStorageScoped(titlesKey);
     if (!raw) return {};
     const o = JSON.parse(raw) as unknown;
     if (!o || typeof o !== "object") return {};
@@ -115,7 +159,7 @@ function loadTitles(titlesKey: string): Record<string, string> {
 
 function saveTitles(titlesKey: string, m: Record<string, string>) {
   try {
-    localStorage.setItem(titlesKey, JSON.stringify(m));
+    writeLocalStorageScoped(titlesKey, JSON.stringify(m));
     scheduleCloudPreferencesPush();
   } catch {
     // ignore
@@ -138,19 +182,26 @@ function CircularPlayControl({
   playing,
   progress,
   disabled,
-  onClick
+  onClick,
+  compact
 }: {
   playing: boolean;
   progress: number;
   disabled?: boolean;
   onClick: () => void;
+  /** 笔记本侧栏紧凑卡片用 */
+  compact?: boolean;
 }) {
-  const r = 41;
+  const r = compact ? 32 : 41;
   const c = 2 * Math.PI * r;
   const p = Math.min(1, Math.max(0, progress));
   const offset = c * (1 - p);
+  const wrap = compact ? "h-9 w-9" : "h-11 w-11";
+  const btn = compact ? "h-6 w-6" : "h-7 w-7";
+  const iconSm = compact ? "h-2 w-2" : "h-2.5 w-2.5";
+  const iconPlay = compact ? "h-2.5 w-2.5" : "h-3 w-3";
   return (
-    <div className="relative inline-flex h-11 w-11 shrink-0 items-center justify-center">
+    <div className={`relative inline-flex ${wrap} shrink-0 items-center justify-center`}>
       <svg className="pointer-events-none absolute inset-0 h-full w-full -rotate-90" viewBox="0 0 100 100" aria-hidden>
         <circle cx="50" cy="50" r={r} fill="none" className="stroke-line" strokeWidth="3" />
         <circle
@@ -170,15 +221,15 @@ function CircularPlayControl({
         disabled={disabled}
         onClick={onClick}
         aria-label={playing ? "暂停" : "播放"}
-        className="relative z-[1] flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-surface text-brand shadow-soft outline-none ring-offset-2 hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-wait disabled:opacity-60"
+        className={`relative z-[1] flex ${btn} cursor-pointer items-center justify-center rounded-full bg-surface text-brand shadow-soft outline-none ring-offset-2 hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-wait disabled:opacity-60`}
       >
         {playing ? (
-          <svg className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="currentColor">
+          <svg className={iconSm} viewBox="0 0 24 24" fill="currentColor">
             <rect x="6" y="5" width="4" height="14" rx="1" />
             <rect x="14" y="5" width="4" height="14" rx="1" />
           </svg>
         ) : (
-          <svg className="ml-px h-3 w-3" viewBox="0 0 24 24" fill="currentColor">
+          <svg className={`ml-px ${iconPlay}`} viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>
         )}
@@ -213,8 +264,108 @@ function humanNoteSourceLabel(raw: string): string {
   return s;
 }
 
+/**
+ * 笔记本侧栏「我的作品」卡片简介：体裁 · 来源笔记名 · 时长或字数 · 生成时间
+ */
+/** 笔记本侧栏 ⋯ 菜单：fixed 定位，避免 overflow/滚动裁切 */
+function computeNotesStudioMenuPosition(anchor: DOMRect): { top: number; left: number } {
+  const MENU_PAD = 8;
+  const MENU_W = 152;
+  const GAP = 4;
+  const EST_HEIGHT = 220;
+  let left = anchor.right - MENU_W;
+  left = Math.min(Math.max(MENU_PAD, left), window.innerWidth - MENU_W - MENU_PAD);
+  let top = anchor.bottom + GAP;
+  if (top + EST_HEIGHT > window.innerHeight - MENU_PAD) {
+    top = Math.max(MENU_PAD, anchor.top - EST_HEIGHT - GAP);
+  }
+  return { top, left };
+}
+
+/** 无本地改名时侧栏卡片首行：引用笔记等推导出的作品名称（完整） */
+function notesStudioReferencedWorkTitle(w: PodcastWorkRow): string {
+  const rawTitles = Array.isArray(w.notesSourceTitles) ? w.notesSourceTitles : [];
+  const labeled = rawTitles.map((t) => humanNoteSourceLabel(String(t)));
+  const firstTitle = labeled.find((t) => t && t !== "未命名笔记") || labeled[0] || "";
+  const nTotal =
+    typeof w.notesSourceNoteCount === "number" && w.notesSourceNoteCount > 0 ? w.notesSourceNoteCount : rawTitles.length;
+  if (firstTitle) return firstTitle;
+  if (nTotal > 0) return `已选 ${nTotal} 条笔记`;
+  return "引用来源未记录";
+}
+
+/**
+ * 侧栏卡片首行：用户通过「修改名称」保存的标题优先，否则为引用来源的作品名称。
+ */
+function notesStudioCardHeadlineTitle(
+  w: PodcastWorkRow,
+  titleOverrides: Record<string, string>,
+  jobId: string
+): string {
+  const saved = jobId && titleOverrides[jobId] ? String(titleOverrides[jobId]).trim() : "";
+  if (saved) return saved;
+  return notesStudioReferencedWorkTitle(w);
+}
+
+const NOTES_STUDIO_REF_TITLE_MAX_CHARS = 24;
+
+function truncateByGraphemes(s: string, maxChars: number): string {
+  const t = String(s || "").trim();
+  if (maxChars < 1) return "";
+  const chars = Array.from(t);
+  if (chars.length <= maxChars) return t;
+  return chars.slice(0, maxChars).join("") + "…";
+}
+
+/** 第二行：体裁 · 时长/字数 · 时间（不含引用标题，避免与首行重复） */
+function formatNotesStudioCardMetaLine(
+  isScriptDraft: boolean,
+  durationLine: string,
+  scriptCharCountDisplay: number | null,
+  createdShort: string
+): string {
+  const genre = isScriptDraft ? "文章" : "播客";
+  const metric = isScriptDraft
+    ? scriptCharCountDisplay != null && scriptCharCountDisplay > 0
+      ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
+      : "—"
+    : durationLine !== "—"
+      ? `时长 ${durationLine}`
+      : "—";
+  return `${genre} · ${metric} · ${createdShort}`;
+}
+
+/** 悬停层完整一行（含《引用》），供摘要提示使用 */
+function formatNotesStudioCardSynopsis(
+  w: PodcastWorkRow,
+  isScriptDraft: boolean,
+  durationLine: string,
+  scriptCharCountDisplay: number | null,
+  createdShort: string
+): string {
+  const genre = isScriptDraft ? "文章" : "播客";
+  const rawTitles = Array.isArray(w.notesSourceTitles) ? w.notesSourceTitles : [];
+  const labeled = rawTitles.map((t) => humanNoteSourceLabel(String(t)));
+  const firstTitle = labeled.find((t) => t && t !== "未命名笔记") || labeled[0] || "";
+  const nTotal =
+    typeof w.notesSourceNoteCount === "number" && w.notesSourceNoteCount > 0 ? w.notesSourceNoteCount : rawTitles.length;
+  const sourcePart = firstTitle
+    ? `《${firstTitle}》`
+    : nTotal > 0
+      ? `已选 ${nTotal} 条笔记`
+      : "来源未记录";
+  const metric = isScriptDraft
+    ? scriptCharCountDisplay != null && scriptCharCountDisplay > 0
+      ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
+      : "—"
+    : durationLine !== "—"
+      ? `时长 ${durationLine}`
+      : "—";
+  return `${genre} · ${sourcePart} · ${metric} · ${createdShort}`;
+}
+
 /** 文章出稿卡片：单行来源 + 悬停/聚焦浮层展示笔记本、引用笔记全名等 */
-function ScriptWorkSourceSummary({ w }: { w: PodcastWorkRow }) {
+function ScriptWorkSourceSummary({ w, compact }: { w: PodcastWorkRow; compact?: boolean }) {
   const rawTitles = Array.isArray(w.notesSourceTitles) ? w.notesSourceTitles : [];
   const titles = rawTitles.map((t) => humanNoteSourceLabel(String(t)));
   const nTotal =
@@ -232,6 +383,14 @@ function ScriptWorkSourceSummary({ w }: { w: PodcastWorkRow }) {
         : "来源：—";
   const nb = String(w.notesSourceNotebook || "").trim();
   const showHoverPanel = titles.length > 0 || nTotal > 0 || Boolean(nb);
+
+  if (compact) {
+    return (
+      <p className="line-clamp-2 text-[9px] leading-snug text-muted" title={sourceOneLine}>
+        {sourceOneLine}
+      </p>
+    );
+  }
 
   return (
     <>
@@ -292,7 +451,18 @@ export default function PodcastWorksGallery({
 }: Props) {
   const { t } = useI18n();
   const router = useRouter();
-  const { getAuthHeaders } = useAuth();
+  const { getAuthHeaders, user } = useAuth();
+
+  const worksNavAuthorDisplay = useMemo(() => {
+    const u = user as { username?: string; phone?: string } | null | undefined;
+    if (!u || u.phone === "local") return "我";
+    const un = typeof u.username === "string" ? u.username.trim() : "";
+    if (un) return un.length > 16 ? `${un.slice(0, 16)}…` : un;
+    const ph = typeof u.phone === "string" ? u.phone.replace(/\s/g, "") : "";
+    if (ph.length >= 4) return `尾号 ${ph.slice(-4)}`;
+    return "我";
+  }, [user]);
+  const planDownloadOk = useMemo(() => planMayDownloadBundledWorks(user?.plan), [user?.plan]);
   const { hiddenKey, titlesKey, allowedTypes } = useMemo(() => galleryStorageKeys(variant), [variant]);
 
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -304,6 +474,9 @@ export default function PodcastWorksGallery({
   }, [hiddenKey, titlesKey]);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const menuWrapRef = useRef<HTMLDivElement>(null);
+  /** notes_studio：菜单挂在 portal 上，用于点击外部判断 */
+  const notesStudioMenuPortalRef = useRef<HTMLDivElement | null>(null);
+  const [notesStudioMenuPos, setNotesStudioMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [renameJobId, setRenameJobId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -316,6 +489,8 @@ export default function PodcastWorksGallery({
   const [publicationsByJobId, setPublicationsByJobId] = useState<Record<string, RssPublication[]>>({});
 
   const [coverBustById, setCoverBustById] = useState<Record<string, number>>({});
+  /** 仅 notes_studio：详情弹窗 */
+  const [notesStudioDetailId, setNotesStudioDetailId] = useState<string | null>(null);
   const [coverUploadBusy, setCoverUploadBusy] = useState<string | null>(null);
   const coverFileInputRef = useRef<HTMLInputElement | null>(null);
   const coverUploadTargetIdRef = useRef<string | null>(null);
@@ -383,6 +558,89 @@ export default function PodcastWorksGallery({
   }, [items]);
 
   useEffect(() => {
+    if (!notesStudioDetailId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setNotesStudioDetailId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [notesStudioDetailId]);
+
+  const notesStudioDetailWork = useMemo((): PodcastWorkRow | undefined => {
+    if (variant !== "notes_studio" || !notesStudioDetailId) return undefined;
+    return items.find((x) => x.id === notesStudioDetailId);
+  }, [variant, notesStudioDetailId, items]);
+
+  const notesStudioDetailUi = useMemo(() => {
+    if (!notesStudioDetailWork) return null;
+    const w = notesStudioDetailWork;
+    const id = w.id!;
+    const isScriptDraft = String(w.type || "") === "script_draft";
+    const isActive = activeJobId === id;
+    const prog = isActive ? progress01 : 0;
+    const baseSec =
+      typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0
+        ? w.audioDurationSec
+        : hydratedDurationSec[id];
+    const totalSecForLabel =
+      isActive && durationSec > 0 && Number.isFinite(durationSec)
+        ? durationSec
+        : baseSec !== undefined && Number.isFinite(baseSec)
+          ? baseSec
+          : undefined;
+    const durationLine = totalSecForLabel !== undefined ? formatClock(totalSecForLabel) : "—";
+    const durationCaption = isScriptDraft ? "文章出稿（无音频）" : `时长 ${durationLine}`;
+    const created = w.createdAt ? new Date(w.createdAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—";
+    const publications = publicationsByJobId[id] || [];
+    const publishedText =
+      publications.length > 0
+        ? `已在 ${publications.length} 处发布 · ${publications[0]?.channel_title || ""}`
+        : "";
+    const publishActionText = publications.length > 0 ? "已发过" : "分享";
+    const scriptCharCountDisplay =
+      typeof w.scriptCharCount === "number" &&
+      Number.isFinite(w.scriptCharCount) &&
+      w.scriptCharCount > 0
+        ? Math.round(w.scriptCharCount)
+        : null;
+    return {
+      w,
+      id,
+      isScriptDraft,
+      isActive,
+      prog,
+      durationCaption,
+      created,
+      publications,
+      publishedText,
+      publishActionText,
+      scriptCharCountDisplay
+    };
+  }, [
+    notesStudioDetailWork,
+    activeJobId,
+    progress01,
+    durationSec,
+    hydratedDurationSec,
+    publicationsByJobId
+  ]);
+
+  const notesStudioMenuPortalData = useMemo(() => {
+    if (variant !== "notes_studio" || !menuOpenId) return null;
+    const w = items.find((x) => x.id === menuOpenId);
+    if (!w?.id) return null;
+    const id = w.id;
+    const pubs = publicationsByJobId[id] || [];
+    const isScriptDraft = String(w.type || "") === "script_draft";
+    return {
+      w,
+      id,
+      isScriptDraft,
+      publishActionText: pubs.length > 0 ? "已发过" : "分享"
+    };
+  }, [variant, menuOpenId, items, publicationsByJobId]);
+
+  useEffect(() => {
     for (const w of items) {
       const id = w.id;
       if (!id) continue;
@@ -442,11 +700,39 @@ export default function PodcastWorksGallery({
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       const t = e.target as Node;
-      if (menuWrapRef.current && !menuWrapRef.current.contains(t)) setMenuOpenId(null);
+      if (menuWrapRef.current?.contains(t)) return;
+      if (notesStudioMenuPortalRef.current?.contains(t)) return;
+      setMenuOpenId(null);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+
+  useLayoutEffect(() => {
+    if (variant !== "notes_studio" || !menuOpenId) {
+      setNotesStudioMenuPos(null);
+      return;
+    }
+    const update = () => {
+      const el = menuWrapRef.current;
+      if (!el) {
+        requestAnimationFrame(() => {
+          const el2 = menuWrapRef.current;
+          if (!el2) return;
+          setNotesStudioMenuPos(computeNotesStudioMenuPosition(el2.getBoundingClientRect()));
+        });
+        return;
+      }
+      setNotesStudioMenuPos(computeNotesStudioMenuPosition(el.getBoundingClientRect()));
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [variant, menuOpenId]);
 
   useEffect(() => {
     const el = audioEl;
@@ -758,7 +1044,7 @@ export default function PodcastWorksGallery({
       if (!id) return;
       setMenuOpenId(null);
       try {
-        sessionStorage.setItem(`fym_share_display_title:${id}`, work.displayTitle);
+        writeSessionStorageScoped(`fym_share_display_title:${id}`, work.displayTitle);
       } catch {
         /* ignore */
       }
@@ -810,7 +1096,7 @@ export default function PodcastWorksGallery({
       const result = (row.result || {}) as Record<string, unknown>;
 
       if (jobType === "text_to_speech" || jobType === "tts") {
-        sessionStorage.setItem(
+        writeSessionStorageScoped(
           TTS_REUSE_TEMPLATE_KEY,
           JSON.stringify({
             text: String(payload.text || result.script_text || "").trim(),
@@ -827,7 +1113,7 @@ export default function PodcastWorksGallery({
       }
 
       if (jobType === "script_draft") {
-        sessionStorage.setItem(
+        writeSessionStorageScoped(
           NOTES_REUSE_TEMPLATE_KEY,
           JSON.stringify({
             notes_notebook: String(payload.notes_notebook || "").trim(),
@@ -840,7 +1126,7 @@ export default function PodcastWorksGallery({
         return;
       }
 
-      sessionStorage.setItem(
+      writeSessionStorageScoped(
         PODCAST_REUSE_TEMPLATE_KEY,
         JSON.stringify({
           text: String(payload.text || result.script_text || "").trim(),
@@ -872,6 +1158,7 @@ export default function PodcastWorksGallery({
 
   async function batchDownloadSelected() {
     if (selectedRows.length === 0) return;
+    if (variant === "all" && !planDownloadOk) return;
     setBatchBusy(true);
     try {
       for (const row of selectedRows) {
@@ -930,14 +1217,17 @@ export default function PodcastWorksGallery({
       />
 
       {fetchError ? (
-        <p className="mb-2 text-sm text-danger-ink">
-          {fetchError}
-          {onDismissError ? (
-            <button type="button" className="ml-2 underline" onClick={onDismissError}>
-              清除
-            </button>
-          ) : null}
-        </p>
+        <div className="mb-2 text-sm text-danger-ink">
+          <p>
+            {fetchError}
+            {onDismissError ? (
+              <button type="button" className="ml-2 underline" onClick={onDismissError}>
+                清除
+              </button>
+            ) : null}
+          </p>
+          {messageSuggestsBillingTopUpOrSubscription(fetchError) ? <BillingShortfallLinks className="mt-2" /> : null}
+        </div>
       ) : null}
 
       {enableBatchActions && items.length > 0 ? (
@@ -962,14 +1252,27 @@ export default function PodcastWorksGallery({
               >
                 全选当前页
               </button>
-              <button
-                type="button"
-                className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"
-                disabled={selectedCount === 0 || batchBusy}
-                onClick={() => void batchDownloadSelected()}
-              >
-                {batchBusy ? "正在批量下载…" : "批量下载"}
-              </button>
+              {variant === "all" && !planDownloadOk ? (
+                <GatedSplitAction
+                  locked
+                  variant="default"
+                  upgradeTitle="批量下载需要 Basic 及以上或按量套餐"
+                  onClick={() => void batchDownloadSelected()}
+                  disabled={selectedCount === 0 || batchBusy}
+                  unlockedClassName="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"
+                >
+                  {batchBusy ? "正在批量下载…" : "批量下载"}
+                </GatedSplitAction>
+              ) : (
+                <button
+                  type="button"
+                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"
+                  disabled={selectedCount === 0 || batchBusy}
+                  onClick={() => void batchDownloadSelected()}
+                >
+                  {batchBusy ? "正在批量下载…" : "批量下载"}
+                </button>
+              )}
               <button
                 type="button"
                 className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill"
@@ -1001,7 +1304,7 @@ export default function PodcastWorksGallery({
         <ul
           className={
             variant === "notes_studio"
-              ? "grid grid-cols-2 gap-2"
+              ? "grid w-full grid-cols-1 gap-2 overflow-visible"
               : "grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
           }
         >
@@ -1023,6 +1326,10 @@ export default function PodcastWorksGallery({
             const durationLine = totalSecForLabel !== undefined ? formatClock(totalSecForLabel) : "—";
             const durationCaption = isScriptDraft ? "文章出稿（无音频）" : `时长 ${durationLine}`;
             const created = w.createdAt ? new Date(w.createdAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—";
+            const createdShort =
+              w.createdAt
+                ? new Date(w.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" })
+                : "—";
             const publications = publicationsByJobId[id] || [];
             const publishedText =
               publications.length > 0
@@ -1035,6 +1342,301 @@ export default function PodcastWorksGallery({
               w.scriptCharCount > 0
                 ? Math.round(w.scriptCharCount)
                 : null;
+
+            /** 仅笔记本工作台侧栏「我的作品」：无封面顶栏、简介 + 标题 + 操作；其它页面仍走下方默认卡片 */
+            if (variant === "notes_studio") {
+              const headlineFull = notesStudioCardHeadlineTitle(w, titleOverrides, id);
+              const headlineShown = truncateByGraphemes(headlineFull, NOTES_STUDIO_REF_TITLE_MAX_CHARS);
+              const metaLine = formatNotesStudioCardMetaLine(
+                isScriptDraft,
+                durationLine,
+                scriptCharCountDisplay,
+                createdShort
+              );
+              const synopsisHoverFull = formatNotesStudioCardSynopsis(
+                w,
+                isScriptDraft,
+                durationLine,
+                scriptCharCountDisplay,
+                createdShort
+              );
+              return (
+                <li
+                  key={id}
+                  className="relative flex w-full min-w-0 max-w-full flex-col overflow-visible rounded-xl border border-line bg-surface shadow-soft"
+                >
+                  {enableBatchActions && batchMode ? (
+                    <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-2 py-1 text-[10px] text-ink">
+                      <input type="checkbox" checked={selectedIds.has(id)} onChange={() => toggleSelect(id)} />
+                      选择
+                    </label>
+                  ) : null}
+                  <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
+                    {headlineFull !== headlineShown ? (
+                      <div className="group/reftitle relative min-h-0">
+                        <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
+                        <div
+                          role="tooltip"
+                          className="pointer-events-none invisible absolute bottom-full left-0 z-[70] mb-1 w-max max-w-[min(18rem,90vw)] rounded-md border border-line bg-surface px-2 py-1.5 text-left text-[10px] font-normal leading-snug text-ink opacity-0 shadow-card ring-1 ring-line/50 transition-opacity delay-[75ms] duration-100 group-hover/reftitle:visible group-hover/reftitle:opacity-100"
+                        >
+                          {headlineFull}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
+                    )}
+                    <div className="group/synopsis relative min-h-0">
+                      <p className="line-clamp-3 min-h-0 text-[9px] leading-snug text-muted">{metaLine}</p>
+                      <div
+                        role="tooltip"
+                        className="pointer-events-none invisible absolute bottom-full left-0 z-[70] mb-1 w-max max-w-[min(18rem,92vw)] whitespace-pre-wrap break-words rounded-md border border-line bg-surface px-2 py-1.5 text-left text-[9px] leading-snug text-ink opacity-0 shadow-card ring-1 ring-line/50 transition-opacity delay-[75ms] duration-100 group-hover/synopsis:visible group-hover/synopsis:opacity-100"
+                      >
+                        {synopsisHoverFull}
+                      </div>
+                    </div>
+                    <div className="mt-0.5 flex items-center justify-between gap-1 border-t border-line/50 pt-1.5">
+                      <div className="flex min-w-0 flex-1 items-center gap-1">
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-md border border-brand/35 bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-brand hover:bg-brand/15"
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            setNotesStudioDetailId(id);
+                          }}
+                        >
+                          详情
+                        </button>
+                        {!isScriptDraft ? (
+                          <CircularPlayControl
+                            playing={isActive && isPlayingAudio}
+                            progress={prog}
+                            disabled={audioLoadingId === id}
+                            onClick={() => void togglePlay(id)}
+                            compact
+                          />
+                        ) : null}
+                      </div>
+                      <div className="relative shrink-0" ref={menuOpenId === id ? menuWrapRef : undefined}>
+                        <button
+                          type="button"
+                          className="flex h-6 w-6 items-center justify-center rounded-full text-muted hover:bg-fill"
+                          aria-label="更多"
+                          aria-expanded={menuOpenId === id}
+                          onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
+                        >
+                          <span className="text-sm leading-none">⋯</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  {renameJobId === id ? (
+                    <div className="border-t border-line px-2 py-1.5">
+                      <InlineTextPrompt
+                        open
+                        title="作品名称"
+                        value={renameDraft}
+                        onChange={setRenameDraft}
+                        onSubmit={commitRename}
+                        onCancel={() => setRenameJobId(null)}
+                        placeholder="输入显示名称"
+                      />
+                    </div>
+                  ) : null}
+                  {playErrorById[id] ? (
+                    <p
+                      className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[8px] leading-tight text-danger-ink"
+                      role="status"
+                    >
+                      {playErrorById[id]}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            }
+
+            if (variant === "all") {
+              const primaryK = worksNavPrimaryKind(w.type);
+              const secondaryK = worksNavSecondaryLabel(w, primaryK);
+              const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
+              const dayP = formatWorkCreatedDay(w.createdAt);
+              const navMetaLine = [primaryK, secondaryK, worksNavAuthorDisplay, metricP, dayP].join(" | ");
+              return (
+                <li
+                  key={id}
+                  className={`flex w-full max-w-full flex-col rounded-xl border border-line bg-surface shadow-soft ${
+                    isScriptDraft ? "overflow-visible" : "overflow-hidden"
+                  }`}
+                >
+                  {enableBatchActions && batchMode ? (
+                    <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-3 py-1.5 text-xs text-ink">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(id)}
+                        onChange={() => toggleSelect(id)}
+                      />
+                      选择此作品
+                    </label>
+                  ) : null}
+                  {isScriptDraft ? (
+                    <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden border-b border-success/25 bg-gradient-to-br from-success-soft/50 to-success/[0.08]">
+                      <div className="flex h-full flex-col items-center justify-center gap-1 p-2">
+                        <span className="text-2xl leading-none opacity-90" aria-hidden>
+                          📝
+                        </span>
+                        <span className="text-[10px] font-medium text-success-ink/90">文稿</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden bg-gradient-to-br from-fill to-fill">
+                      {w.coverImage ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={coverImageSrc(w.coverImage, coverBustById[id])}
+                          alt=""
+                          className="relative z-[1] h-full w-full object-cover"
+                          referrerPolicy="no-referrer"
+                          loading="lazy"
+                          onError={(e) => {
+                            const el = e.target as HTMLImageElement;
+                            const orig = String(w.coverImage || "").trim();
+                            if (orig && el.src.includes("/api/image-proxy") && !el.dataset.fallback) {
+                              el.dataset.fallback = "1";
+                              el.src = orig;
+                              return;
+                            }
+                            el.style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <div className="flex h-full min-h-[3rem] items-center justify-center text-[10px] text-muted">无配图</div>
+                      )}
+                    </div>
+                  )}
+                  <div className="shrink-0 border-b border-line/70 px-3 py-2">
+                    <div className="flex items-start gap-2">
+                      <p className="min-w-0 flex-1 text-sm font-semibold leading-snug text-ink line-clamp-2" title={w.displayTitle}>
+                        {w.displayTitle}
+                      </p>
+                      {!isScriptDraft ? (
+                        <div className="shrink-0 pt-0.5">
+                          <CircularPlayControl
+                            playing={isActive && isPlayingAudio}
+                            progress={prog}
+                            disabled={audioLoadingId === id}
+                            onClick={() => void togglePlay(id)}
+                            compact
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                    <p className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted" title={navMetaLine}>
+                      {navMetaLine}
+                    </p>
+                  </div>
+                  {renameJobId === id ? (
+                    <div className="border-t border-line px-3 py-2">
+                      <InlineTextPrompt
+                        open
+                        title="作品名称"
+                        value={renameDraft}
+                        onChange={setRenameDraft}
+                        onSubmit={commitRename}
+                        onCancel={() => setRenameJobId(null)}
+                        placeholder="输入显示名称"
+                      />
+                    </div>
+                  ) : null}
+                  {playErrorById[id] ? (
+                    <p
+                      className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-tight text-danger-ink"
+                      role="status"
+                    >
+                      {playErrorById[id]}
+                    </p>
+                  ) : null}
+                  <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
+                    {!isScriptDraft ? (
+                      <button
+                        type="button"
+                        className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
+                        disabled={audioLoadingId === id}
+                        onClick={() => void togglePlay(id)}
+                      >
+                        {isActive && isPlayingAudio ? "暂停" : "播放"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
+                      onClick={() => goToSharePage(w)}
+                    >
+                      {publishActionText}
+                    </button>
+                    <GatedSplitAction
+                      locked={!planDownloadOk}
+                      variant="default"
+                      upgradeTitle="下载需要 Basic 及以上或按量套餐"
+                      onClick={() => void onDownload(w)}
+                      disabled={zipBusy === id}
+                      unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      {zipBusy === id ? "正在打包…" : "下载"}
+                    </GatedSplitAction>
+                    <button
+                      type="button"
+                      className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+                      onClick={() => void onReuseTemplate(id)}
+                    >
+                      复用
+                    </button>
+                    <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
+                      <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-fill"
+                        aria-label="更多"
+                        onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
+                      >
+                        <span className="text-base leading-none">⋯</span>
+                      </button>
+                      {menuOpenId === id ? (
+                        <div className="absolute bottom-full right-0 z-50 mb-1 min-w-[9.5rem] rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card">
+                          <button
+                            type="button"
+                            className="block w-full px-3 py-2 text-left hover:bg-fill"
+                            onClick={() => openRename(id, w.displayTitle)}
+                          >
+                            修改名称
+                          </button>
+                          {!isScriptDraft ? (
+                            <button
+                              type="button"
+                              className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-50"
+                              disabled={coverUploadBusy === id}
+                              onClick={() => {
+                                coverUploadTargetIdRef.current = id;
+                                coverFileInputRef.current?.click();
+                              }}
+                            >
+                              {coverUploadBusy === id ? "处理封面中…" : "上传封面（裁 1400²）"}
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
+                            onClick={() => requestDelete(id)}
+                          >
+                            删除
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {publications.length > 0 ? (
+                      <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">{publishedText}</span>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            }
 
             return (
               <li
@@ -1244,6 +1846,71 @@ export default function PodcastWorksGallery({
             );
           })}
         </ul>
+        {variant === "notes_studio" && notesStudioMenuPortalData && notesStudioMenuPos
+          ? createPortal(
+              (() => {
+                const m = notesStudioMenuPortalData;
+                const pos = notesStudioMenuPos;
+                return (
+                  <div
+                    ref={notesStudioMenuPortalRef}
+                    role="menu"
+                    className="fixed z-[1000] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
+                    style={{ top: pos.top, left: pos.left }}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
+                      disabled={zipBusy === m.id}
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        void onDownload(m.w);
+                      }}
+                    >
+                      {zipBusy === m.id ? "正在打包…" : downloadLabelForWorkType(m.w.type)}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="block w-full px-3 py-2 text-left hover:bg-fill"
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        openRename(m.id, m.w.displayTitle);
+                      }}
+                    >
+                      修改名称
+                    </button>
+                    {!m.isScriptDraft ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left hover:bg-fill"
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          goToSharePage(m.w);
+                        }}
+                      >
+                        {m.publishActionText}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        requestDelete(m.id);
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
+                );
+              })(),
+              document.body
+            )
+          : null}
         {sidebarMoreCount > 0 ? (
           <div className="mt-3 flex justify-center">
             <Link
@@ -1257,6 +1924,172 @@ export default function PodcastWorksGallery({
         ) : null}
         </>
       )}
+      {variant === "notes_studio" && notesStudioDetailUi
+        ? (() => {
+            const d = notesStudioDetailUi;
+            const { w, id, isScriptDraft, isActive, prog } = d;
+            return (
+              <div
+                className="fixed inset-0 z-[520] flex items-end justify-center bg-black/45 p-3 sm:items-center sm:p-4"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="notes-studio-detail-title"
+                onPointerDown={(e) => {
+                  if (e.target === e.currentTarget) setNotesStudioDetailId(null);
+                }}
+              >
+                <div
+                  className="flex max-h-[min(92dvh,800px)] w-full max-w-[min(100vw-1.5rem,32rem)] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-modal"
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+                    <div className="flex items-start justify-between gap-2 border-b border-line pb-3">
+                      <h2 id="notes-studio-detail-title" className="min-w-0 flex-1 text-base font-semibold leading-snug text-ink">
+                        {w.displayTitle}
+                      </h2>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-lg p-1.5 text-muted hover:bg-fill"
+                        aria-label="关闭"
+                        onClick={() => setNotesStudioDetailId(null)}
+                      >
+                        <span className="text-lg leading-none" aria-hidden>
+                          ×
+                        </span>
+                      </button>
+                    </div>
+                    {isScriptDraft ? (
+                      <div className="mt-3 rounded-xl border border-success/25 bg-gradient-to-br from-success-soft/95 to-success/[0.08] px-3 py-2">
+                        <div className="flex gap-2">
+                          <span className="shrink-0 text-base leading-none" aria-hidden>
+                            📝
+                          </span>
+                          <div className="min-w-0 flex-1 space-y-1 text-[11px] leading-snug text-success-ink/85">
+                            <ScriptWorkSourceSummary w={w} />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="relative mt-3 aspect-[4/3] w-full overflow-hidden rounded-xl bg-gradient-to-br from-fill to-fill">
+                        {w.coverImage ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            src={coverImageSrc(w.coverImage, coverBustById[id])}
+                            alt=""
+                            className="relative z-[1] h-full w-full object-cover"
+                            referrerPolicy="no-referrer"
+                            loading="lazy"
+                            onError={(e) => {
+                              const el = e.target as HTMLImageElement;
+                              const orig = String(w.coverImage || "").trim();
+                              if (orig && el.src.includes("/api/image-proxy") && !el.dataset.fallback) {
+                                el.dataset.fallback = "1";
+                                el.src = orig;
+                                return;
+                              }
+                              el.style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <div className="flex h-full min-h-[3rem] items-center justify-center text-xs text-muted">无配图</div>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-3 space-y-1.5 text-sm">
+                      <p className="text-muted">{d.durationCaption}</p>
+                      {d.scriptCharCountDisplay !== null ? (
+                        <p className="tabular-nums text-muted">约 {d.scriptCharCountDisplay.toLocaleString()} 字</p>
+                      ) : null}
+                      <p className="text-muted">{d.created}</p>
+                      {d.publications.length > 0 ? (
+                        <p className="text-[11px] leading-snug text-success-ink" title={d.publishedText}>
+                          {d.publishedText}
+                        </p>
+                      ) : null}
+                    </div>
+                    {playErrorById[id] ? (
+                      <p
+                        className="mt-3 rounded-lg border border-danger/25 bg-danger-soft/90 px-2 py-1.5 text-xs text-danger-ink"
+                        role="status"
+                      >
+                        {playErrorById[id]}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="shrink-0 border-t border-line bg-fill/30 px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!isScriptDraft ? (
+                        <CircularPlayControl
+                          playing={isActive && isPlayingAudio}
+                          progress={prog}
+                          disabled={audioLoadingId === id}
+                          onClick={() => void togglePlay(id)}
+                        />
+                      ) : null}
+                      {!isScriptDraft ? (
+                        <button
+                          type="button"
+                          className="rounded-md border border-brand/45 bg-brand/10 px-3 py-1.5 text-sm font-medium text-brand hover:bg-brand/15 disabled:opacity-50"
+                          onClick={() => goToSharePage(w)}
+                        >
+                          {d.publishActionText}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill disabled:opacity-50"
+                        disabled={zipBusy === id}
+                        onClick={() => void onDownload(w)}
+                      >
+                        {zipBusy === id ? "正在打包…" : "下载"}
+                      </button>
+                      {!isScriptDraft ? (
+                        <button
+                          type="button"
+                          className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill disabled:opacity-50"
+                          disabled={coverUploadBusy === id}
+                          onClick={() => {
+                            coverUploadTargetIdRef.current = id;
+                            coverFileInputRef.current?.click();
+                          }}
+                        >
+                          {coverUploadBusy === id ? "处理封面中…" : "上传封面"}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill"
+                        onClick={() => {
+                          setNotesStudioDetailId(null);
+                          openRename(id, w.displayTitle);
+                        }}
+                      >
+                        修改名称
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill"
+                        onClick={() => void onReuseTemplate(id)}
+                      >
+                        复用
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-md border border-danger/35 bg-danger-soft/80 px-3 py-1.5 text-sm text-danger-ink hover:bg-danger-soft"
+                        onClick={() => {
+                          setNotesStudioDetailId(null);
+                          requestDelete(id);
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()
+        : null}
     </div>
   );
 }

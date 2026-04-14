@@ -1,0 +1,134 @@
+"use client";
+
+import Link from "next/link";
+import type { ReactNode } from "react";
+
+export function IconSubscriptionCrown({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2 17l2-8h4l3 6 3-10 3 10 3-6h4l2 8H2z" />
+      <path d="M4 17v3h16v-3" />
+    </svg>
+  );
+}
+
+type SubscriptionVipLinkProps = {
+  /** 鼠标悬停与无障碍说明 */
+  title?: string;
+  className?: string;
+  /**
+   * 与左侧主按钮拼成同一圆角框：右侧竖分割线 + 图标，无独立外框。
+   * 用于工具条 pill、作品卡片操作区等。
+   */
+  segment?: boolean;
+};
+
+/**
+ * 未满足订阅条件时跳转 `/subscription`；仅用皇冠图标表示「会员 / 升级」，文案放在 `title` / `aria-label`。
+ */
+export function SubscriptionVipLink({ title = "升级套餐后可使用，点击查看订阅", className, segment }: SubscriptionVipLinkProps) {
+  return (
+    <Link
+      href="/subscription"
+      title={title}
+      aria-label={title}
+      className={
+        className ??
+        [
+          "inline-flex shrink-0 items-center justify-center text-amber-700 transition-colors hover:bg-amber-500/15 dark:text-amber-300",
+          segment
+            ? "min-h-[1.75rem] min-w-[2.25rem] border-l border-amber-500/30 bg-amber-500/[0.07] px-2"
+            : "h-7 min-w-[1.75rem] rounded-md border border-amber-500/35 bg-amber-500/10 px-1.5"
+        ].join(" ")
+      }
+    >
+      <IconSubscriptionCrown className="h-3 w-3" />
+    </Link>
+  );
+}
+
+type LockedToolbarChipPillProps = {
+  /** 与 chip 正文一致 */
+  label: ReactNode;
+  upgradeTitle: string;
+};
+
+/** 工具条上未解锁能力：与 `chipClass` 同级的圆角胶囊内，左侧为禁用文案、右侧为皇冠入口。 */
+export function LockedToolbarChipPill({ label, upgradeTitle }: LockedToolbarChipPillProps) {
+  return (
+    <div className="inline-flex max-w-full min-w-0 overflow-hidden rounded-full border border-line bg-surface shadow-sm">
+      <button
+        type="button"
+        className="max-w-[calc(100%-2.5rem)] min-w-0 flex-1 cursor-not-allowed truncate border-0 bg-transparent px-3 py-1.5 text-left text-xs font-medium text-muted"
+        disabled
+      >
+        {label}
+      </button>
+      <SubscriptionVipLink title={upgradeTitle} segment />
+    </div>
+  );
+}
+
+type GatedSplitActionProps = {
+  locked: boolean;
+  upgradeTitle: string;
+  onClick: () => void;
+  disabled?: boolean;
+  /** 解锁时的按钮 class（圆角、品牌色等） */
+  unlockedClassName: string;
+  /** 锁定态外壳：与解锁按钮边框语义一致 */
+  variant?: "default" | "brand";
+  children: ReactNode;
+};
+
+/**
+ * 作品卡片等：`locked` 时主文案与皇冠入口同处一个 `rounded-md` 边框内；解锁时为普通按钮。
+ */
+export function GatedSplitAction({
+  locked,
+  upgradeTitle,
+  onClick,
+  disabled,
+  unlockedClassName,
+  variant = "default",
+  children
+}: GatedSplitActionProps) {
+  if (!locked) {
+    return (
+      <button type="button" className={unlockedClassName} disabled={disabled} onClick={onClick}>
+        {children}
+      </button>
+    );
+  }
+  const shell =
+    variant === "brand"
+      ? "inline-flex max-w-full min-w-0 overflow-hidden rounded-md border border-brand/45 bg-brand/10 shadow-sm"
+      : "inline-flex max-w-full min-w-0 overflow-hidden rounded-md border border-line bg-surface shadow-sm";
+  const labelCls =
+    variant === "brand"
+      ? "text-[11px] font-medium text-brand opacity-80"
+      : "text-[11px] text-ink opacity-70";
+  return (
+    <div className={shell}>
+      <button type="button" className={`min-w-0 flex-1 truncate border-0 bg-transparent px-2 py-1 text-left ${labelCls}`} disabled>
+        {children}
+      </button>
+      <SubscriptionVipLink
+        title={upgradeTitle}
+        segment
+        className="inline-flex min-h-[1.75rem] min-w-[2.25rem] shrink-0 items-center justify-center border-l border-amber-500/35 bg-amber-500/[0.08] px-2 text-amber-800 transition-colors hover:bg-amber-500/15 dark:text-amber-300"
+      />
+    </div>
+  );
+}

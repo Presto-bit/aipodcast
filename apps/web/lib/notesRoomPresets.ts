@@ -6,31 +6,32 @@ export const PODCAST_ROOM_PRESETS: Record<
   { label: string; textPrefix: string; scriptStyle: string | null; programName: string | null }
 > = {
   custom: {
-    label: "自定义模式",
-    textPrefix: "",
-    scriptStyle: null,
-    programName: null
+    label: "深夜聊天",
+    textPrefix:
+      "两位主持人是认识多年的老友。语气要松弛、富有磁性。多一些长叹、感叹词（如：哎、其实啊、说真的），语速放缓。请用「碎碎念」的方式，从文档的一个小细节切入，联想到生活感悟。增加「打断」和「附和」。一个主持人分享观点时，另一个可以随口插话（如：「我懂你意思」「这让我想起了……」）。不要试图涵盖文档所有细节。重点聊聊那些让人感慨、产生共鸣或感到无奈的地方，要把知识聊出「烟火气」。必须全程使用地道的中文口语。避免书面语，多用口头短句。以一种意犹未尽的感慨结束。",
+    scriptStyle: "深夜闲聊、老友口语、烟火气",
+    programName: "深夜聊天"
   },
   deep_dive: {
-    label: "学霸模式",
+    label: "深度讨论",
     textPrefix:
-      "【体裁：知识分享 Deep Dive】请将笔记材料转化为知识讲解类播客：结构清晰、循序渐进，帮助听众建立系统理解。",
-    scriptStyle: "深入浅出、条理清晰、适合系统学习的知识分享类播客",
-    programName: "学霸模式 · Deep Dive"
+      "请进行一场深度的技术研讨。专注于文档中的原始数据和实验方法，减少寒暄和幽默，用专业严谨的口吻分析论点之间的逻辑关系，并对结论进行批判性思考。",
+    scriptStyle: "专业严谨、技术研讨、批判性分析",
+    programName: "深度讨论"
   },
   critique: {
-    label: "锐评频道",
+    label: "快速概览",
     textPrefix:
-      "【体裁：观点点评】请基于笔记材料做有态度、有观点的播客点评，观点可鲜明，但保持可听性与基本尊重。",
-    scriptStyle: "观点鲜明、有态度、点评类播客",
-    programName: "锐评频道 · Critique"
+      "请针对这份文档做一个5分钟的快速简报。直接跳过背景介绍，重点讲述最核心的三个结论和对应的行动建议。语言要精炼，像是在为CEO做汇报。",
+    scriptStyle: "精炼简报、结论与行动项",
+    programName: "快速概览"
   },
   debate: {
-    label: "左右互搏",
+    label: "多视角评价",
     textPrefix:
-      "【体裁：双人对辩】请以两位角色就材料中的争议点或对立观点展开讨论与辩论，有交锋、有来回，保持可听性。",
-    scriptStyle: "观点交锋、对话张力、辩论型双人播客",
-    programName: "左右互搏 · Debate"
+      "请针对文档中的观点进行一场辩论。一位主持人表示支持，另一位则持怀疑态度并提出挑战性的问题。重点探讨该方案可能存在的风险和局限性。",
+    scriptStyle: "双视角交锋、风险与局限",
+    programName: "多视角评价"
   }
 };
 

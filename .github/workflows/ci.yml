@@ -12,6 +12,9 @@ jobs:
     defaults:
       run:
         working-directory: apps/web
+    env:
+      # next build 跳过 phase-production-build 后仍会在 start 校验；提供给构建期 BFF/签名路径的一致性占位
+      INTERNAL_SIGNING_SECRET: ci-workflow-placeholder-must-be-32chars-min
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

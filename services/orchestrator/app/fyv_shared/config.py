@@ -233,11 +233,13 @@ TTS_RATE_LIMIT_CONFIG = {
 
 # ========== 图像生成配置 ==========
 IMAGE_GENERATION_CONFIG = {
-    "style_type": "漫画",
-    "style_weight": 1,
+    # 文生图 API 粗粒度画风；具体视觉语言主要由 compose 画面描述 + style_weight 体现
+    "style_type": "插画",
+    # 压低固定画风权重，避免覆盖「按主题写的」画面与媒介描述
+    "style_weight": 0.38,
     "aspect_ratio": "1:1",
     "prompt_optimizer": True,
-    "n": 1
+    "n": 1,
 }
 
 # ========== 日志配置 ==========

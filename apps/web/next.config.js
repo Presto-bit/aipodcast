@@ -46,6 +46,8 @@ mergeRootAiNativeEnv();
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
+    /** 启用 `instrumentation.ts`（生产 INTERNAL_SIGNING_SECRET 强校验等） */
+    instrumentationHook: true,
     typedRoutes: false,
     /**
      * Server Actions 体积极限；Route Handler（如 /api/note-upload）在部分部署下另有默认上限。

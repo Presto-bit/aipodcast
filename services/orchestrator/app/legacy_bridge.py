@@ -227,7 +227,12 @@ def synthesize_tts_with_minimax(text: str, voice_id: str, api_key: str | None = 
     }
 
 
-def generate_cover_image_tts_result(summary: str, api_key: str | None) -> tuple[str | None, str | None]:
+def generate_cover_image_tts_result(
+    summary: str,
+    api_key: str | None,
+    *,
+    program_name_fallback: str = "",
+) -> tuple[str | None, str | None]:
     """文生图封面：成功返回 (url, None)，失败返回 (None, 简短原因)。"""
     if not api_key:
         return None, "未配置 MINIMAX_API_KEY"
@@ -237,7 +242,11 @@ def generate_cover_image_tts_result(summary: str, api_key: str | None) -> tuple[
     try:
         from app.fyv_shared.minimax_client import minimax_client
 
-        cr = minimax_client.generate_cover_image(s[:1200], api_key=api_key)
+        cr = minimax_client.generate_cover_image(
+            s[:4000],
+            api_key=api_key,
+            program_name_fallback=(program_name_fallback or "").strip(),
+        )
         if cr.get("success") and cr.get("image_url"):
             return str(cr["image_url"]), None
         err = str(cr.get("error") or cr.get("message") or "上游未返回 image_url")
@@ -249,7 +258,7 @@ def generate_cover_image_tts_result(summary: str, api_key: str | None) -> tuple[
 
 def generate_cover_image_tts(summary: str, api_key: str | None) -> str | None:
     """文生图封面（失败则返回 None）。"""
-    url, _ = generate_cover_image_tts_result(summary, api_key)
+    url, _ = generate_cover_image_tts_result(summary, api_key, program_name_fallback="")
     return url
 
 

@@ -8,11 +8,14 @@ import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { cancelJob, getJob, retryJob } from "../../lib/api";
 import { classifyErrorTone, errorPageCopy } from "../../lib/errorCopy";
 import { useI18n } from "../../lib/I18nContext";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { classifyJobError, failureCopy, failureRecoveryLink } from "../../lib/jobFailure";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { deriveJobStage, type StreamPayload } from "../../lib/jobStage";
 import { supportMailtoWithJob } from "../../lib/supportLink";
 import { JOB_SECTION_SURFACE_CARD } from "../../lib/jobSectionClasses";
 import type { JobArtifactRecord, JobRecord } from "../../lib/types";
+import { readSessionStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
 
 function extractPreviewText(result: Record<string, unknown> | undefined): string {
   if (!result) return "";
@@ -81,7 +84,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
   useEffect(() => {
     if (!jobId) return;
     try {
-      const raw = window.sessionStorage.getItem(jobUiCacheKey(jobId));
+      const raw = readSessionStorageScoped(jobUiCacheKey(jobId));
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
         job?: JobRecord | null;
@@ -105,7 +108,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
     if (!jobId) return;
     try {
       const last200 = events.slice(-200);
-      window.sessionStorage.setItem(
+      writeSessionStorageScoped(
         jobUiCacheKey(jobId),
         JSON.stringify({
           job,
@@ -306,7 +309,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       return;
     }
     try {
-      sessionStorage.setItem(
+      writeSessionStorageScoped(
         "fym_podcast_partial_redo_v1",
         JSON.stringify({
           sourceJobId: jobId,
@@ -411,7 +414,12 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
             </div>
           ) : null}
           {job.error_message ? (
-            <p className="mt-3 rounded border border-danger/40 bg-danger-soft/80 px-3 py-2 text-xs text-danger-ink">{job.error_message}</p>
+            <div className="mt-3 rounded border border-danger/40 bg-danger-soft/80 px-3 py-2 text-xs text-danger-ink">
+              <p>{job.error_message}</p>
+              {messageSuggestsBillingTopUpOrSubscription(job.error_message) ? (
+                <BillingShortfallLinks className="mt-2 border-t border-danger/25 pt-2" />
+              ) : null}
+            </div>
           ) : null}
           {job.status === "failed" ? (
             <div className="mt-3 space-y-2 rounded border border-danger/40 bg-danger-soft p-3 text-xs" role="alert">
@@ -508,7 +516,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
                     className="rounded-dawn-sm border border-brand/50 bg-brand/10 px-2.5 py-1.5 text-xs font-medium text-brand hover:bg-brand/15"
                     onClick={() => {
                       try {
-                        sessionStorage.setItem(`fym_share_display_title:${jobId}`, jobShareDisplayTitle(job));
+                        writeSessionStorageScoped(`fym_share_display_title:${jobId}`, jobShareDisplayTitle(job));
                       } catch {
                         /* ignore */
                       }

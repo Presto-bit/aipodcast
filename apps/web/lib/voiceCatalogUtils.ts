@@ -137,24 +137,37 @@ export function parseVoiceMeta(key: string, val: Record<string, unknown>): Voice
   const tags = pickTags(val);
 
   let language = "其他";
-  let typeSource = voiceTypeRaw || name;
+  /** 编排器写入的「系统音色」仅作分类，不能作为展示简称，否则会经 shortenTypeLabel 变成「系统」 */
+  const voiceTypeBlocksDisplay =
+    String(voiceTypeRaw || "")
+      .trim()
+      .replace(/\s+/g, "") === "系统音色";
+  let typeSource = voiceTypeRaw && !voiceTypeBlocksDisplay ? voiceTypeRaw : name;
 
   if (desc.includes(" · ")) {
     const parts = desc.split(" · ");
     language = pickText(val, ["language", "language_name", "lang", "locale"], (parts[0] || "").trim() || "其他");
-    typeSource = voiceTypeRaw || parts.slice(1).join(" · ").trim() || name;
+    const fromDesc = parts.slice(1).join(" · ").trim();
+    typeSource =
+      voiceTypeRaw && !voiceTypeBlocksDisplay
+        ? voiceTypeRaw
+        : fromDesc || name;
   } else if (desc && (/女声|男声/.test(desc) || /Mini|Max/i.test(name))) {
     language = pickText(val, ["language", "language_name", "lang", "locale"], "内置");
-    typeSource = voiceTypeRaw || name;
+    typeSource = (voiceTypeRaw && !voiceTypeBlocksDisplay ? voiceTypeRaw : "") || name;
   } else if (desc) {
     language = pickText(val, ["language", "language_name", "lang", "locale"], "其他");
-    typeSource = voiceTypeRaw || (desc.length > 40 ? name : desc);
+    typeSource =
+      (voiceTypeRaw && !voiceTypeBlocksDisplay ? voiceTypeRaw : "") || (desc.length > 40 ? name : desc);
   } else {
     language = pickText(val, ["language", "language_name", "lang", "locale"], "其他");
   }
 
   const genderGroup = genderRaw === "male" ? "男" : genderRaw === "female" ? "女" : "其他";
-  const typeShort = shortenTypeLabel(typeSource, name);
+  let typeShort = shortenTypeLabel(typeSource, name);
+  if (typeShort === "系统" || (voiceTypeBlocksDisplay && typeShort.length <= 2)) {
+    typeShort = shortenTypeLabel(name, name);
+  }
   const langShort = compactLanguageLabel(language);
   const selectGroupLabel = `${genderGroup} · ${langShort}`;
   const optionTitle =

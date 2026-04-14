@@ -23,7 +23,16 @@ import {
   type ShareFormFields
 } from "../../lib/sharePublishDefaults";
 import { getBearerAuthHeadersSync } from "../../lib/authHeaders";
-import { getJob, listRssChannels, listRssPublicationsByJobIds, publishWorkToRss, type RssChannel } from "../../lib/api";
+import { readSessionStorageScoped } from "../../lib/userScopedStorage";
+import {
+  fetchRssPublishEligibility,
+  getJob,
+  listRssChannels,
+  listRssPublicationsByJobIds,
+  publishWorkToRss,
+  type RssChannel
+} from "../../lib/api";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import {
   DEFAULT_PUBLISH_PLATFORM_ID,
   type PublishPlatformId,
@@ -132,6 +141,11 @@ export function SharePublishClient({ jobId }: Props) {
   const [advancedPublishOpen, setAdvancedPublishOpen] = useState(false);
   const [shareOrigin, setShareOrigin] = useState("");
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
+  /** RSS 发布：服务端与账户/作品计费挂钩；复制上方分享链接不受限 */
+  const [rssGate, setRssGate] = useState<
+    "idle" | "loading" | "ok" | "blocked" | "err"
+  >("idle");
+  const [rssGateDetail, setRssGateDetail] = useState("");
 
   const shareGenContextRef = useRef<ShareGenContext | null>(null);
 
@@ -188,7 +202,7 @@ export function SharePublishClient({ jobId }: Props) {
 
       const storedTitle = (() => {
         try {
-          return String(sessionStorage.getItem(`fym_share_display_title:${jobId}`) || "").trim();
+          return String(readSessionStorageScoped(`fym_share_display_title:${jobId}`) || "").trim();
         } catch {
           return "";
         }
@@ -264,7 +278,7 @@ export function SharePublishClient({ jobId }: Props) {
         const displayKey = `fym_share_display_title:${jobId}`;
         let fallback = "";
         try {
-          fallback = String(sessionStorage.getItem(displayKey) || "").trim();
+          fallback = String(readSessionStorageScoped(displayKey) || "").trim();
         } catch {
           /* ignore */
         }
@@ -276,7 +290,7 @@ export function SharePublishClient({ jobId }: Props) {
         const rawTitle =
           (() => {
             try {
-              return String(sessionStorage.getItem(displayKey) || "").trim();
+              return String(readSessionStorageScoped(displayKey) || "").trim();
             } catch {
               return "";
             }
@@ -386,8 +400,59 @@ export function SharePublishClient({ jobId }: Props) {
     };
   }, [jobId, applyJobToForm]);
 
+  const scriptDraft = jobType === "script_draft";
+  const audioBlocked = scriptDraft || !hasAudio;
+  /** 未 hydration 前 blocked 为 false，避免误显分享区；仅 hydration 后才允许复制链接与发布表单。 */
+  const showShareAndPublish = shareJobHydrated && !audioBlocked;
+
   useEffect(() => {
     let canceled = false;
+    if (!shareJobHydrated || audioBlocked) {
+      setRssGate("idle");
+      setRssGateDetail("");
+      return () => {
+        canceled = true;
+      };
+    }
+    void (async () => {
+      setRssGate("loading");
+      setRssGateDetail("");
+      try {
+        const r = await fetchRssPublishEligibility(jobId);
+        if (canceled) return;
+        if (r.success === false) {
+          setRssGate("err");
+          setRssGateDetail((r.detail || "").trim() || "无法校验 RSS 发布条件");
+          return;
+        }
+        if (r.eligible) {
+          setRssGate("ok");
+          setRssGateDetail("");
+        } else {
+          setRssGate("blocked");
+          setRssGateDetail((r.detail || "").trim() || "当前账户或作品不符合 RSS 发布条件。");
+        }
+      } catch (e) {
+        if (!canceled) {
+          setRssGate("err");
+          setRssGateDetail(String(e instanceof Error ? e.message : e));
+        }
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [jobId, shareJobHydrated, audioBlocked]);
+
+  useEffect(() => {
+    let canceled = false;
+    if (rssGate !== "ok") {
+      setChannels([]);
+      setChannelId("");
+      return () => {
+        canceled = true;
+      };
+    }
     void (async () => {
       setChannelsLoading(true);
       setFormErr("");
@@ -407,7 +472,7 @@ export function SharePublishClient({ jobId }: Props) {
     return () => {
       canceled = true;
     };
-  }, []);
+  }, [rssGate]);
 
   useEffect(() => {
     if (!scheduleModalOpen) return;
@@ -561,6 +626,12 @@ export function SharePublishClient({ jobId }: Props) {
       setFormErr("请先在上方选择「小宇宙」并完成表单。");
       return;
     }
+    if (rssGate !== "ok") {
+      setFormErr(
+        rssGateDetail.trim() || "当前账户或作品暂不符合 RSS 发布条件，请查看上方说明或完成充值/订阅后再试。"
+      );
+      return;
+    }
     if (!channelId) {
       setFormErr("请选择频道。若列表为空，请先在设置里配置 RSS。");
       return;
@@ -634,11 +705,6 @@ export function SharePublishClient({ jobId }: Props) {
     }
   }
 
-  const scriptDraft = jobType === "script_draft";
-  const audioBlocked = scriptDraft || !hasAudio;
-  /** 未 hydration 前 blocked 为 false，避免误显分享区；仅 hydration 后才允许复制链接与发布表单。 */
-  const showShareAndPublish = shareJobHydrated && !audioBlocked;
-
   return (
     <main className="mx-auto min-h-0 w-full max-w-2xl px-3 pb-12 pt-5 sm:px-4">
       <div className="mb-5 flex flex-col gap-1">
@@ -649,7 +715,9 @@ export function SharePublishClient({ jobId }: Props) {
           <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">发给朋友听</h1>
           {jobTitle ? <span className="max-w-[min(100%,14rem)] truncate text-xs text-muted sm:max-w-xs">{jobTitle}</span> : null}
         </div>
-        <p className="text-xs text-muted">复制链接分享（使用站点公网域名）；下方可发布到播客平台。</p>
+        <p className="text-xs text-muted">
+          复制链接给好友听不限会员（公网域名）；使用下方 RSS 发布到播客平台时，需为充值/订阅等付费账户，且本片须为套餐或按量付费产生的成片。
+        </p>
       </div>
 
       <audio ref={audioRef} className="hidden" preload="metadata" playsInline />
@@ -769,6 +837,21 @@ export function SharePublishClient({ jobId }: Props) {
           >
             使用小宇宙发布
           </button>
+        </div>
+      ) : rssGate === "idle" || rssGate === "loading" ? (
+        <div className="rounded-2xl border border-line bg-fill/20 px-4 py-10 text-center shadow-soft sm:px-6">
+          <p className="text-sm text-muted" role="status">
+            {rssGate === "idle" ? "准备校验 RSS 发布条件…" : "正在校验 RSS 发布条件…"}
+          </p>
+        </div>
+      ) : rssGate === "blocked" || rssGate === "err" ? (
+        <div className="rounded-2xl border border-warning/35 bg-warning-soft/60 px-4 py-5 shadow-soft sm:px-6 sm:py-6">
+          <p className="text-sm font-medium text-warning-ink">暂无法使用 RSS 发布</p>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-warning-ink/95">{rssGateDetail.trim() || "请稍后再试或刷新页面。"}</p>
+          {rssGate === "blocked" ? <BillingShortfallLinks className="mt-4" /> : null}
+          {rssGate === "err" ? (
+            <p className="mt-3 text-xs text-muted">若持续失败请刷新页面或稍后重试。</p>
+          ) : null}
         </div>
       ) : (
       <div className="rounded-2xl border border-line bg-surface px-4 py-5 shadow-soft sm:px-6 sm:py-6">

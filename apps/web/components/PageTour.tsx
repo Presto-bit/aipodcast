@@ -1,43 +1,52 @@
 "use client";
 
-import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../lib/I18nContext";
-import { stepsForTour } from "../lib/pageTourContent";
-import { tourIdForPathname } from "../lib/pageTourRoutes";
+import { globalOnboardingSteps } from "../lib/pageTourContent";
+import { readLocalStorageScoped, writeLocalStorageScoped } from "../lib/userScopedStorage";
 
-const STORAGE_KEY = "fym_page_tour_done_v1";
+/** 全局分步新手指引完成标记（全站仅一次） */
+const STORAGE_SEEN = "fym_onboarding_steps_v1_seen";
+/** 旧版一次性弹窗 */
+const LEGACY_ONBOARDING = "fym_onboarding_v1_seen";
+/** 已废弃：按页 tour 的完成记录；存在则视为已看过引导，避免重复打扰 */
+const LEGACY_PAGE_TOUR = "fym_page_tour_done_v1";
 
-function readDoneMap(): Record<string, boolean> {
+function hasCompletedOnboarding(): boolean {
   try {
-    const raw = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as Record<string, boolean>;
+    if (typeof window === "undefined") return true;
+    if (readLocalStorageScoped(STORAGE_SEEN) === "1") return true;
+    if (window.localStorage.getItem(LEGACY_ONBOARDING) === "1") return true;
+    const pageTour = window.localStorage.getItem(LEGACY_PAGE_TOUR);
+    if (pageTour && pageTour !== "{}" && pageTour !== "null") {
+      try {
+        const o = JSON.parse(pageTour) as Record<string, boolean>;
+        if (o && typeof o === "object" && Object.keys(o).length > 0) return true;
+      } catch {
+        return true;
+      }
+    }
   } catch {
-    return {};
+    // ignore
   }
+  return false;
 }
 
-function writeDone(tourId: string) {
+function markOnboardingSeen() {
   try {
-    const next = { ...readDoneMap(), [tourId]: true };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    writeLocalStorageScoped(STORAGE_SEEN, "1");
   } catch {
     // ignore
   }
 }
 
 /**
- * 按路由展示分步新手指引；每个 tourId 默认只完成一次（localStorage）。
- * 与旧版全局弹窗 `fym_onboarding_v1_seen` 独立；不再渲染 OnboardingModal。
+ * 全局分步新手指引：下一步 / 跳过，默认整站只展示一次（localStorage）。
+ * 不再按路由重复展示。
  */
 export default function PageTour() {
-  const pathname = usePathname() || "/";
   const { t, lang } = useI18n();
-  const tourId = useMemo(() => tourIdForPathname(pathname), [pathname]);
-  const steps = useMemo(() => (tourId ? stepsForTour(tourId, lang) : []), [tourId, lang]);
+  const steps = useMemo(() => globalOnboardingSteps(lang), [lang]);
 
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
@@ -48,22 +57,15 @@ export default function PageTour() {
   }, []);
 
   useEffect(() => {
+    if (!hydrated) return;
+    setOpen(!hasCompletedOnboarding());
     setStep(0);
-  }, [tourId]);
-
-  useEffect(() => {
-    if (!hydrated || !tourId || steps.length === 0) {
-      setOpen(false);
-      return;
-    }
-    const done = readDoneMap()[tourId];
-    setOpen(!done);
-  }, [hydrated, tourId, steps.length]);
+  }, [hydrated]);
 
   const finish = useCallback(() => {
-    if (tourId) writeDone(tourId);
+    markOnboardingSeen();
     setOpen(false);
-  }, [tourId]);
+  }, []);
 
   const onNext = useCallback(() => {
     if (step >= steps.length - 1) {

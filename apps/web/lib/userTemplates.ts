@@ -2,6 +2,7 @@
  * 用户自定义内容模板；登录后将随用户偏好同步服务端。
  */
 import { scheduleCloudPreferencesPush } from "./cloudPreferences";
+import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
 import type { PodcastStudioPreset } from "./podcastStudioPresets";
 
 const KEY = "fym_user_templates_v1";
@@ -13,7 +14,7 @@ export type UserTemplate = PodcastStudioPreset & {
 
 function readRaw(): UserTemplate[] {
   try {
-    const raw = window.localStorage.getItem(KEY);
+    const raw = readLocalStorageScoped(KEY);
     if (!raw) return [];
     const j = JSON.parse(raw) as unknown;
     return Array.isArray(j) ? (j as UserTemplate[]) : [];
@@ -23,7 +24,7 @@ function readRaw(): UserTemplate[] {
 }
 
 function saveRaw(items: UserTemplate[]) {
-  window.localStorage.setItem(KEY, JSON.stringify(items));
+  writeLocalStorageScoped(KEY, JSON.stringify(items));
   scheduleCloudPreferencesPush();
 }
 

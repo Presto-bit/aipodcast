@@ -10,6 +10,8 @@ import { jobsListLoadErrorPresentation } from "../../lib/jobsListErrors";
 import { listRememberedJobIds } from "../../lib/jobRecent";
 import type { JobRecord, JobStatus } from "../../lib/types";
 import { useI18n } from "../../lib/I18nContext";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 
 const PAGE_SIZE = 40;
 
@@ -168,6 +170,7 @@ export default function JobsListView({ variant }: JobsListViewProps) {
           </p>
           <p className="mt-1 text-xs text-muted">{errPresentation.sub}</p>
           <p className="mt-2 break-words font-mono text-xs opacity-90">{err}</p>
+          {messageSuggestsBillingTopUpOrSubscription(err) ? <BillingShortfallLinks className="mt-3" /> : null}
         </div>
       ) : null}
 

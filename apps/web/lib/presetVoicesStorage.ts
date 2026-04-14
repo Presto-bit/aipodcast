@@ -1,4 +1,5 @@
 import { scheduleCloudPreferencesPush } from "./cloudPreferences";
+import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
 
 const ENABLED_PRESET_VOICES_KEY = "minimax_aipodcast_enabled_preset_voices";
 export const SPEAKER_DEFAULT_VOICE_KEYS_KEY = "minimax_aipodcast_speaker_default_voice_keys";
@@ -14,7 +15,7 @@ function dispatchChanged() {
 
 export function readEnabledPresetKeys(): string[] {
   try {
-    const raw = window.localStorage.getItem(ENABLED_PRESET_VOICES_KEY);
+    const raw = readLocalStorageScoped(ENABLED_PRESET_VOICES_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(arr)) return [];
     return [...new Set(arr.map((k: unknown) => String(k || "").trim()).filter(Boolean))];
@@ -30,7 +31,7 @@ export function addEnabledPresetKey(key: string) {
   if (cur.has(k)) return;
   cur.add(k);
   try {
-    window.localStorage.setItem(ENABLED_PRESET_VOICES_KEY, JSON.stringify([...cur]));
+    writeLocalStorageScoped(ENABLED_PRESET_VOICES_KEY, JSON.stringify([...cur]));
     scheduleCloudPreferencesPush();
   } catch {
     // ignore
@@ -40,7 +41,7 @@ export function addEnabledPresetKey(key: string) {
 
 export function readSpeakerDefaultVoiceKeys() {
   try {
-    const raw = window.localStorage.getItem(SPEAKER_DEFAULT_VOICE_KEYS_KEY);
+    const raw = readLocalStorageScoped(SPEAKER_DEFAULT_VOICE_KEYS_KEY);
     const d = raw ? JSON.parse(raw) : {};
     return {
       speaker1: typeof d.speaker1 === "string" && d.speaker1.trim() ? d.speaker1.trim() : "mini",
@@ -57,7 +58,7 @@ export function writeSpeakerDefaultVoiceKeys(speaker1: string, speaker2: string)
   const cur = readSpeakerDefaultVoiceKeys();
   if (cur.speaker1 === n1 && cur.speaker2 === n2) return;
   try {
-    window.localStorage.setItem(SPEAKER_DEFAULT_VOICE_KEYS_KEY, JSON.stringify({ speaker1: n1, speaker2: n2 }));
+    writeLocalStorageScoped(SPEAKER_DEFAULT_VOICE_KEYS_KEY, JSON.stringify({ speaker1: n1, speaker2: n2 }));
     scheduleCloudPreferencesPush();
   } catch {
     // ignore
@@ -67,7 +68,7 @@ export function writeSpeakerDefaultVoiceKeys(speaker1: string, speaker2: string)
 
 export function readSpeakerClonedVoiceIds() {
   try {
-    const raw = window.localStorage.getItem(SPEAKER_CLONED_VOICE_IDS_KEY);
+    const raw = readLocalStorageScoped(SPEAKER_CLONED_VOICE_IDS_KEY);
     const d = raw ? JSON.parse(raw) : {};
     const norm = (x: unknown) => {
       if (typeof x !== "string") return null;
@@ -89,7 +90,7 @@ export function writeSpeakerClonedVoiceIds(speaker1Id: string | null, speaker2Id
   const cur = readSpeakerClonedVoiceIds();
   if (cur.speaker1 === n1 && cur.speaker2 === n2) return;
   try {
-    window.localStorage.setItem(SPEAKER_CLONED_VOICE_IDS_KEY, JSON.stringify({ speaker1: n1, speaker2: n2 }));
+    writeLocalStorageScoped(SPEAKER_CLONED_VOICE_IDS_KEY, JSON.stringify({ speaker1: n1, speaker2: n2 }));
     scheduleCloudPreferencesPush();
   } catch {
     // ignore

@@ -386,11 +386,22 @@ def polish_tts_text(
     return out
 
 
-def generate_cover_image(summary: str, api_key: str | None) -> tuple[str | None, str | None]:
+def generate_cover_image(
+    summary: str,
+    api_key: str | None,
+    *,
+    program_name_fallback: str = "",
+) -> tuple[str | None, str | None]:
     provider = image_provider()
+    bundle = (summary or "").strip()
+    pn = (program_name_fallback or "").strip()
 
     def _run_minimax() -> tuple[str | None, str | None]:
-        return generate_cover_image_tts_result(summary, api_key)
+        return generate_cover_image_tts_result(
+            bundle,
+            api_key,
+            program_name_fallback=pn,
+        )
 
     def _run_qwen() -> tuple[str | None, str | None]:
         key = str(os.getenv("QWEN_API_KEY") or "").strip()
@@ -398,7 +409,18 @@ def generate_cover_image(summary: str, api_key: str | None) -> tuple[str | None,
         model = str(os.getenv("QWEN_IMAGE_MODEL") or "wanx-v1").strip()
         if not key or not url:
             raise RuntimeError("qwen_image_config_missing")
-        return image_via_http_json(url=url, api_key=key, model=model, prompt=summary)
+        mm_key = str(os.getenv("MINIMAX_API_KEY") or api_key or "").strip()
+        short_prompt = ""
+        if mm_key and bundle:
+            short_prompt, _ = minimax_client.compose_cover_visual_prompt(
+                bundle[:4000],
+                mm_key,
+                program_name_fallback=pn,
+            )
+        image_prompt = (short_prompt or "").strip() or bundle[:1200]
+        if not image_prompt:
+            raise RuntimeError("qwen_image_prompt_empty")
+        return image_via_http_json(url=url, api_key=key, model=model, prompt=image_prompt)
 
     return _safe_call_with_minimax_fallback(
         domain="image",

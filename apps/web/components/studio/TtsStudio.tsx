@@ -18,6 +18,7 @@ import { VoiceSelect, type VoiceOpt } from "./VoiceSelect";
 import BgmControlRow from "./BgmControlRow";
 import IntroOutroPresetBar from "./IntroOutroPresetBar";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
+import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
 import { cancelJob, formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
 import { rememberJobId } from "../../lib/jobRecent";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
@@ -30,8 +31,14 @@ import { buildIntroOutroSnapshot, type IntroOutroSnapshotV1 } from "../../lib/in
 import { readLastIntroOutro, writeLastIntroOutro } from "../../lib/introOutroStorage";
 import type { WorkItem } from "../../lib/worksTypes";
 import FloatingPopover from "../ui/FloatingPopover";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { useAuth, userAccountRef } from "../../lib/auth";
+import { useI18n } from "../../lib/I18nContext";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+import { readSessionStorageScoped, removeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { PlanTierHint } from "../PlanTierHint";
+import { LockedToolbarChipPill } from "../SubscriptionVipLink";
+import { mayUseAiPolishPlan, planIsBasicOrAbove } from "../../lib/noteReferenceLimits";
 
 type PanelId = "mode" | "voice" | "intro" | null;
 
@@ -74,8 +81,11 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   ref
 ) {
   const { user, phone, getAuthHeaders } = useAuth();
+  const { t } = useI18n();
   const createdByPhone = useMemo(() => userAccountRef(user) || String(phone || "").trim(), [user, phone]);
+  const planBasicOk = useMemo(() => planIsBasicOrAbove(String(user?.plan)), [user?.plan]);
   const [defaultVoicesMap, setDefaultVoicesMap] = useState<Record<string, Record<string, unknown>>>({});
+  const [systemVoicesMap, setSystemVoicesMap] = useState<Record<string, Record<string, unknown>>>({});
   const [savedCustomVoices, setSavedCustomVoices] = useState<{ voiceId: string; displayName?: string }[]>([]);
   const [voiceKey1, setVoiceKey1] = useState("mini");
   const [voiceKey2, setVoiceKey2] = useState("max");
@@ -133,6 +143,13 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const stopPanelPointer = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
   }, []);
+
+  useEffect(() => {
+    if (!planBasicOk) {
+      setActivePanel((p) => (p === "intro" ? null : p));
+      setAiPolish(false);
+    }
+  }, [planBasicOk]);
 
   const applyIntroOutroSnapshot = useCallback((s: IntroOutroSnapshotV1) => {
     setIntroText(s.introText);
@@ -209,9 +226,13 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     return out;
   }, [defaultVoicesMap]);
 
+  const voiceOptionMarks = useMemo(
+    () => ({ cloneMark: t("voice.option.cloneMark"), systemMark: t("voice.option.systemMark") }),
+    [t]
+  );
   const voiceOptions = useMemo(
-    () => buildVoiceOptionsFromMaps(mergedDefaultVoices, savedCustomVoices),
-    [mergedDefaultVoices, savedCustomVoices]
+    () => buildVoiceOptionsFromMaps(mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks),
+    [mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks]
   );
 
   const voiceId1 = useMemo(() => resolveVoiceId(voiceOptions, voiceKey1), [voiceOptions, voiceKey1]);
@@ -263,9 +284,13 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
           fetch("/api/default-voices", { cache: "no-store", headers: { ...getAuthHeaders() } }),
           fetch("/api/saved_voices", { cache: "no-store", headers: { ...getAuthHeaders() } })
         ]);
-        const dd = (await d.json().catch(() => ({}))) as { voices?: Record<string, Record<string, unknown>> };
+        const dd = (await d.json().catch(() => ({}))) as {
+          voices?: Record<string, Record<string, unknown>>;
+          system_voices?: Record<string, Record<string, unknown>>;
+        };
         const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
         if (dd.voices) setDefaultVoicesMap(dd.voices);
+        if (dd.system_voices && typeof dd.system_voices === "object") setSystemVoicesMap(dd.system_voices);
         if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
       } catch {
         // ignore
@@ -281,10 +306,10 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
 
   useEffect(() => {
     try {
-      const imp = sessionStorage.getItem(TTS_IMPORT_SCRIPT_KEY);
+      const imp = readSessionStorageScoped(TTS_IMPORT_SCRIPT_KEY);
       if (imp) {
         setText(imp);
-        sessionStorage.removeItem(TTS_IMPORT_SCRIPT_KEY);
+        removeSessionStorageScoped(TTS_IMPORT_SCRIPT_KEY);
       }
     } catch {
       // ignore
@@ -293,7 +318,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
 
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem(TTS_REUSE_TEMPLATE_KEY);
+      const raw = readSessionStorageScoped(TTS_REUSE_TEMPLATE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
         text?: string;
@@ -307,7 +332,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
       setTtsMode(mode === "dual" ? "dual" : "single");
       setIntroText(String(parsed.intro_text || "").trim());
       setOutroText(String(parsed.outro_text || "").trim());
-      sessionStorage.removeItem(TTS_REUSE_TEMPLATE_KEY);
+      removeSessionStorageScoped(TTS_REUSE_TEMPLATE_KEY);
     } catch {
       // ignore
     }
@@ -433,6 +458,11 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
             resolve();
             return;
           }
+          if (isJobEventLogOnlyForUi(data.type)) {
+            const p = data.payload?.progress;
+            if (typeof p === "number") setTaskProgressPct(Math.min(100, Math.max(0, p)));
+            return;
+          }
           const msg = String(data.message || "").trim();
           const p = data.payload?.progress;
           if (msg) applyTaskFromEvent(msg, typeof p === "number" ? p : undefined);
@@ -548,7 +578,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
         intro_text: introText.trim(),
         outro_text: outroText.trim(),
         generate_cover: generateCover,
-        ai_polish: aiPolish,
+        ai_polish: aiPolish && mayUseAiPolishPlan(user?.plan),
         ...ttsExtras
       };
       if (ttsMode === "single") {
@@ -643,6 +673,10 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   }
 
   async function runAiPolish() {
+    if (!mayUseAiPolishPlan(user?.plan)) {
+      applyTaskFromEvent("AI 润色需要 Basic 及以上套餐");
+      return;
+    }
     const source = text.trim();
     if (!source) {
       applyTaskFromEvent("请先输入要润色的正文");
@@ -682,10 +716,11 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
 
   const showTaskPanel = busy || taskPhase.length > 0;
   const etaMinutesRemaining = useMemo(() => {
-    if (!busy && taskProgressPct >= 100) return 0;
+    if (!busy && taskProgressPct <= 0) return null;
+    if (taskProgressPct >= 100) return 0;
     const charEst = Math.max(320, text.length + introText.length + outroText.length);
     const totalMin = Math.max(3, Math.min(36, Math.round(3 + charEst / 950)));
-    if (taskProgressPct <= 0) return totalMin;
+    if (taskProgressPct < 12) return null;
     return Math.max(1, Math.ceil(((100 - taskProgressPct) / 100) * totalMin));
   }, [busy, taskProgressPct, text.length, introText.length, outroText.length]);
 
@@ -847,16 +882,24 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                       </>
                     )}
                   </span>
-                  <span data-tts-toolbar-chip data-tts-toolbar-chip-id="intro" className="relative inline-block align-top">
-                    <button type="button" className={chipClass(activePanel === "intro")} onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}>
-                      开头结尾 · {introSummary}
-                    </button>
-                    {renderFloatingPanel(
-                      "intro",
-                      panelClassIntroAnchorMobile,
-                      panelClassIntroAnchor,
-                      "开场与结尾",
+                  <span data-tts-toolbar-chip data-tts-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
+                    {!planBasicOk ? (
+                      <LockedToolbarChipPill label={<>开头结尾 · {introSummary}</>} upgradeTitle="开头结尾设置需要 Basic 及以上套餐" />
+                    ) : (
                       <>
+                        <button
+                          type="button"
+                          className={chipClass(activePanel === "intro")}
+                          onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}
+                        >
+                          开头结尾 · {introSummary}
+                        </button>
+                        {renderFloatingPanel(
+                          "intro",
+                          panelClassIntroAnchorMobile,
+                          panelClassIntroAnchor,
+                          "开场与结尾",
+                          <>
                         <p className="mb-1 text-sm font-medium">开场 / 结尾</p>
                         <p className="mb-3 text-xs text-muted">开场 / 正文 / 结尾与背景音均可选。</p>
                         <IntroOutroPresetBar
@@ -963,25 +1006,34 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                           </div>
                         </div>
                       </>
+                        )}
+                      </>
                     )}
                   </span>
-                  <span data-tts-toolbar-chip className="relative inline-block align-top">
-                    <button
-                      type="button"
-                      className={chipClass(aiPolish || polishing)}
-                      aria-pressed={aiPolish}
-                      onClick={(e) => {
-                        if (e.shiftKey) {
-                          void runAiPolish();
-                          return;
-                        }
-                        setAiPolish((v) => !v);
-                      }}
-                      disabled={polishing}
-                      title="开：合成前润色。Shift+点：仅润色正文"
-                    >
-                      {polishing ? "润色中…" : "AI润色"}
-                    </button>
+                  <span data-tts-toolbar-chip className="relative inline-flex max-w-full align-top">
+                    {!mayUseAiPolishPlan(user?.plan) ? (
+                      <LockedToolbarChipPill
+                        label={polishing ? "润色中…" : "AI润色"}
+                        upgradeTitle="AI 润色需要 Basic 及以上或按量套餐"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className={chipClass(aiPolish || polishing)}
+                        aria-pressed={aiPolish}
+                        onClick={(e) => {
+                          if (e.shiftKey) {
+                            void runAiPolish();
+                            return;
+                          }
+                          setAiPolish((v) => !v);
+                        }}
+                        disabled={polishing}
+                        title="开：合成前润色。Shift+点：仅润色正文"
+                      >
+                        {polishing ? "润色中…" : "AI润色"}
+                      </button>
+                    )}
                   </span>
                   <span data-tts-toolbar-chip className="relative inline-block align-top">
                     <button
@@ -1026,6 +1078,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
           <div className="mb-4 rounded-2xl border border-brand/25 bg-fill/90 p-4 shadow-soft">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">生成进度</h3>
             <p className="mt-2 text-sm text-ink">{taskPhase || (busy ? "处理中…" : "—")}</p>
+            {messageSuggestsBillingTopUpOrSubscription(taskPhase) ? <BillingShortfallLinks className="mt-2" /> : null}
             <div className="mt-3">
               <div className="h-2.5 w-full overflow-hidden rounded-full bg-track/90">
                 <div
@@ -1039,7 +1092,9 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                   {busy || taskProgressPct > 0
                     ? taskProgressPct >= 100
                       ? "已完成"
-                      : `预估剩余约 ${etaMinutesRemaining} 分钟`
+                      : etaMinutesRemaining != null && etaMinutesRemaining > 0
+                        ? `预估剩余约 ${etaMinutesRemaining} 分钟`
+                        : "排队与生成中，请稍候"
                     : ""}
                 </span>
               </div>

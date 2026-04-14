@@ -24,4 +24,6 @@ export type WorkItem = {
   notesSourceNoteCount?: number;
   /** 引用笔记标题（与创建任务时勾选顺序一致；条数与套餐笔记引用上限一致） */
   notesSourceTitles?: string[];
+  /** 来自任务 payload.program_name / result，用于作品导航页二级体裁（如深度讨论、笔记文章类目） */
+  workProgramName?: string;
 };

@@ -13,6 +13,7 @@ import {
   type SetStateAction
 } from "react";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
+import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
 import { cancelJob, formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
 import { buildReferenceJobFields } from "../../lib/jobReferencePayload";
 import { rememberJobId } from "../../lib/jobRecent";
@@ -40,8 +41,12 @@ import {
   resolveVoiceId
 } from "../../lib/podcastStudioCommon";
 import { useAuth, userAccountRef } from "../../lib/auth";
-import { maxNotesForReferencePlan } from "../../lib/noteReferenceLimits";
+import { useI18n } from "../../lib/I18nContext";
+import { maxNotesForReferencePlan, planIsBasicOrAbove } from "../../lib/noteReferenceLimits";
 import { PlanTierHint } from "../PlanTierHint";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
+import { LockedToolbarChipPill } from "../SubscriptionVipLink";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import {
   creativeBundleFromTemplateValue,
   DEFAULT_CREATIVE_TEMPLATE_VALUE,
@@ -49,6 +54,7 @@ import {
   resolveCreativeBundle
 } from "../../lib/creativeTemplates";
 import { DEFAULT_INGEST_NOTEBOOK_NAME, NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
+import { readLocalStorageScoped, readSessionStorageScoped, removeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
 import FloatingPopover from "../ui/FloatingPopover";
@@ -119,7 +125,9 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   ref
 ) {
   const { user, phone, getAuthHeaders } = useAuth();
+  const { t } = useI18n();
   const noteRefCap = useMemo(() => maxNotesForReferencePlan(String(user?.plan)), [user?.plan]);
+  const planBasicOk = useMemo(() => planIsBasicOrAbove(String(user?.plan)), [user?.plan]);
   const createdByPhone = useMemo(() => userAccountRef(user) || String(phone || "").trim(), [user, phone]);
 
   const [uncontrolledText, setUncontrolledText] = useState("");
@@ -176,6 +184,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const [outroBgm3StoredHex, setOutroBgm3StoredHex] = useState<string | null>(null);
   const [introOutroHydrated, setIntroOutroHydrated] = useState(false);
   const [defaultVoicesMap, setDefaultVoicesMap] = useState<Record<string, Record<string, unknown>>>({});
+  const [systemVoicesMap, setSystemVoicesMap] = useState<Record<string, Record<string, unknown>>>({});
   const [savedCustomVoices, setSavedCustomVoices] = useState<{ voiceId: string; displayName?: string }[]>([]);
   const [voiceKey1, setVoiceKey1] = useState("mini");
   const [voiceKey2, setVoiceKey2] = useState("max");
@@ -219,8 +228,14 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }, [applyIntroOutroSnapshot]);
 
   useEffect(() => {
+    if (!planBasicOk) {
+      setActivePanel((p) => (p === "creative" || p === "intro" ? null : p));
+    }
+  }, [planBasicOk]);
+
+  useEffect(() => {
     try {
-      const raw = localStorage.getItem(PODCAST_PREFS_KEY);
+      const raw = readLocalStorageScoped(PODCAST_PREFS_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as { defaultExpandAdvanced?: boolean; defaultScriptTargetChars?: number };
       if (typeof parsed.defaultExpandAdvanced === "boolean") setShowAdvanced(parsed.defaultExpandAdvanced);
@@ -236,7 +251,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem(PODCAST_REUSE_TEMPLATE_KEY);
+      const raw = readSessionStorageScoped(PODCAST_REUSE_TEMPLATE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
         text?: string;
@@ -261,7 +276,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       setReferenceUrlsBlock(String(parsed.reference_urls || "").trim());
       setIntroText(String(parsed.intro_text || "").trim());
       setOutroText(String(parsed.outro_text || "").trim());
-      sessionStorage.removeItem(PODCAST_REUSE_TEMPLATE_KEY);
+      removeSessionStorageScoped(PODCAST_REUSE_TEMPLATE_KEY);
     } catch {
       // ignore
     }
@@ -269,7 +284,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem(PARTIAL_REDO_KEY);
+      const raw = readSessionStorageScoped(PARTIAL_REDO_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
         sourceJobId?: string;
@@ -294,7 +309,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
           prompt: finalPrompt
         });
       }
-      sessionStorage.removeItem(PARTIAL_REDO_KEY);
+      removeSessionStorageScoped(PARTIAL_REDO_KEY);
     } catch {
       // ignore
     }
@@ -304,7 +319,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     setPartialRedoMeta(null);
     setTaskPhase("已清除局部重做上下文");
     try {
-      sessionStorage.removeItem(PARTIAL_REDO_KEY);
+      removeSessionStorageScoped(PARTIAL_REDO_KEY);
     } catch {
       // ignore
     }
@@ -375,9 +390,13 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     return out;
   }, [defaultVoicesMap]);
 
+  const voiceOptionMarks = useMemo(
+    () => ({ cloneMark: t("voice.option.cloneMark"), systemMark: t("voice.option.systemMark") }),
+    [t]
+  );
   const voiceOptions = useMemo(
-    () => buildVoiceOptionsFromMaps(mergedDefaultVoices, savedCustomVoices),
-    [mergedDefaultVoices, savedCustomVoices]
+    () => buildVoiceOptionsFromMaps(mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks),
+    [mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks]
   );
 
   const notebookChoices = useMemo(() => {
@@ -433,11 +452,15 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
           fetch("/api/notes", { cache: "no-store", headers: { ...getAuthHeaders() } }),
           fetch("/api/notebooks", { cache: "no-store", credentials: "same-origin", headers: { ...getAuthHeaders() } })
         ]);
-        const dd = (await d.json().catch(() => ({}))) as { voices?: Record<string, Record<string, unknown>> };
+        const dd = (await d.json().catch(() => ({}))) as {
+          voices?: Record<string, Record<string, unknown>>;
+          system_voices?: Record<string, Record<string, unknown>>;
+        };
         const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
         const nd = (await n.json().catch(() => ({}))) as { success?: boolean; notes?: { noteId: string; title?: string; notebook?: string }[] };
         const nbd = (await nb.json().catch(() => ({}))) as { success?: boolean; notebooks?: string[] };
         if (dd.voices) setDefaultVoicesMap(dd.voices);
+        if (dd.system_voices && typeof dd.system_voices === "object") setSystemVoicesMap(dd.system_voices);
         if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
         if (n.ok && nd.success && Array.isArray(nd.notes)) setNotesList(nd.notes.slice(0, 300));
         if (nb.ok && nbd.success && Array.isArray(nbd.notebooks)) setStudioNotebooks(nbd.notebooks);
@@ -602,6 +625,11 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
             eventSourceRef.current = null;
             resolveWaitRef.current = null;
             resolve();
+            return;
+          }
+          if (isJobEventLogOnlyForUi(data.type)) {
+            const p = data.payload?.progress;
+            if (typeof p === "number") setTaskProgressPct(Math.min(100, Math.max(0, p)));
             return;
           }
           const msg = String(data.message || "").trim();
@@ -931,9 +959,10 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const showTaskPanel = busy || taskPhase.length > 0;
 
   const etaMinutesRemaining = useMemo(() => {
-    if (!busy && taskProgressPct >= 100) return 0;
+    if (!busy && taskProgressPct <= 0) return null;
+    if (taskProgressPct >= 100) return 0;
     const totalMin = Math.max(5, Math.min(48, Math.round(5 + scriptTargetChars / 420)));
-    if (taskProgressPct <= 0) return totalMin;
+    if (taskProgressPct < 12) return null;
     return Math.max(1, Math.ceil(((100 - taskProgressPct) / 100) * totalMin));
   }, [busy, taskProgressPct, scriptTargetChars]);
 
@@ -1111,21 +1140,27 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       </>
                     )}
                   </span>
-                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-block align-top">
-                    <button
-                      type="button"
-                      className={chipClass(activePanel === "creative")}
-                      title={CREATIVE_CHIP_HOVER_HINT}
-                      onClick={() => setActivePanel((p) => (p === "creative" ? null : "creative"))}
-                    >
-                      风格 · {creativeSummary}
-                    </button>
-                    {renderFloatingPanel(
-                      "creative",
-                      panelClassAnchorMobile,
-                      panelClassAnchor,
-                      "加入创意",
-                      <CreativeTemplatePicker value={creativeTemplateValue} onChange={setCreativeTemplateValue} />
+                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-flex max-w-full align-top">
+                    {!planBasicOk ? (
+                      <LockedToolbarChipPill label={<>风格 · {creativeSummary}</>} upgradeTitle="风格设置需要 Basic 及以上套餐" />
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className={chipClass(activePanel === "creative")}
+                          title={CREATIVE_CHIP_HOVER_HINT}
+                          onClick={() => setActivePanel((p) => (p === "creative" ? null : "creative"))}
+                        >
+                          风格 · {creativeSummary}
+                        </button>
+                        {renderFloatingPanel(
+                          "creative",
+                          panelClassAnchorMobile,
+                          panelClassAnchor,
+                          "加入创意",
+                          <CreativeTemplatePicker value={creativeTemplateValue} onChange={setCreativeTemplateValue} />
+                        )}
+                      </>
                     )}
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="library" className="relative inline-block align-top">
@@ -1142,7 +1177,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                         <div className="rounded-lg border border-line bg-fill/70 p-2.5">
                           <p className="mb-1.5 text-xs font-medium text-ink">网页链接</p>
                           <textarea
-                            className="max-h-[4.5rem] w-full max-w-[min(100%,66%)] rounded-lg border border-line bg-surface p-2 font-mono text-sm leading-snug text-ink placeholder:text-muted"
+                            className="max-h-[4.5rem] w-full rounded-lg border border-line bg-surface p-2 font-mono text-sm leading-snug text-ink placeholder:text-muted"
                             rows={2}
                             value={referenceUrlsBlock}
                             onChange={(e) => setReferenceUrlsBlock(e.target.value)}
@@ -1311,16 +1346,24 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       </>
                     )}
                   </span>
-                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="intro" className="relative inline-block align-top">
-                    <button type="button" className={chipClass(activePanel === "intro")} onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}>
-                      开场/结尾 · {introSummary}
-                    </button>
-                    {renderFloatingPanel(
-                      "intro",
-                      panelClassIntroAnchorMobile,
-                      panelClassIntroAnchor,
-                      "开场与结尾",
+                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
+                    {!planBasicOk ? (
+                      <LockedToolbarChipPill label={<>开场/结尾 · {introSummary}</>} upgradeTitle="开场与结尾设置需要 Basic 及以上套餐" />
+                    ) : (
                       <>
+                        <button
+                          type="button"
+                          className={chipClass(activePanel === "intro")}
+                          onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}
+                        >
+                          开场/结尾 · {introSummary}
+                        </button>
+                        {renderFloatingPanel(
+                          "intro",
+                          panelClassIntroAnchorMobile,
+                          panelClassIntroAnchor,
+                          "开场与结尾",
+                          <>
                         <p className="mb-1 text-sm font-medium">开场 / 结尾</p>
                         <p className="mb-3 text-xs text-muted">开场 / 正文 / 结尾与背景音均可选。</p>
                         <IntroOutroPresetBar
@@ -1427,6 +1470,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                           </div>
                         </div>
                       </>
+                        )}
+                      </>
                     )}
                   </span>
                     </>
@@ -1482,6 +1527,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
           <div className="mb-4 rounded-2xl border border-brand/25 bg-fill/90 p-4 shadow-soft">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">进行中</h3>
             <p className="mt-2 text-sm text-ink">{taskPhase || (busy ? "处理中…" : "—")}</p>
+            {messageSuggestsBillingTopUpOrSubscription(taskPhase) ? <BillingShortfallLinks className="mt-2" /> : null}
             <div className="mt-3">
               <div className="h-2.5 w-full overflow-hidden rounded-full bg-track">
                 <div
@@ -1495,7 +1541,9 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                   {busy || taskProgressPct > 0
                     ? taskProgressPct >= 100
                       ? "已完成"
-                      : `预估剩余约 ${etaMinutesRemaining} 分钟`
+                      : etaMinutesRemaining != null && etaMinutesRemaining > 0
+                        ? `预估剩余约 ${etaMinutesRemaining} 分钟`
+                        : "排队与生成中，请稍候"
                     : ""}
                 </span>
               </div>

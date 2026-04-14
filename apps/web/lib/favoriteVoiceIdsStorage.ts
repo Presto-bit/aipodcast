@@ -1,4 +1,5 @@
 import { scheduleCloudPreferencesPush } from "./cloudPreferences";
+import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
 
 const FAVORITE_VOICE_IDS_KEY = "fym_favorite_voice_ids_v1";
 const MAX_FAVORITES = 200;
@@ -13,7 +14,7 @@ function dispatchFavoriteChanged() {
 
 export function readFavoriteVoiceIds(): string[] {
   try {
-    const raw = window.localStorage.getItem(FAVORITE_VOICE_IDS_KEY);
+    const raw = readLocalStorageScoped(FAVORITE_VOICE_IDS_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(arr)) return [];
     const out: string[] = [];
@@ -52,7 +53,7 @@ export function toggleFavoriteVoiceId(voiceId: string): boolean {
     }
   }
   try {
-    window.localStorage.setItem(FAVORITE_VOICE_IDS_KEY, JSON.stringify(next));
+    writeLocalStorageScoped(FAVORITE_VOICE_IDS_KEY, JSON.stringify(next));
     scheduleCloudPreferencesPush();
   } catch {
     // ignore

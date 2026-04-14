@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 import time
 import base64
 import binascii
@@ -30,6 +31,7 @@ from .entitlement_matrix import (
     voice_clone_monthly_included,
     voice_clone_payg_cents,
 )
+from .cover_image_material import build_cover_material
 from .reference_material import effective_article_script_target_chars, merge_reference_for_script
 from .subscription_limits import max_note_refs_for_plan, tier_allows_ai_polish
 from .tts_pipeline import (
@@ -230,7 +232,7 @@ def _subscription_tier_for_job(created_by: str | None) -> str:
 
 
 def _effective_ai_polish(payload: dict[str, Any], created_by: str | None, job_id: str) -> bool:
-    """客户端可传 ai_polish，仅 Max 且功能未关闭时生效。"""
+    """客户端可传 ai_polish；以权益矩阵 tier_ai_polish_monthly_quota 为准，且功能总开关未关时生效。"""
     if not bool(payload.get("ai_polish")):
         return False
     tier = _subscription_tier_for_job(created_by)
@@ -239,7 +241,7 @@ def _effective_ai_polish(payload: dict[str, Any], created_by: str | None, job_id
     append_job_event(
         job_id,
         "log",
-        "AI润色需要 Max 套餐（或管理员已关闭 AI_POLISH_FEATURE_ENABLED），已跳过",
+        "AI润色需要含润色权益的套餐（或管理员已关闭 AI_POLISH_FEATURE_ENABLED），已跳过",
         {"plan": tier},
     )
     return False
@@ -248,6 +250,26 @@ def _effective_ai_polish(payload: dict[str, Any], created_by: str | None, job_id
 def _guard_cancelled(job_id: str) -> bool:
     row = get_job(job_id)
     return bool(row and row.get("status") == "cancelled")
+
+
+def _progress_heartbeat_loop(job_id: str, message: str, progress: float, stop: threading.Event) -> None:
+    """长步骤无中间事件时周期性写入 progress，避免 SSE 客户端因空闲超时断开。"""
+    while not stop.wait(45):
+        if _guard_cancelled(job_id):
+            return
+        append_job_event(job_id, "progress", message, {"progress": progress})
+
+
+def _start_progress_heartbeat(job_id: str, message: str, progress: float) -> tuple[threading.Event, threading.Thread]:
+    stop = threading.Event()
+    t = threading.Thread(
+        target=_progress_heartbeat_loop,
+        args=(job_id, message, progress, stop),
+        daemon=True,
+        name=f"job-hb-{job_id[:8]}",
+    )
+    t.start()
+    return stop, t
 
 
 def _storage_owner_uuid(created_by: Any) -> str | None:
@@ -510,9 +532,21 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                         if not api_key:
                             append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
                         else:
-                            s = (source_text or "").strip()[:1200]
+                            _plain = (_plain_body or "").strip()
+                            _pn = str(payload.get("program_name") or "").strip()
+                            mat = build_cover_material(
+                                script_body=_plain,
+                                program_name=_pn,
+                                script_constraints=str(payload.get("script_constraints") or "").strip(),
+                                source_text="",
+                            )
+                            s = (mat or "").strip() or _plain[:4000]
                             if s:
-                                ci, cerr = generate_cover_image(s, api_key)
+                                ci, cerr = generate_cover_image(
+                                    s,
+                                    api_key,
+                                    program_name_fallback=_pn,
+                                )
                                 if ci:
                                     result["cover_image"] = ci
                                 elif cerr:
@@ -569,9 +603,18 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             return out
 
         append_job_event(job_id, "progress", "正在汇总参考材料（多 URL / 笔记 / 附加文本）", {"progress": 18})
-        source_text, ref_meta = merge_reference_for_script(
-            payload, source_text, source_url, api_key, max_note_refs=note_ref_cap, user_ref=created_by
+        stop_ref, thr_ref = _start_progress_heartbeat(
+            job_id,
+            "正在汇总参考材料（检索与加载可能较慢）…",
+            18.0,
         )
+        try:
+            source_text, ref_meta = merge_reference_for_script(
+                payload, source_text, source_url, api_key, max_note_refs=note_ref_cap, user_ref=created_by
+            )
+        finally:
+            stop_ref.set()
+            thr_ref.join(timeout=2)
         append_job_event(job_id, "log", "参考材料汇总", ref_meta)
 
         if not source_text.strip():
@@ -611,14 +654,23 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     )
                 script_opts["script_target_chars"] = adj
 
-        gen = build_script(
-            source_text,
-            api_key=api_key,
-            force_fallback=force_fb,
-            script_options=script_opts,
-            on_script_delta=_make_script_delta_handler(job_id),
-            subscription_tier=_subscription_tier_for_job(created_by),
+        stop_scr, thr_scr = _start_progress_heartbeat(
+            job_id,
+            "正在调用模型生成脚本（长稿可能较久）…",
+            60.0,
         )
+        try:
+            gen = build_script(
+                source_text,
+                api_key=api_key,
+                force_fallback=force_fb,
+                script_options=script_opts,
+                on_script_delta=_make_script_delta_handler(job_id),
+                subscription_tier=_subscription_tier_for_job(created_by),
+            )
+        finally:
+            stop_scr.set()
+            thr_scr.join(timeout=2)
         script = str(gen.get("script") or "")
         fallback = bool(gen.get("fallback"))
         retries = int(gen.get("retries") or 0)
@@ -661,7 +713,15 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
         }
         _enrich_result_script_notes_meta(result, payload if isinstance(payload, dict) else {}, script)
         if _payload_wants_generate_cover(payload, job_type) and api_key:
-            ci, cerr = generate_cover_image(script[:1200], api_key)
+            _pn = str(payload.get("program_name") or "").strip()
+            mat = build_cover_material(
+                script_body=(script or ""),
+                program_name=_pn,
+                script_constraints=str(payload.get("script_constraints") or "").strip(),
+                source_text=str(payload.get("text") or "").strip(),
+            )
+            mat_use = (mat or "").strip() or (script or "").strip()[:4000]
+            ci, cerr = generate_cover_image(mat_use, api_key, program_name_fallback=_pn)
             if ci:
                 result["cover_image"] = ci
                 cov_key, cov_ct, cov_err = _persist_cover_for_job(job_id, created_by, str(ci))
@@ -739,23 +799,41 @@ def run_media_job(job_id: str) -> dict[str, Any]:
 
         if job_type in ("podcast_generate", "podcast"):
             append_job_event(job_id, "progress", "正在汇总参考材料（多 URL / 笔记 / 附加文本）", {"progress": 18})
-            source_text, ref_meta = merge_reference_for_script(
-                payload, source_text, source_url, api_key, max_note_refs=note_ref_cap, user_ref=created_by
+            stop_ref, thr_ref = _start_progress_heartbeat(
+                job_id,
+                "正在汇总参考材料（检索与加载可能较慢）…",
+                18.0,
             )
+            try:
+                source_text, ref_meta = merge_reference_for_script(
+                    payload, source_text, source_url, api_key, max_note_refs=note_ref_cap, user_ref=created_by
+                )
+            finally:
+                stop_ref.set()
+                thr_ref.join(timeout=2)
             append_job_event(job_id, "log", "参考材料汇总", ref_meta)
             if not source_text.strip():
                 source_text = "请生成一段 AI Native 播客稿件。"
 
             append_job_event(job_id, "progress", "正在生成播客脚本", {"progress": 45})
             force_fb = bool(payload.get("integration_force_fallback"))
-            gen = build_script(
-                source_text,
-                api_key=api_key,
-                force_fallback=force_fb,
-                script_options=script_generation_options_from_payload(payload),
-                on_script_delta=_make_script_delta_handler(job_id),
-                subscription_tier=_subscription_tier_for_job(created_by),
+            stop_scr, thr_scr = _start_progress_heartbeat(
+                job_id,
+                "正在生成播客脚本（长稿可能较久）…",
+                45.0,
             )
+            try:
+                gen = build_script(
+                    source_text,
+                    api_key=api_key,
+                    force_fallback=force_fb,
+                    script_options=script_generation_options_from_payload(payload),
+                    on_script_delta=_make_script_delta_handler(job_id),
+                    subscription_tier=_subscription_tier_for_job(created_by),
+                )
+            finally:
+                stop_scr.set()
+                thr_scr.join(timeout=2)
             script = str(gen.get("script") or "").strip() or "播客脚本生成失败"
             output_mode = str(payload.get("output_mode") or "dialogue").strip().lower()
             if output_mode not in ("dialogue", "article"):
@@ -826,6 +904,9 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                 _v = payload.get(_k)
                 if _v is not None and str(_v).strip() != "":
                     tts_pl[_k] = _v
+            tts_pl["cover_program_name"] = str(payload.get("program_name") or "").strip()
+            tts_pl["cover_script_constraints"] = str(payload.get("script_constraints") or "").strip()
+            tts_pl["cover_source_text"] = str(payload.get("text") or "").strip()
             _want_polish = _effective_ai_polish(payload, created_by, job_id)
             tts_pl["ai_polish"] = _want_polish
             # 脚本已在生成阶段注入 TTS 口语约束；开启 AI 润色时默认跳过正文二次文本润色（force_tts_text_polish_main 可强制再润色）

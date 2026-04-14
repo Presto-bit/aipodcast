@@ -438,7 +438,7 @@ export default function SubscriptionPage() {
       />
 
       {showWalletRechargeSection ? (
-        <section className="mt-12 rounded-xl border border-dashed border-line bg-fill/30 p-5">
+        <section id="wallet-topup" className="mt-12 scroll-mt-24 rounded-xl border border-dashed border-line bg-fill/30 p-5">
           <h2 className="text-sm font-semibold text-ink">账户余额充值</h2>
           {walletBalanceCents != null ? (
             <p className="mt-1 text-sm text-ink">

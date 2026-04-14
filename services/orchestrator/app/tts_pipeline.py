@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 from .audio_mix import _resolve_bgm_path
+from .cover_image_material import build_cover_material
 from .provider_router import (
     default_podcast_voice_ids,
     generate_cover_image,
@@ -803,16 +804,28 @@ def run_extended_tts(
     cover_image: str | None = None
     cover_error: str | None = None
     if bool(payload.get("generate_cover", True)):
-        chunks: list[str] = []
-        if intro_final:
-            chunks.append(intro_final[:400])
+        program_name = str(payload.get("cover_program_name") or payload.get("program_name") or "").strip()
+        script_constraints = str(
+            payload.get("cover_script_constraints") or payload.get("script_constraints") or ""
+        ).strip()
+        source_hint = str(payload.get("cover_source_text") or payload.get("source_text") or "").strip()
         body_txt = (main_body or "").strip() if main_body else ""
-        if body_txt.strip():
-            chunks.append(body_txt[:1000])
-        if outro_final:
-            chunks.append(outro_final[:400])
-        summary = "\n".join(chunks).strip() or "语音朗读内容"
-        cover_image, cover_error = generate_cover_image(summary[:1200], api_key)
+        summary = (
+            build_cover_material(
+                script_body=body_txt,
+                intro=intro_final or "",
+                outro=outro_final or "",
+                program_name=program_name,
+                script_constraints=script_constraints,
+                source_text=source_hint,
+            ).strip()
+            or "语音朗读内容"
+        )
+        cover_image, cover_error = generate_cover_image(
+            summary,
+            api_key,
+            program_name_fallback=program_name,
+        )
 
     out: dict[str, Any] = {
         "audio_hex": out_hex,

@@ -47,10 +47,23 @@ export function formatScriptStyleChip(scriptStyle: string, maxChars = 14): strin
 
 export const DEFAULT_PROGRAM_NAME = "MiniMax AI 播客节目";
 
+/** 下拉中「克隆 / 系统」后缀，随界面语言传入 */
+export type VoiceOptionMarks = {
+  cloneMark: string;
+  systemMark: string;
+};
+
+const DEFAULT_CLONE_MARK = "（克隆）";
+const DEFAULT_SYSTEM_MARK = "（系统）";
+
 export function buildVoiceOptionsFromMaps(
   defaultVoicesObj: Record<string, Record<string, unknown>> | null,
-  savedList: { voiceId: string; displayName?: string }[]
+  savedList: { voiceId: string; displayName?: string }[],
+  systemVoicesObj?: Record<string, Record<string, unknown>> | null,
+  marks?: Partial<VoiceOptionMarks> | null
 ): VoiceOpt[] {
+  const cloneMark = (marks?.cloneMark ?? DEFAULT_CLONE_MARK).trim() || DEFAULT_CLONE_MARK;
+  const systemMark = (marks?.systemMark ?? DEFAULT_SYSTEM_MARK).trim() || DEFAULT_SYSTEM_MARK;
   const preset = Object.keys(defaultVoicesObj || {})
     .map((k) => {
       const item = defaultVoicesObj![k];
@@ -73,12 +86,27 @@ export function buildVoiceOptionsFromMaps(
         key: `saved:${vid}`,
         voice_id: vid,
         name: v.displayName || vid,
-        label: `${v.displayName || vid}（克隆）`,
+        label: `${v.displayName || vid}${cloneMark}`,
         group: "saved"
       };
     })
     .filter(Boolean) as VoiceOpt[];
-  return [...saved, ...preset];
+  const system = Object.keys(systemVoicesObj || {})
+    .map((k) => {
+      const item = systemVoicesObj![k];
+      const vidRaw = item?.voice_id ?? (item as { voiceId?: unknown } | undefined)?.voiceId;
+      if (!item || vidRaw === undefined || vidRaw === null || String(vidRaw).trim() === "") return null;
+      return {
+        key: k,
+        voice_id: String(vidRaw).trim(),
+        name: String(item.name || k),
+        label: `${String(item.name || k)}${item.description ? ` · ${String(item.description)}` : ""}${systemMark}`,
+        group: "system"
+      };
+    })
+    .filter(Boolean) as VoiceOpt[];
+  /** 默认音色 > 克隆 > Minimax 系统音色 */
+  return [...preset, ...saved, ...system];
 }
 
 export function refsFromUrlBlock(block: string): { url?: string; urlListText: string } {

@@ -1,11 +1,13 @@
-/** 笔记工作台：记住用户上次选中的笔记本（localStorage） */
+/** 笔记工作台：记住用户上次选中的笔记本（localStorage，按账号隔离） */
+import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
+
 export const NOTES_LAST_NOTEBOOK_KEY = "notes:last-notebook:v1";
 
 export const NOTES_NAV_WORKBENCH_EVENT = "fym:notes-open-workbench";
 
 export function readLastNotebookName(): string {
   try {
-    return String(window.localStorage.getItem(NOTES_LAST_NOTEBOOK_KEY) || "").trim();
+    return String(readLocalStorageScoped(NOTES_LAST_NOTEBOOK_KEY) || "").trim();
   } catch {
     return "";
   }
@@ -15,7 +17,7 @@ export function writeLastNotebookName(name: string): void {
   const n = String(name || "").trim();
   if (!n) return;
   try {
-    window.localStorage.setItem(NOTES_LAST_NOTEBOOK_KEY, n);
+    writeLocalStorageScoped(NOTES_LAST_NOTEBOOK_KEY, n);
   } catch {
     // ignore
   }

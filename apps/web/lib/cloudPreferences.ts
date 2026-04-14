@@ -3,6 +3,8 @@
  * 播客草稿仅保存在浏览器 localStorage，不参与云端同步。
  */
 
+import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
+
 export const CLOUD_PREF_KEYS = [
   "fym_user_templates_v1",
   "fym_native_works_folders_v1",
@@ -53,11 +55,11 @@ function rawLocalToValue(raw: string | null): unknown {
 function applyRemoteToStorage(key: string, val: unknown) {
   if (val === undefined || val === null) return;
   if (typeof val === "string") {
-    window.localStorage.setItem(key, val);
+    writeLocalStorageScoped(key, val);
     return;
   }
   try {
-    window.localStorage.setItem(key, JSON.stringify(val));
+    writeLocalStorageScoped(key, JSON.stringify(val));
   } catch {
     // ignore
   }
@@ -75,7 +77,7 @@ export async function pullCloudPreferences(): Promise<void> {
     const server = j.data;
     const toUpload: Record<string, unknown> = {};
     for (const key of CLOUD_PREF_KEYS) {
-      const localRaw = window.localStorage.getItem(key);
+      const localRaw = readLocalStorageScoped(key);
       const localVal = rawLocalToValue(localRaw);
       const remoteVal = server[key];
       const remoteOk = prefValueIsUseful(remoteVal);
@@ -108,7 +110,7 @@ export async function pullCloudPreferences(): Promise<void> {
 function buildLocalPatchPayload(): Record<string, unknown> {
   const data: Record<string, unknown> = {};
   for (const key of CLOUD_PREF_KEYS) {
-    const v = rawLocalToValue(window.localStorage.getItem(key));
+    const v = rawLocalToValue(readLocalStorageScoped(key));
     if (prefValueIsUseful(v) && v !== undefined) data[key] = v;
   }
   return data;
@@ -128,5 +130,5 @@ export function scheduleCloudPreferencesPush() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ data })
     }).catch(() => {});
-  }, 2500);
+  }, 800);
 }

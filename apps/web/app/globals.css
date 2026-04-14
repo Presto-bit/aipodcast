@@ -207,14 +207,13 @@ body {
   }
 }
 
+/* 仅使用 opacity：父级带 transform 会让 fixed 弹窗的定位参照该祖先，遮罩无法铺满视口、侧栏会像「压在遮罩之上」 */
 @keyframes fym-fade-in {
   from {
-    opacity: 0.92;
-    transform: translateY(6px);
+    opacity: 0.88;
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 

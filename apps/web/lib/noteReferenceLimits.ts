@@ -1,8 +1,28 @@
 /** 与 orchestrator `subscription_manifest.MAX_NOTE_REFS_BY_TIER` 一致 */
 
-/** 进 TTS 前「口述润色」：仅 Max 档（且服务端 AI_POLISH_FEATURE_ENABLED 未关） */
+/** Basic / Pro / Max：风格与开头结尾等订阅档能力（不含 free、按量 payg） */
+export function planIsBasicOrAbove(plan: string | undefined | null): boolean {
+  const p = (plan || "free").trim().toLowerCase();
+  return p === "basic" || p === "pro" || p === "max";
+}
+
+/** 打包下载作品（含批量）：Basic+ 或按量（payg）。分享链接不限档位。 */
+export function planMayDownloadBundledWorks(plan: string | undefined | null): boolean {
+  const p = (plan || "free").trim().toLowerCase();
+  return planIsBasicOrAbove(plan) || p === "payg";
+}
+
+/** @deprecated 历史命名；分享已开放，仅下载仍受限。请用 planMayDownloadBundledWorks。 */
+export function planMayShareOrDownloadWorks(plan: string | undefined | null): boolean {
+  return planMayDownloadBundledWorks(plan);
+}
+
+/**
+ * 进 TTS 前「口述润色」：与 `entitlement_matrix.tier_ai_polish_monthly_quota` 非 0 的档位一致
+ * （且服务端 AI_POLISH_FEATURE_ENABLED 未关）。含 Basic+ 与 payg。
+ */
 export function mayUseAiPolishPlan(plan: string | undefined | null): boolean {
-  return (plan || "free").trim().toLowerCase() === "max";
+  return planMayDownloadBundledWorks(plan);
 }
 
 export function maxNotesForReferencePlan(plan: string | undefined | null): number {

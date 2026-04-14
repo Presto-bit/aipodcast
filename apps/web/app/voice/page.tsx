@@ -4,9 +4,11 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import VoiceClonePanel from "../../components/voice/VoiceClonePanel";
 import MyVoicesPanel from "../../components/voice/MyVoicesPanel";
+import { useI18n } from "../../lib/I18nContext";
 
 export default function VoiceManagementPage() {
   const router = useRouter();
+  const { t } = useI18n();
   const [tab, setTab] = useState<"clone" | "my">("my");
 
   useEffect(() => {
@@ -37,7 +39,7 @@ export default function VoiceManagementPage() {
       <div className="flex flex-col gap-4">
         <nav
           className="flex shrink-0 flex-row gap-2 overflow-x-auto rounded-2xl border border-line bg-surface p-2 shadow-soft"
-          aria-label="音色管理子导航"
+          aria-label={t("voice.page.subNavAria")}
         >
           <button type="button" className={navBtn(tab === "my")} onClick={() => setTabAndUrl("my")}>
             <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-90" aria-hidden>
@@ -45,7 +47,7 @@ export default function VoiceManagementPage() {
                 <path d="M4 4h7v7H4V4zM13 4h7v7h-7V4zM4 13h7v7H4v-7zM13 13h7v7h-7v-7z" strokeLinejoin="round" />
               </svg>
             </span>
-            <span className="whitespace-nowrap">音色库</span>
+            <span className="whitespace-nowrap">{t("voice.page.navLibrary")}</span>
           </button>
           <button type="button" className={navBtn(tab === "clone")} onClick={() => setTabAndUrl("clone")}>
             <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-90" aria-hidden>
@@ -54,7 +56,7 @@ export default function VoiceManagementPage() {
                 <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 19v3" strokeLinecap="round" />
               </svg>
             </span>
-            <span className="whitespace-nowrap">音色克隆</span>
+            <span className="whitespace-nowrap">{t("voice.page.navClone")}</span>
           </button>
         </nav>
 

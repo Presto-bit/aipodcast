@@ -21,7 +21,7 @@ const COPY: Record<FailureKind, { title: string; hint: string }> = {
   },
   quota: {
     title: "用量、配额或钱包余额不足",
-    hint: "可前往「订阅与订单」查看套餐、分钟包与钱包；充值或升级后再试。"
+    hint: "可前往会员页查看套餐、分钟包与账户余额；「充值余额」在会员页下方，充值或升级后再试。"
   },
   validation: {
     title: "内容或设置需要调整",
@@ -39,6 +39,6 @@ export function failureCopy(kind: FailureKind): { title: string; hint: string } 
 
 /** 失败态常用恢复入口（与 classifyJobError 分类对齐） */
 export function failureRecoveryLink(kind: FailureKind): { href: string; label: string } | null {
-  if (kind === "quota") return { href: "/me/subscription", label: "订阅与订单" };
+  if (kind === "quota") return { href: "/me/subscription", label: "我的订阅与余额" };
   return null;
 }

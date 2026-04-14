@@ -10,6 +10,8 @@ import {
   type ReactNode,
   type SetStateAction
 } from "react";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import {
   DEFAULT_CREATIVE_TEMPLATE_VALUE,
   formatCreativeTemplateChip,
@@ -40,6 +42,9 @@ import {
 } from "../../lib/podcastStudioCommon";
 import { formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
 import { useAuth, userAccountRef } from "../../lib/auth";
+import { useI18n } from "../../lib/I18nContext";
+import { planIsBasicOrAbove } from "../../lib/noteReferenceLimits";
+import { LockedToolbarChipPill } from "../SubscriptionVipLink";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
 import FloatingPopover from "../ui/FloatingPopover";
@@ -101,9 +106,13 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     ref
   ) {
   const { user, phone, getAuthHeaders } = useAuth();
+  const { t } = useI18n();
   const createdByPhone = userAccountRef(user) || String(phone || "").trim();
+  const planBasicOk = useMemo(() => planIsBasicOrAbove(String(user?.plan)), [user?.plan]);
 
   const [internalPrompt, setInternalPrompt] = useState("");
+  /** 媒体钱包预检 / 创建任务失败时的提示（替换不可点链接的 alert） */
+  const [billingGateMessage, setBillingGateMessage] = useState<string | null>(null);
   const text = controlledPrompt !== undefined ? controlledPrompt : internalPrompt;
   const setText = useCallback(
     (next: SetStateAction<string>) => {
@@ -128,6 +137,10 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
 
+  useEffect(() => {
+    if (open) setBillingGateMessage(null);
+  }, [open]);
+
   const [speakerMode, setSpeakerMode] = useState<"single" | "dual">("dual");
   const [introText, setIntroText] = useState("");
   const [outroText, setOutroText] = useState("");
@@ -146,6 +159,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   const [outroBgm3StoredHex, setOutroBgm3StoredHex] = useState<string | null>(null);
   const [introOutroHydrated, setIntroOutroHydrated] = useState(false);
   const [defaultVoicesMap, setDefaultVoicesMap] = useState<Record<string, Record<string, unknown>>>({});
+  const [systemVoicesMap, setSystemVoicesMap] = useState<Record<string, Record<string, unknown>>>({});
   const [savedCustomVoices, setSavedCustomVoices] = useState<{ voiceId: string; displayName?: string }[]>([]);
   const [voiceKey1, setVoiceKey1] = useState("mini");
   const [voiceKey2, setVoiceKey2] = useState("max");
@@ -155,6 +169,12 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   const stopPanelPointer = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
   }, []);
+
+  useEffect(() => {
+    if (!planBasicOk) {
+      setActivePanel((p) => (p === "creative" || p === "intro" ? null : p));
+    }
+  }, [planBasicOk]);
 
   const applyIntroOutroSnapshot = useCallback((s: IntroOutroSnapshotV1) => {
     setIntroText(s.introText);
@@ -231,9 +251,13 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     return out;
   }, [defaultVoicesMap]);
 
+  const voiceOptionMarks = useMemo(
+    () => ({ cloneMark: t("voice.option.cloneMark"), systemMark: t("voice.option.systemMark") }),
+    [t]
+  );
   const voiceOptions = useMemo(
-    () => buildVoiceOptionsFromMaps(mergedDefaultVoices, savedCustomVoices),
-    [mergedDefaultVoices, savedCustomVoices]
+    () => buildVoiceOptionsFromMaps(mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks),
+    [mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks]
   );
 
   const voiceIdSingle = useMemo(() => resolveVoiceId(voiceOptions, voiceKey1), [voiceOptions, voiceKey1]);
@@ -250,9 +274,13 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
           fetch("/api/default-voices", { cache: "no-store", headers: { ...getAuthHeaders() } }),
           fetch("/api/saved_voices", { cache: "no-store", headers: { ...getAuthHeaders() } })
         ]);
-        const dd = (await d.json().catch(() => ({}))) as { voices?: Record<string, Record<string, unknown>> };
+        const dd = (await d.json().catch(() => ({}))) as {
+          voices?: Record<string, Record<string, unknown>>;
+          system_voices?: Record<string, Record<string, unknown>>;
+        };
         const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
         if (dd.voices) setDefaultVoicesMap(dd.voices);
+        if (dd.system_voices && typeof dd.system_voices === "object") setSystemVoicesMap(dd.system_voices);
         if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
       } catch {
         // ignore
@@ -396,6 +424,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   }
 
   async function runPodcast() {
+    setBillingGateMessage(null);
     setBusy(true);
     try {
       const effectiveChars = resolveScriptTargetCharsForJob(scriptTargetChars, scriptTargetCharsInput);
@@ -412,11 +441,12 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
           ...(createdByPhone ? { created_by: createdByPhone } : {})
         });
         if (prev.allowed === false) {
-          window.alert(prev.detail || "余额或套餐不足，请前往「订阅与订单」处理。");
+          setBillingGateMessage(prev.detail || "余额或套餐不足，请前往订阅页处理。");
           return;
         }
       } catch (pe) {
-        window.alert(String(pe instanceof Error ? pe.message : pe));
+        const peMsg = String(pe instanceof Error ? pe.message : pe);
+        setBillingGateMessage(peMsg);
         return;
       }
       const createRes = await fetch("/api/jobs", {
@@ -432,13 +462,14 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
       });
       if (!createRes.ok) {
         const errText = await createRes.text();
-        window.alert(formatOrchestratorErrorText(errText) || `创建失败: HTTP ${createRes.status}`);
+        const msg = formatOrchestratorErrorText(errText) || `创建失败: HTTP ${createRes.status}`;
+        setBillingGateMessage(msg);
         return;
       }
       const created = (await createRes.json().catch(() => ({}))) as { id?: string };
       const jobId = String(created.id || "").trim();
       if (!jobId) {
-        window.alert("创建失败: 未返回记录编号");
+        setBillingGateMessage("创建失败: 未返回记录编号");
         return;
       }
       rememberJobId(jobId);
@@ -447,7 +478,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
       onPodcastJobCreated(jobId);
       if (closeOnSuccess) onClose();
     } catch (err) {
-      window.alert(`错误: ${String(err)}`);
+      setBillingGateMessage(`错误: ${String(err)}`);
     } finally {
       setBusy(false);
     }
@@ -551,6 +582,17 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-5">
+          {billingGateMessage ? (
+            <div
+              className="mb-3 shrink-0 rounded-xl border border-warning/40 bg-warning-soft/85 px-3 py-2.5 text-sm text-ink shadow-sm"
+              role="alert"
+            >
+              <p className="leading-snug">{billingGateMessage}</p>
+              {messageSuggestsBillingTopUpOrSubscription(billingGateMessage) ? (
+                <BillingShortfallLinks className="mt-2" />
+              ) : null}
+            </div>
+          ) : null}
           <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
             {controlledPrompt === undefined || layout === "modal" ? (
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-3 md:p-5">
@@ -705,16 +747,24 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                           </>
                         )}
                       </span>
-                      <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="intro" className="relative inline-block align-top">
-                        <button type="button" className={chipClass(activePanel === "intro")} onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}>
-                          开场/结尾 · {introSummary}
-                        </button>
-                        {renderFloatingPanel(
-                          "intro",
-                          panelClassIntroAnchorMobile,
-                          panelClassIntroAnchorDesktop,
-                          "开场与结尾",
+                      <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
+                        {!planBasicOk ? (
+                          <LockedToolbarChipPill label={<>开场/结尾 · {introSummary}</>} upgradeTitle="开场与结尾设置需要 Basic 及以上套餐" />
+                        ) : (
                           <>
+                            <button
+                              type="button"
+                              className={chipClass(activePanel === "intro")}
+                              onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}
+                            >
+                              开场/结尾 · {introSummary}
+                            </button>
+                            {renderFloatingPanel(
+                              "intro",
+                              panelClassIntroAnchorMobile,
+                              panelClassIntroAnchorDesktop,
+                              "开场与结尾",
+                              <>
                             <p className="mb-1 text-sm font-medium">开场 / 结尾</p>
                             <p className="mb-3 text-xs text-muted">开场 / 正文 / 结尾与背景音均可选。</p>
                             <IntroOutroPresetBar
@@ -822,22 +872,30 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                             </div>
                           </>
                         )}
+                      </>
+                    )}
                       </span>
-                      <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-block align-top">
-                        <button
-                          type="button"
-                          className={chipClass(activePanel === "creative")}
-                          title={CREATIVE_CHIP_HOVER_HINT}
-                          onClick={() => setActivePanel((p) => (p === "creative" ? null : "creative"))}
-                        >
-                          加入创意 · {creativeSummary}
-                        </button>
-                        {renderFloatingPanel(
-                          "creative",
-                          panelClassAnchorMobile,
-                          panelClassAnchorDesktop,
-                          "加入创意",
-                          <CreativeTemplatePicker value={creativeTemplateValue} onChange={setCreativeTemplateValue} />
+                      <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-flex max-w-full align-top">
+                        {!planBasicOk ? (
+                          <LockedToolbarChipPill label={<>加入创意 · {creativeSummary}</>} upgradeTitle="风格与创意设置需要 Basic 及以上套餐" />
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className={chipClass(activePanel === "creative")}
+                              title={CREATIVE_CHIP_HOVER_HINT}
+                              onClick={() => setActivePanel((p) => (p === "creative" ? null : "creative"))}
+                            >
+                              加入创意 · {creativeSummary}
+                            </button>
+                            {renderFloatingPanel(
+                              "creative",
+                              panelClassAnchorMobile,
+                              panelClassAnchorDesktop,
+                              "加入创意",
+                              <CreativeTemplatePicker value={creativeTemplateValue} onChange={setCreativeTemplateValue} />
+                            )}
+                          </>
                         )}
                       </span>
                     </div>

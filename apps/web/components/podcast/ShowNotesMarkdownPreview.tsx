@@ -2,6 +2,7 @@
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { sanitizeUserMarkdownHref } from "../../lib/safeMarkdownHref";
 
 type Props = {
   markdown: string;
@@ -59,8 +60,12 @@ export function ShowNotesMarkdownPreview({ markdown, onSeekSeconds, className }:
               }
               return <span className="text-brand/90 underline decoration-dotted">{children}</span>;
             }
+            const safe = sanitizeUserMarkdownHref(h);
+            if (!safe) {
+              return <span className="break-all text-ink">{children}</span>;
+            }
             return (
-              <a href={h} target="_blank" rel="noopener noreferrer" className="break-all" {...rest}>
+              <a href={safe} target="_blank" rel="noopener noreferrer" className="break-all" {...rest}>
                 {children}
               </a>
             );

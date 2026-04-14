@@ -2,7 +2,9 @@
 
 import { useRef, useState } from "react";
 import { rememberJobId } from "../../lib/jobRecent";
+import { messageLooksLikeWalletTopupHint } from "../../lib/billingShortfall";
 import { useAuth } from "../../lib/auth";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 
@@ -220,7 +222,12 @@ export default function VoiceClonePanel() {
         </section>
       </div>
 
-      {error ? <p className="mt-6 text-sm text-danger-ink">{error}</p> : null}
+      {error ? (
+        <div className="mt-6 text-sm text-danger-ink">
+          <p>{error}</p>
+          {messageLooksLikeWalletTopupHint(error) ? <BillingShortfallLinks className="mt-2" /> : null}
+        </div>
+      ) : null}
 
       {result ? (
         <section className={`mt-6 ${card}`}>

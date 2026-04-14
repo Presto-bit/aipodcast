@@ -26,6 +26,9 @@ export const allowRegisterSendCodePerIp = createWindowLimiter(20, 60_000);
 /** 忘记密码发信：防刷邮箱 */
 export const allowForgotPasswordPerIp = createWindowLimiter(8, 60_000);
 
+/** /api/image-proxy：单列更严窗口（全站 400/min 已对该 GET 豁免） */
+export const allowImageProxyPerIp = createWindowLimiter(45, 60_000);
+
 export function clientIpFromNextRequest(req: NextRequest): string {
   const xf = req.headers.get("x-forwarded-for");
   if (xf) return xf.split(",")[0]!.trim();

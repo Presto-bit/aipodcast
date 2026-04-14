@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { pullCloudPreferences, setCloudPrefsSyncEnabled } from "./cloudPreferences";
+import { accountKeyFromUser, setStorageAccountSync } from "./userScopedStorage";
 
 const AUTH_TOKEN_KEY = "fym_auth_token";
 const AUTH_PHONE_KEY = "fym_auth_phone";
@@ -121,6 +122,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   /** 开启鉴权时，在首次 /api/auth/me（带 Cookie）返回后设为 true */
   const [sessionResolved, setSessionResolved] = useState(false);
+
+  const storageAccountKey = useMemo(() => accountKeyFromUser(user), [user]);
+  setStorageAccountSync(storageAccountKey);
 
   useLayoutEffect(() => {
     const ph = getStorageItem(AUTH_PHONE_KEY).trim();

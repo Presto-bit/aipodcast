@@ -272,3 +272,27 @@ export async function listRssPublicationsByJobIds(jobIds: string[]) {
   const data = (await resp.json()) as { items?: Record<string, RssPublication[]> };
   return data.items || {};
 }
+
+export type RssPublishEligibilityResult = {
+  success?: boolean;
+  eligible?: boolean;
+  detail?: string;
+};
+
+/** 与 POST /api/rss/publish 一致的预检：账户档位 + 成片是否含付费/按量扣费 */
+export async function fetchRssPublishEligibility(jobId: string): Promise<RssPublishEligibilityResult> {
+  const id = encodeURIComponent(String(jobId || "").trim());
+  const resp = await fetch(`/api/rss/publish-eligibility?job_id=${id}`, {
+    cache: "no-store",
+    headers: authMerge()
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    return { success: false, eligible: false, detail: formatOrchestratorErrorText(text) || `请求失败 ${resp.status}` };
+  }
+  try {
+    return JSON.parse(text) as RssPublishEligibilityResult;
+  } catch {
+    return { success: false, eligible: false, detail: text || "响应无效" };
+  }
+}

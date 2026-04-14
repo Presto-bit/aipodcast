@@ -12,6 +12,22 @@ from ..subscription_limits import tier_allows_ai_polish
 router = APIRouter(prefix="/api/v1", tags=["voice"], dependencies=[Depends(verify_internal_signature)])
 
 
+def _fyv_production() -> bool:
+    return (os.environ.get("FYV_PRODUCTION") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _raise_if_production_without_auth() -> None:
+    """FYV_PRODUCTION=1 时必须启用登录，否则语音类接口无法按用户计费与限流。"""
+    if _fyv_production() and not auth_bridge.is_auth_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "配置错误：FYV_PRODUCTION=1 时必须启用登录鉴权，当前编排器未启用登录。"
+                "请检查 fyv_auth / 相关环境变量与登录服务，或本地开发时关闭 FYV_PRODUCTION。"
+            ),
+        )
+
+
 def _strict_user_phone(request: Request) -> str:
     if not auth_bridge.is_auth_enabled():
         raise HTTPException(status_code=401, detail="未登录")
@@ -40,7 +56,8 @@ def save_saved_voices_api(body: SavedVoicesWriteRequest, request: Request):
 
 @router.post("/preview_voice")
 def preview_voice_api(body: PreviewVoiceRequest, request: Request):
-    if auth_bridge.is_auth_enabled():
+    if auth_bridge.is_auth_enabled() or _fyv_production():
+        _raise_if_production_without_auth()
         _strict_user_phone(request)
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
     if not api_key:
@@ -64,13 +81,14 @@ def preview_voice_api(body: PreviewVoiceRequest, request: Request):
 
 @router.post("/polish_tts_text")
 def polish_tts_text_api(body: PolishTtsTextRequest, request: Request):
-    if auth_bridge.is_auth_enabled():
+    if auth_bridge.is_auth_enabled() or _fyv_production():
+        _raise_if_production_without_auth()
         phone = _strict_user_phone(request)
         tier = str(auth_bridge.user_info_for_phone(phone).get("plan") or "free")
         if not tier_allows_ai_polish(tier):
             raise HTTPException(
                 status_code=403,
-                detail="AI润色仅 Max 套餐可用（或运营已关闭 AI_POLISH_FEATURE_ENABLED）",
+                detail="当前套餐不含 AI 润色权益（或运营已关闭 AI_POLISH_FEATURE_ENABLED）",
             )
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
     if not api_key:
@@ -86,7 +104,11 @@ def polish_tts_text_api(body: PolishTtsTextRequest, request: Request):
 
 @router.get("/default-voices")
 def default_voices_api():
-    return {"success": True, "voices": voice_bridge.get_default_voices()}
+    return {
+        "success": True,
+        "voices": voice_bridge.get_default_voices(),
+        "system_voices": voice_bridge.get_system_voices(),
+    }
 
 
 @router.get("/saved_voices")

@@ -1,3 +1,5 @@
+import { readLocalStorageScoped, removeLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
+
 /**
  * RSS / 小宇宙 等客户端常见映射：
  * - 单集标题 → item.title（列表与详情页主标题）
@@ -760,7 +762,7 @@ export function shareFormFieldsDiffer(a: ShareFormFields, b: ShareFormFields): b
 
 export function loadShareFormDraft(jobId: string): ShareFormDraft | null {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY_PREFIX + jobId);
+    const raw = readLocalStorageScoped(DRAFT_KEY_PREFIX + jobId);
     if (!raw) return null;
     const j = JSON.parse(raw) as Record<string, unknown>;
     if (!j || typeof j !== "object") return null;
@@ -780,7 +782,7 @@ export function loadShareFormDraft(jobId: string): ShareFormDraft | null {
 export function saveShareFormDraft(jobId: string, draft: Omit<ShareFormDraft, "savedAt">): void {
   try {
     const payload: ShareFormDraft = { ...draft, savedAt: Date.now() };
-    localStorage.setItem(DRAFT_KEY_PREFIX + jobId, JSON.stringify(payload));
+    writeLocalStorageScoped(DRAFT_KEY_PREFIX + jobId, JSON.stringify(payload));
   } catch {
     /* quota / privacy */
   }
@@ -788,7 +790,7 @@ export function saveShareFormDraft(jobId: string, draft: Omit<ShareFormDraft, "s
 
 export function clearShareFormDraft(jobId: string): void {
   try {
-    localStorage.removeItem(DRAFT_KEY_PREFIX + jobId);
+    removeLocalStorageScoped(DRAFT_KEY_PREFIX + jobId);
   } catch {
     /* ignore */
   }

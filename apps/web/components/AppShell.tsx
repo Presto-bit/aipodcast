@@ -25,7 +25,11 @@ import {
   IconVoice
 } from "./NavIcons";
 import { useAuth } from "../lib/auth";
-import { APP_SIDEBAR_COLLAPSED_KEY as COLLAPSE_KEY, APP_SIDEBAR_COLLAPSE_EVENT } from "../lib/appSidebarCollapse";
+import {
+  APP_SIDEBAR_COLLAPSED_KEY as COLLAPSE_KEY,
+  APP_SIDEBAR_COLLAPSE_EVENT,
+  APP_SIDEBAR_TOGGLE_EVENT
+} from "../lib/appSidebarCollapse";
 import { useI18n } from "../lib/I18nContext";
 import PageTour from "./PageTour";
 import BrandGlyph from "./brand/BrandGlyph";
@@ -51,6 +55,7 @@ import {
   NOTES_TRASH_PREFIX,
   pathMatchesRoot
 } from "../lib/navPaths";
+import { readLocalStorageScoped, writeLocalStorageScoped } from "../lib/userScopedStorage";
 
 type NavItem = {
   href: string;
@@ -197,7 +202,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     try {
-      const v = window.localStorage.getItem(COLLAPSE_KEY);
+      const v = readLocalStorageScoped(COLLAPSE_KEY);
       if (v === SIDEBAR_COLLAPSED_STORAGE) setCollapsed(true);
     } catch {
       // ignore
@@ -214,9 +219,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setCollapsed((c) => {
       const next = !c;
       try {
-        window.localStorage.setItem(COLLAPSE_KEY, next ? SIDEBAR_COLLAPSED_STORAGE : SIDEBAR_EXPANDED_STORAGE);
+        writeLocalStorageScoped(COLLAPSE_KEY, next ? SIDEBAR_COLLAPSED_STORAGE : SIDEBAR_EXPANDED_STORAGE);
       } catch {
         // ignore
+      }
+      if (typeof window !== "undefined") {
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent(APP_SIDEBAR_TOGGLE_EVENT));
+        });
       }
       return next;
     });

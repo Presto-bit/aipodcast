@@ -6,7 +6,8 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from .db import get_conn, get_cursor
-from .models import get_job
+from .media_wallet import media_wallet_billing_enabled
+from .models import get_job, list_job_events
 from .show_notes_convert import (
     markdown_show_notes_to_html,
     plain_summary_fallback_from_markdown,
@@ -208,6 +209,76 @@ def upsert_rss_channel(user_phone: str, payload: dict[str, Any]) -> dict[str, An
     raise ValueError("channel_upsert_failed")
 
 
+def _event_payload_dict(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip().startswith("{"):
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
+    return {}
+
+
+def _job_events_indicate_paid_media_debit(job_id: str) -> bool:
+    """任务流水中出现「套餐外按次/钱包」扣费记录（与 worker 写入的 log 文案一致）。"""
+    for ev in list_job_events(job_id, after_id=0):
+        msg = str(ev.get("message") or "")
+        if "已按预估语音分钟结算套餐外用量" not in msg:
+            continue
+        pay = _event_payload_dict(ev.get("event_payload"))
+        if int(pay.get("wallet_cents") or 0) > 0:
+            return True
+        if float(pay.get("from_payg_minutes") or 0) > 0:
+            return True
+    return False
+
+
+def rss_publish_eligibility_dict(user_phone: str, job_id: str) -> dict[str, Any]:
+    """供 GET 预检：不抛 HTTP，返回 eligible + 说明。"""
+    try:
+        assert_rss_publish_eligibility(user_phone, job_id)
+        return {"success": True, "eligible": True}
+    except ValueError as exc:
+        msg = str(exc).strip()
+        if msg == "job_not_found":
+            return {"success": False, "eligible": False, "detail": "找不到该作品或无权访问。"}
+        return {"success": True, "eligible": False, "detail": msg}
+
+
+def assert_rss_publish_eligibility(user_phone: str, job_id: str) -> None:
+    """
+    RSS 发布条件：
+    - 账户：订阅档 Basic+、按量 payg、或免费档但账户内有余额（充值用户）；
+    - 作品：上述付费/按量档位的成片均可；免费档+余额时，需本任务曾产生套餐外扣费（钱包或按次分钟包），
+      纯免费用量成片不可写 RSS。媒体钱包总开关关闭时，免费+余额无法校验扣费，允许发布。
+    """
+    from . import auth_bridge
+    from .models import wallet_balance_cents_for_phone
+
+    jid = (job_id or "").strip()
+    row = get_job(jid, user_ref=user_phone)
+    if not row:
+        raise ValueError("job_not_found")
+    tier = str(auth_bridge.user_info_for_phone(user_phone).get("plan") or "free").strip().lower()
+    bal = max(0, int(wallet_balance_cents_for_phone(user_phone) or 0))
+
+    if tier in ("basic", "pro", "max", "payg"):
+        return
+    if tier != "free":
+        return
+    if bal <= 0:
+        raise ValueError("RSS 发布需订阅会员、按量套餐或账户有余额（充值）。")
+    if not media_wallet_billing_enabled():
+        return
+    if _job_events_indicate_paid_media_debit(jid):
+        return
+    raise ValueError(
+        "仅支持由付费套餐、按量套餐或余额扣费生成的成片写入 RSS；"
+        "本任务为免费额度内生成，请先升级/充值后重新生成作品再发布。"
+    )
+
+
 def _extract_work_audio_and_cover(job_row: dict[str, Any]) -> tuple[str, str, int | None]:
     result_raw = job_row.get("result")
     if isinstance(result_raw, str):
@@ -263,6 +334,7 @@ def publish_work_to_rss(
     row = get_job(jid, user_ref=user_phone)
     if not row:
         raise ValueError("job_not_found")
+    assert_rss_publish_eligibility(user_phone, jid)
     audio_url, fallback_cover, duration = _extract_work_audio_and_cover(row)
     schedule_at = _parse_publish_at(publish_at)
     existing: dict[str, Any] | None = None

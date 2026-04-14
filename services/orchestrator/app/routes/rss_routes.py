@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from .. import auth_bridge
 from ..rss_publish_store import (
@@ -7,6 +7,7 @@ from ..rss_publish_store import (
     list_rss_channels,
     list_episode_publications,
     publish_work_to_rss,
+    rss_publish_eligibility_dict,
     upsert_rss_channel,
 )
 from ..schemas import RssChannelUpsertRequest, RssPublishRequest
@@ -47,6 +48,17 @@ def upsert_channel_api(request: Request, body: RssChannelUpsertRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True, "channel": row}
+
+
+@private_router.get("/publish-eligibility")
+def rss_publish_eligibility_api(request: Request, job_id: str = ""):
+    """发布到 RSS 前的账户与作品计费口径预检（复制分享链接不受限）。"""
+    phone = _current_phone_or_401(request)
+    jid = (job_id or "").strip()
+    if not jid:
+        raise HTTPException(status_code=400, detail="job_id required")
+    body = rss_publish_eligibility_dict(phone, jid)
+    return JSONResponse(content=body)
 
 
 @private_router.post("/publish")

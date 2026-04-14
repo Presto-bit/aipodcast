@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
 import {
@@ -16,15 +17,12 @@ import {
   type VoiceMeta
 } from "../../lib/voiceCatalogUtils";
 import { apiErrorMessage } from "../../lib/apiError";
+import { messageLooksLikeWalletTopupHint } from "../../lib/billingShortfall";
 import { useAuth } from "../../lib/auth";
+import { useI18n } from "../../lib/I18nContext";
+import SystemVoicesVirtualList from "./SystemVoicesVirtualList";
+import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { readFavoriteVoiceIds, toggleFavoriteVoiceId } from "../../lib/favoriteVoiceIdsStorage";
-
-const GENDER_FILTER_ITEMS = [
-  { id: "all", label: "全部" },
-  { id: "男", label: "男声" },
-  { id: "女", label: "女声" },
-  { id: "其他", label: "其他" }
-];
 
 type LibraryTab = "explore" | "my" | "favorites";
 
@@ -41,6 +39,10 @@ type DetailModel =
   | { kind: "preset"; meta: VoiceMeta }
   | { kind: "cloned"; voice: Voice }
   | { kind: "orphan"; voiceId: string };
+
+const VOICE_OVERFLOW_MENU_W = 144;
+
+type OverflowMenuState = { rowKey: string; top: number; left: number; entry: DetailModel };
 
 const panel = "rounded-2xl border border-line bg-surface p-4 shadow-soft";
 
@@ -66,9 +68,22 @@ export default function MyVoicesPanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { getAuthHeaders } = useAuth();
-  const previewText = "欢迎收听我的播客节目";
+  const { t } = useI18n();
+  const previewText = t("voice.preview.defaultText");
+
+  const genderFilterItems = useMemo(
+    () => [
+      { id: "all" as const, label: t("voice.filter.genderAll") },
+      { id: "男" as const, label: t("voice.filter.genderMale") },
+      { id: "女" as const, label: t("voice.filter.genderFemale") },
+      { id: "其他" as const, label: t("voice.filter.genderOther") }
+    ],
+    [t]
+  );
   const [savedVoices, setSavedVoices] = useState<Voice[]>([]);
   const [defaultVoices, setDefaultVoices] = useState<Record<string, Record<string, unknown>>>({});
+  /** Minimax 官方系统音色表（与 orchestrator minimax_system_voices_data 同源） */
+  const [systemVoices, setSystemVoices] = useState<Record<string, Record<string, unknown>>>({});
   const [libraryTab, setLibraryTab] = useState<LibraryTab>(() =>
     parseLibraryTab(typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("lib") : null)
   );
@@ -78,7 +93,6 @@ export default function MyVoicesPanel() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [genderFilter, setGenderFilter] = useState("all");
   const [langFilter, setLangFilter] = useState("all");
-  const [providerFilter, setProviderFilter] = useState("all");
   const [voiceTypeFilter, setVoiceTypeFilter] = useState("all");
   /** 正在请求试听音频的卡片 key（非 voiceId，避免多卡冲突） */
   const [loadingCardKey, setLoadingCardKey] = useState("");
@@ -96,11 +110,17 @@ export default function MyVoicesPanel() {
   const [renamingVoiceId, setRenamingVoiceId] = useState("");
   const [assignOpen, setAssignOpen] = useState<AssignOpen | null>(null);
   const [detailOpen, setDetailOpen] = useState<DetailModel | null>(null);
-  const [overflowKey, setOverflowKey] = useState("");
+  const [overflowMenu, setOverflowMenu] = useState<OverflowMenuState | null>(null);
   const [msg, setMsg] = useState("");
 
-  const defaultVoiceTree = useMemo(() => buildSettingsVoiceTree(defaultVoices), [defaultVoices]);
-  const allMetas = useMemo(() => listVoiceMetasFromVoicesObject(defaultVoices), [defaultVoices]);
+  /** 合并顺序：系统表在前，默认 mini/max 在后以便同 key 时以后端默认为准（一般不会冲突） */
+  const mergedVoiceCatalog = useMemo(
+    () => ({ ...systemVoices, ...defaultVoices }),
+    [systemVoices, defaultVoices]
+  );
+
+  const defaultVoiceTree = useMemo(() => buildSettingsVoiceTree(mergedVoiceCatalog), [mergedVoiceCatalog]);
+  const allMetas = useMemo(() => listVoiceMetasFromVoicesObject(mergedVoiceCatalog), [mergedVoiceCatalog]);
 
   const languageChips = useMemo(() => {
     const langs: string[] = [];
@@ -109,12 +129,6 @@ export default function MyVoicesPanel() {
     });
     return sortUniqueLanguages(langs);
   }, [defaultVoiceTree]);
-
-  const providerChips = useMemo(() => {
-    const uniq = [...new Set(allMetas.map((m) => m.provider).filter(Boolean))];
-    uniq.sort((a, b) => a.localeCompare(b, "zh-CN"));
-    return uniq;
-  }, [allMetas]);
 
   const voiceTypeChips = useMemo(() => {
     const uniq = [...new Set(allMetas.map((m) => m.voiceType).filter(Boolean))];
@@ -129,10 +143,18 @@ export default function MyVoicesPanel() {
           `${m.name} ${m.voiceId} ${m.typeShort} ${m.voiceType} ${m.language} ${m.genderGroup} ${m.style} ${m.ageGroup} ${m.accent} ${m.tags.join(" ")}`.toLowerCase().includes(searchKeyword.trim().toLowerCase())) &&
         (genderFilter === "all" || m.genderGroup === genderFilter) &&
         (langFilter === "all" || m.language === langFilter) &&
-        (providerFilter === "all" || m.provider === providerFilter) &&
         (voiceTypeFilter === "all" || m.voiceType === voiceTypeFilter)
     );
-  }, [allMetas, genderFilter, langFilter, providerFilter, searchKeyword, voiceTypeFilter]);
+  }, [allMetas, genderFilter, langFilter, searchKeyword, voiceTypeFilter]);
+
+  const exploreDefaultMetas = useMemo(
+    () => filteredMetas.filter((m) => m.key === "mini" || m.key === "max"),
+    [filteredMetas]
+  );
+  const exploreSystemMetas = useMemo(
+    () => filteredMetas.filter((m) => m.key !== "mini" && m.key !== "max"),
+    [filteredMetas]
+  );
 
   const sortedSaved = useMemo(() => {
     return [...savedVoices].sort((a, b) => {
@@ -169,9 +191,14 @@ export default function MyVoicesPanel() {
           fetch("/api/default-voices", { headers: { ...getAuthHeaders() } }),
           fetch("/api/saved_voices", { headers: { ...getAuthHeaders() } })
         ]);
-        const dd = (await d.json().catch(() => ({}))) as { success?: boolean; voices?: Record<string, Record<string, unknown>> };
+        const dd = (await d.json().catch(() => ({}))) as {
+          success?: boolean;
+          voices?: Record<string, Record<string, unknown>>;
+          system_voices?: Record<string, Record<string, unknown>>;
+        };
         const sd = (await s.json().catch(() => ({}))) as { success?: boolean; voices?: Voice[] };
         if (dd.success && dd.voices) setDefaultVoices(dd.voices);
+        if (dd.success && dd.system_voices && typeof dd.system_voices === "object") setSystemVoices(dd.system_voices);
         if (sd.success && Array.isArray(sd.voices)) setSavedVoices(sd.voices);
       } catch {
         // ignore
@@ -202,11 +229,15 @@ export default function MyVoicesPanel() {
   }, [getAuthHeaders]);
 
   useEffect(() => {
-    if (!overflowKey) return;
-    const onDoc = () => setOverflowKey("");
-    document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
-  }, [overflowKey]);
+    if (!overflowMenu) return;
+    const close = () => setOverflowMenu(null);
+    document.addEventListener("click", close);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("click", close);
+      window.removeEventListener("resize", close);
+    };
+  }, [overflowMenu]);
 
   const setLibraryTabAndUrl = useCallback(
     (tab: LibraryTab) => {
@@ -230,7 +261,7 @@ export default function MyVoicesPanel() {
   }, []);
 
   async function fetchPreviewMp3Url(voiceId: string): Promise<string> {
-    const textRaw = (previewText || "").trim() || "欢迎收听我的播客节目";
+    const textRaw = (previewText || "").trim() || t("voice.preview.defaultText");
     const res = await fetch("/api/preview_voice", {
       method: "POST",
       headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -242,9 +273,9 @@ export default function MyVoicesPanel() {
       error?: string;
       detail?: unknown;
     };
-    if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "试听失败"));
+    if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, t("voice.msg.previewFailed")));
     const url = hexToMp3DataUrl(String(data.audio_hex || ""));
-    if (!url) throw new Error("无音频数据");
+    if (!url) throw new Error(t("voice.msg.noAudioData"));
     return url;
   }
 
@@ -273,7 +304,7 @@ export default function MyVoicesPanel() {
           setPlayingCardKey("");
           return;
         } catch {
-          setMsg("播放失败，请重试");
+          setMsg(t("voice.msg.playFailed"));
           return;
         }
       }
@@ -319,10 +350,10 @@ export default function MyVoicesPanel() {
         el.currentTime = 0;
         const p = el.play();
         if (p !== undefined) {
-          p.catch(() => setMsg("播放未开始，请再点一次圆形播放按钮。"));
+          p.catch(() => setMsg(t("voice.msg.playNotStarted")));
         }
       } catch {
-        setMsg("播放失败，请重试");
+        setMsg(t("voice.msg.playFailed"));
       }
       return;
     }
@@ -347,7 +378,7 @@ export default function MyVoicesPanel() {
     detailPendingAutoplay.current = false;
     const p = audioEl.play();
     if (p !== undefined) {
-      p.catch(() => setMsg("若未听到声音，请再点一次圆形播放按钮。"));
+      p.catch(() => setMsg(t("voice.msg.playNoSound")));
     }
   }
 
@@ -356,16 +387,16 @@ export default function MyVoicesPanel() {
     if (!id) return;
     try {
       await navigator.clipboard.writeText(id);
-      setMsg("已复制音色 ID");
+      setMsg(t("voice.msg.copiedId"));
     } catch {
-      setMsg("复制失败，请手动选择并复制 ID");
+      setMsg(t("voice.msg.copyFailed"));
     }
   }
 
   async function submitRenameSavedVoice(voiceId: string) {
     const normalizedName = (editingVoiceName || "").trim();
     if (!normalizedName) {
-      setMsg("音色名称不能为空");
+      setMsg(t("voice.msg.nameRequired"));
       return;
     }
     const updatedVoices = savedVoices.map((v) => (v.voiceId === voiceId ? { ...v, displayName: normalizedName } : v));
@@ -377,7 +408,7 @@ export default function MyVoicesPanel() {
         body: JSON.stringify({ voices: updatedVoices })
       });
       const data = (await res.json()) as { success?: boolean; error?: string };
-      if (!res.ok || !data.success) throw new Error(data.error || "重命名失败");
+      if (!res.ok || !data.success) throw new Error(data.error || t("voice.msg.renameFailed"));
       setSavedVoices(updatedVoices);
       setEditingVoiceId("");
       setEditingVoiceName("");
@@ -402,8 +433,12 @@ export default function MyVoicesPanel() {
       assignClonedVoiceToSpeaker(which, assignOpen.voiceId);
     }
     const cur = readSpeakerDefaultVoiceKeys();
+    const speakerLabel = which === "speaker1" ? t("voice.assign.speaker1") : t("voice.assign.speaker2");
     setMsg(
-      `已分配到 ${which === "speaker1" ? "Speaker1" : "Speaker2"}（当前预设键：${cur.speaker1} / ${cur.speaker2}，可在播客/TTS 页使用）`
+      t("voice.assign.success")
+        .replace("{speaker}", speakerLabel)
+        .replace("{k1}", cur.speaker1)
+        .replace("{k2}", cur.speaker2)
     );
     setAssignOpen(null);
   }
@@ -425,56 +460,49 @@ export default function MyVoicesPanel() {
       // ignore
     }
     setDetailOpen(entry);
-    setOverflowKey("");
+    setOverflowMenu(null);
   }
 
   function cardTitleFor(entry: DetailModel): string {
-    if (entry.kind === "preset") return entry.meta.typeShort || entry.meta.name;
+    if (entry.kind === "preset") return (entry.meta.name || "").trim() || entry.meta.typeShort;
     if (entry.kind === "cloned") return entry.voice.displayName || entry.voice.voiceId;
-    return "未识别的音色";
-  }
-
-  function cardSubtitleFor(entry: DetailModel): string {
-    if (entry.kind === "preset")
-      return `${entry.meta.genderGroup === "男" ? "男声" : entry.meta.genderGroup === "女" ? "女声" : "其他"} · ${getLanguageShortLabel(entry.meta.language)}`;
-    if (entry.kind === "cloned") return "我的克隆音色";
-    return "仅保留 ID，详情不可用";
+    return t("voice.detail.orphanTitle");
   }
 
   function renderVoiceRow(
-    key: string,
+    rowKey: string,
     voiceId: string,
     entry: DetailModel,
     previewLabel: string,
     usePresetKey?: string
   ) {
     const fav = favSet.has(voiceId);
-    const loading = loadingCardKey === key;
+    const loading = loadingCardKey === rowKey;
     const busyRename = renamingVoiceId === voiceId;
-    const isMenuOpen = overflowKey === key;
+    const isMenuOpen = overflowMenu?.rowKey === rowKey;
 
     const gender =
-      entry.kind === "preset" ? (entry.meta.genderGroup === "男" ? "男声" : entry.meta.genderGroup === "女" ? "女声" : "其他") : "—";
-    const language = entry.kind === "preset" ? getLanguageShortLabel(entry.meta.language) : "—";
-    const source =
       entry.kind === "preset"
-        ? `${entry.meta.provider === "minimax" ? "MiniMax 预设" : "系统音色"}`
-        : entry.kind === "cloned"
-          ? "克隆音色"
-          : "未知";
-    const voiceType = entry.kind === "preset" ? entry.meta.voiceType : "—";
-    const style = entry.kind === "preset" ? entry.meta.style || "—" : "—";
-    const playing = playingCardKey === key;
+        ? entry.meta.genderGroup === "男"
+          ? t("voice.row.male")
+          : entry.meta.genderGroup === "女"
+            ? t("voice.row.female")
+            : t("voice.row.otherGender")
+        : t("voice.row.dash");
+    const language = entry.kind === "preset" ? getLanguageShortLabel(entry.meta.language) : t("voice.row.dash");
+    const voiceType = entry.kind === "preset" ? entry.meta.voiceType : t("voice.row.dash");
+    const style = entry.kind === "preset" ? entry.meta.style || t("voice.row.dash") : t("voice.row.dash");
+    const playing = playingCardKey === rowKey;
     return (
-      <div key={key} className="relative rounded-xl border border-line bg-surface px-3 py-2.5 shadow-soft">
+      <div className="relative rounded-xl border border-line bg-surface px-3 py-2.5 shadow-soft">
         <div className="flex items-center gap-2">
           <button
             type="button"
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line bg-fill text-ink disabled:opacity-50"
-            title={playing ? "暂停" : "试听"}
-            aria-label={playing ? "暂停" : "试听"}
+            title={playing ? t("voice.preview.pause") : t("voice.preview.play")}
+            aria-label={playing ? t("voice.preview.pause") : t("voice.preview.play")}
             disabled={loading || busyRename}
-            onClick={() => void playOnCard(key, voiceId)}
+            onClick={() => void playOnCard(rowKey, voiceId)}
           >
             {loading ? (
               <span className="text-xs text-muted">…</span>
@@ -491,12 +519,18 @@ export default function MyVoicesPanel() {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-ink">{cardTitleFor(entry)}</p>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
-              <span className="truncate">{cardSubtitleFor(entry)}</span>
-              <span className="truncate">来源：{source}</span>
-              <span className="truncate">性别：{gender}</span>
-              <span className="truncate">语言：{language}</span>
-              <span className="truncate">类型：{voiceType}</span>
-              <span className="truncate">风格：{style}</span>
+              <span className="truncate">
+                {t("voice.row.gender")}：{gender}
+              </span>
+              <span className="truncate">
+                {t("voice.row.language")}：{language}
+              </span>
+              <span className="truncate">
+                {t("voice.row.voiceType")}：{voiceType}
+              </span>
+              <span className="truncate">
+                {t("voice.row.style")}：{style}
+              </span>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -512,57 +546,58 @@ export default function MyVoicesPanel() {
                 }
               }}
             >
-              使用
+              {t("voice.action.use")}
             </button>
             <button
               type="button"
               className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-medium text-ink"
               onClick={() => void copyVoiceId(voiceId)}
             >
-              复制 ID
+              {t("voice.action.copyId")}
             </button>
             <button
               type="button"
               className={`rounded-lg p-1.5 transition-colors ${fav ? "text-warning" : "text-muted hover:text-warning-ink"}`}
-              title={fav ? "取消收藏" : "收藏"}
-              aria-label={fav ? "取消收藏" : "收藏"}
+              title={fav ? t("voice.action.unfavorite") : t("voice.action.favorite")}
+              aria-label={fav ? t("voice.action.unfavorite") : t("voice.action.favorite")}
               onClick={() => onToggleFavorite(voiceId)}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill={fav ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" strokeLinejoin="round" />
               </svg>
             </button>
-            <div className="relative">
-              <button
-                type="button"
-                className="rounded-lg p-1.5 text-muted hover:bg-surface hover:text-ink"
-                aria-label="更多"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setOverflowKey(isMenuOpen ? "" : key);
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <circle cx="5" cy="12" r="2" />
-                  <circle cx="12" cy="12" r="2" />
-                  <circle cx="19" cy="12" r="2" />
-                </svg>
-              </button>
-              {isMenuOpen ? (
-                <div
-                  className="absolute right-0 top-full z-20 mt-1 w-36 rounded-xl border border-line bg-surface py-1 text-sm shadow-card ring-1 ring-line/50"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    className="flex w-full px-3 py-2 text-left hover:bg-fill"
-                    onClick={() => openDetailFromResolved(entry)}
-                  >
-                    详情
-                  </button>
-                </div>
-              ) : null}
-            </div>
+            <button
+              type="button"
+              className="rounded-lg p-1.5 text-muted hover:bg-surface hover:text-ink"
+              aria-label={t("voice.action.more")}
+              aria-expanded={isMenuOpen}
+              aria-haspopup="menu"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isMenuOpen) {
+                  setOverflowMenu(null);
+                  return;
+                }
+                const r = e.currentTarget.getBoundingClientRect();
+                const pad = 8;
+                const left = Math.min(
+                  Math.max(pad, r.right - VOICE_OVERFLOW_MENU_W),
+                  typeof window !== "undefined" ? window.innerWidth - VOICE_OVERFLOW_MENU_W - pad : r.right - VOICE_OVERFLOW_MENU_W
+                );
+                setOverflowMenu({
+                  rowKey,
+                  top: r.bottom + 4,
+                  left,
+                  entry
+                });
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <circle cx="5" cy="12" r="2" />
+                <circle cx="12" cy="12" r="2" />
+                <circle cx="19" cy="12" r="2" />
+              </svg>
+            </button>
           </div>
         </div>
       </div>
@@ -571,12 +606,16 @@ export default function MyVoicesPanel() {
 
   return (
     <div>
-      <div className="mt-0 flex gap-1 rounded-2xl border border-line bg-fill/50 p-1 shadow-soft" role="tablist" aria-label="音色库分区">
+      <div
+        className="mt-0 flex gap-1 rounded-2xl border border-line bg-fill/50 p-1 shadow-soft"
+        role="tablist"
+        aria-label={t("voice.library.tablistAria")}
+      >
         <button type="button" role="tab" aria-selected={libraryTab === "explore"} className={subTabBtn(libraryTab === "explore")} onClick={() => setLibraryTabAndUrl("explore")}>
-          探索
+          {t("voice.library.tabExplore")}
         </button>
         <button type="button" role="tab" aria-selected={libraryTab === "my"} className={subTabBtn(libraryTab === "my")} onClick={() => setLibraryTabAndUrl("my")}>
-          我的音色
+          {t("voice.library.tabMy")}
         </button>
         <button
           type="button"
@@ -585,28 +624,28 @@ export default function MyVoicesPanel() {
           className={subTabBtn(libraryTab === "favorites")}
           onClick={() => setLibraryTabAndUrl("favorites")}
         >
-          收藏音色
+          {t("voice.library.tabFavorites")}
         </button>
       </div>
 
       {libraryTab === "explore" ? (
         <section className={`mt-3 ${panel}`}>
-          <h2 className="text-sm font-semibold text-ink">搜索与筛选</h2>
-          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <h2 className="text-sm font-semibold text-ink">{t("voice.library.searchTitle")}</h2>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <input
               className="rounded-xl border border-line bg-fill p-2.5 text-sm"
               value={searchKeyword}
               onChange={(e) => setSearchKeyword(e.target.value)}
-              placeholder="搜索名称 / ID / 类型 / 风格 / 标签"
-              aria-label="搜索音色"
+              placeholder={t("voice.library.searchPlaceholder")}
+              aria-label={t("voice.library.searchAria")}
             />
             <select
               className="rounded-xl border border-line bg-fill p-2.5 text-sm"
               value={genderFilter}
               onChange={(e) => setGenderFilter(e.target.value)}
-              aria-label="按性别筛选"
+              aria-label={t("voice.filter.genderAria")}
             >
-              {GENDER_FILTER_ITEMS.map((item) => (
+              {genderFilterItems.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.label}
                 </option>
@@ -616,9 +655,9 @@ export default function MyVoicesPanel() {
               className="rounded-xl border border-line bg-fill p-2.5 text-sm"
               value={langFilter}
               onChange={(e) => setLangFilter(e.target.value)}
-              aria-label="按语言筛选"
+              aria-label={t("voice.filter.langAria")}
             >
-              <option value="all">全部语言</option>
+              <option value="all">{t("voice.filter.allLang")}</option>
               {languageChips.map((langCode) => (
                 <option key={langCode} value={langCode}>
                   {getLanguageShortLabel(langCode)}
@@ -627,24 +666,11 @@ export default function MyVoicesPanel() {
             </select>
             <select
               className="rounded-xl border border-line bg-fill p-2.5 text-sm"
-              value={providerFilter}
-              onChange={(e) => setProviderFilter(e.target.value)}
-              aria-label="按来源筛选"
-            >
-              <option value="all">全部来源</option>
-              {providerChips.map((provider) => (
-                <option key={provider} value={provider}>
-                  {provider === "minimax" ? "MiniMax" : provider}
-                </option>
-              ))}
-            </select>
-            <select
-              className="rounded-xl border border-line bg-fill p-2.5 text-sm"
               value={voiceTypeFilter}
               onChange={(e) => setVoiceTypeFilter(e.target.value)}
-              aria-label="按类型筛选"
+              aria-label={t("voice.filter.typeAria")}
             >
-              <option value="all">全部类型</option>
+              <option value="all">{t("voice.filter.allType")}</option>
               {voiceTypeChips.map((voiceType) => (
                 <option key={voiceType} value={voiceType}>
                   {voiceType}
@@ -656,35 +682,65 @@ export default function MyVoicesPanel() {
       ) : null}
 
       {libraryTab === "explore" ? (
-        <section className={`mt-4 ${panel}`}>
-          <h2 className="text-sm font-semibold text-ink">系统音色</h2>
-          <p className="mt-1 text-xs text-muted">按列表浏览并快速试听，支持名称、来源、性别、语言、类型、风格等维度筛选。</p>
-          <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
-            {filteredMetas.map((m) =>
-              renderVoiceRow(`explore-${m.key}`, m.voiceId, { kind: "preset", meta: m }, m.name, m.key)
+        <>
+          <section className={`mt-4 ${panel}`}>
+            <h2 className="text-sm font-semibold text-ink">{t("voice.library.defaultTitle")}</h2>
+            <p className="mt-1 text-xs text-muted">{t("voice.library.defaultDesc")}</p>
+            <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
+              {exploreDefaultMetas.map((m) => (
+                <div key={`explore-def-${m.key}`}>
+                  {renderVoiceRow(`explore-def-${m.key}`, m.voiceId, { kind: "preset", meta: m }, m.name, m.key)}
+                </div>
+              ))}
+            </div>
+            {exploreDefaultMetas.length === 0 ? (
+              <p className="mt-4 text-sm text-muted">{t("voice.library.defaultEmpty")}</p>
+            ) : null}
+          </section>
+          <section className={`mt-4 ${panel}`}>
+            <h2 className="text-sm font-semibold text-ink">{t("voice.library.systemTitle")}</h2>
+            {exploreSystemMetas.length === 0 ? (
+              <p className="mt-4 text-sm text-muted">{t("voice.library.systemEmpty")}</p>
+            ) : (
+              <SystemVoicesVirtualList
+                itemsLength={exploreSystemMetas.length}
+                onScroll={() => setOverflowMenu(null)}
+              >
+                {(index) => {
+                  const m = exploreSystemMetas[index];
+                  return renderVoiceRow(
+                    `explore-sys-${m.key}`,
+                    m.voiceId,
+                    { kind: "preset", meta: m },
+                    m.name,
+                    m.key
+                  );
+                }}
+              </SystemVoicesVirtualList>
             )}
-          </div>
-          {filteredMetas.length === 0 ? <p className="mt-4 text-sm text-muted">当前筛选下无音色</p> : null}
-        </section>
+          </section>
+        </>
       ) : null}
 
       {libraryTab === "my" ? (
         <section className={`mt-4 ${panel}`}>
-          <h2 className="text-sm font-semibold text-ink">克隆音色</h2>
-          <p className="mt-1 text-xs text-muted">你通过音色克隆保存的音色。</p>
+          <h2 className="text-sm font-semibold text-ink">{t("voice.library.clonedTitle")}</h2>
+          <p className="mt-1 text-xs text-muted">{t("voice.library.clonedDesc")}</p>
           <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
-            {sortedSaved.map((v) =>
-              renderVoiceRow(`my-${v.voiceId}`, v.voiceId, { kind: "cloned", voice: v }, v.displayName || v.voiceId)
-            )}
+            {sortedSaved.map((v) => (
+              <div key={`my-${v.voiceId}`}>
+                {renderVoiceRow(`my-${v.voiceId}`, v.voiceId, { kind: "cloned", voice: v }, v.displayName || v.voiceId)}
+              </div>
+            ))}
           </div>
-          {sortedSaved.length === 0 ? <p className="mt-4 text-sm text-muted">暂无克隆音色</p> : null}
+          {sortedSaved.length === 0 ? <p className="mt-4 text-sm text-muted">{t("voice.library.clonedEmpty")}</p> : null}
         </section>
       ) : null}
 
       {libraryTab === "favorites" ? (
         <section className={`mt-4 ${panel}`}>
-          <h2 className="text-sm font-semibold text-ink">收藏音色</h2>
-          <p className="mt-1 text-xs text-muted">在探索或我的音色中点击星标即可加入此处。</p>
+          <h2 className="text-sm font-semibold text-ink">{t("voice.library.favoritesTitle")}</h2>
+          <p className="mt-1 text-xs text-muted">{t("voice.library.favoritesDesc")}</p>
           <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
             {favoriteResolved.map((entry, i) => {
               const id = entry.kind === "orphan" ? entry.voiceId : entry.kind === "preset" ? entry.meta.voiceId : entry.voice.voiceId;
@@ -695,17 +751,23 @@ export default function MyVoicesPanel() {
                     ? entry.voice.displayName || entry.voice.voiceId
                     : entry.voiceId;
               const pk = entry.kind === "preset" ? entry.meta.key : undefined;
-              return renderVoiceRow(`fav-${id}-${i}`, id, entry, pl, pk);
+              return (
+                <div key={`fav-${id}-${i}`}>
+                  {renderVoiceRow(`fav-${id}-${i}`, id, entry, pl, pk)}
+                </div>
+              );
             })}
           </div>
-          {favoriteResolved.length === 0 ? <p className="mt-4 text-sm text-muted">暂无收藏，去探索或我的音色里点亮星标吧</p> : null}
+          {favoriteResolved.length === 0 ? (
+            <p className="mt-4 text-sm text-muted">{t("voice.library.favoritesEmpty")}</p>
+          ) : null}
         </section>
       ) : null}
 
       {assignOpen ? (
         <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <div className="pointer-events-auto w-full max-w-sm rounded-xl border border-line bg-surface p-4 text-sm shadow-modal ring-1 ring-line/50">
-            <p className="font-medium text-ink">使用音色</p>
+            <p className="font-medium text-ink">{t("voice.assign.title")}</p>
             <p className="mt-1 text-xs text-muted">{assignOpen.label}</p>
             <div className="mt-4 flex gap-2">
               <button
@@ -713,18 +775,18 @@ export default function MyVoicesPanel() {
                 className="flex-1 rounded-lg bg-brand py-2.5 text-brand-foreground hover:bg-brand"
                 onClick={() => confirmAssign("speaker1")}
               >
-                Speaker1
+                {t("voice.assign.speaker1")}
               </button>
               <button
                 type="button"
                 className="flex-1 rounded-lg bg-brand py-2.5 text-brand-foreground hover:bg-brand"
                 onClick={() => confirmAssign("speaker2")}
               >
-                Speaker2
+                {t("voice.assign.speaker2")}
               </button>
             </div>
             <button type="button" className="mt-3 w-full text-xs text-muted hover:text-ink" onClick={() => setAssignOpen(null)}>
-              取消
+              {t("voice.assign.cancel")}
             </button>
           </div>
         </div>
@@ -735,7 +797,7 @@ export default function MyVoicesPanel() {
           className="fixed inset-0 z-[60] flex items-end justify-center bg-black/35 p-4 sm:items-center"
           role="dialog"
           aria-modal="true"
-          aria-label="音色详情"
+          aria-label={t("voice.detail.title")}
           onClick={() => {
             try {
               detailAudioRef.current?.pause();
@@ -758,21 +820,19 @@ export default function MyVoicesPanel() {
                   {detailOpen.kind === "preset"
                     ? detailOpen.meta.name
                     : detailOpen.kind === "cloned"
-                      ? detailOpen.voice.displayName || "克隆音色"
-                      : "音色详情"}
+                      ? detailOpen.voice.displayName || t("voice.source.clone")
+                      : t("voice.detail.orphanTitle")}
                 </h3>
-                <p className="mt-1 text-xs text-muted">
-                  {detailOpen.kind === "preset"
-                    ? `${detailOpen.meta.genderGroup === "男" ? "男声" : detailOpen.meta.genderGroup === "女" ? "女声" : "其他"} · ${getLanguageShortLabel(detailOpen.meta.language)}`
-                    : detailOpen.kind === "cloned"
-                      ? "我的克隆音色"
-                      : "未知来源"}
-                </p>
+                {detailOpen.kind === "preset" ? null : (
+                  <p className="mt-1 text-xs text-muted">
+                    {detailOpen.kind === "cloned" ? t("voice.detail.clonedSub") : t("voice.detail.orphanSub")}
+                  </p>
+                )}
               </div>
               <button
                 type="button"
                 className="rounded-lg p-1 text-muted hover:bg-fill hover:text-ink"
-                aria-label="关闭"
+                aria-label={t("voice.detail.close")}
                 onClick={() => {
                   try {
                     detailAudioRef.current?.pause();
@@ -790,7 +850,7 @@ export default function MyVoicesPanel() {
             </div>
             <dl className="mt-4 space-y-3 text-sm">
               <div>
-                <dt className="text-xs font-medium text-muted">音色 ID</dt>
+                <dt className="text-xs font-medium text-muted">{t("voice.detail.fieldVoiceId")}</dt>
                 <dd className="mt-1 break-all font-mono text-xs text-ink">
                   {detailOpen.kind === "preset"
                     ? detailOpen.meta.voiceId
@@ -802,52 +862,50 @@ export default function MyVoicesPanel() {
               {detailOpen.kind === "preset" ? (
                 <>
                   <div>
-                    <dt className="text-xs font-medium text-muted">预设键</dt>
+                    <dt className="text-xs font-medium text-muted">{t("voice.detail.fieldPresetKey")}</dt>
                     <dd className="mt-1 text-ink">{detailOpen.meta.key}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium text-muted">描述</dt>
-                    <dd className="mt-1 text-ink">{detailOpen.meta.description || "—"}</dd>
+                    <dt className="text-xs font-medium text-muted">{t("voice.detail.fieldDescription")}</dt>
+                    <dd className="mt-1 text-ink">{detailOpen.meta.description || t("voice.detail.placeholder")}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium text-muted">来源</dt>
-                    <dd className="mt-1 text-ink">{detailOpen.meta.provider === "minimax" ? "MiniMax" : detailOpen.meta.provider || "—"}</dd>
+                    <dt className="text-xs font-medium text-muted">{t("voice.detail.fieldVoiceType")}</dt>
+                    <dd className="mt-1 text-ink">{detailOpen.meta.voiceType || t("voice.detail.placeholder")}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium text-muted">类型</dt>
-                    <dd className="mt-1 text-ink">{detailOpen.meta.voiceType || "—"}</dd>
+                    <dt className="text-xs font-medium text-muted">{t("voice.detail.fieldStyle")}</dt>
+                    <dd className="mt-1 text-ink">{detailOpen.meta.style || t("voice.detail.placeholder")}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium text-muted">风格</dt>
-                    <dd className="mt-1 text-ink">{detailOpen.meta.style || "—"}</dd>
+                    <dt className="text-xs font-medium text-muted">{t("voice.detail.fieldAge")}</dt>
+                    <dd className="mt-1 text-ink">{detailOpen.meta.ageGroup || t("voice.detail.placeholder")}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium text-muted">年龄段</dt>
-                    <dd className="mt-1 text-ink">{detailOpen.meta.ageGroup || "—"}</dd>
+                    <dt className="text-xs font-medium text-muted">{t("voice.detail.fieldAccent")}</dt>
+                    <dd className="mt-1 text-ink">{detailOpen.meta.accent || t("voice.detail.placeholder")}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium text-muted">口音/方言</dt>
-                    <dd className="mt-1 text-ink">{detailOpen.meta.accent || "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium text-muted">标签</dt>
-                    <dd className="mt-1 text-ink">{detailOpen.meta.tags.length ? detailOpen.meta.tags.join(" / ") : "—"}</dd>
+                    <dt className="text-xs font-medium text-muted">{t("voice.detail.fieldTags")}</dt>
+                    <dd className="mt-1 text-ink">
+                      {detailOpen.meta.tags.length ? detailOpen.meta.tags.join(" / ") : t("voice.detail.placeholder")}
+                    </dd>
                   </div>
                 </>
               ) : null}
               {detailOpen.kind === "cloned" ? (
                 <>
                   <div>
-                    <dt className="text-xs font-medium text-muted">创建时间</dt>
-                    <dd className="mt-1 text-ink">{detailOpen.voice.createdAt || "—"}</dd>
+                    <dt className="text-xs font-medium text-muted">{t("voice.detail.createdAt")}</dt>
+                    <dd className="mt-1 text-ink">{detailOpen.voice.createdAt || t("voice.detail.placeholder")}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium text-muted">最近使用</dt>
-                    <dd className="mt-1 text-ink">{detailOpen.voice.lastUsedAt || "—"}</dd>
+                    <dt className="text-xs font-medium text-muted">{t("voice.detail.lastUsed")}</dt>
+                    <dd className="mt-1 text-ink">{detailOpen.voice.lastUsedAt || t("voice.detail.placeholder")}</dd>
                   </div>
                   {editingVoiceId === detailOpen.voice.voiceId ? (
                     <div>
-                      <dt className="text-xs font-medium text-muted">重命名</dt>
+                      <dt className="text-xs font-medium text-muted">{t("voice.detail.rename")}</dt>
                       <dd className="mt-2 space-y-2">
                         <input
                           className="w-full rounded-lg border border-line bg-fill px-2 py-2 text-sm"
@@ -861,10 +919,10 @@ export default function MyVoicesPanel() {
                             disabled={!!renamingVoiceId}
                             onClick={() => void submitRenameSavedVoice(detailOpen.voice.voiceId)}
                           >
-                            保存
+                            {t("voice.detail.save")}
                           </button>
                           <button type="button" className="rounded-lg border border-line px-3 py-1.5 text-xs" onClick={() => setEditingVoiceId("")}>
-                            取消
+                            {t("voice.detail.cancelRename")}
                           </button>
                         </div>
                       </dd>
@@ -879,7 +937,7 @@ export default function MyVoicesPanel() {
                           setEditingVoiceName((detailOpen.voice.displayName || detailOpen.voice.voiceId || "").trim());
                         }}
                       >
-                        重命名
+                        {t("voice.detail.rename")}
                       </button>
                     </div>
                   )}
@@ -900,7 +958,7 @@ export default function MyVoicesPanel() {
                   void copyVoiceId(id);
                 }}
               >
-                复制 ID
+                {t("voice.action.copyId")}
               </button>
               <button
                 type="button"
@@ -922,14 +980,14 @@ export default function MyVoicesPanel() {
                       ? detailOpen.voice.voiceId
                       : detailOpen.voiceId
                 )
-                  ? "取消收藏"
-                  : "收藏"}
+                  ? t("voice.action.unfavorite")
+                  : t("voice.action.favorite")}
               </button>
               <button
                 type="button"
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink shadow-soft disabled:opacity-50"
-                title="试听"
-                aria-label="试听"
+                title={t("voice.preview.play")}
+                aria-label={t("voice.preview.play")}
                 disabled={detailPreviewLoading}
                 onClick={() => {
                   if (detailOpen.kind === "preset") {
@@ -966,7 +1024,7 @@ export default function MyVoicesPanel() {
                     detailPendingAutoplay.current = false;
                   }}
                 >
-                  使用
+                  {t("voice.action.use")}
                 </button>
               ) : null}
               {detailOpen.kind === "cloned" ? (
@@ -990,7 +1048,7 @@ export default function MyVoicesPanel() {
                     detailPendingAutoplay.current = false;
                   }}
                 >
-                  使用
+                  {t("voice.action.use")}
                 </button>
               ) : null}
             </div>
@@ -1008,7 +1066,33 @@ export default function MyVoicesPanel() {
         </div>
       ) : null}
 
-      {msg ? <p className="mt-4 text-sm text-muted">{msg}</p> : null}
+      {overflowMenu
+        ? createPortal(
+            <div
+              className="fixed z-[100] w-36 max-w-[min(9rem,calc(100vw-16px))] rounded-xl border border-line bg-surface py-1 text-sm shadow-card ring-1 ring-line/50"
+              style={{ top: overflowMenu.top, left: overflowMenu.left }}
+              role="menu"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full px-3 py-2 text-left hover:bg-fill"
+                onClick={() => openDetailFromResolved(overflowMenu.entry)}
+              >
+                {t("voice.action.detail")}
+              </button>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {msg ? (
+        <div className="mt-4 text-sm text-muted">
+          <p>{msg}</p>
+          {messageLooksLikeWalletTopupHint(msg) ? <BillingShortfallLinks className="mt-2" /> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

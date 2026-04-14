@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import PodcastWorksGallery from "../components/podcast/PodcastWorksGallery";
-import { IconCreate, IconNotes, IconTts, IconVoice, IconGrid } from "../components/NavIcons";
+import { IconCreate, IconNotes, IconVoice, IconGrid } from "../components/NavIcons";
 import type { WorkItem } from "../lib/worksTypes";
 import { useAuth, userAccountRef } from "../lib/auth";
 import { useI18n } from "../lib/I18nContext";
@@ -121,20 +121,34 @@ export default function HomePage() {
     return () => window.clearTimeout(t);
   }, [regA11ySuccess]);
 
-  const createCards = useMemo(
+  const quickEntryCards = useMemo(
     () =>
       [
-        { href: "/notes", title: "知识库", desc: "资料 → 长文 / 播客", Icon: IconNotes, badge: undefined },
-        { href: "/create", title: "创作播客", desc: "选题与生成 · 播客 / 配音", Icon: IconCreate, badge: undefined },
-        { href: "/tts", title: "文字转语音", desc: "文字 → 语音", Icon: IconTts, badge: undefined },
+        {
+          href: "/notes",
+          title: t("home.quickCards.step1.title"),
+          desc: t("home.quickCards.step1.desc"),
+          Icon: IconNotes
+        },
+        {
+          href: "/create",
+          title: t("home.quickCards.step2.title"),
+          desc: t("home.quickCards.step2.desc"),
+          Icon: IconCreate
+        },
+        {
+          href: "/works",
+          title: t("home.quickCards.step3.title"),
+          desc: t("home.quickCards.step3.desc"),
+          Icon: IconGrid
+        },
         {
           href: "/voice?tab=clone",
           title: t("nav.voice"),
           desc: t("home.entryVoice.desc"),
-          Icon: IconVoice,
-          badge: undefined
+          Icon: IconVoice
         }
-      ] as const,
+      ],
     [t]
   );
 
@@ -381,6 +395,10 @@ export default function HomePage() {
 
   const isReturningVisitor = overview.worksCount > 0 || overview.activeJobsCount > 0;
 
+  const recentJobHref = overview.latestJobId ? `/jobs/${overview.latestJobId}` : "/jobs";
+  const statLinkClass =
+    "group block rounded-xl border border-transparent p-2 -m-1 transition-colors hover:border-line/80 hover:bg-fill/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40";
+
   return (
     <main className="mx-auto min-h-0 w-full max-w-6xl space-y-6 px-3 pb-12 pt-2 sm:space-y-8 sm:px-4 sm:pt-4">
       <div className="fym-surface-card fym-tech-cap p-5 sm:p-8">
@@ -433,29 +451,7 @@ export default function HomePage() {
             ) : (
               <>
                 <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">开始创作</h1>
-                <p className="mt-3 text-sm leading-relaxed text-muted">
-                  建议流程：知识库整理素材 → 创作页选题与生成。长任务可切换页面，队列与状态在「我的作品 → 进行中」。
-                </p>
-                <ol className="mt-4 list-inside list-decimal space-y-1.5 text-sm leading-relaxed text-muted">
-                  <li>
-                    <Link href="/notes" className="text-brand hover:underline">
-                      知识库
-                    </Link>{" "}
-                    写素材或成稿
-                  </li>
-                  <li>
-                    <Link href="/create" className="text-brand hover:underline">
-                      开始创作
-                    </Link>{" "}
-                    做播客或配音
-                  </li>
-                  <li>
-                    <Link href="/works" className="text-brand hover:underline">
-                      我的作品
-                    </Link>{" "}
-                    收听、下载或分享
-                  </li>
-                </ol>
+                <p className="mt-3 text-sm leading-relaxed text-muted">{t("home.schemeB.newUserLead")}</p>
                 <div className="mt-5 flex flex-wrap items-center gap-2 sm:gap-3">
                   <Link
                     href="/create"
@@ -486,53 +482,56 @@ export default function HomePage() {
             )}
           </div>
 
-          <dl className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-3 border-t border-line pt-5 text-sm lg:w-52 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0 xl:w-56">
-            <div>
-              <dt className="text-xs font-medium text-muted">最近任务</dt>
-              <dd
+          <div
+            className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-2 border-t border-line pt-5 text-sm lg:w-52 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0 xl:w-56"
+            role="group"
+            aria-label="工作台概览"
+          >
+            <Link href={recentJobHref} className={statLinkClass}>
+              <div className="text-xs font-medium text-muted group-hover:text-ink">最近任务</div>
+              <div
                 className="mt-0.5 truncate font-medium tabular-nums text-ink"
                 title={overview.latestJobId || undefined}
               >
                 {overview.latestJobId ? `${overview.latestJobId.slice(0, 8)}…` : "—"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium text-muted">状态</dt>
-              <dd className="mt-0.5 font-medium text-ink">{overview.latestJobStatus}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium text-muted">成品件数</dt>
-              <dd className="mt-0.5 font-medium tabular-nums text-ink">{overview.worksCount}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium text-muted">笔记篇数</dt>
-              <dd className="mt-0.5 font-medium tabular-nums text-ink">{overview.notesCount}</dd>
-            </div>
-          </dl>
+              </div>
+            </Link>
+            <Link href={recentJobHref} className={statLinkClass}>
+              <div className="text-xs font-medium text-muted group-hover:text-ink">状态</div>
+              <div className="mt-0.5 font-medium text-ink">{overview.latestJobStatus}</div>
+            </Link>
+            <Link href="/works" className={statLinkClass}>
+              <div className="text-xs font-medium text-muted group-hover:text-ink">成品件数</div>
+              <div className="mt-0.5 font-medium tabular-nums text-ink">{overview.worksCount}</div>
+            </Link>
+            <Link href="/notes" className={statLinkClass}>
+              <div className="text-xs font-medium text-muted group-hover:text-ink">笔记篇数</div>
+              <div className="mt-0.5 font-medium tabular-nums text-ink">{overview.notesCount}</div>
+            </Link>
+          </div>
         </div>
       </div>
 
-      <section className="fym-surface-card p-5 sm:p-8">
-        <h2 className="text-base font-semibold tracking-tight text-ink">其他入口</h2>
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {createCards.map((c) => (
+      <section className="fym-surface-card p-5 sm:p-8" aria-labelledby="home-feature-entry-heading">
+        <h2 id="home-feature-entry-heading" className="text-base font-semibold tracking-tight text-ink">
+          {t("home.quickCards.sectionTitle")}
+        </h2>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {quickEntryCards.map((c) => (
             <Link
               key={c.href}
               href={c.href}
               className="group flex flex-col rounded-xl border border-line/80 bg-fill/35 p-4 transition-colors hover:border-brand/35 hover:bg-fill/60 dark:border-line dark:bg-fill/25 dark:hover:bg-fill/40"
             >
-              <div className="flex items-center justify-between gap-2">
-                <span
-                  className={[
-                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-dawn-md transition-colors",
-                    "bg-fill text-muted group-hover:bg-track group-hover:text-ink"
-                  ].join(" ")}
-                  aria-hidden
-                >
-                  <c.Icon className="shrink-0" width={20} height={20} />
-                </span>
-                {c.badge ? <span className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand">{c.badge}</span> : null}
-              </div>
+              <span
+                className={[
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-dawn-md transition-colors",
+                  "bg-fill text-muted group-hover:bg-track group-hover:text-ink"
+                ].join(" ")}
+                aria-hidden
+              >
+                <c.Icon className="shrink-0" width={20} height={20} />
+              </span>
               <span className="mt-2 font-medium text-ink group-hover:text-brand">{c.title}</span>
               <span className="mt-1 text-sm text-muted">{c.desc}</span>
             </Link>
@@ -542,15 +541,22 @@ export default function HomePage() {
 
       <section className="fym-surface-card p-5 sm:p-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-start gap-2 sm:max-w-[min(100%,28rem)]">
             <span
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-dawn-md bg-fill text-muted"
               aria-hidden
             >
               <IconGrid width={20} height={20} />
             </span>
-            <div>
-              <h2 className="text-base font-semibold tracking-tight text-ink">最近成品</h2>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold tracking-tight text-ink">
+                <Link
+                  href="/works"
+                  className="rounded-sm outline-offset-2 hover:text-brand hover:underline focus-visible:outline focus-visible:ring-2 focus-visible:ring-brand/40"
+                >
+                  最近成品
+                </Link>
+              </h2>
               <p className="mt-0.5 text-sm text-muted">
                 队列与进度 ·
                 <Link href="/works?tab=active" className="ml-1 font-medium text-brand hover:underline">

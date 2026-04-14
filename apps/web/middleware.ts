@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+/** 进程内限流：多副本 / Serverless 横向扩展时无法全局共享，滥用面可被多 IP 稀释；生产建议在网关或 Redis 侧叠加配额。 */
 const inMemoryWindow = new Map<string, { count: number; resetAt: number }>();
 const WINDOW_MS = 60_000;
 /** 全站 /api 粗粒度防护；笔记区一次上传会叠加大量列表/作品请求，120 容易误伤 */
@@ -54,6 +55,10 @@ export function middleware(req: NextRequest) {
     });
   }
   if (!pathname.startsWith("/api/")) {
+    return NextResponse.next();
+  }
+  /** 由路由内 `/api/image-proxy` 单独按 IP 限速，避免拖满全站 400/min */
+  if (pathname === "/api/image-proxy" && req.method === "GET") {
     return NextResponse.next();
   }
   if (req.method === "POST" && RATE_LIMIT_EXEMPT_POST_PATHS.has(pathname)) {
