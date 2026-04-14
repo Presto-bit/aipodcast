@@ -31,6 +31,7 @@ import { readLastIntroOutro, writeLastIntroOutro } from "../../lib/introOutroSto
 import type { WorkItem } from "../../lib/worksTypes";
 import FloatingPopover from "../ui/FloatingPopover";
 import { useAuth, userAccountRef } from "../../lib/auth";
+import { PlanTierHint } from "../PlanTierHint";
 
 type PanelId = "mode" | "voice" | "intro" | null;
 
@@ -993,6 +994,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                     </button>
                   </span>
                 </div>
+                <PlanTierHint variant="tts_polish" />
               </div>
 
               {!hideGenerateButton ? (

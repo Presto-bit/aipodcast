@@ -27,7 +27,7 @@ import {
 import { useAuth } from "../lib/auth";
 import { APP_SIDEBAR_COLLAPSED_KEY as COLLAPSE_KEY, APP_SIDEBAR_COLLAPSE_EVENT } from "../lib/appSidebarCollapse";
 import { useI18n } from "../lib/I18nContext";
-import OnboardingModal from "./OnboardingModal";
+import PageTour from "./PageTour";
 import BrandGlyph from "./brand/BrandGlyph";
 import { dispatchNotesOpenWorkbench } from "../lib/notesLastNotebook";
 import {
@@ -130,13 +130,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const navProducts = useMemo<NavItem[]>(
     () => [
       {
-        href: "/create",
-        label: t("nav.create"),
-        short: t("nav.createShort"),
-        Icon: IconCreate,
-        activeMatch: (p) => matchesProductStudio(p)
-      },
-      {
         href: "/notes",
         label: t("nav.notes"),
         short: "笔",
@@ -150,6 +143,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             dispatchNotesOpenWorkbench();
           }
         }
+      },
+      {
+        href: "/create",
+        label: t("nav.create"),
+        short: t("nav.createShort"),
+        Icon: IconCreate,
+        activeMatch: (p) => matchesProductStudio(p)
       },
       {
         href: "/voice",
@@ -331,7 +331,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div id="main-content" className="flex min-h-screen min-w-0 flex-1 flex-col" tabIndex={-1}>
-        <OnboardingModal />
+        <PageTour />
         <div key={path} className="fym-page-enter fym-page-shell">
           {children}
         </div>

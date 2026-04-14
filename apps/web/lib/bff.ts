@@ -375,3 +375,36 @@ export async function proxyEventStreamFromOrchestrator(
     );
   }
 }
+
+/**
+ * POST body + SSE 响应（如笔记问答流式）。内部签名与 `fetchOrchestrator` POST 一致。
+ */
+export async function proxySsePostFromOrchestrator(
+  path: string,
+  opts: Omit<FetchOrchestratorOptions, "sse" | "method"> & { body: string }
+): Promise<Response> {
+  try {
+    const raw = opts.body ?? "{}";
+    const upstream = await fetchOrchestrator(path, {
+      ...opts,
+      method: "POST",
+      sse: true,
+      body: raw,
+      payload: raw,
+      timeoutMs: opts.timeoutMs ?? 0
+    });
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive"
+      }
+    });
+  } catch {
+    return Response.json(
+      { success: false, error: "upstream_unreachable", detail: "orchestrator request failed" },
+      { status: 503 }
+    );
+  }
+}

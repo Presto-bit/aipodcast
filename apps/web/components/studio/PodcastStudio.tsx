@@ -41,12 +41,14 @@ import {
 } from "../../lib/podcastStudioCommon";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { maxNotesForReferencePlan } from "../../lib/noteReferenceLimits";
+import { PlanTierHint } from "../PlanTierHint";
 import {
   creativeBundleFromTemplateValue,
   DEFAULT_CREATIVE_TEMPLATE_VALUE,
   formatCreativeTemplateChip,
   resolveCreativeBundle
 } from "../../lib/creativeTemplates";
+import { DEFAULT_INGEST_NOTEBOOK_NAME, NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
 import FloatingPopover from "../ui/FloatingPopover";
@@ -98,6 +100,8 @@ export type PodcastStudioProps = {
   onActivityChange?: (s: PodcastStudioActivity) => void;
   /** 嵌入且无作品区时：任务结束后通知父级刷新列表 */
   onExternalListRefresh?: () => void;
+  /** 资料库当前选择摘要（链接条数 / 笔记标题），供创作页在正文框角标展示 */
+  onLibrarySelectionPreviewChange?: (summary: string) => void;
 };
 
 const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(function PodcastStudio(
@@ -109,7 +113,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     hideGenerateButton = false,
     showGallery = true,
     onActivityChange,
-    onExternalListRefresh
+    onExternalListRefresh,
+    onLibrarySelectionPreviewChange
   },
   ref
 ) {
@@ -146,6 +151,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const [taskProgressPct, setTaskProgressPct] = useState(0);
   const [notesList, setNotesList] = useState<{ noteId: string; title?: string; notebook?: string }[]>([]);
   const [studioNotebooks, setStudioNotebooks] = useState<string[]>([]);
+  /** 资料库内仅允许单选一条笔记（与产品默认一致） */
+  const LIBRARY_MAX_SELECTED_NOTES = 1;
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
   const [works, setWorks] = useState<WorkItem[]>([]);
   const [worksLoading, setWorksLoading] = useState(true);
@@ -541,21 +548,20 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }, [getAuthHeaders]);
 
   useEffect(() => {
-    setSelectedNoteIds((prev) => (prev.length > noteRefCap ? prev.slice(0, noteRefCap) : prev));
+    setSelectedNoteIds((prev) => {
+      const cap = Math.min(noteRefCap, LIBRARY_MAX_SELECTED_NOTES);
+      return prev.length > cap ? prev.slice(0, cap) : prev;
+    });
   }, [noteRefCap]);
 
   useEffect(() => {
     setScriptTargetCharsInput(String(scriptTargetChars));
   }, [scriptTargetChars]);
 
-  function toggleNote(id: string) {
+  function selectNote(id: string) {
     setSelectedNoteIds((prev) => {
-      if (prev.includes(id)) return prev.filter((x) => x !== id);
-      if (prev.length >= noteRefCap) {
-        setTaskPhase(`已达套餐资料上限：最多 ${noteRefCap} 本笔记（Free 1 / Basic 3 / Pro 6 / Max 12）`);
-        return prev;
-      }
-      return [...prev, id];
+      if (prev[0] === id) return [];
+      return [id];
     });
   }
 
@@ -696,9 +702,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }
 
   async function ensureDefaultStudioNotebook(): Promise<string | null> {
-    const existing = studioNotebooks[0]?.trim();
-    if (existing) return existing;
-    const name = "默认资料库";
+    if (studioNotebooks.includes(DEFAULT_INGEST_NOTEBOOK_NAME)) return DEFAULT_INGEST_NOTEBOOK_NAME;
+    const name = DEFAULT_INGEST_NOTEBOOK_NAME;
     try {
       const res = await fetch("/api/notebooks", {
         method: "POST",
@@ -750,20 +755,22 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       const r = await uploadNoteFileWithProgress(file, {
         notebook: targetNb,
         title: file.name,
+        projectName: NOTES_PODCAST_PROJECT_NAME,
         onProgress: (p) => setUploadProgress(p)
       });
       if (r.ok) {
         applyTaskFromEvent("资料文件已上传", undefined);
         const j = r.data;
-        const nid = j.note?.noteId;
+        const nid = String(j.note?.noteId || "").trim();
         const n = await fetch("/api/notes", { cache: "no-store", headers: { ...getAuthHeaders() } }).then((x) =>
           x.json()
         );
         const nd = n as { success?: boolean; notes?: { noteId: string; title?: string; notebook?: string }[] };
         if (nd.success && Array.isArray(nd.notes)) {
           setNotesList(nd.notes.slice(0, 300));
-          if (nid) setSelectedNoteIds((prev) => (prev.includes(nid) ? prev : [nid, ...prev]));
         }
+        // 单选：仅引用本次上传生成的笔记，覆盖此前在列表中勾选或更早一次上传的笔记
+        setSelectedNoteIds(nid ? [nid] : []);
       } else {
         applyTaskFromEvent(`上传失败: ${r.error}`);
       }
@@ -905,7 +912,21 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const creativeSummary = formatCreativeTemplateChip(creativeTemplateValue);
   const refUrlLines = referenceUrlsBlock.split(/\n/).map((l) => l.trim()).filter(Boolean);
   const librarySummary =
-    refUrlLines.length > 0 || selectedNoteIds.length > 0 ? `链接${refUrlLines.length}·笔记${selectedNoteIds.length}` : "默认";
+    refUrlLines.length > 0 || selectedNoteIds.length > 0
+      ? `链接${refUrlLines.length}·笔记${selectedNoteIds.length ? "1" : "0"}`
+      : "未选资料";
+
+  useEffect(() => {
+    const lines = referenceUrlsBlock.split(/\n/).map((l) => l.trim()).filter(Boolean);
+    const parts: string[] = [];
+    if (lines.length) parts.push(`链接 ${lines.length} 条`);
+    if (selectedNoteIds.length) {
+      const id0 = selectedNoteIds[0];
+      const title = id0 ? notesList.find((n) => n.noteId === id0)?.title || id0 : "";
+      if (title) parts.push(`笔记：${title}`);
+    }
+    onLibrarySelectionPreviewChange?.(parts.join(" · "));
+  }, [referenceUrlsBlock, selectedNoteIds, notesList, onLibrarySelectionPreviewChange]);
 
   const showTaskPanel = busy || taskPhase.length > 0;
 
@@ -1117,14 +1138,15 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       panelClassAnchor,
                       "资料库",
                       <div className="flex flex-col gap-2">
+                        <PlanTierHint variant="notes_ref" />
                         <div className="rounded-lg border border-line bg-fill/70 p-2.5">
                           <p className="mb-1.5 text-xs font-medium text-ink">网页链接</p>
                           <textarea
-                            className="w-full rounded-lg border border-line bg-surface p-2 font-mono text-sm leading-snug text-ink placeholder:text-muted"
-                            rows={3}
+                            className="max-h-[4.5rem] w-full max-w-[min(100%,66%)] rounded-lg border border-line bg-surface p-2 font-mono text-sm leading-snug text-ink placeholder:text-muted"
+                            rows={2}
                             value={referenceUrlsBlock}
                             onChange={(e) => setReferenceUrlsBlock(e.target.value)}
-                            placeholder={"https://…\n（首行主 URL）"}
+                            placeholder=""
                           />
                         </div>
                         <div className="flex flex-col rounded-lg border border-line bg-fill/70 p-2.5">
@@ -1180,14 +1202,17 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                               </option>
                             ))}
                           </select>
-                          <p className="mb-1 text-xs text-muted">
-                            资料 {selectedNoteIds.length}/{noteRefCap}（Free 1 · Basic 3 · Pro 6 · Max 12）
-                          </p>
+                          <p className="mb-1 text-xs text-muted">单选 1 本笔记（生成时作为资料引用）</p>
                           <div className="max-h-[5.5rem] overflow-auto text-sm text-ink">
                             {filteredNotesForLibrary.length === 0 ? <span className="text-muted">无</span> : null}
                             {filteredNotesForLibrary.map((n) => (
-                              <label key={n.noteId} className="flex gap-2 py-0.5">
-                                <input type="checkbox" className="mt-1 shrink-0" checked={selectedNoteIds.includes(n.noteId)} onChange={() => toggleNote(n.noteId)} />
+                              <label key={n.noteId} className="flex cursor-pointer gap-2 py-0.5">
+                                <input
+                                  type="checkbox"
+                                  className="mt-1 shrink-0"
+                                  checked={selectedNoteIds[0] === n.noteId}
+                                  onChange={() => selectNote(n.noteId)}
+                                />
                                 <span className="min-w-0 truncate leading-snug">{n.title || n.noteId}</span>
                               </label>
                             ))}

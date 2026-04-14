@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib import request
+
+import requests
 
 from ..entitlement_matrix import long_form_script_chars_cap, normalize_script_target_input
 from ..fyv_shared.config import PODCAST_CONFIG, TIMEOUTS
@@ -331,4 +333,62 @@ def chat_completion_openai_compatible(
     if not content:
         raise RuntimeError("openai_compatible_empty_content")
     return content
+
+
+def iter_chat_completion_openai_compatible_stream(
+    *,
+    messages: list[dict[str, str]],
+    api_base: str,
+    api_key: str,
+    model: str,
+    temperature: float = 0.65,
+    timeout_sec: int = 120,
+) -> Iterator[str]:
+    """OpenAI 兼容 Chat Completions 流式输出，逐段产出 delta 文本。"""
+    base = api_base.rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": float(temperature),
+        "stream": True,
+    }
+    resp = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        stream=True,
+        timeout=(10, int(timeout_sec)),
+    )
+    resp.raise_for_status()
+    for line in resp.iter_lines(decode_unicode=True):
+        if not line:
+            continue
+        line_s = str(line).strip()
+        if not line_s.startswith("data:"):
+            continue
+        raw = line_s[5:].strip()
+        if raw == "[DONE]":
+            break
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        err = data.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            raise RuntimeError(str(err.get("message") or "upstream_error"))
+        choices = data.get("choices") or []
+        if not isinstance(choices, list) or not choices:
+            continue
+        c0 = choices[0] if isinstance(choices[0], dict) else {}
+        delta = c0.get("delta") or {}
+        if not isinstance(delta, dict):
+            continue
+        piece = delta.get("content")
+        if piece:
+            yield str(piece)
 

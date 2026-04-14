@@ -25,8 +25,21 @@ import {
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { useAuth } from "../../lib/auth";
 import { maxNotesForReferencePlan } from "../../lib/noteReferenceLimits";
+import { PlanTierHint } from "../../components/PlanTierHint";
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
+
+type NotesAskStreamEvent =
+  | { type: "chunk"; text: string }
+  | { type: "done"; sources?: unknown; traceId?: string | null }
+  | { type: "error"; message: string };
+
+type NotesAskTurn = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  streaming?: boolean;
+};
 
 type NoteItem = {
   noteId: string;
@@ -216,7 +229,6 @@ export default function NotesPage() {
   const addNoteFileRef = useRef<HTMLInputElement | null>(null);
   const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false);
   const [deleteNotebookTarget, setDeleteNotebookTarget] = useState<string | null>(null);
-  const [deleteNoteId, setDeleteNoteId] = useState<string | null>(null);
   const [noteMenuOpenId, setNoteMenuOpenId] = useState<string | null>(null);
   const [notebookCardMenu, setNotebookCardMenu] = useState<string | null>(null);
 
@@ -286,10 +298,11 @@ export default function NotesPage() {
   /** 右侧资料区底部输入：带入播客/文章，不在此自动扩写全文 */
   const [notesStudioPrompt, setNotesStudioPrompt] = useState("");
   const [notesAskQuestion, setNotesAskQuestion] = useState("");
-  const [notesAskAnswer, setNotesAskAnswer] = useState("");
+  const [notesAskMessages, setNotesAskMessages] = useState<NotesAskTurn[]>([]);
   const [notesAskBusy, setNotesAskBusy] = useState(false);
   const [notesAskError, setNotesAskError] = useState("");
-  const [notesAskPhase, setNotesAskPhase] = useState("");
+  const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
+  const [notesAskNoteBusyId, setNotesAskNoteBusyId] = useState<string | null>(null);
   const [sourcesPanelCollapsed, setSourcesPanelCollapsed] = useState(false);
   const [studioPanelCollapsed, setStudioPanelCollapsed] = useState(false);
 
@@ -341,19 +354,10 @@ export default function NotesPage() {
   }, []);
 
   useEffect(() => {
-    if (!notesAskBusy) {
-      setNotesAskPhase("");
-      return;
-    }
-    const phases = ["正在理解你的问题…", "正在检索已勾选资料…", "正在组织回答…"];
-    let i = 0;
-    setNotesAskPhase(phases[0]!);
-    const id = window.setInterval(() => {
-      i = (i + 1) % phases.length;
-      setNotesAskPhase(phases[i]!);
-    }, 1200);
-    return () => window.clearInterval(id);
-  }, [notesAskBusy]);
+    const el = notesAskScrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [notesAskMessages]);
 
   const notesSorted = useMemo(() => {
     return [...notes].sort((a, b) => {
@@ -1187,11 +1191,18 @@ export default function NotesPage() {
       setNotesAskError("请输入要问资料的问题");
       return;
     }
+    const userMsgId = crypto.randomUUID();
+    const assistantId = crypto.randomUUID();
     setNotesAskError("");
     setNotesAskBusy(true);
-    setNotesAskAnswer("");
+    setNotesAskMessages((prev) => [
+      ...prev,
+      { id: userMsgId, role: "user", content: q },
+      { id: assistantId, role: "assistant", content: "", streaming: true }
+    ]);
+    setNotesAskQuestion("");
     try {
-      const res = await fetch("/api/notes/ask", {
+      const res = await fetch("/api/notes/ask/stream", {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -1201,18 +1212,155 @@ export default function NotesPage() {
           question: q
         })
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        answer?: string;
-        error?: string;
-        detail?: unknown;
-      };
-      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "问答失败"));
-      setNotesAskAnswer(String(data.answer || "").trim());
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          detail?: unknown;
+          error?: string;
+        };
+        throw new Error(apiErrorMessage(data, "问答失败"));
+      }
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      if (!ct.includes("text/event-stream") || !res.body) {
+        const t = await res.text();
+        throw new Error(t || "未返回流式响应");
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let sawDone = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const block of parts) {
+          for (const line of block.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const raw = trimmed.slice(5).trim();
+            if (!raw) continue;
+            let ev: NotesAskStreamEvent;
+            try {
+              ev = JSON.parse(raw) as NotesAskStreamEvent;
+            } catch {
+              continue;
+            }
+            if (ev.type === "chunk") {
+              const piece = String(ev.text ?? "");
+              setNotesAskMessages((prev) => {
+                const next = [...prev];
+                const idx = next.findIndex((m) => m.id === assistantId);
+                if (idx < 0) return prev;
+                const cur = next[idx]!;
+                next[idx] = {
+                  ...cur,
+                  content: (cur.content || "") + piece,
+                  streaming: true
+                };
+                return next;
+              });
+            } else if (ev.type === "done") {
+              sawDone = true;
+              setNotesAskMessages((prev) => {
+                const next = [...prev];
+                const idx = next.findIndex((m) => m.id === assistantId);
+                if (idx < 0) return prev;
+                next[idx] = { ...next[idx]!, streaming: false };
+                return next;
+              });
+            } else if (ev.type === "error") {
+              throw new Error(String(ev.message || "").trim() || "问答失败");
+            }
+          }
+        }
+      }
+      if (!sawDone) {
+        setNotesAskMessages((prev) =>
+          prev.map((m) => (m.id === assistantId && m.streaming ? { ...m, streaming: false } : m))
+        );
+      }
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      setNotesAskError(msg);
+      setNotesAskMessages((prev) => {
+        const next = [...prev];
+        const idx = next.findIndex((m) => m.id === assistantId);
+        if (idx < 0) return prev;
+        const cur = next[idx]!;
+        next[idx] = {
+          ...cur,
+          streaming: false,
+          content: (cur.content || "").trim() || `（${msg}）`
+        };
+        return next;
+      });
+    } finally {
+      setNotesAskBusy(false);
+    }
+  }
+
+  async function copyNotesAskAnswer(text: string) {
+    const t = (text || "").trim();
+    if (!t) return;
+    try {
+      await navigator.clipboard.writeText(t);
+      setNotesAskError("");
+    } catch (err) {
+      setNotesAskError(String(err instanceof Error ? err.message : err));
+    }
+  }
+
+  async function shareNotesAskAnswer(text: string) {
+    const t = (text || "").trim();
+    if (!t) return;
+    try {
+      if (typeof navigator !== "undefined" && "share" in navigator && typeof navigator.share === "function") {
+        await navigator.share({ title: "知识库回答", text: t });
+      } else {
+        await navigator.clipboard.writeText(t);
+      }
+      setNotesAskError("");
+    } catch (err) {
+      const e = err as Error;
+      if (e?.name === "AbortError") return;
+      setNotesAskError(String(e?.message || err));
+    }
+  }
+
+  async function saveAskAnswerAsNote(text: string, msgId: string) {
+    const nb = selectedNotebook.trim();
+    if (!nb) {
+      setNotesAskError("请先选择笔记本");
+      return;
+    }
+    const raw = (text || "").trim();
+    if (!raw) return;
+    const firstLine = raw.split(/\n/).find((l) => l.trim())?.trim() || "";
+    const title = (firstLine.replace(/[#*`>]+/g, "").slice(0, 80) || "问答摘录").trim();
+    setNotesAskNoteBusyId(msgId);
+    setNotesAskError("");
+    try {
+      const res = await fetch("/api/notes", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          project_name: NOTES_PODCAST_PROJECT_NAME,
+          title: title || "问答摘录",
+          notebook: nb,
+          content: raw
+        })
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: unknown };
+      if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
+      await loadNotebookMeta();
+      await loadNotes();
     } catch (err) {
       setNotesAskError(String(err instanceof Error ? err.message : err));
     } finally {
-      setNotesAskBusy(false);
+      setNotesAskNoteBusyId(null);
     }
   }
 
@@ -1279,7 +1427,6 @@ export default function NotesPage() {
   }
 
   async function confirmDeleteNote(noteId: string) {
-    setDeleteNoteId(null);
     setBusy(true);
     try {
       const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
@@ -1765,6 +1912,7 @@ export default function NotesPage() {
                     ? "创建笔记本后即可添加资料。"
                     : `资料 ${draftSelectedNoteIds.length}/${noteRefCap} · 本页 ${stats.total} 条${hasMoreNotes ? " · 仍有更多" : ""}`}
                 </p>
+                {notebooks.length > 0 ? <PlanTierHint variant="notes_ref" /> : null}
                 {notesSorted.length > 0 ? (
                   <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink hover:bg-surface/70">
                     <input
@@ -1861,7 +2009,6 @@ export default function NotesPage() {
                                 onClick={() => {
                                   setRenameNoteId(n.noteId);
                                   setRenameNoteTitle(n.title || "");
-                                  setDeleteNoteId(null);
                                   setNoteMenuOpenId(null);
                                 }}
                               >
@@ -1871,9 +2018,9 @@ export default function NotesPage() {
                                 type="button"
                                 className="block w-full px-2 py-1.5 text-left text-danger-ink hover:bg-danger-soft"
                                 onClick={() => {
-                                  setDeleteNoteId(n.noteId);
                                   setRenameNoteId(null);
                                   setNoteMenuOpenId(null);
+                                  void confirmDeleteNote(n.noteId);
                                 }}
                               >
                                 删除
@@ -1900,20 +2047,6 @@ export default function NotesPage() {
                             onSubmit={() => void saveRenameNote()}
                             onCancel={() => setRenameNoteId(null)}
                             className="border-line bg-canvas/80"
-                          />
-                        </div>
-                      ) : null}
-                      {deleteNoteId === n.noteId ? (
-                        <div className="mt-2 border-t border-line pt-2">
-                          <InlineConfirmBar
-                            open
-                            message="确认删除这条笔记吗？"
-                            confirmLabel="删除"
-                            cancelLabel="取消"
-                            danger
-                            onConfirm={() => void confirmDeleteNote(n.noteId)}
-                            onCancel={() => setDeleteNoteId(null)}
-                            className="border-danger/35 bg-danger-soft"
                           />
                         </div>
                       ) : null}
@@ -1972,11 +2105,101 @@ export default function NotesPage() {
                     {notesAskError}
                   </p>
                 ) : null}
-                <div className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-xl border border-line/80 bg-surface/80 p-3.5">
-                  {notesAskAnswer ? (
-                    <NotesAskAnswerDisplay text={notesAskAnswer} />
-                  ) : (
+                <div
+                  ref={notesAskScrollRef}
+                  className="h-[min(50vh,420px)] max-h-[min(50vh,420px)] min-h-[200px] w-full min-w-0 shrink-0 overflow-y-auto rounded-xl border border-line/80 bg-surface/80 p-3.5"
+                >
+                  {notesAskMessages.length === 0 ? (
                     <p className="text-xs text-muted">勾选资料后提问</p>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {notesAskMessages.map((m) => (
+                        <div
+                          key={m.id}
+                          className={m.role === "user" ? "flex justify-end" : "flex justify-start"}
+                        >
+                          <div
+                            className={
+                              m.role === "user"
+                                ? "max-w-[min(92%,28rem)] rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm"
+                                : "max-w-[min(92%,28rem)] rounded-2xl border border-line/70 bg-fill/40 px-3 py-2 text-sm text-ink shadow-sm"
+                            }
+                          >
+                            {m.role === "user" ? (
+                              <p className="whitespace-pre-wrap break-words">{m.content}</p>
+                            ) : m.streaming && !(m.content || "").trim() ? (
+                              <p className="text-muted">思考中…</p>
+                            ) : (
+                              <div className="min-w-0">
+                                <NotesAskAnswerDisplay text={m.content} />
+                                {!m.streaming && (m.content || "").trim() ? (
+                                  <div className="mt-2 flex flex-wrap items-center gap-0.5 border-t border-line/60 pt-2">
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
+                                      title="复制"
+                                      aria-label="复制"
+                                      onClick={() => void copyNotesAskAnswer(m.content)}
+                                    >
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path
+                                          d="M6 11c0-1.1.9-2 2-2h7a2 2 0 012 2v9a2 2 0 01-2 2H8a2 2 0 01-2-2v-9z"
+                                          stroke="currentColor"
+                                          strokeWidth="1.75"
+                                        />
+                                        <path
+                                          d="M9 7V6a2 2 0 012-2h7a2 2 0 012 2v9a2 2 0 01-2 2h-2"
+                                          stroke="currentColor"
+                                          strokeWidth="1.75"
+                                        />
+                                      </svg>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
+                                      title="分享"
+                                      aria-label="分享"
+                                      onClick={() => void shareNotesAskAnswer(m.content)}
+                                    >
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <circle cx="18" cy="5" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+                                        <circle cx="6" cy="12" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+                                        <circle cx="18" cy="19" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+                                        <path
+                                          d="M8.2 13.6l6.6 3.2M15.8 7.2L9.2 10.4"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                          strokeLinecap="round"
+                                        />
+                                      </svg>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink disabled:opacity-40"
+                                      title="新增为笔记"
+                                      aria-label="新增为笔记"
+                                      disabled={notesAskNoteBusyId === m.id}
+                                      onClick={() => void saveAskAnswerAsNote(m.content, m.id)}
+                                    >
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path
+                                          d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                          strokeLinejoin="round"
+                                        />
+                                        <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                                        <path d="M12 18v-6M9 15h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
                 <div className="flex shrink-0 flex-row flex-wrap items-center justify-start gap-2">
@@ -2027,6 +2250,19 @@ export default function NotesPage() {
                     }
                     value={notesAskQuestion}
                     onChange={(e) => setNotesAskQuestion(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter" || e.shiftKey) return;
+                      if (e.nativeEvent.isComposing) return;
+                      e.preventDefault();
+                      if (
+                        notesAskBusy ||
+                        draftSelectedNoteIds.length === 0 ||
+                        !notesAskQuestion.trim()
+                      ) {
+                        return;
+                      }
+                      void submitNotesAsk();
+                    }}
                     disabled={notesAskBusy || draftSelectedNoteIds.length === 0}
                     aria-label={
                       draftSelectedNoteIds.length === 0 ? "需先勾选资料后再向资料提问" : "向资料提问"
@@ -2068,11 +2304,6 @@ export default function NotesPage() {
                     )}
                   </button>
                 </div>
-                {notesAskBusy ? (
-                  <p className="mt-2 shrink-0 text-xs leading-relaxed text-brand/90" aria-live="polite">
-                    {notesAskPhase || "正在生成回答…"}
-                  </p>
-                ) : null}
               </div>
             </section>
 

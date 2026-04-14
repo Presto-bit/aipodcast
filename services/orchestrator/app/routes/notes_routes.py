@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import psycopg2
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ..legacy_bridge import parse_url_content
 from ..note_constants import (
@@ -32,6 +32,7 @@ from ..models import (
     list_notebook_names,
     list_notes,
     list_trashed_notes,
+    ensure_default_library_notebook,
     migrate_legacy_default_notebook_for_user,
     purge_expired_trashed_notes,
     purge_note_hard,
@@ -45,7 +46,7 @@ from ..worker_tasks import run_ai_job
 from ..storage_paths import note_upload_object_key
 from ..note_document_extract import NoteParseResult, extract_text_from_bytes
 from ..object_store import delete_object_key, get_object_bytes, upload_bytes
-from ..notes_ask import answer_notes_question
+from ..notes_ask import answer_notes_question, iter_notes_answer_events, validate_notes_ask_request
 from ..note_rag_service import count_rag_chunks_for_notes, ensure_note_rag_schema
 from ..schemas import (
     NoteCreateRequest,
@@ -379,6 +380,51 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
     return {"success": True, **out}
 
 
+@router.post("/notes/ask/stream")
+def notes_ask_stream_api(body: NotesAskRequest, request: Request):
+    """基于已选笔记的问答：SSE，`data:` JSON 行，事件 type 为 chunk | done | error。"""
+    user_ref = _current_user_ref_or_401(request)
+    try:
+        validate_notes_ask_request(
+            notebook=body.notebook.strip(),
+            note_ids=body.note_ids,
+            question=body.question.strip(),
+            user_ref=user_ref,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if msg == "note_not_found":
+            raise HTTPException(status_code=404, detail=msg) from e
+        if msg in (
+            "notebook_required",
+            "question_required",
+            "note_ids_required",
+            "too_many_notes",
+            "note_notebook_mismatch",
+        ):
+            raise HTTPException(status_code=400, detail=msg) from e
+        raise HTTPException(status_code=400, detail=msg) from e
+
+    def gen():
+        for ev in iter_notes_answer_events(
+            notebook=body.notebook.strip(),
+            note_ids=body.note_ids,
+            question=body.question.strip(),
+            user_ref=user_ref,
+        ):
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.patch("/notes/{note_id}")
 def patch_note_api(note_id: str, body: NotePatchRequest, request: Request):
     user_ref = _current_user_ref_or_401(request)
@@ -468,7 +514,7 @@ def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
     raw_name = (body.filename or "").strip()
     title = (body.title or "").strip()
     notebook = (body.notebook or "").strip()
-    project_name = (body.project_name or "default-notes").strip() or "default-notes"
+    project_name = (body.project_name or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
     return _persist_note_upload(user_ref, data, raw_name, title, notebook, project_name)
 
 
@@ -478,7 +524,7 @@ async def upload_note_raw_api(
     notebook: str = Query(...),
     filename: str = Query(...),
     title: str = Query(default=""),
-    project_name: str = Query(default="default-notes"),
+    project_name: str = Query(default=NOTES_PODCAST_STUDIO_PROJECT),
 ):
     """BFF 二进制转发：body 为原始文件字节，元数据在 query（避免对整段 multipart 做内部签名）。"""
     user_ref = _current_user_ref_or_401(request)
@@ -486,7 +532,7 @@ async def upload_note_raw_api(
     if not data:
         raise HTTPException(status_code=400, detail="空文件")
     fname = (filename or "").strip()
-    pn = (project_name or "default-notes").strip() or "default-notes"
+    pn = (project_name or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
     return _persist_note_upload(
         user_ref,
         data,
@@ -571,6 +617,7 @@ def purge_note_api(note_id: str, request: Request):
 def list_notebooks_api(request: Request):
     user_ref = _current_user_ref_or_401(request)
     migrate_legacy_default_notebook_for_user(user_ref)
+    ensure_default_library_notebook(user_ref)
     names = list_notebook_names(user_ref=user_ref)
     ordered = sorted(set(names), key=lambda x: x)
     return {"success": True, "notebooks": ordered}
@@ -582,6 +629,7 @@ def create_notebook_api(body: NotebookCreateRequest, request: Request):
     ok, msg = create_notebook_only(body.name.strip(), user_ref=user_ref)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
+    ensure_default_library_notebook(user_ref)
     return {"success": True, "name": msg}
 
 

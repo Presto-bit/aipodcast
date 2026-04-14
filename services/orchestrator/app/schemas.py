@@ -32,7 +32,7 @@ class JobResponse(BaseModel):
 
 
 class NoteCreateRequest(BaseModel):
-    project_name: str = Field(default="default-notes", min_length=1, max_length=120)
+    project_name: str = Field(default="notes-podcast-studio", min_length=1, max_length=120)
     title: str = Field(default="未命名笔记", min_length=1, max_length=200)
     notebook: str = Field(min_length=1, max_length=120)
     content: str = Field(min_length=1)
@@ -52,7 +52,7 @@ class NotebookRenameRequest(BaseModel):
 
 
 class NoteUploadJsonRequest(BaseModel):
-    project_name: str = Field(default="default-notes", min_length=1, max_length=120)
+    project_name: str = Field(default="notes-podcast-studio", min_length=1, max_length=120)
     filename: str = Field(min_length=1, max_length=260)
     notebook: str = Field(min_length=1, max_length=120)
     title: str = Field(default="", max_length=300)
@@ -60,7 +60,7 @@ class NoteUploadJsonRequest(BaseModel):
 
 
 class NoteImportUrlRequest(BaseModel):
-    project_name: str = Field(default="default-notes", min_length=1, max_length=120)
+    project_name: str = Field(default="notes-podcast-studio", min_length=1, max_length=120)
     url: str = Field(min_length=1, max_length=4000)
     notebook: str = Field(min_length=1, max_length=120)
     title: str = Field(default="", max_length=300)

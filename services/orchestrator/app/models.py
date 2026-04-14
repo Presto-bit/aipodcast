@@ -19,6 +19,8 @@ _usage_events_user_id_schema_ready = False
 LEGACY_DEFAULT_NOTEBOOK = "默认笔记本"
 # 笔记播客页创建的任务 project_name（与 apps/web/lib/notesProject 一致）
 NOTES_PODCAST_STUDIO_PROJECT = "notes-podcast-studio"
+# 与创作页「资料库」上传、ensureDefaultStudioNotebook 使用的名称一致
+DEFAULT_LIBRARY_NOTEBOOK_NAME = "默认资料库"
 
 
 def _normalize_phone_digits(phone: str | None) -> str:
@@ -439,6 +441,20 @@ def ensure_jobs_trash_schema() -> None:
                 """
             )
             conn.commit()
+
+
+def ensure_default_library_notebook(user_ref: str | None) -> None:
+    """确保存在「默认资料库」：即使用户已新建其他笔记本也会自动补齐，与创作侧资料上传默认笔记本一致。幂等。"""
+    raw = (user_ref or "").strip()
+    if not raw:
+        return
+    try:
+        names = list_notebook_names(user_ref=user_ref)
+        if DEFAULT_LIBRARY_NOTEBOOK_NAME in names:
+            return
+        create_notebook_only(DEFAULT_LIBRARY_NOTEBOOK_NAME, user_ref=user_ref)
+    except Exception:
+        return
 
 
 def migrate_legacy_default_notebook_for_user(user_ref: str | None) -> None:

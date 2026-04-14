@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Iterator
 
 from .models import get_note_by_id
 from .note_rag_service import NOTE_LAYERED_RAG, build_layered_notes_context
-from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
+from .provider_router import (
+    invoke_llm_chat_messages_stream_iter,
+    invoke_llm_chat_messages_with_minimax_fallback,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,16 +49,75 @@ def _metadata_title(row: dict[str, Any], note_id: str) -> str:
     return str(md.get("title") or note_id).strip() or note_id
 
 
-def _invoke_llm(system: str, user: str, api_key: str | None) -> tuple[str, str | None]:
-    return invoke_llm_chat_messages_with_minimax_fallback(
-        [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.45,
-        api_key=api_key,
-        timeout_sec=120,
+def _prepare_notes_ask_messages(
+    *,
+    notebook: str,
+    note_ids: list[str],
+    question: str,
+    user_ref: str | None,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    q = (question or "").strip()
+    if not q:
+        raise ValueError("question_required")
+    if len(q) > _MAX_QUESTION_CHARS:
+        q = q[:_MAX_QUESTION_CHARS]
+
+    context, sources = build_notes_qa_context(
+        notebook=notebook, note_ids=note_ids, user_ref=user_ref, question=q
     )
+    if not context.strip():
+        raise ValueError("empty_context")
+
+    user_block = f"资料摘录如下：\n\n{context}\n\n---\n\n问题：{q}"
+    messages = [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": user_block},
+    ]
+    return messages, sources
+
+
+def validate_notes_ask_request(
+    *,
+    notebook: str,
+    note_ids: list[str],
+    question: str,
+    user_ref: str | None,
+) -> None:
+    """与 answer_notes_question 相同输入校验，供流式接口在建立 SSE 前返回 4xx。"""
+    _prepare_notes_ask_messages(
+        notebook=notebook, note_ids=note_ids, question=question, user_ref=user_ref
+    )
+
+
+def iter_notes_answer_events(
+    *,
+    notebook: str,
+    note_ids: list[str],
+    question: str,
+    user_ref: str | None,
+    api_key: str | None = None,
+) -> Iterator[dict[str, Any]]:
+    """SSE 事件：chunk / done / error。"""
+    messages, sources = _prepare_notes_ask_messages(
+        notebook=notebook, note_ids=note_ids, question=question, user_ref=user_ref
+    )
+    acc: list[str] = []
+    try:
+        for piece in invoke_llm_chat_messages_stream_iter(
+            messages,
+            temperature=0.45,
+            api_key=api_key,
+            timeout_sec=120,
+        ):
+            acc.append(piece)
+            yield {"type": "chunk", "text": piece}
+        full = "".join(acc).strip()
+        if not full:
+            raise RuntimeError("empty_answer")
+        yield {"type": "done", "sources": sources, "traceId": None}
+    except Exception as exc:
+        logger.warning("notes_ask_stream_failed: %s", exc)
+        yield {"type": "error", "message": str(exc)}
 
 
 def legacy_build_notes_qa_context(
@@ -142,21 +204,16 @@ def answer_notes_question(
     user_ref: str | None,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    q = (question or "").strip()
-    if not q:
-        raise ValueError("question_required")
-    if len(q) > _MAX_QUESTION_CHARS:
-        q = q[:_MAX_QUESTION_CHARS]
-
-    context, sources = build_notes_qa_context(
-        notebook=notebook, note_ids=note_ids, user_ref=user_ref, question=q
+    messages, sources = _prepare_notes_ask_messages(
+        notebook=notebook, note_ids=note_ids, question=question, user_ref=user_ref
     )
-    if not context.strip():
-        raise ValueError("empty_context")
-
-    user_block = f"资料摘录如下：\n\n{context}\n\n---\n\n问题：{q}"
     try:
-        answer, trace_id = _invoke_llm(_SYSTEM, user_block, api_key)
+        answer, trace_id = invoke_llm_chat_messages_with_minimax_fallback(
+            messages,
+            temperature=0.45,
+            api_key=api_key,
+            timeout_sec=120,
+        )
     except Exception as exc:
         logger.warning("notes_ask_llm_failed: %s", exc)
         raise

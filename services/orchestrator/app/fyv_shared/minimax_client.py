@@ -1822,6 +1822,77 @@ Speaker2: 今天咱们聊聊这个话题。"""
         txt = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
         return str(txt).strip(), trace_id
 
+    def iter_chat_completion_messages_stream(
+        self,
+        messages: list[Dict[str, Any]],
+        api_key: Optional[str] = None,
+        *,
+        temperature: float = 0.65,
+    ) -> Iterator[str]:
+        """流式多轮文本补全，逐段产出 delta 文本（与 OpenAI 流式语义一致）。"""
+        url = self.endpoints["text_completion"]
+        headers = self._get_headers("text", api_key=api_key)
+        norm: list[Dict[str, Any]] = []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            role = str(m.get("role") or "user").strip().lower()
+            if role not in ("system", "user", "assistant"):
+                role = "user"
+            content = str(m.get("content") or "").strip()
+            if not content:
+                continue
+            entry: Dict[str, Any] = {"role": role, "content": content}
+            name = m.get("name")
+            if name:
+                entry["name"] = str(name)
+            norm.append(entry)
+        if not norm:
+            raise ValueError("chat_messages_empty")
+        payload = {
+            "model": self.models["text"],
+            "messages": norm,
+            "stream": True,
+            "temperature": float(temperature),
+        }
+        response = self._post_with_proxy_fallback(
+            url,
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=TIMEOUTS["script_generation"],
+        )
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line_s = line.decode("utf-8") if isinstance(line, bytes) else str(line)
+            raw_sse = line_s[5:].strip() if line_s.startswith("data:") else ""
+            if line_s.startswith("data:") and raw_sse == "[DONE]":
+                break
+            if line_s.startswith("data:"):
+                try:
+                    data = json.loads(raw_sse)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(data.get("base_resp"), dict):
+                    base_resp = data.get("base_resp") or {}
+                    if base_resp.get("status_code") not in (None, 0):
+                        raise RuntimeError(str(base_resp.get("status_msg") or "upstream_error"))
+                choices = data.get("choices")
+                if not isinstance(choices, list) or len(choices) == 0:
+                    continue
+                first_choice = choices[0] if isinstance(choices[0], dict) else {}
+                delta = first_choice.get("delta") or {}
+                if not isinstance(delta, dict):
+                    continue
+                content_chunk = delta.get("content")
+                if content_chunk is None:
+                    continue
+                s = str(content_chunk)
+                if s:
+                    yield s
+
     @staticmethod
     def _resolve_polish_requirements(override: Optional[str], default: str) -> str:
         if override is None:

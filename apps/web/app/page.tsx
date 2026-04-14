@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import PodcastWorksGallery from "../components/podcast/PodcastWorksGallery";
-import { IconNotes, IconTts, IconVoice, IconGrid } from "../components/NavIcons";
+import { IconCreate, IconNotes, IconTts, IconVoice, IconGrid } from "../components/NavIcons";
 import type { WorkItem } from "../lib/worksTypes";
 import { useAuth, userAccountRef } from "../lib/auth";
 import { useI18n } from "../lib/I18nContext";
@@ -124,8 +124,9 @@ export default function HomePage() {
   const createCards = useMemo(
     () =>
       [
-        { href: "/tts", title: "文字转语音", desc: "文字 → 语音", Icon: IconTts, badge: undefined },
         { href: "/notes", title: "知识库", desc: "资料 → 长文 / 播客", Icon: IconNotes, badge: undefined },
+        { href: "/create", title: "创作播客", desc: "选题与生成 · 播客 / 配音", Icon: IconCreate, badge: undefined },
+        { href: "/tts", title: "文字转语音", desc: "文字 → 语音", Icon: IconTts, badge: undefined },
         {
           href: "/voice?tab=clone",
           title: t("nav.voice"),

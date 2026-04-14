@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 import base64
 
 from .entitlement_matrix import apply_script_options_subscription_caps
@@ -13,7 +13,11 @@ from .legacy_bridge import (
     synthesize_tts_with_minimax,
 )
 from .providers.http_provider_misc import image_via_http_json, tts_via_http_json, voice_clone_via_http_json
-from .providers.openai_compat_text import chat_completion_openai_compatible, generate_script_openai_compatible
+from .providers.openai_compat_text import (
+    chat_completion_openai_compatible,
+    generate_script_openai_compatible,
+    iter_chat_completion_openai_compatible_stream,
+)
 from .fyv_shared.minimax_client import minimax_client
 
 logger = logging.getLogger(__name__)
@@ -115,6 +119,66 @@ def invoke_llm_chat_messages_with_minimax_fallback(
     except Exception as exc:
         logger.warning("invoke_llm_chat_messages provider=%s failed, fallback minimax: %s", prov, exc)
         return _run_minimax()
+
+
+def invoke_llm_chat_messages_stream_iter(
+    messages: list[dict[str, Any]],
+    *,
+    temperature: float = 0.45,
+    api_key: str | None = None,
+    timeout_sec: int = 120,
+) -> Iterator[str]:
+    """
+    与 invoke_llm_chat_messages_with_minimax_fallback 相同路由策略，但以流式逐段产出文本。
+    """
+    prov = script_provider()
+
+    def _iter_minimax() -> Iterator[str]:
+        key = (api_key or "").strip() or str(os.getenv("MINIMAX_API_KEY") or "").strip()
+        if not key:
+            raise RuntimeError("minimax_api_key_missing")
+        yield from minimax_client.iter_chat_completion_messages_stream(
+            messages,
+            api_key=key,
+            temperature=float(temperature),
+        )
+
+    if prov == "minimax":
+        yield from _iter_minimax()
+        return
+
+    def _iter_openai_compat() -> Iterator[str]:
+        if prov == "deepseek":
+            key = str(os.getenv("DEEPSEEK_API_KEY") or "").strip()
+            base = str(os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
+            model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-chat").strip()
+        else:
+            key = str(os.getenv("QWEN_API_KEY") or "").strip()
+            base = str(os.getenv("QWEN_BASE_URL") or "").strip()
+            model = str(os.getenv("QWEN_TEXT_MODEL") or "qwen-plus").strip()
+        if not key or not base:
+            raise RuntimeError(f"text_provider_{prov}_config_missing")
+        norm: list[dict[str, str]] = []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            role = str(m.get("role") or "user").strip()
+            content = str(m.get("content") or "")
+            norm.append({"role": role, "content": content})
+        yield from iter_chat_completion_openai_compatible_stream(
+            messages=norm,
+            api_base=base,
+            api_key=key,
+            model=model,
+            temperature=float(temperature),
+            timeout_sec=int(timeout_sec),
+        )
+
+    try:
+        yield from _iter_openai_compat()
+    except Exception as exc:
+        logger.warning("invoke_llm_chat_messages_stream provider=%s failed, fallback minimax: %s", prov, exc)
+        yield from _iter_minimax()
 
 
 def tts_provider() -> str:

@@ -54,6 +54,7 @@ export default function CreatePage() {
   const { getAuthHeaders } = useAuth();
 
   const [draftText, setDraftText] = useState("");
+  const [libraryPreview, setLibraryPreview] = useState("");
   const [mode, setMode] = useState<CreateMode | null>(null);
 
   const [podcastAct, setPodcastAct] = useState<PodcastStudioActivity>({ busy: false, phase: "", progressPct: 0 });
@@ -100,6 +101,10 @@ export default function CreatePage() {
     void refreshWorks();
   }, [refreshWorks]);
 
+  useEffect(() => {
+    if (mode !== "podcast") setLibraryPreview("");
+  }, [mode]);
+
   const act = mode === "podcast" ? podcastAct : mode === "tts" ? ttsAct : null;
   /** 与 TtsStudio 内嵌一致：仅有 phase、无 progress 数字时也要展示（如校验提示、润色/接口错误文案） */
   const showProgress = Boolean(
@@ -120,14 +125,23 @@ export default function CreatePage() {
             创作正文
           </label>
           {/* 文本框 + 模式切换同一视觉块（模式条贴在输入区底部） */}
-          <div className="overflow-hidden rounded-xl border border-line bg-fill ring-brand/20 focus-within:ring-2">
+          <div className="relative overflow-hidden rounded-xl border border-line bg-fill ring-brand/20 focus-within:ring-2">
             <textarea
               id="create-draft"
-              className="min-h-[min(22vh,140px)] w-full resize-y border-0 bg-transparent p-4 text-sm leading-relaxed text-ink placeholder:text-muted focus:outline-none focus:ring-0 md:min-h-[160px]"
+              className="min-h-[min(22vh,140px)] w-full resize-y border-0 bg-transparent p-4 pb-[3.25rem] text-sm leading-relaxed text-ink placeholder:text-muted focus:outline-none focus:ring-0 md:min-h-[160px]"
               placeholder={DRAFT_PLACEHOLDER}
               value={draftText}
               onChange={(e) => setDraftText(e.target.value)}
             />
+            {libraryPreview.trim() ? (
+              <div
+                className="absolute bottom-2 left-2 right-2 z-[1] max-h-16 min-h-0 overflow-y-auto rounded-md border border-line/60 bg-surface/95 px-2 py-1.5 text-[10px] leading-snug text-muted shadow-sm backdrop-blur-sm sm:max-h-20"
+                title={`已选资料 · ${libraryPreview}`}
+              >
+                <span className="text-muted">已选资料 · </span>
+                <span className="break-words text-ink/85">{libraryPreview}</span>
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2 border-t border-line bg-surface/95 px-3 py-2.5 backdrop-blur-sm">
               {(
                 [
@@ -168,6 +182,7 @@ export default function CreatePage() {
                   showGallery={false}
                   onActivityChange={setPodcastAct}
                   onExternalListRefresh={() => void refreshWorks()}
+                  onLibrarySelectionPreviewChange={setLibraryPreview}
                 />
               ) : (
                 <TtsStudio

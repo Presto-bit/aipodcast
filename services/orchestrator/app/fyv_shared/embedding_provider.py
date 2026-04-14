@@ -3,9 +3,89 @@ import logging
 import math
 import os
 import re
-from typing import List
+import json
+from typing import Any, List
 
 import requests
+
+
+def _parse_embedding_response_to_vectors(payload_json: Any, num_texts: int) -> List[List[float]]:
+    """
+    解析 OpenAI 兼容及其它常见变体（如顶层 embedding、embeddings[][]、MiniMax base_resp 包裹等）。
+    """
+    if not isinstance(payload_json, dict):
+        raise RuntimeError("embedding api 返回非 JSON 对象")
+
+    br = payload_json.get("base_resp")
+    if isinstance(br, dict):
+        code = br.get("status_code")
+        if code not in (None, 0, "0"):
+            msg = br.get("status_msg") or str(br)
+            raise RuntimeError(f"embedding api 业务错误: {msg}")
+
+    candidates: list[dict[str, Any]] = [payload_json]
+    for k in ("result", "response", "payload"):
+        inner = payload_json.get(k)
+        if isinstance(inner, dict):
+            candidates.append(inner)
+
+    last_keys: list[str] = []
+    for root in candidates:
+        last_keys = list(root.keys())[:24]
+
+        data = root.get("data")
+        if isinstance(data, list) and data:
+            vectors: List[List[float]] = []
+            for item in data:
+                if isinstance(item, dict):
+                    emb = item.get("embedding")
+                    if isinstance(emb, list) and emb:
+                        vectors.append([float(x) for x in emb])
+                elif isinstance(item, list) and item and isinstance(item[0], (int, float)):
+                    vectors.append([float(x) for x in item])
+            if len(vectors) == num_texts:
+                return vectors
+        if isinstance(data, dict):
+            for key in ("embeddings", "vectors", "embedding"):
+                block = data.get(key)
+                if isinstance(block, list) and block:
+                    try:
+                        parsed = _parse_embedding_response_to_vectors({"data": block}, num_texts)
+                        if len(parsed) == num_texts:
+                            return parsed
+                    except RuntimeError:
+                        pass
+
+        emb = root.get("embedding")
+        if isinstance(emb, list) and emb and isinstance(emb[0], (int, float)):
+            if num_texts == 1:
+                return [[float(x) for x in emb]]
+
+        embs = root.get("embeddings")
+        if isinstance(embs, list) and embs:
+            out: List[List[float]] = []
+            for e in embs:
+                if isinstance(e, list) and e and isinstance(e[0], (int, float)):
+                    out.append([float(x) for x in e])
+            if len(out) == num_texts:
+                return out
+
+        vecs = root.get("vectors")
+        if isinstance(vecs, list) and vecs:
+            out2: List[List[float]] = []
+            for v in vecs:
+                if isinstance(v, dict):
+                    emb = v.get("embedding") or v.get("vector")
+                    if isinstance(emb, list) and emb:
+                        out2.append([float(x) for x in emb])
+                elif isinstance(v, list) and v and isinstance(v[0], (int, float)):
+                    out2.append([float(x) for x in v])
+            if len(out2) == num_texts:
+                return out2
+
+    raise RuntimeError(
+        "embedding api 返回格式异常：无法解析向量（顶层 keys=%s）" % last_keys
+    )
 
 
 def embedding_env_fingerprint() -> str:
@@ -108,6 +188,8 @@ class EmbeddingProvider:
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         texts = [str(t or "") for t in (texts or [])]
+        # 部分厂商拒绝空串；保持条数不变以便与 chunk 对齐
+        texts = [s if s.strip() else " " for s in texts]
         if not texts:
             return []
         backend = self.active_backend()
@@ -181,15 +263,42 @@ class EmbeddingProvider:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
-        payload_json = None
-        last_error = None
-        candidate_bodies = [
-            {"model": model, "input": texts},
-            {"model": model, "texts": texts},
-            {"model": model, "text": texts},
-        ]
+        url_l = (url or "").lower()
+        model_l = (model or "").lower()
+        # MiniMax / 部分网关要求 `texts`；OpenAI 兼容为 `input`。统一多形态尝试，避免代理 URL 不含 minimax 时误先发 input。
+        prefers_texts = (
+            "minimax" in url_l
+            or "minimaxi" in url_l
+            or model_l.startswith("embo")
+            or (os.getenv("RAG_EMBEDDING_TEXTS_FIRST") or "").strip().lower() in ("1", "true", "yes")
+        )
+        candidate_bodies: list[dict[str, Any]] = []
+        if prefers_texts:
+            candidate_bodies.extend(
+                [
+                    {"model": model, "texts": texts, "type": "db"},
+                    {"model": model, "texts": texts},
+                    {"model": model, "input": texts},
+                    {"model": model, "text": texts},
+                ]
+            )
+        else:
+            candidate_bodies.extend(
+                [
+                    {"model": model, "input": texts},
+                    {"model": model, "texts": texts, "type": "db"},
+                    {"model": model, "texts": texts},
+                    {"model": model, "text": texts},
+                ]
+            )
+        last_err: Exception | None = None
+        seen: set[str] = set()
         for body in candidate_bodies:
             try:
+                sig = json.dumps(body, sort_keys=True, ensure_ascii=True)
+                if sig in seen:
+                    continue
+                seen.add(sig)
                 resp = requests.post(
                     url,
                     json=body,
@@ -198,25 +307,12 @@ class EmbeddingProvider:
                 )
                 resp.raise_for_status()
                 payload_json = resp.json()
-                break
-            except Exception as e:
-                last_error = e
-                payload_json = None
-        if payload_json is None:
-            raise RuntimeError(f"embedding api 请求失败: {last_error}")
-
-        data = payload_json.get("data")
-        if not isinstance(data, list):
-            raise RuntimeError("embedding api 返回格式异常：缺少 data")
-        vectors: List[List[float]] = []
-        for item in data:
-            emb = item.get("embedding") if isinstance(item, dict) else None
-            if not isinstance(emb, list):
-                raise RuntimeError("embedding api 返回格式异常：embedding 非数组")
-            vectors.append([float(x) for x in emb])
-        if len(vectors) != len(texts):
-            raise RuntimeError("embedding api 返回条数与输入不一致")
-        return vectors
+                return _parse_embedding_response_to_vectors(payload_json, len(texts))
+            except Exception as exc:
+                last_err = exc
+                logger.warning("embedding body variant failed (%s): %s", url[:48], exc)
+                continue
+        raise RuntimeError(f"embedding api 请求失败: {last_err}")
 
     def _embed_with_local(self, texts: List[str]) -> List[List[float]]:
         if self._local_model is None and not self._try_load_local():

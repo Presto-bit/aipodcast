@@ -1,4 +1,5 @@
 import { getBearerAuthHeadersSync } from "./authHeaders";
+import { NOTES_PODCAST_PROJECT_NAME } from "./notesProject";
 import { validateNoteFileMeta } from "./noteUploadConstants";
 
 type UploadJson = {
@@ -113,7 +114,10 @@ export function uploadNoteFileWithProgress(
     form.append("file", file, file.name || "note.txt");
     form.append("notebook", nb);
     form.append("title", (opts.title || "").trim());
-    form.append("project_name", (opts.projectName || "default-notes").trim() || "default-notes");
+    form.append(
+      "project_name",
+      (opts.projectName || NOTES_PODCAST_PROJECT_NAME).trim() || NOTES_PODCAST_PROJECT_NAME
+    );
     xhr.send(form);
   });
 }

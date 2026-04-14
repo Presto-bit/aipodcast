@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchOrchestrator, getOrCreateRequestId, incomingAuthHeadersFrom } from "./bff";
 import { MAX_NOTE_UPLOAD_BYTES, validateNoteFileMeta } from "./noteUploadConstants";
+import { NOTES_PODCAST_PROJECT_NAME } from "./notesProject";
 
 export type NoteUploadJsonBody = {
   project_name?: string;
@@ -46,7 +47,7 @@ async function handleMultipartNoteUpload(req: NextRequest): Promise<Response> {
 
   const notebook = String(form.get("notebook") || "").trim();
   const title = String(form.get("title") || "").trim();
-  const projectName = String(form.get("project_name") || "default-notes").trim() || "default-notes";
+  const projectName = String(form.get("project_name") || NOTES_PODCAST_PROJECT_NAME).trim() || NOTES_PODCAST_PROJECT_NAME;
   const fname = (file.name || "note.txt").trim() || "note.txt";
 
   if (!notebook) {
@@ -105,7 +106,7 @@ async function handleJsonNoteUpload(req: NextRequest): Promise<Response> {
     const dataBase64 = typeof body.data_base64 === "string" ? body.data_base64.trim() : "";
     const filename = String(body.filename || "note.txt").trim() || "note.txt";
     const title = typeof body.title === "string" ? body.title.trim() : "";
-    const projectName = String(body.project_name || "default-notes").trim() || "default-notes";
+    const projectName = String(body.project_name || NOTES_PODCAST_PROJECT_NAME).trim() || NOTES_PODCAST_PROJECT_NAME;
 
     if (!notebook) {
       return NextResponse.json({ success: false, detail: "请指定笔记本（notebook）" }, { status: 400 });
