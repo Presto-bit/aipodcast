@@ -193,6 +193,18 @@ def _work_has_audio_hex(result: dict[str, Any]) -> bool:
     return bool(result.get("audio_hex")) or bool(str(result.get("audio_object_key") or "").strip())
 
 
+def _work_cover_display_url(result: dict[str, Any], job_id: str) -> str:
+    """列表用封面 URL：优先 result 内外链；仅持久化了 cover_object_key 时回落到网关路径。"""
+    cov = str(result.get("cover_image") or result.get("coverImage") or "").strip()
+    if cov:
+        return cov
+    if str(result.get("cover_object_key") or "").strip():
+        jid = str(job_id or "").strip()
+        if jid:
+            return f"/api/jobs/{jid}/cover"
+    return ""
+
+
 def _works_script_notes_extras(result: dict[str, Any], payload: dict[str, Any], job_type: str) -> dict[str, Any]:
     """作品列表：文章字数与笔记本来源（script_draft / 播客成片）。"""
     out: dict[str, Any] = {}
@@ -463,7 +475,7 @@ def list_works_api(
             "scriptText": preview_list,
             "hasAudioHex": _work_has_audio_hex(result),
             "audioDurationSec": _dur_out,
-            "coverImage": str(result.get("cover_image") or result.get("coverImage") or ""),
+            "coverImage": _work_cover_display_url(result, _jid),
             "status": str(row.get("status") or ""),
             "type": job_type,
             "projectName": project_name_for(_pid),
@@ -631,7 +643,7 @@ def list_works_trash_api(
             "scriptText": preview_list,
             "hasAudioHex": _work_has_audio_hex(result),
             "audioDurationSec": _dur_out,
-            "coverImage": str(result.get("cover_image") or result.get("coverImage") or ""),
+            "coverImage": _work_cover_display_url(result, _jid),
             "status": str(row.get("status") or ""),
             "type": job_type,
             "projectName": project_name_for(_pid),

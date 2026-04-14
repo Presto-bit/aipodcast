@@ -1244,6 +1244,7 @@ def list_recent_works(
                             'script_url', j.result->'script_url',
                             'audio_duration_sec', j.result->'audio_duration_sec',
                             'cover_image', COALESCE(j.result->'cover_image', j.result->'coverImage'),
+                            'cover_object_key', j.result->'cover_object_key',
                             'audio_object_key', j.result->'audio_object_key',
                             'script_char_count', j.result->'script_char_count',
                             'notes_source_notebook', j.result->'notes_source_notebook',
