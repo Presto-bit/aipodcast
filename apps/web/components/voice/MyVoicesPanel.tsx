@@ -1103,7 +1103,12 @@ export default function MyVoicesPanel() {
                   type="button"
                   role="menuitem"
                   className="flex w-full px-3 py-2 text-left hover:bg-fill"
-                  onClick={() => openRenameForClonedVoice(overflowMenu.entry.voice)}
+                  onClick={() => {
+                    const entry = overflowMenu.entry;
+                    if (entry.kind === "cloned") {
+                      openRenameForClonedVoice(entry.voice);
+                    }
+                  }}
                 >
                   {t("voice.detail.rename")}
                 </button>
