@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from typing import Any, Callable, Iterator
 from urllib import request
 
@@ -11,7 +13,13 @@ from ..fyv_shared.config import PODCAST_CONFIG, TIMEOUTS
 from ..legacy_bridge import (
     DEFAULT_SCRIPT_CONSTRAINTS_DIALOGUE,
     DIALOGUE_SPEAKER_RETRY_CONSTRAINTS,
+    _article_continuation_progress_summary,
+    _article_outline_first_enabled,
+    merge_script_continuation_material,
 )
+from ..script_reference_coverage import article_outline_min_chars_threshold
+
+logger = logging.getLogger(__name__)
 
 
 def _http_post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeout_sec: int = 60) -> dict[str, Any]:
@@ -63,30 +71,6 @@ def _max_tokens_for_target_chars(target_chars: int, cap: int) -> int:
     except (TypeError, ValueError):
         est = 2048
     return max(256, min(cap, est))
-
-
-def _merge_continue_material_local(
-    base_ref: str,
-    script_so_far: str,
-    *,
-    tail_max: int,
-    reference_tail_max: int,
-) -> str:
-    ref = (base_ref or "").rstrip()
-    rtm = max(0, int(reference_tail_max))
-    if rtm > 0 and len(ref) > rtm:
-        ref = (
-            f"【参考材料节选·全文较长已截取末尾约 {rtm} 字，供衔接事实与术语】\n"
-            f"{ref[-rtm:]}"
-        )
-    t = (script_so_far or "").strip()
-    if len(t) > tail_max:
-        t = t[-tail_max:]
-    return (
-        f"{ref}\n\n【已生成上文】\n{t}\n\n"
-        "（请紧接上文最后一两句续写：首句须自然承接上文语义与指代；不要重复已有段落；"
-        "不要重新写开篇套话或再介绍一遍主题；不要输出「续写」「下一段」等编排标记。）"
-    )
 
 
 def _join_script_continued_local(accumulated: str, piece: str, output_mode: str) -> str:
@@ -199,11 +183,19 @@ def generate_script_openai_compatible(
                 article_zh = (
                     "- 中文须通篇使用大陆规范简体中文，勿使用繁体字或与繁体混排。\n"
                     "- 正文禁止出现「续写」「第几段」「（接续）」等编排说明；勿复述提示用语。\n"
+                    "- 若材料含多个来源：须围绕统一主线或中心论点组织，将各来源对照、归纳或递进，避免「一书一节」互不衔接的堆砌。\n"
+                    "- 禁止播客式结语（如「感谢收听」「感谢你的收听」「我们下次再见」）；中途分段禁止告别套话。\n"
                 )
         round_c = _constraints_for_round(material).strip()
+        core_line = ""
+        if output_mode == "article":
+            cq = str(opts.get("core_question") or "").strip()
+            if cq:
+                core_line = f"- 核心问题（须全文围绕）：{cq}\n"
         return (
             f"请基于材料生成{program_name}脚本。\n"
             f"- 语言：{language}\n"
+            f"{core_line}"
             f"- 风格：{style}\n"
             f"- 输出形式：{mode_hint}\n"
             f"{article_zh}"
@@ -213,8 +205,47 @@ def generate_script_openai_compatible(
             f"材料如下：\n{material}"
         )
 
+    core_q = str(opts.get("core_question") or "").strip()
+    article_outline_text = ""
+    try:
+        snc = int(opts.get("selected_note_count") or 0)
+    except (TypeError, ValueError):
+        snc = 0
+    outline_min = article_outline_min_chars_threshold(snc)
+    if (
+        output_mode == "article"
+        and _article_outline_first_enabled()
+        and goal >= outline_min
+    ):
+        from app.fyv_shared.minimax_client import minimax_client
+
+        oc = first_script_constraints.strip()
+        if not oc and core_q:
+            oc = f"【核心问题】{core_q}"
+        try:
+            out_res = minimax_client.generate_script_outline(
+                content=(text or "")[:80000],
+                total_target_chars=goal,
+                api_key=None,
+                script_style=style,
+                script_language=language,
+                program_name=program_name,
+                speaker1_persona=str(opts.get("speaker1_persona") or "活泼亲切，引导话题").strip(),
+                speaker2_persona=str(opts.get("speaker2_persona") or "稳重专业，深度分析").strip(),
+                script_constraints=oc,
+                output_mode="article",
+            )
+            if out_res.get("success") and str(out_res.get("outline_text") or "").strip():
+                article_outline_text = str(out_res.get("outline_text") or "").strip()[:12000]
+        except Exception as exc:
+            logger.warning("openai_compat article outline skipped: %s", exc)
+
     full_script = ""
-    material = text
+    material = (
+        f"{text}\n\n【写作提纲·正文须按此脉络展开】\n{article_outline_text}\n"
+        if article_outline_text
+        else text
+    )
     trace_id = ""
     last_finish = ""
     api_calls = 0
@@ -233,8 +264,19 @@ def generate_script_openai_compatible(
         elif continuation_shrink_pass >= 2:
             ref_budget = max(2000, min(6000, ref_tail_max // 4))
         if full_script.strip():
-            material = _merge_continue_material_local(
-                text, full_script, tail_max=tail_max, reference_tail_max=ref_budget
+            prog = (
+                _article_continuation_progress_summary(full_script)
+                if output_mode == "article"
+                else ""
+            )
+            material = merge_script_continuation_material(
+                text,
+                full_script,
+                tail_max=tail_max,
+                reference_tail_max=ref_budget,
+                output_mode=output_mode,
+                article_outline_block=article_outline_text if output_mode == "article" else "",
+                article_progress_summary=prog,
             )
 
         segment_target = min(remaining, seg_cap)

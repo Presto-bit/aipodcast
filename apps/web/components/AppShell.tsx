@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -31,8 +32,10 @@ import {
   APP_SIDEBAR_TOGGLE_EVENT
 } from "../lib/appSidebarCollapse";
 import { useI18n } from "../lib/I18nContext";
-import PageTour from "./PageTour";
+import AnimatedPageShell from "./AnimatedPageShell";
 import BrandGlyph from "./brand/BrandGlyph";
+
+const PageTourLazy = dynamic(() => import("./PageTour"), { ssr: false });
 import { dispatchNotesOpenWorkbench } from "../lib/notesLastNotebook";
 import {
   FOOTER_LINK_CLASS,
@@ -341,10 +344,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div id="main-content" className="flex min-h-screen min-w-0 flex-1 flex-col" tabIndex={-1}>
-        <PageTour />
-        <div key={path} className="fym-page-enter fym-page-shell">
-          {children}
-        </div>
+        <PageTourLazy />
+        <AnimatedPageShell>{children}</AnimatedPageShell>
         <footer className="mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">
           <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">
             <nav

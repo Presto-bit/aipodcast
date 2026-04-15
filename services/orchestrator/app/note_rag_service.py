@@ -6,6 +6,7 @@
 - inputs.note_rag_index_error：最近一次索引失败原因（成功时清空）。
 - 摘要：异步 LLM 生成，写入 inputs.note_summary（标注为机器摘要）。
 - 问答 / 脚本参考：优先摘要 + 跨笔记向量检索 Top 块；无索引时回退旧逻辑。
+- 跨笔记：关键词/向量候选池按笔记均衡合并（避免单篇挤掉他篇）；Top-K 在多篇时轮询各篇高分块后再按全局分数补足，输出顺序与分数一致。
 """
 from __future__ import annotations
 
@@ -13,11 +14,12 @@ import hashlib
 import json
 import logging
 import os
+from collections import defaultdict
 from typing import Any
 
 from .db import get_conn, get_cursor
 from .models import get_note_by_id
-from .rag_core import _cosine, _keyword_score, split_text_into_chunks
+from .rag_core import _cosine, _keyword_score, decompose_retrieval_queries, split_text_into_chunks
 from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
 
 logger = logging.getLogger(__name__)
@@ -328,18 +330,220 @@ def _batch_cosine_vs_query(qv: list[float], vectors: list[list[float]]) -> list[
         return [_cosine(qv, v) for v in vectors]
 
 
+def _multi_query_enabled() -> bool:
+    return (os.getenv("NOTE_RAG_MULTI_QUERY", "1") or "").strip().lower() not in ("0", "false", "no")
+
+
+def _max_subqueries() -> int:
+    try:
+        return max(1, min(5, int(os.getenv("NOTE_RAG_MAX_SUBQUERIES", "3") or "3")))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _note_rag_fairness_enabled() -> bool:
+    return (os.getenv("NOTE_RAG_NOTE_FAIRNESS", "1") or "").strip().lower() not in ("0", "false", "no")
+
+
+def _note_rag_balanced_prefilter_enabled() -> bool:
+    return (os.getenv("NOTE_RAG_BALANCED_PREFILTER", "1") or "").strip().lower() not in ("0", "false", "no")
+
+
+def _kw_score_chunk(q: str, p: dict[str, Any]) -> float:
+    return float(_keyword_score(q, p["_ch"]))
+
+
+def _balanced_pool_by_note_keyword(
+    parsed: list[dict[str, Any]],
+    q: str,
+    ordered_note_ids: list[str],
+    total_cap: int,
+) -> list[dict[str, Any]]:
+    """
+    P1：在总条数上限内，每篇笔记先保留若干关键词最高分块再合并，避免全局粗筛时整篇被挤掉。
+    """
+    if len(parsed) <= total_cap:
+        return parsed
+    by_note: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for p in parsed:
+        nid = str(p.get("note_id") or "").strip()
+        if nid:
+            by_note[nid].append(p)
+
+    min_per = max(4, min(128, int(os.getenv("NOTE_RAG_PER_NOTE_PREFILTER_MIN", "8") or "8")))
+    seen_n: set[str] = set()
+    order: list[str] = []
+    for raw in ordered_note_ids:
+        nid = str(raw or "").strip()
+        if nid and nid in by_note and nid not in seen_n:
+            order.append(nid)
+            seen_n.add(nid)
+    for nid in sorted(by_note.keys()):
+        if nid not in seen_n:
+            order.append(nid)
+
+    n = max(1, len(order))
+    per = max(min_per, total_cap // n)
+    pool: list[dict[str, Any]] = []
+    for nid in order:
+        chunks = by_note[nid]
+        chunks.sort(key=lambda x: -_kw_score_chunk(q, x))
+        pool.extend(chunks[:per])
+    if len(pool) <= total_cap:
+        return pool
+    pool.sort(key=lambda x: -_kw_score_chunk(q, x))
+    return pool[:total_cap]
+
+
+def _chunk_identity(row: dict[str, Any]) -> tuple[str, int]:
+    return (str(row.get("note_id") or ""), int(row.get("chunk_index") or 0))
+
+
+def _note_rag_mmr_enabled() -> bool:
+    return (os.getenv("NOTE_RAG_MMR", "1") or "").strip().lower() not in ("0", "false", "no")
+
+
+def _mmr_rerank_head(
+    head_rr: list[tuple[float, dict[str, Any]]],
+    vec_map: dict[tuple[str, int], list[float]],
+    *,
+    lambda_mult: float,
+) -> list[tuple[float, dict[str, Any]]] | None:
+    """对 rerank 后的候选池做 MMR 重排，降低相邻高分块语义重复（需每块均有向量）。失败时返回 None。"""
+    if len(head_rr) <= 1:
+        return None
+    items: list[tuple[float, dict[str, Any], list[float]]] = []
+    for sim, row in head_rr:
+        ident = _chunk_identity(row)
+        v = vec_map.get(ident)
+        if not v:
+            return None
+        items.append((sim, row, v))
+    n = len(items)
+    selected: list[int] = []
+    remaining = set(range(n))
+    first_i = max(remaining, key=lambda i: items[i][0])
+    selected.append(first_i)
+    remaining.remove(first_i)
+    lam = float(lambda_mult)
+    lam = max(0.0, min(1.0, lam))
+    while remaining:
+        best_i: int | None = None
+        best_score = -1e300
+        for i in remaining:
+            sim_q = items[i][0]
+            max_sim_sel = 0.0
+            for j in selected:
+                max_sim_sel = max(max_sim_sel, float(_cosine(items[i][2], items[j][2])))
+            mmr = lam * sim_q - (1.0 - lam) * max_sim_sel
+            if mmr > best_score:
+                best_score = mmr
+                best_i = i
+        if best_i is None:
+            break
+        selected.append(best_i)
+        remaining.remove(best_i)
+    return [(items[i][0], items[i][1]) for i in selected]
+
+
+def _pick_top_k_note_fairness(
+    scored: list[tuple[float, dict[str, Any]]],
+    top_k: int,
+    ordered_note_ids: list[str],
+) -> list[tuple[float, dict[str, Any]]]:
+    """
+    P0：多篇笔记时在各篇之间轮询取最高相似块，再从未入选的块中按全局分数降序补足 top_k；
+    单篇时按分数降序取前 top_k。
+    """
+    k = max(1, min(top_k, len(scored)))
+    if not _note_rag_fairness_enabled() or k <= 1:
+        return scored[:k]
+
+    by_note: dict[str, list[tuple[float, dict[str, Any]]]] = defaultdict(list)
+    for sim, row in scored:
+        nid = str(row.get("note_id") or "").strip()
+        by_note[nid].append((sim, row))
+    for nid in by_note:
+        by_note[nid].sort(key=lambda x: -x[0])
+
+    seen_notes = {str(x).strip() for x in ordered_note_ids if str(x).strip()}
+    if len(seen_notes) <= 1 and len(by_note) <= 1:
+        return scored[:k]
+
+    order: list[str] = []
+    seen_o: set[str] = set()
+    for raw in ordered_note_ids:
+        nid = str(raw or "").strip()
+        if nid and nid in by_note and nid not in seen_o:
+            order.append(nid)
+            seen_o.add(nid)
+    for nid in sorted(by_note.keys()):
+        if nid not in seen_o:
+            order.append(nid)
+
+    picked: list[tuple[float, dict[str, Any]]] = []
+    seen_chunk: set[tuple[str, int]] = set()
+    ptr = {nid: 0 for nid in order if nid in by_note}
+
+    while len(picked) < k:
+        progressed = False
+        for nid in order:
+            if nid not in by_note:
+                continue
+            i = ptr.get(nid, 0)
+            if i >= len(by_note[nid]):
+                continue
+            cand = by_note[nid][i]
+            ptr[nid] = i + 1
+            ident = _chunk_identity(cand[1])
+            if ident in seen_chunk:
+                continue
+            seen_chunk.add(ident)
+            picked.append(cand)
+            progressed = True
+            if len(picked) >= k:
+                break
+        if not progressed:
+            break
+
+    if len(picked) < k:
+        for sim, row in scored:
+            if len(picked) >= k:
+                break
+            ident = _chunk_identity(row)
+            if ident in seen_chunk:
+                continue
+            seen_chunk.add(ident)
+            picked.append((sim, row))
+
+    return picked[:k]
+
+
+def _note_source_index_map(note_ids: list[str]) -> dict[str, str]:
+    """与 build_layered_notes_context 中 sources 序号一致：第 1 条笔记为「1」。"""
+    out: dict[str, str] = {}
+    seen: set[str] = set()
+    for raw in note_ids:
+        nid = str(raw or "").strip()
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        out[nid] = str(len(seen))
+    return out
+
+
 def retrieve_chunks_across_notes(
     *,
     note_ids: list[str],
     query: str,
     max_chars: int,
     top_k: int = 32,
-) -> tuple[str, list[dict[str, Any]]]:
-    """对已索引块：关键词粗排缩小候选，再对 query 嵌入并批量余弦，取 Top-K 后按预算拼上下文。"""
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    """对已索引块：关键词粗排（多篇时按笔记均衡）→ 多子查询向量 max-pool → 可选 hybrid/Cohere 重排 → Top-K（多篇公平）→ 拼上下文。返回 (正文, 片段 meta, 可观测字段)。"""
     q = (query or "").strip()
     rows = _load_chunks_for_notes(note_ids)
     if not rows or not q:
-        return "", []
+        return "", [], {"reason": "empty_query_or_no_rows"}
 
     parsed: list[dict[str, Any]] = []
     for r in rows:
@@ -358,22 +562,39 @@ def retrieve_chunks_across_notes(
         parsed.append({**r, "_vec": vec, "_ch": ch, "note_sig": r.get("note_sig")})
 
     if not parsed:
-        return "", []
+        return "", [], {"reason": "no_parsed_chunks"}
 
     try:
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
         ep = EmbeddingProvider()
-        qv = ep.embed_texts([q[:8000]])[0]
-        current_sig = ep.embedding_signature(len(qv))
+        if _multi_query_enabled():
+            subqs = decompose_retrieval_queries(q, max_queries=_max_subqueries())
+        else:
+            subqs = [q]
+        uniq: list[str] = []
+        seen_q: set[str] = set()
+        for s in subqs:
+            t = (s or "").strip()
+            if not t or t in seen_q:
+                continue
+            seen_q.add(t)
+            uniq.append(t)
+        if not uniq:
+            uniq = [q]
+        qvs = ep.embed_texts([x[:8000] for x in uniq])
+        if not qvs:
+            raise RuntimeError("empty query embeddings")
+        current_sig = ep.embedding_signature(len(qvs[0]))
+        emb_backend = ep.active_backend()
     except Exception as exc:
         logger.warning("retrieve query embed failed: %s", exc)
-        return "", []
+        return "", [], {"reason": "query_embed_failed", "error": str(exc)[:200]}
 
     filtered: list[dict[str, Any]] = []
     dropped_stale = 0
     for p in parsed:
-        if _chunk_allowed_for_embedding(p.get("note_sig"), p["_vec"], qv, current_sig):
+        if _chunk_allowed_for_embedding(p.get("note_sig"), p["_vec"], qvs[0], current_sig):
             filtered.append(p)
         else:
             dropped_stale += 1
@@ -381,33 +602,85 @@ def retrieve_chunks_across_notes(
     if dropped_stale:
         logger.info("note_rag retrieve dropped %s stale or dim-mismatch chunks", dropped_stale)
     if not parsed:
-        return "", []
+        return "", [], {"reason": "all_stale_chunks", "dropped_stale_chunks": dropped_stale}
+
+    src_idx_map = _note_source_index_map(note_ids)
 
     pref_cap = _note_rag_keyword_prefilter_cap(len(note_ids), top_k)
     if len(parsed) > pref_cap:
-        scored_kw = [(float(_keyword_score(q, p["_ch"])), p) for p in parsed]
-        scored_kw.sort(key=lambda x: -x[0])
-        parsed = [p for _, p in scored_kw[:pref_cap]]
+        if _note_rag_balanced_prefilter_enabled() and len(note_ids) > 1:
+            parsed = _balanced_pool_by_note_keyword(parsed, q, note_ids, pref_cap)
+        else:
+            scored_kw = [(float(_keyword_score(q, p["_ch"])), p) for p in parsed]
+            scored_kw.sort(key=lambda x: -x[0])
+            parsed = [p for _, p in scored_kw[:pref_cap]]
 
     vec_cap = _note_rag_vector_candidate_cap()
     if len(parsed) > vec_cap:
-        scored_kw2 = [(float(_keyword_score(q, p["_ch"])), p) for p in parsed]
-        scored_kw2.sort(key=lambda x: -x[0])
-        parsed = [p for _, p in scored_kw2[:vec_cap]]
+        if _note_rag_balanced_prefilter_enabled() and len(note_ids) > 1:
+            parsed = _balanced_pool_by_note_keyword(parsed, q, note_ids, vec_cap)
+        else:
+            scored_kw2 = [(float(_keyword_score(q, p["_ch"])), p) for p in parsed]
+            scored_kw2.sort(key=lambda x: -x[0])
+            parsed = [p for _, p in scored_kw2[:vec_cap]]
 
-    vectors = [p["_vec"] for p in parsed]
-    sims = _batch_cosine_vs_query(qv, vectors)
+    sims: list[float] = []
+    for p in parsed:
+        vec = p["_vec"]
+        sims.append(max(float(_cosine(qv, vec)) for qv in qvs))
     scored: list[tuple[float, dict[str, Any]]] = []
     for sim, p in zip(sims, parsed):
         row = {k: v for k, v in p.items() if not str(k).startswith("_")}
         scored.append((float(sim), row))
 
     scored.sort(key=lambda x: -x[0])
-    k = max(1, min(top_k, len(scored)))
-    picked = scored[:k]
-    picked.sort(
-        key=lambda x: (str(x[1].get("note_id") or ""), int(x[1].get("chunk_index") or 0))
-    )
+    try:
+        pool_n = min(
+            len(scored),
+            max(top_k * 2, int(os.getenv("NOTE_RAG_RERANK_POOL", "96") or "96")),
+        )
+    except (TypeError, ValueError):
+        pool_n = min(len(scored), max(top_k * 2, 96))
+    head = scored[:pool_n]
+    tail = scored[pool_n:]
+    from app.fyv_shared.rerank_provider import rerank_retrieval_candidates
+
+    head_rr, rerank_mode = rerank_retrieval_candidates(q, head)
+    mmr_applied = False
+    if _note_rag_mmr_enabled() and head_rr and qvs:
+        try:
+            lam = float(os.getenv("NOTE_RAG_MMR_LAMBDA", "0.65") or "0.65")
+        except (TypeError, ValueError):
+            lam = 0.65
+        vec_map: dict[tuple[str, int], list[float]] = {}
+        for p in parsed:
+            ident = (str(p.get("note_id") or ""), int(p.get("chunk_index") or 0))
+            v = p.get("_vec")
+            if isinstance(v, list) and v:
+                vec_map[ident] = v
+        head_mmr = _mmr_rerank_head(head_rr, vec_map, lambda_mult=lam)
+        if head_mmr is not None:
+            head_rr = head_mmr
+            mmr_applied = True
+    scored_for_pick = head_rr + tail
+    picked = _pick_top_k_note_fairness(scored_for_pick, top_k, note_ids)
+
+    obs: dict[str, Any] = {
+        "embedding_backend": emb_backend,
+        "multi_query_embedded": len(uniq),
+        "keyword_pref_cap": pref_cap,
+        "vec_cap": vec_cap,
+        "vector_candidates": len(parsed),
+        "dropped_stale_chunks": dropped_stale,
+        "rerank_pool": pool_n,
+        "rerank_mode": rerank_mode,
+        "mmr_applied": mmr_applied,
+        "top_k": top_k,
+    }
+    try:
+        logger.info("note_rag_retrieve %s", json.dumps(obs, ensure_ascii=False)[:1600])
+    except Exception:
+        logger.info("note_rag_retrieve emb=%s subq=%s rerank=%s", emb_backend, len(uniq), rerank_mode)
 
     parts: list[str] = []
     used = 0
@@ -419,19 +692,38 @@ def retrieve_chunks_across_notes(
         ch = str(r.get("chunk_text") or "").strip()
         if not ch:
             continue
-        header = f"【检索片段 note={nid} chunk={idx} score={score:.4f}】\n"
+        src_label = src_idx_map.get(nid, "?")
+        header = f"【检索片段 [来源{src_label}] chunk={idx} score={score:.4f}】\n"
         piece = header + ch
         if used + len(piece) + 2 <= budget:
             parts.append(piece)
             used += len(piece) + 2
-            meta_out.append({"noteId": nid, "chunkIndex": str(idx), "score": f"{score:.4f}"})
+            excerpt = ch if len(ch) <= 4000 else ch[:4000] + "…"
+            meta_out.append(
+                {
+                    "noteId": nid,
+                    "chunkIndex": str(idx),
+                    "score": f"{score:.4f}",
+                    "excerpt": excerpt,
+                }
+            )
         else:
             remain = budget - used - len(header) - 40
             if remain > 200:
-                parts.append(header + ch[:remain] + "\n【…块内截断…】")
+                tail = ch[:remain] + "\n【…块内截断…】"
+                parts.append(header + tail)
+                tail_ex = tail if len(tail) <= 4000 else tail[:4000] + "…"
+                meta_out.append(
+                    {
+                        "noteId": nid,
+                        "chunkIndex": str(idx),
+                        "score": f"{score:.4f}",
+                        "excerpt": tail_ex,
+                    }
+                )
             break
 
-    return "\n\n".join(parts).strip(), meta_out
+    return "\n\n".join(parts).strip(), meta_out, obs
 
 
 def build_summaries_section(
@@ -511,13 +803,15 @@ def build_layered_notes_context(
     sum_part = build_summaries_section(
         ordered_ids=ordered, user_ref=user_ref, max_chars=summary_budget
     )
-    retr, retr_meta = retrieve_chunks_across_notes(
+    retr, retr_meta, retrieve_obs = retrieve_chunks_across_notes(
         note_ids=ordered,
         query=query,
         max_chars=retrieval_budget,
         top_k=top_k,
     )
     meta["retrieval_chunks"] = len(retr_meta)
+    meta["retrieve_obs"] = retrieve_obs
+    meta["retrieval_chunks_meta"] = retr_meta
 
     blocks: list[str] = []
     if sum_part:
@@ -530,6 +824,22 @@ def build_layered_notes_context(
         return None, [], meta
 
     return ctx, sources, meta
+
+
+def _layered_source_manifest_block(ordered: list[str], user_ref: str | None) -> str:
+    """固定 N 与「来源1…N」对应关系，减少模型把检索中出现次数误当成勾选条数。"""
+    n = len(ordered)
+    lines: list[str] = [
+        f"【来源清单】用户勾选笔记共 **{n}** 条；检索片段中的「来源k」表示第 k 条笔记。",
+        f"正文若出现「综合 N 条资料」「基于 N 本书」等表述，**N 必须等于 {n}**；"
+        "检索可能未在片段中均匀展示每一条，不得以「只看到 9 个来源」等理由改写为 N−1。",
+        "条目：",
+    ]
+    for i, nid in enumerate(ordered, start=1):
+        row = get_note_by_id(nid, user_ref=user_ref)
+        title = _metadata_title(row, nid) if row else nid
+        lines.append(f"- 来源{i}：{title}（noteId={nid}）")
+    return "\n".join(lines)
 
 
 def build_layered_reference_block(
@@ -554,13 +864,14 @@ def build_layered_reference_block(
     sum_part = build_summaries_section(
         ordered_ids=ordered, user_ref=user_ref, max_chars=summary_budget
     )
-    retr, _rm = retrieve_chunks_across_notes(
+    retr, _rm, retrieve_obs = retrieve_chunks_across_notes(
         note_ids=ordered,
         query=query_hint,
         max_chars=retrieval_budget,
         top_k=top_k,
     )
-    blocks: list[str] = []
+    meta["retrieve_obs"] = retrieve_obs
+    blocks: list[str] = [_layered_source_manifest_block(ordered, user_ref)]
     if sum_part:
         blocks.append(sum_part)
     if retr:

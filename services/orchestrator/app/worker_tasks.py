@@ -33,6 +33,7 @@ from .entitlement_matrix import (
 )
 from .cover_image_material import build_cover_material
 from .reference_material import effective_article_script_target_chars, merge_reference_for_script
+from .script_reference_coverage import augment_script_options_for_multi_note_coverage
 from .subscription_limits import max_note_refs_for_plan, tier_allows_ai_polish
 from .tts_pipeline import (
     dialogue_speaker_format_issues,
@@ -625,7 +626,9 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
 
         append_job_event(job_id, "progress", "正在调用模型生成脚本", {"progress": 60})
         force_fb = bool(payload.get("integration_force_fallback"))
-        script_opts = script_generation_options_from_payload(payload)
+        script_opts = augment_script_options_for_multi_note_coverage(
+            payload, script_generation_options_from_payload(payload)
+        )
         if script_opts.get("script_target_chars") is None:
             _st = normalize_script_target_input(payload.get("script_target_chars"))
             if _st is not None:
@@ -827,7 +830,9 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                     source_text,
                     api_key=api_key,
                     force_fallback=force_fb,
-                    script_options=script_generation_options_from_payload(payload),
+                    script_options=augment_script_options_for_multi_note_coverage(
+                        payload, script_generation_options_from_payload(payload)
+                    ),
                     on_script_delta=_make_script_delta_handler(job_id),
                     subscription_tier=_subscription_tier_for_job(created_by),
                 )

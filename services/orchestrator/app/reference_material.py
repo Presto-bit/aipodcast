@@ -1,6 +1,8 @@
 """
 多来源参考材料合并 + 长文压缩（P2 / P2+）。
 P2+：reference_rag_mode = keyword | full_coverage | hybrid（见 rag_core：关键词 + 可选向量混合）。
+任务 meta['rag_pipeline'] 汇总模式、混合检索、笔记向量检索可观测字段（retrieve_obs_notes）。
+多笔记脚本参考：build_layered_reference_block 的摘要/检索预算与 top_k 随勾选条数略增（SCRIPT_LAYERED_TOP_K）。
 """
 from __future__ import annotations
 
@@ -15,6 +17,25 @@ from .note_document_extract import extract_text_from_bytes
 from .object_store import get_object_bytes
 
 logger = logging.getLogger(__name__)
+
+
+def _script_layered_top_k() -> int:
+    try:
+        return max(64, min(200, int(os.getenv("SCRIPT_LAYERED_TOP_K", "112") or "112")))
+    except (TypeError, ValueError):
+        return 112
+
+
+def _layered_reference_budgets(note_count: int, rag_cap_early: int) -> tuple[int, int, int]:
+    """
+    脚本合并参考：摘要预算、检索预算、向量 Top-K。
+    勾选条数增多时略增检索预算与 top_k，减轻「只打到少数几本」的块分布。
+    """
+    nc = max(1, min(int(note_count or 1), 24))
+    top_k = _script_layered_top_k()
+    summary_budget = min(28_000, max(10_000, rag_cap_early // 2 + nc * 250))
+    retrieval_budget = min(140_000, max(32_000, int(rag_cap_early * 1.85) + nc * 2200))
+    return summary_budget, retrieval_budget, top_k
 
 
 def _choose_auto_rag_top_k(total_chars: int) -> int:
@@ -86,6 +107,30 @@ def compress_long_reference(text: str, max_chars: int) -> str:
 
 # 与 legacy 侧 RAG_TRIGGER_CHARS 对齐：低于此长度不跑向量混合（改走 keyword 等）
 RAG_HYBRID_TRIGGER_CHARS = 12_000
+
+
+def _finalize_rag_pipeline_meta(meta: dict[str, Any]) -> None:
+    """汇总参考材料 RAG 链路可观测字段，写入 meta['rag_pipeline']。"""
+    layered = meta.get("notes_layered_rag_meta")
+    layered_dict = layered if isinstance(layered, dict) else {}
+    meta["rag_pipeline"] = {
+        "reference_rag_mode": meta.get("reference_rag_mode"),
+        "rag_max_chars": meta.get("rag_max_chars"),
+        "rag_hybrid": meta.get("rag_hybrid"),
+        "rag_hybrid_skipped": meta.get("rag_hybrid_skipped"),
+        "rag_hybrid_log": (meta.get("rag_hybrid_log") or "")[:400] if meta.get("rag_hybrid_log") else None,
+        "rag_hybrid_error": meta.get("rag_hybrid_error"),
+        "rag_embedding_backend": meta.get("rag_embedding_backend"),
+        "rag_keyword": meta.get("rag_keyword"),
+        "rag_full_coverage": meta.get("rag_full_coverage"),
+        "rag_compressed": meta.get("rag_compressed"),
+        "rag_final_trim": meta.get("rag_final_trim"),
+        "hard_truncated": meta.get("hard_truncated"),
+        "rag_chunks_total": meta.get("rag_chunks_total"),
+        "rag_chunks_selected": meta.get("rag_chunks_selected"),
+        "notes_layered_rag": bool(layered_dict),
+        "retrieve_obs_notes": layered_dict.get("retrieve_obs"),
+    }
 
 
 def merge_reference_for_script(
@@ -170,13 +215,14 @@ def merge_reference_for_script(
                 str(payload.get("speaker2_persona") or ""),
                 str(payload.get("script_constraints") or ""),
             ) or (topic_text[:1200] if topic_text else "资料要点")
+            sb, rb, tk = _layered_reference_budgets(len(capped_nids), rag_cap_early)
             lb, lmeta = build_layered_reference_block(
                 note_ids=capped_nids,
                 query_hint=qh,
                 user_ref=user_ref,
-                summary_budget=min(20_000, max(10_000, rag_cap_early // 2)),
-                retrieval_budget=min(120_000, max(32_000, int(rag_cap_early * 1.85))),
-                top_k=80,
+                summary_budget=sb,
+                retrieval_budget=rb,
+                top_k=tk,
             )
             meta["notes_layered_rag_meta"] = lmeta
             layered_block = lb
@@ -225,6 +271,7 @@ def merge_reference_for_script(
     meta["reference_rag_mode"] = mode
 
     if not use_compress:
+        _finalize_rag_pipeline_meta(meta)
         return merged, meta
 
     if mode == "hybrid" and len(merged) >= RAG_HYBRID_TRIGGER_CHARS:
@@ -235,6 +282,12 @@ def merge_reference_for_script(
             meta["rag_hybrid"] = True
             if log_msg:
                 meta["rag_hybrid_log"] = str(log_msg)[:800]
+            try:
+                from app.fyv_shared.embedding_provider import EmbeddingProvider
+
+                meta["rag_embedding_backend"] = EmbeddingProvider().active_backend()
+            except Exception:
+                pass
         except Exception as exc:
             logger.warning("hybrid vector RAG: %s", exc)
             meta["rag_hybrid_error"] = str(exc)[:400]
@@ -244,9 +297,11 @@ def merge_reference_for_script(
         if len(merged) > rag_cap:
             merged = merged[:rag_cap] + "\n【…截断…】"
             meta["rag_final_trim"] = True
+        _finalize_rag_pipeline_meta(meta)
         return merged, meta
 
     if len(merged) <= rag_cap:
+        _finalize_rag_pipeline_meta(meta)
         return merged, meta
 
     rest_mode = mode
@@ -257,6 +312,7 @@ def merge_reference_for_script(
     if rest_mode == "truncate":
         merged = compress_long_reference(merged, rag_cap)
         meta["rag_compressed"] = True
+        _finalize_rag_pipeline_meta(meta)
         return merged, meta
 
     topic_hint = str(payload.get("text") or merged[:1200])[:1200]
@@ -276,6 +332,7 @@ def merge_reference_for_script(
         logger.warning("build_retrieval_query failed: %s", exc)
         merged = compress_long_reference(merged, rag_cap)
         meta["rag_compressed"] = True
+        _finalize_rag_pipeline_meta(meta)
         return merged, meta
 
     if rest_mode == "keyword":
@@ -320,6 +377,7 @@ def merge_reference_for_script(
         merged = merged[:rag_cap] + "\n【…截断…】"
         meta["rag_final_trim"] = True
 
+    _finalize_rag_pipeline_meta(meta)
     return merged, meta
 
 

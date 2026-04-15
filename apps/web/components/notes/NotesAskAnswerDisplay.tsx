@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -30,10 +30,81 @@ export function normalizeNotesAskAnswerForDisplay(raw: string): string {
     .join("\n\n");
 }
 
+function SourceExcerptModal({
+  source,
+  open,
+  onClose
+}: {
+  source: NotesAskSource | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open || !source) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="notes-ask-source-modal-title"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[min(80vh,560px)] w-full max-w-lg overflow-hidden rounded-xl border border-line bg-surface shadow-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="border-b border-line/80 px-4 py-3">
+          <h2 id="notes-ask-source-modal-title" className="text-sm font-semibold text-ink">
+            来源 [{source.index}] {source.title}
+          </h2>
+          <p className="mt-1 font-mono text-[10px] text-muted">{source.noteId}</p>
+        </div>
+        <div className="max-h-[min(60vh,440px)] overflow-y-auto px-4 py-3 text-[13px] leading-relaxed text-ink">
+          {source.chunks && source.chunks.length > 0 ? (
+            <ul className="space-y-3">
+              {source.chunks.map((c, i) => (
+                <li key={`${c.chunkIndex}-${i}`} className="rounded-lg border border-line/70 bg-fill/40 p-2.5">
+                  <p className="text-[11px] font-medium text-muted">
+                    块 {c.chunkIndex}
+                    {c.score ? <span className="ml-2">score {c.score}</span> : null}
+                  </p>
+                  <p className="mt-1.5 whitespace-pre-wrap text-ink">{c.excerpt || "（无摘录）"}</p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-muted">本条暂无向量检索摘录，请以正文角标对应资料中的来源全文为准。</p>
+          )}
+        </div>
+        <div className="border-t border-line/80 px-4 py-2.5 text-right">
+          <button
+            type="button"
+            className="rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
+            onClick={onClose}
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
- * 对话回答区：GFM Markdown + 段落/列表/代码块等排版；可选将 [1] 等标为指向脚注的内链。
+ * 对话回答区：GFM Markdown + 段落/列表/代码块等排版；可选将 [n] 等标为指向脚注的内链。
  */
 export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
+  const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
+
   const md = useMemo(() => {
     const n = normalizeNotesAskAnswerForDisplay(text);
     return linkifyCitationMarkers(n, sources);
@@ -99,7 +170,9 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
           aria-label="引用来源"
         >
           <p className="font-semibold text-ink">引用来源</p>
-          <p className="mt-1 text-[11px] text-muted">点击正文中带下划线的 [n] 可跳转到对应条目。</p>
+          <p className="mt-1 text-[11px] text-muted">
+            点击正文中的 [n] 可跳转到下方对应脚注；有检索摘录时点击「查看摘录」可在弹窗中阅读块原文。
+          </p>
           <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
             {sortedSources.map((s) => (
               <li key={`${s.noteId}-${s.index}`} id={`cite-${s.index}`} className="scroll-mt-20">
@@ -107,11 +180,20 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
                 <span className="ml-1.5 font-mono text-[10px] text-muted" title={s.noteId}>
                   {s.noteId.slice(0, 8)}…
                 </span>
+                <button
+                  type="button"
+                  className="ml-2 rounded border border-line/90 bg-fill/60 px-1.5 py-px text-[11px] font-medium text-ink hover:bg-fill"
+                  onClick={() => setModalSource(s)}
+                >
+                  查看摘录
+                </button>
               </li>
             ))}
           </ol>
         </aside>
       ) : null}
+
+      <SourceExcerptModal source={modalSource} open={modalSource != null} onClose={() => setModalSource(null)} />
     </div>
   );
 }

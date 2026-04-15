@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
+from collections import defaultdict
 from typing import Any, Iterator
 
 from .models import get_note_by_id
@@ -18,11 +21,58 @@ _MAX_QUESTION_CHARS = 800
 _MAX_TOTAL_CONTEXT = 44_000
 _MAX_PER_NOTE = 16_000
 
+
+def _notes_ask_top_k() -> int:
+    try:
+        return max(36, min(160, int(os.getenv("NOTES_ASK_TOP_K", "96") or "96")))
+    except (TypeError, ValueError):
+        return 96
+
+
 _SYSTEM = (
     "你是资料助手。用户提供了若干条笔记摘录（可能已截断）。请仅用这些材料回答问题；"
-    "若材料不足以回答，请明确说明「材料中未提及」或「摘录中看不到」，不要编造事实。"
-    "回答使用中文，可在要点处用 [1]、[2] 等形式标注对应来源序号。"
+    "若材料不足以回答，请明确说明「材料中未提及」或「摘录中看不到」，不要编造事实。\n"
+    "回答使用中文；仅在确实依据某一来源时，在对应句子或段落后用 [1]、[2] 等形式标注来源序号（与资料中的「来源 [n]」一致）。"
+    "不要标注未在回答中实际用到的序号；也不要在正文中复述「检索片段」等系统标记或原始 noteId。\n"
+    "若问题与多条笔记均相关，请尽量在回答中分别引用不同序号，避免只依赖少数几条而忽略其他相关摘录。"
 )
+
+
+def _enrich_sources_with_chunks(sources: list[dict[str, Any]], retr_meta: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """将向量检索块按 noteId 归并到各来源，供前端展示摘录弹窗。"""
+    if not retr_meta:
+        return sources
+    by_note: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in retr_meta:
+        nid = str(item.get("noteId") or "").strip()
+        if not nid:
+            continue
+        ex = str(item.get("excerpt") or "").strip()
+        by_note[nid].append(
+            {
+                "chunkIndex": str(item.get("chunkIndex") or ""),
+                "score": str(item.get("score") or ""),
+                "excerpt": ex,
+            }
+        )
+    out: list[dict[str, Any]] = []
+    for s in sources:
+        nid = str(s.get("noteId") or "").strip()
+        merged = dict(s)
+        if nid in by_note:
+            merged["chunks"] = by_note[nid]
+        out.append(merged)
+    return out
+
+
+def filter_sources_by_citations(answer: str, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    若回答中出现至少一处 [n] 角标，则脚注仅保留被引用的序号；否则保留全部来源（兼容未标角标的旧行为）。
+    """
+    cited = set(re.findall(r"\[(\d+)\]", answer or ""))
+    if not cited:
+        return sources
+    return [s for s in sources if str(s.get("index") or "") in cited]
 
 
 def _metadata_notebook(row: dict[str, Any]) -> str:
@@ -55,7 +105,7 @@ def _prepare_notes_ask_messages(
     note_ids: list[str],
     question: str,
     user_ref: str | None,
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     q = (question or "").strip()
     if not q:
         raise ValueError("question_required")
@@ -114,6 +164,7 @@ def iter_notes_answer_events(
         full = "".join(acc).strip()
         if not full:
             raise RuntimeError("empty_answer")
+        sources = filter_sources_by_citations(full, sources)
         yield {"type": "done", "sources": sources, "traceId": None}
     except Exception as exc:
         logger.warning("notes_ask_stream_failed: %s", exc)
@@ -177,21 +228,24 @@ def build_notes_qa_context(
     note_ids: list[str],
     user_ref: str | None,
     question: str | None = None,
-) -> tuple[str, list[dict[str, str]]]:
+) -> tuple[str, list[dict[str, Any]]]:
     """
     优先：异步摘要 + 勾选范围内向量检索；若无索引块则回退 legacy 前缀截断。
     """
     if NOTE_LAYERED_RAG and (question or "").strip():
-        layered, sources, _meta = build_layered_notes_context(
+        layered, sources, meta = build_layered_notes_context(
             notebook=notebook,
             note_ids=note_ids,
             query=(question or "").strip(),
             user_ref=user_ref,
             summary_budget=16_000,
             retrieval_budget=40_000,
-            top_k=80,
+            top_k=_notes_ask_top_k(),
         )
         if layered:
+            rcm = meta.get("retrieval_chunks_meta")
+            if isinstance(rcm, list) and rcm:
+                sources = _enrich_sources_with_chunks(sources, rcm)
             return layered, sources
     return legacy_build_notes_qa_context(notebook=notebook, note_ids=note_ids, user_ref=user_ref)
 
@@ -220,8 +274,9 @@ def answer_notes_question(
     if not (answer or "").strip():
         raise RuntimeError("empty_answer")
 
+    ans = answer.strip()
     return {
-        "answer": answer.strip(),
-        "sources": sources,
+        "answer": ans,
+        "sources": filter_sources_by_citations(ans, sources),
         "traceId": trace_id,
     }

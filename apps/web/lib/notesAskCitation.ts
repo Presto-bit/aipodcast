@@ -2,11 +2,38 @@
  * 知识库「向资料提问」：回答中的 [1]、[2] 与编排器返回的 sources 对齐，用于内链与脚注。
  */
 
+export type NotesAskSourceChunk = {
+  chunkIndex: string;
+  score?: string;
+  excerpt?: string;
+};
+
 export type NotesAskSource = {
   index: string;
   noteId: string;
   title: string;
+  /** 向量检索块，供弹窗展示摘录 */
+  chunks?: NotesAskSourceChunk[];
 };
+
+function normalizeChunks(raw: unknown): NotesAskSourceChunk[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: NotesAskSourceChunk[] = [];
+  for (const x of raw) {
+    if (!x || typeof x !== "object") continue;
+    const o = x as Record<string, unknown>;
+    const chunkIndex = String(o.chunkIndex ?? "").trim();
+    const excerpt = String(o.excerpt ?? "").trim();
+    const score = o.score != null ? String(o.score).trim() : "";
+    if (!chunkIndex && !excerpt) continue;
+    out.push({
+      chunkIndex: chunkIndex || "—",
+      ...(score ? { score } : {}),
+      ...(excerpt ? { excerpt } : {})
+    });
+  }
+  return out.length ? out : undefined;
+}
 
 export function normalizeNotesAskSources(raw: unknown): NotesAskSource[] | undefined {
   if (!Array.isArray(raw)) return undefined;
@@ -18,7 +45,13 @@ export function normalizeNotesAskSources(raw: unknown): NotesAskSource[] | undef
     const noteId = String(o.noteId ?? "").trim();
     const title = String(o.title ?? "").trim();
     if (!index || !noteId) continue;
-    out.push({ index, noteId, title: title || noteId });
+    const chunks = normalizeChunks(o.chunks);
+    out.push({
+      index,
+      noteId,
+      title: title || noteId,
+      ...(chunks ? { chunks } : {})
+    });
   }
   return out.length ? out : undefined;
 }

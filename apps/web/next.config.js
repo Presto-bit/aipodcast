@@ -49,6 +49,8 @@ const nextConfig = {
     /** 启用 `instrumentation.ts`（生产 INTERNAL_SIGNING_SECRET 强校验等） */
     instrumentationHook: true,
     typedRoutes: false,
+    /** 按需解析子路径，减轻首包与路由切换时的解析开销 */
+    optimizePackageImports: ["@tanstack/react-query", "react-markdown"],
     /**
      * Server Actions 体积极限；Route Handler（如 /api/note-upload）在部分部署下另有默认上限。
      * 大文件 multipart 若 413：请同步调大反代 `client_max_body_size` 与平台请求体限制。

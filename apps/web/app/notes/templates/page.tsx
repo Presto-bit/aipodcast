@@ -176,9 +176,12 @@ export default function UserTemplatesPage() {
               className="mt-1 min-h-[72px] w-full rounded-lg border border-line bg-fill px-2 py-2 text-sm"
               value={creativeConstraints}
               onChange={(e) => setCreativeConstraints(e.target.value)}
-              placeholder="可选；不设时使用播客页默认约束"
+              placeholder="可选；不设时使用播客页默认约束。多本资料时：请保证各笔记有正文并已建索引；重点书目可在「话题/本页主题」或此处单独写一句要求（如须突出某几本）。"
             />
           </label>
+          <p className="mt-1 text-[11px] leading-snug text-muted">
+            勾选多本笔记作参考时，系统会为脚本自动追加「覆盖全部所选资料」类说明；你仍可在此补充语气、结构或某几本书的侧重。
+          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">

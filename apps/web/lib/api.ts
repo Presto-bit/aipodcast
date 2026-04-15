@@ -102,9 +102,15 @@ export async function createJob(payload: {
     headers: authMerge({ "Content-Type": "application/json" }),
     body: JSON.stringify(body)
   });
-  const rawErr = await resp.text();
-  if (!resp.ok) throw new Error(formatOrchestratorErrorText(rawErr) || rawErr || `创建任务失败 ${resp.status}`);
-  return (await resp.json()) as JobRecord;
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(formatOrchestratorErrorText(text) || text || `创建任务失败 ${resp.status}`);
+  }
+  try {
+    return JSON.parse(text) as JobRecord;
+  } catch {
+    throw new Error(text.trim() || "创建任务响应无效");
+  }
 }
 
 export async function getJob(jobId: string) {

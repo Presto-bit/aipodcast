@@ -71,6 +71,48 @@ def split_text_into_chunks(
     return _split_plain_paragraphs(raw, mc, ov)
 
 
+def decompose_retrieval_queries(text: str, *, max_queries: int = 3) -> list[str]:
+    """
+    将主题/检索句拆成若干子查询，用于多向量 max-pool（跨句命中不同文档）。
+    无有效拆分时返回单条全文前缀。
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return [""]
+    main = raw[:8000]
+    try:
+        mq = max(1, min(5, int(max_queries)))
+    except (TypeError, ValueError):
+        mq = 3
+
+    min_seg = 8
+    segments: list[str] = []
+    for block in re.split(r"(?<=[。！？\n])\s*", raw):
+        s = (block or "").strip()
+        if len(s) >= min_seg:
+            segments.append(s[:8000])
+
+    if len(segments) < 2:
+        for block in re.split(r"\n\s*\n+", raw):
+            s = (block or "").strip()
+            if len(s) >= min_seg:
+                segments.append(s[:8000])
+
+    out: list[str] = [main]
+    if mq <= 1 or len(segments) < 2:
+        return out
+
+    seen: set[str] = {main}
+    for s in segments:
+        if s in seen or len(s) < min_seg:
+            continue
+        seen.add(s)
+        out.append(s[:8000])
+        if len(out) >= mq:
+            break
+    return out[: max(1, len(out))]
+
+
 def build_retrieval_query(
     topic_hint: str,
     script_style: str,

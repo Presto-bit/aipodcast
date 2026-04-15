@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import InlineConfirmBar from "../../components/ui/InlineConfirmBar";
 import InlineTextPrompt from "../../components/ui/InlineTextPrompt";
@@ -7,8 +8,16 @@ import SmallPromptModal from "../../components/ui/SmallPromptModal";
 import EmptyState from "../../components/ui/EmptyState";
 import NoteMarkdownPreview from "../../components/notes/NoteMarkdownPreview";
 import { NotesAskAnswerDisplay } from "../../components/notes/NotesAskAnswerDisplay";
-import NotesPodcastRoomModal from "../../components/notes/NotesPodcastRoomModal";
-import PodcastWorksGallery from "../../components/podcast/PodcastWorksGallery";
+const NotesPodcastRoomModal = dynamic(() => import("../../components/notes/NotesPodcastRoomModal"));
+const PodcastWorksGallery = dynamic(() => import("../../components/podcast/PodcastWorksGallery"), {
+  loading: () => (
+    <div
+      className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
+      aria-busy
+      aria-label="加载作品列表"
+    />
+  )
+});
 import { createJob, cancelJob } from "../../lib/api";
 import { apiErrorMessage } from "../../lib/apiError";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
@@ -322,6 +331,7 @@ export default function NotesPage() {
   const [artChars, setArtChars] = useState(2000);
   const [artCharsInput, setArtCharsInput] = useState("2000");
   const [artText, setArtText] = useState("");
+  const [artCoreQuestion, setArtCoreQuestion] = useState("");
   /** 右侧资料区底部输入：带入播客/文章，不在此自动扩写全文 */
   const [notesStudioPrompt, setNotesStudioPrompt] = useState("");
   const [notesAskQuestion, setNotesAskQuestion] = useState("");
@@ -1529,7 +1539,8 @@ export default function NotesPage() {
           speaker2_persona: "分析师",
           script_constraints: "",
           output_mode: "article",
-          generate_cover: false
+          generate_cover: false,
+          ...(artCoreQuestion.trim() ? { core_question: artCoreQuestion.trim() } : {})
         }
       });
       rememberJobId(data.id);
@@ -1958,12 +1969,12 @@ export default function NotesPage() {
             )}
           </div>
 
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-3">
+          <div className="flex min-h-0 flex-col gap-3 lg:h-[min(100dvh-5.5rem,900px)] lg:max-h-[min(100dvh-5.5rem,900px)] lg:flex-row lg:items-stretch lg:gap-3 lg:overflow-hidden">
             <section
-              className={`flex shrink-0 flex-col rounded-3xl border border-line/70 bg-fill/15 shadow-soft ${
+              className={`flex shrink-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 shadow-soft lg:min-h-0 lg:h-full ${
                 sourcesPanelCollapsed
-                  ? "w-full max-lg:min-h-0 lg:min-h-[min(100vh-12rem,920px)] lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
-                  : "min-h-[min(100vh-12rem,920px)] w-full p-4 lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
+                  ? "w-full max-lg:min-h-0 lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
+                  : "w-full p-4 lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
               }`}
               aria-label="来源"
             >
@@ -2062,7 +2073,7 @@ export default function NotesPage() {
                   添加笔记
                 </button>
 
-                  <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-0.5">
+                  <div className="mt-3 min-h-0 max-h-[min(100dvh-12rem,520px)] flex-1 overflow-y-auto overflow-x-hidden pr-0.5 lg:max-h-none">
                 <p className="text-[11px] leading-snug text-muted">
                   {notebooks.length === 0
                     ? "创建笔记本后即可添加资料。"
@@ -2243,12 +2254,12 @@ export default function NotesPage() {
             </section>
 
             <div
-              className={`flex min-w-0 flex-1 ${
+              className={`flex min-h-0 min-w-0 flex-1 overflow-hidden ${
                 sourcesPanelCollapsed || appNavCollapsed ? "w-full" : "justify-center"
               }`}
             >
             <section
-              className={`flex min-h-[min(100vh-12rem,920px)] w-full min-w-0 flex-col rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft ${
+              className={`flex min-h-0 h-full w-full min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft ${
                 sourcesPanelCollapsed || appNavCollapsed ? "max-w-none" : "max-w-[min(100%,38rem)]"
               }`}
               role="region"
@@ -2474,10 +2485,10 @@ export default function NotesPage() {
             </div>
 
             <section
-              className={`flex shrink-0 flex-col rounded-3xl border border-line/70 bg-fill/15 shadow-soft ${
+              className={`flex shrink-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 shadow-soft lg:min-h-0 lg:h-full ${
                 studioPanelCollapsed
-                  ? "w-full max-lg:min-h-0 lg:min-h-[min(100vh-12rem,920px)] lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
-                  : "min-h-[min(100vh-12rem,920px)] w-full p-3 lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
+                  ? "w-full max-lg:min-h-0 lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
+                  : "w-full p-3 lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
               }`}
               aria-label="我的作品"
             >
@@ -2545,7 +2556,7 @@ export default function NotesPage() {
                       </svg>
                     </button>
                   </div>
-              {draftMessage ? (
+              {!hubView && draftMessage ? (
                 <div
                   className={`mt-3 rounded-xl border px-3 py-2 text-xs ${
                     draftBusy
@@ -2601,7 +2612,7 @@ export default function NotesPage() {
                   </div>
                 </div>
               ) : null}
-                  <div className="mt-4 min-h-0 flex-1">
+                  <div className="mt-4 min-h-0 max-h-[min(100dvh-12rem,520px)] flex-1 overflow-y-auto overflow-x-hidden lg:max-h-none">
               <PodcastWorksGallery
                 works={notesStudioWorks}
                 loading={podcastWorksLoading}
@@ -2609,7 +2620,6 @@ export default function NotesPage() {
                 onDismissError={() => setPodcastWorksError("")}
                 onWorkDeleted={() => void fetchPodcastWorks()}
                 variant="notes_studio"
-                sidebarMaxItems={4}
               />
               </div>
                 </>
@@ -2926,6 +2936,16 @@ export default function NotesPage() {
                     />
                   </label>
                 </div>
+                <label className="mt-3 block text-xs text-ink">
+                  核心问题（可选）
+                  <input
+                    type="text"
+                    className={`mt-1 block w-full ${inputCls}`}
+                    value={artCoreQuestion}
+                    onChange={(e) => setArtCoreQuestion(e.target.value)}
+                    placeholder="全文须围绕回答的一个问题，例如：……"
+                  />
+                </label>
                 <label className="mt-3 block text-xs text-ink">
                   AI 提词（可编辑）
                   <textarea

@@ -69,7 +69,8 @@ SCRIPT_GEN_TTS_ORAL_ARTICLE_APPEND = """
 # 长文多段生成：减少繁体与「续写」类编排语泄漏（与 oral_for_tts 无关，文章路径始终叠用）
 ARTICLE_OUTPUT_QUALITY_ZH_APPEND = """
 【语言文字】若文稿为中文，须通篇使用大陆规范**简体中文**，勿使用繁体字或与繁体混排。
-【输出边界】只输出可发表正文；禁止出现「续写」「第几段」「（接续）」「【接上文】」「以下为第二部分」等编排说明或分段标签；不要复述提示中的【】标记句。"""
+【输出边界】只输出可发表正文；禁止出现「续写」「第几段」「（接续）」「【接上文】」「以下为第二部分」等编排说明或分段标签；不要复述提示中的【】标记句。
+【体裁】本文为书面长文，非播客节目稿；禁止「感谢收听」「感谢你的收听」「我们下次再见」「下期再见」等播客收束语；中途分段禁止告别、订阅引导或「本期节目」式套话。"""
 
 
 class MinimaxClient:
@@ -290,6 +291,7 @@ class MinimaxClient:
         segment_position: Optional[str],
         oral_for_tts: bool = False,
         full_goal_chars: Optional[int] = None,
+        core_question: Optional[str] = None,
     ) -> str:
         """普通文章（非双人播客对话）生成提示。"""
         pos_note = f"（{segment_position}）" if segment_position else ""
@@ -298,6 +300,7 @@ class MinimaxClient:
 【长文章分段·接续写作{pos_note}】
 下方「材料内容」中含「已生成上文」区块：你必须在该文之后续写，不要重复已有段落或句子。
 严禁：再次写与上文重复的全文导语、标题或开篇套话；严禁使用 Speaker1/Speaker2 或对话体。
+严禁：播客式结语（如「感谢收听」「感谢你的收听」「我们下次再见」）；非全文最后一段时禁止任何告别语。
 必须：本段从第一个字起即紧接「已生成上文」最后 1～2 句的话题、指代与语气（如同同一段落的自然延伸），禁止另起炉灶或再列提纲。
 术语与事实与上文一致；段首禁止出现「续写」「接下来」「第二部分」等自我说明用语。
 """
@@ -317,7 +320,7 @@ class MinimaxClient:
         elif segment_role == "middle":
             rules_tail = """7. 本段为中途续写：首句须直接承接上文末句语义，禁止重复标题与开篇、禁止对话体。
 8. 只输出文章正文，不要任何分段/续写标记或小标题式编排说明。
-9. 禁止使用 Speaker 行；论述与上文末段无缝衔接。
+9. 禁止使用 Speaker 行；论述与上文末段无缝衔接；禁止播客结语（感谢收听/我们下次再见等）。
 10. 严格遵守字数上限；本段末尾若非全文末段，不要做全篇总结。"""
         elif segment_role == "last":
             rules_tail = """7. 本段为收尾段：承接上文完成论证，并做简洁收束。
@@ -346,23 +349,27 @@ class MinimaxClient:
                 f"【篇幅】全文汉字量请控制在约 {target_chars} 字以内，充实但不堆砌；材料不足时可略短。"
             )
 
+        cq = (core_question or "").strip()
+        core_line = f"- 核心问题（全文须围绕并回答）：{cq}\n" if cq else ""
+
         return f"""你是专业文章写作助手。请基于以下材料，写出一篇普通文章（非双人对话、非播客脚本）。
 {segment_banner}
 {span_block}
 
 文稿信息：
-- 主题/标题参考：{program_name}
+{core_line}- 主题/标题参考：{program_name}
 - 语言：{script_language}
 - 文风：{script_style}
 - 用户与体裁约束：{constraints_block}
 
 硬性要求：
 1. 输出为连续可读的文章：可使用多级标题、段落、列表；允许使用 Markdown。
-2. 不要写成两人问答；不要出现「Speaker1」「Speaker2」「主持人」「听众」「欢迎收听」等播客用语。
+2. 不要写成两人问答；不要出现「Speaker1」「Speaker2」「主持人」「听众」「欢迎收听」「感谢收听」「我们下次再见」等播客用语或节目结语。
 3. 基于材料写作，避免无根据编造；专业术语前后一致。
 4. 不要以剧本、台词、对话行形式排版。
 5. 不要单独输出「以下是正文」等提示语。
 6. 若材料中有用户给出的结构要求（如分点、小结），请尽量满足。
+   若材料含多个来源（多本书/多条笔记），须围绕统一主线或中心问题组织，将各来源观点对照、归纳或递进，避免写成彼此无关联的「资料块」堆砌；段与段之间须有衔接。
 {rules_tail}
 {_zh_article_quality}
 {SCRIPT_GEN_TTS_ORAL_ARTICLE_APPEND if oral_for_tts else ""}
@@ -386,7 +393,8 @@ class MinimaxClient:
                                segment_position: Optional[str] = None,
                                output_mode: str = "dialogue",
                                oral_for_tts: bool = True,
-                               full_goal_chars: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+                               full_goal_chars: Optional[int] = None,
+                               core_question: Optional[str] = None) -> Iterator[Dict[str, Any]]:
         """
         流式生成播客脚本
 
@@ -447,6 +455,7 @@ class MinimaxClient:
                 segment_position=segment_position,
                 oral_for_tts=oral_for_tts,
                 full_goal_chars=full_goal_chars,
+                core_question=(core_question or "").strip() or None,
             )
         else:
             logger.info(
@@ -1634,8 +1643,9 @@ Speaker2: 今天咱们聊聊这个话题。"""
 3) 结构循序渐进：背景与问题 -> 核心论点/定义 -> 展开论证 -> 案例或数据 -> 小结与展望（按需）。
 4) 每段必须含 transition_hint。
 5) 语言={script_language}，风格={script_style}，文稿主题={program_name}。
-6) 这是文章结构（非双人对话），各段为章节脉络。
-7) 约束（参考）：{constraints or "无"}。
+6) 这是文章结构（非双人对话），各段为章节脉络；禁止设计成「分集播客」式道别或收束。
+7) 若素材含多个来源（来源1…来源N），分段须服务同一论证主线，段间衔接为书面过渡，不要出现「感谢收听」「下期再见」等播客用语。
+8) 约束（参考）：{constraints or "无"}。
 
 素材：
 {content}

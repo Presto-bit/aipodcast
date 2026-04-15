@@ -9,6 +9,7 @@ from app.fyv_shared.config import DEFAULT_VOICES, PODCAST_CONFIG
 from app.fyv_shared.content_parser import content_parser
 
 from .entitlement_matrix import normalize_script_target_input
+from .script_reference_coverage import article_outline_min_chars_threshold, count_selected_notes
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +74,41 @@ def _script_continuation_tail(script_so_far: str, tail_max: int) -> str:
     return t[-tail_max:]
 
 
+def _article_outline_first_enabled() -> bool:
+    return (os.getenv("ARTICLE_OUTLINE_FIRST", "1") or "").strip().lower() not in ("0", "false", "no")
+
+
+def _article_continuation_progress_summary(script_so_far: str, *, max_heading_lines: int = 14) -> str:
+    """长文续写：用字数 + 已出现的 Markdown 标题做轻量进展摘要，降低后段跑题。"""
+    t = (script_so_far or "").strip()
+    if not t:
+        return ""
+    n_chars = len(t)
+    headings: list[str] = []
+    for ln in t.splitlines():
+        s = ln.strip()
+        if s.startswith("#"):
+            headings.append(s[:160])
+        if len(headings) >= max_heading_lines:
+            break
+    head_block = "\n".join(headings) if headings else ""
+    if head_block:
+        return (
+            f"【写作进展摘要】已生成约 {n_chars} 字；以下为已出现标题脉络（勿重复展开，请顺势接续）：\n"
+            f"{head_block}"
+        )
+    return f"【写作进展摘要】已生成约 {n_chars} 字；请紧接末段语义续写，勿重复开篇。"
+
+
 def merge_script_continuation_material(
     base_ref: str,
     script_so_far: str,
     *,
     tail_max: int,
     reference_tail_max: int,
+    output_mode: str = "dialogue",
+    article_outline_block: str = "",
+    article_progress_summary: str = "",
 ) -> str:
     """在参考材料后附加「已生成上文」，供第二轮及后续续写。参考书极长时截末尾，减轻第三轮起拒写/空返。"""
     ref = (base_ref or "").rstrip()
@@ -88,12 +118,30 @@ def merge_script_continuation_material(
             f"【参考材料节选·全文较长已截取末尾约 {rtm} 字，供衔接事实与术语】\n"
             f"{ref[-rtm:]}"
         )
+    om = (output_mode or "dialogue").strip().lower()
+    ao = (article_outline_block or "").strip()
+    aps = (article_progress_summary or "").strip()
+    blocks: list[str] = []
+    if ref:
+        blocks.append(ref)
+    if om == "article" and ao:
+        blocks.append(f"【写作提纲·正文须按此脉络展开】\n{ao}")
+    if om == "article" and aps:
+        blocks.append(aps)
     tail = _script_continuation_tail(script_so_far, tail_max)
-    return (
-        f"{ref}\n\n【已生成上文】\n{tail}\n\n"
+    tail_note = ""
+    if om == "article":
+        tail_note = (
+            "非全文末段时禁止播客式结语（如「感谢收听」「感谢你的收听」「我们下次再见」）；"
+            "须像同一篇文章的中段自然延伸。"
+        )
+    blocks.append(
+        f"【已生成上文】\n{tail}\n\n"
         "（请紧接上文最后一两句续写：首句须自然承接上文语义与指代；不要重复已有段落；"
-        "不要重新写开篇套话或再介绍一遍主题；不要输出「续写」「下一段」等编排标记。）"
+        "不要重新写开篇套话或再介绍一遍主题；不要输出「续写」「下一段」等编排标记。"
+        f"{tail_note}）"
     )
+    return "\n\n".join(blocks)
 
 
 def _join_script_continued(accumulated: str, piece: str, output_mode: str) -> str:
@@ -312,6 +360,7 @@ def script_generation_options_from_payload(payload: dict[str, Any]) -> dict[str,
         "speaker2_persona",
         "script_constraints",
         "output_mode",
+        "core_question",
     ):
         v = payload.get(k)
         if isinstance(v, str) and v.strip():
@@ -321,6 +370,9 @@ def script_generation_options_from_payload(payload: dict[str, Any]) -> dict[str,
         out["script_target_chars"] = n
     if "oral_for_tts" in payload:
         out["oral_for_tts"] = bool(payload.get("oral_for_tts"))
+    _sn = count_selected_notes(payload)
+    if _sn > 0:
+        out["selected_note_count"] = _sn
     return out
 
 
@@ -380,6 +432,12 @@ def build_script_with_minimax(
     if output_mode not in ("dialogue", "article"):
         output_mode = "dialogue"
 
+    core_q = str(opts.get("core_question") or "").strip()
+    try:
+        selected_note_count = int(opts.get("selected_note_count") or 0)
+    except (TypeError, ValueError):
+        selected_note_count = 0
+
     user_c = str(opts.get("script_constraints") or "").strip()
     # 双人：未显式传约束时使用默认双人约束；文章：空约束交给 minimax_client →「无额外约束」
     if output_mode == "article":
@@ -414,7 +472,39 @@ def build_script_with_minimax(
         try:
             goal = int(cfg["target_chars"])
             accumulated = ""
-            material = text
+            article_outline_text = ""
+            outline_min = article_outline_min_chars_threshold(selected_note_count)
+            if (
+                output_mode == "article"
+                and _article_outline_first_enabled()
+                and goal >= outline_min
+            ):
+                oc = str(cfg.get("script_constraints") or "").strip()
+                if not oc and core_q:
+                    oc = f"【核心问题】{core_q}"
+                try:
+                    out_res = minimax_client.generate_script_outline(
+                        content=(text or "")[:80000],
+                        total_target_chars=goal,
+                        api_key=api_key,
+                        script_style=script_style,
+                        script_language=script_language,
+                        program_name=program_name,
+                        speaker1_persona=speaker1,
+                        speaker2_persona=speaker2,
+                        script_constraints=oc,
+                        output_mode="article",
+                    )
+                    if out_res.get("success") and str(out_res.get("outline_text") or "").strip():
+                        article_outline_text = str(out_res.get("outline_text") or "").strip()[:12000]
+                except Exception as exc:
+                    logger.warning("article outline pre-pass skipped: %s", exc)
+
+            material = (
+                f"{text}\n\n【写作提纲·正文须按此脉络展开】\n{article_outline_text}\n"
+                if article_outline_text
+                else text
+            )
             continuity_round = 0
             last_fr: str | None = None
             continuation_shrink_pass = 0
@@ -431,8 +521,19 @@ def build_script_with_minimax(
                     ref_budget = max(2000, min(6000, ref_tail_max // 4))
 
                 if accumulated:
+                    prog = (
+                        _article_continuation_progress_summary(accumulated)
+                        if output_mode == "article"
+                        else ""
+                    )
                     material = merge_script_continuation_material(
-                        text, accumulated, tail_max=tail_max, reference_tail_max=ref_budget
+                        text,
+                        accumulated,
+                        tail_max=tail_max,
+                        reference_tail_max=ref_budget,
+                        output_mode=output_mode,
+                        article_outline_block=article_outline_text if output_mode == "article" else "",
+                        article_progress_summary=prog,
                     )
 
                 seg_target = min(remaining, seg_cap)
@@ -473,6 +574,7 @@ def build_script_with_minimax(
                         segment_role=segment_role,
                         segment_position=segment_position,
                         full_goal_chars=goal if goal > seg_target else None,
+                        core_question=core_q or None,
                     ),
                     on_script_delta=on_script_delta,
                     accumulated_prefix=accumulated,

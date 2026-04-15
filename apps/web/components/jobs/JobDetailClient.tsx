@@ -262,6 +262,17 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
   const traceId =
     job?.result && typeof job.result.trace_id === "string" ? job.result.trace_id : null;
 
+  /** script_draft 单脚本工件时，「成品」区已提供下载，不再重复列出工件表与 object_key。 */
+  const showArtifactsSection = useMemo(() => {
+    const arts = job?.artifacts;
+    if (!arts?.length) return false;
+    if (String(job?.job_type || "") !== "script_draft") return true;
+    if (arts.length !== 1) return true;
+    return String(arts[0].artifact_type || "").toLowerCase() !== "script";
+  }, [job?.artifacts, job?.job_type]);
+
+  const isScriptDraft = String(job?.job_type || "") === "script_draft";
+
   async function onCancel() {
     if (!jobId || !window.confirm("确定要停止这次创作吗？")) return;
     setBusy("cancel");
@@ -335,7 +346,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
   return (
     <main className="min-h-0 max-w-4xl">
       <div className="flex flex-wrap items-baseline gap-3">
-        <h1 className="text-2xl font-semibold">生成结果详情</h1>
+        <h1 className="text-2xl font-semibold">任务详情</h1>
         <code className="rounded bg-surface px-2 py-0.5 text-xs text-muted">{jobId}</code>
       </div>
       <p className="mt-2 text-sm text-muted">
@@ -359,12 +370,14 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
             <span className="text-muted">类型 {job.job_type}</span>
             {job.created_by ? <span className="text-muted">创建者 {job.created_by}</span> : null}
             <span className="text-muted">通道 {job.queue_name}</span>
-            <span className="text-muted tabular-nums">进度 {job.progress}%</span>
+            {job.status !== "queued" && job.status !== "running" ? (
+              <span className="text-muted tabular-nums">进度 {job.progress}%</span>
+            ) : null}
           </div>
           {(job.status === "queued" || job.status === "running") && typeof job.progress === "number" ? (
             <div className="mt-3">
               <div className="mb-1 flex justify-between text-[11px] text-muted">
-                <span>总体进度（后端上报，各类型含义可能略有不同）</span>
+                <span>进度</span>
                 <span className="tabular-nums">{Math.min(100, Math.max(0, job.progress))}%</span>
               </div>
               <div
@@ -395,17 +408,11 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
               {stage.detail ? (
                 <p className="mt-2 border-t border-line pt-2 text-xs text-muted">{stage.detail}</p>
               ) : null}
-            </div>
-          ) : null}
-          {job.status === "queued" || job.status === "running" ? (
-            <div className="mt-3 rounded-lg border border-line bg-surface/90 px-3 py-2 text-[11px] leading-relaxed text-muted" role="status">
-              <p className="text-muted">
+              <p className="mt-3 border-t border-line pt-2 text-[11px] leading-relaxed text-muted">
                 {job.status === "queued"
                   ? "排队中，请稍候。"
-                  : "生成中；久无进展可刷新或点「停止创作」后重试。"}
-              </p>
-              <p className="mt-1.5">
-                无需一直停在本页：可先去写笔记或处理其他事，完成后到{" "}
+                  : "生成中；久无进展可刷新或点「停止创作」后重试。"}{" "}
+                无需一直停在本页：完成后到{" "}
                 <Link href="/works?tab=active" className="font-medium text-brand hover:underline">
                   我的作品 → 进行中
                 </Link>{" "}
@@ -466,12 +473,6 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
             </p>
           ) : null}
           <div className="mt-4 flex flex-wrap gap-2">
-            <Link
-              href={recordsListHref}
-              className="inline-flex items-center rounded-md border border-line bg-surface px-2.5 py-1.5 text-xs text-ink hover:bg-fill"
-            >
-              返回列表
-            </Link>
             {job.status === "running" || job.status === "queued" ? (
               <Button
                 type="button"
@@ -533,13 +534,15 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
                     下载文稿
                   </a>
                 ) : null}
-                <button
-                  type="button"
-                  className="rounded-dawn-sm border border-line bg-surface px-2.5 py-1.5 text-xs text-ink hover:bg-fill"
-                  onClick={() => void onCopyPreview()}
-                >
-                  复制文案摘要
-                </button>
+                {!isScriptDraft ? (
+                  <button
+                    type="button"
+                    className="rounded-dawn-sm border border-line bg-surface px-2.5 py-1.5 text-xs text-ink hover:bg-fill"
+                    onClick={() => void onCopyPreview()}
+                  >
+                    复制文案摘要
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="rounded-dawn-sm border border-line bg-surface px-2.5 py-1.5 text-xs text-ink hover:bg-fill"
@@ -555,9 +558,9 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
         <p className="mt-6 text-sm text-muted">加载中…</p>
       ) : null}
 
-      {job?.artifacts && job.artifacts.length > 0 ? (
+      {showArtifactsSection && job?.artifacts && job.artifacts.length > 0 ? (
         <section className="fym-table-shell mt-6 p-[var(--dawn-space-card)]">
-          <h2 className="text-sm font-medium text-ink">生成结果</h2>
+          <h2 className="text-sm font-medium text-ink">附件</h2>
           <ul className="mt-2 space-y-2 text-xs">
             {job.artifacts.map((a) => (
               <li key={a.id} className="rounded border border-line bg-fill p-2">
@@ -570,7 +573,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
                     下载文件
                   </a>
                 </div>
-                <div className="mt-1 break-all font-mono text-ink">{a.object_key}</div>
+                <div className="mt-1 break-all font-mono text-[11px] text-muted">{a.object_key}</div>
               </li>
             ))}
           </ul>
@@ -583,7 +586,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
         <section className={JOB_SECTION_SURFACE_CARD}>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-medium text-ink">文案预览</h2>
+              <h2 className="text-sm font-medium text-ink">{isScriptDraft ? "文稿" : "文案预览"}</h2>
             </div>
             {job?.job_type === "script_draft" ? (
               <Button

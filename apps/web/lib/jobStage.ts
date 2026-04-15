@@ -47,7 +47,7 @@ export function deriveJobStage(
   if (st === "succeeded") {
     return {
       stageLabel: "已完成",
-      nextStep: "可在上方生成结果中下载，或到「我的作品」里收听。",
+      nextStep: "可在本页下载或复制成品，或到「我的作品」里收听。",
       detail: label
     };
   }
