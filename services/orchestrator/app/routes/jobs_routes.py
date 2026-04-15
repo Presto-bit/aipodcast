@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from rq.job import Job
 
 from .. import auth_bridge
+from ..config import settings
 
 _jobs_startup_logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ from ..note_work_meta import (
 from ..worker_tasks import run_ai_job, run_media_job
 
 router = APIRouter(prefix="/api/v1", tags=["jobs"], dependencies=[Depends(verify_internal_signature)])
-WORK_TRASH_RETENTION_DAYS = 7
+WORK_TRASH_RETENTION_DAYS = settings.trash_retention_days
 
 
 def _list_jobs_db_unreachable(exc: BaseException) -> bool:
@@ -582,7 +583,7 @@ def list_works_trash_api(
     offset: int = Query(default=0, ge=0, le=10_000),
 ):
     # 按默认策略：回收站作品保留 7 天，访问列表时顺带清理过期数据。
-    purge_expired_trashed_works(retention_days=WORK_TRASH_RETENTION_DAYS, max_rows=500)
+    purge_expired_trashed_works(retention_days=WORK_TRASH_RETENTION_DAYS, max_rows=settings.trash_purge_max_rows)
     user_ref = _current_user_ref_or_401(request)
     rows = list_trashed_works(limit=limit, offset=offset, user_ref=user_ref)
     buckets: dict[str, list[dict[str, Any]]] = {"notes": [], "ai": [], "tts": []}
@@ -720,7 +721,7 @@ def _purge_job_impl(job_id: str, request: Request) -> dict[str, Any]:
     if not ok:
         raise HTTPException(status_code=400, detail=err or "purge_failed")
     try:
-        purge_expired_trashed_works(retention_days=WORK_TRASH_RETENTION_DAYS, max_rows=500)
+        purge_expired_trashed_works(retention_days=WORK_TRASH_RETENTION_DAYS, max_rows=settings.trash_purge_max_rows)
     except Exception:
         pass
     return {"success": True, "job_id": job_id}
@@ -740,7 +741,7 @@ def purge_job_api_post(job_id: str, request: Request):
 def ensure_jobs_trash_schema_startup(*, strict: bool = False) -> None:
     try:
         ensure_jobs_trash_schema()
-        purge_expired_trashed_works(retention_days=WORK_TRASH_RETENTION_DAYS, max_rows=500)
+        purge_expired_trashed_works(retention_days=WORK_TRASH_RETENTION_DAYS, max_rows=settings.trash_purge_max_rows)
     except Exception:
         _jobs_startup_logger.exception("jobs trash schema startup failed")
         if strict:
@@ -866,12 +867,22 @@ def export_job_audio_mp3_api(
         raise HTTPException(status_code=404, detail="job_not_found")
     result = _parse_job_result_dict(row.get("result"))
     hx = str(result.get("audio_hex") or "").strip()
-    if not hx or len(hx) % 2 != 0:
-        raise HTTPException(status_code=400, detail="work_audio_missing")
-    try:
-        raw_mp3 = bytes.fromhex(hx)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="audio_hex_invalid") from exc
+    raw_mp3: bytes
+    if hx and len(hx) % 2 == 0:
+        try:
+            raw_mp3 = bytes.fromhex(hx)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="audio_hex_invalid") from exc
+    else:
+        akey = str(result.get("audio_object_key") or "").strip()
+        if not akey:
+            raise HTTPException(status_code=400, detail="work_audio_missing")
+        try:
+            raw_mp3 = get_object_bytes(akey)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"object_fetch_failed:{exc}") from exc
+        if not raw_mp3:
+            raise HTTPException(status_code=400, detail="work_audio_missing")
     chapters_raw = result.get("audio_chapters")
     chapters = chapters_raw if opts.embed_chapters and isinstance(chapters_raw, list) else None
     title = (opts.title or "").strip() or str(result.get("title") or "")[:300]

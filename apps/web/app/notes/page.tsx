@@ -2107,7 +2107,7 @@ export default function NotesPage() {
                     ? "创建笔记本后即可添加资料。"
                     : `资料 ${draftSelectedNoteIds.length}/${noteRefCap} · 本页 ${stats.total} 条${hasMoreNotes ? " · 仍有更多" : ""}`}
                 </p>
-                {notebooks.length > 0 ? <PlanTierHint variant="notes_ref" /> : null}
+                {notebooks.length > 0 ? <PlanTierHint /> : null}
                 {notesSorted.length > 0 ? (
                   <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink hover:bg-surface/70">
                     <input

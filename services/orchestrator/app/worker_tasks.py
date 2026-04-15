@@ -91,6 +91,12 @@ def _attach_result_audio_duration_sec(result: dict[str, Any]) -> None:
         pass
 
 
+def _strip_audio_hex_if_persisted_to_object_store(result: dict[str, Any]) -> None:
+    """成片 MP3 已写入对象存储后从 result 移除 audio_hex，避免 JSONB 重复存放大块 hex。"""
+    if str(result.get("audio_object_key") or "").strip():
+        result.pop("audio_hex", None)
+
+
 def _terminal_result_dict(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -1012,6 +1018,7 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                             upload_bytes(_ep_key, _raw_mp3, "audio/mpeg")
                             result["audio_object_key"] = _ep_key
                             result["audio_url"] = presigned_get_url(_ep_key, expires_in=86400 * 7)
+                            _strip_audio_hex_if_persisted_to_object_store(result)
                     except Exception as _up_exc:
                         append_job_event(
                             job_id,

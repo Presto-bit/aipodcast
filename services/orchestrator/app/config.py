@@ -35,5 +35,11 @@ class Settings:
         "yes",
     )
 
+    # 回收站保留天数；定时任务与 API 侧 purge 共用。
+    trash_retention_days = max(1, min(365, int(os.getenv("TRASH_RETENTION_DAYS", "7"))))
+    # 后台回收站清理间隔（秒）；0 表示不启用独立定时循环（仍可在启动与各 API 路径触发 purge）。
+    trash_purge_interval_sec = max(0, int(os.getenv("TRASH_PURGE_INTERVAL_SEC", "3600")))
+    trash_purge_max_rows = max(1, min(2000, int(os.getenv("TRASH_PURGE_MAX_ROWS", "500"))))
+
 
 settings = Settings()

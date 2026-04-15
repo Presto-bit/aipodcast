@@ -64,19 +64,22 @@ type LockedToolbarChipPillProps = {
   upgradeTitle: string;
 };
 
-/** 工具条上未解锁能力：与 `chipClass` 同级的圆角胶囊内，左侧为禁用文案、右侧为皇冠入口。 */
+/** 工具条上未解锁能力：整段胶囊（文案 + 皇冠）点击跳转订阅页。 */
 export function LockedToolbarChipPill({ label, upgradeTitle }: LockedToolbarChipPillProps) {
   return (
-    <div className="inline-flex max-w-full min-w-0 overflow-hidden rounded-full border border-line bg-surface shadow-sm">
-      <button
-        type="button"
-        className="max-w-[calc(100%-2.5rem)] min-w-0 flex-1 cursor-not-allowed truncate border-0 bg-transparent px-3 py-1.5 text-left text-xs font-medium text-muted"
-        disabled
-      >
+    <Link
+      href="/subscription"
+      title={upgradeTitle}
+      aria-label={upgradeTitle}
+      className="inline-flex max-w-full min-w-0 overflow-hidden rounded-full border border-line bg-surface text-inherit shadow-sm no-underline transition-colors hover:bg-fill/80"
+    >
+      <span className="max-w-[calc(100%-2.5rem)] min-w-0 flex-1 truncate px-3 py-1.5 text-left text-xs font-medium text-muted">
         {label}
-      </button>
-      <SubscriptionVipLink title={upgradeTitle} segment />
-    </div>
+      </span>
+      <span className="inline-flex min-h-[1.75rem] min-w-[2.25rem] shrink-0 items-center justify-center border-l border-amber-500/30 bg-amber-500/[0.07] px-2 text-amber-700 transition-colors hover:bg-amber-500/15 dark:text-amber-300">
+        <IconSubscriptionCrown className="h-3 w-3" />
+      </span>
+    </Link>
   );
 }
 
@@ -113,22 +116,18 @@ export function GatedSplitAction({
   }
   const shell =
     variant === "brand"
-      ? "inline-flex max-w-full min-w-0 overflow-hidden rounded-md border border-brand/45 bg-brand/10 shadow-sm"
-      : "inline-flex max-w-full min-w-0 overflow-hidden rounded-md border border-line bg-surface shadow-sm";
+      ? "inline-flex max-w-full min-w-0 overflow-hidden rounded-md border border-brand/45 bg-brand/10 shadow-sm text-inherit no-underline transition-colors hover:bg-brand/15"
+      : "inline-flex max-w-full min-w-0 overflow-hidden rounded-md border border-line bg-surface shadow-sm text-inherit no-underline transition-colors hover:bg-fill/80";
   const labelCls =
     variant === "brand"
       ? "text-[11px] font-medium text-brand opacity-80"
       : "text-[11px] text-ink opacity-70";
   return (
-    <div className={shell}>
-      <button type="button" className={`min-w-0 flex-1 truncate border-0 bg-transparent px-2 py-1 text-left ${labelCls}`} disabled>
-        {children}
-      </button>
-      <SubscriptionVipLink
-        title={upgradeTitle}
-        segment
-        className="inline-flex min-h-[1.75rem] min-w-[2.25rem] shrink-0 items-center justify-center border-l border-amber-500/35 bg-amber-500/[0.08] px-2 text-amber-800 transition-colors hover:bg-amber-500/15 dark:text-amber-300"
-      />
-    </div>
+    <Link href="/subscription" title={upgradeTitle} aria-label={upgradeTitle} className={shell}>
+      <span className={`min-w-0 flex-1 truncate px-2 py-1 text-left ${labelCls}`}>{children}</span>
+      <span className="inline-flex min-h-[1.75rem] min-w-[2.25rem] shrink-0 items-center justify-center border-l border-amber-500/35 bg-amber-500/[0.08] px-2 text-amber-800 dark:text-amber-300">
+        <IconSubscriptionCrown className="h-3 w-3" />
+      </span>
+    </Link>
   );
 }

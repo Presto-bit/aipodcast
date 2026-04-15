@@ -664,14 +664,14 @@ export default function PodcastWorksGallery({
             return;
           }
           const hex = String(result.audio_hex || "").trim();
-          if (!hex) {
+          const audioUrl = String(result.audio_url || "").trim();
+          if (!hex && !audioUrl) {
             durationResolvedRef.current.add(id);
             return;
           }
-          const url = hexToMp3DataUrl(hex);
           const a = document.createElement("audio");
           a.preload = "metadata";
-          a.src = url;
+          a.src = hex ? hexToMp3DataUrl(hex) : audioUrl;
           await new Promise<void>((resolve) => {
             const done = () => {
               a.removeAttribute("src");
@@ -775,10 +775,17 @@ export default function PodcastWorksGallery({
     if (!res.ok) return null;
     const result = (row.result || {}) as Record<string, unknown>;
     const hex = String(result.audio_hex || "").trim();
-    if (!hex) return null;
-    const url = hexToMp3DataUrl(hex);
-    srcCache.current[jobId] = url;
-    return url;
+    if (hex) {
+      const url = hexToMp3DataUrl(hex);
+      srcCache.current[jobId] = url;
+      return url;
+    }
+    const audioUrl = String(result.audio_url || "").trim();
+    if (audioUrl) {
+      srcCache.current[jobId] = audioUrl;
+      return audioUrl;
+    }
+    return null;
   }, [getAuthHeaders]);
 
   const togglePlay = useCallback(

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from ..config import settings
 from ..legacy_bridge import parse_url_content
 from ..note_constants import (
     ALLOWED_NOTE_EXT,
@@ -62,7 +63,7 @@ _notes_startup_logger = logging.getLogger(__name__)
 from ..security import verify_internal_signature
 
 router = APIRouter(prefix="/api/v1", tags=["notes"], dependencies=[Depends(verify_internal_signature)])
-NOTE_TRASH_RETENTION_DAYS = 7
+NOTE_TRASH_RETENTION_DAYS = settings.trash_retention_days
 
 
 def _try_enqueue_note_rag_index(note_id: str, user_ref: str | None) -> None:
@@ -287,7 +288,7 @@ def list_trash_notes_api(
     offset: int = Query(default=0, ge=0, le=50_000),
 ):
     # 默认保留 7 天，查询回收站时顺带清理过期项。
-    purge_expired_trashed_notes(retention_days=NOTE_TRASH_RETENTION_DAYS, max_rows=500)
+    purge_expired_trashed_notes(retention_days=NOTE_TRASH_RETENTION_DAYS, max_rows=settings.trash_purge_max_rows)
     user_ref = _current_user_ref_or_401(request)
     rows = list_trashed_notes(limit=limit, offset=offset, user_ref=user_ref)
     notes: list[dict[str, object]] = []
@@ -660,7 +661,7 @@ def ensure_notebooks_schema_startup(*, strict: bool = False) -> None:
     try:
         ensure_notebooks_schema()
         ensure_note_rag_schema()
-        purge_expired_trashed_notes(retention_days=NOTE_TRASH_RETENTION_DAYS, max_rows=500)
+        purge_expired_trashed_notes(retention_days=NOTE_TRASH_RETENTION_DAYS, max_rows=settings.trash_purge_max_rows)
     except Exception:
         _notes_startup_logger.exception("notebooks schema startup failed")
         if strict:

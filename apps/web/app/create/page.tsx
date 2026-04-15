@@ -57,7 +57,7 @@ export default function CreatePage() {
 
   const [draftText, setDraftText] = useState("");
   const [libraryPreview, setLibraryPreview] = useState("");
-  const [mode, setMode] = useState<CreateMode | null>(null);
+  const [mode, setMode] = useState<CreateMode | null>("podcast");
 
   const [podcastAct, setPodcastAct] = useState<PodcastStudioActivity>({ busy: false, phase: "", progressPct: 0 });
   const [ttsAct, setTtsAct] = useState<TtsStudioActivity>({ busy: false, phase: "", progressPct: 0 });

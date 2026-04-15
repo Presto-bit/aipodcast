@@ -1003,7 +1003,7 @@ def restore_note(note_id: str, user_ref: str | None = None) -> bool:
 
 
 def purge_note_hard(note_id: str, user_ref: str | None = None) -> bool:
-    """永久删除（回收站清空）。"""
+    """永久删除（回收站清空）；若有上传原件则删除对象存储中的 file_object_key。"""
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -1016,12 +1016,23 @@ def purge_note_hard(note_id: str, user_ref: str | None = None) -> bool:
                   AND i.input_type IN ('note_text', 'note_file')
                   AND i.deleted_at IS NOT NULL
                   AND (%s::uuid IS NULL OR p.user_id = %s::uuid)
+                RETURNING i.file_object_key
                 """,
                 (note_id, user_uuid, user_uuid),
             )
-            ok = cur.rowcount > 0
+            row = cur.fetchone()
             conn.commit()
-            return ok
+    if not row:
+        return False
+    key = str(row.get("file_object_key") or "").strip()
+    if key:
+        from .object_store import delete_object_key
+
+        try:
+            delete_object_key(key)
+        except Exception:
+            pass
+    return True
 
 
 def purge_expired_trashed_notes(retention_days: int = 7, max_rows: int = 200) -> int:
@@ -1049,14 +1060,6 @@ def purge_expired_trashed_notes(retention_days: int = 7, max_rows: int = 200) ->
         if not nid:
             continue
         if purge_note_hard(nid):
-            key = str(row.get("file_object_key") or "").strip()
-            if key:
-                try:
-                    from .object_store import delete_object_key
-
-                    delete_object_key(key)
-                except Exception:
-                    pass
             deleted_count += 1
     return deleted_count
 
@@ -1087,7 +1090,7 @@ def delete_job_and_storage(job_id: str) -> tuple[bool, str]:
         k = str(a.get("object_key") or "").strip()
         if k:
             keys.add(k)
-    for fk in ("script_object_key", "script_url", "cover_object_key"):
+    for fk in ("script_object_key", "script_url", "cover_object_key", "audio_object_key"):
         v = result.get(fk)
         if isinstance(v, str) and v.strip() and not v.strip().lower().startswith("http"):
             keys.add(v.strip())
@@ -1211,6 +1214,37 @@ def purge_expired_trashed_works(retention_days: int = 7, max_rows: int = 200) ->
         if ok:
             deleted_count += 1
     return deleted_count
+
+
+def strip_redundant_audio_hex_from_job_results(max_rows: int = 200) -> int:
+    """
+    成片已写入 audio_object_key 时移除 result 内 audio_hex，降低 JSONB 体积与备份成本。
+    返回本轮 UPDATE 行数。
+    """
+    lim = max(1, min(2000, int(max_rows)))
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE jobs AS j
+                SET result = j.result - 'audio_hex',
+                    updated_at = NOW()
+                FROM (
+                  SELECT id FROM jobs
+                  WHERE status = 'succeeded'
+                    AND result ? 'audio_object_key'
+                    AND COALESCE(TRIM(result->>'audio_object_key'), '') <> ''
+                    AND result ? 'audio_hex'
+                  ORDER BY updated_at ASC
+                  LIMIT %s
+                ) AS sub
+                WHERE j.id = sub.id
+                """,
+                (lim,),
+            )
+            n = int(cur.rowcount or 0)
+            conn.commit()
+    return n
 
 
 def list_recent_works(

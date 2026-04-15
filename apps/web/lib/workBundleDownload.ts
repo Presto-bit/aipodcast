@@ -113,14 +113,12 @@ export async function downloadJobBundleZip(opts: JobBundleExportOptions): Promis
   const folderName = sanitizeFolderName(opts.title);
   const embedChapters = opts.embedChaptersInMp3 !== false;
 
-  const taggedMp3 =
-    hex &&
-    (await fetchTaggedMp3Bytes(opts.jobId, authHdr, {
-      title: (opts.title || folderName).slice(0, 300),
-      artist: (opts.exportArtist || "").trim(),
-      album: (opts.exportAlbum || "").trim(),
-      embed_chapters: embedChapters
-    }));
+  const taggedMp3 = await fetchTaggedMp3Bytes(opts.jobId, authHdr, {
+    title: (opts.title || folderName).slice(0, 300),
+    artist: (opts.exportArtist || "").trim(),
+    album: (opts.exportAlbum || "").trim(),
+    embed_chapters: embedChapters
+  });
   const fallbackMp3 = hex ? hexToUint8Array(hex) : new Uint8Array();
   const audioBytes = taggedMp3 && taggedMp3.length > 0 ? Uint8Array.from(taggedMp3) : fallbackMp3;
 

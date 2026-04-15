@@ -1190,7 +1190,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       panelClassAnchor,
                       "资料库",
                       <div className="flex flex-col gap-2">
-                        <PlanTierHint variant="notes_ref" />
+                        <PlanTierHint />
                         <div className="rounded-lg border border-line bg-fill/70 p-2.5">
                           <p className="mb-1.5 text-xs font-medium text-ink">网页链接</p>
                           <textarea

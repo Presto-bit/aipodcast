@@ -1,5 +1,6 @@
 """编排器 HTTP 入口：路由按域拆分到 `app/routes/`。"""
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -19,6 +20,9 @@ from .models import (
     ensure_user_preferences_schema,
     ensure_users_profile_columns,
     ensure_alipay_page_checkout_schema,
+    purge_expired_trashed_notes,
+    purge_expired_trashed_works,
+    strip_redundant_audio_hex_from_job_results,
 )
 from .object_store import ensure_bucket_exists
 from .startup_security import assert_production_security_or_exit
@@ -75,10 +79,59 @@ def run_startup_tasks() -> None:
     _startup_step("ensure_rss_publish_schema", ensure_rss_publish_schema)
 
 
+def _run_scheduled_storage_maintenance() -> None:
+    """回收站到期清理 + 历史任务 result 中冗余 audio_hex 剥离（对象存储已有时）。"""
+    try:
+        n_notes = purge_expired_trashed_notes(
+            retention_days=settings.trash_retention_days,
+            max_rows=settings.trash_purge_max_rows,
+        )
+        n_jobs = purge_expired_trashed_works(
+            retention_days=settings.trash_retention_days,
+            max_rows=settings.trash_purge_max_rows,
+        )
+        n_hex = strip_redundant_audio_hex_from_job_results(max_rows=settings.trash_purge_max_rows)
+        if n_notes or n_jobs or n_hex:
+            logger.info(
+                "scheduled storage maintenance: trashed_notes=%s trashed_jobs=%s stripped_audio_hex_rows=%s",
+                n_notes,
+                n_jobs,
+                n_hex,
+            )
+    except Exception:
+        logger.exception("scheduled storage maintenance failed")
+
+
+async def _scheduled_storage_maintenance_loop(stop: asyncio.Event) -> None:
+    interval = int(settings.trash_purge_interval_sec)
+    if interval <= 0:
+        return
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=float(interval))
+        except asyncio.TimeoutError:
+            pass
+        if stop.is_set():
+            break
+        await asyncio.to_thread(_run_scheduled_storage_maintenance)
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     run_startup_tasks()
-    yield
+    stop = asyncio.Event()
+    maint_task: asyncio.Task[None] | None = None
+    if int(settings.trash_purge_interval_sec) > 0:
+        maint_task = asyncio.create_task(_scheduled_storage_maintenance_loop(stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        if maint_task is not None:
+            try:
+                await asyncio.wait_for(maint_task, timeout=5.0)
+            except Exception:
+                maint_task.cancel()
 
 
 app = FastAPI(title="AI Native Orchestrator", version="0.1.0", lifespan=_lifespan)

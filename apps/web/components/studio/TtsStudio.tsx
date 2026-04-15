@@ -36,7 +36,6 @@ import { useAuth, userAccountRef } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { readSessionStorageScoped, removeSessionStorageScoped } from "../../lib/userScopedStorage";
-import { PlanTierHint } from "../PlanTierHint";
 import { LockedToolbarChipPill } from "../SubscriptionVipLink";
 import { mayUseAiPolishPlan, planIsBasicOrAbove } from "../../lib/noteReferenceLimits";
 
@@ -119,7 +118,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const [introBgm2StoredHex, setIntroBgm2StoredHex] = useState<string | null>(null);
   const [outroBgm3StoredHex, setOutroBgm3StoredHex] = useState<string | null>(null);
   const [introOutroHydrated, setIntroOutroHydrated] = useState(false);
-  const [generateCover, setGenerateCover] = useState(true);
+  const [generateCover, setGenerateCover] = useState(false);
   /** 默认关闭：仅用户打开开关时才会在任务 payload 中携带 ai_polish；不会在未点击「AI 润色」时自动润色 */
   const [aiPolish, setAiPolish] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1046,7 +1045,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                           setAiPolish((v) => !v);
                         }}
                         disabled={polishing}
-                        title="开：合成前润色。Shift+点：仅润色正文"
+                        title="开启后会改动内容，让文字更口语化。开：合成前润色。Shift+点：仅润色正文"
                       >
                         {polishing ? "润色中…" : "AI润色"}
                       </button>
@@ -1063,7 +1062,6 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                     </button>
                   </span>
                 </div>
-                <PlanTierHint variant="tts_polish" />
               </div>
 
               {!hideGenerateButton ? (
