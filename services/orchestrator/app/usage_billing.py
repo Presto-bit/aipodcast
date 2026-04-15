@@ -28,11 +28,13 @@ def _parse_jsonish(val: Any) -> dict[str, Any]:
 
 
 def _want_generate_cover_for_billing(payload: dict[str, Any], job_type: str) -> bool:
-    """与 worker_tasks._payload_wants_generate_cover 一致：文章默认不配封面估算。"""
+    """与 worker_tasks._payload_wants_generate_cover 一致（含 script_draft 与播客 article 分支）。"""
     om = str(payload.get("output_mode") or "").strip().lower()
     jt = str(job_type or "").strip()
-    if om == "article" and jt in ("script_draft", "podcast_generate", "podcast"):
+    if om == "article" and jt == "script_draft":
         return bool(payload.get("generate_cover"))
+    if om == "article" and jt in ("podcast_generate", "podcast"):
+        return payload.get("generate_cover") is not False
     return bool(payload.get("generate_cover", True))
 
 

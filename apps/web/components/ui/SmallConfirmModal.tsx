@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "./Button";
 
 type Props = {
@@ -45,8 +46,11 @@ export default function SmallConfirmModal({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+  /** 挂到 body：祖先若含 backdrop-filter（如 .fym-surface-card），未 portal 的 fixed 会相对该层定位并被裁切。 */
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
       <button
         type="button"
         className="absolute inset-0 bg-surface/50 backdrop-blur-[1px]"
@@ -81,6 +85,7 @@ export default function SmallConfirmModal({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

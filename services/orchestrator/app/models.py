@@ -1174,7 +1174,8 @@ def list_trashed_works(limit: int = 120, offset: int = 0, user_ref: str | None =
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
             cur.execute(
                 """
-                SELECT j.id, j.job_type, j.status, j.result, j.created_at, j.completed_at, j.project_id, j.deleted_at
+                SELECT j.id, j.job_type, j.status, j.result, j.created_at, j.completed_at, j.project_id, j.deleted_at,
+                  p.name AS project_name
                 FROM jobs j
                 LEFT JOIN projects p ON p.id = j.project_id
                 WHERE j.status = 'succeeded'
@@ -1294,7 +1295,8 @@ def list_recent_works(
                           )
                         )
                       END AS result,
-                      j.payload, j.created_at, j.completed_at, j.project_id
+                      j.payload, j.created_at, j.completed_at, j.project_id,
+                      p.name AS project_name
                     FROM jobs j
                     LEFT JOIN projects p ON p.id = j.project_id
                     WHERE j.status = 'succeeded'
@@ -1308,7 +1310,8 @@ def list_recent_works(
             else:
                 cur.execute(
                     """
-                    SELECT j.id, j.job_type, j.status, j.result, j.payload, j.created_at, j.completed_at, j.project_id
+                    SELECT j.id, j.job_type, j.status, j.result, j.payload, j.created_at, j.completed_at, j.project_id,
+                      p.name AS project_name
                     FROM jobs j
                     LEFT JOIN projects p ON p.id = j.project_id
                     WHERE j.status = 'succeeded'

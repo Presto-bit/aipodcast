@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type MouseEventHandler } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -50,9 +51,11 @@ function SourceExcerptModal({
 
   if (!open || !source) return null;
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
+      className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="notes-ask-source-modal-title"
@@ -95,7 +98,8 @@ function SourceExcerptModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

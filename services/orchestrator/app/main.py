@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .config import settings
+from .embedded_rq_media import start_embedded_media_rq_worker_thread
 from .e2e_smoke import e2e_smoke_secret_configured
 from .models import (
     ensure_payment_refunds_schema,
@@ -119,6 +120,11 @@ async def _scheduled_storage_maintenance_loop(stop: asyncio.Event) -> None:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     run_startup_tasks()
+    if settings.embed_rq_media_worker:
+        try:
+            start_embedded_media_rq_worker_thread(settings.redis_url)
+        except Exception:
+            logger.exception("embedded media RQ worker failed to start; podcast jobs may stay queued until media-worker runs")
     stop = asyncio.Event()
     maint_task: asyncio.Task[None] | None = None
     if int(settings.trash_purge_interval_sec) > 0:

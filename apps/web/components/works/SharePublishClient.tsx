@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
 import {
   buildSharePublishCopyFromScriptAndPayload,
@@ -1087,57 +1088,63 @@ export function SharePublishClient({ jobId }: Props) {
         </>
       ) : null}
 
-      {scheduleModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center" role="presentation">
-          <button
-            type="button"
-            className="absolute inset-0 cursor-default"
-            aria-label="关闭"
-            onClick={() => cancelScheduleModal()}
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="schedule-modal-title"
-            className="relative z-10 w-full max-w-md rounded-2xl border border-line bg-surface p-5 shadow-card"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 id="schedule-modal-title" className="text-base font-semibold text-ink">
-              定时发布
-            </h2>
-            <p className="mt-1 text-xs text-muted">选择 RSS 中该集的可见时间（各平台抓取有延迟）。</p>
-            <label className="mt-4 block text-sm text-muted">
-              发布时间
-              <input
-                type="datetime-local"
-                className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                value={scheduleModalDraft}
-                onChange={(e) => {
-                  setScheduleModalDraft(e.target.value);
-                  setScheduleModalErr("");
-                }}
-              />
-            </label>
-            {scheduleModalErr ? <p className="mt-2 text-sm text-danger-ink">{scheduleModalErr}</p> : null}
-            <div className="mt-5 flex justify-end gap-2">
+      {scheduleModalOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+              role="presentation"
+            >
               <button
                 type="button"
-                className="rounded-lg border border-line bg-fill/40 px-4 py-2 text-sm text-ink hover:bg-fill"
+                className="absolute inset-0 cursor-default"
+                aria-label="关闭"
                 onClick={() => cancelScheduleModal()}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="schedule-modal-title"
+                className="relative z-10 w-full max-w-md rounded-2xl border border-line bg-surface p-5 shadow-card"
+                onClick={(e) => e.stopPropagation()}
               >
-                取消
-              </button>
-              <button
-                type="button"
-                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-95"
-                onClick={() => confirmScheduleModal()}
-              >
-                确定
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+                <h2 id="schedule-modal-title" className="text-base font-semibold text-ink">
+                  定时发布
+                </h2>
+                <p className="mt-1 text-xs text-muted">选择 RSS 中该集的可见时间（各平台抓取有延迟）。</p>
+                <label className="mt-4 block text-sm text-muted">
+                  发布时间
+                  <input
+                    type="datetime-local"
+                    className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                    value={scheduleModalDraft}
+                    onChange={(e) => {
+                      setScheduleModalDraft(e.target.value);
+                      setScheduleModalErr("");
+                    }}
+                  />
+                </label>
+                {scheduleModalErr ? <p className="mt-2 text-sm text-danger-ink">{scheduleModalErr}</p> : null}
+                <div className="mt-5 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-line bg-fill/40 px-4 py-2 text-sm text-ink hover:bg-fill"
+                    onClick={() => cancelScheduleModal()}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-95"
+                    onClick={() => confirmScheduleModal()}
+                  >
+                    确定
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </main>
   );
 }

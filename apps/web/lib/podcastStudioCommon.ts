@@ -175,12 +175,8 @@ export function buildScriptPayload(
     outro_text: opts.outroText.trim(),
     ...opts.ref
   };
-  // 单人/文章成片默认不生成封面；双人对话默认生成，除非显式关闭
-  if (opts.outputMode === "article") {
-    out.generate_cover = opts.generateCover === true;
-  } else {
-    out.generate_cover = opts.generateCover !== false;
-  }
+  // 播客单人(article)与双人(dialogue)一致：默认生成封面，仅显式 generateCover=false 关闭（script_draft 不走本函数）
+  out.generate_cover = opts.generateCover !== false;
   if (opts.aiPolish === true) {
     out.ai_polish = true;
   }

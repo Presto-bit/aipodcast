@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "./Button";
 
 type Props = {
@@ -80,9 +81,11 @@ export default function SmallPromptModal({
 
   if (!open) return null;
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/35 p-4"
+      className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/35 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="prompt-modal-title"
@@ -123,6 +126,7 @@ export default function SmallPromptModal({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

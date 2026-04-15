@@ -8,6 +8,25 @@ load_dotenv(os.path.join(_REPO_ROOT, ".env.ai-native"), override=False)
 load_dotenv(".env.ai-native", override=False)
 
 
+def _fyv_production() -> bool:
+    return (os.environ.get("FYV_PRODUCTION") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _parse_embed_rq_media_worker() -> bool:
+    """
+    ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER：
+    - 显式 1/true/on → 内嵌 media 消费者；
+    - 显式 0/false/off → 不内嵌；
+    - 未设置 → FYV_PRODUCTION 未开启时默认内嵌（本机只起编排器时播客可出队）。
+    """
+    raw = (os.environ.get("ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return not _fyv_production()
+
+
 class Settings:
     db_host = os.getenv("DB_HOST", "127.0.0.1")
     db_port = int(os.getenv("DB_PORT", "5432"))
@@ -40,6 +59,9 @@ class Settings:
     # 后台回收站清理间隔（秒）；0 表示不启用独立定时循环（仍可在启动与各 API 路径触发 purge）。
     trash_purge_interval_sec = max(0, int(os.getenv("TRASH_PURGE_INTERVAL_SEC", "3600")))
     trash_purge_max_rows = max(1, min(2000, int(os.getenv("TRASH_PURGE_MAX_ROWS", "500"))))
+
+    # 非生产默认在进程内消费 media 队列；生产须 FYV_PRODUCTION=1（此时默认关）并部署独立 media-worker
+    embed_rq_media_worker = _parse_embed_rq_media_worker()
 
 
 settings = Settings()

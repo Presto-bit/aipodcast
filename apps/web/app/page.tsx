@@ -57,11 +57,14 @@ export default function HomePage() {
   const [worksRefreshKey, setWorksRefreshKey] = useState(0);
   const [worksFetchErr, setWorksFetchErr] = useState("");
 
-  const refreshHomeOverview = useCallback(async () => {
+  const refreshHomeOverview = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
     try {
       const authHdr = getAuthHeaders();
-      setWorksLoading(true);
-      setWorksFetchErr("");
+      if (!silent) {
+        setWorksLoading(true);
+        setWorksFetchErr("");
+      }
       const [jobsRes, activeJobsRes, worksRes, notesRes] = await Promise.all([
         fetch("/api/jobs?limit=1", { cache: "no-store", credentials: "same-origin", headers: { ...authHdr } }),
         fetch("/api/jobs?limit=80&offset=0&status=queued,running&slim=1", {
@@ -88,7 +91,9 @@ export default function HomePage() {
       };
       const notesData = (await notesRes.json().catch(() => ({}))) as { notes?: unknown[] };
       if (!worksRes.ok || worksData.success === false) {
-        setWorksFetchErr(String(worksData.error || worksData.detail || `作品加载失败 ${worksRes.status}`));
+        if (!silent) {
+          setWorksFetchErr(String(worksData.error || worksData.detail || `作品加载失败 ${worksRes.status}`));
+        }
       }
       const latest = Array.isArray(jobsData.jobs) && jobsData.jobs.length > 0 ? jobsData.jobs[0] : null;
       const ai = Array.isArray(worksData.ai) ? worksData.ai : [];
@@ -105,15 +110,32 @@ export default function HomePage() {
         activeJobsCount: activeList.length
       });
     } catch {
-      setWorksFetchErr("加载失败，请稍后重试");
+      if (!silent) setWorksFetchErr("加载失败，请稍后重试");
     } finally {
-      setWorksLoading(false);
+      if (!silent) setWorksLoading(false);
     }
   }, [getAuthHeaders]);
 
   useEffect(() => {
     void refreshHomeOverview();
   }, [refreshHomeOverview, worksRefreshKey, homeAccountKey]);
+
+  useEffect(() => {
+    if (!user) return;
+    const tick = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void refreshHomeOverview({ silent: true });
+    };
+    const id = window.setInterval(tick, 20_000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void refreshHomeOverview({ silent: true });
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [user, refreshHomeOverview]);
 
   useEffect(() => {
     if (!regA11ySuccess) return;

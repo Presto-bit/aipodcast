@@ -14,6 +14,7 @@ import {
 } from "react";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
+import { MEDIA_QUEUE_STALL_HINT_MS, MEDIA_QUEUE_STALL_HINT_ZH } from "../../lib/mediaQueueStallHint";
 import { cancelJob, formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
 import { buildReferenceJobFields } from "../../lib/jobReferencePayload";
 import { rememberJobId } from "../../lib/jobRecent";
@@ -197,7 +198,15 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const resolveWaitRef = useRef<(() => void) | null>(null);
   const cancelledRef = useRef(false);
   const logSuccessHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mediaQueueStallHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recoveryStartedRef = useRef(false);
+
+  function clearMediaQueueStallHintTimer() {
+    if (mediaQueueStallHintTimerRef.current) {
+      clearTimeout(mediaQueueStallHintTimerRef.current);
+      mediaQueueStallHintTimerRef.current = null;
+    }
+  }
 
   const stopPanelPointer = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -625,10 +634,17 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 
   function waitJobEvents(jobId: string): Promise<void> {
     return new Promise<void>((resolve) => {
+      clearMediaQueueStallHintTimer();
       resolveWaitRef.current = resolve;
       const es = new EventSource(jobEventsSourceUrl(jobId, 0));
       eventSourceRef.current = es;
       activeJobIdRef.current = jobId;
+      mediaQueueStallHintTimerRef.current = window.setTimeout(() => {
+        mediaQueueStallHintTimerRef.current = null;
+        if (activeJobIdRef.current === jobId && resolveWaitRef.current) {
+          applyTaskFromEvent(MEDIA_QUEUE_STALL_HINT_ZH);
+        }
+      }, MEDIA_QUEUE_STALL_HINT_MS);
       es.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data) as {
@@ -638,6 +654,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
             payload?: { progress?: number };
           };
           if (data.type === "terminal") {
+            clearMediaQueueStallHintTimer();
             es.close();
             eventSourceRef.current = null;
             resolveWaitRef.current = null;
@@ -658,6 +675,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
         }
       };
       es.onerror = () => {
+        clearMediaQueueStallHintTimer();
         applyTaskFromEvent("连接中断，正在重试或结束…");
         es.close();
         eventSourceRef.current = null;
@@ -668,6 +686,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }
 
   async function stopGeneration() {
+    clearMediaQueueStallHintTimer();
     if (logSuccessHideTimerRef.current) {
       clearTimeout(logSuccessHideTimerRef.current);
       logSuccessHideTimerRef.current = null;

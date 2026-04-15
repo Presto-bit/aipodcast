@@ -39,6 +39,7 @@ import {
   APP_SIDEBAR_TOGGLE_EVENT
 } from "../../lib/appSidebarCollapse";
 import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
+import { MEDIA_QUEUE_STALL_HINT_MS, MEDIA_QUEUE_STALL_HINT_ZH } from "../../lib/mediaQueueStallHint";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
@@ -387,6 +388,7 @@ export default function NotesPage() {
   const podcastRecoveryStartedRef = useRef(false);
   const podcastLogHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const podcastActiveJobIdRef = useRef<string | null>(null);
+  const podcastStallHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   /** 来自 /notes?note=<id> 深链：解析笔记本并滚动到对应卡片 */
@@ -837,11 +839,25 @@ export default function NotesPage() {
     }
   }
 
+  function clearPodcastStallHintTimer() {
+    if (podcastStallHintTimerRef.current) {
+      clearTimeout(podcastStallHintTimerRef.current);
+      podcastStallHintTimerRef.current = null;
+    }
+  }
+
   const waitPodcastJobEvents = useCallback((jobId: string): Promise<void> => {
     return new Promise((resolve) => {
+      clearPodcastStallHintTimer();
       podcastResolveWaitRef.current = resolve;
       const es = new EventSource(jobEventsSourceUrl(jobId, 0));
       podcastEventSourceRef.current = es;
+      podcastStallHintTimerRef.current = window.setTimeout(() => {
+        podcastStallHintTimerRef.current = null;
+        if (podcastActiveJobIdRef.current === jobId && podcastResolveWaitRef.current) {
+          applyPodcastTaskFromEvent(MEDIA_QUEUE_STALL_HINT_ZH);
+        }
+      }, MEDIA_QUEUE_STALL_HINT_MS);
       es.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data) as {
@@ -850,6 +866,7 @@ export default function NotesPage() {
             payload?: { progress?: number };
           };
           if (data.type === "terminal") {
+            clearPodcastStallHintTimer();
             es.close();
             podcastEventSourceRef.current = null;
             podcastResolveWaitRef.current = null;
@@ -870,6 +887,7 @@ export default function NotesPage() {
         }
       };
       es.onerror = () => {
+        clearPodcastStallHintTimer();
         applyPodcastTaskFromEvent("连接中断，正在重试或结束…");
         es.close();
         podcastEventSourceRef.current = null;
@@ -937,6 +955,7 @@ export default function NotesPage() {
   );
 
   const stopPodcastGeneration = useCallback(async () => {
+    clearPodcastStallHintTimer();
     if (podcastLogHideTimerRef.current) {
       clearTimeout(podcastLogHideTimerRef.current);
       podcastLogHideTimerRef.current = null;

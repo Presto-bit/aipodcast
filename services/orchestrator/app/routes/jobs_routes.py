@@ -53,7 +53,7 @@ from ..models import (
 )
 from ..mp3_export import build_export_mp3
 from ..object_store import get_object_bytes, presigned_get_url, upload_bytes
-from ..rss_publish_store import work_download_allowed
+from ..rss_publish_store import user_download_allowed_for_succeeded_works, work_download_allowed
 from ..queue import ai_queue, media_queue, redis_conn
 from ..schemas import (
     JobAudioExportRequest,
@@ -418,6 +418,7 @@ def list_works_api(
     rows = list_recent_works(limit=limit, offset=offset, user_ref=user_ref)
     buckets: dict[str, list[dict[str, Any]]] = {"notes": [], "ai": [], "tts": []}
     _proj_name_cache: dict[str, str] = {}
+    download_allowed_bulk = user_download_allowed_for_succeeded_works(user_ref or "")
 
     def project_name_for(pid_raw: str) -> str:
         pid = (pid_raw or "").strip()
@@ -468,6 +469,7 @@ def list_works_api(
         _program_name = str(
             _payload_dict.get("program_name") or result.get("program_name") or ""
         ).strip()
+        _proj_name_row = str(row.get("project_name") or "").strip()
         work = {
             "id": _jid,
             "title": title,
@@ -480,8 +482,8 @@ def list_works_api(
             "coverImage": _work_cover_display_url(result, _jid),
             "status": str(row.get("status") or ""),
             "type": job_type,
-            "projectName": project_name_for(_pid),
-            "downloadAllowed": work_download_allowed(_jid, user_ref or ""),
+            "projectName": _proj_name_row or project_name_for(_pid),
+            "downloadAllowed": download_allowed_bulk,
         }
         if _program_name:
             work["workProgramName"] = _program_name[:200]
@@ -590,6 +592,7 @@ def list_works_trash_api(
     rows = list_trashed_works(limit=limit, offset=offset, user_ref=user_ref)
     buckets: dict[str, list[dict[str, Any]]] = {"notes": [], "ai": [], "tts": []}
     _proj_name_cache: dict[str, str] = {}
+    download_allowed_bulk = user_download_allowed_for_succeeded_works(user_ref or "")
 
     def project_name_for(pid_raw: str) -> str:
         pid = (pid_raw or "").strip()
@@ -636,6 +639,7 @@ def list_works_trash_api(
             _dur_out = None
         _pid = str(row.get("project_id") or "").strip()
         _jid = str(row.get("id"))
+        _proj_name_row = str(row.get("project_name") or "").strip()
         work = {
             "id": _jid,
             "title": title,
@@ -649,8 +653,8 @@ def list_works_trash_api(
             "coverImage": _work_cover_display_url(result, _jid),
             "status": str(row.get("status") or ""),
             "type": job_type,
-            "projectName": project_name_for(_pid),
-            "downloadAllowed": work_download_allowed(_jid, user_ref or ""),
+            "projectName": _proj_name_row or project_name_for(_pid),
+            "downloadAllowed": download_allowed_bulk,
         }
         if job_type in ("text_to_speech", "tts"):
             buckets["tts"].append(work)

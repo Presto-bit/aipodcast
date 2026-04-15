@@ -129,6 +129,13 @@ def _enrich_result_script_notes_meta(result: dict[str, Any], payload: dict[str, 
 _COVER_MAX_BYTES = 8 * 1024 * 1024
 
 
+def _cover_host_may_require_minimax_bearer(hostname: str) -> bool:
+    h = (hostname or "").strip().lower()
+    if not h:
+        return False
+    return "minimax" in h or "minimaxi" in h
+
+
 def _cover_ext_and_type_from_content_type(content_type: str | None) -> tuple[str, str]:
     ct = str(content_type or "").strip().lower()
     if "png" in ct:
@@ -144,7 +151,9 @@ def _cover_ext_and_type_from_content_type(content_type: str | None) -> tuple[str
     return "jpg", "image/jpeg"
 
 
-def _download_cover_bytes(cover_url: str) -> tuple[bytes | None, str | None, str | None]:
+def _download_cover_bytes(
+    cover_url: str, *, bearer_token: str | None = None
+) -> tuple[bytes | None, str | None, str | None]:
     u = str(cover_url or "").strip()
     if not u:
         return None, None, "cover_url_empty"
@@ -183,8 +192,15 @@ def _download_cover_bytes(cover_url: str) -> tuple[bytes | None, str | None, str
         return None, None, "cover_url_invalid"
     if parsed.scheme not in ("http", "https"):
         return None, None, "cover_url_protocol_unsupported"
+    headers: dict[str, str] = {
+        "User-Agent": "Mozilla/5.0 (compatible; FYV-CoverFetch/1.0)",
+        "Accept": "image/*,*/*",
+    }
+    tok = (bearer_token or "").strip()
+    if tok and _cover_host_may_require_minimax_bearer(parsed.hostname or ""):
+        headers["Authorization"] = f"Bearer {tok}"
     try:
-        resp = requests.get(u, timeout=25, stream=True)
+        resp = requests.get(u, timeout=25, stream=True, headers=headers)
         resp.raise_for_status()
         chunks: list[bytes] = []
         total = 0
@@ -204,8 +220,14 @@ def _download_cover_bytes(cover_url: str) -> tuple[bytes | None, str | None, str
         return None, None, f"cover_download_failed:{str(exc)[:180]}"
 
 
-def _persist_cover_for_job(job_id: str, created_by: Any, cover_url: str) -> tuple[str | None, str | None, str | None]:
-    raw, content_type, err = _download_cover_bytes(cover_url)
+def _persist_cover_for_job(
+    job_id: str,
+    created_by: Any,
+    cover_url: str,
+    *,
+    cover_download_bearer: str | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    raw, content_type, err = _download_cover_bytes(cover_url, bearer_token=cover_download_bearer)
     if err or not raw:
         return None, None, err or "cover_download_failed"
     ext, safe_ct = _cover_ext_and_type_from_content_type(content_type)
@@ -310,11 +332,17 @@ def _make_script_delta_handler(job_id: str):
 
 
 def _payload_wants_generate_cover(payload: dict[str, Any], job_type: str) -> bool:
-    """文章 output_mode 默认不配图；显式 generate_cover=true 才生成。对话类保持原默认（未传则 True）。"""
+    """
+    - script_draft + article：默认不配封面，仅显式 generate_cover=true 时生成。
+    - podcast_generate / podcast + article（单人口播）：与对话模式一致，默认生成，仅显式 false 关闭。
+    - 其它：未传则 True。
+    """
     om = str(payload.get("output_mode") or "").strip().lower()
     jt = (job_type or "").strip().lower()
-    if om == "article" and jt in ("script_draft", "podcast_generate", "podcast"):
+    if om == "article" and jt == "script_draft":
         return bool(payload.get("generate_cover"))
+    if om == "article" and jt in ("podcast_generate", "podcast"):
+        return payload.get("generate_cover") is not False
     return bool(payload.get("generate_cover", True))
 
 
@@ -501,7 +529,10 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     if tts.get("cover_image"):
                         result["cover_image"] = tts.get("cover_image")
                         cov_key, cov_ct, cov_err = _persist_cover_for_job(
-                            job_id, created_by, str(tts.get("cover_image") or "")
+                            job_id,
+                            created_by,
+                            str(tts.get("cover_image") or ""),
+                            cover_download_bearer=api_key,
                         )
                         if cov_key:
                             result["cover_object_key"] = cov_key
@@ -556,6 +587,23 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                                 )
                                 if ci:
                                     result["cover_image"] = ci
+                                    cov_key, cov_ct, cov_err = _persist_cover_for_job(
+                                        job_id,
+                                        created_by,
+                                        str(ci),
+                                        cover_download_bearer=api_key,
+                                    )
+                                    if cov_key:
+                                        result["cover_object_key"] = cov_key
+                                        result["cover_content_type"] = cov_ct or "image/jpeg"
+                                        result["cover_image"] = f"/api/jobs/{job_id}/cover"
+                                    elif cov_err:
+                                        append_job_event(
+                                            job_id,
+                                            "log",
+                                            "封面持久化失败，继续使用外链",
+                                            {"detail": cov_err[:500]},
+                                        )
                                 elif cerr:
                                     append_job_event(
                                         job_id,
@@ -733,7 +781,9 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             ci, cerr = generate_cover_image(mat_use, api_key, program_name_fallback=_pn)
             if ci:
                 result["cover_image"] = ci
-                cov_key, cov_ct, cov_err = _persist_cover_for_job(job_id, created_by, str(ci))
+                cov_key, cov_ct, cov_err = _persist_cover_for_job(
+                    job_id, created_by, str(ci), cover_download_bearer=api_key
+                )
                 if cov_key:
                     result["cover_object_key"] = cov_key
                     result["cover_content_type"] = cov_ct or "image/jpeg"
@@ -892,6 +942,8 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                 if _mc is not None and str(_mc).strip() != "":
                     tts_pl["tts_max_chunk_chars"] = _mc
             else:
+                # 双人成片：默认禁止「分段过多→单人快速合成」降级，否则长对话只听得到一种音色。
+                # 需极限省时可由 payload.auto_degrade_tts=true 显式开启。
                 tts_pl = {
                     "text": script,
                     "tts_mode": "dual",
@@ -900,6 +952,7 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                     "intro_text": intro_text,
                     "outro_text": outro_text,
                     "generate_cover": gen_cover,
+                    "auto_degrade_tts": bool(payload.get("auto_degrade_tts", False)),
                 }
             _tts_extra = (
                 "intro_voice_id",
@@ -996,7 +1049,12 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                     result["audio_chapters"] = tts.get("audio_chapters")
                 if tts.get("cover_image"):
                     result["cover_image"] = tts.get("cover_image")
-                    cov_key, cov_ct, cov_err = _persist_cover_for_job(job_id, created_by, str(tts.get("cover_image") or ""))
+                    cov_key, cov_ct, cov_err = _persist_cover_for_job(
+                        job_id,
+                        created_by,
+                        str(tts.get("cover_image") or ""),
+                        cover_download_bearer=api_key,
+                    )
                     if cov_key:
                         result["cover_object_key"] = cov_key
                         result["cover_content_type"] = cov_ct or "image/jpeg"
@@ -1007,6 +1065,50 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                     append_job_event(job_id, "log", "封面生成未完全成功", {"detail": str(tts.get("cover_error") or "")[:500]})
                 elif gen_cover and not api_key:
                     append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
+                # 合成阶段文生图失败时，用与 script_draft 相同的素材摘要再试一次（含开场/收场，关联度更好）
+                if gen_cover and api_key:
+                    _has_cov = bool(str(result.get("cover_image") or "").strip()) or bool(
+                        str(result.get("cover_object_key") or "").strip()
+                    )
+                    if not _has_cov:
+                        _pn_fb = str(payload.get("program_name") or "").strip()
+                        _mat = build_cover_material(
+                            script_body=script_after_tts or script,
+                            intro=_it or "",
+                            outro=_ot or "",
+                            program_name=_pn_fb,
+                            script_constraints=str(payload.get("script_constraints") or "").strip(),
+                            source_text=str(payload.get("text") or "").strip(),
+                        )
+                        _mat_use = (_mat or "").strip() or (script_after_tts or script or "").strip()[:4000]
+                        if _mat_use:
+                            ci2, cerr2 = generate_cover_image(_mat_use, api_key, program_name_fallback=_pn_fb)
+                            if ci2:
+                                result["cover_image"] = ci2
+                                cov_key2, cov_ct2, cov_err2 = _persist_cover_for_job(
+                                    job_id,
+                                    created_by,
+                                    str(ci2),
+                                    cover_download_bearer=api_key,
+                                )
+                                if cov_key2:
+                                    result["cover_object_key"] = cov_key2
+                                    result["cover_content_type"] = cov_ct2 or "image/jpeg"
+                                    result["cover_image"] = f"/api/jobs/{job_id}/cover"
+                                elif cov_err2:
+                                    append_job_event(
+                                        job_id,
+                                        "log",
+                                        "封面持久化失败，继续使用外链",
+                                        {"detail": cov_err2[:500]},
+                                    )
+                            elif cerr2:
+                                append_job_event(
+                                    job_id,
+                                    "log",
+                                    "成片补生成封面未成功",
+                                    {"detail": cerr2[:500]},
+                                )
                 _enrich_result_script_notes_meta(result, payload if isinstance(payload, dict) else {}, script_after_tts)
                 _attach_result_audio_duration_sec(result)
                 _hx_ep = str(result.get("audio_hex") or "").strip()

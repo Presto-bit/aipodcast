@@ -1478,7 +1478,8 @@ Speaker2: 今天咱们聊聊这个话题。"""
                 "model": self.models["image"],
                 "prompt": image_prompt,
                 "aspect_ratio": IMAGE_GENERATION_CONFIG["aspect_ratio"],
-                "response_format": "url",
+                # base64：避免 CDN 外链需鉴权/防盗链导致 worker 下载与浏览器 image-proxy 失败
+                "response_format": "base64",
                 "n": IMAGE_GENERATION_CONFIG["n"],
                 "prompt_optimizer": IMAGE_GENERATION_CONFIG["prompt_optimizer"],
                 "style": {
@@ -1592,13 +1593,23 @@ Speaker2: 今天咱们聊聊这个话题。"""
                             return v.strip()
                 elif isinstance(it, str) and it.strip():
                     return it.strip()
-        for key in ("image_base64", "image", "base64", "b64_json"):
-            b64 = data.get(key)
-            if isinstance(b64, str) and b64.strip():
-                raw = b64.strip()
+        def _b64_field_to_data_url(val: Any) -> str | None:
+            if isinstance(val, str) and val.strip():
+                raw = val.strip()
                 if raw.startswith("data:"):
                     return raw
                 return f"data:image/png;base64,{raw}"
+            if isinstance(val, list):
+                for it in val:
+                    out = _b64_field_to_data_url(it)
+                    if out:
+                        return out
+            return None
+
+        for key in ("image_base64", "image", "base64", "b64_json"):
+            got = _b64_field_to_data_url(data.get(key))
+            if got:
+                return got
         return None
 
     def generate_script_outline(self,

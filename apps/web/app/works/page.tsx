@@ -63,51 +63,78 @@ export default function WorksPage() {
       else setLoading(true);
       const o = append ? offset : 0;
       try {
-        const res = await fetch(`/api/works?limit=${WORKS_LIMIT}&offset=${o}`, {
-          cache: "no-store",
-          headers: { ...getAuthHeaders() }
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          success?: boolean;
-          notes?: WorkItem[];
-          ai?: WorkItem[];
-          tts?: WorkItem[];
-          error?: string;
-          detail?: string;
-          total?: number;
-          has_more?: boolean;
-        };
-        if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-        const nextAi = Array.isArray(data.ai) ? data.ai : [];
-        const nextTts = Array.isArray(data.tts) ? data.tts : [];
-        if (append) {
-          setAi((p) => mergeById(p, nextAi));
-          setTts((p) => mergeById(p, nextTts));
-        } else {
+        if (!append) {
+          const [res, jobsPack] = await Promise.all([
+            fetch(`/api/works?limit=${WORKS_LIMIT}&offset=0`, {
+              cache: "no-store",
+              headers: { ...getAuthHeaders() }
+            }),
+            listJobs({
+              limit: ACTIVE_JOBS_LIMIT,
+              offset: 0,
+              status: "queued,running",
+              slim: true
+            })
+          ]);
+          const data = (await res.json().catch(() => ({}))) as {
+            success?: boolean;
+            notes?: WorkItem[];
+            ai?: WorkItem[];
+            tts?: WorkItem[];
+            error?: string;
+            detail?: string;
+            total?: number;
+            has_more?: boolean;
+          };
+          if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
+          const nextAi = Array.isArray(data.ai) ? data.ai : [];
+          const nextTts = Array.isArray(data.tts) ? data.tts : [];
           setAi(nextAi);
           setTts(nextTts);
+          const t = typeof data.total === "number" ? data.total : nextAi.length + nextTts.length;
+          setOffset(t);
+          setHasMore(Boolean(data.has_more));
+          setActiveJobCount(Array.isArray(jobsPack.jobs) ? jobsPack.jobs.length : null);
+        } else {
+          const res = await fetch(`/api/works?limit=${WORKS_LIMIT}&offset=${o}`, {
+            cache: "no-store",
+            headers: { ...getAuthHeaders() }
+          });
+          const data = (await res.json().catch(() => ({}))) as {
+            success?: boolean;
+            notes?: WorkItem[];
+            ai?: WorkItem[];
+            tts?: WorkItem[];
+            error?: string;
+            detail?: string;
+            total?: number;
+            has_more?: boolean;
+          };
+          if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
+          const nextAi = Array.isArray(data.ai) ? data.ai : [];
+          const nextTts = Array.isArray(data.tts) ? data.tts : [];
+          setAi((p) => mergeById(p, nextAi));
+          setTts((p) => mergeById(p, nextTts));
+          const t = typeof data.total === "number" ? data.total : nextAi.length + nextTts.length;
+          setOffset(o + t);
+          setHasMore(Boolean(data.has_more));
         }
-        const t = typeof data.total === "number" ? data.total : nextAi.length + nextTts.length;
-        setOffset(o + t);
-        setHasMore(Boolean(data.has_more));
       } catch (err) {
         setError(String(err instanceof Error ? err.message : err));
       } finally {
         setLoading(false);
         setLoadingMore(false);
-        if (!append) void refreshActiveJobCount();
       }
     },
-    [offset, getAuthHeaders, refreshActiveJobCount]
+    [offset, getAuthHeaders]
   );
 
   useEffect(() => {
+    if (!ready) return;
     void fetchWorks(false);
-  }, [getAuthHeaders]);
-
-  useEffect(() => {
-    void refreshActiveJobCount();
-  }, [refreshActiveJobCount]);
+    // 仅随登录态刷新全表；勿依赖 fetchWorks/offset，否则会「加载更多」后重复首屏请求
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, getAuthHeaders]);
 
   useEffect(() => {
     const t = searchParams?.get("tab");

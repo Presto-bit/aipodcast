@@ -788,40 +788,44 @@ export default function MyVoicesPanel() {
         </section>
       ) : null}
 
-      {assignOpen ? (
-        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <div className="pointer-events-auto w-full max-w-sm rounded-xl border border-line bg-surface p-4 text-sm shadow-modal ring-1 ring-line/50">
-            <p className="font-medium text-ink">{t("voice.assign.title")}</p>
-            <p className="mt-1 text-xs text-muted">{assignOpen.label}</p>
-            <div className="mt-4 flex gap-2">
-              <button
-                type="button"
-                className="flex-1 rounded-lg bg-brand py-2.5 text-brand-foreground hover:bg-brand"
-                onClick={() => confirmAssign("speaker1")}
-              >
-                {t("voice.assign.speaker1")}
-              </button>
-              <button
-                type="button"
-                className="flex-1 rounded-lg bg-brand py-2.5 text-brand-foreground hover:bg-brand"
-                onClick={() => confirmAssign("speaker2")}
-              >
-                {t("voice.assign.speaker2")}
-              </button>
-            </div>
-            <button type="button" className="mt-3 w-full text-xs text-muted hover:text-ink" onClick={() => setAssignOpen(null)}>
-              {t("voice.assign.cancel")}
-            </button>
-          </div>
-        </div>
-      ) : null}
+      {assignOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[1200] flex justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              <div className="pointer-events-auto w-full max-w-sm rounded-xl border border-line bg-surface p-4 text-sm shadow-modal ring-1 ring-line/50">
+                <p className="font-medium text-ink">{t("voice.assign.title")}</p>
+                <p className="mt-1 text-xs text-muted">{assignOpen.label}</p>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    className="flex-1 rounded-lg bg-brand py-2.5 text-brand-foreground hover:bg-brand"
+                    onClick={() => confirmAssign("speaker1")}
+                  >
+                    {t("voice.assign.speaker1")}
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 rounded-lg bg-brand py-2.5 text-brand-foreground hover:bg-brand"
+                    onClick={() => confirmAssign("speaker2")}
+                  >
+                    {t("voice.assign.speaker2")}
+                  </button>
+                </div>
+                <button type="button" className="mt-3 w-full text-xs text-muted hover:text-ink" onClick={() => setAssignOpen(null)}>
+                  {t("voice.assign.cancel")}
+                </button>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
 
-      {detailOpen ? (
-        <div
-          className="fixed inset-0 z-[60] flex items-end justify-center bg-black/35 p-4 sm:items-center"
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("voice.detail.title")}
+      {detailOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[1200] flex items-end justify-center bg-black/35 p-4 sm:items-center"
+              role="dialog"
+              aria-modal="true"
+              aria-label={t("voice.detail.title")}
           onClick={() => {
             try {
               detailAudioRef.current?.pause();
@@ -1087,13 +1091,15 @@ export default function MyVoicesPanel() {
               />
             ) : null}
           </div>
-        </div>
-      ) : null}
+        </div>,
+            document.body
+          )
+        : null}
 
       {overflowMenu
         ? createPortal(
             <div
-              className="fixed z-[100] min-w-[9rem] max-w-[min(12rem,calc(100vw-16px))] rounded-xl border border-line bg-surface py-1 text-sm shadow-card ring-1 ring-line/50"
+              className="fixed z-[1210] min-w-[9rem] max-w-[min(12rem,calc(100vw-16px))] rounded-xl border border-line bg-surface py-1 text-sm shadow-card ring-1 ring-line/50"
               style={{ top: overflowMenu.top, left: overflowMenu.left }}
               role="menu"
               onClick={(e) => e.stopPropagation()}

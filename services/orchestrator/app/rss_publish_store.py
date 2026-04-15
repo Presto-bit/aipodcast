@@ -238,6 +238,20 @@ def _job_events_indicate_paid_media_debit(job_id: str) -> bool:
     return False
 
 
+def user_download_allowed_for_succeeded_works(user_phone: str | None) -> bool:
+    """
+    作品列表专用：列表中的任务均为 succeeded，下载权限只与用户账户有关，
+    避免对每个 job 重复 get_job 与钱包/订阅查询。
+    """
+    from . import auth_bridge
+
+    up = (user_phone or "").strip()
+    if not up:
+        return False
+    tier = str(auth_bridge.user_info_for_phone(up).get("plan") or "free").strip().lower()
+    return not user_work_download_blocked_never_paid_free_only(up, tier)
+
+
 def work_download_allowed(job_id: str, user_phone: str | None) -> bool:
     """
     是否允许打包下载本条成片：

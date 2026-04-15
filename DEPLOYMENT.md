@@ -169,7 +169,11 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 - **编排器**：实现 JSON 解析、**`PAYMENT_WEBHOOK_SECRET` 下 HMAC-SHA256(body)** 验签、投递审计表、订单/订阅字段归一及幂等处理；支付宝电脑网站支付异步通知为 **`POST /api/v1/webhooks/alipay`**（`application/x-www-form-urlencoded`，RSA2 验签，见 `alipay_page_pay`）。公网域名建议配置 **`ALIPAY_NOTIFY_URL=https://www.prestoai.cn/api/webhooks/alipay`**（按实际站点替换），由 Next BFF 原样转发 body 至编排器。
 - 配置示例见 `.env.ai-native.example` 中 `PAYMENT_WEBHOOK_SECRET` / `ALIPAY_*`。本地联调可临时 `PAYMENT_WEBHOOK_ALLOW_UNSIGNED=1`，**不得用于生产**。
 
-## 媒体 Worker（非播客类型）
+## 媒体 Worker 与播客队列
 
-- 队列任务类型 **`podcast_generate` / `podcast`** 走完整脚本 + TTS 管线。
-- **其它 `job_type`** 当前为**占位成功**（无真实成片）。生产若需禁止此类任务「假成功」，可设 **`MEDIA_WORKER_FAIL_ON_NON_PODCAST=1`**（任务将失败并带明确原因）。详见编排器日志与任务事件流。
+- **`podcast_generate` / `podcast`** 任务入 **Redis `media` 队列**，须由 **`media-worker`**（`workers/media-worker/worker.py`，与编排器**相同 `REDIS_URL`**）或编排器内嵌的 **RQ SimpleWorker** 消费。
+- **本机只跑 `scripts/dev-api.sh` / `make dev-api`（仅 uvicorn）**：在 **`FYV_PRODUCTION` 未开启**时，编排器默认 **`ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER` 视为开启**，在进程内启动内嵌 `media` 消费者，播客可出队。若本机 `.env` 设了 **`FYV_PRODUCTION=1`** 又未起独立 `media-worker`，请显式设 **`ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER=1`**，或改用 **`make dev`**。
+- **Docker Compose**：`orchestrator` 服务环境变量 **`ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER=0`**，由独立 **`media-worker`** 消费队列，避免双消费与 API 同进程争用 CPU。
+- 全栈本机开发请用 **`make dev`**（默认起 `ai` + `media` worker）。**`SKIP_DEV_WORKERS=1 make dev`** 时依赖上述**内嵌**逻辑（非生产）或须自行起 worker。
+- **其它 `job_type`**（非播客）在媒体 Worker 内当前多为占位逻辑。生产若需禁止「假成功」，可设 **`MEDIA_WORKER_FAIL_ON_NON_PODCAST=1`**。
+- **排查**：**`GET /health`** 查看 `queues.media_pending`、`embedded_media_rq_worker`；任务长期 `queued` 时检查 **`media-worker`** 与 Redis。

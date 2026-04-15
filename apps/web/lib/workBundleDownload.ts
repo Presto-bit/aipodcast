@@ -83,13 +83,16 @@ async function fetchTaggedMp3Bytes(
   }
 }
 
-/**
- * 从任务结果拉取音频 / 文稿 / 封面，打 ZIP。
- * 音频默认经服务端写入 ID3（标题、艺人、专辑）与可选章节；失败时回退为原始 hex 解码。
- */
-export async function downloadJobBundleZip(opts: JobBundleExportOptions): Promise<void> {
+type ManuscriptParts = { introT: string; scriptBody: string; outroT: string };
+
+async function loadJobManuscriptParts(jobId: string): Promise<{
+  authHdr: Record<string, string>;
+  result: Record<string, unknown>;
+  hex: string;
+  parts: ManuscriptParts;
+}> {
   const authHdr = getBearerAuthHeadersSync();
-  const res = await fetch(`/api/jobs/${opts.jobId}`, {
+  const res = await fetch(`/api/jobs/${jobId}`, {
     cache: "no-store",
     credentials: "same-origin",
     headers: { ...authHdr }
@@ -100,15 +103,59 @@ export async function downloadJobBundleZip(opts: JobBundleExportOptions): Promis
     throw new Error(detail || `HTTP ${res.status}`);
   }
   const result = (row.result || {}) as Record<string, unknown>;
-  const hex = String(result.audio_hex || "").trim();
-  const scriptBody = await resolveJobScriptBodyText(opts.jobId, row, authHdr);
+  const scriptBody = await resolveJobScriptBodyText(jobId, row, authHdr);
   const introT = String(result.tts_intro_text || "").trim();
   const outroT = String(result.tts_outro_text || "").trim();
+  const hex = String(result.audio_hex || "").trim();
+  return { authHdr, result, hex, parts: { introT, scriptBody, outroT } };
+}
+
+function formatManuscriptPlainZip(parts: ManuscriptParts): string {
+  const { introT, scriptBody, outroT } = parts;
   let scriptDoc = "";
   if (introT) scriptDoc += `【开场】\n${introT}\n\n`;
   if (scriptBody) scriptDoc += `【正文】\n${scriptBody}\n\n`;
   if (outroT) scriptDoc += `【结尾】\n${outroT}\n`;
-  const script = scriptDoc.trim() || scriptBody;
+  return scriptDoc.trim() || scriptBody;
+}
+
+/** 文章类直链下载：默认 Markdown，含开场/正文/结尾时用二级标题分段。 */
+function formatManuscriptMarkdown(parts: ManuscriptParts): string {
+  const { introT, scriptBody, outroT } = parts;
+  const blocks: string[] = [];
+  if (introT) blocks.push(`## 开场\n\n${introT}`);
+  if (scriptBody) {
+    if (introT || outroT) blocks.push(`## 正文\n\n${scriptBody.trimEnd()}`);
+    else blocks.push(scriptBody.trimEnd());
+  }
+  if (outroT) blocks.push(`## 结尾\n\n${outroT}`);
+  const merged = blocks.join("\n\n").trim();
+  return merged || scriptBody.trim();
+}
+
+export type JobManuscriptDownloadOptions = Pick<JobBundleExportOptions, "jobId" | "title">;
+
+/**
+ * 仅下载文稿为单个 `.md` 文件（不打 ZIP）。用于 script_draft / 文章类作品。
+ */
+export async function downloadJobManuscriptMarkdown(opts: JobManuscriptDownloadOptions): Promise<void> {
+  const { parts } = await loadJobManuscriptParts(opts.jobId);
+  const md = formatManuscriptMarkdown(parts);
+  if (!md) {
+    throw new Error("文稿为空，无法下载");
+  }
+  const nameBase = sanitizeFolderName(opts.title);
+  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+  triggerBlobDownload(blob, `${nameBase}.md`);
+}
+
+/**
+ * 从任务结果拉取音频 / 文稿 / 封面，打 ZIP。
+ * 音频默认经服务端写入 ID3（标题、艺人、专辑）与可选章节；失败时回退为原始 hex 解码。
+ */
+export async function downloadJobBundleZip(opts: JobBundleExportOptions): Promise<void> {
+  const { authHdr, result, hex, parts } = await loadJobManuscriptParts(opts.jobId);
+  const script = formatManuscriptPlainZip(parts);
   const coverUrl = String(result.cover_image || result.coverImage || "").trim();
   const folderName = sanitizeFolderName(opts.title);
   const embedChapters = opts.embedChaptersInMp3 !== false;
@@ -149,9 +196,12 @@ export async function downloadJobBundleZip(opts: JobBundleExportOptions): Promis
 
   if (coverUrl) {
     try {
-      const proxied = `/api/image-proxy?url=${encodeURIComponent(coverUrl)}`;
-      let imgRes = await fetch(proxied, { credentials: "same-origin", headers: { ...authHdr } });
-      if (!imgRes.ok) {
+      const sameOriginCover = coverUrl.startsWith("/api/jobs/") && coverUrl.includes("/cover");
+      const coverFetchUrl = sameOriginCover
+        ? coverUrl
+        : `/api/image-proxy?url=${encodeURIComponent(coverUrl)}`;
+      let imgRes = await fetch(coverFetchUrl, { credentials: "same-origin", headers: { ...authHdr } });
+      if (!imgRes.ok && !sameOriginCover) {
         imgRes = await fetch(coverUrl, { mode: "cors", credentials: "omit" });
       }
       if (imgRes.ok) {

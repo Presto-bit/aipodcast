@@ -12,7 +12,7 @@ import { GatedSplitAction } from "../SubscriptionVipLink";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
 import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
 import { sanitizeShareEpisodeTitle } from "../../lib/sharePublishDefaults";
-import { downloadJobBundleZip } from "../../lib/workBundleDownload";
+import { downloadJobBundleZip, downloadJobManuscriptMarkdown } from "../../lib/workBundleDownload";
 import { listRssPublicationsByJobIds, type RssPublication } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
 import { useI18n } from "../../lib/I18nContext";
@@ -61,12 +61,20 @@ function worksNavMetricPart(
   return durationLine !== "—" ? `时长 ${durationLine}` : "—";
 }
 
-function formatWorkCreatedDay(createdAt: string | undefined): string {
+/** 作品列表/详情：年月日 + 24 小时制时分 */
+function formatWorkCreatedAtZh(createdAt: string | undefined): string {
   const raw = String(createdAt || "").trim();
   if (!raw) return "—";
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+  return d.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
 }
 
 type GalleryKeys = {
@@ -491,7 +499,7 @@ export default function PodcastWorksGallery({
   const [publicationsByJobId, setPublicationsByJobId] = useState<Record<string, RssPublication[]>>({});
 
   const [coverBustById, setCoverBustById] = useState<Record<string, number>>({});
-  /** 仅 notes_studio：详情弹窗 */
+  /** 作品详情全屏弹窗（笔记本侧栏 / 合并列表「全部」/ 播客与语音等卡片共用） */
   const [notesStudioDetailId, setNotesStudioDetailId] = useState<string | null>(null);
   const [coverUploadBusy, setCoverUploadBusy] = useState<string | null>(null);
   const coverFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -569,9 +577,9 @@ export default function PodcastWorksGallery({
   }, [notesStudioDetailId]);
 
   const notesStudioDetailWork = useMemo((): PodcastWorkRow | undefined => {
-    if (variant !== "notes_studio" || !notesStudioDetailId) return undefined;
+    if (!notesStudioDetailId) return undefined;
     return items.find((x) => x.id === notesStudioDetailId);
-  }, [variant, notesStudioDetailId, items]);
+  }, [notesStudioDetailId, items]);
 
   const notesStudioDetailUi = useMemo(() => {
     if (!notesStudioDetailWork) return null;
@@ -592,7 +600,7 @@ export default function PodcastWorksGallery({
           : undefined;
     const durationLine = totalSecForLabel !== undefined ? formatClock(totalSecForLabel) : "—";
     const durationCaption = isScriptDraft ? "文章出稿（无音频）" : `时长 ${durationLine}`;
-    const created = w.createdAt ? new Date(w.createdAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—";
+    const created = formatWorkCreatedAtZh(w.createdAt);
     const publications = publicationsByJobId[id] || [];
     const publishedText =
       publications.length > 0
@@ -640,6 +648,21 @@ export default function PodcastWorksGallery({
       isScriptDraft,
       publishActionText: pubs.length > 0 ? "已发过" : "分享"
     };
+  }, [variant, menuOpenId, items, publicationsByJobId]);
+
+  /** 我的作品 / 首页合并列表：⋯ 菜单用 portal，避免卡片 overflow 裁切与网格叠层遮挡 */
+  const worksGridMenuPortalData = useMemo(() => {
+    if (!menuOpenId || variant === "notes_studio") return null;
+    const w = items.find((x) => x.id === menuOpenId);
+    if (!w?.id) return null;
+    const id = w.id;
+    const isScriptDraft = String(w.type || "") === "script_draft";
+    const pubs = publicationsByJobId[id] || [];
+    const publishActionText = pubs.length > 0 ? "已发过" : "分享";
+    if (variant === "all") {
+      return { layout: "toolbar" as const, w, id, isScriptDraft };
+    }
+    return { layout: "card" as const, w, id, isScriptDraft, publishActionText };
   }, [variant, menuOpenId, items, publicationsByJobId]);
 
   useEffect(() => {
@@ -711,7 +734,7 @@ export default function PodcastWorksGallery({
   }, []);
 
   useLayoutEffect(() => {
-    if (variant !== "notes_studio" || !menuOpenId) {
+    if (!menuOpenId) {
       setNotesStudioMenuPos(null);
       return;
     }
@@ -734,7 +757,7 @@ export default function PodcastWorksGallery({
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [variant, menuOpenId]);
+  }, [menuOpenId]);
 
   useEffect(() => {
     const el = audioEl;
@@ -842,11 +865,13 @@ export default function PodcastWorksGallery({
     if (!id) return;
     setMenuOpenId(null);
     setZipBusy(id);
+    const title = String(row.displayTitle || row.title || id).trim() || id;
     try {
-      await downloadJobBundleZip({
-        jobId: id,
-        title: String(row.displayTitle || row.title || id).trim() || id
-      });
+      if (String(row.type || "") === "script_draft") {
+        await downloadJobManuscriptMarkdown({ jobId: id, title });
+      } else {
+        await downloadJobBundleZip({ jobId: id, title });
+      }
     } catch (e) {
       setPlayErrorById((prev) => ({
         ...prev,
@@ -857,9 +882,13 @@ export default function PodcastWorksGallery({
     }
   }, []);
 
+  function downloadBusyLabel(workType: string | undefined): string {
+    return String(workType || "") === "script_draft" ? "正在下载…" : "正在打包…";
+  }
+
   function downloadLabelForWorkType(type: string | undefined): string {
     const t = String(type || "");
-    if (t === "script_draft") return "下载（文稿）";
+    if (t === "script_draft") return "下载 Markdown 文稿";
     return "下载（音频·文稿·配图）";
   }
 
@@ -1176,7 +1205,12 @@ export default function PodcastWorksGallery({
     try {
       for (const row of rows) {
         if (!row.id) continue;
-        await downloadJobBundleZip({ jobId: row.id, title: row.displayTitle || row.title || row.id });
+        const title = row.displayTitle || row.title || row.id;
+        if (String(row.type || "") === "script_draft") {
+          await downloadJobManuscriptMarkdown({ jobId: row.id, title });
+        } else {
+          await downloadJobBundleZip({ jobId: row.id, title });
+        }
       }
     } finally {
       setBatchBusy(false);
@@ -1346,11 +1380,8 @@ export default function PodcastWorksGallery({
                   : undefined;
             const durationLine = totalSecForLabel !== undefined ? formatClock(totalSecForLabel) : "—";
             const durationCaption = isScriptDraft ? "文章出稿（无音频）" : `时长 ${durationLine}`;
-            const created = w.createdAt ? new Date(w.createdAt).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—";
-            const createdShort =
-              w.createdAt
-                ? new Date(w.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" })
-                : "—";
+            const created = formatWorkCreatedAtZh(w.createdAt);
+            const createdShort = created;
             const publications = publicationsByJobId[id] || [];
             const publishedText =
               publications.length > 0
@@ -1479,14 +1510,12 @@ export default function PodcastWorksGallery({
               const primaryK = worksNavPrimaryKind(w.type);
               const secondaryK = worksNavSecondaryLabel(w, primaryK);
               const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
-              const dayP = formatWorkCreatedDay(w.createdAt);
+              const dayP = formatWorkCreatedAtZh(w.createdAt);
               const navMetaLine = [primaryK, secondaryK, worksNavAuthorDisplay, metricP, dayP].join(" | ");
               return (
                 <li
                   key={id}
-                  className={`flex w-full max-w-full flex-col rounded-xl border border-line bg-surface shadow-soft ${
-                    isScriptDraft ? "overflow-visible" : "overflow-hidden"
-                  }`}
+                  className="relative flex w-full max-w-full flex-col overflow-visible rounded-xl border border-line bg-surface shadow-soft"
                 >
                   {enableBatchActions && batchMode ? (
                     <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-3 py-1.5 text-xs text-ink">
@@ -1499,7 +1528,7 @@ export default function PodcastWorksGallery({
                     </label>
                   ) : null}
                   {isScriptDraft ? (
-                    <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden border-b border-success/25 bg-gradient-to-br from-success-soft/50 to-success/[0.08]">
+                    <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden rounded-t-xl border-b border-success/25 bg-gradient-to-br from-success-soft/50 to-success/[0.08]">
                       <div className="flex h-full flex-col items-center justify-center gap-1 p-2">
                         <span className="text-2xl leading-none opacity-90" aria-hidden>
                           📝
@@ -1508,7 +1537,7 @@ export default function PodcastWorksGallery({
                       </div>
                     </div>
                   ) : (
-                    <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden bg-gradient-to-br from-fill to-fill">
+                    <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill">
                       {w.coverImage ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
                         <img
@@ -1576,6 +1605,16 @@ export default function PodcastWorksGallery({
                     </p>
                   ) : null}
                   <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
+                    <button
+                      type="button"
+                      className="rounded-md border border-brand/35 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15"
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        setNotesStudioDetailId(id);
+                      }}
+                    >
+                      详情
+                    </button>
                     {!isScriptDraft ? (
                       <button
                         type="button"
@@ -1601,7 +1640,7 @@ export default function PodcastWorksGallery({
                       disabled={zipBusy === id}
                       unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
                     >
-                      {zipBusy === id ? "正在打包…" : "下载"}
+                      {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
                     </GatedSplitAction>
                     <button
                       type="button"
@@ -1619,37 +1658,6 @@ export default function PodcastWorksGallery({
                       >
                         <span className="text-base leading-none">⋯</span>
                       </button>
-                      {menuOpenId === id ? (
-                        <div className="absolute bottom-full right-0 z-50 mb-1 min-w-[9.5rem] rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card">
-                          <button
-                            type="button"
-                            className="block w-full px-3 py-2 text-left hover:bg-fill"
-                            onClick={() => openRename(id, w.displayTitle)}
-                          >
-                            修改名称
-                          </button>
-                          {!isScriptDraft ? (
-                            <button
-                              type="button"
-                              className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-50"
-                              disabled={coverUploadBusy === id}
-                              onClick={() => {
-                                coverUploadTargetIdRef.current = id;
-                                coverFileInputRef.current?.click();
-                              }}
-                            >
-                              {coverUploadBusy === id ? "处理封面中…" : "上传封面（裁 1400²）"}
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
-                            onClick={() => requestDelete(id)}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      ) : null}
                     </div>
                     {publications.length > 0 ? (
                       <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">{publishedText}</span>
@@ -1662,9 +1670,7 @@ export default function PodcastWorksGallery({
             return (
               <li
                 key={id}
-                className={`flex w-full max-w-full flex-col rounded-xl border border-line bg-surface shadow-soft ${
-                  isScriptDraft ? "overflow-visible" : "overflow-hidden"
-                }`}
+                className="relative flex w-full max-w-full flex-col overflow-visible rounded-xl border border-line bg-surface shadow-soft"
               >
                 {enableBatchActions && batchMode ? (
                   <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-3 py-1.5 text-xs text-ink">
@@ -1677,7 +1683,7 @@ export default function PodcastWorksGallery({
                   </label>
                 ) : null}
                 {isScriptDraft ? (
-                  <div className="border-b border-success/25 bg-gradient-to-br from-success-soft/95 to-success/[0.08] px-3 py-2">
+                  <div className="overflow-hidden rounded-t-xl border-b border-success/25 bg-gradient-to-br from-success-soft/95 to-success/[0.08] px-3 py-2">
                     <div className="flex gap-2">
                       <span className="shrink-0 text-base leading-none" aria-hidden>
                         📝
@@ -1688,7 +1694,7 @@ export default function PodcastWorksGallery({
                     </div>
                   </div>
                 ) : (
-                  <div className="relative aspect-[4/3] w-full overflow-hidden bg-gradient-to-br from-fill to-fill">
+                  <div className="relative aspect-[4/3] w-full overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill">
                     {w.coverImage ? (
                       /* eslint-disable-next-line @next/next/no-img-element */
                       <img
@@ -1752,59 +1758,6 @@ export default function PodcastWorksGallery({
                       >
                         <span className="text-base leading-none">⋯</span>
                       </button>
-                      {menuOpenId === id ? (
-                        <div className="absolute bottom-full right-0 z-50 mb-1 min-w-[9.5rem] overflow-hidden rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card">
-                          <GatedSplitAction
-                            locked={!workDownloadAllowed(w)}
-                            variant="default"
-                            upgradeTitle="下载需订阅"
-                            onClick={() => void onDownload(w)}
-                            disabled={zipBusy === id}
-                            unlockedClassName="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
-                            lockedLinkClassName="w-full max-w-none rounded-none border-0 border-b border-line/80 bg-transparent shadow-none"
-                            lockedLabelClassName="px-3 py-2"
-                            onLockedNavigate={() => setMenuOpenId(null)}
-                          >
-                            {zipBusy === id ? "正在打包…" : downloadLabelForWorkType(w.type)}
-                          </GatedSplitAction>
-                          <button
-                            type="button"
-                            className="block w-full px-3 py-2 text-left hover:bg-fill"
-                            onClick={() => openRename(id, w.displayTitle)}
-                          >
-                            修改名称
-                          </button>
-                          {!isScriptDraft ? (
-                            <button
-                              type="button"
-                              className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-50"
-                              disabled={coverUploadBusy === id}
-                              onClick={() => {
-                                coverUploadTargetIdRef.current = id;
-                                coverFileInputRef.current?.click();
-                              }}
-                            >
-                              {coverUploadBusy === id ? "处理封面中…" : "上传封面（裁 1400²）"}
-                            </button>
-                          ) : null}
-                          {!isScriptDraft ? (
-                            <button
-                              type="button"
-                              className="block w-full px-3 py-2 text-left hover:bg-fill"
-                              onClick={() => goToSharePage(w)}
-                            >
-                              {publishActionText}
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
-                            onClick={() => requestDelete(id)}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -1830,6 +1783,16 @@ export default function PodcastWorksGallery({
                   </p>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
+                  <button
+                    type="button"
+                    className="rounded-md border border-brand/35 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15"
+                    onClick={() => {
+                      setMenuOpenId(null);
+                      setNotesStudioDetailId(id);
+                    }}
+                  >
+                    详情
+                  </button>
                   {!isScriptDraft ? (
                     <button
                       type="button"
@@ -1857,7 +1820,7 @@ export default function PodcastWorksGallery({
                     disabled={zipBusy === id}
                     unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
                   >
-                    {zipBusy === id ? "正在打包…" : "下载"}
+                    {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
                   </GatedSplitAction>
                   <button
                     type="button"
@@ -1883,7 +1846,7 @@ export default function PodcastWorksGallery({
                   <div
                     ref={notesStudioMenuPortalRef}
                     role="menu"
-                    className="fixed z-[1000] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
+                    className="fixed z-[1210] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
                     style={{ top: pos.top, left: pos.left }}
                   >
                     <GatedSplitAction
@@ -1900,7 +1863,7 @@ export default function PodcastWorksGallery({
                       lockedLabelClassName="px-3 py-2"
                       onLockedNavigate={() => setMenuOpenId(null)}
                     >
-                      {zipBusy === m.id ? "正在打包…" : downloadLabelForWorkType(m.w.type)}
+                      {zipBusy === m.id ? downloadBusyLabel(m.w.type) : downloadLabelForWorkType(m.w.type)}
                     </GatedSplitAction>
                     <button
                       type="button"
@@ -1943,6 +1906,140 @@ export default function PodcastWorksGallery({
               document.body
             )
           : null}
+        {worksGridMenuPortalData && notesStudioMenuPos
+          ? createPortal(
+              (() => {
+                const spec = worksGridMenuPortalData;
+                const pos = notesStudioMenuPos;
+                if (spec.layout === "toolbar") {
+                  const { w, id, isScriptDraft } = spec;
+                  return (
+                    <div
+                      ref={notesStudioMenuPortalRef}
+                      role="menu"
+                      className="fixed z-[1210] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
+                      style={{ top: pos.top, left: pos.left }}
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left hover:bg-fill"
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          openRename(id, w.displayTitle);
+                        }}
+                      >
+                        修改名称
+                      </button>
+                      {!isScriptDraft ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-50"
+                          disabled={coverUploadBusy === id}
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            coverUploadTargetIdRef.current = id;
+                            coverFileInputRef.current?.click();
+                          }}
+                        >
+                          {coverUploadBusy === id ? "处理封面中…" : "上传封面（裁 1400²）"}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          requestDelete(id);
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  );
+                }
+                const { w, id, isScriptDraft, publishActionText } = spec;
+                return (
+                  <div
+                    ref={notesStudioMenuPortalRef}
+                    role="menu"
+                    className="fixed z-[1210] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
+                    style={{ top: pos.top, left: pos.left }}
+                  >
+                    <GatedSplitAction
+                      locked={!workDownloadAllowed(w)}
+                      variant="default"
+                      upgradeTitle="下载需订阅"
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        void onDownload(w);
+                      }}
+                      disabled={zipBusy === id}
+                      unlockedClassName="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
+                      lockedLinkClassName="w-full max-w-none rounded-none border-0 border-b border-line/80 bg-transparent shadow-none"
+                      lockedLabelClassName="px-3 py-2"
+                      onLockedNavigate={() => setMenuOpenId(null)}
+                    >
+                      {zipBusy === id ? downloadBusyLabel(w.type) : downloadLabelForWorkType(w.type)}
+                    </GatedSplitAction>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="block w-full px-3 py-2 text-left hover:bg-fill"
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        openRename(id, w.displayTitle);
+                      }}
+                    >
+                      修改名称
+                    </button>
+                    {!isScriptDraft ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-50"
+                        disabled={coverUploadBusy === id}
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          coverUploadTargetIdRef.current = id;
+                          coverFileInputRef.current?.click();
+                        }}
+                      >
+                        {coverUploadBusy === id ? "处理封面中…" : "上传封面（裁 1400²）"}
+                      </button>
+                    ) : null}
+                    {!isScriptDraft ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left hover:bg-fill"
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          goToSharePage(w);
+                        }}
+                      >
+                        {publishActionText}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        requestDelete(id);
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
+                );
+              })(),
+              document.body
+            )
+          : null}
         {sidebarMoreCount > 0 ? (
           <div className="mt-3 flex justify-center">
             <Link
@@ -1956,20 +2053,21 @@ export default function PodcastWorksGallery({
         ) : null}
         </>
       )}
-      {variant === "notes_studio" && notesStudioDetailUi
-        ? (() => {
-            const d = notesStudioDetailUi;
-            const { w, id, isScriptDraft, isActive, prog } = d;
-            return (
-              <div
-                className="fixed inset-0 z-[520] flex items-end justify-center bg-black/45 p-3 sm:items-center sm:p-4"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="notes-studio-detail-title"
-                onPointerDown={(e) => {
-                  if (e.target === e.currentTarget) setNotesStudioDetailId(null);
-                }}
-              >
+      {notesStudioDetailUi
+        ? createPortal(
+            (() => {
+              const d = notesStudioDetailUi;
+              const { w, id, isScriptDraft, isActive, prog } = d;
+              return (
+                <div
+                  className="fixed inset-0 z-[1350] flex items-end justify-center bg-black/45 p-3 sm:items-center sm:p-4"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="notes-studio-detail-title"
+                  onPointerDown={(e) => {
+                    if (e.target === e.currentTarget) setNotesStudioDetailId(null);
+                  }}
+                >
                 <div
                   className="flex max-h-[min(92dvh,800px)] w-full max-w-[min(100vw-1.5rem,32rem)] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-modal"
                   onPointerDown={(e) => e.stopPropagation()}
@@ -2077,7 +2175,7 @@ export default function PodcastWorksGallery({
                         lockedLabelClassName="!px-3 !py-1.5 !text-sm"
                         onLockedNavigate={() => setNotesStudioDetailId(null)}
                       >
-                        {zipBusy === id ? "正在打包…" : "下载"}
+                        {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
                       </GatedSplitAction>
                       {!isScriptDraft ? (
                         <button
@@ -2123,8 +2221,10 @@ export default function PodcastWorksGallery({
                   </div>
                 </div>
               </div>
-            );
-          })()
+              );
+            })(),
+            document.body
+          )
         : null}
     </div>
   );
