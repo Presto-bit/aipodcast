@@ -54,7 +54,7 @@ import {
 
 type PanelId = "mode" | "lang" | "voice" | "duration" | "intro" | "creative" | null;
 
-const MAIN_TEXT_PLACEHOLDER = "可补充要点；将结合已选笔记生成。";
+const MAIN_TEXT_PLACEHOLDER = "补充要点（结合已选笔记）";
 
 export type NotesPodcastRoomModalProps = {
   open: boolean;
@@ -260,7 +260,6 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     [mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks]
   );
 
-  const voiceIdSingle = useMemo(() => resolveVoiceId(voiceOptions, voiceKey1), [voiceOptions, voiceKey1]);
   const voiceId1 = useMemo(() => resolveVoiceId(voiceOptions, voiceKey1), [voiceOptions, voiceKey1]);
   const voiceId2 = useMemo(() => resolveVoiceId(voiceOptions, voiceKey2), [voiceOptions, voiceKey2]);
 
@@ -287,6 +286,23 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
       }
     })();
   }, [open, getAuthHeaders]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const refetchSaved = () => {
+      void (async () => {
+        try {
+          const s = await fetch("/api/saved_voices", { cache: "no-store", headers: { ...getAuthHeaders() } });
+          const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
+          if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
+        } catch {
+          // ignore
+        }
+      })();
+    };
+    window.addEventListener("fym-saved-voices-changed", refetchSaved);
+    return () => window.removeEventListener("fym-saved-voices-changed", refetchSaved);
+  }, [getAuthHeaders]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -394,11 +410,11 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     if (!introVoiceFollow) ttsExtras.intro_voice_id = resolveVoiceId(voiceOptions, introVoiceKey);
     if (!outroVoiceFollow) ttsExtras.outro_voice_id = resolveVoiceId(voiceOptions, outroVoiceKey);
 
-    const vMain = speakerMode === "single" ? voiceIdSingle : voiceId1;
+    const vMain = voiceId1;
     const v1 = voiceId1;
     const v2 = voiceId2;
     const programName = (preset.programName && preset.programName.trim()) || DEFAULT_PROGRAM_NAME;
-    const bodyText = text.trim() || "请根据所选笔记与体裁要求生成播客。";
+    const bodyText = text.trim() || "请按所选笔记与体裁生成播客。";
     return buildScriptPayload(
       { text: bodyText },
       {
@@ -563,7 +579,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
         <div className="sticky top-0 z-[1] shrink-0 flex items-center justify-between gap-2 border-b border-line bg-surface/95 px-4 py-3 backdrop-blur">
           <div>
             <h2 id="notes-podcast-room-title" className="text-base font-semibold text-ink">
-              笔记本 · 生成播客
+              笔记本 · 播客间
             </h2>
             <p className="mt-0.5 text-xs text-muted">
               {presetLabel} · 「{notebookName}」 · 已选 {lockedNoteIds.length}/{maxLockedNotes}
@@ -620,7 +636,6 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                           panelClassAnchorDesktop,
                           "单人或双人",
                           <>
-                            <p className="mb-3 text-sm font-medium text-ink">单人 / 双人</p>
                             <div className="flex gap-2">
                               <button
                                 type="button"
@@ -650,7 +665,6 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                           panelClassAnchorDesktop,
                           "语言",
                           <>
-                            <p className="mb-2 text-sm font-medium">语言</p>
                             <div className="flex flex-wrap gap-2">
                               {LANG_OPTIONS.map((l) => (
                                 <button
@@ -676,7 +690,6 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                           panelClassAnchorDesktop,
                           "音色设置",
                           <>
-                            <p className="mb-1 text-sm font-medium">音色</p>
                             {voiceOptions.length === 0 ? (
                               <p className="text-xs text-warning-ink">正在加载音色列表…</p>
                             ) : null}
@@ -710,7 +723,6 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                           panelClassAnchorDesktop,
                           "时长",
                           <>
-                            <p className="mb-2 text-sm font-medium">时长</p>
                             <div className="flex flex-wrap gap-2">
                               {DURATION_PRESETS.map((p) => (
                                 <button
@@ -725,7 +737,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                               ))}
                             </div>
                             <label className="mt-3 block text-xs">
-                              <span>字数（200–50000，以套餐为准）</span>
+                              <span>字数（200–50000）</span>
                               <input
                                 type="number"
                                 min={200}
@@ -765,7 +777,6 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                               panelClassIntroAnchorDesktop,
                               "开场与结尾",
                               <>
-                            <p className="mb-1 text-sm font-medium">开场 / 结尾</p>
                             <p className="mb-3 text-xs text-muted">开场 / 正文 / 结尾与背景音均可选。</p>
                             <IntroOutroPresetBar
                               scope="notes_room"

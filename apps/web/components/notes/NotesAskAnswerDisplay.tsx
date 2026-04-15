@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEventHandler } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -104,6 +104,7 @@ function SourceExcerptModal({
  */
 export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   const md = useMemo(() => {
     const n = normalizeNotesAskAnswerForDisplay(text);
@@ -114,6 +115,16 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
     if (!sources?.length) return [];
     return [...sources].sort((a, b) => Number(a.index) - Number(b.index));
   }, [sources]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const expandIfCitationHash = () => {
+      if (/^#cite-/.test(window.location.hash || "")) setSourcesOpen(true);
+    };
+    expandIfCitationHash();
+    window.addEventListener("hashchange", expandIfCitationHash);
+    return () => window.removeEventListener("hashchange", expandIfCitationHash);
+  }, []);
 
   const wrap = className?.trim() ? className : "";
 
@@ -136,6 +147,10 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
                   className="ml-0.5 inline align-baseline text-[0.92em] font-semibold text-brand underline decoration-dotted underline-offset-[3px] hover:decoration-solid"
                   title={title}
                   {...rest}
+                  onClick={(e) => {
+                    setSourcesOpen(true);
+                    (rest as { onClick?: MouseEventHandler<HTMLAnchorElement> }).onClick?.(e);
+                  }}
                 >
                   {children}
                 </a>
@@ -169,27 +184,38 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
           className="mt-1 border-t border-line/70 pt-3 text-xs text-ink"
           aria-label="引用来源"
         >
-          <p className="font-semibold text-ink">引用来源</p>
-          <p className="mt-1 text-[11px] text-muted">
-            点击正文中的 [n] 可跳转到下方对应脚注；有检索摘录时点击「查看摘录」可在弹窗中阅读块原文。
-          </p>
-          <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
-            {sortedSources.map((s) => (
-              <li key={`${s.noteId}-${s.index}`} id={`cite-${s.index}`} className="scroll-mt-20">
-                <span className="font-medium text-ink">{s.title}</span>
-                <span className="ml-1.5 font-mono text-[10px] text-muted" title={s.noteId}>
-                  {s.noteId.slice(0, 8)}…
-                </span>
-                <button
-                  type="button"
-                  className="ml-2 rounded border border-line/90 bg-fill/60 px-1.5 py-px text-[11px] font-medium text-ink hover:bg-fill"
-                  onClick={() => setModalSource(s)}
-                >
-                  查看摘录
-                </button>
-              </li>
-            ))}
-          </ol>
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 rounded-lg py-0.5 text-left text-ink hover:bg-fill/50"
+            onClick={() => setSourcesOpen((o) => !o)}
+            aria-expanded={sourcesOpen}
+            aria-controls="notes-ask-citation-footnotes"
+          >
+            <span className="font-semibold">引用来源</span>
+            <span className="shrink-0 text-[11px] font-medium text-muted">{sourcesOpen ? "收起" : "展开"}</span>
+          </button>
+          <div id="notes-ask-citation-footnotes" className="mt-2" hidden={!sourcesOpen}>
+            <p className="text-[11px] text-muted">
+              点击正文中的 [n] 可跳转到下方对应脚注；有检索摘录时点击「查看摘录」可在弹窗中阅读块原文。
+            </p>
+            <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
+              {sortedSources.map((s) => (
+                <li key={`${s.noteId}-${s.index}`} id={`cite-${s.index}`} className="scroll-mt-20">
+                  <span className="font-medium text-ink">{s.title}</span>
+                  <span className="ml-1.5 font-mono text-[10px] text-muted" title={s.noteId}>
+                    {s.noteId.slice(0, 8)}…
+                  </span>
+                  <button
+                    type="button"
+                    className="ml-2 rounded border border-line/90 bg-fill/60 px-1.5 py-px text-[11px] font-medium text-ink hover:bg-fill"
+                    onClick={() => setModalSource(s)}
+                  >
+                    查看摘录
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </div>
         </aside>
       ) : null}
 

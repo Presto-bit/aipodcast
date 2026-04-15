@@ -126,7 +126,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const [polishing, setPolishing] = useState(false);
   const [taskPhase, setTaskPhase] = useState("");
   const [taskProgressPct, setTaskProgressPct] = useState(0);
-  /** 默认不展开「开头结尾」；与 AI 播客同一套面板 */
+  /** 默认不展开「开场/结尾」；与 AI 播客同一套面板 */
   const [activePanel, setActivePanel] = useState<PanelId>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [works, setWorks] = useState<WorkItem[]>([]);
@@ -296,6 +296,23 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
         // ignore
       }
     })();
+  }, [getAuthHeaders]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const refetchSaved = () => {
+      void (async () => {
+        try {
+          const s = await fetch("/api/saved_voices", { cache: "no-store", headers: { ...getAuthHeaders() } });
+          const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
+          if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
+        } catch {
+          // ignore
+        }
+      })();
+    };
+    window.addEventListener("fym-saved-voices-changed", refetchSaved);
+    return () => window.removeEventListener("fym-saved-voices-changed", refetchSaved);
   }, [getAuthHeaders]);
 
   useEffect(() => {
@@ -884,7 +901,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                   </span>
                   <span data-tts-toolbar-chip data-tts-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
                     {!planBasicOk ? (
-                      <LockedToolbarChipPill label={<>开头结尾 · {introSummary}</>} upgradeTitle="开头结尾设置需要 Basic 及以上套餐" />
+                      <LockedToolbarChipPill label={<>开场/结尾 · {introSummary}</>} upgradeTitle="开场与结尾设置需要 Basic 及以上套餐" />
                     ) : (
                       <>
                         <button
@@ -892,7 +909,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                           className={chipClass(activePanel === "intro")}
                           onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}
                         >
-                          开头结尾 · {introSummary}
+                          开场/结尾 · {introSummary}
                         </button>
                         {renderFloatingPanel(
                           "intro",

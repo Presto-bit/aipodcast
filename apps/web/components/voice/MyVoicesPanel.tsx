@@ -40,7 +40,8 @@ type DetailModel =
   | { kind: "cloned"; voice: Voice }
   | { kind: "orphan"; voiceId: string };
 
-const VOICE_OVERFLOW_MENU_W = 144;
+/** 与「⋯」菜单实际宽度大致匹配，用于靠右对齐时计算 left */
+const VOICE_OVERFLOW_MENU_W = 168;
 
 type OverflowMenuState = { rowKey: string; top: number; left: number; entry: DetailModel };
 
@@ -417,6 +418,11 @@ export default function MyVoicesPanel() {
           ? { kind: "cloned", voice: { ...d.voice, displayName: normalizedName } }
           : d
       );
+      try {
+        window.dispatchEvent(new Event("fym-saved-voices-changed"));
+      } catch {
+        // ignore
+      }
     } catch (e) {
       setMsg(String(e instanceof Error ? e.message : e));
     } finally {
@@ -460,7 +466,25 @@ export default function MyVoicesPanel() {
       // ignore
     }
     setDetailOpen(entry);
+    setEditingVoiceId("");
+    setEditingVoiceName("");
     setOverflowMenu(null);
+  }
+
+  function openRenameForClonedVoice(voice: Voice) {
+    setOverflowMenu(null);
+    setDetailPreviewUrl(null);
+    setDetailPreviewVoiceId(null);
+    detailPendingAutoplay.current = false;
+    setDetailPreviewLoading(false);
+    try {
+      detailAudioRef.current?.pause();
+    } catch {
+      // ignore
+    }
+    setDetailOpen({ kind: "cloned", voice });
+    setEditingVoiceId(voice.voiceId);
+    setEditingVoiceName((voice.displayName || voice.voiceId || "").trim());
   }
 
   function cardTitleFor(entry: DetailModel): string {
@@ -1069,11 +1093,21 @@ export default function MyVoicesPanel() {
       {overflowMenu
         ? createPortal(
             <div
-              className="fixed z-[100] w-36 max-w-[min(9rem,calc(100vw-16px))] rounded-xl border border-line bg-surface py-1 text-sm shadow-card ring-1 ring-line/50"
+              className="fixed z-[100] min-w-[9rem] max-w-[min(12rem,calc(100vw-16px))] rounded-xl border border-line bg-surface py-1 text-sm shadow-card ring-1 ring-line/50"
               style={{ top: overflowMenu.top, left: overflowMenu.left }}
               role="menu"
               onClick={(e) => e.stopPropagation()}
             >
+              {overflowMenu.entry.kind === "cloned" ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full px-3 py-2 text-left hover:bg-fill"
+                  onClick={() => openRenameForClonedVoice(overflowMenu.entry.voice)}
+                >
+                  {t("voice.detail.rename")}
+                </button>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"

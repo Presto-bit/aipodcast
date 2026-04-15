@@ -471,6 +471,23 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }, [getAuthHeaders]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const refetchSaved = () => {
+      void (async () => {
+        try {
+          const s = await fetch("/api/saved_voices", { cache: "no-store", headers: { ...getAuthHeaders() } });
+          const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
+          if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
+        } catch {
+          // ignore
+        }
+      })();
+    };
+    window.addEventListener("fym-saved-voices-changed", refetchSaved);
+    return () => window.removeEventListener("fym-saved-voices-changed", refetchSaved);
+  }, [getAuthHeaders]);
+
+  useEffect(() => {
     if (introVoiceFollow) setIntroVoiceKey(voiceKey1);
   }, [voiceKey1, introVoiceFollow]);
 

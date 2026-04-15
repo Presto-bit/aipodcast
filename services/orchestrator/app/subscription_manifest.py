@@ -57,8 +57,8 @@ TIER_AI_POLISH_MONTHLY_BY_TIER: dict[str, int] = {
 MAX_NOTE_REFS_BY_TIER: dict[str, int] = {
     "free": 1,
     "basic": 3,
-    "pro": 5,
-    "max": 10,
+    "pro": 6,
+    "max": 12,
     "payg": 1,
 }
 
@@ -70,7 +70,7 @@ VOICE_CLONE_MONTHLY_INCLUDED_BY_TIER: dict[str, int] = {
     "payg": 0,
 }
 
-# 长文 / 长文播客：单次 script_target_chars 上限（产品口径，与 worker 脚本生成一致）
+# 长文与长文播客：单次 script_target_chars 上限（产品口径，与 worker 脚本生成一致）
 LONG_FORM_SCRIPT_CHARS_CAP_BY_TIER: dict[str, int] = {
     "free": 5000,
     "basic": 8000,

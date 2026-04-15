@@ -131,7 +131,7 @@ def _summary_quotas_for_tier(tier: str) -> list[dict[str, str]]:
             },
             {
                 "key": "long_form",
-                "label": "长文/长文播客单次目标字数上限",
+                "label": "长文与长文播客单次目标字数上限",
                 "value": f"{long_form_script_chars_cap(tid)} 字",
             },
         ]
@@ -149,15 +149,14 @@ def _feature_bullets_for_tier(tier: str) -> tuple[str | None, list[str]]:
         ]
     if tid == "basic":
         return "相对 Free 的提升：", [
-            f"月目标生成时长更高；单次长文/长文播客上限约 {long_form_script_chars_cap('basic')} 字",
+            "月目标生成时长更高；单次成稿字数等配额见上表",
             "标准导出（mp3）；不含去水印与 AI 润色（Pro 起）",
             "每月含 1 次音色克隆（超出可按 ¥9.9/次购买）",
             "适合轻量周更",
         ]
     if tid == "pro":
         return "Basic+ 的核心升级：", [
-            "更高月目标生成时长（见上表）",
-            f"长文与长文播客单次目标字数上限 {long_form_script_chars_cap('pro')} 字",
+            "更高月目标生成时长与单次成稿字数上限（见上表）",
             "高质量导出、去水印",
             f"AI 润色（TTS 前）{_ai_polish_label('pro')}",
             "每月 2 次音色克隆额度（超出可按次购买）",
@@ -165,8 +164,7 @@ def _feature_bullets_for_tier(tier: str) -> tuple[str | None, list[str]]:
         ]
     if tid == "max":
         return "Pro 的全部权益，另含：", [
-            "顶配月目标生成时长（见上表）",
-            f"长文与长文播客单次目标字数上限 {long_form_script_chars_cap('max')} 字",
+            "顶配月目标生成时长与单次成稿字数上限（见上表）",
             "批量处理、更高队列优先级（产品口径）",
             f"AI 润色（TTS 前）{_ai_polish_label('max')}",
             "每月 3 次音色克隆额度",

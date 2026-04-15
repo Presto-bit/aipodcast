@@ -33,3 +33,10 @@ export function maxNotesForReferencePlan(plan: string | undefined | null): numbe
   if (p === "payg") return 1;
   return 1;
 }
+
+/** 与订阅页「知识库可参考资料条数」口径一致（payg / free 均为 1 条） */
+export const NOTE_REFS_TIER_SUMMARY_ZH = "Free 1 / Basic 3 / Pro 6 / Max 12";
+
+export function notesRefSelectionLimitMessage(cap: number): string {
+  return `当前套餐最多勾选 ${cap} 本笔记作为资料（${NOTE_REFS_TIER_SUMMARY_ZH}）`;
+}

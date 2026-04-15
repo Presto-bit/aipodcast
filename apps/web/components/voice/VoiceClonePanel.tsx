@@ -6,18 +6,20 @@ import { messageLooksLikeWalletTopupHint } from "../../lib/billingShortfall";
 import { useAuth } from "../../lib/auth";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 
-const MAX_BYTES = 20 * 1024 * 1024;
+/** 本地录音上传上限（与后端上限一致，避免长音频被拒） */
+const MAX_RECORD_BYTES = 20 * 1024 * 1024;
+/** 上传文件克隆：与界面说明一致 */
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 
 const DIALOGUE_HELP = [
   "在安静环境录制，避免回声与背景噪声。",
   "建议连续朗读 15～60 秒，口齿清晰、音量稳定。",
-  "克隆将使用服务端 MINIMAX_API_KEY 调用 MiniMax 音色克隆。"
+  "克隆将使用MINIMAX服务，遵守MiniMax服务协议。"
 ];
 
 const UPLOAD_HELP = [
-  "支持 wav / mp3 / m4a / flac / ogg / aac / webm 等，单文件最大 20MB。",
-  "音频需包含足够有效人声（以服务商校验为准）。",
-  "成功后音色写入服务端列表，可在「音色库」与 TTS/播客 中选择。"
+  "支持 wav / mp3 / m4a 等，单文件最大2MB。",
+  "音频需包含足够有效人声，避免回声与背景噪声。"
 ];
 
 const card =
@@ -46,9 +48,9 @@ export default function VoiceClonePanel() {
     return btoa(binary);
   }
 
-  async function runClone(blob: Blob, filename: string) {
-    if (blob.size > MAX_BYTES) {
-      setError("文件过大，最大 20MB");
+  async function runClone(blob: Blob, filename: string, maxBytes: number, limitLabel: string) {
+    if (blob.size > maxBytes) {
+      setError(`文件过大，最大 ${limitLabel}`);
       return;
     }
     setBusy(true);
@@ -156,7 +158,7 @@ export default function VoiceClonePanel() {
       return;
     }
     const ext = blob.type.includes("webm") ? "webm" : "wav";
-    await runClone(blob, `record_${Date.now()}.${ext}`);
+    await runClone(blob, `record_${Date.now()}.${ext}`, MAX_RECORD_BYTES, "20MB");
   }
 
   return (
@@ -208,7 +210,7 @@ export default function VoiceClonePanel() {
             onChange={(e) => {
               const f = e.target.files?.[0];
               e.target.value = "";
-              if (f) void runClone(f, f.name || "upload.wav");
+              if (f) void runClone(f, f.name || "upload.wav", MAX_UPLOAD_BYTES, "2MB");
             }}
           />
           <button

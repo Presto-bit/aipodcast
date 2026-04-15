@@ -1,7 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import InlineConfirmBar from "../../components/ui/InlineConfirmBar";
 import InlineTextPrompt from "../../components/ui/InlineTextPrompt";
 import SmallPromptModal from "../../components/ui/SmallPromptModal";
@@ -41,7 +42,7 @@ import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
-import { maxNotesForReferencePlan } from "../../lib/noteReferenceLimits";
+import { maxNotesForReferencePlan, notesRefSelectionLimitMessage } from "../../lib/noteReferenceLimits";
 import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
 import { PlanTierHint } from "../../components/PlanTierHint";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
@@ -123,6 +124,11 @@ const inputCls =
 const LANG_OPTIONS_ART = ["中文", "English", "日本語"] as const;
 const NOTE_PAGE = 30;
 const NOTEBOOK_STATS_PAGE = 500;
+
+/** 需要先打开笔记本时的统一提示 */
+const NOTES_NEED_NOTEBOOK = "请先进入笔记本";
+/** 未在左侧来源勾选资料时的统一提示（占位、无障碍、按钮与校验） */
+const NOTES_ASK_SOURCE_REQUIRED = "请先勾选左侧资料";
 
 const NOTEBOOK_CARD_THEMES = [
   {
@@ -491,6 +497,16 @@ export default function NotesPage() {
       return tb - ta;
     });
   }, [notes]);
+
+  const selectAllOnPageInputRef = useRef<HTMLInputElement>(null);
+  const allNotesOnPageSelected =
+    notesSorted.length > 0 && notesSorted.every((x) => draftSelectedNoteIds.includes(x.noteId));
+  const someNotesOnPageSelected = notesSorted.some((x) => draftSelectedNoteIds.includes(x.noteId));
+
+  useLayoutEffect(() => {
+    const el = selectAllOnPageInputRef.current;
+    if (el) el.indeterminate = someNotesOnPageSelected && !allNotesOnPageSelected;
+  }, [allNotesOnPageSelected, someNotesOnPageSelected]);
 
   const noteTitleById = useMemo(() => {
     const m: Record<string, string> = {};
@@ -1242,7 +1258,7 @@ export default function NotesPage() {
     if (!file) return;
     const nb = selectedNotebook.trim();
     if (!nb) {
-      setError("请先进入某一笔记本后再上传");
+      setError(`${NOTES_NEED_NOTEBOOK}后再上传`);
       return;
     }
     setUploading(true);
@@ -1274,7 +1290,7 @@ export default function NotesPage() {
     setDraftSelectedNoteIds((prev) => {
       if (prev.includes(noteId)) return prev.filter((x) => x !== noteId);
       if (prev.length >= noteRefCap) {
-        setError(`当前套餐最多勾选 ${noteRefCap} 本笔记作为资料（Free 1 / Basic 3 / Pro 6 / Max 12）`);
+        setError(notesRefSelectionLimitMessage(noteRefCap));
         return prev;
       }
       setError("");
@@ -1282,36 +1298,48 @@ export default function NotesPage() {
     });
   }
 
-  function toggleSelectAllOnPage() {
-    const pageIds = notesSorted.map((n) => n.noteId);
-    if (pageIds.length === 0) return;
-    const allOn = pageIds.every((id) => draftSelectedNoteIds.includes(id));
-    if (allOn) {
-      setDraftSelectedNoteIds((prev) => prev.filter((id) => !pageIds.includes(id)));
-      return;
-    }
-    setDraftSelectedNoteIds((prev) => {
-      const next = [...prev];
-      for (const id of pageIds) {
-        if (next.length >= noteRefCap) {
-          setError(`当前套餐最多勾选 ${noteRefCap} 本笔记作为资料（Free 1 / Basic 3 / Pro 6 / Max 12）`);
-          break;
-        }
-        if (!next.includes(id)) next.push(id);
+  const onSelectAllOnPageChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      const wantSelect = e.target.checked;
+      const pageIds = notesSorted.map((n) => n.noteId);
+      if (pageIds.length === 0) return;
+      if (!wantSelect) {
+        /** 取消「选择全部」：清空当前笔记本下已选资料（含其它分页中已勾选的 ID） */
+        setDraftSelectedNoteIds([]);
+        setError("");
+        return;
       }
-      if (next.length > prev.length) setError("");
-      return next;
-    });
-  }
+      /**
+       * 本页未全选时表头为 indeterminate；点击后浏览器会先走 checked=true（补全本页），
+       * 若已满额再 setError，会卡住且无法切到「取消全选」。已满额且仍有本页缺口时改为整本清空以便恢复操作。
+       * 未达上限则静默按条补选至套餐上限，不再弹出限制文案（单条勾选仍可在 toggleDraftNote 中提示）。
+       */
+      setDraftSelectedNoteIds((prev) => {
+        const missingOnPage = pageIds.filter((id) => !prev.includes(id));
+        if (missingOnPage.length === 0) return prev;
+        if (prev.length >= noteRefCap) {
+          return [];
+        }
+        const next = [...prev];
+        for (const id of pageIds) {
+          if (next.length >= noteRefCap) break;
+          if (!next.includes(id)) next.push(id);
+        }
+        return next;
+      });
+      setError("");
+    },
+    [notesSorted, noteRefCap]
+  );
 
   async function submitNotesAsk() {
     const nb = selectedNotebook.trim();
     if (!nb) {
-      setNotesAskError("请先进入某一笔记本");
+      setNotesAskError(NOTES_NEED_NOTEBOOK);
       return;
     }
     if (draftSelectedNoteIds.length === 0) {
-      setNotesAskError("请先在「来源」中勾选至少一条笔记");
+      setNotesAskError(NOTES_ASK_SOURCE_REQUIRED);
       return;
     }
     const q = notesAskQuestion.trim();
@@ -1465,7 +1493,7 @@ export default function NotesPage() {
   async function saveAskAnswerAsNote(text: string, msgId: string) {
     const nb = selectedNotebook.trim();
     if (!nb) {
-      setNotesAskError("请先选择笔记本");
+      setNotesAskError(NOTES_NEED_NOTEBOOK);
       return;
     }
     const raw = (text || "").trim();
@@ -1661,11 +1689,11 @@ export default function NotesPage() {
 
   function openPodcastFlow() {
     if (!selectedNotebook.trim()) {
-      setError("生成播客：请先进入某一笔记本");
+      setError(`生成播客：${NOTES_NEED_NOTEBOOK}`);
       return;
     }
     if (draftSelectedNoteIds.length === 0) {
-      setError("生成播客：请先在「来源」中勾选至少一条笔记");
+      setError(`生成播客：${NOTES_ASK_SOURCE_REQUIRED}`);
       return;
     }
     setError("");
@@ -1674,11 +1702,11 @@ export default function NotesPage() {
 
   function openArticleFlow() {
     if (!selectedNotebook.trim()) {
-      setError("生成文章：请先进入某一笔记本");
+      setError(`生成文章：${NOTES_NEED_NOTEBOOK}`);
       return;
     }
     if (draftSelectedNoteIds.length === 0) {
-      setError("生成文章：请先在「来源」中勾选至少一条笔记");
+      setError(`生成文章：${NOTES_ASK_SOURCE_REQUIRED}`);
       return;
     }
     setError("");
@@ -1802,7 +1830,7 @@ export default function NotesPage() {
           {notebooks.length === 0 ? (
             <EmptyState
               title="还没有笔记本"
-              description="新建笔记本 → 添加资料 → 右侧提问或生成。"
+              description="新建后添加资料，即可在右侧提问或生成。"
               className="mt-4 border-dashed border-line bg-fill/40 py-8"
             />
           ) : null}
@@ -2083,14 +2111,14 @@ export default function NotesPage() {
                 {notesSorted.length > 0 ? (
                   <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink hover:bg-surface/70">
                     <input
+                      ref={selectAllOnPageInputRef}
                       type="checkbox"
                       className="h-3.5 w-3.5 accent-brand"
-                      checked={
-                        notesSorted.length > 0 && notesSorted.every((x) => draftSelectedNoteIds.includes(x.noteId))
-                      }
-                      onChange={() => toggleSelectAllOnPage()}
+                      checked={allNotesOnPageSelected}
+                      onChange={onSelectAllOnPageChange}
+                      aria-label="选择全部"
                     />
-                    选择本页全部
+                    选择全部
                   </label>
                 ) : null}
                 {loading ? <p className="mt-2 text-sm text-muted">加载中…</p> : null}
@@ -2271,7 +2299,6 @@ export default function NotesPage() {
                   ⋮
                 </span>
               </div>
-              <p className="mt-2 shrink-0 text-xs text-muted">勾选左侧资料后提问</p>
 
               <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
                 {notesAskError ? (
@@ -2284,7 +2311,7 @@ export default function NotesPage() {
                   className="h-[min(50vh,420px)] max-h-[min(50vh,420px)] min-h-[200px] w-full min-w-0 shrink-0 overflow-y-auto rounded-xl border border-line/80 bg-surface/80 p-3.5"
                 >
                   {notesAskMessages.length === 0 ? (
-                    <p className="text-xs text-muted">勾选资料后提问</p>
+                    <p className="text-xs text-muted">勾选左侧资料后即可提问</p>
                   ) : (
                     <div className="flex flex-col gap-3">
                       {notesAskMessages.map((m) => (
@@ -2390,10 +2417,7 @@ export default function NotesPage() {
                     >
                       🎧
                     </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] font-semibold leading-tight text-ink">音频</div>
-                      <div className="text-[9px] leading-tight text-brand/80">生成播客</div>
-                    </div>
+                    <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">生成播客</span>
                   </button>
                   <button
                     type="button"
@@ -2406,10 +2430,7 @@ export default function NotesPage() {
                     >
                       📝
                     </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] font-semibold leading-tight text-ink">文章</div>
-                      <div className="text-[9px] leading-tight text-success-ink/80">生成长文</div>
-                    </div>
+                    <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">生成长文</span>
                   </button>
                 </div>
                 <div
@@ -2422,7 +2443,7 @@ export default function NotesPage() {
                   <textarea
                     className="max-h-32 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
                     placeholder={
-                      draftSelectedNoteIds.length === 0 ? "请先在左侧「来源」中勾选资料…" : "向资料提问…"
+                      draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "输入问题…"
                     }
                     value={notesAskQuestion}
                     onChange={(e) => setNotesAskQuestion(e.target.value)}
@@ -2441,11 +2462,9 @@ export default function NotesPage() {
                     }}
                     disabled={notesAskBusy || draftSelectedNoteIds.length === 0}
                     aria-label={
-                      draftSelectedNoteIds.length === 0 ? "需先勾选资料后再向资料提问" : "向资料提问"
+                      draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "向资料提问"
                     }
-                    title={
-                      draftSelectedNoteIds.length === 0 ? "请先在左侧「来源」中勾选至少一条笔记" : undefined
-                    }
+                    title={draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : undefined}
                     rows={1}
                   />
                   <span className="mb-1 shrink-0 rounded-full bg-fill px-2 py-0.5 text-[10px] font-medium text-muted tabular-nums">
@@ -2460,7 +2479,7 @@ export default function NotesPage() {
                       !notesAskQuestion.trim()
                     }
                     title={
-                      draftSelectedNoteIds.length === 0 ? "请先勾选资料" : "提问"
+                      draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "提问"
                     }
                     aria-label="发送提问"
                     onClick={() => void submitNotesAsk()}
@@ -2794,7 +2813,7 @@ export default function NotesPage() {
             onPointerDown={(e) => e.stopPropagation()}
           >
             <h2 id="genre-title" className="text-base font-semibold text-ink">
-              选择播客体裁
+              选择体裁
             </h2>
             <div className="mt-4 grid grid-cols-2 gap-2">
               {(Object.keys(PODCAST_ROOM_PRESETS) as PodcastRoomPresetKey[]).map((k) => (

@@ -83,7 +83,7 @@ def voice_clone_payg_cents() -> int:
 
 
 def long_form_script_chars_cap(tier: str | None) -> int:
-    """长文 / 长文播客单次目标字数上限（与脚本生成 enforcement 一致）。"""
+    """长文与长文播客单次目标字数上限（与脚本生成 enforcement 一致）。"""
     return int(LONG_FORM_SCRIPT_CHARS_CAP_BY_TIER[_norm_tier(tier)])
 
 
@@ -137,7 +137,7 @@ def _row_monthly_minutes_product() -> dict[str, Any]:
 def _row_long_form_script_chars_cap() -> dict[str, Any]:
     return {
         "key": "feature.long_form.script_target_chars_max",
-        "label": "长文 / 长文播客单次目标字数上限",
+        "label": "长文与长文播客单次目标字数上限",
         **_tier_cells(lambda t: str(LONG_FORM_SCRIPT_CHARS_CAP_BY_TIER[t])),
     }
 
