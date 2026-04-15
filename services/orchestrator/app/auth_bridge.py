@@ -53,6 +53,13 @@ def user_info_for_phone(phone: str) -> dict[str, Any]:
                         base[key] = pg_row.get(key)
     except Exception:
         pass
+    try:
+        from .models import wallet_balance_cents_for_phone
+
+        ph_w = str(base.get("phone") or "").strip()
+        base["wallet_balance_cents"] = int(wallet_balance_cents_for_phone(ph_w)) if ph_w else 0
+    except Exception:
+        base["wallet_balance_cents"] = 0
     return base
 
 

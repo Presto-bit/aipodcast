@@ -93,6 +93,12 @@ type GatedSplitActionProps = {
   /** 锁定态外壳：与解锁按钮边框语义一致 */
   variant?: "default" | "brand";
   children: ReactNode;
+  /** 锁定态外层 Link 的额外 class（如下拉菜单全宽：`w-full rounded-none border-0`） */
+  lockedLinkClassName?: string;
+  /** 锁定态左侧文案区域的额外 class */
+  lockedLabelClassName?: string;
+  /** 锁定态跳转订阅前回调（如关闭下拉菜单） */
+  onLockedNavigate?: () => void;
 };
 
 /**
@@ -105,7 +111,10 @@ export function GatedSplitAction({
   disabled,
   unlockedClassName,
   variant = "default",
-  children
+  children,
+  lockedLinkClassName,
+  lockedLabelClassName,
+  onLockedNavigate
 }: GatedSplitActionProps) {
   if (!locked) {
     return (
@@ -122,9 +131,17 @@ export function GatedSplitAction({
     variant === "brand"
       ? "text-[11px] font-medium text-brand opacity-80"
       : "text-[11px] text-ink opacity-70";
+  const linkCls = [shell, lockedLinkClassName].filter(Boolean).join(" ");
+  const labelSpanCls = ["min-w-0 flex-1 truncate px-2 py-1 text-left", labelCls, lockedLabelClassName].filter(Boolean).join(" ");
   return (
-    <Link href="/subscription" title={upgradeTitle} aria-label={upgradeTitle} className={shell}>
-      <span className={`min-w-0 flex-1 truncate px-2 py-1 text-left ${labelCls}`}>{children}</span>
+    <Link
+      href="/subscription"
+      title={upgradeTitle}
+      aria-label={upgradeTitle}
+      className={linkCls}
+      onClick={() => onLockedNavigate?.()}
+    >
+      <span className={labelSpanCls}>{children}</span>
       <span className="inline-flex min-h-[1.75rem] min-w-[2.25rem] shrink-0 items-center justify-center border-l border-amber-500/35 bg-amber-500/[0.08] px-2 text-amber-800 dark:text-amber-300">
         <IconSubscriptionCrown className="h-3 w-3" />
       </span>

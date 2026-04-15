@@ -1,6 +1,6 @@
 export const metadata = {
-  title: "创作 · FindingYourVoice",
-  description: "做一期播客、文字转语音、笔记本 — 统一入口"
+  title: "一键生成播客 · FindingYourVoice",
+  description: "输入主题或正文，一键生成播客或文字转语音"
 };
 
 export default function CreateLayout({ children }: { children: React.ReactNode }) {

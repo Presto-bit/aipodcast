@@ -113,18 +113,33 @@ export default function CreatePage() {
     act && (act.busy || (act.phase ?? "").trim().length > 0 || act.progressPct > 0)
   );
 
+  const createPageEyebrow = t("create.pageEyebrow").trim();
+  const createPageSubtitle = t("create.pageSubtitle").trim();
+
   return (
     <main className="mx-auto min-h-0 w-full max-w-3xl px-3 pb-12 pt-3 sm:px-4 sm:pt-6">
       <header className="mb-6 border-l-2 border-brand/35 pl-4 sm:mb-10 sm:pl-5">
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted">{t("create.pageEyebrow")}</p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-ink sm:text-3xl">{t("create.pageTitle")}</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">{t("create.pageSubtitle")}</p>
+        {createPageEyebrow ? (
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted">{createPageEyebrow}</p>
+        ) : null}
+        <h1
+          className={
+            createPageEyebrow
+              ? "mt-2 text-2xl font-semibold tracking-tight text-ink sm:text-3xl"
+              : "text-2xl font-semibold tracking-tight text-ink sm:text-3xl"
+          }
+        >
+          {t("create.pageTitle")}
+        </h1>
+        {createPageSubtitle ? (
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">{createPageSubtitle}</p>
+        ) : null}
       </header>
 
       <section className="fym-surface-card fym-tech-cap overflow-visible">
         <div className="p-4 sm:p-5">
           <label className="sr-only" htmlFor="create-draft">
-            创作正文
+            输入主题或正文
           </label>
           {/* 角标摘要仅叠在正文框内，模式条独立在下方，避免遮挡「创作播客 / 文字转语音」 */}
           <div className="overflow-hidden rounded-xl border border-line bg-fill ring-brand/20 focus-within:ring-2">

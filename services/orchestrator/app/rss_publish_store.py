@@ -7,7 +7,11 @@ from xml.sax.saxutils import escape
 
 from .db import get_conn, get_cursor
 from .media_wallet import media_wallet_billing_enabled
-from .models import get_job, list_job_events
+from .models import (
+    get_job,
+    list_job_events,
+    user_work_download_blocked_never_paid_free_only,
+)
 from .show_notes_convert import (
     markdown_show_notes_to_html,
     plain_summary_fallback_from_markdown,
@@ -232,6 +236,29 @@ def _job_events_indicate_paid_media_debit(job_id: str) -> bool:
         if float(pay.get("from_payg_minutes") or 0) > 0:
             return True
     return False
+
+
+def work_download_allowed(job_id: str, user_phone: str | None) -> bool:
+    """
+    是否允许打包下载本条成片：
+    - 若用户从未有余额（无钱包充值记录且当前余额为 0），且历史侧证仅为 free 档，则不允许；
+    - 其余情况均允许（与单条任务是否套餐外扣费无关）。
+    """
+    from . import auth_bridge
+
+    jid = (job_id or "").strip()
+    up = (user_phone or "").strip()
+    if not jid or not up:
+        return False
+    row = get_job(jid, user_ref=up)
+    if not row:
+        return False
+    if str(row.get("status") or "") != "succeeded":
+        return False
+    tier = str(auth_bridge.user_info_for_phone(up).get("plan") or "free").strip().lower()
+    if user_work_download_blocked_never_paid_free_only(up, tier):
+        return False
+    return True
 
 
 def rss_publish_eligibility_dict(user_phone: str, job_id: str) -> dict[str, Any]:

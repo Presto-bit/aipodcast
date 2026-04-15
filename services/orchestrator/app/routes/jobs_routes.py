@@ -53,6 +53,7 @@ from ..models import (
 )
 from ..mp3_export import build_export_mp3
 from ..object_store import get_object_bytes, presigned_get_url, upload_bytes
+from ..rss_publish_store import work_download_allowed
 from ..queue import ai_queue, media_queue, redis_conn
 from ..schemas import (
     JobAudioExportRequest,
@@ -480,6 +481,7 @@ def list_works_api(
             "status": str(row.get("status") or ""),
             "type": job_type,
             "projectName": project_name_for(_pid),
+            "downloadAllowed": work_download_allowed(_jid, user_ref or ""),
         }
         if _program_name:
             work["workProgramName"] = _program_name[:200]
@@ -648,6 +650,7 @@ def list_works_trash_api(
             "status": str(row.get("status") or ""),
             "type": job_type,
             "projectName": project_name_for(_pid),
+            "downloadAllowed": work_download_allowed(_jid, user_ref or ""),
         }
         if job_type in ("text_to_speech", "tts"):
             buckets["tts"].append(work)
@@ -750,8 +753,11 @@ def ensure_jobs_trash_schema_startup(*, strict: bool = False) -> None:
 
 @router.get("/jobs/{job_id}/artifacts/{artifact_id}/download")
 def download_job_artifact_api(job_id: str, artifact_id: str, request: Request):
-    if not get_job(job_id, user_ref=_job_row_scope_ref(request)):
+    scope = _job_row_scope_ref(request)
+    if not get_job(job_id, user_ref=scope):
         raise HTTPException(status_code=404, detail="job_not_found")
+    if not work_download_allowed(job_id, scope or ""):
+        raise HTTPException(status_code=403, detail="下载需订阅")
     art = get_job_artifact(job_id, artifact_id)
     if not art:
         raise HTTPException(status_code=404, detail="artifact_not_found")
@@ -862,9 +868,12 @@ def export_job_audio_mp3_api(
     body: JobAudioExportRequest | None = Body(default=None),
 ):
     opts = body or JobAudioExportRequest()
-    row = get_job(job_id, user_ref=_job_row_scope_ref(request))
+    scope = _job_row_scope_ref(request)
+    row = get_job(job_id, user_ref=scope)
     if not row:
         raise HTTPException(status_code=404, detail="job_not_found")
+    if not work_download_allowed(job_id, scope or ""):
+        raise HTTPException(status_code=403, detail="下载需订阅")
     result = _parse_job_result_dict(row.get("result"))
     hx = str(result.get("audio_hex") or "").strip()
     raw_mp3: bytes
@@ -915,11 +924,14 @@ def distribution_pack_api(
     短期「全平台分发」辅助：返回 MP3/封面/各画幅短视频的预签名直链 + 一段可复制 Markdown 文案骨架。
     需任务已成功且相应产物已写入对象存储（音频优先 audio_object_key，否则仅提供站内 audio-export 路径说明）。
     """
-    row = get_job(job_id, user_ref=_job_row_scope_ref(request))
+    scope = _job_row_scope_ref(request)
+    row = get_job(job_id, user_ref=scope)
     if not row:
         raise HTTPException(status_code=404, detail="job_not_found")
     if str(row.get("status") or "") != "succeeded":
         raise HTTPException(status_code=400, detail="job_not_succeeded")
+    if not work_download_allowed(job_id, scope or ""):
+        raise HTTPException(status_code=403, detail="下载需订阅")
     result = _parse_job_result_dict(row.get("result"))
     pack: dict[str, Any] = {
         "job_id": job_id,

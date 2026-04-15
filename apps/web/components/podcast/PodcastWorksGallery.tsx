@@ -8,7 +8,6 @@ import SmallConfirmModal from "../ui/SmallConfirmModal";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
 import { useAuth } from "../../lib/auth";
-import { planMayDownloadBundledWorks } from "../../lib/noteReferenceLimits";
 import { GatedSplitAction } from "../SubscriptionVipLink";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
 import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
@@ -20,6 +19,10 @@ import { useI18n } from "../../lib/I18nContext";
 import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
+
+function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
+  return w.downloadAllowed === true;
+}
 
 const PODCAST_TYPES = new Set(["podcast_generate", "podcast", "podcast_short_video"]);
 const TTS_TYPES = new Set(["text_to_speech", "tts"]);
@@ -462,7 +465,6 @@ export default function PodcastWorksGallery({
     if (ph.length >= 4) return `尾号 ${ph.slice(-4)}`;
     return "我";
   }, [user]);
-  const planDownloadOk = useMemo(() => planMayDownloadBundledWorks(user?.plan), [user?.plan]);
   const { hiddenKey, titlesKey, allowedTypes } = useMemo(() => galleryStorageKeys(variant), [variant]);
 
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -835,6 +837,7 @@ export default function PodcastWorksGallery({
   );
 
   const onDownload = useCallback(async (row: PodcastWorkRow) => {
+    if (!workDownloadAllowed(row)) return;
     const id = String(row.id || "").trim();
     if (!id) return;
     setMenuOpenId(null);
@@ -1044,6 +1047,8 @@ export default function PodcastWorksGallery({
 
   const selectedCount = selectedIds.size;
   const selectedRows = items.filter((x) => x.id && selectedIds.has(x.id));
+  const batchAllSelectedAllowDownload =
+    selectedRows.length > 0 && selectedRows.every((w) => workDownloadAllowed(w));
 
   const goToSharePage = useCallback(
     (work: PodcastWorkRow) => {
@@ -1165,10 +1170,11 @@ export default function PodcastWorksGallery({
 
   async function batchDownloadSelected() {
     if (selectedRows.length === 0) return;
-    if (variant === "all" && !planDownloadOk) return;
+    const rows = selectedRows.filter((w) => workDownloadAllowed(w));
+    if (rows.length === 0) return;
     setBatchBusy(true);
     try {
-      for (const row of selectedRows) {
+      for (const row of rows) {
         if (!row.id) continue;
         await downloadJobBundleZip({ jobId: row.id, title: row.displayTitle || row.title || row.id });
       }
@@ -1259,26 +1265,34 @@ export default function PodcastWorksGallery({
               >
                 全选当前页
               </button>
-              {variant === "all" && !planDownloadOk ? (
-                <GatedSplitAction
-                  locked
-                  variant="default"
-                  upgradeTitle="批量下载需要 Basic 及以上或按量套餐"
-                  onClick={() => void batchDownloadSelected()}
-                  disabled={selectedCount === 0 || batchBusy}
-                  unlockedClassName="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"
+              {selectedCount === 0 ? (
+                <button
+                  type="button"
+                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink opacity-50"
+                  disabled
                 >
-                  {batchBusy ? "正在批量下载…" : "批量下载"}
-                </GatedSplitAction>
-              ) : (
+                  批量下载
+                </button>
+              ) : batchAllSelectedAllowDownload ? (
                 <button
                   type="button"
                   className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"
-                  disabled={selectedCount === 0 || batchBusy}
+                  disabled={batchBusy}
                   onClick={() => void batchDownloadSelected()}
                 >
                   {batchBusy ? "正在批量下载…" : "批量下载"}
                 </button>
+              ) : (
+                <GatedSplitAction
+                  locked
+                  variant="default"
+                  upgradeTitle="下载需订阅"
+                  onClick={() => {}}
+                  disabled={false}
+                  unlockedClassName="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"
+                >
+                  {batchBusy ? "正在批量下载…" : "批量下载"}
+                </GatedSplitAction>
               )}
               <button
                 type="button"
@@ -1580,9 +1594,9 @@ export default function PodcastWorksGallery({
                       {publishActionText}
                     </button>
                     <GatedSplitAction
-                      locked={!planDownloadOk}
+                      locked={!workDownloadAllowed(w)}
                       variant="default"
-                      upgradeTitle="下载需要 Basic 及以上或按量套餐"
+                      upgradeTitle="下载需订阅"
                       onClick={() => void onDownload(w)}
                       disabled={zipBusy === id}
                       unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
@@ -1739,15 +1753,20 @@ export default function PodcastWorksGallery({
                         <span className="text-base leading-none">⋯</span>
                       </button>
                       {menuOpenId === id ? (
-                        <div className="absolute bottom-full right-0 z-50 mb-1 min-w-[9.5rem] rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card">
-                          <button
-                            type="button"
-                            className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
-                            disabled={zipBusy === id}
+                        <div className="absolute bottom-full right-0 z-50 mb-1 min-w-[9.5rem] overflow-hidden rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card">
+                          <GatedSplitAction
+                            locked={!workDownloadAllowed(w)}
+                            variant="default"
+                            upgradeTitle="下载需订阅"
                             onClick={() => void onDownload(w)}
+                            disabled={zipBusy === id}
+                            unlockedClassName="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
+                            lockedLinkClassName="w-full max-w-none rounded-none border-0 border-b border-line/80 bg-transparent shadow-none"
+                            lockedLabelClassName="px-3 py-2"
+                            onLockedNavigate={() => setMenuOpenId(null)}
                           >
                             {zipBusy === id ? "正在打包…" : downloadLabelForWorkType(w.type)}
-                          </button>
+                          </GatedSplitAction>
                           <button
                             type="button"
                             className="block w-full px-3 py-2 text-left hover:bg-fill"
@@ -1830,14 +1849,16 @@ export default function PodcastWorksGallery({
                       {publishActionText}
                     </button>
                   ) : null}
-                  <button
-                    type="button"
-                    className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
-                    disabled={zipBusy === id}
+                  <GatedSplitAction
+                    locked={!workDownloadAllowed(w)}
+                    variant="default"
+                    upgradeTitle="下载需订阅"
                     onClick={() => void onDownload(w)}
+                    disabled={zipBusy === id}
+                    unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
                   >
                     {zipBusy === id ? "正在打包…" : "下载"}
-                  </button>
+                  </GatedSplitAction>
                   <button
                     type="button"
                     className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
@@ -1865,18 +1886,22 @@ export default function PodcastWorksGallery({
                     className="fixed z-[1000] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
                     style={{ top: pos.top, left: pos.left }}
                   >
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
-                      disabled={zipBusy === m.id}
+                    <GatedSplitAction
+                      locked={!workDownloadAllowed(m.w)}
+                      variant="default"
+                      upgradeTitle="下载需订阅"
                       onClick={() => {
                         setMenuOpenId(null);
                         void onDownload(m.w);
                       }}
+                      disabled={zipBusy === m.id}
+                      unlockedClassName="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
+                      lockedLinkClassName="w-full max-w-none rounded-none border-0 border-b border-line/80 bg-transparent shadow-none"
+                      lockedLabelClassName="px-3 py-2"
+                      onLockedNavigate={() => setMenuOpenId(null)}
                     >
                       {zipBusy === m.id ? "正在打包…" : downloadLabelForWorkType(m.w.type)}
-                    </button>
+                    </GatedSplitAction>
                     <button
                       type="button"
                       role="menuitem"
@@ -2042,14 +2067,18 @@ export default function PodcastWorksGallery({
                           {d.publishActionText}
                         </button>
                       ) : null}
-                      <button
-                        type="button"
-                        className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill disabled:opacity-50"
-                        disabled={zipBusy === id}
+                      <GatedSplitAction
+                        locked={!workDownloadAllowed(w)}
+                        variant="default"
+                        upgradeTitle="下载需订阅"
                         onClick={() => void onDownload(w)}
+                        disabled={zipBusy === id}
+                        unlockedClassName="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill disabled:opacity-50"
+                        lockedLabelClassName="!px-3 !py-1.5 !text-sm"
+                        onLockedNavigate={() => setNotesStudioDetailId(null)}
                       >
                         {zipBusy === id ? "正在打包…" : "下载"}
-                      </button>
+                      </GatedSplitAction>
                       {!isScriptDraft ? (
                         <button
                           type="button"

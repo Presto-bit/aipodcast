@@ -4212,6 +4212,101 @@ def wallet_balance_cents_for_phone(phone: str) -> int:
         return 0
 
 
+def user_never_had_wallet_topup_balance(phone: str) -> bool:
+    """
+    当前钱包余额为 0，且 user_wallet_topups 中无任何充值记录。
+    无法读取用户或出错时返回 False（不视为「从未有余额」），避免误拦下载。
+    """
+    p = (phone or "").strip()
+    if not p:
+        return False
+    try:
+        if wallet_balance_cents_for_phone(p) > 0:
+            return False
+        ensure_user_wallet_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return False
+                cur.execute(
+                    "SELECT 1 FROM user_wallet_topups WHERE user_id = %s LIMIT 1",
+                    (uid,),
+                )
+                if cur.fetchone():
+                    return False
+        return True
+    except Exception:
+        logger.exception("user_never_had_wallet_topup_balance failed phone=%s", p[:4] if p else "")
+        return False
+
+
+def user_subscription_history_only_free(phone: str, current_plan: str | None) -> bool:
+    """
+    当前档为 free，且库内无 basic/pro/max 订阅事件、无成功付费单（订阅或按量包）、无按量分钟包发放记录。
+    current_plan 来自 auth（free/basic/pro/max/payg）；非 free 时返回 False。
+    """
+    cp = (current_plan or "free").strip().lower()
+    if cp in ("basic", "pro", "max", "payg"):
+        return False
+    if cp != "free":
+        return False
+    p = (phone or "").strip()
+    if not p:
+        return False
+    try:
+        ensure_subscription_events_schema()
+        ensure_payment_orders_schema()
+        ensure_user_payg_minute_grants_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return False
+                cur.execute(
+                    """
+                    SELECT 1 FROM subscription_events
+                    WHERE phone = %s AND LOWER(tier) IN ('basic', 'pro', 'max')
+                    LIMIT 1
+                    """,
+                    (p,),
+                )
+                if cur.fetchone():
+                    return False
+                cur.execute(
+                    """
+                    SELECT 1 FROM payment_orders
+                    WHERE phone = %s
+                      AND LOWER(status) = 'paid'
+                      AND (
+                        LOWER(tier) IN ('basic', 'pro', 'max')
+                        OR COALESCE(product_snapshot->>'kind', '') = 'payg_minutes'
+                      )
+                    LIMIT 1
+                    """,
+                    (p,),
+                )
+                if cur.fetchone():
+                    return False
+                cur.execute(
+                    "SELECT 1 FROM user_payg_minute_grants WHERE user_id = %s LIMIT 1",
+                    (uid,),
+                )
+                if cur.fetchone():
+                    return False
+        return True
+    except Exception:
+        logger.exception("user_subscription_history_only_free failed phone=%s", p[:4] if p else "")
+        return False
+
+
+def user_work_download_blocked_never_paid_free_only(phone: str, current_plan: str | None) -> bool:
+    """从未有余额且历史侧证仅 free：应禁止作品下载。"""
+    return user_never_had_wallet_topup_balance(phone) and user_subscription_history_only_free(
+        phone, current_plan
+    )
+
+
 def wallet_try_debit_cents(phone: str, cents: int) -> tuple[bool, int]:
     """
     从钱包扣减指定分；余额不足则不扣。
