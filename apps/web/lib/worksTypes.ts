@@ -29,3 +29,26 @@ export type WorkItem = {
   /** 来自任务 payload.program_name / result，用于作品导航页二级体裁（如深度讨论、笔记文章类目） */
   workProgramName?: string;
 };
+
+/** 编排器内部任务，不应出现在「我的作品」/首页最近成品等用户向列表（与 list_recent_works 过滤一致） */
+export function shouldHideWorkFromUserGallery(work: Pick<WorkItem, "type">): boolean {
+  return String(work.type || "") === "note_rag_index";
+}
+
+/** 合并 ai / tts / notes 桶并排序，排除内部任务类型 */
+export function mergeUserFacingWorksByRecency(ai: WorkItem[], tts: WorkItem[], notes: WorkItem[]): WorkItem[] {
+  const map = new Map<string, WorkItem>();
+  for (const x of [...ai, ...tts, ...notes]) {
+    if (shouldHideWorkFromUserGallery(x)) continue;
+    const id = String(x.id || "").trim();
+    if (!id) continue;
+    if (!map.has(id)) map.set(id, x);
+  }
+  return [...map.values()].sort((a, b) => {
+    const ta = new Date(String(a.createdAt || 0)).getTime();
+    const tb = new Date(String(b.createdAt || 0)).getTime();
+    const na = Number.isFinite(ta) ? ta : 0;
+    const nb = Number.isFinite(tb) ? tb : 0;
+    return nb - na;
+  });
+}

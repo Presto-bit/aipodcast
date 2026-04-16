@@ -23,10 +23,11 @@ _MAX_PER_NOTE = 16_000
 
 
 def _notes_ask_top_k() -> int:
+    """向量检索 top_k 上限与默认；可用环境变量 NOTES_ASK_TOP_K 覆盖（36–160）。"""
     try:
-        return max(36, min(160, int(os.getenv("NOTES_ASK_TOP_K", "96") or "96")))
+        return max(36, min(160, int(os.getenv("NOTES_ASK_TOP_K", "160") or "160")))
     except (TypeError, ValueError):
-        return 96
+        return 160
 
 
 _SYSTEM = (
@@ -126,19 +127,6 @@ def _prepare_notes_ask_messages(
     return messages, sources
 
 
-def validate_notes_ask_request(
-    *,
-    notebook: str,
-    note_ids: list[str],
-    question: str,
-    user_ref: str | None,
-) -> None:
-    """与 answer_notes_question 相同输入校验，供流式接口在建立 SSE 前返回 4xx。"""
-    _prepare_notes_ask_messages(
-        notebook=notebook, note_ids=note_ids, question=question, user_ref=user_ref
-    )
-
-
 def iter_notes_answer_events(
     *,
     notebook: str,
@@ -146,11 +134,19 @@ def iter_notes_answer_events(
     question: str,
     user_ref: str | None,
     api_key: str | None = None,
+    prepared_messages_sources: tuple[list[dict[str, str]], list[dict[str, Any]]] | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """SSE 事件：chunk / done / error。"""
-    messages, sources = _prepare_notes_ask_messages(
-        notebook=notebook, note_ids=note_ids, question=question, user_ref=user_ref
-    )
+    """SSE 事件：chunk / done / error。
+
+    若调用方已通过 `_prepare_notes_ask_messages` 得到 messages/sources，可传入
+    `prepared_messages_sources`，避免与校验阶段重复执行向量检索（此前流式接口会构建两遍上下文）。
+    """
+    if prepared_messages_sources is not None:
+        messages, sources = prepared_messages_sources
+    else:
+        messages, sources = _prepare_notes_ask_messages(
+            notebook=notebook, note_ids=note_ids, question=question, user_ref=user_ref
+        )
     acc: list[str] = []
     try:
         for piece in invoke_llm_chat_messages_stream_iter(

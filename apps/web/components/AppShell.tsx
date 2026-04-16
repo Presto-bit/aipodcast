@@ -14,6 +14,7 @@ import {
 } from "react";
 import {
   IconAdmin,
+  IconClip,
   IconCreate,
   IconDraft,
   IconGrid,
@@ -48,6 +49,7 @@ import {
   SIDEBAR_WIDTH_COLLAPSED_CLASS,
   SIDEBAR_WIDTH_EXPANDED_CLASS
 } from "../lib/appShellLayout";
+import { isClipNavPublicForAllUsers } from "../lib/clipNavAccess";
 import {
   isAuthPublicPath,
   matchesAdminConsole,
@@ -64,6 +66,8 @@ type NavItem = {
   href: string;
   label: string;
   short?: string;
+  /** 侧栏收起时 title 与无障碍说明（默认同 label） */
+  linkTitle?: string;
   Icon: ComponentType<object>;
   /** 自定义高亮（例如子路由需与父入口同时高亮） */
   activeMatch?: (pathname: string) => boolean;
@@ -130,13 +134,27 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [ready, authRequired, user, pathname, router]);
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
+  const isAdmin = String((user as { role?: string })?.role || "") === ADMIN_ROLE;
+  const clipNavPublic = isClipNavPublicForAllUsers();
+  const showClipNav = isAdmin || clipNavPublic;
 
   const navPrimary = useMemo<NavItem[]>(
     () => [{ href: "/", label: t("nav.home"), short: "首", Icon: IconHome }],
     [t]
   );
-  const navProducts = useMemo<NavItem[]>(
-    () => [
+  const navProducts = useMemo<NavItem[]>(() => {
+    const clipLinkTitle =
+      !clipNavPublic && showClipNav ? `${t("nav.clip")}（${t("nav.clipBadge")}）` : t("nav.clip");
+    const clipItem: NavItem = {
+      href: "/clip",
+      label:
+        !clipNavPublic && showClipNav ? `${t("nav.clip")}（${t("nav.clipBadge")}）` : t("nav.clip"),
+      short: t("nav.clipShort"),
+      linkTitle: clipLinkTitle,
+      Icon: IconClip,
+      activeMatch: (p) => pathMatchesRoot(p, "/clip")
+    };
+    const items: NavItem[] = [
       {
         href: "/notes",
         label: t("nav.notes"),
@@ -165,17 +183,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         short: "音",
         Icon: IconVoice,
         activeMatch: (p) => pathMatchesRoot(p, "/voice")
-      },
-      {
-        href: "/notes/templates",
-        label: t("nav.templates"),
-        short: "风",
-        Icon: IconTemplate,
-        activeMatch: (p) => pathMatchesRoot(p, NOTES_TEMPLATES_PREFIX)
       }
-    ],
-    [t, path]
-  );
+    ];
+    if (showClipNav) items.push(clipItem);
+    items.push({
+      href: "/notes/templates",
+      label: t("nav.templates"),
+      short: "风",
+      Icon: IconTemplate,
+      activeMatch: (p) => pathMatchesRoot(p, NOTES_TEMPLATES_PREFIX)
+    });
+    return items;
+  }, [t, path, showClipNav, clipNavPublic]);
   const navLibrary = useMemo<NavItem[]>(
     () => [
       { href: "/works", label: t("nav.works"), short: "作", Icon: IconGrid },
@@ -248,8 +267,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  const isAdmin = String((user as { role?: string })?.role || "") === ADMIN_ROLE;
-
   function linkActive(item: NavItem): boolean {
     if (item.activeMatch) return item.activeMatch(path);
     return path === item.href || (item.href !== "/" && path.startsWith(item.href + "/"));
@@ -259,12 +276,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const active = linkActive(item);
     const label = collapsed && item.short ? item.short : item.label;
     const Ic = item.Icon;
+    const tip = item.linkTitle ?? item.label;
     return (
       <Link
         key={item.href}
         href={item.href}
         className={navButtonClass(active, collapsed)}
-        title={item.label}
+        title={tip}
         onClick={item.onNavigate}
       >
         <NavIconBox active={active}>

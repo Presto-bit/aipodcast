@@ -1,4 +1,5 @@
 import type { JobRecord } from "./types";
+import { presentJobProgressMessageForUser } from "./jobProgressUserText";
 
 export type StreamPayload = {
   id?: number;
@@ -30,8 +31,8 @@ export function jobTypeLabel(jobType: string): string {
 function lastMeaningfulEvent(events: StreamPayload[]): StreamPayload | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    const t = e?.type || "";
-    if (t && t !== "terminal") return e;
+    const t = String(e?.type || "").toLowerCase();
+    if (t && t !== "terminal" && t !== "log") return e;
   }
   return null;
 }
@@ -61,7 +62,8 @@ export function deriveJobStage(
 
   const ev = lastMeaningfulEvent(events);
   const evType = ev?.type || "";
-  const evMsg = typeof ev?.message === "string" ? ev.message.trim() : "";
+  const evMsgRaw = typeof ev?.message === "string" ? ev.message.trim() : "";
+  const evMsg = evMsgRaw ? presentJobProgressMessageForUser(evMsgRaw) : "";
 
   if (st === "queued") {
     return {
@@ -74,15 +76,15 @@ export function deriveJobStage(
   if (evType === "script_chunk") {
     return {
       stageLabel: "撰写脚本",
-      nextStep: "完成后会继续生成语音或混音（视类型而定）。下方文案预览会陆续刷新。",
+      nextStep: "完成后会继续生成语音。下方文案预览会陆续刷新。",
       detail: evMsg || label
     };
   }
 
-  if (/tts|audio|mix|encode|render/i.test(evType) || /语音|合成|混音|编码/.test(evMsg)) {
+  if (/tts|audio|mix|encode|render/i.test(evType) || /语音|合成|混音|编码/.test(evMsgRaw)) {
     return {
       stageLabel: "音频处理",
-      nextStep: "生成可播放文件并写入对象存储，请稍候。",
+      nextStep: "正在生成可播放文件，请稍候。",
       detail: evMsg || label
     };
   }
@@ -90,7 +92,7 @@ export function deriveJobStage(
   if (evMsg) {
     return {
       stageLabel: "处理中",
-      nextStep: "下方处理记录会显示主要步骤；完成后本页会自动更新。",
+      nextStep: "完成后本页会自动更新，也可稍后在「创作记录」查看。",
       detail: evMsg
     };
   }

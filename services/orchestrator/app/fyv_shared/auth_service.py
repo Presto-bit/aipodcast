@@ -800,6 +800,75 @@ def _pg_upsert_user_and_auth(
         conn.close()
 
 
+def _pg_revive_user_with_credentials(
+    *,
+    user_id: str,
+    phone: str,
+    password_hash: str,
+    display_name: str,
+    role: str,
+    plan: str,
+    billing_cycle: Optional[str],
+) -> bool:
+    """将 account_status=deleted 的账号恢复为可用，并更新密码与资料（避免列表中不可见但仍占用手机号）。"""
+    if not _pg_available():
+        return False
+    uid = (user_id or "").strip()
+    if not uid:
+        return False
+    _ensure_auth_tables_pg()
+    p = (phone or "").strip()
+    if not p:
+        return False
+    dn = (display_name or p).strip() or p
+    rl = _normalize_role(role)
+    pl = str(plan or "free").strip().lower()
+    if pl not in VALID_PLANS:
+        pl = "free"
+    bc = (billing_cycle or "").strip().lower() if billing_cycle else None
+    if bc and bc not in VALID_BILLING:
+        bc = None
+    p_norm = re.sub(r"\D+", "", p)
+    conn = psycopg2.connect(_pg_dsn())
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            UPDATE users
+            SET phone = %s,
+                phone_normalized = %s,
+                display_name = %s,
+                role = %s,
+                plan = %s,
+                billing_cycle = %s,
+                account_status = 'active',
+                deleted_at = NULL,
+                updated_at = NOW()
+            WHERE id = %s::uuid
+            """,
+            (p, p_norm, dn, rl, pl, bc, uid),
+        )
+        if int(cur.rowcount or 0) < 1:
+            return False
+        cur.execute(
+            """
+            INSERT INTO user_auth_accounts (user_id, password_hash, status, updated_at)
+            VALUES (%s::uuid, %s, 'active', NOW())
+            ON CONFLICT (user_id) DO UPDATE SET
+              password_hash = EXCLUDED.password_hash,
+              status = 'active',
+              updated_at = NOW()
+            """,
+            (uid, password_hash),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
 def _pg_delete_user(phone: str) -> bool:
     if not _pg_available():
         return False
@@ -2267,19 +2336,36 @@ def register_user(
         return None, pw_err_phone, meta
     pw_hash = generate_password_hash(password)
     if _auth_pg_primary() and _pg_available():
-        exists = _pg_fetch_auth_user(p)
-        if exists:
-            return None, "该手机号已注册", meta
-        ok = _pg_upsert_user_and_auth(
-            phone=p,
-            password_hash=pw_hash,
-            display_name=p,
-            role="user",
-            plan="free",
-            billing_cycle=None,
-        )
-        if not ok:
-            return None, "注册失败（数据库写入失败）", meta
+        row_existing = _pg_fetch_auth_user(p)
+        if isinstance(row_existing, dict):
+            st = str(row_existing.get("account_status") or "active").strip().lower()
+            if st == "deleted":
+                ok = _pg_revive_user_with_credentials(
+                    user_id=str(row_existing.get("user_id") or ""),
+                    phone=p,
+                    password_hash=pw_hash,
+                    display_name=p,
+                    role="user",
+                    plan="free",
+                    billing_cycle=None,
+                )
+                if not ok:
+                    return None, "注册失败（数据库写入失败）", meta
+            elif st == "disabled":
+                return None, "该账号已禁用", meta
+            else:
+                return None, "该手机号已注册", meta
+        else:
+            ok = _pg_upsert_user_and_auth(
+                phone=p,
+                password_hash=pw_hash,
+                display_name=p,
+                role="user",
+                plan="free",
+                billing_cycle=None,
+            )
+            if not ok:
+                return None, "注册失败（数据库写入失败）", meta
         row = _pg_fetch_auth_user(p)
         uid = str((row or {}).get("user_id") or "")
         if uid:
@@ -2871,22 +2957,42 @@ def admin_create_user(phone: str, password: str, role: str = "user", plan: str =
         return False, "无效计费周期"
 
     pw_hash = generate_password_hash(password)
+    reused_deleted_pg = False
     if _auth_pg_primary() and _pg_available():
-        if _pg_fetch_auth_user(p):
-            return False, "该手机号已存在"
-        ok = _pg_upsert_user_and_auth(
-            phone=p,
-            password_hash=pw_hash,
-            display_name=p,
-            role=r,
-            plan=t,
-            billing_cycle=(cycle if t != "free" else None),
-        )
-        if not ok:
-            return False, "新增用户失败"
+        row = _pg_fetch_auth_user(p)
+        if isinstance(row, dict):
+            st = str(row.get("account_status") or "active").strip().lower()
+            if st == "deleted":
+                ok = _pg_revive_user_with_credentials(
+                    user_id=str(row.get("user_id") or ""),
+                    phone=p,
+                    password_hash=pw_hash,
+                    display_name=p,
+                    role=r,
+                    plan=t,
+                    billing_cycle=(cycle if t != "free" else None),
+                )
+                if not ok:
+                    return False, "新增用户失败"
+                reused_deleted_pg = True
+            elif st == "disabled":
+                return False, "该手机号对应账号已禁用"
+            else:
+                return False, "该手机号已存在"
+        else:
+            ok = _pg_upsert_user_and_auth(
+                phone=p,
+                password_hash=pw_hash,
+                display_name=p,
+                role=r,
+                plan=t,
+                billing_cycle=(cycle if t != "free" else None),
+            )
+            if not ok:
+                return False, "新增用户失败"
     if _auth_dual_write() or not _auth_pg_primary() or not _pg_available():
         users = _load_users()
-        if p in users:
+        if p in users and not reused_deleted_pg:
             return False, "该手机号已存在"
         users[p] = {
             "password_hash": pw_hash,

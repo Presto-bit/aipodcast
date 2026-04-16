@@ -14,7 +14,8 @@ import {
 } from "react";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
-import { MEDIA_QUEUE_STALL_HINT_MS, MEDIA_QUEUE_STALL_HINT_ZH } from "../../lib/mediaQueueStallHint";
+import { presentJobProgressMessageForUser } from "../../lib/jobProgressUserText";
+import { MEDIA_QUEUE_STALL_HINT_MS } from "../../lib/mediaQueueStallHint";
 import { cancelJob, formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
 import { buildReferenceJobFields } from "../../lib/jobReferencePayload";
 import { rememberJobId } from "../../lib/jobRecent";
@@ -33,9 +34,9 @@ import { PODCAST_PRESET_VOICES } from "../../lib/podcastVoiceDefaults";
 import {
   buildScriptPayload,
   buildVoiceOptionsFromMaps,
+  collectScriptLanguageOptionsFromVoices,
   DEFAULT_PROGRAM_NAME,
   DURATION_PRESETS,
-  LANG_OPTIONS,
   durationInputMatchesCommitted,
   refsFromUrlBlock,
   resolveScriptTargetCharsForJob,
@@ -198,7 +199,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const resolveWaitRef = useRef<(() => void) | null>(null);
   const cancelledRef = useRef(false);
   const logSuccessHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mediaQueueStallHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 浏览器中 `window.setTimeout` 返回 `number`，与 Node 的 `Timeout` 类型不同 */
+  const mediaQueueStallHintTimerRef = useRef<number | null>(null);
   const recoveryStartedRef = useRef(false);
 
   function clearMediaQueueStallHintTimer() {
@@ -407,6 +409,18 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     () => buildVoiceOptionsFromMaps(mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks),
     [mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks]
   );
+
+  const scriptLanguageOptions = useMemo(
+    () => collectScriptLanguageOptionsFromVoices(mergedDefaultVoices, systemVoicesMap),
+    [mergedDefaultVoices, systemVoicesMap]
+  );
+
+  useEffect(() => {
+    if (scriptLanguageOptions.length === 0) return;
+    if (!scriptLanguageOptions.includes(scriptLanguage)) {
+      setScriptLanguage(scriptLanguageOptions[0] ?? "中文");
+    }
+  }, [scriptLanguageOptions, scriptLanguage]);
 
   const notebookChoices = useMemo(() => {
     const s = new Set<string>();
@@ -626,7 +640,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }
 
   function applyTaskFromEvent(message: string, progressFromPayload?: number) {
-    setTaskPhase(message);
+    setTaskPhase(presentJobProgressMessageForUser(message));
     if (typeof progressFromPayload === "number" && !Number.isNaN(progressFromPayload)) {
       setTaskProgressPct(Math.min(100, Math.max(0, progressFromPayload)));
     }
@@ -642,7 +656,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       mediaQueueStallHintTimerRef.current = window.setTimeout(() => {
         mediaQueueStallHintTimerRef.current = null;
         if (activeJobIdRef.current === jobId && resolveWaitRef.current) {
-          applyTaskFromEvent(MEDIA_QUEUE_STALL_HINT_ZH);
+          applyTaskFromEvent(t("podcast.studio.queueStallHint"));
         }
       }, MEDIA_QUEUE_STALL_HINT_MS);
       es.onmessage = (evt) => {
@@ -873,8 +887,10 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 
   async function runPodcast() {
     const trimmed = text.trim();
-    if (!trimmed) {
-      applyTaskFromEvent("请先输入内容，再开始生成");
+    const hasLibraryMaterial =
+      referenceUrlsBlock.split(/\n/).some((l) => l.trim().length > 0) || selectedNoteIds.length > 0;
+    if (!trimmed && !hasLibraryMaterial) {
+      applyTaskFromEvent("请先输入内容，或在资料库勾选资料后再开始生成");
       return;
     }
     cancelledRef.current = false;
@@ -1162,7 +1178,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       <>
                         <p className="mb-2 text-sm font-medium">语言</p>
                         <div className="flex flex-wrap gap-2">
-                          {LANG_OPTIONS.map((l) => (
+                          {scriptLanguageOptions.map((l) => (
                             <button
                               key={l}
                               type="button"

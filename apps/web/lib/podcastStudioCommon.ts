@@ -36,6 +36,45 @@ export function resolveScriptTargetCharsForJob(committedChars: number, inputValu
 export const LANG_OPTIONS = ["中文", "English", "日本語"] as const;
 
 /**
+ * 从默认音色 + 系统音色表的 description / language 字段汇总脚本语言选项（随音色表更新而扩展）。
+ */
+export function collectScriptLanguageOptionsFromVoices(
+  mergedDefaultVoices: Record<string, Record<string, unknown>>,
+  systemVoicesMap: Record<string, Record<string, unknown>> | null | undefined
+): string[] {
+  const out: string[] = [...LANG_OPTIONS];
+  const seen = new Set(out);
+  const add = (lang: string) => {
+    const t = lang.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+  const fromDesc = (desc: string) => {
+    const head = (desc.split("·")[0] || desc).trim();
+    if (/日本|日語|日文/.test(head) || /日本|日語|日文/.test(desc)) add("日本語");
+    else if (/english|英文/i.test(head) || /english|英文/i.test(desc)) add("English");
+    else if (/中文|汉语|普通话|国语|简体|繁体/.test(head) || /中文|汉语|普通话/.test(desc)) add("中文");
+  };
+  const fromEntry = (entry: Record<string, unknown>) => {
+    const explicit = String(entry.language ?? entry.script_language ?? "").trim();
+    if (explicit) {
+      add(explicit);
+      return;
+    }
+    const desc = String(entry.description ?? "").trim();
+    if (desc) fromDesc(desc);
+  };
+  for (const v of Object.values(mergedDefaultVoices || {})) {
+    if (v && typeof v === "object") fromEntry(v as Record<string, unknown>);
+  }
+  for (const v of Object.values(systemVoicesMap || {})) {
+    if (v && typeof v === "object") fromEntry(v as Record<string, unknown>);
+  }
+  return out;
+}
+
+/**
  * 加入创意工具栏芯片上的脚本风格摘要（用户自由填写时长句时截断）。
  */
 export function formatScriptStyleChip(scriptStyle: string, maxChars = 14): string {
@@ -45,7 +84,8 @@ export function formatScriptStyleChip(scriptStyle: string, maxChars = 14): strin
   return `${t.slice(0, maxChars)}…`;
 }
 
-export const DEFAULT_PROGRAM_NAME = "MiniMax AI 播客节目";
+/** 默认节目名：中性表述，避免脚本里反复出现供应商品牌 */
+export const DEFAULT_PROGRAM_NAME = "本期播客";
 
 /** 下拉中「克隆 / 系统」后缀，随界面语言传入 */
 export type VoiceOptionMarks = {

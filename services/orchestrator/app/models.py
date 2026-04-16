@@ -831,6 +831,57 @@ def create_file_note(
             return str(row["id"])
 
 
+def find_duplicate_file_note_id(
+    project_id: str,
+    notebook: str,
+    *,
+    content_sha256: str,
+    original_filename: str,
+    size: int,
+) -> str | None:
+    """
+    同一项目 + 笔记本下，已存在的资料文件与本次上传视为「同一文件」时返回最早一条 note id：
+    - 优先按 metadata.contentSha256 匹配（新写入）；
+    - 旧数据无哈希时按 original_filename + size 匹配。
+    """
+    pid = (project_id or "").strip()
+    nb = (notebook or "").strip()
+    h = (content_sha256 or "").strip()
+    fn = (original_filename or "").strip()
+    if not pid or not nb or not h:
+        return None
+    try:
+        sz = int(size)
+    except (TypeError, ValueError):
+        return None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT i.id::text AS id
+                FROM inputs i
+                WHERE i.project_id = %s
+                  AND i.input_type = 'note_file'
+                  AND i.deleted_at IS NULL
+                  AND COALESCE(i.metadata->>'notebook', '') = %s
+                  AND (
+                    COALESCE(i.metadata->>'contentSha256', '') = %s
+                    OR (
+                      COALESCE(i.metadata->>'contentSha256', '') = ''
+                      AND COALESCE(i.metadata->>'original_filename', '') = %s
+                      AND (i.metadata ? 'size')
+                      AND (i.metadata->>'size')::bigint = %s
+                    )
+                  )
+                ORDER BY i.created_at ASC
+                LIMIT 1
+                """,
+                (pid, nb, h, fn, sz),
+            )
+            row = cur.fetchone()
+            return str(row["id"]) if row else None
+
+
 def list_notes(
     notebook: str | None = None, limit: int = 200, offset: int = 0, user_ref: str | None = None
 ) -> list[dict[str, Any]]:
@@ -1180,6 +1231,7 @@ def list_trashed_works(limit: int = 120, offset: int = 0, user_ref: str | None =
                 LEFT JOIN projects p ON p.id = j.project_id
                 WHERE j.status = 'succeeded'
                   AND j.deleted_at IS NOT NULL
+                  AND j.job_type NOT IN ('note_rag_index')
                   AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
                 ORDER BY j.deleted_at DESC, j.completed_at DESC NULLS LAST, j.created_at DESC
                 LIMIT %s OFFSET %s
@@ -1257,6 +1309,7 @@ def list_recent_works(
 ) -> list[dict[str, Any]]:
     """
     成功态作品列表。slim_result=True 时仅在 SQL 层投影 result 白名单，避免巨大 audio_hex 进入 API 进程。
+    排除知识库索引等内部任务（如 note_rag_index），避免进入「我的作品」/notes 桶。
     """
     ensure_jobs_trash_schema()
     lim = max(1, min(200, int(limit)))
@@ -1301,6 +1354,7 @@ def list_recent_works(
                     LEFT JOIN projects p ON p.id = j.project_id
                     WHERE j.status = 'succeeded'
                       AND j.deleted_at IS NULL
+                      AND j.job_type NOT IN ('note_rag_index')
                       AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
                     ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
                     LIMIT %s OFFSET %s
@@ -1316,6 +1370,7 @@ def list_recent_works(
                     LEFT JOIN projects p ON p.id = j.project_id
                     WHERE j.status = 'succeeded'
                       AND j.deleted_at IS NULL
+                      AND j.job_type NOT IN ('note_rag_index')
                       AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
                     ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
                     LIMIT %s OFFSET %s

@@ -58,7 +58,33 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(objectUrl);
 }
 
-async function fetchTaggedMp3Bytes(
+/** 区分「HTTP 成功但正文实为 JSON 错误页」与真实 MP3（成片已剥离 audio_hex 时仅依赖此路径）。 */
+function isLikelyMp3Bytes(buf: Uint8Array): boolean {
+  if (!buf || buf.length < 4) return false;
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) return true;
+  const n = Math.min(buf.length - 1, 4096);
+  for (let i = 0; i < n; i++) {
+    if (buf[i] === 0xff && (buf[i + 1] & 0xe0) === 0xe0) return true;
+  }
+  return false;
+}
+
+function detailFromMaybeJsonBodyBytes(buf: Uint8Array, httpStatus: number): string {
+  try {
+    const asText = new TextDecoder().decode(buf.slice(0, 1200)).trim();
+    if (asText.startsWith("{")) {
+      const j = JSON.parse(asText) as { detail?: unknown; error?: unknown };
+      const d = j.detail != null ? String(j.detail) : j.error != null ? String(j.error) : "";
+      if (d) return d.slice(0, 280);
+    }
+    if (asText) return asText.slice(0, 280);
+  } catch {
+    // ignore
+  }
+  return `HTTP ${httpStatus}`;
+}
+
+async function fetchJobAudioExportBytes(
   jobId: string,
   authHdr: Record<string, string>,
   body: {
@@ -67,7 +93,7 @@ async function fetchTaggedMp3Bytes(
     album: string;
     embed_chapters: boolean;
   }
-): Promise<Uint8Array | null> {
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; status: number; detail: string }> {
   const jid = encodeURIComponent(jobId);
   try {
     const res = await fetch(`/api/jobs/${jid}/audio-export`, {
@@ -76,11 +102,112 @@ async function fetchTaggedMp3Bytes(
       headers: { "Content-Type": "application/json", ...authHdr },
       body: JSON.stringify(body)
     });
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (!res.ok) {
+      return { ok: false, status: res.status, detail: detailFromMaybeJsonBodyBytes(buf, res.status) };
+    }
+    if (!isLikelyMp3Bytes(buf)) {
+      let asText = "";
+      try {
+        asText = new TextDecoder().decode(buf.slice(0, 400));
+      } catch {
+        asText = "";
+      }
+      const hint = asText.trim().startsWith("{") ? asText.trim().slice(0, 200) : "响应不是有效的 MP3";
+      return { ok: false, status: res.status, detail: hint };
+    }
+    return { ok: true, bytes: buf };
+  } catch (e) {
+    return {
+      ok: false,
+      status: 0,
+      detail: e instanceof Error ? e.message : "网络错误"
+    };
+  }
+}
+
+async function fetchBytesFromAudioUrl(url: string, authHdr: Record<string, string>): Promise<Uint8Array | null> {
+  const u = String(url || "").trim();
+  if (!u) return null;
+  try {
+    const relative = u.startsWith("/");
+    const sameOrigin =
+      relative ||
+      (typeof window !== "undefined" && (u.startsWith(window.location.origin + "/") || u.startsWith(window.location.origin + "?")));
+    const res = await fetch(u, {
+      credentials: sameOrigin ? "same-origin" : "omit",
+      mode: "cors",
+      headers: sameOrigin ? { ...authHdr } : {}
+    });
     if (!res.ok) return null;
-    return new Uint8Array(await res.arrayBuffer());
+    const buf = new Uint8Array(await res.arrayBuffer());
+    return isLikelyMp3Bytes(buf) ? buf : null;
   } catch {
     return null;
   }
+}
+
+function resultSuggestsAudioPresent(result: Record<string, unknown>, hex: string): boolean {
+  if (String(hex || "").trim()) return true;
+  if (String(result.audio_object_key || "").trim()) return true;
+  if (String(result.audio_url || "").trim()) return true;
+  const durRaw = result.audio_duration_sec;
+  if (typeof durRaw === "number" && Number.isFinite(durRaw) && durRaw > 0.4) return true;
+  if (typeof durRaw === "string" && durRaw.trim()) {
+    const d = Number.parseFloat(durRaw);
+    if (Number.isFinite(d) && d > 0.4) return true;
+  }
+  if (result.has_audio_hex === true) return true;
+  return false;
+}
+
+/**
+ * 依次尝试：带章节的导出 → 无章节导出 → hex → result.audio_url（预签名直链等）。
+ */
+async function resolveBundleMp3Bytes(
+  jobId: string,
+  authHdr: Record<string, string>,
+  result: Record<string, unknown>,
+  hex: string,
+  exportBody: { title: string; artist: string; album: string; wantChapters: boolean }
+): Promise<{ bytes: Uint8Array; lastError: string }> {
+  let lastError = "";
+  const tryExport = async (embedChapters: boolean) => {
+    const r = await fetchJobAudioExportBytes(jobId, authHdr, {
+      title: exportBody.title,
+      artist: exportBody.artist,
+      album: exportBody.album,
+      embed_chapters: embedChapters
+    });
+    if (r.ok) {
+      lastError = "";
+      return r.bytes;
+    }
+    lastError = r.detail || `HTTP ${r.status}`;
+    return null;
+  };
+
+  let bytes =
+    (await tryExport(exportBody.wantChapters)) ||
+    (exportBody.wantChapters ? await tryExport(false) : null);
+
+  if (!bytes || bytes.length === 0) {
+    const fromHex = hex ? hexToUint8Array(hex) : new Uint8Array();
+    if (fromHex.length > 0) {
+      bytes = fromHex;
+      lastError = "";
+    }
+  }
+
+  if (!bytes || bytes.length === 0) {
+    const fromUrl = await fetchBytesFromAudioUrl(String(result.audio_url || "").trim(), authHdr);
+    if (fromUrl && fromUrl.length > 0) {
+      bytes = fromUrl;
+      lastError = "";
+    }
+  }
+
+  return { bytes: bytes || new Uint8Array(), lastError };
 }
 
 type ManuscriptParts = { introT: string; scriptBody: string; outroT: string };
@@ -160,14 +287,28 @@ export async function downloadJobBundleZip(opts: JobBundleExportOptions): Promis
   const folderName = sanitizeFolderName(opts.title);
   const embedChapters = opts.embedChaptersInMp3 !== false;
 
-  const taggedMp3 = await fetchTaggedMp3Bytes(opts.jobId, authHdr, {
-    title: (opts.title || folderName).slice(0, 300),
-    artist: (opts.exportArtist || "").trim(),
-    album: (opts.exportAlbum || "").trim(),
-    embed_chapters: embedChapters
-  });
-  const fallbackMp3 = hex ? hexToUint8Array(hex) : new Uint8Array();
-  const audioBytes = taggedMp3 && taggedMp3.length > 0 ? Uint8Array.from(taggedMp3) : fallbackMp3;
+  const { bytes: resolvedAudio, lastError: audioResolveError } = await resolveBundleMp3Bytes(
+    opts.jobId,
+    authHdr,
+    result,
+    hex,
+    {
+      title: (opts.title || folderName).slice(0, 300),
+      artist: (opts.exportArtist || "").trim(),
+      album: (opts.exportAlbum || "").trim(),
+      wantChapters: embedChapters
+    }
+  );
+  const audioBytes = Uint8Array.from(resolvedAudio);
+
+  const likelyHasEpisodeAudio = resultSuggestsAudioPresent(result, hex);
+  if (likelyHasEpisodeAudio && audioBytes.length === 0) {
+    throw new Error(
+      audioResolveError.trim()
+        ? `无法打包音频：${audioResolveError.trim()}`
+        : "无法打包音频：服务端导出不可用，且文稿以外的回退来源均未返回有效 MP3。请稍后重试。"
+    );
+  }
 
   const hasAudio = audioBytes.length > 0;
   const hasScript = Boolean(script);

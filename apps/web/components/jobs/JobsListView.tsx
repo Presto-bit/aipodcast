@@ -5,9 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../ui/Button";
 import EmptyState from "../ui/EmptyState";
 import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
-import { cancelJob, listJobs } from "../../lib/api";
+import { cancelJob, listJobs, purgeJob } from "../../lib/api";
 import { jobsListLoadErrorPresentation } from "../../lib/jobsListErrors";
-import { listRememberedJobIds } from "../../lib/jobRecent";
 import type { JobRecord, JobStatus } from "../../lib/types";
 import { useI18n } from "../../lib/I18nContext";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
@@ -26,6 +25,39 @@ function statusBadge(status: string) {
   return m[status] || "bg-track text-ink";
 }
 
+/** 任务耗时：已结束用 started→completed；排队/运行中用起点→当前时间。 */
+function formatJobDuration(j: JobRecord): string {
+  const startMs = j.started_at
+    ? new Date(j.started_at).getTime()
+    : new Date(j.created_at || 0).getTime();
+  if (!Number.isFinite(startMs)) return "—";
+
+  const endRaw = j.completed_at ? new Date(j.completed_at).getTime() : NaN;
+  const hasCompletedAt = Number.isFinite(endRaw);
+
+  const formatSeconds = (sec: number) => {
+    const s = Math.max(0, Math.round(sec));
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m${s % 60}s`;
+  };
+
+  if (hasCompletedAt) {
+    const ms = Math.max(0, endRaw - startMs);
+    if (ms < 1000) return "<1s";
+    const sec = Math.round(ms / 1000);
+    if (sec < 120) return `${sec}s`;
+    const m = Math.floor(sec / 60);
+    const rs = sec % 60;
+    return rs ? `${m}分${rs}秒` : `${m}分钟`;
+  }
+
+  if (j.status === "queued" || j.status === "running") {
+    return `${formatSeconds((Date.now() - startMs) / 1000)}…`;
+  }
+
+  return "—";
+}
+
 export type JobsListViewVariant = "public" | "admin";
 
 type JobsListViewProps = {
@@ -42,8 +74,9 @@ export default function JobsListView({ variant }: JobsListViewProps) {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [remembered, setRemembered] = useState<string[]>([]);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [purgeBusy, setPurgeBusy] = useState(false);
 
   useEffect(() => {
     setPage(1);
@@ -72,11 +105,9 @@ export default function JobsListView({ variant }: JobsListViewProps) {
   }, [load]);
 
   useEffect(() => {
-    setRemembered(listRememberedJobIds());
-  }, [jobs]);
+    setSelectedIds([]);
+  }, [filter, page]);
 
-  const idsOnPage = useMemo(() => new Set(jobs.map((j) => j.id)), [jobs]);
-  const extraRemembered = useMemo(() => remembered.filter((id) => !idsOnPage.has(id)), [remembered, idsOnPage]);
   const errPresentation = useMemo(() => {
     if (!err) return null;
     return jobsListLoadErrorPresentation(err, t);
@@ -92,6 +123,46 @@ export default function JobsListView({ variant }: JobsListViewProps) {
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
       setStoppingId(null);
+    }
+  }
+
+  const pageJobIds = useMemo(() => jobs.map((j) => j.id), [jobs]);
+  const allPageSelected =
+    pageJobIds.length > 0 && pageJobIds.every((id) => selectedIds.includes(id));
+
+  function toggleSelectAllOnPage() {
+    if (allPageSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !pageJobIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => {
+        const set = new Set(prev);
+        pageJobIds.forEach((id) => set.add(id));
+        return [...set];
+      });
+    }
+  }
+
+  function toggleRowSelected(id: string) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  async function purgeSelected() {
+    if (selectedIds.length === 0) return;
+    const ok = window.confirm(`将永久删除已选中的 ${selectedIds.length} 条任务及其存储，不可恢复。确定？`);
+    if (!ok) return;
+    setPurgeBusy(true);
+    setErr("");
+    try {
+      for (const id of selectedIds) {
+        await purgeJob(id);
+      }
+      setSelectedIds([]);
+      await load();
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+      await load();
+    } finally {
+      setPurgeBusy(false);
     }
   }
 
@@ -174,20 +245,32 @@ export default function JobsListView({ variant }: JobsListViewProps) {
         </div>
       ) : null}
 
-      {!isAdmin && extraRemembered.length > 0 ? (
-        <section className="mt-6 rounded-2xl border border-line bg-fill/80 p-4">
-          <h2 className="text-xs font-medium uppercase tracking-wide text-muted">本机最近创建</h2>
-          <p className="mt-1 text-xs text-muted">列表未显示时可从此打开详情。</p>
-          <ul className="mt-2 flex flex-wrap gap-2 text-xs">
-            {extraRemembered.map((id) => (
-              <li key={id}>
-                <Link className="text-brand underline hover:text-brand/90" href={`${basePath}/${id}`}>
-                  {id.slice(0, 8)}…
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {!isAdmin && jobs.length > 0 ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-line/80 bg-fill/50 px-3 py-2.5 text-sm">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-ink">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-brand"
+              checked={allPageSelected}
+              onChange={() => toggleSelectAllOnPage()}
+              aria-label="全选本页"
+            />
+            <span className="text-muted">本页全选</span>
+          </label>
+          <span className="text-xs text-muted">已选 {selectedIds.length} 条</span>
+          <Button
+            type="button"
+            variant="danger"
+            className="!px-3 !py-1.5 !text-xs"
+            loading={purgeBusy}
+            busyLabel="删除中…"
+            disabled={selectedIds.length === 0}
+            disabledReason={selectedIds.length === 0 ? "请先勾选任务" : undefined}
+            onClick={() => void purgeSelected()}
+          >
+            删除选中
+          </Button>
+        </div>
       ) : null}
 
       {loading ? (
@@ -211,14 +294,18 @@ export default function JobsListView({ variant }: JobsListViewProps) {
         />
       ) : (
         <section className="fym-table-shell mt-6 overflow-x-auto">
-          <table className="w-full min-w-[820px] text-left text-sm">
+          <table className="w-full min-w-[880px] text-left text-sm">
             <thead className="border-b border-line bg-fill text-xs text-muted">
               <tr>
+                {!isAdmin ? (
+                  <th className="w-10 px-2 py-2" aria-label="多选" />
+                ) : null}
                 <th className="px-3 py-2">状态</th>
                 <th className="px-3 py-2">类型</th>
                 <th className="px-3 py-2">创建者</th>
                 <th className="px-3 py-2">通道</th>
                 <th className="px-3 py-2">进度</th>
+                <th className="px-3 py-2">耗时</th>
                 <th className="px-3 py-2">创建时间</th>
                 <th className="px-3 py-2">操作</th>
               </tr>
@@ -229,6 +316,18 @@ export default function JobsListView({ variant }: JobsListViewProps) {
                 const operator = j.created_by?.trim() || "—";
                 return (
                   <tr key={j.id} className="border-b border-line hover:bg-fill">
+                    {!isAdmin ? (
+                      <td className="px-2 py-2 align-middle">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-brand"
+                          checked={selectedIds.includes(j.id)}
+                          disabled={purgeBusy}
+                          onChange={() => toggleRowSelected(j.id)}
+                          aria-label={`选择任务 ${j.id.slice(0, 8)}`}
+                        />
+                      </td>
+                    ) : null}
                     <td className="px-3 py-2">
                       <span className={`rounded px-2 py-0.5 text-xs ${statusBadge(j.status)}`}>{j.status}</span>
                     </td>
@@ -238,6 +337,7 @@ export default function JobsListView({ variant }: JobsListViewProps) {
                     </td>
                     <td className="px-3 py-2 text-muted">{j.queue_name}</td>
                     <td className="px-3 py-2 text-muted">{j.progress}%</td>
+                    <td className="px-3 py-2 text-xs tabular-nums text-muted">{formatJobDuration(j)}</td>
                     <td className="px-3 py-2 text-xs text-muted">{j.created_at?.replace("T", " ").slice(0, 19) ?? "-"}</td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-2">

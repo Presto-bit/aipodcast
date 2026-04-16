@@ -16,6 +16,19 @@ def _s3():
     )
 
 
+def _s3_for_presigned_url():
+    """仅用于 generate_presigned_url：公网域名须与百炼可访问的 Host 一致（如 https://prestoai.cn）。"""
+    ep = (settings.object_presign_endpoint or "").strip() or settings.object_endpoint
+    return boto3.client(
+        "s3",
+        endpoint_url=ep,
+        aws_access_key_id=settings.object_access_key,
+        aws_secret_access_key=settings.object_secret_key,
+        region_name=settings.object_region,
+        config=Config(s3={"addressing_style": "path" if settings.object_force_path_style else "auto"}),
+    )
+
+
 def ensure_bucket_exists() -> None:
     s3 = _s3()
     try:
@@ -63,6 +76,19 @@ def get_object_bytes(object_key: str) -> bytes:
     return obj["Body"].read()
 
 
+def iter_object_chunks(object_key: str, *, chunk_size: int = 262_144):
+    """流式读取对象体（用于同源代理波形/试听，减轻单次内存）。"""
+    key = (object_key or "").strip()
+    if not key:
+        raise ValueError("object_key_empty")
+    sz = max(32_768, min(8 * 1024 * 1024, int(chunk_size)))
+    s3 = _s3()
+    obj = s3.get_object(Bucket=settings.object_bucket, Key=key)
+    for chunk in obj["Body"].iter_chunks(chunk_size=sz):
+        if chunk:
+            yield chunk
+
+
 def presigned_get_url(object_key: str, *, expires_in: int = 3600) -> str:
     """
     生成对象 GET 的预签名 URL，便于客户端直拉 MP3/封面/视频，减轻编排器流式代理压力。
@@ -76,7 +102,7 @@ def presigned_get_url(object_key: str, *, expires_in: int = 3600) -> str:
         raise ValueError("expires_in_too_small")
     if exp > 86400 * 7:
         exp = 86400 * 7
-    return _s3().generate_presigned_url(
+    return _s3_for_presigned_url().generate_presigned_url(
         "get_object",
         Params={"Bucket": settings.object_bucket, "Key": key},
         ExpiresIn=exp,

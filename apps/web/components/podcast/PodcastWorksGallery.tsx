@@ -16,9 +16,12 @@ import { downloadJobBundleZip, downloadJobManuscriptMarkdown } from "../../lib/w
 import { listRssPublicationsByJobIds, type RssPublication } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
 import { useI18n } from "../../lib/I18nContext";
+import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
+import { insertPodcastDraftAtTop, setDraftsNavigationFocusDraftId } from "../../lib/podcastDrafts";
 import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
+import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 
 function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
   return w.downloadAllowed === true;
@@ -30,6 +33,11 @@ const TTS_TYPES = new Set(["text_to_speech", "tts"]);
 const NOTES_WORK_TYPES = new Set(["script_draft"]);
 /** 笔记本页：成片 + 文章出稿 */
 const NOTES_STUDIO_TYPES = new Set(["podcast_generate", "podcast", "script_draft"]);
+
+function isPodcastManuscriptDraftTarget(jobType: string): boolean {
+  const t = String(jobType || "").trim();
+  return t === "podcast_generate" || t === "podcast";
+}
 
 /** 「我的作品」导航页音频合并列表：一级体裁 */
 function worksNavPrimaryKind(type: string | undefined): string {
@@ -463,10 +471,13 @@ export default function PodcastWorksGallery({
   const { t } = useI18n();
   const router = useRouter();
   const { getAuthHeaders, user } = useAuth();
+  const workAudio = useWorkAudioPlayer();
 
   const worksNavAuthorDisplay = useMemo(() => {
-    const u = user as { username?: string; phone?: string } | null | undefined;
+    const u = user as { display_name?: string; username?: string; phone?: string } | null | undefined;
     if (!u || u.phone === "local") return "我";
+    const dn = typeof u.display_name === "string" ? u.display_name.trim() : "";
+    if (dn) return dn.length > 16 ? `${dn.slice(0, 16)}…` : dn;
     const un = typeof u.username === "string" ? u.username.trim() : "";
     if (un) return un.length > 16 ? `${un.slice(0, 16)}…` : un;
     const ph = typeof u.phone === "string" ? u.phone.replace(/\s/g, "") : "";
@@ -499,20 +510,32 @@ export default function PodcastWorksGallery({
   const [publicationsByJobId, setPublicationsByJobId] = useState<Record<string, RssPublication[]>>({});
 
   const [coverBustById, setCoverBustById] = useState<Record<string, number>>({});
-  /** 作品详情全屏弹窗（笔记本侧栏 / 合并列表「全部」/ 播客与语音等卡片共用） */
-  const [notesStudioDetailId, setNotesStudioDetailId] = useState<string | null>(null);
   const [coverUploadBusy, setCoverUploadBusy] = useState<string | null>(null);
   const coverFileInputRef = useRef<HTMLInputElement | null>(null);
   const coverUploadTargetIdRef = useRef<string | null>(null);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
-  const srcCache = useRef<Record<string, string>>({});
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [progress01, setProgress01] = useState(0);
-  const [durationSec, setDurationSec] = useState(0);
-  const [audioLoadingId, setAudioLoadingId] = useState<string | null>(null);
+  const {
+    activeJobId,
+    isPlaying: isPlayingAudio,
+    progress01,
+    durationSec,
+    loadingJobId: audioLoadingId,
+    playError: activePlayError,
+    togglePlay: toggleWorkAudio,
+    dismissIfJob,
+    clearCachedAudioSrc
+  } = workAudio;
+  const togglePlay = useCallback(
+    (jobId: string, displayTitle: string) => {
+      setPlayErrorById((prev) => {
+        const next = { ...prev };
+        delete next[jobId];
+        return next;
+      });
+      void toggleWorkAudio(jobId, { displayTitle });
+    },
+    [toggleWorkAudio]
+  );
   const [hydratedDurationSec, setHydratedDurationSec] = useState<Record<string, number>>({});
   const durationFetchRef = useRef<Set<string>>(new Set());
   const durationResolvedRef = useRef<Set<string>>(new Set());
@@ -566,74 +589,6 @@ export default function PodcastWorksGallery({
       canceled = true;
     };
   }, [items]);
-
-  useEffect(() => {
-    if (!notesStudioDetailId) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setNotesStudioDetailId(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [notesStudioDetailId]);
-
-  const notesStudioDetailWork = useMemo((): PodcastWorkRow | undefined => {
-    if (!notesStudioDetailId) return undefined;
-    return items.find((x) => x.id === notesStudioDetailId);
-  }, [notesStudioDetailId, items]);
-
-  const notesStudioDetailUi = useMemo(() => {
-    if (!notesStudioDetailWork) return null;
-    const w = notesStudioDetailWork;
-    const id = w.id!;
-    const isScriptDraft = String(w.type || "") === "script_draft";
-    const isActive = activeJobId === id;
-    const prog = isActive ? progress01 : 0;
-    const baseSec =
-      typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0
-        ? w.audioDurationSec
-        : hydratedDurationSec[id];
-    const totalSecForLabel =
-      isActive && durationSec > 0 && Number.isFinite(durationSec)
-        ? durationSec
-        : baseSec !== undefined && Number.isFinite(baseSec)
-          ? baseSec
-          : undefined;
-    const durationLine = totalSecForLabel !== undefined ? formatClock(totalSecForLabel) : "—";
-    const durationCaption = isScriptDraft ? "文章出稿（无音频）" : `时长 ${durationLine}`;
-    const created = formatWorkCreatedAtZh(w.createdAt);
-    const publications = publicationsByJobId[id] || [];
-    const publishedText =
-      publications.length > 0
-        ? `已在 ${publications.length} 处发布 · ${publications[0]?.channel_title || ""}`
-        : "";
-    const publishActionText = publications.length > 0 ? "已发过" : "分享";
-    const scriptCharCountDisplay =
-      typeof w.scriptCharCount === "number" &&
-      Number.isFinite(w.scriptCharCount) &&
-      w.scriptCharCount > 0
-        ? Math.round(w.scriptCharCount)
-        : null;
-    return {
-      w,
-      id,
-      isScriptDraft,
-      isActive,
-      prog,
-      durationCaption,
-      created,
-      publications,
-      publishedText,
-      publishActionText,
-      scriptCharCountDisplay
-    };
-  }, [
-    notesStudioDetailWork,
-    activeJobId,
-    progress01,
-    durationSec,
-    hydratedDurationSec,
-    publicationsByJobId
-  ]);
 
   const notesStudioMenuPortalData = useMemo(() => {
     if (variant !== "notes_studio" || !menuOpenId) return null;
@@ -758,106 +713,6 @@ export default function PodcastWorksGallery({
       window.removeEventListener("resize", update);
     };
   }, [menuOpenId]);
-
-  useEffect(() => {
-    const el = audioEl;
-    if (!el) return;
-    const onTime = () => {
-      const d = el.duration;
-      const t = el.currentTime;
-      setDurationSec(Number.isFinite(d) ? d : 0);
-      setProgress01(d && Number.isFinite(d) && d > 0 ? t / d : 0);
-    };
-    const onEnded = () => {
-      setActiveJobId(null);
-      setIsPlayingAudio(false);
-      setProgress01(0);
-    };
-    const onMeta = () => {
-      const d = el.duration;
-      setDurationSec(Number.isFinite(d) ? d : 0);
-    };
-    const onPlay = () => setIsPlayingAudio(true);
-    const onPause = () => setIsPlayingAudio(false);
-    el.addEventListener("timeupdate", onTime);
-    el.addEventListener("ended", onEnded);
-    el.addEventListener("loadedmetadata", onMeta);
-    el.addEventListener("play", onPlay);
-    el.addEventListener("pause", onPause);
-    return () => {
-      el.removeEventListener("timeupdate", onTime);
-      el.removeEventListener("ended", onEnded);
-      el.removeEventListener("loadedmetadata", onMeta);
-      el.removeEventListener("play", onPlay);
-      el.removeEventListener("pause", onPause);
-    };
-  }, [audioEl]);
-
-  const ensureSrc = useCallback(async (jobId: string): Promise<string | null> => {
-    if (srcCache.current[jobId]) return srcCache.current[jobId]!;
-    const res = await fetch(`/api/jobs/${jobId}`, { cache: "no-store", headers: { ...getAuthHeaders() } });
-    const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) return null;
-    const result = (row.result || {}) as Record<string, unknown>;
-    const hex = String(result.audio_hex || "").trim();
-    if (hex) {
-      const url = hexToMp3DataUrl(hex);
-      srcCache.current[jobId] = url;
-      return url;
-    }
-    const audioUrl = String(result.audio_url || "").trim();
-    if (audioUrl) {
-      srcCache.current[jobId] = audioUrl;
-      return audioUrl;
-    }
-    return null;
-  }, [getAuthHeaders]);
-
-  const togglePlay = useCallback(
-    async (jobId: string) => {
-      const el = audioRef.current;
-      if (!el) {
-        setPlayErrorById((prev) => ({ ...prev, [jobId]: "播放器未就绪" }));
-        return;
-      }
-      setPlayErrorById((prev) => {
-        const next = { ...prev };
-        delete next[jobId];
-        return next;
-      });
-      if (activeJobId === jobId) {
-        if (el.paused) void el.play().catch((err) => setPlayErrorById((p) => ({ ...p, [jobId]: String(err instanceof Error ? err.message : err) })));
-        else el.pause();
-        return;
-      }
-      setAudioLoadingId(jobId);
-      try {
-        const url = await ensureSrc(jobId);
-        if (!url) {
-          setPlayErrorById((prev) => ({ ...prev, [jobId]: "暂无可播放音频，请稍后在创作记录中查看是否生成完成" }));
-          return;
-        }
-        el.pause();
-        el.src = url;
-        setActiveJobId(jobId);
-        setProgress01(0);
-        await el.play().catch((err) => {
-          setPlayErrorById((prev) => ({
-            ...prev,
-            [jobId]: err instanceof Error ? err.message : "无法播放（浏览器策略或格式问题）"
-          }));
-        });
-      } catch (e) {
-        setPlayErrorById((prev) => ({
-          ...prev,
-          [jobId]: e instanceof Error ? e.message : "加载音频失败"
-        }));
-      } finally {
-        setAudioLoadingId(null);
-      }
-    },
-    [ensureSrc, activeJobId]
-  );
 
   const onDownload = useCallback(async (row: PodcastWorkRow) => {
     if (!workDownloadAllowed(row)) return;
@@ -984,7 +839,8 @@ export default function PodcastWorksGallery({
             saveHiddenIds(hiddenKey, next);
             return next;
           });
-          delete srcCache.current[jobId];
+          clearCachedAudioSrc(jobId);
+          dismissIfJob(jobId);
           setHydratedDurationSec((prev) => {
             const next = { ...prev };
             delete next[jobId];
@@ -992,12 +848,6 @@ export default function PodcastWorksGallery({
           });
           durationResolvedRef.current.delete(jobId);
           durationFetchRef.current.delete(jobId);
-          if (activeJobId === jobId) {
-            audioRef.current?.pause();
-            setActiveJobId(null);
-            setIsPlayingAudio(false);
-            setProgress01(0);
-          }
           setPlayErrorById((prev) => {
             const next = { ...prev };
             delete next[jobId];
@@ -1033,7 +883,8 @@ export default function PodcastWorksGallery({
           saveHiddenIds(hiddenKey, next);
           return next;
         });
-        delete srcCache.current[jobId];
+        clearCachedAudioSrc(jobId);
+        dismissIfJob(jobId);
         setHydratedDurationSec((prev) => {
           const next = { ...prev };
           delete next[jobId];
@@ -1041,12 +892,6 @@ export default function PodcastWorksGallery({
         });
         durationResolvedRef.current.delete(jobId);
         durationFetchRef.current.delete(jobId);
-        if (activeJobId === jobId) {
-          audioRef.current?.pause();
-          setActiveJobId(null);
-          setIsPlayingAudio(false);
-          setProgress01(0);
-        }
         setPlayErrorById((prev) => {
           const next = { ...prev };
           delete next[jobId];
@@ -1061,7 +906,7 @@ export default function PodcastWorksGallery({
         setDeleteBusyId(null);
       }
     },
-    [activeJobId, onWorkDeleted, titlesKey, hiddenKey, getAuthHeaders]
+    [dismissIfJob, clearCachedAudioSrc, onWorkDeleted, titlesKey, hiddenKey, getAuthHeaders]
   );
 
   const requestDelete = useCallback((jobId: string) => {
@@ -1136,6 +981,21 @@ export default function PodcastWorksGallery({
       const payload = (row.payload || {}) as Record<string, unknown>;
       const result = (row.result || {}) as Record<string, unknown>;
 
+      if (isPodcastManuscriptDraftTarget(jobType)) {
+        /** 正文在 result.script_text / script 工件；勿用 payload.text（多为原始素材）。 */
+        const text = (await resolveJobScriptBodyText(id, row, getAuthHeaders())).trim();
+        if (!text) {
+          window.alert("暂无文稿可复制");
+          return;
+        }
+        const titleFromJob = String((row as { title?: unknown }).title || payload.title || "").trim();
+        const draftTitle = (sanitizeShareEpisodeTitle(titleFromJob, "") || titleFromJob || "播客文稿").slice(0, 200);
+        const newId = insertPodcastDraftAtTop({ title: draftTitle, text });
+        setDraftsNavigationFocusDraftId(newId);
+        router.push("/drafts");
+        return;
+      }
+
       if (jobType === "text_to_speech" || jobType === "tts") {
         writeSessionStorageScoped(
           TTS_REUSE_TEMPLATE_KEY,
@@ -1183,7 +1043,7 @@ export default function PodcastWorksGallery({
     } catch (e) {
       setPlayErrorById((prev) => ({
         ...prev,
-        [id]: `复用模板失败：${e instanceof Error ? e.message : String(e)}`
+        [id]: `操作失败：${e instanceof Error ? e.message : String(e)}`
       }));
     }
   }
@@ -1240,15 +1100,6 @@ export default function PodcastWorksGallery({
         }}
       />
 
-      <audio
-        ref={(node) => {
-          audioRef.current = node;
-          setAudioEl(node);
-        }}
-        className="hidden"
-        preload="metadata"
-        playsInline
-      />
       <input
         ref={coverFileInputRef}
         type="file"
@@ -1367,6 +1218,7 @@ export default function PodcastWorksGallery({
             const id = w.id!;
             const isScriptDraft = String(w.type || "") === "script_draft";
             const isActive = activeJobId === id;
+            const rowPlayMsg = (isActive && activePlayError) || playErrorById[id];
             const prog = isActive ? progress01 : 0;
             const baseSec =
               typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0
@@ -1394,6 +1246,7 @@ export default function PodcastWorksGallery({
               w.scriptCharCount > 0
                 ? Math.round(w.scriptCharCount)
                 : null;
+            const reuseOrManuscriptLabel = isPodcastManuscriptDraftTarget(String(w.type || "")) ? "修改文稿" : "复用";
 
             /** 仅笔记本工作台侧栏「我的作品」：无封面顶栏、简介 + 标题 + 操作；其它页面仍走下方默认卡片 */
             if (variant === "notes_studio") {
@@ -1448,22 +1301,12 @@ export default function PodcastWorksGallery({
                     </div>
                     <div className="mt-0.5 flex items-center justify-between gap-1 border-t border-line/50 pt-1.5">
                       <div className="flex min-w-0 flex-1 items-center gap-1">
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-md border border-brand/35 bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-brand hover:bg-brand/15"
-                          onClick={() => {
-                            setMenuOpenId(null);
-                            setNotesStudioDetailId(id);
-                          }}
-                        >
-                          详情
-                        </button>
                         {!isScriptDraft ? (
                           <CircularPlayControl
                             playing={isActive && isPlayingAudio}
                             progress={prog}
                             disabled={audioLoadingId === id}
-                            onClick={() => void togglePlay(id)}
+                            onClick={() => void togglePlay(id, w.displayTitle)}
                             compact
                           />
                         ) : null}
@@ -1494,12 +1337,12 @@ export default function PodcastWorksGallery({
                       />
                     </div>
                   ) : null}
-                  {playErrorById[id] ? (
+                  {rowPlayMsg ? (
                     <p
                       className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[8px] leading-tight text-danger-ink"
                       role="status"
                     >
-                      {playErrorById[id]}
+                      {rowPlayMsg}
                     </p>
                   ) : null}
                 </li>
@@ -1511,7 +1354,12 @@ export default function PodcastWorksGallery({
               const secondaryK = worksNavSecondaryLabel(w, primaryK);
               const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
               const dayP = formatWorkCreatedAtZh(w.createdAt);
-              const navMetaLine = [primaryK, secondaryK, worksNavAuthorDisplay, metricP, dayP].join(" | ");
+              /** 合并列表播客行不再展示节目名（如默认「本期播客」），避免与一级体裁重复 */
+              const secondaryForNav = primaryK === "播客" ? "" : secondaryK;
+              const navMetaLine = [primaryK, secondaryForNav, worksNavAuthorDisplay, metricP, dayP]
+                .map((s) => String(s || "").trim())
+                .filter(Boolean)
+                .join(" | ");
               return (
                 <li
                   key={id}
@@ -1573,7 +1421,7 @@ export default function PodcastWorksGallery({
                             playing={isActive && isPlayingAudio}
                             progress={prog}
                             disabled={audioLoadingId === id}
-                            onClick={() => void togglePlay(id)}
+                            onClick={() => void togglePlay(id, w.displayTitle)}
                             compact
                           />
                         </div>
@@ -1596,31 +1444,21 @@ export default function PodcastWorksGallery({
                       />
                     </div>
                   ) : null}
-                  {playErrorById[id] ? (
+                  {rowPlayMsg ? (
                     <p
                       className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-tight text-danger-ink"
                       role="status"
                     >
-                      {playErrorById[id]}
+                      {rowPlayMsg}
                     </p>
                   ) : null}
                   <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
-                    <button
-                      type="button"
-                      className="rounded-md border border-brand/35 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15"
-                      onClick={() => {
-                        setMenuOpenId(null);
-                        setNotesStudioDetailId(id);
-                      }}
-                    >
-                      详情
-                    </button>
                     {!isScriptDraft ? (
                       <button
                         type="button"
                         className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
                         disabled={audioLoadingId === id}
-                        onClick={() => void togglePlay(id)}
+                        onClick={() => void togglePlay(id, w.displayTitle)}
                       >
                         {isActive && isPlayingAudio ? "暂停" : "播放"}
                       </button>
@@ -1647,7 +1485,7 @@ export default function PodcastWorksGallery({
                       className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
                       onClick={() => void onReuseTemplate(id)}
                     >
-                      复用
+                      {reuseOrManuscriptLabel}
                     </button>
                     <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
                       <button
@@ -1746,7 +1584,7 @@ export default function PodcastWorksGallery({
                         playing={isActive && isPlayingAudio}
                         progress={prog}
                         disabled={audioLoadingId === id}
-                        onClick={() => void togglePlay(id)}
+                        onClick={() => void togglePlay(id, w.displayTitle)}
                       />
                     ) : null}
                     <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
@@ -1774,31 +1612,21 @@ export default function PodcastWorksGallery({
                     />
                   </div>
                 ) : null}
-                {playErrorById[id] ? (
+                {rowPlayMsg ? (
                   <p
                     className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-tight text-danger-ink"
                     role="status"
                   >
-                    {playErrorById[id]}
+                    {rowPlayMsg}
                   </p>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
-                  <button
-                    type="button"
-                    className="rounded-md border border-brand/35 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15"
-                    onClick={() => {
-                      setMenuOpenId(null);
-                      setNotesStudioDetailId(id);
-                    }}
-                  >
-                    详情
-                  </button>
                   {!isScriptDraft ? (
                     <button
                       type="button"
                       className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
                       disabled={audioLoadingId === id}
-                      onClick={() => void togglePlay(id)}
+                      onClick={() => void togglePlay(id, w.displayTitle)}
                     >
                       {isActive && isPlayingAudio ? "暂停" : "播放"}
                     </button>
@@ -1827,7 +1655,7 @@ export default function PodcastWorksGallery({
                     className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
                     onClick={() => void onReuseTemplate(id)}
                   >
-                    复用
+                    {reuseOrManuscriptLabel}
                   </button>
                   {publications.length > 0 ? (
                     <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">{publishedText}</span>
@@ -2053,179 +1881,6 @@ export default function PodcastWorksGallery({
         ) : null}
         </>
       )}
-      {notesStudioDetailUi
-        ? createPortal(
-            (() => {
-              const d = notesStudioDetailUi;
-              const { w, id, isScriptDraft, isActive, prog } = d;
-              return (
-                <div
-                  className="fixed inset-0 z-[1350] flex items-end justify-center bg-black/45 p-3 sm:items-center sm:p-4"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="notes-studio-detail-title"
-                  onPointerDown={(e) => {
-                    if (e.target === e.currentTarget) setNotesStudioDetailId(null);
-                  }}
-                >
-                <div
-                  className="flex max-h-[min(92dvh,800px)] w-full max-w-[min(100vw-1.5rem,32rem)] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-modal"
-                  onPointerDown={(e) => e.stopPropagation()}
-                >
-                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
-                    <div className="flex items-start justify-between gap-2 border-b border-line pb-3">
-                      <h2 id="notes-studio-detail-title" className="min-w-0 flex-1 text-base font-semibold leading-snug text-ink">
-                        {w.displayTitle}
-                      </h2>
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-lg p-1.5 text-muted hover:bg-fill"
-                        aria-label="关闭"
-                        onClick={() => setNotesStudioDetailId(null)}
-                      >
-                        <span className="text-lg leading-none" aria-hidden>
-                          ×
-                        </span>
-                      </button>
-                    </div>
-                    {isScriptDraft ? (
-                      <div className="mt-3 rounded-xl border border-success/25 bg-gradient-to-br from-success-soft/95 to-success/[0.08] px-3 py-2">
-                        <div className="flex gap-2">
-                          <span className="shrink-0 text-base leading-none" aria-hidden>
-                            📝
-                          </span>
-                          <div className="min-w-0 flex-1 space-y-1 text-[11px] leading-snug text-success-ink/85">
-                            <ScriptWorkSourceSummary w={w} />
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="relative mt-3 aspect-[4/3] w-full overflow-hidden rounded-xl bg-gradient-to-br from-fill to-fill">
-                        {w.coverImage ? (
-                          /* eslint-disable-next-line @next/next/no-img-element */
-                          <img
-                            src={coverImageSrc(w.coverImage, coverBustById[id])}
-                            alt=""
-                            className="relative z-[1] h-full w-full object-cover"
-                            referrerPolicy="no-referrer"
-                            loading="lazy"
-                            onError={(e) => {
-                              const el = e.target as HTMLImageElement;
-                              const orig = String(w.coverImage || "").trim();
-                              if (orig && el.src.includes("/api/image-proxy") && !el.dataset.fallback) {
-                                el.dataset.fallback = "1";
-                                el.src = orig;
-                                return;
-                              }
-                              el.style.display = "none";
-                            }}
-                          />
-                        ) : (
-                          <div className="flex h-full min-h-[3rem] items-center justify-center text-xs text-muted">无配图</div>
-                        )}
-                      </div>
-                    )}
-                    <div className="mt-3 space-y-1.5 text-sm">
-                      <p className="text-muted">{d.durationCaption}</p>
-                      {d.scriptCharCountDisplay !== null ? (
-                        <p className="tabular-nums text-muted">约 {d.scriptCharCountDisplay.toLocaleString()} 字</p>
-                      ) : null}
-                      <p className="text-muted">{d.created}</p>
-                      {d.publications.length > 0 ? (
-                        <p className="text-[11px] leading-snug text-success-ink" title={d.publishedText}>
-                          {d.publishedText}
-                        </p>
-                      ) : null}
-                    </div>
-                    {playErrorById[id] ? (
-                      <p
-                        className="mt-3 rounded-lg border border-danger/25 bg-danger-soft/90 px-2 py-1.5 text-xs text-danger-ink"
-                        role="status"
-                      >
-                        {playErrorById[id]}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="shrink-0 border-t border-line bg-fill/30 px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {!isScriptDraft ? (
-                        <CircularPlayControl
-                          playing={isActive && isPlayingAudio}
-                          progress={prog}
-                          disabled={audioLoadingId === id}
-                          onClick={() => void togglePlay(id)}
-                        />
-                      ) : null}
-                      {!isScriptDraft ? (
-                        <button
-                          type="button"
-                          className="rounded-md border border-brand/45 bg-brand/10 px-3 py-1.5 text-sm font-medium text-brand hover:bg-brand/15 disabled:opacity-50"
-                          onClick={() => goToSharePage(w)}
-                        >
-                          {d.publishActionText}
-                        </button>
-                      ) : null}
-                      <GatedSplitAction
-                        locked={!workDownloadAllowed(w)}
-                        variant="default"
-                        upgradeTitle="下载需订阅"
-                        onClick={() => void onDownload(w)}
-                        disabled={zipBusy === id}
-                        unlockedClassName="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill disabled:opacity-50"
-                        lockedLabelClassName="!px-3 !py-1.5 !text-sm"
-                        onLockedNavigate={() => setNotesStudioDetailId(null)}
-                      >
-                        {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
-                      </GatedSplitAction>
-                      {!isScriptDraft ? (
-                        <button
-                          type="button"
-                          className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill disabled:opacity-50"
-                          disabled={coverUploadBusy === id}
-                          onClick={() => {
-                            coverUploadTargetIdRef.current = id;
-                            coverFileInputRef.current?.click();
-                          }}
-                        >
-                          {coverUploadBusy === id ? "处理封面中…" : "上传封面"}
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill"
-                        onClick={() => {
-                          setNotesStudioDetailId(null);
-                          openRename(id, w.displayTitle);
-                        }}
-                      >
-                        修改名称
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink hover:bg-fill"
-                        onClick={() => void onReuseTemplate(id)}
-                      >
-                        复用
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md border border-danger/35 bg-danger-soft/80 px-3 py-1.5 text-sm text-danger-ink hover:bg-danger-soft"
-                        onClick={() => {
-                          setNotesStudioDetailId(null);
-                          requestDelete(id);
-                        }}
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              );
-            })(),
-            document.body
-          )
-        : null}
     </div>
   );
 }

@@ -44,7 +44,7 @@ if [ "${SKIP}" != "1" ]; then
   start_worker "ai"
   start_worker "media"
 else
-  echo ">>> SKIP_DEV_WORKERS=1：未启动 ai/media worker（任务可能长期 queued）"
+  echo ">>> SKIP_DEV_WORKERS=1：未启动独立 ai/media worker（非生产编排器默认内嵌 RQ 消费两队列；若仍 queued 请查 REDIS_URL 与 /health）"
 fi
 
 exec npm run dev

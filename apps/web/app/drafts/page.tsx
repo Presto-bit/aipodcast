@@ -2,36 +2,20 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  DRAFTS_NAV_FOCUS_DRAFT_ID_KEY,
+  loadPodcastDrafts,
+  savePodcastDrafts,
+  type PodcastDraft
+} from "../../lib/podcastDrafts";
 import { TTS_IMPORT_SCRIPT_KEY } from "../../lib/ttsImport";
-import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
+import {
+  readSessionStorageScoped,
+  removeSessionStorageScoped,
+  writeSessionStorageScoped
+} from "../../lib/userScopedStorage";
 
-const DRAFTS_STORAGE_KEY = "fym_podcast_drafts_v1";
-
-type Draft = {
-  id: string;
-  title: string;
-  text: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-function loadDrafts(): Draft[] {
-  try {
-    const raw = readLocalStorageScoped(DRAFTS_STORAGE_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveDrafts(list: Draft[]) {
-  try {
-    writeLocalStorageScoped(DRAFTS_STORAGE_KEY, JSON.stringify((list || []).slice(0, 100)));
-  } catch {
-    // ignore
-  }
-}
+type Draft = PodcastDraft;
 
 function nowIso() {
   return new Date().toISOString();
@@ -52,9 +36,16 @@ export default function DraftsPage() {
   const autosaveTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const list = loadDrafts();
+    const list = loadPodcastDrafts();
     setDrafts(list);
-    setActiveId(list[0]?.id ? String(list[0].id) : null);
+    let nextActive = list[0]?.id ? String(list[0].id) : null;
+    const focusRaw = readSessionStorageScoped(DRAFTS_NAV_FOCUS_DRAFT_ID_KEY);
+    if (focusRaw) {
+      removeSessionStorageScoped(DRAFTS_NAV_FOCUS_DRAFT_ID_KEY);
+      const fid = String(focusRaw || "").trim();
+      if (fid && list.some((d) => String(d.id) === fid)) nextActive = fid;
+    }
+    setActiveId(nextActive);
   }, []);
 
   const sortedDrafts = useMemo(() => {
@@ -89,7 +80,7 @@ export default function DraftsPage() {
     const t = nowIso();
     const next = sortedDrafts.map((d) => (String(d.id) === sid ? { ...d, title, text, updatedAt: t } : d));
     setDrafts(next);
-    saveDrafts(next);
+    savePodcastDrafts(next);
     setDirty(false);
   }, [activeDraft, sortedDrafts, titleInput, textInput]);
 
@@ -111,7 +102,7 @@ export default function DraftsPage() {
     const entry: Draft = { id, title: "未命名草稿", text: "", createdAt: t, updatedAt: t };
     const next = [entry, ...sortedDrafts].slice(0, 100);
     setDrafts(next);
-    saveDrafts(next);
+    savePodcastDrafts(next);
     setActiveId(id);
   }
 
@@ -123,7 +114,7 @@ export default function DraftsPage() {
     if (!window.confirm(`确定删除「${label}」吗？`)) return;
     const next = sortedDrafts.filter((d) => String(d.id) !== sid);
     setDrafts(next);
-    saveDrafts(next);
+    savePodcastDrafts(next);
     if (String(activeId) === sid) {
       lastLoadedIdRef.current = null;
       setActiveId(next[0]?.id ? String(next[0].id) : null);

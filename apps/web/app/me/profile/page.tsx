@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 import { useI18n } from "../../../lib/I18nContext";
 import { useTheme } from "../../../lib/ThemeContext";
+import InlineTextPrompt from "../../../components/ui/InlineTextPrompt";
 
 export default function MeProfilePage() {
   const { t, lang, setLang } = useI18n();
@@ -26,6 +27,10 @@ export default function MeProfilePage() {
   const [authError, setAuthError] = useState("");
   const [regPasswordConfirm, setRegPasswordConfirm] = useState("");
   const [regA11ySuccess, setRegA11ySuccess] = useState("");
+  const [nicknamePromptOpen, setNicknamePromptOpen] = useState(false);
+  const [nicknameDraft, setNicknameDraft] = useState("");
+  const [nicknameBusy, setNicknameBusy] = useState(false);
+  const [nicknameErr, setNicknameErr] = useState("");
 
   async function submitAuth(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -125,12 +130,54 @@ export default function MeProfilePage() {
     user?.email,
   ]);
 
+  const displayName =
+    typeof user?.display_name === "string" && user.display_name.trim() ? user.display_name.trim() : "—";
+
+  const startNicknameEdit = useCallback(() => {
+    if (!showLogout || !user) return;
+    setNicknameErr("");
+    setNicknameDraft(displayName === "—" ? "" : displayName);
+    setNicknamePromptOpen(true);
+  }, [showLogout, user, displayName]);
+
+  const saveNickname = useCallback(async () => {
+    const v = nicknameDraft.trim();
+    if (!v) {
+      setNicknameErr("昵称不能为空");
+      return;
+    }
+    if (v.length > 48) {
+      setNicknameErr("昵称不超过 48 字");
+      return;
+    }
+    setNicknameBusy(true);
+    setNicknameErr("");
+    try {
+      const res = await fetch("/api/auth/profile", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: v })
+      });
+      const data = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      if (!res.ok) {
+        const d = data.detail;
+        const msg = typeof d === "string" && d.trim() ? d.trim() : `更新失败（${res.status}）`;
+        throw new Error(msg);
+      }
+      setNicknamePromptOpen(false);
+      await refreshMe();
+    } catch (e) {
+      setNicknameErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setNicknameBusy(false);
+    }
+  }, [nicknameDraft, refreshMe]);
+
   if (!ready) {
     return <p className="py-12 text-center text-sm text-muted">正在加载…</p>;
   }
 
-  const displayName =
-    typeof user?.display_name === "string" && user.display_name.trim() ? user.display_name.trim() : "—";
   const role = String((user as { role?: string })?.role || "").trim() || "—";
   const plan = typeof user?.plan === "string" ? user.plan : "—";
 
@@ -167,7 +214,13 @@ export default function MeProfilePage() {
             ) : null}
             <div className="flex flex-wrap gap-x-2 gap-y-1">
               <dt className="text-muted">{t("settings.displayName")}</dt>
-              <dd className="text-ink">{displayName}</dd>
+              <dd
+                className="cursor-default text-ink underline decoration-dotted decoration-muted/60 underline-offset-2 select-none"
+                title="双击修改昵称"
+                onDoubleClick={startNicknameEdit}
+              >
+                {displayName}
+              </dd>
             </div>
             <div className="flex flex-wrap gap-x-2 gap-y-1">
               <dt className="text-muted">当前方案</dt>
@@ -180,7 +233,36 @@ export default function MeProfilePage() {
               </div>
             ) : null}
           </dl>
-        ) : (
+        ) : null}
+        {showLogout && user && nicknamePromptOpen ? (
+          <div className="mt-4 border-t border-line pt-3">
+            <InlineTextPrompt
+              open
+              title="修改昵称"
+              value={nicknameDraft}
+              onChange={setNicknameDraft}
+              onSubmit={() => {
+                if (nicknameBusy) return;
+                void saveNickname();
+              }}
+              onCancel={() => {
+                if (nicknameBusy) return;
+                setNicknamePromptOpen(false);
+                setNicknameErr("");
+              }}
+              submitLabel={nicknameBusy ? "保存中…" : "保存"}
+              cancelLabel="取消"
+              placeholder="1～48 字"
+              closeOnOutsideClick={false}
+            />
+            {nicknameErr ? (
+              <p className="mt-2 text-xs text-danger-ink" role="alert">
+                {nicknameErr}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {showLogout && user ? null : (
           <p className="mt-4 text-sm text-muted">登录后可查看账号标识与展示信息。</p>
         )}
       </section>

@@ -6,6 +6,7 @@ import AppShell from "../components/AppShell";
 import { AuthProvider } from "../lib/auth";
 import { I18nProvider } from "../lib/I18nContext";
 import { ThemeProvider } from "../lib/ThemeContext";
+import { WorkAudioPlayerProvider } from "../lib/workAudioPlayer";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const [client] = useState(
@@ -26,7 +27,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       <ThemeProvider>
         <I18nProvider>
           <AuthProvider>
-            <AppShell>{children}</AppShell>
+            <WorkAudioPlayerProvider>
+              <AppShell>{children}</AppShell>
+            </WorkAudioPlayerProvider>
           </AuthProvider>
         </I18nProvider>
       </ThemeProvider>

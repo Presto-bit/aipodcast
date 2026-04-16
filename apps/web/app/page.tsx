@@ -4,29 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import PodcastWorksGallery from "../components/podcast/PodcastWorksGallery";
 import { IconCreate, IconNotes, IconVoice, IconGrid } from "../components/NavIcons";
-import type { WorkItem } from "../lib/worksTypes";
+import { mergeUserFacingWorksByRecency, type WorkItem } from "../lib/worksTypes";
 import { useAuth, userAccountRef } from "../lib/auth";
 import { useI18n } from "../lib/I18nContext";
 import { isRegisterEmailFormatOk } from "../lib/registerEmail";
 
 const HOME_WORKS_LIMIT = 80;
 const HOME_WORKS_PREVIEW = 10;
-
-function mergeWorksByRecency(ai: WorkItem[], tts: WorkItem[], notes: WorkItem[]): WorkItem[] {
-  const map = new Map<string, WorkItem>();
-  for (const x of [...ai, ...tts, ...notes]) {
-    const id = String(x.id || "").trim();
-    if (!id) continue;
-    if (!map.has(id)) map.set(id, x);
-  }
-  return [...map.values()].sort((a, b) => {
-    const ta = new Date(String(a.createdAt || 0)).getTime();
-    const tb = new Date(String(b.createdAt || 0)).getTime();
-    const na = Number.isFinite(ta) ? ta : 0;
-    const nb = Number.isFinite(tb) ? tb : 0;
-    return nb - na;
-  });
-}
 
 export default function HomePage() {
   const { t } = useI18n();
@@ -99,7 +83,7 @@ export default function HomePage() {
       const ai = Array.isArray(worksData.ai) ? worksData.ai : [];
       const tts = Array.isArray(worksData.tts) ? worksData.tts : [];
       const notesWorks = Array.isArray(worksData.notes) ? worksData.notes : [];
-      const merged = mergeWorksByRecency(ai, tts, notesWorks);
+      const merged = mergeUserFacingWorksByRecency(ai, tts, notesWorks);
       const activeList = Array.isArray(activeJobsData.jobs) ? activeJobsData.jobs : [];
       setHomeWorks(merged);
       setOverview({

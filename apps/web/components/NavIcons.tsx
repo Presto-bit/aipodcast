@@ -167,6 +167,18 @@ export function IconSearch(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** 文稿剪辑：胶片孔 + 斜向剪口（与麦克风 / TTS 区分） */
+export function IconClip(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={STROKE} aria-hidden {...props}>
+      <rect x="4" y="6.5" width="16" height="11" rx="1.5" strokeLinejoin="round" />
+      <path d="M7 6.5v-2M10 6.5v-2M13 6.5v-2M16 6.5v-2" strokeLinecap="round" opacity={0.45} />
+      <path d="M4 12h16" strokeLinecap="round" opacity={0.22} />
+      <path d="M12 10.5l-2.2 5M12 10.5l2.2 5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function IconTrash(props: SVGProps<SVGSVGElement>) {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={STROKE} aria-hidden {...props}>

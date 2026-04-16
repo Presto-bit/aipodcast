@@ -5,6 +5,9 @@
 
 import os
 import json
+import logging
+
+from ..cover_image_style import normalize_minimax_image_style_type
 
 # ========== API Keys ==========
 # 统一 API Key（文本、TTS、音色克隆、图像生成都使用同一个）
@@ -73,7 +76,8 @@ WELCOME_TEXT = "欢迎收听AI播客节目"
 WELCOME_VOICE_ID = DEFAULT_VOICES["mini"]["voice_id"]  # 使用 Mini 音色
 
 # ========== MiniMax API 端点配置 ==========
-MINIMAX_API_BASE = "https://api.minimax.chat/v1"
+# 控制台常见域名为 api.minimaxi.com；若文生图/TTS 与文档不一致可通过 MINIMAX_API_BASE 覆盖
+MINIMAX_API_BASE = (os.getenv("MINIMAX_API_BASE") or "https://api.minimax.chat/v1").strip().rstrip("/") or "https://api.minimax.chat/v1"
 _MINIMAX_API_PATHS = {
     "text_completion": "/text/chatcompletion_v2",
     "embeddings": "/embeddings",
@@ -232,11 +236,46 @@ TTS_RATE_LIMIT_CONFIG = {
 }
 
 # ========== 图像生成配置 ==========
+# 画风可被环境变量覆盖（部署后无需改代码）；非法值会记录 warning 并映射为合法枚举。
+_IMAGE_STYLE_ENV_RAW = (
+    os.getenv("MINIMAX_IMAGE_STYLE_TYPE")
+    or os.getenv("MINIMAX_COVER_STYLE_TYPE")
+    or os.getenv("AIPODCAST_IMAGE_STYLE_TYPE")
+    or ""
+).strip()
+_IMAGE_STYLE_DEFAULT = "元气"
+_IMAGE_STYLE_RESOLVED = (
+    normalize_minimax_image_style_type(_IMAGE_STYLE_ENV_RAW, fallback=_IMAGE_STYLE_DEFAULT)
+    if _IMAGE_STYLE_ENV_RAW
+    else _IMAGE_STYLE_DEFAULT
+)
+if _IMAGE_STYLE_ENV_RAW and _IMAGE_STYLE_RESOLVED != _IMAGE_STYLE_ENV_RAW:
+    logging.getLogger(__name__).warning(
+        "图像画风环境变量原值=%r 与 MiniMax 要求不一致，已收敛为 %r；"
+        "合法取值仅为：漫画、元气、中世纪、水彩（勿再使用「插画」「写实」等旧参数）。",
+        _IMAGE_STYLE_ENV_RAW,
+        _IMAGE_STYLE_RESOLVED,
+    )
+
+_IMAGE_SW_RAW = os.getenv("MINIMAX_IMAGE_STYLE_WEIGHT")
+_IMAGE_STYLE_WEIGHT = 0.38
+if _IMAGE_SW_RAW is not None and str(_IMAGE_SW_RAW).strip():
+    try:
+        _IMAGE_STYLE_WEIGHT = float(str(_IMAGE_SW_RAW).strip())
+    except ValueError:
+        _IMAGE_STYLE_WEIGHT = 0.38
+if not (0.0 < _IMAGE_STYLE_WEIGHT <= 1.0):
+    logging.getLogger(__name__).warning(
+        "MINIMAX_IMAGE_STYLE_WEIGHT=%r 超出 (0,1]，已回退为 0.38",
+        _IMAGE_SW_RAW,
+    )
+    _IMAGE_STYLE_WEIGHT = 0.38
+
 IMAGE_GENERATION_CONFIG = {
-    # 文生图 API 粗粒度画风；具体视觉语言主要由 compose 画面描述 + style_weight 体现
-    "style_type": "插画",
+    # 文生图（image-01-live）的 style.style_type 仅接受上列四值；见官方 StyleObject
+    "style_type": _IMAGE_STYLE_RESOLVED,
     # 压低固定画风权重，避免覆盖「按主题写的」画面与媒介描述
-    "style_weight": 0.38,
+    "style_weight": _IMAGE_STYLE_WEIGHT,
     "aspect_ratio": "1:1",
     "prompt_optimizer": True,
     "n": 1,

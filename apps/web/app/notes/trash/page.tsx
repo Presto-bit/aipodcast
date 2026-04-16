@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import EmptyState from "../../../components/ui/EmptyState";
 import { useAuth } from "../../../lib/auth";
+import { shouldHideWorkFromUserGallery } from "../../../lib/worksTypes";
 
 type NoteRow = {
   noteId: string;
@@ -86,7 +87,9 @@ export default function NotesTrashPage() {
       if (!notesRes.ok || !notesData.success) throw new Error(notesData.error || `加载笔记回收站失败 ${notesRes.status}`);
       if (!worksRes.ok || !worksData.success) throw new Error(worksData.error || `加载作品回收站失败 ${worksRes.status}`);
       const nextNotes = Array.isArray(notesData.notes) ? notesData.notes : [];
-      const nextWorks = [...(worksData.ai || []), ...(worksData.tts || []), ...(worksData.notes || [])];
+      const nextWorks = [...(worksData.ai || []), ...(worksData.tts || []), ...(worksData.notes || [])].filter(
+        (w) => !shouldHideWorkFromUserGallery(w)
+      );
       setNotes(nextNotes);
       setWorks(nextWorks);
       const noteIdSet = new Set(nextNotes.map((n) => n.noteId));

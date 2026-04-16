@@ -1,55 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import PodcastWorksGallery from "../../components/podcast/PodcastWorksGallery";
 import { IconMic, IconTts } from "../../components/NavIcons";
 import PodcastStudio, { type PodcastStudioActivity } from "../../components/studio/PodcastStudio";
 import TtsStudio, { type TtsStudioActivity } from "../../components/studio/TtsStudio";
 import { useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
-import type { WorkItem } from "../../lib/worksTypes";
+import { mergeUserFacingWorksByRecency, type WorkItem } from "../../lib/worksTypes";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
+import { pickQuickTopicsForDisplay } from "../../lib/createQuickTopics";
 
 type CreateMode = "podcast" | "tts";
 
 const HOME_WORKS_LIMIT = 80;
 
-function mergeWorksByRecency(ai: WorkItem[], tts: WorkItem[], notes: WorkItem[]): WorkItem[] {
-  const map = new Map<string, WorkItem>();
-  for (const x of [...ai, ...tts, ...notes]) {
-    const id = String(x.id || "").trim();
-    if (!id) continue;
-    if (!map.has(id)) map.set(id, x);
-  }
-  return [...map.values()].sort((a, b) => {
-    const ta = new Date(String(a.createdAt || 0)).getTime();
-    const tb = new Date(String(b.createdAt || 0)).getTime();
-    const na = Number.isFinite(ta) ? ta : 0;
-    const nb = Number.isFinite(tb) ? tb : 0;
-    return nb - na;
-  });
-}
-
 const DRAFT_PLACEHOLDER = "输入主题或正文";
-
-/** 快捷话题：点击写入正文，可再选播客 / TTS 生成 */
-const CREATE_QUICK_TOPICS: { label: string; text: string }[] = [
-  {
-    label: "热点速递",
-    text: "请用适合口播的语言，概述近期值得关注的科技或商业动向（2～3 条），每条给听众一句能记住的 takeaway。"
-  },
-  {
-    label: "知识小测",
-    text: "围绕一个你熟悉的领域，设计 3 个「易误解」的知识点，用问答或对比方式写出口播大纲，语言通俗。"
-  },
-  {
-    label: "故事开场",
-    text: "写一个能抓住注意力的播客开场：一句钩子 + 本期将要讲清楚的三个层次，语气自然、口语化。"
-  }
-];
 
 export default function CreatePage() {
   const { t } = useI18n();
@@ -65,6 +34,8 @@ export default function CreatePage() {
   const [homeWorks, setHomeWorks] = useState<WorkItem[]>([]);
   const [worksLoading, setWorksLoading] = useState(true);
   const [worksErr, setWorksErr] = useState("");
+  const [quickTopicSeed, setQuickTopicSeed] = useState(() => Math.floor(Date.now() % 2147483646) + 1);
+  const quickTopicsShown = useMemo(() => pickQuickTopicsForDisplay(quickTopicSeed), [quickTopicSeed]);
 
   const refreshWorks = useCallback(async () => {
     setWorksErr("");
@@ -83,7 +54,7 @@ export default function CreatePage() {
         detail?: string;
       };
       if (!res.ok || data.success === false) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-      const merged = mergeWorksByRecency(
+      const merged = mergeUserFacingWorksByRecency(
         Array.isArray(data.ai) ? data.ai : [],
         Array.isArray(data.tts) ? data.tts : [],
         Array.isArray(data.notes) ? data.notes : []
@@ -250,16 +221,33 @@ export default function CreatePage() {
       </section>
 
       <section className="mt-6">
-        <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted">快速选题</p>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted">快速选题</p>
+          <button
+            type="button"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-line bg-fill/50 text-muted transition hover:border-brand/40 hover:bg-brand/10 hover:text-brand"
+            title="换一批选题"
+            aria-label="换一批选题"
+            onClick={() => setQuickTopicSeed((s) => (s + 7919) % 2147483646)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M4 9a8 8 0 0113.657-5.657M20 15a8 8 0 01-13.657 5.657M20 15v-4M4 9v4"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
         <div className="flex flex-wrap gap-2">
-          {CREATE_QUICK_TOPICS.map((topic) => (
+          {quickTopicsShown.map((topic) => (
             <button
-              key={topic.label}
+              key={`${quickTopicSeed}-${topic.label}`}
               type="button"
-              className="rounded-full border border-line bg-fill/40 px-3 py-1.5 text-left text-xs text-ink transition hover:border-brand/40 hover:bg-brand/5"
-              onClick={() =>
-                setDraftText(`【${topic.label}】\n${topic.text.trim()}`)
-              }
+              className="max-w-full rounded-full border border-line bg-fill/40 px-3 py-1.5 text-left text-xs text-ink transition hover:border-brand/40 hover:bg-brand/5"
+              onClick={() => setDraftText(`【${topic.label}】\n${topic.text.trim()}`)}
             >
               {topic.label}
             </button>

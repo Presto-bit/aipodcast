@@ -12,6 +12,11 @@ import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShor
 import { classifyJobError, failureCopy, failureRecoveryLink } from "../../lib/jobFailure";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { deriveJobStage, type StreamPayload } from "../../lib/jobStage";
+import {
+  presentJobEventTypeForUser,
+  presentJobProgressMessageForUser,
+  visibleJobEventsForUserTimeline
+} from "../../lib/jobProgressUserText";
 import { supportMailtoWithJob } from "../../lib/supportLink";
 import { JOB_SECTION_SURFACE_CARD } from "../../lib/jobSectionClasses";
 import type { JobArtifactRecord, JobRecord } from "../../lib/types";
@@ -252,6 +257,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
   }, [jobId, streamingTail, job?.artifacts, job?.result, job?.job_type, job?.status, scriptArtifactId]);
 
   const stage = useMemo(() => deriveJobStage(job, events), [job, events]);
+  const timelineEvents = useMemo(() => visibleJobEventsForUserTimeline(events), [events]);
   const previewText = useMemo(() => extractPreviewText(job?.result), [job?.result]);
   const audioArtifactId = useMemo(() => pickArtifactIdByKeyword(job?.artifacts, "audio"), [job?.artifacts]);
   const loadErrCopy = useMemo(() => {
@@ -684,16 +690,19 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       )}
 
       <section className={JOB_SECTION_SURFACE_CARD}>
-        <h2 className="text-sm font-medium text-ink">处理记录</h2>
-        <p className="mt-1 text-xs text-muted">以下为后台步骤摘要，完成后本页会自动更新。</p>
+        <h2 className="text-sm font-medium text-ink">进度记录</h2>
+        <p className="mt-1 text-xs text-muted">仅展示主要步骤；完成后本页会自动更新。</p>
         <div className="mt-3 max-h-80 space-y-2 overflow-auto text-xs">
-          {events.length === 0 ? <p className="text-muted">暂无记录，或正在连接中…</p> : null}
-          {events.map((ev, i) => (
-            <div key={`${ev.id ?? i}_${i}`} className="rounded border border-line/80 bg-canvas/50 px-2 py-1">
-              <span className="text-muted">{(ev.type || "?") + " "}</span>
-              <span className="text-muted">{ev.message || ""}</span>
-            </div>
-          ))}
+          {timelineEvents.length === 0 ? <p className="text-muted">暂无记录，或正在连接中…</p> : null}
+          {timelineEvents.map((ev, i) => {
+            const line = presentJobProgressMessageForUser(String(ev.message || "").trim());
+            return (
+              <div key={`${ev.id ?? i}_${i}`} className="rounded border border-line/80 bg-canvas/50 px-2 py-1">
+                <span className="text-muted">{presentJobEventTypeForUser(ev.type)} · </span>
+                <span className="text-ink">{line || "—"}</span>
+              </div>
+            );
+          })}
         </div>
       </section>
     </main>

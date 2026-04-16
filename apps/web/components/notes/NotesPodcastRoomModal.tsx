@@ -33,11 +33,11 @@ import { PODCAST_PRESET_VOICES } from "../../lib/podcastVoiceDefaults";
 import {
   buildScriptPayload,
   buildVoiceOptionsFromMaps,
+  collectScriptLanguageOptionsFromVoices,
   DEFAULT_PROGRAM_NAME,
   durationInputMatchesCommitted,
   resolveScriptTargetCharsForJob,
   DURATION_PRESETS,
-  LANG_OPTIONS,
   resolveVoiceId
 } from "../../lib/podcastStudioCommon";
 import { formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
@@ -259,6 +259,18 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     () => buildVoiceOptionsFromMaps(mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks),
     [mergedDefaultVoices, savedCustomVoices, systemVoicesMap, voiceOptionMarks]
   );
+
+  const scriptLanguageOptions = useMemo(
+    () => collectScriptLanguageOptionsFromVoices(mergedDefaultVoices, systemVoicesMap),
+    [mergedDefaultVoices, systemVoicesMap]
+  );
+
+  useEffect(() => {
+    if (scriptLanguageOptions.length === 0) return;
+    if (!scriptLanguageOptions.includes(scriptLanguage)) {
+      setScriptLanguage(scriptLanguageOptions[0] ?? "中文");
+    }
+  }, [scriptLanguageOptions, scriptLanguage]);
 
   const voiceId1 = useMemo(() => resolveVoiceId(voiceOptions, voiceKey1), [voiceOptions, voiceKey1]);
   const voiceId2 = useMemo(() => resolveVoiceId(voiceOptions, voiceKey2), [voiceOptions, voiceKey2]);
@@ -666,7 +678,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                           "语言",
                           <>
                             <div className="flex flex-wrap gap-2">
-                              {LANG_OPTIONS.map((l) => (
+                              {scriptLanguageOptions.map((l) => (
                                 <button
                                   key={l}
                                   type="button"

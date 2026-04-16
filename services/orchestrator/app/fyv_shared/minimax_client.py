@@ -16,7 +16,7 @@ import zipfile
 import tempfile
 from collections import deque
 from typing import Iterator, Dict, Any, Optional, Tuple
-from ..cover_image_style import coarse_cover_style_type
+from ..cover_image_style import coarse_cover_style_type, normalize_minimax_image_style_type
 
 from .config import (
     MINIMAX_TEXT_API_KEY,
@@ -385,7 +385,7 @@ class MinimaxClient:
                                api_key: Optional[str] = None,
                                script_style: str = "轻松幽默，自然流畅",
                                script_language: str = "中文",
-                               program_name: str = "MiniMax AI 播客节目",
+                               program_name: str = "本期播客",
                                speaker1_persona: str = "活泼亲切，引导话题",
                                speaker2_persona: str = "稳重专业，深度分析",
                                script_constraints: str = "对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本。",
@@ -416,7 +416,7 @@ class MinimaxClient:
 
         normalized_style = (script_style or "轻松幽默，自然流畅").strip()
         normalized_language = (script_language or "中文").strip()
-        normalized_program_name = (program_name or "MiniMax AI 播客节目").strip()
+        normalized_program_name = (program_name or "本期播客").strip()
         normalized_speaker1_persona = (speaker1_persona or "活泼亲切，引导话题").strip()
         normalized_speaker2_persona = (speaker2_persona or "稳重专业，深度分析").strip()
         normalized_constraints = (script_constraints or "").strip()
@@ -480,25 +480,32 @@ class MinimaxClient:
                 segment_banner = ""
 
             if segment_role == "first":
-                rules_7_10 = """7. 开场白要吸引人，快速进入主题；本段末尾只收束到小节点或自然停顿，不要写全篇总结或告别语。
-8. 不要有多余的说明文字，只输出对话内容
-9. 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
-10. 严格遵守上述字数上限；本段结尾为「待续」感，不要宣称节目已结束"""
+                rules_7_10 = """(A) 开场白要吸引人，快速进入主题；本段末尾只收束到小节点或自然停顿，不要写全篇总结或告别语。
+(B) 不要有多余的说明文字，只输出对话内容
+(C) 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
+(D) 严格遵守上述字数上限；本段结尾为「待续」感，不要宣称节目已结束"""
             elif segment_role == "middle":
-                rules_7_10 = """7. 本段为中途接续：禁止问候听众、禁止重复节目开场与主题引入；从「已生成上文」末句自然延伸。
-8. 不要有多余的说明文字，只输出对话内容
-9. 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
-10. 严格遵守上述字数上限；本段末尾仍不要做全篇总结，保留空间给下一段"""
+                rules_7_10 = """(A) 本段为中途接续：禁止问候听众、禁止重复节目开场与主题引入；从「已生成上文」末句自然延伸。
+(B) 不要有多余的说明文字，只输出对话内容
+(C) 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
+(D) 严格遵守上述字数上限；本段末尾仍不要做全篇总结，保留空间给下一段"""
             elif segment_role == "last":
-                rules_7_10 = """7. 本段为收尾接续：禁止重新开场问候、禁止重复前文已出现过的完整开场套话；承接「已生成上文」末句继续展开，并在全段末尾用对话做简短小结，自然收束本期话题。
-8. 不要有多余的说明文字，只输出对话内容
-9. 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
-10. 严格遵守上述字数上限；接近本段收尾时做简洁总结，结束要自然，勿突兀截断"""
+                rules_7_10 = """(A) 本段为收尾接续：禁止重新开场问候、禁止重复前文已出现过的完整开场套话；承接「已生成上文」末句继续展开，并在全段末尾用对话做简短小结，自然收束本期话题。
+(B) 不要有多余的说明文字，只输出对话内容
+(C) 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
+(D) 严格遵守上述字数上限；接近本段收尾时做简洁总结，结束要自然，勿突兀截断"""
             else:
-                rules_7_10 = """7. 开场白要吸引人，结尾要有总结
-8. 不要有多余的说明文字，只输出对话内容
-9. 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
-10. 严格遵守上述字数上限，接近收尾时主动收束、做简短总结，不要突然超长发挥"""
+                _short_ep = int(target_chars) <= 1200
+                if _short_ep:
+                    rules_7_10 = """(A) 开场白要吸引人，尽快进入核心观点；篇幅较短时不要铺垫过长。
+(B) 不要有多余的说明文字，只输出对话内容
+(C) 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
+(D) 严格遵守上述字数上限；因篇幅较短，倒数第三句左右就要开始收束：先用一两句共同小结听众能带走的要点，再用最后一两句自然结束本期（可简短道别或「下期再聊」），禁止戛然而止、禁止话题未收束就停止。"""
+                else:
+                    rules_7_10 = """(A) 开场白要吸引人，结尾要有总结
+(B) 不要有多余的说明文字，只输出对话内容
+(C) 对话内容中不能包含（笑）（停顿）（思考）等动作、心理活动或场景描述，只生成纯对话文本
+(D) 严格遵守上述字数上限，接近收尾时主动收束、做简短总结，不要突然超长发挥"""
 
             if segment_role in ("middle", "last"):
                 format_example = """格式示例（接续结构示意，勿照抄）：
@@ -506,8 +513,8 @@ Speaker1: 那我们接着刚才这点往下说。
 Speaker2: 对，我补充一个具体例子。"""
             else:
                 format_example = """格式示例（仅示意结构，勿照抄内容）：
-Speaker1: 大家好，欢迎收听本期节目。
-Speaker2: 今天咱们聊聊这个话题。"""
+Speaker1: 嗨，今天想从一个具体问题聊起。
+Speaker2: 好，我们先帮听众把背景捋清楚。"""
 
             tail_remind = ""
             if segment_role in ("middle", "last"):
@@ -534,15 +541,16 @@ Speaker2: 今天咱们聊聊这个话题。"""
 
 播客节目信息：
 - 节目名称：{normalized_program_name}
-- 主持人：Mini（Speaker1）和 Max（Speaker2）
+- 两位主持人对应：Speaker1 与 Speaker2（对话中请用自然称呼，勿在台词里反复念「Speaker1」等标识）
 
 要求：
 1. 输出语言：{normalized_language}
 2. 对话风格：{normalized_style}
-3. 说话人：Speaker1（Mini，{normalized_speaker1_persona}）和 Speaker2（Max，{normalized_speaker2_persona}）
+3. 说话人：Speaker1（人设：{normalized_speaker1_persona}）与 Speaker2（人设：{normalized_speaker2_persona}）
 4. 额外约束：{constraints_block}
 5. 文本要自然，包含适当的重复、语气词、停顿等真人对话特征
-6. 【行格式必须严格遵守】全文只能输出对话行，不要标题、不要 Markdown、不要编号列表说明。
+6. 对话正文中不要提及 AI 模型供应商、云平台或「MiniMax」等品牌字样，除非用户「材料内容」里原文已出现。
+7. 【行格式必须严格遵守】全文只能输出对话行，不要标题、不要 Markdown、不要编号列表说明。
    - 每一行恰好对应一句对话；禁止在同一行内写两句或以上（不要用分号、句号把多句拼在同一行）。
    - 每行必须以英文标识开头：`Speaker1:` 或 `Speaker2:`（注意大小写与冒号），冒号后接该句台词。
    - 除上述前缀外，行内只写台词正文，不要加「第几句」「旁白」等标签。
@@ -567,7 +575,7 @@ Speaker2: 今天咱们聊聊这个话题。"""
         payload = {
             "model": self.models["text"],
             "messages": [
-                {"role": "system", "name": "MiniMax AI"},
+                {"role": "system", "name": "assistant"},
                 {"role": "user", "content": prompt}
             ],
             "stream": True,
@@ -709,7 +717,7 @@ Speaker2: 今天咱们聊聊这个话题。"""
         api_key: Optional[str] = None,
         script_style: str = "轻松幽默，自然流畅",
         script_language: str = "中文",
-        program_name: str = "MiniMax AI 播客节目",
+        program_name: str = "本期播客",
         speaker1_persona: str = "活泼亲切，引导话题",
         speaker2_persona: str = "稳重专业，深度分析",
     ) -> Dict[str, Any]:
@@ -747,7 +755,7 @@ Speaker2: 今天咱们聊聊这个话题。"""
         payload = {
             "model": self.models["text"],
             "messages": [
-                {"role": "system", "name": "MiniMax AI"},
+                {"role": "system", "name": "assistant"},
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
@@ -815,7 +823,7 @@ Speaker2: 今天咱们聊聊这个话题。"""
         payload = {
             "model": self.models["text"],
             "messages": [
-                {"role": "system", "name": "MiniMax AI"},
+                {"role": "system", "name": "assistant"},
                 {"role": "user", "content": f"{prompt}\n\n---\n\n{raw}"},
             ],
             "stream": False,
@@ -1391,7 +1399,7 @@ Speaker2: 今天咱们聊聊这个话题。"""
             payload_text = {
                 "model": self.models["text"],
                 "messages": [
-                    {"role": "system", "name": "MiniMax AI"},
+                    {"role": "system", "name": "assistant"},
                     {"role": "user", "content": prompt_generation_prompt},
                 ],
                 "stream": False,
@@ -1468,13 +1476,14 @@ Speaker2: 今天咱们聊聊这个话题。"""
             _style_t = coarse_cover_style_type(
                 bundle,
                 image_prompt,
-                default_type=str(IMAGE_GENERATION_CONFIG.get("style_type") or "插画"),
+                default_type=str(IMAGE_GENERATION_CONFIG.get("style_type") or "元气"),
             )
+            _style_t = normalize_minimax_image_style_type(_style_t)
             try:
                 _style_w = float(IMAGE_GENERATION_CONFIG.get("style_weight", 0.38))
             except (TypeError, ValueError):
                 _style_w = 0.38
-            payload_image = {
+            payload_image: Dict[str, Any] = {
                 "model": self.models["image"],
                 "prompt": image_prompt,
                 "aspect_ratio": IMAGE_GENERATION_CONFIG["aspect_ratio"],
@@ -1482,11 +1491,13 @@ Speaker2: 今天咱们聊聊这个话题。"""
                 "response_format": "base64",
                 "n": IMAGE_GENERATION_CONFIG["n"],
                 "prompt_optimizer": IMAGE_GENERATION_CONFIG["prompt_optimizer"],
-                "style": {
+            }
+            # 官方：style 仅在 model=image-01-live 时生效；非 live 模型带上 style 可能触发参数错误
+            if str(self.models.get("image") or "").strip() == "image-01-live":
+                payload_image["style"] = {
                     "style_type": _style_t,
                     "style_weight": _style_w,
-                },
-            }
+                }
 
             logger.info(f"图像生成 API: {url_image}")
             logger.info(f"图像生成请求 payload: {payload_image}")
@@ -1618,7 +1629,7 @@ Speaker2: 今天咱们聊聊这个话题。"""
                                 api_key: Optional[str] = None,
                                 script_style: str = "轻松幽默，自然流畅",
                                 script_language: str = "中文",
-                                program_name: str = "MiniMax AI 播客节目",
+                                program_name: str = "本期播客",
                                 speaker1_persona: str = "活泼亲切，引导话题",
                                 speaker2_persona: str = "稳重专业，深度分析",
                                 script_constraints: str = "",
@@ -1691,7 +1702,7 @@ Speaker2: 今天咱们聊聊这个话题。"""
         payload = {
             "model": self.models["text"],
             "messages": [
-                {"role": "system", "name": "MiniMax AI"},
+                {"role": "system", "name": "assistant"},
                 {"role": "user", "content": prompt}
             ],
             "stream": False
@@ -1747,7 +1758,7 @@ Speaker2: 今天咱们聊聊这个话题。"""
         payload = {
             "model": self.models["text"],
             "messages": [
-                {"role": "system", "name": "MiniMax AI"},
+                {"role": "system", "name": "assistant"},
                 {"role": "user", "content": prompt}
             ],
             "stream": False
@@ -1859,7 +1870,7 @@ Speaker2: 今天咱们聊聊这个话题。"""
         payload = {
             "model": self.models["text"],
             "messages": [
-                {"role": "system", "name": "MiniMax AI"},
+                {"role": "system", "name": "assistant"},
                 {"role": "user", "content": user_content},
             ],
             "stream": False,

@@ -8,8 +8,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .config import settings
+from .embedded_rq_ai import start_embedded_ai_rq_worker_thread
 from .embedded_rq_media import start_embedded_media_rq_worker_thread
 from .e2e_smoke import e2e_smoke_secret_configured
+from .clip_store import ensure_clip_studio_schema
 from .models import (
     ensure_payment_refunds_schema,
     ensure_payment_orders_schema,
@@ -32,6 +34,7 @@ from .rss_publish_store import ensure_rss_publish_schema
 from .routes import (
     admin_routes,
     auth_routes,
+    clip_routes,
     e2e_smoke_routes,
     health,
     jobs_routes,
@@ -78,6 +81,7 @@ def run_startup_tasks() -> None:
     _startup_step("ensure_payment_refunds_schema", ensure_payment_refunds_schema)
     _startup_step("ensure_alipay_page_checkout_schema", ensure_alipay_page_checkout_schema)
     _startup_step("ensure_rss_publish_schema", ensure_rss_publish_schema)
+    _startup_step("ensure_clip_studio_schema", lambda: ensure_clip_studio_schema(strict=settings.strict_schema_startup))
 
 
 def _run_scheduled_storage_maintenance() -> None:
@@ -125,6 +129,13 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
             start_embedded_media_rq_worker_thread(settings.redis_url)
         except Exception:
             logger.exception("embedded media RQ worker failed to start; podcast jobs may stay queued until media-worker runs")
+    if settings.embed_rq_ai_worker:
+        try:
+            start_embedded_ai_rq_worker_thread(settings.redis_url)
+        except Exception:
+            logger.exception(
+                "embedded ai RQ worker failed to start; ai-queue jobs may stay queued until ai-worker runs"
+            )
     stop = asyncio.Event()
     maint_task: asyncio.Task[None] | None = None
     if int(settings.trash_purge_interval_sec) > 0:
@@ -146,6 +157,7 @@ app.add_middleware(RequestIdMiddleware)
 app.include_router(health.router)
 app.include_router(auth_routes.router)
 app.include_router(user_prefs_routes.router)
+app.include_router(clip_routes.router)
 app.include_router(jobs_routes.router)
 app.include_router(notes_routes.router)
 app.include_router(voice_routes.router)

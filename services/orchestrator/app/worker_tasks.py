@@ -1200,3 +1200,223 @@ def run_media_job(job_id: str) -> dict[str, Any]:
         else:
             append_job_event(job_id, "log", "媒体任务失败但终态未写入（任务已取消）", {"error": msg[:500]})
         return {"status": "failed", "error": msg}
+
+
+def _clip_owner_uuid_str(uid: Any) -> str | None:
+    if uid is None:
+        return None
+    s = str(uid).strip()
+    return s or None
+
+
+def run_clip_transcription_job(project_id: str) -> dict[str, Any]:
+    from pathlib import Path
+
+    from .clip_audio_merge import ffprobe_audio_channels
+    from .clip_store import (
+        get_clip_project_by_id,
+        try_claim_clip_transcription_queued,
+        update_clip_project_meta,
+        update_clip_transcribe_failed,
+        update_clip_transcribe_queued,
+        update_clip_transcribe_succeeded,
+    )
+    from .clip_transcript_normalize import normalize_volc_flash_transcript
+    from .object_store import get_object_bytes, presigned_get_url
+    from .volcengine_seed_asr_client import volc_seed_recognize_url_wait
+
+    pid = (project_id or "").strip()
+    if not pid:
+        return {"status": "skipped", "error": "empty_project_id"}
+    row = get_clip_project_by_id(pid)
+    if not row:
+        return {"status": "failed", "error": "project_not_found"}
+    owner = _clip_owner_uuid_str(row.get("user_id"))
+    t_st = str(row.get("transcription_status") or "").strip() or "idle"
+    logger.info("clip transcribe worker_start project_id=%s transcription_status=%s", pid, t_st)
+    if t_st == "succeeded" and row.get("transcript_normalized"):
+        return {"status": "skipped", "reason": "already_succeeded"}
+    if t_st == "running":
+        return {"status": "skipped", "reason": "already_running"}
+    if t_st in ("idle", "failed"):
+        if not try_claim_clip_transcription_queued(project_id=pid, user_uuid=owner):
+            return {"status": "skipped", "reason": "transcription_claim_failed"}
+    elif t_st != "queued":
+        return {"status": "skipped", "reason": "unexpected_transcription_status"}
+    audio_key = str(row.get("audio_object_key") or "").strip()
+    if not audio_key:
+        update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message="未上传音频")
+        return {"status": "failed", "error": "no_audio"}
+
+    try:
+        audio_bytes = get_object_bytes(audio_key)
+    except Exception as exc:
+        update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=f"读取音频失败: {exc}")
+        return {"status": "failed", "error": "read_audio"}
+
+    try:
+        import tempfile
+
+        suf = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
+        with tempfile.NamedTemporaryFile(prefix="fyv_clip_tr_probe_", suffix=suf, delete=True) as tf:
+            tf.write(audio_bytes)
+            tf.flush()
+            nch = ffprobe_audio_channels(Path(tf.name))
+            ch_auto = [0, 1] if nch >= 2 else [0]
+            update_clip_project_meta(
+                project_id=pid,
+                user_uuid=owner,
+                channel_ids=ch_auto,
+                diarization_enabled=True,
+                speaker_count=2,
+            )
+            row = get_clip_project_by_id(pid) or row
+            logger.info("clip transcribe channel_autodetect project_id=%s channels=%s", pid, nch)
+    except Exception as probe_exc:
+        logger.warning("clip transcribe channel_autodetect_failed project_id=%s err=%s", pid, probe_exc)
+
+    max_inline_raw = int(os.getenv("CLIP_VOLC_SEED_MAX_INLINE_BYTES") or str(80 * 1024 * 1024))
+    max_inline = max(1024 * 1024, min(200 * 1024 * 1024, max_inline_raw))
+    file_url = ""
+    submit_bytes: bytes | None = None
+    if len(audio_bytes) <= max_inline:
+        submit_bytes = audio_bytes
+        logger.info(
+            "clip transcribe volc_seed_inline_bytes project_id=%s bytes=%s max_inline=%s",
+            pid,
+            len(audio_bytes),
+            max_inline,
+        )
+    else:
+        exp = int(os.getenv("CLIP_AUDIO_PRESIGNED_EXPIRES_SEC") or os.getenv("FUNASR_PRESIGNED_EXPIRES_SEC") or "172800")
+        exp = max(300, min(604800, exp))
+        try:
+            file_url = presigned_get_url(audio_key, expires_in=exp)
+        except Exception as exc:
+            update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=f"生成访问 URL 失败: {exc}")
+            return {"status": "failed", "error": "presign"}
+        logger.warning(
+            "clip transcribe volc_seed_url_only project_id=%s bytes=%s exceeds CLIP_VOLC_SEED_MAX_INLINE_BYTES=%s; "
+            "豆包需能公网下载该预签名 URL（内网 MinIO 请调大阈值或配置 OBJECT_PRESIGN_ENDPOINT）",
+            pid,
+            len(audio_bytes),
+            max_inline,
+        )
+
+    diar = bool(row.get("diarization_enabled", True))
+    ch_raw = row.get("channel_ids")
+    channel_ids: list[int] | None = None
+    if isinstance(ch_raw, list):
+        channel_ids = []
+        for x in ch_raw:
+            try:
+                channel_ids.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        if not channel_ids:
+            channel_ids = [0]
+    elif isinstance(ch_raw, str) and ch_raw.strip():
+        try:
+            parsed = json.loads(ch_raw)
+            if isinstance(parsed, list) and parsed:
+                channel_ids = [int(x) for x in parsed]
+        except Exception:
+            channel_ids = None
+    if not channel_ids:
+        channel_ids = [0]
+
+    try:
+        import uuid as _uuid
+
+        volc_tid = f"volc-seed-{_uuid.uuid4().hex[:20]}"
+        update_clip_transcribe_queued(project_id=pid, user_uuid=owner, task_id=volc_tid)
+        logger.info("clip transcribe volc_seed_start project_id=%s pseudo_task_id=%s", pid, volc_tid)
+        raw_tr = volc_seed_recognize_url_wait(
+            file_url=file_url,
+            audio_bytes=submit_bytes,
+            diarization_enabled=diar,
+            channel_ids=channel_ids,
+            audio_filename=str(row.get("audio_filename") or "").strip() or None,
+            audio_mime=str(row.get("audio_mime") or "").strip() or None,
+        )
+        normalized = normalize_volc_flash_transcript(raw_tr)
+        update_clip_transcribe_succeeded(project_id=pid, user_uuid=owner, raw=raw_tr, normalized=normalized)
+        return {"status": "succeeded", "word_count": len(normalized.get("words") or [])}
+    except Exception as exc:
+        msg = str(exc) or "transcribe_failed"
+        update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=msg)
+        logger.exception("clip transcribe failed project_id=%s", pid)
+        return {"status": "failed", "error": msg}
+
+
+def run_clip_export_job(project_id: str) -> dict[str, Any]:
+    from .clip_export import export_clip_mp3_from_bytes
+    from .clip_store import (
+        get_clip_project_by_id,
+        try_claim_clip_export_queued,
+        update_clip_export_failed,
+        update_clip_export_running,
+        update_clip_export_succeeded,
+    )
+    from .object_store import get_object_bytes, upload_bytes
+
+    pid = (project_id or "").strip()
+    row = get_clip_project_by_id(pid)
+    if not row:
+        return {"status": "failed", "error": "project_not_found"}
+    owner = _clip_owner_uuid_str(row.get("user_id"))
+    ex_st = str(row.get("export_status") or "").strip() or "idle"
+    logger.info("clip export worker_start project_id=%s export_status=%s", pid, ex_st)
+    if str(row.get("transcription_status") or "") != "succeeded":
+        update_clip_export_failed(project_id=pid, user_uuid=owner, message="转写未完成，无法导出")
+        return {"status": "failed", "error": "not_transcribed"}
+    if ex_st == "running":
+        return {"status": "skipped", "reason": "export_already_running"}
+    if ex_st in ("idle", "failed", "succeeded"):
+        if not try_claim_clip_export_queued(project_id=pid, user_uuid=owner):
+            return {"status": "skipped", "reason": "export_claim_failed"}
+    elif ex_st != "queued":
+        return {"status": "skipped", "reason": "unexpected_export_status"}
+    norm = row.get("transcript_normalized")
+    if isinstance(norm, str):
+        try:
+            norm = json.loads(norm)
+        except Exception:
+            norm = {}
+    if not isinstance(norm, dict):
+        update_clip_export_failed(project_id=pid, user_uuid=owner, message="缺少归一化文稿")
+        return {"status": "failed", "error": "no_transcript"}
+
+    ex = row.get("excluded_word_ids")
+    if isinstance(ex, str):
+        try:
+            ex = json.loads(ex)
+        except Exception:
+            ex = []
+    excluded = {str(x) for x in (ex if isinstance(ex, list) else [])}
+
+    if not update_clip_export_running(project_id=pid, user_uuid=owner):
+        return {"status": "skipped", "reason": "export_running_guard"}
+
+    audio_key = str(row.get("audio_object_key") or "").strip()
+    try:
+        merge_gap_ms = max(0, int(os.getenv("CLIP_EXPORT_MERGE_GAP_MS") or "120"))
+    except (TypeError, ValueError):
+        merge_gap_ms = 120
+    try:
+        b = get_object_bytes(audio_key)
+        out = export_clip_mp3_from_bytes(
+            audio_bytes=b,
+            normalized=norm,
+            excluded_word_ids=excluded,
+            merge_gap_ms=merge_gap_ms,
+        )
+        out_key = f"clip/{owner or 'anon'}/{pid}/export.mp3"
+        upload_bytes(out_key, out, "audio/mpeg")
+        update_clip_export_succeeded(project_id=pid, user_uuid=owner, export_key=out_key)
+        return {"status": "succeeded", "export_object_key": out_key}
+    except Exception as exc:
+        msg = str(exc) or "export_failed"
+        update_clip_export_failed(project_id=pid, user_uuid=owner, message=msg)
+        logger.exception("clip export failed project_id=%s", pid)
+        return {"status": "failed", "error": msg}

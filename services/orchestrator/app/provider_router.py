@@ -422,9 +422,20 @@ def generate_cover_image(
             raise RuntimeError("qwen_image_prompt_empty")
         return image_via_http_json(url=url, api_key=key, model=model, prompt=image_prompt)
 
-    return _safe_call_with_minimax_fallback(
-        domain="image",
-        provider=provider,
-        run_selected=_run_qwen,
-        run_minimax=_run_minimax,
-    )
+    if provider == "minimax":
+        return _run_minimax()
+
+    # 通义返回 (None, err) 时不抛异常，原 _safe_call 不会触发 minimax 兜底，导致有 MINIMAX_API_KEY 仍无封面
+    try:
+        img_url, img_err = _run_qwen()
+        if img_url:
+            return img_url, img_err
+        if img_err:
+            logger.warning(
+                "image provider=qwen returned no url (detail=%s), falling back to minimax",
+                (img_err or "")[:220],
+            )
+    except Exception as exc:
+        logger.warning("image provider=%s failed, falling back to minimax: %s", provider, exc)
+
+    return _run_minimax()

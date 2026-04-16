@@ -19,12 +19,13 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
     />
   )
 });
-import { createJob, cancelJob } from "../../lib/api";
+import { createJob } from "../../lib/api";
 import { apiErrorMessage } from "../../lib/apiError";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
 import { rememberJobId } from "../../lib/jobRecent";
 import { buildReferenceJobFields, type ReferenceRagMode } from "../../lib/jobReferencePayload";
 import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
+import { presentJobProgressMessageForUser } from "../../lib/jobProgressUserText";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
 import { ART_KIND_PRESETS, type ArtKindKey } from "../../lib/artKindPresets";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
@@ -33,13 +34,13 @@ import {
   pickNotebookForWorkbench,
   writeLastNotebookName
 } from "../../lib/notesLastNotebook";
+import { readDraftSourceIdsForNotebook, writeDraftSourceIdsForNotebook } from "../../lib/notesDraftSourcesStorage";
 import {
   APP_SIDEBAR_COLLAPSED_KEY,
   APP_SIDEBAR_COLLAPSE_EVENT,
   APP_SIDEBAR_TOGGLE_EVENT
 } from "../../lib/appSidebarCollapse";
 import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
-import { MEDIA_QUEUE_STALL_HINT_MS, MEDIA_QUEUE_STALL_HINT_ZH } from "../../lib/mediaQueueStallHint";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
@@ -57,6 +58,23 @@ import {
   writeLocalStorageScoped
 } from "../../lib/userScopedStorage";
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
+import {
+  NOTES_GUIDANCE_ASK_DIGEST,
+  NOTES_GUIDANCE_ASK_STRUCTURE,
+  NOTES_GUIDANCE_DEFAULT_OUTLINE_PROMPT,
+  NOTES_GUIDANCE_TEMPLATE_DEBATE,
+  NOTES_GUIDANCE_TEMPLATE_INTERVIEW,
+  NOTES_GUIDANCE_TEMPLATE_READING,
+  clearNotesReturnBar,
+  inferNotesGuidanceKind,
+  readNotesReturnBarActive,
+  setNotesReturnBarActive
+} from "../../lib/notesNextStepsGuidance";
+import {
+  NotesNextStepsGuidanceBurst,
+  NotesNextStepsReturnBar,
+  NotesNextStepsSidebarPeek
+} from "../../components/notes/NotesNextStepsGuidance";
 import type { WorkItem } from "../../lib/worksTypes";
 
 type NotesAskStreamEvent =
@@ -331,6 +349,13 @@ export default function NotesPage() {
   const [podcastRoomPresetKey, setPodcastRoomPresetKey] = useState<PodcastRoomPresetKey>("custom");
   const [showPodcastRoomModal, setShowPodcastRoomModal] = useState(false);
 
+  /** 上传/导入成功后的「下一步」引导（同一场景一轮） */
+  const [guidanceBurst, setGuidanceBurst] = useState<{ notebook: string; noteIds: string[] } | null>(null);
+  const [guidanceMoreOpen, setGuidanceMoreOpen] = useState(false);
+  /** 与 localStorage 同步：用户点「暂不」后再进入笔记本时的顶部条 */
+  const [guidanceReturnBar, setGuidanceReturnBar] = useState(false);
+  const [guidanceSidebarExpanded, setGuidanceSidebarExpanded] = useState(false);
+
   const [showArticleModal, setShowArticleModal] = useState(false);
   const [articleModalStep, setArticleModalStep] = useState<"pick" | "form">("pick");
   const [artKind, setArtKind] = useState<ArtKindKey>("custom");
@@ -346,6 +371,7 @@ export default function NotesPage() {
   const [notesAskBusy, setNotesAskBusy] = useState(false);
   const [notesAskError, setNotesAskError] = useState("");
   const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
+  const notesAskTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [notesAskNoteBusyId, setNotesAskNoteBusyId] = useState<string | null>(null);
   const [sourcesPanelCollapsed, setSourcesPanelCollapsed] = useState(false);
   const [studioPanelCollapsed, setStudioPanelCollapsed] = useState(false);
@@ -379,20 +405,16 @@ export default function NotesPage() {
   const [podcastWorks, setPodcastWorks] = useState<WorkItem[]>([]);
   const [podcastWorksLoading, setPodcastWorksLoading] = useState(true);
   const [podcastWorksError, setPodcastWorksError] = useState("");
-  const [podcastPhase, setPodcastPhase] = useState("");
-  const [podcastProgressPct, setPodcastProgressPct] = useState(0);
-  const [podcastBusy, setPodcastBusy] = useState(false);
   const podcastEventSourceRef = useRef<EventSource | null>(null);
   const podcastResolveWaitRef = useRef<(() => void) | null>(null);
   const podcastCancelledRef = useRef(false);
   const podcastRecoveryStartedRef = useRef(false);
-  const podcastLogHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const podcastActiveJobIdRef = useRef<string | null>(null);
-  const podcastStallHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const eventSourceRef = useRef<EventSource | null>(null);
   /** 来自 /notes?note=<id> 深链：解析笔记本并滚动到对应卡片 */
   const pendingFocusNoteIdRef = useRef<string | null>(null);
+  /** 与「来源」持久化配合：仅在当前笔记本已做过一次恢复后再写入，避免切换瞬间用旧笔记本的勾选覆盖新键 */
+  const draftSourcesPersistNotebookRef = useRef<string>("");
   const activeDraftJobIdRef = useRef<string | null>(null);
   const resolveDraftWaitRef = useRef<(() => void) | null>(null);
   const draftCancelledRef = useRef(false);
@@ -517,6 +539,62 @@ export default function NotesPage() {
     }
     return m;
   }, [notes]);
+
+  const guidanceKindLive = useMemo(
+    () => inferNotesGuidanceKind(notebookMetaByName[selectedNotebook.trim()] || null),
+    [notebookMetaByName, selectedNotebook]
+  );
+
+  const guidanceLockedTitles = useMemo(() => {
+    if (!guidanceBurst) return [];
+    return guidanceBurst.noteIds.map((id) => (noteTitleById[id] || "").trim());
+  }, [guidanceBurst, noteTitleById]);
+
+  const resolveGuidanceNoteIds = useCallback((): string[] => {
+    if (guidanceBurst?.noteIds?.length) {
+      return guidanceBurst.noteIds.filter(Boolean).slice(0, noteRefCap);
+    }
+    const fromFresh = freshNoteIds.filter((id) => notes.some((n) => n.noteId === id));
+    if (fromFresh.length) return fromFresh.slice(0, noteRefCap);
+    return notesSorted.map((n) => n.noteId).slice(0, noteRefCap);
+  }, [guidanceBurst, freshNoteIds, notes, notesSorted, noteRefCap]);
+
+  const applyGuidanceNoteIds = useCallback(
+    (ids: string[]) => {
+      const capped = ids.slice(0, noteRefCap).filter(Boolean);
+      setDraftSelectedNoteIds(capped);
+      setError("");
+    },
+    [noteRefCap]
+  );
+
+  const dismissGuidanceReturnUi = useCallback((notebook: string) => {
+    const nb = notebook.trim();
+    if (nb) clearNotesReturnBar(nb);
+    setGuidanceReturnBar(false);
+    setGuidanceSidebarExpanded(false);
+  }, []);
+
+  useEffect(() => {
+    const nb = selectedNotebook.trim();
+    if (!nb || hubView) {
+      setGuidanceReturnBar(false);
+      return;
+    }
+    setGuidanceReturnBar(readNotesReturnBarActive(nb));
+  }, [hubView, selectedNotebook]);
+
+  useEffect(() => {
+    setGuidanceSidebarExpanded(false);
+  }, [selectedNotebook]);
+
+  useEffect(() => {
+    if (!guidanceBurst) return;
+    if (guidanceBurst.notebook.trim() !== selectedNotebook.trim()) {
+      setGuidanceBurst(null);
+      setGuidanceMoreOpen(false);
+    }
+  }, [selectedNotebook, guidanceBurst]);
 
   /** 当前笔记本下、且仍绑定该笔记本的作品（删除笔记本后进回收站再恢复的不再出现于此） */
   const notesStudioWorks = useMemo(() => {
@@ -805,8 +883,20 @@ export default function NotesPage() {
   }, [hubView, selectedNotebook, notebooks.length, notebooksReady]);
 
   useEffect(() => {
-    setDraftSelectedNoteIds([]);
-  }, [selectedNotebook]);
+    const nb = selectedNotebook.trim();
+    if (!nb) {
+      setDraftSelectedNoteIds([]);
+      draftSourcesPersistNotebookRef.current = "";
+      return;
+    }
+    const prevNb = draftSourcesPersistNotebookRef.current;
+    if (prevNb !== nb) {
+      draftSourcesPersistNotebookRef.current = nb;
+      setDraftSelectedNoteIds(readDraftSourceIdsForNotebook(nb, noteRefCap));
+      return;
+    }
+    writeDraftSourceIdsForNotebook(nb, draftSelectedNoteIds, noteRefCap);
+  }, [selectedNotebook, draftSelectedNoteIds, noteRefCap]);
 
   const fetchPodcastWorks = useCallback(async () => {
     setPodcastWorksError("");
@@ -832,32 +922,11 @@ export default function NotesPage() {
     void fetchPodcastWorks();
   }, [fetchPodcastWorks]);
 
-  function applyPodcastTaskFromEvent(message: string, progressFromPayload?: number) {
-    setPodcastPhase(message);
-    if (typeof progressFromPayload === "number" && !Number.isNaN(progressFromPayload)) {
-      setPodcastProgressPct(Math.min(100, Math.max(0, progressFromPayload)));
-    }
-  }
-
-  function clearPodcastStallHintTimer() {
-    if (podcastStallHintTimerRef.current) {
-      clearTimeout(podcastStallHintTimerRef.current);
-      podcastStallHintTimerRef.current = null;
-    }
-  }
-
   const waitPodcastJobEvents = useCallback((jobId: string): Promise<void> => {
     return new Promise((resolve) => {
-      clearPodcastStallHintTimer();
       podcastResolveWaitRef.current = resolve;
       const es = new EventSource(jobEventsSourceUrl(jobId, 0));
       podcastEventSourceRef.current = es;
-      podcastStallHintTimerRef.current = window.setTimeout(() => {
-        podcastStallHintTimerRef.current = null;
-        if (podcastActiveJobIdRef.current === jobId && podcastResolveWaitRef.current) {
-          applyPodcastTaskFromEvent(MEDIA_QUEUE_STALL_HINT_ZH);
-        }
-      }, MEDIA_QUEUE_STALL_HINT_MS);
       es.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data) as {
@@ -866,7 +935,6 @@ export default function NotesPage() {
             payload?: { progress?: number };
           };
           if (data.type === "terminal") {
-            clearPodcastStallHintTimer();
             es.close();
             podcastEventSourceRef.current = null;
             podcastResolveWaitRef.current = null;
@@ -874,21 +942,13 @@ export default function NotesPage() {
             return;
           }
           if (isJobEventLogOnlyForUi(data.type)) {
-            const p = data.payload?.progress;
-            if (typeof p === "number") setPodcastProgressPct(Math.min(100, Math.max(0, p)));
             return;
           }
-          const msg = String(data.message || "").trim();
-          const p = data.payload?.progress;
-          if (msg) applyPodcastTaskFromEvent(msg, typeof p === "number" ? p : undefined);
-          else if (typeof p === "number") setPodcastProgressPct(Math.min(100, Math.max(0, p)));
         } catch {
           // ignore
         }
       };
       es.onerror = () => {
-        clearPodcastStallHintTimer();
-        applyPodcastTaskFromEvent("连接中断，正在重试或结束…");
         es.close();
         podcastEventSourceRef.current = null;
         podcastResolveWaitRef.current = null;
@@ -906,14 +966,10 @@ export default function NotesPage() {
           headers: { ...getAuthHeaders() }
         }).then((r) => r.json())) as Record<string, unknown>;
         const status = String(terminal.status || "");
-        const err = String(terminal.error_message || "");
         const succeeded = status === "succeeded";
-        if (succeeded) applyPodcastTaskFromEvent("生成完成", 100);
-        else applyPodcastTaskFromEvent(err || "生成未成功");
         void fetchPodcastWorks();
         return succeeded;
-      } catch (e) {
-        applyPodcastTaskFromEvent(String(e instanceof Error ? e.message : e));
+      } catch {
         void fetchPodcastWorks();
         return false;
       }
@@ -923,60 +979,26 @@ export default function NotesPage() {
 
   const onPodcastJobCreated = useCallback(
     (jobId: string) => {
+      const nbClear = selectedNotebook.trim();
+      if (nbClear) {
+        clearNotesReturnBar(nbClear);
+        setGuidanceReturnBar(false);
+      }
       podcastCancelledRef.current = false;
       podcastActiveJobIdRef.current = jobId;
-      if (podcastLogHideTimerRef.current) {
-        clearTimeout(podcastLogHideTimerRef.current);
-        podcastLogHideTimerRef.current = null;
-      }
-      setPodcastBusy(true);
-      setPodcastProgressPct(5);
-      applyPodcastTaskFromEvent("已提交，生成即将开始…", 5);
       rememberJobId(jobId);
       void (async () => {
         await waitPodcastJobEvents(jobId);
         if (!podcastCancelledRef.current) {
-          const ok = await finalizePodcastJob(jobId);
-          if (ok && !podcastCancelledRef.current) {
-            podcastLogHideTimerRef.current = setTimeout(() => {
-              setPodcastPhase("");
-              setPodcastProgressPct(0);
-              podcastLogHideTimerRef.current = null;
-            }, 5000);
-          }
+          await finalizePodcastJob(jobId);
         }
         clearActiveGenerationJob("podcast");
         podcastActiveJobIdRef.current = null;
-        setPodcastBusy(false);
         podcastCancelledRef.current = false;
       })();
     },
-    [waitPodcastJobEvents, finalizePodcastJob]
+    [waitPodcastJobEvents, finalizePodcastJob, selectedNotebook]
   );
-
-  const stopPodcastGeneration = useCallback(async () => {
-    clearPodcastStallHintTimer();
-    if (podcastLogHideTimerRef.current) {
-      clearTimeout(podcastLogHideTimerRef.current);
-      podcastLogHideTimerRef.current = null;
-    }
-    const es = podcastEventSourceRef.current;
-    podcastCancelledRef.current = true;
-    es?.close();
-    podcastEventSourceRef.current = null;
-    podcastResolveWaitRef.current?.();
-    podcastResolveWaitRef.current = null;
-    try {
-      const jid = podcastActiveJobIdRef.current || readActiveGenerationJob("podcast");
-      if (jid) await cancelJob(jid);
-    } catch {
-      // ignore
-    }
-    podcastActiveJobIdRef.current = null;
-    clearActiveGenerationJob("podcast");
-    setPodcastBusy(false);
-    applyPodcastTaskFromEvent("已取消");
-  }, []);
 
   useEffect(() => {
     if (podcastRecoveryStartedRef.current) return;
@@ -998,9 +1020,6 @@ export default function NotesPage() {
         if (st === "queued" || st === "running") {
           podcastCancelledRef.current = false;
           podcastActiveJobIdRef.current = sid;
-          setPodcastBusy(true);
-          setPodcastProgressPct(5);
-          applyPodcastTaskFromEvent(`恢复未完成的生成 ${sid.slice(0, 8)}…`, 5);
           rememberJobId(sid);
           await waitPodcastJobEvents(sid);
           if (!podcastCancelledRef.current) await finalizePodcastJob(sid);
@@ -1010,18 +1029,11 @@ export default function NotesPage() {
         clearActiveGenerationJob("podcast");
       } finally {
         clearActiveGenerationJob("podcast");
-        setPodcastBusy(false);
         podcastCancelledRef.current = false;
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载时尝试恢复
   }, [waitPodcastJobEvents, finalizePodcastJob, getAuthHeaders]);
-
-  useEffect(() => {
-    return () => {
-      if (podcastLogHideTimerRef.current) clearTimeout(podcastLogHideTimerRef.current);
-    };
-  }, []);
 
   const waitDraftJobEvents = useCallback((jobId: string): Promise<void> => {
     return new Promise((resolve) => {
@@ -1045,7 +1057,7 @@ export default function NotesPage() {
           }
           if (isJobEventLogOnlyForUi(data.type)) return;
           const msg = String(data.message || "").trim();
-          if (msg) setDraftMessage(msg);
+          if (msg) setDraftMessage(presentJobProgressMessageForUser(msg));
         } catch {
           // ignore
         }
@@ -1237,6 +1249,12 @@ export default function NotesPage() {
       await loadNotebooks();
       await loadNotebookMeta();
       await loadNotes();
+      if (data.noteId) {
+        clearNotesReturnBar(nb);
+        setGuidanceReturnBar(false);
+        setGuidanceBurst({ notebook: nb, noteIds: [data.noteId] });
+        setGuidanceMoreOpen(false);
+      }
     } catch (err) {
       setImportUrlError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -1297,6 +1315,12 @@ export default function NotesPage() {
       await loadNotebooks();
       await loadNotebookMeta();
       await loadNotes();
+      if (newId) {
+        clearNotesReturnBar(nb);
+        setGuidanceReturnBar(false);
+        setGuidanceBurst({ notebook: nb, noteIds: [newId] });
+        setGuidanceMoreOpen(false);
+      }
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -1404,62 +1428,96 @@ export default function NotesPage() {
       const decoder = new TextDecoder();
       let buffer = "";
       let sawDone = false;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-        for (const block of parts) {
-          for (const line of block.split("\n")) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith("data:")) continue;
-            const raw = trimmed.slice(5).trim();
-            if (!raw) continue;
-            let ev: NotesAskStreamEvent;
-            try {
-              ev = JSON.parse(raw) as NotesAskStreamEvent;
-            } catch {
-              continue;
-            }
-            if (ev.type === "chunk") {
-              const piece = String(ev.text ?? "");
-              setNotesAskMessages((prev) => {
-                const next = [...prev];
-                const idx = next.findIndex((m) => m.id === assistantId);
-                if (idx < 0) return prev;
-                const cur = next[idx]!;
-                next[idx] = {
-                  ...cur,
-                  content: (cur.content || "") + piece,
-                  streaming: true
-                };
-                return next;
-              });
-            } else if (ev.type === "done") {
-              sawDone = true;
-              const doneSources = normalizeNotesAskSources(ev.sources);
-              setNotesAskMessages((prev) => {
-                const next = [...prev];
-                const idx = next.findIndex((m) => m.id === assistantId);
-                if (idx < 0) return prev;
-                next[idx] = {
-                  ...next[idx]!,
-                  streaming: false,
-                  ...(doneSources?.length ? { sources: doneSources } : {})
-                };
-                return next;
-              });
-            } else if (ev.type === "error") {
-              throw new Error(String(ev.message || "").trim() || "问答失败");
+      /** 合并 SSE 片段后再 setState，避免每 token 一次重渲染导致主线程卡顿 */
+      let chunkPending = "";
+      let chunkRaf = 0;
+      const applyPendingChunks = () => {
+        if (!chunkPending) return;
+        const batch = chunkPending;
+        chunkPending = "";
+        setNotesAskMessages((prev) => {
+          const next = [...prev];
+          const idx = next.findIndex((m) => m.id === assistantId);
+          if (idx < 0) return prev;
+          const cur = next[idx]!;
+          next[idx] = {
+            ...cur,
+            content: (cur.content || "") + batch,
+            streaming: true
+          };
+          return next;
+        });
+      };
+      const scheduleChunkFlush = () => {
+        if (chunkRaf) return;
+        chunkRaf = requestAnimationFrame(() => {
+          chunkRaf = 0;
+          applyPendingChunks();
+        });
+      };
+      const flushChunksNow = () => {
+        if (chunkRaf) {
+          cancelAnimationFrame(chunkRaf);
+          chunkRaf = 0;
+        }
+        applyPendingChunks();
+      };
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() ?? "";
+          for (const block of parts) {
+            for (const line of block.split("\n")) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith("data:")) continue;
+              const raw = trimmed.slice(5).trim();
+              if (!raw) continue;
+              let ev: NotesAskStreamEvent;
+              try {
+                ev = JSON.parse(raw) as NotesAskStreamEvent;
+              } catch {
+                continue;
+              }
+              if (ev.type === "chunk") {
+                chunkPending += String(ev.text ?? "");
+                scheduleChunkFlush();
+              } else if (ev.type === "done") {
+                flushChunksNow();
+                sawDone = true;
+                const doneSources = normalizeNotesAskSources(ev.sources);
+                setNotesAskMessages((prev) => {
+                  const next = [...prev];
+                  const idx = next.findIndex((m) => m.id === assistantId);
+                  if (idx < 0) return prev;
+                  next[idx] = {
+                    ...next[idx]!,
+                    streaming: false,
+                    ...(doneSources?.length ? { sources: doneSources } : {})
+                  };
+                  return next;
+                });
+              } else if (ev.type === "error") {
+                flushChunksNow();
+                throw new Error(String(ev.message || "").trim() || "问答失败");
+              }
             }
           }
         }
+      } finally {
+        flushChunksNow();
       }
       if (!sawDone) {
         setNotesAskMessages((prev) =>
           prev.map((m) => (m.id === assistantId && m.streaming ? { ...m, streaming: false } : m))
         );
+      }
+      if (sawDone) {
+        clearNotesReturnBar(nb);
+        setGuidanceReturnBar(false);
+        setGuidanceSidebarExpanded(false);
       }
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
@@ -1586,7 +1644,7 @@ export default function NotesPage() {
           speaker2_persona: "分析师",
           script_constraints: "",
           output_mode: "article",
-          generate_cover: false,
+          generate_cover: true,
           ...(artCoreQuestion.trim() ? { core_question: artCoreQuestion.trim() } : {})
         }
       });
@@ -1595,6 +1653,14 @@ export default function NotesPage() {
       setDraftMessage(`记录 ${data.id.slice(0, 8)}…：已创建，正在监听进度`);
       setShowArticleModal(false);
       setArticleModalStep("pick");
+      {
+        const nbDraft = selectedNotebook.trim();
+        if (nbDraft) {
+          clearNotesReturnBar(nbDraft);
+          setGuidanceReturnBar(false);
+          setGuidanceSidebarExpanded(false);
+        }
+      }
       activeDraftJobIdRef.current = data.id;
       await waitDraftJobEvents(data.id);
       if (!draftCancelledRef.current) await finalizeDraftJob(data.id);
@@ -1759,17 +1825,91 @@ export default function NotesPage() {
     setArtCharsInput(String(clamped));
   }
 
-  const podcastEtaMinutes = useMemo(() => {
-    if (!podcastBusy && podcastProgressPct <= 0) return null;
-    if (podcastProgressPct >= 100) return 0;
-    // 进度仍处排队/入口阶段时不展示「约 N 分钟」，避免固定乘出 ~25 分钟误导
-    if (podcastProgressPct < 12) return null;
-    const charEst = Math.max(800, notesStudioPrompt.length);
-    const totalMin = Math.max(5, Math.min(48, Math.round(5 + charEst / 420)));
-    return Math.max(1, Math.ceil(((100 - podcastProgressPct) / 100) * totalMin));
-  }, [podcastBusy, podcastProgressPct, notesStudioPrompt.length]);
+  const runGuidanceDefaultOutline = useCallback(() => {
+    const nb = selectedNotebook.trim();
+    if (!nb) return;
+    const ids = resolveGuidanceNoteIds();
+    if (!ids.length) {
+      setError(NOTES_ASK_SOURCE_REQUIRED);
+      return;
+    }
+    applyGuidanceNoteIds(ids);
+    setPodcastRoomPresetKey("critique");
+    setNotesStudioPrompt(NOTES_GUIDANCE_DEFAULT_OUTLINE_PROMPT);
+    setShowPodcastRoomModal(true);
+    setGuidanceBurst(null);
+    setGuidanceMoreOpen(false);
+    dismissGuidanceReturnUi(nb);
+  }, [selectedNotebook, resolveGuidanceNoteIds, applyGuidanceNoteIds, dismissGuidanceReturnUi]);
 
-  const showPodcastTaskPanel = podcastBusy || podcastPhase.length > 0;
+  const runGuidanceAskPrefill = useCallback(
+    (question: string) => {
+      const nb = selectedNotebook.trim();
+      if (!nb) {
+        setNotesAskError(NOTES_NEED_NOTEBOOK);
+        return;
+      }
+      const ids = resolveGuidanceNoteIds();
+      if (!ids.length) {
+        setNotesAskError(NOTES_ASK_SOURCE_REQUIRED);
+        return;
+      }
+      applyGuidanceNoteIds(ids);
+      setNotesAskQuestion(question);
+      setNotesAskError("");
+      setGuidanceBurst(null);
+      setGuidanceMoreOpen(false);
+      dismissGuidanceReturnUi(nb);
+      requestAnimationFrame(() => {
+        notesAskTextareaRef.current?.focus();
+      });
+    },
+    [selectedNotebook, resolveGuidanceNoteIds, applyGuidanceNoteIds, dismissGuidanceReturnUi]
+  );
+
+  const guidanceSnoozeNextSteps = useCallback(() => {
+    const nb = (guidanceBurst?.notebook || selectedNotebook).trim();
+    setGuidanceBurst(null);
+    setGuidanceMoreOpen(false);
+    if (nb) {
+      setNotesReturnBarActive(nb, true);
+      setGuidanceReturnBar(true);
+    }
+  }, [guidanceBurst?.notebook, selectedNotebook]);
+
+  const guidanceOpenMorePodcastGenres = useCallback(() => {
+    const nb = selectedNotebook.trim();
+    if (!nb) return;
+    const ids = resolveGuidanceNoteIds();
+    if (!ids.length) {
+      setError(NOTES_ASK_SOURCE_REQUIRED);
+      return;
+    }
+    applyGuidanceNoteIds(ids);
+    setShowPodcastGenreModal(true);
+    setGuidanceBurst(null);
+    setGuidanceMoreOpen(false);
+    dismissGuidanceReturnUi(nb);
+  }, [selectedNotebook, resolveGuidanceNoteIds, applyGuidanceNoteIds, dismissGuidanceReturnUi]);
+
+  const guidanceOpenArticle = useCallback(() => {
+    const nb = selectedNotebook.trim();
+    if (!nb) return;
+    const ids = resolveGuidanceNoteIds();
+    if (!ids.length) {
+      setError(NOTES_ASK_SOURCE_REQUIRED);
+      return;
+    }
+    applyGuidanceNoteIds(ids);
+    setArticleModalStep("pick");
+    setArtKind("custom");
+    setArtLang("中文");
+    setArtChars(2000);
+    setShowArticleModal(true);
+    setGuidanceBurst(null);
+    setGuidanceMoreOpen(false);
+    dismissGuidanceReturnUi(nb);
+  }, [selectedNotebook, resolveGuidanceNoteIds, applyGuidanceNoteIds, dismissGuidanceReturnUi]);
 
   return (
     <main
@@ -2016,6 +2156,28 @@ export default function NotesPage() {
             )}
           </div>
 
+          {guidanceBurst && guidanceBurst.notebook.trim() === selectedNotebook.trim() ? (
+            <NotesNextStepsGuidanceBurst
+              kind={guidanceKindLive}
+              noteRefCap={noteRefCap}
+              lockedSampleTitles={guidanceLockedTitles}
+              guidanceMoreOpen={guidanceMoreOpen}
+              onGuidanceMoreOpenChange={setGuidanceMoreOpen}
+              onSnooze={guidanceSnoozeNextSteps}
+              onDefaultOutline={runGuidanceDefaultOutline}
+              onAskDigest={() => runGuidanceAskPrefill(NOTES_GUIDANCE_ASK_DIGEST)}
+              onAskStructure={() => runGuidanceAskPrefill(NOTES_GUIDANCE_ASK_STRUCTURE)}
+              onOpenMorePodcastGenres={guidanceOpenMorePodcastGenres}
+              onOpenArticle={guidanceOpenArticle}
+              onAskReadingPodcast={() => runGuidanceAskPrefill(NOTES_GUIDANCE_TEMPLATE_READING)}
+              onAskInterviewPlan={() => runGuidanceAskPrefill(NOTES_GUIDANCE_TEMPLATE_INTERVIEW)}
+              onAskDebateSketch={() => runGuidanceAskPrefill(NOTES_GUIDANCE_TEMPLATE_DEBATE)}
+            />
+          ) : null}
+          {guidanceReturnBar && !guidanceBurst ? (
+            <NotesNextStepsReturnBar onTry={runGuidanceDefaultOutline} onDismiss={() => dismissGuidanceReturnUi(selectedNotebook)} />
+          ) : null}
+
           <div className="flex min-h-0 flex-col gap-3 lg:h-[min(100dvh-5.5rem,900px)] lg:max-h-[min(100dvh-5.5rem,900px)] lg:flex-row lg:items-stretch lg:gap-3 lg:overflow-hidden">
             <section
               className={`flex shrink-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 shadow-soft lg:min-h-0 lg:h-full ${
@@ -2119,6 +2281,21 @@ export default function NotesPage() {
                   <span className="text-base leading-none text-brand">+</span>
                   添加笔记
                 </button>
+
+                {guidanceReturnBar && !guidanceBurst ? (
+                  <NotesNextStepsSidebarPeek
+                    expanded={guidanceSidebarExpanded}
+                    onExpandedChange={setGuidanceSidebarExpanded}
+                    onDefaultOutline={runGuidanceDefaultOutline}
+                    onAskDigest={() => runGuidanceAskPrefill(NOTES_GUIDANCE_ASK_DIGEST)}
+                    onAskStructure={() => runGuidanceAskPrefill(NOTES_GUIDANCE_ASK_STRUCTURE)}
+                    onOpenMorePodcastGenres={guidanceOpenMorePodcastGenres}
+                    onOpenArticle={guidanceOpenArticle}
+                    onAskReadingPodcast={() => runGuidanceAskPrefill(NOTES_GUIDANCE_TEMPLATE_READING)}
+                    onAskInterviewPlan={() => runGuidanceAskPrefill(NOTES_GUIDANCE_TEMPLATE_INTERVIEW)}
+                    onAskDebateSketch={() => runGuidanceAskPrefill(NOTES_GUIDANCE_TEMPLATE_DEBATE)}
+                  />
+                ) : null}
 
                   <div className="mt-3 min-h-0 max-h-[min(100dvh-12rem,520px)] flex-1 overflow-y-auto overflow-x-hidden pr-0.5 lg:max-h-none">
                 <p className="text-[11px] leading-snug text-muted">
@@ -2460,6 +2637,7 @@ export default function NotesPage() {
                   }`}
                 >
                   <textarea
+                    ref={notesAskTextareaRef}
                     className="max-h-32 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
                     placeholder={
                       draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "输入问题…"
@@ -2608,46 +2786,6 @@ export default function NotesPage() {
                   {messageSuggestsBillingTopUpOrSubscription(draftMessage) ? (
                     <BillingShortfallLinks className="mt-2 text-[11px] normal-case" />
                   ) : null}
-                </div>
-              ) : null}
-              {showPodcastTaskPanel ? (
-                <div className="mt-3 rounded-2xl border border-brand/25 bg-fill/90 p-4 shadow-soft">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">生成进度</h3>
-                    {podcastBusy ? (
-                      <button
-                        type="button"
-                        className="rounded-lg border border-danger/30 px-2 py-1 text-[11px] text-danger-ink hover:bg-danger-soft"
-                        onClick={() => void stopPodcastGeneration()}
-                      >
-                        停止
-                      </button>
-                    ) : null}
-                  </div>
-                  <p className="mt-2 text-sm text-ink">{podcastPhase || (podcastBusy ? "处理中…" : "—")}</p>
-                  {messageSuggestsBillingTopUpOrSubscription(podcastPhase || "") ? (
-                    <BillingShortfallLinks className="mt-2" />
-                  ) : null}
-                  <div className="mt-3">
-                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-track/90">
-                      <div
-                        className="h-full rounded-full bg-brand transition-[width] duration-300"
-                        style={{ width: `${Math.min(100, Math.max(0, podcastProgressPct))}%` }}
-                      />
-                    </div>
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-muted">
-                      <span>{podcastProgressPct > 0 ? `${podcastProgressPct}%` : podcastBusy ? "排队中" : ""}</span>
-                      <span>
-                        {podcastBusy || podcastProgressPct > 0
-                          ? podcastProgressPct >= 100
-                            ? "已完成"
-                            : podcastEtaMinutes != null && podcastEtaMinutes > 0
-                              ? `预估剩余约 ${podcastEtaMinutes} 分钟`
-                              : "排队与生成中，请稍候"
-                          : ""}
-                      </span>
-                    </div>
-                  </div>
                 </div>
               ) : null}
                   <div className="mt-4 min-h-0 max-h-[min(100dvh-12rem,520px)] flex-1 overflow-y-auto overflow-x-hidden lg:max-h-none">

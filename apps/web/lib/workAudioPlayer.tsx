@@ -1,0 +1,441 @@
+"use client";
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from "react";
+import { hexToMp3DataUrl } from "./audioHex";
+import { useAuth } from "./auth";
+
+function formatClock(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "—";
+  const s = Math.floor(sec);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+export type WorkAudioToggleMeta = {
+  displayTitle: string;
+};
+
+export type WorkAudioPlayerContextValue = {
+  activeJobId: string | null;
+  activeDisplayTitle: string;
+  isPlaying: boolean;
+  progress01: number;
+  durationSec: number;
+  loadingJobId: string | null;
+  playError: string | null;
+  togglePlay: (jobId: string, meta: WorkAudioToggleMeta) => Promise<void>;
+  pause: () => void;
+  resume: () => void;
+  skipSeconds: (deltaSec: number) => void;
+  dismiss: () => void;
+  dismissIfJob: (jobId: string) => void;
+  clearCachedAudioSrc: (jobId: string) => void;
+};
+
+const WorkAudioPlayerContext = createContext<WorkAudioPlayerContextValue | null>(null);
+
+export function useWorkAudioPlayer(): WorkAudioPlayerContextValue {
+  const v = useContext(WorkAudioPlayerContext);
+  if (!v) throw new Error("useWorkAudioPlayer 必须在 WorkAudioPlayerProvider 内使用");
+  return v;
+}
+
+export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
+  const { getAuthHeaders } = useAuth();
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
+  const srcCache = useRef<Record<string, string>>({});
+
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeDisplayTitle, setActiveDisplayTitle] = useState("");
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress01, setProgress01] = useState(0);
+  const [durationSec, setDurationSec] = useState(0);
+  const [loadingJobId, setLoadingJobId] = useState<string | null>(null);
+  const [playError, setPlayError] = useState<string | null>(null);
+  /** 新开始播放或切换曲目时默认为收起 */
+  const [dockExpanded, setDockExpanded] = useState(false);
+
+  const stopAndClearAudio = useCallback(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    try {
+      el.pause();
+      el.removeAttribute("src");
+      el.load();
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const dismiss = useCallback(() => {
+    stopAndClearAudio();
+    setActiveJobId(null);
+    setActiveDisplayTitle("");
+    setIsPlaying(false);
+    setProgress01(0);
+    setDurationSec(0);
+    setPlayError(null);
+    setLoadingJobId(null);
+    setDockExpanded(false);
+  }, [stopAndClearAudio]);
+
+  const dismissIfJob = useCallback(
+    (jobId: string) => {
+      if (activeJobId !== jobId) return;
+      dismiss();
+    },
+    [activeJobId, dismiss]
+  );
+
+  const clearCachedAudioSrc = useCallback((jobId: string) => {
+    delete srcCache.current[jobId];
+  }, []);
+
+  useEffect(() => {
+    const el = audioEl;
+    if (!el) return;
+    const onTime = () => {
+      const d = el.duration;
+      const t = el.currentTime;
+      setDurationSec(Number.isFinite(d) ? d : 0);
+      setProgress01(d && Number.isFinite(d) && d > 0 ? t / d : 0);
+    };
+    const onEnded = () => {
+      dismiss();
+    };
+    const onMeta = () => {
+      const d = el.duration;
+      setDurationSec(Number.isFinite(d) ? d : 0);
+    };
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    el.addEventListener("timeupdate", onTime);
+    el.addEventListener("ended", onEnded);
+    el.addEventListener("loadedmetadata", onMeta);
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPause);
+    return () => {
+      el.removeEventListener("timeupdate", onTime);
+      el.removeEventListener("ended", onEnded);
+      el.removeEventListener("loadedmetadata", onMeta);
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
+    };
+  }, [audioEl, dismiss]);
+
+  const ensureSrc = useCallback(
+    async (jobId: string): Promise<string | null> => {
+      if (srcCache.current[jobId]) return srcCache.current[jobId]!;
+      const res = await fetch(`/api/jobs/${jobId}`, { cache: "no-store", headers: { ...getAuthHeaders() } });
+      const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) return null;
+      const result = (row.result || {}) as Record<string, unknown>;
+      const hex = String(result.audio_hex || "").trim();
+      if (hex) {
+        const url = hexToMp3DataUrl(hex);
+        srcCache.current[jobId] = url;
+        return url;
+      }
+      const audioUrl = String(result.audio_url || "").trim();
+      if (audioUrl) {
+        srcCache.current[jobId] = audioUrl;
+        return audioUrl;
+      }
+      return null;
+    },
+    [getAuthHeaders]
+  );
+
+  const togglePlay = useCallback(
+    async (jobId: string, meta: WorkAudioToggleMeta) => {
+      const el = audioRef.current;
+      if (!el) {
+        setPlayError("播放器未就绪");
+        return;
+      }
+      setPlayError(null);
+      const title = String(meta.displayTitle || "").trim() || jobId;
+      if (activeJobId === jobId) {
+        if (el.paused) {
+          void el.play().catch((err) =>
+            setPlayError(String(err instanceof Error ? err.message : err))
+          );
+        } else {
+          el.pause();
+        }
+        return;
+      }
+      setLoadingJobId(jobId);
+      setDockExpanded(false);
+      try {
+        const url = await ensureSrc(jobId);
+        if (!url) {
+          setPlayError("暂无可播放音频，请稍后在创作记录中查看是否生成完成");
+          return;
+        }
+        el.pause();
+        el.src = url;
+        setActiveJobId(jobId);
+        setActiveDisplayTitle(title);
+        setProgress01(0);
+        await el.play().catch((err) => {
+          setPlayError(err instanceof Error ? err.message : "无法播放（浏览器策略或格式问题）");
+        });
+      } catch (e) {
+        setPlayError(e instanceof Error ? e.message : "加载音频失败");
+      } finally {
+        setLoadingJobId(null);
+      }
+    },
+    [ensureSrc, activeJobId]
+  );
+
+  const pause = useCallback(() => {
+    audioRef.current?.pause();
+  }, []);
+
+  const resume = useCallback(() => {
+    const el = audioRef.current;
+    if (!el || !activeJobId) return;
+    void el.play().catch((err) => setPlayError(err instanceof Error ? err.message : String(err)));
+  }, [activeJobId]);
+
+  const skipSeconds = useCallback(
+    (deltaSec: number) => {
+      const el = audioRef.current;
+      if (!el || !activeJobId) return;
+      const d = el.duration;
+      const next = el.currentTime + deltaSec;
+      if (Number.isFinite(d) && d > 0) {
+        el.currentTime = Math.min(d, Math.max(0, next));
+      } else {
+        el.currentTime = Math.max(0, next);
+      }
+    },
+    [activeJobId]
+  );
+
+  const value = useMemo<WorkAudioPlayerContextValue>(
+    () => ({
+      activeJobId,
+      activeDisplayTitle,
+      isPlaying,
+      progress01,
+      durationSec,
+      loadingJobId,
+      playError,
+      togglePlay,
+      pause,
+      resume,
+      skipSeconds,
+      dismiss,
+      dismissIfJob,
+      clearCachedAudioSrc
+    }),
+    [
+      activeJobId,
+      activeDisplayTitle,
+      isPlaying,
+      progress01,
+      durationSec,
+      loadingJobId,
+      playError,
+      togglePlay,
+      pause,
+      resume,
+      skipSeconds,
+      dismiss,
+      dismissIfJob,
+      clearCachedAudioSrc
+    ]
+  );
+
+  const dockVisible = activeJobId != null;
+  const timeLabel =
+    durationSec > 0 && Number.isFinite(durationSec)
+      ? `${formatClock(durationSec * progress01)} / ${formatClock(durationSec)}`
+      : "—";
+
+  return (
+    <WorkAudioPlayerContext.Provider value={value}>
+      {children}
+      <audio
+        ref={(node) => {
+          audioRef.current = node;
+          setAudioEl(node);
+        }}
+        className="hidden"
+        preload="metadata"
+        playsInline
+      />
+      {dockVisible ? (
+        <div
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-[260] flex justify-center px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5"
+          aria-live="polite"
+        >
+          <div
+            className={`pointer-events-auto flex flex-col gap-1.5 rounded-xl border border-line bg-surface/95 px-2 py-1.5 shadow-card backdrop-blur-sm transition-[max-width] duration-200 ${
+              dockExpanded ? "w-full max-w-[17rem] sm:max-w-xs" : "w-full max-w-[10.5rem] sm:max-w-[11rem]"
+            }`}
+          >
+            {!dockExpanded ? (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-soft hover:opacity-95"
+                  aria-label={isPlaying ? "暂停" : "播放"}
+                  title={isPlaying ? "暂停" : "播放"}
+                  onClick={() => (isPlaying ? pause() : resume())}
+                >
+                  {isPlaying ? (
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="5" width="4" height="14" rx="1" />
+                      <rect x="14" y="5" width="4" height="14" rx="1" />
+                    </svg>
+                  ) : (
+                    <svg className="ml-px h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                </button>
+                <p className="min-w-0 flex-1 truncate text-[11px] font-medium leading-tight text-ink" title={activeDisplayTitle}>
+                  {activeDisplayTitle}
+                </p>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-ink"
+                  aria-label="展开播放器"
+                  title="展开"
+                  onClick={() => setDockExpanded(true)}
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                    <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-ink"
+                  aria-label="关闭播放器"
+                  title="关闭"
+                  onClick={() => dismiss()}
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
+                    <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <p className="min-w-0 flex-1 truncate text-[11px] font-medium text-ink" title={activeDisplayTitle}>
+                    {activeDisplayTitle}
+                  </p>
+                  <span className="shrink-0 tabular-nums text-[9px] text-muted">{timeLabel}</span>
+                  <button
+                    type="button"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-ink"
+                    aria-label="收起播放器"
+                    title="收起"
+                    onClick={() => setDockExpanded(false)}
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <path d="M18 15l-6-6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-ink"
+                    aria-label="关闭播放器"
+                    title="关闭"
+                    onClick={() => dismiss()}
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
+                      <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
+                <div
+                  className="h-1 w-full cursor-pointer rounded-full bg-track"
+                  role="slider"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(progress01 * 100)}
+                  aria-label="播放进度"
+                  onClick={(e) => {
+                    const el = audioRef.current;
+                    if (!el || !activeJobId) return;
+                    const d = el.duration;
+                    if (!Number.isFinite(d) || d <= 0) return;
+                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const p = Math.min(1, Math.max(0, x / rect.width));
+                    el.currentTime = p * d;
+                  }}
+                >
+                  <div
+                    className="h-1 rounded-full bg-brand transition-[width] duration-150"
+                    style={{ width: `${Math.min(100, Math.max(0, progress01 * 100))}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-center gap-1">
+                  <button
+                    type="button"
+                    className="flex h-8 min-w-[2.75rem] shrink-0 items-center justify-center rounded-full border border-line bg-fill px-0.5 text-[9px] font-semibold text-ink hover:bg-track"
+                    aria-label="后退 10 秒"
+                    title="后退 10 秒"
+                    onClick={() => skipSeconds(-10)}
+                  >
+                    −10s
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-soft hover:opacity-95"
+                    aria-label={isPlaying ? "暂停" : "播放"}
+                    title={isPlaying ? "暂停" : "播放"}
+                    onClick={() => (isPlaying ? pause() : resume())}
+                  >
+                    {isPlaying ? (
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="5" width="4" height="14" rx="1" />
+                        <rect x="14" y="5" width="4" height="14" rx="1" />
+                      </svg>
+                    ) : (
+                      <svg className="ml-0.5 h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-8 min-w-[2.75rem] shrink-0 items-center justify-center rounded-full border border-line bg-fill px-0.5 text-[9px] font-semibold text-ink hover:bg-track"
+                    aria-label="前进 10 秒"
+                    title="前进 10 秒"
+                    onClick={() => skipSeconds(10)}
+                  >
+                    +10s
+                  </button>
+                </div>
+                {playError ? (
+                  <p className="text-center text-[9px] leading-snug text-danger-ink" role="alert">
+                    {playError}
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </WorkAudioPlayerContext.Provider>
+  );
+}

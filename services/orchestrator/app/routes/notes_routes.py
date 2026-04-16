@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -29,6 +30,7 @@ from ..models import (
     delete_notebook_db,
     ensure_default_project,
     ensure_notebooks_schema,
+    find_duplicate_file_note_id,
     get_note_by_id,
     list_notebook_names,
     list_notes,
@@ -47,7 +49,11 @@ from ..worker_tasks import run_ai_job
 from ..storage_paths import note_upload_object_key
 from ..note_document_extract import NoteParseResult, extract_text_from_bytes
 from ..object_store import delete_object_key, get_object_bytes, upload_bytes
-from ..notes_ask import answer_notes_question, iter_notes_answer_events, validate_notes_ask_request
+from ..notes_ask import (
+    _prepare_notes_ask_messages,
+    answer_notes_question,
+    iter_notes_answer_events,
+)
 from ..note_rag_service import count_rag_chunks_for_notes, ensure_note_rag_schema
 from ..schemas import (
     NoteCreateRequest,
@@ -132,6 +138,55 @@ def _persist_note_upload(
     notebook = (notebook or "").strip()
     if not notebook:
         raise HTTPException(status_code=400, detail="notebook_required")
+    content_sha256 = hashlib.sha256(data).hexdigest()
+    project_id = ensure_default_project(project_name, created_by=user_ref)
+    dup_id = find_duplicate_file_note_id(
+        project_id,
+        notebook,
+        content_sha256=content_sha256,
+        original_filename=raw_name,
+        size=len(data),
+    )
+    if dup_id:
+        row = get_note_by_id(dup_id, user_ref=user_ref)
+        if row:
+            md_raw = row.get("metadata") or {}
+            if isinstance(md_raw, str):
+                try:
+                    md = json.loads(md_raw) if md_raw.strip() else {}
+                except Exception:
+                    md = {}
+            else:
+                md = md_raw if isinstance(md_raw, dict) else {}
+            p_st = str(md.get("parseStatus") or "").strip()
+            p_eng = str(md.get("parseEngine") or "").strip()
+            p_de = str(md.get("parseDetail") or "").strip()[:500]
+            p_enc = str(md.get("parseEncoding") or "").strip()[:120]
+            tit = str(md.get("title") or title).strip() or title
+            ext_out = str(md.get("ext") or ext).lower() or ext
+            ct = str(row.get("content_text") or "").strip()
+            parse_empty = bool(len(data) > 0 and not ct)
+            out_dup: dict = {
+                "success": True,
+                "deduped": True,
+                "note": {
+                    "noteId": dup_id,
+                    "title": tit,
+                    "notebook": notebook,
+                    "ext": ext_out,
+                    "relativePath": f"/api/notes/{dup_id}/file",
+                    "createdAt": str(row.get("created_at") or ""),
+                },
+                "parse": {
+                    "status": p_st or "ok",
+                    "engine": p_eng,
+                    "detail": p_de,
+                    "encoding": p_enc,
+                },
+            }
+            if parse_empty:
+                out_dup["parseEmpty"] = True
+            return out_dup
     note_id = f"note_{int(time.time())}_{uuid.uuid4().hex[:8]}"
     owner_uuid = resolved_user_uuid_string(user_ref)
     object_key = note_upload_object_key(note_id, ext, owner_uuid)
@@ -162,7 +217,7 @@ def _persist_note_upload(
         extra_meta["parseDetail"] = str(parse_result.detail)[:500]
     if parse_result.encoding:
         extra_meta["parseEncoding"] = str(parse_result.encoding)[:120]
-    project_id = ensure_default_project(project_name, created_by=user_ref)
+    extra_meta["contentSha256"] = content_sha256
     try:
         row_id = create_file_note(
             project_id=project_id,
@@ -386,7 +441,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
     """基于已选笔记的问答：SSE，`data:` JSON 行，事件 type 为 chunk | done | error。"""
     user_ref = _current_user_ref_or_401(request)
     try:
-        validate_notes_ask_request(
+        prepared = _prepare_notes_ask_messages(
             notebook=body.notebook.strip(),
             note_ids=body.note_ids,
             question=body.question.strip(),
@@ -412,6 +467,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             note_ids=body.note_ids,
             question=body.question.strip(),
             user_ref=user_ref,
+            prepared_messages_sources=prepared,
         ):
             yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
 

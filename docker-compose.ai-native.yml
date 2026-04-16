@@ -80,7 +80,8 @@ services:
       DB_HOST: postgres
       REDIS_URL: redis://redis:6379/0
       OBJECT_ENDPOINT: http://minio:9000
-      # 独立 media-worker 已消费 media 队列；编排器内不再嵌 worker，避免双消费与 API 同进程抢 CPU
+      # 独立 ai-worker / media-worker 已消费队列；编排器内关闭内嵌，避免双消费与 API 同进程抢 CPU
+      ORCHESTRATOR_EMBED_RQ_AI_WORKER: "0"
       ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER: "0"
     ports:
       - "127.0.0.1:8008:8008"

@@ -196,14 +196,13 @@ def _work_has_audio_hex(result: dict[str, Any]) -> bool:
 
 
 def _work_cover_display_url(result: dict[str, Any], job_id: str) -> str:
-    """列表用封面 URL：优先 result 内外链；仅持久化了 cover_object_key 时回落到网关路径。"""
+    """列表用封面 URL：已持久化对象键时优先同源网关（避免外链过期/换环境后失效）；否则再用 result 内外链。"""
+    jid = str(job_id or "").strip()
+    if str(result.get("cover_object_key") or "").strip() and jid:
+        return f"/api/jobs/{jid}/cover"
     cov = str(result.get("cover_image") or result.get("coverImage") or "").strip()
     if cov:
         return cov
-    if str(result.get("cover_object_key") or "").strip():
-        jid = str(job_id or "").strip()
-        if jid:
-            return f"/api/jobs/{jid}/cover"
     return ""
 
 

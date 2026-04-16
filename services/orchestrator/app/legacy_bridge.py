@@ -422,10 +422,10 @@ def build_script_with_minimax(
     if not _explicit_target:
         base = min(base, min(_pref_max, tier_cap))
 
-    # 与 legacy 播客生成及 minimax_client.generate_script_stream 默认一致
+    # 与 legacy 播客生成及 minimax_client.generate_script_stream 默认一致（本期播客）
     script_style = str(opts.get("script_style") or "轻松幽默，自然流畅").strip()
     script_language = str(opts.get("script_language") or "中文").strip()
-    program_name = str(opts.get("program_name") or "MiniMax AI 播客节目").strip()
+    program_name = str(opts.get("program_name") or "本期播客").strip()
     speaker1 = str(opts.get("speaker1_persona") or "活泼亲切，引导话题").strip()
     speaker2 = str(opts.get("speaker2_persona") or "稳重专业，深度分析").strip()
     output_mode = str(opts.get("output_mode") or "dialogue").strip().lower()

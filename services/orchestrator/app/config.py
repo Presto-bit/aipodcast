@@ -27,6 +27,21 @@ def _parse_embed_rq_media_worker() -> bool:
     return not _fyv_production()
 
 
+def _parse_embed_rq_ai_worker() -> bool:
+    """
+    ORCHESTRATOR_EMBED_RQ_AI_WORKER：
+    - 显式 1/true/on → 内嵌 ai 消费者；
+    - 显式 0/false/off → 不内嵌；
+    - 未设置 → FYV_PRODUCTION 未开启时默认内嵌（本机只起编排器、无独立 ai-worker 时脚本/TTS 任务可出队）。
+    """
+    raw = (os.environ.get("ORCHESTRATOR_EMBED_RQ_AI_WORKER") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return not _fyv_production()
+
+
 class Settings:
     db_host = os.getenv("DB_HOST", "127.0.0.1")
     db_port = int(os.getenv("DB_PORT", "5432"))
@@ -42,6 +57,8 @@ class Settings:
     object_secret_key = os.getenv("OBJECT_SECRET_KEY", "minioadmin")
     object_bucket = os.getenv("OBJECT_BUCKET", "aipodcast-artifacts")
     object_force_path_style = os.getenv("OBJECT_FORCE_PATH_STYLE", "1") in ("1", "true", "True")
+    # 预签名 URL 使用的 S3 endpoint（须与反向代理/公网域名一致，供百炼拉取；为空则与 OBJECT_ENDPOINT 相同）
+    object_presign_endpoint = (os.getenv("OBJECT_PRESIGN_ENDPOINT") or "").strip()
 
     orchestrator_port = int(os.getenv("ORCHESTRATOR_PORT", "8008"))
     orchestrator_api_token = os.getenv("ORCHESTRATOR_API_TOKEN", "local-dev-token")
@@ -62,6 +79,8 @@ class Settings:
 
     # 非生产默认在进程内消费 media 队列；生产须 FYV_PRODUCTION=1（此时默认关）并部署独立 media-worker
     embed_rq_media_worker = _parse_embed_rq_media_worker()
+    # 非生产默认在进程内消费 ai 队列；全栈 Docker 通常显式 ORCHESTRATOR_EMBED_RQ_AI_WORKER=0 并起独立 ai-worker
+    embed_rq_ai_worker = _parse_embed_rq_ai_worker()
 
 
 settings = Settings()

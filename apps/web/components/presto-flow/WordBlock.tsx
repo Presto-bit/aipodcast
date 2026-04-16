@@ -1,0 +1,222 @@
+"use client";
+
+import {
+  autoUpdate,
+  flip,
+  FloatingPortal,
+  offset,
+  shift,
+  useDismiss,
+  useFloating,
+  useFocus,
+  useHover,
+  useInteractions,
+  useRole
+} from "@floating-ui/react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import type { ClipWord } from "../../lib/clipTypes";
+import type { TranscriptWordSuggestionMarker } from "../../lib/prestoFlowTranscriptMarkers";
+
+const LONG_PRESS_MS = 480;
+
+type Props = {
+  word: ClipWord;
+  excluded: boolean;
+  playbackActive: boolean;
+  focused: boolean;
+  /** 读屏：保留 / 已标记删除 */
+  ariaKeepLabel: string;
+  ariaCutLabel: string;
+  onToggle: (w: ClipWord) => void;
+  onFocusId: (id: string) => void;
+  onLongPress: (w: ClipWord, anchor: DOMRect) => void;
+  suggestionMarker?: TranscriptWordSuggestionMarker | null;
+};
+
+export default function WordBlock({
+  word,
+  excluded,
+  playbackActive,
+  focused,
+  ariaKeepLabel,
+  ariaCutLabel,
+  onToggle,
+  onFocusId,
+  onLongPress,
+  suggestionMarker
+}: Props) {
+  const timerRef = useRef<number | null>(null);
+  const clearTimer = useCallback(() => {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const hasSuggestion = Boolean(suggestionMarker);
+  const [cardOpen, setCardOpen] = useState(false);
+
+  useEffect(() => {
+    if (!suggestionMarker) setCardOpen(false);
+  }, [suggestionMarker]);
+
+  const { refs, floatingStyles, context } = useFloating({
+    open: hasSuggestion && cardOpen,
+    onOpenChange: setCardOpen,
+    placement: "bottom-start",
+    strategy: "fixed",
+    whileElementsMounted: autoUpdate,
+    middleware: [offset(8), flip({ fallbackPlacements: ["top-start", "bottom-start"] }), shift({ padding: 10 })]
+  });
+
+  const hover = useHover(context, {
+    enabled: hasSuggestion,
+    move: false,
+    delay: { open: 40, close: 80 }
+  });
+  const focus = useFocus(context, { enabled: hasSuggestion });
+  const dismiss = useDismiss(context, { enabled: hasSuggestion });
+  const role = useRole(context, { role: "tooltip", enabled: hasSuggestion });
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, dismiss, role]);
+
+  const display = `${word.text}${word.punct ?? ""}`.trim() || "\u00a0";
+
+  const suggestionUnderline =
+    suggestionMarker?.status === "pending"
+      ? "underline decoration-dashed decoration-amber-600/75 decoration-2 underline-offset-[3px]"
+      : suggestionMarker?.status === "applied"
+        ? "underline decoration-dashed decoration-emerald-600/60 decoration-2 underline-offset-[3px]"
+        : "";
+
+  const longPressHandlers = {
+    onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
+      if (e.button !== 0) return;
+      clearTimer();
+      const el = e.currentTarget;
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        onLongPress(word, el.getBoundingClientRect());
+      }, LONG_PRESS_MS);
+    },
+    onPointerUp: clearTimer,
+    onPointerCancel: clearTimer,
+    onPointerLeave: clearTimer
+  };
+
+  const wordButton = (
+    <button
+      type="button"
+      data-word-id={word.id}
+      aria-pressed={excluded}
+      aria-label={
+        suggestionMarker
+          ? `${suggestionMarker.suggestionTitle} — ${excluded ? ariaCutLabel.replace("{text}", display) : ariaKeepLabel.replace("{text}", display)}`
+          : excluded
+            ? ariaCutLabel.replace("{text}", display)
+            : ariaKeepLabel.replace("{text}", display)
+      }
+      className={[
+        "rounded px-0.5 py-0.5 text-[13px] leading-snug transition outline-none",
+        "hover:bg-brand/12 focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-offset-1 focus-visible:ring-offset-canvas",
+        excluded
+          ? "opacity-[0.22] line-through decoration-danger/60 text-muted"
+          : "text-ink",
+        playbackActive && !excluded ? "bg-brand/18 shadow-[0_0_12px_color-mix(in_srgb,var(--dawn-brand)_30%,transparent)]" : "",
+        focused && !excluded ? "ring-1 ring-brand/70" : "",
+        focused && excluded ? "ring-1 ring-line" : "",
+        suggestionUnderline
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      onClick={() => onToggle(word)}
+      onFocus={() => onFocusId(word.id)}
+      {...(hasSuggestion ? getReferenceProps(longPressHandlers) : longPressHandlers)}
+    >
+      <span className="whitespace-pre-wrap">{word.text}</span>
+      {word.punct ? <span className="text-[11px] opacity-75">{word.punct}</span> : null}
+    </button>
+  );
+
+  if (!suggestionMarker) return wordButton;
+
+  const inlineActionsClass =
+    "flex flex-wrap gap-0.5 [@media(hover:hover)_and_(pointer:fine)]:hidden";
+
+  return (
+    <span className="inline-flex flex-col items-start gap-0.5 align-baseline">
+      {wordButton}
+      <span className={inlineActionsClass} role="group">
+        {suggestionMarker.status === "pending" ? (
+          <button
+            type="button"
+            className="rounded border border-amber-600/35 bg-amber-500/10 px-1 py-px text-[9px] font-semibold text-amber-900 hover:bg-amber-500/15 dark:text-amber-100"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              suggestionMarker.onApply();
+            }}
+          >
+            {suggestionMarker.applyLabel}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="rounded border border-emerald-600/35 bg-emerald-500/10 px-1 py-px text-[9px] font-semibold text-emerald-900 hover:bg-emerald-500/15 dark:text-emerald-100"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              suggestionMarker.onUndo();
+            }}
+          >
+            {suggestionMarker.undoLabel}
+          </button>
+        )}
+      </span>
+      {cardOpen ? (
+        <FloatingPortal>
+          <div
+            ref={refs.setFloating}
+            style={floatingStyles}
+            className="z-[10050] max-h-[min(320px,70vh)] w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-line bg-surface p-3 text-left text-[11px] leading-relaxed text-ink shadow-soft"
+            {...getFloatingProps()}
+          >
+            <p className="font-semibold text-ink">{suggestionMarker.suggestionTitle}</p>
+            <p className="mt-1 text-muted">{suggestionMarker.suggestionBody}</p>
+            <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              {suggestionMarker.actionsHeading}
+            </p>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {suggestionMarker.status === "pending" ? (
+                <button
+                  type="button"
+                  className="rounded-lg border border-amber-600/40 bg-amber-500/12 px-2.5 py-1 text-[11px] font-semibold text-amber-950 hover:bg-amber-500/18 dark:text-amber-50"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    suggestionMarker.onApply();
+                    setCardOpen(false);
+                  }}
+                >
+                  {suggestionMarker.applyLabel}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="rounded-lg border border-emerald-600/40 bg-emerald-500/12 px-2.5 py-1 text-[11px] font-semibold text-emerald-950 hover:bg-emerald-500/18 dark:text-emerald-50"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    suggestionMarker.onUndo();
+                    setCardOpen(false);
+                  }}
+                >
+                  {suggestionMarker.undoLabel}
+                </button>
+              )}
+            </div>
+          </div>
+        </FloatingPortal>
+      ) : null}
+    </span>
+  );
+}

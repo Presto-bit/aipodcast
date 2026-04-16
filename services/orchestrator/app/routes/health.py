@@ -41,6 +41,7 @@ def health():
         from ..config import settings as _settings
 
         checks["embedded_media_rq_worker"] = bool(getattr(_settings, "embed_rq_media_worker", False))
+        checks["embedded_ai_rq_worker"] = bool(getattr(_settings, "embed_rq_ai_worker", False))
     except Exception:
         pass
     if RqWorker is not None:
@@ -50,6 +51,7 @@ def health():
             checks["rq_workers"] = {"media": m_workers, "ai": a_workers}
             qd = checks.get("queues")
             embed_m = bool(checks.get("embedded_media_rq_worker", False))
+            embed_a = bool(checks.get("embedded_ai_rq_worker", False))
             if isinstance(qd, dict) and "error" not in qd:
                 media_pending = int(qd.get("media_pending", 0))
                 ai_pending = int(qd.get("ai_pending", 0))
@@ -67,10 +69,17 @@ def health():
                             "或单机设 ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER=1（生产通常关闭并独立扩容 worker）。"
                         )
                 if ai_pending > 0 and a_workers == 0:
-                    alerts.append(
-                        "ai 队列有等待任务但未发现消费 ai 的 RQ worker，脚本/索引等会排队。"
-                        "请运行 workers/ai-worker；本地请用 make dev（勿仅用 SKIP_DEV_WORKERS=1）。"
-                    )
+                    if embed_a:
+                        alerts.append(
+                            "ai 队列有等待任务但 RQ 未登记 ai worker（进程内嵌消费线程可能未启动）；"
+                            "请查编排器启动日志；也可单独运行 workers/ai-worker。"
+                        )
+                    else:
+                        alerts.append(
+                            "ai 队列有等待任务但未发现消费 ai 的 RQ worker，脚本/TTS/索引等会排队。"
+                            "请运行 workers/ai-worker，或与 media 类似设 ORCHESTRATOR_EMBED_RQ_AI_WORKER=1；"
+                            "本地也可用 make dev（默认起独立 worker）；SKIP_DEV_WORKERS=1 时非生产编排器会默认内嵌 ai 消费。"
+                        )
                 if alerts:
                     checks["queue_alerts"] = alerts
         except Exception as e:

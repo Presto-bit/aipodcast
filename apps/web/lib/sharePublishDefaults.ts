@@ -22,7 +22,8 @@ export const AUTO_EPISODE_TITLE_MAX = 14;
 /** 自动生成节目简介上限（字）：列表卡片摘要，偏短、有吸引力 */
 export const AUTO_PROGRAM_SUMMARY_MAX = 30;
 
-const KNOWN_DEFAULT_PROGRAM_NAMES = new Set(["MiniMax AI 播客节目"]);
+/** 占位节目标题：与编排器默认「本期播客」、通用默认「AI 播客节目」对齐；保留旧值以兼容历史任务 */
+const KNOWN_DEFAULT_PROGRAM_NAMES = new Set(["本期播客", "AI 播客节目", "MiniMax AI 播客节目"]);
 
 /** 偏「引发点击」的通俗表述（简介打分加权） */
 const CLICK_HOOK_RE = /为什么|如何|怎样|秘诀|价值|干货|必读|值得|颠覆|真相|区别|误区|建议|别错过|一文|盘点|核心/;
