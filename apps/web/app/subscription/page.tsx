@@ -592,70 +592,97 @@ export default function SubscriptionPage() {
           onClose={() => setRechargeModalOpen(false)}
         >
           {alipayRechargeUiEnabled ? (
-            <p className="text-xs text-muted">
-              点击下方按钮将跳转至支付宝收银台；请使用手机支付宝扫码完成付款。支付完成后返回订阅页即可看到更新后的余额。
-            </p>
-          ) : null}
-          <div className="mt-4 flex flex-col gap-4">
-            <div className="flex max-w-md flex-col gap-2">
-              <label className="flex flex-col gap-1 text-sm">
-                <span className="text-muted">充值金额（元）</span>
-                <input
-                  type="number"
-                  min={(mergedWalletTopup.min_amount_cents ?? 1) / 100}
-                  step="0.01"
-                  className="w-full rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-ink"
-                  value={topupYuanInput}
-                  onChange={(e) => setTopupYuanInput(e.target.value)}
-                />
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {suggestedTopupYuan.map((yuan) => (
+            <>
+              <p className="text-xs text-muted">
+                点击下方按钮将跳转至支付宝收银台；请使用手机支付宝扫码完成付款。支付完成后返回订阅页即可看到更新后的余额。
+              </p>
+              <div className="mt-4 flex flex-col gap-4">
+                <div className="flex max-w-md flex-col gap-2">
+                  <label className="flex flex-col gap-1 text-sm">
+                    <span className="text-muted">充值金额（元）</span>
+                    <input
+                      type="number"
+                      min={(mergedWalletTopup.min_amount_cents ?? 1) / 100}
+                      step="0.01"
+                      className="w-full rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-ink"
+                      value={topupYuanInput}
+                      onChange={(e) => setTopupYuanInput(e.target.value)}
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {suggestedTopupYuan.map((yuan) => (
+                      <button
+                        key={yuan}
+                        type="button"
+                        className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
+                        onClick={() => setTopupYuanInput(String(yuan))}
+                      >
+                        ¥{yuan}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex max-w-md flex-col gap-2">
+                  {topupAmountParse.ok ? (
+                    <p className="text-sm text-ink">
+                      本次充值{" "}
+                      <span className="font-mono text-base font-semibold tabular-nums">
+                        ¥{(topupAmountParse.cents / 100).toFixed(2)}
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-warning-ink" role="alert">
+                      {topupAmountParse.error}
+                    </p>
+                  )}
                   <button
-                    key={yuan}
                     type="button"
-                    className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
-                    onClick={() => setTopupYuanInput(String(yuan))}
+                    className="w-full rounded-xl bg-cta px-4 py-3 text-base font-semibold text-cta-foreground shadow-sm hover:bg-cta/90 disabled:opacity-50"
+                    disabled={
+                      !topupAmountParse.ok ||
+                      walletCreating ||
+                      walletPaying ||
+                      alipayWalletLoading ||
+                      !walletPayEnabled
+                    }
+                    aria-busy={alipayWalletLoading}
+                    onClick={() => void createAlipayWalletTopup()}
                   >
-                    ¥{yuan}
+                    {alipayWalletLoading ? "正在打开支付宝…" : "立即支付（跳转支付宝）"}
                   </button>
-                ))}
+                  <p className="text-center text-[11px] leading-snug text-muted">
+                    点击后将离开本站并打开支付宝官方收银台页面；支付完成后可从浏览器返回本页刷新余额。
+                  </p>
+                </div>
               </div>
-            </div>
-            {alipayRechargeUiEnabled ? (
+            </>
+          ) : allowMockWallet && mergedWalletTopup.checkout_supported !== false ? (
+            <div className="mt-4 flex flex-col gap-4">
               <div className="flex max-w-md flex-col gap-2">
-                {topupAmountParse.ok ? (
-                  <p className="text-sm text-ink">
-                    本次充值{" "}
-                    <span className="font-mono text-base font-semibold tabular-nums">
-                      ¥{(topupAmountParse.cents / 100).toFixed(2)}
-                    </span>
-                  </p>
-                ) : (
-                  <p className="text-xs text-warning-ink" role="alert">
-                    {topupAmountParse.error}
-                  </p>
-                )}
-                <button
-                  type="button"
-                  className="w-full rounded-xl bg-cta px-4 py-3 text-base font-semibold text-cta-foreground shadow-sm hover:bg-cta/90 disabled:opacity-50"
-                  disabled={
-                    !topupAmountParse.ok ||
-                    walletCreating ||
-                    walletPaying ||
-                    alipayWalletLoading ||
-                    !walletPayEnabled
-                  }
-                  aria-busy={alipayWalletLoading}
-                  onClick={() => void createAlipayWalletTopup()}
-                >
-                  {alipayWalletLoading ? "正在打开支付宝…" : "立即支付（跳转支付宝）"}
-                </button>
-                <p className="text-center text-[11px] leading-snug text-muted">
-                  点击后将离开本站并打开支付宝官方收银台页面；支付完成后可从浏览器返回本页刷新余额。
-                </p>
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="text-muted">充值金额（元）</span>
+                  <input
+                    type="number"
+                    min={(mergedWalletTopup.min_amount_cents ?? 1) / 100}
+                    step="0.01"
+                    className="w-full rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-ink"
+                    value={topupYuanInput}
+                    onChange={(e) => setTopupYuanInput(e.target.value)}
+                  />
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {suggestedTopupYuan.map((yuan) => (
+                    <button
+                      key={yuan}
+                      type="button"
+                      className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
+                      onClick={() => setTopupYuanInput(String(yuan))}
+                    >
+                      ¥{yuan}
+                    </button>
+                  ))}
+                </div>
               </div>
-            ) : allowMockWallet && mergedWalletTopup.checkout_supported !== false ? (
               <button
                 type="button"
                 className="w-fit rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50"
@@ -664,24 +691,12 @@ export default function SubscriptionPage() {
               >
                 {walletCreating ? "创建订单中…" : "去支付（内测模拟）"}
               </button>
-            ) : (
-              <div className="max-w-md space-y-2 text-xs text-muted">
-                <p>
-                  当前未检测到可用的支付宝收银配置。请确认编排器已设置{" "}
-                  <code className="rounded bg-fill px-1">ALIPAY_PAY_ENABLED=1</code> 及完整{" "}
-                  <code className="rounded bg-fill px-1">ALIPAY_*</code>，且 Next 能访问编排器{" "}
-                  <code className="rounded bg-fill px-1">/api/v1/subscription/plans</code>。
-                </p>
-                <button
-                  type="button"
-                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
-                  onClick={() => void loadPlans()}
-                >
-                  重新同步计费配置
-                </button>
-              </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <p className="text-sm text-warning-ink" role="alert">
+              余额充值需开通支付宝：请在服务端配置 ALIPAY_* 并启用 payment_channels.alipay_page。
+            </p>
+          )}
           {!walletPayEnabled ? (
             <p className="mt-3 text-xs text-muted">请登录后即可充值账户余额。</p>
           ) : null}
@@ -701,9 +716,11 @@ export default function SubscriptionPage() {
               </button>
             </div>
           ) : null}
-          <div className="mt-6 border-t border-line/80 pt-4">
-            <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
-          </div>
+          {alipayRechargeUiEnabled || (allowMockWallet && mergedWalletTopup.checkout_supported !== false) ? (
+            <div className="mt-6 border-t border-line/80 pt-4">
+              <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
+            </div>
+          ) : null}
         </FormSheetModal>
       ) : null}
 
