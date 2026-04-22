@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { pullCloudPreferences, setCloudPrefsSyncEnabled } from "./cloudPreferences";
 import { accountKeyFromUser, setStorageAccountSync } from "./userScopedStorage";
 
@@ -131,6 +131,9 @@ async function fetchAuthMe(signal?: AbortSignal): Promise<Response> {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  /** 勿把 router 放进拉会话的 effect 依赖：导航时引用变化会反复 abort /me，易偶发 401 后被当成登出。 */
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
   const [phone, setPhone] = useState("");
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -220,7 +223,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
           clearLegacyToken();
           if (!cancelled && typeof window !== "undefined" && window.location.pathname !== "/") {
-            router.replace("/");
+            routerRef.current.replace("/");
           }
           return;
         }
@@ -245,7 +248,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       meAc.abort();
     };
-  }, [authRequired, router]);
+  }, [authRequired]);
 
   useEffect(() => {
     if (authRequired === null) return;
