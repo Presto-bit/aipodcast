@@ -96,5 +96,6 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"]
+  /** 显式包含 `/`：部分 Next 版本下仅 `/(?!...).*` 可能漏匹配首页 */
+  matcher: ["/", "/((?!_next/static|_next/image|favicon.ico).*)"]
 };
