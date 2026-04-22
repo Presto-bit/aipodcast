@@ -178,6 +178,18 @@ def _json_readonly_backup() -> bool:
     return raw not in ("0", "false", "no", "off", "")
 
 
+def _auth_disallow_json_credential_login() -> bool:
+    """
+    PG 主且数据库可用时，禁止仅凭 users.json 校验密码（登录、解锁等）。
+    默认关闭「PG 主 + JSON 仍可登录」：避免 PG 无行却签发无 user_id 会话，与 /me 解析分裂。
+    迁移或救急需旧行为时设置 FYV_AUTH_ALLOW_JSON_LOGIN=1。
+    """
+    if not (_auth_pg_primary() and _pg_available()):
+        return False
+    raw = (os.environ.get("FYV_AUTH_ALLOW_JSON_LOGIN") or "0").strip().lower()
+    return raw not in ("1", "true", "yes", "on")
+
+
 def _pg_dsn() -> str:
     host = os.environ.get("DB_HOST", "127.0.0.1")
     port = os.environ.get("DB_PORT", "5432")
@@ -2419,6 +2431,7 @@ def register_user(
                 None,
                 meta,
             )
+        return None, "注册后加载用户失败", meta
     if _auth_dual_write() or not _auth_pg_primary() or not _pg_available():
         users = _load_users()
         if p in users and _auth_pg_primary() and _pg_available():
@@ -2461,7 +2474,7 @@ def verify_password(user_ref: str, password: str) -> bool:
                     if jh and bool(check_password_hash(str(jh), password)) != bool(ok):
                         print(f"[auth-consistency] password mismatch ref={ref}")
             return ok
-        if _json_readonly_backup():
+        if _json_readonly_backup() or _auth_disallow_json_credential_login():
             return False
     users = _load_users()
     u = users.get(ref)
