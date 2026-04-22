@@ -113,7 +113,10 @@ function persistPhone(phone: string) {
   }
 }
 
-/** 登录刚写入 Set-Cookie 后，个别环境下紧随其后的 /me 可能偶发 401；短延迟重试一次减轻误登出。 */
+/**
+ * 拉取当前会话。对 401/403 做多次退避重试：Set-Cookie 与后续 fetch 的竞态、编排器/Redis 瞬时抖动时，
+ * 单次 /me 失败不应立刻把用户踢回首页。
+ */
 async function fetchAuthMe(signal?: AbortSignal): Promise<Response> {
   const doFetch = () =>
     fetch("/api/auth/me", {
@@ -121,12 +124,21 @@ async function fetchAuthMe(signal?: AbortSignal): Promise<Response> {
       cache: "no-store",
       signal
     });
-  let res = await doFetch();
-  if ((res.status === 401 || res.status === 403) && !signal?.aborted) {
-    await new Promise((r) => setTimeout(r, 150));
-    if (!signal?.aborted) res = await doFetch();
+  const backoffMs = [0, 120, 280, 520];
+  let res: Response | null = null;
+  for (let i = 0; i < backoffMs.length; i++) {
+    if (signal?.aborted) break;
+    if (backoffMs[i] > 0) {
+      await new Promise((r) => setTimeout(r, backoffMs[i]));
+      if (signal?.aborted) break;
+    }
+    res = await doFetch();
+    if (!res.ok && (res.status === 401 || res.status === 403)) {
+      continue;
+    }
+    return res;
   }
-  return res;
+  return res ?? new Response(null, { status: 401 });
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -321,6 +333,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     persistPhone(identifier.trim());
     const u = data.user || {};
     setUser({ ...u });
+    // 等待浏览器把登录 Set-Cookie 纳入同源存储，再拉 /me，减少紧随其后的 401。
+    await new Promise((r) => setTimeout(r, 80));
     await refreshMe();
   }, [refreshMe]);
 
@@ -410,6 +424,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         persistPhone(hint);
       }
       setUser({ ...u });
+      await new Promise((r) => setTimeout(r, 80));
       await refreshMe();
     },
     [refreshMe]

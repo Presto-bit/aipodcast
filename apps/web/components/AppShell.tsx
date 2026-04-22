@@ -8,6 +8,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ComponentType,
   type ReactNode
@@ -127,6 +128,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const path = pathname ?? "";
   const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const { ready, authRequired, user } = useAuth();
 
   /** 需鉴权且无会话时，子路由回到可登录页（首页或设置内嵌登录） */
@@ -134,8 +137,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (!ready || authRequired !== true) return;
     if (user) return;
     if (!pathname || isAuthPublicPath(pathname)) return;
-    router.replace("/");
-  }, [ready, authRequired, user, pathname, router]);
+    routerRef.current.replace("/");
+  }, [ready, authRequired, user, pathname]);
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
   /**

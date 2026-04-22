@@ -3,7 +3,7 @@ import { buildInternalHeaders, orchestratorUrl } from "../../../../lib/bff";
 
 /**
  * 支付宝异步通知公网入口：原样转发 x-www-form-urlencoded body 至编排器验签履约。
- * 开放平台 notify_url 填：https://prestoai.cn/api/webhooks/alipay
+ * 开放平台 notify_url 须与编排器 ALIPAY_NOTIFY_URL 一致，例如：https://www.prestoai.cn/api/webhooks/alipay
  */
 export async function POST(req: NextRequest) {
   const raw = await req.text();

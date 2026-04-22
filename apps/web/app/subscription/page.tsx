@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { FaqAccordion } from "../../components/subscription/FaqAccordion";
 import FormSheetModal from "../../components/subscription/FormSheetModal";
@@ -8,8 +8,6 @@ import { PricingHero } from "../../components/subscription/PricingHero";
 import { WalletUsageReference } from "../../components/subscription/WalletUsageReference";
 import type { WalletTopupPayload } from "../../components/subscription/types";
 import { parseSubscriptionErrorBody } from "../../lib/subscriptionError";
-
-const WALLET_ALERT_YUAN_PREFIX = "presto_wallet_alert_threshold_yuan";
 
 type RechargeRecordRow = {
   serial_no?: string;
@@ -41,6 +39,27 @@ type PlansPayload = {
   };
 };
 
+/** 与编排器 billing_catalog 一致：支持 JSON 布尔或偶发的字符串/数字 */
+function isTruthyPaymentChannelEnabled(v: unknown): boolean {
+  if (v === true || v === 1) return true;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes" || s === "on";
+  }
+  return false;
+}
+
+function walletPayloadImpliesAlipayOnly(wt: WalletTopupPayload | null | undefined): boolean {
+  if (!wt || typeof wt !== "object") return false;
+  const c = wt.checkout_supported;
+  if (c === false) return true;
+  if (typeof c === "string") {
+    const s = c.trim().toLowerCase();
+    return s === "false" || s === "0" || s === "no" || s === "off";
+  }
+  return false;
+}
+
 type WalletCheckoutState = {
   checkout_id: string;
   amount_cents: number;
@@ -63,12 +82,12 @@ export default function SubscriptionPage() {
   const [walletBalanceCents, setWalletBalanceCents] = useState<number | null>(null);
   const [experienceVoiceMin, setExperienceVoiceMin] = useState<number | null>(null);
   const [experienceTextChars, setExperienceTextChars] = useState<number | null>(null);
-  const [alertThresholdYuan, setAlertThresholdYuan] = useState("");
-  const [alertSavedHint, setAlertSavedHint] = useState("");
   const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
-  const [alertModalOpen, setAlertModalOpen] = useState(false);
   const [experienceVoiceTotal, setExperienceVoiceTotal] = useState<number | null>(null);
   const [experienceTextTotal, setExperienceTextTotal] = useState<number | null>(null);
+
+  /** 防止连续多次 loadPlans 返回顺序错乱，把旧响应写回 state */
+  const plansFetchSeqRef = useRef(0);
 
   const allowMockWallet =
     typeof process !== "undefined" && process.env.NEXT_PUBLIC_ENABLE_MOCK_WALLET === "1";
@@ -100,13 +119,6 @@ export default function SubscriptionPage() {
     };
   }, [walletTopupInfo]);
 
-  const walletAlertStorageKey = useMemo(() => {
-    const uid = typeof user?.user_id === "string" ? user.user_id.trim() : "";
-    const phone = typeof user?.phone === "string" ? user.phone.trim() : "";
-    const tail = uid || phone;
-    return tail ? `${WALLET_ALERT_YUAN_PREFIX}:${tail}` : WALLET_ALERT_YUAN_PREFIX;
-  }, [user?.user_id, user?.phone]);
-
   const suggestedTopupYuan = useMemo(() => {
     const raw = mergedWalletTopup.suggested_topup_yuan;
     if (Array.isArray(raw) && raw.length) {
@@ -117,11 +129,19 @@ export default function SubscriptionPage() {
 
   const showWalletRechargeSection = plansConfigLoaded && mergedWalletTopup.enabled !== false;
 
+  /** 弹窗内是否展示支付宝收银：state 与 wallet_topup 双通道（防漏判与竞态） */
+  const alipayRechargeUiEnabled = useMemo(
+    () => alipayPageEnabled || walletPayloadImpliesAlipayOnly(mergedWalletTopup),
+    [alipayPageEnabled, mergedWalletTopup]
+  );
+
   const loadPlans = useCallback(async () => {
+    const seq = ++plansFetchSeqRef.current;
     setPlansLoadError("");
     try {
       const pr = await fetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
       const pd = (await pr.json().catch(() => ({}))) as PlansPayload;
+      if (seq !== plansFetchSeqRef.current) return;
       if (!pr.ok) {
         setAlipayPageEnabled(false);
         if (pr.status === 404) {
@@ -132,19 +152,24 @@ export default function SubscriptionPage() {
         return;
       }
       if (pd.success) {
-        setWalletTopupInfo(pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : {});
-        const wt = pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : null;
-        const fromChannel = pd.payment_channels?.alipay_page?.enabled === true;
-        const fromWallet = wt != null && wt.checkout_supported === false;
+        const wtRaw = pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : {};
+        setWalletTopupInfo(wtRaw);
+        const wt = Object.keys(wtRaw).length ? (wtRaw as WalletTopupPayload) : null;
+        const fromChannel = isTruthyPaymentChannelEnabled(pd.payment_channels?.alipay_page?.enabled);
+        const fromWallet = walletPayloadImpliesAlipayOnly(wt);
         setAlipayPageEnabled(fromChannel || fromWallet);
       } else {
         setAlipayPageEnabled(false);
         setPlansLoadError("计费接口返回异常，已显示参考价目，请稍后重试。");
       }
     } catch (e) {
-      setPlansLoadError(String(e instanceof Error ? e.message : e));
+      if (seq === plansFetchSeqRef.current) {
+        setPlansLoadError(String(e instanceof Error ? e.message : e));
+      }
     } finally {
-      setPlansConfigLoaded(true);
+      if (seq === plansFetchSeqRef.current) {
+        setPlansConfigLoaded(true);
+      }
     }
   }, [getAuthHeaders]);
 
@@ -207,24 +232,9 @@ export default function SubscriptionPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (!walletPayEnabled) return;
-    try {
-      const v = window.localStorage.getItem(walletAlertStorageKey);
-      if (v != null && v.trim() !== "") setAlertThresholdYuan(v.trim());
-      else setAlertThresholdYuan("");
-    } catch {
-      // ignore
-    }
-  }, [walletAlertStorageKey, walletPayEnabled]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
     const h = window.location.hash;
     if (h === "#wallet-topup" || h === "#recharge") {
       setRechargeModalOpen(true);
-      window.history.replaceState({}, "", window.location.pathname + window.location.search);
-    } else if (h === "#balance-alert") {
-      setAlertModalOpen(true);
       window.history.replaceState({}, "", window.location.pathname + window.location.search);
     }
   }, []);
@@ -247,18 +257,12 @@ export default function SubscriptionPage() {
   useEffect(() => {
     if (!rechargeModalOpen || !walletPayEnabled) return;
     void loadMe();
-  }, [rechargeModalOpen, walletPayEnabled, loadMe]);
+    void loadPlans();
+  }, [rechargeModalOpen, walletPayEnabled, loadMe, loadPlans]);
 
   useEffect(() => {
     if (!showWalletRechargeSection) setRechargeModalOpen(false);
   }, [showWalletRechargeSection]);
-
-  const balanceBelowAlertThreshold = useMemo(() => {
-    const y = Number(String(alertThresholdYuan || "").replace(/,/g, "").trim());
-    if (!Number.isFinite(y) || y <= 0) return false;
-    if (walletBalanceCents == null) return false;
-    return walletBalanceCents < Math.round(y * 100);
-  }, [alertThresholdYuan, walletBalanceCents]);
 
   function fmtTimeUnix(ts?: number | null) {
     if (ts == null || typeof ts !== "number" || !Number.isFinite(ts)) return "—";
@@ -283,20 +287,6 @@ export default function SubscriptionPage() {
     const ri = Math.floor(rem);
     const used = Math.max(0, Math.min(tot, tot - ri));
     return `${used.toLocaleString()} / ${tot.toLocaleString()} 字`;
-  }
-
-  function persistWalletAlertThreshold() {
-    setAlertSavedHint("");
-    try {
-      if (typeof window === "undefined") return;
-      const t = alertThresholdYuan.trim();
-      if (!t) window.localStorage.removeItem(walletAlertStorageKey);
-      else window.localStorage.setItem(walletAlertStorageKey, t);
-      setAlertSavedHint("已保存在本浏览器");
-      window.setTimeout(() => setAlertSavedHint(""), 2400);
-    } catch {
-      setAlertSavedHint("无法写入本地存储");
-    }
   }
 
   function parseTopupAmountCents(): { ok: true; cents: number } | { ok: false; error: string } {
@@ -435,6 +425,8 @@ export default function SubscriptionPage() {
     }
   }
 
+  const topupAmountParse = parseTopupAmountCents();
+
   return (
     <main className="min-h-0 max-w-6xl">
       <PricingHero title="余额与账单" />
@@ -489,23 +481,8 @@ export default function SubscriptionPage() {
                 ) : null}
               </p>
             ) : null}
-            {balanceBelowAlertThreshold ? (
-              <div className="mt-3 rounded-lg border border-warning/40 bg-warning-soft/90 px-3 py-2 text-xs text-warning-ink" role="status">
-                {showWalletRechargeSection ? (
-                  <button
-                    type="button"
-                    className="rounded-md bg-cta px-3 py-1.5 text-xs font-medium text-cta-foreground hover:bg-cta/90"
-                    onClick={() => setRechargeModalOpen(true)}
-                  >
-                    去充值
-                  </button>
-                ) : (
-                  <span>余额低于设定下限</span>
-                )}
-              </div>
-            ) : null}
-            <div className="mt-4 flex flex-wrap gap-2">
-              {showWalletRechargeSection ? (
+            {showWalletRechargeSection ? (
+              <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
                   className="inline-flex items-center justify-center rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90"
@@ -513,15 +490,8 @@ export default function SubscriptionPage() {
                 >
                   充值
                 </button>
-              ) : null}
-              <button
-                type="button"
-                className="inline-flex items-center justify-center rounded-lg border border-line bg-fill px-4 py-2 text-sm font-medium text-ink hover:bg-fill/80"
-                onClick={() => setAlertModalOpen(true)}
-              >
-                余额预警
-              </button>
-            </div>
+              </div>
+            ) : null}
           </>
         ) : (
           <p className="mt-2 text-sm text-muted">请登录后查看余额、体验包余量与账单流水。</p>
@@ -613,38 +583,6 @@ export default function SubscriptionPage() {
         </div>
       </section>
 
-      {walletPayEnabled ? (
-        <FormSheetModal
-          open={alertModalOpen}
-          titleId="wallet-alert-modal-title"
-          title="余额预警"
-          onClose={() => setAlertModalOpen(false)}
-        >
-          <div className="flex max-w-md flex-col gap-2 sm:flex-row sm:items-end">
-            <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-              <span className="text-muted">预警线（元）</span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                className="w-full rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-ink"
-                value={alertThresholdYuan}
-                onChange={(e) => setAlertThresholdYuan(e.target.value)}
-                placeholder="例如 5"
-              />
-            </label>
-            <button
-              type="button"
-              className="rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-fill"
-              onClick={() => persistWalletAlertThreshold()}
-            >
-              保存设置
-            </button>
-          </div>
-          {alertSavedHint ? <p className="mt-2 text-xs text-muted">{alertSavedHint}</p> : null}
-        </FormSheetModal>
-      ) : null}
-
       {showWalletRechargeSection ? (
         <FormSheetModal
           open={rechargeModalOpen}
@@ -652,9 +590,9 @@ export default function SubscriptionPage() {
           title="账户充值"
           onClose={() => setRechargeModalOpen(false)}
         >
-          {alipayPageEnabled ? (
+          {alipayRechargeUiEnabled ? (
             <p className="text-xs text-muted">
-              跳转支付宝页后请用手机扫码付款；返回本页后余额会自动刷新。
+              点击下方按钮将跳转至支付宝收银台；请使用手机支付宝扫码完成付款。支付完成后返回订阅页即可看到更新后的余额。
             </p>
           ) : null}
           <div className="mt-4 flex flex-col gap-4">
@@ -683,15 +621,39 @@ export default function SubscriptionPage() {
                 ))}
               </div>
             </div>
-            {alipayPageEnabled ? (
-              <button
-                type="button"
-                className="w-full max-w-md rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50 sm:w-auto"
-                disabled={walletCreating || walletPaying || alipayWalletLoading || !walletPayEnabled}
-                onClick={() => void createAlipayWalletTopup()}
-              >
-                {alipayWalletLoading ? "正在跳转支付宝…" : "支付宝扫码充值"}
-              </button>
+            {alipayRechargeUiEnabled ? (
+              <div className="flex max-w-md flex-col gap-2">
+                {topupAmountParse.ok ? (
+                  <p className="text-sm text-ink">
+                    本次充值{" "}
+                    <span className="font-mono text-base font-semibold tabular-nums">
+                      ¥{(topupAmountParse.cents / 100).toFixed(2)}
+                    </span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-warning-ink" role="alert">
+                    {topupAmountParse.error}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="w-full rounded-xl bg-cta px-4 py-3 text-base font-semibold text-cta-foreground shadow-sm hover:bg-cta/90 disabled:opacity-50"
+                  disabled={
+                    !topupAmountParse.ok ||
+                    walletCreating ||
+                    walletPaying ||
+                    alipayWalletLoading ||
+                    !walletPayEnabled
+                  }
+                  aria-busy={alipayWalletLoading}
+                  onClick={() => void createAlipayWalletTopup()}
+                >
+                  {alipayWalletLoading ? "正在打开支付宝…" : "立即支付（跳转支付宝）"}
+                </button>
+                <p className="text-center text-[11px] leading-snug text-muted">
+                  点击后将离开本站并打开支付宝官方收银台页面；支付完成后可从浏览器返回本页刷新余额。
+                </p>
+              </div>
             ) : allowMockWallet && mergedWalletTopup.checkout_supported !== false ? (
               <button
                 type="button"
@@ -702,10 +664,21 @@ export default function SubscriptionPage() {
                 {walletCreating ? "创建订单中…" : "去支付（内测模拟）"}
               </button>
             ) : (
-              <p className="text-xs text-muted">
-                余额充值需开通支付宝：请在服务端配置 ALIPAY_* 并启用{" "}
-                <code className="rounded bg-fill px-1">payment_channels.alipay_page</code>。
-              </p>
+              <div className="max-w-md space-y-2 text-xs text-muted">
+                <p>
+                  当前未检测到可用的支付宝收银配置。请确认编排器已设置{" "}
+                  <code className="rounded bg-fill px-1">ALIPAY_PAY_ENABLED=1</code> 及完整{" "}
+                  <code className="rounded bg-fill px-1">ALIPAY_*</code>，且 Next 能访问编排器{" "}
+                  <code className="rounded bg-fill px-1">/api/v1/subscription/plans</code>。
+                </p>
+                <button
+                  type="button"
+                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
+                  onClick={() => void loadPlans()}
+                >
+                  重新同步计费配置
+                </button>
+              </div>
             )}
           </div>
           {!walletPayEnabled ? (

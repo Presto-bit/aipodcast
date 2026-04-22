@@ -1,7 +1,7 @@
 """
 支付宝电脑网站支付（alipay.trade.page.pay）：签名下单、异步通知验签。
 
-配置见仓库根目录 `.env.ai-native.example`（`ALIPAY_*`）。
+配置见仓库根目录 `.env.ai-native.example`（`ALIPAY_*`）。生产须 `ALIPAY_SANDBOX=0`，且 `ALIPAY_NOTIFY_URL` 与开放平台异步通知地址、Next 路由 `/api/webhooks/alipay` 一致。
 """
 
 from __future__ import annotations

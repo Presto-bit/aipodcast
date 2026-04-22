@@ -166,7 +166,7 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 ## 支付回调
 
 - **入口（公网）**：支付平台或网关应 POST 至 **Next 对外域名** 下的 BFF 路径（由 `apps/web` 路由转发），由 BFF 将**原始 body** 与 **`X-Payment-Signature`** 转发到编排器 **`POST /api/v1/webhooks/payment`**。
-- **编排器**：实现 JSON 解析、**`PAYMENT_WEBHOOK_SECRET` 下 HMAC-SHA256(body)** 验签、投递审计表、订单/订阅字段归一及幂等处理；支付宝电脑网站支付异步通知为 **`POST /api/v1/webhooks/alipay`**（`application/x-www-form-urlencoded`，RSA2 验签，见 `alipay_page_pay`）。公网域名建议配置 **`ALIPAY_NOTIFY_URL=https://prestoai.cn/api/webhooks/alipay`**（按实际站点替换；若主域为 `www` 则改用 `https://www...`），由 Next BFF 原样转发 body 至编排器。
+- **编排器**：实现 JSON 解析、**`PAYMENT_WEBHOOK_SECRET` 下 HMAC-SHA256(body)** 验签、投递审计表、订单/订阅字段归一及幂等处理；支付宝电脑网站支付异步通知为 **`POST /api/v1/webhooks/alipay`**（`application/x-www-form-urlencoded`，RSA2 验签，见 `alipay_page_pay`）。生产请在编排器设置 **`ALIPAY_NOTIFY_URL`** 与开放平台填写的异步通知 URL **逐字一致**（须公网 HTTPS），例如主域为 `www` 时 **`https://www.prestoai.cn/api/webhooks/alipay`**；仅 apex 时改用 `https://prestoai.cn/api/webhooks/alipay`。由 Next BFF 原样转发 body 至编排器。
 - 配置示例见 `.env.ai-native.example` 中 `PAYMENT_WEBHOOK_SECRET` / `ALIPAY_*`。本地联调可临时 `PAYMENT_WEBHOOK_ALLOW_UNSIGNED=1`，**不得用于生产**。
 
 ## 媒体 Worker 与播客队列
