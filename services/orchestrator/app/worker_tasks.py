@@ -229,7 +229,7 @@ def _download_cover_bytes(
     if parsed.scheme not in ("http", "https"):
         return None, None, "cover_url_protocol_unsupported"
     headers: dict[str, str] = {
-        "User-Agent": "Mozilla/5.0 (compatible; FYV-CoverFetch/1.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; Presto-CoverFetch/1.0)",
         "Accept": "image/*,*/*",
     }
     tok = (bearer_token or "").strip()

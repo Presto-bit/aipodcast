@@ -479,6 +479,7 @@ export default function CreatePage() {
         <PodcastWorksGallery
           key={createWorksGalleryTab}
           variant="all"
+          plainDownloadGate
           works={createWorksGalleryTab === "recent" ? homeWorks.slice(0, 12) : templateGalleryWorks}
           loading={
             (createWorksGalleryTab === "recent" && worksLoading) ||

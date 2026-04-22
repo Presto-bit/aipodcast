@@ -1343,6 +1343,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     );
   }
 
+  if (!project) {
+    return (
+      <div className="flex h-[100dvh] max-h-[100dvh] items-center justify-center bg-canvas text-sm text-muted">
+        {t("clip.loading")}
+      </div>
+    );
+  }
+
   const workbenchPanelTitle =
     workbenchTab === "suggestions"
       ? t("presto.flow.drawer.tabSuggestions")

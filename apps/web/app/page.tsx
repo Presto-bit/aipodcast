@@ -8,6 +8,7 @@ import { mergeUserFacingWorksByRecency, type WorkItem } from "../lib/worksTypes"
 import { useAuth, userAccountRef } from "../lib/auth";
 import { useI18n } from "../lib/I18nContext";
 import { isRegisterEmailFormatOk } from "../lib/registerEmail";
+import { SiteBeianBar } from "../components/SiteBeianBar";
 
 const HOME_WORKS_LIMIT = 80;
 const HOME_WORKS_PREVIEW = 10;
@@ -241,8 +242,9 @@ export default function HomePage() {
 
   if (authRequired && !user) {
     return (
-      <main className="mx-auto min-h-screen max-w-md p-8">
-        <h1 className="text-2xl font-semibold text-ink">Finding Your Voice</h1>
+      <div className="flex min-h-screen flex-col bg-canvas">
+        <main className="mx-auto flex w-full max-w-md flex-1 flex-col p-8">
+        <h1 className="text-2xl font-semibold text-ink">Presto</h1>
         <div className="mt-5 flex gap-2">
           <button
             type="button"
@@ -395,7 +397,11 @@ export default function HomePage() {
             </p>
           ) : null}
         </form>
-      </main>
+        </main>
+        <div className="border-t border-line/70 py-4">
+          <SiteBeianBar />
+        </div>
+      </div>
     );
   }
 

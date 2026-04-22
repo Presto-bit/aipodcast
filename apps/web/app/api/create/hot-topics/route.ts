@@ -39,7 +39,7 @@ async function fetchBaiduHotWords(signal: AbortSignal): Promise<string[]> {
     signal,
     headers: {
       Accept: "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; FYVHotTopics/1.0)"
+      "User-Agent": "Mozilla/5.0 (compatible; PrestoHotTopics/1.0)"
     },
     cache: "no-store"
   });
@@ -57,7 +57,7 @@ async function fetchTencentHotTitles(signal: AbortSignal): Promise<string[]> {
       signal,
       headers: {
         Accept: "application/json",
-        "User-Agent": "Mozilla/5.0 (compatible; FYVHotTopics/1.0)"
+        "User-Agent": "Mozilla/5.0 (compatible; PrestoHotTopics/1.0)"
       },
       cache: "no-store"
     }
@@ -85,7 +85,7 @@ async function fetchSinaRollTitles(signal: AbortSignal): Promise<string[]> {
       signal,
       headers: {
         Accept: "application/json",
-        "User-Agent": "Mozilla/5.0 (compatible; FYVHotTopics/1.0)"
+        "User-Agent": "Mozilla/5.0 (compatible; PrestoHotTopics/1.0)"
       },
       cache: "no-store"
     }

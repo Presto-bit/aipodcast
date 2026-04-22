@@ -9,7 +9,7 @@ import { WalletUsageReference } from "../../components/subscription/WalletUsageR
 import type { WalletTopupPayload } from "../../components/subscription/types";
 import { parseSubscriptionErrorBody } from "../../lib/subscriptionError";
 
-const WALLET_ALERT_YUAN_PREFIX = "fyv_wallet_alert_threshold_yuan";
+const WALLET_ALERT_YUAN_PREFIX = "presto_wallet_alert_threshold_yuan";
 
 type RechargeRecordRow = {
   serial_no?: string;

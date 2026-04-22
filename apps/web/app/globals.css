@@ -75,7 +75,7 @@ html:not(.dark) {
   --dawn-shadow-card: 0 14px 40px rgb(15 23 42 / 0.068);
   --dawn-shadow-modal: 0 24px 52px rgb(15 23 42 / 0.16);
   --dawn-brand-gradient: linear-gradient(125deg, #4f46e5 0%, #7c3aed 46%, #0d9488 100%);
-  /* 侧栏 FYV：浅底 + 深蓝字（与白字方案解耦） */
+  /* 侧栏品牌字块：浅底 + 深蓝字（与白字方案解耦） */
   --dawn-brand-glyph-ink: #142a6e;
   --dawn-brand-glyph-bg: linear-gradient(
     125deg,

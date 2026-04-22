@@ -34,6 +34,7 @@ import {
 import { useI18n } from "../lib/I18nContext";
 import AnimatedPageShell from "./AnimatedPageShell";
 import BrandGlyph from "./brand/BrandGlyph";
+import { SiteBeianBar } from "./SiteBeianBar";
 import { dispatchNotesShowNotebookHub } from "../lib/notesLastNotebook";
 import {
   FOOTER_LINK_CLASS,
@@ -357,7 +358,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {!collapsed ? (
           <div className="min-w-0 flex-1 pr-1">
             <p className="text-[13px] font-bold leading-tight text-ink">{t("nav.brandTitle")}</p>
-            <p className="mt-0.5 text-[10px] italic leading-snug text-muted">{t("nav.brandTagline")}</p>
+            <p className="mt-0.5 text-[10px] italic leading-snug text-muted">{t("nav.brandTaglineEn")}</p>
+            <p className="mt-0.5 text-[10px] not-italic leading-snug text-muted">{t("nav.brandTaglineZh")}</p>
           </div>
         ) : null}
         <button
@@ -439,6 +441,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <p className="text-xs tracking-wide text-muted">{t("footer.pageBrandLine")}</p>
               <p className="mt-2 text-sm text-ink">{t("footer.tag2")}</p>
             </div>
+            {normalizePathname(path) === "/" ? (
+              <div className="w-full border-t border-line/70 pt-4">
+                <SiteBeianBar />
+              </div>
+            ) : null}
           </div>
         </footer>
       </div>

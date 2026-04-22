@@ -86,7 +86,7 @@ function maybeWarnWeakProductionSecret(): void {
   const s = getInternalSigningSecret();
   if (s.length < 32 || s === "local-internal-secret") {
     console.error(
-      "[fyv-security] INTERNAL_SIGNING_SECRET 在生产环境无效或过弱：必须配置至少 32 字节的随机串，并与编排器 FYV_PRODUCTION 校验一致；否则 BFF 与编排器内部签名可被伪造。"
+      "[presto-security] INTERNAL_SIGNING_SECRET 在生产环境无效或过弱：必须配置至少 32 字节的随机串，并与编排器 FYV_PRODUCTION 校验一致；否则 BFF 与编排器内部签名可被伪造。"
     );
   }
 }

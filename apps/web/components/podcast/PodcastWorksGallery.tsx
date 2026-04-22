@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
@@ -242,6 +242,13 @@ type Props = {
   pendingStudioWork?: WorkItem | null;
   /** 与 pending 卡片配套的进度文案（SSE / 排队提示） */
   pendingStudioSubtitle?: string;
+  /**
+   * variant=all：与笔记本侧栏「我的作品」相同的紧凑单列卡片（无封面大图条）。
+   * 用于嵌入窄栏且需与侧栏列表一致的展示。
+   */
+  compactCards?: boolean;
+  /** 为 true 时下载入口不使用 VIP 皇冠分栏；未许可时为跳转订阅的普通链接 */
+  plainDownloadGate?: boolean;
 };
 
 const NOTE_TITLE_UUID_RE =
@@ -408,7 +415,9 @@ export default function PodcastWorksGallery({
   enableBatchActions = false,
   sidebarMaxItems,
   pendingStudioWork = null,
-  pendingStudioSubtitle = ""
+  pendingStudioSubtitle = "",
+  compactCards = false,
+  plainDownloadGate = false
 }: Props) {
   const { t } = useI18n();
   const router = useRouter();
@@ -426,6 +435,8 @@ export default function PodcastWorksGallery({
     if (ph.length >= 4) return `尾号 ${ph.slice(-4)}`;
     return "我";
   }, [user]);
+  const useCompactAllLayout = variant === "all" && compactCards;
+  const useNotesStyleCards = variant === "notes_studio" || useCompactAllLayout;
   const { hiddenKey, titlesKey, allowedTypes } = useMemo(() => galleryStorageKeys(variant), [variant]);
 
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -556,7 +567,9 @@ export default function PodcastWorksGallery({
   }, [items]);
 
   const notesStudioMenuPortalData = useMemo(() => {
-    if (variant !== "notes_studio" || !menuOpenId) return null;
+    if (!menuOpenId) return null;
+    const menuLikeNotesStudio = variant === "notes_studio" || (variant === "all" && compactCards);
+    if (!menuLikeNotesStudio) return null;
     const w = items.find((x) => x.id === menuOpenId);
     if (!w?.id) return null;
     const id = w.id;
@@ -568,11 +581,11 @@ export default function PodcastWorksGallery({
       isScriptDraft,
       publishActionText: pubs.length > 0 ? "已发过" : "分享"
     };
-  }, [variant, menuOpenId, items, publicationsByJobId]);
+  }, [variant, compactCards, menuOpenId, items, publicationsByJobId]);
 
   /** 我的作品 / 首页合并列表：⋯ 菜单用 portal，避免卡片 overflow 裁切与网格叠层遮挡 */
   const worksGridMenuPortalData = useMemo(() => {
-    if (!menuOpenId || variant === "notes_studio") return null;
+    if (!menuOpenId || variant === "notes_studio" || (variant === "all" && compactCards)) return null;
     const w = items.find((x) => x.id === menuOpenId);
     if (!w?.id) return null;
     const id = w.id;
@@ -583,7 +596,7 @@ export default function PodcastWorksGallery({
       return { layout: "toolbar" as const, w, id, isScriptDraft };
     }
     return { layout: "card" as const, w, id, isScriptDraft, publishActionText };
-  }, [variant, menuOpenId, items, publicationsByJobId]);
+  }, [variant, compactCards, menuOpenId, items, publicationsByJobId]);
 
   useEffect(() => {
     for (const w of items) {
@@ -710,6 +723,72 @@ export default function PodcastWorksGallery({
       setZipBusy(null);
     }
   }, []);
+
+  const renderDownloadGated = useCallback(
+    (
+      row: PodcastWorkRow,
+      jobId: string,
+      unlockedClassName: string,
+      label: ReactNode,
+      gatedExtras?: {
+        lockedLinkClassName?: string;
+        lockedLabelClassName?: string;
+        onLockedNavigate?: () => void;
+      }
+    ) => {
+      const allowed = workDownloadAllowed(row);
+      const busy = zipBusy === jobId;
+      if (plainDownloadGate) {
+        if (allowed) {
+          return (
+            <button
+              type="button"
+              className={unlockedClassName}
+              disabled={busy}
+              onClick={() => {
+                gatedExtras?.onLockedNavigate?.();
+                void onDownload(row);
+              }}
+            >
+              {label}
+            </button>
+          );
+        }
+        const subCls = gatedExtras?.lockedLinkClassName
+          ? `${unlockedClassName} ${gatedExtras.lockedLinkClassName}`.trim()
+          : unlockedClassName;
+        return (
+          <Link
+            href="/subscription"
+            title="下载需订阅"
+            aria-label="下载需订阅"
+            className={subCls}
+            onClick={() => gatedExtras?.onLockedNavigate?.()}
+          >
+            {label}
+          </Link>
+        );
+      }
+      return (
+        <GatedSplitAction
+          locked={!allowed}
+          variant="default"
+          upgradeTitle="下载需订阅"
+          onClick={() => {
+            gatedExtras?.onLockedNavigate?.();
+            void onDownload(row);
+          }}
+          disabled={busy}
+          unlockedClassName={unlockedClassName}
+          lockedLinkClassName={gatedExtras?.lockedLinkClassName}
+          lockedLabelClassName={gatedExtras?.lockedLabelClassName}
+        >
+          {label}
+        </GatedSplitAction>
+      );
+    },
+    [plainDownloadGate, onDownload, zipBusy]
+  );
 
   function downloadBusyLabel(workType: string | undefined): string {
     return String(workType || "") === "script_draft" ? "正在下载…" : "正在打包…";
@@ -1152,6 +1231,15 @@ export default function PodcastWorksGallery({
                 >
                   {batchBusy ? "正在批量下载…" : "批量下载"}
                 </button>
+              ) : plainDownloadGate ? (
+                <Link
+                  href="/subscription"
+                  title="下载需订阅"
+                  aria-label="下载需订阅"
+                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill"
+                >
+                  {batchBusy ? "正在批量下载…" : "批量下载"}
+                </Link>
               ) : (
                 <GatedSplitAction
                   locked
@@ -1194,7 +1282,7 @@ export default function PodcastWorksGallery({
         <>
         <ul
           className={
-            variant === "notes_studio"
+            useNotesStyleCards
               ? "grid w-full grid-cols-1 gap-2 overflow-visible"
               : "grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
           }
@@ -1242,8 +1330,8 @@ export default function PodcastWorksGallery({
                 : null;
             const reuseOrManuscriptLabel = isPodcastManuscriptDraftTarget(String(w.type || "")) ? "修改文稿" : "复用";
 
-            /** 仅笔记本工作台侧栏「我的作品」：无封面顶栏、简介 + 标题 + 操作；其它页面仍走下方默认卡片 */
-            if (variant === "notes_studio") {
+            /** 笔记本侧栏「我的作品」或创作页紧凑列表：无封面顶栏、简介 + 标题 + 操作 */
+            if (useNotesStyleCards) {
               const headlineFull = String(w.displayTitle || "").trim() || id;
               const headlineShown = truncateByGraphemes(headlineFull, NOTES_STUDIO_REF_TITLE_MAX_CHARS);
               const metaLine = formatUnifiedWorksNavMetaLine(
@@ -1254,13 +1342,15 @@ export default function PodcastWorksGallery({
                 createdShort,
                 worksNavAuthorDisplay
               );
-              const synopsisHoverFull = `${metaLine}\n\n${formatNotesStudioCardSynopsis(
-                w,
-                isScriptDraft,
-                durationLine,
-                scriptCharCountDisplay,
-                createdShort
-              )}`;
+              const synopsisHoverFull = useCompactAllLayout
+                ? `${metaLine}\n\n${headlineFull}`
+                : `${metaLine}\n\n${formatNotesStudioCardSynopsis(
+                    w,
+                    isScriptDraft,
+                    durationLine,
+                    scriptCharCountDisplay,
+                    createdShort
+                  )}`;
               return (
                 <li
                   key={id}
@@ -1516,16 +1606,12 @@ export default function PodcastWorksGallery({
                           {publishActionText}
                         </button>
                       ) : null}
-                      <GatedSplitAction
-                        locked={!workDownloadAllowed(w)}
-                        variant="default"
-                        upgradeTitle="下载需订阅"
-                        onClick={() => void onDownload(w)}
-                        disabled={zipBusy === id}
-                        unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
-                      >
-                        {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
-                      </GatedSplitAction>
+                      {renderDownloadGated(
+                        w,
+                        id,
+                        "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
+                        zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+                      )}
                       <button
                         type="button"
                         className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
@@ -1709,16 +1795,12 @@ export default function PodcastWorksGallery({
                         {publishActionText}
                       </button>
                     ) : null}
-                    <GatedSplitAction
-                      locked={!workDownloadAllowed(w)}
-                      variant="default"
-                      upgradeTitle="下载需订阅"
-                      onClick={() => void onDownload(w)}
-                      disabled={zipBusy === id}
-                      unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
-                    >
-                      {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
-                    </GatedSplitAction>
+                    {renderDownloadGated(
+                      w,
+                      id,
+                      "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
+                      zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+                    )}
                     <button
                       type="button"
                       className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
@@ -1735,7 +1817,7 @@ export default function PodcastWorksGallery({
             );
           })}
         </ul>
-        {variant === "notes_studio" && notesStudioMenuPortalData && notesStudioMenuPos
+        {useNotesStyleCards && notesStudioMenuPortalData && notesStudioMenuPos
           ? createPortal(
               (() => {
                 const m = notesStudioMenuPortalData;
@@ -1747,22 +1829,18 @@ export default function PodcastWorksGallery({
                     className="fixed z-[1210] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
                     style={{ top: pos.top, left: pos.left }}
                   >
-                    <GatedSplitAction
-                      locked={!workDownloadAllowed(m.w)}
-                      variant="default"
-                      upgradeTitle="下载需订阅"
-                      onClick={() => {
-                        setMenuOpenId(null);
-                        void onDownload(m.w);
-                      }}
-                      disabled={zipBusy === m.id}
-                      unlockedClassName="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
-                      lockedLinkClassName="w-full max-w-none rounded-none border-0 border-b border-line/80 bg-transparent shadow-none"
-                      lockedLabelClassName="px-3 py-2"
-                      onLockedNavigate={() => setMenuOpenId(null)}
-                    >
-                      {zipBusy === m.id ? downloadBusyLabel(m.w.type) : downloadLabelForWorkType(m.w.type)}
-                    </GatedSplitAction>
+                    {renderDownloadGated(
+                      m.w,
+                      m.id,
+                      "block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40",
+                      zipBusy === m.id ? downloadBusyLabel(m.w.type) : downloadLabelForWorkType(m.w.type),
+                      {
+                        lockedLinkClassName:
+                          "w-full max-w-none rounded-none border-0 border-b border-line/80 bg-transparent shadow-none",
+                        lockedLabelClassName: "px-3 py-2",
+                        onLockedNavigate: () => setMenuOpenId(null)
+                      }
+                    )}
                     <button
                       type="button"
                       role="menuitem"
@@ -1866,22 +1944,18 @@ export default function PodcastWorksGallery({
                     className="fixed z-[1210] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
                     style={{ top: pos.top, left: pos.left }}
                   >
-                    <GatedSplitAction
-                      locked={!workDownloadAllowed(w)}
-                      variant="default"
-                      upgradeTitle="下载需订阅"
-                      onClick={() => {
-                        setMenuOpenId(null);
-                        void onDownload(w);
-                      }}
-                      disabled={zipBusy === id}
-                      unlockedClassName="block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40"
-                      lockedLinkClassName="w-full max-w-none rounded-none border-0 border-b border-line/80 bg-transparent shadow-none"
-                      lockedLabelClassName="px-3 py-2"
-                      onLockedNavigate={() => setMenuOpenId(null)}
-                    >
-                      {zipBusy === id ? downloadBusyLabel(w.type) : downloadLabelForWorkType(w.type)}
-                    </GatedSplitAction>
+                    {renderDownloadGated(
+                      w,
+                      id,
+                      "block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40",
+                      zipBusy === id ? downloadBusyLabel(w.type) : downloadLabelForWorkType(w.type),
+                      {
+                        lockedLinkClassName:
+                          "w-full max-w-none rounded-none border-0 border-b border-line/80 bg-transparent shadow-none",
+                        lockedLabelClassName: "px-3 py-2",
+                        onLockedNavigate: () => setMenuOpenId(null)
+                      }
+                    )}
                     <button
                       type="button"
                       role="menuitem"

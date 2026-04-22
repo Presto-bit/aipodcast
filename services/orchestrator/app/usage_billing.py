@@ -1,12 +1,21 @@
 """
-文本：按 TEXT_PROVIDER 选用 MiniMax 或 DeepSeek（及 Qwen 近似）公开价估算；
-MiniMax：https://platform.minimaxi.com/docs/guides/pricing-paygo
-DeepSeek（人民币）：https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny
+按 TEXT_PROVIDER 选用 MiniMax / DeepSeek（及 Qwen 近似）公开价估算用量看板。
 
-音频转写（豆包语音 / 火山 Seed-ASR 大模型录音识别）：参考价见
-`DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR`（元/小时，按输入音频时长）。
+定价参考（人民币，与官网/商务口径对齐；实际以各控制台账单为准）：
 
-估算仅用于后台用量看板；实际消耗以各云控制台账单为准。
+- **MiniMax T2A**（元/万计费字符，`minimax_billing_chars`）：turbo 档 2；HD 档 3.5。
+  turbo：`speech-2.8-turbo`、`speech-2.6-turbo`、`speech-02-turbo` 等；HD：`speech-2.8-hd`、
+  `speech-2.6-hd`、`speech-02-hd` 等（见 ``MINIMAX_TTS_*`` 常量）。
+- **Voice Cloning / Voice Design**：各 9.9 元/次（``MINIMAX_VOICE_CLONE_REF_CNY_PER_CALL``、
+  ``MINIMAX_VOICE_DESIGN_REF_CNY_PER_CALL``）。
+- **image-01-live**：0.025 元/张（``MINIMAX_IMAGE_01_LIVE_REF_CNY_PER_IMAGE``）。
+- **MiniMax-M2.7**（元/百万 tokens）：输入 2.1、输出 8.4、缓存读取 0.42、缓存写入 2.625。
+- **DeepSeek**（元/百万 tokens）：输入缓存命中 0.2、缓存未命中 2、输出 3；
+  ``estimate_llm_cost_cny`` 无缓存命中信息，输入按**未命中**计价（偏保守）。
+- **豆包语音转写**：``DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR``（元/小时音频）。
+
+链接：MiniMax https://platform.minimaxi.com/docs/guides/pricing-paygo
+DeepSeek https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny
 """
 
 from __future__ import annotations
@@ -17,6 +26,30 @@ import re
 from typing import Any
 
 ZH_RE = re.compile(r"[\u4e00-\u9fff]")
+
+# ---------------------------------------------------------------------------
+# 公开价参考（人民币；看板估算；实际以供应商控制台为准）
+# ---------------------------------------------------------------------------
+
+# MiniMax T2A：元 / 万「计费字符」（规则见 minimax_billing_chars）
+MINIMAX_TTS_TURBO_CNY_PER_10K_BILLING_CHARS = 2.0
+MINIMAX_TTS_HD_CNY_PER_10K_BILLING_CHARS = 3.5
+
+MINIMAX_VOICE_CLONE_REF_CNY_PER_CALL = 9.9
+MINIMAX_VOICE_DESIGN_REF_CNY_PER_CALL = 9.9
+
+MINIMAX_IMAGE_01_LIVE_REF_CNY_PER_IMAGE = 0.025
+
+# MiniMax-M2.7：元 / 百万 tokens
+MINIMAX_M27_INPUT_CNY_PER_MTOK = 2.1
+MINIMAX_M27_OUTPUT_CNY_PER_MTOK = 8.4
+MINIMAX_M27_CACHE_READ_CNY_PER_MTOK = 0.42
+MINIMAX_M27_CACHE_WRITE_CNY_PER_MTOK = 2.625
+
+# DeepSeek deepseek-chat 等：元 / 百万 tokens（reasoner 见函数内分支）
+DEEPSEEK_CHAT_INPUT_CACHE_HIT_CNY_PER_MTOK = 0.2
+DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK = 2.0
+DEEPSEEK_CHAT_OUTPUT_CNY_PER_MTOK = 3.0
 
 
 def _parse_jsonish(val: Any) -> dict[str, Any]:
@@ -68,7 +101,12 @@ def text_model_pricing_per_million_tokens(
         return (4.2, 16.8, 0.42, 2.625)
 
     def m27() -> tuple[float, float, float | None, float | None]:
-        return (2.1, 8.4, 0.42, 2.625)
+        return (
+            MINIMAX_M27_INPUT_CNY_PER_MTOK,
+            MINIMAX_M27_OUTPUT_CNY_PER_MTOK,
+            MINIMAX_M27_CACHE_READ_CNY_PER_MTOK,
+            MINIMAX_M27_CACHE_WRITE_CNY_PER_MTOK,
+        )
 
     def m25_hs() -> tuple[float, float, float | None, float | None]:
         return (4.2, 16.8, 0.21, 2.625)
@@ -132,19 +170,27 @@ def _qwen_text_model_id() -> str:
 
 def deepseek_text_estimate_input_output_cny_per_mtok(model_id: str) -> tuple[float, float]:
     """
-    DeepSeek 官方人民币（元/百万 tokens）：按「缓存未命中」输入价 + 输出价估算（偏保守）。
-    deepseek-chat：2 / 8；deepseek-reasoner：4 / 16。
+    DeepSeek 人民币（元/百万 tokens）。
+    - deepseek-chat：输入按缓存**未**命中 2、输出 3；缓存命中输入 0.2 见
+      ``DEEPSEEK_CHAT_INPUT_CACHE_HIT_CNY_PER_MTOK``（``estimate_llm_cost_cny`` 无缓存语义，输入按未命中）。
+    - deepseek-reasoner：未在本次清单中，仍按高价档近似 4 / 16。
     """
     k = (model_id or "").strip().lower()
     if "reasoner" in k:
         return (4.0, 16.0)
-    return (2.0, 8.0)
+    return (
+        DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK,
+        DEEPSEEK_CHAT_OUTPUT_CNY_PER_MTOK,
+    )
 
 
 def qwen_text_estimate_input_output_cny_per_mtok(model_id: str) -> tuple[float, float]:
-    """通义千问兼容通道：DashScope 标价多为美元，此处用与 deepseek-chat 同量级的保守人民币近似。"""
+    """通义千问兼容通道：DashScope 标价多为美元，此处用与 deepseek-chat 未命中输入同量级的人民币近似。"""
     _ = model_id
-    return (2.0, 8.0)
+    return (
+        DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK,
+        DEEPSEEK_CHAT_OUTPUT_CNY_PER_MTOK,
+    )
 
 
 def _llm_unit_prices_cny_per_mtok() -> tuple[str, str, float, float]:
@@ -171,9 +217,11 @@ def estimate_llm_cost_cny(*, prompt_chars: int, completion_chars: int) -> float:
 
 
 def tts_price_cny_per_10k_billing_chars(tts_model: str) -> float:
-    """T2A：HD 3.5 元/万字符；turbo 2 元/万字符（speech-2.8-hd / speech-2.8-turbo 等）。"""
+    """T2A：turbo / HD 档见 ``MINIMAX_TTS_TURBO_CNY_PER_10K_BILLING_CHARS`` 等；模型名含 ``turbo`` 视为 turbo 档。"""
     k = (tts_model or "").strip().lower()
-    return 2.0 if "turbo" in k else 3.5
+    if "turbo" in k:
+        return MINIMAX_TTS_TURBO_CNY_PER_10K_BILLING_CHARS
+    return MINIMAX_TTS_HD_CNY_PER_10K_BILLING_CHARS
 
 
 def estimate_tts_cost_cny(*, tts_model: str, spoken_text: str) -> float:
@@ -184,7 +232,7 @@ def estimate_tts_cost_cny(*, tts_model: str, spoken_text: str) -> float:
     return round((bc / 10_000.0) * rate, 6)
 
 
-IMAGE_01_UNIT_CNY = 0.025
+IMAGE_01_UNIT_CNY = MINIMAX_IMAGE_01_LIVE_REF_CNY_PER_IMAGE
 
 # 豆包语音（火山 openspeech Seed-ASR / 大模型录音文件识别）音频转写：产品侧参考公开价，按「输入音频时长」计小时。
 # 用于成本/用量看板对照；实际扣费以火山控制台账单为准。

@@ -22,7 +22,7 @@ export function assertProductionInternalSigningSecretOrExit(): void {
   const s = process.env.INTERNAL_SIGNING_SECRET || "";
   if (!signingSecretIsAcceptableForProduction(s)) {
     console.error(
-      "[fyv-security] NODE_ENV=production 要求 INTERNAL_SIGNING_SECRET 为至少 32 字节的强随机串，" +
+      "[presto-security] NODE_ENV=production 要求 INTERNAL_SIGNING_SECRET 为至少 32 字节的强随机串，" +
         "且不能使用 local-internal-secret 等示例值（须与编排器 FYV_PRODUCTION 校验一致）。"
     );
     process.exit(1);
