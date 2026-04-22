@@ -742,13 +742,18 @@ def _pg_upsert_user_and_auth(
     role: str | None = None,
     acct_tier: str | None = None,
     billing_cycle: str | None = None,
-) -> bool:
+) -> tuple[bool, str | None]:
+    """
+    写入/更新 users 与可选的 user_auth_accounts。
+    使用 UPDATE→INSERT，避免依赖 ON CONFLICT 与部分唯一索引（021）的推断是否一致。
+    失败时返回 (False, 数据库错误摘要)。
+    """
     if not _pg_available():
-        return False
+        return False, "数据库不可用"
     _ensure_auth_tables_pg()
     p = (phone or "").strip()
     if not p:
-        return False
+        return False, "手机号无效"
     dn = (display_name or p).strip() or p
     rl = _normalize_role(role)
     pl = str(acct_tier or "free").strip().lower()
@@ -764,22 +769,46 @@ def _pg_upsert_user_and_auth(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            INSERT INTO users (phone, phone_normalized, display_name, role, acct_tier, billing_cycle, account_status, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, 'active', NOW())
-            ON CONFLICT (phone) WHERE (phone IS NOT NULL AND btrim(phone) <> '') DO UPDATE SET
-              phone_normalized = EXCLUDED.phone_normalized,
-              display_name = EXCLUDED.display_name,
-              role = EXCLUDED.role,
-              acct_tier = EXCLUDED.acct_tier,
-              billing_cycle = EXCLUDED.billing_cycle,
-              account_status = CASE WHEN users.account_status = 'deleted' THEN users.account_status ELSE 'active' END,
+            UPDATE users SET
+              phone_normalized = %s,
+              display_name = %s,
+              role = %s,
+              acct_tier = %s,
+              billing_cycle = %s,
+              account_status = CASE WHEN account_status = 'deleted' THEN account_status ELSE 'active' END,
               updated_at = NOW()
+            WHERE phone = %s
             RETURNING id
             """,
-            (p, p_norm, dn, rl, pl, bc),
+            (p_norm, dn, rl, pl, bc, p),
         )
         row = cur.fetchone()
+        if not row or row.get("id") is None:
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO users (phone, phone_normalized, display_name, role, acct_tier, billing_cycle, account_status, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'active', NOW())
+                    RETURNING id
+                    """,
+                    (p, p_norm, dn, rl, pl, bc),
+                )
+                row = cur.fetchone()
+            except PsycopgIntegrityError:
+                conn.rollback()
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+                cur.execute(
+                    """
+                    SELECT id FROM users
+                    WHERE phone = %s OR (phone_normalized IS NOT NULL AND phone_normalized = %s)
+                    LIMIT 1
+                    """,
+                    (p, p_norm),
+                )
+                row = cur.fetchone()
         uid = str(row["id"]) if row and row.get("id") is not None else ""
+        if not uid:
+            return False, "未能解析用户 id"
         if uid and password_hash:
             cur.execute(
                 """
@@ -793,9 +822,13 @@ def _pg_upsert_user_and_auth(
                 (uid, password_hash),
             )
         conn.commit()
-        return True
-    except Exception:
-        return False
+        return True, None
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False, str(exc)[:500]
     finally:
         conn.close()
 
@@ -2358,7 +2391,7 @@ def register_user(
             else:
                 return None, "该手机号已注册", meta
         else:
-            ok = _pg_upsert_user_and_auth(
+            ok_pg, pg_err = _pg_upsert_user_and_auth(
                 phone=p,
                 password_hash=pw_hash,
                 display_name=p,
@@ -2366,8 +2399,8 @@ def register_user(
                 acct_tier="free",
                 billing_cycle=None,
             )
-            if not ok:
-                return None, "注册失败（数据库写入失败）", meta
+            if not ok_pg:
+                return None, pg_err or "注册失败（数据库写入失败）", meta
         row = _pg_fetch_auth_user(p)
         uid = str((row or {}).get("user_id") or "")
         if uid:
@@ -2759,7 +2792,7 @@ def update_display_name(principal: str, display_name: str) -> Tuple[bool, Option
         if not dn:
             dn = ph or str(row.get("username") or "") or str(row.get("email") or "") or uid
         if ph:
-            ok = _pg_upsert_user_and_auth(
+            ok, pg_err = _pg_upsert_user_and_auth(
                 phone=ph,
                 display_name=dn,
                 role=str(row.get("role") or "user"),
@@ -2771,8 +2804,9 @@ def update_display_name(principal: str, display_name: str) -> Tuple[bool, Option
                 uid,
                 display_name=dn,
             )
+            pg_err = None
         if not ok:
-            return False, "更新失败"
+            return False, (pg_err if ph else None) or "更新失败"
     json_key = p
     if _auth_pg_primary() and _pg_available():
         rj = _resolve_auth_row_for_principal(p)
@@ -2892,7 +2926,7 @@ def set_user_subscription(user_ref: str, tier: str, cycle: Optional[str]) -> Tup
         uid = str(row.get("user_id") or "").strip()
         ph = str(row.get("phone") or "").strip()
         if ph:
-            ok = _pg_upsert_user_and_auth(
+            ok, pg_err = _pg_upsert_user_and_auth(
                 phone=ph,
                 display_name=str(row.get("display_name") or ph),
                 role=str(row.get("role") or "user"),
@@ -2905,8 +2939,9 @@ def set_user_subscription(user_ref: str, tier: str, cycle: Optional[str]) -> Tup
                 acct_tier=tier,
                 billing_cycle=(cycle if tier != "free" else None),
             )
+            pg_err = None
         if not ok:
-            return False, "更新失败"
+            return False, (pg_err if ph else None) or "更新失败"
     if _auth_dual_write() or not _auth_pg_primary() or not _pg_available():
         users = _load_users()
         jk = user_ref.strip()
@@ -2932,7 +2967,7 @@ def set_user_role(user_ref: str, role: str) -> Tuple[bool, Optional[str]]:
         uid = str(row.get("user_id") or "").strip()
         ph = str(row.get("phone") or "").strip()
         if ph:
-            ok = _pg_upsert_user_and_auth(
+            ok, pg_err = _pg_upsert_user_and_auth(
                 phone=ph,
                 display_name=str(row.get("display_name") or ph),
                 role=r,
@@ -2941,8 +2976,9 @@ def set_user_role(user_ref: str, role: str) -> Tuple[bool, Optional[str]]:
             )
         else:
             ok = _pg_update_user_fields_by_user_id(uid, role=r)
+            pg_err = None
         if not ok:
-            return False, "设置失败"
+            return False, (pg_err if ph else None) or "设置失败"
     if _auth_dual_write() or not _auth_pg_primary() or not _pg_available():
         users = _load_users()
         if p not in users:
@@ -3030,7 +3066,7 @@ def admin_create_user(phone: str, password: str, role: str = "user", initial_tie
             else:
                 return False, "该手机号已存在"
         else:
-            ok = _pg_upsert_user_and_auth(
+            ok_pg, pg_err = _pg_upsert_user_and_auth(
                 phone=p,
                 password_hash=pw_hash,
                 display_name=p,
@@ -3038,8 +3074,8 @@ def admin_create_user(phone: str, password: str, role: str = "user", initial_tie
                 acct_tier=t,
                 billing_cycle=(cycle if t != "free" else None),
             )
-            if not ok:
-                return False, "新增用户失败"
+            if not ok_pg:
+                return False, pg_err or "新增用户失败"
     if _auth_dual_write() or not _auth_pg_primary() or not _pg_available():
         users = _load_users()
         if p in users and not reused_deleted_pg:
@@ -3124,7 +3160,7 @@ def ensure_bootstrap_admin() -> Tuple[bool, str]:
     if force_pwd:
         row = _pg_fetch_auth_user(phone)
         if isinstance(row, dict):
-            _pg_upsert_user_and_auth(
+            ok_pw, err_pw = _pg_upsert_user_and_auth(
                 phone=phone,
                 password_hash=generate_password_hash(password),
                 display_name=str(row.get("display_name") or phone),
@@ -3132,6 +3168,8 @@ def ensure_bootstrap_admin() -> Tuple[bool, str]:
                 acct_tier=str(row.get("acct_tier") or "max"),
                 billing_cycle=(str(row.get("billing_cycle") or "").strip() or "yearly"),
             )
+            if not ok_pw:
+                return False, str(err_pw or "bootstrap_admin_password_reset_failed")
     return True, "bootstrap_admin_updated"
 
 
