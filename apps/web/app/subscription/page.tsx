@@ -3,31 +3,39 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { FaqAccordion } from "../../components/subscription/FaqAccordion";
-import { FALLBACK_SUBSCRIPTION_PLANS } from "../../components/subscription/fallbackPlans";
+import FormSheetModal from "../../components/subscription/FormSheetModal";
 import { PricingHero } from "../../components/subscription/PricingHero";
-import { PricingPlansGrid } from "../../components/subscription/PricingPlansGrid";
 import { WalletUsageReference } from "../../components/subscription/WalletUsageReference";
-import type { PricingPlan, WalletTopupPayload } from "../../components/subscription/types";
-import { TrustFooter } from "../../components/subscription/TrustFooter";
+import type { WalletTopupPayload } from "../../components/subscription/types";
 import { parseSubscriptionErrorBody } from "../../lib/subscriptionError";
 
-type OrderRow = {
-  event_id?: string;
-  status?: string;
-  tier?: string;
-  billing_cycle?: string | null;
+const WALLET_ALERT_YUAN_PREFIX = "fyv_wallet_alert_threshold_yuan";
+
+type RechargeRecordRow = {
+  serial_no?: string;
+  provider_order_id?: string | null;
+  recharged_at_unix?: number | null;
+  channel_zh?: string;
   amount_cents?: number;
-  provider?: string;
-  created_at?: number;
+  currency?: string;
+  result_zh?: string;
+};
+
+type ConsumptionRecordRow = {
+  ledger_id?: number;
+  job_id?: string;
+  account_masked?: string;
+  api_path?: string;
+  feature_zh?: string;
+  usage_detail_zh?: string;
+  amount_cents?: number;
+  consumed_at_unix?: number | null;
+  result_zh?: string;
 };
 
 type PlansPayload = {
   success?: boolean;
-  plans?: PricingPlan[];
-  addons?: unknown[];
   wallet_topup?: WalletTopupPayload;
-  billing_monthly_only?: boolean;
-  yearly_discount_percent?: number;
   payment_channels?: {
     alipay_page?: { enabled?: boolean; label_zh?: string };
   };
@@ -40,42 +48,42 @@ type WalletCheckoutState = {
 
 export default function SubscriptionPage() {
   const { getAuthHeaders, refreshMe, user } = useAuth();
-  const [cycle] = useState<"monthly" | "yearly">("monthly");
-  const [plans, setPlans] = useState<PricingPlan[]>([]);
-  const [yearlyDisc, setYearlyDisc] = useState<number | undefined>(undefined);
-  const [billingMonthlyOnly, setBillingMonthlyOnly] = useState(true);
   const [walletTopupInfo, setWalletTopupInfo] = useState<PlansPayload["wallet_topup"]>(undefined);
-  const [currentPlan, setCurrentPlan] = useState("free");
-  const [billingCycle, setBillingCycle] = useState<string | null>(null);
-  const [orders, setOrders] = useState<OrderRow[]>([]);
-  const [topupYuanInput, setTopupYuanInput] = useState("10");
+  const [rechargeRecords, setRechargeRecords] = useState<RechargeRecordRow[]>([]);
+  const [consumptionRecords, setConsumptionRecords] = useState<ConsumptionRecordRow[]>([]);
+  const [topupYuanInput, setTopupYuanInput] = useState("30");
   const [msg, setMsg] = useState("");
-  const [submittingTier, setSubmittingTier] = useState<string | null>(null);
   const [walletCheckout, setWalletCheckout] = useState<WalletCheckoutState | null>(null);
   const [walletCreating, setWalletCreating] = useState(false);
   const [walletPaying, setWalletPaying] = useState(false);
   const [alipayPageEnabled, setAlipayPageEnabled] = useState(false);
-  const [alipayLoadingTier, setAlipayLoadingTier] = useState<string | null>(null);
   const [alipayWalletLoading, setAlipayWalletLoading] = useState(false);
   const [plansConfigLoaded, setPlansConfigLoaded] = useState(false);
   const [plansLoadError, setPlansLoadError] = useState("");
   const [walletBalanceCents, setWalletBalanceCents] = useState<number | null>(null);
+  const [experienceVoiceMin, setExperienceVoiceMin] = useState<number | null>(null);
+  const [experienceTextChars, setExperienceTextChars] = useState<number | null>(null);
+  const [alertThresholdYuan, setAlertThresholdYuan] = useState("");
+  const [alertSavedHint, setAlertSavedHint] = useState("");
+  const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
+  const [alertModalOpen, setAlertModalOpen] = useState(false);
+  const [experienceVoiceTotal, setExperienceVoiceTotal] = useState<number | null>(null);
+  const [experienceTextTotal, setExperienceTextTotal] = useState<number | null>(null);
 
-  /** 本地联调可选：NEXT_PUBLIC_ENABLE_MOCK_WALLET=1 才展示内测模拟充值；生产环境仅走支付宝。 */
   const allowMockWallet =
     typeof process !== "undefined" && process.env.NEXT_PUBLIC_ENABLE_MOCK_WALLET === "1";
 
   const mergedWalletTopup = useMemo((): WalletTopupPayload => {
     const base: WalletTopupPayload = {
       enabled: true,
-      /** 编排器未返回前：允许内测模拟充值；若已接支付宝则由 plans 覆盖为 checkout_supported=false */
       checkout_supported: true,
-      min_amount_cents: 1000,
+      min_amount_cents: 1,
       max_amount_cents: 10_000_000,
-      description:
-        "充值进入账户余额（人民币），按实际使用扣减；单次充值最低 ¥10，不设过期；不改变当前订阅档位。",
+      suggested_topup_yuan: [30, 50, 100],
+      description: "",
       usage_reference: {
         podcast_yuan_per_minute: 0.25,
+        text_yuan_per_10k_chars: 2,
         voice_clone_payg_cents: 1290,
         disclaimer_zh: "余额实际扣减以任务完成时执行为准。"
       }
@@ -92,7 +100,21 @@ export default function SubscriptionPage() {
     };
   }, [walletTopupInfo]);
 
-  /** 与编排器约定：未接支付宝时 checkout_supported=true 走内测模拟；接支付宝后仍展示「支付宝充值」入口 */
+  const walletAlertStorageKey = useMemo(() => {
+    const uid = typeof user?.user_id === "string" ? user.user_id.trim() : "";
+    const phone = typeof user?.phone === "string" ? user.phone.trim() : "";
+    const tail = uid || phone;
+    return tail ? `${WALLET_ALERT_YUAN_PREFIX}:${tail}` : WALLET_ALERT_YUAN_PREFIX;
+  }, [user?.user_id, user?.phone]);
+
+  const suggestedTopupYuan = useMemo(() => {
+    const raw = mergedWalletTopup.suggested_topup_yuan;
+    if (Array.isArray(raw) && raw.length) {
+      return raw.filter((n) => typeof n === "number" && Number.isFinite(n) && n > 0);
+    }
+    return [30, 50, 100];
+  }, [mergedWalletTopup.suggested_topup_yuan]);
+
   const showWalletRechargeSection = plansConfigLoaded && mergedWalletTopup.enabled !== false;
 
   const loadPlans = useCallback(async () => {
@@ -101,25 +123,23 @@ export default function SubscriptionPage() {
       const pr = await fetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
       const pd = (await pr.json().catch(() => ({}))) as PlansPayload;
       if (!pr.ok) {
-        setPlans(FALLBACK_SUBSCRIPTION_PLANS);
         setAlipayPageEnabled(false);
-        setPlansLoadError(`加载套餐配置失败（HTTP ${pr.status}），已显示参考价目。`);
+        if (pr.status === 404) {
+          setPlansLoadError("未找到计费配置接口（HTTP 404）。已使用本站参考价目；请确认 Next BFF 已部署 /api/subscription/plans 且编排器可访问。");
+        } else {
+          setPlansLoadError(`暂时无法拉取计费配置（HTTP ${pr.status}），已显示参考价目。`);
+        }
         return;
       }
       if (pd.success) {
-        if (Array.isArray(pd.plans)) setPlans(pd.plans);
-        setBillingMonthlyOnly(pd.billing_monthly_only !== false);
-        if (typeof pd.yearly_discount_percent === "number") setYearlyDisc(pd.yearly_discount_percent);
         setWalletTopupInfo(pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : {});
         const wt = pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : null;
-        /** 与 plan_catalog：checkout_supported = not alipay_ready；两者任一为真均视为已接支付宝 Page Pay */
         const fromChannel = pd.payment_channels?.alipay_page?.enabled === true;
         const fromWallet = wt != null && wt.checkout_supported === false;
         setAlipayPageEnabled(fromChannel || fromWallet);
       } else {
-        setPlans(FALLBACK_SUBSCRIPTION_PLANS);
         setAlipayPageEnabled(false);
-        setPlansLoadError("套餐接口返回异常，已显示参考价目，请稍后重试。");
+        setPlansLoadError("计费接口返回异常，已显示参考价目，请稍后重试。");
       }
     } catch (e) {
       setPlansLoadError(String(e instanceof Error ? e.message : e));
@@ -133,17 +153,35 @@ export default function SubscriptionPage() {
       const mr = await fetch("/api/subscription/me", { headers: getAuthHeaders(), cache: "no-store" });
       const md = (await mr.json().catch(() => ({}))) as {
         success?: boolean;
-        plan?: string;
-        billing_cycle?: string | null;
-        orders?: OrderRow[];
+        recharge_records?: RechargeRecordRow[];
+        consumption_records?: ConsumptionRecordRow[];
         wallet_balance_cents?: number;
+        experience?: {
+          voice_minutes_remaining?: number;
+          text_chars_remaining?: number;
+          voice_minutes_total?: number | null;
+          text_chars_total?: number | null;
+        };
       };
       if (mr.ok && md.success) {
-        setCurrentPlan(md.plan?.trim() ? md.plan : "free");
-        setBillingCycle(md.billing_cycle ?? null);
-        setOrders(Array.isArray(md.orders) ? md.orders : []);
+        setRechargeRecords(Array.isArray(md.recharge_records) ? md.recharge_records : []);
+        setConsumptionRecords(Array.isArray(md.consumption_records) ? md.consumption_records : []);
         if (typeof md.wallet_balance_cents === "number") setWalletBalanceCents(md.wallet_balance_cents);
         else setWalletBalanceCents(null);
+        const ex = md.experience;
+        if (ex && typeof ex === "object") {
+          if (typeof ex.voice_minutes_remaining === "number") setExperienceVoiceMin(ex.voice_minutes_remaining);
+          else setExperienceVoiceMin(null);
+          if (typeof ex.text_chars_remaining === "number") setExperienceTextChars(ex.text_chars_remaining);
+          else setExperienceTextChars(null);
+          setExperienceVoiceTotal(typeof ex.voice_minutes_total === "number" ? ex.voice_minutes_total : null);
+          setExperienceTextTotal(typeof ex.text_chars_total === "number" ? ex.text_chars_total : null);
+        } else {
+          setExperienceVoiceMin(null);
+          setExperienceTextChars(null);
+          setExperienceVoiceTotal(null);
+          setExperienceTextTotal(null);
+        }
       }
     } catch {
       // ignore
@@ -155,7 +193,6 @@ export default function SubscriptionPage() {
     void loadMe();
   }, [loadPlans, loadMe]);
 
-  /** 支付宝同步回跳（GET）常带 out_trade_no / trade_no；刷新订单并清理地址栏避免重复提示。 */
   useEffect(() => {
     if (typeof window === "undefined") return;
     const q = new URLSearchParams(window.location.search);
@@ -166,16 +203,65 @@ export default function SubscriptionPage() {
     window.history.replaceState({}, "", window.location.pathname);
   }, [loadMe, refreshMe]);
 
-  const shownPlans = useMemo(() => (plans.length ? plans : FALLBACK_SUBSCRIPTION_PLANS), [plans]);
-
-  /** 邮箱注册用户无 `phone` 字段时也应可发起支付宝/余额支付（与编排器会话一致） */
   const walletPayEnabled = isLoggedInAccountUser(user);
 
-  const busyPayOrWallet =
-    (submittingTier != null && submittingTier !== "") || (alipayLoadingTier != null && alipayLoadingTier !== "");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!walletPayEnabled) return;
+    try {
+      const v = window.localStorage.getItem(walletAlertStorageKey);
+      if (v != null && v.trim() !== "") setAlertThresholdYuan(v.trim());
+      else setAlertThresholdYuan("");
+    } catch {
+      // ignore
+    }
+  }, [walletAlertStorageKey, walletPayEnabled]);
 
-  function fmtOrderTime(ts?: number) {
-    if (!ts) return "—";
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const h = window.location.hash;
+    if (h === "#wallet-topup" || h === "#recharge") {
+      setRechargeModalOpen(true);
+      window.history.replaceState({}, "", window.location.pathname + window.location.search);
+    } else if (h === "#balance-alert") {
+      setAlertModalOpen(true);
+      window.history.replaceState({}, "", window.location.pathname + window.location.search);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!walletPayEnabled) return undefined;
+    const tick = window.setInterval(() => {
+      void loadMe();
+    }, 30_000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void loadMe();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(tick);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [walletPayEnabled, loadMe]);
+
+  useEffect(() => {
+    if (!rechargeModalOpen || !walletPayEnabled) return;
+    void loadMe();
+  }, [rechargeModalOpen, walletPayEnabled, loadMe]);
+
+  useEffect(() => {
+    if (!showWalletRechargeSection) setRechargeModalOpen(false);
+  }, [showWalletRechargeSection]);
+
+  const balanceBelowAlertThreshold = useMemo(() => {
+    const y = Number(String(alertThresholdYuan || "").replace(/,/g, "").trim());
+    if (!Number.isFinite(y) || y <= 0) return false;
+    if (walletBalanceCents == null) return false;
+    return walletBalanceCents < Math.round(y * 100);
+  }, [alertThresholdYuan, walletBalanceCents]);
+
+  function fmtTimeUnix(ts?: number | null) {
+    if (ts == null || typeof ts !== "number" || !Number.isFinite(ts)) return "—";
     try {
       return new Date(ts * 1000).toLocaleString();
     } catch {
@@ -188,100 +274,40 @@ export default function SubscriptionPage() {
     return `¥${(cents / 100).toFixed(2)}`;
   }
 
-  async function selectPlan(tier: string) {
-    setSubmittingTier(tier);
-    setMsg("");
-    try {
-      const res = await fetch("/api/subscription/select", {
-        method: "POST",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ tier, billing_cycle: tier === "free" ? null : "monthly" })
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        error?: string;
-        detail?: string;
-        message?: string;
-        user?: { plan?: string };
-      };
-      if (!res.ok || !data.success) throw new Error(data.error || data.detail || `请求失败 ${res.status}`);
-      setCurrentPlan(data.user?.plan || tier);
-      setMsg(data.message || "已保存");
-      await loadMe();
-      await refreshMe();
-    } catch (err) {
-      setMsg(String(err instanceof Error ? err.message : err));
-    } finally {
-      setSubmittingTier(null);
-    }
+  function experienceVoiceUsedTotalLabel(rem: number, tot: number): string {
+    const used = Math.max(0, Math.min(tot, tot - rem));
+    return `${used.toFixed(2)} / ${tot.toFixed(2)} 分钟`;
   }
 
-  async function createAlipaySubscription(tier: string) {
-    if (tier === "free") return;
-    setAlipayLoadingTier(tier);
-    setMsg("正在连接支付宝…页面打开后请用手机支付宝扫码完成支付，支付成功后将自动升级档位。");
-    setWalletCheckout(null);
-    let didNavigate = false;
-    const ac = new AbortController();
-    const payTimer = window.setTimeout(() => ac.abort(), 60_000);
+  function experienceTextUsedTotalLabel(rem: number, tot: number): string {
+    const ri = Math.floor(rem);
+    const used = Math.max(0, Math.min(tot, tot - ri));
+    return `${used.toLocaleString()} / ${tot.toLocaleString()} 字`;
+  }
+
+  function persistWalletAlertThreshold() {
+    setAlertSavedHint("");
     try {
-      const res = await fetch("/api/subscription/alipay-page/subscription", {
-        method: "POST",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ tier, billing_cycle: "monthly" }),
-        credentials: "same-origin",
-        signal: ac.signal
-      });
-      const text = await res.text();
-      const data = (() => {
-        try {
-          return JSON.parse(text) as {
-            success?: boolean;
-            pay_page_url?: string;
-            out_trade_no?: string;
-            amount_cents?: number;
-            detail?: string;
-            error?: string;
-            message?: string;
-          };
-        } catch {
-          return {};
-        }
-      })();
-      if (!res.ok || !data.success) {
-        throw new Error(parseSubscriptionErrorBody(text, `支付宝下单失败 ${res.status}`));
-      }
-      const payUrl = typeof data.pay_page_url === "string" ? data.pay_page_url.trim() : "";
-      if (!payUrl) {
-        throw new Error("收银台未返回有效支付链接，请稍后重试或联系客服");
-      }
-      if (!data.out_trade_no) {
-        throw new Error("订单号缺失，请重试");
-      }
-      didNavigate = true;
-      window.location.assign(payUrl);
-    } catch (err) {
-      const name = err instanceof Error ? err.name : "";
-      if (name === "AbortError") {
-        setMsg("连接收银台超时，请检查网络或稍后重试。");
-      } else {
-        setMsg(String(err instanceof Error ? err.message : err));
-      }
-    } finally {
-      clearTimeout(payTimer);
-      if (!didNavigate) setAlipayLoadingTier(null);
+      if (typeof window === "undefined") return;
+      const t = alertThresholdYuan.trim();
+      if (!t) window.localStorage.removeItem(walletAlertStorageKey);
+      else window.localStorage.setItem(walletAlertStorageKey, t);
+      setAlertSavedHint("已保存在本浏览器");
+      window.setTimeout(() => setAlertSavedHint(""), 2400);
+    } catch {
+      setAlertSavedHint("无法写入本地存储");
     }
   }
 
   function parseTopupAmountCents(): { ok: true; cents: number } | { ok: false; error: string } {
     const minC =
-      typeof mergedWalletTopup.min_amount_cents === "number" ? mergedWalletTopup.min_amount_cents : 1000;
+      typeof mergedWalletTopup.min_amount_cents === "number" ? mergedWalletTopup.min_amount_cents : 1;
     const maxC =
       typeof mergedWalletTopup.max_amount_cents === "number" ? mergedWalletTopup.max_amount_cents : 10_000_000;
     const y = Number(String(topupYuanInput || "").replace(/,/g, "").trim());
     if (!Number.isFinite(y) || y <= 0) return { ok: false, error: "请输入有效的充值金额（元）" };
     const cents = Math.round(y * 100);
-    if (cents < minC) return { ok: false, error: `单次充值最低 ${(minC / 100).toFixed(2)} 元` };
+    if (cents < minC) return { ok: false, error: `充值金额需至少 ${(minC / 100).toFixed(2)} 元` };
     if (cents > maxC) return { ok: false, error: `单次充值最高 ${(maxC / 100).toFixed(2)} 元` };
     return { ok: true, cents };
   }
@@ -343,10 +369,11 @@ export default function SubscriptionPage() {
       if (!res.ok || !data.success) {
         throw new Error(data.detail || data.error || `支付确认失败 ${res.status}`);
       }
-      setMsg("余额已入账（订阅档位不变；实际业务扣款需在任务侧调用扣减接口）");
+      setMsg("余额已入账");
       setWalletCheckout(null);
       await loadMe();
       await refreshMe();
+      setRechargeModalOpen(false);
     } catch (err) {
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
@@ -408,101 +435,276 @@ export default function SubscriptionPage() {
     }
   }
 
-  const supportEmail = typeof process.env.NEXT_PUBLIC_SUPPORT_EMAIL === "string" ? process.env.NEXT_PUBLIC_SUPPORT_EMAIL : undefined;
-
   return (
     <main className="min-h-0 max-w-6xl">
-      <PricingHero />
+      <PricingHero title="余额与账单" />
 
       {plansLoadError ? (
         <p className="mb-4 rounded-lg border border-warning/35 bg-warning-soft/90 px-3 py-2 text-sm text-warning-ink" role="alert">
-          {plansLoadError} 若编排器未启动或网络异常，将无法调起支付宝；本地开发请先启动 orchestrator。
+          {plansLoadError}
+          若编排器未启动或网络异常，将无法调起支付宝；本地开发请先启动 orchestrator。
         </p>
       ) : null}
 
-      <PricingPlansGrid
-        plans={shownPlans}
-        cycle={cycle}
-        onCycleChange={() => {}}
-        hideBillingCycleToggle={billingMonthlyOnly}
-        yearlyDiscountPercent={yearlyDisc}
-        currentPlanId={currentPlan}
-        submittingTier={submittingTier}
-        onSelectPlan={(tier) => void selectPlan(tier)}
-        alipayPageEnabled={alipayPageEnabled}
-        alipayLoadingTier={alipayLoadingTier}
-        onAlipayPay={(tier) => void createAlipaySubscription(tier)}
-        onPaidTierWithoutAlipay={() =>
-          setMsg("付费订阅需跳转支付宝完成付款后才会生效。请在服务器配置 ALIPAY_PAY_ENABLED、密钥与 ALIPAY_NOTIFY_URL，并确保异步通知可达。")
-        }
-      />
+      <section
+        id="balance-billing"
+        className="mt-8 scroll-mt-24 rounded-xl border border-line bg-surface/60 p-5 shadow-sm"
+        aria-labelledby="balance-billing-title"
+      >
+        <h2 id="balance-billing-title" className="text-base font-semibold text-ink">
+          我的余额
+        </h2>
+        {walletPayEnabled ? (
+          <>
+            <p className="mt-3 text-2xl font-semibold tracking-tight text-ink">
+              {walletBalanceCents != null ? (
+                <span className="font-mono">{fmtMoneyYuan(walletBalanceCents)}</span>
+              ) : (
+                <span className="text-sm font-normal text-muted">加载中…</span>
+              )}
+            </p>
+            {(experienceVoiceTotal != null && experienceVoiceMin != null) ||
+            (experienceTextTotal != null && experienceTextChars != null) ? (
+              <p className="mt-2 text-xs text-ink">
+                <span className="font-medium text-muted">体验包（已用 / 总量）</span>
+                {experienceVoiceTotal != null && experienceVoiceMin != null ? (
+                  <span className="ml-2 font-mono">
+                    语音 {experienceVoiceUsedTotalLabel(experienceVoiceMin, experienceVoiceTotal)}
+                  </span>
+                ) : null}
+                {experienceTextTotal != null && experienceTextChars != null ? (
+                  <span className="ml-2 font-mono">
+                    文本 {experienceTextUsedTotalLabel(experienceTextChars, experienceTextTotal)}
+                  </span>
+                ) : null}
+              </p>
+            ) : experienceVoiceMin != null || experienceTextChars != null ? (
+              <p className="mt-2 text-xs text-ink">
+                <span className="font-medium text-muted">体验包剩余</span>
+                {experienceVoiceMin != null ? (
+                  <span className="ml-2 font-mono">语音 {experienceVoiceMin.toFixed(2)} 分钟</span>
+                ) : null}
+                {experienceTextChars != null ? (
+                  <span className="ml-2 font-mono">文本 {experienceTextChars.toLocaleString()} 字</span>
+                ) : null}
+              </p>
+            ) : null}
+            {balanceBelowAlertThreshold ? (
+              <div className="mt-3 rounded-lg border border-warning/40 bg-warning-soft/90 px-3 py-2 text-xs text-warning-ink" role="status">
+                {showWalletRechargeSection ? (
+                  <button
+                    type="button"
+                    className="rounded-md bg-cta px-3 py-1.5 text-xs font-medium text-cta-foreground hover:bg-cta/90"
+                    onClick={() => setRechargeModalOpen(true)}
+                  >
+                    去充值
+                  </button>
+                ) : (
+                  <span>余额低于设定下限</span>
+                )}
+              </div>
+            ) : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {showWalletRechargeSection ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90"
+                  onClick={() => setRechargeModalOpen(true)}
+                >
+                  充值
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="inline-flex items-center justify-center rounded-lg border border-line bg-fill px-4 py-2 text-sm font-medium text-ink hover:bg-fill/80"
+                onClick={() => setAlertModalOpen(true)}
+              >
+                余额预警
+              </button>
+            </div>
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-muted">请登录后查看余额、体验包余量与账单流水。</p>
+        )}
+      </section>
 
-      {showWalletRechargeSection ? (
-        <section id="wallet-topup" className="mt-12 scroll-mt-24 rounded-xl border border-dashed border-line bg-fill/30 p-5">
-          <h2 className="text-sm font-semibold text-ink">账户余额充值</h2>
-          {walletBalanceCents != null ? (
-            <p className="mt-1 text-sm text-ink">
-              当前余额：<span className="font-mono font-semibold">{fmtMoneyYuan(walletBalanceCents)}</span>
-            </p>
-          ) : null}
-          <p className="mt-1 text-xs text-muted">
-            {mergedWalletTopup.description ||
-              "充值进入钱包（单位：人民币），用多少扣多少；单次最低 ¥10；不改变订阅档位。"}
-          </p>
-          {alipayPageEnabled ? (
-            <p className="mt-2 text-xs text-muted">
-              跳转支付宝页后请用手机扫码付款，成功后余额会自动更新。套餐内用量用尽后，按量任务会从余额扣费（以服务端记录为准）。
-            </p>
-          ) : null}
-          <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
-          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-            <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm sm:max-w-[14rem]">
-              <span className="text-muted">充值金额（元）</span>
+      <section className="mt-10 space-y-10">
+        <div>
+          <h2 className="text-lg font-semibold text-ink">充值记录</h2>
+          <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-surface/40">
+            <table className="min-w-[640px] w-full text-left text-sm text-ink">
+              <thead className="border-b border-line text-xs text-muted">
+                <tr>
+                  <th className="px-3 py-2">流水号</th>
+                  <th className="px-3 py-2">充值时间</th>
+                  <th className="px-3 py-2">充值渠道</th>
+                  <th className="px-3 py-2">充值金额</th>
+                  <th className="px-3 py-2">充值结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rechargeRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-8 text-center text-muted">
+                      暂无
+                    </td>
+                  </tr>
+                ) : (
+                  rechargeRecords.map((r, idx) => (
+                    <tr
+                      key={r.serial_no ? String(r.serial_no) : `rch_${idx}`}
+                      className="border-t border-line/80"
+                    >
+                      <td className="max-w-[14rem] px-3 py-2 font-mono text-[11px]" title={r.provider_order_id || r.serial_no}>
+                        {r.serial_no || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-muted">{fmtTimeUnix(r.recharged_at_unix)}</td>
+                      <td className="px-3 py-2 text-xs">{r.channel_zh || "—"}</td>
+                      <td className="px-3 py-2 font-mono">{fmtMoneyYuan(r.amount_cents)}</td>
+                      <td className="px-3 py-2 text-xs">{r.result_zh || "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div>
+          <h2 className="text-lg font-semibold text-ink">消费记录</h2>
+          <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-surface/40">
+            <table className="min-w-[960px] w-full text-left text-sm text-ink">
+              <thead className="border-b border-line text-xs text-muted">
+                <tr>
+                  <th className="px-3 py-2">消费账号</th>
+                  <th className="px-3 py-2">消费接口</th>
+                  <th className="px-3 py-2">消费功能</th>
+                  <th className="px-3 py-2">消费时长/字数</th>
+                  <th className="px-3 py-2">消费金额</th>
+                  <th className="px-3 py-2">消费时间</th>
+                  <th className="px-3 py-2">消费结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                {consumptionRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-8 text-center text-muted">
+                      暂无
+                    </td>
+                  </tr>
+                ) : (
+                  consumptionRecords.map((c) => (
+                    <tr key={`${c.ledger_id}_${c.job_id}`} className="border-t border-line/80">
+                      <td className="px-3 py-2 font-mono text-xs">{c.account_masked || "—"}</td>
+                      <td className="max-w-[12rem] truncate px-3 py-2 font-mono text-[10px]" title={c.api_path}>
+                        {c.api_path || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-xs">{c.feature_zh || "—"}</td>
+                      <td className="max-w-[18rem] px-3 py-2 text-xs text-muted">{c.usage_detail_zh || "—"}</td>
+                      <td className="px-3 py-2 font-mono">{fmtMoneyYuan(c.amount_cents ?? 0)}</td>
+                      <td className="px-3 py-2 text-xs text-muted">{fmtTimeUnix(c.consumed_at_unix)}</td>
+                      <td className="px-3 py-2 text-xs">{c.result_zh || "—"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {walletPayEnabled ? (
+        <FormSheetModal
+          open={alertModalOpen}
+          titleId="wallet-alert-modal-title"
+          title="余额预警"
+          onClose={() => setAlertModalOpen(false)}
+        >
+          <div className="flex max-w-md flex-col gap-2 sm:flex-row sm:items-end">
+            <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
+              <span className="text-muted">预警线（元）</span>
               <input
                 type="number"
-                min={(mergedWalletTopup.min_amount_cents ?? 1000) / 100}
-                step="1"
+                min="0"
+                step="0.01"
                 className="w-full rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-ink"
-                value={topupYuanInput}
-                onChange={(e) => setTopupYuanInput(e.target.value)}
+                value={alertThresholdYuan}
+                onChange={(e) => setAlertThresholdYuan(e.target.value)}
+                placeholder="例如 5"
               />
             </label>
-            {alipayPageEnabled ? (
-              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-                <button
-                  type="button"
-                  className="w-full rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50 sm:w-auto"
-                  disabled={
-                    walletCreating || walletPaying || alipayWalletLoading || busyPayOrWallet || !walletPayEnabled
-                  }
-                  onClick={() => void createAlipayWalletTopup()}
-                >
-                  {alipayWalletLoading ? "正在跳转支付宝…" : "支付宝扫码充值"}
-                </button>
-                <button
-                  type="button"
-                  className="w-full rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-fill disabled:opacity-50 sm:w-auto"
-                  disabled={!walletPayEnabled}
-                  onClick={() => void loadMe()}
-                >
-                  刷新余额
-                </button>
+            <button
+              type="button"
+              className="rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-fill"
+              onClick={() => persistWalletAlertThreshold()}
+            >
+              保存设置
+            </button>
+          </div>
+          {alertSavedHint ? <p className="mt-2 text-xs text-muted">{alertSavedHint}</p> : null}
+        </FormSheetModal>
+      ) : null}
+
+      {showWalletRechargeSection ? (
+        <FormSheetModal
+          open={rechargeModalOpen}
+          titleId="wallet-recharge-modal-title"
+          title="账户充值"
+          onClose={() => setRechargeModalOpen(false)}
+        >
+          {alipayPageEnabled ? (
+            <p className="text-xs text-muted">
+              跳转支付宝页后请用手机扫码付款；返回本页后余额会自动刷新。
+            </p>
+          ) : null}
+          <div className="mt-4 flex flex-col gap-4">
+            <div className="flex max-w-md flex-col gap-2">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-muted">充值金额（元）</span>
+                <input
+                  type="number"
+                  min={(mergedWalletTopup.min_amount_cents ?? 1) / 100}
+                  step="0.01"
+                  className="w-full rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-ink"
+                  value={topupYuanInput}
+                  onChange={(e) => setTopupYuanInput(e.target.value)}
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {suggestedTopupYuan.map((yuan) => (
+                  <button
+                    key={yuan}
+                    type="button"
+                    className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
+                    onClick={() => setTopupYuanInput(String(yuan))}
+                  >
+                    ¥{yuan}
+                  </button>
+                ))}
               </div>
+            </div>
+            {alipayPageEnabled ? (
+              <button
+                type="button"
+                className="w-full max-w-md rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50 sm:w-auto"
+                disabled={walletCreating || walletPaying || alipayWalletLoading || !walletPayEnabled}
+                onClick={() => void createAlipayWalletTopup()}
+              >
+                {alipayWalletLoading ? "正在跳转支付宝…" : "支付宝扫码充值"}
+              </button>
             ) : allowMockWallet && mergedWalletTopup.checkout_supported !== false ? (
               <button
                 type="button"
-                className="rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50"
-                disabled={
-                  walletCreating || walletPaying || alipayWalletLoading || busyPayOrWallet || !walletPayEnabled
-                }
+                className="w-fit rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90 disabled:opacity-50"
+                disabled={walletCreating || walletPaying || alipayWalletLoading || !walletPayEnabled}
                 onClick={() => void createWalletOrder()}
               >
                 {walletCreating ? "创建订单中…" : "去支付（内测模拟）"}
               </button>
             ) : (
               <p className="text-xs text-muted">
-                余额充值需开通支付宝：请在服务端配置 ALIPAY_* 并启用 <code className="rounded bg-fill px-1">payment_channels.alipay_page</code>
-                。
+                余额充值需开通支付宝：请在服务端配置 ALIPAY_* 并启用{" "}
+                <code className="rounded bg-fill px-1">payment_channels.alipay_page</code>。
               </p>
             )}
           </div>
@@ -525,61 +727,13 @@ export default function SubscriptionPage() {
               </button>
             </div>
           ) : null}
-        </section>
+          <div className="mt-6 border-t border-line/80 pt-4">
+            <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
+          </div>
+        </FormSheetModal>
       ) : null}
 
       <FaqAccordion />
-      <TrustFooter supportEmail={supportEmail} />
-
-      <section className="mt-12 border-t border-line pt-8">
-        <h2 className="text-lg font-semibold text-ink">订单记录</h2>
-        <p className="mt-1 text-xs text-muted">
-          当前方案：<span className="text-ink">{currentPlan}</span>
-          {billingCycle ? (
-            <span className="ml-2">
-              付费周期：<span className="text-ink">{billingCycle}</span>
-            </span>
-          ) : null}
-        </p>
-        <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-surface/40">
-          <table className="min-w-[720px] w-full text-left text-sm text-ink">
-            <thead className="border-b border-line text-xs text-muted">
-              <tr>
-                <th className="px-3 py-2">时间</th>
-                <th className="px-3 py-2">状态</th>
-                <th className="px-3 py-2">方案</th>
-                <th className="px-3 py-2">周期</th>
-                <th className="px-3 py-2">金额</th>
-                <th className="px-3 py-2">支付方式</th>
-                <th className="px-3 py-2">参考编号</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-muted">
-                    暂无订单记录。完成支付后，相关条目会显示在这里。
-                  </td>
-                </tr>
-              ) : (
-                orders.map((o, idx) => (
-                  <tr key={o.event_id ? String(o.event_id) : `ord_${idx}`} className="border-t border-line/80">
-                    <td className="px-3 py-2 text-xs text-muted">{fmtOrderTime(o.created_at)}</td>
-                    <td className="px-3 py-2">{o.status || "—"}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{o.tier || "—"}</td>
-                    <td className="px-3 py-2 text-xs">{o.billing_cycle || "—"}</td>
-                    <td className="px-3 py-2">{fmtMoneyYuan(o.amount_cents)}</td>
-                    <td className="px-3 py-2 text-xs">{o.provider || "—"}</td>
-                    <td className="max-w-[10rem] truncate px-3 py-2 font-mono text-[10px]" title={o.event_id}>
-                      {o.event_id || "—"}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
 
       {msg ? <p className="mt-4 text-center text-sm text-muted">{msg}</p> : null}
     </main>

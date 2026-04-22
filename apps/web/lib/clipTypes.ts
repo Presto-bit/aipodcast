@@ -86,11 +86,27 @@ export type ClipQcReport = {
   hints?: string[];
 };
 
+/** 导出时压缩超长词间静音（粗剪）；由 PATCH export_pause_policy 写入 */
+export type ClipExportPausePolicy = {
+  enabled: boolean;
+  long_gap_ms: number;
+  cap_ms: number;
+};
+
 export type ClipProjectRow = {
   id: string;
   title: string;
   transcription_status: string;
   export_status: string;
+  export_pause_policy?: ClipExportPausePolicy | null;
+  /** 修音 / 导出 loudnorm 整合响度 I（LUFS）；null 表示用 CLIP_EXPORT_LOUDNORM_I 或默认 -16 */
+  repair_loudness_i_lufs?: number | null;
+  /** 嘉宾名 / 公司名 / 专业词：整词匹配时不做口癖高亮与规则建议 */
+  rough_cut_lexicon_exempt?: string[];
+  /** 火山 ASR 热词（corpus.context hotwords），转写 submit 时传入 */
+  asr_corpus_hotwords?: string[];
+  /** 火山 ASR 场景/上下文（dialog_ctx），转写 submit 时传入 */
+  asr_corpus_scene?: string | null;
   has_audio?: boolean;
   audio_staging_count?: number;
   audio_staging_keys?: ClipAudioStagingEntry[];
@@ -126,4 +142,6 @@ export type ClipWord = {
   s_ms: number;
   e_ms: number;
   punct?: string;
+  /** ASR utterance 新条首词（服务端归一化写入）；用于稿面换行 */
+  utt_new?: boolean;
 };

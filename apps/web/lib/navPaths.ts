@@ -14,9 +14,7 @@ const ADMIN_CONSOLE_PREFIXES = [
   "/admin/usage-users",
   "/admin/usage-works",
   "/admin/usage-alerts",
-  "/admin/tts-polish",
-  "/admin/subscription-matrix",
-  "/admin/subscription-pay"
+  "/admin/tts-polish"
 ] as const;
 
 export function normalizePathname(p: string): string {

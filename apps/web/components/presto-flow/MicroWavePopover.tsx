@@ -68,7 +68,7 @@ export default function MicroWavePopover({ word, anchor, onClose, title, hint }:
   const top = Math.max(12, anchor.top - 140);
 
   return (
-    <div className="fixed inset-0 z-[60] bg-canvas/70 backdrop-blur-[2px]" role="presentation" onClick={onClose}>
+    <div className="fym-workspace-scrim z-[60] bg-canvas/70 backdrop-blur-[2px]" role="presentation" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"

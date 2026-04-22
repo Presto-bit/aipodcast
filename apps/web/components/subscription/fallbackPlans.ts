@@ -14,7 +14,6 @@ export const FALLBACK_SUBSCRIPTION_PLANS: PricingPlan[] = [
     summary_quotas: [
       { key: "minutes", label: "月目标生成时长", value: "20 分钟" },
       { key: "clones", label: "每月含音色克隆", value: "0 次" },
-      { key: "note_refs", label: "知识库可参考资料条数", value: "1 条" },
       { key: "long_form", label: "长文与长文播客单次目标字数上限", value: "5000 字" }
     ],
     feature_bullets: [
@@ -34,7 +33,6 @@ export const FALLBACK_SUBSCRIPTION_PLANS: PricingPlan[] = [
     summary_quotas: [
       { key: "minutes", label: "月目标生成时长", value: "80 分钟" },
       { key: "clones", label: "每月含音色克隆", value: "1 次" },
-      { key: "note_refs", label: "知识库可参考资料条数", value: "3 条" },
       { key: "long_form", label: "长文与长文播客单次目标字数上限", value: "8000 字" }
     ],
     inherits_label: "相对 Free 的提升：",
@@ -55,7 +53,6 @@ export const FALLBACK_SUBSCRIPTION_PLANS: PricingPlan[] = [
     summary_quotas: [
       { key: "minutes", label: "月目标生成时长", value: "400 分钟" },
       { key: "clones", label: "每月含音色克隆", value: "2 次" },
-      { key: "note_refs", label: "知识库可参考资料条数", value: "6 条" },
       { key: "long_form", label: "长文与长文播客单次目标字数上限", value: "20000 字" }
     ],
     inherits_label: "Basic+ 的核心升级：",
@@ -76,7 +73,6 @@ export const FALLBACK_SUBSCRIPTION_PLANS: PricingPlan[] = [
     summary_quotas: [
       { key: "minutes", label: "月目标生成时长", value: "800 分钟" },
       { key: "clones", label: "每月含音色克隆", value: "3 次" },
-      { key: "note_refs", label: "知识库可参考资料条数", value: "12 条" },
       { key: "long_form", label: "长文与长文播客单次目标字数上限", value: "50000 字" }
     ],
     inherits_label: "Pro 的全部权益，另含：",

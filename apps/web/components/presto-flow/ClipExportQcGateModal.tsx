@@ -55,7 +55,7 @@ export default function ClipExportQcGateModal({
   const busy = busyAnalyze || busyExport;
 
   return createPortal(
-    <div className="fixed inset-0 z-[1200] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className="fym-workspace-scrim z-[1200] flex items-center justify-center p-4" role="dialog" aria-modal="true">
       <button
         type="button"
         className="absolute inset-0 bg-surface/50 backdrop-blur-[1px]"

@@ -9,7 +9,12 @@ from zoneinfo import ZoneInfo
 from psycopg2 import IntegrityError
 
 from .db import get_conn, get_cursor
-from .subscription_manifest import MONTHLY_MINUTES_PRODUCT_BY_TIER, USER_SUBSCRIPTION_TIERS
+from .subscription_manifest import (
+    EXPERIENCE_NEW_USER_TEXT_CHARS,
+    EXPERIENCE_NEW_USER_VOICE_MINUTES,
+    MONTHLY_MINUTES_PRODUCT_BY_TIER,
+    USER_SUBSCRIPTION_TIERS,
+)
 from .usage_billing import build_usage_event_meta
 
 logger = logging.getLogger(__name__)
@@ -21,6 +26,11 @@ LEGACY_DEFAULT_NOTEBOOK = "默认笔记本"
 NOTES_PODCAST_STUDIO_PROJECT = "notes-podcast-studio"
 # 与创作页「资料库」上传、ensureDefaultStudioNotebook 使用的名称一致
 DEFAULT_LIBRARY_NOTEBOOK_NAME = "默认资料库"
+
+# 「热门笔记本」发现列表：内容门槛与浏览去重（与 increment_public_notebook_view / list_popular_public_notebooks 一致）
+_POPULAR_MIN_SOURCES = 2
+_POPULAR_MAX_SOURCE_STALE_DAYS = 365
+_POPULAR_VIEW_DEDUP_HOURS = 24
 
 
 def _normalize_phone_digits(phone: str | None) -> str:
@@ -348,9 +358,14 @@ def get_job(job_id: str, user_ref: str | None = None) -> dict[str, Any] | None:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
             cur.execute(
                 """
-                SELECT j.*
+                SELECT j.*,
+                  NULLIF(TRIM(COALESCE(
+                    NULLIF(TRIM(u.display_name), ''),
+                    NULLIF(TRIM(u.phone), ''),
+                    NULLIF(TRIM(u.email), ''))), '') AS creator_label
                 FROM jobs j
                 LEFT JOIN projects p ON p.id = j.project_id
+                LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
                 WHERE j.id = %s
                   AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
                 """,
@@ -427,7 +442,752 @@ def ensure_notebooks_schema() -> None:
                 )
             except Exception:
                 pass
+            try:
+                cur.execute(
+                    "ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+                cur.execute("ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS public_access TEXT")
+                cur.execute(
+                    "ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS view_count BIGINT NOT NULL DEFAULT 0"
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_user_notebooks_public_views
+                    ON user_notebooks (is_public, view_count DESC)
+                    WHERE is_public = TRUE
+                    """
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS cover_mode TEXT NOT NULL DEFAULT 'auto'"
+                )
+                cur.execute("ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS cover_preset_id TEXT")
+                cur.execute(
+                    "ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS cover_thumb_object_key TEXT"
+                )
+                cur.execute(
+                    "ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS cover_image_object_key TEXT"
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    "ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS listed_in_discover BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_user_notebooks_discover_views
+                    ON user_notebooks (listed_in_discover, view_count DESC)
+                    WHERE listed_in_discover = TRUE
+                    """
+                )
+            except Exception:
+                pass
+            try:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS notebook_popular_view_dedup (
+                      viewer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                      owner_user_id UUID NOT NULL,
+                      notebook_name TEXT NOT NULL,
+                      last_increment_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                      PRIMARY KEY (viewer_user_id, owner_user_id, notebook_name)
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_notebook_popular_view_dedup_owner
+                    ON notebook_popular_view_dedup (owner_user_id, notebook_name)
+                    """
+                )
+            except Exception:
+                pass
             conn.commit()
+
+
+def _normalize_uuid_str(raw: str | None) -> str | None:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        return str(uuid.UUID(s))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _effective_project_user_uuid(cur: Any, user_ref: str | None, project_owner_user_uuid: str | None) -> str | None:
+    """共享阅读：按笔记本所有者 UUID 过滤 inputs；否则按当前 user_ref 解析。"""
+    ou = _normalize_uuid_str(project_owner_user_uuid or "")
+    if ou:
+        cur.execute("SELECT 1 FROM users WHERE id = %s::uuid LIMIT 1", (ou,))
+        if cur.fetchone():
+            return ou
+    return _resolve_user_uuid_or_none(cur, user_ref)
+
+
+def get_shared_notebook_public_access(owner_user_uuid: str, notebook_name: str) -> str | None:
+    """
+    若该用户笔记本已公开，返回 'read_only' | 'edit'；否则 None。
+    """
+    ou = _normalize_uuid_str(owner_user_uuid)
+    nb = (notebook_name or "").strip()
+    if not ou or not nb:
+        return None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT is_public, public_access
+                FROM user_notebooks
+                WHERE user_id = %s::uuid AND name = %s
+                LIMIT 1
+                """,
+                (ou, nb),
+            )
+            row = cur.fetchone()
+            if not row or not bool(row.get("is_public")):
+                return None
+            mode = str(row.get("public_access") or "").strip().lower()
+            if mode in ("read_only", "edit"):
+                return mode
+            return None
+
+
+def list_popular_public_notebooks(*, limit: int = 40, offset: int = 0) -> list[dict[str, Any]]:
+    lim = max(1, min(200, int(limit)))
+    off = max(0, min(10_000, int(offset)))
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT ub.user_id::text AS owner_user_id,
+                       ub.name AS notebook,
+                       ub.public_access,
+                       ub.view_count,
+                       ub.created_at,
+                       COALESCE(stats.source_count, 0)::int AS source_count,
+                       stats.latest_source_at,
+                       COALESCE(NULLIF(btrim(ub.cover_mode), ''), 'auto') AS cover_mode,
+                       ub.cover_preset_id,
+                       ub.cover_thumb_object_key,
+                       popauto.id::text AS auto_cover_note_id,
+                       COALESCE(NULLIF(btrim(u.phone), ''), NULLIF(btrim(u.username), ''), NULLIF(btrim(u.email), ''), '') AS owner_label_raw
+                FROM user_notebooks ub
+                JOIN users u ON u.id = ub.user_id
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(*)::int AS source_count,
+                           MAX(i.created_at) AS latest_source_at
+                    FROM inputs i
+                    JOIN projects p ON p.id = i.project_id
+                    WHERE i.input_type IN ('note_text', 'note_file')
+                      AND i.deleted_at IS NULL
+                      AND (i.metadata->>'notebook') = ub.name
+                      AND p.user_id = ub.user_id
+                ) stats ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT i.id
+                    FROM inputs i
+                    JOIN projects p2 ON p2.id = i.project_id
+                    WHERE p2.user_id = ub.user_id
+                      AND i.deleted_at IS NULL
+                      AND i.input_type = 'note_file'
+                      AND (i.metadata->>'notebook') = ub.name
+                      AND LOWER(COALESCE(i.metadata->>'ext', '')) IN ('png', 'jpg', 'jpeg', 'webp', 'gif', 'avif')
+                    ORDER BY i.created_at DESC
+                    LIMIT 1
+                ) popauto ON TRUE
+                WHERE ub.is_public = TRUE
+                  AND ub.public_access IN ('read_only', 'edit')
+                  AND ub.listed_in_discover = TRUE
+                  AND COALESCE(stats.source_count, 0) >= %s
+                  AND COALESCE(stats.latest_source_at, ub.created_at)
+                        >= (NOW() - (%s::int * INTERVAL '1 day'))
+                ORDER BY
+                  (
+                    COALESCE(stats.source_count, 0)::double precision * 10.0
+                    + LN(1.0 + GREATEST(ub.view_count::double precision, 0.0)) * 14.0
+                  ) * EXP(
+                    - LEAST(
+                      5.0,
+                      GREATEST(
+                        0.0,
+                        EXTRACT(
+                          EPOCH FROM (NOW() - COALESCE(stats.latest_source_at, ub.created_at))
+                        )::double precision
+                        / 86400.0
+                        / 90.0
+                      )
+                    )
+                  ) DESC NULLS LAST,
+                  ub.view_count DESC,
+                  ub.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (_POPULAR_MIN_SOURCES, _POPULAR_MAX_SOURCE_STALE_DAYS, lim, off),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        label = str(r.get("owner_label_raw") or "").strip()
+        latest = r.get("latest_source_at")
+        if latest is not None and hasattr(latest, "isoformat"):
+            latest_iso = latest.isoformat()
+        else:
+            latest_iso = str(latest or "").strip()
+        cm = str(r.get("cover_mode") or "auto").strip().lower() or "auto"
+        pid = str(r.get("cover_preset_id") or "").strip()
+        out.append(
+            {
+                "ownerUserId": str(r.get("owner_user_id") or ""),
+                "notebook": str(r.get("notebook") or ""),
+                "publicAccess": str(r.get("public_access") or ""),
+                "viewCount": int(r.get("view_count") or 0),
+                "ownerDisplayName": _mask_user_label_for_public(label),
+                "sourceCount": int(r.get("source_count") or 0),
+                "latestSourceAt": latest_iso,
+                "coverMode": cm,
+                "coverPresetId": pid or None,
+                "hasUploadThumb": bool(str(r.get("cover_thumb_object_key") or "").strip()),
+                "autoCoverNoteId": str(r.get("auto_cover_note_id") or "").strip() or None,
+            }
+        )
+    return out
+
+
+def _mask_user_label_for_public(label: str) -> str:
+    s = (label or "").strip()
+    if not s:
+        return "用户"
+    if "@" in s:
+        parts = s.split("@", 1)
+        left = parts[0].strip()
+        if len(left) <= 2:
+            return f"{left[0]}***@{parts[1]}" if left else f"***@{parts[1]}"
+        return f"{left[0]}***@{parts[1]}"
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) >= 7:
+        return f"用户 {digits[-4:]}"
+    if len(s) <= 3:
+        return f"{s[0]}**" if s else "用户"
+    return f"{s[0]}**{s[-1]}"
+
+
+def increment_public_notebook_view(
+    owner_user_uuid: str, notebook_name: str, *, viewer_user_ref: str | None
+) -> bool:
+    """
+    为公开笔记本增加浏览量。同一访客在 _POPULAR_VIEW_DEDUP_HOURS 小时内对同一本仅计一次；
+    笔记本所有者本人打开不计数。未登录/无法解析访客时退化为直接 +1（便于本地关闭鉴权调试）。
+    """
+    ou = _normalize_uuid_str(owner_user_uuid)
+    nb = (notebook_name or "").strip()
+    if not ou or not nb:
+        return False
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            viewer_uuid = _resolve_user_uuid_or_none(cur, viewer_user_ref)
+            if not viewer_uuid:
+                cur.execute(
+                    """
+                    UPDATE user_notebooks
+                    SET view_count = view_count + 1
+                    WHERE user_id = %s::uuid AND name = %s AND is_public = TRUE
+                      AND public_access IN ('read_only', 'edit')
+                    """,
+                    (ou, nb),
+                )
+                ok = cur.rowcount > 0
+                conn.commit()
+                return bool(ok)
+            if viewer_uuid == ou:
+                conn.rollback()
+                return True
+            cur.execute(
+                """
+                SELECT 1
+                FROM notebook_popular_view_dedup
+                WHERE viewer_user_id = %s::uuid
+                  AND owner_user_id = %s::uuid
+                  AND notebook_name = %s
+                  AND last_increment_at > NOW() - make_interval(secs => %s)
+                LIMIT 1
+                """,
+                (viewer_uuid, ou, nb, int(_POPULAR_VIEW_DEDUP_HOURS * 3600)),
+            )
+            if cur.fetchone():
+                conn.rollback()
+                return True
+            cur.execute(
+                """
+                UPDATE user_notebooks
+                SET view_count = view_count + 1
+                WHERE user_id = %s::uuid AND name = %s AND is_public = TRUE
+                  AND public_access IN ('read_only', 'edit')
+                """,
+                (ou, nb),
+            )
+            if cur.rowcount <= 0:
+                conn.rollback()
+                return False
+            cur.execute(
+                """
+                INSERT INTO notebook_popular_view_dedup (viewer_user_id, owner_user_id, notebook_name, last_increment_at)
+                VALUES (%s::uuid, %s::uuid, %s, NOW())
+                ON CONFLICT (viewer_user_id, owner_user_id, notebook_name)
+                DO UPDATE SET last_increment_at = EXCLUDED.last_increment_at
+                """,
+                (viewer_uuid, ou, nb),
+            )
+            conn.commit()
+            return True
+
+
+def get_notebook_sharing_row(user_ref: str | None, notebook_name: str) -> dict[str, Any] | None:
+    nb = (notebook_name or "").strip()
+    if not nb or not (user_ref or "").strip():
+        return None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return None
+            cur.execute(
+                """
+                SELECT name, is_public, public_access, view_count, listed_in_discover
+                FROM user_notebooks
+                WHERE user_id = %s::uuid AND name = %s
+                LIMIT 1
+                """,
+                (user_uuid, nb),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def set_notebook_sharing(
+    user_ref: str | None,
+    notebook_name: str,
+    *,
+    is_public: bool,
+    public_access: str | None,
+    listed_in_discover: bool | None = None,
+) -> tuple[bool, str]:
+    nb = (notebook_name or "").strip()
+    if not nb:
+        return False, "笔记本名称不能为空"
+    mode = (public_access or "").strip().lower() if public_access else ""
+    if is_public and mode not in ("read_only", "edit"):
+        return False, "公开访问需选择 read_only 或 edit"
+    if not is_public:
+        mode = ""
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return False, "未登录"
+            cur.execute(
+                """
+                SELECT is_public, COALESCE(listed_in_discover, FALSE) AS listed_in_discover
+                FROM user_notebooks
+                WHERE user_id = %s::uuid AND name = %s
+                LIMIT 1
+                """,
+                (user_uuid, nb),
+            )
+            prev = cur.fetchone()
+            if not prev:
+                return False, "笔记本不存在"
+            was_public = bool(prev.get("is_public"))
+            prev_listed = bool(prev.get("listed_in_discover"))
+            if not is_public:
+                new_listed = False
+            elif listed_in_discover is not None:
+                new_listed = bool(listed_in_discover)
+            elif not was_public:
+                # 首次开启分享：默认可参与「热门笔记本」筛选（仍受来源数、新鲜度等 SQL 门槛约束）。
+                # 仅链接、不上热门由调用方显式传 listed_in_discover=False。
+                new_listed = True
+            else:
+                new_listed = prev_listed
+            cur.execute(
+                """
+                UPDATE user_notebooks
+                SET is_public = %s,
+                    public_access = CASE WHEN %s THEN %s ELSE NULL END,
+                    listed_in_discover = %s
+                WHERE user_id = %s::uuid AND name = %s
+                """,
+                (bool(is_public), bool(is_public), mode or None, new_listed, user_uuid, nb),
+            )
+            conn.commit()
+    return True, ""
+
+
+def list_user_notebook_sharing_meta(user_ref: str | None) -> dict[str, dict[str, Any]]:
+    """当前用户在 user_notebooks 表中的公开设置（按笔记本名）。"""
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return {}
+            cur.execute(
+                """
+                SELECT name, is_public, public_access, view_count,
+                       COALESCE(listed_in_discover, FALSE) AS listed_in_discover
+                FROM user_notebooks
+                WHERE user_id = %s::uuid
+                """,
+                (user_uuid,),
+            )
+            out: dict[str, dict[str, Any]] = {}
+            for r in cur.fetchall():
+                nm = str(r.get("name") or "")
+                if not nm:
+                    continue
+                pa = str(r.get("public_access") or "").strip()
+                out[nm] = {
+                    "isPublic": bool(r.get("is_public")),
+                    "publicAccess": pa if pa in ("read_only", "edit") else None,
+                    "viewCount": int(r.get("view_count") or 0),
+                    "listedInDiscover": bool(r.get("listed_in_discover")),
+                }
+            return out
+
+
+def _delete_notebook_cover_object_keys(keys: list[str]) -> None:
+    from .object_store import delete_object_key
+
+    for k in keys:
+        s = str(k or "").strip()
+        if not s:
+            continue
+        try:
+            delete_object_key(s)
+        except Exception:
+            pass
+
+
+def _fetch_notebook_cover_keys(cur: Any, user_uuid: str, notebook_name: str) -> tuple[str, str]:
+    cur.execute(
+        """
+        SELECT cover_thumb_object_key, cover_image_object_key
+        FROM user_notebooks
+        WHERE user_id = %s::uuid AND name = %s
+        """,
+        (user_uuid, notebook_name),
+    )
+    row = cur.fetchone()
+    if not row:
+        return "", ""
+    return str(row.get("cover_thumb_object_key") or "").strip(), str(row.get("cover_image_object_key") or "").strip()
+
+
+def list_notebook_covers_meta(user_ref: str | None) -> dict[str, dict[str, Any]]:
+    """按笔记本名返回封面状态，供列表页渲染（混合：auto / preset / upload）。"""
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return {}
+            cur.execute(
+                """
+                SELECT ub.name,
+                       COALESCE(NULLIF(btrim(ub.cover_mode), ''), 'auto') AS cover_mode,
+                       ub.cover_preset_id,
+                       ub.cover_thumb_object_key,
+                       ub.cover_image_object_key,
+                       auto.id::text AS auto_cover_note_id
+                FROM user_notebooks ub
+                LEFT JOIN LATERAL (
+                    SELECT i.id
+                    FROM inputs i
+                    JOIN projects p ON p.id = i.project_id
+                    WHERE p.user_id = ub.user_id
+                      AND i.deleted_at IS NULL
+                      AND i.input_type = 'note_file'
+                      AND (i.metadata->>'notebook') = ub.name
+                      AND LOWER(COALESCE(i.metadata->>'ext', '')) IN ('png', 'jpg', 'jpeg', 'webp', 'gif', 'avif')
+                    ORDER BY i.created_at DESC
+                    LIMIT 1
+                ) auto ON TRUE
+                WHERE ub.user_id = %s::uuid
+                """,
+                (user_uuid,),
+            )
+            out: dict[str, dict[str, Any]] = {}
+            for r in cur.fetchall():
+                nm = str(r.get("name") or "")
+                if not nm:
+                    continue
+                mode = str(r.get("cover_mode") or "auto").strip().lower() or "auto"
+                thumb = str(r.get("cover_thumb_object_key") or "").strip()
+                full = str(r.get("cover_image_object_key") or "").strip()
+                auto_id = str(r.get("auto_cover_note_id") or "").strip()
+                preset = str(r.get("cover_preset_id") or "").strip()
+                out[nm] = {
+                    "coverMode": mode,
+                    "coverPresetId": preset or None,
+                    "hasUploadThumb": bool(thumb),
+                    "autoCoverNoteId": auto_id or None,
+                }
+            return out
+
+
+def patch_notebook_cover_db(
+    user_ref: str | None,
+    notebook_name: str,
+    *,
+    cover_mode: str,
+    cover_preset_id: str | None = None,
+) -> tuple[bool, str]:
+    from .note_constants import NOTEBOOK_COVER_PRESET_IDS
+
+    nb = (notebook_name or "").strip()
+    if not nb:
+        return False, "笔记本名称不能为空"
+    mode = (cover_mode or "").strip().lower()
+    if mode not in ("auto", "preset", "upload"):
+        return False, "cover_mode 无效"
+    preset = (cover_preset_id or "").strip() or None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return False, "未登录"
+            cur.execute(
+                "SELECT 1 FROM user_notebooks WHERE user_id = %s::uuid AND name = %s",
+                (user_uuid, nb),
+            )
+            if not cur.fetchone():
+                return False, "笔记本不存在"
+            kt, kf = _fetch_notebook_cover_keys(cur, str(user_uuid), nb)
+            if mode == "auto":
+                cur.execute(
+                    """
+                    UPDATE user_notebooks
+                    SET cover_mode = 'auto',
+                        cover_preset_id = NULL,
+                        cover_thumb_object_key = NULL,
+                        cover_image_object_key = NULL
+                    WHERE user_id = %s::uuid AND name = %s
+                    """,
+                    (user_uuid, nb),
+                )
+                conn.commit()
+                _delete_notebook_cover_object_keys([kt, kf])
+                return True, ""
+            if mode == "preset":
+                if not preset or preset not in NOTEBOOK_COVER_PRESET_IDS:
+                    return False, "cover_preset_id 无效"
+                cur.execute(
+                    """
+                    UPDATE user_notebooks
+                    SET cover_mode = 'preset',
+                        cover_preset_id = %s,
+                        cover_thumb_object_key = NULL,
+                        cover_image_object_key = NULL
+                    WHERE user_id = %s::uuid AND name = %s
+                    """,
+                    (preset, user_uuid, nb),
+                )
+                conn.commit()
+                _delete_notebook_cover_object_keys([kt, kf])
+                return True, ""
+            # upload: 仅切换为上传模式（对象键由上传接口写入）
+            if not kt and not kf:
+                return False, "请先上传封面图"
+            cur.execute(
+                """
+                UPDATE user_notebooks
+                SET cover_mode = 'upload',
+                    cover_preset_id = NULL
+                WHERE user_id = %s::uuid AND name = %s
+                """,
+                (user_uuid, nb),
+            )
+            conn.commit()
+            return True, ""
+
+
+def upload_notebook_cover_db(
+    user_ref: str | None, notebook_name: str, data: bytes, content_type: str | None
+) -> tuple[bool, str]:
+    from .note_constants import ALLOWED_NOTEBOOK_COVER_IMAGE_EXT, NOTEBOOK_COVER_MAX_BYTES
+    from .object_store import upload_bytes
+    from .storage_paths import notebook_cover_object_keys
+
+    nb = (notebook_name or "").strip()
+    if not nb:
+        return False, "笔记本名称不能为空"
+    if len(data) > NOTEBOOK_COVER_MAX_BYTES:
+        return False, "图片过大"
+    ct = (content_type or "").split(";")[0].strip().lower()
+    ext_by_ct = {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/webp": "webp",
+        "image/gif": "gif",
+        "image/avif": "avif",
+    }
+    ext = ext_by_ct.get(ct)
+    if not ext or ext not in ALLOWED_NOTEBOOK_COVER_IMAGE_EXT:
+        return False, "仅支持 png / jpeg / webp / gif / avif"
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return False, "未登录"
+            cur.execute(
+                "SELECT 1 FROM user_notebooks WHERE user_id = %s::uuid AND name = %s",
+                (user_uuid, nb),
+            )
+            if not cur.fetchone():
+                return False, "笔记本不存在"
+            kt_old, kf_old = _fetch_notebook_cover_keys(cur, str(user_uuid), nb)
+            uid_s = str(user_uuid)
+            thumb_key, full_key = notebook_cover_object_keys(uid_s, nb, ext)
+            try:
+                upload_bytes(thumb_key, data, content_type=ct or f"image/{ext}")
+                upload_bytes(full_key, data, content_type=ct or f"image/{ext}")
+            except Exception:
+                return False, "封面上传失败，请稍后重试"
+            cur.execute(
+                """
+                UPDATE user_notebooks
+                SET cover_mode = 'upload',
+                    cover_preset_id = NULL,
+                    cover_thumb_object_key = %s,
+                    cover_image_object_key = %s
+                WHERE user_id = %s::uuid AND name = %s
+                """,
+                (thumb_key, full_key, user_uuid, nb),
+            )
+            conn.commit()
+    _delete_notebook_cover_object_keys([kt_old, kf_old])
+    return True, ""
+
+
+def _mime_for_cover_ext(ext: str) -> str:
+    e = (ext or "").strip().lower().lstrip(".")
+    return {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp",
+        "gif": "image/gif",
+        "avif": "image/avif",
+    }.get(e, "application/octet-stream")
+
+
+def read_notebook_cover_bytes_owner(
+    user_ref: str | None, notebook_name: str, variant: str
+) -> tuple[bytes | None, str, str | None]:
+    """当前用户读取自己笔记本封面二进制。variant: thumb | full"""
+    nb = (notebook_name or "").strip()
+    v = (variant or "thumb").strip().lower()
+    if v not in ("thumb", "full"):
+        v = "thumb"
+    from .object_store import get_object_bytes
+
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return None, "", "未登录"
+            cur.execute(
+                """
+                SELECT cover_thumb_object_key, cover_image_object_key
+                FROM user_notebooks
+                WHERE user_id = %s::uuid AND name = %s
+                """,
+                (user_uuid, nb),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None, "", "笔记本不存在"
+            kt = str(row.get("cover_thumb_object_key") or "").strip()
+            kf = str(row.get("cover_image_object_key") or "").strip()
+            key = kt if v == "thumb" else (kf or kt)
+            if not key:
+                return None, "", "无封面"
+            ext = key.rsplit(".", 1)[-1] if "." in key else ""
+            try:
+                data = get_object_bytes(key)
+            except Exception:
+                return None, "", "读取失败"
+            return data, _mime_for_cover_ext(ext), None
+
+
+def read_notebook_cover_bytes_public(
+    _viewer_user_ref: str | None, owner_user_uuid: str, notebook_name: str, variant: str
+) -> tuple[bytes | None, str, str | None]:
+    """已登录用户读取他人公开笔记本封面（用于热门列表等）；鉴权由路由层完成。"""
+    nb = (notebook_name or "").strip()
+    ou = _normalize_uuid_str(owner_user_uuid)
+    if not ou or not nb:
+        return None, "", "参数无效"
+    if not get_shared_notebook_public_access(ou, nb):
+        return None, "", "未公开"
+    v = (variant or "thumb").strip().lower()
+    if v not in ("thumb", "full"):
+        v = "thumb"
+    from .object_store import get_object_bytes
+
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT cover_thumb_object_key, cover_image_object_key
+                FROM user_notebooks
+                WHERE user_id = %s::uuid AND name = %s AND is_public = TRUE
+                  AND public_access IN ('read_only', 'edit')
+                """,
+                (ou, nb),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None, "", "无封面"
+            kt = str(row.get("cover_thumb_object_key") or "").strip()
+            kf = str(row.get("cover_image_object_key") or "").strip()
+            key = kt if v == "thumb" else (kf or kt)
+            if not key:
+                return None, "", "无封面"
+            ext = key.rsplit(".", 1)[-1] if "." in key else ""
+            try:
+                data = get_object_bytes(key)
+            except Exception:
+                return None, "", "读取失败"
+            return data, _mime_for_cover_ext(ext), None
+
+
+def count_notes_in_notebook_for_owner(owner_user_uuid: str, notebook_name: str, note_ids: list[str]) -> int:
+    """校验 note_ids 均属于该用户该笔记本且未删除。"""
+    ou = _normalize_uuid_str(owner_user_uuid)
+    nb = (notebook_name or "").strip()
+    ids = [str(x).strip() for x in note_ids if str(x).strip()]
+    if not ou or not nb or not ids:
+        return 0
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)::int AS c
+                FROM inputs i
+                JOIN projects p ON p.id = i.project_id
+                WHERE p.user_id = %s::uuid
+                  AND i.deleted_at IS NULL
+                  AND i.input_type IN ('note_text', 'note_file')
+                  AND COALESCE(i.metadata->>'notebook', '') = %s
+                  AND i.id::text = ANY(%s::text[])
+                """,
+                (ou, nb, ids),
+            )
+            row = cur.fetchone()
+            return int(row["c"] or 0) if row else 0
 
 
 def ensure_jobs_trash_schema() -> None:
@@ -440,6 +1200,21 @@ def ensure_jobs_trash_schema() -> None:
                 ON jobs (deleted_at, completed_at DESC, created_at DESC)
                 """
             )
+            try:
+                cur.execute(
+                    "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS is_podcast_template BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_jobs_podcast_template_list
+                    ON jobs (completed_at DESC NULLS LAST, created_at DESC)
+                    WHERE is_podcast_template IS TRUE
+                      AND deleted_at IS NULL
+                      AND status = 'succeeded'
+                    """
+                )
+            except Exception:
+                pass
             conn.commit()
 
 
@@ -611,9 +1386,21 @@ def rename_notebook_db(old: str, new_name: str, user_ref: str | None = None) -> 
             )
             if cur.fetchone():
                 return False, "该名称已存在"
+            kt_old, kf_old = _fetch_notebook_cover_keys(cur, str(user_uuid), o)
             cur.execute(
                 "UPDATE user_notebooks SET name = %s WHERE user_id = %s AND name = %s",
                 (n, user_uuid, o),
+            )
+            cur.execute(
+                """
+                UPDATE user_notebooks
+                SET cover_mode = 'auto',
+                    cover_preset_id = NULL,
+                    cover_thumb_object_key = NULL,
+                    cover_image_object_key = NULL
+                WHERE user_id = %s::uuid AND name = %s
+                """,
+                (user_uuid, n),
             )
             cur.execute(
                 """
@@ -628,6 +1415,7 @@ def rename_notebook_db(old: str, new_name: str, user_ref: str | None = None) -> 
                 (n, user_uuid, o),
             )
             conn.commit()
+    _delete_notebook_cover_object_keys([kt_old, kf_old])
     return True, ""
 
 
@@ -720,6 +1508,7 @@ def delete_notebook_db(name: str, user_ref: str | None = None) -> tuple[bool, st
     n = (name or "").strip()
     if not n:
         return False, "名称不能为空", 0, 0
+    cover_kt, cover_kf = "", ""
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -731,6 +1520,7 @@ def delete_notebook_db(name: str, user_ref: str | None = None) -> tuple[bool, st
             )
             if not cur.fetchone():
                 return False, "笔记本不存在", 0, 0
+            cover_kt, cover_kf = _fetch_notebook_cover_keys(cur, str(user_uuid), n)
             conn.commit()
 
     jobs_n = trash_jobs_for_notes_notebook(n, user_ref=user_ref)
@@ -743,6 +1533,7 @@ def delete_notebook_db(name: str, user_ref: str | None = None) -> tuple[bool, st
             delete_object_key(k)
         except Exception:
             pass
+    _delete_notebook_cover_object_keys([cover_kt, cover_kf])
 
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -883,14 +1674,18 @@ def find_duplicate_file_note_id(
 
 
 def list_notes(
-    notebook: str | None = None, limit: int = 200, offset: int = 0, user_ref: str | None = None
+    notebook: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+    user_ref: str | None = None,
+    project_owner_user_uuid: str | None = None,
 ) -> list[dict[str, Any]]:
     nb_filter = (notebook or "").strip()
     lim = max(1, min(500, int(limit)))
     off = max(0, min(50_000, int(offset)))
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            user_uuid = _effective_project_user_uuid(cur, user_ref, project_owner_user_uuid)
             if nb_filter:
                 cur.execute(
                     """
@@ -927,11 +1722,16 @@ def list_notes(
             return [dict(x) for x in cur.fetchall()]
 
 
-def get_note_by_id(note_id: str, include_deleted: bool = False, user_ref: str | None = None) -> dict[str, Any] | None:
+def get_note_by_id(
+    note_id: str,
+    include_deleted: bool = False,
+    user_ref: str | None = None,
+    project_owner_user_uuid: str | None = None,
+) -> dict[str, Any] | None:
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             del_clause = "" if include_deleted else "AND deleted_at IS NULL"
-            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            user_uuid = _effective_project_user_uuid(cur, user_ref, project_owner_user_uuid)
             cur.execute(
                 f"""
                 SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type, i.deleted_at,
@@ -1380,6 +2180,118 @@ def list_recent_works(
             return [dict(x) for x in cur.fetchall()]
 
 
+def list_podcast_template_works(
+    limit: int = 40,
+    offset: int = 0,
+    *,
+    slim_result: bool = True,
+) -> list[dict[str, Any]]:
+    """
+    管理员标记为「创作播客模板」的成功成片，供全站用户在创作页模板区浏览。
+    与 list_recent_works 使用相同的 slim result 投影。
+    """
+    ensure_jobs_trash_schema()
+    lim = max(1, min(200, int(limit)))
+    off = max(0, min(10_000, int(offset)))
+    jtypes = ["podcast_generate", "podcast"]
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if slim_result:
+                cur.execute(
+                    """
+                    SELECT j.id, j.job_type, j.status,
+                      CASE
+                        WHEN j.result IS NULL OR jsonb_typeof(j.result) != 'object' THEN '{}'::jsonb
+                        ELSE jsonb_strip_nulls(
+                          jsonb_build_object(
+                            'preview', j.result->'preview',
+                            'script_preview', j.result->'script_preview',
+                            'title', j.result->'title',
+                            'audio_url', j.result->'audio_url',
+                            'script_url', j.result->'script_url',
+                            'audio_duration_sec', j.result->'audio_duration_sec',
+                            'cover_image', COALESCE(j.result->'cover_image', j.result->'coverImage'),
+                            'cover_object_key', j.result->'cover_object_key',
+                            'audio_object_key', j.result->'audio_object_key',
+                            'script_char_count', j.result->'script_char_count',
+                            'notes_source_notebook', j.result->'notes_source_notebook',
+                            'notes_source_note_count', j.result->'notes_source_note_count',
+                            'notes_source_titles', j.result->'notes_source_titles',
+                            'has_audio_hex', to_jsonb(
+                              (j.result ? 'audio_hex' AND COALESCE(LENGTH(j.result->>'audio_hex'), 0) > 0)
+                              OR (
+                                (j.result ? 'audio_object_key')
+                                AND LENGTH(TRIM(COALESCE(j.result->>'audio_object_key', ''))) > 0
+                              )
+                            )
+                          )
+                        )
+                      END AS result,
+                      j.payload, j.created_at, j.completed_at, j.project_id,
+                      p.name AS project_name
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    WHERE j.status = 'succeeded'
+                      AND j.deleted_at IS NULL
+                      AND COALESCE(j.is_podcast_template, FALSE) IS TRUE
+                      AND j.job_type = ANY(%s::text[])
+                    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (jtypes, lim, off),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT j.id, j.job_type, j.status, j.result, j.payload, j.created_at, j.completed_at, j.project_id,
+                      p.name AS project_name
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    WHERE j.status = 'succeeded'
+                      AND j.deleted_at IS NULL
+                      AND COALESCE(j.is_podcast_template, FALSE) IS TRUE
+                      AND j.job_type = ANY(%s::text[])
+                    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (jtypes, lim, off),
+                )
+            return [dict(x) for x in cur.fetchall()]
+
+
+def set_job_podcast_template_flag(job_id: str, enabled: bool) -> tuple[bool, str]:
+    """
+    将成功播客成片标记为（或取消）全站创作模板。
+    返回 (是否更新成功, 错误码)；错误码 ok / invalid_job_id / job_not_found_or_ineligible。
+    """
+    ensure_jobs_trash_schema()
+    jid = (job_id or "").strip()
+    if not jid:
+        return False, "invalid_job_id"
+    en = bool(enabled)
+    jtypes = ["podcast_generate", "podcast"]
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET is_podcast_template = %s,
+                    updated_at = NOW()
+                WHERE id = %s::uuid
+                  AND status = 'succeeded'
+                  AND deleted_at IS NULL
+                  AND job_type = ANY(%s::text[])
+                RETURNING id
+                """,
+                (en, jid, jtypes),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            if row:
+                return True, "ok"
+            return False, "job_not_found_or_ineligible"
+
+
 def user_usage_for_phone(phone: str, days: int = 30) -> dict[str, Any]:
     """统计周期内任务终态用量（usage_events；主键匹配 user_id，兼容 phone 旧行）。"""
     p = (phone or "").strip()
@@ -1540,16 +2452,29 @@ def list_jobs(
             st = valid[0]
         elif len(valid) > 1:
             st_any = valid
+    # 创作记录列表：展示创建者可读名（display_name → phone → email）
+    _creator_label_sql = (
+        "NULLIF(TRIM(COALESCE("
+        "NULLIF(TRIM(u.display_name), ''), "
+        "NULLIF(TRIM(u.phone), ''), "
+        "NULLIF(TRIM(u.email), ''))), '') AS creator_label"
+    )
     # JOIN projects 后必须限定为 j.* / j.col，否则 id 等与 projects 列歧义
     cols = (
-        """
+        f"""
         j.id, j.project_id, j.status, j.job_type, j.queue_name, j.progress,
         j.created_at, j.started_at, j.completed_at, j.updated_at, j.created_by,
-        LEFT(COALESCE(j.error_message, ''), 400) AS error_message
+        LEFT(COALESCE(j.error_message, ''), 400) AS error_message,
+        {_creator_label_sql}
         """
         if slim
-        else "j.*"
+        else f"j.*, {_creator_label_sql}"
     )
+    _from_jobs = """
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
+    """
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -1557,8 +2482,7 @@ def list_jobs(
                 cur.execute(
                     f"""
                     SELECT {cols}
-                    FROM jobs j
-                    LEFT JOIN projects p ON p.id = j.project_id
+                    {_from_jobs}
                     WHERE j.deleted_at IS NULL
                       AND j.status = %s
                       AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
@@ -1571,8 +2495,7 @@ def list_jobs(
                 cur.execute(
                     f"""
                     SELECT {cols}
-                    FROM jobs j
-                    LEFT JOIN projects p ON p.id = j.project_id
+                    {_from_jobs}
                     WHERE j.deleted_at IS NULL
                       AND j.status = ANY(%s)
                       AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
@@ -1585,8 +2508,7 @@ def list_jobs(
                 cur.execute(
                     f"""
                     SELECT {cols}
-                    FROM jobs j
-                    LEFT JOIN projects p ON p.id = j.project_id
+                    {_from_jobs}
                     WHERE j.deleted_at IS NULL
                       AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
                     ORDER BY j.created_at DESC
@@ -4123,6 +5045,259 @@ def payg_restore_minutes_from_log(phone: str, restores: list[tuple[str, float]])
         logger.exception("payg_restore_minutes_from_log failed phone=%s", p[:4] if p else "")
 
 
+def ensure_user_experience_balance_schema() -> None:
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_experience_balance (
+                  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                  phone TEXT NOT NULL DEFAULT '',
+                  voice_minutes_remaining NUMERIC(14,4) NOT NULL DEFAULT 0 CHECK (voice_minutes_remaining >= 0),
+                  text_chars_remaining BIGINT NOT NULL DEFAULT 0 CHECK (text_chars_remaining >= 0),
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            conn.commit()
+
+
+def experience_voice_minutes_for_phone(phone: str) -> float:
+    p = (phone or "").strip()
+    if not p:
+        return 0.0
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return 0.0
+                cur.execute(
+                    "SELECT voice_minutes_remaining FROM user_experience_balance WHERE user_id = %s::uuid LIMIT 1",
+                    (uid,),
+                )
+                row = cur.fetchone()
+                return float(row.get("voice_minutes_remaining") or 0) if row else 0.0
+    except Exception:
+        return 0.0
+
+
+def experience_text_chars_for_phone(phone: str) -> int:
+    p = (phone or "").strip()
+    if not p:
+        return 0
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return 0
+                cur.execute(
+                    "SELECT text_chars_remaining FROM user_experience_balance WHERE user_id = %s::uuid LIMIT 1",
+                    (uid,),
+                )
+                row = cur.fetchone()
+                return int(row.get("text_chars_remaining") or 0) if row else 0
+    except Exception:
+        return 0
+
+
+def experience_pack_row_exists_for_phone(phone: str) -> bool:
+    """是否已有体验包余额行（注册赠送写入后即为 True；用于与「从未开通」区分）。"""
+    p = (phone or "").strip()
+    if not p:
+        return False
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return False
+                cur.execute(
+                    "SELECT 1 FROM user_experience_balance WHERE user_id = %s::uuid LIMIT 1",
+                    (uid,),
+                )
+                return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
+def experience_seed_for_new_user_after_registration(principal: str) -> None:
+    """注册成功后写入一次性体验包（仅当尚无 user_experience_balance 行时）。"""
+    pr = (principal or "").strip()
+    if not pr:
+        return
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, pr)
+                if not uid:
+                    return
+                cur.execute("SELECT phone FROM users WHERE id = %s::uuid LIMIT 1", (uid,))
+                prow = cur.fetchone() or {}
+                ph = str(prow.get("phone") or pr).strip()
+                cur.execute(
+                    """
+                    INSERT INTO user_experience_balance (user_id, phone, voice_minutes_remaining, text_chars_remaining)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO NOTHING
+                    """,
+                    (uid, ph, Decimal(str(EXPERIENCE_NEW_USER_VOICE_MINUTES)), int(EXPERIENCE_NEW_USER_TEXT_CHARS)),
+                )
+            conn.commit()
+    except Exception:
+        logger.exception("experience_seed_for_new_user_after_registration failed principal=%s", pr[:6] if pr else "")
+
+
+def experience_restore_voice_minutes(phone: str, minutes: float) -> None:
+    amt = float(minutes or 0)
+    if amt <= 1e-12:
+        return
+    p = (phone or "").strip()
+    if not p:
+        return
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return
+                cur.execute(
+                    """
+                    UPDATE user_experience_balance
+                    SET voice_minutes_remaining = voice_minutes_remaining + %s,
+                        phone = %s,
+                        updated_at = NOW()
+                    WHERE user_id = %s::uuid
+                    """,
+                    (Decimal(str(round(amt, 6))), p, uid),
+                )
+            conn.commit()
+    except Exception:
+        logger.exception("experience_restore_voice_minutes failed phone=%s", p[:4] if p else "")
+
+
+def experience_restore_text_chars(phone: str, chars: int) -> None:
+    n = int(chars or 0)
+    if n <= 0:
+        return
+    p = (phone or "").strip()
+    if not p:
+        return
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return
+                cur.execute(
+                    """
+                    UPDATE user_experience_balance
+                    SET text_chars_remaining = text_chars_remaining + %s,
+                        phone = %s,
+                        updated_at = NOW()
+                    WHERE user_id = %s::uuid
+                    """,
+                    (n, p, uid),
+                )
+            conn.commit()
+    except Exception:
+        logger.exception("experience_restore_text_chars failed phone=%s", p[:4] if p else "")
+
+
+def script_text_billing_try_debit(phone: str, char_count: int) -> tuple[bool, dict[str, Any]]:
+    """成稿文本：先扣体验包字数，再按超出部分从钱包扣费。"""
+    from .media_wallet import media_wallet_billing_enabled, wallet_cents_for_generated_text_chars
+
+    base: dict[str, Any] = {"wallet_cents": 0, "experience_text_chars_consumed": 0}
+    if not media_wallet_billing_enabled():
+        return True, dict(base)
+    p = (phone or "").strip()
+    n = int(char_count or 0)
+    if not p or n <= 0:
+        return True, dict(base)
+    ensure_user_experience_balance_schema()
+    ensure_user_wallet_schema()
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return False, {**base, "reason": "no_user", "message": "未找到账户"}
+                cur.execute(
+                    """
+                    SELECT text_chars_remaining
+                    FROM user_experience_balance
+                    WHERE user_id = %s::uuid
+                    FOR UPDATE
+                    """,
+                    (uid,),
+                )
+                row = cur.fetchone()
+                ex_txt = int(row.get("text_chars_remaining") or 0) if row else 0
+                take_ex = min(n, max(0, ex_txt))
+                rest = n - take_ex
+                new_txt = max(0, ex_txt - take_ex)
+                if row:
+                    cur.execute(
+                        """
+                        UPDATE user_experience_balance
+                        SET text_chars_remaining = %s, phone = %s, updated_at = NOW()
+                        WHERE user_id = %s::uuid
+                        """,
+                        (new_txt, p, uid),
+                    )
+                cents = int(wallet_cents_for_generated_text_chars(rest))
+                meta: dict[str, Any] = {**base, "experience_text_chars_consumed": int(take_ex), "wallet_cents": cents}
+                if cents > 0:
+                    cur.execute(
+                        """
+                        UPDATE user_wallet_balance
+                        SET balance_cents = balance_cents - %s,
+                            phone = %s,
+                            updated_at = NOW()
+                        WHERE user_id = %s::uuid AND balance_cents >= %s
+                        RETURNING balance_cents
+                        """,
+                        (cents, p, uid, cents),
+                    )
+                    rw = cur.fetchone()
+                    if not rw:
+                        conn.rollback()
+                        return False, {
+                            **meta,
+                            "reason": "insufficient_wallet",
+                            "message": (
+                                f"文本超出体验包约 {rest} 字，需从钱包扣约 ¥{cents / 100:.2f}，余额不足，请先充值。"
+                            ),
+                        }
+                conn.commit()
+                return True, meta
+    except Exception as exc:
+        logger.exception("script_text_billing_try_debit failed")
+        return False, {**base, "reason": "error", "message": str(exc)[:300]}
+
+
+def script_text_billing_refund(phone: str, meta: dict[str, Any]) -> None:
+    """任务取消等场景：退回 script_text_billing_try_debit 已扣的体验与钱包。"""
+    p = (phone or "").strip()
+    if not p or not isinstance(meta, dict):
+        return
+    wc = int(meta.get("wallet_cents") or 0)
+    et = int(meta.get("experience_text_chars_consumed") or 0)
+    if wc > 0:
+        wallet_credit_cents(p, wc)
+    if et > 0:
+        experience_restore_text_chars(p, et)
+
+
 def media_billing_try_debit_estimated_minutes(
     phone: str,
     tier: str | None,
@@ -4131,26 +5306,27 @@ def media_billing_try_debit_estimated_minutes(
     period_days: int = 30,
 ) -> tuple[bool, int, dict[str, Any]]:
     """
-    事务内：按预估分钟先扣按次包再扣钱包（与会员页「近 N 天音频用量」同一周期）。
+    事务内：先扣体验包语音分钟，再按预估分钟从钱包扣费（无订阅月配额、无按次分钟包）。
+    tier / period_days 保留参数以兼容调用方，不再参与计费。
     返回 (是否成功, 实际从钱包扣的分, meta)。
-    meta: payg_restores, wallet_cents, from_payg_minutes, message(失败时)
+    meta: payg_restores(空), wallet_cents, from_payg_minutes(0), experience_voice_minutes_consumed
     """
+    _ = tier, period_days
     from . import media_wallet as _mw
 
     base_meta: dict[str, Any] = {
         "payg_restores": [],
         "wallet_cents": 0,
         "from_payg_minutes": 0.0,
+        "experience_voice_minutes_consumed": 0.0,
     }
     if not _mw.media_wallet_billing_enabled():
         return True, 0, dict(base_meta)
     p = (phone or "").strip()
     if not p or float(est_minutes) <= 1e-9:
         return True, 0, dict(base_meta)
-    ensure_user_payg_minute_grants_schema()
+    ensure_user_experience_balance_schema()
     ensure_user_wallet_schema()
-    tnorm = (tier or "free").strip().lower()
-    cap = int(MONTHLY_MINUTES_PRODUCT_BY_TIER.get(tnorm, MONTHLY_MINUTES_PRODUCT_BY_TIER["free"]))
     try:
         with get_conn() as conn:
             with get_cursor(conn) as cur:
@@ -4161,20 +5337,34 @@ def media_billing_try_debit_estimated_minutes(
                         "reason": "no_user",
                         "message": "未找到账户，无法结算语音用量",
                     }
-                used = _subscription_audio_minutes_used_for_uid_cur(cur, uid, period_days)
-                sub_room = max(0.0, float(cap) - float(used))
-                from_sub = min(float(est_minutes), sub_room)
-                rem = float(est_minutes) - from_sub
-                payg_log: list[tuple[str, Decimal]] = []
-                consumed_payg = 0.0
-                if rem > 1e-9:
-                    consumed_payg, payg_log = _payg_try_consume_minutes_cur(cur, uid, rem)
-                wallet_min = max(0.0, rem - consumed_payg)
+                cur.execute(
+                    """
+                    SELECT voice_minutes_remaining
+                    FROM user_experience_balance
+                    WHERE user_id = %s::uuid
+                    FOR UPDATE
+                    """,
+                    (uid,),
+                )
+                row_ex = cur.fetchone()
+                ex_voice = float(row_ex.get("voice_minutes_remaining") or 0) if row_ex else 0.0
+                est = float(est_minutes)
+                take_ex = min(est, max(0.0, ex_voice))
+                new_ex = max(0.0, ex_voice - take_ex)
+                if row_ex:
+                    cur.execute(
+                        """
+                        UPDATE user_experience_balance
+                        SET voice_minutes_remaining = %s, phone = %s, updated_at = NOW()
+                        WHERE user_id = %s::uuid
+                        """,
+                        (Decimal(str(round(new_ex, 6))), p, uid),
+                    )
+                wallet_min = max(0.0, est - take_ex)
                 cents = int(_mw.wallet_cents_for_overage_minutes(wallet_min))
                 meta = {
                     **base_meta,
-                    "from_payg_minutes": float(consumed_payg),
-                    "payg_restores": [(str(gid), float(amt)) for gid, amt in payg_log],
+                    "experience_voice_minutes_consumed": float(take_ex),
                     "wallet_cents": cents,
                 }
                 if cents > 0:
@@ -4196,8 +5386,8 @@ def media_billing_try_debit_estimated_minutes(
                             **base_meta,
                             "reason": "insufficient_wallet",
                             "message": (
-                                f"钱包余额不足：此次预估超出套餐/分钟包约 {wallet_min:.2f} 分钟，"
-                                f"需约 ¥{cents / 100:.2f}，请充值后再试。"
+                                f"体验包语音分钟不足部分约 {wallet_min:.2f} 分钟，"
+                                f"需从钱包扣约 ¥{cents / 100:.2f}，余额不足，请先充值。"
                             ),
                         }
                     meta["balance_cents_after"] = int(row_w.get("balance_cents") or 0)
@@ -4301,61 +5491,16 @@ def user_never_had_wallet_topup_balance(phone: str) -> bool:
 
 def user_subscription_history_only_free(phone: str, current_plan: str | None) -> bool:
     """
-    当前档为 free，且库内无 basic/pro/max 订阅事件、无成功付费单（订阅或按量包）、无按量分钟包发放记录。
-    current_plan 来自 auth（free/basic/pro/max/payg）；非 free 时返回 False。
+    是否视为「仅免费档」用户：以会话/账号当前档位为准，不再扫描历史订单表。
+
+    订阅收银与历史订单数据可已通过迁移清空；付费能力以钱包充值流水与余额为准。
+    current_plan 来自 auth（free/basic/pro/max/payg）。
     """
+    _ = phone
     cp = (current_plan or "free").strip().lower()
     if cp in ("basic", "pro", "max", "payg"):
         return False
-    if cp != "free":
-        return False
-    p = (phone or "").strip()
-    if not p:
-        return False
-    try:
-        ensure_subscription_events_schema()
-        ensure_payment_orders_schema()
-        ensure_user_payg_minute_grants_schema()
-        with get_conn() as conn:
-            with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
-                    return False
-                cur.execute(
-                    """
-                    SELECT 1 FROM subscription_events
-                    WHERE phone = %s AND LOWER(tier) IN ('basic', 'pro', 'max')
-                    LIMIT 1
-                    """,
-                    (p,),
-                )
-                if cur.fetchone():
-                    return False
-                cur.execute(
-                    """
-                    SELECT 1 FROM payment_orders
-                    WHERE phone = %s
-                      AND LOWER(status) = 'paid'
-                      AND (
-                        LOWER(tier) IN ('basic', 'pro', 'max')
-                        OR COALESCE(product_snapshot->>'kind', '') = 'payg_minutes'
-                      )
-                    LIMIT 1
-                    """,
-                    (p,),
-                )
-                if cur.fetchone():
-                    return False
-                cur.execute(
-                    "SELECT 1 FROM user_payg_minute_grants WHERE user_id = %s LIMIT 1",
-                    (uid,),
-                )
-                if cur.fetchone():
-                    return False
-        return True
-    except Exception:
-        logger.exception("user_subscription_history_only_free failed phone=%s", p[:4] if p else "")
-        return False
+    return cp == "free"
 
 
 def user_work_download_blocked_never_paid_free_only(phone: str, current_plan: str | None) -> bool:
@@ -5406,6 +6551,254 @@ def list_payment_orders_for_phone(phone: str, limit: int = 40) -> list[dict[str,
                 return rows
     except Exception:
         return []
+
+
+def _mask_phone_for_display(phone: str | None) -> str:
+    p = (phone or "").strip()
+    if len(p) >= 11:
+        return f"{p[:3]}****{p[-4:]}"
+    if len(p) >= 7:
+        return f"{p[:2]}****{p[-2:]}"
+    return p or "—"
+
+
+def _job_type_feature_label_zh(job_type: str | None) -> str:
+    jt = str(job_type or "").strip().lower()
+    table: dict[str, str] = {
+        "text_to_speech": "文字转语音",
+        "tts": "文字转语音",
+        "podcast_generate": "AI 播客",
+        "podcast": "AI 播客",
+        "podcast_short_video": "短视频播客",
+        "script_draft": "脚本撰稿",
+        "note_podcast_script": "笔记转脚本",
+        "voice_clone": "音色克隆",
+        "clone_voice": "音色克隆",
+        "polish_tts_text": "口播润色",
+        "cover_image": "封面图",
+        "image_generate": "文生图",
+    }
+    return table.get(jt, jt or "—")
+
+
+def _payment_channel_label_zh(channel: str | None, provider: str | None) -> str:
+    c = str(channel or "").strip().lower()
+    pv = str(provider or "").strip().lower()
+    if c == "alipay" or pv == "alipay":
+        return "支付宝"
+    if c == "subscription_simulated" or pv == "subscription_simulated":
+        return "内测模拟收银"
+    if pv.startswith("admin") or c.startswith("admin"):
+        return "管理员代下单"
+    if pv and pv != "unknown":
+        return pv
+    if c and c != "unknown":
+        return c
+    return "—"
+
+
+def _wallet_recharge_status_label_zh(status: str | None) -> str:
+    s = str(status or "").strip().lower()
+    if s in ("paid", "success", "succeeded", "captured", "ok"):
+        return "成功"
+    if s in ("failed", "fail", "error", "expired", "closed", "cancelled", "cancel", "chargeback", "disputed"):
+        return "失败"
+    if s in ("refunded", "partially_refunded", "partial_refund"):
+        return "已退款"
+    return "处理中"
+
+
+def list_wallet_recharge_rows_for_phone(phone: str, limit: int = 80) -> list[dict[str, Any]]:
+    """钱包充值订单（product_snapshot.kind = wallet_topup）。"""
+    p = (phone or "").strip()
+    lim = max(1, min(200, int(limit)))
+    if not p:
+        return []
+    try:
+        ensure_payment_orders_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return []
+                cur.execute(
+                    """
+                    SELECT
+                      event_id,
+                      provider_order_id,
+                      channel,
+                      provider,
+                      amount_cents,
+                      status,
+                      currency,
+                      COALESCE(paid_at, created_at) AS display_time,
+                      EXTRACT(EPOCH FROM COALESCE(paid_at, created_at))::double precision AS display_time_epoch
+                    FROM payment_orders
+                    WHERE (user_id = %s::uuid OR phone = %s)
+                      AND COALESCE(product_snapshot->>'kind', raw->>'kind', '') = 'wallet_topup'
+                    ORDER BY COALESCE(paid_at, created_at) DESC NULLS LAST, created_at DESC
+                    LIMIT %s
+                    """,
+                    (uid, p, lim),
+                )
+                out: list[dict[str, Any]] = []
+                for row in cur.fetchall() or []:
+                    d = dict(row)
+                    ch = _payment_channel_label_zh(d.get("channel"), d.get("provider"))
+                    st = str(d.get("status") or "")
+                    ts = d.get("display_time_epoch")
+                    try:
+                        ts_i = int(float(ts)) if ts is not None else None
+                    except (TypeError, ValueError):
+                        ts_i = None
+                    out.append(
+                        {
+                            "serial_no": str(d.get("event_id") or "").strip() or "—",
+                            "provider_order_id": str(d.get("provider_order_id") or "").strip() or None,
+                            "recharged_at_unix": ts_i,
+                            "channel_zh": ch,
+                            "amount_cents": int(d.get("amount_cents") or 0),
+                            "currency": str(d.get("currency") or "CNY"),
+                            "result_zh": _wallet_recharge_status_label_zh(st),
+                            "status_raw": st,
+                        }
+                    )
+                return out
+    except Exception:
+        logger.exception("list_wallet_recharge_rows_for_phone failed")
+        return []
+
+
+def list_wallet_consumption_rows_for_phone(phone: str, limit: int = 80) -> list[dict[str, Any]]:
+    """job_events 中的体验包/钱包结算流水（与 RSS 计费检测口径一致）。"""
+    p = (phone or "").strip()
+    lim = max(1, min(200, int(limit)))
+    if not p:
+        return []
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return []
+                cur.execute(
+                    """
+                    SELECT
+                      je.id AS ledger_id,
+                      je.job_id::text AS job_id,
+                      je.message,
+                      je.event_payload,
+                      je.created_at,
+                      EXTRACT(EPOCH FROM je.created_at)::double precision AS consumed_at_unix,
+                      j.job_type,
+                      j.status AS job_status,
+                      u.phone AS owner_phone
+                    FROM job_events je
+                    INNER JOIN jobs j ON j.id = je.job_id
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
+                    WHERE je.event_type = 'log'
+                      AND (
+                        je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                        OR je.message LIKE '已结算脚本文本费用%%'
+                        OR je.message = '已从钱包扣除单次克隆费用'
+                      )
+                      AND COALESCE(j.created_by, p.user_id) = %s::uuid
+                    ORDER BY je.created_at DESC
+                    LIMIT %s
+                    """,
+                    (uid, lim),
+                )
+                rows = [dict(x) for x in cur.fetchall() or []]
+    except Exception:
+        logger.exception("list_wallet_consumption_rows_for_phone failed")
+        return []
+
+    out: list[dict[str, Any]] = []
+    for d in rows:
+        msg = str(d.get("message") or "")
+        pl_raw = d.get("event_payload")
+        if isinstance(pl_raw, str):
+            try:
+                pl = json.loads(pl_raw) if pl_raw.strip().startswith("{") else {}
+            except Exception:
+                pl = {}
+        elif isinstance(pl_raw, dict):
+            pl = pl_raw
+        else:
+            pl = {}
+
+        job_type = str(d.get("job_type") or "")
+        feature = _job_type_feature_label_zh(job_type)
+        owner = str(d.get("owner_phone") or "").strip() or p
+        masked = _mask_phone_for_display(owner)
+
+        wallet_cents = int(pl.get("wallet_cents") or 0)
+        if "已从钱包扣除单次克隆费用" in msg:
+            wallet_cents = int(pl.get("cents") or wallet_cents)
+
+        usage_parts: list[str] = []
+        if "已按预估语音分钟" in msg:
+            try:
+                em = float(pl.get("estimated_minutes") or 0)
+            except (TypeError, ValueError):
+                em = 0.0
+            try:
+                exv = float(pl.get("experience_voice_minutes_consumed") or 0)
+            except (TypeError, ValueError):
+                exv = 0.0
+            if em > 1e-9:
+                usage_parts.append(f"预估语音 {em:.2f} 分钟")
+            if exv > 1e-9:
+                usage_parts.append(f"体验包 {exv:.2f} 分钟")
+            if wallet_cents > 0:
+                usage_parts.append("含钱包扣费")
+        elif "已结算脚本文本费用" in msg:
+            sc = int(pl.get("script_chars") or 0)
+            ex = int(pl.get("experience_text_chars_consumed") or 0)
+            if sc > 0:
+                usage_parts.append(f"脚本 {sc:,} 字")
+            if ex > 0:
+                usage_parts.append(f"体验包 {ex:,} 字")
+            if wallet_cents > 0:
+                usage_parts.append("含钱包扣费")
+        elif "已从钱包扣除单次克隆费用" in msg:
+            usage_parts.append("单次音色克隆")
+
+        usage_text = "；".join(usage_parts) if usage_parts else "—"
+
+        jst = str(d.get("job_status") or "").strip().lower()
+        if jst == "succeeded":
+            result_zh = "成功"
+        elif jst == "failed":
+            result_zh = "失败"
+        elif jst == "cancelled":
+            result_zh = "已取消"
+        elif jst in ("running", "queued"):
+            result_zh = "进行中"
+        else:
+            result_zh = jst or "—"
+
+        try:
+            cts = int(float(d.get("consumed_at_unix") or 0))
+        except (TypeError, ValueError):
+            cts = None
+
+        out.append(
+            {
+                "ledger_id": int(d.get("ledger_id") or 0),
+                "job_id": str(d.get("job_id") or ""),
+                "account_masked": masked,
+                "api_path": "POST /api/v1/jobs/enqueue",
+                "feature_zh": feature,
+                "usage_detail_zh": usage_text,
+                "amount_cents": wallet_cents,
+                "consumed_at_unix": cts,
+                "result_zh": result_zh,
+                "job_status_raw": str(d.get("job_status") or ""),
+            }
+        )
+    return out
 
 
 # ========== 站点级 app_settings（如 TTS 润色条款） ==========

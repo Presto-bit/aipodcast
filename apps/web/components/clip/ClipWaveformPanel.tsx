@@ -10,6 +10,8 @@ export type ClipWaveformHandle = {
   play: () => Promise<void>;
   /** 最近一次 timeupdate 的毫秒（无解码时可能为 0） */
   getCurrentTimeMs: () => number;
+  /** 变速审听；preservePitch 由 wavesurfer 在支持的浏览器中处理 */
+  setPlaybackRate: (rate: number) => void;
 };
 
 type Props = {
@@ -23,10 +25,30 @@ type Props = {
   waveHeight?: number;
   className?: string;
   onPlayStateChange?: (playing: boolean) => void;
+  /** 初始播放倍率（1 / 1.25 / 1.5） */
+  playbackRate?: number;
+  /** 波形点击/拖拽 seek 后回调毫秒，返回磁吸后的毫秒；未传则不磁吸 */
+  snapSeekMs?: (ms: number) => number;
+  /** false：仅展示波形，不可拖拽 seek / 原生控件（用于多轨示意轨） */
+  interactive?: boolean;
+  /** false：不向父组件上报 timeupdate（避免多实例抢进度） */
+  emitTimeUpdates?: boolean;
 };
 
 const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWaveformPanel(
-  { audioUrl, onTimeMs, onLoadError, variant = "panel", waveHeight, className, onPlayStateChange },
+  {
+    audioUrl,
+    onTimeMs,
+    onLoadError,
+    variant = "panel",
+    waveHeight,
+    className,
+    onPlayStateChange,
+    playbackRate = 1,
+    snapSeekMs,
+    interactive = true,
+    emitTimeUpdates = true
+  },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -34,8 +56,12 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
   const lastTimeMsRef = useRef(0);
   const onTimeRef = useRef(onTimeMs);
   const onPlayRef = useRef(onPlayStateChange);
+  const onLoadErrorRef = useRef(onLoadError);
+  const snapSeekRef = useRef(snapSeekMs);
   onTimeRef.current = onTimeMs;
   onPlayRef.current = onPlayStateChange;
+  onLoadErrorRef.current = onLoadError;
+  snapSeekRef.current = snapSeekMs;
 
   useImperativeHandle(ref, () => ({
     seekToMs: (ms: number) => {
@@ -59,7 +85,17 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
       if (!ws) return Promise.resolve();
       return ws.play();
     },
-    getCurrentTimeMs: () => lastTimeMsRef.current
+    getCurrentTimeMs: () => lastTimeMsRef.current,
+    setPlaybackRate: (rate: number) => {
+      const ws = wsRef.current;
+      if (!ws) return;
+      const r = Number.isFinite(rate) && rate > 0 ? rate : 1;
+      try {
+        ws.setPlaybackRate(r, true);
+      } catch {
+        ws.setPlaybackRate(r);
+      }
+    }
   }));
 
   useEffect(() => {
@@ -80,28 +116,48 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
       barWidth: 2,
       barGap: 1,
       barRadius: 2,
-      mediaControls: true,
-      dragToSeek: true,
-      minPxPerSec: 40,
+      mediaControls: interactive,
+      dragToSeek: interactive,
+      minPxPerSec: interactive ? 40 : 24,
       /** 同源代理音频须携带 HttpOnly 会话 Cookie，否则 BFF 无法转发 Authorization */
       fetchParams: { mode: "same-origin", credentials: "include" }
     });
     wsRef.current = ws;
+    const r0 = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+    try {
+      ws.setPlaybackRate(r0, true);
+    } catch {
+      ws.setPlaybackRate(r0);
+    }
+    const unsubInteract =
+      interactive && typeof snapSeekRef.current === "function"
+        ? ws.on("interaction", (t) => {
+            const sec = typeof t === "number" ? t : 0;
+            const ms = sec * 1000;
+            const snapped = snapSeekRef.current!(ms);
+            if (Math.abs(snapped - ms) > 4) {
+              ws.setTime(Math.max(0, snapped / 1000));
+            }
+          })
+        : null;
     const unsubTime = ws.on("timeupdate", (t) => {
-      const ms = t * 1000;
+      const sec = typeof t === "number" ? t : 0;
+      const ms = Math.round(sec * 1000);
       lastTimeMsRef.current = ms;
-      onTimeRef.current(ms);
+      if (emitTimeUpdates) onTimeRef.current(ms);
     });
     const unsubPlay = ws.on("play", () => onPlayRef.current?.(true));
     const unsubPause = ws.on("pause", () => onPlayRef.current?.(false));
     const unsubErr = ws.on("error", (err) => {
-      onLoadError?.(String(err?.message || err || "waveform_error"));
+      onLoadErrorRef.current?.(String(err?.message || err || "waveform_error"));
     });
+    /* snapSeekMs 仅经 snapSeekRef 读取，不把 snapSeekMs 放进依赖，避免反复销毁 WaveSurfer */
     return () => {
       unsubTime();
       unsubPlay();
       unsubPause();
       unsubErr();
+      if (typeof unsubInteract === "function") unsubInteract();
       try {
         ws.destroy();
       } catch {
@@ -109,7 +165,19 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
       }
       wsRef.current = null;
     };
-  }, [audioUrl, onLoadError, variant, waveHeight, onPlayStateChange]);
+    /* onLoadError / onPlayStateChange 经 ref 读取，避免父组件每次渲染传入新函数引用时反复销毁 WaveSurfer（会导致无法持续播放） */
+  }, [audioUrl, variant, waveHeight, interactive, emitTimeUpdates]);
+
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!ws) return;
+    const r = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+    try {
+      ws.setPlaybackRate(r, true);
+    } catch {
+      ws.setPlaybackRate(r);
+    }
+  }, [playbackRate]);
 
   if (!audioUrl?.trim()) {
     return null;
@@ -120,7 +188,18 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
       ? "w-full overflow-hidden rounded-md border border-line bg-track/50 shadow-inset-brand"
       : "w-full overflow-hidden rounded-lg border border-line bg-track/40";
 
-  return <div ref={containerRef} className={[shell, className || ""].filter(Boolean).join(" ")} />;
+  return (
+    <div
+      ref={containerRef}
+      className={[
+        shell,
+        !interactive ? "pointer-events-none select-none opacity-95" : "",
+        className || ""
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    />
+  );
 });
 
 export default ClipWaveformPanel;

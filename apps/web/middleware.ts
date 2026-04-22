@@ -61,6 +61,10 @@ export function middleware(req: NextRequest) {
   if (pathname === "/api/image-proxy" && req.method === "GET") {
     return NextResponse.next();
   }
+  /** 选题助手 GET 由路由内按 IP 限速，避免拖满全站计数 */
+  if (pathname === "/api/create/hot-topics" && req.method === "GET") {
+    return NextResponse.next();
+  }
   if (req.method === "POST" && RATE_LIMIT_EXEMPT_POST_PATHS.has(pathname)) {
     return NextResponse.next();
   }

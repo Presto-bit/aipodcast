@@ -3,7 +3,9 @@
 import { Download, Layers, Music } from "lucide-react";
 import type { ReactNode } from "react";
 
-export type PrestoNavSection = "storyboard" | "music";
+import type { PrestoNavSection } from "./prestoFlowNavTypes";
+
+export type { PrestoNavSection } from "./prestoFlowNavTypes";
 
 type Props = {
   active: PrestoNavSection;
@@ -34,7 +36,7 @@ export default function PrestoFlowSideNav({ active, onSelect, onDownloadClick, h
 
   return (
     <nav
-      className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-line bg-fill/40 py-3 sm:w-16"
+      className="relative z-20 flex w-14 shrink-0 flex-col items-center gap-2 border-r border-line bg-fill/40 py-3 sm:w-16"
       aria-label="Presto Flow"
     >
       {btn("storyboard", <Layers className="h-5 w-5" aria-hidden />, labels.storyboard)}

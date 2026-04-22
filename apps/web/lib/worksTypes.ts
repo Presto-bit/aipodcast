@@ -28,6 +28,8 @@ export type WorkItem = {
   notesSourceTitles?: string[];
   /** 来自任务 payload.program_name / result，用于作品导航页二级体裁（如深度讨论、笔记文章类目） */
   workProgramName?: string;
+  /** 管理员标记的全站播客创作模板；复用/试听走专用接口 */
+  isPodcastPublicTemplate?: boolean;
 };
 
 /** 编排器内部任务，不应出现在「我的作品」/首页最近成品等用户向列表（与 list_recent_works 过滤一致） */

@@ -5,7 +5,8 @@ import logging
 import os
 import time
 import uuid
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Callable
 
 import psycopg2
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -21,17 +22,18 @@ _jobs_startup_logger = logging.getLogger(__name__)
 # 无新 job_events 时每轮 sleep 3s；过小会在长脚本/长合成期间误断 SSE，表现为「进度卡住」。
 SSE_EVENT_IDLE_TICKS_MAX = 2400  # 约 2 小时
 from ..job_serialization import serialize_job
-from ..entitlement_matrix import voice_clone_monthly_included, voice_clone_payg_cents
+from ..entitlement_matrix import voice_clone_payg_cents
 from ..media_wallet import (
     estimate_spoken_minutes_podcast_enqueue,
     estimate_spoken_minutes_tts,
     media_wallet_billing_enabled,
     preview_wallet_cents_for_media_job,
+    preview_wallet_cents_for_text_enqueue,
 )
 from ..models import (
     append_job_event,
     cancel_job_if_runnable,
-    count_succeeded_voice_clone_jobs_for_user_uuid,
+    count_notes_in_notebook_for_owner,
     create_job,
     delete_job_and_storage,
     ensure_default_project,
@@ -39,15 +41,16 @@ from ..models import (
     get_job,
     get_job_artifact,
     get_project_name,
+    get_shared_notebook_public_access,
     list_job_artifacts,
     list_job_events,
     list_jobs,
+    list_podcast_template_works,
     list_recent_works,
     list_trashed_works,
     merge_job_result,
     purge_expired_trashed_works,
     restore_deleted_job,
-    resolved_user_uuid_string,
     soft_delete_job,
     wallet_balance_cents_for_phone,
 )
@@ -59,11 +62,19 @@ from ..schemas import (
     JobAudioExportRequest,
     JobCoverDataRequest,
     JobCreateRequest,
+    JobResultScriptBodyRequest,
     SocialViralCopyRequest,
+)
+from ..public_share_listen import build_podcast_template_listen_bundle, build_public_share_listen_bundle
+from ..share_publish_llm import (
+    build_share_user_source_text,
+    format_audio_chapters_hint,
+    generate_share_rss_ai_copy,
+    resolve_script_body_for_share,
 )
 from ..social_viral_copy import generate_viral_social_copy
 from ..security import verify_internal_signature
-from ..subscription_limits import max_note_refs_for_plan
+from ..subscription_manifest import BILLING_MAX_NOTE_REFS
 from ..storage_paths import job_cover_object_key
 from ..note_work_meta import (
     NOTES_SOURCE_TITLES_CAP,
@@ -206,6 +217,116 @@ def _work_cover_display_url(result: dict[str, Any], job_id: str) -> str:
     return ""
 
 
+def _work_item_dict_from_recent_row(
+    row: dict[str, Any],
+    *,
+    download_allowed: bool,
+    project_name_for: Callable[[str], str],
+    is_podcast_public_template: bool = False,
+) -> tuple[dict[str, Any], str]:
+    """由 list_recent_works / 模板列表行构建前端 WorkItem；返回 (work, job_type)。"""
+    raw_result = row.get("result")
+    if isinstance(raw_result, dict):
+        result = raw_result
+    elif isinstance(raw_result, str) and raw_result.strip():
+        try:
+            result = json.loads(raw_result)
+        except Exception:
+            result = {}
+    else:
+        result = {}
+    job_type = str(row.get("job_type") or "")
+    preview_src = result.get("preview") or result.get("script_preview") or ""
+    ps = str(preview_src or "").strip()
+    preview_list = ps[:400] + ("…" if len(ps) > 400 else "")
+    title_raw = str(result.get("title") or "").strip()
+    if title_raw:
+        title = title_raw[:200]
+    elif ps:
+        title = (ps[:80] + "…") if len(ps) > 80 else ps
+    else:
+        title = job_type or "未命名作品"
+    _dur = result.get("audio_duration_sec")
+    _dur_out: float | None
+    if _dur is not None and str(_dur).strip() != "":
+        try:
+            _dur_out = float(_dur)
+            if not (_dur_out >= 0 and _dur_out < 86400):
+                _dur_out = None
+        except (TypeError, ValueError):
+            _dur_out = None
+    else:
+        _dur_out = None
+    _pid = str(row.get("project_id") or "").strip()
+    _jid = str(row.get("id"))
+    _payload_dict = _coerce_row_payload(row.get("payload"))
+    _program_name = str(
+        _payload_dict.get("program_name") or result.get("program_name") or ""
+    ).strip()
+    _proj_name_row = str(row.get("project_name") or "").strip()
+    work: dict[str, Any] = {
+        "id": _jid,
+        "title": title,
+        "createdAt": str(row.get("completed_at") or row.get("created_at") or ""),
+        "audioUrl": str(result.get("audio_url") or ""),
+        "scriptUrl": str(result.get("script_url") or ""),
+        "scriptText": preview_list,
+        "hasAudioHex": _work_has_audio_hex(result),
+        "audioDurationSec": _dur_out,
+        "coverImage": _work_cover_display_url(result, _jid),
+        "status": str(row.get("status") or ""),
+        "type": job_type,
+        "projectName": _proj_name_row or str(project_name_for(_pid)),
+        "downloadAllowed": download_allowed,
+    }
+    if is_podcast_public_template:
+        work["isPodcastPublicTemplate"] = True
+    if _program_name:
+        work["workProgramName"] = _program_name[:200]
+    work.update(_works_script_notes_extras(result, _payload_dict, job_type))
+    return work, job_type
+
+
+def _podcast_template_reuse_body_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    """全站模板成片：供登录用户复用创作参数（剔除敏感/无关 payload 字段）。"""
+    if not bool(row.get("is_podcast_template")):
+        return None
+    if str(row.get("status") or "").strip().lower() != "succeeded":
+        return None
+    jt = str(row.get("job_type") or "").strip().lower()
+    if jt not in ("podcast_generate", "podcast"):
+        return None
+    if row.get("deleted_at"):
+        return None
+    payload = _coerce_row_payload(row.get("payload"))
+    keys = (
+        "text",
+        "script_target_chars",
+        "script_language",
+        "output_mode",
+        "source_url",
+        "intro_text",
+        "outro_text",
+    )
+    safe_p = {k: payload[k] for k in keys if k in payload}
+    result_raw = row.get("result")
+    result: dict[str, Any] = {}
+    if isinstance(result_raw, dict):
+        result = result_raw
+    elif isinstance(result_raw, str) and result_raw.strip():
+        try:
+            o = json.loads(result_raw)
+            if isinstance(o, dict):
+                result = o
+        except Exception:
+            result = {}
+    st = result.get("script_text")
+    safe_r: dict[str, Any] = {}
+    if isinstance(st, str) and st.strip():
+        safe_r["script_text"] = st
+    return {"job_type": jt, "payload": safe_p, "result": safe_r}
+
+
 def _works_script_notes_extras(result: dict[str, Any], payload: dict[str, Any], job_type: str) -> dict[str, Any]:
     """作品列表：文章字数与笔记本来源（script_draft / 播客成片）。"""
     out: dict[str, Any] = {}
@@ -256,12 +377,11 @@ def _works_script_notes_extras(result: dict[str, Any], payload: dict[str, Any], 
 
 
 def _trim_note_refs_payload(payload: dict[str, Any], phone: str) -> None:
-    """与创建任务一致：按套餐裁剪 selected_note_ids / titles。"""
+    """与创建任务一致：按产品统一上限裁剪 selected_note_ids / titles。"""
     if not (phone or "").strip():
         return
     try:
-        tier = str(auth_bridge.user_info_for_phone(phone).get("plan") or "free")
-        cap = max_note_refs_for_plan(tier)
+        cap = int(BILLING_MAX_NOTE_REFS)
         sn = payload.get("selected_note_ids")
         if isinstance(sn, list) and len(sn) > cap:
             trimmed_ids = [str(x).strip() for x in sn if isinstance(x, str) and str(x).strip()][:cap]
@@ -287,32 +407,30 @@ def _media_job_wallet_preview_dict(phone: str | None, job_type: str, payload: di
     if jt not in ("text_to_speech", "tts", "podcast_generate", "podcast"):
         out["allowed"] = True
         return out
-    tier = str(auth_bridge.user_info_for_phone(p).get("plan") or "free")
     if jt in ("podcast_generate", "podcast"):
         est_m = float(estimate_spoken_minutes_podcast_enqueue(payload))
     else:
         body_m = str(payload.get("text") or "").strip() or "你好，欢迎使用 AI Native Studio。"
         est_m = float(estimate_spoken_minutes_tts(payload, body_m))
-    need_cents = int(preview_wallet_cents_for_media_job(p, tier, est_m))
+    need_cents = int(preview_wallet_cents_for_media_job(p, None, est_m))
     bal_m = int(wallet_balance_cents_for_phone(p))
     out["estimated_spoken_minutes"] = round(est_m, 2)
     out["wallet_charge_cents"] = need_cents
     out["wallet_balance_cents"] = bal_m
-    out["tier"] = tier
     if need_cents > 0 and bal_m < need_cents:
         out["allowed"] = False
         out["detail"] = (
-            f"预估成片约 {est_m:.1f} 分钟，超出当前套餐与分钟包后约需 ¥{need_cents / 100:.2f}，"
+            f"预估成片约 {est_m:.1f} 分钟，超出体验包语音分钟后约需 ¥{need_cents / 100:.2f}，"
             f"钱包余额 ¥{bal_m / 100:.2f} 不足，请先充值。"
         )
     else:
         out["allowed"] = True
         if need_cents > 0:
             out["summary"] = (
-                f"预估口播约 {est_m:.1f} 分钟；超出套餐/分钟包后约需从钱包扣 ¥{need_cents / 100:.2f}（当前余额 ¥{bal_m / 100:.2f}）。"
+                f"预估口播约 {est_m:.1f} 分钟；超出体验包部分约需从钱包扣 ¥{need_cents / 100:.2f}（当前余额 ¥{bal_m / 100:.2f}）。"
             )
         else:
-            out["summary"] = f"预估口播约 {est_m:.1f} 分钟；预计在套餐与分钟包额度内，无需额外扣钱包。"
+            out["summary"] = f"预估口播约 {est_m:.1f} 分钟；预计在体验包语音额度内，无需从钱包扣费。"
     return out
 
 
@@ -320,6 +438,38 @@ def _enforce_media_wallet_for_enqueue(phone: str | None, job_type: str, payload:
     prev = _media_job_wallet_preview_dict(phone, job_type, payload)
     if not prev.get("allowed", True):
         raise HTTPException(status_code=400, detail=str(prev.get("detail") or "钱包余额不足"))
+
+
+def _enforce_combined_wallet_for_enqueue(phone: str | None, job_type: str, payload: dict[str, Any]) -> None:
+    """脚本文本预估计费 + 语音预估计费，合并校验余额。"""
+    if not media_wallet_billing_enabled():
+        return
+    p = (phone or "").strip()
+    if not p:
+        return
+    jt = str(job_type or "").strip().lower()
+    text_c = preview_wallet_cents_for_text_enqueue(p, jt, payload)
+    audio_prev = _media_job_wallet_preview_dict(p, jt, payload)
+    if not audio_prev.get("allowed", True):
+        raise HTTPException(status_code=400, detail=str(audio_prev.get("detail") or "钱包余额不足"))
+    audio_c = int(audio_prev.get("wallet_charge_cents") or 0)
+    total = text_c + audio_c
+    if total <= 0:
+        return
+    bal = int(wallet_balance_cents_for_phone(p))
+    if bal < total:
+        parts: list[str] = []
+        if text_c:
+            parts.append(f"脚本文本（预估计费上界）约 ¥{text_c / 100:.2f}")
+        if audio_c:
+            parts.append(f"语音预估计费约 ¥{audio_c / 100:.2f}")
+        joiner = "；"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"钱包余额 ¥{bal / 100:.2f} 不足；估计需约 ¥{total / 100:.2f}（{joiner.join(parts)}）。请先充值。"
+            ),
+        )
 
 
 @router.post("/jobs/preview-media")
@@ -333,7 +483,32 @@ def preview_media_job_api(req: JobCreateRequest, request: Request):
         payload.pop("api_key", None)
     phone = (user_ref or req.created_by or "").strip()
     _trim_note_refs_payload(payload, phone)
-    body = _media_job_wallet_preview_dict(phone, str(req.job_type), payload)
+    jt = str(req.job_type or "").strip().lower()
+    body = _media_job_wallet_preview_dict(phone, jt, payload)
+    text_c = preview_wallet_cents_for_text_enqueue(phone, jt, payload)
+    body["wallet_text_charge_cents_preview"] = text_c
+    if media_wallet_billing_enabled() and phone:
+        audio_c = int(body.get("wallet_charge_cents") or 0)
+        bal = int(wallet_balance_cents_for_phone(phone))
+        body["wallet_balance_cents"] = bal
+        total = audio_c + text_c
+        body["wallet_total_charge_cents_preview"] = total
+        audio_ok = bool(body.get("allowed", True))
+        if audio_ok and total > bal:
+            body["allowed"] = False
+            parts: list[str] = []
+            if text_c:
+                parts.append(f"脚本文本（上界）约 ¥{text_c / 100:.2f}")
+            if audio_c:
+                parts.append(f"语音预估约 ¥{audio_c / 100:.2f}")
+            body["detail"] = f"钱包余额 ¥{bal / 100:.2f}；{'；'.join(parts)}，请先充值。"
+        elif audio_ok and total > 0:
+            segs: list[str] = []
+            if text_c:
+                segs.append(f"脚本文本（上界）约 ¥{text_c / 100:.2f}")
+            if audio_c:
+                segs.append(f"语音预估约 ¥{audio_c / 100:.2f}")
+            body["summary"] = f"{'；'.join(segs)}（当前余额 ¥{bal / 100:.2f}）。"
     body["success"] = True
     return JSONResponse(jsonable_encoder(body))
 
@@ -350,32 +525,34 @@ def create_job_api(req: JobCreateRequest, request: Request):
     phone = (user_ref or req.created_by or "").strip()
     _trim_note_refs_payload(payload, phone)
 
-    if str(req.job_type or "").strip().lower() in ("voice_clone", "clone_voice") and phone:
-        uid = resolved_user_uuid_string(phone)
-        if uid:
-            tier = str(auth_bridge.user_info_for_phone(phone).get("plan") or "free")
-            used = count_succeeded_voice_clone_jobs_for_user_uuid(uid)
-            inc = voice_clone_monthly_included(tier)
-            if used >= inc:
-                pay = voice_clone_payg_cents()
-                bal = wallet_balance_cents_for_phone(phone)
-                if bal < pay:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"套餐内克隆次数已用完，单次克隆需 ¥{pay / 100:.2f}，"
-                            f"钱包余额不足（当前 ¥{bal / 100:.2f}）。请先充值后再试。"
-                        ),
-                    )
+    owner_src = str(payload.get("notes_source_owner_user_id") or "").strip()
+    nb_src = str(payload.get("notes_notebook") or "").strip()
+    jt0 = str(req.job_type or "").strip().lower()
+    if owner_src and nb_src and jt0 in ("script_draft", "podcast_generate", "podcast"):
+        if get_shared_notebook_public_access(owner_src, nb_src) != "edit":
+            raise HTTPException(status_code=403, detail="shared_notebook_edit_required")
+        sn = payload.get("selected_note_ids")
+        if not isinstance(sn, list) or not sn:
+            raise HTTPException(status_code=400, detail="selected_note_ids_required_for_shared")
+        ids = [str(x).strip() for x in sn if isinstance(x, str) and str(x).strip()]
+        if not ids or count_notes_in_notebook_for_owner(owner_src, nb_src, ids) != len(ids):
+            raise HTTPException(status_code=400, detail="note_ids_not_in_shared_notebook")
 
-    jt_media = str(req.job_type or "").strip().lower()
-    if (
-        jt_media in ("text_to_speech", "tts", "podcast_generate", "podcast")
-        and phone
-        and media_wallet_billing_enabled()
-    ):
+    if str(req.job_type or "").strip().lower() in ("voice_clone", "clone_voice") and phone and media_wallet_billing_enabled():
+        pay = voice_clone_payg_cents()
+        bal = wallet_balance_cents_for_phone(phone)
+        if bal < pay:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"单次克隆需 ¥{pay / 100:.2f}，钱包余额不足（当前 ¥{bal / 100:.2f}）。请先充值后再试。"
+                ),
+            )
+
+    jt_enqueue = str(req.job_type or "").strip().lower()
+    if phone and media_wallet_billing_enabled():
         try:
-            _enforce_media_wallet_for_enqueue(phone, jt_media, payload)
+            _enforce_combined_wallet_for_enqueue(phone, jt_enqueue, payload)
         except HTTPException:
             raise
         except Exception as exc:
@@ -430,63 +607,11 @@ def list_works_api(
         return n
 
     for row in rows:
-        raw_result = row.get("result")
-        if isinstance(raw_result, dict):
-            result = raw_result
-        elif isinstance(raw_result, str) and raw_result.strip():
-            try:
-                result = json.loads(raw_result)
-            except Exception:
-                result = {}
-        else:
-            result = {}
-        job_type = str(row.get("job_type") or "")
-        preview_src = result.get("preview") or result.get("script_preview") or ""
-        ps = str(preview_src or "").strip()
-        preview_list = ps[:400] + ("…" if len(ps) > 400 else "")
-        title_raw = str(result.get("title") or "").strip()
-        if title_raw:
-            title = title_raw[:200]
-        elif ps:
-            title = (ps[:80] + "…") if len(ps) > 80 else ps
-        else:
-            title = job_type or "未命名作品"
-        _dur = result.get("audio_duration_sec")
-        _dur_out: float | None
-        if _dur is not None and str(_dur).strip() != "":
-            try:
-                _dur_out = float(_dur)
-                if not (_dur_out >= 0 and _dur_out < 86400):
-                    _dur_out = None
-            except (TypeError, ValueError):
-                _dur_out = None
-        else:
-            _dur_out = None
-        _pid = str(row.get("project_id") or "").strip()
-        _jid = str(row.get("id"))
-        _payload_dict = _coerce_row_payload(row.get("payload"))
-        _program_name = str(
-            _payload_dict.get("program_name") or result.get("program_name") or ""
-        ).strip()
-        _proj_name_row = str(row.get("project_name") or "").strip()
-        work = {
-            "id": _jid,
-            "title": title,
-            "createdAt": str(row.get("completed_at") or row.get("created_at") or ""),
-            "audioUrl": str(result.get("audio_url") or ""),
-            "scriptUrl": str(result.get("script_url") or ""),
-            "scriptText": preview_list,
-            "hasAudioHex": _work_has_audio_hex(result),
-            "audioDurationSec": _dur_out,
-            "coverImage": _work_cover_display_url(result, _jid),
-            "status": str(row.get("status") or ""),
-            "type": job_type,
-            "projectName": _proj_name_row or project_name_for(_pid),
-            "downloadAllowed": download_allowed_bulk,
-        }
-        if _program_name:
-            work["workProgramName"] = _program_name[:200]
-        work.update(_works_script_notes_extras(result, _payload_dict, job_type))
+        work, job_type = _work_item_dict_from_recent_row(
+            row,
+            download_allowed=download_allowed_bulk,
+            project_name_for=project_name_for,
+        )
         if job_type in ("text_to_speech", "tts"):
             buckets["tts"].append(work)
         elif job_type in ("script_draft", "podcast_generate", "podcast", "podcast_short_video"):
@@ -502,6 +627,69 @@ def list_works_api(
         "limit": limit,
         "offset": offset,
     }
+
+
+@router.get("/works/podcast-templates")
+def list_podcast_template_works_api(
+    request: Request,
+    limit: int = Query(default=40, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=10_000),
+):
+    """全站播客创作模板列表（需登录）；成片由管理员在任务详情中标记。"""
+    _current_user_ref_or_401(request)
+    rows = list_podcast_template_works(limit=limit, offset=offset)
+    _proj_name_cache: dict[str, str] = {}
+
+    def project_name_for(pid_raw: str) -> str:
+        pid = (pid_raw or "").strip()
+        if not pid:
+            return ""
+        if pid in _proj_name_cache:
+            return _proj_name_cache[pid]
+        n = get_project_name(pid) or ""
+        _proj_name_cache[pid] = n
+        return n
+
+    templates: list[dict[str, Any]] = []
+    for row in rows:
+        w, _jt = _work_item_dict_from_recent_row(
+            row,
+            download_allowed=False,
+            project_name_for=project_name_for,
+            is_podcast_public_template=True,
+        )
+        templates.append(w)
+    has_more = len(rows) >= limit
+    return {
+        "success": True,
+        "templates": templates,
+        "has_more": has_more,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/jobs/{job_id}/podcast-template-listen")
+def podcast_template_listen_api(job_id: str, request: Request):
+    """模板成片试听元数据（需登录）；不含全文稿与 payload。"""
+    _current_user_ref_or_401(request)
+    bundle = build_podcast_template_listen_bundle(job_id)
+    if not bundle:
+        raise HTTPException(status_code=404, detail="template_listen_not_available")
+    return JSONResponse(jsonable_encoder({"success": True, **bundle}))
+
+
+@router.get("/jobs/{job_id}/podcast-template-reuse")
+def podcast_template_reuse_api(job_id: str, request: Request):
+    """从全站模板读取可安全复用的创作参数（需登录）。"""
+    _current_user_ref_or_401(request)
+    row = get_job(job_id, None)
+    if not row:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    body = _podcast_template_reuse_body_from_row(row)
+    if not body:
+        raise HTTPException(status_code=404, detail="template_reuse_not_available")
+    return JSONResponse(jsonable_encoder({"success": True, **body}))
 
 
 @router.get("/jobs")
@@ -544,6 +732,12 @@ def get_job_api(job_id: str, request: Request):
     if not row:
         raise HTTPException(status_code=404, detail="job_not_found")
     out = serialize_job(row)
+    _pid = str(row.get("project_id") or "").strip()
+    if _pid:
+        try:
+            out["project_name"] = get_project_name(_pid) or ""
+        except Exception:
+            out["project_name"] = ""
     arts = list_job_artifacts(job_id)
     for a in arts:
         if a.get("created_at") is not None:
@@ -552,6 +746,15 @@ def get_job_api(job_id: str, request: Request):
             a["id"] = str(a["id"])
     out["artifacts"] = arts
     return JSONResponse(jsonable_encoder(out))
+
+
+@router.get("/public/jobs/{job_id}/share-listen")
+def public_job_share_listen_api(job_id: str):
+    """匿名试听成片：不含 payload / 全文稿；仅成功播客任务且可解析出可播放 URL。"""
+    bundle = build_public_share_listen_bundle(job_id)
+    if not bundle:
+        raise HTTPException(status_code=404, detail="share_listen_not_available")
+    return JSONResponse(jsonable_encoder({"success": True, **bundle}))
 
 
 def _delete_job_json(job_id: str, row_scope_ref: str | None) -> JSONResponse:
@@ -864,6 +1067,40 @@ def upload_job_cover_api(job_id: str, request: Request, body: JobCoverDataReques
     return {"success": True, "cover_image": public_path}
 
 
+@router.post("/jobs/{job_id}/result-script")
+def patch_job_result_script_api(
+    job_id: str,
+    request: Request,
+    body: JobResultScriptBodyRequest = Body(...),
+):
+    """将口播稿写入 jobs.result.script_text（终态任务；owner 校验）。"""
+    scope = _job_row_scope_ref(request)
+    row = get_job(job_id, user_ref=scope)
+    if not row:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    if str(row.get("status") or "") != "succeeded":
+        raise HTTPException(status_code=400, detail="job_not_succeeded")
+    jt = str(row.get("job_type") or "").strip().lower()
+    if jt not in ("podcast", "podcast_generate", "script_draft"):
+        raise HTTPException(status_code=400, detail="job_type_not_supported_for_script_patch")
+    text = str(body.script_text or "")
+    st = text.strip()
+    patch: dict[str, Any] = {
+        "script_text": text,
+        "script_char_count": len(st) if st else 0,
+    }
+    err = merge_job_result(job_id, scope, patch)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    append_job_event(
+        job_id,
+        "log",
+        "作品详情：已更新口播稿正文",
+        {"chars": patch["script_char_count"]},
+    )
+    return JSONResponse(jsonable_encoder({"success": True, "script_char_count": patch["script_char_count"]}))
+
+
 @router.post("/jobs/{job_id}/audio-export")
 def export_job_audio_mp3_api(
     job_id: str,
@@ -1128,3 +1365,112 @@ def social_viral_copy_api(req: SocialViralCopyRequest, request: Request):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
     return JSONResponse(jsonable_encoder({"success": True, **pack}))
+
+
+@router.post("/jobs/{job_id}/share-ai-copy")
+def share_ai_copy_api(
+    job_id: str,
+    request: Request,
+    body: dict[str, Any] | None = Body(default=None),
+):
+    """按 TEXT_PROVIDER 用大模型生成 RSS 简介与 Show Notes（服务端密钥，不落前端）。"""
+    _ = _current_user_ref_or_401(request)
+    scope = _job_row_scope_ref(request)
+    row = get_job(job_id, user_ref=scope)
+    if not row:
+        raise HTTPException(status_code=404, detail="job_not_found")
+
+    raw_payload = row.get("payload")
+    if isinstance(raw_payload, dict):
+        payload = raw_payload
+    elif isinstance(raw_payload, str) and raw_payload.strip():
+        try:
+            payload = json.loads(raw_payload)
+            if not isinstance(payload, dict):
+                payload = {}
+        except json.JSONDecodeError:
+            payload = {}
+    else:
+        payload = {}
+
+    raw_result = row.get("result")
+    if isinstance(raw_result, dict):
+        result = raw_result
+    elif isinstance(raw_result, str) and raw_result.strip():
+        try:
+            result = json.loads(raw_result)
+            if not isinstance(result, dict):
+                result = {}
+        except json.JSONDecodeError:
+            result = {}
+    else:
+        result = {}
+
+    opts = body if isinstance(body, dict) else {}
+    persist = bool(opts.get("persist"))
+
+    if persist and str(row.get("status") or "") != "succeeded":
+        raise HTTPException(status_code=400, detail="job_not_succeeded")
+
+    script = resolve_script_body_for_share(job_id, row)
+    user_source = build_share_user_source_text(payload, result)
+    if not script.strip() and not user_source:
+        raise HTTPException(status_code=400, detail="no_script_for_ai_copy")
+
+    title_hint = (
+        str(payload.get("episode_title") or payload.get("podcast_title") or "").strip()
+        or str(result.get("title") or "").strip()
+        or str(payload.get("program_name") or "").strip()
+    )[:300]
+    chapter_hint = format_audio_chapters_hint(result)
+    api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
+    try:
+        pack = generate_share_rss_ai_copy(
+            script_raw=script,
+            user_source_text=user_source,
+            episode_title_hint=title_hint,
+            chapter_timeline_hint=chapter_hint,
+            api_key=api_key,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)[:200]) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+
+    summary_out = str(pack.get("summary") or "").strip()
+    show_notes_out = str(pack.get("show_notes") or "").strip()
+    persisted = False
+    if persist and (summary_out or show_notes_out):
+        patch: dict[str, Any] = {}
+        if summary_out:
+            patch["auto_share_summary"] = summary_out
+        if show_notes_out:
+            patch["auto_share_show_notes"] = show_notes_out
+        tid = pack.get("trace_id")
+        if tid:
+            patch["auto_share_ai_trace_id"] = str(tid)
+        patch["auto_share_ai_generated_at"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        err = merge_job_result(job_id, scope, patch)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+        persisted = True
+        append_job_event(
+            job_id,
+            "log",
+            "已写入 RSS 简介与 Shownotes 初稿（分享页生成）",
+            {"trace_id": pack.get("trace_id")},
+        )
+
+    return JSONResponse(
+        jsonable_encoder(
+            {
+                "success": True,
+                "summary": summary_out,
+                "show_notes": show_notes_out,
+                "trace_id": pack.get("trace_id"),
+                "persisted": persisted,
+            }
+        )
+    )

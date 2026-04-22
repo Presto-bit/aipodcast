@@ -43,7 +43,7 @@ import {
 import { formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
-import { planIsBasicOrAbove } from "../../lib/noteReferenceLimits";
+import { notesRoomFeaturesEnabled } from "../../lib/noteReferenceLimits";
 import { LockedToolbarChipPill } from "../SubscriptionVipLink";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
@@ -62,8 +62,6 @@ export type NotesPodcastRoomModalProps = {
   notebookName: string;
   /** 笔记本内已勾选的笔记 ID（锁定参与 RAG） */
   lockedNoteIds: string[];
-  /** 当前套餐下最多可选笔记数（与服务端一致） */
-  maxLockedNotes?: number;
   noteTitleById: Record<string, string>;
   presetKey: PodcastRoomPresetKey;
   /** 创建 podcast_generate 任务成功后交给父级监听进度 */
@@ -73,6 +71,8 @@ export type NotesPodcastRoomModalProps = {
   /** 由父级提供正文（与顶部统一输入框联动） */
   externalPrompt?: string;
   onExternalPromptChange?: (value: string) => void;
+  /** 基于他人公开笔记本生成时传入所有者用户 UUID（写入任务 payload） */
+  notesSourceOwnerUserId?: string | null;
   /** 主按钮改由父级左侧触发 */
   hideGenerateButton?: boolean;
   /** 成功后是否关闭（内联布局通常为 false） */
@@ -93,12 +93,12 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
       notebookName,
       lockedNoteIds,
       noteTitleById,
-      maxLockedNotes = 10,
       presetKey,
       onPodcastJobCreated,
       layout = "modal",
       externalPrompt: controlledPrompt,
       onExternalPromptChange,
+      notesSourceOwnerUserId,
       hideGenerateButton = false,
       closeOnSuccess = true,
       onBusyChange
@@ -108,7 +108,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   const { user, phone, getAuthHeaders } = useAuth();
   const { t } = useI18n();
   const createdByPhone = userAccountRef(user) || String(phone || "").trim();
-  const planBasicOk = useMemo(() => planIsBasicOrAbove(String(user?.plan)), [user?.plan]);
+  const roomFeaturesOk = useMemo(() => notesRoomFeaturesEnabled(), []);
 
   const [internalPrompt, setInternalPrompt] = useState("");
   /** 媒体钱包预检 / 创建任务失败时的提示（替换不可点链接的 alert） */
@@ -171,10 +171,10 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   }, []);
 
   useEffect(() => {
-    if (!planBasicOk) {
+    if (!roomFeaturesOk) {
       setActivePanel((p) => (p === "creative" || p === "intro" ? null : p));
     }
-  }, [planBasicOk]);
+  }, [roomFeaturesOk]);
 
   const applyIntroOutroSnapshot = useCallback((s: IntroOutroSnapshotV1) => {
     setIntroText(s.introText);
@@ -460,6 +460,10 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
       setScriptTargetCharsInput(String(effectiveChars));
       const payload = await buildPodcastPayload(effectiveChars);
       (payload as Record<string, unknown>).notes_notebook = notebookName;
+      const ownerId = (notesSourceOwnerUserId || "").trim();
+      if (ownerId) {
+        (payload as Record<string, unknown>).notes_source_owner_user_id = ownerId;
+      }
       try {
         const prev = await previewMediaJob({
           project_name: NOTES_PODCAST_PROJECT_NAME,
@@ -594,7 +598,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
               笔记本 · 播客间
             </h2>
             <p className="mt-0.5 text-xs text-muted">
-              {presetLabel} · 「{notebookName}」 · 已选 {lockedNoteIds.length}/{maxLockedNotes}
+              {presetLabel} · 「{notebookName}」 · 已选 {lockedNoteIds.length} 条
             </p>
           </div>
           {layout === "modal" ? (
@@ -772,7 +776,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                         )}
                       </span>
                       <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
-                        {!planBasicOk ? (
+                        {!roomFeaturesOk ? (
                           <LockedToolbarChipPill label={<>开场/结尾 · {introSummary}</>} upgradeTitle="开场与结尾设置需要 Basic 及以上套餐" />
                         ) : (
                           <>
@@ -899,7 +903,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                     )}
                       </span>
                       <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-flex max-w-full align-top">
-                        {!planBasicOk ? (
+                        {!roomFeaturesOk ? (
                           <LockedToolbarChipPill label={<>加入创意 · {creativeSummary}</>} upgradeTitle="风格与创意设置需要 Basic 及以上套餐" />
                         ) : (
                           <>
@@ -954,7 +958,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
 
   return (
     <div
-      className="fixed inset-0 z-[280] overflow-y-auto overscroll-contain bg-black/50 p-3 py-6 sm:p-4 sm:py-10"
+      className="fym-workspace-scrim z-[280] overflow-y-auto overscroll-contain bg-black/50 p-3 py-6 sm:p-4 sm:py-10"
       role="dialog"
       aria-modal="true"
       aria-labelledby="notes-podcast-room-title"

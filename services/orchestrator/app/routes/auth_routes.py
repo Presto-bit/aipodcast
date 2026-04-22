@@ -8,6 +8,7 @@ from ..fyv_shared.register_send_code_limiter import (
 )
 
 from ..schemas import (
+    AuthChangePasswordRequest,
     AuthForgotPasswordRequest,
     AuthLoginRequest,
     AuthProfilePatchRequest,
@@ -205,6 +206,27 @@ def auth_logout_api(request: Request):
     return {"success": True}
 
 
+@router.post("/change-password")
+def auth_change_password_api(request: Request, body: AuthChangePasswordRequest):
+    if not auth_bridge.is_auth_enabled():
+        raise HTTPException(status_code=400, detail="认证未启用")
+    token = bearer_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    sess = auth_bridge.get_session(token)
+    if not sess:
+        raise HTTPException(status_code=401, detail="未登录")
+    principal = auth_bridge.session_principal(sess)
+    if not principal:
+        raise HTTPException(status_code=401, detail="未登录")
+    ok, err = auth_bridge.change_password(
+        principal, body.current_password.strip(), body.new_password.strip()
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=err or "修改失败")
+    return {"success": True}
+
+
 @router.patch("/profile")
 def auth_profile_patch_api(request: Request, body: AuthProfilePatchRequest):
     if not auth_bridge.is_auth_enabled():
@@ -244,7 +266,7 @@ def auth_profile_patch_api(request: Request, body: AuthProfilePatchRequest):
 @router.get("/me")
 def auth_me_api(request: Request):
     if not auth_bridge.is_auth_enabled():
-        return {"success": True, "user": {"phone": "local", "plan": "free", "display_name": "访客"}}
+        return {"success": True, "user": {"phone": "local", "display_name": "访客"}}
     token = bearer_token(request)
     if not token:
         raise HTTPException(status_code=401, detail="未登录")

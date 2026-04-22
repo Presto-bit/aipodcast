@@ -20,8 +20,9 @@ def test_snapshot_zips_ids_and_titles():
 
 
 def test_snapshot_caps_at_limit():
-    ids = [f"id{i}" for i in range(30)]
-    titles = [f"标题{i}" for i in range(30)]
+    over = NOTES_SOURCE_TITLES_CAP + 25
+    ids = [f"id{i}" for i in range(over)]
+    titles = [f"标题{i}" for i in range(over)]
     pl = {"selected_note_ids": ids, "selected_note_titles": titles}
     assert len(snapshot_notes_source_titles(pl)) == NOTES_SOURCE_TITLES_CAP
 

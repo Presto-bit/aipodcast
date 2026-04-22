@@ -35,9 +35,15 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     }
     const ct = upstream.headers.get("content-type") || "application/octet-stream";
     const cd = upstream.headers.get("content-disposition");
+    const cl = upstream.headers.get("content-length");
+    const ar = upstream.headers.get("accept-ranges");
+    const cr = upstream.headers.get("content-range");
     const headers = new Headers();
     headers.set("content-type", ct);
     if (cd) headers.set("content-disposition", cd);
+    if (cl) headers.set("content-length", cl);
+    if (ar) headers.set("accept-ranges", ar);
+    if (cr) headers.set("content-range", cr);
     headers.set("cache-control", "private, max-age=60");
     return new Response(upstream.body, { status: upstream.status, headers });
   } catch (e) {

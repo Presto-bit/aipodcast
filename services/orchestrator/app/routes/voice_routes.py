@@ -84,7 +84,7 @@ def polish_tts_text_api(body: PolishTtsTextRequest, request: Request):
     if auth_bridge.is_auth_enabled() or _fyv_production():
         _raise_if_production_without_auth()
         phone = _strict_user_phone(request)
-        tier = str(auth_bridge.user_info_for_phone(phone).get("plan") or "free")
+        tier = "max"
         if not tier_allows_ai_polish(tier):
             raise HTTPException(
                 status_code=403,

@@ -17,12 +17,13 @@ type Props = {
 };
 
 /**
- * 订阅/收银页：钱包充值区下方的扣费参考（数据来自 orchestrator plans.wallet_topup.usage_reference）。
+ * 充值弹窗内扣费参考（数据来自编排器 wallet_topup.usage_reference）。
  */
 export function WalletUsageReference({ refData }: Props) {
   if (!refData || typeof refData !== "object") return null;
 
   const podcast = refData.podcast_yuan_per_minute;
+  const text10k = refData.text_yuan_per_10k_chars;
   const cloneCentsRaw = refData.voice_clone_payg_cents;
   const cloneCents =
     typeof cloneCentsRaw === "number" && Number.isFinite(cloneCentsRaw)
@@ -41,8 +42,19 @@ export function WalletUsageReference({ refData }: Props) {
           <span className="text-muted">：</span>
           {typeof podcast === "number" && Number.isFinite(podcast) ? (
             <span className="text-ink">
-              成片音频每分钟（文稿 + 合成至成片）约{" "}
+              成片音频每分钟（文稿 + 合成至成片，已含进 TTS 前 AI 润色）约{" "}
               <span className="font-medium">{fmtYuanTwoDecimals(podcast)}</span> / 分钟
+            </span>
+          ) : (
+            <span className="text-muted">—</span>
+          )}
+        </li>
+        <li>
+          <span className="font-medium text-ink">脚本文本</span>
+          <span className="text-muted">：</span>
+          {typeof text10k === "number" && Number.isFinite(text10k) ? (
+            <span className="text-ink">
+              模型成稿按字数，约 <span className="font-medium">{fmtYuanTwoDecimals(text10k)}</span> / 万字（向上取整到分）
             </span>
           ) : (
             <span className="text-muted">—</span>
@@ -52,7 +64,7 @@ export function WalletUsageReference({ refData }: Props) {
           <span className="font-medium text-ink">音色克隆</span>
           <span className="text-muted">：</span>
           <span className="text-ink">
-            超出套餐后按次 <span className="font-medium">{fmtYuanFromCents(cloneCents)}</span> / 次
+            按次 <span className="font-medium">{fmtYuanFromCents(cloneCents)}</span> / 次
           </span>
         </li>
       </ul>

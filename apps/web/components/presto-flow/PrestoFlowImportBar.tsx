@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
+import { useI18n } from "../../lib/I18nContext";
 
 type Props = {
   projectId: string;
@@ -15,6 +16,10 @@ type Props = {
   onDone: () => void;
   onError: (msg: string) => void;
   hasMainAudio: boolean;
+  /** bar：独立条带；inline：顶栏内紧凑，仅按钮 + 简要 title */
+  variant?: "bar" | "inline";
+  /** false 时仅允许单文件上传，不走路由合并 */
+  allowMultiSegment?: boolean;
 };
 
 export default function PrestoFlowImportBar({
@@ -28,13 +33,21 @@ export default function PrestoFlowImportBar({
   replaceWarn,
   onDone,
   onError,
-  hasMainAudio
+  hasMainAudio,
+  variant = "bar",
+  allowMultiSegment = true
 }: Props) {
+  const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function runImport(files: FileList | null) {
     if (!files?.length || busy || disabled) return;
+    if (!allowMultiSegment && files.length > 1) {
+      onError(t("presto.flow.importSingleFileOnly"));
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
     if (hasMainAudio && files.length > 0 && !window.confirm(replaceWarn)) {
       if (inputRef.current) inputRef.current.value = "";
       return;
@@ -59,7 +72,7 @@ export default function PrestoFlowImportBar({
         if (!res.ok || data.success === false) {
           throw new Error(data.detail || `上传失败 ${res.status}`);
         }
-      } else {
+      } else if (allowMultiSegment) {
         for (const f of list) {
           const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
             method: "POST",
@@ -96,28 +109,38 @@ export default function PrestoFlowImportBar({
     }
   }
 
+  const hintText = disabled && disabledReason ? disabledReason : hint;
+  const labelEl = (
+    <label className="inline-flex cursor-pointer items-center gap-2">
+      <span
+        title={variant === "inline" ? hintText : undefined}
+        className={[
+          "rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium shadow-soft",
+          disabled || busy ? "pointer-events-none opacity-50" : "hover:bg-fill"
+        ].join(" ")}
+      >
+        {busy ? busyLabel : label}
+      </span>
+      <input
+        ref={inputRef}
+        type="file"
+        className="sr-only"
+        accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
+        multiple={allowMultiSegment}
+        disabled={disabled || busy}
+        onChange={(e) => void runImport(e.target.files)}
+      />
+    </label>
+  );
+
+  if (variant === "inline") {
+    return <div className="flex min-w-0 max-w-full items-center gap-2">{labelEl}</div>;
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-line bg-fill/25 px-3 py-2">
-      <label className="inline-flex cursor-pointer items-center gap-2">
-        <span
-          className={[
-            "rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium shadow-soft",
-            disabled || busy ? "pointer-events-none opacity-50" : "hover:bg-fill"
-          ].join(" ")}
-        >
-          {busy ? busyLabel : label}
-        </span>
-        <input
-          ref={inputRef}
-          type="file"
-          className="sr-only"
-          accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
-          multiple
-          disabled={disabled || busy}
-          onChange={(e) => void runImport(e.target.files)}
-        />
-      </label>
-      <p className="min-w-0 flex-1 text-[10px] leading-relaxed text-muted">{disabled && disabledReason ? disabledReason : hint}</p>
+      {labelEl}
+      <p className="min-w-0 flex-1 text-[10px] leading-relaxed text-muted">{hintText}</p>
     </div>
   );
 }

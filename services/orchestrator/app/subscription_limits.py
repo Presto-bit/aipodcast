@@ -1,9 +1,9 @@
-"""订阅档位与功能上限（与 subscription/me 的 plan 字段对齐：free / basic / pro / max）。"""
+"""功能开关与 AI 润色上限（与钱包/体验包计费模型对齐）。"""
 
 import os
 
 from .entitlement_matrix import (
-    max_note_refs_for_plan,
+    max_note_refs_budget,
     tier_allows_ai_polish_entitlement,
     tier_ai_polish_monthly_quota,
 )
@@ -12,7 +12,7 @@ __all__ = [
     "ai_polish_feature_enabled",
     "tier_allows_ai_polish",
     "tier_ai_polish_monthly_quota",
-    "max_note_refs_for_plan",
+    "max_note_refs_budget",
 ]
 
 

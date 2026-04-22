@@ -23,6 +23,7 @@ import { useI18n } from "../../lib/I18nContext";
 import SystemVoicesVirtualList from "./SystemVoicesVirtualList";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { readFavoriteVoiceIds, toggleFavoriteVoiceId } from "../../lib/favoriteVoiceIdsStorage";
+import { voicePreviewSampleForCatalogLanguage } from "../../lib/voicePreviewSampleText";
 
 type LibraryTab = "explore" | "my" | "favorites";
 
@@ -65,12 +66,24 @@ function resolveFavoriteEntry(
   return { kind: "orphan", voiceId };
 }
 
+/** 列表/详情试听：按音色目录语言选示例句；克隆音若在目录中可命中语言，否则用界面回退句。 */
+function previewTextForVoiceRow(entry: DetailModel, catalogMetas: VoiceMeta[], uiFallback: string): string {
+  if (entry.kind === "preset") {
+    return voicePreviewSampleForCatalogLanguage(entry.meta.language, uiFallback);
+  }
+  if (entry.kind === "cloned") {
+    const m = catalogMetas.find((x) => x.voiceId === entry.voice.voiceId);
+    return m ? voicePreviewSampleForCatalogLanguage(m.language, uiFallback) : uiFallback;
+  }
+  const m = catalogMetas.find((x) => x.voiceId === entry.voiceId);
+  return m ? voicePreviewSampleForCatalogLanguage(m.language, uiFallback) : uiFallback;
+}
+
 export default function MyVoicesPanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { getAuthHeaders } = useAuth();
   const { t } = useI18n();
-  const previewText = t("voice.preview.defaultText");
 
   const genderFilterItems = useMemo(
     () => [
@@ -261,8 +274,9 @@ export default function MyVoicesPanel() {
     setMsg("");
   }, []);
 
-  async function fetchPreviewMp3Url(voiceId: string): Promise<string> {
-    const textRaw = (previewText || "").trim() || t("voice.preview.defaultText");
+  async function fetchPreviewMp3Url(voiceId: string, previewPlainText: string): Promise<string> {
+    const uiFallback = t("voice.preview.defaultText");
+    const textRaw = (previewPlainText || "").trim() || uiFallback;
     const res = await fetch("/api/preview_voice", {
       method: "POST",
       headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -281,9 +295,11 @@ export default function MyVoicesPanel() {
   }
 
   /** 卡片内播放：已有音频则直接重播；否则拉取后在该卡片区展示控件并自动播放 */
-  async function playOnCard(cardKey: string, voiceId: string) {
+  async function playOnCard(cardKey: string, voiceId: string, entry: DetailModel) {
     const id = String(voiceId || "").trim();
     if (!id) return;
+    const uiFallback = t("voice.preview.defaultText");
+    const previewPlainText = previewTextForVoiceRow(entry, allMetas, uiFallback);
     setMsg("");
     const previousPlayingKey = playingCardKey;
     if (previousPlayingKey && previousPlayingKey !== cardKey) {
@@ -320,14 +336,15 @@ export default function MyVoicesPanel() {
       };
       rowAudioRefs.current.set(cardKey, audioEl);
     }
+    const previewBlobKey = `${cardKey}\n${previewPlainText}`;
     try {
-      if (!cardPreviewUrls[cardKey]) {
+      if (!cardPreviewUrls[previewBlobKey]) {
         setLoadingCardKey(cardKey);
-        const url = await fetchPreviewMp3Url(id);
-        setCardPreviewUrls((prev) => ({ ...prev, [cardKey]: url }));
+        const url = await fetchPreviewMp3Url(id, previewPlainText);
+        setCardPreviewUrls((prev) => ({ ...prev, [previewBlobKey]: url }));
         audioEl.src = url;
-      } else if (audioEl.src !== cardPreviewUrls[cardKey]) {
-        audioEl.src = cardPreviewUrls[cardKey];
+      } else if (audioEl.src !== cardPreviewUrls[previewBlobKey]) {
+        audioEl.src = cardPreviewUrls[previewBlobKey];
       }
       audioEl.currentTime = 0;
       const p = audioEl.play();
@@ -344,6 +361,10 @@ export default function MyVoicesPanel() {
   async function playPreviewInDetail(voiceId: string) {
     const id = String(voiceId || "").trim();
     if (!id) return;
+    const uiFallback = t("voice.preview.defaultText");
+    const previewPlainText = detailOpen
+      ? previewTextForVoiceRow(detailOpen, allMetas, uiFallback)
+      : uiFallback;
     setMsg("");
     if (detailPreviewVoiceId === id && detailPreviewUrl && detailAudioRef.current) {
       try {
@@ -363,7 +384,7 @@ export default function MyVoicesPanel() {
     setDetailPreviewUrl(null);
     setDetailPreviewVoiceId(null);
     try {
-      const url = await fetchPreviewMp3Url(id);
+      const url = await fetchPreviewMp3Url(id, previewPlainText);
       setDetailPreviewUrl(url);
       setDetailPreviewVoiceId(id);
     } catch (e) {
@@ -526,7 +547,7 @@ export default function MyVoicesPanel() {
             title={playing ? t("voice.preview.pause") : t("voice.preview.play")}
             aria-label={playing ? t("voice.preview.pause") : t("voice.preview.play")}
             disabled={loading || busyRename}
-            onClick={() => void playOnCard(rowKey, voiceId)}
+            onClick={() => void playOnCard(rowKey, voiceId, entry)}
           >
             {loading ? (
               <span className="text-xs text-muted">…</span>
@@ -822,7 +843,7 @@ export default function MyVoicesPanel() {
       {detailOpen && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fixed inset-0 z-[1200] flex items-end justify-center bg-black/35 p-4 sm:items-center"
+              className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/35 p-4 sm:items-center"
               role="dialog"
               aria-modal="true"
               aria-label={t("voice.detail.title")}

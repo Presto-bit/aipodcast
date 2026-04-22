@@ -128,14 +128,14 @@ def _register_password_strength_err(
     return None
 
 
-def _coerce_stored_plan(raw: Any) -> str:
+def _coerce_stored_acct_tier(raw: Any) -> str:
     """对外口径：未知/空档位一律视为 free（新注册用户写入 free）。"""
     p = str(raw or "free").strip().lower()
     return p if p in VALID_PLANS else "free"
 
 
-def _normalize_billing_cycle_for_plan(plan: str, raw_cycle: Any) -> Optional[str]:
-    if plan == "free":
+def _normalize_billing_cycle_for_tier(tier: str, raw_cycle: Any) -> Optional[str]:
+    if tier == "free":
         return None
     if raw_cycle is None:
         return None
@@ -580,7 +580,7 @@ def _pg_fetch_auth_user(phone: str) -> Dict[str, Any] | None:
               u.email_verified_at,
               u.display_name,
               u.role,
-              u.plan,
+              u.acct_tier,
               u.billing_cycle,
               u.account_status,
               a.password_hash,
@@ -622,7 +622,7 @@ def _pg_fetch_auth_user_by_user_id(user_id: str) -> Dict[str, Any] | None:
               u.email_verified_at,
               u.display_name,
               u.role,
-              u.plan,
+              u.acct_tier,
               u.billing_cycle,
               u.account_status,
               a.password_hash,
@@ -674,7 +674,7 @@ def _pg_fetch_auth_user_by_login_identifier(login_id: str) -> Dict[str, Any] | N
                   u.email_verified_at,
                   u.display_name,
                   u.role,
-                  u.plan,
+                  u.acct_tier,
                   u.billing_cycle,
                   u.account_status,
                   a.password_hash,
@@ -708,7 +708,7 @@ def _pg_fetch_auth_user_by_login_identifier(login_id: str) -> Dict[str, Any] | N
               u.email_verified_at,
               u.display_name,
               u.role,
-              u.plan,
+              u.acct_tier,
               u.billing_cycle,
               u.account_status,
               a.password_hash,
@@ -740,7 +740,7 @@ def _pg_upsert_user_and_auth(
     password_hash: str | None = None,
     display_name: str | None = None,
     role: str | None = None,
-    plan: str | None = None,
+    acct_tier: str | None = None,
     billing_cycle: str | None = None,
 ) -> bool:
     if not _pg_available():
@@ -751,7 +751,7 @@ def _pg_upsert_user_and_auth(
         return False
     dn = (display_name or p).strip() or p
     rl = _normalize_role(role)
-    pl = str(plan or "free").strip().lower()
+    pl = str(acct_tier or "free").strip().lower()
     if pl not in VALID_PLANS:
         pl = "free"
     bc = (billing_cycle or "").strip().lower() if billing_cycle else None
@@ -764,13 +764,13 @@ def _pg_upsert_user_and_auth(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
             """
-            INSERT INTO users (phone, phone_normalized, display_name, role, plan, billing_cycle, account_status, updated_at)
+            INSERT INTO users (phone, phone_normalized, display_name, role, acct_tier, billing_cycle, account_status, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, 'active', NOW())
             ON CONFLICT (phone) DO UPDATE SET
               phone_normalized = EXCLUDED.phone_normalized,
               display_name = EXCLUDED.display_name,
               role = EXCLUDED.role,
-              plan = EXCLUDED.plan,
+              acct_tier = EXCLUDED.acct_tier,
               billing_cycle = EXCLUDED.billing_cycle,
               account_status = CASE WHEN users.account_status = 'deleted' THEN users.account_status ELSE 'active' END,
               updated_at = NOW()
@@ -807,7 +807,7 @@ def _pg_revive_user_with_credentials(
     password_hash: str,
     display_name: str,
     role: str,
-    plan: str,
+    acct_tier: str,
     billing_cycle: Optional[str],
 ) -> bool:
     """将 account_status=deleted 的账号恢复为可用，并更新密码与资料（避免列表中不可见但仍占用手机号）。"""
@@ -822,7 +822,7 @@ def _pg_revive_user_with_credentials(
         return False
     dn = (display_name or p).strip() or p
     rl = _normalize_role(role)
-    pl = str(plan or "free").strip().lower()
+    pl = str(acct_tier or "free").strip().lower()
     if pl not in VALID_PLANS:
         pl = "free"
     bc = (billing_cycle or "").strip().lower() if billing_cycle else None
@@ -839,7 +839,7 @@ def _pg_revive_user_with_credentials(
                 phone_normalized = %s,
                 display_name = %s,
                 role = %s,
-                plan = %s,
+                acct_tier = %s,
                 billing_cycle = %s,
                 account_status = 'active',
                 deleted_at = NULL,
@@ -998,15 +998,17 @@ def _pg_list_users() -> list[Dict[str, Any]]:
               u.phone,
               u.email,
               u.username,
-              u.plan,
+              u.acct_tier,
               u.billing_cycle,
               u.role,
               u.account_status,
               EXTRACT(EPOCH FROM u.created_at)::bigint AS created_at,
               (a.password_hash IS NOT NULL) AS has_password,
-              (u.email_verified_at IS NOT NULL) AS email_verified
+              (u.email_verified_at IS NOT NULL) AS email_verified,
+              COALESCE(wb.balance_cents, 0)::bigint AS wallet_balance_cents
             FROM users u
             LEFT JOIN user_auth_accounts a ON a.user_id = u.id
+            LEFT JOIN user_wallet_balance wb ON wb.user_id = u.id
             WHERE u.account_status <> 'deleted'
             ORDER BY u.created_at DESC
             """
@@ -1083,7 +1085,7 @@ def _resolve_auth_row_for_principal(ref: str) -> Optional[Dict[str, Any]]:
 def _pg_update_user_fields_by_user_id(
     user_id: str,
     *,
-    plan: Optional[str] = None,
+    acct_tier: Optional[str] = None,
     billing_cycle: Optional[str] = None,
     display_name: Optional[str] = None,
     username: Optional[str] = None,
@@ -1093,11 +1095,11 @@ def _pg_update_user_fields_by_user_id(
         return False
     parts: list[str] = []
     args: list[Any] = []
-    if plan is not None:
-        pl = str(plan or "free").strip().lower()
+    if acct_tier is not None:
+        pl = str(acct_tier or "free").strip().lower()
         if pl not in VALID_PLANS:
             pl = "free"
-        parts.append("plan = %s")
+        parts.append("acct_tier = %s")
         args.append(pl)
     if billing_cycle is not None:
         parts.append("billing_cycle = %s")
@@ -1390,8 +1392,8 @@ def _pg_format_integrity_err_user_insert(exc: BaseException) -> str:
         )
     if "ux_users_phone" in pe or ("duplicate key" in pe and "phone" in pe):
         return "该手机号已被占用"
-    if "violates check constraint" in pe and "plan" in pe:
-        return "注册失败：users.plan 与数据库 CHECK 不一致，请运行最新迁移或联系管理员。"
+    if "violates check constraint" in pe and ("acct_tier" in pe or "users_acct_tier" in cn):
+        return "注册失败：users.acct_tier 与数据库 CHECK 不一致，请运行最新迁移或联系管理员。"
     if pe:
         return f"注册失败：数据库拒绝写入（{pgerr.strip()[:200]}）"
     return "注册失败：数据约束冲突，请稍后再试或更换邮箱/用户名"
@@ -1417,7 +1419,7 @@ def _pg_insert_user_with_credentials_on_cur(
     try:
         cur.execute(
             """
-            INSERT INTO users (phone, email, username, display_name, role, plan, billing_cycle, account_status, email_verified_at, updated_at)
+            INSERT INTO users (phone, email, username, display_name, role, acct_tier, billing_cycle, account_status, email_verified_at, updated_at)
             VALUES (%s, %s, %s, %s, 'user', 'free', NULL, 'active', %s, NOW())
             RETURNING id::text AS uid
             """,
@@ -2346,7 +2348,7 @@ def register_user(
                     password_hash=pw_hash,
                     display_name=p,
                     role="user",
-                    plan="free",
+                    acct_tier="free",
                     billing_cycle=None,
                 )
                 if not ok:
@@ -2361,7 +2363,7 @@ def register_user(
                 password_hash=pw_hash,
                 display_name=p,
                 role="user",
-                plan="free",
+                acct_tier="free",
                 billing_cycle=None,
             )
             if not ok:
@@ -2386,7 +2388,7 @@ def register_user(
             pass
         users[p] = {
             "password_hash": pw_hash,
-            "plan": "free",
+            "acct_tier": "free",
             "billing_cycle": None,
             "role": "user",
             "display_name": p,
@@ -2681,8 +2683,6 @@ def user_info_for_principal(ref: str) -> Dict[str, Any]:
         or str(u.get("email") or "").strip()
         or ref
     )
-    plan = _coerce_stored_plan(u.get("plan"))
-    billing_cycle = _normalize_billing_cycle_for_plan(plan, u.get("billing_cycle"))
     return {
         "user_id": uid or None,
         "phone": phone_out or None,
@@ -2690,8 +2690,6 @@ def user_info_for_principal(ref: str) -> Dict[str, Any]:
         "username": str(u.get("username") or "").strip() or None,
         "email_verified": bool(u.get("email_verified_at")),
         "display_name": dn,
-        "plan": plan,
-        "billing_cycle": billing_cycle,
         "role": r,
     }
 
@@ -2765,7 +2763,7 @@ def update_display_name(principal: str, display_name: str) -> Tuple[bool, Option
                 phone=ph,
                 display_name=dn,
                 role=str(row.get("role") or "user"),
-                plan=str(row.get("plan") or "free"),
+                acct_tier=str(row.get("acct_tier") or "free"),
                 billing_cycle=(str(row.get("billing_cycle") or "").strip() or None),
             )
         else:
@@ -2788,7 +2786,7 @@ def update_display_name(principal: str, display_name: str) -> Tuple[bool, Option
         if jk not in users:
             if not validate_phone(jk):
                 return True, None
-            users[jk] = {"display_name": dn, "plan": "free", "role": "user", "billing_cycle": None}
+            users[jk] = {"display_name": dn, "acct_tier": "free", "role": "user", "billing_cycle": None}
         rec = users[jk]
         if not isinstance(rec, dict):
             return False, "用户数据损坏"
@@ -2823,6 +2821,61 @@ def update_username(principal: str, username: str) -> Tuple[bool, Optional[str]]
     return True, None
 
 
+def change_password_for_principal(
+    principal: str, current_password: str, new_password: str
+) -> Tuple[bool, Optional[str]]:
+    """已登录用户凭当前密码修改登录密码（PostgreSQL 主模式）。"""
+    p = (principal or "").strip()
+    cur_pw = current_password or ""
+    new_pw = new_password or ""
+    if len(new_pw) < 6:
+        return False, "新密码至少 6 位"
+    if not (_auth_pg_primary() and _pg_available()):
+        return False, "当前环境无法修改密码"
+    row = _resolve_auth_row_for_principal(p)
+    if not row:
+        return False, "用户不存在"
+    uid = str(row.get("user_id") or "").strip()
+    if not uid:
+        return False, "用户不存在"
+    ph = row.get("password_hash")
+    if not ph:
+        return False, "当前账号未设置密码，请使用忘记密码流程"
+    if not check_password_hash(str(ph), cur_pw):
+        return False, "当前密码错误"
+    em = str(row.get("email") or "").strip() or None
+    un = str(row.get("username") or "").strip() or None
+    phone_r = str(row.get("phone") or "").strip() or None
+    phone_kw = phone_r if phone_r and validate_phone(phone_r) else None
+    pw_err = _register_password_strength_err(new_pw, email=em, username=un, phone=phone_kw)
+    if pw_err:
+        return False, pw_err
+    new_hash = generate_password_hash(new_pw)
+    conn = psycopg2.connect(_pg_dsn())
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE user_auth_accounts
+            SET password_hash = %s, updated_at = NOW(), failed_attempts = 0, locked_until = NULL
+            WHERE user_id = %s::uuid
+            """,
+            (new_hash, uid),
+        )
+        conn.commit()
+        if cur.rowcount < 1:
+            return False, "更新失败"
+        return True, None
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False, "更新失败"
+    finally:
+        conn.close()
+
+
 def set_user_subscription(user_ref: str, tier: str, cycle: Optional[str]) -> Tuple[bool, Optional[str]]:
     tier = (tier or "free").strip().lower()
     if tier not in VALID_PLANS:
@@ -2843,13 +2896,13 @@ def set_user_subscription(user_ref: str, tier: str, cycle: Optional[str]) -> Tup
                 phone=ph,
                 display_name=str(row.get("display_name") or ph),
                 role=str(row.get("role") or "user"),
-                plan=tier,
+                acct_tier=tier,
                 billing_cycle=(cycle if tier != "free" else None),
             )
         else:
             ok = _pg_update_user_fields_by_user_id(
                 uid,
-                plan=tier,
+                acct_tier=tier,
                 billing_cycle=(cycle if tier != "free" else None),
             )
         if not ok:
@@ -2859,7 +2912,7 @@ def set_user_subscription(user_ref: str, tier: str, cycle: Optional[str]) -> Tup
         jk = user_ref.strip()
         if jk not in users:
             return False, "用户不存在"
-        users[jk]["plan"] = tier
+        users[jk]["acct_tier"] = tier
         users[jk]["billing_cycle"] = cycle if tier != "free" else None
         _save_users(users)
     return True, None
@@ -2883,7 +2936,7 @@ def set_user_role(user_ref: str, role: str) -> Tuple[bool, Optional[str]]:
                 phone=ph,
                 display_name=str(row.get("display_name") or ph),
                 role=r,
-                plan=str(row.get("plan") or "free"),
+                acct_tier=str(row.get("acct_tier") or "free"),
                 billing_cycle=(str(row.get("billing_cycle") or "").strip() or None),
             )
         else:
@@ -2911,13 +2964,12 @@ def list_users_admin_view() -> list[Dict[str, Any]]:
                         "phone": str(raw.get("phone") or ""),
                         "email": str(raw.get("email") or ""),
                         "username": str(raw.get("username") or ""),
-                        "plan": str(raw.get("plan") or "free"),
-                        "billing_cycle": raw.get("billing_cycle"),
                         "role": _normalize_role(raw.get("role")),
                         "account_status": str(raw.get("account_status") or "active"),
                         "created_at": int(raw.get("created_at") or 0),
                         "has_password": bool(raw.get("has_password")),
                         "email_verified": bool(raw.get("email_verified")),
+                        "wallet_balance_cents": int(raw.get("wallet_balance_cents") or 0),
                     }
                 )
             return out
@@ -2930,8 +2982,6 @@ def list_users_admin_view() -> list[Dict[str, Any]]:
         out.append(
             {
                 "phone": str(phone),
-                "plan": str(raw.get("plan") or "free"),
-                "billing_cycle": raw.get("billing_cycle"),
                 "role": _normalize_role(raw.get("role")),
                 "account_status": "active",
                 "created_at": created_at,
@@ -2942,14 +2992,14 @@ def list_users_admin_view() -> list[Dict[str, Any]]:
     return out
 
 
-def admin_create_user(phone: str, password: str, role: str = "user", plan: str = "free", billing_cycle: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+def admin_create_user(phone: str, password: str, role: str = "user", initial_tier: str = "free", billing_cycle: Optional[str] = None) -> Tuple[bool, Optional[str]]:
     p = (phone or "").strip()
     if not validate_phone(p):
         return False, "请输入有效的中国大陆 11 位手机号"
     if len((password or "")) < 6:
         return False, "密码至少 6 位"
     r = _normalize_role(role)
-    t = str(plan or "free").strip().lower()
+    t = str(initial_tier or "free").strip().lower()
     if t not in VALID_PLANS:
         return False, "无效套餐"
     cycle = str(billing_cycle or "").strip().lower() if billing_cycle else None
@@ -2969,7 +3019,7 @@ def admin_create_user(phone: str, password: str, role: str = "user", plan: str =
                     password_hash=pw_hash,
                     display_name=p,
                     role=r,
-                    plan=t,
+                    acct_tier=t,
                     billing_cycle=(cycle if t != "free" else None),
                 )
                 if not ok:
@@ -2985,7 +3035,7 @@ def admin_create_user(phone: str, password: str, role: str = "user", plan: str =
                 password_hash=pw_hash,
                 display_name=p,
                 role=r,
-                plan=t,
+                acct_tier=t,
                 billing_cycle=(cycle if t != "free" else None),
             )
             if not ok:
@@ -2996,7 +3046,7 @@ def admin_create_user(phone: str, password: str, role: str = "user", plan: str =
             return False, "该手机号已存在"
         users[p] = {
             "password_hash": pw_hash,
-            "plan": t,
+            "acct_tier": t,
             "billing_cycle": cycle if t != "free" else None,
             "role": r,
             "display_name": p,
@@ -3061,16 +3111,16 @@ def ensure_bootstrap_admin() -> Tuple[bool, str]:
         return False, "bootstrap_admin_password_too_short"
     exists = bool(_pg_fetch_auth_user(phone)) if (_auth_pg_primary() and _pg_available()) else False
     if not exists:
-        ok, err = admin_create_user(phone, password, role="admin", plan="max", billing_cycle="yearly")
+        ok, err = admin_create_user(phone, password, role="admin", initial_tier="max", billing_cycle="yearly")
         if not ok:
             return False, str(err or "bootstrap_admin_create_failed")
         return True, "bootstrap_admin_created"
     ok_role, err_role = set_user_role(phone, "admin")
     if not ok_role:
         return False, str(err_role or "bootstrap_admin_set_role_failed")
-    ok_plan, err_plan = set_user_subscription(phone, "max", "yearly")
-    if not ok_plan:
-        return False, str(err_plan or "bootstrap_admin_set_plan_failed")
+    ok_sub, err_sub = set_user_subscription(phone, "max", "yearly")
+    if not ok_sub:
+        return False, str(err_sub or "bootstrap_admin_set_subscription_failed")
     if force_pwd:
         row = _pg_fetch_auth_user(phone)
         if isinstance(row, dict):
@@ -3079,7 +3129,7 @@ def ensure_bootstrap_admin() -> Tuple[bool, str]:
                 password_hash=generate_password_hash(password),
                 display_name=str(row.get("display_name") or phone),
                 role=str(row.get("role") or "admin"),
-                plan=str(row.get("plan") or "max"),
+                acct_tier=str(row.get("acct_tier") or "max"),
                 billing_cycle=(str(row.get("billing_cycle") or "").strip() or "yearly"),
             )
     return True, "bootstrap_admin_updated"

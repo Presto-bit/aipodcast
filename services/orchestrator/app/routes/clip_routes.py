@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -14,7 +15,7 @@ from typing import Any
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from .. import auth_bridge
 from ..clip_audio_merge import (
@@ -23,6 +24,13 @@ from ..clip_audio_merge import (
     merge_audio_files_to_mp3,
     validate_staging_segments_for_volc,
 )
+from ..clip_audio_repair import (
+    repair_ambient_to_mp3,
+    repair_dual_stereo_balance_to_mp3,
+    repair_loudnorm_to_mp3,
+    sniff_suffix_from_filename,
+)
+from ..clip_export import resolve_export_loudnorm_i_lufs
 from ..clip_store import (
     append_clip_audio_staging,
     append_clip_suggestion_feedback,
@@ -34,14 +42,19 @@ from ..clip_store import (
     get_clip_project,
     insert_clip_project,
     list_clip_projects,
+    replace_clip_source_audio_preserve_transcript,
     replace_retake_manifest,
     revert_clip_export_after_enqueue_failed,
     revert_clip_transcription_after_enqueue_failed,
     try_claim_clip_export_queued,
     try_claim_clip_transcription_queued,
     update_clip_excluded_words,
+    update_clip_export_pause_policy,
+    update_clip_asr_corpus,
+    update_clip_rough_cut_lexicon_exempt,
     update_clip_project_audio,
     update_clip_project_meta,
+    update_clip_repair_loudness_i_lufs,
     update_clip_silence_analysis,
     update_clip_timeline_json,
     update_qc_report,
@@ -50,7 +63,15 @@ from ..clip_loudness_qc import analyze_loudness_from_file
 from ..clip_timeline import build_timeline_v1_from_row
 from ..models import resolved_user_uuid_string
 from ..clip_silence_detect import detect_silence_segments_from_file
-from ..object_store import delete_object_key, get_object_bytes, iter_object_chunks, presigned_get_url, upload_bytes
+from ..object_store import (
+    delete_object_key,
+    get_object_bytes,
+    head_object_byte_length,
+    iter_object_byte_range,
+    iter_object_chunks,
+    presigned_get_url,
+    upload_bytes,
+)
 from ..queue import ai_queue
 from ..security import verify_internal_signature
 from ..volcengine_seed_asr_client import volc_seed_auth_configured
@@ -122,6 +143,62 @@ def _apply_channel_ids_from_audio_file(*, project_id: str, user_uuid: str | None
         logger.warning("clip audio channel_autodetect_skip project_id=%s err=%s", project_id, exc)
 
 
+def _effective_audio_media_type(filename: str, mime_header: str) -> str:
+    """上传头常为 application/octet-stream；<audio>/WebAudio 需要可信的 audio/*。"""
+    m = (mime_header or "").strip().lower()
+    if m and m not in ("application/octet-stream", "binary/octet-stream", "") and not m.startswith("text/"):
+        return (mime_header or "").strip()[:200]
+    fn = (filename or "").strip().lower()
+    if fn.endswith(".mp3"):
+        return "audio/mpeg"
+    if fn.endswith(".wav"):
+        return "audio/wav"
+    if fn.endswith(".m4a") or fn.endswith(".mp4"):
+        return "audio/mp4"
+    if fn.endswith(".aac"):
+        return "audio/aac"
+    if fn.endswith(".flac"):
+        return "audio/flac"
+    if fn.endswith(".ogg") or fn.endswith(".opus"):
+        return "audio/ogg"
+    if fn.endswith(".webm"):
+        return "audio/webm"
+    return "audio/mpeg"
+
+
+def _parse_single_byte_range(range_header: str | None, total: int) -> tuple[int, int] | None:
+    """解析 ``Range: bytes=a-b`` 单区间，返回 (start, end_inclusive)；不支持的格式返回 None。"""
+    if total <= 0 or not range_header:
+        return None
+    rh = range_header.strip()
+    if not rh.lower().startswith("bytes="):
+        return None
+    spec = rh.split("=", 1)[1].strip().split(",", 1)[0].strip()
+    if "-" not in spec:
+        return None
+    left, _, right = spec.partition("-")
+    try:
+        if left == "":
+            if not right.isdigit():
+                return None
+            ln = int(right)
+            if ln <= 0:
+                return None
+            start = max(0, total - ln)
+            end = total - 1
+        else:
+            start = int(left)
+            if start < 0 or start >= total:
+                return None
+            end = int(right) if right != "" else total - 1
+    except ValueError:
+        return None
+    end = min(end, total - 1)
+    if start > end:
+        return None
+    return start, end
+
+
 def _serialize_clip_row(row: dict[str, Any]) -> dict[str, Any]:
     d = dict(row)
     for k in ("created_at", "updated_at"):
@@ -146,6 +223,10 @@ def _serialize_clip_row(row: dict[str, Any]) -> dict[str, Any]:
         "collaboration_notes",
         "retake_manifest",
         "qc_report",
+        "export_pause_policy",
+        "rough_cut_lexicon_exempt",
+        "asr_corpus_hotwords",
+        "asr_corpus_scene",
     ):
         if isinstance(d.get(key), str):
             try:
@@ -217,6 +298,84 @@ def clip_patch_project(project_id: str, request: Request, body: dict[str, Any] =
         if not isinstance(ex, list):
             raise HTTPException(status_code=400, detail="excluded_word_ids 须为数组")
         update_clip_excluded_words(project_id=project_id, user_uuid=uid, word_ids=[str(x) for x in ex])
+    if "export_pause_policy" in b:
+        pol = b.get("export_pause_policy")
+        if pol is not None and not isinstance(pol, dict):
+            raise HTTPException(status_code=400, detail="export_pause_policy 须为对象或 null")
+        clean_pol: dict[str, Any] | None = None
+        if pol is None:
+            clean_pol = None
+        elif isinstance(pol, dict) and bool(pol.get("enabled")):
+            try:
+                long_gap_ms = int(pol.get("long_gap_ms", 2000))
+                cap_ms = int(pol.get("cap_ms", 500))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="export_pause_policy 数值无效") from None
+            clean_pol = {
+                "enabled": True,
+                "long_gap_ms": max(500, min(120_000, long_gap_ms)),
+                "cap_ms": max(100, min(5000, cap_ms)),
+            }
+        else:
+            clean_pol = None
+        if not update_clip_export_pause_policy(project_id=project_id, user_uuid=uid, policy=clean_pol):
+            raise HTTPException(status_code=500, detail="无法更新导出停顿策略")
+    if "rough_cut_lexicon_exempt" in b:
+        raw_ex = b.get("rough_cut_lexicon_exempt")
+        if not isinstance(raw_ex, list):
+            raise HTTPException(status_code=400, detail="rough_cut_lexicon_exempt 须为字符串数组")
+        phrases: list[str] = []
+        for x in raw_ex:
+            s = str(x).strip()[:64]
+            if s:
+                phrases.append(s)
+            if len(phrases) >= 200:
+                break
+        if not update_clip_rough_cut_lexicon_exempt(project_id=project_id, user_uuid=uid, phrases=phrases):
+            raise HTTPException(status_code=500, detail="无法更新口癖豁免词表")
+    if "asr_corpus_hotwords" in b or "asr_corpus_scene" in b:
+        raw_hw = b.get("asr_corpus_hotwords", row.get("asr_corpus_hotwords"))
+        if isinstance(raw_hw, str):
+            try:
+                raw_hw = json.loads(raw_hw)
+            except Exception:
+                raw_hw = []
+        if raw_hw is None:
+            raw_hw = []
+        if not isinstance(raw_hw, list):
+            raise HTTPException(status_code=400, detail="asr_corpus_hotwords 须为字符串数组")
+        hw_list: list[str] = []
+        seen_hw: set[str] = set()
+        for x in raw_hw:
+            s = str(x).strip()[:48]
+            if not s or s in seen_hw:
+                continue
+            seen_hw.add(s)
+            hw_list.append(s)
+            if len(hw_list) >= 500:
+                break
+        sc_src = b["asr_corpus_scene"] if "asr_corpus_scene" in b else row.get("asr_corpus_scene")
+        if sc_src is not None and not isinstance(sc_src, str):
+            raise HTTPException(status_code=400, detail="asr_corpus_scene 须为字符串或 null")
+        sc_clean = (str(sc_src).strip()[:3500] if sc_src is not None else None) or None
+        if not update_clip_asr_corpus(
+            project_id=project_id, user_uuid=uid, hotwords=hw_list, scene=sc_clean
+        ):
+            raise HTTPException(status_code=500, detail="无法更新 ASR 语料配置")
+    if "repair_loudness_i_lufs" in b:
+        raw_l = b.get("repair_loudness_i_lufs")
+        if raw_l is None:
+            ok_l = update_clip_repair_loudness_i_lufs(project_id=project_id, user_uuid=uid, i_lufs=None)
+        else:
+            try:
+                v = float(raw_l)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="repair_loudness_i_lufs 须为数字或 null") from None
+            if not math.isfinite(v) or v < -24.0 or v > -10.0:
+                raise HTTPException(status_code=400, detail="repair_loudness_i_lufs 须在 -24～-10 LUFS 之间") from None
+            ok_l = update_clip_repair_loudness_i_lufs(project_id=project_id, user_uuid=uid, i_lufs=v)
+        if not ok_l:
+            raise HTTPException(status_code=500, detail="无法更新响度目标")
     ch_ids: list[int] | None = None
     if "channel_ids" in b:
         ch = b.get("channel_ids")
@@ -262,7 +421,8 @@ async def clip_upload_audio(project_id: str, request: Request):
         raise HTTPException(status_code=400, detail=f"音频过大或为空（上限 {_CLIP_MAX_BYTES} 字节）")
     fn = _clip_filename_from_header(request.headers.get("x-clip-filename"), "upload.mp3")
     fn = _SAFE_NAME.sub("_", fn)[:240] or "upload.mp3"
-    mime = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
+    mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
+    mime = _effective_audio_media_type(fn, mime_raw)
     owner_seg = uid or "anon"
     key = f"clip/{owner_seg}/{project_id}/source_{fn}"
     upload_bytes(key, body, mime)
@@ -289,6 +449,76 @@ async def clip_upload_audio(project_id: str, request: Request):
     return {"success": True, "project": _serialize_clip_row(row2 or {})}
 
 
+@router.post("/clip/projects/{project_id}/audio/repair")
+async def clip_repair_source_audio(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    """主素材修音：环境音（高通 + afftdn + 可选人声轻增强 + 限幅）、立体声左右电平自动平衡、或 EBU R128 loudnorm；保留转写稿。"""
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    b = body or {}
+    kind = str(b.get("kind") or "").strip().lower()
+    if kind not in ("ambient", "loudnorm", "dual_balance"):
+        raise HTTPException(status_code=400, detail="kind 须为 ambient、loudnorm 或 dual_balance")
+    t_st = str(row.get("transcription_status") or "").strip()
+    if t_st in ("running", "queued"):
+        raise HTTPException(status_code=409, detail="转写进行中，请稍后再试修音")
+    old_key = str(row.get("audio_object_key") or "").strip()
+    if not old_key:
+        raise HTTPException(status_code=400, detail="无主素材音频")
+    owner_seg = uid or "anon"
+    try:
+        raw = get_object_bytes(old_key)
+    except Exception as exc:
+        logger.exception("clip repair download failed project_id=%s", project_id)
+        raise HTTPException(status_code=502, detail="读取素材失败") from exc
+    if not raw or len(raw) < 64:
+        raise HTTPException(status_code=400, detail="素材过短或为空")
+    fn = str(row.get("audio_filename") or "source.mp3")
+    suf = sniff_suffix_from_filename(fn)
+    new_key: str | None = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="fyv_clip_repair_") as td:
+            td_path = Path(td)
+            src = td_path / f"in{suf}"
+            src.write_bytes(raw)
+            out_mp3 = td_path / "repaired.mp3"
+            if kind == "ambient":
+                repair_ambient_to_mp3(src, out_mp3)
+            elif kind == "dual_balance":
+                repair_dual_stereo_balance_to_mp3(src, out_mp3)
+            else:
+                i_lufs = resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs"))
+                repair_loudnorm_to_mp3(src, out_mp3, i_lufs=i_lufs)
+            out_bytes = out_mp3.read_bytes()
+        new_key = f"clip/{owner_seg}/{project_id}/repair_{uuid.uuid4().hex[:12]}.mp3"
+        upload_bytes(new_key, out_bytes, "audio/mpeg")
+        ok = replace_clip_source_audio_preserve_transcript(
+            project_id=project_id,
+            user_uuid=uid,
+            object_key=new_key,
+            filename=(Path(fn).stem or "source") + "_repaired.mp3",
+            mime="audio/mpeg",
+            size_bytes=len(out_bytes),
+        )
+        if not ok:
+            delete_object_key(new_key)
+            raise HTTPException(status_code=500, detail="写入修音结果失败")
+        if old_key != new_key:
+            delete_object_key(old_key)
+    except HTTPException:
+        if new_key:
+            delete_object_key(new_key)
+        raise
+    except Exception as exc:
+        if new_key:
+            delete_object_key(new_key)
+        logger.exception("clip repair failed project_id=%s kind=%s", project_id, kind)
+        raise HTTPException(status_code=400, detail=str(exc)[:800]) from exc
+    row2 = get_clip_project(project_id=project_id, user_uuid=uid)
+    return {"success": True, "project": _serialize_clip_row(row2 or {})}
+
+
 @router.post("/clip/projects/{project_id}/audio/stage")
 async def clip_stage_audio_segment(project_id: str, request: Request):
     """追加一段暂存素材（多段导入后由前端防抖触发 merge 合并）。"""
@@ -304,7 +534,8 @@ async def clip_stage_audio_segment(project_id: str, request: Request):
         )
     fn = _clip_filename_from_header(request.headers.get("x-clip-filename"), "segment.mp3")
     fn = _SAFE_NAME.sub("_", fn)[:240] or "segment.mp3"
-    mime = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
+    mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
+    mime = _effective_audio_media_type(fn, mime_raw)
     owner_seg = uid or "anon"
     sk = f"clip/{owner_seg}/{project_id}/stage_{uuid.uuid4().hex[:16]}_{fn}"
     upload_bytes(sk, body, mime)
@@ -421,7 +652,7 @@ async def clip_merge_staged_audio(project_id: str, request: Request):
 
 @router.get("/clip/projects/{project_id}/audio/file")
 def clip_get_project_audio_file(project_id: str, request: Request):
-    """同源波形/试听：经 BFF 代理，避免浏览器对对象存储预签名的 CORS 限制。"""
+    """同源波形/试听：经 BFF 代理；补充 Content-Length、Range/206，避免浏览器无法解码或无法 seek。"""
     uid = _owner_uuid(request)
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
@@ -429,11 +660,173 @@ def clip_get_project_audio_file(project_id: str, request: Request):
     key = str(row.get("audio_object_key") or "").strip()
     if not key:
         raise HTTPException(status_code=404, detail="无音频")
-    mime = str(row.get("audio_mime") or "application/octet-stream").strip()[:200] or "application/octet-stream"
+    fn = str(row.get("audio_filename") or "")
+    mime_raw = str(row.get("audio_mime") or "application/octet-stream").strip()[:200]
+    media_type = _effective_audio_media_type(fn, mime_raw)
+    try:
+        total = head_object_byte_length(key)
+    except Exception as exc:
+        logger.warning("clip audio head_object failed project_id=%s err=%s", project_id, exc)
+        raise HTTPException(status_code=503, detail=f"读取音频元数据失败: {exc}") from exc
+    if total <= 0:
+        raise HTTPException(status_code=400, detail="音频长度为 0")
+
+    range_hdr = (request.headers.get("range") or request.headers.get("Range") or "").strip()
+    br = _parse_single_byte_range(range_hdr, total)
+    cache = "private, max-age=60"
+    if br:
+        start, end = br
+        if start >= total:
+            return Response(
+                status_code=416,
+                headers={"Content-Range": f"bytes */{total}"},
+            )
+        part_len = end - start + 1
+        return StreamingResponse(
+            iter_object_byte_range(key, start, end),
+            media_type=media_type,
+            status_code=206,
+            headers={
+                "Content-Length": str(part_len),
+                "Content-Range": f"bytes {start}-{end}/{total}",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": cache,
+            },
+        )
+
     return StreamingResponse(
         iter_object_chunks(key),
-        media_type=mime,
-        headers={"Cache-Control": "private, max-age=60"},
+        media_type=media_type,
+        headers={
+            "Content-Length": str(total),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": cache,
+        },
+    )
+
+
+def _wordchain_preview_object_key(owner_seg: str, project_id: str) -> str:
+    return f"clip/{owner_seg}/{project_id}/wordchain_preview.mp3"
+
+
+@router.post("/clip/projects/{project_id}/audio/wordchain-preview")
+def clip_post_wordchain_preview(project_id: str, request: Request):
+    """生成与终版导出相同的词链 MP3（含 export_pause_policy），写入对象存储供波形试听；不替换主素材。"""
+    from ..clip_export import export_clip_mp3_from_bytes
+
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    if str(row.get("transcription_status") or "").strip() != "succeeded":
+        raise HTTPException(status_code=400, detail="转写未完成，无法生成试听")
+    audio_key = str(row.get("audio_object_key") or "").strip()
+    if not audio_key:
+        raise HTTPException(status_code=400, detail="无主素材音频")
+    norm = row.get("transcript_normalized")
+    if isinstance(norm, str):
+        try:
+            norm = json.loads(norm)
+        except Exception:
+            norm = {}
+    if not isinstance(norm, dict):
+        raise HTTPException(status_code=400, detail="缺少归一化文稿")
+    ex = row.get("excluded_word_ids")
+    if isinstance(ex, str):
+        try:
+            ex = json.loads(ex)
+        except Exception:
+            ex = []
+    excluded = {str(x) for x in (ex if isinstance(ex, list) else [])}
+    try:
+        merge_gap_ms = max(0, int(os.getenv("CLIP_EXPORT_MERGE_GAP_MS") or "120"))
+    except (TypeError, ValueError):
+        merge_gap_ms = 120
+    pol_raw = row.get("export_pause_policy")
+    if isinstance(pol_raw, str):
+        try:
+            pol_raw = json.loads(pol_raw)
+        except Exception:
+            pol_raw = None
+    long_pause_ms = 0
+    long_pause_cap_ms = 500
+    if isinstance(pol_raw, dict) and bool(pol_raw.get("enabled")):
+        try:
+            long_pause_ms = max(0, int(pol_raw.get("long_gap_ms", 2000)))
+            long_pause_cap_ms = max(50, min(5000, int(pol_raw.get("cap_ms", 500))))
+        except (TypeError, ValueError):
+            long_pause_ms, long_pause_cap_ms = 0, 500
+    owner_seg = uid or "anon"
+    pk = _wordchain_preview_object_key(owner_seg, project_id)
+    try:
+        raw = get_object_bytes(audio_key)
+        out = export_clip_mp3_from_bytes(
+            audio_bytes=raw,
+            normalized=norm,
+            excluded_word_ids=excluded,
+            merge_gap_ms=merge_gap_ms,
+            long_pause_ms=long_pause_ms,
+            long_pause_cap_ms=long_pause_cap_ms,
+            loudnorm_i_lufs=resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs")),
+        )
+    except Exception as exc:
+        logger.warning("clip wordchain_preview build failed project_id=%s err=%s", project_id, exc)
+        raise HTTPException(status_code=400, detail=str(exc)[:800]) from exc
+    upload_bytes(pk, out, "audio/mpeg")
+    return {"success": True, "object_key": pk}
+
+
+@router.get("/clip/projects/{project_id}/audio/wordchain-preview")
+def clip_get_wordchain_preview(project_id: str, request: Request):
+    """流式返回 POST 生成的词链试听 MP3（支持 Range）。"""
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    owner_seg = uid or "anon"
+    key = _wordchain_preview_object_key(owner_seg, project_id)
+    media_type = "audio/mpeg"
+    try:
+        total = head_object_byte_length(key)
+    except Exception:
+        raise HTTPException(
+            status_code=404,
+            detail="尚无试听文件，请先在「缩短停顿」侧栏点击生成词链试听",
+        ) from None
+    if total <= 0:
+        raise HTTPException(status_code=400, detail="试听文件无效")
+
+    range_hdr = (request.headers.get("range") or request.headers.get("Range") or "").strip()
+    br = _parse_single_byte_range(range_hdr, total)
+    cache = "private, no-store"
+    if br:
+        start, end = br
+        if start >= total:
+            return Response(
+                status_code=416,
+                headers={"Content-Range": f"bytes */{total}"},
+            )
+        part_len = end - start + 1
+        return StreamingResponse(
+            iter_object_byte_range(key, start, end),
+            media_type=media_type,
+            status_code=206,
+            headers={
+                "Content-Length": str(part_len),
+                "Content-Range": f"bytes {start}-{end}/{total}",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": cache,
+            },
+        )
+
+    return StreamingResponse(
+        iter_object_chunks(key),
+        media_type=media_type,
+        headers={
+            "Content-Length": str(total),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": cache,
+        },
     )
 
 
@@ -640,7 +1033,8 @@ async def clip_upload_retake_take(project_id: str, retake_id: str, request: Requ
         raise HTTPException(status_code=400, detail="音频过大或为空")
     fn = _clip_filename_from_header(request.headers.get("x-clip-filename"), "retake.mp3")
     fn = _SAFE_NAME.sub("_", fn)[:240] or "retake.mp3"
-    mime = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
+    mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
+    mime = _effective_audio_media_type(fn, mime_raw)
     owner_seg = uid or "anon"
     sk = f"clip/{owner_seg}/{project_id}/retake_{uuid.uuid4().hex[:14]}_{fn}"
     upload_bytes(sk, body, mime)

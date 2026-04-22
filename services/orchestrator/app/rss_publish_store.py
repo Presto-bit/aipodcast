@@ -225,15 +225,15 @@ def _event_payload_dict(raw: Any) -> dict[str, Any]:
 
 
 def _job_events_indicate_paid_media_debit(job_id: str) -> bool:
-    """任务流水中出现「套餐外按次/钱包」扣费记录（与 worker 写入的 log 文案一致）。"""
+    """任务流水中出现体验包或钱包计费记录（与 worker 写入的 log 文案一致）。"""
+    markers = (
+        "已按预估语音分钟结算体验包与/或钱包",
+        "已结算脚本文本费用",
+        "已从钱包扣除单次克隆费用",
+    )
     for ev in list_job_events(job_id, after_id=0):
         msg = str(ev.get("message") or "")
-        if "已按预估语音分钟结算套餐外用量" not in msg:
-            continue
-        pay = _event_payload_dict(ev.get("event_payload"))
-        if int(pay.get("wallet_cents") or 0) > 0:
-            return True
-        if float(pay.get("from_payg_minutes") or 0) > 0:
+        if any(m in msg for m in markers):
             return True
     return False
 
@@ -243,13 +243,10 @@ def user_download_allowed_for_succeeded_works(user_phone: str | None) -> bool:
     作品列表专用：列表中的任务均为 succeeded，下载权限只与用户账户有关，
     避免对每个 job 重复 get_job 与钱包/订阅查询。
     """
-    from . import auth_bridge
-
     up = (user_phone or "").strip()
     if not up:
         return False
-    tier = str(auth_bridge.user_info_for_phone(up).get("plan") or "free").strip().lower()
-    return not user_work_download_blocked_never_paid_free_only(up, tier)
+    return not user_work_download_blocked_never_paid_free_only(up, "free")
 
 
 def work_download_allowed(job_id: str, user_phone: str | None) -> bool:
@@ -258,8 +255,6 @@ def work_download_allowed(job_id: str, user_phone: str | None) -> bool:
     - 若用户从未有余额（无钱包充值记录且当前余额为 0），且历史侧证仅为 free 档，则不允许；
     - 其余情况均允许（与单条任务是否套餐外扣费无关）。
     """
-    from . import auth_bridge
-
     jid = (job_id or "").strip()
     up = (user_phone or "").strip()
     if not jid or not up:
@@ -269,8 +264,7 @@ def work_download_allowed(job_id: str, user_phone: str | None) -> bool:
         return False
     if str(row.get("status") or "") != "succeeded":
         return False
-    tier = str(auth_bridge.user_info_for_phone(up).get("plan") or "free").strip().lower()
-    if user_work_download_blocked_never_paid_free_only(up, tier):
+    if user_work_download_blocked_never_paid_free_only(up, "free"):
         return False
     return True
 
@@ -289,35 +283,30 @@ def rss_publish_eligibility_dict(user_phone: str, job_id: str) -> dict[str, Any]
 
 def assert_rss_publish_eligibility(user_phone: str, job_id: str) -> None:
     """
-    RSS 发布条件：
-    - 账户：订阅档 Basic+、按量 payg、或免费档但账户内有余额（充值用户）；
-    - 作品：上述付费/按量档位的成片均可；免费档+余额时，需本任务曾产生套餐外扣费（钱包或按次分钟包），
-      纯免费用量成片不可写 RSS。媒体钱包总开关关闭时，免费+余额无法校验扣费，允许发布。
+    RSS 发布条件：成片须曾从体验包或钱包产生计费记录（与下载/滥用防护一致）。
+    媒体钱包总开关关闭时不校验计费，允许发布。
     """
-    from . import auth_bridge
-    from .models import wallet_balance_cents_for_phone
-
     jid = (job_id or "").strip()
     row = get_job(jid, user_ref=user_phone)
     if not row:
         raise ValueError("job_not_found")
-    tier = str(auth_bridge.user_info_for_phone(user_phone).get("plan") or "free").strip().lower()
-    bal = max(0, int(wallet_balance_cents_for_phone(user_phone) or 0))
-
-    if tier in ("basic", "pro", "max", "payg"):
-        return
-    if tier != "free":
-        return
-    if bal <= 0:
-        raise ValueError("RSS 发布需订阅会员、按量套餐或账户有余额（充值）。")
     if not media_wallet_billing_enabled():
         return
     if _job_events_indicate_paid_media_debit(jid):
         return
     raise ValueError(
-        "仅支持由付费套餐、按量套餐或余额扣费生成的成片写入 RSS；"
-        "本任务为免费额度内生成，请先升级/充值后重新生成作品再发布。"
+        "RSS 仅支持由体验包或账户余额计费生成的成片；本任务未检测到计费记录，请使用计费流程重新生成后再发布。"
     )
+
+
+RSS_EPISODE_SUMMARY_MAX_CHARS = 30
+
+
+def _clamp_rss_episode_summary(summary: str) -> str:
+    s = (summary or "").strip()
+    if len(s) <= RSS_EPISODE_SUMMARY_MAX_CHARS:
+        return s
+    return s[: RSS_EPISODE_SUMMARY_MAX_CHARS - 1] + "…"
 
 
 def _extract_work_audio_and_cover(job_row: dict[str, Any]) -> tuple[str, str, int | None]:
@@ -377,6 +366,7 @@ def publish_work_to_rss(
         raise ValueError("job_not_found")
     assert_rss_publish_eligibility(user_phone, jid)
     audio_url, fallback_cover, duration = _extract_work_audio_and_cover(row)
+    summary_clamped = _clamp_rss_episode_summary(summary)
     schedule_at = _parse_publish_at(publish_at)
     existing: dict[str, Any] | None = None
     with get_conn() as conn:
@@ -437,7 +427,7 @@ def publish_work_to_rss(
                     jid,
                     episode_guid,
                     ep_title,
-                    (summary or "").strip(),
+                    summary_clamped,
                     (show_notes or "").strip(),
                     audio_url,
                     cover,

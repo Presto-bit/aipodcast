@@ -58,9 +58,17 @@ def _note_file_bytes_to_text(data: bytes, ext: str) -> str:
         return ""
 
 
-def load_note_text_for_script(note_id: str, user_ref: str | None = None) -> tuple[str, str]:
+def load_note_text_for_script(
+    note_id: str,
+    user_ref: str | None = None,
+    project_owner_user_uuid: str | None = None,
+) -> tuple[str, str]:
     """返回 (正文, 标题或 id)。"""
-    row = get_note_by_id((note_id or "").strip(), user_ref=user_ref)
+    row = get_note_by_id(
+        (note_id or "").strip(),
+        user_ref=user_ref,
+        project_owner_user_uuid=project_owner_user_uuid,
+    )
     if not row:
         return "", note_id
     md = row.get("metadata") or {}
@@ -162,6 +170,8 @@ def merge_reference_for_script(
         "rag_compressed": False,
         "max_note_refs": note_cap,
     }
+    project_owner_uuid = str(payload.get("notes_source_owner_user_id") or "").strip() or None
+
     parts: list[str] = []
 
     base = (source_text or "").strip()
@@ -223,6 +233,7 @@ def merge_reference_for_script(
                 summary_budget=sb,
                 retrieval_budget=rb,
                 top_k=tk,
+                project_owner_user_uuid=project_owner_uuid,
             )
             meta["notes_layered_rag_meta"] = lmeta
             layered_block = lb
@@ -234,7 +245,9 @@ def merge_reference_for_script(
             for nid in capped_raw:
                 if not isinstance(nid, str) or not nid.strip():
                     continue
-                body, title = load_note_text_for_script(nid.strip(), user_ref=user_ref)
+                body, title = load_note_text_for_script(
+                    nid.strip(), user_ref=user_ref, project_owner_user_uuid=project_owner_uuid
+                )
                 if body:
                     parts.append(f"【笔记：{title}】\n{body}")
                     meta["notes_loaded"] += 1

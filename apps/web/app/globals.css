@@ -227,6 +227,19 @@ body {
   }
 }
 
+/**
+ * 应用内弹层遮罩：只盖住主工作区，左侧留出主导航宽度。
+ * `--fym-app-sidebar-w` 由 AppShell 按折叠状态写入。
+ * 缺省用展开宽度（232px）：避免变量在首帧/StrictMode 间隙为 0 时全屏遮罩压住侧栏；无壳页仅多留一条左侧空白，影响小于误挡导航。
+ */
+.fym-workspace-scrim {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--fym-app-sidebar-w, 232px);
+}
+
 @media (prefers-reduced-transparency: reduce) {
   html.light .fym-surface-card,
   html:not(.dark) .fym-surface-card {

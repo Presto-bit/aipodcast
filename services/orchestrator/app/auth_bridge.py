@@ -1,7 +1,25 @@
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from app.fyv_shared import auth_service
+
+logger = logging.getLogger(__name__)
+
+
+def _experience_seed_after_registration_token(token: str) -> None:
+    try:
+        sess = auth_service.get_session(token)
+        if not isinstance(sess, dict):
+            return
+        pr = str(auth_service.session_effective_user_id(sess) or "").strip()
+        if not pr:
+            return
+        from .models import experience_seed_for_new_user_after_registration
+
+        experience_seed_for_new_user_after_registration(pr)
+    except Exception:
+        logger.exception("experience_seed_after_registration failed")
 
 
 def is_auth_enabled() -> bool:
@@ -60,13 +78,15 @@ def user_info_for_phone(phone: str) -> dict[str, Any]:
         base["wallet_balance_cents"] = int(wallet_balance_cents_for_phone(ph_w)) if ph_w else 0
     except Exception:
         base["wallet_balance_cents"] = 0
+    base.pop("plan", None)
+    base.pop("billing_cycle", None)
     return base
 
 
 def user_info_for_session_token(token: str) -> dict[str, Any]:
     """
-    与 subscription/me 一致：auth_service 用户档 + PG user_profiles 覆盖（plan、billing_cycle 等）。
-    用于 /auth/me、登录/注册响应，避免前端个人资料与订阅页方案不一致。
+    auth_service 用户档 + PG user_profiles 覆盖；返回中不包含 plan / billing_cycle（订阅档位已下线）。
+    用于 /auth/me、登录/注册响应。
     """
     sess = get_session(token)
     if not isinstance(sess, dict):
@@ -99,6 +119,10 @@ def update_username(principal: str, username: str) -> tuple[bool, str | None]:
     return True, None
 
 
+def change_password(principal: str, current_password: str, new_password: str) -> tuple[bool, str | None]:
+    return auth_service.change_password_for_principal(principal, current_password, new_password)
+
+
 def auth_config_dict() -> dict[str, Any]:
     return dict(auth_service.auth_config_dict())
 
@@ -119,6 +143,7 @@ def register_user(
             _sync_profile_from_info(auth_service.user_info_from_session_token(token))
         except Exception:
             pass
+        _experience_seed_after_registration_token(token)
     return token, err, meta
 
 
@@ -137,6 +162,7 @@ def register_complete_with_ticket(ticket: str, password: str) -> tuple[str | Non
             _sync_profile_from_info(auth_service.user_info_from_session_token(token))
         except Exception:
             pass
+        _experience_seed_after_registration_token(token)
     return token, err, meta
 
 
@@ -248,7 +274,7 @@ def admin_create_user(
         phone=phone,
         password=password,
         role=role,
-        plan=plan,
+        initial_tier=plan,
         billing_cycle=billing_cycle,
     )
     if ok:
@@ -256,6 +282,12 @@ def admin_create_user(
             _sync_profile_from_info(auth_service.user_info_for_principal(phone))
         except Exception:
             pass
+        try:
+            from .models import experience_seed_for_new_user_after_registration
+
+            experience_seed_for_new_user_after_registration(phone)
+        except Exception:
+            logger.exception("experience_seed admin_create_user failed phone=%s", phone[:4] if phone else "")
     return ok, err
 
 
@@ -273,18 +305,37 @@ def admin_delete_user(phone: str) -> tuple[bool, str | None]:
     return auth_service.admin_delete_user(phone)
 
 
-def list_payment_orders(phone: str, limit: int = 40) -> list[dict[str, Any]]:
+def admin_credit_wallet_cents(phone: str, cents: int) -> tuple[bool, str | None, int]:
+    """
+    管理员调账：增加钱包余额（分）。用户须已存在。
+    返回 (成功, 错误码/文案, 扣后余额分；失败时余额为当前可读值或 0)。
+    """
+    p = (phone or "").strip()
+    if not p:
+        return False, "phone_required", 0
+    base = auth_service.user_info_for_principal(p)
+    if not str(base.get("phone") or "").strip():
+        return False, "user_not_found", 0
     try:
-        from .models import list_payment_orders_for_phone
+        from . import models
 
-        rows = list_payment_orders_for_phone(phone, limit)
-        if rows:
-            return rows
+        if not models.wallet_credit_cents(p, int(cents)):
+            return False, "wallet_credit_failed", models.wallet_balance_cents_for_phone(p)
+        return True, None, models.wallet_balance_cents_for_phone(p)
     except Exception:
-        pass
-    from app.fyv_shared import payment_store
+        logger.exception("admin_credit_wallet_cents failed")
+        try:
+            from . import models
 
-    return list(payment_store.list_orders_for_phone(phone, limit))
+            return False, "wallet_credit_error", models.wallet_balance_cents_for_phone(p)
+        except Exception:
+            return False, "wallet_credit_error", 0
+
+
+def list_payment_orders(phone: str, limit: int = 40) -> list[dict[str, Any]]:
+    from .models import list_payment_orders_for_phone
+
+    return list_payment_orders_for_phone(phone, limit)
 
 
 def apply_payment_event(
@@ -404,14 +455,4 @@ def apply_payment_event(
     except Exception:
         return False, "payment_event_tx_exception", base_row
 
-    # legacy: best-effort mirror only; do not affect main transaction success
-    try:
-        from app.fyv_shared import payment_store
-
-        if not skips_subscription_from_product:
-            payment_store.apply_payment_event(
-                event_id, phone, tier, billing_cycle, status, amount_cents, provider
-            )
-    except Exception:
-        pass
     return True, "ok", base_row

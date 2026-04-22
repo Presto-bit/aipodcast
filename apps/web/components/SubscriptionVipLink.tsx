@@ -35,7 +35,7 @@ type SubscriptionVipLinkProps = {
 };
 
 /**
- * 未满足订阅条件时跳转 `/subscription`；仅用皇冠图标表示「会员 / 升级」，文案放在 `title` / `aria-label`。
+ * 跳转 `/subscription`（余额与账单）；皇冠图标文案放在 `title` / `aria-label`。
  */
 export function SubscriptionVipLink({ title = "升级套餐后可使用，点击查看订阅", className, segment }: SubscriptionVipLinkProps) {
   return (

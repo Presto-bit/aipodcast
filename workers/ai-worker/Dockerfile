@@ -31,6 +31,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY services/orchestrator /app/services/orchestrator
 COPY legacy_backend /app/legacy_backend
+COPY workers/redis_client.py /app/redis_client.py
 COPY workers/ai-worker/worker.py /app/worker.py
 
 CMD ["python", "/app/worker.py"]

@@ -1,8 +1,8 @@
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
-from .subscription_manifest import WALLET_TOPUP_MAX_CENTS, WALLET_TOPUP_MIN_CENTS
+from .subscription_manifest import BILLING_MAX_NOTE_REFS, WALLET_TOPUP_MAX_CENTS, WALLET_TOPUP_MIN_CENTS
 
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
@@ -47,8 +47,42 @@ class NotebookCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
 
-class NotebookRenameRequest(BaseModel):
-    new_name: str = Field(min_length=1, max_length=120)
+class NotebookPatchRequest(BaseModel):
+    new_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+        validation_alias=AliasChoices("new_name", "newName"),
+    )
+    cover_mode: str | None = Field(default=None, validation_alias=AliasChoices("cover_mode", "coverMode"))
+    cover_preset_id: str | None = Field(
+        default=None,
+        max_length=40,
+        validation_alias=AliasChoices("cover_preset_id", "coverPresetId"),
+    )
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> "NotebookPatchRequest":
+        if self.new_name is None and self.cover_mode is None:
+            raise ValueError("no_changes")
+        return self
+
+
+class NotebookSharingPatchRequest(BaseModel):
+    is_public: bool = Field(validation_alias=AliasChoices("is_public", "isPublic"))
+    public_access: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("public_access", "publicAccess"),
+    )
+    listed_in_discover: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("listed_in_discover", "listedInDiscover"),
+    )
+
+
+class NotebookViewIncrementRequest(BaseModel):
+    owner_user_id: str = Field(min_length=10, max_length=80, validation_alias=AliasChoices("owner_user_id", "ownerUserId"))
+    notebook: str = Field(min_length=1, max_length=120)
 
 
 class NoteUploadJsonRequest(BaseModel):
@@ -66,12 +100,44 @@ class NoteImportUrlRequest(BaseModel):
     title: str = Field(default="", max_length=300)
 
 
+class NotesAskHintsRequest(BaseModel):
+    """根据已选资料生成短摘要与 3 个可点击的提问引导（供输入框旁展示）。"""
+
+    notebook: str = Field(min_length=1, max_length=120)
+    note_ids: list[str] = Field(min_length=1, max_length=BILLING_MAX_NOTE_REFS)
+    shared_from_owner_user_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("shared_from_owner_user_id", "sharedFromOwnerUserId"),
+    )
+
+    @field_validator("note_ids")
+    @classmethod
+    def _normalize_note_ids_hints(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in v:
+            s = str(raw or "").strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            out.append(s)
+        if not out:
+            raise ValueError("note_ids_required")
+        if len(out) > BILLING_MAX_NOTE_REFS:
+            raise ValueError("too_many_notes")
+        return out
+
+
 class NotesAskRequest(BaseModel):
     """对当前笔记本内已选笔记做轻量问答（基于正文摘录）。"""
 
     notebook: str = Field(min_length=1, max_length=120)
-    note_ids: list[str] = Field(min_length=1, max_length=12)
+    note_ids: list[str] = Field(min_length=1, max_length=BILLING_MAX_NOTE_REFS)
     question: str = Field(min_length=1, max_length=800)
+    shared_from_owner_user_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("shared_from_owner_user_id", "sharedFromOwnerUserId"),
+    )
 
     @field_validator("note_ids")
     @classmethod
@@ -86,7 +152,7 @@ class NotesAskRequest(BaseModel):
             out.append(s)
         if not out:
             raise ValueError("note_ids_required")
-        if len(out) > 12:
+        if len(out) > BILLING_MAX_NOTE_REFS:
             raise ValueError("too_many_notes")
         return out
 
@@ -127,9 +193,22 @@ class AdminCreateUserRequest(BaseModel):
     billing_cycle: str | None = None
 
 
+class AdminWalletCreditRequest(BaseModel):
+    """管理员为用户钱包增加余额（分，正整数；受单次充值上限约束）。"""
+
+    phone: str = Field(min_length=1, max_length=64)
+    amount_cents: int = Field(ge=1, le=WALLET_TOPUP_MAX_CENTS)
+
+
 class AdminSetRoleRequest(BaseModel):
     phone: str = Field(min_length=1, max_length=64)
     role: str = Field(default="user", min_length=1, max_length=20)
+
+
+class AdminPodcastTemplatePatch(BaseModel):
+    """将成功播客成片设为全站创作模板（或取消）。"""
+
+    enabled: bool = True
 
 
 class AdminTtsPolishPromptsPut(BaseModel):
@@ -253,6 +332,11 @@ class AuthResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=6, max_length=120)
 
 
+class AuthChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=120)
+    new_password: str = Field(min_length=6, max_length=120)
+
+
 class AuthProfilePatchRequest(BaseModel):
     """PATCH 时至少提供其一；未传的字段不更新。"""
 
@@ -317,3 +401,9 @@ class JobCoverDataRequest(BaseModel):
 
     image_base64: str = Field(min_length=1, max_length=12_000_000)
     content_type: str = Field(default="image/jpeg", max_length=120)
+
+
+class JobResultScriptBodyRequest(BaseModel):
+    """终态任务：将口播稿写入 jobs.result.script_text（作品详情改稿；长稿优先于短 result + 工件回退）。"""
+
+    script_text: str = Field(default="", max_length=600_000)

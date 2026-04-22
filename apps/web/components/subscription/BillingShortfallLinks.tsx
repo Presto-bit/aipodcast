@@ -8,7 +8,7 @@ type Props = {
 };
 
 /**
- * 钱包不足、需按量付费时的引导：充值与查看套餐。
+ * 钱包不足、需按量付费时的引导：跳转余额与账单页。
  */
 export function BillingShortfallLinks({ className }: Props) {
   return (
@@ -17,7 +17,7 @@ export function BillingShortfallLinks({ className }: Props) {
         去充值余额
       </Link>
       <Link href="/subscription" className="font-medium text-muted underline-offset-2 hover:text-ink hover:underline">
-        查看套餐与订阅
+        查看体验包与计费说明
       </Link>
     </div>
   );

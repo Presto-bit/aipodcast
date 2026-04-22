@@ -7,11 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from ..schemas import (
     AdminCreateUserRequest,
     AdminDeleteUserRequest,
+    AdminPodcastTemplatePatch,
     AdminSetRoleRequest,
-    AdminSetSubscriptionRequest,
-    AdminSubscriptionCheckoutCompleteRequest,
-    AdminSubscriptionCheckoutCreateRequest,
     AdminTtsPolishPromptsPut,
+    AdminWalletCreditRequest,
     WalletTopupCheckoutCompleteRequest,
     WalletTopupCheckoutCreateRequest,
 )
@@ -19,8 +18,7 @@ from ..security import verify_internal_signature
 from .. import auth_bridge
 from .. import models
 from ..legacy_bridge import get_tts_polish_default_requirements
-from ..entitlement_matrix import get_entitlement_matrix_payload
-from ..plan_catalog import amount_cents_for_subscription, is_valid_wallet_topup_amount_cents
+from ..plan_catalog import is_valid_wallet_topup_amount_cents
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(verify_internal_signature)])
 
@@ -85,22 +83,21 @@ def admin_set_user_role_api(request: Request, body: AdminSetRoleRequest):
     return {"success": True, "user": auth_bridge.user_info_for_phone(target_phone)}
 
 
-@router.post("/users/subscription")
-def admin_set_user_subscription_api(request: Request, body: AdminSetSubscriptionRequest):
-    actor_phone = _require_admin_phone(request)
-    phone = body.phone.strip()
-    cycle = str(body.billing_cycle or "").strip().lower() if body.billing_cycle else None
-    ok, err = auth_bridge.set_user_subscription(
-        phone,
-        body.tier.strip().lower(),
-        cycle,
-        source="admin_set_user_subscription_api",
-        actor_phone=actor_phone,
-        meta={"route": "/api/v1/admin/users/subscription"},
-    )
+@router.post("/users/wallet")
+def admin_credit_user_wallet_api(request: Request, body: AdminWalletCreditRequest):
+    """为指定用户增加钱包余额（不入 payment_orders，仅调账）。"""
+    _require_admin_phone(request)
+    if not is_valid_wallet_topup_amount_cents(int(body.amount_cents)):
+        raise HTTPException(status_code=400, detail="amount_cents_out_of_range")
+    ok, err, bal = auth_bridge.admin_credit_wallet_cents(body.phone.strip(), int(body.amount_cents))
     if not ok:
-        raise HTTPException(status_code=400, detail=err or "设置套餐失败")
-    return {"success": True, "user": auth_bridge.user_info_for_phone(phone)}
+        raise HTTPException(status_code=400, detail=err or "充值失败")
+    return {
+        "success": True,
+        "phone": body.phone.strip(),
+        "amount_cents": int(body.amount_cents),
+        "wallet_balance_cents": int(bal),
+    }
 
 
 def _parse_ymd(value: str) -> date:
@@ -292,29 +289,6 @@ def admin_usage_orders_api(
     return {"success": True, **payload}
 
 
-@router.get("/subscription/events")
-def admin_subscription_events_api(
-    request: Request,
-    phone: str | None = Query(default=None, description="按手机号筛选"),
-    event_type: str | None = Query(default=None, description="按事件类型筛选（如 payment_paid / subscription_set）"),
-    source: str | None = Query(default=None, description="按来源筛选"),
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-):
-    _require_admin_phone(request)
-    try:
-        payload = models.admin_subscription_events(
-            phone=phone,
-            event_type=event_type,
-            source=source,
-            limit=limit,
-            offset=offset,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)[:200]) from e
-    return {"success": True, **payload}
-
-
 @router.get("/data/consistency")
 def admin_data_consistency_api(
     request: Request,
@@ -327,91 +301,6 @@ def admin_data_consistency_api(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)[:200]) from e
     return {"success": True, **payload}
-
-
-@router.get("/entitlement-matrix")
-def admin_entitlement_matrix_api(request: Request):
-    """管理员只读：订阅与权限矩阵（与 entitlement_matrix 单一数据源一致）。"""
-    _require_admin_phone(request)
-    payload = get_entitlement_matrix_payload()
-    return {"success": True, **payload}
-
-
-@router.post("/subscription-checkout/create")
-def admin_subscription_checkout_create(request: Request, body: AdminSubscriptionCheckoutCreateRequest):
-    """
-    管理员内测收银：创建待支付会话（仅返回 checkout_id 与金额，无真实三方跳转）。
-    完成支付请调用 POST /subscription-checkout/complete。
-    """
-    actor_phone = _require_admin_phone(request)
-    if not _admin_simulated_checkout_enabled():
-        raise HTTPException(status_code=403, detail="admin_simulated_checkout_disabled")
-    tid = body.tier.strip().lower()
-    bc = body.billing_cycle.strip().lower()
-    if tid not in ("basic", "pro", "max"):
-        raise HTTPException(status_code=400, detail="仅支持 basic、pro 或 max 订阅支付")
-    if bc != "monthly":
-        raise HTTPException(status_code=400, detail="billing_cycle 须为 monthly（不提供年付）")
-    amount = amount_cents_for_subscription(tid, bc)
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="invalid_plan_amount")
-    checkout_id = f"admchk_{secrets.token_hex(16)}"
-    return {
-        "success": True,
-        "checkout_id": checkout_id,
-        "phone": actor_phone,
-        "tier": tid,
-        "billing_cycle": bc,
-        "amount_cents": amount,
-        "currency": "CNY",
-        "provider": "admin_simulated",
-        "message": "内测收银：下一步在页面点击「确认支付」完成入账",
-    }
-
-
-@router.post("/subscription-checkout/complete")
-def admin_subscription_checkout_complete(request: Request, body: AdminSubscriptionCheckoutCompleteRequest):
-    """管理员内测：对当前登录管理员账号模拟支付成功，写入订单并同步套餐。"""
-    actor_phone = _require_admin_phone(request)
-    if not _admin_simulated_checkout_enabled():
-        raise HTTPException(status_code=403, detail="admin_simulated_checkout_disabled")
-    tid = body.tier.strip().lower()
-    bc = body.billing_cycle.strip().lower()
-    cid = body.checkout_id.strip()
-    if not cid.startswith("admchk_"):
-        raise HTTPException(status_code=400, detail="invalid_checkout_id")
-    if tid not in ("basic", "pro", "max") or bc != "monthly":
-        raise HTTPException(status_code=400, detail="invalid_tier_or_cycle")
-    expected = amount_cents_for_subscription(tid, bc)
-    if expected <= 0:
-        raise HTTPException(status_code=400, detail="invalid_plan_amount")
-    ok, reason, row = auth_bridge.apply_payment_event(
-        cid,
-        actor_phone,
-        tid,
-        bc,
-        "paid",
-        expected,
-        "admin_simulated",
-        channel="admin_simulated",
-        provider_order_id=f"sim_{secrets.token_hex(10)}",
-        currency="CNY",
-        paid_at=datetime.now(timezone.utc),
-        product_snapshot={
-            "source": "admin_subscription_checkout",
-            "tier": tid,
-            "billing_cycle": bc,
-            "amount_cents": expected,
-        },
-    )
-    if not ok:
-        raise HTTPException(status_code=400, detail=reason or "checkout_complete_failed")
-    return {
-        "success": True,
-        "reason": reason,
-        "order": row,
-        "user": auth_bridge.user_info_for_phone(actor_phone),
-    }
 
 
 @router.post("/wallet-checkout/create")
@@ -521,3 +410,20 @@ def admin_reset_tts_polish_prompts(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)[:240]) from e
     return admin_get_tts_polish_prompts(request)
+
+
+@router.patch("/jobs/{job_id}/podcast-template")
+def admin_patch_job_podcast_template(job_id: str, request: Request, body: AdminPodcastTemplatePatch):
+    """将成功播客成片标记为（或取消）全站创作页模板。"""
+    _require_admin_phone(request)
+    ok, code = models.set_job_podcast_template_flag(job_id, bool(body.enabled))
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail=str(code or "job_not_found_or_ineligible"),
+        )
+    return {
+        "success": True,
+        "job_id": str(job_id).strip(),
+        "is_podcast_template": bool(body.enabled),
+    }

@@ -24,13 +24,24 @@ type Props = {
   excluded: boolean;
   playbackActive: boolean;
   focused: boolean;
+  /** 按住左键拖过多个词时扩展多选（由父级协调） */
+  onRangeDragPointerDown?: (w: ClipWord, e: ReactPointerEvent<HTMLButtonElement>) => void;
+  onRangeDragPointerEnter?: (w: ClipWord, e: ReactPointerEvent<HTMLButtonElement>) => void;
+  /** 多选范围高亮 */
+  multiSelectActive?: boolean;
+  /** 口吃重复等：浏览器原生悬停说明 */
+  trimHintTitle?: string;
+  /** 附加样式（如重复词下划线） */
+  trimExtraClass?: string;
   /** 读屏：保留 / 已标记删除 */
   ariaKeepLabel: string;
   ariaCutLabel: string;
-  onToggle: (w: ClipWord) => void;
+  onActivate: (w: ClipWord, e: React.MouseEvent<HTMLButtonElement>) => void;
   onFocusId: (id: string) => void;
   onLongPress: (w: ClipWord, anchor: DOMRect) => void;
   suggestionMarker?: TranscriptWordSuggestionMarker | null;
+  /** 粗剪：口癖 / 搜索命中 */
+  roughCutHighlight?: boolean;
 };
 
 export default function WordBlock({
@@ -38,12 +49,18 @@ export default function WordBlock({
   excluded,
   playbackActive,
   focused,
+  multiSelectActive,
+  trimHintTitle,
+  trimExtraClass,
   ariaKeepLabel,
   ariaCutLabel,
-  onToggle,
+  onActivate,
   onFocusId,
   onLongPress,
-  suggestionMarker
+  onRangeDragPointerDown,
+  onRangeDragPointerEnter,
+  suggestionMarker,
+  roughCutHighlight
 }: Props) {
   const timerRef = useRef<number | null>(null);
   const clearTimer = useCallback(() => {
@@ -103,6 +120,24 @@ export default function WordBlock({
     onPointerLeave: clearTimer
   };
 
+  const basePointerProps = hasSuggestion ? getReferenceProps(longPressHandlers) : longPressHandlers;
+  type BtnPtr = {
+    onPointerDown?: (ev: ReactPointerEvent<HTMLButtonElement>) => void;
+    onPointerEnter?: (ev: ReactPointerEvent<HTMLButtonElement>) => void;
+  };
+  const bp = basePointerProps as BtnPtr;
+  const pointerProps = {
+    ...basePointerProps,
+    onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
+      bp.onPointerDown?.(e);
+      onRangeDragPointerDown?.(word, e);
+    },
+    onPointerEnter: (e: ReactPointerEvent<HTMLButtonElement>) => {
+      bp.onPointerEnter?.(e);
+      onRangeDragPointerEnter?.(word, e);
+    }
+  };
+
   const wordButton = (
     <button
       type="button"
@@ -115,22 +150,28 @@ export default function WordBlock({
             ? ariaCutLabel.replace("{text}", display)
             : ariaKeepLabel.replace("{text}", display)
       }
+      title={trimHintTitle}
       className={[
         "rounded px-0.5 py-0.5 text-[13px] leading-snug transition outline-none",
         "hover:bg-brand/12 focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-offset-1 focus-visible:ring-offset-canvas",
         excluded
           ? "opacity-[0.22] line-through decoration-danger/60 text-muted"
           : "text-ink",
-        playbackActive && !excluded ? "bg-brand/18 shadow-[0_0_12px_color-mix(in_srgb,var(--dawn-brand)_30%,transparent)]" : "",
+        playbackActive && !excluded
+          ? "z-[1] bg-brand/22 shadow-[0_0_14px_color-mix(in_srgb,var(--dawn-brand)_34%,transparent)] ring-2 ring-brand/45 ring-offset-1 ring-offset-canvas"
+          : "",
         focused && !excluded ? "ring-1 ring-brand/70" : "",
         focused && excluded ? "ring-1 ring-line" : "",
+        multiSelectActive ? "ring-2 ring-amber-500/65 ring-offset-1 ring-offset-canvas" : "",
+        roughCutHighlight && !excluded ? "ring-2 ring-rose-500/55 ring-offset-1 ring-offset-canvas" : "",
+        trimExtraClass || "",
         suggestionUnderline
       ]
         .filter(Boolean)
         .join(" ")}
-      onClick={() => onToggle(word)}
+      onClick={(e) => onActivate(word, e)}
       onFocus={() => onFocusId(word.id)}
-      {...(hasSuggestion ? getReferenceProps(longPressHandlers) : longPressHandlers)}
+      {...pointerProps}
     >
       <span className="whitespace-pre-wrap">{word.text}</span>
       {word.punct ? <span className="text-[11px] opacity-75">{word.punct}</span> : null}

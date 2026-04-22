@@ -12,6 +12,22 @@ import {
 } from "react";
 import { hexToMp3DataUrl } from "./audioHex";
 import { useAuth } from "./auth";
+import { APP_SIDEBAR_COLLAPSED_KEY, APP_SIDEBAR_COLLAPSE_EVENT, APP_SIDEBAR_TOGGLE_EVENT } from "./appSidebarCollapse";
+import { readLocalStorageScoped } from "./userScopedStorage";
+import { SIDEBAR_COLLAPSED_STORAGE } from "./appShellLayout";
+
+const APP_NAV_SIDEBAR_PX_EXPANDED = 232;
+const APP_NAV_SIDEBAR_PX_COLLAPSED = 72;
+
+function readAppNavSidebarInsetPx(): number {
+  try {
+    return readLocalStorageScoped(APP_SIDEBAR_COLLAPSED_KEY) === SIDEBAR_COLLAPSED_STORAGE
+      ? APP_NAV_SIDEBAR_PX_COLLAPSED
+      : APP_NAV_SIDEBAR_PX_EXPANDED;
+  } catch {
+    return APP_NAV_SIDEBAR_PX_EXPANDED;
+  }
+}
 
 function formatClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "—";
@@ -23,6 +39,10 @@ function formatClock(sec: number): string {
 
 export type WorkAudioToggleMeta = {
   displayTitle: string;
+  /** 开始播放或切歌后跳转到该秒（Shownotes / 章节跳转） */
+  seekSeconds?: number;
+  /** 全站官方播客模板：不要求当前用户为任务所有者 */
+  usePodcastPublicTemplateListen?: boolean;
 };
 
 export type WorkAudioPlayerContextValue = {
@@ -37,6 +57,8 @@ export type WorkAudioPlayerContextValue = {
   pause: () => void;
   resume: () => void;
   skipSeconds: (deltaSec: number) => void;
+  /** 当前正在播放且为同一 job 时，将进度跳到绝对秒数 */
+  seekForActiveJob: (targetSec: number) => void;
   dismiss: () => void;
   dismissIfJob: (jobId: string) => void;
   clearCachedAudioSrc: (jobId: string) => void;
@@ -65,6 +87,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   const [playError, setPlayError] = useState<string | null>(null);
   /** 新开始播放或切换曲目时默认为收起 */
   const [dockExpanded, setDockExpanded] = useState(false);
+  const [dockInsetLeftPx, setDockInsetLeftPx] = useState(APP_NAV_SIDEBAR_PX_EXPANDED);
 
   const stopAndClearAudio = useCallback(() => {
     const el = audioRef.current;
@@ -134,9 +157,54 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
     };
   }, [audioEl, dismiss]);
 
+  useEffect(() => {
+    function syncDockInset() {
+      setDockInsetLeftPx(readAppNavSidebarInsetPx());
+    }
+    syncDockInset();
+    window.addEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncDockInset);
+    window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncDockInset);
+    window.addEventListener("storage", syncDockInset);
+    return () => {
+      window.removeEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncDockInset);
+      window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncDockInset);
+      window.removeEventListener("storage", syncDockInset);
+    };
+  }, []);
+
+  const dockVisible = activeJobId != null;
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const el = document.getElementById("main-content");
+    if (!el) return;
+    if (dockVisible) {
+      el.style.paddingBottom = "max(4.25rem, env(safe-area-inset-bottom, 0px))";
+    } else {
+      el.style.paddingBottom = "";
+    }
+    return () => {
+      el.style.paddingBottom = "";
+    };
+  }, [dockVisible]);
+
   const ensureSrc = useCallback(
-    async (jobId: string): Promise<string | null> => {
+    async (jobId: string, opts?: { usePodcastPublicTemplateListen?: boolean }): Promise<string | null> => {
       if (srcCache.current[jobId]) return srcCache.current[jobId]!;
+      if (opts?.usePodcastPublicTemplateListen) {
+        const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/podcast-template-listen`, {
+          cache: "no-store",
+          headers: { ...getAuthHeaders() }
+        });
+        const data = (await res.json().catch(() => ({}))) as { success?: boolean; audio_url?: string };
+        if (!res.ok || data.success === false) return null;
+        const audioUrl = String(data.audio_url || "").trim();
+        if (audioUrl) {
+          srcCache.current[jobId] = audioUrl;
+          return audioUrl;
+        }
+        return null;
+      }
       const res = await fetch(`/api/jobs/${jobId}`, { cache: "no-store", headers: { ...getAuthHeaders() } });
       const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) return null;
@@ -157,6 +225,26 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
     [getAuthHeaders]
   );
 
+  const applySeekSeconds = useCallback((el: HTMLAudioElement, sec: number) => {
+    const s = Number(sec);
+    if (!Number.isFinite(s) || s < 0) return;
+    const d = el.duration;
+    if (Number.isFinite(d) && d > 0) {
+      el.currentTime = Math.min(Math.max(0, s), Math.max(0, d - 0.05));
+    } else {
+      el.currentTime = Math.max(0, s);
+    }
+  }, []);
+
+  const seekForActiveJob = useCallback(
+    (targetSec: number) => {
+      const el = audioRef.current;
+      if (!el || !activeJobId) return;
+      applySeekSeconds(el, targetSec);
+    },
+    [activeJobId, applySeekSeconds]
+  );
+
   const togglePlay = useCallback(
     async (jobId: string, meta: WorkAudioToggleMeta) => {
       const el = audioRef.current;
@@ -166,7 +254,16 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       }
       setPlayError(null);
       const title = String(meta.displayTitle || "").trim() || jobId;
+      const seekSec = meta.seekSeconds;
+      const wantsSeek = seekSec != null && Number.isFinite(seekSec);
       if (activeJobId === jobId) {
+        if (wantsSeek) {
+          applySeekSeconds(el, seekSec as number);
+          void el.play().catch((err) =>
+            setPlayError(String(err instanceof Error ? err.message : err))
+          );
+          return;
+        }
         if (el.paused) {
           void el.play().catch((err) =>
             setPlayError(String(err instanceof Error ? err.message : err))
@@ -179,7 +276,9 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       setLoadingJobId(jobId);
       setDockExpanded(false);
       try {
-        const url = await ensureSrc(jobId);
+        const url = await ensureSrc(jobId, {
+          usePodcastPublicTemplateListen: Boolean(meta.usePodcastPublicTemplateListen)
+        });
         if (!url) {
           setPlayError("暂无可播放音频，请稍后在创作记录中查看是否生成完成");
           return;
@@ -192,13 +291,25 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         await el.play().catch((err) => {
           setPlayError(err instanceof Error ? err.message : "无法播放（浏览器策略或格式问题）");
         });
+        if (wantsSeek) {
+          const t = seekSec as number;
+          const runSeek = () => applySeekSeconds(el, t);
+          runSeek();
+          if (!Number.isFinite(el.duration) || el.duration <= 0) {
+            const onMeta = () => {
+              runSeek();
+              el.removeEventListener("loadedmetadata", onMeta);
+            };
+            el.addEventListener("loadedmetadata", onMeta);
+          }
+        }
       } catch (e) {
         setPlayError(e instanceof Error ? e.message : "加载音频失败");
       } finally {
         setLoadingJobId(null);
       }
     },
-    [ensureSrc, activeJobId]
+    [ensureSrc, activeJobId, applySeekSeconds]
   );
 
   const pause = useCallback(() => {
@@ -239,6 +350,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       pause,
       resume,
       skipSeconds,
+      seekForActiveJob,
       dismiss,
       dismissIfJob,
       clearCachedAudioSrc
@@ -255,13 +367,13 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       pause,
       resume,
       skipSeconds,
+      seekForActiveJob,
       dismiss,
       dismissIfJob,
       clearCachedAudioSrc
     ]
   );
 
-  const dockVisible = activeJobId != null;
   const timeLabel =
     durationSec > 0 && Number.isFinite(durationSec)
       ? `${formatClock(durationSec * progress01)} / ${formatClock(durationSec)}`
@@ -281,7 +393,8 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       />
       {dockVisible ? (
         <div
-          className="pointer-events-none fixed inset-x-0 bottom-0 z-[260] flex justify-center px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5"
+          className="pointer-events-none fixed bottom-0 right-0 z-[420] flex justify-center px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5"
+          style={{ left: dockInsetLeftPx }}
           aria-live="polite"
         >
           <div

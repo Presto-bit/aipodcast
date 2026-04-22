@@ -13,7 +13,7 @@ from typing import Any
 from .entitlement_matrix import normalize_script_target_input
 from .subscription_manifest import (
     MEDIA_WALLET_CENTS_PER_MINUTE,
-    MONTHLY_MINUTES_PRODUCT_BY_TIER,
+    TEXT_OUTPUT_CENTS_PER_10K_CHARS,
     WALLET_REFERENCE_CHARS_PER_SPOKEN_MINUTE,
 )
 
@@ -31,6 +31,15 @@ def wallet_cents_for_overage_minutes(wallet_minutes: float) -> int:
         return 0
     rate = float(MEDIA_WALLET_CENTS_PER_MINUTE)
     return max(1, int(math.ceil(float(wallet_minutes) * rate)))
+
+
+def wallet_cents_for_generated_text_chars(char_count: int) -> int:
+    """按成稿字符数计费：分 / 万字（manifest），向上取整到分；字数为 0 返回 0。"""
+    n = int(char_count or 0)
+    if n <= 0:
+        return 0
+    rate = float(TEXT_OUTPUT_CENTS_PER_10K_CHARS)
+    return max(1, int(math.ceil(n / 10_000.0 * rate)))
 
 
 def _chars_per_minute() -> float:
@@ -67,6 +76,41 @@ def _payload_source_char_est(payload: dict[str, Any]) -> int:
     return len("\n".join(parts))
 
 
+def estimate_billed_script_chars_upper_bound(job_type: str, payload: dict[str, Any]) -> int:
+    """
+    入队前预检：脚本成稿字数上界近似（与 worker 脚本阶段同一量级），用于估算文本费用。
+    """
+    jt = (job_type or "").strip().lower()
+    if jt not in ("script_draft", "podcast_generate", "podcast"):
+        return 0
+    intro = str(payload.get("intro_text") or "").strip()
+    outro = str(payload.get("outro_text") or str(payload.get("ending_text") or "")).strip()
+    if jt in ("podcast_generate", "podcast"):
+        st = normalize_script_target_input(payload.get("script_target_chars"))
+        base = int(st) if st is not None else _payload_source_char_est(payload)
+        base_chars = max(200, min(50_000, int(base)))
+        return max(1, base_chars + len(intro) + len(outro))
+    st = normalize_script_target_input(payload.get("script_target_chars"))
+    body = int(st) if st is not None else 800
+    body = max(200, min(50_000, body))
+    return max(1, body + len(intro) + len(outro))
+
+
+def preview_wallet_cents_for_text_enqueue(phone: str | None, job_type: str, payload: dict[str, Any]) -> int:
+    """不修改数据库：脚本类任务入队前，超出体验包字数的预估钱包扣费（分）。"""
+    if not media_wallet_billing_enabled():
+        return 0
+    p = (phone or "").strip()
+    if not p:
+        return 0
+    est = estimate_billed_script_chars_upper_bound(job_type, payload if isinstance(payload, dict) else {})
+    from . import models
+
+    ex = int(models.experience_text_chars_for_phone(p) or 0)
+    rest = max(0, int(est) - ex)
+    return wallet_cents_for_generated_text_chars(rest)
+
+
 def estimate_spoken_minutes_podcast_enqueue(payload: dict[str, Any]) -> float:
     """创建播客任务时尚无成稿：用 script_target_chars / 素材规模估分钟。"""
     intro = str(payload.get("intro_text") or "").strip()
@@ -80,7 +124,8 @@ def estimate_spoken_minutes_podcast_enqueue(payload: dict[str, Any]) -> float:
 
 
 def preview_wallet_cents_for_media_job(phone: str, tier: str | None, est_minutes: float) -> int:
-    """不修改数据库：用于创建任务前的余额软校验。"""
+    """不修改数据库：超出体验包语音分钟后，预估钱包扣费（分）；tier 已废弃保留参数。"""
+    _ = tier
     if not media_wallet_billing_enabled():
         return 0
     p = (phone or "").strip()
@@ -88,10 +133,9 @@ def preview_wallet_cents_for_media_job(phone: str, tier: str | None, est_minutes
         return 0
     from . import models
 
-    used = float(models.subscription_media_usage_for_phone(p, MEDIA_USAGE_PERIOD_DAYS).get("audio_minutes_used") or 0)
-    payg_avail = float(models.payg_minutes_remaining_for_phone(p))
-    _, cents = split_estimated_minutes_to_wallet(used, tier, payg_avail, float(est_minutes))
-    return int(cents)
+    ex_m = float(models.experience_voice_minutes_for_phone(p) or 0)
+    wallet_min = max(0.0, float(est_minutes) - ex_m)
+    return int(wallet_cents_for_overage_minutes(wallet_min))
 
 
 def split_estimated_minutes_to_wallet(
@@ -102,13 +146,8 @@ def split_estimated_minutes_to_wallet(
 ) -> tuple[float, int]:
     """
     返回 (wallet_minutes, wallet_cents)。
-    先吃满订阅月配额剩余，再吃按次分钟包（payg_avail 为当前可用总量快照）。
+    已取消订阅月配额与按次分钟包；参数 used_minutes / tier / payg_avail 保留兼容，不参与计算。
     """
-    t = (tier or "free").strip().lower()
-    cap = int(MONTHLY_MINUTES_PRODUCT_BY_TIER.get(t, MONTHLY_MINUTES_PRODUCT_BY_TIER["free"]))
-    sub_room = max(0.0, float(cap) - float(used_minutes))
-    from_sub = min(float(est_minutes), sub_room)
-    rem = float(est_minutes) - from_sub
-    from_payg = min(rem, max(0.0, float(payg_avail)))
-    wallet_min = max(0.0, rem - from_payg)
+    _ = used_minutes, tier, payg_avail
+    wallet_min = max(0.0, float(est_minutes))
     return wallet_min, wallet_cents_for_overage_minutes(wallet_min)

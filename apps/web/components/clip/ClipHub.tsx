@@ -1,25 +1,58 @@
 "use client";
 
 import Link from "next/link";
+import { Check, Pencil, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import { useAuth } from "../../lib/auth";
+import { clipJobLabel } from "../../lib/clipJobLabels";
 import type { ClipProjectRow } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";
+import SmallConfirmModal from "../ui/SmallConfirmModal";
 
-function hasClipAudio(p: ClipProjectRow): boolean {
-  return Boolean(p.has_audio) || Boolean(p.audio_download_url);
+function formatClipHubDate(iso: string | undefined, locale: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(d);
+}
+
+function clipHubProgressLine(
+  t: (key: string) => string,
+  transcriptionStatus: string | undefined,
+  exportStatus: string | undefined
+): string {
+  const parts: string[] = [];
+  const tr = transcriptionStatus || "idle";
+  const ex = exportStatus || "idle";
+  if (tr !== "idle") {
+    parts.push(`${t("clip.status.transcription")}: ${clipJobLabel(t, "transcription", tr)}`);
+  }
+  if (ex !== "idle") {
+    parts.push(`${t("clip.status.export")}: ${clipJobLabel(t, "export", ex)}`);
+  }
+  if (parts.length === 0) return t("clip.hub.statusPending");
+  return parts.join(" · ");
 }
 
 export default function ClipHub() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { getAuthHeaders } = useAuth();
   const [items, setItems] = useState<ClipProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ClipProjectRow | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
+
+  const locale = lang === "en" ? "en-US" : "zh-CN";
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -77,37 +110,77 @@ export default function ClipHub() {
     }
   }
 
-  async function uploadAudioToProject(projectId: string, fileList: FileList | null) {
-    if (!fileList || fileList.length === 0) return;
-    const f = fileList[0];
-    if (!f) return;
-    setUploadBusyId(projectId);
+  async function saveRename(projectId: string) {
+    const title = renameDraft.trim().slice(0, 200) || t("clip.defaultProjectTitle");
+    setRenameBusy(true);
     setErr("");
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio`, {
-        method: "POST",
+      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
+        method: "PATCH",
         credentials: "same-origin",
-        headers: {
-          "content-type": f.type || "application/octet-stream",
-          "x-clip-filename": encodeClipFilenameForHttpHeader(f.name, "upload.mp3"),
-          ...getAuthHeaders()
-        },
-        body: f
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ title })
       });
-      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        project?: ClipProjectRow;
+        detail?: string;
+      };
       if (!res.ok || data.success === false) {
-        throw new Error(data.detail || `上传失败 ${res.status}`);
+        throw new Error(data.detail || `重命名失败 ${res.status}`);
       }
+      setRenamingId(null);
       await load();
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
-      setUploadBusyId(null);
+      setRenameBusy(false);
+    }
+  }
+
+  async function confirmDeleteProject() {
+    if (!deleteTarget?.id) return;
+    setDeleteBusy(true);
+    setDeleteErr(null);
+    try {
+      const res = await fetch(`/api/clip/projects/${encodeURIComponent(deleteTarget.id)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { ...getAuthHeaders() }
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+      if (!res.ok || data.success === false) {
+        throw new Error(data.detail || `删除失败 ${res.status}`);
+      }
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      setDeleteErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
   return (
     <main className="mx-auto min-h-0 w-full max-w-5xl px-3 pb-14 sm:px-4">
+      <SmallConfirmModal
+        open={Boolean(deleteTarget)}
+        title={t("clip.editor.deleteConfirmTitle")}
+        message={t("clip.editor.deleteConfirmMessage")}
+        confirmLabel={t("clip.editor.deleteConfirm")}
+        cancelLabel={t("clip.editor.deleteCancel")}
+        danger
+        busy={deleteBusy}
+        busyLabel={t("clip.editor.deleting")}
+        error={deleteErr}
+        onCancel={() => {
+          if (deleteBusy) return;
+          setDeleteTarget(null);
+          setDeleteErr(null);
+        }}
+        onConfirm={() => void confirmDeleteProject()}
+      />
+
       <header className="border-b border-line pb-8 pt-6 sm:pt-8">
         <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t("clip.pageTitle")}</h1>
         <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted sm:text-[15px]">{t("clip.pageSubtitle")}</p>
@@ -156,53 +229,109 @@ export default function ClipHub() {
         <ul className="mt-3 space-y-2">
           {filtered.map((p) => (
             <li key={p.id}>
-              <div className="flex flex-col gap-3 rounded-xl border border-line bg-fill/50 p-4 transition hover:bg-fill sm:flex-row sm:items-stretch sm:justify-between">
-                <Link
-                  href={`/clip/${encodeURIComponent(p.id)}`}
-                  className="min-w-0 flex-1 text-sm transition hover:opacity-90"
-                >
-                  <span className="flex flex-wrap items-center gap-2 font-medium text-ink">
-                    {p.title || p.id}
-                    {p.transcription_status === "failed" ? (
-                      <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[10px] font-medium text-danger-ink">
-                        {t("clip.badgeFailedTranscription")}
-                      </span>
-                    ) : null}
-                    {p.export_status === "failed" ? (
-                      <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[10px] font-medium text-danger-ink">
-                        {t("clip.badgeFailedExport")}
-                      </span>
-                    ) : null}
-                    {p.transcription_status === "queued" || p.export_status === "queued" ? (
-                      <span className="rounded bg-fill px-1.5 py-0.5 text-[10px] font-medium text-muted ring-1 ring-line">
-                        {t("clip.badgeQueued")}
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="mt-1 block text-xs text-muted">
-                    {t("clip.status.transcription")}: {p.transcription_status} · {t("clip.status.export")}: {p.export_status}
-                  </span>
-                </Link>
-                {!hasClipAudio(p) ? (
-                  <div className="flex shrink-0 flex-col gap-1 border-t border-line pt-3 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
-                    <label className="inline-flex cursor-pointer items-center justify-center sm:justify-end">
-                      <span className="rounded-lg border border-line bg-surface px-3 py-2 text-xs font-medium text-ink shadow-soft hover:bg-fill">
-                        {uploadBusyId === p.id ? t("clip.hub.uploading") : t("clip.hub.uploadAudio")}
-                      </span>
-                      <input
-                        type="file"
-                        className="sr-only"
-                        accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
-                        disabled={uploadBusyId === p.id}
-                        onChange={(e) => {
-                          void uploadAudioToProject(p.id, e.target.files);
-                          e.target.value = "";
-                        }}
-                      />
-                    </label>
-                    <p className="max-w-xs text-[10px] leading-relaxed text-muted sm:text-right">{t("clip.hub.uploadHint")}</p>
+              <div className="flex flex-col gap-2 rounded-xl border border-line bg-fill/50 p-4 transition hover:bg-fill">
+                <div className="flex flex-wrap items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    {renamingId === p.id ? (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          maxLength={200}
+                          disabled={renameBusy}
+                          aria-label={t("clip.editor.renameFieldAria")}
+                          className="min-w-[12rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void saveRename(p.id);
+                            }
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              setRenamingId(null);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          disabled={renameBusy}
+                          className="shrink-0 rounded-md border border-line bg-surface p-1.5 text-mint shadow-soft hover:bg-fill disabled:opacity-50"
+                          aria-label={t("clip.hub.renameSave")}
+                          onClick={() => void saveRename(p.id)}
+                        >
+                          <Check className="h-4 w-4" aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={renameBusy}
+                          className="shrink-0 rounded-md border border-line bg-surface p-1.5 text-muted shadow-soft hover:bg-fill disabled:opacity-50"
+                          aria-label={t("clip.hub.renameCancel")}
+                          onClick={() => setRenamingId(null)}
+                        >
+                          <X className="h-4 w-4" aria-hidden />
+                        </button>
+                      </div>
+                    ) : (
+                      <Link
+                        href={`/clip/${encodeURIComponent(p.id)}`}
+                        className="block text-sm font-medium text-ink transition hover:opacity-90"
+                      >
+                        <span className="flex flex-wrap items-center gap-2">
+                          {p.title || p.id}
+                          {p.transcription_status === "failed" ? (
+                            <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[10px] font-medium text-danger-ink">
+                              {t("clip.badgeFailedTranscription")}
+                            </span>
+                          ) : null}
+                          {p.export_status === "failed" ? (
+                            <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[10px] font-medium text-danger-ink">
+                              {t("clip.badgeFailedExport")}
+                            </span>
+                          ) : null}
+                          {p.transcription_status === "queued" || p.export_status === "queued" ? (
+                            <span className="rounded bg-fill px-1.5 py-0.5 text-[10px] font-medium text-muted ring-1 ring-line">
+                              {t("clip.badgeQueued")}
+                            </span>
+                          ) : null}
+                        </span>
+                      </Link>
+                    )}
+                    <p className="mt-1 text-[10px] leading-relaxed text-muted">
+                      {t("clip.hub.createdAtShort")} {formatClipHubDate(p.created_at, locale)} · {t("clip.hub.updatedAtShort")}{" "}
+                      {formatClipHubDate(p.updated_at, locale)}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted">{clipHubProgressLine(t, p.transcription_status, p.export_status)}</p>
                   </div>
-                ) : null}
+                  {renamingId !== p.id ? (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        className="rounded-lg border border-line bg-surface p-2 text-muted shadow-soft hover:bg-fill hover:text-ink"
+                        aria-label={t("clip.hub.rename")}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setRenameDraft(p.title || p.id);
+                          setRenamingId(p.id);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-danger/40 bg-surface p-2 text-danger-ink shadow-soft hover:bg-danger-soft"
+                        aria-label={t("clip.hub.deleteProject")}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setDeleteErr(null);
+                          setDeleteTarget(p);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </li>
           ))}

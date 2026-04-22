@@ -296,7 +296,7 @@ export default function HomePage() {
             <>
               <input
                 className="w-full rounded border border-line bg-canvas p-3 text-sm"
-                placeholder="用户名（3～32 位字母、数字或下划线）"
+                placeholder="账号名称（3～32 位字母、数字或下划线）"
                 value={regUsername}
                 onChange={(e) => {
                   setRegUsername(e.target.value);
@@ -307,7 +307,7 @@ export default function HomePage() {
                 minLength={3}
                 maxLength={32}
                 autoComplete="username"
-                aria-label="用户名"
+                aria-label="账号名称"
               />
               <input
                 className="w-full rounded border border-line bg-canvas p-3 text-sm"

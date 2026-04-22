@@ -106,6 +106,7 @@ def _prepare_notes_ask_messages(
     note_ids: list[str],
     question: str,
     user_ref: str | None,
+    project_owner_user_uuid: str | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     q = (question or "").strip()
     if not q:
@@ -114,7 +115,11 @@ def _prepare_notes_ask_messages(
         q = q[:_MAX_QUESTION_CHARS]
 
     context, sources = build_notes_qa_context(
-        notebook=notebook, note_ids=note_ids, user_ref=user_ref, question=q
+        notebook=notebook,
+        note_ids=note_ids,
+        user_ref=user_ref,
+        question=q,
+        project_owner_user_uuid=project_owner_user_uuid,
     )
     if not context.strip():
         raise ValueError("empty_context")
@@ -135,6 +140,7 @@ def iter_notes_answer_events(
     user_ref: str | None,
     api_key: str | None = None,
     prepared_messages_sources: tuple[list[dict[str, str]], list[dict[str, Any]]] | None = None,
+    project_owner_user_uuid: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """SSE 事件：chunk / done / error。
 
@@ -145,7 +151,11 @@ def iter_notes_answer_events(
         messages, sources = prepared_messages_sources
     else:
         messages, sources = _prepare_notes_ask_messages(
-            notebook=notebook, note_ids=note_ids, question=question, user_ref=user_ref
+            notebook=notebook,
+            note_ids=note_ids,
+            question=question,
+            user_ref=user_ref,
+            project_owner_user_uuid=project_owner_user_uuid,
         )
     acc: list[str] = []
     try:
@@ -172,6 +182,7 @@ def legacy_build_notes_qa_context(
     notebook: str,
     note_ids: list[str],
     user_ref: str | None,
+    project_owner_user_uuid: str | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     """前缀截断合并（无向量索引时的回退）。"""
     nb = notebook.strip()
@@ -193,7 +204,7 @@ def legacy_build_notes_qa_context(
     budget = _MAX_TOTAL_CONTEXT
 
     for i, nid in enumerate(ordered, start=1):
-        row = get_note_by_id(nid, user_ref=user_ref)
+        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
         if not row:
             raise ValueError("note_not_found")
         if _metadata_notebook(row) != nb:
@@ -224,6 +235,7 @@ def build_notes_qa_context(
     note_ids: list[str],
     user_ref: str | None,
     question: str | None = None,
+    project_owner_user_uuid: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     优先：异步摘要 + 勾选范围内向量检索；若无索引块则回退 legacy 前缀截断。
@@ -237,13 +249,101 @@ def build_notes_qa_context(
             summary_budget=16_000,
             retrieval_budget=40_000,
             top_k=_notes_ask_top_k(),
+            project_owner_user_uuid=project_owner_user_uuid,
         )
         if layered:
             rcm = meta.get("retrieval_chunks_meta")
             if isinstance(rcm, list) and rcm:
                 sources = _enrich_sources_with_chunks(sources, rcm)
             return layered, sources
-    return legacy_build_notes_qa_context(notebook=notebook, note_ids=note_ids, user_ref=user_ref)
+    return legacy_build_notes_qa_context(
+        notebook=notebook,
+        note_ids=note_ids,
+        user_ref=user_ref,
+        project_owner_user_uuid=project_owner_user_uuid,
+    )
+
+
+_HINTS_SYSTEM = (
+    "你是资料导读助手。用户会提供若干条笔记摘录（可能已截断）。"
+    "请仅依据摘录内容，输出一个 JSON 对象（不要 markdown、不要代码围栏、不要任何 JSON 外文字）。"
+    "JSON 结构必须为："
+    '{"summary":"…","suggestions":["…","…","…"]} 。\n'
+    "要求：summary 为中文，1～3 句、总长度不超过 220 字，概括这些材料共同涉及的主题与要点；"
+    "suggestions 为恰好 3 条字符串，每条为一句用户可向助手提出的具体问题（中文），"
+    "每条不超过 48 字，且应能从给定摘录中找到回答依据；不要重复或近似重复。"
+)
+
+
+def _parse_hints_json(raw: str) -> tuple[str, list[str]]:
+    s = (raw or "").strip()
+    if not s:
+        raise ValueError("empty_hints")
+    if s.startswith("```"):
+        lines = s.split("\n")
+        if len(lines) >= 2 and lines[0].startswith("```"):
+            s = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
+    brace = s.find("{")
+    if brace >= 0:
+        depth = 0
+        end = -1
+        for i, ch in enumerate(s[brace:], start=brace):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        if end > brace:
+            s = s[brace:end]
+    data = json.loads(s)
+    if not isinstance(data, dict):
+        raise ValueError("hints_shape")
+    summary = str(data.get("summary") or "").strip()
+    sug_raw = data.get("suggestions")
+    if not isinstance(sug_raw, list):
+        raise ValueError("hints_suggestions")
+    suggestions = [str(x or "").strip() for x in sug_raw if str(x or "").strip()]
+    if not summary or len(suggestions) < 3:
+        raise ValueError("hints_incomplete")
+    return summary[:400], suggestions[:3]
+
+
+def generate_notes_ask_hints(
+    *,
+    notebook: str,
+    note_ids: list[str],
+    user_ref: str | None,
+    project_owner_user_uuid: str | None = None,
+) -> dict[str, Any]:
+    """基于与问答相同的资料上下文，生成摘要 + 3 个潜在问题（单次非流式 LLM）。"""
+    nb = (notebook or "").strip()
+    if not nb:
+        raise ValueError("notebook_required")
+    q_hint = "请根据下列摘录，生成导读 JSON（summary + suggestions 共 3 条），严格按系统说明的 JSON 结构输出。"
+    context, _sources = build_notes_qa_context(
+        notebook=nb,
+        note_ids=note_ids,
+        user_ref=user_ref,
+        question=q_hint,
+        project_owner_user_uuid=project_owner_user_uuid,
+    )
+    if not (context or "").strip():
+        raise ValueError("empty_context")
+    user_block = f"资料摘录如下：\n\n{context}\n\n---\n\n任务：{q_hint}"
+    messages = [
+        {"role": "system", "content": _HINTS_SYSTEM},
+        {"role": "user", "content": user_block},
+    ]
+    raw, _trace = invoke_llm_chat_messages_with_minimax_fallback(
+        messages,
+        temperature=0.35,
+        api_key=None,
+        timeout_sec=90,
+    )
+    summary, suggestions = _parse_hints_json(raw)
+    return {"summary": summary, "suggestions": suggestions}
 
 
 def answer_notes_question(
@@ -253,9 +353,14 @@ def answer_notes_question(
     question: str,
     user_ref: str | None,
     api_key: str | None = None,
+    project_owner_user_uuid: str | None = None,
 ) -> dict[str, Any]:
     messages, sources = _prepare_notes_ask_messages(
-        notebook=notebook, note_ids=note_ids, question=question, user_ref=user_ref
+        notebook=notebook,
+        note_ids=note_ids,
+        question=question,
+        user_ref=user_ref,
+        project_owner_user_uuid=project_owner_user_uuid,
     )
     try:
         answer, trace_id = invoke_llm_chat_messages_with_minimax_fallback(

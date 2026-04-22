@@ -32,12 +32,12 @@ export type AdminModelRow = {
 export const ADMIN_MODEL_CATALOG: AdminModelRow[] = [
   {
     id: "minimax-text",
-    name: "MiniMax 文本生成",
+    name: "文本生成（MiniMax / DeepSeek）",
     category: "文本模型",
-    usage: "脚本生成、润色、对话式播客稿等，按提示与输出 token 计量。",
+    usage: "脚本生成、润色、对话式播客稿等，按提示与输出 token 计量；路由由环境变量 TEXT_PROVIDER 决定。",
     billing:
-      "文本按量：输入/输出（及可选缓存读写）以元/百万 tokens 计费，如 MiniMax-M2.7 为 2.1 / 8.4，见 https://platform.minimaxi.com/docs/guides/pricing-paygo ；本站用 1600 中文字符≈1000 tokens 近似折算。",
-    estimatedUnitCostCny: 0.06,
+      "用量看板按当前 TEXT_PROVIDER 估算：MiniMax 系单价取自代码内与官网一致的 M2/M2.7 等档（元/百万 tokens，含高速档差异），见 https://platform.minimaxi.com/docs/guides/pricing-paygo ；DeepSeek 系按官方人民币表 deepseek-chat 输入(缓存未命中)2 / 输出8、deepseek-reasoner 4 / 16（元/百万 tokens），见 https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny ；Qwen 兼容通道为公开美元价量级折算的保守近似。字符→token 仍用 1600 汉字≈1000 tokens。",
+    estimatedUnitCostCny: 0.04,
     costField: "llm",
     features: ["podcast_generate", "script_draft", "PolishTtsText（TTS 页润色）", "笔记播客脚本"],
     jobTypes: ["podcast_generate", "script_draft", "polish_tts_text", "note_podcast_script"],

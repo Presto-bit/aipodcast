@@ -44,8 +44,7 @@ import {
 } from "../../lib/podcastStudioCommon";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
-import { maxNotesForReferencePlan, planIsBasicOrAbove } from "../../lib/noteReferenceLimits";
-import { PlanTierHint } from "../PlanTierHint";
+import { maxNotesForReference, notesRoomFeaturesEnabled } from "../../lib/noteReferenceLimits";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { LockedToolbarChipPill } from "../SubscriptionVipLink";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
@@ -128,8 +127,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 ) {
   const { user, phone, getAuthHeaders } = useAuth();
   const { t } = useI18n();
-  const noteRefCap = useMemo(() => maxNotesForReferencePlan(String(user?.plan)), [user?.plan]);
-  const planBasicOk = useMemo(() => planIsBasicOrAbove(String(user?.plan)), [user?.plan]);
+  const noteRefCap = useMemo(() => maxNotesForReference(), []);
+  const roomFeaturesOk = useMemo(() => notesRoomFeaturesEnabled(), []);
   const createdByPhone = useMemo(() => userAccountRef(user) || String(phone || "").trim(), [user, phone]);
 
   const [uncontrolledText, setUncontrolledText] = useState("");
@@ -239,10 +238,10 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }, [applyIntroOutroSnapshot]);
 
   useEffect(() => {
-    if (!planBasicOk) {
+    if (!roomFeaturesOk) {
       setActivePanel((p) => (p === "creative" || p === "intro" ? null : p));
     }
-  }, [planBasicOk]);
+  }, [roomFeaturesOk]);
 
   useEffect(() => {
     try {
@@ -1193,7 +1192,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                     )}
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-flex max-w-full align-top">
-                    {!planBasicOk ? (
+                    {!roomFeaturesOk ? (
                       <LockedToolbarChipPill label={<>风格 · {creativeSummary}</>} upgradeTitle="风格设置需要 Basic 及以上套餐" />
                     ) : (
                       <>
@@ -1225,7 +1224,6 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       panelClassAnchor,
                       "资料库",
                       <div className="flex flex-col gap-2">
-                        <PlanTierHint />
                         <div className="rounded-lg border border-line bg-fill/70 p-2.5">
                           <p className="mb-1.5 text-xs font-medium text-ink">网页链接</p>
                           <textarea
@@ -1399,7 +1397,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                     )}
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
-                    {!planBasicOk ? (
+                    {!roomFeaturesOk ? (
                       <LockedToolbarChipPill label={<>开场/结尾 · {introSummary}</>} upgradeTitle="开场与结尾设置需要 Basic 及以上套餐" />
                     ) : (
                       <>

@@ -3,24 +3,25 @@ import { readLocalStorageScoped, removeLocalStorageScoped, writeLocalStorageScop
 /**
  * RSS / 小宇宙 等客户端常见映射：
  * - 单集标题 → item.title（列表与详情页主标题）
- * - 节目简介 → item.description / itunes:summary（约 30 字：主线提炼、偏吸引力）
- * - Show Notes → content:encoded（结构化：主题、关键收获、时间轴、金句、资源；勿整篇贴口播稿）
+ * - 节目简介 → item.description / itunes:summary（约 50 字内：主线提炼、偏吸引力）
+ * - Show Notes → content:encoded（结构化：主题、关键收获、节目导听、金句、资源；勿整篇贴口播稿）
  */
 
 const SUMMARY_SOFT_MAX = 600;
 
 /** 小宇宙/列表卡片常见舒适长度参考（非硬性限制） */
 export const SHARE_TITLE_SOFT_MAX = 36;
-/** 节目简介（列表摘要）以约 30 字为佳 */
-export const SHARE_SUMMARY_IDEAL_MAX = 30;
-export const SHARE_SUMMARY_WARN_MAX = 45;
+/** 节目简介（列表摘要 / itunes:summary）舒适上限参考 */
+export const SHARE_SUMMARY_IDEAL_MAX = 50;
+/** 超过此长度视为超长（与 IDEAL 一致，简介强制 ≤50 字） */
+export const SHARE_SUMMARY_WARN_MAX = 50;
 
 /** 自动生成单集标题目标长度（字） */
 export const AUTO_EPISODE_TITLE_TARGET = 10;
 export const AUTO_EPISODE_TITLE_MAX = 14;
 
 /** 自动生成节目简介上限（字）：列表卡片摘要，偏短、有吸引力 */
-export const AUTO_PROGRAM_SUMMARY_MAX = 30;
+export const AUTO_PROGRAM_SUMMARY_MAX = 50;
 
 /** 占位节目标题：与编排器默认「本期播客」、通用默认「AI 播客节目」对齐；保留旧值以兼容历史任务 */
 const KNOWN_DEFAULT_PROGRAM_NAMES = new Set(["本期播客", "AI 播客节目", "MiniMax AI 播客节目"]);
@@ -68,6 +69,21 @@ export function defaultSummaryFromJobResult(result: Record<string, unknown>): st
   const oneLine = cleaned.replace(/\s+/g, " ").trim();
   if (oneLine.length <= SUMMARY_SOFT_MAX) return oneLine;
   return `${oneLine.slice(0, SUMMARY_SOFT_MAX - 1)}…`;
+}
+
+/**
+ * 从 Shownotes Markdown 中取「## 本期概览」与下一节二级标题（`## …`）之间的正文。
+ * 与编排器生成约定一致；无该节时返回空串。
+ */
+export function extractEpisodeOverviewFromShowNotes(markdown: string): string {
+  const md = String(markdown || "").replace(/\r\n/g, "\n");
+  const headerRe = /^##\s+本期概览\s*$/im;
+  const m = md.match(headerRe);
+  if (!m || m.index === undefined) return "";
+  const after = md.slice(m.index + m[0].length);
+  const next = after.search(/^\s*##\s+/m);
+  const chunk = next >= 0 ? after.slice(0, next) : after;
+  return chunk.trim();
 }
 
 export type ChapterOutlineItem = { title: string; start_ms: number };
@@ -236,8 +252,8 @@ function scoreSentenceForSummary(
 
   const len = s.length;
   if (len >= 12 && len <= AUTO_PROGRAM_SUMMARY_MAX) sc += 2.2;
-  else if (len > AUTO_PROGRAM_SUMMARY_MAX && len <= 48) sc += 0.6;
-  else if (len > 52) sc -= 1.2;
+  else if (len > AUTO_PROGRAM_SUMMARY_MAX && len <= AUTO_PROGRAM_SUMMARY_MAX + 30) sc += 0.6;
+  else if (len > AUTO_PROGRAM_SUMMARY_MAX + 20) sc -= 1.2;
 
   if (total > 2) {
     const pos = index / Math.max(1, total - 1);
@@ -283,7 +299,7 @@ function collectSummaryCandidateSentences(scriptRaw: string, userSourceText: str
 }
 
 /**
- * 节目简介：≤30 字；提炼主要讨论点，通俗、有吸引力；优先与素材主题重合、含观点/结构信号、弱化开场套话。
+ * 节目简介：≤50 字；提炼主要讨论点，通俗、有吸引力；优先与素材主题重合、含观点/结构信号、弱化开场套话。
  */
 export function deriveProgramSummaryOverallMax30(scriptRaw: string, userSourceText: string): string {
   const a = stripDialogueMarkersFromBlurb(scriptRaw);
@@ -385,7 +401,7 @@ function splitScriptIntoWeightedSegments(scriptRaw: string, maxSeg = 10, minSeg 
 }
 
 /**
- * 时间轴：优先用 TTS 返回的 audio_chapters（与合成切段一致）；否则按文稿块权重 + 音频时长比例估算起点。
+ * 节目导听时间线：优先用 TTS 返回的 audio_chapters（与合成切段一致）；否则按文稿块权重 + 音频时长比例估算起点。
  */
 export function buildChapterTimelineMarkdownLines(
   scriptRaw: string,
@@ -478,7 +494,8 @@ export type BuildShareCopyOptions = {
   fallbackSummary: string;
 };
 
-function truncateSummaryToAutoMax(s: string): string {
+/** 将 RSS 列表简介截断到 {@link AUTO_PROGRAM_SUMMARY_MAX} 字内（含省略号占位） */
+export function truncateSummaryToAutoMax(s: string): string {
   const t = String(s || "").trim();
   if (t.length <= AUTO_PROGRAM_SUMMARY_MAX) return t;
   return `${t.slice(0, AUTO_PROGRAM_SUMMARY_MAX - 1)}…`;
@@ -580,6 +597,15 @@ function deriveGoldenQuotesFromScript(scriptRaw: string, userSourceText: string,
   return out;
 }
 
+function deriveVoicePersonaLinesFromPayload(payload: Record<string, unknown>): string[] {
+  const p1 = String(payload.speaker1_persona || "").trim();
+  const p2 = String(payload.speaker2_persona || "").trim();
+  const out: string[] = [];
+  if (p1) out.push(`Speaker1：${truncateSmart(p1, 96)}`);
+  if (p2) out.push(`Speaker2：${truncateSmart(p2, 96)}`);
+  return out;
+}
+
 function deriveResourceBulletsFromPayload(payload: Record<string, unknown>, scriptRaw: string): string[] {
   const links = extractReferenceLinksFromPayload(payload);
   const lines = String(scriptRaw)
@@ -609,6 +635,56 @@ function deriveResourceBulletsFromPayload(payload: Record<string, unknown>, scri
   return out;
 }
 
+function extractTitleFromChapterMarkdownLine(line: string): string {
+  const m = line.match(/\[(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+?)\]\(t:\d+\)/);
+  if (m) return String(m[2] || "").replace(/\s+/g, " ").trim();
+  return line.replace(/^\s*[-*]\s*/, "").trim();
+}
+
+function pickFocusChapterLineIndices(n: number, k: number): number[] {
+  if (n <= 0) return [];
+  if (n <= k) return Array.from({ length: n }, (_, i) => i);
+  if (k <= 2) return k === 1 ? [0] : [0, n - 1];
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (let i = 0; i < k; i++) {
+    const idx = Math.round((i * (n - 1)) / (k - 1));
+    const clamped = Math.max(0, Math.min(n - 1, idx));
+    if (!seen.has(clamped)) {
+      out.push(clamped);
+      seen.add(clamped);
+    }
+  }
+  return [...new Set(out)].sort((a, b) => a - b);
+}
+
+/** 切段过多时只保留均匀分布的关键锚点，避免导听板块变成散碎列表 */
+function curateChapterMarkdownTimelineLines(lines: string[], maxItems: number): string[] {
+  const bullets = lines.map((l) => l.trim()).filter((l) => l.startsWith("- "));
+  if (bullets.length <= maxItems) return bullets;
+  const idxs = pickFocusChapterLineIndices(bullets.length, maxItems);
+  return idxs.map((i) => bullets[i]!);
+}
+
+function buildProgramListenIntroLines(curated: string[]): string[] {
+  if (curated.length === 0) return [];
+  const titles = curated.map(extractTitleFromChapterMarkdownLine).filter(Boolean);
+  if (titles.length >= 3) {
+    const mid = titles[Math.floor(titles.length / 2)]!;
+    return [
+      `**听法：**从「${titles[0]}」切入，中段「${mid}」推进论述，收尾落在「${titles[titles.length - 1]!}」。下方为关键跳转点。`,
+      ""
+    ];
+  }
+  if (titles.length === 2) {
+    return [`**听法：**建议先听「${titles[0]}」，再跟进「${titles[1]}」。`, ""];
+  }
+  if (titles.length === 1) {
+    return [`**听法：**主线集中在「${titles[0]}」。`, ""];
+  }
+  return ["**听法：**可按时间码跳到最相关的段落。", ""];
+}
+
 function buildStructuredShowNotesMarkdown(
   summaryLine: string,
   scriptRaw: string,
@@ -621,6 +697,11 @@ function buildStructuredShowNotesMarkdown(
   const takeaways = deriveKeyTakeawaysFromScript(scriptRaw, payloadText, summaryLine, 4);
   const quotes = deriveGoldenQuotesFromScript(scriptRaw, payloadText, 3);
   const resources = deriveResourceBulletsFromPayload(payload, scriptRaw);
+  const voiceLines = deriveVoicePersonaLinesFromPayload(payload);
+
+  const rawTimeline = timelineLines.length ? timelineLines : ["- [0:00 开篇](t:0)"];
+  const curatedTimeline = curateChapterMarkdownTimelineLines(rawTimeline, 7);
+  const listenIntro = buildProgramListenIntroLines(curatedTimeline);
 
   const parts: string[] = [
     "## 本期在讲什么",
@@ -637,30 +718,49 @@ function buildStructuredShowNotesMarkdown(
     "",
     ...(takeaways.length ? takeaways.map((t) => `- ${t}`) : ["- （可据文稿补充几条听得懂的要点）"]),
     "",
-    "## 时间轴",
+    "## 节目导听",
     "",
-    ...(timelineLines.length ? timelineLines : ["- [0:00 开篇](t:0)"]),
+    ...listenIntro,
+    ...curatedTimeline,
     "",
     "## 关键观点 / 金句",
     "",
     ...(quotes.length ? quotes.map((q) => `- ${q}`) : ["- （可提炼适合传播的短句）"]),
     "",
-    "## 提到的工具 / 方法 / 资源",
+    ...(voiceLines.length
+      ? ["## 声音角色（人设）", "", ...voiceLines.map((v) => `- ${v}`), ""]
+      : []),
+    "## 链接与参考",
     "",
     ...(resources.length ? resources.map((r) => `- ${r}`) : ["- （暂无）"]),
+    "",
+    "## 文稿与追更",
+    "",
+    "- 完整口播正文可在作品页查看或导出。",
+    "- 已绑定 RSS 时，可用播客客户端订阅节目源以接收更新。",
     ""
   ];
   return parts.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**
- * 根据口播稿、任务 payload、音频章节与时长生成：≤30 字简介、结构化 Show Notes。
+ * 根据口播稿、任务 payload、音频章节与时长生成：≤50 字简介、结构化 Show Notes。
  * 节目标题由用户在发布页自行填写，此处 `episodeTitle` 恒为空字符串。
  */
 export function buildSharePublishCopyFromScriptAndPayload(opts: BuildShareCopyOptions): ShareFormFields {
   const script = String(opts.scriptRaw || "").trim();
   const payloadText = String(opts.payload.text || "");
   const result = opts.result || {};
+
+  const autoSummary = String(result.auto_share_summary || "").trim();
+  const autoShowNotes = String(result.auto_share_show_notes || "").trim();
+  if (autoSummary && autoShowNotes) {
+    return {
+      episodeTitle: "",
+      summary: truncateSummaryToAutoMax(autoSummary),
+      showNotes: autoShowNotes
+    };
+  }
 
   let summary = "";
   if (script.length > 0 || payloadText.trim().length > 0) {

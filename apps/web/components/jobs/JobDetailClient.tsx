@@ -8,6 +8,7 @@ import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { cancelJob, getJob, retryJob } from "../../lib/api";
 import { classifyErrorTone, errorPageCopy } from "../../lib/errorCopy";
 import { useI18n } from "../../lib/I18nContext";
+import { useAuth } from "../../lib/auth";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { classifyJobError, failureCopy, failureRecoveryLink } from "../../lib/jobFailure";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
@@ -66,6 +67,7 @@ export type JobDetailClientProps = {
 export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps) {
   const router = useRouter();
   const { t } = useI18n();
+  const { getAuthHeaders } = useAuth();
   const [job, setJob] = useState<JobRecord | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -77,6 +79,15 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
   const copyManuscriptHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [partialRedoPrompt, setPartialRedoPrompt] = useState("");
   const [partialRedoScope, setPartialRedoScope] = useState<"full" | "intro" | "middle" | "outro">("full");
+  const [podcastTemplateBusy, setPodcastTemplateBusy] = useState(false);
+  const [podcastTemplateErr, setPodcastTemplateErr] = useState<string | null>(null);
+
+  const isAdminJobConsole = recordsListHref.includes("/admin/jobs");
+  const canAdminPodcastTemplate =
+    isAdminJobConsole &&
+    job?.status === "succeeded" &&
+    (job.job_type === "podcast_generate" || job.job_type === "podcast");
+  const podcastTemplateOn = Boolean((job as { is_podcast_template?: boolean } | null)?.is_podcast_template);
 
   const appendEvent = useCallback((incoming: StreamPayload) => {
     setEvents((prev) => {
@@ -136,6 +147,35 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       setLoadErr(String(e instanceof Error ? e.message : e));
     }
   }, [jobId]);
+
+  const setPodcastTemplateEnabled = useCallback(
+    async (next: boolean) => {
+      if (!jobId || !isAdminJobConsole) return;
+      setPodcastTemplateErr(null);
+      setPodcastTemplateBusy(true);
+      try {
+        const res = await fetch(`/api/admin/jobs/${encodeURIComponent(jobId)}/podcast-template`, {
+          method: "PATCH",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ enabled: next })
+        });
+        const data = (await res.json().catch(() => ({}))) as { detail?: unknown; success?: boolean };
+        if (!res.ok) {
+          const d = data.detail;
+          const msg =
+            typeof d === "string" ? d : d !== undefined && d !== null ? JSON.stringify(d) : `HTTP ${res.status}`;
+          throw new Error(msg);
+        }
+        await load();
+      } catch (e) {
+        setPodcastTemplateErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPodcastTemplateBusy(false);
+      }
+    },
+    [jobId, isAdminJobConsole, getAuthHeaders, load]
+  );
 
   useEffect(() => {
     void load();
@@ -374,7 +414,14 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
           <div className="flex flex-wrap gap-2">
             <span className="rounded-dawn-sm bg-fill px-2 py-0.5 text-xs text-ink">{job.status}</span>
             <span className="text-muted">类型 {job.job_type}</span>
-            {job.created_by ? <span className="text-muted">创建者 {job.created_by}</span> : null}
+            {job.created_by || job.creator_label ? (
+              <span className="text-muted">
+                创建者{" "}
+                {String(job.creator_label ?? "").trim() ||
+                  String(job.created_by ?? "").trim() ||
+                  "—"}
+              </span>
+            ) : null}
             <span className="text-muted">通道 {job.queue_name}</span>
             {job.status !== "queued" && job.status !== "running" ? (
               <span className="text-muted tabular-nums">进度 {job.progress}%</span>
@@ -519,7 +566,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
                 ) : null}
                 {audioArtifactId ? (
                   <Link
-                    href={`/works/share/${jobId}`}
+                    href={`/works/${jobId}`}
                     className="rounded-dawn-sm border border-brand/50 bg-brand/10 px-2.5 py-1.5 text-xs font-medium text-brand hover:bg-brand/15"
                     onClick={() => {
                       try {
@@ -557,6 +604,37 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
                   再次生成
                 </button>
               </div>
+              {canAdminPodcastTemplate ? (
+                <div className="mt-4 rounded-dawn-lg border border-line bg-surface/90 p-3">
+                  <p className="text-xs font-medium text-ink">创作页模板</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                    开启后，该成功成片会出现在所有用户的「创作 → 模板」列表中，供试听与一键复用创作参数（不含他人私有笔记等敏感字段）。
+                  </p>
+                  {podcastTemplateErr ? (
+                    <p className="mt-2 text-[11px] text-danger-ink" role="alert">
+                      {podcastTemplateErr}
+                    </p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant={podcastTemplateOn ? "secondary" : "primary"}
+                      className="text-xs"
+                      loading={podcastTemplateBusy}
+                      busyLabel="保存中…"
+                      disabled={podcastTemplateBusy}
+                      onClick={() => void setPodcastTemplateEnabled(!podcastTemplateOn)}
+                    >
+                      {podcastTemplateOn ? "取消模板" : "设为创作播客模板"}
+                    </Button>
+                    {podcastTemplateOn ? (
+                      <span className="text-[11px] font-medium text-success-ink">当前已作为全站模板展示</span>
+                    ) : (
+                      <span className="text-[11px] text-muted">当前未作为模板展示</span>
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </section>

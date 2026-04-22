@@ -89,6 +89,32 @@ def iter_object_chunks(object_key: str, *, chunk_size: int = 262_144):
             yield chunk
 
 
+def head_object_byte_length(object_key: str) -> int:
+    """对象大小（字节），用于 Content-Length / Range。"""
+    key = (object_key or "").strip()
+    if not key:
+        raise ValueError("object_key_empty")
+    s3 = _s3()
+    r = s3.head_object(Bucket=settings.object_bucket, Key=key)
+    return int(r["ContentLength"])
+
+
+def iter_object_byte_range(object_key: str, start: int, end_inclusive: int, *, chunk_size: int = 262_144):
+    """S3 Range 读取；end_inclusive 含端点（与 HTTP Content-Range 一致）。"""
+    key = (object_key or "").strip()
+    if not key:
+        raise ValueError("object_key_empty")
+    if end_inclusive < start or start < 0:
+        raise ValueError("invalid_range")
+    rng = f"bytes={start}-{end_inclusive}"
+    sz = max(32_768, min(8 * 1024 * 1024, int(chunk_size)))
+    s3 = _s3()
+    obj = s3.get_object(Bucket=settings.object_bucket, Key=key, Range=rng)
+    for chunk in obj["Body"].iter_chunks(chunk_size=sz):
+        if chunk:
+            yield chunk
+
+
 def presigned_get_url(object_key: str, *, expires_in: int = 3600) -> str:
     """
     生成对象 GET 的预签名 URL，便于客户端直拉 MP3/封面/视频，减轻编排器流式代理压力。

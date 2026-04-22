@@ -16,8 +16,14 @@ type Props = {
   backHref?: string;
   backLabel?: string;
   title: string;
+  /** 若提供则替换标题行（如内联改名输入） */
+  titleOverride?: ReactNode;
+  /** 紧挨标题右侧（如重命名、删除） */
+  titleActions?: ReactNode;
   engineLabel: string;
   engineState: EngineState;
+  /** 插在「开始转写」按钮之前，如上传素材 */
+  beforeTranscribe?: ReactNode;
   transcribeLabel: string;
   exportLabel: string;
   transcribeDisabled: boolean;
@@ -31,8 +37,11 @@ export default function PrestoFlowHeader({
   backHref,
   backLabel,
   title,
+  titleOverride,
+  titleActions,
   engineLabel,
   engineState,
+  beforeTranscribe,
   transcribeLabel,
   exportLabel,
   transcribeDisabled,
@@ -42,7 +51,7 @@ export default function PrestoFlowHeader({
   trailing
 }: Props) {
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface/90 px-3 backdrop-blur-md sm:h-16 sm:gap-4 sm:px-4">
+    <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/90 px-3 py-2 backdrop-blur-md sm:min-h-16 sm:gap-3 sm:px-4">
       {backHref && backLabel ? (
         <Link
           href={backHref}
@@ -51,12 +60,24 @@ export default function PrestoFlowHeader({
           {backLabel}
         </Link>
       ) : null}
-      <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-ink sm:text-base">{title}</h1>
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
+        {titleOverride ?? (
+          <>
+            <h1 className="min-w-0 truncate text-sm font-semibold text-ink sm:text-base">{title}</h1>
+            {titleActions}
+          </>
+        )}
+      </div>
       <div className="hidden items-center gap-2 rounded-full border border-line bg-fill/80 px-3 py-1.5 text-xs text-muted md:flex">
         <span className={`h-2 w-2 shrink-0 rounded-full ${engineDot(engineState)}`} aria-hidden />
-        <span className="whitespace-nowrap text-ink">{engineLabel}</span>
+        <span className="max-w-[14rem] truncate whitespace-nowrap text-ink">{engineLabel}</span>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+      {beforeTranscribe ? (
+        <div className="flex w-full min-w-0 basis-full items-center border-t border-line/60 pt-2 sm:w-auto sm:basis-auto sm:border-t-0 sm:pt-0">
+          {beforeTranscribe}
+        </div>
+      ) : null}
+      <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto">
         <button
           type="button"
           disabled={transcribeDisabled}

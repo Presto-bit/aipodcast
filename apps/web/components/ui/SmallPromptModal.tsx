@@ -85,7 +85,7 @@ export default function SmallPromptModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/35 p-4"
+      className="fym-workspace-scrim z-[1200] flex items-center justify-center bg-black/35 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="prompt-modal-title"

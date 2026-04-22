@@ -24,17 +24,19 @@ from .provider_router import (
     synthesize_tts,
 )
 from .audio_mix import maybe_mix_podcast_bgm
-from .auth_bridge import user_info_for_phone
 from .entitlement_matrix import (
-    long_form_script_chars_cap,
     normalize_script_target_input,
-    voice_clone_monthly_included,
     voice_clone_payg_cents,
 )
 from .cover_image_material import build_cover_material
 from .reference_material import effective_article_script_target_chars, merge_reference_for_script
 from .script_reference_coverage import augment_script_options_for_multi_note_coverage
-from .subscription_limits import max_note_refs_for_plan, tier_allows_ai_polish
+from .subscription_limits import tier_allows_ai_polish
+from .subscription_manifest import (
+    BILLING_LONG_FORM_SCRIPT_CHARS_CAP,
+    BILLING_MAX_NOTE_REFS,
+    PRODUCT_ENTITLEMENTS_TIER,
+)
 from .tts_pipeline import (
     dialogue_speaker_format_issues,
     normalize_dialogue_speaker_lines,
@@ -44,12 +46,14 @@ from .models import (
     add_artifact,
     append_cloned_voice_for_user_uuid,
     append_job_event,
-    count_succeeded_voice_clone_jobs_for_user_uuid,
+    experience_restore_voice_minutes,
     finalize_job_terminal_unless_cancelled,
     get_job,
     media_billing_try_debit_estimated_minutes,
     payg_restore_minutes_from_log,
     phone_for_job_created_by,
+    script_text_billing_refund,
+    script_text_billing_try_debit,
     try_mark_job_running,
     update_job_status,
     wallet_credit_cents,
@@ -58,6 +62,7 @@ from .models import (
 from .object_store import presigned_get_url, upload_bytes, upload_text
 from .storage_paths import job_artifact_base, job_cover_object_key
 from .note_work_meta import snapshot_notes_source_titles
+from .work_result_title import assign_work_result_title_with_optional_llm
 
 logger = logging.getLogger(__name__)
 
@@ -65,18 +70,49 @@ VOICE_CLONE_MAX_BYTES = 20 * 1024 * 1024
 
 
 def _refund_media_wallet_job(phone: str, meta: dict[str, Any]) -> None:
-    """语音任务失败或取消后退回本次从钱包扣的分与按次分钟包。"""
+    """语音任务失败或取消后退回本次从钱包扣的分、按次分钟包（若有）及体验包语音分钟。"""
     p = (phone or "").strip()
     if not p or not isinstance(meta, dict):
         return
     wc = int(meta.get("wallet_cents") or 0)
     pr = meta.get("payg_restores")
-    if wc <= 0 and not (isinstance(pr, list) and pr):
+    ev = float(meta.get("experience_voice_minutes_consumed") or 0)
+    if wc <= 0 and not (isinstance(pr, list) and pr) and ev <= 1e-12:
         return
     if wc > 0:
         wallet_credit_cents(p, wc)
     if isinstance(pr, list) and pr:
         payg_restore_minutes_from_log(p, pr)
+    if ev > 1e-12:
+        experience_restore_voice_minutes(p, ev)
+
+
+def _debit_script_text_billing_or_raise(job_id: str, created_by: str | None, script_body: str) -> dict[str, Any]:
+    """
+    模型成稿落库后：体验包字数 + 钱包结算文本费。
+    返回 billing meta（供取消时 script_text_billing_refund）；未开媒体钱包时返回空 dict。
+    """
+    from .media_wallet import media_wallet_billing_enabled
+
+    if not media_wallet_billing_enabled():
+        return {}
+    phone = (phone_for_job_created_by(created_by) or "").strip()
+    if not phone:
+        return {}
+    chars = len((script_body or "").strip())
+    ok, meta = script_text_billing_try_debit(phone, chars)
+    if not ok:
+        raise RuntimeError(str((meta or {}).get("message") or "script text billing failed"))
+    wc = int((meta or {}).get("wallet_cents") or 0)
+    ex = int((meta or {}).get("experience_text_chars_consumed") or 0)
+    if wc > 0 or ex > 0:
+        append_job_event(
+            job_id,
+            "log",
+            "已结算脚本文本费用（体验包字数与/或钱包）",
+            {"script_chars": chars, "wallet_cents": wc, "experience_text_chars_consumed": ex},
+        )
+    return dict(meta or {})
 
 
 def _attach_result_audio_duration_sec(result: dict[str, Any]) -> None:
@@ -240,24 +276,13 @@ def _persist_cover_for_job(
 
 
 def _max_note_refs_for_job(created_by: str | None) -> int:
-    phone = phone_for_job_created_by(created_by)
-    if not phone:
-        return 1
-    try:
-        tier = str(user_info_for_phone(phone).get("plan") or "free")
-    except Exception:
-        tier = "free"
-    return max_note_refs_for_plan(tier)
+    _ = created_by
+    return int(BILLING_MAX_NOTE_REFS)
 
 
 def _subscription_tier_for_job(created_by: str | None) -> str:
-    phone = phone_for_job_created_by(created_by)
-    if not phone:
-        return "free"
-    try:
-        return str(user_info_for_phone(phone).get("plan") or "free").strip().lower() or "free"
-    except Exception:
-        return "free"
+    _ = created_by
+    return str(PRODUCT_ENTITLEMENTS_TIER).strip().lower() or "max"
 
 
 def _effective_ai_polish(payload: dict[str, Any], created_by: str | None, job_id: str) -> bool:
@@ -270,8 +295,8 @@ def _effective_ai_polish(payload: dict[str, Any], created_by: str | None, job_id
     append_job_event(
         job_id,
         "log",
-        "AI润色需要含润色权益的套餐（或管理员已关闭 AI_POLISH_FEATURE_ENABLED），已跳过",
-        {"plan": tier},
+        "当前未开启 AI 润色（或运营已关闭 AI_POLISH_FEATURE_ENABLED），已跳过",
+        {"tier": tier},
     )
     return False
 
@@ -378,31 +403,26 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             display_name = str(payload.get("display_name") or "").strip() or None
             if not audio_b64:
                 raise RuntimeError("缺少音频数据")
-            tier = _subscription_tier_for_job(created_by)
-            included = voice_clone_monthly_included(tier)
-            used = count_succeeded_voice_clone_jobs_for_user_uuid(created_by)
+            from .media_wallet import media_wallet_billing_enabled
+
             pay_cents = voice_clone_payg_cents()
-            need_pay = used >= included
-            clone_phone = phone_for_job_created_by(created_by) if need_pay else ""
+            clone_phone = (phone_for_job_created_by(created_by) or "").strip()
             debited = False
-            if need_pay:
+            if media_wallet_billing_enabled():
                 if not clone_phone:
-                    raise RuntimeError(
-                        "套餐内克隆次数已用完，单次克隆需从钱包扣费，但未找到绑定手机号账户，请重新登录后重试"
-                    )
+                    raise RuntimeError("单次克隆需从钱包扣费，但未找到绑定账户，请重新登录后重试")
                 ok_debit, bal_after = wallet_try_debit_cents(clone_phone, pay_cents)
                 if not ok_debit:
                     bal_show = max(0, bal_after) / 100.0 if bal_after >= 0 else 0.0
                     raise RuntimeError(
-                        f"套餐内克隆次数已用完，单次克隆需 ¥{pay_cents / 100:.2f}，"
-                        f"钱包余额不足（当前约 ¥{bal_show:.2f}）"
+                        f"单次克隆需 ¥{pay_cents / 100:.2f}，钱包余额不足（当前约 ¥{bal_show:.2f}），请先充值"
                     )
                 debited = True
                 append_job_event(
                     job_id,
                     "log",
-                    "套餐内克隆次数已用尽，已从钱包扣除单次克隆费用",
-                    {"cents": pay_cents, "monthly_included": included, "succeeded_this_month_before": used},
+                    "已从钱包扣除单次克隆费用",
+                    {"cents": pay_cents},
                 )
             append_job_event(job_id, "progress", "正在上传音频并克隆音色", {"progress": 60})
             try:
@@ -476,17 +496,16 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     )
                     if not ok_m:
                         raise RuntimeError(str(media_bill_meta.get("message") or "media billing failed"))
-                    if int(media_bill_meta.get("wallet_cents") or 0) > 0 or float(
-                        media_bill_meta.get("from_payg_minutes") or 0
-                    ) > 0:
+                    exv = float(media_bill_meta.get("experience_voice_minutes_consumed") or 0)
+                    if int(media_bill_meta.get("wallet_cents") or 0) > 0 or exv > 1e-9:
                         append_job_event(
                             job_id,
                             "log",
-                            "已按预估语音分钟结算套餐外用量（失败或取消将退回）",
+                            "已按预估语音分钟结算体验包与/或钱包（失败或取消将退回）",
                             {
                                 "estimated_minutes": round(est_m, 4),
                                 "wallet_cents": int(media_bill_meta.get("wallet_cents") or 0),
-                                "from_payg_minutes": float(media_bill_meta.get("from_payg_minutes") or 0),
+                                "experience_voice_minutes_consumed": exv,
                             },
                         )
 
@@ -526,6 +545,13 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                         result["script_char_count"] = len(_fm)
                     if isinstance(tts.get("audio_chapters"), list):
                         result["audio_chapters"] = tts.get("audio_chapters")
+                    assign_work_result_title_with_optional_llm(
+                        result,
+                        payload if isinstance(payload, dict) else {},
+                        _fm,
+                        job_type=job_type,
+                        api_key=api_key,
+                    )
                     if tts.get("cover_image"):
                         result["cover_image"] = tts.get("cover_image")
                         cov_key, cov_ct, cov_err = _persist_cover_for_job(
@@ -566,6 +592,13 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     if ad_sec > 0:
                         end_ms = int(round(ad_sec * 1000))
                         result["audio_chapters"] = [{"title": "全文", "start_ms": 0, "end_ms": max(end_ms, 1)}]
+                    assign_work_result_title_with_optional_llm(
+                        result,
+                        payload if isinstance(payload, dict) else {},
+                        _plain_body,
+                        job_type=job_type,
+                        api_key=api_key,
+                    )
                     if bool(payload.get("generate_cover", True)):
                         if not api_key:
                             append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
@@ -688,8 +721,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             if _st is not None:
                 script_opts["script_target_chars"] = _st
         if job_type == "script_draft" and str(payload.get("output_mode") or "").strip().lower() == "article":
-            tier = _subscription_tier_for_job(created_by)
-            tcap = long_form_script_chars_cap(tier)
+            tcap = int(BILLING_LONG_FORM_SCRIPT_CHARS_CAP)
             raw_tc = script_opts.get("script_target_chars")
             if raw_tc is not None:
                 try:
@@ -794,7 +826,19 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 append_job_event(job_id, "log", "封面生成未完全成功", {"detail": cerr[:500]})
         elif _payload_wants_generate_cover(payload, job_type) and not api_key:
             append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
+        assign_work_result_title_with_optional_llm(
+            result,
+            payload if isinstance(payload, dict) else {},
+            script,
+            job_type=job_type,
+            api_key=api_key,
+        )
+        text_bill_meta_script = _debit_script_text_billing_or_raise(job_id, created_by, script)
         if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
+            ph_can = (phone_for_job_created_by(created_by) or "").strip()
+            if text_bill_meta_script and ph_can:
+                script_text_billing_refund(ph_can, text_bill_meta_script)
+                append_job_event(job_id, "log", "任务已取消，已退回脚本文本扣费（体验包与/或钱包）", text_bill_meta_script)
             append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
             return {"status": "cancelled"}
         append_job_event(job_id, "complete", "任务完成", {"progress": 100})
@@ -857,63 +901,93 @@ def run_media_job(job_id: str) -> dict[str, Any]:
             return {"status": "failed", "error": err}
 
         if job_type in ("podcast_generate", "podcast"):
-            append_job_event(job_id, "progress", "正在汇总参考材料（多 URL / 笔记 / 附加文本）", {"progress": 18})
-            stop_ref, thr_ref = _start_progress_heartbeat(
-                job_id,
-                "正在汇总参考材料（检索与加载可能较慢）…",
-                18.0,
-            )
-            try:
-                source_text, ref_meta = merge_reference_for_script(
-                    payload, source_text, source_url, api_key, max_note_refs=note_ref_cap, user_ref=created_by
+            resynth_only = bool(payload.get("resynth_audio_only"))
+            forced_script = str(payload.get("resynth_script_text") or "").strip()
+            if resynth_only and forced_script:
+                append_job_event(
+                    job_id,
+                    "progress",
+                    "使用已编辑口播稿，跳过参考合并与撰稿模型",
+                    {"progress": 22},
                 )
-            finally:
-                stop_ref.set()
-                thr_ref.join(timeout=2)
-            append_job_event(job_id, "log", "参考材料汇总", ref_meta)
-            if not source_text.strip():
-                source_text = "请生成一段 AI Native 播客稿件。"
-
-            append_job_event(job_id, "progress", "正在生成播客脚本", {"progress": 45})
-            force_fb = bool(payload.get("integration_force_fallback"))
-            stop_scr, thr_scr = _start_progress_heartbeat(
-                job_id,
-                "正在生成播客脚本（长稿可能较久）…",
-                45.0,
-            )
-            try:
-                gen = build_script(
-                    source_text,
-                    api_key=api_key,
-                    force_fallback=force_fb,
-                    script_options=augment_script_options_for_multi_note_coverage(
-                        payload, script_generation_options_from_payload(payload)
-                    ),
-                    on_script_delta=_make_script_delta_handler(job_id),
-                    subscription_tier=_subscription_tier_for_job(created_by),
+                script = forced_script
+                output_mode = str(payload.get("output_mode") or "dialogue").strip().lower()
+                if output_mode not in ("dialogue", "article"):
+                    output_mode = "dialogue"
+                if output_mode == "dialogue":
+                    script = normalize_dialogue_speaker_lines(script)
+                    _sp_issues = dialogue_speaker_format_issues(script)
+                    if _sp_issues:
+                        append_job_event(
+                            job_id,
+                            "log",
+                            "文稿 Speaker 行格式仍异常（请人工检查）",
+                            {"issues": _sp_issues[:25]},
+                        )
+                append_job_event(job_id, "progress", "口播稿已就绪，正在上传并准备语音合成…", {"progress": 55})
+                _mbase = job_artifact_base(job_id, _storage_owner_uuid(job.get("created_by")))
+                script_key = f"{_mbase}/podcast_script.txt"
+                upload_text(script_key, script)
+                add_artifact(job_id, "script", script_key)
+            else:
+                append_job_event(job_id, "progress", "正在汇总参考材料（多 URL / 笔记 / 附加文本）", {"progress": 18})
+                stop_ref, thr_ref = _start_progress_heartbeat(
+                    job_id,
+                    "正在汇总参考材料（检索与加载可能较慢）…",
+                    18.0,
                 )
-            finally:
-                stop_scr.set()
-                thr_scr.join(timeout=2)
-            script = str(gen.get("script") or "").strip() or "播客脚本生成失败"
-            output_mode = str(payload.get("output_mode") or "dialogue").strip().lower()
-            if output_mode not in ("dialogue", "article"):
-                output_mode = "dialogue"
-            if output_mode == "dialogue":
-                script = normalize_dialogue_speaker_lines(script)
-                _sp_issues = dialogue_speaker_format_issues(script)
-                if _sp_issues:
-                    append_job_event(
-                        job_id,
-                        "log",
-                        "文稿 Speaker 行格式仍异常（请人工检查）",
-                        {"issues": _sp_issues[:25]},
+                try:
+                    source_text, ref_meta = merge_reference_for_script(
+                        payload, source_text, source_url, api_key, max_note_refs=note_ref_cap, user_ref=created_by
                     )
-            append_job_event(job_id, "progress", "脚本已生成，正在上传并准备语音合成…", {"progress": 55})
-            _mbase = job_artifact_base(job_id, _storage_owner_uuid(job.get("created_by")))
-            script_key = f"{_mbase}/podcast_script.txt"
-            upload_text(script_key, script)
-            add_artifact(job_id, "script", script_key)
+                finally:
+                    stop_ref.set()
+                    thr_ref.join(timeout=2)
+                append_job_event(job_id, "log", "参考材料汇总", ref_meta)
+                if not source_text.strip():
+                    source_text = "请生成一段 AI Native 播客稿件。"
+
+                append_job_event(job_id, "progress", "正在生成播客脚本", {"progress": 45})
+                force_fb = bool(payload.get("integration_force_fallback"))
+                stop_scr, thr_scr = _start_progress_heartbeat(
+                    job_id,
+                    "正在生成播客脚本（长稿可能较久）…",
+                    45.0,
+                )
+                try:
+                    gen = build_script(
+                        source_text,
+                        api_key=api_key,
+                        force_fallback=force_fb,
+                        script_options=augment_script_options_for_multi_note_coverage(
+                            payload, script_generation_options_from_payload(payload)
+                        ),
+                        on_script_delta=_make_script_delta_handler(job_id),
+                        subscription_tier=_subscription_tier_for_job(created_by),
+                    )
+                finally:
+                    stop_scr.set()
+                    thr_scr.join(timeout=2)
+                script = str(gen.get("script") or "").strip() or "播客脚本生成失败"
+                output_mode = str(payload.get("output_mode") or "dialogue").strip().lower()
+                if output_mode not in ("dialogue", "article"):
+                    output_mode = "dialogue"
+                if output_mode == "dialogue":
+                    script = normalize_dialogue_speaker_lines(script)
+                    _sp_issues = dialogue_speaker_format_issues(script)
+                    if _sp_issues:
+                        append_job_event(
+                            job_id,
+                            "log",
+                            "文稿 Speaker 行格式仍异常（请人工检查）",
+                            {"issues": _sp_issues[:25]},
+                        )
+                append_job_event(job_id, "progress", "脚本已生成，正在上传并准备语音合成…", {"progress": 55})
+                _mbase = job_artifact_base(job_id, _storage_owner_uuid(job.get("created_by")))
+                script_key = f"{_mbase}/podcast_script.txt"
+                upload_text(script_key, script)
+                add_artifact(job_id, "script", script_key)
+                _debit_script_text_billing_or_raise(job_id, created_by, script)
 
             append_job_event(job_id, "progress", "正在调用语音合成（开场 / 对白 / 结尾）…", {"progress": 68})
             append_job_event(job_id, "progress", "正在合成播客音频", {"progress": 75})
@@ -993,17 +1067,16 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                     )
                     if not ok_m:
                         raise RuntimeError(str(media_bill_meta.get("message") or "media billing failed"))
-                    if int(media_bill_meta.get("wallet_cents") or 0) > 0 or float(
-                        media_bill_meta.get("from_payg_minutes") or 0
-                    ) > 0:
+                    exv2 = float(media_bill_meta.get("experience_voice_minutes_consumed") or 0)
+                    if int(media_bill_meta.get("wallet_cents") or 0) > 0 or exv2 > 1e-9:
                         append_job_event(
                             job_id,
                             "log",
-                            "已按预估语音分钟结算套餐外用量（失败或取消将退回）",
+                            "已按预估语音分钟结算体验包与/或钱包（失败或取消将退回）",
                             {
                                 "estimated_minutes": round(est_m, 4),
                                 "wallet_cents": int(media_bill_meta.get("wallet_cents") or 0),
-                                "from_payg_minutes": float(media_bill_meta.get("from_payg_minutes") or 0),
+                                "experience_voice_minutes_consumed": exv2,
                             },
                         )
 
@@ -1128,6 +1201,13 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                             "成片 MP3 写入对象存储失败，RSS 仍可能依赖 audio_hex",
                             {"detail": str(_up_exc)[:240]},
                         )
+                assign_work_result_title_with_optional_llm(
+                    result,
+                    payload if isinstance(payload, dict) else {},
+                    script_after_tts,
+                    job_type=job_type,
+                    api_key=api_key,
+                )
                 if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
                     _refund_media_wallet_job(phone_pm, media_bill_meta)
                     append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
@@ -1263,13 +1343,7 @@ def run_clip_transcription_job(project_id: str) -> dict[str, Any]:
             tf.flush()
             nch = ffprobe_audio_channels(Path(tf.name))
             ch_auto = [0, 1] if nch >= 2 else [0]
-            update_clip_project_meta(
-                project_id=pid,
-                user_uuid=owner,
-                channel_ids=ch_auto,
-                diarization_enabled=True,
-                speaker_count=2,
-            )
+            update_clip_project_meta(project_id=pid, user_uuid=owner, channel_ids=ch_auto)
             row = get_clip_project_by_id(pid) or row
             logger.info("clip transcribe channel_autodetect project_id=%s channels=%s", pid, nch)
     except Exception as probe_exc:
@@ -1331,6 +1405,23 @@ def run_clip_transcription_job(project_id: str) -> dict[str, Any]:
         volc_tid = f"volc-seed-{_uuid.uuid4().hex[:20]}"
         update_clip_transcribe_queued(project_id=pid, user_uuid=owner, task_id=volc_tid)
         logger.info("clip transcribe volc_seed_start project_id=%s pseudo_task_id=%s", pid, volc_tid)
+        hw_raw = row.get("asr_corpus_hotwords") or []
+        if isinstance(hw_raw, str):
+            try:
+                hw_raw = json.loads(hw_raw)
+            except Exception:
+                hw_raw = []
+        corpus_hw: list[str] = []
+        if isinstance(hw_raw, list):
+            for x in hw_raw:
+                s = str(x).strip()
+                if s:
+                    corpus_hw.append(s)
+        sc_raw = row.get("asr_corpus_scene")
+        corpus_scene = (
+            str(sc_raw).strip() if isinstance(sc_raw, str) and str(sc_raw).strip() else None
+        )
+
         raw_tr = volc_seed_recognize_url_wait(
             file_url=file_url,
             audio_bytes=submit_bytes,
@@ -1338,6 +1429,8 @@ def run_clip_transcription_job(project_id: str) -> dict[str, Any]:
             channel_ids=channel_ids,
             audio_filename=str(row.get("audio_filename") or "").strip() or None,
             audio_mime=str(row.get("audio_mime") or "").strip() or None,
+            corpus_hotwords=corpus_hw if corpus_hw else None,
+            corpus_scene=corpus_scene,
         )
         normalized = normalize_volc_flash_transcript(raw_tr)
         update_clip_transcribe_succeeded(project_id=pid, user_uuid=owner, raw=raw_tr, normalized=normalized)
@@ -1350,7 +1443,7 @@ def run_clip_transcription_job(project_id: str) -> dict[str, Any]:
 
 
 def run_clip_export_job(project_id: str) -> dict[str, Any]:
-    from .clip_export import export_clip_mp3_from_bytes
+    from .clip_export import export_clip_mp3_from_bytes, resolve_export_loudnorm_i_lufs
     from .clip_store import (
         get_clip_project_by_id,
         try_claim_clip_export_queued,
@@ -1403,6 +1496,20 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
         merge_gap_ms = max(0, int(os.getenv("CLIP_EXPORT_MERGE_GAP_MS") or "120"))
     except (TypeError, ValueError):
         merge_gap_ms = 120
+    pol_raw = row.get("export_pause_policy")
+    if isinstance(pol_raw, str):
+        try:
+            pol_raw = json.loads(pol_raw)
+        except Exception:
+            pol_raw = None
+    long_pause_ms = 0
+    long_pause_cap_ms = 500
+    if isinstance(pol_raw, dict) and bool(pol_raw.get("enabled")):
+        try:
+            long_pause_ms = max(0, int(pol_raw.get("long_gap_ms", 2000)))
+            long_pause_cap_ms = max(50, min(5000, int(pol_raw.get("cap_ms", 500))))
+        except (TypeError, ValueError):
+            long_pause_ms, long_pause_cap_ms = 0, 500
     try:
         b = get_object_bytes(audio_key)
         out = export_clip_mp3_from_bytes(
@@ -1410,6 +1517,9 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
             normalized=norm,
             excluded_word_ids=excluded,
             merge_gap_ms=merge_gap_ms,
+            long_pause_ms=long_pause_ms,
+            long_pause_cap_ms=long_pause_cap_ms,
+            loudnorm_i_lufs=resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs")),
         )
         out_key = f"clip/{owner or 'anon'}/{pid}/export.mp3"
         upload_bytes(out_key, out, "audio/mpeg")

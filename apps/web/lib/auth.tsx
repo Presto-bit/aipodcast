@@ -49,9 +49,7 @@ export type AuthUser = {
   email?: string;
   username?: string;
   email_verified?: boolean;
-  plan?: string;
   display_name?: string;
-  billing_cycle?: string | null;
   [k: string]: unknown;
 };
 
@@ -124,7 +122,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [sessionResolved, setSessionResolved] = useState(false);
 
   const storageAccountKey = useMemo(() => accountKeyFromUser(user), [user]);
-  setStorageAccountSync(storageAccountKey);
+
+  useLayoutEffect(() => {
+    setStorageAccountSync(storageAccountKey);
+  }, [storageAccountKey]);
 
   useLayoutEffect(() => {
     const ph = getStorageItem(AUTH_PHONE_KEY).trim();
@@ -168,7 +169,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (authRequired === null) return;
 
     if (authRequired === false) {
-      setUser({ phone: "local", plan: "free", display_name: "访客" });
+      setUser({ phone: "local", display_name: "访客" });
       setSessionResolved(true);
       return;
     }
@@ -210,16 +211,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         setUser((prev) => {
-          if (prev && (prev.phone || prev.plan)) return prev;
+          if (prev && (prev.phone || prev.display_name)) return prev;
           const ph = getStorageItem(AUTH_PHONE_KEY).trim();
-          return { phone: ph || "用户", plan: "free" };
+          return { phone: ph || "用户" };
         });
       } catch {
         if (!cancelled) {
           setUser((prev) => {
-            if (prev && (prev.phone || prev.plan)) return prev;
+            if (prev && (prev.phone || prev.display_name)) return prev;
             const ph = getStorageItem(AUTH_PHONE_KEY).trim();
-            return ph ? { phone: ph, plan: "free" } : null;
+            return ph ? { phone: ph } : null;
           });
         }
       } finally {
@@ -301,8 +302,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setPhone(identifier.trim());
     persistPhone(identifier.trim());
     const u = data.user || {};
-    const pl = typeof u.plan === "string" && u.plan.trim() ? u.plan.trim() : "free";
-    setUser({ ...u, plan: pl });
+    setUser({ ...u });
     await refreshMe();
   }, [refreshMe]);
 
@@ -391,8 +391,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setPhone(hint);
         persistPhone(hint);
       }
-      const pl = typeof u.plan === "string" && u.plan.trim() ? u.plan.trim() : "free";
-      setUser({ ...u, plan: pl });
+      setUser({ ...u });
       await refreshMe();
     },
     [refreshMe]

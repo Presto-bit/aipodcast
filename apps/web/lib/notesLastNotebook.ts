@@ -3,6 +3,9 @@ import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedSto
 
 export const NOTES_LAST_NOTEBOOK_KEY = "notes:last-notebook:v1";
 
+/** 侧栏再次点「知识库」且已在 /notes 时：回到笔记本卡片列表，不自动进入工作台 */
+export const NOTES_NAV_HUB_EVENT = "fym:notes-show-notebook-hub";
+
 export const NOTES_NAV_WORKBENCH_EVENT = "fym:notes-open-workbench";
 
 export function readLastNotebookName(): string {
@@ -33,4 +36,9 @@ export function pickNotebookForWorkbench(notebooks: string[]): string {
 export function dispatchNotesOpenWorkbench(): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NOTES_NAV_WORKBENCH_EVENT, { bubbles: false }));
+}
+
+export function dispatchNotesShowNotebookHub(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(NOTES_NAV_HUB_EVENT, { bubbles: false }));
 }

@@ -32,16 +32,27 @@ from ..models import (
     ensure_notebooks_schema,
     find_duplicate_file_note_id,
     get_note_by_id,
+    get_notebook_sharing_row,
+    get_shared_notebook_public_access,
+    increment_public_notebook_view,
     list_notebook_names,
     list_notes,
+    list_notebook_covers_meta,
+    list_popular_public_notebooks,
     list_trashed_notes,
+    list_user_notebook_sharing_meta,
     ensure_default_library_notebook,
     migrate_legacy_default_notebook_for_user,
     purge_expired_trashed_notes,
     purge_note_hard,
+    patch_notebook_cover_db,
+    read_notebook_cover_bytes_owner,
+    read_notebook_cover_bytes_public,
     rename_notebook_db,
     resolved_user_uuid_string,
+    upload_notebook_cover_db,
     restore_note,
+    set_notebook_sharing,
     update_note_title,
 )
 from ..queue import ai_queue
@@ -52,6 +63,7 @@ from ..object_store import delete_object_key, get_object_bytes, upload_bytes
 from ..notes_ask import (
     _prepare_notes_ask_messages,
     answer_notes_question,
+    generate_notes_ask_hints,
     iter_notes_answer_events,
 )
 from ..note_rag_service import count_rag_chunks_for_notes, ensure_note_rag_schema
@@ -61,7 +73,10 @@ from ..schemas import (
     NotePatchRequest,
     NoteUploadJsonRequest,
     NotebookCreateRequest,
-    NotebookRenameRequest,
+    NotebookPatchRequest,
+    NotebookSharingPatchRequest,
+    NotebookViewIncrementRequest,
+    NotesAskHintsRequest,
     NotesAskRequest,
 )
 
@@ -70,6 +85,36 @@ from ..security import verify_internal_signature
 
 router = APIRouter(prefix="/api/v1", tags=["notes"], dependencies=[Depends(verify_internal_signature)])
 NOTE_TRASH_RETENTION_DAYS = settings.trash_retention_days
+
+
+def _metadata_notebook_from_row(row: dict) -> str:
+    md = row.get("metadata") or {}
+    if isinstance(md, str):
+        try:
+            md = json.loads(md)
+        except Exception:
+            md = {}
+    if not isinstance(md, dict):
+        return ""
+    return str(md.get("notebook") or "").strip()
+
+
+def _shared_list_owner_uuid_or_none(
+    request: Request,
+    *,
+    notebook: str | None,
+    shared_from_owner_user_id: str | None,
+) -> str | None:
+    del request
+    sid = (shared_from_owner_user_id or "").strip() or None
+    if not sid:
+        return None
+    nb = (notebook or "").strip() or None
+    if not nb:
+        raise HTTPException(status_code=400, detail="notebook_required_for_shared_view")
+    if not get_shared_notebook_public_access(sid, nb):
+        raise HTTPException(status_code=404, detail="notebook_not_shared")
+    return sid
 
 
 def _try_enqueue_note_rag_index(note_id: str, user_ref: str | None) -> None:
@@ -94,6 +139,18 @@ def _current_user_ref_or_401(request: Request) -> str | None:
     if not phone:
         raise HTTPException(status_code=401, detail="未登录")
     return phone
+
+
+def _optional_user_ref(request: Request) -> str | None:
+    """有会话则返回 principal；无会话返回 None（用于公开分享只读浏览）。"""
+    from .. import auth_bridge
+
+    if not auth_bridge.is_auth_enabled():
+        return None
+    sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
+    if not sess:
+        return None
+    return auth_bridge.session_principal(sess) or None
 
 
 def _mime_for_note_ext(ext: str) -> str:
@@ -279,10 +336,27 @@ def list_notes_api(
     notebook: str | None = Query(default=None),
     limit: int = Query(default=40, ge=1, le=500),
     offset: int = Query(default=0, ge=0, le=50_000),
+    shared_from_owner_user_id: str | None = Query(default=None, alias="sharedFromOwnerUserId"),
 ):
     nb = (notebook or "").strip() or None
-    user_ref = _current_user_ref_or_401(request)
-    rows = list_notes(notebook=nb, limit=limit, offset=offset, user_ref=user_ref)
+    sid = (shared_from_owner_user_id or "").strip() or None
+    if sid and not nb:
+        raise HTTPException(status_code=400, detail="notebook_required_for_shared_view")
+    if sid and nb:
+        owner_uuid = _shared_list_owner_uuid_or_none(
+            request, notebook=nb, shared_from_owner_user_id=shared_from_owner_user_id
+        )
+        user_ref = _optional_user_ref(request)
+    else:
+        user_ref = _current_user_ref_or_401(request)
+        owner_uuid = None
+    rows = list_notes(
+        notebook=nb,
+        limit=limit,
+        offset=offset,
+        user_ref=user_ref,
+        project_owner_user_uuid=owner_uuid,
+    )
     notes: list[dict[str, object]] = []
     for r in rows:
         md = r.get("metadata") or {}
@@ -333,7 +407,16 @@ def list_notes_api(
             }
         )
     has_more = len(rows) >= limit
-    return {"success": True, "notes": notes, "has_more": has_more}
+    shared_mode = (
+        get_shared_notebook_public_access(owner_uuid, nb) if owner_uuid and nb else None
+    )
+    return {
+        "success": True,
+        "notes": notes,
+        "has_more": has_more,
+        "sharedAccess": shared_mode,
+        "sharedFromOwnerUserId": owner_uuid,
+    }
 
 
 @router.get("/notes/trash")
@@ -408,15 +491,52 @@ def create_note_api(req: NoteCreateRequest, request: Request):
     return {"success": True, "noteId": note_id}
 
 
+@router.post("/notes/ask/hints")
+def notes_ask_hints_api(body: NotesAskHintsRequest, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    owner_sid = (body.shared_from_owner_user_id or "").strip() or None
+    project_owner: str | None = None
+    if owner_sid:
+        if not get_shared_notebook_public_access(owner_sid, body.notebook.strip()):
+            raise HTTPException(status_code=404, detail="notebook_not_shared")
+        project_owner = owner_sid
+    try:
+        out = generate_notes_ask_hints(
+            notebook=body.notebook.strip(),
+            note_ids=body.note_ids,
+            user_ref=user_ref,
+            project_owner_user_uuid=project_owner,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if msg == "note_not_found":
+            raise HTTPException(status_code=404, detail=msg) from e
+        if msg in ("notebook_required", "note_ids_required", "too_many_notes", "note_notebook_mismatch", "empty_context"):
+            raise HTTPException(status_code=400, detail=msg) from e
+        if msg in ("empty_hints", "hints_shape", "hints_suggestions", "hints_incomplete"):
+            raise HTTPException(status_code=502, detail="hints_llm_output_invalid") from e
+        raise HTTPException(status_code=502, detail=msg) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"success": True, **out}
+
+
 @router.post("/notes/ask")
 def notes_ask_api(body: NotesAskRequest, request: Request):
     user_ref = _current_user_ref_or_401(request)
+    owner_sid = (body.shared_from_owner_user_id or "").strip() or None
+    project_owner: str | None = None
+    if owner_sid:
+        if not get_shared_notebook_public_access(owner_sid, body.notebook.strip()):
+            raise HTTPException(status_code=404, detail="notebook_not_shared")
+        project_owner = owner_sid
     try:
         out = answer_notes_question(
             notebook=body.notebook.strip(),
             note_ids=body.note_ids,
             question=body.question.strip(),
             user_ref=user_ref,
+            project_owner_user_uuid=project_owner,
         )
     except ValueError as e:
         msg = str(e)
@@ -440,12 +560,19 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
 def notes_ask_stream_api(body: NotesAskRequest, request: Request):
     """基于已选笔记的问答：SSE，`data:` JSON 行，事件 type 为 chunk | done | error。"""
     user_ref = _current_user_ref_or_401(request)
+    owner_sid = (body.shared_from_owner_user_id or "").strip() or None
+    project_owner: str | None = None
+    if owner_sid:
+        if not get_shared_notebook_public_access(owner_sid, body.notebook.strip()):
+            raise HTTPException(status_code=404, detail="notebook_not_shared")
+        project_owner = owner_sid
     try:
         prepared = _prepare_notes_ask_messages(
             notebook=body.notebook.strip(),
             note_ids=body.note_ids,
             question=body.question.strip(),
             user_ref=user_ref,
+            project_owner_user_uuid=project_owner,
         )
     except ValueError as e:
         msg = str(e)
@@ -468,6 +595,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             question=body.question.strip(),
             user_ref=user_ref,
             prepared_messages_sources=prepared,
+            project_owner_user_uuid=project_owner,
         ):
             yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
@@ -493,11 +621,25 @@ def patch_note_api(note_id: str, body: NotePatchRequest, request: Request):
 
 
 @router.get("/notes/{note_id}/preview_text")
-def preview_note_text_api(note_id: str, request: Request):
-    user_ref = _current_user_ref_or_401(request)
-    row = get_note_by_id(note_id, user_ref=user_ref)
-    if not row:
-        row = get_note_by_id(note_id, include_deleted=True, user_ref=user_ref)
+def preview_note_text_api(
+    note_id: str,
+    request: Request,
+    shared_from_owner_user_id: str | None = Query(default=None, alias="sharedFromOwnerUserId"),
+):
+    sid = (shared_from_owner_user_id or "").strip() or None
+    user_ref = _optional_user_ref(request) if sid else _current_user_ref_or_401(request)
+    if sid:
+        row = get_note_by_id(note_id, user_ref=user_ref, project_owner_user_uuid=sid)
+        if not row:
+            row = get_note_by_id(note_id, include_deleted=True, user_ref=user_ref, project_owner_user_uuid=sid)
+        if row:
+            nb = _metadata_notebook_from_row(row)
+            if not get_shared_notebook_public_access(sid, nb):
+                raise HTTPException(status_code=404, detail="notebook_not_shared")
+    else:
+        row = get_note_by_id(note_id, user_ref=user_ref)
+        if not row:
+            row = get_note_by_id(note_id, include_deleted=True, user_ref=user_ref)
     if not row:
         raise HTTPException(status_code=404, detail="note_not_found")
     md = row.get("metadata") or {}
@@ -535,11 +677,25 @@ def preview_note_text_api(note_id: str, request: Request):
 
 
 @router.get("/notes/{note_id}/file")
-def download_note_file_api(note_id: str, request: Request):
-    user_ref = _current_user_ref_or_401(request)
-    row = get_note_by_id(note_id, user_ref=user_ref)
-    if not row:
-        row = get_note_by_id(note_id, include_deleted=True, user_ref=user_ref)
+def download_note_file_api(
+    note_id: str,
+    request: Request,
+    shared_from_owner_user_id: str | None = Query(default=None, alias="sharedFromOwnerUserId"),
+):
+    sid = (shared_from_owner_user_id or "").strip() or None
+    user_ref = _optional_user_ref(request) if sid else _current_user_ref_or_401(request)
+    if sid:
+        row = get_note_by_id(note_id, user_ref=user_ref, project_owner_user_uuid=sid)
+        if not row:
+            row = get_note_by_id(note_id, include_deleted=True, user_ref=user_ref, project_owner_user_uuid=sid)
+        if row:
+            nb = _metadata_notebook_from_row(row)
+            if not get_shared_notebook_public_access(sid, nb):
+                raise HTTPException(status_code=404, detail="notebook_not_shared")
+    else:
+        row = get_note_by_id(note_id, user_ref=user_ref)
+        if not row:
+            row = get_note_by_id(note_id, include_deleted=True, user_ref=user_ref)
     if not row or str(row.get("input_type") or "") != "note_file":
         raise HTTPException(status_code=404, detail="note_not_found")
     key = str(row.get("file_object_key") or "").strip()
@@ -677,7 +833,21 @@ def list_notebooks_api(request: Request):
     ensure_default_library_notebook(user_ref)
     names = list_notebook_names(user_ref=user_ref)
     ordered = sorted(set(names), key=lambda x: x)
-    return {"success": True, "notebooks": ordered}
+    sharing = list_user_notebook_sharing_meta(user_ref)
+    covers = list_notebook_covers_meta(user_ref)
+    return {"success": True, "notebooks": ordered, "notebookSharing": sharing, "notebookCovers": covers}
+
+
+@router.get("/notebooks/popular")
+def list_popular_notebooks_api(
+    request: Request,
+    limit: int = Query(default=40, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=10_000),
+):
+    _current_user_ref_or_401(request)
+    items = list_popular_public_notebooks(limit=limit, offset=offset)
+    has_more = len(items) >= limit
+    return {"success": True, "items": items, "has_more": has_more, "offset": offset, "limit": limit}
 
 
 @router.post("/notebooks")
@@ -690,13 +860,108 @@ def create_notebook_api(body: NotebookCreateRequest, request: Request):
     return {"success": True, "name": msg}
 
 
-@router.patch("/notebooks/{notebook_name:path}")
-def rename_notebook_api(notebook_name: str, body: NotebookRenameRequest, request: Request):
+@router.post("/notebooks/view")
+def increment_notebook_view_api(body: NotebookViewIncrementRequest, request: Request):
     user_ref = _current_user_ref_or_401(request)
-    ok, err = rename_notebook_db(notebook_name.strip(), body.new_name.strip(), user_ref=user_ref)
+    owner = body.owner_user_id.strip()
+    nb = body.notebook.strip()
+    if not get_shared_notebook_public_access(owner, nb):
+        raise HTTPException(status_code=404, detail="notebook_not_shared")
+    if not increment_public_notebook_view(owner, nb, viewer_user_ref=user_ref):
+        raise HTTPException(status_code=400, detail="view_increment_failed")
+    return {"success": True}
+
+
+@router.get("/notebooks/cover-public")
+def get_notebook_cover_public_api(
+    request: Request,
+    owner_user_id: str = Query(..., min_length=10, max_length=80, alias="ownerUserId"),
+    notebook: str = Query(..., min_length=1, max_length=200),
+    variant: str = Query(default="thumb"),
+):
+    del request
+    data, mime, err = read_notebook_cover_bytes_public(
+        None, owner_user_id.strip(), notebook.strip(), variant.strip().lower()
+    )
+    if err or not data:
+        raise HTTPException(status_code=404, detail=err or "cover_not_found")
+    return Response(content=data, media_type=mime or "application/octet-stream")
+
+
+@router.patch("/notebooks/{notebook_name:path}/share")
+def patch_notebook_share_api(notebook_name: str, body: NotebookSharingPatchRequest, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    pa = (body.public_access or "").strip().lower() if body.public_access else None
+    ok, err = set_notebook_sharing(
+        user_ref,
+        notebook_name.strip(),
+        is_public=bool(body.is_public),
+        public_access=pa,
+        listed_in_discover=body.listed_in_discover,
+    )
     if not ok:
         raise HTTPException(status_code=400, detail=err)
-    return {"success": True, "old": notebook_name.strip(), "new": body.new_name.strip()}
+    nb = notebook_name.strip()
+    row = get_notebook_sharing_row(user_ref, nb)
+    listed = bool((row or {}).get("listed_in_discover")) if row else False
+    return {
+        "success": True,
+        "name": nb,
+        "isPublic": body.is_public,
+        "publicAccess": pa,
+        "listedInDiscover": listed,
+    }
+
+
+@router.get("/notebooks/{notebook_name:path}/cover")
+def get_notebook_cover_owner_api(
+    notebook_name: str,
+    request: Request,
+    variant: str = Query(default="thumb"),
+):
+    user_ref = _current_user_ref_or_401(request)
+    data, mime, err = read_notebook_cover_bytes_owner(
+        user_ref, notebook_name.strip(), (variant or "thumb").strip().lower()
+    )
+    if err or not data:
+        raise HTTPException(status_code=404, detail=err or "cover_not_found")
+    return Response(content=data, media_type=mime or "application/octet-stream")
+
+
+@router.post("/notebooks/{notebook_name:path}/cover")
+async def upload_notebook_cover_api(notebook_name: str, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    data = await request.body()
+    ct = request.headers.get("content-type")
+    ok, err = upload_notebook_cover_db(user_ref, notebook_name.strip(), data, ct)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+    return {"success": True, "name": notebook_name.strip()}
+
+
+@router.patch("/notebooks/{notebook_name:path}")
+def patch_notebook_api(notebook_name: str, body: NotebookPatchRequest, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    nb0 = notebook_name.strip()
+    changed_rename = False
+    if body.new_name is not None:
+        new_n = body.new_name.strip()
+        ok, err = rename_notebook_db(nb0, new_n, user_ref=user_ref)
+        if not ok:
+            raise HTTPException(status_code=400, detail=err)
+        nb0 = new_n
+        changed_rename = True
+    if body.cover_mode is not None:
+        ok, err = patch_notebook_cover_db(
+            user_ref, nb0, cover_mode=body.cover_mode.strip().lower(), cover_preset_id=body.cover_preset_id
+        )
+        if not ok:
+            raise HTTPException(status_code=400, detail=err)
+    out: dict[str, object] = {"success": True, "name": nb0}
+    if changed_rename and body.new_name is not None:
+        out["old"] = notebook_name.strip()
+        out["new"] = nb0
+    return out
 
 
 @router.delete("/notebooks/{notebook_name:path}")

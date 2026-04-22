@@ -22,6 +22,12 @@ import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageSco
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
+import { workCoverImageSrc } from "../../lib/workCoverImage";
+import {
+  formatWorkCreatedAtZh,
+  worksNavMetricPart,
+  worksNavPrimaryKind
+} from "../../lib/worksNavMetaLine";
 
 function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
   return w.downloadAllowed === true;
@@ -39,50 +45,21 @@ function isPodcastManuscriptDraftTarget(jobType: string): boolean {
   return t === "podcast_generate" || t === "podcast";
 }
 
-/** 「我的作品」导航页音频合并列表：一级体裁 */
-function worksNavPrimaryKind(type: string | undefined): string {
-  const t = String(type || "");
-  if (t === "script_draft") return "文章";
-  if (TTS_TYPES.has(t)) return "文字转语音";
-  return "播客";
-}
-
-/** 二级体裁：payload.program_name；缺失时按一级给默认（播客→「播客」等） */
-function worksNavSecondaryLabel(w: WorkItem, primaryKind: string): string {
-  const p = String(w.workProgramName || "").trim();
-  if (p) return p;
-  if (primaryKind === "文章") return "文章";
-  if (primaryKind === "文字转语音") return "配音";
-  return "播客";
-}
-
-function worksNavMetricPart(
+/** 与首页「全部作品」合并列表卡片 meta 完全一致：一级 | 作者 | 时长/字数 | 时间 */
+function formatUnifiedWorksNavMetaLine(
+  w: PodcastWorkRow,
   isScriptDraft: boolean,
   durationLine: string,
-  scriptCharCountDisplay: number | null
+  scriptCharCountDisplay: number | null,
+  createdZh: string,
+  authorDisplay: string
 ): string {
-  if (isScriptDraft) {
-    return scriptCharCountDisplay != null && scriptCharCountDisplay > 0
-      ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
-      : "—";
-  }
-  return durationLine !== "—" ? `时长 ${durationLine}` : "—";
-}
-
-/** 作品列表/详情：年月日 + 24 小时制时分 */
-function formatWorkCreatedAtZh(createdAt: string | undefined): string {
-  const raw = String(createdAt || "").trim();
-  if (!raw) return "—";
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  });
+  const primaryK = worksNavPrimaryKind(w.type);
+  const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
+  return [primaryK, authorDisplay, metricP, createdZh]
+    .map((s) => String(s || "").trim())
+    .filter(Boolean)
+    .join(" | ");
 }
 
 type GalleryKeys = {
@@ -126,17 +103,6 @@ function galleryStorageKeys(variant: "podcast" | "tts" | "notes" | "notes_studio
     titlesKey: "fym_podcast_works_display_titles_v1",
     allowedTypes: PODCAST_TYPES
   };
-}
-
-/** 外链封面常因防盗链无法在浏览器直接显示，走同源代理 */
-function coverImageSrc(url: string | undefined | null, cacheBust?: number): string {
-  const u = String(url || "").trim();
-  if (!u) return "";
-  let base = u.startsWith("data:") || u.startsWith("/") ? u : `/api/image-proxy?url=${encodeURIComponent(u)}`;
-  if (cacheBust && base.startsWith("/")) {
-    base += `${base.includes("?") ? "&" : "?"}v=${cacheBust}`;
-  }
-  return base;
 }
 
 function loadHiddenIds(hiddenKey: string): Set<string> {
@@ -272,6 +238,10 @@ type Props = {
   enableBatchActions?: boolean;
   /** 笔记页侧栏：仅展示前 N 条，其余通过「更多」跳转我的作品 */
   sidebarMaxItems?: number;
+  /** 笔记本工作台侧栏：进行中的任务（尚未出现在成功作品列表中） */
+  pendingStudioWork?: WorkItem | null;
+  /** 与 pending 卡片配套的进度文案（SSE / 排队提示） */
+  pendingStudioSubtitle?: string;
 };
 
 const NOTE_TITLE_UUID_RE =
@@ -313,20 +283,8 @@ function notesStudioReferencedWorkTitle(w: PodcastWorkRow): string {
   return "引用来源未记录";
 }
 
-/**
- * 侧栏卡片首行：用户通过「修改名称」保存的标题优先，否则为引用来源的作品名称。
- */
-function notesStudioCardHeadlineTitle(
-  w: PodcastWorkRow,
-  titleOverrides: Record<string, string>,
-  jobId: string
-): string {
-  const saved = jobId && titleOverrides[jobId] ? String(titleOverrides[jobId]).trim() : "";
-  if (saved) return saved;
-  return notesStudioReferencedWorkTitle(w);
-}
-
-const NOTES_STUDIO_REF_TITLE_MAX_CHARS = 24;
+/** 与作品导航列表一致展示更多标题字符（仍 line-clamp 防撑破侧栏） */
+const NOTES_STUDIO_REF_TITLE_MAX_CHARS = 48;
 
 function truncateByGraphemes(s: string, maxChars: number): string {
   const t = String(s || "").trim();
@@ -334,24 +292,6 @@ function truncateByGraphemes(s: string, maxChars: number): string {
   const chars = Array.from(t);
   if (chars.length <= maxChars) return t;
   return chars.slice(0, maxChars).join("") + "…";
-}
-
-/** 第二行：体裁 · 时长/字数 · 时间（不含引用标题，避免与首行重复） */
-function formatNotesStudioCardMetaLine(
-  isScriptDraft: boolean,
-  durationLine: string,
-  scriptCharCountDisplay: number | null,
-  createdShort: string
-): string {
-  const genre = isScriptDraft ? "文章" : "播客";
-  const metric = isScriptDraft
-    ? scriptCharCountDisplay != null && scriptCharCountDisplay > 0
-      ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
-      : "—"
-    : durationLine !== "—"
-      ? `时长 ${durationLine}`
-      : "—";
-  return `${genre} · ${metric} · ${createdShort}`;
 }
 
 /** 悬停层完整一行（含《引用》），供摘要提示使用 */
@@ -466,7 +406,9 @@ export default function PodcastWorksGallery({
   onWorkDeleted,
   variant = "podcast",
   enableBatchActions = false,
-  sidebarMaxItems
+  sidebarMaxItems,
+  pendingStudioWork = null,
+  pendingStudioSubtitle = ""
 }: Props) {
   const { t } = useI18n();
   const router = useRouter();
@@ -526,13 +468,16 @@ export default function PodcastWorksGallery({
     clearCachedAudioSrc
   } = workAudio;
   const togglePlay = useCallback(
-    (jobId: string, displayTitle: string) => {
+    (jobId: string, displayTitle: string, audioOpts?: { usePodcastPublicTemplateListen?: boolean }) => {
       setPlayErrorById((prev) => {
         const next = { ...prev };
         delete next[jobId];
         return next;
       });
-      void toggleWorkAudio(jobId, { displayTitle });
+      void toggleWorkAudio(jobId, {
+        displayTitle,
+        usePodcastPublicTemplateListen: audioOpts?.usePodcastPublicTemplateListen
+      });
     },
     [toggleWorkAudio]
   );
@@ -543,11 +488,13 @@ export default function PodcastWorksGallery({
 
   const items = useMemo((): PodcastWorkRow[] => {
     const list = works.filter((w) => {
-      if (!w.id || hidden.has(w.id)) return false;
+      const wid = String(w.id || "").trim();
+      if (!wid) return false;
+      if (hidden.has(wid)) return false;
       if (allowedTypes === null) return true;
       return allowedTypes.has(String(w.type || ""));
     });
-    return list.map((w) => ({
+    const mapped = list.map((w) => ({
       ...w,
       displayTitle:
         (w.id && titleOverrides[w.id]) ||
@@ -556,7 +503,23 @@ export default function PodcastWorksGallery({
         w.id ||
         "未命名"
     }));
-  }, [works, hidden, titleOverrides, allowedTypes]);
+    const pendingId =
+      variant === "notes_studio" && pendingStudioWork?.id ? String(pendingStudioWork.id).trim() : "";
+    const withoutDup = pendingId ? mapped.filter((w) => String(w.id || "") !== pendingId) : mapped;
+    if (!pendingId || !pendingStudioWork) return withoutDup;
+    const baseRow: PodcastWorkRow = {
+      ...pendingStudioWork,
+      id: pendingId,
+      displayTitle: ""
+    };
+    baseRow.displayTitle =
+      (pendingId && titleOverrides[pendingId]) ||
+      sanitizeShareEpisodeTitle(String(pendingStudioWork.title || "").trim(), "") ||
+      notesStudioReferencedWorkTitle(baseRow) ||
+      pendingId ||
+      "生成中";
+    return [baseRow, ...withoutDup];
+  }, [works, hidden, titleOverrides, allowedTypes, variant, pendingStudioWork]);
 
   const visibleItems = useMemo(() => {
     const cap = typeof sidebarMaxItems === "number" && sidebarMaxItems > 0 ? sidebarMaxItems : 0;
@@ -571,7 +534,9 @@ export default function PodcastWorksGallery({
   }, [items.length, variant, sidebarMaxItems]);
 
   useEffect(() => {
-    const ids = items.map((x) => String(x.id || "").trim()).filter(Boolean);
+    const ids = items
+      .map((x) => String(x.id || "").trim())
+      .filter(Boolean);
     if (ids.length === 0) {
       setPublicationsByJobId({});
       return;
@@ -624,6 +589,10 @@ export default function PodcastWorksGallery({
     for (const w of items) {
       const id = w.id;
       if (!id) continue;
+      if (w.isPodcastPublicTemplate) {
+        durationResolvedRef.current.add(id);
+        continue;
+      }
       if (typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0) continue;
       if (durationResolvedRef.current.has(id)) continue;
       if (durationFetchRef.current.has(id)) continue;
@@ -679,7 +648,12 @@ export default function PodcastWorksGallery({
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
-      const t = e.target as Node;
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      if (t instanceof Element && t.closest("[data-fym-app-sidebar]")) {
+        setMenuOpenId(null);
+        return;
+      }
       if (menuWrapRef.current?.contains(t)) return;
       if (notesStudioMenuPortalRef.current?.contains(t)) return;
       setMenuOpenId(null);
@@ -770,6 +744,10 @@ export default function PodcastWorksGallery({
 
   const confirmDelete = useCallback(
     async (jobId: string) => {
+      if (works.some((w) => String(w.id || "") === jobId && w.isPodcastPublicTemplate)) {
+        setDeleteConfirmId(null);
+        return;
+      }
       setDeleteBusyId(jobId);
       setDeleteError(null);
       try {
@@ -906,15 +884,16 @@ export default function PodcastWorksGallery({
         setDeleteBusyId(null);
       }
     },
-    [dismissIfJob, clearCachedAudioSrc, onWorkDeleted, titlesKey, hiddenKey, getAuthHeaders]
+    [dismissIfJob, clearCachedAudioSrc, onWorkDeleted, titlesKey, hiddenKey, getAuthHeaders, works]
   );
 
   const requestDelete = useCallback((jobId: string) => {
+    if (works.some((w) => String(w.id || "") === jobId && w.isPodcastPublicTemplate)) return;
     setDeleteConfirmId(jobId);
     setDeleteError(null);
     setMenuOpenId(null);
     setRenameJobId(null);
-  }, []);
+  }, [works]);
 
   const pendingDeleteTitle =
     deleteConfirmId != null ? items.find((x) => x.id === deleteConfirmId)?.displayTitle || deleteConfirmId : "";
@@ -934,7 +913,7 @@ export default function PodcastWorksGallery({
       } catch {
         /* ignore */
       }
-      router.push(`/works/share/${id}`);
+      router.push(`/works/${encodeURIComponent(id)}?tab=publish`);
     },
     [router]
   );
@@ -969,9 +948,15 @@ export default function PodcastWorksGallery({
     }
   }
 
-  async function onReuseTemplate(id: string) {
+  async function onReuseTemplate(id: string, opts?: { publicTemplate?: boolean }) {
     try {
-      const res = await fetch(`/api/jobs/${encodeURIComponent(id)}`, { cache: "no-store", headers: { ...getAuthHeaders() } });
+      const usePublicTpl = Boolean(opts?.publicTemplate);
+      const res = await fetch(
+        usePublicTpl
+          ? `/api/jobs/${encodeURIComponent(id)}/podcast-template-reuse`
+          : `/api/jobs/${encodeURIComponent(id)}`,
+        { cache: "no-store", headers: { ...getAuthHeaders() } }
+      );
       const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) throw new Error("读取作品参数失败");
       const jobType = String(row.job_type || "").trim();
@@ -1216,7 +1201,16 @@ export default function PodcastWorksGallery({
         >
           {visibleItems.map((w) => {
             const id = w.id!;
+            const isPublicTpl = Boolean(w.isPodcastPublicTemplate);
+            const templateReuseArgs = isPublicTpl ? ({ publicTemplate: true } as const) : undefined;
             const isScriptDraft = String(w.type || "") === "script_draft";
+            const jobStatus = String(w.status || "").trim();
+            const isMediaInFlight =
+              !isScriptDraft && (jobStatus === "queued" || jobStatus === "running");
+            const showPendingLog =
+              variant === "notes_studio" &&
+              pendingStudioWork?.id === id &&
+              Boolean(String(pendingStudioSubtitle || "").trim());
             const isActive = activeJobId === id;
             const rowPlayMsg = (isActive && activePlayError) || playErrorById[id];
             const prog = isActive ? progress01 : 0;
@@ -1250,21 +1244,23 @@ export default function PodcastWorksGallery({
 
             /** 仅笔记本工作台侧栏「我的作品」：无封面顶栏、简介 + 标题 + 操作；其它页面仍走下方默认卡片 */
             if (variant === "notes_studio") {
-              const headlineFull = notesStudioCardHeadlineTitle(w, titleOverrides, id);
+              const headlineFull = String(w.displayTitle || "").trim() || id;
               const headlineShown = truncateByGraphemes(headlineFull, NOTES_STUDIO_REF_TITLE_MAX_CHARS);
-              const metaLine = formatNotesStudioCardMetaLine(
+              const metaLine = formatUnifiedWorksNavMetaLine(
+                w,
                 isScriptDraft,
                 durationLine,
                 scriptCharCountDisplay,
-                createdShort
+                createdShort,
+                worksNavAuthorDisplay
               );
-              const synopsisHoverFull = formatNotesStudioCardSynopsis(
+              const synopsisHoverFull = `${metaLine}\n\n${formatNotesStudioCardSynopsis(
                 w,
                 isScriptDraft,
                 durationLine,
                 scriptCharCountDisplay,
                 createdShort
-              );
+              )}`;
               return (
                 <li
                   key={id}
@@ -1277,51 +1273,78 @@ export default function PodcastWorksGallery({
                     </label>
                   ) : null}
                   <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
-                    {headlineFull !== headlineShown ? (
-                      <div className="group/reftitle relative min-h-0">
+                    <Link
+                      href={`/works/${encodeURIComponent(id)}`}
+                      className="block min-w-0 rounded-md outline-none ring-brand/0 transition hover:bg-fill/45 focus-visible:ring-2 focus-visible:ring-brand"
+                      aria-label={`查看作品详情：${headlineFull}`}
+                    >
+                      {headlineFull !== headlineShown ? (
+                        <div className="group/reftitle relative min-h-0">
+                          <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
+                          <div
+                            role="tooltip"
+                            className="pointer-events-none invisible absolute bottom-full left-0 z-[70] mb-1 w-max max-w-[min(18rem,90vw)] rounded-md border border-line bg-surface px-2 py-1.5 text-left text-[10px] font-normal leading-snug text-ink opacity-0 shadow-card ring-1 ring-line/50 transition-opacity delay-[75ms] duration-100 group-hover/reftitle:visible group-hover/reftitle:opacity-100"
+                          >
+                            {headlineFull}
+                          </div>
+                        </div>
+                      ) : (
                         <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
+                      )}
+                      <div className="group/synopsis relative mt-1 min-h-0">
+                        <p className="line-clamp-3 min-h-0 text-[9px] leading-snug text-muted">{metaLine}</p>
                         <div
                           role="tooltip"
-                          className="pointer-events-none invisible absolute bottom-full left-0 z-[70] mb-1 w-max max-w-[min(18rem,90vw)] rounded-md border border-line bg-surface px-2 py-1.5 text-left text-[10px] font-normal leading-snug text-ink opacity-0 shadow-card ring-1 ring-line/50 transition-opacity delay-[75ms] duration-100 group-hover/reftitle:visible group-hover/reftitle:opacity-100"
+                          className="pointer-events-none invisible absolute bottom-full left-0 z-[70] mb-1 w-max max-w-[min(18rem,92vw)] whitespace-pre-wrap break-words rounded-md border border-line bg-surface px-2 py-1.5 text-left text-[9px] leading-snug text-ink opacity-0 shadow-card ring-1 ring-line/50 transition-opacity delay-[75ms] duration-100 group-hover/synopsis:visible group-hover/synopsis:opacity-100"
                         >
-                          {headlineFull}
+                          {synopsisHoverFull}
                         </div>
                       </div>
-                    ) : (
-                      <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
-                    )}
-                    <div className="group/synopsis relative min-h-0">
-                      <p className="line-clamp-3 min-h-0 text-[9px] leading-snug text-muted">{metaLine}</p>
-                      <div
-                        role="tooltip"
-                        className="pointer-events-none invisible absolute bottom-full left-0 z-[70] mb-1 w-max max-w-[min(18rem,92vw)] whitespace-pre-wrap break-words rounded-md border border-line bg-surface px-2 py-1.5 text-left text-[9px] leading-snug text-ink opacity-0 shadow-card ring-1 ring-line/50 transition-opacity delay-[75ms] duration-100 group-hover/synopsis:visible group-hover/synopsis:opacity-100"
+                    </Link>
+                    {showPendingLog ? (
+                      <p
+                        className="line-clamp-5 min-h-0 text-center text-[9px] leading-snug text-brand"
+                        role="status"
+                        aria-live="polite"
                       >
-                        {synopsisHoverFull}
-                      </div>
-                    </div>
+                        {pendingStudioSubtitle.trim()}
+                      </p>
+                    ) : null}
                     <div className="mt-0.5 flex items-center justify-between gap-1 border-t border-line/50 pt-1.5">
                       <div className="flex min-w-0 flex-1 items-center gap-1">
                         {!isScriptDraft ? (
-                          <CircularPlayControl
-                            playing={isActive && isPlayingAudio}
-                            progress={prog}
-                            disabled={audioLoadingId === id}
-                            onClick={() => void togglePlay(id, w.displayTitle)}
-                            compact
-                          />
+                          isMediaInFlight ? (
+                            <span className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border border-line/80 bg-fill/60 px-1.5 text-[9px] font-medium text-muted">
+                              {jobStatus === "queued" ? "排队" : "生成"}
+                            </span>
+                          ) : (
+                            <CircularPlayControl
+                              playing={isActive && isPlayingAudio}
+                              progress={prog}
+                              disabled={audioLoadingId === id}
+                              onClick={() =>
+                                void togglePlay(id, w.displayTitle, {
+                                  usePodcastPublicTemplateListen: isPublicTpl
+                                })
+                              }
+                              compact
+                            />
+                          )
                         ) : null}
                       </div>
-                      <div className="relative shrink-0" ref={menuOpenId === id ? menuWrapRef : undefined}>
-                        <button
-                          type="button"
-                          className="flex h-6 w-6 items-center justify-center rounded-full text-muted hover:bg-fill"
-                          aria-label="更多"
-                          aria-expanded={menuOpenId === id}
-                          onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
-                        >
-                          <span className="text-sm leading-none">⋯</span>
-                        </button>
-                      </div>
+                      {isMediaInFlight ? null : (
+                        <div className="relative shrink-0" ref={menuOpenId === id ? menuWrapRef : undefined}>
+                          <button
+                            type="button"
+                            className="flex h-6 w-6 items-center justify-center rounded-full text-muted hover:bg-fill"
+                            aria-label="更多"
+                            aria-expanded={menuOpenId === id}
+                            onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
+                          >
+                            <span className="text-sm leading-none">⋯</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                   {renameJobId === id ? (
@@ -1350,16 +1373,15 @@ export default function PodcastWorksGallery({
             }
 
             if (variant === "all") {
-              const primaryK = worksNavPrimaryKind(w.type);
-              const secondaryK = worksNavSecondaryLabel(w, primaryK);
-              const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
               const dayP = formatWorkCreatedAtZh(w.createdAt);
-              /** 合并列表播客行不再展示节目名（如默认「本期播客」），避免与一级体裁重复 */
-              const secondaryForNav = primaryK === "播客" ? "" : secondaryK;
-              const navMetaLine = [primaryK, secondaryForNav, worksNavAuthorDisplay, metricP, dayP]
-                .map((s) => String(s || "").trim())
-                .filter(Boolean)
-                .join(" | ");
+              const navMetaLine = formatUnifiedWorksNavMetaLine(
+                w,
+                isScriptDraft,
+                durationLine,
+                scriptCharCountDisplay,
+                dayP,
+                worksNavAuthorDisplay
+              );
               return (
                 <li
                   key={id}
@@ -1376,20 +1398,28 @@ export default function PodcastWorksGallery({
                     </label>
                   ) : null}
                   {isScriptDraft ? (
-                    <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden rounded-t-xl border-b border-success/25 bg-gradient-to-br from-success-soft/50 to-success/[0.08]">
+                    <Link
+                      href={`/works/${encodeURIComponent(id)}`}
+                      className="relative block aspect-[4/3] w-full shrink-0 overflow-hidden rounded-t-xl border-b border-success/25 bg-gradient-to-br from-success-soft/50 to-success/[0.08] outline-none ring-brand/0 transition hover:brightness-[1.02] focus-visible:ring-2 focus-visible:ring-brand"
+                      aria-label={`查看作品详情：${w.displayTitle}`}
+                    >
                       <div className="flex h-full flex-col items-center justify-center gap-1 p-2">
                         <span className="text-2xl leading-none opacity-90" aria-hidden>
                           📝
                         </span>
                         <span className="text-[10px] font-medium text-success-ink/90">文稿</span>
                       </div>
-                    </div>
+                    </Link>
                   ) : (
-                    <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill">
+                    <Link
+                      href={`/works/${encodeURIComponent(id)}`}
+                      className="relative block aspect-[4/3] w-full shrink-0 overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill outline-none ring-brand/0 transition hover:opacity-[0.97] focus-visible:ring-2 focus-visible:ring-brand"
+                      aria-label={`查看作品详情：${w.displayTitle}`}
+                    >
                       {w.coverImage ? (
                         /* eslint-disable-next-line @next/next/no-img-element */
                         <img
-                          src={coverImageSrc(w.coverImage, coverBustById[id])}
+                          src={workCoverImageSrc(w.coverImage, coverBustById[id])}
                           alt=""
                           className="relative z-[1] h-full w-full object-cover"
                           referrerPolicy="no-referrer"
@@ -1406,9 +1436,14 @@ export default function PodcastWorksGallery({
                           }}
                         />
                       ) : (
-                        <div className="flex h-full min-h-[3rem] items-center justify-center text-[10px] text-muted">无配图</div>
+                        <div className="flex h-full min-h-[3rem] flex-col items-center justify-center gap-1 bg-gradient-to-br from-brand/[0.14] via-fill to-cta/[0.12] px-2 text-center">
+                          <span className="text-2xl leading-none opacity-90" aria-hidden>
+                            🎙️
+                          </span>
+                          <span className="text-[10px] font-medium leading-tight text-muted">待生成或暂无封面</span>
+                        </div>
                       )}
-                    </div>
+                    </Link>
                   )}
                   <div className="shrink-0 border-b border-line/70 px-3 py-2">
                     <div className="flex items-start gap-2">
@@ -1421,7 +1456,11 @@ export default function PodcastWorksGallery({
                             playing={isActive && isPlayingAudio}
                             progress={prog}
                             disabled={audioLoadingId === id}
-                            onClick={() => void togglePlay(id, w.displayTitle)}
+                            onClick={() =>
+                                void togglePlay(id, w.displayTitle, {
+                                  usePodcastPublicTemplateListen: isPublicTpl
+                                })
+                              }
                             compact
                           />
                         </div>
@@ -1458,45 +1497,53 @@ export default function PodcastWorksGallery({
                         type="button"
                         className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
                         disabled={audioLoadingId === id}
-                        onClick={() => void togglePlay(id, w.displayTitle)}
+                        onClick={() =>
+                                void togglePlay(id, w.displayTitle, {
+                                  usePodcastPublicTemplateListen: isPublicTpl
+                                })
+                              }
                       >
                         {isActive && isPlayingAudio ? "暂停" : "播放"}
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
-                      onClick={() => goToSharePage(w)}
-                    >
-                      {publishActionText}
-                    </button>
-                    <GatedSplitAction
-                      locked={!workDownloadAllowed(w)}
-                      variant="default"
-                      upgradeTitle="下载需订阅"
-                      onClick={() => void onDownload(w)}
-                      disabled={zipBusy === id}
-                      unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
-                    >
-                      {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
-                    </GatedSplitAction>
-                    <button
-                      type="button"
-                      className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                      onClick={() => void onReuseTemplate(id)}
-                    >
-                      {reuseOrManuscriptLabel}
-                    </button>
-                    <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
+                    <>
+                      {!isScriptDraft ? (
+                        <button
+                          type="button"
+                          className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
+                          onClick={() => goToSharePage(w)}
+                        >
+                          {publishActionText}
+                        </button>
+                      ) : null}
+                      <GatedSplitAction
+                        locked={!workDownloadAllowed(w)}
+                        variant="default"
+                        upgradeTitle="下载需订阅"
+                        onClick={() => void onDownload(w)}
+                        disabled={zipBusy === id}
+                        unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
+                      </GatedSplitAction>
                       <button
                         type="button"
-                        className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-fill"
-                        aria-label="更多"
-                        onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
+                        className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+                        onClick={() => void onReuseTemplate(id, templateReuseArgs)}
                       >
-                        <span className="text-base leading-none">⋯</span>
+                        {reuseOrManuscriptLabel}
                       </button>
-                    </div>
+                      <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
+                        <button
+                          type="button"
+                          className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-fill"
+                          aria-label="更多"
+                          onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
+                        >
+                          <span className="text-base leading-none">⋯</span>
+                        </button>
+                      </div>
+                    </>
                     {publications.length > 0 ? (
                       <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">{publishedText}</span>
                     ) : null}
@@ -1521,7 +1568,11 @@ export default function PodcastWorksGallery({
                   </label>
                 ) : null}
                 {isScriptDraft ? (
-                  <div className="overflow-hidden rounded-t-xl border-b border-success/25 bg-gradient-to-br from-success-soft/95 to-success/[0.08] px-3 py-2">
+                  <Link
+                    href={`/works/${encodeURIComponent(id)}`}
+                    className="block overflow-hidden rounded-t-xl border-b border-success/25 bg-gradient-to-br from-success-soft/95 to-success/[0.08] px-3 py-2 outline-none ring-brand/0 transition hover:bg-success-soft/90 focus-visible:ring-2 focus-visible:ring-brand"
+                    aria-label={`查看作品详情：${w.displayTitle}`}
+                  >
                     <div className="flex gap-2">
                       <span className="shrink-0 text-base leading-none" aria-hidden>
                         📝
@@ -1530,13 +1581,17 @@ export default function PodcastWorksGallery({
                         <ScriptWorkSourceSummary w={w} />
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 ) : (
-                  <div className="relative aspect-[4/3] w-full overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill">
+                  <Link
+                    href={`/works/${encodeURIComponent(id)}`}
+                    className="relative block aspect-[4/3] w-full overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill outline-none ring-brand/0 transition hover:opacity-[0.97] focus-visible:ring-2 focus-visible:ring-brand"
+                    aria-label={`查看作品详情：${w.displayTitle}`}
+                  >
                     {w.coverImage ? (
                       /* eslint-disable-next-line @next/next/no-img-element */
                       <img
-                        src={coverImageSrc(w.coverImage, coverBustById[id])}
+                        src={workCoverImageSrc(w.coverImage, coverBustById[id])}
                         alt=""
                         className="relative z-[1] h-full w-full object-cover"
                         referrerPolicy="no-referrer"
@@ -1553,9 +1608,14 @@ export default function PodcastWorksGallery({
                         }}
                       />
                     ) : (
-                      <div className="flex h-full min-h-[3rem] items-center justify-center text-[10px] text-muted">无配图</div>
+                      <div className="flex h-full min-h-[3rem] flex-col items-center justify-center gap-1 bg-gradient-to-br from-brand/[0.14] via-fill to-cta/[0.12] px-2 text-center">
+                        <span className="text-2xl leading-none opacity-90" aria-hidden>
+                          🎙️
+                        </span>
+                        <span className="text-[10px] font-medium leading-tight text-muted">待生成或暂无封面</span>
+                      </div>
                     )}
-                  </div>
+                  </Link>
                 )}
 
                 <div className="flex min-h-[4.25rem] shrink-0 flex-row items-center gap-2 border-t border-line px-3 py-2.5">
@@ -1584,7 +1644,11 @@ export default function PodcastWorksGallery({
                         playing={isActive && isPlayingAudio}
                         progress={prog}
                         disabled={audioLoadingId === id}
-                        onClick={() => void togglePlay(id, w.displayTitle)}
+                        onClick={() =>
+                                void togglePlay(id, w.displayTitle, {
+                                  usePodcastPublicTemplateListen: isPublicTpl
+                                })
+                              }
                       />
                     ) : null}
                     <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
@@ -1626,37 +1690,43 @@ export default function PodcastWorksGallery({
                       type="button"
                       className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
                       disabled={audioLoadingId === id}
-                      onClick={() => void togglePlay(id, w.displayTitle)}
+                      onClick={() =>
+                                void togglePlay(id, w.displayTitle, {
+                                  usePodcastPublicTemplateListen: isPublicTpl
+                                })
+                              }
                     >
                       {isActive && isPlayingAudio ? "暂停" : "播放"}
                     </button>
                   ) : null}
-                  {!isScriptDraft ? (
+                  <>
+                    {!isScriptDraft ? (
+                      <button
+                        type="button"
+                        className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:opacity-50"
+                        onClick={() => goToSharePage(w)}
+                      >
+                        {publishActionText}
+                      </button>
+                    ) : null}
+                    <GatedSplitAction
+                      locked={!workDownloadAllowed(w)}
+                      variant="default"
+                      upgradeTitle="下载需订阅"
+                      onClick={() => void onDownload(w)}
+                      disabled={zipBusy === id}
+                      unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
+                    </GatedSplitAction>
                     <button
                       type="button"
-                      className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:opacity-50"
-                      onClick={() => goToSharePage(w)}
+                      className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+                      onClick={() => void onReuseTemplate(id, templateReuseArgs)}
                     >
-                      {publishActionText}
+                      {reuseOrManuscriptLabel}
                     </button>
-                  ) : null}
-                  <GatedSplitAction
-                    locked={!workDownloadAllowed(w)}
-                    variant="default"
-                    upgradeTitle="下载需订阅"
-                    onClick={() => void onDownload(w)}
-                    disabled={zipBusy === id}
-                    unlockedClassName="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    {zipBusy === id ? downloadBusyLabel(w.type) : "下载"}
-                  </GatedSplitAction>
-                  <button
-                    type="button"
-                    className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                    onClick={() => void onReuseTemplate(id)}
-                  >
-                    {reuseOrManuscriptLabel}
-                  </button>
+                  </>
                   {publications.length > 0 ? (
                     <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">{publishedText}</span>
                   ) : null}

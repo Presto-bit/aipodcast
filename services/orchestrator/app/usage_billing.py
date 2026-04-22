@@ -1,6 +1,12 @@
 """
-MiniMax 按量计费参考：https://platform.minimaxi.com/docs/guides/pricing-paygo
-估算仅用于后台用量看板；实际消耗以 MiniMax 控制台为准。
+文本：按 TEXT_PROVIDER 选用 MiniMax 或 DeepSeek（及 Qwen 近似）公开价估算；
+MiniMax：https://platform.minimaxi.com/docs/guides/pricing-paygo
+DeepSeek（人民币）：https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny
+
+音频转写（豆包语音 / 火山 Seed-ASR 大模型录音识别）：参考价见
+`DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR`（元/小时，按输入音频时长）。
+
+估算仅用于后台用量看板；实际消耗以各云控制台账单为准。
 """
 
 from __future__ import annotations
@@ -108,15 +114,59 @@ def estimate_tokens_from_chars_zh_heuristic(char_count: int) -> float:
     return float(char_count) * (1000.0 / 1600.0)
 
 
-def estimate_llm_cost_cny(
-    *,
-    text_model: str,
-    prompt_chars: int,
-    completion_chars: int,
-) -> float:
+def _billing_text_provider() -> str:
+    """与 provider_router 默认一致：未设置 TEXT_PROVIDER 时 deepseek。"""
+    v = (os.getenv("TEXT_PROVIDER") or "deepseek").strip().lower()
+    if v in ("minimax", "deepseek", "qwen"):
+        return v
+    return "minimax"
+
+
+def _deepseek_text_model_id() -> str:
+    return str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-chat").strip()
+
+
+def _qwen_text_model_id() -> str:
+    return str(os.getenv("QWEN_TEXT_MODEL") or "qwen-plus").strip()
+
+
+def deepseek_text_estimate_input_output_cny_per_mtok(model_id: str) -> tuple[float, float]:
+    """
+    DeepSeek 官方人民币（元/百万 tokens）：按「缓存未命中」输入价 + 输出价估算（偏保守）。
+    deepseek-chat：2 / 8；deepseek-reasoner：4 / 16。
+    """
+    k = (model_id or "").strip().lower()
+    if "reasoner" in k:
+        return (4.0, 16.0)
+    return (2.0, 8.0)
+
+
+def qwen_text_estimate_input_output_cny_per_mtok(model_id: str) -> tuple[float, float]:
+    """通义千问兼容通道：DashScope 标价多为美元，此处用与 deepseek-chat 同量级的保守人民币近似。"""
+    _ = model_id
+    return (2.0, 8.0)
+
+
+def _llm_unit_prices_cny_per_mtok() -> tuple[str, str, float, float]:
+    """(provider, model_label, input_cny_per_mtok, output_cny_per_mtok)。"""
+    prov = _billing_text_provider()
+    if prov == "deepseek":
+        mid = _deepseek_text_model_id()
+        pi, po = deepseek_text_estimate_input_output_cny_per_mtok(mid)
+        return (prov, mid, pi, po)
+    if prov == "qwen":
+        mid = _qwen_text_model_id()
+        pi, po = qwen_text_estimate_input_output_cny_per_mtok(mid)
+        return (prov, mid, pi, po)
+    mid = str(os.getenv("MINIMAX_TEXT_MODEL") or "MiniMax-M2.7").strip()
+    pi, po, _, _ = text_model_pricing_per_million_tokens(mid)
+    return (prov, mid, float(pi), float(po))
+
+
+def estimate_llm_cost_cny(*, prompt_chars: int, completion_chars: int) -> float:
     inp_t = estimate_tokens_from_chars_zh_heuristic(prompt_chars)
     out_t = estimate_tokens_from_chars_zh_heuristic(completion_chars)
-    pi, po, _, _ = text_model_pricing_per_million_tokens(text_model)
+    _, _mid, pi, po = _llm_unit_prices_cny_per_mtok()
     return round((inp_t / 1_000_000.0) * pi + (out_t / 1_000_000.0) * po, 6)
 
 
@@ -135,6 +185,21 @@ def estimate_tts_cost_cny(*, tts_model: str, spoken_text: str) -> float:
 
 
 IMAGE_01_UNIT_CNY = 0.025
+
+# 豆包语音（火山 openspeech Seed-ASR / 大模型录音文件识别）音频转写：产品侧参考公开价，按「输入音频时长」计小时。
+# 用于成本/用量看板对照；实际扣费以火山控制台账单为准。
+DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR = 2.3
+
+
+def estimate_doubao_seed_asr_cost_cny(*, audio_seconds: float) -> float:
+    """按音频秒数估算转写成本（元），线性折算到小时单价。"""
+    try:
+        sec = float(audio_seconds)
+    except (TypeError, ValueError):
+        return 0.0
+    if sec <= 0:
+        return 0.0
+    return round((sec / 3600.0) * DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR, 6)
 
 
 def _payload_source_char_est(payload: dict[str, Any]) -> int:
@@ -159,7 +224,7 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
     payload = _parse_jsonish(job.get("payload"))
     result = _parse_jsonish(job.get("result"))
     jt = str(job.get("job_type") or "").strip()
-    text_model = str(os.getenv("MINIMAX_TEXT_MODEL") or "MiniMax-M2.7").strip()
+    llm_prov, text_model, llm_pi, llm_po = _llm_unit_prices_cny_per_mtok()
     tts_model = str(os.getenv("MINIMAX_TTS_MODEL") or "speech-2.8-turbo").strip()
     image_model = str(os.getenv("MINIMAX_IMAGE_MODEL") or "image-01-live").strip()
 
@@ -189,9 +254,7 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
         script = str(
             result.get("script_text") or result.get("preview") or result.get("script_preview") or ""
         )
-        llm += estimate_llm_cost_cny(
-            text_model=text_model, prompt_chars=src_chars, completion_chars=len(script)
-        )
+        llm += estimate_llm_cost_cny(prompt_chars=src_chars, completion_chars=len(script))
         intro = str(payload.get("intro_text") or "")
         outro = str(payload.get("outro_text") or str(payload.get("ending_text") or ""))
         spoken = "\n".join(x for x in (intro, script, outro) if x.strip())
@@ -203,22 +266,16 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
         script = str(result.get("preview") or result.get("script_preview") or "")
         if jt == "polish_tts_text":
             body = str(payload.get("text") or "")
-            llm += estimate_llm_cost_cny(
-                text_model=text_model, prompt_chars=len(body), completion_chars=len(script)
-            )
+            llm += estimate_llm_cost_cny(prompt_chars=len(body), completion_chars=len(script))
         else:
-            llm += estimate_llm_cost_cny(
-                text_model=text_model, prompt_chars=src_chars, completion_chars=len(script)
-            )
+            llm += estimate_llm_cost_cny(prompt_chars=src_chars, completion_chars=len(script))
         if want_cover and result.get("cover_image"):
             img += IMAGE_01_UNIT_CNY
     else:
         src_chars = _payload_source_char_est(payload)
         script = str(result.get("preview") or result.get("script_preview") or "")
         if src_chars or script:
-            llm += estimate_llm_cost_cny(
-                text_model=text_model, prompt_chars=src_chars, completion_chars=len(script)
-            )
+            llm += estimate_llm_cost_cny(prompt_chars=src_chars, completion_chars=len(script))
         if want_cover and result.get("cover_image"):
             img += IMAGE_01_UNIT_CNY
 
@@ -230,8 +287,12 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
         "tts_cost_cny": float(tts),
         "image_cost_cny": float(img),
         "cost_total_cny": float(total),
+        "llm_billing_provider": llm_prov,
         "text_model_pricing": text_model,
+        "llm_input_cny_per_mtok": float(llm_pi),
+        "llm_output_cny_per_mtok": float(llm_po),
         "tts_model_pricing": tts_model,
         "image_model_hint": image_model if img > 0 else "",
         "pricing_ref": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
+        "pricing_ref_deepseek": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny",
     }

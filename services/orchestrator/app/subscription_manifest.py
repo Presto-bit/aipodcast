@@ -55,11 +55,11 @@ TIER_AI_POLISH_MONTHLY_BY_TIER: dict[str, int] = {
 }
 
 MAX_NOTE_REFS_BY_TIER: dict[str, int] = {
-    "free": 1,
-    "basic": 3,
-    "pro": 6,
-    "max": 12,
-    "payg": 1,
+    "free": 100,
+    "basic": 100,
+    "pro": 100,
+    "max": 100,
+    "payg": 100,
 }
 
 VOICE_CLONE_MONTHLY_INCLUDED_BY_TIER: dict[str, int] = {
@@ -106,10 +106,26 @@ PAYG_MINUTE_PACK_EXPIRE_DAYS = 90
 PAYG_EXPIRE_DAYS = PAYG_MINUTE_PACK_EXPIRE_DAYS
 
 # TTS / 播客成片：超出「月配额分钟」与「按次分钟包」后，钱包按分钟扣费；单价与 30 分钟包一致（分/分钟）。
+# 产品口径：成片语音 ¥0.25/分钟；AI 润色（进 TTS 前的文本模型）不单列，含于该分钟单价。
 MEDIA_WALLET_CENTS_PER_MINUTE = max(1, int(PAYG_30_CENTS // max(1, PAYG_30_MINUTES)))
 
-# 钱包充值：人民币分，单次最低 10 元
-WALLET_TOPUP_MIN_CENTS = 1000
+# 脚本/大纲等「模型成稿」：按成稿字符数计费，单位分 / 1 万字符（不足一万按比例向上取整到分）。
+# 产品口径：¥1 / 万字；数值仍可对照 `usage_billing.text_model_pricing_per_million_tokens` 与成本再调。
+TEXT_OUTPUT_CENTS_PER_10K_CHARS = 100
+
+# 钱包充值：不设最低金额（仍须为正整数分）；前端推荐 ¥30 / ¥50 / ¥100 / 自定义。
+WALLET_TOPUP_MIN_CENTS = 1
 WALLET_TOPUP_MAX_CENTS = 10_000_000
+WALLET_TOPUP_SUGGESTED_YUAN: tuple[int, ...] = (30, 50, 100)
 
 VOICE_CLONE_PAYG_CENTS = 1290
+
+# 单次任务可选参考资料条数上限（产品口径，与前端知识库勾选一致）
+BILLING_MAX_NOTE_REFS = 100
+BILLING_LONG_FORM_SCRIPT_CHARS_CAP = 50_000
+# 兼容仍传 subscription_tier 的调用链（脚本 cap 等），逻辑上等价于「全员同一上限」
+PRODUCT_ENTITLEMENTS_TIER = "max"
+
+# 新注册用户一次性体验包（仅注册成功时写入；老用户无行则视为 0）
+EXPERIENCE_NEW_USER_VOICE_MINUTES = 20.0
+EXPERIENCE_NEW_USER_TEXT_CHARS = 10_000

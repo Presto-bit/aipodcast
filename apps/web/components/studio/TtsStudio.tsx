@@ -37,8 +37,7 @@ import { useAuth, userAccountRef } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { readSessionStorageScoped, removeSessionStorageScoped } from "../../lib/userScopedStorage";
-import { LockedToolbarChipPill } from "../SubscriptionVipLink";
-import { mayUseAiPolishPlan, planIsBasicOrAbove } from "../../lib/noteReferenceLimits";
+import { notesRoomFeaturesEnabled } from "../../lib/noteReferenceLimits";
 
 type PanelId = "mode" | "voice" | "intro" | null;
 
@@ -67,6 +66,21 @@ export type TtsStudioProps = {
   onExternalListRefresh?: () => void;
 };
 
+function TtsStudioRoot({
+  embedded,
+  className,
+  children
+}: {
+  embedded: boolean;
+  className: string;
+  children: ReactNode;
+}) {
+  if (embedded) {
+    return <div className={className}>{children}</div>;
+  }
+  return <main className={className}>{children}</main>;
+}
+
 const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio(
   {
     contentText: controlledText,
@@ -83,7 +97,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const { user, phone, getAuthHeaders } = useAuth();
   const { t } = useI18n();
   const createdByPhone = useMemo(() => userAccountRef(user) || String(phone || "").trim(), [user, phone]);
-  const planBasicOk = useMemo(() => planIsBasicOrAbove(String(user?.plan)), [user?.plan]);
+  const roomFeaturesOk = useMemo(() => notesRoomFeaturesEnabled(), []);
   const [defaultVoicesMap, setDefaultVoicesMap] = useState<Record<string, Record<string, unknown>>>({});
   const [systemVoicesMap, setSystemVoicesMap] = useState<Record<string, Record<string, unknown>>>({});
   const [savedCustomVoices, setSavedCustomVoices] = useState<{ voiceId: string; displayName?: string }[]>([]);
@@ -143,13 +157,6 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const stopPanelPointer = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
   }, []);
-
-  useEffect(() => {
-    if (!planBasicOk) {
-      setActivePanel((p) => (p === "intro" ? null : p));
-      setAiPolish(false);
-    }
-  }, [planBasicOk]);
 
   const applyIntroOutroSnapshot = useCallback((s: IntroOutroSnapshotV1) => {
     setIntroText(s.introText);
@@ -595,7 +602,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
         intro_text: introText.trim(),
         outro_text: outroText.trim(),
         generate_cover: generateCover,
-        ai_polish: aiPolish && mayUseAiPolishPlan(user?.plan),
+        ai_polish: aiPolish,
         ...ttsExtras
       };
       if (ttsMode === "single") {
@@ -690,10 +697,6 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   }
 
   async function runAiPolish() {
-    if (!mayUseAiPolishPlan(user?.plan)) {
-      applyTaskFromEvent("AI 润色需要 Basic 及以上套餐");
-      return;
-    }
     const source = text.trim();
     if (!source) {
       applyTaskFromEvent("请先输入要润色的正文");
@@ -795,7 +798,6 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     [runTts, stopGeneration]
   );
 
-  const Root = embedded ? "div" : "main";
   const rootClass = embedded ? "min-w-0 flex-1" : "mx-auto min-h-0 w-full max-w-6xl px-3 pb-10 sm:px-4";
   const nestCard = !(embedded && blendOuterCard);
   const shellClass = nestCard
@@ -804,7 +806,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const innerPad = nestCard ? "p-4 md:p-5" : "p-0";
 
   return (
-    <Root className={rootClass}>
+    <TtsStudioRoot embedded={embedded} className={rootClass}>
       {!embedded ? (
         <div className="mb-6 text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-ink">文字转语音</h1>
@@ -900,10 +902,6 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                     )}
                   </span>
                   <span data-tts-toolbar-chip data-tts-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
-                    {!planBasicOk ? (
-                      <LockedToolbarChipPill label={<>开场/结尾 · {introSummary}</>} upgradeTitle="开场与结尾设置需要 Basic 及以上套餐" />
-                    ) : (
-                      <>
                         <button
                           type="button"
                           className={chipClass(activePanel === "intro")}
@@ -1023,34 +1021,25 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                           </div>
                         </div>
                       </>
-                        )}
-                      </>
                     )}
                   </span>
                   <span data-tts-toolbar-chip className="relative inline-flex max-w-full align-top">
-                    {!mayUseAiPolishPlan(user?.plan) ? (
-                      <LockedToolbarChipPill
-                        label={polishing ? "润色中…" : "AI润色"}
-                        upgradeTitle="AI 润色需要 Basic 及以上或按量套餐"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        className={chipClass(aiPolish || polishing)}
-                        aria-pressed={aiPolish}
-                        onClick={(e) => {
-                          if (e.shiftKey) {
-                            void runAiPolish();
-                            return;
-                          }
-                          setAiPolish((v) => !v);
-                        }}
-                        disabled={polishing}
-                        title="开启后会改动内容，让文字更口语化。开：合成前润色。Shift+点：仅润色正文"
-                      >
-                        {polishing ? "润色中…" : "AI润色"}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className={chipClass(aiPolish || polishing)}
+                      aria-pressed={aiPolish}
+                      onClick={(e) => {
+                        if (e.shiftKey) {
+                          void runAiPolish();
+                          return;
+                        }
+                        setAiPolish((v) => !v);
+                      }}
+                      disabled={polishing}
+                      title="开启后会改动内容，让文字更口语化。开：合成前润色。Shift+点：仅润色正文"
+                    >
+                      {polishing ? "润色中…" : "AI润色"}
+                    </button>
                   </span>
                   <span data-tts-toolbar-chip className="relative inline-block align-top">
                     <button
@@ -1127,7 +1116,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
         />
       </section>
       ) : null}
-    </Root>
+    </TtsStudioRoot>
   );
 });
 

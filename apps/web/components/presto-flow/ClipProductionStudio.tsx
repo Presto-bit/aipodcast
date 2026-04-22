@@ -173,7 +173,7 @@ export default function ClipProductionStudio({
         id: crypto.randomUUID(),
         after_word_id: wid,
         label: retakeLabel.trim() || t("presto.flow.studio.retakeDefaultLabel"),
-        status: "planned",
+        status: "pending",
         takes: [],
         active_take_index: 0
       }

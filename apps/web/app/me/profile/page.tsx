@@ -6,6 +6,7 @@ import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 import { useI18n } from "../../../lib/I18nContext";
 import { useTheme } from "../../../lib/ThemeContext";
+import ChangePasswordModal from "../../../components/ui/ChangePasswordModal";
 import InlineTextPrompt from "../../../components/ui/InlineTextPrompt";
 
 export default function MeProfilePage() {
@@ -31,6 +32,8 @@ export default function MeProfilePage() {
   const [nicknameDraft, setNicknameDraft] = useState("");
   const [nicknameBusy, setNicknameBusy] = useState(false);
   const [nicknameErr, setNicknameErr] = useState("");
+  const [pwdModalOpen, setPwdModalOpen] = useState(false);
+  const [pwdOk, setPwdOk] = useState("");
 
   async function submitAuth(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -117,6 +120,12 @@ export default function MeProfilePage() {
   }, [regA11ySuccess]);
 
   useEffect(() => {
+    if (!pwdOk) return;
+    const t = window.setTimeout(() => setPwdOk(""), 5000);
+    return () => window.clearTimeout(t);
+  }, [pwdOk]);
+
+  useEffect(() => {
     if (!ready || !authRequired) return;
     if (!user || user.phone === "local") return;
     if (!(user.user_id || user.phone || user.email || user.username)) return;
@@ -174,42 +183,43 @@ export default function MeProfilePage() {
     }
   }, [nicknameDraft, refreshMe]);
 
+  const applyPasswordChange = useCallback(async (currentPassword: string, newPassword: string) => {
+    const res = await fetch("/api/auth/change-password", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+    });
+    const data = (await res.json().catch(() => ({}))) as { detail?: unknown };
+    if (!res.ok) {
+      const d = data.detail;
+      const msg = typeof d === "string" && d.trim() ? d.trim() : `修改失败（${res.status}）`;
+      throw new Error(msg);
+    }
+  }, []);
+
   if (!ready) {
     return <p className="py-12 text-center text-sm text-muted">正在加载…</p>;
   }
 
-  const role = String((user as { role?: string })?.role || "").trim() || "—";
-  const plan = typeof user?.plan === "string" ? user.plan : "—";
+  const accountName =
+    typeof user?.username === "string" && user.username.trim() ? user.username.trim() : "—";
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
-        <h2 className="text-sm font-semibold text-ink">注册信息</h2>
-        <p className="mt-1 text-xs text-muted">当前账号在系统中的登记信息。</p>
-        {showLogout && user ? (
-          <dl className="mt-4 space-y-3 text-sm">
-            {user.phone ? (
-              <div className="flex flex-wrap gap-x-2 gap-y-1">
-                <dt className="text-muted">手机号</dt>
-                <dd className="font-mono text-ink">{String(user.phone)}</dd>
-              </div>
-            ) : null}
-            {user.user_id ? (
-              <div className="flex flex-wrap gap-x-2 gap-y-1">
-                <dt className="text-muted">用户 ID</dt>
-                <dd className="font-mono text-xs text-ink">{String(user.user_id)}</dd>
-              </div>
-            ) : null}
+    <div className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
+      <h2 className="text-sm font-semibold text-ink">个人资料与账号</h2>
+
+      {showLogout && user ? (
+        <div className="mt-5">
+          <dl className="space-y-3 text-sm">
+            <div className="flex flex-wrap gap-x-2 gap-y-1">
+              <dt className="text-muted">账号名称</dt>
+              <dd className="font-mono text-ink">{accountName}</dd>
+            </div>
             {user.email ? (
               <div className="flex flex-wrap gap-x-2 gap-y-1">
                 <dt className="text-muted">邮箱</dt>
                 <dd className="font-mono text-xs text-ink">{String(user.email)}</dd>
-              </div>
-            ) : null}
-            {user.username ? (
-              <div className="flex flex-wrap gap-x-2 gap-y-1">
-                <dt className="text-muted">用户名</dt>
-                <dd className="font-mono text-ink">{String(user.username)}</dd>
               </div>
             ) : null}
             <div className="flex flex-wrap gap-x-2 gap-y-1">
@@ -222,56 +232,45 @@ export default function MeProfilePage() {
                 {displayName}
               </dd>
             </div>
-            <div className="flex flex-wrap gap-x-2 gap-y-1">
-              <dt className="text-muted">当前方案</dt>
-              <dd className="font-mono text-ink">{plan}</dd>
-            </div>
-            {role !== "—" ? (
-              <div className="flex flex-wrap gap-x-2 gap-y-1">
-                <dt className="text-muted">角色</dt>
-                <dd className="text-ink">{role}</dd>
-              </div>
-            ) : null}
           </dl>
-        ) : null}
-        {showLogout && user && nicknamePromptOpen ? (
-          <div className="mt-4 border-t border-line pt-3">
-            <InlineTextPrompt
-              open
-              title="修改昵称"
-              value={nicknameDraft}
-              onChange={setNicknameDraft}
-              onSubmit={() => {
-                if (nicknameBusy) return;
-                void saveNickname();
-              }}
-              onCancel={() => {
-                if (nicknameBusy) return;
-                setNicknamePromptOpen(false);
-                setNicknameErr("");
-              }}
-              submitLabel={nicknameBusy ? "保存中…" : "保存"}
-              cancelLabel="取消"
-              placeholder="1～48 字"
-              closeOnOutsideClick={false}
-            />
-            {nicknameErr ? (
-              <p className="mt-2 text-xs text-danger-ink" role="alert">
-                {nicknameErr}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-        {showLogout && user ? null : (
-          <p className="mt-4 text-sm text-muted">登录后可查看账号标识与展示信息。</p>
-        )}
-      </section>
+          {nicknamePromptOpen ? (
+            <div className="mt-4 border-t border-line pt-3">
+              <InlineTextPrompt
+                open
+                title="修改昵称"
+                value={nicknameDraft}
+                onChange={setNicknameDraft}
+                onSubmit={() => {
+                  if (nicknameBusy) return;
+                  void saveNickname();
+                }}
+                onCancel={() => {
+                  if (nicknameBusy) return;
+                  setNicknamePromptOpen(false);
+                  setNicknameErr("");
+                }}
+                submitLabel={nicknameBusy ? "保存中…" : "保存"}
+                cancelLabel="取消"
+                placeholder="1～48 字"
+                closeOnOutsideClick={false}
+              />
+              {nicknameErr ? (
+                <p className="mt-2 text-xs text-danger-ink" role="alert">
+                  {nicknameErr}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-5 text-sm text-muted">
+          {authRequired ? "登录后可查看账号标识、修改密码与展示信息。" : "当前环境未开启登录，可直接体验。"}
+        </p>
+      )}
 
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
-        <h2 className="text-sm font-semibold text-ink">{t("settings.account")}</h2>
-        <p className="mt-1 text-xs text-muted">主题与界面语言。</p>
-
-        <div className="mt-4 space-y-4">
+      <div className="mt-6 border-t border-line pt-5">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{t("settings.account")}</h3>
+        <div className="mt-3 space-y-4">
           <div>
             <p className="text-xs font-medium text-ink">{t("settings.theme")}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -291,7 +290,6 @@ export default function MeProfilePage() {
               </button>
             </div>
           </div>
-
           <div>
             <p className="text-xs font-medium text-ink">{t("settings.language")}</p>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -312,22 +310,41 @@ export default function MeProfilePage() {
             </div>
           </div>
         </div>
-      </section>
+      </div>
 
-      <section className="rounded-2xl border border-line bg-surface p-5 shadow-soft">
-        <h2 className="text-sm font-semibold text-ink">{t("settings.logoutTitle")}</h2>
+      <div className="mt-6 border-t border-line pt-5">
         {authRequired && showLogout && !user ? <p className="mt-2 text-sm text-muted">正在恢复登录状态…</p> : null}
         {showLogout && user ? (
-          <>
-            <p className="mt-1 text-[11px] text-muted">{t("settings.logoutHint")}</p>
+          <div className="flex flex-col gap-3">
             <button
               type="button"
-              className="mt-4 w-full rounded-lg border border-line bg-fill px-4 py-3 text-sm font-medium text-ink transition hover:bg-canvas sm:w-auto sm:min-w-[8rem]"
-              onClick={() => void logout({ redirectTo: null })}
+              className="w-full rounded-lg border border-line bg-fill px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-canvas sm:w-auto sm:min-w-[8rem]"
+              onClick={() => {
+                setPwdOk("");
+                setPwdModalOpen(true);
+              }}
+            >
+              修改密码
+            </button>
+            <ChangePasswordModal
+              open={pwdModalOpen}
+              onClose={() => setPwdModalOpen(false)}
+              onSuccess={() => setPwdOk("密码已更新")}
+              applyChange={applyPasswordChange}
+            />
+            {pwdOk ? (
+              <p className="text-sm text-brand" role="status">
+                {pwdOk}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              className="w-full rounded-lg border border-line bg-fill px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-canvas sm:w-auto sm:min-w-[8rem]"
+              onClick={() => void logout({ redirectTo: "/" })}
             >
               {t("footer.logout")}
             </button>
-          </>
+          </div>
         ) : null}
         {authRequired && !showLogout ? (
           <div className="mt-3 space-y-3">
@@ -378,7 +395,7 @@ export default function MeProfilePage() {
                 <>
                   <input
                     className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
-                    placeholder="用户名（3～32 位字母、数字或下划线）"
+                    placeholder="账号名称（3～32 位字母、数字或下划线）"
                     value={regUsername}
                     onChange={(e) => {
                       setRegUsername(e.target.value);
@@ -390,7 +407,7 @@ export default function MeProfilePage() {
                     minLength={3}
                     maxLength={32}
                     autoComplete="username"
-                    aria-label="用户名"
+                    aria-label="账号名称"
                   />
                   <input
                     className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
@@ -493,10 +510,7 @@ export default function MeProfilePage() {
             </form>
           </div>
         ) : null}
-        {!authRequired && !showLogout ? (
-          <p className="mt-2 text-[11px] text-muted">当前环境未开启登录，可直接体验；若管理员开启了账号登录，这里会出现登录入口。</p>
-        ) : null}
-      </section>
+      </div>
     </div>
   );
 }

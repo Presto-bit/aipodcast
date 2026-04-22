@@ -1,38 +1,39 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { hexToMp3DataUrl } from "../../lib/audioHex";
 import {
   buildSharePublishCopyFromScriptAndPayload,
   clearShareFormDraft,
   computeSharePublishHints,
   AUTO_PROGRAM_SUMMARY_MAX,
   defaultSummaryFromJobResult,
-  deriveProgramSummaryOverallMax30,
-  formatChapterMarkdownLines,
+  extractEpisodeOverviewFromShowNotes,
   loadShareFormDraft,
-  promotePlainTimestampLinesInMarkdown,
   saveShareFormDraft,
   sanitizeShareEpisodeTitle,
-  SHARE_SUMMARY_IDEAL_MAX,
-  SHARE_SUMMARY_WARN_MAX,
   SHARE_TITLE_SOFT_MAX,
   shareFormFieldsDiffer,
-  type ShareFormDraft,
+  truncateSummaryToAutoMax,
   type ShareFormFields
 } from "../../lib/sharePublishDefaults";
 import { getBearerAuthHeadersSync } from "../../lib/authHeaders";
 import { readSessionStorageScoped } from "../../lib/userScopedStorage";
 import {
+  createJob,
+  fetchJobShareAiCopy,
+  fetchPublicShareListen,
   fetchRssPublishEligibility,
   getJob,
   listRssChannels,
   listRssPublicationsByJobIds,
+  previewMediaJob,
   publishWorkToRss,
   type RssChannel
 } from "../../lib/api";
+import type { JobRecord } from "../../lib/types";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import {
   DEFAULT_PUBLISH_PLATFORM_ID,
@@ -43,9 +44,20 @@ import {
 import { resolveJobScriptBodyText, SCRIPT_TEXT_LIKELY_FULL_MIN_LEN } from "../../lib/jobScriptText";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { buildWorksSharePageUrl } from "../../lib/rssPublicBase";
+import { jobResultCoverUrl } from "../../lib/workCoverImage";
+import { blobToDataUrlBase64 } from "../../lib/podcastCoverImage";
+import { useAuth, userAccountRef } from "../../lib/auth";
+import { formatUnifiedWorksNavMetaLineFromJobRecord } from "../../lib/worksNavMetaLine";
+import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
+import { WorkHubOverviewPanel } from "./WorkHubOverviewPanel";
+import { WorksShareLinkPreviewCard } from "./WorksShareLinkPreviewCard";
 
 type Props = {
   jobId: string;
+  /** `work_hub`：作品详情（概览 + 发布分组）；默认与旧版 `/works/share` 一致 */
+  layout?: "standalone" | "work_hub";
+  /** 仅 `layout === "work_hub"` 时生效；`publish` 对应 URL `?tab=publish` */
+  initialHubTab?: "overview" | "publish";
 };
 
 /** 成片可能只有对象存储 URL / key，不一定内联 audio_hex（大文件会省略 hex）。 */
@@ -101,7 +113,14 @@ function formatSchedulePreview(value: string): string {
   }).format(d);
 }
 
-export function SharePublishClient({ jobId }: Props) {
+export function SharePublishClient({
+  jobId,
+  layout = "standalone",
+  initialHubTab = "overview"
+}: Props) {
+  const router = useRouter();
+  const { user, phone } = useAuth();
+  const workAudio = useWorkAudioPlayer();
   const [loadErr, setLoadErr] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [channels, setChannels] = useState<RssChannel[]>([]);
@@ -110,14 +129,19 @@ export function SharePublishClient({ jobId }: Props) {
   const [episodeTitle, setEpisodeTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [showNotes, setShowNotes] = useState("");
-  const [notesTab, setNotesTab] = useState<"edit" | "preview">("edit");
+  const [notesTab, setNotesTab] = useState<"edit" | "preview">(() =>
+    layout === "work_hub" ? "preview" : "edit"
+  );
+  const [hubTab, setHubTab] = useState<"overview" | "publish">(() =>
+    layout === "work_hub" && initialHubTab === "publish" ? "publish" : "overview"
+  );
+  const [manuscriptBody, setManuscriptBody] = useState("");
   const [publishAt, setPublishAt] = useState("");
   /** 已确认启用定时发布（开关为开且提交时使用 publishAt）。 */
   const [schedulePublish, setSchedulePublish] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleModalDraft, setScheduleModalDraft] = useState("");
   const [scheduleModalErr, setScheduleModalErr] = useState("");
-  const [confirmRepublish, setConfirmRepublish] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState("");
   const [formOk, setFormOk] = useState("");
@@ -126,29 +150,38 @@ export function SharePublishClient({ jobId }: Props) {
   /** 首次拉取任务详情完成前，勿把「无音频」提示当成最终态（避免闪错觉与长文案误报）。 */
   const [shareJobHydrated, setShareJobHydrated] = useState(false);
   const [jobType, setJobType] = useState("");
-  const [scriptTextForLead, setScriptTextForLead] = useState("");
-  /** 任务内 script_text 偏短时，先拉 script 工件再允许「从文稿提炼」，避免用摘要误点。 */
+  /** 任务内 script_text 偏短时，先拉 script 工件（与 AI 优化按钮禁用态同步）。 */
   const [scriptResolvePending, setScriptResolvePending] = useState(false);
   const [scriptBodyHint, setScriptBodyHint] = useState("");
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [audioReady, setAudioReady] = useState(false);
   const [publishedHint, setPublishedHint] = useState("");
   const initialSnapshotRef = useRef<FormSnapshot | null>(null);
-  const [draftBanner, setDraftBanner] = useState<ShareFormDraft | null>(null);
+  /** 相对服务端基线（initialSnapshot）是否有未落库的本地编辑；不在进入页面时因旧 localStorage 自动为 true */
+  const [sharePublishDirty, setSharePublishDirty] = useState(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [formReady, setFormReady] = useState(false);
   const [publishPlatform, setPublishPlatform] = useState<PublishPlatformId>(DEFAULT_PUBLISH_PLATFORM_ID);
-  const [advancedPublishOpen, setAdvancedPublishOpen] = useState(false);
+  const [advancedPublishOpen, setAdvancedPublishOpen] = useState(() => layout === "work_hub");
   const [shareOrigin, setShareOrigin] = useState("");
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
+  /** 大模型生成简介 / Show Notes（与发布 busy 分离） */
+  const [shareAiBusy, setShareAiBusy] = useState(false);
+  /** 当前登录用户且有权访问时拉取到的任务；匿名仅有公开试听数据时为空 */
+  const [ownerJobRecord, setOwnerJobRecord] = useState<JobRecord | null>(null);
   /** RSS 发布：服务端与账户/作品计费挂钩；复制上方分享链接不受限 */
   const [rssGate, setRssGate] = useState<
     "idle" | "loading" | "ok" | "blocked" | "err"
   >("idle");
   const [rssGateDetail, setRssGateDetail] = useState("");
+  const [audioRegenActive, setAudioRegenActive] = useState(false);
+  const [audioRegenProgress, setAudioRegenProgress] = useState(0);
+  const [audioRegenMessage, setAudioRegenMessage] = useState("");
+  const [regenerateVoiceBusy, setRegenerateVoiceBusy] = useState(false);
+  const audioRegenAbortRef = useRef(false);
 
   const shareGenContextRef = useRef<ShareGenContext | null>(null);
+  /** 主人进入分享页后至多触发一次「persist 写入 result」的 AI 初稿（Strict Mode 取消时会复位）。 */
+  const deferredShareAiOnceRef = useRef(false);
 
   useEffect(() => {
     setShareOrigin(typeof window !== "undefined" ? window.location.origin : "");
@@ -193,12 +226,25 @@ export function SharePublishClient({ jobId }: Props) {
     };
   }, [persistDraft]);
 
+  useEffect(() => {
+    if (!formReady) {
+      setSharePublishDirty(false);
+      return;
+    }
+    const snap = initialSnapshotRef.current;
+    if (!snap) {
+      setSharePublishDirty(false);
+      return;
+    }
+    const cur: ShareFormFields = { episodeTitle, summary, showNotes };
+    setSharePublishDirty(shareFormFieldsDiffer(cur, snap));
+  }, [formReady, episodeTitle, summary, showNotes]);
+
   const applyJobToForm = useCallback(
     (row: Record<string, unknown>, displayTitleFallback: string) => {
       const result = (row.result || {}) as Record<string, unknown>;
       const jt = String(row.job_type || "").trim();
       setJobType(jt);
-      const hex = String(result.audio_hex || "").trim();
       setHasAudio(jobResultHasPlayableAudio(result));
 
       const storedTitle = (() => {
@@ -211,8 +257,8 @@ export function SharePublishClient({ jobId }: Props) {
       setJobTitle(displayTitleFallback || storedTitle);
 
       const rawTitle = storedTitle || displayTitleFallback || String(result.title || "").trim();
+      const defaultEpisodeTitle = sanitizeShareEpisodeTitle(rawTitle, "").trim().slice(0, 300);
       const sum = defaultSummaryFromJobResult(result);
-      setScriptTextForLead(String(result.script_text || "").trim());
 
       const rawCh = result.audio_chapters;
       const hasCh =
@@ -230,171 +276,246 @@ export function SharePublishClient({ jobId }: Props) {
         setChapterOutline(null);
       }
 
-      setEpisodeTitle("");
-      setSummary(sum);
-      setShowNotes("正在根据口播稿与创作素材生成 Show Notes，请稍候…");
+      setEpisodeTitle(defaultEpisodeTitle);
+      setSummary(truncateSummaryToAutoMax(sum));
+      setShowNotes("正在生成 Shownotes…");
 
       initialSnapshotRef.current = {
-        episodeTitle: "",
-        summary: sum,
-        showNotes: "正在根据口播稿与创作素材生成 Show Notes，请稍候…"
+        episodeTitle: defaultEpisodeTitle,
+        summary: truncateSummaryToAutoMax(sum),
+        showNotes: "正在生成 Shownotes…"
       };
-
-      queueMicrotask(() => {
-        const a = audioRef.current;
-        if (!a) {
-          setAudioReady(false);
-          return;
-        }
-        const url = String(result.audio_url || "").trim();
-        try {
-          if (hex) {
-            a.src = hexToMp3DataUrl(hex);
-            setAudioReady(true);
-          } else if (url) {
-            a.src = url;
-            setAudioReady(true);
-          } else {
-            setAudioReady(false);
-          }
-        } catch {
-          setAudioReady(false);
-        }
-      });
     },
     [jobId]
   );
 
   useEffect(() => {
     let canceled = false;
+    deferredShareAiOnceRef.current = false;
     void (async () => {
       setLoadErr("");
       setShareJobHydrated(false);
       setFormReady(false);
+      setManuscriptBody("");
       setScriptBodyHint("");
       setScriptResolvePending(false);
+      setOwnerJobRecord(null);
+
+      let row: JobRecord | null = null;
       try {
-        const row = await getJob(jobId);
-        if (canceled) return;
-        const displayKey = `fym_share_display_title:${jobId}`;
-        let fallback = "";
-        try {
-          fallback = String(readSessionStorageScoped(displayKey) || "").trim();
-        } catch {
-          /* ignore */
-        }
-        applyJobToForm(row as unknown as Record<string, unknown>, fallback);
-
-        const rowRec = row as unknown as Record<string, unknown>;
-        const resultEarly = (rowRec.result || {}) as Record<string, unknown>;
-        const payload = (rowRec.payload || {}) as Record<string, unknown>;
-        const rawTitle =
-          (() => {
-            try {
-              return String(readSessionStorageScoped(displayKey) || "").trim();
-            } catch {
-              return "";
-            }
-          })() ||
-          fallback ||
-          String(resultEarly.title || "").trim();
-        const rawCh = resultEarly.audio_chapters;
-        const hasCh =
-          Array.isArray(rawCh) &&
-          rawCh.length > 0 &&
-          rawCh.every((x) => x && typeof x === "object");
-        const audioChaptersRaw = hasCh ? (rawCh as Record<string, unknown>[]) : undefined;
-        const durRaw = resultEarly.audio_duration_sec;
-        const audioDurationSec =
-          typeof durRaw === "number" && Number.isFinite(durRaw)
-            ? durRaw
-            : typeof durRaw === "string" && String(durRaw).trim() !== ""
-              ? Number.parseFloat(String(durRaw))
-              : null;
-
-        const shortFrom = String(resultEarly.script_text || "").trim();
-        const needsArtifactPath = shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN;
-        if (needsArtifactPath) {
-          setScriptResolvePending(true);
-          setScriptBodyHint("正在加载正文…");
-        }
-        let fullScript = shortFrom;
-        try {
-          fullScript = await resolveJobScriptBodyText(jobId, rowRec, getBearerAuthHeadersSync());
-          if (!canceled) {
-            setScriptTextForLead(fullScript);
-            if (!fullScript.trim()) {
-              setScriptBodyHint("未找到完整口播稿，简介等将按任务摘要生成。");
-            } else if (!needsArtifactPath) {
-              setScriptBodyHint("已根据口播稿生成，可直接改。");
-            } else if (fullScript.length > shortFrom.length) {
-              setScriptBodyHint("已从存储补全文稿并重新生成。");
-            } else if (fullScript.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN) {
-              setScriptBodyHint("正文较短，完整稿可在作品包 ZIP 中查看。");
-            } else {
-              setScriptBodyHint("已根据口播稿生成，可直接改。");
-            }
-          }
-        } catch {
-          if (!canceled) {
-            setScriptBodyHint("正文加载失败，已用本地摘要。可刷新重试。");
-          }
-        } finally {
-          if (!canceled) setScriptResolvePending(false);
-        }
-
-        if (!canceled) {
-          shareGenContextRef.current = {
-            payload,
-            displayTitleHint: rawTitle,
-            titleFallbackRaw: rawTitle,
-            resultEarly
-          };
-          const derived = buildSharePublishCopyFromScriptAndPayload({
-            scriptRaw: fullScript,
-            payload,
-            result: resultEarly,
-            displayTitleHint: rawTitle,
-            audioChaptersRaw,
-            audioDurationSec: Number.isFinite(audioDurationSec as number) ? audioDurationSec : null,
-            fallbackTitle: sanitizeShareEpisodeTitle(rawTitle),
-            fallbackSummary: defaultSummaryFromJobResult(resultEarly)
-          });
-          setEpisodeTitle((prev) => {
-            const nextEt = prev.trim() ? prev : derived.episodeTitle;
-            initialSnapshotRef.current = { ...derived, episodeTitle: nextEt };
-            return nextEt;
-          });
-          setSummary(derived.summary);
-          setShowNotes(derived.showNotes);
-        }
-
-        const draft = loadShareFormDraft(jobId);
-        const snap = initialSnapshotRef.current;
-        if (draft && snap && !canceled) {
-          const dFields: ShareFormFields = {
-            episodeTitle: draft.episodeTitle,
-            summary: draft.summary,
-            showNotes: draft.showNotes
-          };
-          if (shareFormFieldsDiffer(dFields, snap)) {
-            setDraftBanner(draft);
-          }
-        }
-        if (!canceled) setFormReady(true);
-
-        const pubs = await listRssPublicationsByJobIds([jobId]);
-        const list = pubs[jobId] || [];
-        if (list.length > 0) {
-          setPublishedHint(`已曾发布到：${list.map((p) => p.channel_title).join("、")}`);
-        } else {
-          setPublishedHint("");
-        }
-      } catch (e) {
-        if (!canceled) setLoadErr(String(e instanceof Error ? e.message : e));
-      } finally {
-        if (!canceled) setShareJobHydrated(true);
+        row = await getJob(jobId);
+      } catch {
+        row = null;
       }
+      if (canceled) return;
+
+      let pub: Awaited<ReturnType<typeof fetchPublicShareListen>> = null;
+      if (!row) {
+        try {
+          pub = await fetchPublicShareListen(jobId);
+        } catch {
+          pub = null;
+        }
+      }
+      if (canceled) return;
+
+      if (!row && !pub) {
+        setLoadErr("无法加载该作品或链接已失效。");
+        setShareJobHydrated(true);
+        return;
+      }
+
+      if (row) {
+        setOwnerJobRecord(row);
+        try {
+          const displayKey = `fym_share_display_title:${jobId}`;
+          let fallback = "";
+          try {
+            fallback = String(readSessionStorageScoped(displayKey) || "").trim();
+          } catch {
+            /* ignore */
+          }
+          applyJobToForm(row as unknown as Record<string, unknown>, fallback);
+
+          const rowRec = row as unknown as Record<string, unknown>;
+          const resultEarly = (rowRec.result || {}) as Record<string, unknown>;
+          const payload = (rowRec.payload || {}) as Record<string, unknown>;
+          const rawTitle =
+            (() => {
+              try {
+                return String(readSessionStorageScoped(displayKey) || "").trim();
+              } catch {
+                return "";
+              }
+            })() ||
+            fallback ||
+            String(resultEarly.title || "").trim();
+          const rawCh = resultEarly.audio_chapters;
+          const hasCh =
+            Array.isArray(rawCh) &&
+            rawCh.length > 0 &&
+            rawCh.every((x) => x && typeof x === "object");
+          const audioChaptersRaw = hasCh ? (rawCh as Record<string, unknown>[]) : undefined;
+          const durRaw = resultEarly.audio_duration_sec;
+          const audioDurationSec =
+            typeof durRaw === "number" && Number.isFinite(durRaw)
+              ? durRaw
+              : typeof durRaw === "string" && String(durRaw).trim() !== ""
+                ? Number.parseFloat(String(durRaw))
+                : null;
+
+          const shortFrom = String(resultEarly.script_text || "").trim();
+          const needsArtifactPath = shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN;
+          if (needsArtifactPath) {
+            setScriptResolvePending(true);
+            setScriptBodyHint("正在加载正文…");
+          }
+          let fullScript = shortFrom;
+          try {
+            fullScript = await resolveJobScriptBodyText(jobId, rowRec, getBearerAuthHeadersSync());
+            if (!canceled) {
+              if (!fullScript.trim()) {
+                setScriptBodyHint("无完整口播稿，简介按任务摘要。");
+              } else if (!needsArtifactPath) {
+                setScriptBodyHint("简介与正文已关联口播稿。");
+              } else if (fullScript.length > shortFrom.length) {
+                setScriptBodyHint("已从存储补全文稿。");
+              } else if (fullScript.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN) {
+                setScriptBodyHint("正文较短。");
+              } else {
+                setScriptBodyHint("简介与正文已关联口播稿。");
+              }
+            }
+          } catch {
+            if (!canceled) {
+              setScriptBodyHint("正文加载失败，请刷新。");
+            }
+          } finally {
+            if (!canceled) setScriptResolvePending(false);
+          }
+
+          if (!canceled) {
+            shareGenContextRef.current = {
+              payload,
+              displayTitleHint: rawTitle,
+              titleFallbackRaw: rawTitle,
+              resultEarly
+            };
+            const derived = buildSharePublishCopyFromScriptAndPayload({
+              scriptRaw: fullScript,
+              payload,
+              result: resultEarly,
+              displayTitleHint: rawTitle,
+              audioChaptersRaw,
+              audioDurationSec: Number.isFinite(audioDurationSec as number) ? audioDurationSec : null,
+              fallbackTitle: sanitizeShareEpisodeTitle(rawTitle),
+              fallbackSummary: defaultSummaryFromJobResult(resultEarly)
+            });
+            setEpisodeTitle((prev) => {
+              const nextEt = prev.trim() ? prev : derived.episodeTitle;
+              initialSnapshotRef.current = { ...derived, episodeTitle: nextEt };
+              return nextEt;
+            });
+            setSummary(derived.summary);
+            setShowNotes(derived.showNotes);
+            setManuscriptBody(String(fullScript || "").trim());
+          }
+
+          if (!canceled) setFormReady(true);
+
+          const pubs = await listRssPublicationsByJobIds([jobId]);
+          const list = pubs[jobId] || [];
+          if (list.length > 0) {
+            setPublishedHint(`已发布：${list.map((p) => p.channel_title).join("、")}`);
+          } else {
+            setPublishedHint("");
+          }
+
+          if (!canceled) {
+            const jtLower = String(row.job_type || "").trim().toLowerCase();
+            const autoS0 = String(resultEarly.auto_share_summary || "").trim();
+            const autoN0 = String(resultEarly.auto_share_show_notes || "").trim();
+            const hasAutoBoth0 = Boolean(autoS0 && autoN0);
+            if (
+              !deferredShareAiOnceRef.current &&
+              !hasAutoBoth0 &&
+              jtLower !== "script_draft" &&
+              jobResultHasPlayableAudio(resultEarly)
+            ) {
+              deferredShareAiOnceRef.current = true;
+              void (async () => {
+                try {
+                  if (canceled) {
+                    deferredShareAiOnceRef.current = false;
+                    return;
+                  }
+                  const out = await fetchJobShareAiCopy(jobId, { persist: true });
+                  if (canceled || !out.success) {
+                    deferredShareAiOnceRef.current = false;
+                    return;
+                  }
+                  const sum = String(out.summary ?? "").trim();
+                  const notes = String(out.show_notes ?? "").trim();
+                  if (!sum && !notes) {
+                    deferredShareAiOnceRef.current = false;
+                    return;
+                  }
+                  const snap = initialSnapshotRef.current;
+                  if (snap) {
+                    initialSnapshotRef.current = {
+                      episodeTitle: snap.episodeTitle,
+                      summary: truncateSummaryToAutoMax(sum || snap.summary),
+                      showNotes: notes || snap.showNotes
+                    };
+                  }
+                  if (sum) setSummary(truncateSummaryToAutoMax(sum));
+                  if (notes) setShowNotes(notes);
+                  try {
+                    const fresh = await getJob(jobId);
+                    if (!canceled && fresh) setOwnerJobRecord(fresh);
+                  } catch {
+                    /* ignore */
+                  }
+                } catch {
+                  deferredShareAiOnceRef.current = false;
+                }
+              })();
+            }
+          }
+        } catch (e) {
+          if (!canceled) setLoadErr(String(e instanceof Error ? e.message : e));
+        }
+      } else if (pub) {
+        setManuscriptBody("");
+        setOwnerJobRecord(null);
+        setJobType(pub.job_type || "");
+        setJobTitle(pub.title);
+        setHasAudio(Boolean(pub.audio_url?.trim()));
+        const et = pub.title.slice(0, 300);
+        setEpisodeTitle(et);
+        setSummary(truncateSummaryToAutoMax((pub.preview || "").trim()));
+        setShowNotes("");
+        const ch = pub.audio_chapters;
+        if (Array.isArray(ch) && ch.length > 0) {
+          setChapterOutline(
+            ch.map((o) => ({
+              title: String(o.title || "章节"),
+              start_ms: Number(o.start_ms) || 0
+            }))
+          );
+        } else {
+          setChapterOutline(null);
+        }
+        initialSnapshotRef.current = {
+          episodeTitle: et,
+          summary: truncateSummaryToAutoMax((pub.preview || "").trim()),
+          showNotes: ""
+        };
+        shareGenContextRef.current = null;
+        setFormReady(true);
+      }
+
+      if (!canceled) setShareJobHydrated(true);
     })();
     return () => {
       canceled = true;
@@ -406,9 +527,257 @@ export function SharePublishClient({ jobId }: Props) {
   /** 未 hydration 前 blocked 为 false，避免误显分享区；仅 hydration 后才允许复制链接与发布表单。 */
   const showShareAndPublish = shareJobHydrated && !audioBlocked;
 
+  const jobCoverUrl = useMemo(() => {
+    if (!ownerJobRecord) return "";
+    return jobResultCoverUrl(ownerJobRecord.result as Record<string, unknown>);
+  }, [ownerJobRecord]);
+
+  const audioDurationHintSec = useMemo(() => {
+    if (!ownerJobRecord) return null;
+    const r = ownerJobRecord.result as Record<string, unknown>;
+    const raw = r.audio_duration_sec;
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+    if (typeof raw === "string" && String(raw).trim()) {
+      const n = Number.parseFloat(String(raw));
+      return Number.isFinite(n) && n > 0 ? n : null;
+    }
+    return null;
+  }, [ownerJobRecord]);
+
+  useEffect(() => {
+    if (layout !== "work_hub") return;
+    setHubTab(initialHubTab === "publish" ? "publish" : "overview");
+  }, [layout, jobId, initialHubTab]);
+
+  useEffect(() => {
+    if (layout !== "work_hub") return;
+    setNotesTab("preview");
+  }, [layout, jobId]);
+
+  const publishChromeVisible = layout === "standalone" || hubTab === "publish";
+
+  const worksNavAuthorDisplay = useMemo(() => {
+    const u = user as { display_name?: string; username?: string; phone?: string } | null | undefined;
+    if (!u || u.phone === "local") return "我";
+    const dn = typeof u.display_name === "string" ? u.display_name.trim() : "";
+    if (dn) return dn.length > 16 ? `${dn.slice(0, 16)}…` : dn;
+    const un = typeof u.username === "string" ? u.username.trim() : "";
+    if (un) return un.length > 16 ? `${un.slice(0, 16)}…` : un;
+    const ph = typeof u.phone === "string" ? u.phone.replace(/\s/g, "") : "";
+    if (ph.length >= 4) return `尾号 ${ph.slice(-4)}`;
+    return "我";
+  }, [user]);
+
+  const navMetaPipe = useMemo(() => {
+    if (!ownerJobRecord) return "";
+    return formatUnifiedWorksNavMetaLineFromJobRecord(ownerJobRecord, worksNavAuthorDisplay);
+  }, [ownerJobRecord, worksNavAuthorDisplay]);
+
+  /**
+   * 作品详情预览简介：优先 Shownotes「## 本期概览」节；否则 result 的 preview 类字段（约 600 字内）；再否则表单 summary。
+   */
+  const previewIntro = useMemo(() => {
+    const fromNotes = extractEpisodeOverviewFromShowNotes(showNotes).trim();
+    if (fromNotes) return fromNotes;
+    const r = ownerJobRecord?.result as Record<string, unknown> | undefined;
+    const fromJob = r ? defaultSummaryFromJobResult(r).trim() : "";
+    return fromJob || summary.trim();
+  }, [ownerJobRecord, summary, showNotes]);
+
+  const canEditWorkScript = useMemo(() => {
+    const jt = String(ownerJobRecord?.job_type || "").trim().toLowerCase();
+    return Boolean(ownerJobRecord && ["podcast", "podcast_generate", "script_draft"].includes(jt));
+  }, [ownerJobRecord]);
+
+  const showManuscriptTools = useMemo(
+    () => layout === "work_hub" && Boolean(ownerJobRecord) && shareJobHydrated && !loadErr,
+    [layout, ownerJobRecord, shareJobHydrated, loadErr]
+  );
+
+  const regenerateVoiceSupported = useMemo(() => {
+    if (!ownerJobRecord || scriptDraft || !hasAudio) return false;
+    const jt = String(ownerJobRecord.job_type || "").trim().toLowerCase();
+    return jt === "podcast" || jt === "podcast_generate";
+  }, [ownerJobRecord, scriptDraft, hasAudio]);
+
+  const startAudioResynth = useCallback(async () => {
+    const row = ownerJobRecord;
+    if (!row || regenerateVoiceBusy || audioRegenActive) return;
+    const script = manuscriptBody.trim();
+    if (!script) {
+      window.alert("请先填写或加载口播稿正文。");
+      return;
+    }
+    const jt = String(row.job_type || "").trim().toLowerCase();
+    if (jt !== "podcast" && jt !== "podcast_generate") return;
+
+    const oldId = String(row.id || jobId).trim();
+    const projectName = String(row.project_name || "").trim() || "web-podcast-native";
+    const createdBy = userAccountRef(user) || String(phone || "").trim() || undefined;
+
+    /**
+     * 深拷贝任务创建时落库的 payload：voice_id / voice_id_1/2、output_mode、intro/outro、
+     * tts_sentence_chunks、auto_degrade_tts、BGM 槽位等均在 worker 的 run_extended_tts 前原样参与合成。
+     * 服务端对 resynth 路径仍是对整稿 script 跑完整 TTS 管线并输出成片，不做「仅改动片段再拼回旧音频」。
+     */
+    let basePayload: Record<string, unknown>;
+    try {
+      basePayload = JSON.parse(JSON.stringify(row.payload || {})) as Record<string, unknown>;
+    } catch {
+      basePayload = { ...(row.payload || {}) };
+    }
+    delete basePayload.resynth_audio_only;
+    delete basePayload.resynth_script_text;
+    basePayload.resynth_audio_only = true;
+    basePayload.resynth_script_text = script;
+    basePayload.generate_cover = false;
+
+    audioRegenAbortRef.current = false;
+    setRegenerateVoiceBusy(true);
+    setAudioRegenActive(true);
+    setAudioRegenProgress(2);
+    setAudioRegenMessage("正在校验计费与队列…");
+
+    try {
+      const prev = await previewMediaJob({
+        project_name: projectName,
+        job_type: jt,
+        queue_name: "media",
+        payload: basePayload,
+        ...(createdBy ? { created_by: createdBy } : {})
+      });
+      if (prev.allowed === false) {
+        throw new Error((prev.detail || "").trim() || "当前无法创建语音合成任务（余额或套餐）。");
+      }
+      if (prev.summary) {
+        setAudioRegenMessage(String(prev.summary));
+      }
+
+      setAudioRegenProgress(5);
+      setAudioRegenMessage("已创建任务，正在生成音频…");
+
+      const created = await createJob({
+        project_name: projectName,
+        job_type: jt,
+        queue_name: "media",
+        payload: basePayload,
+        ...(createdBy ? { created_by: createdBy } : {})
+      });
+      const newId = String(created.id || "").trim();
+      if (!newId) throw new Error("创建任务成功但未返回编号");
+
+      const terminalFail = new Set(["failed", "cancelled"]);
+      let lastProgress = 5;
+      let succeededRow: JobRecord | null = null;
+      for (let i = 0; i < 3600; i += 1) {
+        if (audioRegenAbortRef.current) {
+          setAudioRegenMessage("已离开页面，停止轮询（任务可能仍在后台运行）。");
+          return;
+        }
+        const j = await getJob(newId);
+        const st = String(j.status || "").trim().toLowerCase();
+        const p = typeof j.progress === "number" && Number.isFinite(j.progress) ? j.progress : lastProgress;
+        lastProgress = p;
+        setAudioRegenProgress(Math.min(99, Math.max(5, p)));
+        if (st === "succeeded") {
+          setAudioRegenProgress(100);
+          setAudioRegenMessage("即将完成…");
+          succeededRow = j;
+          break;
+        }
+        if (st === "running" || st === "queued") {
+          setAudioRegenMessage(st === "queued" ? "排队中…" : "正在合成音频…");
+        } else if (terminalFail.has(st)) {
+          const err = String(j.error_message || "").trim() || `任务状态：${st}`;
+          throw new Error(err);
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+
+      if (!succeededRow) {
+        throw new Error("合成等待超时，请到「我的作品」查看新任务是否仍在进行。");
+      }
+
+      const coverRes = await fetch(`/api/jobs/${encodeURIComponent(oldId)}/cover`, {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { ...getBearerAuthHeadersSync() }
+      });
+      if (coverRes.ok) {
+        const blob = await coverRes.blob();
+        if (blob.size > 0) {
+          const { base64: image_base64 } = await blobToDataUrlBase64(blob);
+          const content_type = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+          const up = await fetch(`/api/jobs/${encodeURIComponent(newId)}/cover`, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json", ...getBearerAuthHeadersSync() },
+            body: JSON.stringify({ image_base64, content_type })
+          });
+          if (!up.ok) {
+            void (await up.text().catch(() => ""));
+          }
+        }
+      }
+
+      try {
+        const del = await fetch(`/api/jobs/${encodeURIComponent(oldId)}/delete`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getBearerAuthHeadersSync() },
+          body: "{}"
+        });
+        if (!del.ok) {
+          void (await del.text().catch(() => ""));
+        }
+      } catch {
+        /* ignore */
+      }
+
+      router.replace(`/works/${encodeURIComponent(newId)}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setAudioRegenMessage(msg || "重新合成失败");
+      window.alert(msg || "重新合成失败");
+    } finally {
+      setRegenerateVoiceBusy(false);
+      setAudioRegenActive(false);
+      setAudioRegenProgress(0);
+    }
+  }, [
+    ownerJobRecord,
+    regenerateVoiceBusy,
+    audioRegenActive,
+    manuscriptBody,
+    jobId,
+    user,
+    phone,
+    router
+  ]);
+
+  useEffect(() => {
+    audioRegenAbortRef.current = false;
+    return () => {
+      audioRegenAbortRef.current = true;
+    };
+  }, [jobId]);
+
+  const onManuscriptSaved = useCallback(
+    async (next: string) => {
+      setManuscriptBody(next);
+      try {
+        const fresh = await getJob(jobId);
+        if (fresh) setOwnerJobRecord(fresh);
+      } catch {
+        /* ignore */
+      }
+    },
+    [jobId]
+  );
+
   useEffect(() => {
     let canceled = false;
-    if (!shareJobHydrated || audioBlocked) {
+    if (!shareJobHydrated || audioBlocked || !ownerJobRecord) {
       setRssGate("idle");
       setRssGateDetail("");
       return () => {
@@ -443,11 +812,11 @@ export function SharePublishClient({ jobId }: Props) {
     return () => {
       canceled = true;
     };
-  }, [jobId, shareJobHydrated, audioBlocked]);
+  }, [jobId, shareJobHydrated, audioBlocked, ownerJobRecord]);
 
   useEffect(() => {
     let canceled = false;
-    if (rssGate !== "ok") {
+    if (rssGate !== "ok" || !ownerJobRecord) {
       setChannels([]);
       setChannelId("");
       return () => {
@@ -473,7 +842,7 @@ export function SharePublishClient({ jobId }: Props) {
     return () => {
       canceled = true;
     };
-  }, [rssGate]);
+  }, [rssGate, ownerJobRecord]);
 
   useEffect(() => {
     if (!scheduleModalOpen) return;
@@ -517,124 +886,108 @@ export function SharePublishClient({ jobId }: Props) {
 
   const seekFromNotes = useCallback(
     (sec: number) => {
-      const el = audioRef.current;
-      if (!el || !hasAudio) {
-        window.alert("无法跳转：无音频或未加载好。");
+      if (!hasAudio) {
+        window.alert("无法跳转：无音频。");
         return;
       }
-      const d = el.duration;
-      if (Number.isFinite(d) && d > 0) {
-        el.currentTime = Math.min(Math.max(0, sec), Math.max(0, d - 0.05));
-      } else {
-        el.currentTime = Math.max(0, sec);
+      const title = episodeTitle.trim() || jobTitle || jobId;
+      if (workAudio.activeJobId === jobId && workAudio.loadingJobId !== jobId) {
+        workAudio.seekForActiveJob(sec);
+        void workAudio.resume();
+        return;
       }
-      void el.play().catch(() => {});
+      void workAudio.togglePlay(jobId, { displayTitle: title, seekSeconds: sec });
     },
-    [hasAudio]
+    [hasAudio, episodeTitle, jobTitle, jobId, workAudio]
   );
 
-  function insertChapterOutline() {
-    if (!chapterOutline?.length) return;
-    const secs = chapterOutline.map((c) => Math.floor((c.start_ms || 0) / 1000));
-    const allPresent = secs.length > 0 && secs.every((s) => new RegExp(`\\(t:${s}\\)`).test(showNotes));
-    if (allPresent) {
-      window.alert("章节时间戳已在正文里。");
-      return;
-    }
-    const lines = formatChapterMarkdownLines(chapterOutline);
-    setShowNotes((p) => `${p.trim() ? `${p.trim()}\n\n` : ""}${lines.join("\n")}`);
-  }
-
-  function applySmartTimestampLines() {
-    setShowNotes((p) => promotePlainTimestampLinesInMarkdown(p));
-  }
-
   function restoreDraft() {
-    const d = draftBanner;
+    const d = loadShareFormDraft(jobId);
     if (!d) return;
     setEpisodeTitle(d.episodeTitle);
-    setSummary(d.summary);
+    setSummary(truncateSummaryToAutoMax(d.summary));
     setShowNotes(d.showNotes);
-    setDraftBanner(null);
   }
 
   function discardDraft() {
     clearShareFormDraft(jobId);
-    setDraftBanner(null);
     const snap = initialSnapshotRef.current;
     if (snap) {
       setEpisodeTitle(snap.episodeTitle);
-      setSummary(snap.summary);
+      setSummary(truncateSummaryToAutoMax(snap.summary));
       setShowNotes(snap.showNotes);
     }
   }
 
-  function fillSummaryFromScript() {
-    const ctx = shareGenContextRef.current;
-    const extra = ctx ? String(ctx.payload.text || "") : "";
-    const s = deriveProgramSummaryOverallMax30(scriptTextForLead, extra);
-    if (!s.trim()) {
-      window.alert("没有口播稿，请手写简介。");
-      return;
+  async function applyShareAiCopyFromProvider(opts?: { persist?: boolean }) {
+    if (!jobId.trim()) return;
+    setShareAiBusy(true);
+    setFormErr("");
+    setFormOk("");
+    /** 默认落库：刷新页后仍从 jobs.result 的 auto_share_* 恢复，避免被旧稿或本地草稿覆盖 */
+    const persist = opts?.persist !== false;
+    try {
+      const out = await fetchJobShareAiCopy(jobId, { persist });
+      if (!out.success) {
+        throw new Error("服务端未返回成功状态");
+      }
+      const sum = String(out.summary ?? "").trim();
+      const notes = String(out.show_notes ?? "").trim();
+      if (!sum && !notes) {
+        throw new Error("返回内容为空");
+      }
+      let nextSummary = summary;
+      let nextNotes = showNotes;
+      if (sum) {
+        const clipped = truncateSummaryToAutoMax(sum);
+        setSummary(clipped);
+        nextSummary = clipped;
+      }
+      if (notes) {
+        setShowNotes(notes);
+        nextNotes = notes;
+      }
+      initialSnapshotRef.current = {
+        episodeTitle,
+        summary: nextSummary,
+        showNotes: nextNotes
+      };
+      if (persist) {
+        try {
+          const fresh = await getJob(jobId);
+          if (fresh) setOwnerJobRecord(fresh);
+        } catch {
+          /* ignore */
+        }
+        clearShareFormDraft(jobId);
+      }
+    } catch (e) {
+      const msg = String(e instanceof Error ? e.message : e);
+      setFormErr(msg || "AI 生成失败");
+    } finally {
+      setShareAiBusy(false);
     }
-    setSummary(s);
-  }
-
-  function regenerateShareMetadataFromScript() {
-    const ctx = shareGenContextRef.current;
-    if (!ctx) {
-      window.alert("请稍后再试。");
-      return;
-    }
-    if (!scriptTextForLead.trim() && !String(ctx.payload.text || "").trim()) {
-      window.alert("没有文稿或素材，无法重新生成。");
-      return;
-    }
-    const r = ctx.resultEarly;
-    const rawCh = r.audio_chapters;
-    const hasCh =
-      Array.isArray(rawCh) &&
-      rawCh.length > 0 &&
-      rawCh.every((x) => x && typeof x === "object");
-    const audioChaptersRaw = hasCh ? (rawCh as Record<string, unknown>[]) : undefined;
-    const durRaw = r.audio_duration_sec;
-    const audioDurationSec =
-      typeof durRaw === "number" && Number.isFinite(durRaw)
-        ? durRaw
-        : typeof durRaw === "string" && String(durRaw).trim() !== ""
-          ? Number.parseFloat(String(durRaw))
-          : null;
-    const derived = buildSharePublishCopyFromScriptAndPayload({
-      scriptRaw: scriptTextForLead,
-      payload: ctx.payload,
-      result: r,
-      displayTitleHint: ctx.displayTitleHint,
-      audioChaptersRaw,
-      audioDurationSec: Number.isFinite(audioDurationSec as number) ? audioDurationSec : null,
-      fallbackTitle: sanitizeShareEpisodeTitle(ctx.titleFallbackRaw),
-      fallbackSummary: defaultSummaryFromJobResult(r)
-    });
-    setSummary(derived.summary);
-    setShowNotes(derived.showNotes);
-    initialSnapshotRef.current = { ...derived, episodeTitle };
-    setScriptBodyHint("已重新生成。");
   }
 
   async function submit() {
     setFormErr("");
     setFormOk("");
+    if (shareAiBusy) {
+      setFormErr("AI 生成中，请稍候再发布。");
+      return;
+    }
     if (publishPlatform !== "xiaoyuzhou") {
-      setFormErr("请先在上方选择「小宇宙」并完成表单。");
+      setFormErr("请先选择小宇宙。");
       return;
     }
     if (rssGate !== "ok") {
       setFormErr(
-        rssGateDetail.trim() || "当前账户或作品暂不符合 RSS 发布条件，请查看上方说明或完成充值/订阅后再试。"
+        rssGateDetail.trim() || "当前不符合 RSS 发布条件。"
       );
       return;
     }
     if (!channelId) {
-      setFormErr("请选择频道。若列表为空，请先在设置里配置 RSS。");
+      setFormErr("请选择 RSS 频道。");
       return;
     }
     if (!episodeTitle.trim()) {
@@ -647,7 +1000,7 @@ export function SharePublishClient({ jobId }: Props) {
     }
     if (schedulePublish) {
       if (!publishAt.trim()) {
-        setFormErr("已开启定时发布，请先设置发布时间。");
+        setFormErr("请设置定时发布时间。");
         return;
       }
       const ts = new Date(publishAt).getTime();
@@ -658,46 +1011,41 @@ export function SharePublishClient({ jobId }: Props) {
     }
     const h = computeSharePublishHints(episodeTitle, summary, showNotes);
     if (h.summaryEmpty) {
-      if (!window.confirm("简介为空，列表里可能不显示摘要。仍要发布？")) {
+      if (!window.confirm("简介为空，仍发布？")) {
         return;
       }
     }
-    if (h.summaryOverWarn && !h.summaryEmpty) {
-      if (!window.confirm("简介很长，在部分 App 里会被截断。仍要发布？")) {
-        return;
-      }
-    }
-
     setBusy(true);
     try {
       await publishWorkToRss({
         channel_id: channelId,
         job_id: jobId,
         title: episodeTitle.trim(),
-        summary: summary.trim(),
+        summary: truncateSummaryToAutoMax(summary.trim()),
         show_notes: showNotes.trim(),
         explicit: false,
         publish_at: schedulePublish && publishAt.trim() ? new Date(publishAt).toISOString() : undefined,
-        force_republish: confirmRepublish
+        force_republish: true
       });
       clearShareFormDraft(jobId);
-      setDraftBanner(null);
-      setFormOk(
-        schedulePublish
-          ? "已提交定时发布。到点后会在 RSS 中可见，各客户端同步有延迟。"
-          : "已发布。各客户端同步有延迟，可在播客后台核对。"
-      );
+      initialSnapshotRef.current = {
+        episodeTitle,
+        summary: truncateSummaryToAutoMax(summary.trim()),
+        showNotes: showNotes.trim()
+      };
+      setSharePublishDirty(false);
+      setFormOk(schedulePublish ? "已提交定时发布。" : "已发布。");
       try {
         const rows = await listRssPublicationsByJobIds([jobId]);
         const list = rows[jobId] || [];
-        setPublishedHint(list.length > 0 ? `已发布过：${list.map((p) => p.channel_title).join("、")}` : "");
+        setPublishedHint(list.length > 0 ? `已发布：${list.map((p) => p.channel_title).join("、")}` : "");
       } catch {
         /* ignore */
       }
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e);
       if (msg.includes("already_published_same_channel")) {
-        setFormErr("该频道已发布过。勾选「覆盖已发布」后再试。");
+        setFormErr("该频道已发布过，服务端未接受覆盖，请稍后重试或更换频道。");
       } else {
         setFormErr(msg);
       }
@@ -706,22 +1054,55 @@ export function SharePublishClient({ jobId }: Props) {
     }
   }
 
+  const mainMax = layout === "work_hub" ? "max-w-3xl" : "max-w-2xl";
+
   return (
-    <main className="mx-auto min-h-0 w-full max-w-2xl px-3 pb-12 pt-5 sm:px-4">
+    <main className={`mx-auto min-h-0 w-full ${mainMax} px-3 pb-12 pt-5 sm:px-4`}>
       <div className="mb-5 flex flex-col gap-1">
-        <Link href="/works" className="text-sm text-brand hover:underline">
-          ← 返回我的作品
+        <Link
+          href={ownerJobRecord ? "/works" : "/"}
+          className="text-sm text-brand hover:underline"
+        >
+          {ownerJobRecord ? "← 返回我的作品" : "← 返回首页"}
         </Link>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">发给朋友听</h1>
-          {jobTitle ? <span className="max-w-[min(100%,14rem)] truncate text-xs text-muted sm:max-w-xs">{jobTitle}</span> : null}
+          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
+            {layout === "work_hub" ? "作品详情" : "发给朋友听"}
+          </h1>
+          {jobTitle ? (
+            <span className="max-w-[min(100%,14rem)] truncate text-xs text-muted sm:max-w-xs">{jobTitle}</span>
+          ) : null}
         </div>
-        <p className="text-xs text-muted">
-          复制链接给好友听不限会员（公网域名）；使用下方 RSS 发布到播客平台时，需为充值/订阅等付费账户，且本片须为套餐或按量付费产生的成片。
-        </p>
       </div>
 
-      <audio ref={audioRef} className="hidden" preload="metadata" playsInline />
+      {layout === "work_hub" && shareJobHydrated && !loadErr ? (
+        <div className="sticky top-0 z-[60] -mx-3 mb-5 border-b border-line/80 bg-canvas/95 px-1 pb-2 pt-1 backdrop-blur-md supports-[backdrop-filter]:bg-canvas/80 sm:-mx-4">
+          <div className="flex gap-1 rounded-xl border border-line bg-fill/35 p-1">
+            <button
+              type="button"
+              onClick={() => setHubTab("overview")}
+              className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+                hubTab === "overview"
+                  ? "bg-surface text-ink shadow-soft"
+                  : "text-muted hover:bg-fill/60 hover:text-ink"
+              }`}
+            >
+              预览
+            </button>
+            <button
+              type="button"
+              onClick={() => setHubTab("publish")}
+              className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+                hubTab === "publish"
+                  ? "bg-surface text-ink shadow-soft"
+                  : "text-muted hover:bg-fill/60 hover:text-ink"
+              }`}
+            >
+              发布
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {loadErr ? (
         <p className="mb-4 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger-ink">{loadErr}</p>
@@ -729,13 +1110,13 @@ export function SharePublishClient({ jobId }: Props) {
 
       {!loadErr && !shareJobHydrated ? (
         <p className="mb-4 rounded-lg border border-line bg-fill/60 px-3 py-2 text-sm text-muted" role="status">
-          正在加载作品与音频信息…
+          加载中…
         </p>
       ) : null}
 
-      {draftBanner ? (
+      {sharePublishDirty ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/35 bg-warning-soft/80 px-3 py-2 text-xs text-warning-ink">
-          <span>有未保存的本地草稿</span>
+          <span>本地草稿未保存</span>
           <div className="flex gap-2">
             <button type="button" className="rounded-md bg-brand px-2.5 py-1 text-brand-foreground hover:opacity-95" onClick={restoreDraft}>
               恢复
@@ -751,44 +1132,73 @@ export function SharePublishClient({ jobId }: Props) {
         <p className="mb-4 rounded-lg border border-success/35 bg-success-soft/70 px-3 py-2 text-xs text-success-ink">{publishedHint}</p>
       ) : null}
 
-      {showShareAndPublish && sharePageFullUrl ? (
-        <section className="mb-5 rounded-2xl border border-brand/35 bg-brand/10 px-4 py-4 shadow-soft dark:bg-brand/15">
-          <p className="text-sm font-semibold text-ink">先复制本页链接</p>
-          <p className="mt-1 text-xs text-muted">收件人需登录本站打开链接；链接已固定为公网域名，便于转发。</p>
-          <input
-            readOnly
-            value={sharePageFullUrl}
-            className="mt-2 w-full cursor-text truncate rounded-lg border border-line bg-fill/50 px-3 py-2 font-mono text-[11px] text-ink"
-            onFocus={(e) => e.target.select()}
-            aria-label="分享页链接"
-          />
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50"
-              disabled={!sharePageFullUrl}
-              onClick={() => void copySharePageLink()}
-            >
-              复制链接
-            </button>
-            {shareLinkCopied ? (
-              <span className="text-xs font-medium text-success-ink dark:text-success-ink" role="status">
-                已复制
-              </span>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
-
-      {shareJobHydrated && audioBlocked ? (
-        <p className="mb-4 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-ink">
-          {scriptDraft
-            ? "该类型没有音频，无法在此页收听或发布；请从有口播成片的任务使用「发给朋友」。"
-            : "还没有可分享的音频（或成品尚未同步）。请确认任务已成功完成后再试。"}
+      {layout === "work_hub" && hubTab === "overview" && shareJobHydrated && !loadErr && !formReady ? (
+        <p className="mb-4 rounded-lg border border-line bg-fill/60 px-3 py-2 text-sm text-muted" role="status">
+          加载作品信息…
         </p>
       ) : null}
 
-      {showShareAndPublish ? (
+      {layout === "work_hub" && hubTab === "overview" && shareJobHydrated && !loadErr && formReady ? (
+        <div className="mb-8">
+          <WorkHubOverviewPanel
+            jobId={jobId}
+            displayTitleForDownload={episodeTitle.trim() || jobTitle || jobId}
+            episodeTitle={episodeTitle}
+            previewIntro={previewIntro}
+            coverUrl={jobCoverUrl}
+            navMetaPipe={navMetaPipe}
+            chapterOutline={chapterOutline}
+            onSeekSeconds={seekFromNotes}
+            hasAudio={hasAudio}
+            scriptDraft={scriptDraft}
+            audioBlocked={audioBlocked}
+            durationSecHint={audioDurationHintSec}
+            manuscriptBody={manuscriptBody}
+            scriptResolvePending={scriptResolvePending}
+            onManuscriptSaved={onManuscriptSaved}
+            canEditScript={canEditWorkScript}
+            showManuscriptTools={showManuscriptTools}
+            regenerateVoiceSupported={regenerateVoiceSupported}
+            regenerateVoiceBusy={regenerateVoiceBusy}
+            onRegenerateVoice={() => void startAudioResynth()}
+            audioRegenActive={audioRegenActive}
+            audioRegenProgress={audioRegenProgress}
+            audioRegenMessage={audioRegenMessage}
+          />
+        </div>
+      ) : null}
+
+      {publishChromeVisible && showShareAndPublish && sharePageFullUrl ? (
+        <div className="mb-5">
+          <WorksShareLinkPreviewCard
+            coverUrl={jobCoverUrl}
+            episodeTitle={episodeTitle}
+            summary={summary}
+            sharePageFullUrl={sharePageFullUrl}
+            onCopy={() => void copySharePageLink()}
+            copied={shareLinkCopied}
+          />
+        </div>
+      ) : null}
+
+      {publishChromeVisible && shareJobHydrated && audioBlocked ? (
+        <p className="mb-4 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-ink">
+          {scriptDraft
+            ? "仅有文稿、无音频，无法在此页收听或发布。"
+            : "暂无可播放音频，请确认任务已成功完成。"}
+        </p>
+      ) : null}
+
+      {publishChromeVisible && showShareAndPublish && !ownerJobRecord ? (
+        <p className="mb-4 text-xs text-muted">
+          <Link href="/create" className="text-brand underline">
+            登录
+          </Link>
+          后可编辑简介与 Shownotes、发布 RSS。
+        </p>
+      ) : null}
+
+      {publishChromeVisible && showShareAndPublish && ownerJobRecord ? (
         <div className="mb-4">
           <button
             type="button"
@@ -802,7 +1212,7 @@ export function SharePublishClient({ jobId }: Props) {
         </div>
       ) : null}
 
-      {showShareAndPublish && advancedPublishOpen ? (
+      {publishChromeVisible && showShareAndPublish && ownerJobRecord && advancedPublishOpen ? (
         <>
           <div className="mb-5">
             <p className="mb-2 text-xs font-medium text-ink">发布平台</p>
@@ -811,7 +1221,7 @@ export function SharePublishClient({ jobId }: Props) {
                 <button
                   key={p.id}
                   type="button"
-                  disabled={busy}
+                  disabled={busy || shareAiBusy}
                   onClick={() => setPublishPlatform(p.id)}
                   className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
                     publishPlatform === p.id
@@ -823,7 +1233,7 @@ export function SharePublishClient({ jobId }: Props) {
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-[11px] text-muted/90">默认小宇宙；更多平台陆续开放。</p>
+            <p className="mt-2 text-[11px] text-muted/90">更多平台开发中。</p>
           </div>
 
       {publishPlatform !== "xiaoyuzhou" ? (
@@ -842,7 +1252,7 @@ export function SharePublishClient({ jobId }: Props) {
       ) : rssGate === "idle" || rssGate === "loading" ? (
         <div className="rounded-2xl border border-line bg-fill/20 px-4 py-10 text-center shadow-soft sm:px-6">
           <p className="text-sm text-muted" role="status">
-            {rssGate === "idle" ? "准备校验 RSS 发布条件…" : "正在校验 RSS 发布条件…"}
+            {rssGate === "idle" ? "校验发布条件…" : "校验中…"}
           </p>
         </div>
       ) : rssGate === "blocked" || rssGate === "err" ? (
@@ -850,22 +1260,19 @@ export function SharePublishClient({ jobId }: Props) {
           <p className="text-sm font-medium text-warning-ink">暂无法使用 RSS 发布</p>
           <p className="mt-2 whitespace-pre-wrap text-sm text-warning-ink/95">{rssGateDetail.trim() || "请稍后再试或刷新页面。"}</p>
           {rssGate === "blocked" ? <BillingShortfallLinks className="mt-4" /> : null}
-          {rssGate === "err" ? (
-            <p className="mt-3 text-xs text-muted">若持续失败请刷新页面或稍后重试。</p>
-          ) : null}
         </div>
       ) : (
       <div className="rounded-2xl border border-line bg-surface px-4 py-5 shadow-soft sm:px-6 sm:py-6">
         <div className="space-y-6">
           <section className="space-y-3">
-            <h2 className="text-sm font-medium text-ink">小宇宙 · 渠道与选项</h2>
+            <h2 className="text-sm font-medium text-ink">RSS 渠道</h2>
             <label className="block text-sm text-muted">
               频道
               <select
                 className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
                 value={channelId}
                 onChange={(e) => setChannelId(e.target.value)}
-                disabled={channelsLoading || busy}
+                disabled={channelsLoading || busy || shareAiBusy}
               >
                 <option value="">{channelsLoading ? "加载中…" : "选择 RSS 频道"}</option>
                 {channels.map((c) => (
@@ -875,30 +1282,22 @@ export function SharePublishClient({ jobId }: Props) {
                 ))}
               </select>
             </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-muted">
-              <input
-                type="checkbox"
-                checked={confirmRepublish}
-                onChange={(e) => setConfirmRepublish(e.target.checked)}
-                disabled={busy}
-                className="rounded border-line"
-              />
-              覆盖已发布（同一频道）
-            </label>
           </section>
 
           <div className="border-t border-line pt-6">
             <section className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-medium text-ink">标题与简介</h2>
-                <button
-                  type="button"
-                  className="shrink-0 text-xs text-brand underline disabled:opacity-40"
-                  disabled={busy || scriptResolvePending}
-                  onClick={() => regenerateShareMetadataFromScript()}
-                >
-                  重新生成简介与 Shownotes
-                </button>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <button
+                    type="button"
+                    className="shrink-0 text-xs text-brand underline disabled:opacity-40"
+                    disabled={busy || shareAiBusy || scriptResolvePending}
+                    onClick={() => void applyShareAiCopyFromProvider()}
+                  >
+                    {shareAiBusy ? "生成中…" : "AI 优化简介与 Shownotes"}
+                  </button>
+                </div>
               </div>
               <label className="block text-sm text-muted">
                 节目标题
@@ -906,61 +1305,36 @@ export function SharePublishClient({ jobId }: Props) {
                   className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
                   value={episodeTitle}
                   onChange={(e) => setEpisodeTitle(e.target.value)}
-                  disabled={busy}
+                  disabled={busy || shareAiBusy}
                   maxLength={300}
-                  placeholder={
-                    jobTitle
-                      ? `请输入标题（可与作品名一致：${jobTitle.length > 40 ? `${jobTitle.slice(0, 40)}…` : jobTitle}）`
-                      : "请输入节目标题（将写入 RSS / 小宇宙）"
-                  }
+                  placeholder="RSS / 小宇宙单集标题"
                 />
-                <span className="mt-1 block text-[11px] text-muted/90">由你填写，系统不再自动从口播稿生成标题。</span>
+                <span className="mt-1 block text-[11px] text-muted/90">默认与作品列表名称一致，可改。</span>
                 <span className="mt-0.5 flex justify-end text-[11px] tabular-nums text-muted/80">
                   <span className={hints.titleOverSoft ? "text-warning-ink" : ""}>{episodeTitle.length}</span>
                   <span className="text-muted/60">/{SHARE_TITLE_SOFT_MAX}</span>
                 </span>
               </label>
               <div className="text-sm text-muted">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>简介</span>
-                  <button
-                    type="button"
-                    className="text-xs text-brand underline disabled:opacity-40"
-                    disabled={busy || !scriptTextForLead || scriptResolvePending}
-                    onClick={() => fillSummaryFromScript()}
-                  >
-                    重写（约 {AUTO_PROGRAM_SUMMARY_MAX} 字内）
-                  </button>
-                </div>
-                <p className="mt-1 text-[11px] text-muted/90">
-                  提炼本期讨论主线，约 {AUTO_PROGRAM_SUMMARY_MAX} 字以内、通俗有吸引力；不满意可点「重写」或手改。
-                </p>
+                <span>简介</span>
                 {scriptBodyHint ? <p className="mt-1 text-[11px] text-muted/90">{scriptBodyHint}</p> : null}
                 <textarea
                   className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
                   rows={3}
                   value={summary}
-                  onChange={(e) => setSummary(e.target.value)}
-                  disabled={busy}
-                  maxLength={4000}
-                  placeholder={`列表摘要，建议 ${AUTO_PROGRAM_SUMMARY_MAX} 字以内`}
+                  onChange={(e) => setSummary(e.target.value.slice(0, AUTO_PROGRAM_SUMMARY_MAX))}
+                  disabled={busy || shareAiBusy}
+                  maxLength={AUTO_PROGRAM_SUMMARY_MAX}
+                  placeholder="RSS 列表用短摘要"
                 />
                 <span className="mt-0.5 flex justify-end text-[11px] tabular-nums text-muted/80">
-                  <span
-                    className={
-                      summary.length > SHARE_SUMMARY_WARN_MAX
-                        ? "font-medium text-danger-ink"
-                        : summary.length > SHARE_SUMMARY_IDEAL_MAX
-                          ? "text-warning-ink"
-                          : ""
-                    }
-                  >
+                  <span className={summary.length >= AUTO_PROGRAM_SUMMARY_MAX ? "text-warning-ink" : ""}>
                     {summary.length}
                   </span>
-                  <span className="text-muted/60"> 字</span>
+                  <span className="text-muted/60">/{AUTO_PROGRAM_SUMMARY_MAX}</span>
                 </span>
                 {hints.summaryLooksLikeDialogue ? (
-                  <p className="mt-1 text-[11px] text-warning-ink">疑似对白格式，听众在列表里会读起来怪。</p>
+                  <p className="mt-1 text-[11px] text-warning-ink">简介含对白标记，列表展示可能不佳。</p>
                 ) : null}
               </div>
             </section>
@@ -989,9 +1363,8 @@ export function SharePublishClient({ jobId }: Props) {
               </div>
               {notesTab === "edit" ? (
                 <p className="text-[11px] text-muted/90">
-                  默认包含：本期主题、关键收获、时间轴、金句与资源；支持 Markdown。时间跳转{" "}
-                  <code className="rounded bg-fill px-1">[3:20 标题](t:200)</code>
-                  {audioReady ? "，预览里可点。" : "。"}
+                  Markdown；跳转 <code className="rounded bg-fill px-1">[3:20 标题](t:200)</code>
+                  {hasAudio ? "，预览可点。" : "。"}
                 </p>
               ) : null}
               {notesTab === "edit" ? (
@@ -1000,7 +1373,7 @@ export function SharePublishClient({ jobId }: Props) {
                   rows={12}
                   value={showNotes}
                   onChange={(e) => setShowNotes(e.target.value)}
-                  disabled={busy}
+                  disabled={busy || shareAiBusy}
                   maxLength={20_000}
                 />
               ) : (
@@ -1012,18 +1385,8 @@ export function SharePublishClient({ jobId }: Props) {
                   />
                 </div>
               )}
-              <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
-                {chapterOutline && chapterOutline.length > 0 ? (
-                  <button type="button" className="text-xs text-brand underline" onClick={() => insertChapterOutline()}>
-                    插入章节
-                  </button>
-                ) : null}
-                <button type="button" className="text-xs text-brand underline" onClick={() => applySmartTimestampLines()} disabled={busy}>
-                  识别分:秒 行
-                </button>
-              </div>
               {hints.showNotesVeryShort ? (
-                <p className="text-[11px] text-warning-ink">内容偏少，可补链接或时间轴。</p>
+                <p className="text-[11px] text-warning-ink">Shownotes 偏短。</p>
               ) : null}
             </section>
           </div>
@@ -1043,7 +1406,7 @@ export function SharePublishClient({ jobId }: Props) {
                 role="switch"
                 aria-checked={schedulePublish}
                 aria-label="定时发布"
-                disabled={busy || !showShareAndPublish}
+                disabled={busy || shareAiBusy || !showShareAndPublish}
                 onClick={() => {
                   if (schedulePublish) {
                     setSchedulePublish(false);
@@ -1066,7 +1429,7 @@ export function SharePublishClient({ jobId }: Props) {
                 <button
                   type="button"
                   className="max-w-[10rem] truncate text-xs text-brand underline decoration-brand/40 hover:decoration-brand disabled:opacity-50"
-                  disabled={busy || !showShareAndPublish}
+                  disabled={busy || shareAiBusy || !showShareAndPublish}
                   onClick={() => openScheduleModal()}
                 >
                   {formatSchedulePreview(publishAt)}
@@ -1076,7 +1439,7 @@ export function SharePublishClient({ jobId }: Props) {
             <button
               type="button"
               className="min-w-[7rem] rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50"
-              disabled={busy || !showShareAndPublish || publishPlatform !== "xiaoyuzhou"}
+              disabled={busy || shareAiBusy || !showShareAndPublish || publishPlatform !== "xiaoyuzhou"}
               onClick={() => void submit()}
             >
               {busy ? (schedulePublish ? "定时发布中…" : "发布中…") : schedulePublish ? "定时发布" : "发布"}
@@ -1091,7 +1454,7 @@ export function SharePublishClient({ jobId }: Props) {
       {scheduleModalOpen && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fixed inset-0 z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+              className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
               role="presentation"
             >
               <button
@@ -1110,7 +1473,7 @@ export function SharePublishClient({ jobId }: Props) {
                 <h2 id="schedule-modal-title" className="text-base font-semibold text-ink">
                   定时发布
                 </h2>
-                <p className="mt-1 text-xs text-muted">选择 RSS 中该集的可见时间（各平台抓取有延迟）。</p>
+                <p className="mt-1 text-xs text-muted">RSS 与各客户端同步有延迟。</p>
                 <label className="mt-4 block text-sm text-muted">
                   发布时间
                   <input
@@ -1145,6 +1508,7 @@ export function SharePublishClient({ jobId }: Props) {
             document.body
           )
         : null}
+
     </main>
   );
 }

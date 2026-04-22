@@ -1,4 +1,5 @@
 import type { ClipSilenceSegment, ClipWord } from "./clipTypes";
+import { ROUGH_CUT_FILLER_PHRASES as FILLER_CORE, ROUGH_CUT_HESITATION_TOKENS as HESITATION_CORE } from "./prestoFlowRoughCutLexicon";
 import { buildFlowUnits, displayToken } from "./prestoFlowTranscript";
 
 /** 可执行的建议动作（由侧栏「执行」触发） */
@@ -43,39 +44,37 @@ export type LlmSuggestionApiItem = {
   parent_suggestion_id?: string;
 };
 
-const FILLER_CORE = new Set([
-  "那个",
-  "这个",
-  "就是",
-  "然后",
-  "所以说",
-  "嗯",
-  "啊",
-  "呃",
-  "诶",
-  "哎",
-  "对吧",
-  "你知道",
-  "怎么说呢"
-]);
-
 function wordCore(w: ClipWord): string {
   return displayToken(w).replace(/[，,。.!！?？、；;:""''「」…]+$/u, "").trim();
+}
+
+/** 纯拉丁词统一小写，便于与填充词表匹配（ASR 大小写不一） */
+function lexNormKey(c: string): string {
+  if (!c) return c;
+  if (/[A-Za-z]/.test(c) && !/[\u4e00-\u9fff]/.test(c)) return c.toLowerCase();
+  return c;
 }
 
 /**
  * 规则型剪辑建议：叠字、高频填充词、极短碎片、已剪提示；无远端模型。
  */
-export function buildClipEditSuggestions(words: readonly ClipWord[], excluded: ReadonlySet<string>): ClipEditSuggestion[] {
+export function buildClipEditSuggestions(
+  words: readonly ClipWord[],
+  excluded: ReadonlySet<string>,
+  exemptCores?: ReadonlySet<string>
+): ClipEditSuggestion[] {
   const out: ClipEditSuggestion[] = [];
   const units = buildFlowUnits(words);
+  const exm = exemptCores;
 
   let stutterN = 0;
   for (const u of units) {
     if (u.kind !== "stutter" || u.words.length < 2) continue;
     const first = u.words[0]!;
+    const firstCore = lexNormKey(wordCore(first));
+    if (exm?.size && firstCore && exm.has(firstCore)) continue;
     if (excluded.size && u.words.every((w) => excluded.has(w.id))) continue;
-    if (stutterN >= 5) break;
+    if (stutterN >= 8) break;
     stutterN += 1;
     const ids = u.words.map((w) => w.id);
     out.push({
@@ -91,7 +90,7 @@ export function buildClipEditSuggestions(words: readonly ClipWord[], excluded: R
 
   const durByCore = new Map<string, { count: number; ids: string[] }>();
   for (const w of words) {
-    const c = wordCore(w);
+    const c = lexNormKey(wordCore(w));
     if (c.length < 2) continue;
     const prev = durByCore.get(c);
     if (!prev) durByCore.set(c, { count: 1, ids: [w.id] });
@@ -102,7 +101,8 @@ export function buildClipEditSuggestions(words: readonly ClipWord[], excluded: R
   }
 
   for (const [core, { count, ids }] of durByCore) {
-    if (!FILLER_CORE.has(core) || count < 4 || ids.length === 0) continue;
+    if (exm?.size && exm.has(core)) continue;
+    if (!FILLER_CORE.has(core) || count < 3 || ids.length === 0) continue;
     const sample = ids[0]!;
     const notExcluded = ids.filter((id) => !excluded.has(id));
     if (notExcluded.length === 0) continue;
@@ -117,6 +117,32 @@ export function buildClipEditSuggestions(words: readonly ClipWord[], excluded: R
     });
   }
 
+  const hesIds: string[] = [];
+  const hesByCore = new Map<string, number>();
+  for (const w of words) {
+    const c = lexNormKey(wordCore(w));
+    if (exm?.size && exm.has(c)) continue;
+    if (!HESITATION_CORE.has(c)) continue;
+    if (excluded.has(w.id)) continue;
+    if (w.e_ms - w.s_ms > 420) continue;
+    hesByCore.set(c, (hesByCore.get(c) ?? 0) + 1);
+    if (hesIds.length < 80) hesIds.push(w.id);
+  }
+  let hesTotal = 0;
+  for (const n of hesByCore.values()) hesTotal += n;
+  if (hesTotal >= 5 && hesIds.length > 0) {
+    const sample = hesIds[0]!;
+    out.push({
+      id: `hes-${sample}`,
+      title: "语气词 / 气口",
+      body: `检出 ${hesTotal} 处较短语气词（如「嗯」「啊」等），多为可删气口；可一键剪掉下列尚未标记删除的实例（仍可用撤销恢复）。`,
+      wordId: sample,
+      source: "rule",
+      execute: { kind: "excludeWords", wordIds: hesIds },
+      executeLabel: "剪掉检出的语气词"
+    });
+  }
+
   let veryShort = 0;
   const shortIds: string[] = [];
   for (const w of words) {
@@ -125,7 +151,7 @@ export function buildClipEditSuggestions(words: readonly ClipWord[], excluded: R
     veryShort += 1;
     if (shortIds.length < 40 && !excluded.has(w.id)) shortIds.push(w.id);
   }
-  if (veryShort >= 8 && shortIds.length > 0) {
+  if (veryShort >= 6 && shortIds.length > 0) {
     const sample = shortIds[0]!;
     out.push({
       id: `short-${sample}`,
@@ -149,10 +175,39 @@ export function buildClipEditSuggestions(words: readonly ClipWord[], excluded: R
     });
   }
 
-  return out.slice(0, 12);
+  return out.slice(0, 16);
 }
 
-const LONG_SILENCE_MS = 1200;
+/**
+ * 粗剪侧栏：合并「相同」的规则建议（如多条叠字口癖指向同一词核），避免列表重复。
+ */
+export function dedupeRoughCutEditSuggestions(
+  suggestions: readonly ClipEditSuggestion[],
+  words: readonly ClipWord[]
+): ClipEditSuggestion[] {
+  const seen = new Set<string>();
+  const out: ClipEditSuggestion[] = [];
+  for (const s of suggestions) {
+    const ex = s.execute;
+    let key: string;
+    if (ex?.kind === "keepStutterFirst" && ex.wordIds.length) {
+      const w0 = words.find((x) => x.id === ex.wordIds[0]);
+      const core = w0 ? lexNormKey(wordCore(w0)) : "";
+      key = `stutter:${core}`;
+    } else if (ex?.kind === "excludeWords" && ex.wordIds.length) {
+      const sig = [...ex.wordIds].sort().join("\0");
+      key = `exclude:${s.title}\0${sig}`;
+    } else {
+      key = `id:${s.id}`;
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out;
+}
+
+const LONG_SILENCE_MS = 1000;
 const SILENCE_WORD_MAX_MS = 400;
 const SILENCE_WORD_CAP = 20;
 

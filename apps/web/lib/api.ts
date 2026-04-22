@@ -120,6 +120,70 @@ export async function getJob(jobId: string) {
   return (await resp.json()) as JobRecord;
 }
 
+/** 分享页匿名试听：无需登录；仅返回可播放 URL 与标题等安全字段 */
+export type PublicShareListenPayload = {
+  success: boolean;
+  job_id: string;
+  job_type: string;
+  title: string;
+  audio_url: string;
+  audio_duration_sec?: number | null;
+  preview?: string;
+  audio_chapters?: Array<{ title: string; start_ms: number }>;
+};
+
+export async function fetchPublicShareListen(jobId: string): Promise<PublicShareListenPayload | null> {
+  const id = encodeURIComponent(String(jobId || "").trim());
+  const resp = await fetch(`/api/jobs/${id}/share-public`, {
+    cache: "no-store",
+    credentials: "omit"
+  });
+  if (resp.status === 404) return null;
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(formatOrchestratorErrorText(t) || t || `share_public_failed_${resp.status}`);
+  }
+  const data = (await resp.json()) as PublicShareListenPayload;
+  return data?.success && data.audio_url ? data : null;
+}
+
+/** 分享 / RSS：按服务端 TEXT_PROVIDER 生成简介与 Show Notes（Markdown） */
+export async function fetchJobShareAiCopy(
+  jobId: string,
+  opts?: { persist?: boolean }
+): Promise<{
+  success: boolean;
+  summary?: string;
+  show_notes?: string;
+  trace_id?: string | null;
+  persisted?: boolean;
+}> {
+  const id = encodeURIComponent(String(jobId || "").trim());
+  const body = JSON.stringify({ persist: Boolean(opts?.persist) });
+  const resp = await fetch(`/api/jobs/${id}/share-ai-copy`, {
+    method: "POST",
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: authMerge({ "Content-Type": "application/json" }),
+    body
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(formatOrchestratorErrorText(text) || `AI 生成失败 ${resp.status}`);
+  }
+  try {
+    return JSON.parse(text) as {
+      success: boolean;
+      summary?: string;
+      show_notes?: string;
+      trace_id?: string | null;
+      persisted?: boolean;
+    };
+  } catch {
+    throw new Error(text.trim() || "AI 生成响应无效");
+  }
+}
+
 export async function listJobs(params?: {
   limit?: number;
   offset?: number;

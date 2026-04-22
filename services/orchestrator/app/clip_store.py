@@ -57,6 +57,18 @@ def ensure_clip_studio_schema(*, strict: bool) -> None:
       ADD COLUMN IF NOT EXISTS retake_manifest jsonb NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE clip_projects
       ADD COLUMN IF NOT EXISTS qc_report jsonb;
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS export_pause_policy jsonb;
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS rough_cut_lexicon_exempt jsonb NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS asr_corpus_hotwords jsonb NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS asr_corpus_scene text;
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS repair_loudness_i_lufs double precision;
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS export_options jsonb NOT NULL DEFAULT '{}'::jsonb;
     """
     try:
         with get_conn() as conn:
@@ -226,6 +238,254 @@ def update_clip_project_audio(
                     """,
                     (object_key, filename[:500], mime[:200], int(size_bytes), pid),
                 )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
+def replace_clip_source_audio_preserve_transcript(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    object_key: str,
+    filename: str,
+    mime: str,
+    size_bytes: int,
+) -> bool:
+    """仅替换主素材文件；保留转写稿、排除词等剪辑状态；清空静音缓存与质检缓存。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_object_key = %s, audio_filename = %s, audio_mime = %s, audio_size_bytes = %s,
+                        silence_analysis = NULL,
+                        qc_report = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                    """,
+                    (object_key, filename[:500], mime[:200], int(size_bytes), pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_object_key = %s, audio_filename = %s, audio_mime = %s, audio_size_bytes = %s,
+                        silence_analysis = NULL,
+                        qc_report = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                    """,
+                    (object_key, filename[:500], mime[:200], int(size_bytes), pid),
+                )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
+def update_clip_export_pause_policy(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    policy: dict[str, Any] | None,
+) -> bool:
+    """粗剪：导出时是否压缩超长词间静音。policy 为 None 表示关闭。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    if policy is None:
+        blob = None
+    elif isinstance(policy, dict):
+        blob = json.dumps(policy, ensure_ascii=False)
+    else:
+        return False
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET export_pause_policy = %s::jsonb, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                    """,
+                    (blob, pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET export_pause_policy = %s::jsonb, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                    """,
+                    (blob, pid),
+                )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
+def update_clip_rough_cut_lexicon_exempt(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    phrases: list[str],
+) -> bool:
+    """嘉宾名 / 公司名 / 专业词：不视为口癖；存为小写归一化后的去重短串数组。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    seen: set[str] = set()
+    clean: list[str] = []
+    for p in phrases:
+        s = str(p or "").strip()[:64]
+        if not s or len(s) < 1:
+            continue
+        key = s.lower() if s.isascii() and any(c.isalpha() for c in s) else s
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(s[:64])
+        if len(clean) >= 200:
+            break
+    blob = json.dumps(clean, ensure_ascii=False)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET rough_cut_lexicon_exempt = %s::jsonb, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                    """,
+                    (blob, pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET rough_cut_lexicon_exempt = %s::jsonb, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                    """,
+                    (blob, pid),
+                )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
+def update_clip_asr_corpus(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    hotwords: list[str],
+    scene: str | None,
+) -> bool:
+    """火山录音识别 request.corpus：热词直传 + 可选场景上下文（dialog_ctx）。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    seen: set[str] = set()
+    clean_hw: list[str] = []
+    for p in hotwords:
+        s = str(p or "").strip()[:48]
+        if not s or len(s) < 1:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        clean_hw.append(s)
+        if len(clean_hw) >= 500:
+            break
+    hw_blob = json.dumps(clean_hw, ensure_ascii=False)
+    scene_sql: str | None = (scene or "").strip()[:3500] or None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET asr_corpus_hotwords = %s::jsonb,
+                        asr_corpus_scene = %s,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                    """,
+                    (hw_blob, scene_sql, pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET asr_corpus_hotwords = %s::jsonb,
+                        asr_corpus_scene = %s,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                    """,
+                    (hw_blob, scene_sql, pid),
+                )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
+def update_clip_repair_loudness_i_lufs(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    i_lufs: float | None,
+) -> bool:
+    """修音 / 导出 loudnorm 目标整合响度 I（LUFS）；NULL 表示使用环境变量 CLIP_EXPORT_LOUDNORM_I 或默认 -16。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                if i_lufs is None:
+                    cur.execute(
+                        """
+                        UPDATE clip_projects
+                        SET repair_loudness_i_lufs = NULL, updated_at = NOW()
+                        WHERE id = %s::uuid AND user_id = %s::uuid
+                        """,
+                        (pid, uid),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE clip_projects
+                        SET repair_loudness_i_lufs = %s, updated_at = NOW()
+                        WHERE id = %s::uuid AND user_id = %s::uuid
+                        """,
+                        (float(i_lufs), pid, uid),
+                    )
+            else:
+                if i_lufs is None:
+                    cur.execute(
+                        """
+                        UPDATE clip_projects
+                        SET repair_loudness_i_lufs = NULL, updated_at = NOW()
+                        WHERE id = %s::uuid AND user_id IS NULL
+                        """,
+                        (pid,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE clip_projects
+                        SET repair_loudness_i_lufs = %s, updated_at = NOW()
+                        WHERE id = %s::uuid AND user_id IS NULL
+                        """,
+                        (float(i_lufs), pid),
+                    )
             n = cur.rowcount
             conn.commit()
             return n > 0
@@ -617,6 +877,34 @@ def update_clip_project_meta(
             return n > 0
 
 
+def update_clip_project_export_options(
+    *, project_id: str, user_uuid: str | None, export_options: dict[str, Any]
+) -> bool:
+    """写入导出选项（提交导出任务前由 API 调用）。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    blob = json.dumps(export_options if isinstance(export_options, dict) else {}, ensure_ascii=False)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            sql = """
+                UPDATE clip_projects
+                SET export_options = %s::jsonb, updated_at = NOW()
+                WHERE id = %s::uuid
+                """
+            params: list[Any] = [blob, pid]
+            if uid:
+                sql += " AND user_id = %s::uuid"
+                params.append(uid)
+            else:
+                sql += " AND user_id IS NULL"
+            cur.execute(sql, tuple(params))
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
 def update_clip_excluded_words(*, project_id: str, user_uuid: str | None, word_ids: list[str]) -> bool:
     pid = _parse_uuid(project_id)
     if not pid:
@@ -828,7 +1116,7 @@ def replace_retake_manifest(*, project_id: str, user_uuid: str | None, manifest:
             "id": str(it.get("id") or "").strip() or str(uuid.uuid4()),
             "after_word_id": str(it.get("after_word_id") or "").strip(),
             "label": str(it.get("label") or f"重录 {i + 1}")[:200],
-            "status": str(it.get("status") or "planned").strip()[:32],
+            "status": str(it.get("status") or "pending").strip()[:32],
             "takes": [],
         }
         takes_raw = it.get("takes") if isinstance(it.get("takes"), list) else []

@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# 作品卡片与任务 result 中保留的引用笔记标题条数（与套餐 max_note_refs 上限对齐，便于单行截断 + 悬停看全量）
-NOTES_SOURCE_TITLES_CAP = 12
+# 作品卡片与任务 result 中保留的引用笔记标题条数（避免元数据过大；与可选资料条数解耦）
+NOTES_SOURCE_TITLES_CAP = 200
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",

@@ -10,7 +10,13 @@ export type SummaryQuota = {
 export type WalletUsageReference = {
   /** 成片播客：元/分钟（分钟包最优单价折算） */
   podcast_yuan_per_minute?: number;
+  /** 脚本/大纲成稿：元/万字 */
+  text_yuan_per_10k_chars?: number;
   voice_clone_payg_cents?: number;
+  /** 新用户语音体验包总量（分钟），与编排器 manifest 一致 */
+  experience_voice_minutes_new_user?: number;
+  /** 新用户文本体验包总量（字） */
+  experience_text_chars_new_user?: number;
   disclaimer_zh?: string;
 };
 
@@ -19,6 +25,8 @@ export type WalletTopupPayload = {
   enabled?: boolean;
   min_amount_cents?: number;
   max_amount_cents?: number;
+  /** 推荐快捷充值金额（元），如 30 / 50 / 100 */
+  suggested_topup_yuan?: number[];
   description?: string;
   checkout_supported?: boolean;
   usage_reference?: WalletUsageReference;

@@ -171,6 +171,10 @@ export default function AdminModelsPage() {
   return (
     <main className="min-h-0 max-w-6xl">
       <h1 className="text-2xl font-semibold text-ink">模型管理</h1>
+      <p className="mt-2 max-w-3xl text-sm text-muted">
+        文本类 LLM 费用按编排器环境变量 <code className="rounded bg-fill px-1 py-0.5 font-mono text-xs">TEXT_PROVIDER</code>{" "}
+        选择 MiniMax 价目表或 DeepSeek 官方人民币价估算；与线上真实路由一致。
+      </p>
 
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <label className="text-sm text-muted">

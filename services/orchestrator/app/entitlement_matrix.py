@@ -13,6 +13,8 @@ from typing import Any
 from .subscription_manifest import (
     BASIC_MONTHLY_CENTS,
     BASIC_YEARLY_CENTS,
+    BILLING_LONG_FORM_SCRIPT_CHARS_CAP,
+    BILLING_MAX_NOTE_REFS,
     JOBS_TERMINAL_MONTHLY_BY_TIER,
     LONG_FORM_SCRIPT_CHARS_CAP_BY_TIER,
     MAX_MONTHLY_CENTS,
@@ -51,30 +53,37 @@ def jobs_terminal_monthly_quota(tier: str | None) -> int:
 
 
 def monthly_minutes_product_target(tier: str | None) -> int:
-    """产品口径：月配额分钟（展示/定价，不替代 jobs 计数）。"""
-    return int(MONTHLY_MINUTES_PRODUCT_BY_TIER[_norm_tier(tier)])
+    """已取消订阅月配额；保留函数供旧接口，恒为 0。"""
+    _ = tier
+    return 0
 
 
 def tier_ai_polish_monthly_quota(tier: str | None) -> int:
-    """
-    AI 润色月上限：0=不可用，-1=不限（仅矩阵语义，具体 enforcement 可后续接用量表）。
-    """
-    return int(TIER_AI_POLISH_MONTHLY_BY_TIER[_norm_tier(tier)])
+    """无订阅档位：不按套餐限制润色次数（-1=不限；总开关仍由 AI_POLISH_FEATURE_ENABLED 控制）。"""
+    _ = tier
+    return -1
 
 
 def tier_allows_ai_polish_entitlement(tier: str | None) -> bool:
-    """是否具备 AI 润色权益（不含 AI_POLISH_FEATURE_ENABLED 总开关）。"""
-    return tier_ai_polish_monthly_quota(tier) != 0
+    """无订阅档位：具备润色能力（不含 AI_POLISH_FEATURE_ENABLED 总开关）。"""
+    _ = tier
+    return True
 
 
 def max_note_refs_for_plan(tier: str | None) -> int:
-    """笔记本 RAG 参考资料条数上限。"""
-    return int(MAX_NOTE_REFS_BY_TIER[_norm_tier(tier)])
+    """笔记本 RAG 参考资料条数上限（与订阅档位解耦）。"""
+    _ = tier
+    return int(BILLING_MAX_NOTE_REFS)
+
+
+# subscription_limits 等模块使用的稳定导入名，语义与 max_note_refs_for_plan 相同
+max_note_refs_budget = max_note_refs_for_plan
 
 
 def voice_clone_monthly_included(tier: str | None) -> int:
-    """套餐内每月含克隆次数（上海自然月；超出后按 voice_clone_payg_cents 从钱包扣）。"""
-    return int(VOICE_CLONE_MONTHLY_INCLUDED_BY_TIER[_norm_tier(tier)])
+    """无套餐赠送：每次克隆均按钱包扣费。"""
+    _ = tier
+    return 0
 
 
 def voice_clone_payg_cents() -> int:
@@ -83,8 +92,9 @@ def voice_clone_payg_cents() -> int:
 
 
 def long_form_script_chars_cap(tier: str | None) -> int:
-    """长文与长文播客单次目标字数上限（与脚本生成 enforcement 一致）。"""
-    return int(LONG_FORM_SCRIPT_CHARS_CAP_BY_TIER[_norm_tier(tier)])
+    """长文与长文播客单次目标字数上限（与订阅档位解耦）。"""
+    _ = tier
+    return int(BILLING_LONG_FORM_SCRIPT_CHARS_CAP)
 
 
 def normalize_script_target_input(raw: Any) -> int | None:

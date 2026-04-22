@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PodcastWorksGallery from "../../components/podcast/PodcastWorksGallery";
 import { IconMic, IconTts } from "../../components/NavIcons";
 import PodcastStudio, { type PodcastStudioActivity } from "../../components/studio/PodcastStudio";
@@ -12,7 +12,10 @@ import { mergeUserFacingWorksByRecency, type WorkItem } from "../../lib/worksTyp
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
-import { pickQuickTopicsForDisplay } from "../../lib/createQuickTopics";
+
+type HotTopicAssistantItem = { label: string; text: string };
+
+type CreateWorksTab = "recent" | "templates";
 
 type CreateMode = "podcast" | "tts";
 
@@ -34,8 +37,67 @@ export default function CreatePage() {
   const [homeWorks, setHomeWorks] = useState<WorkItem[]>([]);
   const [worksLoading, setWorksLoading] = useState(true);
   const [worksErr, setWorksErr] = useState("");
-  const [quickTopicSeed, setQuickTopicSeed] = useState(() => Math.floor(Date.now() % 2147483646) + 1);
-  const quickTopicsShown = useMemo(() => pickQuickTopicsForDisplay(quickTopicSeed), [quickTopicSeed]);
+  const [hotTopicSeed, setHotTopicSeed] = useState(() => Math.floor(Date.now() % 2147483646) + 1);
+  const [hotTopics, setHotTopics] = useState<HotTopicAssistantItem[]>([]);
+  const [hotTopicsLoading, setHotTopicsLoading] = useState(false);
+  const [hotTopicsErr, setHotTopicsErr] = useState("");
+  const [hotTopicAssistantOpen, setHotTopicAssistantOpen] = useState(false);
+  /** 区分「本次已处于展开」与「刚从折叠变为展开」，避免展开态下随 state 重渲染重复请求 */
+  const hotTopicPanelWasOpenRef = useRef(false);
+  /** 用户手动切换「我的 / 模板」；`homeWorks.length` 变化时清空，回到系统默认策略 */
+  const [createWorksTabOverride, setCreateWorksTabOverride] = useState<CreateWorksTab | null>(null);
+  const [serverPodcastTemplates, setServerPodcastTemplates] = useState<WorkItem[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesErr, setTemplatesErr] = useState("");
+
+  const fetchHotTopics = useCallback(async (seed: number, opts?: { preserveOnError?: boolean }) => {
+    setHotTopicsLoading(true);
+    setHotTopicsErr("");
+    try {
+      const res = await fetch(`/api/create/hot-topics?seed=${encodeURIComponent(String(seed))}`, {
+        cache: "no-store",
+        credentials: "same-origin"
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+        topics?: HotTopicAssistantItem[];
+      };
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || `热点加载失败 ${res.status}`);
+      }
+      const list = Array.isArray(data.topics) ? data.topics : [];
+      setHotTopics(list);
+    } catch (e) {
+      const msg = String(e instanceof Error ? e.message : e);
+      if (opts?.preserveOnError) {
+        setHotTopicsErr(msg);
+        return;
+      }
+      setHotTopics([]);
+      setHotTopicsErr(msg);
+    } finally {
+      setHotTopicsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hotTopicAssistantOpen) {
+      hotTopicPanelWasOpenRef.current = false;
+      return;
+    }
+    const wasAlreadyOpen = hotTopicPanelWasOpenRef.current;
+    hotTopicPanelWasOpenRef.current = true;
+    if (wasAlreadyOpen) return;
+    if (hotTopics.length > 0) return;
+    void fetchHotTopics(hotTopicSeed);
+  }, [hotTopicAssistantOpen, hotTopics.length, hotTopicSeed, fetchHotTopics]);
+
+  const refreshHotTopics = useCallback(() => {
+    const next = (hotTopicSeed + 7919) % 2147483646;
+    setHotTopicSeed(next);
+    void fetchHotTopics(next, { preserveOnError: true });
+  }, [fetchHotTopics, hotTopicSeed]);
 
   const refreshWorks = useCallback(async () => {
     setWorksErr("");
@@ -74,6 +136,41 @@ export default function CreatePage() {
     void refreshWorks();
   }, [refreshWorks]);
 
+  const refreshPodcastTemplates = useCallback(async () => {
+    setTemplatesErr("");
+    setTemplatesLoading(true);
+    try {
+      const res = await fetch("/api/works/podcast-templates?limit=40&offset=0", {
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { ...getAuthHeaders() }
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        templates?: WorkItem[];
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || data.detail || `模板加载失败 ${res.status}`);
+      }
+      setServerPodcastTemplates(Array.isArray(data.templates) ? data.templates : []);
+    } catch (e) {
+      setTemplatesErr(String(e instanceof Error ? e.message : e));
+      setServerPodcastTemplates([]);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [getAuthHeaders]);
+
+  useEffect(() => {
+    void refreshPodcastTemplates();
+  }, [refreshPodcastTemplates]);
+
+  useEffect(() => {
+    setCreateWorksTabOverride(null);
+  }, [homeWorks.length]);
+
   useEffect(() => {
     if (mode !== "podcast") setLibraryPreview("");
   }, [mode]);
@@ -86,6 +183,11 @@ export default function CreatePage() {
 
   const createPageEyebrow = t("create.pageEyebrow").trim();
   const createPageSubtitle = t("create.pageSubtitle").trim();
+
+  const createWorksGalleryTab: CreateWorksTab =
+    createWorksTabOverride ?? (worksLoading ? "recent" : homeWorks.length > 0 ? "recent" : "templates");
+
+  const templateGalleryWorks = useMemo(() => [...serverPodcastTemplates], [serverPodcastTemplates]);
 
   return (
     <main className="mx-auto min-h-0 w-full max-w-3xl px-3 pb-12 pt-3 sm:px-4 sm:pt-6">
@@ -220,54 +322,173 @@ export default function CreatePage() {
         ) : null}
       </section>
 
-      <section className="mt-6">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted">快速选题</p>
-          <button
-            type="button"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-line bg-fill/50 text-muted transition hover:border-brand/40 hover:bg-brand/10 hover:text-brand"
-            title="换一批选题"
-            aria-label="换一批选题"
-            onClick={() => setQuickTopicSeed((s) => (s + 7919) % 2147483646)}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <section className="mt-6 overflow-hidden rounded-xl border border-line bg-fill/25">
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition hover:bg-fill/50 sm:px-4"
+          aria-expanded={hotTopicAssistantOpen}
+          aria-controls="create-hot-topic-panel"
+          onClick={() => setHotTopicAssistantOpen((o) => !o)}
+        >
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted">选题助手</span>
+          {hotTopicsErr && !hotTopicAssistantOpen ? (
+            <span className="rounded-md bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400">
+              加载失败
+            </span>
+          ) : null}
+          <span className="ml-auto flex items-center gap-2">
+            {hotTopicsLoading && !hotTopicAssistantOpen ? (
+              <span
+                className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted border-t-brand"
+                aria-hidden
+              />
+            ) : null}
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              className={`shrink-0 text-muted transition-transform duration-200 ${hotTopicAssistantOpen ? "rotate-180" : ""}`}
+              aria-hidden
+            >
               <path
-                d="M4 9a8 8 0 0113.657-5.657M20 15a8 8 0 01-13.657 5.657M20 15v-4M4 9v4"
+                d="M6 9l6 6 6-6"
                 stroke="currentColor"
                 strokeWidth="1.75"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
             </svg>
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {quickTopicsShown.map((topic) => (
+          </span>
+        </button>
+        <div
+          id="create-hot-topic-panel"
+          hidden={!hotTopicAssistantOpen}
+          className="border-t border-line px-3 pb-3 pt-2 sm:px-4"
+        >
+          <div className="mb-2 flex justify-end">
             <button
-              key={`${quickTopicSeed}-${topic.label}`}
               type="button"
-              className="max-w-full rounded-full border border-line bg-fill/40 px-3 py-1.5 text-left text-xs text-ink transition hover:border-brand/40 hover:bg-brand/5"
-              onClick={() => setDraftText(`【${topic.label}】\n${topic.text.trim()}`)}
+              disabled={hotTopicsLoading}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-line bg-fill/50 text-muted transition hover:border-brand/40 hover:bg-brand/10 hover:text-brand disabled:pointer-events-none disabled:opacity-40"
+              title="换一批"
+              aria-label="换一批"
+              onClick={() => refreshHotTopics()}
             >
-              {topic.label}
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden
+                className={hotTopicsLoading ? "animate-spin" : ""}
+              >
+                <path
+                  d="M4 9a8 8 0 0113.657-5.657M20 15a8 8 0 01-13.657 5.657M20 15v-4M4 9v4"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
-          ))}
+          </div>
+          {hotTopicsErr ? (
+            <p className="mb-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+              {hotTopicsErr}
+            </p>
+          ) : null}
+          <div
+            className={`grid grid-cols-3 grid-rows-2 gap-2 sm:gap-3 ${hotTopicsLoading ? "opacity-70" : ""}`}
+          >
+            {hotTopics.length === 0 && hotTopicsLoading
+              ? Array.from({ length: 6 }).map((_, i) => (
+                  <div
+                    key={`sk-${i}`}
+                    className="min-h-[4.25rem] animate-pulse rounded-lg border border-line bg-fill/80"
+                    aria-hidden
+                  />
+                ))
+              : hotTopics.map((topic, idx) => (
+                  <button
+                    key={`${hotTopicSeed}-${idx}-${topic.label}`}
+                    type="button"
+                    className="flex min-h-[4.25rem] items-start rounded-lg border border-line bg-fill/40 px-2.5 py-2 text-left text-xs leading-snug text-ink transition hover:border-brand/40 hover:bg-brand/5 sm:px-3 sm:text-[13px]"
+                    onClick={() => setDraftText(topic.text.trim())}
+                  >
+                    <span className="line-clamp-3 break-words">{topic.label}</span>
+                  </button>
+                ))}
+          </div>
         </div>
       </section>
 
       <section className="mt-8">
-        <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-          <h2 className="text-lg font-semibold text-ink">最近成品</h2>
-          <Link href="/works" className="text-xs font-medium text-brand hover:underline">
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <h2 className="text-lg font-semibold text-ink">最近成品</h2>
+            <div
+              role="tablist"
+              aria-label="成品来源"
+              className="inline-flex w-max max-w-full shrink-0 rounded-lg border border-line bg-fill/40 p-0.5 text-xs font-medium"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={createWorksGalleryTab === "recent"}
+                className={[
+                  "rounded-md px-2.5 py-1 transition sm:px-3",
+                  createWorksGalleryTab === "recent"
+                    ? "bg-surface text-ink shadow-sm ring-1 ring-line/60"
+                    : "text-muted hover:text-ink"
+                ].join(" ")}
+                onClick={() => setCreateWorksTabOverride("recent")}
+              >
+                我的
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={createWorksGalleryTab === "templates"}
+                className={[
+                  "rounded-md px-2.5 py-1 transition sm:px-3",
+                  createWorksGalleryTab === "templates"
+                    ? "bg-surface text-ink shadow-sm ring-1 ring-line/60"
+                    : "text-muted hover:text-ink"
+                ].join(" ")}
+                onClick={() => setCreateWorksTabOverride("templates")}
+              >
+                模板
+              </button>
+            </div>
+          </div>
+          <Link href="/works" className="text-xs font-medium text-brand hover:underline sm:shrink-0">
             查看全部
           </Link>
         </div>
+        {createWorksGalleryTab === "templates" && templatesErr.trim() ? (
+          <p className="mb-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+            模板列表加载失败：{templatesErr}
+          </p>
+        ) : null}
+        {createWorksGalleryTab === "recent" && worksErr.trim() ? (
+          <p className="mb-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+            「我的」列表加载失败：{worksErr}
+          </p>
+        ) : null}
         <PodcastWorksGallery
+          key={createWorksGalleryTab}
           variant="all"
-          works={homeWorks.slice(0, 12)}
-          loading={worksLoading}
-          fetchError={worksErr}
-          onDismissError={() => setWorksErr("")}
+          works={createWorksGalleryTab === "recent" ? homeWorks.slice(0, 12) : templateGalleryWorks}
+          loading={
+            (createWorksGalleryTab === "recent" && worksLoading) ||
+            (createWorksGalleryTab === "templates" && templatesLoading)
+          }
+          fetchError={createWorksGalleryTab === "recent" ? worksErr : templatesErr}
+          onDismissError={() => {
+            if (createWorksGalleryTab === "recent") setWorksErr("");
+            else setTemplatesErr("");
+          }}
           onWorkDeleted={() => void refreshWorks()}
         />
       </section>

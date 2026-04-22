@@ -11,8 +11,12 @@ export interface JobArtifactRecord {
 export interface JobRecord {
   id: string;
   project_id: string | null;
+  /** GET /jobs/:id 可能附带，用于复用创建任务时的 project_name */
+  project_name?: string | null;
   /** 创建任务的操作人（手机号或标识），与 orchestrator jobs.created_by 一致 */
   created_by?: string | null;
+  /** 列表/详情 JOIN users 后的可读创建者名（display_name → phone → email） */
+  creator_label?: string | null;
   status: JobStatus;
   job_type: string;
   queue_name: "ai" | "media" | string;
@@ -25,6 +29,8 @@ export interface JobRecord {
     upstream_status_code?: number | null;
   };
   error_message: string | null;
+  /** 成功播客成片是否被设为全站创作模板（仅管理员可改） */
+  is_podcast_template?: boolean;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;

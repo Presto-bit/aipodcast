@@ -23,5 +23,5 @@ export function messageSuggestsBillingTopUpOrSubscription(text: string): boolean
   return false;
 }
 
-/** 订阅页「账户余额充值」区块锚点（与 page 内 id 一致） */
+/** 订阅页打开充值弹窗的锚点（与 subscription/page 内 hash 处理一致） */
 export const SUBSCRIPTION_WALLET_TOPUP_HASH = "#wallet-topup";

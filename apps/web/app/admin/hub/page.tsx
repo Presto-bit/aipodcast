@@ -17,18 +17,6 @@ export default function AdminHubPage() {
           <Link href="/admin/jobs" className="rounded-lg border border-line bg-canvas/60 px-3 py-2 text-sm text-ink hover:bg-fill">
             打开创作记录
           </Link>
-          <Link
-            href="/admin/subscription-matrix"
-            className="rounded-lg border border-line bg-canvas/60 px-3 py-2 text-sm text-ink hover:bg-fill"
-          >
-            订阅与权限矩阵
-          </Link>
-          <Link
-            href="/admin/subscription-pay"
-            className="rounded-lg border border-line bg-canvas/60 px-3 py-2 text-sm text-ink hover:bg-fill"
-          >
-            订阅收银（内测）
-          </Link>
           <Link href="/" className="text-sm text-brand hover:text-brand/80">
             返回首页
           </Link>

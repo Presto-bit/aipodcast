@@ -5,8 +5,8 @@ function e2eLoginPassword(): string {
   return p.length >= 8 ? p : "E2eSmoke!ci900";
 }
 
-test.describe("侧栏订阅入口与任务进度（全栈 + FYV_AUTH）", () => {
-  test("登录后可见侧栏订阅入口；进行中任务有进度条", async ({ page }) => {
+test.describe("侧栏余额入口与任务进度（全栈 + FYV_AUTH）", () => {
+  test("登录后可见侧栏余额入口；进行中任务有进度条", async ({ page }) => {
     const web = (process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
     const orch = (process.env.ORCHESTRATOR_URL || "http://127.0.0.1:8008").replace(/\/$/, "");
     const token = (process.env.E2E_SMOKE_SECRET || "").trim();

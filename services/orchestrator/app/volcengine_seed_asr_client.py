@@ -1,4 +1,8 @@
-"""火山 / 豆包「大模型录音文件识别 2.0」（Seed-ASR，异步 submit + query）。"""
+"""火山 / 豆包「大模型录音文件识别 2.0」（Seed-ASR，异步 submit + query）。
+
+参考定价（音频转写、按输入音频时长）：约 2.3 元/小时；常量与估算函数见 ``usage_billing`` 中
+``DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR`` / ``estimate_doubao_seed_asr_cost_cny``。实际以供应商账单为准。
+"""
 
 from __future__ import annotations
 
@@ -30,6 +34,45 @@ RESOURCE_ID_DEFAULT = "volc.seedasr.auc"
 # 与官方文档及社区示例一致：排队 / 处理中需继续轮询
 _PENDING_STATUS = frozenset({"20000001", "20000002"})
 _SUCCESS = "20000000"
+
+
+def build_volc_seed_corpus_block(
+    *,
+    hotwords: list[str] | None,
+    scene: str | None,
+) -> dict[str, str] | None:
+    """
+    6561/1354868：``request.corpus`` 为对象，其中 ``context`` 为 **JSON 字符串**。
+    热词：`{"hotwords":[{"word":"..."}]}`；场景：`{"context_type":"dialog_ctx","context_data":[{"text":"..."}]}`。
+    二者皆有则合并为一条 dialog_ctx 文本（避免非文档化的双结构混用）。
+    """
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    if isinstance(hotwords, list):
+        for x in hotwords:
+            w = str(x or "").strip()[:48]
+            if not w or w in seen:
+                continue
+            seen.add(w)
+            cleaned.append(w)
+            if len(cleaned) >= 500:
+                break
+    scene_t = str(scene or "").strip()
+    if len(scene_t) > 3500:
+        scene_t = scene_t[:3500]
+    if not cleaned and not scene_t:
+        return None
+    if cleaned and not scene_t:
+        inner: dict[str, Any] = {"hotwords": [{"word": w} for w in cleaned]}
+    elif scene_t and not cleaned:
+        inner = {"context_type": "dialog_ctx", "context_data": [{"text": scene_t}]}
+    else:
+        lines = "\n".join(f"「{w}」" for w in cleaned[:400])
+        combined = f"{scene_t}\n\n以下为节目中可能出现的专有名词（请按字面优先转写）：\n{lines}"
+        if len(combined) > 4000:
+            combined = combined[:4000]
+        inner = {"context_type": "dialog_ctx", "context_data": [{"text": combined}]}
+    return {"context": json.dumps(inner, ensure_ascii=False)}
 
 
 def _infer_audio_format_from_url(url: str) -> str:
@@ -130,9 +173,13 @@ def _volc_seed_submit(
     timeout_sec: float,
     diarization_enabled: bool,
     channel_split: bool,
+    vad_segment: bool,
+    vad_end_window_ms: int | None,
+    corpus_block: dict[str, str] | None,
     audio_format: str,
     audio_url: str | None = None,
     audio_data_b64: str | None = None,
+    audio_language: str | None = None,
 ) -> tuple[str, str | None]:
     """返回 (task_id, x_tt_logid)。task_id 即请求头中的 X-Api-Request-Id。"""
     task_id = str(uuid.uuid4())
@@ -145,19 +192,35 @@ def _volc_seed_submit(
         audio_mode = "url"
     else:
         raise RuntimeError("豆包 submit：需提供 audio_url 或内联 audio_data_b64")
-    body: dict[str, Any] = {
-        "user": {"uid": str(uid)},
-        "audio": audio_obj,
-        "request": {
-            "model_name": "bigmodel",
-            "show_utterances": True,
-            "enable_itn": True,
-            "enable_punc": True,
-            "enable_ddc": True,
-            "enable_speaker_info": bool(diarization_enabled),
-            "enable_channel_split": bool(channel_split),
-        },
+    al = (audio_language or "").strip()
+    if al:
+        audio_obj["language"] = al
+    # 语义顺滑会改写语气词等，可能与「词级口癖剪辑」冲突；标点由 enable_punc 控制（见 6561/1354868）。
+    _ddc_raw = (os.getenv("CLIP_VOLC_SEED_ENABLE_DDC") or "1").strip().lower()
+    enable_ddc = _ddc_raw not in ("0", "false", "off", "no")
+    req: dict[str, Any] = {
+        "model_name": "bigmodel",
+        "show_utterances": True,
+        "enable_itn": True,
+        "enable_punc": True,
+        "enable_ddc": enable_ddc,
+        "enable_speaker_info": bool(diarization_enabled),
+        "enable_channel_split": bool(channel_split),
     }
+    # 单轨 / 双轨均使用火山 VAD 判停分句 + end_window_size；是否分轨由 enable_channel_split 决定。
+    if vad_segment:
+        win = int(vad_end_window_ms or 800)
+        win = max(300, min(5000, win))
+        req["vad_segment"] = True
+        req["end_window_size"] = win
+    if corpus_block:
+        req["corpus"] = corpus_block
+    if diarization_enabled:
+        # 6561/1354868：enable_speaker_info 时建议配合 ssd_version（如「200」）以启用说话人相关 SSD。
+        _ssd = (os.getenv("CLIP_VOLC_SEED_SSD_VERSION") or "200").strip()
+        if _ssd and _ssd.lower() not in ("0", "false", "off", "no", "none"):
+            req["ssd_version"] = _ssd
+    body: dict[str, Any] = {"user": {"uid": str(uid)}, "audio": audio_obj, "request": req}
     headers = _headers(
         api_key=api_key,
         app_key=app_key,
@@ -171,13 +234,20 @@ def _volc_seed_submit(
     msg = (r.headers.get("X-Api-Message") or r.headers.get("x-api-message") or "").strip()
     logid = (r.headers.get("X-Tt-Logid") or r.headers.get("x-tt-logid") or "").strip() or None
     logger.info(
-        "volc_seed_submit status=%s message=%s logid=%s http=%s audio.mode=%s audio.format=%s",
+        "volc_seed_submit status=%s message=%s logid=%s http=%s audio.mode=%s audio.format=%s "
+        "channel_split=%s vad_segment=%s corpus=%s diar=%s ssd=%s audio.lang=%s",
         st,
         msg[:200],
         (logid or "")[:80],
         r.status_code,
         audio_mode,
         audio_format,
+        channel_split,
+        vad_segment,
+        bool(corpus_block),
+        diarization_enabled,
+        str(req.get("ssd_version") or ""),
+        al or "",
     )
     if r.status_code != 200:
         raw = (r.text or "")[:800]
@@ -265,6 +335,8 @@ def volc_seed_recognize_url_wait(
     channel_ids: list[int] | None = None,
     audio_filename: str | None = None,
     audio_mime: str | None = None,
+    corpus_hotwords: list[str] | None = None,
+    corpus_scene: str | None = None,
 ) -> dict[str, Any]:
     """
     提交音频异步任务并轮询 query，返回与极速版类似的 JSON 体（含 audio_info / result）。
@@ -277,6 +349,16 @@ def volc_seed_recognize_url_wait(
     - 新控制台：VOLCENGINE_SPEECH_API_KEY（或别名 VOLCENGINE_OPENSPEECH_API_KEY）
     - 旧控制台：VOLCENGINE_SPEECH_APP_KEY + VOLCENGINE_SPEECH_ACCESS_KEY（或 ACCESS_TOKEN）
     可选 VOLCENGINE_SEED_ASR_RESOURCE_ID（默认 volc.seedasr.auc）。
+
+    分句策略（后台自动）：单轨与双轨均提交 ``vad_segment`` + ``end_window_size``（判停灵敏度，毫秒）。
+    灵敏度由 ``CLIP_VOLC_SEED_VAD_END_WINDOW_MS`` 控制（默认 800，范围 300–5000）。
+    双声道时 ``enable_channel_split`` 仍为 true，与 VAD 分句可同时使用。
+
+    ``corpus_hotwords`` / ``corpus_scene`` 写入 ``request.corpus.context``（见文档语料/上下文）。
+
+    说话人信息（``enable_speaker_info``）相关环境变量：
+    - ``CLIP_VOLC_SEED_SSD_VERSION``：默认 ``200``；设为 ``0`` / ``false`` / ``off`` / ``no`` / ``none`` 时不下发 ``ssd_version``。
+    - ``CLIP_VOLC_SEED_AUDIO_LANGUAGE``：非空则写入 ``audio.language``（如 ``zh-CN``）；留空则不指定（走模型多语自动）。
     """
     cfg = _volc_seed_env()
     has_single = bool(cfg["api_key"])
@@ -289,6 +371,15 @@ def volc_seed_recognize_url_wait(
     uid = (cfg["uid"] or cfg["api_key"]).strip()
     ch = channel_ids if isinstance(channel_ids, list) and len(channel_ids) >= 2 else []
     channel_split = len(ch) >= 2
+    vad_segment = True
+    try:
+        vad_end_raw = int(os.getenv("CLIP_VOLC_SEED_VAD_END_WINDOW_MS") or "800")
+    except (TypeError, ValueError):
+        vad_end_raw = 800
+    vad_end_window_ms = max(300, min(5000, vad_end_raw))
+    corpus_block = build_volc_seed_corpus_block(hotwords=corpus_hotwords, scene=corpus_scene)
+    _al = (os.getenv("CLIP_VOLC_SEED_AUDIO_LANGUAGE") or "").strip()
+    audio_lang = _al or None
     u = (file_url or "").strip()
     inline = audio_bytes if isinstance(audio_bytes, (bytes, bytearray)) and len(audio_bytes) > 0 else None
     if inline is not None:
@@ -304,9 +395,13 @@ def volc_seed_recognize_url_wait(
             timeout_sec=float(cfg["submit_timeout_sec"]),
             diarization_enabled=diarization_enabled,
             channel_split=channel_split,
+            vad_segment=vad_segment,
+            vad_end_window_ms=vad_end_window_ms,
+            corpus_block=corpus_block,
             audio_format=audio_format,
             audio_url=None,
             audio_data_b64=b64,
+            audio_language=audio_lang,
         )
     else:
         if not u:
@@ -322,9 +417,13 @@ def volc_seed_recognize_url_wait(
             timeout_sec=float(cfg["submit_timeout_sec"]),
             diarization_enabled=diarization_enabled,
             channel_split=channel_split,
+            vad_segment=vad_segment,
+            vad_end_window_ms=vad_end_window_ms,
+            corpus_block=corpus_block,
             audio_format=audio_format,
             audio_url=u,
             audio_data_b64=None,
+            audio_language=audio_lang,
         )
 
     deadline = time.monotonic() + float(cfg["poll_max_sec"])

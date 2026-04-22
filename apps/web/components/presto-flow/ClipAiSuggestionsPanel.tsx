@@ -6,7 +6,7 @@ type Props = {
   title: string;
   empty: string;
   suggestions: ClipEditSuggestion[];
-  onJumpWord?: (wordId: string) => void;
+  onJumpWord?: (wordId: string, opts?: { lineEndAutopause?: boolean }) => void;
   jumpLabel: string;
   deepseekTitle?: string;
   /** 两阶段：意向（outline） */
@@ -23,6 +23,8 @@ type Props = {
   onExecute?: (s: ClipEditSuggestion) => void;
   /** 嵌入右侧工作台抽屉时去掉侧栏边框与固定宽度 */
   embedded?: boolean;
+  /** 与粗剪合并展示时隐藏大标题，仅保留模型按钮与列表 */
+  hideTitle?: boolean;
 };
 
 export default function ClipAiSuggestionsPanel({
@@ -42,17 +44,15 @@ export default function ClipAiSuggestionsPanel({
   expandOutlineLabel,
   outlineExpandBusy,
   onExecute,
-  embedded
+  embedded,
+  hideTitle
 }: Props) {
   const llmBusy = Boolean(deepseekOutlineBusy || deepseekStructuredBusy || outlineExpandBusy);
   const wrapClass = embedded
     ? "flex min-h-0 w-full min-w-0 flex-col gap-2 overflow-y-auto bg-surface/50 p-1"
     : "flex min-h-0 w-full min-w-0 flex-col gap-2 overflow-y-auto border-l border-line bg-surface/60 p-3 lg:max-w-sm lg:shrink-0 lg:basis-[min(22rem,28vw)]";
-  return (
-    <aside className={wrapClass}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h2>
-        <div className="flex shrink-0 flex-wrap justify-end gap-1">
+  const buttons = (
+    <div className="flex shrink-0 flex-wrap justify-end gap-1">
           {deepseekOutlineLabel && onLoadDeepseekOutline ? (
             <button
               type="button"
@@ -73,8 +73,19 @@ export default function ClipAiSuggestionsPanel({
               {deepseekStructuredBusy ? "…" : deepseekStructuredLabel}
             </button>
           ) : null}
+    </div>
+  );
+
+  return (
+    <aside className={wrapClass}>
+      {hideTitle ? (
+        <div className="flex flex-wrap justify-end gap-1">{buttons}</div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h2>
+          {buttons}
         </div>
-      </div>
+      )}
       {deepseekTitle ? <p className="text-[10px] leading-relaxed text-muted">{deepseekTitle}</p> : null}
       {suggestions.length === 0 ? (
         <p className="rounded-xl border border-line bg-fill/40 p-3 text-[11px] leading-relaxed text-muted">{empty}</p>

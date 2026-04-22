@@ -731,11 +731,12 @@ def build_summaries_section(
     ordered_ids: list[str],
     user_ref: str | None,
     max_chars: int,
+    project_owner_user_uuid: str | None = None,
 ) -> str:
     parts: list[str] = []
     used = 0
     for i, nid in enumerate(ordered_ids, start=1):
-        row = get_note_by_id(nid, user_ref=user_ref)
+        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
         if not row:
             continue
         title = _metadata_title(row, nid)
@@ -764,6 +765,7 @@ def build_layered_notes_context(
     summary_budget: int,
     retrieval_budget: int,
     top_k: int = 36,
+    project_owner_user_uuid: str | None = None,
 ) -> tuple[str | None, list[dict[str, str]], dict[str, Any]]:
     """
     若勾选范围内无任何索引块，返回 (None, [], meta) 表示应回退旧逻辑。
@@ -787,7 +789,7 @@ def build_layered_notes_context(
 
     sources: list[dict[str, str]] = []
     for i, nid in enumerate(ordered, start=1):
-        row = get_note_by_id(nid, user_ref=user_ref)
+        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
         if not row:
             raise ValueError("note_not_found")
         if _metadata_notebook(row) != nb:
@@ -801,7 +803,10 @@ def build_layered_notes_context(
         return None, [], meta
 
     sum_part = build_summaries_section(
-        ordered_ids=ordered, user_ref=user_ref, max_chars=summary_budget
+        ordered_ids=ordered,
+        user_ref=user_ref,
+        max_chars=summary_budget,
+        project_owner_user_uuid=project_owner_user_uuid,
     )
     retr, retr_meta, retrieve_obs = retrieve_chunks_across_notes(
         note_ids=ordered,
@@ -826,7 +831,9 @@ def build_layered_notes_context(
     return ctx, sources, meta
 
 
-def _layered_source_manifest_block(ordered: list[str], user_ref: str | None) -> str:
+def _layered_source_manifest_block(
+    ordered: list[str], user_ref: str | None, project_owner_user_uuid: str | None = None
+) -> str:
     """固定 N 与「来源1…N」对应关系，减少模型把检索中出现次数误当成勾选条数。"""
     n = len(ordered)
     lines: list[str] = [
@@ -836,7 +843,7 @@ def _layered_source_manifest_block(ordered: list[str], user_ref: str | None) -> 
         "条目：",
     ]
     for i, nid in enumerate(ordered, start=1):
-        row = get_note_by_id(nid, user_ref=user_ref)
+        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
         title = _metadata_title(row, nid) if row else nid
         lines.append(f"- 来源{i}：{title}（noteId={nid}）")
     return "\n".join(lines)
@@ -850,6 +857,7 @@ def build_layered_reference_block(
     summary_budget: int,
     retrieval_budget: int,
     top_k: int = 40,
+    project_owner_user_uuid: str | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     """供 merge_reference_for_script：无 notebook 校验，仅按 note id 列表。"""
     meta: dict[str, Any] = {"layered_ref": True}
@@ -862,7 +870,10 @@ def build_layered_reference_block(
         return None, meta
 
     sum_part = build_summaries_section(
-        ordered_ids=ordered, user_ref=user_ref, max_chars=summary_budget
+        ordered_ids=ordered,
+        user_ref=user_ref,
+        max_chars=summary_budget,
+        project_owner_user_uuid=project_owner_user_uuid,
     )
     retr, _rm, retrieve_obs = retrieve_chunks_across_notes(
         note_ids=ordered,
@@ -871,7 +882,7 @@ def build_layered_reference_block(
         top_k=top_k,
     )
     meta["retrieve_obs"] = retrieve_obs
-    blocks: list[str] = [_layered_source_manifest_block(ordered, user_ref)]
+    blocks: list[str] = [_layered_source_manifest_block(ordered, user_ref, project_owner_user_uuid)]
     if sum_part:
         blocks.append(sum_part)
     if retr:

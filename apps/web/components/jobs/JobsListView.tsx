@@ -58,6 +58,31 @@ function formatJobDuration(j: JobRecord): string {
   return "—";
 }
 
+/** 列表接口 creator_label（用户名/手机等）+ created_by 回退 */
+function jobCreatorDisplayName(j: JobRecord): string {
+  const label = String(j.creator_label ?? "").trim();
+  if (label) return label;
+  const raw = String(j.created_by ?? "").trim();
+  return raw || "—";
+}
+
+/** 已成功任务：是否提供成片入口（作品页或后台详情） */
+function succeededContentPeekKinds(j: JobRecord): { audio: boolean; article: boolean } | null {
+  if (j.status !== "succeeded") return null;
+  const jt = String(j.job_type || "");
+  if (jt === "script_draft") return { audio: false, article: true };
+  if (jt === "podcast_generate" || jt === "podcast") return { audio: true, article: true };
+  if (jt === "tts" || jt === "text_to_speech") return { audio: true, article: false };
+  return null;
+}
+
+/** 成品页链接：用户进作品页；管理员进后台任务详情成品区 */
+function succeededContentPeekHref(j: JobRecord, isAdmin: boolean): string | null {
+  if (!succeededContentPeekKinds(j)) return null;
+  const id = encodeURIComponent(j.id);
+  return isAdmin ? `/admin/jobs/${id}` : `/works/${id}`;
+}
+
 export type JobsListViewVariant = "public" | "admin";
 
 type JobsListViewProps = {
@@ -77,6 +102,19 @@ export default function JobsListView({ variant }: JobsListViewProps) {
   const [stoppingId, setStoppingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [purgeBusy, setPurgeBusy] = useState(false);
+  const [copiedJobId, setCopiedJobId] = useState<string | null>(null);
+
+  const copyJobId = useCallback(async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopiedJobId(id);
+      window.setTimeout(() => {
+        setCopiedJobId((cur) => (cur === id ? null : cur));
+      }, 2000);
+    } catch {
+      window.prompt("复制以下任务 ID：", id);
+    }
+  }, []);
 
   useEffect(() => {
     setPage(1);
@@ -293,8 +331,8 @@ export default function JobsListView({ variant }: JobsListViewProps) {
           }
         />
       ) : (
-        <section className="fym-table-shell mt-6 overflow-x-auto">
-          <table className="w-full min-w-[880px] text-left text-sm">
+        <section className="fym-table-shell mt-6 min-w-0 max-w-full overflow-x-auto overflow-y-visible overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+          <table className="w-full min-w-[min(110rem,1180px)] text-left text-sm">
             <thead className="border-b border-line bg-fill text-xs text-muted">
               <tr>
                 {!isAdmin ? (
@@ -302,18 +340,21 @@ export default function JobsListView({ variant }: JobsListViewProps) {
                 ) : null}
                 <th className="px-3 py-2">状态</th>
                 <th className="px-3 py-2">类型</th>
+                <th className="px-3 py-2">任务 ID</th>
                 <th className="px-3 py-2">创建者</th>
                 <th className="px-3 py-2">通道</th>
                 <th className="px-3 py-2">进度</th>
                 <th className="px-3 py-2">耗时</th>
                 <th className="px-3 py-2">创建时间</th>
+                <th className="px-3 py-2">成品</th>
                 <th className="px-3 py-2">操作</th>
               </tr>
             </thead>
             <tbody>
               {jobs.map((j) => {
                 const canStop = j.status === "queued" || j.status === "running";
-                const operator = j.created_by?.trim() || "—";
+                const peekKinds = succeededContentPeekKinds(j);
+                const peekHref = succeededContentPeekHref(j, isAdmin);
                 return (
                   <tr key={j.id} className="border-b border-line hover:bg-fill">
                     {!isAdmin ? (
@@ -332,13 +373,40 @@ export default function JobsListView({ variant }: JobsListViewProps) {
                       <span className={`rounded px-2 py-0.5 text-xs ${statusBadge(j.status)}`}>{j.status}</span>
                     </td>
                     <td className="px-3 py-2 text-ink">{j.job_type}</td>
-                    <td className="max-w-[10rem] truncate px-3 py-2 text-muted" title={operator}>
-                      {operator}
+                    <td className="max-w-[min(22rem,40vw)] px-3 py-2 align-top">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center">
+                        <span className="break-all font-mono text-[11px] text-ink/90 select-all" title={j.id}>
+                          {j.id}
+                        </span>
+                        <button
+                          type="button"
+                          className="w-max shrink-0 rounded border border-line bg-fill px-1.5 py-0.5 text-[10px] font-medium text-brand hover:bg-surface"
+                          onClick={() => void copyJobId(j.id)}
+                        >
+                          {copiedJobId === j.id ? "已复制" : "复制 ID"}
+                        </button>
+                      </div>
+                    </td>
+                    <td className="max-w-[12rem] truncate px-3 py-2 text-ink" title={jobCreatorDisplayName(j)}>
+                      {jobCreatorDisplayName(j)}
                     </td>
                     <td className="px-3 py-2 text-muted">{j.queue_name}</td>
                     <td className="px-3 py-2 text-muted">{j.progress}%</td>
                     <td className="px-3 py-2 text-xs tabular-nums text-muted">{formatJobDuration(j)}</td>
                     <td className="px-3 py-2 text-xs text-muted">{j.created_at?.replace("T", " ").slice(0, 19) ?? "-"}</td>
+                    <td className="px-3 py-2">
+                      {peekKinds && peekHref ? (
+                        <Link
+                          className="text-sm font-medium text-brand underline hover:text-brand/90"
+                          href={peekHref}
+                          title={isAdmin ? "打开任务详情（含成品与文稿）" : "打开作品详情（含音频与文稿）"}
+                        >
+                          详情
+                        </Link>
+                      ) : (
+                        <span className="text-xs text-muted">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <Link className="text-brand underline hover:text-brand/90" href={`${basePath}/${j.id}`}>
