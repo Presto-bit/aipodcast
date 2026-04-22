@@ -100,12 +100,13 @@ def migrate_users(*, dry_run: bool) -> tuple[int, int]:
         p = str(phone or "").strip()
         if not p or not isinstance(user, dict):
             continue
+        tier = str(user.get("acct_tier") or user.get("plan") or "free").strip().lower() or "free"
         rows.append(
             {
                 "phone": p,
                 "display_name": str(user.get("display_name") or p).strip() or p,
                 "role": str(user.get("role") or "user").strip().lower() or "user",
-                "plan": str(user.get("plan") or "free").strip().lower() or "free",
+                "acct_tier": tier,
                 "billing_cycle": (str(user.get("billing_cycle") or "").strip().lower() or ""),
                 "password_hash": str(user.get("password_hash") or "").strip(),
             }
@@ -139,12 +140,12 @@ def migrate_users(*, dry_run: bool) -> tuple[int, int]:
             for r in rows:
                 cur.execute(
                     """
-                    INSERT INTO users (phone, display_name, role, plan, billing_cycle, updated_at)
+                    INSERT INTO users (phone, display_name, role, acct_tier, billing_cycle, updated_at)
                     VALUES (%s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (phone) WHERE (phone IS NOT NULL AND btrim(phone) <> '') DO UPDATE SET
                       display_name = EXCLUDED.display_name,
                       role = EXCLUDED.role,
-                      plan = EXCLUDED.plan,
+                      acct_tier = EXCLUDED.acct_tier,
                       billing_cycle = EXCLUDED.billing_cycle,
                       updated_at = NOW()
                     RETURNING id
@@ -153,7 +154,7 @@ def migrate_users(*, dry_run: bool) -> tuple[int, int]:
                         r["phone"],
                         r["display_name"],
                         r["role"] if r["role"] in ("user", "admin") else "user",
-                        r["plan"] if r["plan"] in ("free", "basic", "pro", "max") else "free",
+                        r["acct_tier"] if r["acct_tier"] in ("free", "basic", "pro", "max") else "free",
                         (r["billing_cycle"] if r["billing_cycle"] in ("monthly", "yearly") else None),
                     ),
                 )

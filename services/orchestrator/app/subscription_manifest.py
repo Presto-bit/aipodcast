@@ -22,7 +22,7 @@ TIER_LABELS: dict[str, str] = {
     "payg": "按次（无订阅）",
 }
 
-# 可写入 users.plan / 订阅事件的档位（不含 payg）
+# 可写入 users.acct_tier / 订阅事件的档位（不含 payg）
 USER_SUBSCRIPTION_TIERS: frozenset[str] = frozenset({"free", "basic", "pro", "max"})
 
 # ---------------------------------------------------------------------------

@@ -2716,6 +2716,16 @@ def user_info_for_principal(ref: str) -> Dict[str, Any]:
         or str(u.get("email") or "").strip()
         or ref
     )
+    tier_src = u.get("acct_tier")
+    if tier_src is None and u.get("plan") is not None:
+        tier_src = u.get("plan")
+    acct_tier_out = _coerce_stored_acct_tier(tier_src)
+    bc_raw = u.get("billing_cycle")
+    bc_out: str | None = None
+    if bc_raw is not None:
+        s = str(bc_raw).strip().lower()
+        if s in VALID_BILLING:
+            bc_out = s
     return {
         "user_id": uid or None,
         "phone": phone_out or None,
@@ -2724,6 +2734,8 @@ def user_info_for_principal(ref: str) -> Dict[str, Any]:
         "email_verified": bool(u.get("email_verified_at")),
         "display_name": dn,
         "role": r,
+        "acct_tier": acct_tier_out,
+        "billing_cycle": bc_out,
     }
 
 
@@ -3001,6 +3013,8 @@ def list_users_admin_view() -> list[Dict[str, Any]]:
                         "email": str(raw.get("email") or ""),
                         "username": str(raw.get("username") or ""),
                         "role": _normalize_role(raw.get("role")),
+                        "acct_tier": _coerce_stored_acct_tier(raw.get("acct_tier")),
+                        "billing_cycle": raw.get("billing_cycle"),
                         "account_status": str(raw.get("account_status") or "active"),
                         "created_at": int(raw.get("created_at") or 0),
                         "has_password": bool(raw.get("has_password")),

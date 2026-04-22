@@ -4229,7 +4229,7 @@ def ensure_users_profile_columns() -> None:
     """为 users 表补充档位与按手机号解析用户所需列（兼容旧库、未跑 011 迁移的实例）。"""
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free'")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS acct_tier TEXT NOT NULL DEFAULT 'free'")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_cycle TEXT")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_normalized TEXT")
             cur.execute(
@@ -4249,7 +4249,7 @@ def sync_user_profile_to_pg(
     user_id: str | None = None,
     display_name: str | None = None,
     role: str | None = None,
-    plan: str | None = None,
+    acct_tier: str | None = None,
     billing_cycle: str | None = None,
 ) -> None:
     """将用户核心档案同步到 PG users（仅覆盖传入字段）；优先按 user_id 更新。"""
@@ -4260,7 +4260,7 @@ def sync_user_profile_to_pg(
         return
     dn = (display_name or "").strip()
     rl = (role or "").strip().lower()
-    pl = (plan or "").strip().lower()
+    pl = (acct_tier or "").strip().lower()
     bc = (billing_cycle or "").strip().lower() if billing_cycle is not None else None
     if rl and rl not in ("user", "admin"):
         rl = "user"
@@ -4281,7 +4281,7 @@ def sync_user_profile_to_pg(
                         UPDATE users SET
                           display_name = COALESCE(NULLIF(%s, ''), display_name),
                           role = COALESCE(NULLIF(%s, ''), role),
-                          plan = COALESCE(NULLIF(%s, ''), plan),
+                          acct_tier = COALESCE(NULLIF(%s, ''), acct_tier),
                           billing_cycle = CASE WHEN %s IS NULL THEN billing_cycle ELSE %s END,
                           updated_at = NOW()
                         WHERE id = %s::uuid
@@ -4300,7 +4300,7 @@ def sync_user_profile_to_pg(
                       phone_normalized = COALESCE(NULLIF(%s, ''), phone_normalized),
                       display_name = COALESCE(NULLIF(%s, ''), display_name),
                       role = COALESCE(NULLIF(%s, ''), role),
-                      plan = COALESCE(NULLIF(%s, ''), plan),
+                      acct_tier = COALESCE(NULLIF(%s, ''), acct_tier),
                       billing_cycle = CASE WHEN %s IS NULL THEN billing_cycle ELSE %s END,
                       updated_at = NOW()
                     WHERE phone = %s OR (phone_normalized IS NOT NULL AND phone_normalized = %s)
@@ -4323,7 +4323,7 @@ def get_user_profile_from_pg(phone: str) -> dict[str, Any] | None:
             with get_cursor(conn) as cur:
                 cur.execute(
                     """
-                    SELECT phone, display_name, role, plan, billing_cycle
+                    SELECT phone, display_name, role, acct_tier, billing_cycle
                     FROM users
                     WHERE phone = %s OR (phone_normalized IS NOT NULL AND phone_normalized = %s)
                     LIMIT 1
@@ -4337,7 +4337,7 @@ def get_user_profile_from_pg(phone: str) -> dict[str, Any] | None:
                     "phone": str(row.get("phone") or p),
                     "display_name": str(row.get("display_name") or p),
                     "role": str(row.get("role") or "user"),
-                    "plan": str(row.get("plan") or "free"),
+                    "acct_tier": str(row.get("acct_tier") or "free"),
                     "billing_cycle": row.get("billing_cycle"),
                 }
     except Exception:
@@ -6141,11 +6141,11 @@ def process_payment_event_transaction(
                         bc = (str(row.get("billing_cycle") or "").strip().lower() or None)
                     else:
                         cur.execute(
-                            "SELECT plan, billing_cycle FROM users WHERE id = %s LIMIT 1",
+                            "SELECT acct_tier, billing_cycle FROM users WHERE id = %s LIMIT 1",
                             (uid,),
                         )
                         ur = cur.fetchone() or {}
-                        tp = str(ur.get("plan") or "free").strip().lower()
+                        tp = str(ur.get("acct_tier") or "free").strip().lower()
                         t = tp if tp in USER_SUBSCRIPTION_TIERS else "free"
                         bc = (str(ur.get("billing_cycle") or "").strip().lower() or None)
 

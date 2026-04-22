@@ -189,7 +189,12 @@ class AdminCreateUserRequest(BaseModel):
     phone: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=6, max_length=120)
     role: str = Field(default="user", min_length=1, max_length=20)
-    plan: str = Field(default="free", min_length=1, max_length=20)
+    acct_tier: str = Field(
+        default="free",
+        min_length=1,
+        max_length=20,
+        validation_alias=AliasChoices("acct_tier", "plan"),
+    )
     billing_cycle: str | None = None
 
 

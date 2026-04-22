@@ -50,7 +50,7 @@ def _sync_profile_from_info(info: dict[str, Any]) -> None:
             user_id=uid or None,
             display_name=str(info.get("display_name") or ph or uid),
             role=str(info.get("role") or "user"),
-            plan=str(info.get("plan") or "free"),
+            acct_tier=str(info.get("acct_tier") or info.get("plan") or "free"),
             billing_cycle=(str(info.get("billing_cycle") or "").strip() or None),
         )
     except Exception:
@@ -66,7 +66,7 @@ def user_info_for_phone(phone: str) -> dict[str, Any]:
         if ph_key:
             pg_row = get_user_profile_from_pg(ph_key)
             if pg_row:
-                for key in ("display_name", "role", "plan", "billing_cycle"):
+                for key in ("display_name", "role", "acct_tier", "billing_cycle"):
                     if key in pg_row and pg_row.get(key) is not None:
                         base[key] = pg_row.get(key)
     except Exception:
@@ -79,13 +79,14 @@ def user_info_for_phone(phone: str) -> dict[str, Any]:
     except Exception:
         base["wallet_balance_cents"] = 0
     base.pop("plan", None)
+    base.pop("acct_tier", None)
     base.pop("billing_cycle", None)
     return base
 
 
 def user_info_for_session_token(token: str) -> dict[str, Any]:
     """
-    auth_service 用户档 + PG user_profiles 覆盖；返回中不包含 plan / billing_cycle（订阅档位已下线）。
+    auth_service 用户档 + PG user_profiles 覆盖；返回中不包含 acct_tier / billing_cycle（对外会话不暴露订阅档位）。
     用于 /auth/me、登录/注册响应。
     """
     sess = get_session(token)
@@ -214,7 +215,7 @@ def set_user_subscription(
         sub_key = str(info.get("phone") or info.get("user_id") or phone or "").strip()
         record_subscription_event(
             sub_key,
-            str(info.get("plan") or tier or "free"),
+            str(info.get("acct_tier") or info.get("plan") or tier or "free"),
             (str(info.get("billing_cycle") or "").strip() or None),
             event_type="subscription_set",
             effective_at=datetime.now(timezone.utc),
@@ -267,14 +268,14 @@ def admin_create_user(
     phone: str,
     password: str,
     role: str = "user",
-    plan: str = "free",
+    acct_tier: str = "free",
     billing_cycle: str | None = None,
 ) -> tuple[bool, str | None]:
     ok, err = auth_service.admin_create_user(
         phone=phone,
         password=password,
         role=role,
-        initial_tier=plan,
+        initial_tier=acct_tier,
         billing_cycle=billing_cycle,
     )
     if ok:

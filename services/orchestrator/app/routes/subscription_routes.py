@@ -57,7 +57,7 @@ def subscription_me_api(request: Request):
         raise HTTPException(status_code=401, detail="未登录")
     phone = auth_bridge.session_principal(sess)
     info = dict(auth_bridge.user_info_for_phone(phone))
-    for k in ("plan", "billing_cycle"):
+    for k in ("plan", "acct_tier", "billing_cycle"):
         info.pop(k, None)
     bal = models.wallet_balance_cents_for_phone(phone)
     recharge = models.list_wallet_recharge_rows_for_phone(phone, 80)

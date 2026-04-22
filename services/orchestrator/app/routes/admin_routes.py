@@ -53,7 +53,7 @@ def admin_create_user_api(request: Request, body: AdminCreateUserRequest):
         phone=body.phone.strip(),
         password=body.password,
         role=body.role.strip().lower(),
-        plan=body.plan.strip().lower(),
+        acct_tier=body.acct_tier.strip().lower(),
         billing_cycle=cycle,
     )
     if not ok:

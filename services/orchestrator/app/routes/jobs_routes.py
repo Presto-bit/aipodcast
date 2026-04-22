@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from rq.job import Job
 
 from .. import auth_bridge
+from ..fyv_shared import auth_service
 from ..config import settings
 
 _jobs_startup_logger = logging.getLogger(__name__)
@@ -1352,7 +1353,7 @@ def social_viral_copy_api(req: SocialViralCopyRequest, request: Request):
     tier = None
     if phone:
         try:
-            tier = str(auth_bridge.user_info_for_phone(phone).get("plan") or "free")
+            tier = str(auth_service.user_info_for_principal(phone).get("acct_tier") or "free")
         except Exception:
             tier = "free"
     try:

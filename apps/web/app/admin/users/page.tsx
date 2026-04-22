@@ -10,7 +10,7 @@ type AdminUser = {
   email?: string;
   username?: string;
   role?: string;
-  plan?: string;
+  acct_tier?: string;
   billing_cycle?: string | null;
   has_password?: boolean;
   created_at?: number;
@@ -77,7 +77,7 @@ export default function AdminUsersPage() {
         phone: phone.trim(),
         password,
         role,
-        plan: "free",
+        acct_tier: "free",
         billing_cycle: null,
       }),
     });
@@ -216,13 +216,14 @@ export default function AdminUsersPage() {
                 <th className="px-2 py-2">钱包余额</th>
                 <th className="px-2 py-2">注册时间</th>
                 <th className="px-2 py-2">角色</th>
+                <th className="px-2 py-2">档位</th>
                 <th className="px-2 py-2">操作</th>
               </tr>
             </thead>
             <tbody>
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-2 py-8 text-center text-muted">
+                  <td colSpan={6} className="px-2 py-8 text-center text-muted">
                     暂无用户
                   </td>
                 </tr>
@@ -240,6 +241,10 @@ export default function AdminUsersPage() {
                   <td className="whitespace-nowrap px-2 py-2 text-xs tabular-nums text-ink">¥{formatWalletYuan(u.wallet_balance_cents)}</td>
                   <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{formatRegisteredAt(u.created_at)}</td>
                   <td className="px-2 py-2 text-xs">{roleLabel(u.role)}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">
+                    {(u.acct_tier || "free").toLowerCase()}
+                    {u.billing_cycle ? ` · ${u.billing_cycle}` : ""}
+                  </td>
                   <td className="px-2 py-2">
                     <div className="flex w-max max-w-none flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                       <div className="flex flex-wrap items-center gap-1">
