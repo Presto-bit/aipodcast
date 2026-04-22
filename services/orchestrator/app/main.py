@@ -59,6 +59,19 @@ def _startup_step(label: str, fn: Callable[[], None]) -> None:
             raise
 
 
+def _run_bootstrap_admin_if_enabled() -> None:
+    """FYV_BOOTSTRAP_ADMIN_ENABLED=1 时创建/提升运维管理员（见 .env.ai-native.example）。"""
+    from .fyv_shared.auth_service import ensure_bootstrap_admin
+
+    ok, msg = ensure_bootstrap_admin()
+    if msg == "bootstrap_admin_disabled":
+        return
+    if ok:
+        logger.info("bootstrap admin: %s", msg)
+    else:
+        logger.warning("bootstrap admin: %s", msg)
+
+
 def run_startup_tasks() -> None:
     assert_production_security_or_exit()
     _startup_step("object_store.ensure_bucket_exists", ensure_bucket_exists)
@@ -67,6 +80,7 @@ def run_startup_tasks() -> None:
     _startup_step("ensure_saved_voices_schema", ensure_saved_voices_schema)
     _startup_step("ensure_user_preferences_schema", ensure_user_preferences_schema)
     _startup_step("ensure_users_profile_columns", ensure_users_profile_columns)
+    _startup_step("ensure_bootstrap_admin", _run_bootstrap_admin_if_enabled)
     _startup_step("ensure_subscription_events_schema", ensure_subscription_events_schema)
     _startup_step("ensure_usage_events_user_id_schema", ensure_usage_events_user_id_schema)
     _startup_step("ensure_payment_orders_schema", ensure_payment_orders_schema)

@@ -3,7 +3,7 @@
  * 部署到其它域名时可在环境变量中覆盖。
  */
 export const RSS_PUBLIC_BASE_URL =
-  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_RSS_PUBLIC_BASE_URL?.trim()) || "https://www.prestoai.cn";
+  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_RSS_PUBLIC_BASE_URL?.trim()) || "https://prestoai.cn";
 
 /** 站点对外 origin（与 RSS 公网域名一致），用于分享页等需「可转发域名链接」的场景 */
 export function publicSiteOrigin(): string {

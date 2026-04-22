@@ -446,7 +446,7 @@ async def alipay_page_payment_notify(request: Request):
     """
     支付宝电脑网站支付异步通知（application/x-www-form-urlencoded）。
     开放平台 notify_url 应填 Next 公网 HTTPS（由 BFF 转发至此），例如：
-    https://www.prestoai.cn/api/webhooks/alipay
+    https://prestoai.cn/api/webhooks/alipay
     （环境变量 ALIPAY_NOTIFY_URL 须与此一致；勿将编排器 8008 端口直接暴露公网。）
     """
     cfg = AlipayPagePayConfig.from_env()
