@@ -13,6 +13,17 @@ const RATE_LIMIT_EXEMPT_POST_PATHS = new Set([
   "/api/notes/import_url"
 ]);
 
+/** 页面与 RSC：禁止浏览器与遵守源站的 CDN 长期缓存 HTML（与 layout force-dynamic 叠加） */
+const CACHE_PAGE = "private, no-cache, no-store, max-age=0, must-revalidate";
+/** BFF / API：不进入共享边缘长期缓存 */
+const CACHE_API = "no-store, max-age=0, must-revalidate";
+
+function withCacheHeaders(res: NextResponse, directive: string): NextResponse {
+  res.headers.set("Cache-Control", directive);
+  res.headers.set("Pragma", "no-cache");
+  return res;
+}
+
 function clientRateLimitKey(req: NextRequest): string {
   const fwd = req.headers.get("x-forwarded-for");
   if (fwd) {
@@ -43,38 +54,47 @@ function checkRateLimit(key: string): boolean {
 export function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
-  if (req.method === "OPTIONS" && pathname.startsWith("/api/")) {
-    return new NextResponse(null, {
-      status: 204,
-      headers: {
-        Allow: "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers":
-          "Content-Type, Authorization, Cookie, X-Internal-Signature, X-Internal-Timestamp, X-Internal-Payload-Sha256"
-      }
-    });
-  }
-  if (!pathname.startsWith("/api/")) {
+  if (pathname.startsWith("/_next/static/") || pathname.startsWith("/_next/image")) {
     return NextResponse.next();
   }
+
+  if (req.method === "OPTIONS" && pathname.startsWith("/api/")) {
+    return withCacheHeaders(
+      new NextResponse(null, {
+        status: 204,
+        headers: {
+          Allow: "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "Access-Control-Allow-Headers":
+            "Content-Type, Authorization, Cookie, X-Internal-Signature, X-Internal-Timestamp, X-Internal-Payload-Sha256"
+        }
+      }),
+      CACHE_API
+    );
+  }
+
+  if (!pathname.startsWith("/api/")) {
+    return withCacheHeaders(NextResponse.next(), CACHE_PAGE);
+  }
+
   /** 由路由内 `/api/image-proxy` 单独按 IP 限速，避免拖满全站 400/min */
   if (pathname === "/api/image-proxy" && req.method === "GET") {
-    return NextResponse.next();
+    return withCacheHeaders(NextResponse.next(), CACHE_API);
   }
   /** 选题助手 GET 由路由内按 IP 限速，避免拖满全站计数 */
   if (pathname === "/api/create/hot-topics" && req.method === "GET") {
-    return NextResponse.next();
+    return withCacheHeaders(NextResponse.next(), CACHE_API);
   }
   if (req.method === "POST" && RATE_LIMIT_EXEMPT_POST_PATHS.has(pathname)) {
-    return NextResponse.next();
+    return withCacheHeaders(NextResponse.next(), CACHE_API);
   }
   const clientKey = clientRateLimitKey(req);
   if (!checkRateLimit(clientKey)) {
-    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+    return withCacheHeaders(NextResponse.json({ error: "rate_limited" }, { status: 429 }), CACHE_API);
   }
-  return NextResponse.next();
+  return withCacheHeaders(NextResponse.next(), CACHE_API);
 }
 
 export const config = {
-  matcher: ["/api/:path*"]
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"]
 };
