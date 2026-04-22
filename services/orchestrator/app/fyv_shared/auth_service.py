@@ -766,7 +766,7 @@ def _pg_upsert_user_and_auth(
             """
             INSERT INTO users (phone, phone_normalized, display_name, role, acct_tier, billing_cycle, account_status, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, 'active', NOW())
-            ON CONFLICT (phone) DO UPDATE SET
+            ON CONFLICT (phone) WHERE (phone IS NOT NULL AND btrim(phone) <> '') DO UPDATE SET
               phone_normalized = EXCLUDED.phone_normalized,
               display_name = EXCLUDED.display_name,
               role = EXCLUDED.role,

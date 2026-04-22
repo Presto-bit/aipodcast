@@ -76,7 +76,7 @@ def run_smoke_chain() -> dict[str, Any]:
                 """
                 INSERT INTO users (phone, display_name, role, updated_at)
                 VALUES (%s, %s, 'user', NOW())
-                ON CONFLICT (phone) DO UPDATE SET display_name = EXCLUDED.display_name, updated_at = NOW()
+                ON CONFLICT (phone) WHERE (phone IS NOT NULL AND btrim(phone) <> '') DO UPDATE SET display_name = EXCLUDED.display_name, updated_at = NOW()
                 RETURNING id::text
                 """,
                 (phone, "E2E Smoke"),

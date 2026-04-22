@@ -72,7 +72,7 @@ def main() -> int:
     sql = """
     INSERT INTO users (phone, display_name, role, updated_at)
     VALUES (%s, %s, %s, NOW())
-    ON CONFLICT (phone) DO UPDATE SET
+    ON CONFLICT (phone) WHERE (phone IS NOT NULL AND btrim(phone) <> '') DO UPDATE SET
       display_name = EXCLUDED.display_name,
       role = EXCLUDED.role,
       updated_at = NOW()

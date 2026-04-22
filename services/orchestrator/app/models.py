@@ -4081,7 +4081,7 @@ def sync_user_display_name_to_pg(phone: str, display_name: str) -> None:
                     """
                     INSERT INTO users (phone, display_name, role, updated_at)
                     VALUES (%s, %s, 'user', NOW())
-                    ON CONFLICT (phone) DO UPDATE SET
+                    ON CONFLICT (phone) WHERE (phone IS NOT NULL AND btrim(phone) <> '') DO UPDATE SET
                       display_name = EXCLUDED.display_name,
                       updated_at = NOW()
                     """,

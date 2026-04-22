@@ -141,7 +141,7 @@ def migrate_users(*, dry_run: bool) -> tuple[int, int]:
                     """
                     INSERT INTO users (phone, display_name, role, plan, billing_cycle, updated_at)
                     VALUES (%s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT (phone) DO UPDATE SET
+                    ON CONFLICT (phone) WHERE (phone IS NOT NULL AND btrim(phone) <> '') DO UPDATE SET
                       display_name = EXCLUDED.display_name,
                       role = EXCLUDED.role,
                       plan = EXCLUDED.plan,
