@@ -51,7 +51,8 @@ function isTruthyPaymentChannelEnabled(v: unknown): boolean {
 
 function walletPayloadImpliesAlipayOnly(wt: WalletTopupPayload | null | undefined): boolean {
   if (!wt || typeof wt !== "object") return false;
-  const c = wt.checkout_supported;
+  // 运行时 JSON 可能偶发非布尔；避免用 WalletTopupPayload 收窄成 never
+  const c = (wt as { checkout_supported?: unknown }).checkout_supported;
   if (c === false) return true;
   if (typeof c === "string") {
     const s = c.trim().toLowerCase();
