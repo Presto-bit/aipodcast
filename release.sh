@@ -12,6 +12,7 @@
 #   ORCH_HEALTH_MAX_ATTEMPTS=12 ORCH_HEALTH_SLEEP=2   编排器 /health 探测（默认约 24s）
 #   WEB_HEALTH_MAX_ATTEMPTS=50 WEB_HEALTH_SLEEP=2      Web :3000 探测（默认约 100s，与 compose web healthcheck start_period 90s 对齐）
 #   NEXT_PUBLIC_APP_VERSION=自定义   写入前端构建号；不设则发版脚本默认用当前目录 git 短 SHA
+#   阿里云 CDN：在 .env.ai-native 配置 ALIYUN_CDN_REFRESH_ON_RELEASE=1 等（见该文件注释）；发版成功后会调用 scripts/aliyun-cdn-refresh.sh
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/FYV}"
@@ -111,4 +112,10 @@ done
 log "发布成功"
 log "编排器: http://127.0.0.1:8008/health"
 log "Web: http://127.0.0.1:3000/"
-log "若域名前有 CDN：发版后请在控制台 Purge / 刷新缓存（建议至少 /admin/* 与 /；仍见旧前端时再 Purge /_next/static/*）。Nginx 勿对整条反代做长期 proxy_cache；分层与示例见 DEPLOYMENT.md「Nginx / CDN 与 Web 发版缓存」与 deploy/nginx-prestoai.cdn-cache.example.conf"
+
+if [[ -f "$APP_DIR/scripts/aliyun-cdn-refresh.sh" ]]; then
+  log "阿里云 CDN：若已启用 ALIYUN_CDN_REFRESH_ON_RELEASE，将尝试刷新缓存"
+  bash "$APP_DIR/scripts/aliyun-cdn-refresh.sh" "$APP_DIR/$ENV_FILE" || log "⚠️ 阿里云 CDN 刷新失败，请在控制台手动刷新（见 DEPLOYMENT.md「Nginx / CDN 与 Web 发版缓存」）"
+fi
+
+log "若域名前有 CDN 且未走自动刷新：发版后请在控制台 Purge / 刷新缓存（建议至少 /admin/* 与 /；仍见旧前端时再 Purge /_next/static/*）。Nginx 勿对整条反代做长期 proxy_cache；分层与示例见 DEPLOYMENT.md「Nginx / CDN 与 Web 发版缓存」与 deploy/nginx-prestoai.cdn-cache.example.conf"
