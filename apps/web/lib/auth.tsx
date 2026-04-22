@@ -113,6 +113,22 @@ function persistPhone(phone: string) {
   }
 }
 
+/** 登录刚写入 Set-Cookie 后，个别环境下紧随其后的 /me 可能偶发 401；短延迟重试一次减轻误登出。 */
+async function fetchAuthMe(signal?: AbortSignal): Promise<Response> {
+  const doFetch = () =>
+    fetch("/api/auth/me", {
+      credentials: "same-origin",
+      cache: "no-store",
+      signal
+    });
+  let res = await doFetch();
+  if ((res.status === 401 || res.status === 403) && !signal?.aborted) {
+    await new Promise((r) => setTimeout(r, 150));
+    if (!signal?.aborted) res = await doFetch();
+  }
+  return res;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
@@ -175,13 +191,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     let cancelled = false;
+    const meAc = new AbortController();
     setSessionResolved(false);
     (async () => {
       try {
-        const res = await fetch("/api/auth/me", {
-          credentials: "same-origin",
-          cache: "no-store"
-        });
+        const res = await fetchAuthMe(meAc.signal);
         const data = (await res.json().catch(() => ({}))) as {
           success?: boolean;
           user?: AuthUser;
@@ -229,6 +243,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
     return () => {
       cancelled = true;
+      meAc.abort();
     };
   }, [authRequired, router]);
 
@@ -261,7 +276,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshMe = useCallback(async () => {
     if (!authRequired) return;
     try {
-      const res = await fetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
+      const res = await fetchAuthMe();
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; user?: AuthUser };
       if (res.ok && data.success && data.user) {
         setUser(data.user);
