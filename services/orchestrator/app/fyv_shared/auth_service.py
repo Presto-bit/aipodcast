@@ -1384,8 +1384,12 @@ def session_effective_user_id(sess: Dict[str, Any]) -> str:
             row = _pg_fetch_auth_user_by_login_identifier(v)
             if isinstance(row, dict) and row.get("user_id"):
                 return str(row["user_id"])
-        return ""
-    return str(sess.get("phone") or "").strip()
+    # PG 无行或仅 users.json 账号时 login_user 仍会写入 phone 等字段；旧逻辑在 PG 分支曾 return "" 导致 /me 恒 401
+    return (
+        str(sess.get("phone") or "").strip()
+        or str(sess.get("email") or "").strip()
+        or str(sess.get("username") or "").strip()
+    )
 
 
 def _pg_format_integrity_err_user_insert(exc: BaseException) -> str:
