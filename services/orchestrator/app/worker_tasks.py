@@ -69,6 +69,15 @@ logger = logging.getLogger(__name__)
 VOICE_CLONE_MAX_BYTES = 20 * 1024 * 1024
 
 
+def _wallet_ledger_tts_model_for_voice_billing(payload: dict[str, Any] | None) -> str:
+    """与用量参考价一致：优先任务 payload.tts_model，否则 MINIMAX_TTS_MODEL 环境默认。"""
+    pl = payload if isinstance(payload, dict) else {}
+    m = str(pl.get("tts_model") or "").strip()
+    if m:
+        return m
+    return str(os.getenv("MINIMAX_TTS_MODEL") or "speech-2.8-turbo").strip()
+
+
 def _refund_media_wallet_job(phone: str, meta: dict[str, Any]) -> None:
     """语音任务失败或取消后退回本次从钱包扣的分、按次分钟包（若有）及体验包语音分钟。"""
     p = (phone or "").strip()
@@ -110,7 +119,12 @@ def _debit_script_text_billing_or_raise(job_id: str, created_by: str | None, scr
             job_id,
             "log",
             "已结算脚本文本费用（体验包字数与/或钱包）",
-            {"script_chars": chars, "wallet_cents": wc, "experience_text_chars_consumed": ex},
+            {
+                "script_chars": chars,
+                "wallet_cents": wc,
+                "experience_text_chars_consumed": ex,
+                "tts_model": "(非TTS·脚本文本)",
+            },
         )
     return dict(meta or {})
 
@@ -422,7 +436,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     job_id,
                     "log",
                     "已从钱包扣除单次克隆费用",
-                    {"cents": pay_cents},
+                    {"cents": pay_cents, "tts_model": "(非TTS·音色克隆)"},
                 )
             append_job_event(job_id, "progress", "正在上传音频并克隆音色", {"progress": 60})
             try:
@@ -506,6 +520,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                                 "estimated_minutes": round(est_m, 4),
                                 "wallet_cents": int(media_bill_meta.get("wallet_cents") or 0),
                                 "experience_voice_minutes_consumed": exv,
+                                "tts_model": _wallet_ledger_tts_model_for_voice_billing(payload if isinstance(payload, dict) else {}),
                             },
                         )
 
@@ -1077,6 +1092,7 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                                 "estimated_minutes": round(est_m, 4),
                                 "wallet_cents": int(media_bill_meta.get("wallet_cents") or 0),
                                 "experience_voice_minutes_consumed": exv2,
+                                "tts_model": _wallet_ledger_tts_model_for_voice_billing(tts_pl),
                             },
                         )
 

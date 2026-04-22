@@ -273,6 +273,27 @@ def admin_usage_alerts_api(
     return {"success": True, **payload}
 
 
+@router.get("/usage/revenue-expense")
+def admin_revenue_expense_api(
+    request: Request,
+    date_from: str = Query(..., description="YYYY-MM-DD，与 date_to 同时有效"),
+    date_to: str = Query(..., description="YYYY-MM-DD"),
+    detail_limit: int = Query(default=400, ge=50, le=1000, description="收支明细最大条数"),
+):
+    """按日汇总模型参考成本（支出）与钱包实际扣费（收入），含分人/分模型与明细。"""
+    _require_admin_phone(request)
+    try:
+        df = _parse_ymd(date_from.strip())
+        dt = _parse_ymd(date_to.strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="日期格式应为 YYYY-MM-DD") from None
+    try:
+        payload = models.admin_revenue_expense_board(date_from=df, date_to=dt, detail_limit=detail_limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)[:200]) from e
+    return {"success": True, **payload}
+
+
 @router.get("/usage/orders")
 def admin_usage_orders_api(
     request: Request,

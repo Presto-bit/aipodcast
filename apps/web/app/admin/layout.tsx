@@ -140,7 +140,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: "/admin/hub", label: "概览", desc: "快捷入口与说明", icon: "hub" as const },
     { href: "/admin/users", label: "用户管理", desc: "用户与角色", icon: "users" as const },
     { href: "/admin/models", label: "模型管理", desc: "模型与费用说明", icon: "models" as const },
-    { href: "/admin/usage", label: "总览看板", desc: "总览/订单/用户/作品/告警", icon: "usage" as const },
+    { href: "/admin/usage", label: "总览看板", desc: "总览/收支/订单/用户/作品/告警", icon: "usage" as const },
     { href: "/admin/jobs", label: "创作记录", desc: "生成记录列表与详情", icon: "jobs" as const },
     { href: "/admin/tts-polish", label: "TTS 润色", desc: "AI 润色条款（单/双人）", icon: "polish" as const },
   ];

@@ -3128,6 +3128,493 @@ def admin_usage_dashboard(
     return out
 
 
+def admin_revenue_expense_board(
+    *,
+    date_from: date,
+    date_to: date,
+    detail_limit: int = 400,
+) -> dict[str, Any]:
+    """
+    管理端收支看板（按 Asia/Shanghai 日历日，含首尾）：
+    - 支出：usage_events(job_terminal) 中 meta 参考价分项之和（与总览看板一致，为模型侧估算成本，非供应商对账单）。
+    - 收入：job_events 中钱包实际扣费流水（wallet_cents / 克隆 cents），不含纯体验包零扣费行。
+    - 收入按「TTS/计费模型键」：优先 event_payload.tts_model（新流水由 worker 写入）；旧语音流水回退同 job 的 usage_events.meta.tts_model_pricing。
+    """
+    df = date_from if date_from <= date_to else date_to
+    dt = date_to if date_from <= date_to else date_from
+    lim = max(50, min(1000, int(detail_limit)))
+    tz_note = "Asia/Shanghai"
+    out: dict[str, Any] = {
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "timezone": tz_note,
+        "notes": {
+            "expense": "支出为 usage_events 内参考模型价估算（与「总览看板」成本口径一致），实际以各云厂商账单为准。",
+            "revenue": "收入为用户钱包实际扣减分（含语音结算、脚本文本结算、单次克隆等），不含充值入账。",
+            "revenue_tts": "「按 TTS 模型」收入：语音类取流水 tts_model 或回退用量事件中的 tts_model_pricing；脚本文本/克隆为固定非 TTS 标签。",
+        },
+        "overview": {"expense_cny_total": 0.0, "revenue_cents_total": 0, "revenue_cny_total": 0.0},
+        "by_day": [],
+        "by_user_expense": [],
+        "by_user_revenue": [],
+        "by_model_expense": [],
+        "by_job_type_revenue": [],
+        "by_tts_model_revenue": [],
+        "expense_details": [],
+        "revenue_details": [],
+    }
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(NULLIF(TRIM(ue.meta->>'cost_total_cny'), '')::numeric), 0::numeric) AS total
+                FROM usage_events ue
+                WHERE ue.metric = 'job_terminal'
+                  AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                  AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                """,
+                (df, dt),
+            )
+            out["overview"]["expense_cny_total"] = _safe_float((cur.fetchone() or {}).get("total"))
+
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(w.revenue_cents), 0)::bigint AS total_cents
+                FROM (
+                  SELECT CASE
+                    WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                      COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                    ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                  END AS revenue_cents
+                  FROM job_events je
+                  WHERE je.event_type = 'log'
+                    AND (
+                      je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                      OR je.message LIKE '已结算脚本文本费用%%'
+                      OR je.message = '已从钱包扣除单次克隆费用'
+                    )
+                    AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                    AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                ) w
+                WHERE w.revenue_cents > 0
+                """,
+                (df, dt),
+            )
+            rev_cents = _safe_int((cur.fetchone() or {}).get("total_cents"))
+            out["overview"]["revenue_cents_total"] = rev_cents
+            out["overview"]["revenue_cny_total"] = round(rev_cents / 100.0, 4)
+
+            exp_by_day: dict[str, float] = {}
+            cur.execute(
+                """
+                SELECT (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date AS day,
+                       SUM(COALESCE(NULLIF(TRIM(ue.meta->>'cost_total_cny'), '')::numeric, 0))::numeric AS expense_cny
+                FROM usage_events ue
+                WHERE ue.metric = 'job_terminal'
+                  AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                  AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                GROUP BY 1
+                ORDER BY 1 ASC
+                """,
+                (df, dt),
+            )
+            for row in cur.fetchall() or []:
+                rd = dict(row)
+                dv = rd.get("day")
+                ds = dv.isoformat() if hasattr(dv, "isoformat") else str(dv)
+                exp_by_day[ds] = _safe_float(rd.get("expense_cny"))
+
+            rev_by_day: dict[str, int] = {}
+            cur.execute(
+                """
+                SELECT (je.created_at AT TIME ZONE 'Asia/Shanghai')::date AS day,
+                       SUM(
+                         CASE
+                           WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                             COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                           ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                         END
+                       )::bigint AS revenue_cents
+                FROM job_events je
+                WHERE je.event_type = 'log'
+                  AND (
+                    je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                    OR je.message LIKE '已结算脚本文本费用%%'
+                    OR je.message = '已从钱包扣除单次克隆费用'
+                  )
+                  AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                  AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                GROUP BY 1
+                ORDER BY 1 ASC
+                """,
+                (df, dt),
+            )
+            for row in cur.fetchall() or []:
+                rd = dict(row)
+                dv = rd.get("day")
+                ds = dv.isoformat() if hasattr(dv, "isoformat") else str(dv)
+                rev_by_day[ds] = _safe_int(rd.get("revenue_cents"))
+
+            dcur = df
+            while dcur <= dt:
+                ds = dcur.isoformat()
+                rc = rev_by_day.get(ds, 0)
+                out["by_day"].append(
+                    {
+                        "day": ds,
+                        "expense_cny": float(exp_by_day.get(ds, 0.0)),
+                        "revenue_cents": rc,
+                        "revenue_cny": round(rc / 100.0, 4),
+                    }
+                )
+                dcur = dcur + timedelta(days=1)
+
+            cur.execute(
+                """
+                SELECT COALESCE(ue.user_id::text, '(unknown)') AS user_key,
+                       MAX(ue.user_id::text) AS user_id,
+                       MAX(COALESCE(NULLIF(TRIM(u.phone), ''), NULLIF(TRIM(ue.phone), ''), '')) AS phone,
+                       COUNT(*)::bigint AS events,
+                       SUM(COALESCE(NULLIF(TRIM(ue.meta->>'cost_total_cny'), '')::numeric, 0))::numeric AS expense_cny
+                FROM usage_events ue
+                LEFT JOIN users u ON u.id = ue.user_id
+                WHERE ue.metric = 'job_terminal'
+                  AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                  AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                GROUP BY COALESCE(ue.user_id::text, '(unknown)')
+                ORDER BY expense_cny DESC NULLS LAST
+                LIMIT 200
+                """,
+                (df, dt),
+            )
+            out["by_user_expense"] = [
+                {
+                    "user_key": str(r.get("user_key") or ""),
+                    "user_id": str(r.get("user_id") or ""),
+                    "phone": str(r.get("phone") or "").strip() or None,
+                    "events": _safe_int(r.get("events")),
+                    "expense_cny": _safe_float(r.get("expense_cny")),
+                }
+                for r in (cur.fetchall() or [])
+            ]
+
+            cur.execute(
+                """
+                SELECT COALESCE(NULLIF(TRIM(u.phone), ''), '(unknown)') AS phone,
+                       COALESCE(u.id::text, '') AS user_id,
+                       SUM(
+                         CASE
+                           WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                             COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                           ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                         END
+                       )::bigint AS revenue_cents,
+                       COUNT(*)::bigint AS ledger_rows
+                FROM job_events je
+                INNER JOIN jobs j ON j.id = je.job_id
+                LEFT JOIN projects p ON p.id = j.project_id
+                LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
+                WHERE je.event_type = 'log'
+                  AND (
+                    je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                    OR je.message LIKE '已结算脚本文本费用%%'
+                    OR je.message = '已从钱包扣除单次克隆费用'
+                  )
+                  AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                  AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                GROUP BY u.id, u.phone
+                HAVING SUM(
+                  CASE
+                    WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                      COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                    ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                  END
+                ) > 0
+                ORDER BY revenue_cents DESC
+                LIMIT 200
+                """,
+                (df, dt),
+            )
+            out["by_user_revenue"] = [
+                {
+                    "phone": str(r.get("phone") or ""),
+                    "user_id": str(r.get("user_id") or "").strip() or None,
+                    "revenue_cents": _safe_int(r.get("revenue_cents")),
+                    "revenue_cny": round(_safe_int(r.get("revenue_cents")) / 100.0, 4),
+                    "ledger_rows": _safe_int(r.get("ledger_rows")),
+                }
+                for r in (cur.fetchall() or [])
+            ]
+
+            cur.execute(
+                """
+                SELECT bucket, model_label, SUM(cost_cny)::numeric AS cost_cny
+                FROM (
+                  SELECT 'llm'::text AS bucket,
+                         COALESCE(NULLIF(TRIM(ue.meta->>'text_model_pricing'), ''), '(unknown)') AS model_label,
+                         COALESCE(NULLIF(TRIM(ue.meta->>'llm_cost_cny'), '')::numeric, 0) AS cost_cny
+                  FROM usage_events ue
+                  WHERE ue.metric = 'job_terminal'
+                    AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                    AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                  UNION ALL
+                  SELECT 'tts'::text,
+                         COALESCE(NULLIF(TRIM(ue.meta->>'tts_model_pricing'), ''), '(unknown)'),
+                         COALESCE(NULLIF(TRIM(ue.meta->>'tts_cost_cny'), '')::numeric, 0)
+                  FROM usage_events ue
+                  WHERE ue.metric = 'job_terminal'
+                    AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                    AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                  UNION ALL
+                  SELECT 'image'::text,
+                         COALESCE(NULLIF(TRIM(ue.meta->>'image_model_hint'), ''), '(image)') AS model_label,
+                         COALESCE(NULLIF(TRIM(ue.meta->>'image_cost_cny'), '')::numeric, 0)
+                  FROM usage_events ue
+                  WHERE ue.metric = 'job_terminal'
+                    AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                    AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                ) x
+                GROUP BY bucket, model_label
+                HAVING SUM(cost_cny) > 0
+                ORDER BY cost_cny DESC, bucket, model_label
+                LIMIT 300
+                """,
+                (df, dt, df, dt, df, dt),
+            )
+            out["by_model_expense"] = [
+                {
+                    "bucket": str(r.get("bucket") or ""),
+                    "model_label": str(r.get("model_label") or ""),
+                    "expense_cny": _safe_float(r.get("cost_cny")),
+                }
+                for r in (cur.fetchall() or [])
+            ]
+
+            cur.execute(
+                """
+                SELECT COALESCE(j.job_type, '(unknown)') AS job_type,
+                       SUM(
+                         CASE
+                           WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                             COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                           ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                         END
+                       )::bigint AS revenue_cents,
+                       COUNT(*)::bigint AS ledger_rows
+                FROM job_events je
+                INNER JOIN jobs j ON j.id = je.job_id
+                WHERE je.event_type = 'log'
+                  AND (
+                    je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                    OR je.message LIKE '已结算脚本文本费用%%'
+                    OR je.message = '已从钱包扣除单次克隆费用'
+                  )
+                  AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                  AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                GROUP BY j.job_type
+                HAVING SUM(
+                  CASE
+                    WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                      COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                    ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                  END
+                ) > 0
+                ORDER BY revenue_cents DESC
+                """,
+                (df, dt),
+            )
+            out["by_job_type_revenue"] = [
+                {
+                    "job_type": str(r.get("job_type") or ""),
+                    "revenue_cents": _safe_int(r.get("revenue_cents")),
+                    "revenue_cny": round(_safe_int(r.get("revenue_cents")) / 100.0, 4),
+                    "ledger_rows": _safe_int(r.get("ledger_rows")),
+                }
+                for r in (cur.fetchall() or [])
+            ]
+
+            cur.execute(
+                """
+                SELECT w.model_key,
+                       SUM(w.rc)::bigint AS revenue_cents,
+                       COUNT(*)::bigint AS ledger_rows
+                FROM (
+                  SELECT
+                    CASE
+                      WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                        COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                      ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                    END AS rc,
+                    COALESCE(
+                      NULLIF(TRIM(je.event_payload->>'tts_model'), ''),
+                      CASE WHEN je.message LIKE '已结算脚本文本费用%%' THEN '(非TTS·脚本文本)' END,
+                      CASE WHEN je.message = '已从钱包扣除单次克隆费用' THEN '(非TTS·音色克隆)' END,
+                      (
+                        SELECT NULLIF(TRIM(ue.meta->>'tts_model_pricing'), '')
+                        FROM usage_events ue
+                        WHERE ue.job_id = je.job_id AND ue.metric = 'job_terminal'
+                        ORDER BY ue.created_at DESC
+                        LIMIT 1
+                      ),
+                      CASE
+                        WHEN je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' THEN '(TTS·未记录)'
+                        ELSE '(其他)'
+                      END
+                    ) AS model_key
+                  FROM job_events je
+                  INNER JOIN jobs j ON j.id = je.job_id
+                  WHERE je.event_type = 'log'
+                    AND (
+                      je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                      OR je.message LIKE '已结算脚本文本费用%%'
+                      OR je.message = '已从钱包扣除单次克隆费用'
+                    )
+                    AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                    AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                ) w
+                WHERE w.rc > 0
+                GROUP BY w.model_key
+                ORDER BY revenue_cents DESC
+                """,
+                (df, dt),
+            )
+            out["by_tts_model_revenue"] = [
+                {
+                    "model_key": str(r.get("model_key") or ""),
+                    "revenue_cents": _safe_int(r.get("revenue_cents")),
+                    "revenue_cny": round(_safe_int(r.get("revenue_cents")) / 100.0, 4),
+                    "ledger_rows": _safe_int(r.get("ledger_rows")),
+                }
+                for r in (cur.fetchall() or [])
+            ]
+
+            cur.execute(
+                """
+                SELECT ue.id::bigint AS usage_event_id,
+                       ue.created_at,
+                       (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date AS day,
+                       ue.job_id::text AS job_id,
+                       ue.job_type,
+                       ue.status AS terminal_status,
+                       COALESCE(ue.user_id::text, '') AS user_id,
+                       COALESCE(NULLIF(TRIM(u.phone), ''), NULLIF(TRIM(ue.phone), ''), '') AS phone,
+                       COALESCE(NULLIF(TRIM(ue.meta->>'cost_total_cny'), '')::numeric, 0)::numeric AS expense_cny,
+                       COALESCE(NULLIF(TRIM(ue.meta->>'llm_cost_cny'), '')::numeric, 0)::numeric AS llm_cny,
+                       COALESCE(NULLIF(TRIM(ue.meta->>'tts_cost_cny'), '')::numeric, 0)::numeric AS tts_cny,
+                       COALESCE(NULLIF(TRIM(ue.meta->>'image_cost_cny'), '')::numeric, 0)::numeric AS image_cny,
+                       NULLIF(TRIM(ue.meta->>'text_model_pricing'), '') AS text_model,
+                       NULLIF(TRIM(ue.meta->>'tts_model_pricing'), '') AS tts_model,
+                       NULLIF(TRIM(ue.meta->>'image_model_hint'), '') AS image_model
+                FROM usage_events ue
+                LEFT JOIN users u ON u.id = ue.user_id
+                WHERE ue.metric = 'job_terminal'
+                  AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                  AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                ORDER BY ue.created_at DESC
+                LIMIT %s
+                """,
+                (df, dt, lim),
+            )
+            for r in cur.fetchall() or []:
+                rd = dict(r)
+                day_v = rd.get("day")
+                out["expense_details"].append(
+                    {
+                        "usage_event_id": _safe_int(rd.get("usage_event_id")),
+                        "created_at": rd.get("created_at").isoformat() if rd.get("created_at") else None,
+                        "day": day_v.isoformat() if hasattr(day_v, "isoformat") else str(day_v),
+                        "job_id": str(rd.get("job_id") or ""),
+                        "job_type": str(rd.get("job_type") or ""),
+                        "terminal_status": str(rd.get("terminal_status") or ""),
+                        "user_id": str(rd.get("user_id") or "").strip() or None,
+                        "phone": str(rd.get("phone") or "").strip() or None,
+                        "expense_cny": _safe_float(rd.get("expense_cny")),
+                        "llm_cny": _safe_float(rd.get("llm_cny")),
+                        "tts_cny": _safe_float(rd.get("tts_cny")),
+                        "image_cny": _safe_float(rd.get("image_cny")),
+                        "text_model": rd.get("text_model"),
+                        "tts_model": rd.get("tts_model"),
+                        "image_model": rd.get("image_model"),
+                    }
+                )
+
+            cur.execute(
+                """
+                SELECT je.id AS ledger_id,
+                       je.created_at,
+                       (je.created_at AT TIME ZONE 'Asia/Shanghai')::date AS day,
+                       je.job_id::text AS job_id,
+                       j.job_type,
+                       COALESCE(NULLIF(TRIM(u.phone), ''), '') AS phone,
+                       COALESCE(u.id::text, '') AS user_id,
+                       je.message AS ledger_message,
+                       COALESCE(
+                         NULLIF(TRIM(je.event_payload->>'tts_model'), ''),
+                         CASE WHEN je.message LIKE '已结算脚本文本费用%%' THEN '(非TTS·脚本文本)' END,
+                         CASE WHEN je.message = '已从钱包扣除单次克隆费用' THEN '(非TTS·音色克隆)' END,
+                         (
+                           SELECT NULLIF(TRIM(ue.meta->>'tts_model_pricing'), '')
+                           FROM usage_events ue
+                           WHERE ue.job_id = je.job_id AND ue.metric = 'job_terminal'
+                           ORDER BY ue.created_at DESC
+                           LIMIT 1
+                         ),
+                         CASE
+                           WHEN je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' THEN '(TTS·未记录)'
+                           ELSE '(其他)'
+                         END
+                       ) AS billing_model_key,
+                       CASE
+                         WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                           COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                         ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                       END::bigint AS revenue_cents
+                FROM job_events je
+                INNER JOIN jobs j ON j.id = je.job_id
+                LEFT JOIN projects p ON p.id = j.project_id
+                LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
+                WHERE je.event_type = 'log'
+                  AND (
+                    je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                    OR je.message LIKE '已结算脚本文本费用%%'
+                    OR je.message = '已从钱包扣除单次克隆费用'
+                  )
+                  AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                  AND (je.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                  AND (
+                    CASE
+                      WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                        COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                      ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                    END
+                  ) > 0
+                ORDER BY je.created_at DESC
+                LIMIT %s
+                """,
+                (df, dt, lim),
+            )
+            for r in cur.fetchall() or []:
+                rd = dict(r)
+                day_v = rd.get("day")
+                rc = _safe_int(rd.get("revenue_cents"))
+                out["revenue_details"].append(
+                    {
+                        "ledger_id": _safe_int(rd.get("ledger_id")),
+                        "created_at": rd.get("created_at").isoformat() if rd.get("created_at") else None,
+                        "day": day_v.isoformat() if hasattr(day_v, "isoformat") else str(day_v),
+                        "job_id": str(rd.get("job_id") or ""),
+                        "job_type": str(rd.get("job_type") or ""),
+                        "phone": str(rd.get("phone") or "").strip() or None,
+                        "user_id": str(rd.get("user_id") or "").strip() or None,
+                        "ledger_message": str(rd.get("ledger_message") or ""),
+                        "billing_model_key": str(rd.get("billing_model_key") or ""),
+                        "revenue_cents": rc,
+                        "revenue_cny": round(rc / 100.0, 4),
+                    }
+                )
+    return out
+
+
 def admin_orders_analytics(
     *,
     days: int | None = None,

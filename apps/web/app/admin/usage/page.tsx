@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "../../../lib/auth";
 
-type TabKey = "overview" | "orders" | "users" | "works" | "alerts";
+type TabKey = "overview" | "ledger" | "orders" | "users" | "works" | "alerts";
 type JobTypeRow = { job_type?: string; events?: number; succeeded?: number; users?: number; cost_total_cny?: number };
 type InputTypeRow = { input_type?: string; events?: number };
 type DayRow = { day?: string; events?: number; succeeded?: number; users?: number; cost_total_cny?: number };
@@ -64,6 +64,45 @@ type RecentOrderRow = {
   created_at?: string;
 };
 
+type LedgerOverview = { expense_cny_total?: number; revenue_cents_total?: number; revenue_cny_total?: number };
+type LedgerDayRow = { day?: string; expense_cny?: number; revenue_cents?: number; revenue_cny?: number };
+type LedgerUserExpense = { user_key?: string; user_id?: string; phone?: string | null; events?: number; expense_cny?: number };
+type LedgerUserRevenue = { phone?: string; user_id?: string | null; revenue_cents?: number; revenue_cny?: number; ledger_rows?: number };
+type LedgerModelExpense = { bucket?: string; model_label?: string; expense_cny?: number };
+type LedgerJobTypeRevenue = { job_type?: string; revenue_cents?: number; revenue_cny?: number; ledger_rows?: number };
+type LedgerExpenseDetail = {
+  usage_event_id?: number;
+  created_at?: string | null;
+  day?: string;
+  job_id?: string;
+  job_type?: string;
+  terminal_status?: string;
+  user_id?: string | null;
+  phone?: string | null;
+  expense_cny?: number;
+  llm_cny?: number;
+  tts_cny?: number;
+  image_cny?: number;
+  text_model?: string | null;
+  tts_model?: string | null;
+  image_model?: string | null;
+};
+type LedgerRevenueDetail = {
+  ledger_id?: number;
+  created_at?: string | null;
+  day?: string;
+  job_id?: string;
+  job_type?: string;
+  phone?: string | null;
+  user_id?: string | null;
+  ledger_message?: string;
+  billing_model_key?: string;
+  revenue_cents?: number;
+  revenue_cny?: number;
+};
+type LedgerNotes = { expense?: string; revenue?: string; revenue_tts?: string };
+type LedgerTtsModelRevenue = { model_key?: string; revenue_cents?: number; revenue_cny?: number; ledger_rows?: number };
+
 function ymd(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -89,7 +128,9 @@ export default function AdminUsagePage(): JSX.Element {
   const search = useSearchParams();
   const initialTab = useMemo(() => {
     const t = String(search?.get("tab") ?? "").toLowerCase();
-    return (t === "overview" || t === "orders" || t === "users" || t === "works" || t === "alerts") ? (t as TabKey) : "overview";
+    return t === "overview" || t === "ledger" || t === "orders" || t === "users" || t === "works" || t === "alerts"
+      ? (t as TabKey)
+      : "overview";
   }, [search]);
   const today = useMemo(() => new Date(), []);
   const [tab, setTab] = useState<TabKey>(initialTab);
@@ -117,8 +158,24 @@ export default function AdminUsagePage(): JSX.Element {
   const [ordersByDay, setOrdersByDay] = useState<OrderDayRow[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrderRow[]>([]);
 
+  const [ledgerOverview, setLedgerOverview] = useState<LedgerOverview>({});
+  const [ledgerNotes, setLedgerNotes] = useState<LedgerNotes>({});
+  const [ledgerByDay, setLedgerByDay] = useState<LedgerDayRow[]>([]);
+  const [ledgerUserExpense, setLedgerUserExpense] = useState<LedgerUserExpense[]>([]);
+  const [ledgerUserRevenue, setLedgerUserRevenue] = useState<LedgerUserRevenue[]>([]);
+  const [ledgerModelExpense, setLedgerModelExpense] = useState<LedgerModelExpense[]>([]);
+  const [ledgerJobTypeRevenue, setLedgerJobTypeRevenue] = useState<LedgerJobTypeRevenue[]>([]);
+  const [ledgerTtsModelRevenue, setLedgerTtsModelRevenue] = useState<LedgerTtsModelRevenue[]>([]);
+  const [ledgerExpenseDetails, setLedgerExpenseDetails] = useState<LedgerExpenseDetail[]>([]);
+  const [ledgerRevenueDetails, setLedgerRevenueDetails] = useState<LedgerRevenueDetail[]>([]);
+
   const query = useMemo(() => {
     const q = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+    return q.toString();
+  }, [dateFrom, dateTo]);
+
+  const ledgerQuery = useMemo(() => {
+    const q = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, detail_limit: "400" });
     return q.toString();
   }, [dateFrom, dateTo]);
 
@@ -135,6 +192,35 @@ export default function AdminUsagePage(): JSX.Element {
         setDayRows(Array.isArray(data.by_day) ? data.by_day : []);
         setTopUsers(Array.isArray(data.top_users) ? data.top_users : []);
         setUsageSource(typeof data.source === "string" && data.source ? data.source : "usage_events");
+        return;
+      }
+      if (tab === "ledger") {
+        const res = await fetch(`/api/admin/usage/revenue-expense?${ledgerQuery}`, { headers: getAuthHeaders(), cache: "no-store" });
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          overview?: LedgerOverview;
+          notes?: LedgerNotes;
+          by_day?: LedgerDayRow[];
+          by_user_expense?: LedgerUserExpense[];
+          by_user_revenue?: LedgerUserRevenue[];
+          by_model_expense?: LedgerModelExpense[];
+          by_job_type_revenue?: LedgerJobTypeRevenue[];
+          by_tts_model_revenue?: LedgerTtsModelRevenue[];
+          expense_details?: LedgerExpenseDetail[];
+          revenue_details?: LedgerRevenueDetail[];
+          error?: string;
+        };
+        if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
+        setLedgerOverview(data.overview || {});
+        setLedgerNotes(data.notes || {});
+        setLedgerByDay(Array.isArray(data.by_day) ? data.by_day : []);
+        setLedgerUserExpense(Array.isArray(data.by_user_expense) ? data.by_user_expense : []);
+        setLedgerUserRevenue(Array.isArray(data.by_user_revenue) ? data.by_user_revenue : []);
+        setLedgerModelExpense(Array.isArray(data.by_model_expense) ? data.by_model_expense : []);
+        setLedgerJobTypeRevenue(Array.isArray(data.by_job_type_revenue) ? data.by_job_type_revenue : []);
+        setLedgerTtsModelRevenue(Array.isArray(data.by_tts_model_revenue) ? data.by_tts_model_revenue : []);
+        setLedgerExpenseDetails(Array.isArray(data.expense_details) ? data.expense_details : []);
+        setLedgerRevenueDetails(Array.isArray(data.revenue_details) ? data.revenue_details : []);
         return;
       }
       if (tab === "orders") {
@@ -181,7 +267,7 @@ export default function AdminUsagePage(): JSX.Element {
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
     }
-  }, [getAuthHeaders, query, tab]);
+  }, [getAuthHeaders, ledgerQuery, query, tab]);
 
   useEffect(() => { setTab(initialTab); }, [initialTab]);
   useEffect(() => { void load(); }, [load]);
@@ -189,11 +275,14 @@ export default function AdminUsagePage(): JSX.Element {
   return (
     <main className="min-h-0 max-w-7xl">
       <h1 className="text-2xl font-semibold text-ink">数据看板</h1>
-      <p className="mt-2 text-sm text-muted">顶部横向导航切换模块；时间区间与上方日期选择一致。订单分析按订单创建时间落入该区间的记录统计。</p>
+      <p className="mt-2 text-sm text-muted">
+        顶部横向导航切换模块；时间区间与上方日期选择一致（收支看板按 Asia/Shanghai 日历日）。订单分析按订单创建时间落入该区间的记录统计。
+      </p>
 
       <div className="mt-4 flex flex-wrap gap-2 border-b border-line pb-2">
         {[
           { key: "overview", label: "总览看板" },
+          { key: "ledger", label: "收支看板" },
           { key: "orders", label: "订单分析" },
           { key: "users", label: "用户分析" },
           { key: "works", label: "作品分析" },
@@ -216,6 +305,309 @@ export default function AdminUsagePage(): JSX.Element {
 
       {err ? <p className="mt-4 text-sm text-danger-ink">{err}</p> : null}
       {tab === "overview" && usageSource === "jobs_fallback" ? <p className="mt-2 text-sm text-warning-ink/90">当前为 jobs 回退数据，建议继续使用 usage_events。</p> : null}
+      {tab === "ledger" && (ledgerNotes.expense || ledgerNotes.revenue || ledgerNotes.revenue_tts) ? (
+        <div className="mt-3 space-y-1 rounded-lg border border-line/80 bg-surface/40 px-3 py-2 text-xs text-muted">
+          {ledgerNotes.expense ? <p>{ledgerNotes.expense}</p> : null}
+          {ledgerNotes.revenue ? <p>{ledgerNotes.revenue}</p> : null}
+          {ledgerNotes.revenue_tts ? <p>{ledgerNotes.revenue_tts}</p> : null}
+        </div>
+      ) : null}
+
+      {tab === "ledger" ? (
+        <>
+          <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-3">
+            <MetricCard title="支出合计（参考模型价）" value={money(ledgerOverview.expense_cny_total)} hint="usage_events.meta 分项估算" />
+            <MetricCard title="收入合计（钱包实扣）" value={money(ledgerOverview.revenue_cny_total)} hint={`${num(ledgerOverview.revenue_cents_total)} 分`} />
+            <MetricCard title="毛利（参考）" value={money(Number(ledgerOverview.revenue_cny_total || 0) - Number(ledgerOverview.expense_cny_total || 0))} hint="收入−支出，仅供参考" />
+          </div>
+          <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60">
+            <div className="border-b border-line px-3 py-2 text-sm text-muted">按日（Asia/Shanghai）</div>
+            <table className="min-w-[640px] w-full text-left text-sm text-ink">
+              <thead className="border-b border-line text-xs text-muted">
+                <tr>
+                  <th className="px-3 py-2">日期</th>
+                  <th className="px-3 py-2">支出（元）</th>
+                  <th className="px-3 py-2">收入（元）</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledgerByDay.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-6 text-center text-muted">
+                      暂无数据
+                    </td>
+                  </tr>
+                ) : (
+                  ledgerByDay.map((r, i) => (
+                    <tr key={`${r.day || "d"}_${i}`} className="border-t border-line/80">
+                      <td className="px-3 py-2">{r.day || "—"}</td>
+                      <td className="px-3 py-2">{money(r.expense_cny)}</td>
+                      <td className="px-3 py-2">{money(r.revenue_cny)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div className="overflow-x-auto rounded-xl border border-line bg-surface/60">
+              <div className="border-b border-line px-3 py-2 text-sm text-muted">分用户 · 支出（Top）</div>
+              <table className="min-w-[520px] w-full text-left text-sm text-ink">
+                <thead className="border-b border-line text-xs text-muted">
+                  <tr>
+                    <th className="px-3 py-2">用户</th>
+                    <th className="px-3 py-2">事件数</th>
+                    <th className="px-3 py-2">支出</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledgerUserExpense.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-6 text-center text-muted">
+                        暂无
+                      </td>
+                    </tr>
+                  ) : (
+                    ledgerUserExpense.map((r, i) => (
+                      <tr key={`${r.user_key || r.user_id || "u"}_${i}`} className="border-t border-line/80">
+                        <td className="px-3 py-2 font-mono text-xs">
+                          <span className="block">{r.phone || r.user_id || r.user_key || "—"}</span>
+                        </td>
+                        <td className="px-3 py-2">{num(r.events)}</td>
+                        <td className="px-3 py-2">{money(r.expense_cny)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-line bg-surface/60">
+              <div className="border-b border-line px-3 py-2 text-sm text-muted">分用户 · 收入（钱包实扣）</div>
+              <table className="min-w-[520px] w-full text-left text-sm text-ink">
+                <thead className="border-b border-line text-xs text-muted">
+                  <tr>
+                    <th className="px-3 py-2">用户</th>
+                    <th className="px-3 py-2">流水条数</th>
+                    <th className="px-3 py-2">收入</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledgerUserRevenue.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-6 text-center text-muted">
+                        暂无
+                      </td>
+                    </tr>
+                  ) : (
+                    ledgerUserRevenue.map((r, i) => (
+                      <tr key={`${r.phone || r.user_id || "p"}_${i}`} className="border-t border-line/80">
+                        <td className="px-3 py-2 font-mono text-xs">{r.phone || r.user_id || "—"}</td>
+                        <td className="px-3 py-2">{num(r.ledger_rows)}</td>
+                        <td className="px-3 py-2">{money(r.revenue_cny)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div className="overflow-x-auto rounded-xl border border-line bg-surface/60">
+              <div className="border-b border-line px-3 py-2 text-sm text-muted">分模型 · 支出（LLM/TTS/图像 参考价）</div>
+              <table className="min-w-[560px] w-full text-left text-sm text-ink">
+                <thead className="border-b border-line text-xs text-muted">
+                  <tr>
+                    <th className="px-3 py-2">类别</th>
+                    <th className="px-3 py-2">模型/价目键</th>
+                    <th className="px-3 py-2">支出</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledgerModelExpense.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-6 text-center text-muted">
+                        暂无
+                      </td>
+                    </tr>
+                  ) : (
+                    ledgerModelExpense.map((r, i) => (
+                      <tr key={`${r.bucket || "b"}_${r.model_label || "m"}_${i}`} className="border-t border-line/80">
+                        <td className="px-3 py-2 font-mono text-xs">{r.bucket || "—"}</td>
+                        <td className="max-w-[240px] truncate px-3 py-2 font-mono text-xs" title={r.model_label}>
+                          {r.model_label || "—"}
+                        </td>
+                        <td className="px-3 py-2">{money(r.expense_cny)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-line bg-surface/60">
+              <div className="border-b border-line px-3 py-2 text-sm text-muted">分任务类型 · 收入（钱包实扣）</div>
+              <table className="min-w-[480px] w-full text-left text-sm text-ink">
+                <thead className="border-b border-line text-xs text-muted">
+                  <tr>
+                    <th className="px-3 py-2">job_type</th>
+                    <th className="px-3 py-2">流水条数</th>
+                    <th className="px-3 py-2">收入</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledgerJobTypeRevenue.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-6 text-center text-muted">
+                        暂无
+                      </td>
+                    </tr>
+                  ) : (
+                    ledgerJobTypeRevenue.map((r, i) => (
+                      <tr key={`${r.job_type || "jt"}_${i}`} className="border-t border-line/80">
+                        <td className="px-3 py-2 font-mono text-xs">{r.job_type || "—"}</td>
+                        <td className="px-3 py-2">{num(r.ledger_rows)}</td>
+                        <td className="px-3 py-2">{money(r.revenue_cny)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60">
+            <div className="border-b border-line px-3 py-2 text-sm text-muted">按 TTS / 计费模型键 · 收入（含非 TTS 类目）</div>
+            <table className="min-w-[560px] w-full text-left text-sm text-ink">
+              <thead className="border-b border-line text-xs text-muted">
+                <tr>
+                  <th className="px-3 py-2">模型键</th>
+                  <th className="px-3 py-2">流水条数</th>
+                  <th className="px-3 py-2">收入</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledgerTtsModelRevenue.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-3 py-6 text-center text-muted">
+                      暂无
+                    </td>
+                  </tr>
+                ) : (
+                  ledgerTtsModelRevenue.map((r, i) => (
+                    <tr key={`${r.model_key || "mk"}_${i}`} className="border-t border-line/80">
+                      <td className="max-w-[320px] truncate px-3 py-2 font-mono text-xs" title={r.model_key}>
+                        {r.model_key || "—"}
+                      </td>
+                      <td className="px-3 py-2">{num(r.ledger_rows)}</td>
+                      <td className="px-3 py-2">{money(r.revenue_cny)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60">
+            <div className="border-b border-line px-3 py-2 text-sm text-muted">支出明细（最多 400 条，任务终态用量事件）</div>
+            <table className="min-w-[1180px] w-full text-left text-sm text-ink">
+              <thead className="border-b border-line text-xs text-muted">
+                <tr>
+                  <th className="px-3 py-2">时间</th>
+                  <th className="px-3 py-2">日</th>
+                  <th className="px-3 py-2">用户</th>
+                  <th className="px-3 py-2">job_id</th>
+                  <th className="px-3 py-2">job_type</th>
+                  <th className="px-3 py-2">状态</th>
+                  <th className="px-3 py-2">合计</th>
+                  <th className="px-3 py-2">LLM</th>
+                  <th className="px-3 py-2">TTS</th>
+                  <th className="px-3 py-2">图</th>
+                  <th className="px-3 py-2">文本模型</th>
+                  <th className="px-3 py-2">TTS 模型</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledgerExpenseDetails.length === 0 ? (
+                  <tr>
+                    <td colSpan={12} className="px-3 py-6 text-center text-muted">
+                      暂无
+                    </td>
+                  </tr>
+                ) : (
+                  ledgerExpenseDetails.map((r, i) => (
+                    <tr key={`${r.usage_event_id ?? "e"}_${i}`} className="border-t border-line/80">
+                      <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">{r.created_at || "—"}</td>
+                      <td className="px-3 py-2 text-xs">{r.day || "—"}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{r.phone || r.user_id || "—"}</td>
+                      <td className="max-w-[120px] truncate px-3 py-2 font-mono text-[10px]" title={r.job_id}>
+                        {r.job_id ? `${r.job_id.slice(0, 8)}…` : "—"}
+                      </td>
+                      <td className="max-w-[120px] truncate px-3 py-2 font-mono text-[11px]" title={r.job_type}>
+                        {r.job_type || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-xs">{r.terminal_status || "—"}</td>
+                      <td className="px-3 py-2">{money(r.expense_cny)}</td>
+                      <td className="px-3 py-2">{money(r.llm_cny)}</td>
+                      <td className="px-3 py-2">{money(r.tts_cny)}</td>
+                      <td className="px-3 py-2">{money(r.image_cny)}</td>
+                      <td className="max-w-[100px] truncate px-3 py-2 text-[10px] font-mono" title={r.text_model || ""}>
+                        {r.text_model || "—"}
+                      </td>
+                      <td className="max-w-[100px] truncate px-3 py-2 text-[10px] font-mono" title={r.tts_model || ""}>
+                        {r.tts_model || "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60">
+            <div className="border-b border-line px-3 py-2 text-sm text-muted">收入明细（最多 400 条，钱包扣费流水）</div>
+            <table className="min-w-[1180px] w-full text-left text-sm text-ink">
+              <thead className="border-b border-line text-xs text-muted">
+                <tr>
+                  <th className="px-3 py-2">时间</th>
+                  <th className="px-3 py-2">日</th>
+                  <th className="px-3 py-2">用户</th>
+                  <th className="px-3 py-2">job_id</th>
+                  <th className="px-3 py-2">job_type</th>
+                  <th className="px-3 py-2">计费模型键</th>
+                  <th className="px-3 py-2">金额</th>
+                  <th className="px-3 py-2">摘要</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledgerRevenueDetails.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-3 py-6 text-center text-muted">
+                      暂无
+                    </td>
+                  </tr>
+                ) : (
+                  ledgerRevenueDetails.map((r, i) => (
+                    <tr key={`${r.ledger_id ?? "l"}_${i}`} className="border-t border-line/80">
+                      <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">{r.created_at || "—"}</td>
+                      <td className="px-3 py-2 text-xs">{r.day || "—"}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{r.phone || r.user_id || "—"}</td>
+                      <td className="max-w-[120px] truncate px-3 py-2 font-mono text-[10px]" title={r.job_id}>
+                        {r.job_id ? `${r.job_id.slice(0, 8)}…` : "—"}
+                      </td>
+                      <td className="max-w-[120px] truncate px-3 py-2 font-mono text-[11px]" title={r.job_type}>
+                        {r.job_type || "—"}
+                      </td>
+                      <td className="max-w-[160px] truncate px-3 py-2 font-mono text-[10px]" title={r.billing_model_key}>
+                        {r.billing_model_key || "—"}
+                      </td>
+                      <td className="px-3 py-2">{money(r.revenue_cny)}</td>
+                      <td className="max-w-[320px] truncate px-3 py-2 text-xs text-muted" title={r.ledger_message}>
+                        {r.ledger_message || "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : null}
 
       {tab === "overview" ? (
         <>
