@@ -11,6 +11,7 @@
 #   GIT_PULL=0   跳过 git fetch/pull（离线或固定版本发布）
 #   ORCH_HEALTH_MAX_ATTEMPTS=12 ORCH_HEALTH_SLEEP=2   编排器 /health 探测（默认约 24s）
 #   WEB_HEALTH_MAX_ATTEMPTS=50 WEB_HEALTH_SLEEP=2      Web :3000 探测（默认约 100s，与 compose web healthcheck start_period 90s 对齐）
+#   NEXT_PUBLIC_APP_VERSION=自定义   写入前端构建号；不设则发版脚本默认用当前目录 git 短 SHA
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/FYV}"
@@ -43,6 +44,26 @@ if [[ "$GIT_PULL" == "1" ]]; then
 else
   log "GIT_PULL=0，跳过 git fetch/pull"
 fi
+
+# NEXT_PUBLIC_APP_VERSION：已 export 则沿用；否则读 .env.ai-native；仍空则用 git 短 SHA（打进 Web 镜像）
+if [[ -z "${NEXT_PUBLIC_APP_VERSION:-}" && -f "$ENV_FILE" ]]; then
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    line="${raw%%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*NEXT_PUBLIC_APP_VERSION=(.*)$ ]] || continue
+    v="${BASH_REMATCH[1]}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    v="${v#\"}"; v="${v%\"}"
+    v="${v#\'}"; v="${v%\'}"
+    NEXT_PUBLIC_APP_VERSION="$v"
+  done <"$ENV_FILE"
+fi
+if [[ -z "${NEXT_PUBLIC_APP_VERSION:-}" ]]; then
+  NEXT_PUBLIC_APP_VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+fi
+export NEXT_PUBLIC_APP_VERSION
+log "Web 构建版本号 NEXT_PUBLIC_APP_VERSION=${NEXT_PUBLIC_APP_VERSION}"
 
 log "构建并启动容器"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build || die "docker compose up 失败"
@@ -90,3 +111,4 @@ done
 log "发布成功"
 log "编排器: http://127.0.0.1:8008/health"
 log "Web: http://127.0.0.1:3000/"
+log "若域名前有 CDN：发版后请在控制台 Purge / 刷新缓存（建议至少 /admin/* 与 /；仍见旧前端时再 Purge /_next/static/*）。Nginx 勿对整条反代做长期 proxy_cache；分层与示例见 DEPLOYMENT.md「Nginx / CDN 与 Web 发版缓存」与 deploy/nginx-prestoai.cdn-cache.example.conf"

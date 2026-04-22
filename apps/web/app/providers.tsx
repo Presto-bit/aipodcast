@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import DeployVersionSync from "../components/DeployVersionSync";
 import AppShell from "../components/AppShell";
 import { AuthProvider } from "../lib/auth";
 import { I18nProvider } from "../lib/I18nContext";
@@ -24,6 +25,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   );
   return (
     <QueryClientProvider client={client}>
+      <DeployVersionSync />
       <ThemeProvider>
         <I18nProvider>
           <AuthProvider>

@@ -55,7 +55,7 @@
    - 生产建议的 PG 单一事实源与 `FYV_AUTH_*` 等见 [数据单一事实源](#数据单一事实源鉴权--用户) 与 [`docs/operations/README.md`](docs/operations/README.md)。
 
 7. **反向代理（生产）**  
-   - 宿主机前加 **Nginx**，`80`/`443` 反代到 **`127.0.0.1:3000`**；勿将数据库、Redis、MinIO、`8008` 暴露到公网，详见下文 [生产环境建议](#生产环境建议安全)。
+   - 宿主机前加 **Nginx**，`80`/`443` 反代到 **`127.0.0.1:3000`**；勿将数据库、Redis、MinIO、`8008` 暴露到公网，详见下文 [生产环境建议](#生产环境建议安全)。**HTML 与静态资源的缓存分层、发版后 CDN Purge、Nginx 示例**见下文「**Nginx / CDN 与 Web 发版缓存**」一节。
 
 ### 后续发版（代码已上线后的常规更新）
 
@@ -162,6 +162,37 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 - 浏览器与公网流量**只进 Next（BFF）**；BFF 使用 **`INTERNAL_SIGNING_SECRET`** 等对编排器请求签名（见 `docs/architecture/bff.md`）。
 - 将 `MINIMAX_API_KEY`、`INTERNAL_SIGNING_SECRET`、`PAYMENT_WEBHOOK_SECRET`、`ORCHESTRATOR_API_TOKEN` 等放在仅宿主机可读的环境文件或密钥管理，**不要**提交到 Git。
 - **生产禁止** `PAYMENT_WEBHOOK_ALLOW_UNSIGNED=1`（未配置 `PAYMENT_WEBHOOK_SECRET` 且未允许无签时，编排器会对回调返回 503，避免误接未验签流量）。
+
+## Nginx / CDN 与 Web 发版缓存
+
+面向 **Next.js**（`/_next/static/*` 带 content hash）：目标是 **HTML 能尽快换新引用**，静态 chunk 仍可 **长缓存**；避免「整条反代 + CDN」把 **HTML** 也缓存成很久不变，导致发版后浏览器仍拉旧 chunk。
+
+### 1）别让 Nginx / CDN 把 HTML（或整条反代）缓存成「很久不变」
+
+- **Nginx**
+  - **不要**对 `location /` 套 **`proxy_cache`** 且不区分路径，否则容易把 **HTML API 响应** 一并磁盘缓存，发版后仍像旧站。
+  - 若必须做边缘/磁盘缓存：**只对**明确路径（例如仅 `/_next/static/`）启用，或严格跟随源站 `Cache-Control`。
+  - 对 **`/admin`**（管理后台）可在反代层增加 **`Cache-Control: no-cache, private, must-revalidate`**，降低浏览器与中间层长期持有旧 HTML 的概率（**不要**对 `/_next/static/` 强行 `no-store`，以免放弃 hash 文件的长缓存收益）。
+- **CDN（Cloudflare / 阿里云 CDN 等）**
+  - **HTML**（或 `/admin*`）与 **`/_next/static/*`** 使用 **不同缓存策略**：HTML **短 TTL / 不缓存 / 遵循源站 no-cache**；静态 **可长 TTL**。
+  - 避免一条规则把 **整站** 设成「边缘缓存 1 年且忽略源站」。
+
+### 2）发版后做一次刷新（Purge）
+
+- 执行 **`release.sh`** 或 `docker compose ... up -d --build` 且 **`web` 已 healthy** 后，若域名前还有 **CDN**：在控制台对以下路径做一次 **刷新 / Purge**（以厂商文档为准）：
+  - 至少：**`/admin/*`**、**`/`**（或你实际入口路径）；
+  - 若仍见旧前端：再对 **`/_next/static/*`** 做 Purge（会短时间增加回源，但能立刻对齐新 chunk）。
+- **自检**：`curl -I https://你的域名/admin/usage` 看 `cache-control`、`age`、`cf-cache-status` 等；与 **`curl -I http://127.0.0.1:3000/admin/usage`** 对照，确认公网与源站一致。
+
+### 3）缓存分层（推荐）
+
+| 资源类型 | 建议 |
+|---------|------|
+| `/_next/static/*`（文件名含 hash） | **长 TTL + immutable**（与 Next 默认一致；CDN 对齐源站即可） |
+| HTML、`/admin/*`、强个性化页面 | **短 TTL** 或 **`no-cache`**；发版后 **CDN Purge** |
+| 同源 API（若经同一主机名） | **不缓存** 或极短 TTL |
+
+**示例配置**：仓库根目录 **`deploy/nginx-prestoai.cdn-cache.example.conf`**（注释块内为完整 `server` 片段，按需合并到宝塔或 `sites-available`，`nginx -t` 后 `reload`）。
 
 ## 支付回调
 

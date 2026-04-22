@@ -1,6 +1,8 @@
 import "./globals.css";
 import Providers from "./providers";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Presto · 灵感不设限，创作即刻起",
   description: "Presto — 灵感不设限，创作即刻起。语音与播客创作工作台"
