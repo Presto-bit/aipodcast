@@ -172,6 +172,8 @@ services:
       # 发版时拉取 NODE_BASE_IMAGE 最新 digest，避免基础镜像层长期不更新
       pull: true
       args:
+        # 国内若报「failed to resolve … node:20-alpine」「content size of zero」：在 .env.ai-native 设
+        # NODE_BASE_IMAGE=docker.m.daocloud.io/library/node:20-alpine（或配置 Docker Hub 镜像加速）
         NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-node:20-alpine}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
         NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-development}

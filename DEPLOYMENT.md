@@ -102,6 +102,16 @@
 - **可靠性**：核心服务使用 **`restart: unless-stopped`**；编排器与 Web 配置了 **healthcheck**，`web` 与 Worker 在编排器健康后再依赖启动，减少「半启动」竞态。
 - **`release.sh`**：支持 **`GIT_PULL=0`** 跳过 `git fetch/pull`；发布末尾会检查 `orchestrator` / `web` / `ai-worker` / `media-worker` 是否为 **running**。
 
+### Docker：`web` 构建拉取 `node:20-alpine` 失败（metadata / content size of zero）
+
+多为 **Docker Hub** 在国内不可达或限流。任选其一：
+
+1. **在服务器 `.env.ai-native` 中指定可拉的基础镜像**（与 `docker-compose.ai-native.yml` 中 `web.build.args.NODE_BASE_IMAGE` 一致），例如：  
+   `NODE_BASE_IMAGE=docker.m.daocloud.io/library/node:20-alpine`  
+   保存后重新执行 `bash release.sh`（或 `docker compose ... up -d --build`）。
+2. **为 Docker 配置 Hub 镜像加速**（`/etc/docker/daemon.json` 的 `registry-mirrors`），`systemctl restart docker` 后仍使用默认 `node:20-alpine`。  
+   详见根目录 **`.env.ai-native.example`**「Docker 镜像与离线构建」注释。
+
 ### PostgreSQL：已有数据卷时更换 `DB_PASSWORD`（换密流程）
 
 Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGRES_PASSWORD` 去改库内已有角色的密码；应用侧的 `DB_PASSWORD` 必须与库里该用户口令一致，否则编排器 / Worker 会连库失败。
