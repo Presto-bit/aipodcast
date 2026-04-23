@@ -43,7 +43,10 @@ read_key_from_env_file() {
     v="${v#\'}"; v="${v%\'}"
     out="$v"
   done <"$file"
-  [[ -n "$out" ]] && printf '%s' "$out"
+  if [[ -n "$out" ]]; then
+    printf '%s' "$out"
+  fi
+  return 0
 }
 
 command -v docker >/dev/null 2>&1 || die "未找到 docker 命令"
