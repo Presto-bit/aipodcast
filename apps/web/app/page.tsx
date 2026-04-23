@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PodcastWorksGallery from "../components/podcast/PodcastWorksGallery";
 import { IconCreate, IconNotes, IconVoice, IconGrid } from "../components/NavIcons";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../lib/worksTypes";
@@ -12,6 +12,17 @@ import { SiteBeianBar } from "../components/SiteBeianBar";
 
 const HOME_WORKS_LIMIT = 80;
 const HOME_WORKS_PREVIEW = 10;
+
+function countQueuedOrRunningJobs(jobs: unknown[] | undefined): number {
+  if (!Array.isArray(jobs)) return 0;
+  let n = 0;
+  for (const row of jobs) {
+    if (!row || typeof row !== "object") continue;
+    const st = String((row as { status?: unknown }).status || "").trim();
+    if (st === "queued" || st === "running") n += 1;
+  }
+  return n;
+}
 
 export default function HomePage() {
   const { t } = useI18n();
@@ -41,9 +52,12 @@ export default function HomePage() {
   const [worksLoading, setWorksLoading] = useState(false);
   const [worksRefreshKey, setWorksRefreshKey] = useState(0);
   const [worksFetchErr, setWorksFetchErr] = useState("");
+  /** 避免 accountKey / 依赖连变时多次概览请求乱序覆盖（进行中数量闪错） */
+  const homeOverviewReqSeq = useRef(0);
 
   const refreshHomeOverview = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
+    const seq = ++homeOverviewReqSeq.current;
     try {
       const authHdr = getAuthHeaders();
       if (!silent) {
@@ -65,7 +79,10 @@ export default function HomePage() {
         fetch("/api/notes", { cache: "no-store", credentials: "same-origin", headers: { ...authHdr } })
       ]);
       const jobsData = (await jobsRes.json().catch(() => ({}))) as { jobs?: Array<{ id?: string; status?: string }> };
-      const activeJobsData = (await activeJobsRes.json().catch(() => ({}))) as { jobs?: unknown[] };
+      const activeJobsData = (await activeJobsRes.json().catch(() => ({}))) as {
+        jobs?: unknown[];
+        success?: boolean;
+      };
       const worksData = (await worksRes.json().catch(() => ({}))) as {
         ai?: WorkItem[];
         tts?: WorkItem[];
@@ -85,19 +102,24 @@ export default function HomePage() {
       const tts = Array.isArray(worksData.tts) ? worksData.tts : [];
       const notesWorks = Array.isArray(worksData.notes) ? worksData.notes : [];
       const merged = mergeUserFacingWorksByRecency(ai, tts, notesWorks);
-      const activeList = Array.isArray(activeJobsData.jobs) ? activeJobsData.jobs : [];
+      const activeJobsOk =
+        activeJobsRes.ok && activeJobsData.success !== false && Array.isArray(activeJobsData.jobs);
+      const activeJobsCount = activeJobsOk ? countQueuedOrRunningJobs(activeJobsData.jobs) : null;
+
+      if (seq !== homeOverviewReqSeq.current) return;
+
       setHomeWorks(merged);
-      setOverview({
+      setOverview((prev) => ({
         latestJobId: String(latest?.id || "").trim(),
         latestJobStatus: String(latest?.status || "—"),
         worksCount: merged.length,
         notesCount: Array.isArray(notesData.notes) ? notesData.notes.length : 0,
-        activeJobsCount: activeList.length
-      });
+        activeJobsCount: activeJobsCount != null ? activeJobsCount : prev.activeJobsCount
+      }));
     } catch {
-      if (!silent) setWorksFetchErr("加载失败，请稍后重试");
+      if (seq === homeOverviewReqSeq.current && !silent) setWorksFetchErr("加载失败，请稍后重试");
     } finally {
-      if (!silent) setWorksLoading(false);
+      if (seq === homeOverviewReqSeq.current && !silent) setWorksLoading(false);
     }
   }, [getAuthHeaders]);
 

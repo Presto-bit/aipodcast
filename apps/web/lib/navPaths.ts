@@ -33,6 +33,8 @@ export function isAuthPublicPath(pathname: string): boolean {
   const n = normalizePathname(pathname);
   if (n === "/forgot-password" || n === "/reset-password" || n === "/verify-email") return true;
   if (n === "/" || n === "/me" || n === "/settings") return true;
+  /** 套餐/余额页：允许未登录浏览价目与说明；充值等仍依赖登录态由页面内控制 */
+  if (n === "/subscription" || n.startsWith("/subscription/")) return true;
   return pathname.startsWith("/me/") || pathname.startsWith("/settings/");
 }
 
