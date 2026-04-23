@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sensitiveApiPath, sensitiveDocumentPath } from "./lib/sensitiveCacheRoutes";
 
 /** 进程内限流：多副本 / Serverless 横向扩展时无法全局共享，滥用面可被多 IP 稀释；生产建议在网关或 Redis 侧叠加配额。 */
 const inMemoryWindow = new Map<string, { count: number; resetAt: number }>();
@@ -21,6 +22,19 @@ const CACHE_API = "no-store, max-age=0, must-revalidate";
 function withCacheHeaders(res: NextResponse, directive: string): NextResponse {
   res.headers.set("Cache-Control", directive);
   res.headers.set("Pragma", "no-cache");
+  return res;
+}
+
+/**
+ * 敏感业务：强制 CDN/代理按 Cookie（及 API 的 Authorization）区分缓存键，避免「同 URL 多用户」命中共享对象。
+ * 与 Next 默认 RSC Vary 合并为单头，减少重复 Vary。
+ */
+function applySensitiveSharedCacheVary(res: NextResponse, kind: "page" | "api"): NextResponse {
+  const base =
+    kind === "page"
+      ? ["RSC", "Next-Router-State-Tree", "Next-Router-Prefetch", "Accept-Encoding", "Cookie"]
+      : ["Cookie", "Authorization", "Accept-Encoding"];
+  res.headers.set("Vary", base.join(", "));
   return res;
 }
 
@@ -59,7 +73,7 @@ export function middleware(req: NextRequest) {
   }
 
   if (req.method === "OPTIONS" && pathname.startsWith("/api/")) {
-    return withCacheHeaders(
+    const opt = withCacheHeaders(
       new NextResponse(null, {
         status: 204,
         headers: {
@@ -71,10 +85,16 @@ export function middleware(req: NextRequest) {
       }),
       CACHE_API
     );
+    if (sensitiveApiPath(pathname)) applySensitiveSharedCacheVary(opt, "api");
+    return opt;
   }
 
   if (!pathname.startsWith("/api/")) {
-    return withCacheHeaders(NextResponse.next(), CACHE_PAGE);
+    const res = withCacheHeaders(NextResponse.next(), CACHE_PAGE);
+    if (sensitiveDocumentPath(pathname)) {
+      applySensitiveSharedCacheVary(res, "page");
+    }
+    return res;
   }
 
   /** 由路由内 `/api/image-proxy` 单独按 IP 限速，避免拖满全站 400/min */
@@ -90,9 +110,13 @@ export function middleware(req: NextRequest) {
   }
   const clientKey = clientRateLimitKey(req);
   if (!checkRateLimit(clientKey)) {
-    return withCacheHeaders(NextResponse.json({ error: "rate_limited" }, { status: 429 }), CACHE_API);
+    const r = withCacheHeaders(NextResponse.json({ error: "rate_limited" }, { status: 429 }), CACHE_API);
+    if (sensitiveApiPath(pathname)) applySensitiveSharedCacheVary(r, "api");
+    return r;
   }
-  return withCacheHeaders(NextResponse.next(), CACHE_API);
+  const r = withCacheHeaders(NextResponse.next(), CACHE_API);
+  if (sensitiveApiPath(pathname)) applySensitiveSharedCacheVary(r, "api");
+  return r;
 }
 
 export const config = {

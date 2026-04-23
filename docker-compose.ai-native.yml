@@ -169,11 +169,13 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
-      pull: false
+      # 发版时拉取 NODE_BASE_IMAGE 最新 digest，避免基础镜像层长期不更新
+      pull: true
       args:
         NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-node:20-alpine}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
         NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-development}
+        NEXT_PUBLIC_APP_BUILD_ID: ${NEXT_PUBLIC_APP_BUILD_ID:-0}
     env_file:
       - .env.ai-native
     environment:

@@ -12,6 +12,9 @@
 #   ORCH_HEALTH_MAX_ATTEMPTS=12 ORCH_HEALTH_SLEEP=2   编排器 /health 探测（默认约 24s）
 #   WEB_HEALTH_MAX_ATTEMPTS=50 WEB_HEALTH_SLEEP=2      Web :3000 探测（默认约 100s，与 compose web healthcheck start_period 90s 对齐）
 #   NEXT_PUBLIC_APP_VERSION=自定义   写入前端构建号；不设则发版脚本默认用当前目录 git 短 SHA
+#   NEXT_PUBLIC_APP_BUILD_ID=整数   可选；不设则发版脚本用 git rev-list --count HEAD（单调递增，用于软刷新/旧包检测）
+#   COMPOSE_BUILD_PULL=0|1   发版时 docker compose build 是否加 --pull（默认 1，刷新各 Dockerfile 的 FROM）
+#   DOCKER_BUILD_NO_CACHE=1   构建禁用层缓存（极慢，仅排障）
 #   阿里云 CDN：在 .env.ai-native 配置 ALIYUN_CDN_REFRESH_ON_RELEASE=1 等（见该文件注释）；发版成功后会调用 scripts/aliyun-cdn-refresh.sh
 set -euo pipefail
 
@@ -65,6 +68,26 @@ if [[ -z "${NEXT_PUBLIC_APP_VERSION:-}" ]]; then
 fi
 export NEXT_PUBLIC_APP_VERSION
 log "Web 构建版本号 NEXT_PUBLIC_APP_VERSION=${NEXT_PUBLIC_APP_VERSION}"
+
+# 单调递增构建号：供前端 DeployVersionSync 识别「软刷新命中旧包」时勿把 localStorage 降回旧版本（见组件注释）
+if [[ -z "${NEXT_PUBLIC_APP_BUILD_ID:-}" && -f "$ENV_FILE" ]]; then
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    line="${raw%%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*NEXT_PUBLIC_APP_BUILD_ID=(.*)$ ]] || continue
+    v="${BASH_REMATCH[1]}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    v="${v#\"}"; v="${v%\"}"
+    v="${v#\'}"; v="${v%\'}"
+    NEXT_PUBLIC_APP_BUILD_ID="$v"
+  done <"$ENV_FILE"
+fi
+if [[ -z "${NEXT_PUBLIC_APP_BUILD_ID:-}" ]]; then
+  NEXT_PUBLIC_APP_BUILD_ID="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+fi
+export NEXT_PUBLIC_APP_BUILD_ID
+log "Web 构建序号 NEXT_PUBLIC_APP_BUILD_ID=${NEXT_PUBLIC_APP_BUILD_ID}"
 
 log "构建并启动容器"
 docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build || die "docker compose up 失败"

@@ -10,6 +10,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # 构建时写入客户端包；发版脚本或 compose build args 注入（见 release.sh、docker-compose）
 ARG NEXT_PUBLIC_APP_VERSION=development
 ENV NEXT_PUBLIC_APP_VERSION=${NEXT_PUBLIC_APP_VERSION}
+ARG NEXT_PUBLIC_APP_BUILD_ID=0
+ENV NEXT_PUBLIC_APP_BUILD_ID=${NEXT_PUBLIC_APP_BUILD_ID}
 
 COPY apps/web/package.json /app/package.json
 RUN npm config set registry "${NPM_REGISTRY}" \
