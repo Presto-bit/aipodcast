@@ -12,6 +12,8 @@ export type SerializedNotesAskTurn = {
   content: string;
   /** 助手消息可选：与编排器 sources 一致，用于 [n] 脚注与内链 */
   sources?: NotesAskSource[];
+  /** 知识库引导气泡：可点击填入输入框的建议问句 */
+  hintSuggestions?: string[];
 };
 
 const STORAGE_VERSION = 1;
@@ -42,11 +44,19 @@ function parseStored(raw: string): SerializedNotesAskTurn[] | null {
       if (!id || (role !== "user" && role !== "assistant")) continue;
       const content = String((m as SerializedNotesAskTurn).content ?? "");
       const src = normalizeNotesAskSources((m as SerializedNotesAskTurn).sources);
+      const h1 = (m as { hint_suggestions?: unknown }).hint_suggestions;
+      const h2 = (m as { hintSuggestions?: unknown }).hintSuggestions;
+      const hintArr = Array.isArray(h1) ? h1 : Array.isArray(h2) ? h2 : [];
+      const hintSuggestions = hintArr
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+        .slice(0, 8);
       out.push({
         id,
         role,
         content,
-        ...(src && role === "assistant" ? { sources: src } : {})
+        ...(src && role === "assistant" ? { sources: src } : {}),
+        ...(hintSuggestions.length && role === "assistant" ? { hintSuggestions } : {})
       });
       if (out.length >= MAX_MESSAGES) break;
     }
@@ -107,9 +117,12 @@ export function saveNotesAskChat(notebook: string, messages: SerializedNotesAskT
   try {
     const bk = baseKey(notebook);
     const trimmed = messages.slice(-MAX_MESSAGES).map((m) => {
-      const base = { id: m.id, role: m.role, content: m.content };
+      const base: SerializedNotesAskTurn = { id: m.id, role: m.role, content: m.content };
       if (m.role === "assistant" && m.sources?.length) {
-        return { ...base, sources: m.sources };
+        base.sources = m.sources;
+      }
+      if (m.role === "assistant" && m.hintSuggestions?.length) {
+        base.hintSuggestions = m.hintSuggestions;
       }
       return base;
     });

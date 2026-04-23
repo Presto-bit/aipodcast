@@ -180,11 +180,22 @@ export default function AdminUsersPage() {
       <section className="mt-6 rounded-xl border border-line bg-surface/60 p-4">
         <h2 className="text-sm font-medium text-ink">新增用户</h2>
         <div className="mt-3 grid gap-2 md:grid-cols-6">
-          <input className="rounded bg-canvas p-2 text-sm text-ink" placeholder="手机号" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <input
+            className="rounded bg-canvas p-2 text-sm text-ink"
+            placeholder="手机号"
+            name="fym-admin-new-user-phone"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
           <input
             className="rounded bg-canvas p-2 text-sm text-ink"
             placeholder="密码（≥6 位）"
             type="password"
+            name="fym-admin-new-user-password"
+            autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />

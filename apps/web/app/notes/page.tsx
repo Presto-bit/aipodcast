@@ -70,6 +70,8 @@ type NotesAskTurn = {
   streaming?: boolean;
   /** 编排器 done 事件中的 sources，用于 [n] 脚注与内链 */
   sources?: NotesAskSource[];
+  /** 引导气泡：可点击填入下方输入框 */
+  hintSuggestions?: string[];
 };
 
 type NoteItem = {
@@ -947,7 +949,12 @@ export default function NotesPage() {
       if (prev.some((m) => m.role === "user")) return prev;
       const rest = stripBoot(prev);
       const existingIdx = rest.findIndex((m) => m.id === bootId);
-      const nextMsg: NotesAskTurn = { id: bootId, role: "assistant", content };
+      const nextMsg: NotesAskTurn = {
+        id: bootId,
+        role: "assistant",
+        content,
+        hintSuggestions: notesAskHints.suggestions.length ? [...notesAskHints.suggestions] : undefined
+      };
       if (existingIdx >= 0) {
         const next = [...rest];
         next[existingIdx] = nextMsg;
@@ -981,7 +988,13 @@ export default function NotesPage() {
     }
     const loaded = loadNotesAskChat(nb);
     setNotesAskMessages(
-      loaded?.length ? loaded.map((m) => ({ ...m, streaming: false as boolean | undefined })) : []
+      loaded?.length
+        ? loaded.map((m) => ({
+            ...m,
+            streaming: false as boolean | undefined,
+            hintSuggestions: m.hintSuggestions?.length ? [...m.hintSuggestions] : undefined
+          }))
+        : []
     );
     skipNotesAskSaveRef.current = true;
   }, [selectedNotebook, storageAccountScope]);
@@ -3436,6 +3449,29 @@ export default function NotesPage() {
                             ) : (
                               <div className="min-w-0">
                                 <NotesAskAnswerDisplay text={m.content} sources={m.sources} />
+                                {!m.streaming &&
+                                m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
+                                (m.hintSuggestions?.length ?? 0) > 0 ? (
+                                  <div className="mt-2 flex flex-col gap-1.5">
+                                    <p className="text-[11px] font-medium text-muted">试试这样问（点击填入输入框）</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {m.hintSuggestions!.map((q) => (
+                                        <button
+                                          key={q}
+                                          type="button"
+                                          className="max-w-full rounded-lg border border-brand/35 bg-brand/[0.06] px-2.5 py-1.5 text-left text-[11px] leading-snug text-ink transition hover:bg-brand/10"
+                                          title={q}
+                                          onClick={() => {
+                                            setNotesAskQuestion(q);
+                                            window.setTimeout(() => notesAskTextareaRef.current?.focus(), 0);
+                                          }}
+                                        >
+                                          {q}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : null}
                                 {!m.streaming &&
                                 (m.content || "").trim() &&
                                 !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) ? (

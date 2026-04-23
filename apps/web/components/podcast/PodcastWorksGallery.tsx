@@ -1514,6 +1514,7 @@ export default function PodcastWorksGallery({
                           className="relative z-[1] h-full w-full object-cover"
                           referrerPolicy="no-referrer"
                           loading="lazy"
+                          decoding="async"
                           onError={(e) => {
                             const el = e.target as HTMLImageElement;
                             const orig = String(w.coverImage || "").trim();
@@ -1682,6 +1683,7 @@ export default function PodcastWorksGallery({
                         className="relative z-[1] h-full w-full object-cover"
                         referrerPolicy="no-referrer"
                         loading="lazy"
+                        decoding="async"
                         onError={(e) => {
                           const el = e.target as HTMLImageElement;
                           const orig = String(w.coverImage || "").trim();

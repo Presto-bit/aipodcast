@@ -77,6 +77,8 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
   const srcCache = useRef<Record<string, string>>({});
+  /** 跨域音频拉成 blob 时登记，便于 revoke */
+  const blobUrlByJobId = useRef<Record<string, string>>({});
 
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [activeDisplayTitle, setActiveDisplayTitle] = useState("");
@@ -103,6 +105,15 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
 
   const dismiss = useCallback(() => {
     stopAndClearAudio();
+    for (const k of Object.keys(blobUrlByJobId.current)) {
+      try {
+        URL.revokeObjectURL(blobUrlByJobId.current[k]!);
+      } catch {
+        // ignore
+      }
+      delete blobUrlByJobId.current[k];
+      delete srcCache.current[k];
+    }
     setActiveJobId(null);
     setActiveDisplayTitle("");
     setIsPlaying(false);
@@ -122,7 +133,47 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   );
 
   const clearCachedAudioSrc = useCallback((jobId: string) => {
+    const blob = blobUrlByJobId.current[jobId];
+    if (blob) {
+      try {
+        URL.revokeObjectURL(blob);
+      } catch {
+        // ignore
+      }
+      delete blobUrlByJobId.current[jobId];
+    }
     delete srcCache.current[jobId];
+  }, []);
+
+  const wrapRemoteAudioAsBlobIfNeeded = useCallback(async (jobId: string, directUrl: string): Promise<string> => {
+    if (!directUrl || directUrl.startsWith("data:") || directUrl.startsWith("blob:")) return directUrl;
+    if (typeof window === "undefined") return directUrl;
+    let remote: URL;
+    try {
+      remote = new URL(directUrl, window.location.href);
+    } catch {
+      return directUrl;
+    }
+    if (remote.origin === window.location.origin) return directUrl;
+    try {
+      const r = await fetch(remote.toString(), { mode: "cors", credentials: "omit", cache: "no-store" });
+      if (!r.ok) return directUrl;
+      const blob = await r.blob();
+      if (!blob?.size) return directUrl;
+      const prev = blobUrlByJobId.current[jobId];
+      if (prev) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {
+          // ignore
+        }
+      }
+      const obj = URL.createObjectURL(blob);
+      blobUrlByJobId.current[jobId] = obj;
+      return obj;
+    } catch {
+      return directUrl;
+    }
   }, []);
 
   useEffect(() => {
@@ -215,28 +266,26 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         srcCache.current[jobId] = url;
         return url;
       }
-      const objectKey = String(result.audio_object_key || "").trim();
-      const hasHexFlag = result.has_audio_hex === true || result.has_audio_hex === "true";
-      if (objectKey || hasHexFlag) {
-        const lr = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/work-listen`, {
-          cache: "no-store",
-          headers: { ...getAuthHeaders() }
-        });
-        const lj = (await lr.json().catch(() => ({}))) as { success?: boolean; audio_url?: string };
-        const fresh = String(lj.audio_url || "").trim();
-        if (lr.ok && lj.success !== false && fresh) {
-          srcCache.current[jobId] = fresh;
-          return fresh;
-        }
+      const lr = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/work-listen`, {
+        cache: "no-store",
+        headers: { ...getAuthHeaders() }
+      });
+      const lj = (await lr.json().catch(() => ({}))) as { success?: boolean; audio_url?: string };
+      const fresh = String(lj.audio_url || "").trim();
+      if (lr.ok && lj.success !== false && fresh) {
+        const playable = await wrapRemoteAudioAsBlobIfNeeded(jobId, fresh);
+        srcCache.current[jobId] = playable;
+        return playable;
       }
       const audioUrl = String(result.audio_url || "").trim();
       if (audioUrl) {
-        srcCache.current[jobId] = audioUrl;
-        return audioUrl;
+        const playable = await wrapRemoteAudioAsBlobIfNeeded(jobId, audioUrl);
+        srcCache.current[jobId] = playable;
+        return playable;
       }
       return null;
     },
-    [getAuthHeaders]
+    [getAuthHeaders, wrapRemoteAudioAsBlobIfNeeded]
   );
 
   const applySeekSeconds = useCallback((el: HTMLAudioElement, sec: number) => {

@@ -73,7 +73,8 @@ export async function GET(req: NextRequest) {
     return new NextResponse(buf, {
       headers: {
         "content-type": validated.contentType,
-        "cache-control": "public, max-age=300, s-maxage=3600"
+        // 封面 URL 常带长签名；同源代理后由浏览器强缓存，减少「我的作品」反复滚动时重复拉图
+        "cache-control": "public, max-age=86400, s-maxage=86400"
       }
     });
   } catch {

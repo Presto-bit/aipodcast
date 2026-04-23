@@ -1032,7 +1032,11 @@ def download_job_cover_api(
         data = get_object_bytes(key)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"cover_fetch_failed:{exc}") from exc
-    return Response(content=data, media_type=mime)
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 @router.post("/jobs/{job_id}/cover")

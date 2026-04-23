@@ -202,6 +202,12 @@ export default function SubscriptionPage() {
     [alipayPageEnabled, mergedWalletTopup]
   );
 
+  /** 编排器未就绪支付宝时，仍可用模拟收银入账（与 SIMULATED_WALLET_CHECKOUT_ENABLED 一致，默认开启） */
+  const showSimulatedWalletTopup = useMemo(
+    () => !alipayRechargeUiEnabled && mergedWalletTopup.checkout_supported !== false,
+    [alipayRechargeUiEnabled, mergedWalletTopup.checkout_supported]
+  );
+
   useEffect(() => {
     if (!subscriptionPlansDebugEnabled() || !plansConfigLoaded) return;
     console.info("[subscription 合并态诊断]", {
@@ -867,7 +873,7 @@ export default function SubscriptionPage() {
                 </div>
               </div>
             </>
-          ) : allowMockWallet && mergedWalletTopup.checkout_supported !== false ? (
+          ) : showSimulatedWalletTopup ? (
             <div className="mt-4 flex flex-col gap-4">
               <div className="flex max-w-md flex-col gap-2">
                 <label className="flex flex-col gap-1 text-sm">
@@ -900,18 +906,23 @@ export default function SubscriptionPage() {
                 disabled={walletCreating || walletPaying || alipayWalletLoading || !walletPayEnabled}
                 onClick={() => void createWalletOrder()}
               >
-                {walletCreating ? "创建订单中…" : "去支付（内测模拟）"}
+                {walletCreating ? "创建订单中…" : allowMockWallet ? "去支付（内测模拟）" : "创建订单并确认支付入账"}
               </button>
+              {!allowMockWallet ? (
+                <p className="text-[11px] leading-relaxed text-muted">
+                  当前未检测到支付宝通道，使用站内模拟收银完成入账。生产环境开通支付宝后，此处将自动切换为跳转支付宝。
+                </p>
+              ) : null}
             </div>
           ) : (
             <p className="text-sm text-warning-ink" role="alert">
-              余额充值需开通支付宝：请在服务端配置 ALIPAY_* 并启用 payment_channels.alipay_page。
+              余额充值暂不可用：请在服务端配置 ALIPAY_* 并启用支付宝，或开启模拟收银（SIMULATED_WALLET_CHECKOUT_ENABLED，默认开启）。
             </p>
           )}
           {!walletPayEnabled ? (
             <p className="mt-3 text-xs text-muted">请登录后即可充值账户余额。</p>
           ) : null}
-          {walletCheckout && allowMockWallet ? (
+          {walletCheckout && showSimulatedWalletTopup ? (
             <div className="mt-4 rounded-lg border border-warning/30 bg-warning-soft/80 p-3 dark:border-warning/40 dark:bg-warning-soft/35">
               <p className="text-xs text-muted">
                 待支付 <span className="font-mono text-ink">{walletCheckout.checkout_id}</span> ·{" "}
@@ -923,11 +934,11 @@ export default function SubscriptionPage() {
                 disabled={walletPaying}
                 onClick={() => void confirmWalletOrder()}
               >
-                {walletPaying ? "处理中…" : "确认支付（模拟成功）"}
+                {walletPaying ? "处理中…" : allowMockWallet ? "确认支付（模拟成功）" : "确认支付并入账"}
               </button>
             </div>
           ) : null}
-          {alipayRechargeUiEnabled || (allowMockWallet && mergedWalletTopup.checkout_supported !== false) ? (
+          {alipayRechargeUiEnabled || showSimulatedWalletTopup ? (
             <div className="mt-6 border-t border-line/80 pt-4">
               <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
             </div>
