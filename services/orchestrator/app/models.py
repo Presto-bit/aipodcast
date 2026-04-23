@@ -6016,6 +6016,25 @@ def wallet_balance_cents_for_phone(phone: str) -> int:
         return 0
 
 
+def user_has_wallet_recharge_history(phone: str) -> bool:
+    """是否在 user_wallet_topups 中存在至少一条充值记录（真实/模拟收银入账；不含运营赠送余额）。"""
+    p = (phone or "").strip()
+    if not p:
+        return False
+    try:
+        ensure_user_wallet_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return False
+                cur.execute("SELECT 1 FROM user_wallet_topups WHERE user_id = %s LIMIT 1", (uid,))
+                return cur.fetchone() is not None
+    except Exception:
+        logger.exception("user_has_wallet_recharge_history failed phone=%s", p[:4] if p else "")
+        return False
+
+
 def user_never_had_wallet_topup_balance(phone: str) -> bool:
     """
     当前钱包余额为 0，且 user_wallet_topups 中无任何充值记录。
@@ -6045,25 +6064,13 @@ def user_never_had_wallet_topup_balance(phone: str) -> bool:
         return False
 
 
-def user_subscription_history_only_free(phone: str, current_plan: str | None) -> bool:
-    """
-    是否视为「仅免费档」用户：以会话/账号当前档位为准，不再扫描历史订单表。
-
-    订阅收银与历史订单数据可已通过迁移清空；付费能力以钱包充值流水与余额为准。
-    current_plan 来自 auth（free/basic/pro/max/payg）。
-    """
-    _ = phone
-    cp = (current_plan or "free").strip().lower()
-    if cp in ("basic", "pro", "max", "payg"):
-        return False
-    return cp == "free"
-
-
 def user_work_download_blocked_never_paid_free_only(phone: str, current_plan: str | None) -> bool:
-    """从未有余额且历史侧证仅 free：应禁止作品下载。"""
-    return user_never_had_wallet_topup_balance(phone) and user_subscription_history_only_free(
-        phone, current_plan
-    )
+    """
+    无历史钱包充值记录时禁止作品打包下载（与订阅档位无关；仅赠送/体验余额不算）。
+    current_plan 保留参数以兼容调用方，不参与判断。
+    """
+    _ = current_plan
+    return not user_has_wallet_recharge_history(phone)
 
 
 def wallet_try_debit_cents(phone: str, cents: int) -> tuple[bool, int]:

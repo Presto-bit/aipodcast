@@ -777,7 +777,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                       </span>
                       <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
                         {!roomFeaturesOk ? (
-                          <LockedToolbarChipPill label={<>开场/结尾 · {introSummary}</>} upgradeTitle="开场与结尾设置需要 Basic 及以上套餐" />
+                          <LockedToolbarChipPill label={<>开场/结尾 · {introSummary}</>} upgradeTitle="该能力未开启（由服务器配置控制）" />
                         ) : (
                           <>
                             <button
@@ -904,7 +904,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                       </span>
                       <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-flex max-w-full align-top">
                         {!roomFeaturesOk ? (
-                          <LockedToolbarChipPill label={<>加入创意 · {creativeSummary}</>} upgradeTitle="风格与创意设置需要 Basic 及以上套餐" />
+                          <LockedToolbarChipPill label={<>加入创意 · {creativeSummary}</>} upgradeTitle="该能力未开启（由服务器配置控制）" />
                         ) : (
                           <>
                             <button

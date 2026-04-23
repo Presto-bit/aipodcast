@@ -85,7 +85,7 @@ export async function createJob(payload: {
   job_type: string;
   queue_name: "ai" | "media";
   payload: Record<string, unknown>;
-  /** 与 orchestrator 任务 created_by 对齐，用于套餐限制（笔记引用等） */
+  /** 与 orchestrator 任务 created_by 对齐（笔记归属等） */
   created_by?: string | null;
 }) {
   const body: Record<string, unknown> = {
@@ -349,7 +349,7 @@ export type RssPublishEligibilityResult = {
   detail?: string;
 };
 
-/** 与 POST /api/rss/publish 一致的预检：账户档位 + 成片是否含付费/按量扣费 */
+/** 与 POST /api/rss/publish 一致的预检：成片计费记录等（与订阅档位无关） */
 export async function fetchRssPublishEligibility(jobId: string): Promise<RssPublishEligibilityResult> {
   const id = encodeURIComponent(String(jobId || "").trim());
   const resp = await fetch(`/api/rss/publish-eligibility?job_id=${id}`, {

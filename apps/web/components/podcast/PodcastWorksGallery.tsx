@@ -247,7 +247,7 @@ type Props = {
    * 用于嵌入窄栏且需与侧栏列表一致的展示。
    */
   compactCards?: boolean;
-  /** 为 true 时下载入口不使用 VIP 皇冠分栏；未许可时为跳转订阅的普通链接 */
+  /** 为 true 时下载入口不使用 VIP 皇冠分栏；未许可时为跳转充值页的链接（需历史钱包充值记录） */
   plainDownloadGate?: boolean;
 };
 
@@ -760,8 +760,8 @@ export default function PodcastWorksGallery({
         return (
           <Link
             href="/subscription"
-            title="下载需订阅"
-            aria-label="下载需订阅"
+            title="下载需至少完成一次钱包充值（赠送余额不计）"
+            aria-label="下载需至少完成一次钱包充值（赠送余额不计）"
             className={subCls}
             onClick={() => gatedExtras?.onLockedNavigate?.()}
           >
@@ -773,7 +773,7 @@ export default function PodcastWorksGallery({
         <GatedSplitAction
           locked={!allowed}
           variant="default"
-          upgradeTitle="下载需订阅"
+          upgradeTitle="下载需至少完成一次钱包充值（赠送余额不计）"
           onClick={() => {
             gatedExtras?.onLockedNavigate?.();
             void onDownload(row);
@@ -1234,8 +1234,8 @@ export default function PodcastWorksGallery({
               ) : plainDownloadGate ? (
                 <Link
                   href="/subscription"
-                  title="下载需订阅"
-                  aria-label="下载需订阅"
+                  title="下载需至少完成一次钱包充值（赠送余额不计）"
+                  aria-label="下载需至少完成一次钱包充值（赠送余额不计）"
                   className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill"
                 >
                   {batchBusy ? "正在批量下载…" : "批量下载"}
@@ -1244,7 +1244,7 @@ export default function PodcastWorksGallery({
                 <GatedSplitAction
                   locked
                   variant="default"
-                  upgradeTitle="下载需订阅"
+                  upgradeTitle="下载需至少完成一次钱包充值（赠送余额不计）"
                   onClick={() => {}}
                   disabled={false}
                   unlockedClassName="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"

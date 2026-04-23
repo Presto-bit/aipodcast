@@ -7,7 +7,7 @@ from ..models import list_saved_voices_for_user, replace_saved_voices_for_user
 from ..provider_router import polish_tts_text, synthesize_tts
 from ..schemas import PolishTtsTextRequest, PreviewVoiceRequest, SavedVoicesWriteRequest
 from ..security import verify_internal_signature
-from ..subscription_limits import tier_allows_ai_polish
+from ..subscription_limits import ai_polish_feature_enabled
 
 router = APIRouter(prefix="/api/v1", tags=["voice"], dependencies=[Depends(verify_internal_signature)])
 
@@ -83,12 +83,11 @@ def preview_voice_api(body: PreviewVoiceRequest, request: Request):
 def polish_tts_text_api(body: PolishTtsTextRequest, request: Request):
     if auth_bridge.is_auth_enabled() or _fyv_production():
         _raise_if_production_without_auth()
-        phone = _strict_user_phone(request)
-        tier = "max"
-        if not tier_allows_ai_polish(tier):
+        _strict_user_phone(request)
+        if not ai_polish_feature_enabled():
             raise HTTPException(
                 status_code=403,
-                detail="当前套餐不含 AI 润色权益（或运营已关闭 AI_POLISH_FEATURE_ENABLED）",
+                detail="AI 润色功能已关闭（可将环境变量 AI_POLISH_FEATURE_ENABLED 设为 1 开启）。",
             )
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
     if not api_key:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import re
 import ssl
@@ -43,6 +44,8 @@ def jsonify(*args: Any, **kwargs: Any) -> Any:
     return kwargs
 
 from .config import DATA_DIR
+
+logger = logging.getLogger(__name__)
 
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
@@ -920,6 +923,9 @@ def _pg_delete_user(phone: str) -> bool:
     conn = psycopg2.connect(_pg_dsn())
     try:
         cur = conn.cursor()
+        # 避免长时间等行锁导致 nginx/网关 504：尽快失败由接口返回 400 而非挂死
+        cur.execute("SET LOCAL lock_timeout = '12s'")
+        cur.execute("SET LOCAL statement_timeout = '25s'")
         cur.execute(
             """
             UPDATE users
@@ -942,6 +948,8 @@ def _pg_soft_delete_user_by_id(user_id: str) -> bool:
     conn = psycopg2.connect(_pg_dsn())
     try:
         cur = conn.cursor()
+        cur.execute("SET LOCAL lock_timeout = '12s'")
+        cur.execute("SET LOCAL statement_timeout = '25s'")
         cur.execute(
             """
             UPDATE users
@@ -1736,13 +1744,24 @@ def request_password_reset_by_email(email: str) -> None:
         return
     raw_tok = _pg_store_password_reset_token(uid)
     if not raw_tok:
+        logger.warning("password_reset: token persist failed (check DB / password_reset_tokens)")
         return
     base = _verify_base_url()
     link = f"{base}/reset-password?token={raw_tok}" if base else ""
     to_addr = str(row.get("email") or em).strip()
-    if _email_smtp_configured():
+    if not _email_smtp_configured():
+        logger.warning(
+            "password_reset: FYV_SMTP_HOST 未配置，已跳过发信；请在编排器环境配置 SMTP 相关变量"
+        )
+    else:
+        if not base:
+            logger.warning(
+                "password_reset: FYV_AUTH_VERIFY_BASE_URL 未配置，邮件内可能无可点击链接，仅含 token 说明"
+            )
         body_link = link if base else f"(请配置 FYV_AUTH_VERIFY_BASE_URL) token={raw_tok}"
-        _send_password_reset_email(to_addr, body_link)
+        ok_send, send_err = _send_password_reset_email(to_addr, body_link)
+        if not ok_send:
+            logger.warning("password_reset: SMTP 发信失败: %s", (send_err or "unknown")[:800])
     if _truthy_env_email_log_token() and raw_tok:
         print(f"[auth] password reset token for {em}: {link or raw_tok}")
 

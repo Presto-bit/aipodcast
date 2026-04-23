@@ -10,7 +10,7 @@ export type WorkItem = {
   type?: string;
   /** 列表接口在存在 audio_hex 或 audio_object_key 时为 true（用于一键转视频等） */
   hasAudioHex?: boolean;
-  /** 是否允许打包下载：Basic+/按量，或免费档下本任务曾发生套餐外扣费（钱包/按量分钟） */
+  /** 是否允许打包下载：用户须在钱包中有过充值流水（user_wallet_topups），与订阅档位无关 */
   downloadAllowed?: boolean;
   /** 秒；来自任务 result.audio_duration_sec */
   audioDurationSec?: number | null;
