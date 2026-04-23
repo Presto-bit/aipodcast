@@ -51,6 +51,41 @@ if [[ -z "$URLS" ]]; then
   exit 1
 fi
 
+# 按用户配置的 URL 推导 https://host/_next/static/ 并去重追加，减少发版后旧 chunk 仍命中 CDN 的概率
+cdn_join_refresh_urls() {
+  local input="$1"
+  local seen="|"
+  local -a out=()
+  local raw u origin
+  local -a base_parts=()
+  IFS=',' read -ra base_parts <<<"$input" || true
+  for raw in "${base_parts[@]}"; do
+    u="${raw#"${raw%%[![:space:]]*}"}"
+    u="${u%"${u##*[![:space:]]}"}"
+    [[ -z "$u" ]] && continue
+    case "$seen" in *"|${u}|"*) ;; *)
+      seen+="${u}|"
+      out+=("$u")
+      ;;
+    esac
+  done
+  for raw in "${base_parts[@]}"; do
+    u="${raw#"${raw%%[![:space:]]*}"}"
+    u="${u%"${u##*[![:space:]]}"}"
+    [[ -z "$u" ]] && continue
+    if [[ "$u" =~ ^(https?://[^/?#]+) ]]; then
+      origin="${BASH_REMATCH[1]}/_next/static/"
+      case "$seen" in *"|${origin}|"*) ;; *)
+        seen+="${origin}|"
+        out+=("$origin")
+        ;;
+      esac
+    fi
+  done
+  local IFS=,
+  printf '%s' "${out[*]}"
+}
+
 if ! command -v aliyun >/dev/null 2>&1; then
   echo "[aliyun-cdn-refresh] 未找到 aliyun 命令，请安装阿里云 CLI：https://github.com/aliyun/aliyun-cli" >&2
   exit 1
@@ -62,7 +97,9 @@ export ALIBABA_CLOUD_ACCESS_KEY_SECRET="$SK"
 OT="${ALIYUN_CDN_REFRESH_OBJECT_TYPE:-Directory}"
 # Directory：目录 URL 须以 / 结尾；File：单文件完整 URL。
 
-IFS=',' read -ra PARTS <<<"$URLS" || true
+REFRESH_CSV="$(cdn_join_refresh_urls "$URLS")"
+IFS=',' read -ra PARTS <<<"$REFRESH_CSV" || true
+echo "[aliyun-cdn-refresh] 共 ${#PARTS[@]} 条刷新路径（在 ALIYUN_CDN_REFRESH_URLS 基础上自动追加各源站 /_next/static/）" >&2
 for raw in "${PARTS[@]}"; do
   u="${raw#"${raw%%[![:space:]]*}"}"
   u="${u%"${u##*[![:space:]]}"}"

@@ -28,6 +28,24 @@ ENV_FILE=".env.ai-native"
 log() { echo "[$(date +'%F %T')] $*"; }
 die() { echo "❌ $*" >&2; exit 1; }
 
+# 从 .env 读 KEY=value（跳过注释；同一 key 多次出现时取最后一次）；仅用于 shell 未预先 export 的变量
+read_key_from_env_file() {
+  local file="$1" want="$2" out=""
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    line="${raw%%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*${want}=(.*)$ ]] || continue
+    local v="${BASH_REMATCH[1]}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    v="${v#\"}"; v="${v%\"}"
+    v="${v#\'}"; v="${v%\'}"
+    out="$v"
+  done <"$file"
+  [[ -n "$out" ]] && printf '%s' "$out"
+}
+
 command -v docker >/dev/null 2>&1 || die "未找到 docker 命令"
 docker compose version >/dev/null 2>&1 || die "未找到 docker compose（需 Docker Compose v2 插件）"
 command -v curl >/dev/null 2>&1 || die "未找到 curl（健康检查需要）"
@@ -89,8 +107,35 @@ fi
 export NEXT_PUBLIC_APP_BUILD_ID
 log "Web 构建序号 NEXT_PUBLIC_APP_BUILD_ID=${NEXT_PUBLIC_APP_BUILD_ID}"
 
-log "构建并启动容器"
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build || die "docker compose up 失败"
+if [[ -z "${COMPOSE_BUILD_PULL:-}" ]]; then
+  v="$(read_key_from_env_file "$ENV_FILE" COMPOSE_BUILD_PULL)"
+  [[ -n "$v" ]] && COMPOSE_BUILD_PULL="$v"
+fi
+COMPOSE_BUILD_PULL="${COMPOSE_BUILD_PULL:-1}"
+if [[ -z "${DOCKER_BUILD_NO_CACHE:-}" ]]; then
+  v="$(read_key_from_env_file "$ENV_FILE" DOCKER_BUILD_NO_CACHE)"
+  [[ -n "$v" ]] && DOCKER_BUILD_NO_CACHE="$v"
+fi
+DOCKER_BUILD_NO_CACHE="${DOCKER_BUILD_NO_CACHE:-0}"
+
+compose=(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
+build_flags=()
+if [[ "$COMPOSE_BUILD_PULL" == "1" ]]; then
+  build_flags+=(--pull)
+  log "Docker 构建将拉取各服务 Dockerfile 中 FROM 的基础镜像（COMPOSE_BUILD_PULL=1）"
+else
+  log "COMPOSE_BUILD_PULL=0，构建阶段不附加 --pull"
+fi
+if [[ "$DOCKER_BUILD_NO_CACHE" == "1" ]]; then
+  build_flags+=(--no-cache)
+  log "DOCKER_BUILD_NO_CACHE=1，构建不使用层缓存（耗时显著增加）"
+fi
+
+log "构建业务镜像（orchestrator / ai-worker / media-worker / web）"
+"${compose[@]}" build "${build_flags[@]}" orchestrator ai-worker media-worker web || die "docker compose build 失败"
+
+log "启动容器"
+"${compose[@]}" up -d || die "docker compose up 失败"
 
 log "健康检查"
 ORCH_HEALTH_MAX_ATTEMPTS="${ORCH_HEALTH_MAX_ATTEMPTS:-12}"
@@ -120,14 +165,27 @@ for ((i = 1; i <= WEB_HEALTH_MAX_ATTEMPTS; i++)); do
 done
 if [[ "$web_ok" -ne 1 ]]; then
   log "Web 仍不可用，最近 web 容器日志（便于排查）："
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail 120 web >&2 || true
+  "${compose[@]}" logs --tail 120 web >&2 || true
   die "Web 3000 在多次重试后仍不通（请检查 web 容器是否 OOM、构建失败或端口被占用；可增大 WEB_HEALTH_MAX_ATTEMPTS）"
+fi
+
+log "校验 Web 容器内 NEXT_PUBLIC_APP_BUILD_ID 与本次发版一致"
+got="$("${compose[@]}" exec -T web sh -c 'printf %s "${NEXT_PUBLIC_APP_BUILD_ID:-}"' 2>/dev/null | tr -d '\r' || true)"
+[[ "$got" == "$NEXT_PUBLIC_APP_BUILD_ID" ]] || die "Web 容器内构建号为「${got:-空}」，期望「${NEXT_PUBLIC_APP_BUILD_ID}」。请确认镜像已由本次 compose build 重建且 build.args 已传入。"
+
+hdr="$(curl -fsSI --connect-timeout 3 --max-time 15 http://127.0.0.1:3000/ 2>/dev/null | tr -d '\r' || true)"
+if echo "$hdr" | grep -qi '^cache-control:.*\(no-store\|no-cache\)'; then
+  log "首页 Cache-Control 含 no-store 或 no-cache（降低浏览器长期缓存 HTML 风险）"
+elif echo "$hdr" | grep -qi '^cache-control:'; then
+  log "⚠️ 首页 Cache-Control 未识别到 no-store/no-cache；若前有 Nginx/CDN 请对照 DEPLOYMENT.md 检查是否覆盖源站缓存策略"
+else
+  log "⚠️ 未从首页响应解析到 Cache-Control（curl 失败或头异常）"
 fi
 
 log "检查核心容器是否为 running"
 for svc in orchestrator web ai-worker media-worker; do
-  if [[ -z "$(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q --status running "$svc" 2>/dev/null || true)" ]]; then
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -a >&2 || true
+  if [[ -z "$("${compose[@]}" ps -q --status running "$svc" 2>/dev/null || true)" ]]; then
+    "${compose[@]}" ps -a >&2 || true
     die "容器 $svc 未处于 running，请查看: docker compose -f $COMPOSE_FILE --env-file $ENV_FILE logs $svc"
   fi
 done
