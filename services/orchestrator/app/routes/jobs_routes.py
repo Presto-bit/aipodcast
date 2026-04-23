@@ -65,7 +65,11 @@ from ..schemas import (
     JobResultScriptBodyRequest,
     SocialViralCopyRequest,
 )
-from ..public_share_listen import build_podcast_template_listen_bundle, build_public_share_listen_bundle
+from ..public_share_listen import (
+    build_owner_work_listen_bundle,
+    build_podcast_template_listen_bundle,
+    build_public_share_listen_bundle,
+)
 from ..share_publish_llm import (
     build_share_user_source_text,
     format_audio_chapters_hint,
@@ -676,6 +680,15 @@ def podcast_template_listen_api(job_id: str, request: Request):
     bundle = build_podcast_template_listen_bundle(job_id)
     if not bundle:
         raise HTTPException(status_code=404, detail="template_listen_not_available")
+    return JSONResponse(jsonable_encoder({"success": True, **bundle}))
+
+
+@router.get("/jobs/{job_id}/work-listen")
+def owner_work_listen_api(job_id: str, request: Request):
+    """我的作品内联播放：归属校验后返回新鲜预签名 URL（object key 优先于 result 内旧 audio_url）。"""
+    bundle = build_owner_work_listen_bundle(job_id, user_ref=_job_row_scope_ref(request))
+    if not bundle:
+        raise HTTPException(status_code=404, detail="work_listen_not_available")
     return JSONResponse(jsonable_encoder({"success": True, **bundle}))
 
 

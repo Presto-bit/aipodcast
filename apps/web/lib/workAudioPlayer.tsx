@@ -215,6 +215,20 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         srcCache.current[jobId] = url;
         return url;
       }
+      const objectKey = String(result.audio_object_key || "").trim();
+      const hasHexFlag = result.has_audio_hex === true || result.has_audio_hex === "true";
+      if (objectKey || hasHexFlag) {
+        const lr = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/work-listen`, {
+          cache: "no-store",
+          headers: { ...getAuthHeaders() }
+        });
+        const lj = (await lr.json().catch(() => ({}))) as { success?: boolean; audio_url?: string };
+        const fresh = String(lj.audio_url || "").trim();
+        if (lr.ok && lj.success !== false && fresh) {
+          srcCache.current[jobId] = fresh;
+          return fresh;
+        }
+      }
       const audioUrl = String(result.audio_url || "").trim();
       if (audioUrl) {
         srcCache.current[jobId] = audioUrl;

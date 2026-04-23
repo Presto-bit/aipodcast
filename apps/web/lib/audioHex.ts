@@ -12,5 +12,6 @@ export function hexToMp3DataUrl(hex: string): string {
   for (let i = 0; i < bytes.length; i += chunk) {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
-  return `data:audio/mp3;base64,${btoa(binary)}`;
+  // IANA 类型为 audio/mpeg；部分浏览器对 data:audio/mp3 报「不支持的视频源」
+  return `data:audio/mpeg;base64,${btoa(binary)}`;
 }
