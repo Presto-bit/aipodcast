@@ -39,6 +39,68 @@ type PlansPayload = {
   };
 };
 
+/** 设为 1 时：拉取 /api/subscription/plans 后在控制台与充值弹窗输出结构化诊断（需重新 build Next） */
+function subscriptionPlansDebugEnabled(): boolean {
+  return typeof process !== "undefined" && process.env.NEXT_PUBLIC_SUBSCRIPTION_PLANS_DEBUG === "1";
+}
+
+type PlansLoadDiag = {
+  ts: string;
+  branch:
+    | "http_error"
+    | "success_false"
+    | "success_true"
+    | "network_error"
+    | "stale_response_skipped";
+  http_ok?: boolean;
+  http_status?: number;
+  pd_success?: boolean;
+  payment_channels_alipay_page_enabled_raw?: unknown;
+  wallet_topup_checkout_supported_raw?: unknown;
+  wallet_topup_key_count?: number;
+  wallet_topup_empty?: boolean;
+  from_channel_flag?: boolean;
+  from_wallet_flag?: boolean;
+  set_alipay_page_enabled_to?: boolean;
+  plans_load_error_message?: string;
+  hint_zh?: string;
+};
+
+function buildPlansLoadHintZh(d: PlansLoadDiag): string {
+  if (d.branch === "network_error") {
+    return "请求 /api/subscription/plans 失败（网络异常或未捕获错误），未完成价目拉取。";
+  }
+  if (d.branch === "stale_response_skipped") {
+    return "存在更新的拉取请求，本响应已丢弃（多为快速重复打开弹窗）。";
+  }
+  if (d.branch === "http_error") {
+    return `Next BFF 或上游编排器返回 HTTP ${d.http_status ?? "?"}，未拿到价目 JSON；请查编排器可达性、网关与 /api/subscription/plans 路由。`;
+  }
+  if (d.branch === "success_false") {
+    return "响应体 success 不为 true，前端关闭支付宝通道；请查编排器该接口业务错误与日志。";
+  }
+  if (d.branch === "success_true") {
+    if (d.from_channel_flag) {
+      return "payment_channels.alipay_page.enabled 判定为真，编排器侧已声明支付宝可用。";
+    }
+    if (d.from_wallet_flag) {
+      return "由 wallet_topup.checkout_supported===false 推断走支付宝（与编排器「已就绪支付宝」时一致）。";
+    }
+    if (d.wallet_topup_empty) {
+      return "wallet_topup 几乎为空，合并了前端兜底价目；此时完全依赖 payment_channels.alipay_page.enabled，当前为假 → 编排器仍判定支付宝未就绪（ALIPAY_* / 密钥可读性 / NOTIFY 推导 RETURN 等）。";
+    }
+    return "payment_channels.alipay_page.enabled 为假，且 wallet_topup 未暗示仅支付宝 → 编排器未就绪或字段未下发。";
+  }
+  return "";
+}
+
+function logSubscriptionPlansDiag(d: PlansLoadDiag): void {
+  if (!subscriptionPlansDebugEnabled()) return;
+  const hint = d.hint_zh || buildPlansLoadHintZh(d);
+  const payload = { ...d, hint_zh: hint };
+  console.info("[subscription/plans 诊断]", payload);
+}
+
 /** 与编排器 billing_catalog 一致：支持 JSON 布尔或偶发的字符串/数字 */
 function isTruthyPaymentChannelEnabled(v: unknown): boolean {
   if (v === true || v === 1) return true;
@@ -86,6 +148,7 @@ export default function SubscriptionPage() {
   const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
   const [experienceVoiceTotal, setExperienceVoiceTotal] = useState<number | null>(null);
   const [experienceTextTotal, setExperienceTextTotal] = useState<number | null>(null);
+  const [plansLoadDiag, setPlansLoadDiag] = useState<PlansLoadDiag | null>(null);
 
   /** 防止连续多次 loadPlans 返回顺序错乱，把旧响应写回 state */
   const plansFetchSeqRef = useRef(0);
@@ -136,13 +199,45 @@ export default function SubscriptionPage() {
     [alipayPageEnabled, mergedWalletTopup]
   );
 
+  useEffect(() => {
+    if (!subscriptionPlansDebugEnabled() || !plansConfigLoaded) return;
+    console.info("[subscription 合并态诊断]", {
+      alipayPageEnabled,
+      alipayRechargeUiEnabled,
+      allowMockWallet,
+      merged_wallet_topup_enabled: mergedWalletTopup.enabled,
+      merged_wallet_checkout_supported: mergedWalletTopup.checkout_supported,
+      showWalletRechargeSection
+    });
+  }, [
+    plansConfigLoaded,
+    alipayPageEnabled,
+    alipayRechargeUiEnabled,
+    allowMockWallet,
+    mergedWalletTopup.enabled,
+    mergedWalletTopup.checkout_supported,
+    showWalletRechargeSection
+  ]);
+
   const loadPlans = useCallback(async () => {
     const seq = ++plansFetchSeqRef.current;
     setPlansLoadError("");
+    if (!subscriptionPlansDebugEnabled()) setPlansLoadDiag(null);
     try {
       const pr = await fetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
       const pd = (await pr.json().catch(() => ({}))) as PlansPayload;
-      if (seq !== plansFetchSeqRef.current) return;
+      if (seq !== plansFetchSeqRef.current) {
+        const stale: PlansLoadDiag = {
+          ts: new Date().toISOString(),
+          branch: "stale_response_skipped",
+          http_ok: pr.ok,
+          http_status: pr.status,
+          hint_zh: buildPlansLoadHintZh({ ts: "", branch: "stale_response_skipped" })
+        };
+        logSubscriptionPlansDiag(stale);
+        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(stale);
+        return;
+      }
       if (!pr.ok) {
         setAlipayPageEnabled(false);
         if (pr.status === 404) {
@@ -150,6 +245,20 @@ export default function SubscriptionPage() {
         } else {
           setPlansLoadError(`暂时无法拉取计费配置（HTTP ${pr.status}），已显示参考价目。`);
         }
+        const errDiag: PlansLoadDiag = {
+          ts: new Date().toISOString(),
+          branch: "http_error",
+          http_ok: pr.ok,
+          http_status: pr.status,
+          pd_success: typeof pd.success === "boolean" ? pd.success : undefined,
+          plans_load_error_message:
+            pr.status === 404
+              ? "HTTP 404：未找到计费配置接口"
+              : `HTTP ${pr.status}：暂时无法拉取计费配置`
+        };
+        errDiag.hint_zh = buildPlansLoadHintZh(errDiag);
+        logSubscriptionPlansDiag(errDiag);
+        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(errDiag);
         return;
       }
       if (pd.success) {
@@ -158,14 +267,55 @@ export default function SubscriptionPage() {
         const wt = Object.keys(wtRaw).length ? (wtRaw as WalletTopupPayload) : null;
         const fromChannel = isTruthyPaymentChannelEnabled(pd.payment_channels?.alipay_page?.enabled);
         const fromWallet = walletPayloadImpliesAlipayOnly(wt);
-        setAlipayPageEnabled(fromChannel || fromWallet);
+        const enabledNext = fromChannel || fromWallet;
+        setAlipayPageEnabled(enabledNext);
+        const wtKeys = Object.keys(wtRaw);
+        const csRaw = wt && typeof wt === "object" ? (wt as { checkout_supported?: unknown }).checkout_supported : undefined;
+        const okDiag: PlansLoadDiag = {
+          ts: new Date().toISOString(),
+          branch: "success_true",
+          http_ok: true,
+          http_status: pr.status,
+          pd_success: true,
+          payment_channels_alipay_page_enabled_raw: pd.payment_channels?.alipay_page?.enabled,
+          wallet_topup_checkout_supported_raw: csRaw,
+          wallet_topup_key_count: wtKeys.length,
+          wallet_topup_empty: wtKeys.length === 0,
+          from_channel_flag: fromChannel,
+          from_wallet_flag: fromWallet,
+          set_alipay_page_enabled_to: enabledNext
+        };
+        okDiag.hint_zh = buildPlansLoadHintZh(okDiag);
+        logSubscriptionPlansDiag(okDiag);
+        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(okDiag);
       } else {
         setAlipayPageEnabled(false);
         setPlansLoadError("计费接口返回异常，已显示参考价目，请稍后重试。");
+        const badDiag: PlansLoadDiag = {
+          ts: new Date().toISOString(),
+          branch: "success_false",
+          http_ok: true,
+          http_status: pr.status,
+          pd_success: false,
+          payment_channels_alipay_page_enabled_raw: pd.payment_channels?.alipay_page?.enabled,
+          plans_load_error_message: "success 不为 true"
+        };
+        badDiag.hint_zh = buildPlansLoadHintZh(badDiag);
+        logSubscriptionPlansDiag(badDiag);
+        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(badDiag);
       }
     } catch (e) {
       if (seq === plansFetchSeqRef.current) {
-        setPlansLoadError(String(e instanceof Error ? e.message : e));
+        const msg = String(e instanceof Error ? e.message : e);
+        setPlansLoadError(msg);
+        const netDiag: PlansLoadDiag = {
+          ts: new Date().toISOString(),
+          branch: "network_error",
+          plans_load_error_message: msg
+        };
+        netDiag.hint_zh = buildPlansLoadHintZh(netDiag);
+        logSubscriptionPlansDiag(netDiag);
+        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(netDiag);
       }
     } finally {
       if (seq === plansFetchSeqRef.current) {
@@ -719,6 +869,17 @@ export default function SubscriptionPage() {
           {alipayRechargeUiEnabled || (allowMockWallet && mergedWalletTopup.checkout_supported !== false) ? (
             <div className="mt-6 border-t border-line/80 pt-4">
               <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
+            </div>
+          ) : null}
+          {subscriptionPlansDebugEnabled() && plansLoadDiag ? (
+            <div className="mt-4 border-t border-dashed border-line/80 pt-3">
+              <p className="mb-2 text-[11px] font-medium text-muted">调试：最近一次 GET /api/subscription/plans（需 build 时含 NEXT_PUBLIC_SUBSCRIPTION_PLANS_DEBUG=1）</p>
+              <pre
+                className="max-h-52 overflow-auto rounded-lg border border-line bg-canvas p-2 text-left font-mono text-[10px] leading-snug text-muted"
+                aria-label="订阅价目拉取诊断"
+              >
+                {JSON.stringify(plansLoadDiag, null, 2)}
+              </pre>
             </div>
           ) : null}
         </FormSheetModal>
