@@ -102,15 +102,12 @@
 - **可靠性**：核心服务使用 **`restart: unless-stopped`**；编排器与 Web 配置了 **healthcheck**，`web` 与 Worker 在编排器健康后再依赖启动，减少「半启动」竞态。
 - **`release.sh`**：支持 **`GIT_PULL=0`** 跳过 `git fetch/pull`；发布末尾会检查 `orchestrator` / `web` / `ai-worker` / `media-worker` 是否为 **running**。
 
-### Docker：`web` 构建拉取 `node:20-alpine` 失败（metadata / content size of zero）
+### Docker：`web` 构建拉取 Node 基础镜像失败（metadata / content size of zero）
 
-多为 **Docker Hub** 在国内不可达或限流。任选其一：
+多为 **直连 Docker Hub** 在国内不可达或限流。`docker-compose.ai-native.yml` 中 **`web` 构建默认已使用**  
+`swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/node:20-alpine`（同步官方 `library/node:20-alpine`）；`git pull` 到该默认后重新 `bash release.sh` 即可。
 
-1. **在服务器 `.env.ai-native` 中指定可拉的基础镜像**（与 `docker-compose.ai-native.yml` 中 `web.build.args.NODE_BASE_IMAGE` 一致），例如：  
-   `NODE_BASE_IMAGE=docker.m.daocloud.io/library/node:20-alpine`  
-   保存后重新执行 `bash release.sh`（或 `docker compose ... up -d --build`）。
-2. **为 Docker 配置 Hub 镜像加速**（`/etc/docker/daemon.json` 的 `registry-mirrors`），`systemctl restart docker` 后仍使用默认 `node:20-alpine`。  
-   详见根目录 **`.env.ai-native.example`**「Docker 镜像与离线构建」注释。
+若仍失败或你在**海外**希望用 Hub 短名：在 `.env.ai-native` 设 **`NODE_BASE_IMAGE=node:20-alpine`**，并为 Docker 配置 **`registry-mirrors`**（`/etc/docker/daemon.json`，`systemctl restart docker`）。详见 **`.env.ai-native.example`**「Docker 镜像与离线构建」。
 
 ### PostgreSQL：已有数据卷时更换 `DB_PASSWORD`（换密流程）
 
