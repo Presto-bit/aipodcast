@@ -228,6 +228,7 @@ def _job_events_indicate_paid_media_debit(job_id: str) -> bool:
     """任务流水中出现体验包或钱包计费记录（与 worker 写入的 log 文案一致）。"""
     markers = (
         "已按预估语音分钟结算体验包与/或钱包",
+        "已按实际语音时长结算体验包与/或钱包",
         "已结算脚本文本费用",
         "已从钱包扣除单次克隆费用",
     )

@@ -133,6 +133,9 @@ export default function SubscriptionPage() {
   const [walletTopupInfo, setWalletTopupInfo] = useState<PlansPayload["wallet_topup"]>(undefined);
   const [rechargeRecords, setRechargeRecords] = useState<RechargeRecordRow[]>([]);
   const [consumptionRecords, setConsumptionRecords] = useState<ConsumptionRecordRow[]>([]);
+  const [consumptionSince, setConsumptionSince] = useState("");
+  const [consumptionUntil, setConsumptionUntil] = useState("");
+  const [consumptionFilteredTotalCents, setConsumptionFilteredTotalCents] = useState<number | null>(null);
   const [topupYuanInput, setTopupYuanInput] = useState("30");
   const [msg, setMsg] = useState("");
   const [walletCheckout, setWalletCheckout] = useState<WalletCheckoutState | null>(null);
@@ -324,13 +327,20 @@ export default function SubscriptionPage() {
     }
   }, [getAuthHeaders]);
 
-  const loadMe = useCallback(async () => {
+  const loadMe = useCallback(async (filterSince?: string, filterUntil?: string) => {
     try {
-      const mr = await fetch("/api/subscription/me", { headers: getAuthHeaders(), cache: "no-store" });
+      const sUse = filterSince !== undefined ? filterSince : consumptionSince;
+      const tUse = filterUntil !== undefined ? filterUntil : consumptionUntil;
+      const qs = new URLSearchParams();
+      if (sUse.trim()) qs.set("consumption_since", sUse.trim());
+      if (tUse.trim()) qs.set("consumption_until", tUse.trim());
+      const mePath = qs.toString() ? `/api/subscription/me?${qs.toString()}` : "/api/subscription/me";
+      const mr = await fetch(mePath, { headers: getAuthHeaders(), cache: "no-store" });
       const md = (await mr.json().catch(() => ({}))) as {
         success?: boolean;
         recharge_records?: RechargeRecordRow[];
         consumption_records?: ConsumptionRecordRow[];
+        consumption_filtered_wallet_total_cents?: number | null;
         wallet_balance_cents?: number;
         experience?: {
           voice_minutes_remaining?: number;
@@ -342,6 +352,11 @@ export default function SubscriptionPage() {
       if (mr.ok && md.success) {
         setRechargeRecords(Array.isArray(md.recharge_records) ? md.recharge_records : []);
         setConsumptionRecords(Array.isArray(md.consumption_records) ? md.consumption_records : []);
+        if (typeof md.consumption_filtered_wallet_total_cents === "number") {
+          setConsumptionFilteredTotalCents(md.consumption_filtered_wallet_total_cents);
+        } else {
+          setConsumptionFilteredTotalCents(null);
+        }
         if (typeof md.wallet_balance_cents === "number") setWalletBalanceCents(md.wallet_balance_cents);
         else setWalletBalanceCents(null);
         const ex = md.experience;
@@ -362,7 +377,7 @@ export default function SubscriptionPage() {
     } catch {
       // ignore
     }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, consumptionSince, consumptionUntil]);
 
   useEffect(() => {
     void loadPlans();
@@ -692,7 +707,53 @@ export default function SubscriptionPage() {
         </div>
 
         <div>
-          <h2 className="text-lg font-semibold text-ink">消费记录</h2>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="text-lg font-semibold text-ink">消费记录</h2>
+            {consumptionFilteredTotalCents != null ? (
+              <p className="text-xs text-muted">
+                筛选时段成功消费合计（钱包扣款）
+                <span className="ml-1 font-mono tabular-nums text-ink">{fmtMoneyYuan(consumptionFilteredTotalCents)}</span>
+              </p>
+            ) : null}
+          </div>
+          <div className="mt-2 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-0.5 text-xs text-muted">
+              开始日期
+              <input
+                type="date"
+                className="rounded-md border border-line bg-canvas px-2 py-1 font-mono text-xs text-ink"
+                value={consumptionSince}
+                onChange={(e) => setConsumptionSince(e.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-0.5 text-xs text-muted">
+              结束日期
+              <input
+                type="date"
+                className="rounded-md border border-line bg-canvas px-2 py-1 font-mono text-xs text-ink"
+                value={consumptionUntil}
+                onChange={(e) => setConsumptionUntil(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
+              onClick={() => void loadMe()}
+            >
+              应用筛选
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-line bg-canvas px-3 py-1.5 text-xs text-muted hover:bg-fill"
+              onClick={() => {
+                setConsumptionSince("");
+                setConsumptionUntil("");
+                void loadMe("", "");
+              }}
+            >
+              清除
+            </button>
+          </div>
           <div className="mt-3 overflow-x-auto rounded-xl border border-line bg-surface/40">
             <table className="min-w-[960px] w-full text-left text-sm text-ink">
               <thead className="border-b border-line text-xs text-muted">

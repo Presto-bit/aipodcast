@@ -3189,7 +3189,7 @@ def admin_revenue_expense_board(
                   FROM job_events je
                   WHERE je.event_type = 'log'
                     AND (
-                      je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                      (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%')
                       OR je.message LIKE '已结算脚本文本费用%%'
                       OR je.message = '已从钱包扣除单次克隆费用'
                     )
@@ -3238,7 +3238,7 @@ def admin_revenue_expense_board(
                 FROM job_events je
                 WHERE je.event_type = 'log'
                   AND (
-                    je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                    (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%')
                     OR je.message LIKE '已结算脚本文本费用%%'
                     OR je.message = '已从钱包扣除单次克隆费用'
                   )
@@ -3316,7 +3316,7 @@ def admin_revenue_expense_board(
                 LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
                 WHERE je.event_type = 'log'
                   AND (
-                    je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                    (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%')
                     OR je.message LIKE '已结算脚本文本费用%%'
                     OR je.message = '已从钱包扣除单次克隆费用'
                   )
@@ -3405,7 +3405,7 @@ def admin_revenue_expense_board(
                 INNER JOIN jobs j ON j.id = je.job_id
                 WHERE je.event_type = 'log'
                   AND (
-                    je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                    (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%')
                     OR je.message LIKE '已结算脚本文本费用%%'
                     OR je.message = '已从钱包扣除单次克隆费用'
                   )
@@ -3457,7 +3457,7 @@ def admin_revenue_expense_board(
                         LIMIT 1
                       ),
                       CASE
-                        WHEN je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' THEN '(TTS·未记录)'
+                        WHEN (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%') THEN '(TTS·未记录)'
                         ELSE '(其他)'
                       END
                     ) AS model_key
@@ -3465,7 +3465,7 @@ def admin_revenue_expense_board(
                   INNER JOIN jobs j ON j.id = je.job_id
                   WHERE je.event_type = 'log'
                     AND (
-                      je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                      (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%')
                       OR je.message LIKE '已结算脚本文本费用%%'
                       OR je.message = '已从钱包扣除单次克隆费用'
                     )
@@ -3560,7 +3560,7 @@ def admin_revenue_expense_board(
                            LIMIT 1
                          ),
                          CASE
-                           WHEN je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' THEN '(TTS·未记录)'
+                           WHEN (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%') THEN '(TTS·未记录)'
                            ELSE '(其他)'
                          END
                        ) AS billing_model_key,
@@ -3575,7 +3575,7 @@ def admin_revenue_expense_board(
                 LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
                 WHERE je.event_type = 'log'
                   AND (
-                    je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                    (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%')
                     OR je.message LIKE '已结算脚本文本费用%%'
                     OR je.message = '已从钱包扣除单次克隆费用'
                   )
@@ -5785,18 +5785,61 @@ def script_text_billing_refund(phone: str, meta: dict[str, Any]) -> None:
         experience_restore_text_chars(p, et)
 
 
-def media_billing_try_debit_estimated_minutes(
+def media_billing_try_assert_cover_estimated_minutes(
     phone: str,
     tier: str | None,
     est_minutes: float,
     *,
     period_days: int = 30,
+) -> tuple[bool, dict[str, Any]]:
+    """
+    不落库：按预估分钟校验「体验包语音 + 钱包」是否足以开始语音合成（公式与正式扣费一致）。
+    tier / period_days 保留兼容，不参与计算。
+    """
+    _ = tier, period_days
+    from . import media_wallet as _mw
+
+    base: dict[str, Any] = {"estimated_minutes": float(est_minutes)}
+    if not _mw.media_wallet_billing_enabled():
+        return True, base
+    p = (phone or "").strip()
+    if not p or float(est_minutes) <= 1e-9:
+        return True, base
+    est = float(est_minutes)
+    try:
+        ex_voice = float(experience_voice_minutes_for_phone(p) or 0.0)
+    except Exception:
+        ex_voice = 0.0
+    take_ex = min(est, max(0.0, ex_voice))
+    wallet_min = max(0.0, est - take_ex)
+    cents = int(_mw.wallet_cents_for_overage_minutes(wallet_min))
+    if cents <= 0:
+        return True, {**base, "preview_wallet_cents": 0}
+    bal = int(wallet_balance_cents_for_phone(p))
+    if bal < cents:
+        return False, {
+            **base,
+            "reason": "insufficient_wallet",
+            "preview_wallet_cents": cents,
+            "wallet_balance_cents": bal,
+            "message": (
+                f"预估成片约 {est:.1f} 分钟语音，超出体验包后约需 ¥{cents / 100:.2f}，"
+                f"当前钱包余额 ¥{bal / 100:.2f} 不足，请先充值后再试。"
+            ),
+        }
+    return True, {**base, "preview_wallet_cents": cents}
+
+
+def _media_billing_try_debit_voice_billed_minutes(
+    phone: str,
+    tier: str | None,
+    billed_minutes: float,
+    *,
+    period_days: int = 30,
 ) -> tuple[bool, int, dict[str, Any]]:
     """
-    事务内：先扣体验包语音分钟，再按预估分钟从钱包扣费（无订阅月配额、无按次分钟包）。
-    tier / period_days 保留参数以兼容调用方，不再参与计费。
-    返回 (是否成功, 实际从钱包扣的分, meta)。
-    meta: payg_restores(空), wallet_cents, from_payg_minutes(0), experience_voice_minutes_consumed
+    事务内：先扣体验包语音分钟，再按 billed_minutes 超出部分从钱包扣费（无订阅月配额、无按次分钟包）。
+    billed_minutes 通常为成片实际口播分钟；兼容旧调用传入预估分钟。
     """
     _ = tier, period_days
     from . import media_wallet as _mw
@@ -5810,7 +5853,7 @@ def media_billing_try_debit_estimated_minutes(
     if not _mw.media_wallet_billing_enabled():
         return True, 0, dict(base_meta)
     p = (phone or "").strip()
-    if not p or float(est_minutes) <= 1e-9:
+    if not p or float(billed_minutes) <= 1e-9:
         return True, 0, dict(base_meta)
     ensure_user_experience_balance_schema()
     ensure_user_wallet_schema()
@@ -5835,8 +5878,8 @@ def media_billing_try_debit_estimated_minutes(
                 )
                 row_ex = cur.fetchone()
                 ex_voice = float(row_ex.get("voice_minutes_remaining") or 0) if row_ex else 0.0
-                est = float(est_minutes)
-                take_ex = min(est, max(0.0, ex_voice))
+                bill = float(billed_minutes)
+                take_ex = min(bill, max(0.0, ex_voice))
                 new_ex = max(0.0, ex_voice - take_ex)
                 if row_ex:
                     cur.execute(
@@ -5847,7 +5890,7 @@ def media_billing_try_debit_estimated_minutes(
                         """,
                         (Decimal(str(round(new_ex, 6))), p, uid),
                     )
-                wallet_min = max(0.0, est - take_ex)
+                wallet_min = max(0.0, bill - take_ex)
                 cents = int(_mw.wallet_cents_for_overage_minutes(wallet_min))
                 meta = {
                     **base_meta,
@@ -5881,8 +5924,34 @@ def media_billing_try_debit_estimated_minutes(
                 conn.commit()
                 return True, cents, meta
     except Exception as exc:
-        logger.exception("media_billing_try_debit_estimated_minutes failed")
+        logger.exception("_media_billing_try_debit_voice_billed_minutes failed")
         return False, 0, {**base_meta, "reason": "error", "message": str(exc)[:300]}
+
+
+def media_billing_try_debit_estimated_minutes(
+    phone: str,
+    tier: str | None,
+    est_minutes: float,
+    *,
+    period_days: int = 30,
+) -> tuple[bool, int, dict[str, Any]]:
+    """兼容入口：按传入分钟数扣费（历史上传入预估分钟）。"""
+    return _media_billing_try_debit_voice_billed_minutes(
+        phone, tier, float(est_minutes), period_days=period_days
+    )
+
+
+def media_billing_try_debit_actual_minutes(
+    phone: str,
+    tier: str | None,
+    actual_minutes: float,
+    *,
+    period_days: int = 30,
+) -> tuple[bool, int, dict[str, Any]]:
+    """成片生成后：按实际口播分钟扣体验包与钱包。"""
+    return _media_billing_try_debit_voice_billed_minutes(
+        phone, tier, float(actual_minutes), period_days=period_days
+    )
 
 
 def ensure_user_wallet_schema() -> None:
@@ -7156,12 +7225,72 @@ def list_wallet_recharge_rows_for_phone(phone: str, limit: int = 80) -> list[dic
         return []
 
 
-def list_wallet_consumption_rows_for_phone(phone: str, limit: int = 80) -> list[dict[str, Any]]:
+def sum_wallet_consumption_wallet_cents_succeeded_for_phone(
+    phone: str,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> int:
+    """筛选时段内、任务已成功终态的消费流水：汇总钱包扣款分（不含纯体验包 0 元行）。"""
+    p = (phone or "").strip()
+    if not p:
+        return 0
+    since_eff = since or datetime(1970, 1, 1, tzinfo=timezone.utc)
+    until_eff = until or datetime(2099, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return 0
+                cur.execute(
+                    """
+                    SELECT COALESCE(
+                      SUM(
+                        CASE
+                          WHEN je.message = '已从钱包扣除单次克隆费用' THEN
+                            COALESCE(NULLIF(TRIM(je.event_payload->>'cents'), '')::bigint, 0)
+                          ELSE COALESCE(NULLIF(TRIM(je.event_payload->>'wallet_cents'), '')::bigint, 0)
+                        END
+                      ),
+                      0
+                    )::bigint AS total_cents
+                    FROM job_events je
+                    INNER JOIN jobs j ON j.id = je.job_id
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    WHERE je.event_type = 'log'
+                      AND j.status = 'succeeded'
+                      AND (
+                        (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%')
+                        OR je.message LIKE '已结算脚本文本费用%%'
+                        OR je.message = '已从钱包扣除单次克隆费用'
+                      )
+                      AND COALESCE(j.created_by, p.user_id) = %s::uuid
+                      AND je.created_at >= %s::timestamptz
+                      AND je.created_at <= %s::timestamptz
+                    """,
+                    (uid, since_eff, until_eff),
+                )
+                row = cur.fetchone() or {}
+                return int(row.get("total_cents") or 0)
+    except Exception:
+        logger.exception("sum_wallet_consumption_wallet_cents_succeeded_for_phone failed")
+        return 0
+
+
+def list_wallet_consumption_rows_for_phone(
+    phone: str,
+    limit: int = 80,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[dict[str, Any]]:
     """job_events 中的体验包/钱包结算流水（与 RSS 计费检测口径一致）。"""
     p = (phone or "").strip()
     lim = max(1, min(200, int(limit)))
     if not p:
         return []
+    since_eff = since or datetime(1970, 1, 1, tzinfo=timezone.utc)
+    until_eff = until or datetime(2099, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
     try:
         with get_conn() as conn:
             with get_cursor(conn) as cur:
@@ -7186,15 +7315,17 @@ def list_wallet_consumption_rows_for_phone(phone: str, limit: int = 80) -> list[
                     LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
                     WHERE je.event_type = 'log'
                       AND (
-                        je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%'
+                        (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%')
                         OR je.message LIKE '已结算脚本文本费用%%'
                         OR je.message = '已从钱包扣除单次克隆费用'
                       )
                       AND COALESCE(j.created_by, p.user_id) = %s::uuid
+                      AND je.created_at >= %s::timestamptz
+                      AND je.created_at <= %s::timestamptz
                     ORDER BY je.created_at DESC
                     LIMIT %s
                     """,
-                    (uid, lim),
+                    (uid, since_eff, until_eff, lim),
                 )
                 rows = [dict(x) for x in cur.fetchall() or []]
     except Exception:
@@ -7225,7 +7356,28 @@ def list_wallet_consumption_rows_for_phone(phone: str, limit: int = 80) -> list[
             wallet_cents = int(pl.get("cents") or wallet_cents)
 
         usage_parts: list[str] = []
-        if "已按预估语音分钟" in msg:
+        if "已按实际语音时长" in msg:
+            try:
+                am = float(pl.get("actual_minutes") or 0)
+            except (TypeError, ValueError):
+                am = 0.0
+            try:
+                exv = float(pl.get("experience_voice_minutes_consumed") or 0)
+            except (TypeError, ValueError):
+                exv = 0.0
+            if am > 1e-9:
+                usage_parts.append(f"实际语音 {am:.2f} 分钟")
+            try:
+                em = float(pl.get("estimated_minutes") or 0)
+            except (TypeError, ValueError):
+                em = 0.0
+            if em > 1e-9 and abs(em - am) > 0.01:
+                usage_parts.append(f"预估 {em:.2f} 分钟")
+            if exv > 1e-9:
+                usage_parts.append(f"体验包 {exv:.2f} 分钟")
+            if wallet_cents > 0:
+                usage_parts.append("含钱包扣费")
+        elif "已按预估语音分钟" in msg:
             try:
                 em = float(pl.get("estimated_minutes") or 0)
             except (TypeError, ValueError):

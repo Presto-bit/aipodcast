@@ -1,7 +1,8 @@
 """
 TTS / 播客类任务的「套餐分钟 → 按次分钟包 → 钱包」预估与扣费辅助。
 
-扣费执行在 models.media_billing_try_debit_estimated_minutes（事务内：扣分钟包 + 扣钱包）。
+入队前预检见 models.media_billing_try_assert_cover_estimated_minutes；
+成片后按实际时长扣费见 models.media_billing_try_debit_actual_minutes（事务内：扣体验包语音分钟 + 扣钱包）。
 """
 
 from __future__ import annotations

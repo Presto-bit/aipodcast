@@ -1,7 +1,7 @@
 import logging
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import date, datetime, time as dt_time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -20,6 +20,38 @@ from ..alipay_page_pay import AlipayPagePayConfig, build_page_pay_url, new_out_t
 _log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/subscription", tags=["subscription"], dependencies=[Depends(verify_internal_signature)])
+
+
+def _consumption_range_from_request(request: Request) -> tuple[datetime | None, datetime | None, bool]:
+    """
+    解析消费记录筛选：consumption_since / consumption_until（YYYY-MM-DD）。
+    无参数时返回 (None, None, False)，列表仍返回最近记录但不计算汇总金额。
+    有任一参数时第三项为 True，汇总该闭区间内成功任务的钱包消费分。
+    """
+    since_q = (request.query_params.get("consumption_since") or "").strip()
+    until_q = (request.query_params.get("consumption_until") or "").strip()
+    if not since_q and not until_q:
+        return None, None, False
+
+    def _parse_day(s: str) -> date:
+        return date.fromisoformat(s[:10])
+
+    try:
+        if since_q:
+            d0 = _parse_day(since_q)
+            since_dt = datetime.combine(d0, dt_time.min, tzinfo=timezone.utc)
+        else:
+            since_dt = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        if until_q:
+            d1 = _parse_day(until_q)
+            until_dt = datetime(d1.year, d1.month, d1.day, 23, 59, 59, 999999, tzinfo=timezone.utc)
+        else:
+            until_dt = datetime.now(timezone.utc)
+        if since_q and until_q and _parse_day(until_q) < _parse_day(since_q):
+            raise ValueError("until_before_since")
+        return since_dt, until_dt, True
+    except Exception:
+        return None, None, False
 
 
 def _simulated_wallet_checkout_enabled() -> bool:
@@ -61,7 +93,16 @@ def subscription_me_api(request: Request):
         info.pop(k, None)
     bal = models.wallet_balance_cents_for_phone(phone)
     recharge = models.list_wallet_recharge_rows_for_phone(phone, 80)
-    consumption = models.list_wallet_consumption_rows_for_phone(phone, 80)
+    since_f, until_f, consumption_sum_enabled = _consumption_range_from_request(request)
+    lim_cons = 200 if consumption_sum_enabled else 80
+    consumption = models.list_wallet_consumption_rows_for_phone(
+        phone, lim_cons, since=since_f, until=until_f
+    )
+    consumption_filtered_wallet_total_cents: int | None = None
+    if consumption_sum_enabled and since_f is not None and until_f is not None:
+        consumption_filtered_wallet_total_cents = models.sum_wallet_consumption_wallet_cents_succeeded_for_phone(
+            phone, since=since_f, until=until_f
+        )
     has_experience_pack = models.experience_pack_row_exists_for_phone(phone)
     experience_body = {
         "voice_minutes_remaining": round(float(models.experience_voice_minutes_for_phone(phone) or 0), 4),
@@ -80,6 +121,7 @@ def subscription_me_api(request: Request):
         "experience": experience_body,
         "recharge_records": recharge,
         "consumption_records": consumption,
+        "consumption_filtered_wallet_total_cents": consumption_filtered_wallet_total_cents,
     }
 
 
