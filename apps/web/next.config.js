@@ -42,9 +42,24 @@ function mergeRootAiNativeEnv() {
 
 mergeRootAiNativeEnv();
 
+/** 与 `middleware.ts` 中 `CACHE_PAGE` 一致：避免 HTML/RSC 被 CDN 按 Next 默认整页缓存（如 s-maxage=31536000）。 */
+const CACHE_DOCUMENT =
+  "private, no-cache, no-store, max-age=0, must-revalidate";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  async headers() {
+    return [
+      {
+        source: "/((?!api/|_next/static|_next/image|favicon.ico).*)",
+        headers: [
+          { key: "Cache-Control", value: CACHE_DOCUMENT },
+          { key: "Pragma", value: "no-cache" }
+        ]
+      }
+    ];
+  },
   experimental: {
     /** 启用 `instrumentation.ts`（生产 INTERNAL_SIGNING_SECRET 强校验等） */
     instrumentationHook: true,
