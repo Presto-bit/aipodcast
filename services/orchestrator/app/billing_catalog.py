@@ -22,7 +22,11 @@ from .subscription_manifest import (
     WALLET_TOPUP_MIN_CENTS,
     WALLET_TOPUP_SUGGESTED_YUAN,
 )
-from .alipay_page_pay import alipay_page_pay_ready
+from .alipay_page_pay import (
+    alipay_config_diag_exposed,
+    alipay_page_pay_env_diag,
+    alipay_page_pay_ready,
+)
 
 
 def _wallet_usage_reference() -> dict[str, Any]:
@@ -65,7 +69,7 @@ def build_wallet_catalog_response() -> dict[str, Any]:
         alipay_ready = alipay_page_pay_ready()
     except Exception:
         alipay_ready = False
-    return {
+    out: dict[str, Any] = {
         "success": True,
         "currency": "CNY",
         "billing_monthly_only": False,
@@ -90,3 +94,6 @@ def build_wallet_catalog_response() -> dict[str, Any]:
         },
         "note": "wallet_billing_catalog",
     }
+    if alipay_config_diag_exposed():
+        out["alipay_config_diag"] = alipay_page_pay_env_diag()
+    return out

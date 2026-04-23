@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+from typing import Any
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -92,6 +93,88 @@ class AlipayPagePayConfig:
 
 def alipay_page_pay_ready() -> bool:
     return AlipayPagePayConfig.from_env() is not None
+
+
+def alipay_config_diag_exposed() -> bool:
+    """FYV_EXPOSE_ALIPAY_CONFIG_DIAG=1 时在价目 JSON 中附带 alipay_config_diag，便于前端排障（勿在生产长期开启）。"""
+    return (os.getenv("FYV_EXPOSE_ALIPAY_CONFIG_DIAG") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def alipay_page_pay_env_diag() -> dict[str, Any]:
+    """
+    不含私钥/公钥内容；用于排障。与 AlipayPagePayConfig.from_env 判定一致。
+    """
+    checks: dict[str, Any] = {}
+    issues: list[str] = []
+
+    pay_on = _truthy("ALIPAY_PAY_ENABLED")
+    checks["ALIPAY_PAY_ENABLED"] = pay_on
+    if not pay_on:
+        issues.append("ALIPAY_PAY_ENABLED 未开启（须为 1/true）")
+
+    app_id = (os.getenv("ALIPAY_APP_ID") or "").strip()
+    checks["ALIPAY_APP_ID"] = bool(app_id)
+    if pay_on and not app_id:
+        issues.append("ALIPAY_APP_ID 为空")
+
+    notify_url = (os.getenv("ALIPAY_NOTIFY_URL") or "").strip()
+    checks["ALIPAY_NOTIFY_URL"] = bool(notify_url)
+    if pay_on and not notify_url:
+        issues.append("ALIPAY_NOTIFY_URL 为空")
+    elif notify_url:
+        low = notify_url.lower()
+        if low.startswith("http://") and not _truthy("ALIPAY_SANDBOX"):
+            issues.append("ALIPAY_NOTIFY_URL 使用了 http://，正式环境支付宝要求 https://")
+
+    return_url_raw = (os.getenv("ALIPAY_RETURN_URL") or "").strip()
+    derived_return = _default_return_url_from_notify(notify_url) if notify_url else ""
+    effective_return = return_url_raw or derived_return
+    checks["ALIPAY_RETURN_URL_or_derived"] = bool(effective_return)
+    checks["ALIPAY_RETURN_URL_derived_only"] = bool(not return_url_raw and bool(derived_return))
+    if pay_on and notify_url and not effective_return:
+        issues.append("ALIPAY_RETURN_URL 为空且无法从 NOTIFY_URL 推导（请检查 NOTIFY 是否为合法 https URL）")
+
+    def _diag_pem(path_env: str, pem_env: str) -> tuple[bool, str]:
+        p = (os.getenv(path_env) or "").strip()
+        if p:
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    body = f.read().strip()
+                if not body:
+                    issues.append(f"{path_env} 文件为空: …/{os.path.basename(p)}")
+                    return False, "empty_file"
+                return True, "path_ok"
+            except OSError as e:
+                issues.append(f"{path_env} 读失败: {os.path.basename(p)} — {str(e)[:160]}")
+                return False, "read_error"
+        raw = (os.getenv(pem_env) or "").strip()
+        if not raw:
+            issues.append(f"{path_env} 与 {pem_env} 均未提供有效内容")
+            return False, "missing"
+        if "\\n" in raw and "\n" not in raw:
+            raw = raw.replace("\\n", "\n")
+        if not raw.strip():
+            issues.append(f"{pem_env} 展开后为空")
+            return False, "empty_pem_env"
+        return True, "pem_env_ok"
+
+    priv_ok, priv_how = _diag_pem("ALIPAY_APP_PRIVATE_KEY_PATH", "ALIPAY_APP_PRIVATE_KEY_PEM")
+    pub_ok, pub_how = _diag_pem("ALIPAY_PUBLIC_KEY_PATH", "ALIPAY_PUBLIC_KEY_PEM")
+    checks["app_private_key"] = priv_ok
+    checks["alipay_public_key"] = pub_ok
+    checks["app_private_key_source"] = priv_how
+    checks["alipay_public_key_source"] = pub_how
+
+    sandbox = _truthy("ALIPAY_SANDBOX")
+    checks["ALIPAY_SANDBOX"] = sandbox
+
+    return {
+        "ready": alipay_page_pay_ready(),
+        "sandbox": sandbox,
+        "notify_url_host": (urlparse(notify_url).netloc if notify_url else ""),
+        "issues": issues,
+        "checks": checks,
+    }
 
 
 def gateway_base_url(*, sandbox: bool) -> str:

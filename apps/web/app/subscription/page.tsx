@@ -37,6 +37,8 @@ type PlansPayload = {
   payment_channels?: {
     alipay_page?: { enabled?: boolean; label_zh?: string };
   };
+  /** 编排器 FYV_EXPOSE_ALIPAY_CONFIG_DIAG=1 时附带，脱敏自检信息 */
+  alipay_config_diag?: unknown;
 };
 
 /** 设为 1 时：拉取 /api/subscription/plans 后在控制台与充值弹窗输出结构化诊断（需重新 build Next） */
@@ -101,6 +103,31 @@ function logSubscriptionPlansDiag(d: PlansLoadDiag): void {
   console.info("[subscription/plans 诊断]", payload);
 }
 
+/** 编排器在 FYV_EXPOSE_ALIPAY_CONFIG_DIAG=1 时经价目接口下发，不含密钥正文。 */
+function AlipayEnvDiagPanel({ diag, defaultOpen }: { diag: unknown; defaultOpen?: boolean }) {
+  if (diag == null) return null;
+  const body = typeof diag === "string" ? diag : JSON.stringify(diag, null, 2);
+  return (
+    <details
+      className="mt-4 rounded-lg border border-dashed border-warning/40 bg-warning-soft/50 p-3 dark:border-warning/35 dark:bg-warning-soft/25"
+      {...(defaultOpen ? { defaultOpen: true } : {})}
+    >
+      <summary className="cursor-pointer select-none text-xs font-medium text-warning-ink">
+        支付宝配置自检（FYV_EXPOSE_ALIPAY_CONFIG_DIAG）
+      </summary>
+      <p className="mt-2 text-[11px] leading-relaxed text-muted">
+        数据来自编排器价目 JSON 字段 alipay_config_diag，已脱敏。生产环境请勿长期开启该环境变量。
+      </p>
+      <pre
+        className="mt-2 max-h-64 overflow-auto rounded-md border border-line bg-canvas p-2 text-left font-mono text-[10px] leading-snug text-ink"
+        aria-label="支付宝配置自检"
+      >
+        {body}
+      </pre>
+    </details>
+  );
+}
+
 /** 与编排器 billing_catalog 一致：支持 JSON 布尔或偶发的字符串/数字 */
 function isTruthyPaymentChannelEnabled(v: unknown): boolean {
   if (v === true || v === 1) return true;
@@ -152,6 +179,7 @@ export default function SubscriptionPage() {
   const [experienceVoiceTotal, setExperienceVoiceTotal] = useState<number | null>(null);
   const [experienceTextTotal, setExperienceTextTotal] = useState<number | null>(null);
   const [plansLoadDiag, setPlansLoadDiag] = useState<PlansLoadDiag | null>(null);
+  const [alipayConfigDiag, setAlipayConfigDiag] = useState<unknown>(null);
 
   /** 防止连续多次 loadPlans 返回顺序错乱，把旧响应写回 state */
   const plansFetchSeqRef = useRef(0);
@@ -248,6 +276,7 @@ export default function SubscriptionPage() {
         return;
       }
       if (!pr.ok) {
+        setAlipayConfigDiag(null);
         setAlipayPageEnabled(false);
         if (pr.status === 404) {
           setPlansLoadError("未找到计费配置接口（HTTP 404）。已使用本站参考价目；请确认 Next BFF 已部署 /api/subscription/plans 且编排器可访问。");
@@ -271,6 +300,7 @@ export default function SubscriptionPage() {
         return;
       }
       if (pd.success) {
+        setAlipayConfigDiag(pd.alipay_config_diag ?? null);
         const wtRaw = pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : {};
         setWalletTopupInfo(wtRaw);
         const wt = Object.keys(wtRaw).length ? (wtRaw as WalletTopupPayload) : null;
@@ -298,6 +328,7 @@ export default function SubscriptionPage() {
         logSubscriptionPlansDiag(okDiag);
         if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(okDiag);
       } else {
+        setAlipayConfigDiag(null);
         setAlipayPageEnabled(false);
         setPlansLoadError("计费接口返回异常，已显示参考价目，请稍后重试。");
         const badDiag: PlansLoadDiag = {
@@ -315,6 +346,7 @@ export default function SubscriptionPage() {
       }
     } catch (e) {
       if (seq === plansFetchSeqRef.current) {
+        setAlipayConfigDiag(null);
         const msg = String(e instanceof Error ? e.message : e);
         setPlansLoadError(msg);
         const netDiag: PlansLoadDiag = {
@@ -609,6 +641,8 @@ export default function SubscriptionPage() {
           若编排器未启动或网络异常，将无法调起支付宝；本地开发请先启动 orchestrator。
         </p>
       ) : null}
+
+      {plansConfigLoaded ? <AlipayEnvDiagPanel diag={alipayConfigDiag} defaultOpen /> : null}
 
       <section
         id="balance-billing"
@@ -943,6 +977,7 @@ export default function SubscriptionPage() {
               <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
             </div>
           ) : null}
+          <AlipayEnvDiagPanel diag={alipayConfigDiag} />
           {subscriptionPlansDebugEnabled() && plansLoadDiag ? (
             <div className="mt-4 border-t border-dashed border-line/80 pt-3">
               <p className="mb-2 text-[11px] font-medium text-muted">调试：最近一次 GET /api/subscription/plans（需 build 时含 NEXT_PUBLIC_SUBSCRIPTION_PLANS_DEBUG=1）</p>
