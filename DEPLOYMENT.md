@@ -192,6 +192,51 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 | HTML、`/admin/*`、强个性化页面 | **短 TTL** 或 **`no-cache`**；发版后 **CDN Purge** |
 | 同源 API（若经同一主机名） | **不缓存** 或极短 TTL |
 
+### 4）阿里云 CDN：`prestoai.cn` 源站已是新版、域名仍显示旧版
+
+典型原因：**边缘节点仍命中旧 HTML**（或旧 `/_next/static/*`），与 ECS 上 Docker Web 是否最新无关。
+
+#### A. 先确认「旧」发生在哪一层（在任意能出网的机器执行）
+
+1. **直连源站 Web（须在能访问 ECS 内网或本机的环境；生产多为 SSH 上 ECS）**  
+   `curl -sI http://127.0.0.1:3000/ | tr -d '\r' | grep -iE 'cache-control|http/'`  
+   应看到 **`no-store` / `no-cache`** 一类（与当前 Next + Nginx 策略一致），且页面内容应为新版本。
+
+2. **经公网域名（走 CDN）**  
+   `curl -sI https://prestoai.cn/ | tr -d '\r' | grep -iE 'cache-control|age|x-cache|via|server'`  
+   若出现 **`Age` 很大**、或 **`X-Cache: HIT`**（具体头名因阿里云产品略有差异）、或 **`Cache-Control` 与步骤 1 明显不一致**，基本可判定为 **CDN / 中间代理缓存**。
+
+3. **若步骤 1 已是旧内容**：先 **`bash release.sh`** 或 `docker compose ... up -d --build`，确认 `web` 容器为新镜像后再测步骤 1。
+
+#### B. 阿里云 CDN 控制台（必做：发版后刷新）
+
+1. 登录 [阿里云 CDN 控制台](https://cdn.console.aliyun.com/) → **域名管理** → 选中 **`prestoai.cn`**（若用户实际访问 **`www.prestoai.cn`**，两个加速域名要**分别**处理）。
+2. 左侧 **「刷新预热」**（或 **缓存刷新**）→ **URL 刷新**。
+3. **建议至少刷新以下 URL**（按你站点是否同时存在 apex / `www` 复制；**目录刷新**时 URL **必须以 `/` 结尾**）：
+   - `https://prestoai.cn/`
+   - `https://prestoai.cn/admin/`（若使用管理端）
+   - 若对外还暴露 **`www.prestoai.cn`**：同样各加一条根路径与 `/admin/`。
+4. 刷新后等待 **1～5 分钟**（视节点与任务队列），再用浏览器 **无痕窗口** 打开首页验证。若仍见**旧 JS/CSS 报错或白屏**，再补刷 **`https://prestoai.cn/_next/static/`**（目录刷新，会短时增加回源，慎用高峰期）。
+
+#### C. 阿里云 CDN：缓存规则（减少「每次发版都要全站刷新」）
+
+在 **域名管理** → 对应域名 → **缓存配置** → **缓存过期时间**（或「节点缓存规则」）：
+
+- **对 HTML 文档路径**（如 `/`、`/admin`、`/notes` 等页面路由）：设为 **遵循源站**、或 **TTL 极短（如 60 秒）**、或 **不缓存**，且**不要**勾选「忽略源站 Cache-Control」类选项（若有）。
+- **对 `/_next/static/`**：可 **长 TTL**（文件名含 hash，换版会换新 URL）。
+- **对 `/api/`**：建议 **不缓存** 或 **遵循源站**（BFF 常为 `no-store`）。
+
+避免一条「**整站 `/*` 缓存 30 天**」且不区分路径的规则，否则发版后极易长期看到旧 HTML。
+
+#### D. ECS 上 Nginx（宝塔 / 自建）
+
+- 若 **`location /`** 配置了 **`proxy_cache`** 或 **`expires 30d`** 等长过期：会把 **动态 HTML** 一并缓存，表现为 **本机 `curl 127.0.0.1` 新、经 Nginx 端口旧**。请改为 **仅对 `/_next/static/`** 等静态路径启用长缓存，**HTML 反代 location 不要**套全站 `proxy_cache`。详见上文「1）别让 Nginx…」与仓库 **`deploy/nginx-prestoai.cdn-cache.example.conf`**。
+- 修改后执行：`sudo nginx -t && sudo nginx -s reload`（或宝塔内「保存并重载」）。
+
+#### E. 发版后自动调用 CDN 刷新（可选）
+
+在服务器 **`/opt/FYV/.env.ai-native`**（或你的 `APP_DIR`）中配置 **`ALIYUN_CDN_*`**，并在发布机安装 **`aliyun` CLI** 且 AK 具备刷新权限；`release.sh` 成功后会执行 **`scripts/aliyun-cdn-refresh.sh`**。变量说明与 **`prestoai.cn` 填写示例**见根目录 **`.env.ai-native.example`** 中「阿里云 CDN」注释块。
+
 **示例配置**：仓库根目录 **`deploy/nginx-prestoai.cdn-cache.example.conf`**（注释块内为完整 `server` 片段，按需合并到宝塔或 `sites-available`，`nginx -t` 后 `reload`）。
 
 ## 支付回调
