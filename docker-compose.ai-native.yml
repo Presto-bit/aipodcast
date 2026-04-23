@@ -100,12 +100,10 @@ services:
           "-c",
           "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health', timeout=5).read()",
         ]
-      # 冷启动：lifespan 内 schema/对象存储就绪后才监听端口；Apple Silicon 上 linux/amd64 模拟较慢，窗口过短会导致
-      # compose 在 web/worker 依赖 orchestrator 健康前将编排器判为 unhealthy。
       interval: 10s
-      timeout: 10s
-      retries: 12
-      start_period: 120s
+      timeout: 6s
+      retries: 5
+      start_period: 60s
     volumes:
       # 支付宝 PEM 等：仓库根目录 secrets/（gitignore），与 .env.ai-native 中 ALIPAY_*_PATH 相对 /app 一致
       - ./secrets:/app/secrets:ro
