@@ -76,6 +76,15 @@ class AlipayPagePayConfig:
             priv = _read_pem_from_path_or_env("ALIPAY_APP_PRIVATE_KEY_PATH", "ALIPAY_APP_PRIVATE_KEY_PEM")
             pub = _read_pem_from_path_or_env("ALIPAY_PUBLIC_KEY_PATH", "ALIPAY_PUBLIC_KEY_PEM")
             sandbox = _truthy("ALIPAY_SANDBOX")
+            if (
+                notify_url
+                and not sandbox
+                and notify_url.lower().startswith("http://")
+            ):
+                _log.warning(
+                    "alipay: ALIPAY_NOTIFY_URL must use https in production (sandbox=0); treating as disabled"
+                )
+                return None
             if not all([app_id, notify_url, return_url, priv, pub]):
                 return None
             return cls(
@@ -102,7 +111,8 @@ def alipay_config_diag_exposed() -> bool:
 
 def alipay_page_pay_env_diag() -> dict[str, Any]:
     """
-    不含私钥/公钥内容；用于排障。与 AlipayPagePayConfig.from_env 判定一致。
+    不含私钥/公钥内容；用于排障。issues 与 alipay_page_pay_ready()（from_env）一致：
+    正式环境若 NOTIFY 为 http://，两者均视为未就绪。
     """
     checks: dict[str, Any] = {}
     issues: list[str] = []
