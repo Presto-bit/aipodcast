@@ -175,7 +175,8 @@ services:
         # 默认用 DaoCloud 同步的 Hub 官方 library/node（国内直连 hub 常 metadata / content size of zero）
         # 海外或已配 registry-mirrors：在 .env.ai-native 设 NODE_BASE_IMAGE=node:20-alpine
         NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/node:20-alpine}
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        # 默认官方源：部分机房对 registry.npmmirror.com 解析失败（EAI_AGAIN）会导致 web 构建卡死；国内可设 NPM_REGISTRY 为 npmmirror
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
         NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-development}
         NEXT_PUBLIC_APP_BUILD_ID: ${NEXT_PUBLIC_APP_BUILD_ID:-0}
     env_file:

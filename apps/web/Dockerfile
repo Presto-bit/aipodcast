@@ -1,8 +1,8 @@
 ARG NODE_BASE_IMAGE=node:20-alpine
 FROM --platform=linux/amd64 ${NODE_BASE_IMAGE}
 
-# 国内机构建 web 时连接 registry.npmjs.org 常极慢或假死；默认 npmmirror，海外可 build-arg NPM_REGISTRY=https://registry.npmjs.org/
-ARG NPM_REGISTRY=https://registry.npmmirror.com
+# 默认可解析性优先用官方源；国内 CI/构建慢可在 build-arg 设 NPM_REGISTRY=https://registry.npmmirror.com
+ARG NPM_REGISTRY=https://registry.npmjs.org/
 
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
