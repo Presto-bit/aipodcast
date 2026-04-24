@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   getLegalContactEmail,
   getSiteProductDisplayName,
+  LEGAL_ACCOUNT_DELETE_GRACE_DAYS,
   LEGAL_OPERATOR_NAME_CN
 } from "../../lib/siteLegalMeta";
 
@@ -82,6 +83,12 @@ export function UserAgreementZh() {
         </p>
       </Section>
 
+      <Section title="营销与推广通信">
+        <p>
+          在您同意后，我们可能通过<strong>短信、电子邮件</strong>等方式向您发送产品更新、活动推广、优惠方案等商业信息。您可随时按信息内载明的退订方式退订，或发送邮件至本协议末尾公示的邮箱说明退订需求。退订后，我们将停止向您发送新的营销信息，但不影响与账号安全、服务履行相关的非营销通知。
+        </p>
+      </Section>
+
       <Section title="免责声明与责任限制">
         <p>
           本服务按「现状」和「可得性」提供。在法律允许的最大范围内，我们对因不可抗力、网络故障、第三方服务中断、您自身设备或操作原因、以及非我们可控因素导致的损失不承担责任。
@@ -94,6 +101,9 @@ export function UserAgreementZh() {
       <Section title="协议终止">
         <p>
           您可随时停止使用本服务并申请注销账号（如产品内提供相应入口）。我们可在您严重违反本协议、法律法规要求或出于安全与合规考虑时，暂停或终止向您提供本服务。
+        </p>
+        <p>
+          账号注销成功后，除法律法规另有规定须继续保留的信息外，我们将在<strong>{LEGAL_ACCOUNT_DELETE_GRACE_DAYS} 个自然日</strong>内删除或匿名化处理与您账号相关的个人信息及内容数据，具体处理规则以《隐私政策》为准。
         </p>
       </Section>
 
@@ -108,17 +118,11 @@ export function UserAgreementZh() {
           运营方：<strong>{LEGAL_OPERATOR_NAME_CN}</strong>。
         </p>
         <p>
-          {email ? (
-            <>
-              与本协议相关的问题，请发送邮件至{" "}
-              <a className="text-brand underline-offset-2 hover:underline" href={`mailto:${email}`}>
-                {email}
-              </a>
-              。
-            </>
-          ) : (
-            <>与本协议相关的问题，请通过本网站「帮助」页所列渠道或运营方另行公示的客服方式与我们联系。</>
-          )}
+          与本协议、营销退订或账号相关的问题，请发送邮件至{" "}
+          <a className="text-brand underline-offset-2 hover:underline" href={`mailto:${email}`}>
+            {email}
+          </a>
+          。
         </p>
       </Section>
     </>
