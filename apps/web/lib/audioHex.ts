@@ -1,7 +1,7 @@
 /** MP3 hex string (from orchestrator jobs) → data URL for <audio>. */
 export function hexToMp3DataUrl(hex: string): string {
   const clean = (hex || "").trim();
-  if (!clean) return "";
+  if (!clean || clean.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(clean)) return "";
   const byteLen = clean.length / 2;
   const bytes = new Uint8Array(byteLen);
   for (let i = 0; i < byteLen; i++) {

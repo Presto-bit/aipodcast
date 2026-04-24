@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useAuth } from "../../lib/auth";
 
-type AdminNavIcon = "hub" | "users" | "models" | "usage" | "jobs" | "polish" | "matrix" | "pay";
+type AdminNavIcon = "users" | "models" | "usage" | "jobs" | "polish" | "matrix" | "pay";
 
 function navHrefActive(pathname: string, href: string): boolean {
   if (pathname === href) return true;
@@ -15,20 +15,6 @@ function navHrefActive(pathname: string, href: string): boolean {
 
 function NavIcon({ icon, active }: { icon: AdminNavIcon; active: boolean }) {
   const colorClass = active ? "text-brand" : "text-muted";
-  if (icon === "hub") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true" className={`h-4 w-4 ${colorClass}`}>
-        <path
-          d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    );
-  }
   if (icon === "users") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true" className={`h-4 w-4 ${colorClass}`}>
@@ -132,15 +118,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { user, ready } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  /** usePathname() 在部分类型下可为 null，导航比较需归一为 string */
   const path = pathname ?? "";
-  const [collapsed, setCollapsed] = useState(false);
   const isAdmin = String((user as { role?: string })?.role || "") === "admin";
   const navItems = [
-    { href: "/admin/hub", label: "概览", desc: "快捷入口与说明", icon: "hub" as const },
+    { href: "/admin/usage", label: "总览看板", desc: "总览/收支/订单/用户/作品/告警", icon: "usage" as const },
     { href: "/admin/users", label: "用户管理", desc: "用户与角色", icon: "users" as const },
     { href: "/admin/models", label: "模型管理", desc: "模型与费用说明", icon: "models" as const },
-    { href: "/admin/usage", label: "总览看板", desc: "总览/收支/订单/用户/作品/告警", icon: "usage" as const },
     { href: "/admin/jobs", label: "创作记录", desc: "生成记录列表与详情", icon: "jobs" as const },
     { href: "/admin/tts-polish", label: "TTS 润色", desc: "AI 润色条款（单/双人）", icon: "polish" as const },
   ];
@@ -168,78 +151,48 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className={`grid min-h-0 gap-6 ${collapsed ? "md:grid-cols-[88px_minmax(0,1fr)]" : "md:grid-cols-[240px_minmax(0,1fr)]"}`}>
-      <aside className="rounded-xl border border-line bg-surface/70 p-3 md:sticky md:top-4 md:h-[calc(100vh-2rem)] md:self-start md:overflow-hidden">
-        <div className={`mb-2 flex items-center ${collapsed ? "justify-center" : "justify-between"} px-2`}>
-          {!collapsed ? (
-            <div>
-              <h2 className="text-sm font-semibold text-ink">后台管理</h2>
-              <p className="mt-1 text-xs text-muted">在下方切换功能模块</p>
-            </div>
-          ) : null}
-          <button
-            type="button"
-            className="hidden rounded-md border border-line bg-canvas/50 px-2 py-1 text-xs text-muted transition hover:border-brand/40 hover:text-ink md:inline-flex"
-            onClick={() => setCollapsed((v) => !v)}
-            title={collapsed ? "展开侧栏" : "折叠侧栏"}
-            aria-label={collapsed ? "展开侧栏" : "折叠侧栏"}
-          >
-            {collapsed ? "→" : "←"}
-          </button>
+    <div className="flex min-h-0 w-full flex-col gap-4">
+      <header className="sticky top-0 z-20 -mx-1 rounded-xl border border-line bg-surface/90 px-2 py-2 backdrop-blur-sm md:px-3">
+        <div className="mb-2 flex flex-col gap-0.5 px-1 sm:px-2">
+          <h2 className="text-sm font-semibold text-ink">后台管理</h2>
+          <p className="text-[11px] text-muted">在下方标签切换功能模块</p>
         </div>
-        <nav
-          className="flex flex-col gap-1 pb-1 md:h-[calc(100%-2.75rem)] md:overflow-y-auto md:overflow-x-hidden md:pb-0"
-          aria-label="后台功能导航"
-        >
-          <ul className="m-0 list-none space-y-1 p-0">
-            {navItems.map((item) => {
-              const isActive =
-                item.href === "/admin/hub"
-                  ? navHrefActive(path, item.href) || path === "/admin"
-                  : navHrefActive(path, item.href);
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    aria-current={isActive ? "page" : undefined}
-                    title={collapsed ? item.label : undefined}
-                    className={[
-                      "group flex w-full items-center rounded-dawn-md py-2 text-sm transition-colors",
-                      collapsed ? "justify-center px-0 md:px-1" : "gap-2.5 border-l-2 pl-1.5 pr-2",
-                      collapsed
-                        ? isActive
-                          ? "bg-fill text-ink"
-                          : "text-muted hover:bg-fill hover:text-ink"
-                        : isActive
-                          ? "border-brand/80 bg-fill text-ink"
-                          : "border-transparent text-ink hover:bg-fill hover:text-ink",
-                      collapsed && isActive ? "shadow-inset-brand" : "",
-                    ].join(" ")}
-                  >
-                    <span
-                      className={[
-                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-dawn-md transition-colors",
-                        isActive
-                          ? "bg-brand/18 text-brand shadow-inset-brand dark:bg-brand/22"
-                          : "bg-fill text-muted group-hover:bg-track group-hover:text-ink",
-                      ].join(" ")}
-                    >
-                      <NavIcon icon={item.icon} active={isActive} />
-                    </span>
-                    {!collapsed ? (
-                      <span className="min-w-0 flex-1 text-left">
-                        <span className="block font-medium leading-snug text-ink">{item.label}</span>
-                        <span className="mt-0.5 block text-xs font-normal leading-snug text-muted">{item.desc}</span>
-                      </span>
-                    ) : null}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+        <nav className="flex min-w-0 flex-wrap gap-1 sm:gap-2" aria-label="后台功能导航">
+          {navItems.map((item) => {
+            const isActive = navHrefActive(path, item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={isActive ? "page" : undefined}
+                title={item.desc}
+                className={[
+                  "flex min-w-0 items-center gap-2 rounded-dawn-md border px-2.5 py-2 text-sm transition-colors sm:px-3",
+                  isActive
+                    ? "border-brand/50 bg-fill text-ink shadow-inset-brand"
+                    : "border-transparent text-muted hover:border-line hover:bg-fill hover:text-ink",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-dawn-md transition-colors",
+                    isActive
+                      ? "bg-brand/18 text-brand shadow-inset-brand dark:bg-brand/22"
+                      : "bg-fill text-muted group-hover:bg-track group-hover:text-ink",
+                  ].join(" ")}
+                >
+                  <NavIcon icon={item.icon} active={isActive} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-medium leading-snug text-ink">{item.label}</span>
+                  <span className="mt-0.5 hidden text-xs font-normal leading-snug text-muted sm:block">{item.desc}</span>
+                </span>
+              </Link>
+            );
+          })}
         </nav>
-      </aside>
-      <section className="min-w-0">{children}</section>
+      </header>
+      <section className="min-w-0 flex-1">{children}</section>
     </div>
   );
 }

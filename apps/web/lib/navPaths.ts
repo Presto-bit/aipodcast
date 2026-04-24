@@ -7,16 +7,6 @@ export const NOTES_TRASH_PREFIX = "/notes/trash";
 
 const PRODUCT_STUDIO_ROOTS = ["/create", "/podcast", "/tts"] as const;
 
-const ADMIN_CONSOLE_PREFIXES = [
-  "/admin/users",
-  "/admin/models",
-  "/admin/usage",
-  "/admin/usage-users",
-  "/admin/usage-works",
-  "/admin/usage-alerts",
-  "/admin/tts-polish"
-] as const;
-
 export function normalizePathname(p: string): string {
   if (p.length > 1 && p.endsWith("/")) return p.slice(0, -1);
   return p;
@@ -51,7 +41,6 @@ export function matchesNotesWorkbench(pathname: string): boolean {
 }
 
 export function matchesAdminConsole(pathname: string): boolean {
-  if (pathname === "/admin/hub") return true;
-  if (ADMIN_CONSOLE_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return true;
-  return pathMatchesRoot(pathname, "/jobs");
+  const n = normalizePathname(pathname);
+  return pathMatchesRoot(n, "/admin");
 }

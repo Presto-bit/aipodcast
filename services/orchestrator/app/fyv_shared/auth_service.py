@@ -1145,7 +1145,6 @@ def _pg_list_users() -> list[Dict[str, Any]]:
             FROM users u
             LEFT JOIN user_auth_accounts a ON a.user_id = u.id
             LEFT JOIN user_wallet_balance wb ON wb.user_id = u.id
-            WHERE u.account_status <> 'deleted'
             ORDER BY u.created_at DESC
             """
         )

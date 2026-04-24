@@ -69,6 +69,14 @@ export default function AdminUsersPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [creditYuanByPhone, setCreditYuanByPhone] = useState<Record<string, string>>({});
   const [creditBusyPhone, setCreditBusyPhone] = useState<string | null>(null);
+  const [moreMenuKey, setMoreMenuKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!moreMenuKey) return;
+    const close = () => setMoreMenuKey(null);
+    document.addEventListener("click", close, true);
+    return () => document.removeEventListener("click", close, true);
+  }, [moreMenuKey]);
 
   const loadUsers = useCallback(async () => {
     const res = await fetch("/api/admin/users", { headers: getAuthHeaders(), cache: "no-store" });
@@ -147,6 +155,7 @@ export default function AdminUsersPage() {
         throw new Error(data.detail || data.error || `充值失败 ${res.status}`);
       }
       setCreditYuanByPhone((prev) => ({ ...prev, [phoneKey]: "" }));
+      setMoreMenuKey(null);
       setMsg(`已充值 ¥${(cents / 100).toFixed(2)}，当前余额 ¥${((data.wallet_balance_cents ?? 0) / 100).toFixed(2)}`);
       await loadUsers();
     } catch (e) {
@@ -244,7 +253,7 @@ export default function AdminUsersPage() {
     <main className="min-h-0 min-w-0 w-full max-w-6xl">
       <h1 className="text-2xl font-semibold text-ink">用户管理</h1>
       <p className="mt-2 text-sm text-muted">
-        管理员可对任意用户执行下列操作（含本人账号）。「设为失效」禁止登录并清除会话，数据仍保留；「恢复」将已失效账号改回可登录；「永久删除」为数据库物理删除（级联清理关联数据），不可恢复。
+        列表含全部账号（含已删除状态）；操作请点「更多」。「设为失效」禁止登录并清除会话，数据仍保留；「恢复」将已失效账号改回可登录；「永久删除」为数据库物理删除（级联清理关联数据），不可恢复。
       </p>
 
       <section className="mt-6 rounded-xl border border-line bg-surface/60 p-4">
@@ -335,74 +344,102 @@ export default function AdminUsersPage() {
                     {(u.acct_tier || "free").toLowerCase()}
                     {u.billing_cycle ? ` · ${u.billing_cycle}` : ""}
                   </td>
-                  <td className="px-2 py-2">
-                    <div className="flex w-max max-w-none flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                      <div className="flex flex-wrap items-center gap-1">
-                        <input
-                          className="w-24 rounded border border-line bg-canvas px-2 py-1 text-xs text-ink"
-                          inputMode="decimal"
-                          placeholder="金额"
-                          aria-label={`为 ${rowKey(u)} 充值金额（元）`}
-                          value={creditYuanByPhone[rowKey(u)] ?? ""}
-                          onChange={(e) =>
-                            setCreditYuanByPhone((prev) => ({ ...prev, [rowKey(u)]: e.target.value }))
-                          }
-                        />
-                        <span className="text-[10px] text-muted">元</span>
-                        <button
-                          type="button"
-                          className="rounded bg-brand px-2 py-1 text-xs text-brand-foreground hover:bg-brand/90 disabled:opacity-50"
-                          disabled={creditBusyPhone === rowKey(u)}
-                          onClick={() => void creditWallet(u)}
-                        >
-                          {creditBusyPhone === rowKey(u) ? "充值中…" : "加余额"}
-                        </button>
+                  <td className="relative px-2 py-2">
+                    <button
+                      type="button"
+                      className="rounded border border-line bg-canvas/80 px-2.5 py-1 text-xs text-ink hover:bg-fill"
+                      aria-expanded={moreMenuKey === rowKey(u)}
+                      aria-haspopup="menu"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const k = rowKey(u);
+                        setMoreMenuKey((cur) => (cur === k ? null : k));
+                      }}
+                    >
+                      更多
+                    </button>
+                    {moreMenuKey === rowKey(u) ? (
+                      <div
+                        role="menu"
+                        className="absolute right-2 top-full z-50 mt-1 w-[min(18rem,calc(100vw-2rem))] rounded-xl border border-line bg-surface p-2 shadow-card"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <p className="mb-1.5 text-[10px] font-medium text-muted">加余额（元）</p>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <input
+                            className="min-w-0 flex-1 rounded border border-line bg-canvas px-2 py-1 text-xs text-ink"
+                            inputMode="decimal"
+                            placeholder="金额"
+                            aria-label={`为 ${rowKey(u)} 充值金额（元）`}
+                            value={creditYuanByPhone[rowKey(u)] ?? ""}
+                            onChange={(e) =>
+                              setCreditYuanByPhone((prev) => ({ ...prev, [rowKey(u)]: e.target.value }))
+                            }
+                          />
+                          <button
+                            type="button"
+                            className="shrink-0 rounded bg-brand px-2 py-1 text-xs text-brand-foreground hover:bg-brand/90 disabled:opacity-50"
+                            disabled={creditBusyPhone === rowKey(u)}
+                            onClick={() => void creditWallet(u)}
+                          >
+                            {creditBusyPhone === rowKey(u) ? "充值中…" : "确认充值"}
+                          </button>
+                        </div>
+                        <div className="mt-2 space-y-1 border-t border-line pt-2">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="flex w-full rounded px-2 py-1.5 text-left text-xs text-ink hover:bg-fill"
+                            onClick={() => {
+                              setMoreMenuKey(null);
+                              void toggleRole(u).catch((e) => setMsg(String(e?.message || e)));
+                            }}
+                          >
+                            {u.role === "admin" ? "取消管理员" : "设为管理员"}
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="flex w-full rounded px-2 py-1.5 text-left text-xs text-amber-800 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-300"
+                            disabled={isInvalid}
+                            title={isInvalid ? "已是失效状态" : undefined}
+                            onClick={() => {
+                              setMoreMenuKey(null);
+                              setInvalidateError(null);
+                              setInvalidateTarget(u);
+                            }}
+                          >
+                            设为失效
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="flex w-full rounded px-2 py-1.5 text-left text-xs text-ink hover:bg-fill disabled:opacity-40"
+                            disabled={!isInvalid}
+                            title={!isInvalid ? "仅对已失效账号可用" : undefined}
+                            onClick={() => {
+                              setMoreMenuKey(null);
+                              setRestoreError(null);
+                              setRestoreTarget(u);
+                            }}
+                          >
+                            恢复账号
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="flex w-full rounded px-2 py-1.5 text-left text-xs text-danger-ink hover:bg-danger-soft"
+                            onClick={() => {
+                              setMoreMenuKey(null);
+                              setDeleteError(null);
+                              setDeleteTarget(u);
+                            }}
+                          >
+                            永久删除
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <button
-                          type="button"
-                          className="rounded border border-line px-2 py-1 text-xs"
-                          onClick={() => void toggleRole(u).catch((e) => setMsg(String(e?.message || e)))}
-                        >
-                          切换管理员
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded border border-amber-600/45 px-2 py-1 text-xs text-amber-800 hover:bg-amber-500/10 disabled:opacity-40 dark:border-amber-500/40 dark:text-amber-300 dark:hover:bg-amber-500/10"
-                          disabled={isInvalid}
-                          title={isInvalid ? "已是失效状态" : "禁止登录，保留数据"}
-                          onClick={() => {
-                            setInvalidateError(null);
-                            setInvalidateTarget(u);
-                          }}
-                        >
-                          设为失效
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded border border-line px-2 py-1 text-xs text-ink hover:bg-fill/80 disabled:opacity-40"
-                          disabled={!isInvalid}
-                          title={isInvalid ? "恢复为可登录" : "仅对已失效账号可用"}
-                          onClick={() => {
-                            setRestoreError(null);
-                            setRestoreTarget(u);
-                          }}
-                        >
-                          恢复
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded border border-danger/50 px-2 py-1 text-xs text-danger-ink hover:bg-danger-soft dark:border-danger/45 dark:text-danger-ink dark:hover:bg-danger-soft"
-                          title="物理删除用户及级联数据"
-                          onClick={() => {
-                            setDeleteError(null);
-                            setDeleteTarget(u);
-                          }}
-                        >
-                          永久删除
-                        </button>
-                      </div>
-                    </div>
+                    ) : null}
                   </td>
                 </tr>
               );

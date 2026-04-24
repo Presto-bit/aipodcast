@@ -21,11 +21,11 @@ export default function MeLayout({ children }: { children: React.ReactNode }) {
       { href: "/me/general", labelKey: "me.navGeneral" }
     ];
     if (!isAdmin) return core;
-    return [...core, { href: "/admin/hub", labelKey: "nav.console", dividerBefore: true }];
+    return [...core, { href: "/admin/usage", labelKey: "nav.console", dividerBefore: true }];
   }, [isAdmin]);
 
   function subNavActive(href: string): boolean {
-    if (href === "/admin/hub") {
+    if (href === "/admin/usage") {
       return pathname === "/admin" || pathname.startsWith("/admin/");
     }
     if (href === "/me/profile") {

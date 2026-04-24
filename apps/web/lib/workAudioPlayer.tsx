@@ -145,21 +145,25 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
     delete srcCache.current[jobId];
   }, []);
 
-  const wrapRemoteAudioAsBlobIfNeeded = useCallback(async (jobId: string, directUrl: string): Promise<string> => {
+  const wrapRemoteAudioAsBlobIfNeeded = useCallback(async (jobId: string, directUrl: string): Promise<string | null> => {
     if (!directUrl || directUrl.startsWith("data:") || directUrl.startsWith("blob:")) return directUrl;
     if (typeof window === "undefined") return directUrl;
     let remote: URL;
     try {
       remote = new URL(directUrl, window.location.href);
     } catch {
-      return directUrl;
+      return null;
     }
     if (remote.origin === window.location.origin) return directUrl;
     try {
       const r = await fetch(remote.toString(), { mode: "cors", credentials: "omit", cache: "no-store" });
-      if (!r.ok) return directUrl;
+      if (!r.ok) return null;
       const blob = await r.blob();
-      if (!blob?.size) return directUrl;
+      if (!blob?.size) return null;
+      const ct = (blob.type || "").toLowerCase();
+      if (ct.includes("text/html") || ct.includes("application/json") || ct.includes("xml")) {
+        return null;
+      }
       const prev = blobUrlByJobId.current[jobId];
       if (prev) {
         try {
@@ -263,8 +267,10 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       const hex = String(result.audio_hex || "").trim();
       if (hex) {
         const url = hexToMp3DataUrl(hex);
-        srcCache.current[jobId] = url;
-        return url;
+        if (url) {
+          srcCache.current[jobId] = url;
+          return url;
+        }
       }
       const lr = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/work-listen`, {
         cache: "no-store",
@@ -274,14 +280,18 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       const fresh = String(lj.audio_url || "").trim();
       if (lr.ok && lj.success !== false && fresh) {
         const playable = await wrapRemoteAudioAsBlobIfNeeded(jobId, fresh);
-        srcCache.current[jobId] = playable;
-        return playable;
+        if (playable) {
+          srcCache.current[jobId] = playable;
+          return playable;
+        }
       }
       const audioUrl = String(result.audio_url || "").trim();
       if (audioUrl) {
         const playable = await wrapRemoteAudioAsBlobIfNeeded(jobId, audioUrl);
-        srcCache.current[jobId] = playable;
-        return playable;
+        if (playable) {
+          srcCache.current[jobId] = playable;
+          return playable;
+        }
       }
       return null;
     },
@@ -453,6 +463,18 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         className="hidden"
         preload="metadata"
         playsInline
+        onLoadedData={() => setPlayError(null)}
+        onError={() => {
+          const el = audioRef.current;
+          const code = el?.error?.code;
+          if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED || code === MediaError.MEDIA_ERR_DECODE) {
+            setPlayError("无法解码该音频（链接可能已失效或格式异常），请刷新后重试或从创作记录重新打开");
+          } else if (code === MediaError.MEDIA_ERR_NETWORK) {
+            setPlayError("网络错误导致音频加载失败，请检查网络后重试");
+          } else {
+            setPlayError("音频加载失败，请刷新页面后重试");
+          }
+        }}
       />
       {dockVisible ? (
         <div

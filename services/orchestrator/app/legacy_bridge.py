@@ -129,12 +129,18 @@ def merge_script_continuation_material(
     if om == "article" and aps:
         blocks.append(aps)
     tail = _script_continuation_tail(script_so_far, tail_max)
-    tail_note = ""
+    cont_notes: list[str] = []
     if om == "article":
-        tail_note = (
+        cont_notes.append(
             "非全文末段时禁止播客式结语（如「感谢收听」「感谢你的收听」「我们下次再见」）；"
             "须像同一篇文章的中段自然延伸。"
         )
+    if om == "dialogue":
+        cont_notes.append(
+            "若为播客对话：若上文末段已含道别/收场语（含「拜拜」「再见」「感谢收听」「下次见」等），"
+            "本段须直接进入新内容或深化讨论，严禁再次输出同类道别套话；全文仅末段保留一次完整道别。"
+        )
+    tail_note = (" " + " ".join(cont_notes)) if cont_notes else ""
     blocks.append(
         f"【已生成上文】\n{tail}\n\n"
         "（请紧接上文最后一两句续写：首句须自然承接上文语义与指代；不要重复已有段落；"
@@ -144,9 +150,54 @@ def merge_script_continuation_material(
     return "\n\n".join(blocks)
 
 
+def _tail_has_dialogue_farewell(accumulated: str, window: int = 360) -> bool:
+    tail = (accumulated or "")[-window:] if len(accumulated or "") > window else (accumulated or "")
+    return bool(re.search(r"(拜拜|再见啦|下次再见|感谢收听|感谢你的收听)", tail))
+
+
+def _strip_speaker_prefix(line: str) -> str:
+    return re.sub(r"^\s*Speaker\s*[12]\s*[:：]\s*", "", (line or "").strip(), flags=re.IGNORECASE).strip()
+
+
+def _line_is_brief_farewell_only(line: str) -> bool:
+    t = _strip_speaker_prefix(line)
+    t = re.sub(r'^["「『]', "", t)
+    t = re.sub(r'["」』]$', "", t).strip()
+    if not t or len(t) > 56:
+        return False
+    return bool(
+        re.match(
+            r"^(?:拜拜|再见|再见啦|那(?:先)?拜拜|回见|回头见|下次见|下次再见)(?:[。！？…~～!,\s]*)$",
+            t,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _trim_redundant_dialogue_farewell_leading(accumulated: str, piece: str) -> str:
+    if not _tail_has_dialogue_farewell(accumulated):
+        return piece
+    lines = piece.split("\n")
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        if not ln.strip():
+            i += 1
+            continue
+        if _line_is_brief_farewell_only(ln):
+            i += 1
+            continue
+        break
+    return "\n".join(lines[i:])
+
+
 def _join_script_continued(accumulated: str, piece: str, output_mode: str) -> str:
     a = accumulated.rstrip()
     p = piece.lstrip()
+    if not p:
+        return accumulated
+    if output_mode == "dialogue":
+        p = _trim_redundant_dialogue_farewell_leading(a, p).lstrip()
     if not p:
         return accumulated
     sep = "\n" if output_mode == "dialogue" else "\n\n"
