@@ -2493,7 +2493,8 @@ export default function NotesPage() {
             return {
               ...m,
               streaming: false,
-              content: body || `（${incomplete}）`
+              // 完整说明已在上方红字区，避免气泡内再嵌一整段重复
+              content: body || "（本次未生成正文，详见上方红色错误说明。）"
             };
           })
         );
@@ -2509,7 +2510,7 @@ export default function NotesPage() {
         next[idx] = {
           ...cur,
           streaming: false,
-          content: (cur.content || "").trim() || `（${msg}）`
+          content: (cur.content || "").trim() || "（本次未生成正文，详见上方红色错误说明。）"
         };
         return next;
       });
