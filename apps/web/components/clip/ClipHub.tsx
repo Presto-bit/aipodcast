@@ -213,12 +213,15 @@ export default function ClipHub() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-sm font-semibold text-ink">{t("clip.projectList")}</h2>
           <input
+            id="clip-hub-project-search"
+            name="clip_hub_project_search"
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder={t("clip.searchPlaceholder")}
             className="w-full max-w-xs rounded-lg border border-line bg-surface px-3 py-2 text-xs text-ink placeholder:text-muted sm:w-64"
             aria-label={t("clip.searchPlaceholder")}
+            autoComplete="off"
           />
         </div>
         {loading ? <p className="mt-3 text-sm text-muted">{t("clip.loading")}</p> : null}
@@ -235,6 +238,8 @@ export default function ClipHub() {
                     {renamingId === p.id ? (
                       <div className="flex flex-wrap items-center gap-1.5">
                         <input
+                          id={`clip-hub-rename-${p.id}`}
+                          name="clip_hub_project_rename"
                           type="text"
                           value={renameDraft}
                           onChange={(e) => setRenameDraft(e.target.value)}
@@ -242,6 +247,7 @@ export default function ClipHub() {
                           disabled={renameBusy}
                           aria-label={t("clip.editor.renameFieldAria")}
                           className="min-w-[12rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
+                          autoComplete="off"
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();

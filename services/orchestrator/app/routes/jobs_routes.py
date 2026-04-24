@@ -1164,13 +1164,19 @@ def export_job_audio_mp3_api(
     if not title:
         prev = str(result.get("preview") or result.get("script_preview") or "").strip()
         title = (prev[:120] + ("…" if len(prev) > 120 else "")) if prev else "episode"
-    out_bytes = build_export_mp3(
-        raw_mp3,
-        title=title,
-        artist=(opts.artist or "").strip(),
-        album=(opts.album or "").strip(),
-        chapters=chapters,
-    )
+    try:
+        out_bytes = build_export_mp3(
+            raw_mp3,
+            title=title,
+            artist=(opts.artist or "").strip(),
+            album=(opts.album or "").strip(),
+            chapters=chapters,
+        )
+    except Exception as exc:
+        _jobs_startup_logger.warning(
+            "audio_export_build_unexpected job_id=%s: %s", job_id, exc, exc_info=True
+        )
+        out_bytes = raw_mp3
     safe_stub = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in title)[:48] or "episode"
     filename = f"{safe_stub}.mp3"
     return Response(

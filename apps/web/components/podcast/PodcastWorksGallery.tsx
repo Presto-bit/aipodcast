@@ -1360,8 +1360,17 @@ export default function PodcastWorksGallery({
                   className="relative flex w-full min-w-0 max-w-full flex-col overflow-visible rounded-xl border border-line bg-surface shadow-soft"
                 >
                   {enableBatchActions && batchMode ? (
-                    <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-2 py-1 text-[10px] text-ink">
-                      <input type="checkbox" checked={selectedIds.has(id)} onChange={() => toggleSelect(id)} />
+                    <label
+                      className="flex items-center gap-2 border-b border-line bg-fill/40 px-2 py-1 text-[10px] text-ink"
+                      htmlFor={`work-gallery-batch-${id}`}
+                    >
+                      <input
+                        id={`work-gallery-batch-${id}`}
+                        name="work_gallery_batch_item"
+                        type="checkbox"
+                        checked={selectedIds.has(id)}
+                        onChange={() => toggleSelect(id)}
+                      />
                       选择
                     </label>
                   ) : null}

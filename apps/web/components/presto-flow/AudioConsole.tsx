@@ -216,8 +216,13 @@ export default function AudioConsole({
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
           {onMagneticSnapChange && magneticSnapLabel ? (
-            <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-muted">
+            <label
+              className="flex cursor-pointer items-center gap-1.5 text-[10px] text-muted"
+              htmlFor="presto-audio-console-magnetic-snap"
+            >
               <input
+                id="presto-audio-console-magnetic-snap"
+                name="presto_audio_magnetic_snap"
                 type="checkbox"
                 className="rounded border-line"
                 checked={magneticSnap}
