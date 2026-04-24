@@ -171,11 +171,7 @@ services:
       dockerfile: apps/web/Dockerfile
       # 发版时拉取 NODE_BASE_IMAGE 最新 digest，避免基础镜像层长期不更新
       pull: true
-      # 构建阶段解析 npm/registry 域名；部分环境 Docker 内置 DNS 易 EAI_AGAIN，显式指定公共 DNS
-      dns:
-        - 223.5.5.5
-        - 119.29.29.29
-        - 8.8.8.8
+      # 构建阶段 DNS 由宿主机 Docker 决定；旧版 compose 不支持 build.dns，若 npm 解析失败请配 daemon.json「dns」或宿主机 resolv.conf
       args:
         # 默认用 DaoCloud 同步的 Hub 官方 library/node（国内直连 hub 常 metadata / content size of zero）
         # 海外或已配 registry-mirrors：在 .env.ai-native 设 NODE_BASE_IMAGE=node:20-alpine
