@@ -659,28 +659,37 @@ def _pg_fetch_auth_user_by_user_id(user_id: str) -> Dict[str, Any] | None:
         conn.close()
 
 
-def _pg_fetch_auth_user_by_login_identifier(login_id: str) -> Dict[str, Any] | None:
+def _pg_fetch_auth_user_by_login_identifier(
+    login_id: str, *, exclude_deleted: bool = False
+) -> Dict[str, Any] | None:
     s = (login_id or "").strip()
     if not s:
         return None
     if not (_auth_pg_primary() and _pg_available()):
         return None
+    del_sql = " AND u.account_status IS DISTINCT FROM 'deleted'" if exclude_deleted else ""
     try:
         uuid.UUID(s)
         row = _pg_fetch_auth_user_by_user_id(s)
         if row:
+            if exclude_deleted and str(row.get("account_status") or "").strip().lower() == "deleted":
+                return None
             return row
     except (ValueError, TypeError, AttributeError):
         pass
     if validate_phone(s):
-        return _pg_fetch_auth_user(s)
+        row = _pg_fetch_auth_user(s)
+        if exclude_deleted and isinstance(row, dict):
+            if str(row.get("account_status") or "").strip().lower() == "deleted":
+                return None
+        return row
     if "@" in s:
         _ensure_auth_tables_pg()
         conn = psycopg2.connect(_pg_dsn())
         try:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute(
-                """
+                f"""
                 SELECT
                   u.id::text AS user_id,
                   u.phone,
@@ -699,6 +708,7 @@ def _pg_fetch_auth_user_by_login_identifier(login_id: str) -> Dict[str, Any] | N
                 FROM users u
                 LEFT JOIN user_auth_accounts a ON a.user_id = u.id
                 WHERE lower(btrim(u.email)) = lower(btrim(%s))
+                {del_sql}
                 LIMIT 1
                 """,
                 (s,),
@@ -714,7 +724,7 @@ def _pg_fetch_auth_user_by_login_identifier(login_id: str) -> Dict[str, Any] | N
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(
-            """
+            f"""
             SELECT
               u.id::text AS user_id,
               u.phone,
@@ -733,6 +743,7 @@ def _pg_fetch_auth_user_by_login_identifier(login_id: str) -> Dict[str, Any] | N
             FROM users u
             LEFT JOIN user_auth_accounts a ON a.user_id = u.id
             WHERE lower(btrim(u.username)) = lower(btrim(%s))
+            {del_sql}
             LIMIT 1
             """,
             (s,),
@@ -1919,9 +1930,9 @@ def _pg_register_slots_available(email: str, username: str) -> Tuple[bool, str]:
         return False, "用户名为 3–32 位字母数字下划线"
     if not (_auth_pg_primary() and _pg_available()):
         return False, "当前环境需 PostgreSQL 才能注册"
-    if isinstance(_pg_fetch_auth_user_by_login_identifier(em), dict):
+    if isinstance(_pg_fetch_auth_user_by_login_identifier(em, exclude_deleted=True), dict):
         return False, "该邮箱已注册"
-    if isinstance(_pg_fetch_auth_user_by_login_identifier(un), dict):
+    if isinstance(_pg_fetch_auth_user_by_login_identifier(un, exclude_deleted=True), dict):
         return False, "该用户名已被占用"
     return True, ""
 
