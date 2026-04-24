@@ -1,7 +1,7 @@
 ARG NODE_BASE_IMAGE=node:20-alpine
 FROM --platform=linux/amd64 ${NODE_BASE_IMAGE}
 
-# 默认可解析性优先用官方源；国内 CI/构建慢可在 build-arg 设 NPM_REGISTRY=https://registry.npmmirror.com
+# 首选源（compose build-arg NPM_REGISTRY）；install 失败时按序换源重试（单源 DNS EAI_AGAIN 等）
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 
 WORKDIR /app
@@ -14,10 +14,21 @@ ARG NEXT_PUBLIC_APP_BUILD_ID=0
 ENV NEXT_PUBLIC_APP_BUILD_ID=${NEXT_PUBLIC_APP_BUILD_ID}
 
 COPY apps/web/package.json /app/package.json
-RUN npm config set registry "${NPM_REGISTRY}" \
-  && npm config set fetch-timeout 600000 \
-  && npm config set fetch-retries 5 \
-  && npm install --loglevel info
+# 多源回退：先试 NPM_REGISTRY，再官方 / npmmirror / 腾讯云 / 华为云 / 阿里云（ash 兼容）
+RUN npm config set fetch-timeout 600000 \
+  && npm config set fetch-retries 3 \
+  && ok=0 \
+  && for reg in "${NPM_REGISTRY}" \
+      "https://registry.npmjs.org/" \
+      "https://registry.npmmirror.com/" \
+      "https://mirrors.cloud.tencent.com/npm/" \
+      "https://mirrors.huaweicloud.com/repository/npm/" \
+      "https://npm.aliyun.com/"; do \
+    echo "npm install: try registry ${reg}"; \
+    npm config set registry "${reg}" || continue; \
+    if npm install --loglevel info; then ok=1; break; fi; \
+  done \
+  && test "${ok}" = 1
 
 COPY apps/web /app
 COPY packages/shared-types /packages/shared-types
