@@ -57,6 +57,8 @@ const WALLET_ALIPAY_PENDING_KEY = "subscription_alipay_wallet_pending";
 type WalletAlipayPendingPayload = {
   startedAt: number;
   balanceBeforeCents: number | null;
+  /** 跳转支付前「充值记录」条数；用于首充或余额尚未加载时仍能检测入账 */
+  rechargeCountBefore?: number;
 };
 
 /** 设为 1 时：拉取 /api/subscription/plans 后在控制台与充值弹窗输出结构化诊断（需重新 build Next） */
@@ -567,6 +569,9 @@ export default function SubscriptionPage() {
       } catch {
         /* noop */
       }
+      setMsg(
+        "返回同步状态已超过 10 分钟，已停止自动拉取。若支付宝已付款仍未到账，请查异步通知与编排器日志，或刷新本页查看「充值记录」。"
+      );
       return undefined;
     }
     setMsg("已从支付宝返回，正在同步余额（通常几秒内完成）…");
@@ -579,6 +584,7 @@ export default function SubscriptionPage() {
     }
     let ticks = 0;
     const maxTicks = 40;
+    const pollMs = 2500;
     const tick = () => {
       void loadMeRef.current();
     };
@@ -596,8 +602,11 @@ export default function SubscriptionPage() {
         } catch {
           /* noop */
         }
+        setMsg(
+          `已自动拉取约 ${Math.round((maxTicks * pollMs) / 1000)} 秒仍未检测到入账。若支付宝已扣款，多为异步通知未到编排器（可查 alipay_reconcile 日志与 INTERNAL_SIGNING_SECRET）；请刷新页面或稍后在「充值记录」中确认。`
+        );
       }
-    }, 2500);
+    }, pollMs);
     return () => window.clearInterval(id);
   }, [walletPayEnabled]);
 
@@ -616,11 +625,13 @@ export default function SubscriptionPage() {
     } catch {
       return;
     }
-    if (
+    const beforeCount = typeof p.rechargeCountBefore === "number" ? p.rechargeCountBefore : null;
+    const balanceIncreased =
       typeof p.balanceBeforeCents === "number" &&
       typeof walletBalanceCents === "number" &&
-      walletBalanceCents > p.balanceBeforeCents
-    ) {
+      walletBalanceCents > p.balanceBeforeCents;
+    const recordsIncreased = beforeCount !== null && rechargeRecords.length > beforeCount;
+    if (balanceIncreased || recordsIncreased) {
       try {
         sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
       } catch {
@@ -630,11 +641,14 @@ export default function SubscriptionPage() {
       if (rechargeDebugEnabled()) {
         appendRechargeDebug("alipay_pending_cleared_balance_increased", {
           balance_before_cents: p.balanceBeforeCents,
-          balance_after_cents: walletBalanceCents
+          balance_after_cents: walletBalanceCents,
+          recharge_count_before: beforeCount,
+          recharge_count_after: rechargeRecords.length,
+          via: balanceIncreased ? "balance" : "recharge_records"
         });
       }
     }
-  }, [walletPayEnabled, walletBalanceCents]);
+  }, [walletPayEnabled, walletBalanceCents, rechargeRecords.length]);
 
   useEffect(() => {
     if (!rechargeModalOpen || !walletPayEnabled) return;
@@ -862,7 +876,8 @@ export default function SubscriptionPage() {
       try {
         const payload: WalletAlipayPendingPayload = {
           startedAt: Date.now(),
-          balanceBeforeCents: typeof walletBalanceCents === "number" ? walletBalanceCents : null
+          balanceBeforeCents: typeof walletBalanceCents === "number" ? walletBalanceCents : null,
+          rechargeCountBefore: rechargeRecords.length
         };
         sessionStorage.setItem(WALLET_ALIPAY_PENDING_KEY, JSON.stringify(payload));
       } catch {
