@@ -206,7 +206,8 @@ export async function fetchOrchestrator(path: string, opts: FetchOrchestratorOpt
   const method = opts.method || "GET";
   const defaultPayload = opts.payload ?? "{}";
   const sse = opts.sse === true;
-  const timeoutMs = sse ? 0 : Math.max(1000, opts.timeoutMs ?? 10_000);
+  // 默认 10s 在生产易误判为「编排器挂了」；首页 /home-overview 等并行多路 GET 任一慢即 503
+  const timeoutMs = sse ? 0 : Math.max(1000, opts.timeoutMs ?? ORCHESTRATOR_TIMEOUT_SLOW_UPSTREAM_MS);
   const maxAttempts =
     method === "GET" && opts.retryGetOnce !== false && !sse ? 2 : 1;
 
