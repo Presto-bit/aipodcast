@@ -5194,6 +5194,67 @@ def ensure_payment_webhook_deliveries_schema() -> None:
             conn.commit()
 
 
+def ensure_payment_reconciliation_queue_schema() -> None:
+    """P1：人工对账队列表（与 infra/postgres/init/037_payment_reconciliation_queue.sql 对齐）。"""
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS payment_reconciliation_queue (
+                  id BIGSERIAL PRIMARY KEY,
+                  source TEXT NOT NULL,
+                  reason TEXT NOT NULL,
+                  out_trade_no TEXT NOT NULL,
+                  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_payment_recon_q_reason_created ON payment_reconciliation_queue (reason, created_at DESC)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_payment_recon_q_out_trade_no ON payment_reconciliation_queue (out_trade_no)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_payment_recon_q_created ON payment_reconciliation_queue (created_at DESC)"
+            )
+        conn.commit()
+
+
+def enqueue_payment_reconciliation_need(
+    *,
+    source: str,
+    reason: str,
+    out_trade_no: str,
+    meta: dict[str, Any] | None = None,
+) -> None:
+    """写入待人工/脚本处理队列；失败吞掉以免阻塞支付宝回调主路径。"""
+    oid = (out_trade_no or "").strip() or "unknown"
+    src = (source or "unknown").strip()[:64] or "unknown"
+    rsn = (reason or "unknown").strip()[:128] or "unknown"
+    m = meta if isinstance(meta, dict) else {}
+    try:
+        ensure_payment_reconciliation_queue_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                cur.execute(
+                    """
+                    INSERT INTO payment_reconciliation_queue (source, reason, out_trade_no, meta)
+                    VALUES (%s, %s, %s, %s::jsonb)
+                    """,
+                    (src, rsn, oid, json.dumps(m, ensure_ascii=False)),
+                )
+            conn.commit()
+    except Exception:
+        logger.exception(
+            "enqueue_payment_reconciliation_need failed source=%s reason=%s out_trade_no=%s",
+            src,
+            rsn,
+            oid[:80],
+        )
+
+
 def record_payment_webhook_delivery(
     *,
     event_id: str,

@@ -38,6 +38,23 @@ _WALLET_RECONCILE_APPLY_RETRY_REASONS = frozenset(
     {"payment_event_tx_failed", "transaction_exception", "transaction_deadlock"}
 )
 
+
+def _wallet_reconcile_pending_body(*, bal: int, last_apply_reason: str, pending_kind: str | None = None) -> dict:
+    """统一 pending 响应体；last_apply_reason / pending_kind 便于前端与日志检索。"""
+    r: dict = {
+        "success": True,
+        "applied": False,
+        "detail": "reconcile_apply_pending",
+        "wallet_balance_cents": bal,
+    }
+    lr = (last_apply_reason or "").strip()
+    if lr:
+        r["last_apply_reason"] = lr
+    pk = (pending_kind or "").strip()
+    if pk:
+        r["pending_kind"] = pk
+    return r
+
 router = APIRouter(prefix="/api/v1/subscription", tags=["subscription"], dependencies=[Depends(verify_internal_signature)])
 
 
@@ -371,19 +388,6 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
     ok_apply = False
     last_reason = ""
     for attempt in range(4):
-        if time.monotonic() >= _apply_deadline - 0.15:
-            _log.warning(
-                "alipay wallet reconcile apply budget exhausted out_trade_no=%s attempt=%s",
-                out_trade_no,
-                attempt,
-            )
-            bal = models.wallet_balance_cents_for_phone(phone)
-            return {
-                "success": True,
-                "applied": False,
-                "detail": "reconcile_apply_pending",
-                "wallet_balance_cents": bal,
-            }
         ok, reason, _row = auth_bridge.apply_payment_event(
             out_trade_no,
             phone,
@@ -423,12 +427,9 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
             sleep_s = min(0.35, 0.05 * (2**attempt))
             if time.monotonic() + sleep_s >= _apply_deadline - 0.12:
                 bal = models.wallet_balance_cents_for_phone(phone)
-                return {
-                    "success": True,
-                    "applied": False,
-                    "detail": "reconcile_apply_pending",
-                    "wallet_balance_cents": bal,
-                }
+                return _wallet_reconcile_pending_body(
+                    bal=bal, last_apply_reason=last_reason, pending_kind="sleep_budget"
+                )
             time.sleep(sleep_s)
     if not ok_apply:
         if last_reason in _WALLET_RECONCILE_APPLY_RETRY_REASONS:
@@ -439,12 +440,9 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
                 last_reason,
                 bal,
             )
-            return {
-                "success": True,
-                "applied": False,
-                "detail": "reconcile_apply_pending",
-                "wallet_balance_cents": bal,
-            }
+            return _wallet_reconcile_pending_body(
+                bal=bal, last_apply_reason=last_reason, pending_kind="retries_exhausted"
+            )
         _log.error(
             "alipay wallet reconcile apply failed after retries out_trade_no=%s reason=%s",
             out_trade_no,

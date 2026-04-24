@@ -493,7 +493,9 @@ export default function SubscriptionPage() {
             applied: data.applied,
             detail: data.detail,
             trade_status: data.trade_status,
-            wallet_balance_cents: data.wallet_balance_cents
+            wallet_balance_cents: data.wallet_balance_cents,
+            last_apply_reason: data.last_apply_reason,
+            pending_kind: data.pending_kind
           },
           undefined,
           user

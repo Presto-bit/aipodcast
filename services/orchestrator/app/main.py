@@ -29,11 +29,13 @@ from .models import (
     ensure_user_wallet_schema,
     ensure_users_profile_columns,
     ensure_alipay_page_checkout_schema,
+    ensure_payment_reconciliation_queue_schema,
     purge_expired_trashed_notes,
     purge_expired_trashed_works,
     strip_redundant_audio_hex_from_job_results,
 )
 from .object_store import ensure_bucket_exists
+from .startup_payment_checks import run_payment_startup_checks
 from .startup_security import assert_production_security_or_exit
 from .middleware.request_id import RequestIdMiddleware
 from .rss_publish_store import ensure_rss_publish_schema
@@ -106,10 +108,18 @@ def run_startup_tasks() -> None:
         ensure_payment_webhook_deliveries_schema,
     )
     _startup_step(
+        "ensure_payment_reconciliation_queue_schema",
+        ensure_payment_reconciliation_queue_schema,
+    )
+    _startup_step(
         "ensure_subscription_current_state_schema",
         ensure_subscription_current_state_schema,
     )
     _startup_step("ensure_alipay_page_checkout_schema", ensure_alipay_page_checkout_schema)
+    try:
+        run_payment_startup_checks()
+    except Exception:
+        logger.exception("run_payment_startup_checks")
     _startup_step("ensure_rss_publish_schema", ensure_rss_publish_schema)
     _startup_step("ensure_clip_studio_schema", lambda: ensure_clip_studio_schema(strict=settings.strict_schema_startup))
 

@@ -17,12 +17,52 @@ from ..alipay_page_pay import (
     parse_alipay_notify_time,
     verify_notify_params,
 )
+from ..fyv_shared.alipay_notify_policy import (
+    alipay_notify_fail_on_amount_mismatch,
+    alipay_notify_fail_on_app_id_mismatch,
+    alipay_notify_fail_on_no_checkout,
+    payment_reconciliation_queue_enabled,
+)
 from ..fyv_shared.payment_wallet_rate_limit import check_alipay_notify_rate_limit
 from ..fyv_shared.register_send_code_limiter import client_ip_from_request
 from ..security import verify_internal_signature
 
 router = APIRouter(prefix="/api/v1", tags=["webhooks"])
 _log = logging.getLogger(__name__)
+
+
+def _alipay_notify_noop_p0_p1(
+    noop_kind: str,
+    *,
+    out_trade_no: str,
+    params: dict[str, str],
+    extra: dict | None = None,
+) -> None:
+    """
+    P0：结构化日志（单行 ALIPAY_NOTIFY_NOOP|…），便于日志平台检索。
+    P1：写入 payment_reconciliation_queue（可 FYV_PAYMENT_RECONCILIATION_QUEUE_DISABLED=1 关闭）。
+    """
+    otn = (out_trade_no or "").strip()
+    ex = dict(extra) if isinstance(extra, dict) else {}
+    _log.error(
+        "ALIPAY_NOTIFY_NOOP|kind=%s|out_trade_no=%s|trade_no=%s|total_amount=%s|detail=%s",
+        noop_kind,
+        otn or "<empty>",
+        str(params.get("trade_no") or "")[:48],
+        str(params.get("total_amount") or ""),
+        json.dumps(ex, ensure_ascii=False)[:800],
+    )
+    if payment_reconciliation_queue_enabled() and otn:
+        models.enqueue_payment_reconciliation_need(
+            source="alipay_page_notify",
+            reason=noop_kind,
+            out_trade_no=otn,
+            meta={
+                "trade_no": (params.get("trade_no") or "")[:64],
+                "total_amount": params.get("total_amount"),
+                **ex,
+            },
+        )
 
 
 def _pick_first_non_empty(body: dict, keys: list[str]) -> str:
@@ -332,15 +372,26 @@ def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]
     if trade_status not in ("TRADE_SUCCESS", "TRADE_FINISHED"):
         return PlainTextResponse("success")
     if str(params.get("app_id") or "").strip() != cfg.app_id:
-        _log.error(
-            "alipay_reconcile app_id_mismatch needs_manual_reconciliation=1 out_trade_no=%s",
-            params.get("out_trade_no"),
+        otn0 = str(params.get("out_trade_no") or "").strip() or "unknown"
+        _alipay_notify_noop_p0_p1(
+            "app_id_mismatch",
+            out_trade_no=otn0,
+            params=params,
+            extra={"expect_app_id": (cfg.app_id or "")[:32], "notify_app_id": (params.get("app_id") or "")[:32]},
         )
+        if alipay_notify_fail_on_app_id_mismatch():
+            return PlainTextResponse("fail", status_code=500)
         return PlainTextResponse("success")
     out_trade_no = str(params.get("out_trade_no") or "").strip()
     trade_no = str(params.get("trade_no") or "").strip()
     notify_cents = alipay_total_amount_yuan_to_cents(str(params.get("total_amount") or ""))
     if not out_trade_no or notify_cents is None or notify_cents <= 0:
+        _alipay_notify_noop_p0_p1(
+            "invalid_notify_params",
+            out_trade_no=out_trade_no or "unknown",
+            params=params,
+            extra={"notify_cents": notify_cents},
+        )
         return PlainTextResponse("success")
     paid_at = parse_alipay_notify_time(params.get("gmt_payment") or params.get("notify_time"))
     row_sess = models.alipay_page_get_checkout_session(out_trade_no)
@@ -353,20 +404,25 @@ def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]
             "captured",
         ):
             return PlainTextResponse("success")
-        _log.error(
-            "alipay_reconcile no_checkout_session needs_manual_reconciliation=1 out_trade_no=%s "
-            "(无法入账；常见原因：支付完成前又发起新的同类型支付宝下单导致旧会话被替换，或会话已超过保留期)",
-            out_trade_no,
+        _alipay_notify_noop_p0_p1(
+            "no_checkout_session",
+            out_trade_no=out_trade_no,
+            params=params,
+            extra={"hint": "no_checkout_and_order_not_settled"},
         )
+        if alipay_notify_fail_on_no_checkout():
+            return PlainTextResponse("fail", status_code=500)
         return PlainTextResponse("success")
     session_cents = int(row_sess.get("amount_cents") or 0)
     if session_cents != notify_cents:
-        _log.error(
-            "alipay_reconcile amount_mismatch needs_manual_reconciliation=1 out_trade_no=%s session_cents=%s notify_cents=%s",
-            out_trade_no,
-            session_cents,
-            notify_cents,
+        _alipay_notify_noop_p0_p1(
+            "amount_mismatch",
+            out_trade_no=out_trade_no,
+            params=params,
+            extra={"session_cents": session_cents, "notify_cents": notify_cents},
         )
+        if alipay_notify_fail_on_amount_mismatch():
+            return PlainTextResponse("fail", status_code=500)
         return PlainTextResponse("success")
     phone = models.normalize_payment_principal(str(row_sess.get("phone") or "").strip())
     kind = str(row_sess.get("kind") or "").strip().lower()
@@ -416,8 +472,20 @@ def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]
             source="alipay_page_notify",
         )
     else:
+        _alipay_notify_noop_p0_p1(
+            "unknown_checkout_kind",
+            out_trade_no=out_trade_no,
+            params=params,
+            extra={"kind": kind},
+        )
         return PlainTextResponse("success")
     if not ok:
+        _alipay_notify_noop_p0_p1(
+            "notify_apply_failed",
+            out_trade_no=out_trade_no,
+            params=params,
+            extra={"apply_reason": str(reason or "")[:400]},
+        )
         _log.error("alipay notify apply failed out_trade_no=%s reason=%s", out_trade_no, reason)
         return PlainTextResponse("fail", status_code=500)
     models.alipay_page_delete_checkout_session(out_trade_no)
