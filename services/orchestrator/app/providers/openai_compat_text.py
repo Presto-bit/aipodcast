@@ -414,8 +414,11 @@ def chat_completion_openai_compatible(
     return content
 
 
-def _openai_stream_delta_text(delta: dict[str, Any]) -> str:
-    """聚合流式 delta 文本：正文、推理模型 reasoning_content、以及数组型 content 片段。"""
+def _openai_stream_delta_text(delta: dict[str, Any], *, content_only: bool = False) -> str:
+    """聚合流式 delta 文本：正文、推理模型 reasoning_content、以及数组型 content 片段。
+
+    ``content_only=True`` 时仅拼接 ``content``（知识库问答等场景：不向用户展示推理过程）。
+    """
     parts: list[str] = []
 
     def append_piece(val: object) -> None:
@@ -423,8 +426,9 @@ def _openai_stream_delta_text(delta: dict[str, Any]) -> str:
         if chunk:
             parts.append(chunk)
 
-    append_piece(delta.get("reasoning_content"))
-    append_piece(delta.get("reasoning"))
+    if not content_only:
+        append_piece(delta.get("reasoning_content"))
+        append_piece(delta.get("reasoning"))
     append_piece(delta.get("content"))
     return "".join(parts)
 
@@ -437,6 +441,7 @@ def iter_chat_completion_openai_compatible_stream(
     model: str,
     temperature: float = 0.65,
     timeout_sec: int = 120,
+    content_only: bool = False,
 ) -> Iterator[str]:
     """OpenAI 兼容 Chat Completions 流式输出，逐段产出 delta 文本。"""
     base = api_base.rstrip("/")
@@ -482,7 +487,7 @@ def iter_chat_completion_openai_compatible_stream(
         delta = c0.get("delta") or {}
         if not isinstance(delta, dict):
             continue
-        piece = _openai_stream_delta_text(delta)
+        piece = _openai_stream_delta_text(delta, content_only=content_only)
         if piece:
             yield piece
 

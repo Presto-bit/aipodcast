@@ -776,6 +776,11 @@ export default function NotesPage() {
     () => [...draftSelectedNoteIds].filter(Boolean).sort().join("|"),
     [draftSelectedNoteIds]
   );
+  /** loadNotes 内校验「已删除的笔记 id」：避免 localStorage 里残留旧 id 导致仍加载旧对话 */
+  const draftSelectedNoteIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    draftSelectedNoteIdsRef.current = draftSelectedNoteIds;
+  }, [draftSelectedNoteIds]);
 
   useEffect(() => {
     setDraftSelectedNoteIds((prev) => (prev.length > noteRefCap ? prev.slice(0, noteRefCap) : prev));
@@ -1618,7 +1623,37 @@ export default function NotesPage() {
       const res = await fetch(`/api/notes?${q}`, { credentials: "same-origin", cache: "no-store", headers: { ...getAuthHeaders() } });
       const data = (await res.json().catch(() => ({}))) as NotesResp & { detail?: unknown };
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, `加载失败 ${res.status}`));
-      setNotes(data.notes || []);
+      const list = data.notes || [];
+      let validIdSet = new Set(list.map((n) => n.noteId));
+      const drafts = draftSelectedNoteIdsRef.current;
+      const looksStale = drafts.some((id) => !validIdSet.has(id));
+      if (looksStale && data.has_more) {
+        try {
+          const p2 = new URLSearchParams();
+          if (selectedNotebook) p2.set("notebook", selectedNotebook);
+          p2.set("limit", "500");
+          p2.set("offset", "0");
+          if (sharedBrowse?.ownerUserId) p2.set("sharedFromOwnerUserId", sharedBrowse.ownerUserId);
+          const res2 = await fetch(`/api/notes?${p2.toString()}`, {
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { ...getAuthHeaders() }
+          });
+          const data2 = (await res2.json().catch(() => ({}))) as NotesResp;
+          if (res2.ok && data2.success && Array.isArray(data2.notes)) {
+            validIdSet = new Set(data2.notes.map((n) => n.noteId));
+          }
+        } catch {
+          // 仅按当前页结果继续剔除
+        }
+      }
+      if (drafts.length) {
+        const pruned = drafts.filter((id) => validIdSet.has(id));
+        if (pruned.length !== drafts.length) {
+          setDraftSelectedNoteIds(pruned);
+        }
+      }
+      setNotes(list);
       setHasMoreNotes(Boolean(data.has_more));
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));

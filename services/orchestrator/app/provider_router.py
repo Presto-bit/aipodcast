@@ -172,6 +172,7 @@ def invoke_llm_chat_messages_stream_iter(
             model=model,
             temperature=float(temperature),
             timeout_sec=int(timeout_sec),
+            content_only=True,
         )
 
     try:

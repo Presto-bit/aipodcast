@@ -105,7 +105,8 @@ def count_rag_chunks_for_notes(note_ids: list[str]) -> int:
             return int(row["c"] or 0) if row else 0
 
 
-def _load_chunks_for_notes(note_ids: list[str]) -> list[dict[str, Any]]:
+def _load_chunk_rows_light(note_ids: list[str]) -> list[dict[str, Any]]:
+    """仅加载块文本与索引（不含 embedding），供关键词粗排后再按需取向量。"""
     ids = [str(x).strip() for x in note_ids if str(x).strip()]
     if not ids:
         return []
@@ -113,7 +114,7 @@ def _load_chunks_for_notes(note_ids: list[str]) -> list[dict[str, Any]]:
         with get_cursor(conn) as cur:
             cur.execute(
                 """
-                SELECT n.input_id::text AS note_id, n.chunk_index, n.chunk_text, n.embedding,
+                SELECT n.input_id::text AS note_id, n.chunk_index, n.chunk_text,
                        i.note_rag_embedding_sig AS note_sig
                 FROM note_rag_chunks n
                 JOIN inputs i ON i.id = n.input_id
@@ -123,6 +124,50 @@ def _load_chunks_for_notes(note_ids: list[str]) -> list[dict[str, Any]]:
                 (ids,),
             )
             return [dict(r) for r in cur.fetchall()]
+
+
+def _load_embeddings_by_pairs(pairs: list[tuple[str, int]]) -> dict[tuple[str, int], list[float]]:
+    """按 (note_id, chunk_index) 批量加载向量，避免先把笔记本下全部块向量读进内存。"""
+    out: dict[tuple[str, int], list[float]] = {}
+    if not pairs:
+        return out
+    seen: set[tuple[str, int]] = set()
+    deduped: list[tuple[str, int]] = []
+    for nid, idx in pairs:
+        key = (str(nid).strip(), int(idx))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(key)
+    batch_n = max(50, min(800, int(os.getenv("NOTE_RAG_EMB_BATCH", "500") or "500")))
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            for bi in range(0, len(deduped), batch_n):
+                batch = deduped[bi : bi + batch_n]
+                uuids = [b[0] for b in batch]
+                idxs = [b[1] for b in batch]
+                cur.execute(
+                    """
+                    SELECT n.input_id::text AS note_id, n.chunk_index, n.embedding
+                    FROM note_rag_chunks n
+                    INNER JOIN (
+                        SELECT * FROM unnest(%s::uuid[], %s::int[]) AS p(input_id, chunk_index)
+                    ) pr ON pr.input_id = n.input_id AND pr.chunk_index = n.chunk_index
+                    """,
+                    (uuids, idxs),
+                )
+                for r in cur.fetchall():
+                    emb = r.get("embedding")
+                    if isinstance(emb, str):
+                        try:
+                            emb = json.loads(emb)
+                        except Exception:
+                            continue
+                    if not isinstance(emb, list) or not emb:
+                        continue
+                    key2 = (str(r.get("note_id") or "").strip(), int(r.get("chunk_index") or 0))
+                    out[key2] = [float(x) for x in emb]
+    return out
 
 
 def _update_note_rag_after_success(
@@ -539,27 +584,30 @@ def retrieve_chunks_across_notes(
     max_chars: int,
     top_k: int = 32,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
-    """对已索引块：关键词粗排（多篇时按笔记均衡）→ 多子查询向量 max-pool → 可选 hybrid/Cohere 重排 → Top-K（多篇公平）→ 拼上下文。返回 (正文, 片段 meta, 可观测字段)。"""
+    """对已索引块：先轻量读块文本 → 关键词粗排 → 仅对候选批量取向量 → 多子查询向量 max-pool → 重排 → Top-K。
+
+    历史上「先全量 SELECT embedding」会在块数多时严重拖慢首包（与单篇笔记字数无直接关系）。
+    """
     q = (query or "").strip()
-    rows = _load_chunks_for_notes(note_ids)
+    rows = _load_chunk_rows_light(note_ids)
+    light_rows_n = len(rows)
     if not rows or not q:
         return "", [], {"reason": "empty_query_or_no_rows"}
 
     parsed: list[dict[str, Any]] = []
     for r in rows:
-        emb = r.get("embedding")
-        if isinstance(emb, str):
-            try:
-                emb = json.loads(emb)
-            except Exception:
-                continue
-        if not isinstance(emb, list) or not emb:
-            continue
         ch = str(r.get("chunk_text") or "").strip()
         if not ch:
             continue
-        vec = [float(x) for x in emb]
-        parsed.append({**r, "_vec": vec, "_ch": ch, "note_sig": r.get("note_sig")})
+        parsed.append(
+            {
+                "note_id": r.get("note_id"),
+                "chunk_index": r.get("chunk_index"),
+                "chunk_text": ch,
+                "_ch": ch,
+                "note_sig": r.get("note_sig"),
+            }
+        )
 
     if not parsed:
         return "", [], {"reason": "no_parsed_chunks"}
@@ -591,19 +639,6 @@ def retrieve_chunks_across_notes(
         logger.warning("retrieve query embed failed: %s", exc)
         return "", [], {"reason": "query_embed_failed", "error": str(exc)[:200]}
 
-    filtered: list[dict[str, Any]] = []
-    dropped_stale = 0
-    for p in parsed:
-        if _chunk_allowed_for_embedding(p.get("note_sig"), p["_vec"], qvs[0], current_sig):
-            filtered.append(p)
-        else:
-            dropped_stale += 1
-    parsed = filtered
-    if dropped_stale:
-        logger.info("note_rag retrieve dropped %s stale or dim-mismatch chunks", dropped_stale)
-    if not parsed:
-        return "", [], {"reason": "all_stale_chunks", "dropped_stale_chunks": dropped_stale}
-
     src_idx_map = _note_source_index_map(note_ids)
 
     pref_cap = _note_rag_keyword_prefilter_cap(len(note_ids), top_k)
@@ -624,10 +659,38 @@ def retrieve_chunks_across_notes(
             scored_kw2.sort(key=lambda x: -x[0])
             parsed = [p for _, p in scored_kw2[:vec_cap]]
 
-    sims: list[float] = []
+    pairs = [(str(p["note_id"]), int(p["chunk_index"])) for p in parsed]
+    emb_map = _load_embeddings_by_pairs(pairs)
+    filtered: list[dict[str, Any]] = []
+    dropped_stale = 0
+    dropped_missing_emb = 0
     for p in parsed:
-        vec = p["_vec"]
-        sims.append(max(float(_cosine(qv, vec)) for qv in qvs))
+        key = (str(p["note_id"]), int(p["chunk_index"]))
+        emb_list = emb_map.get(key)
+        if emb_list is None:
+            dropped_missing_emb += 1
+            continue
+        if not _chunk_allowed_for_embedding(p.get("note_sig"), emb_list, qvs[0], current_sig):
+            dropped_stale += 1
+            continue
+        filtered.append({**p, "_vec": emb_list})
+    parsed = filtered
+    if dropped_stale:
+        logger.info("note_rag retrieve dropped %s stale or dim-mismatch chunks", dropped_stale)
+    if dropped_missing_emb:
+        logger.info("note_rag retrieve dropped %s chunks missing embedding row", dropped_missing_emb)
+    if not parsed:
+        return "", [], {
+            "reason": "all_stale_chunks",
+            "dropped_stale_chunks": dropped_stale,
+            "dropped_missing_emb": dropped_missing_emb,
+        }
+
+    vecs = [p["_vec"] for p in parsed]
+    sims = _batch_cosine_vs_query(qvs[0], vecs)
+    for qv in qvs[1:]:
+        extra = _batch_cosine_vs_query(qv, vecs)
+        sims = [max(a, b) for a, b in zip(sims, extra)]
     scored: list[tuple[float, dict[str, Any]]] = []
     for sim, p in zip(sims, parsed):
         row = {k: v for k, v in p.items() if not str(k).startswith("_")}
@@ -670,8 +733,11 @@ def retrieve_chunks_across_notes(
         "multi_query_embedded": len(uniq),
         "keyword_pref_cap": pref_cap,
         "vec_cap": vec_cap,
+        "chunks_light_rows": light_rows_n,
         "vector_candidates": len(parsed),
+        "emb_rows_loaded": len(emb_map),
         "dropped_stale_chunks": dropped_stale,
+        "dropped_missing_emb": dropped_missing_emb,
         "rerank_pool": pool_n,
         "rerank_mode": rerank_mode,
         "mmr_applied": mmr_applied,
@@ -693,7 +759,8 @@ def retrieve_chunks_across_notes(
         if not ch:
             continue
         src_label = src_idx_map.get(nid, "?")
-        header = f"【检索片段 [来源{src_label}] chunk={idx} score={score:.4f}】\n"
+        # 仅用「资料序号」标头，避免模型复述 chunk= / score= 等技术词到用户回答里
+        header = f"【摘录·与问题相关的原文（资料第 {src_label} 条）】\n"
         piece = header + ch
         if used + len(piece) + 2 <= budget:
             parts.append(piece)
@@ -743,7 +810,7 @@ def build_summaries_section(
         s = str(row.get("note_summary") or "").strip()
         if not s:
             continue
-        block = f"### 摘要 [{i}] {title}\nnoteId: {nid}\n\n{s}"
+        block = f"### 摘要 [{i}] {title}\n\n{s}"
         if used + len(block) + 4 > max_chars:
             break
         parts.append(block)
@@ -837,7 +904,7 @@ def _layered_source_manifest_block(
     """固定 N 与「来源1…N」对应关系，减少模型把检索中出现次数误当成勾选条数。"""
     n = len(ordered)
     lines: list[str] = [
-        f"【来源清单】用户勾选笔记共 **{n}** 条；检索片段中的「来源k」表示第 k 条笔记。",
+        f"【来源清单】用户勾选笔记共 **{n}** 条；摘录中的「资料第 k 条」对应下方第 k 条标题。",
         f"正文若出现「综合 N 条资料」「基于 N 本书」等表述，**N 必须等于 {n}**；"
         "检索可能未在片段中均匀展示每一条，不得以「只看到 9 个来源」等理由改写为 N−1。",
         "条目：",
@@ -845,7 +912,7 @@ def _layered_source_manifest_block(
     for i, nid in enumerate(ordered, start=1):
         row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
         title = _metadata_title(row, nid) if row else nid
-        lines.append(f"- 来源{i}：{title}（noteId={nid}）")
+        lines.append(f"- 第 {i} 条：{title}")
     return "\n".join(lines)
 
 

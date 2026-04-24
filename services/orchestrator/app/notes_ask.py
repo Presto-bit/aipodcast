@@ -24,18 +24,51 @@ _MAX_PER_NOTE = 16_000
 
 
 def _notes_ask_top_k() -> int:
-    """向量检索 top_k 上限与默认；可用环境变量 NOTES_ASK_TOP_K 覆盖（36–160）。"""
+    """向量检索 top_k 上限与默认；可用环境变量 NOTES_ASK_TOP_K 覆盖（24–160）。"""
     try:
-        return max(36, min(160, int(os.getenv("NOTES_ASK_TOP_K", "160") or "160")))
+        return max(24, min(160, int(os.getenv("NOTES_ASK_TOP_K", "90") or "90")))
     except (TypeError, ValueError):
-        return 160
+        return 90
+
+
+# 常见推理模型标签（避免在流式正文中露出）
+_THINK_BLOCKS = (
+    re.compile(
+        re.escape("<redacted_reasoning>") + r".*?" + re.escape("</redacted_reasoning>"),
+        re.DOTALL | re.IGNORECASE,
+    ),
+    re.compile(
+        re.escape("<think>") + r".*?" + re.escape("</think>"),
+        re.DOTALL | re.IGNORECASE,
+    ),
+    # 部分厂商用 think 围栏包裹推理（避免 patch 工具吞写尖括号，用 \x3c 表示 <）
+    re.compile(r"\x3cthink\x3e.*?\x3c/think\x3e", re.DOTALL | re.IGNORECASE),
+)
+_LEAK_PATTERNS = re.compile(
+    r"(?:来源\s*\d+\s*的\s*chunk\s*=\s*\d+(?:\s+score\s*=\s*[\d.]+)?)|"
+    r"(?:【检索片段[^】]{0,320}】)|"
+    r"(?:chunk\s*=\s*\d+(?:\s+score\s*=\s*[\d.]+)?)",
+    re.IGNORECASE,
+)
+
+
+def _notes_ask_sanitize_visible_text(s: str) -> str:
+    """去掉推理标签、系统检索标记等不应展示给用户的片段。"""
+    if not s:
+        return ""
+    t = s
+    for pat in _THINK_BLOCKS:
+        t = pat.sub("", t)
+    t = _LEAK_PATTERNS.sub("", t)
+    return t
 
 
 _SYSTEM = (
     "你是资料助手。用户提供了若干条笔记摘录（可能已截断）。请仅用这些材料回答问题；"
     "若材料不足以回答，请明确说明「材料中未提及」或「摘录中看不到」，不要编造事实。\n"
-    "回答使用中文；仅在确实依据某一来源时，在对应句子或段落后用 [1]、[2] 等形式标注来源序号（与资料中的「来源 [n]」一致）。"
-    "不要标注未在回答中实际用到的序号；也不要在正文中复述「检索片段」等系统标记或原始 noteId。\n"
+    "回答使用中文；仅在确实依据某一来源时，在对应句子或段落后用 [1]、[2] 等形式标注来源序号（与摘录或来源清单中的序号 [n] 一致）。"
+    "不要标注未在回答中实际用到的序号；也不要在正文中复述「检索片段」、chunk、score、向量、noteId 等系统或调试用语。\n"
+    "不要输出思考过程、提纲或「首先/其次」式推演说明，直接给出面向用户的结论与依据。\n"
     "若问题与多条笔记均相关，请尽量在回答中分别引用不同序号，避免只依赖少数几条而忽略其他相关摘录。"
 )
 
@@ -218,9 +251,11 @@ def iter_notes_answer_events(
             api_key=api_key,
             timeout_sec=120,
         ):
-            acc.append(piece)
-            yield {"type": "chunk", "text": piece}
-        full = "".join(acc).strip()
+            vis = _notes_ask_sanitize_visible_text(piece)
+            if vis:
+                acc.append(vis)
+                yield {"type": "chunk", "text": vis}
+        full = _notes_ask_sanitize_visible_text("".join(acc)).strip()
         if not full:
             raise RuntimeError("empty_answer")
         sources = filter_sources_by_citations(full, sources)
@@ -433,7 +468,7 @@ def answer_notes_question(
     if not (answer or "").strip():
         raise RuntimeError("empty_answer")
 
-    ans = answer.strip()
+    ans = _notes_ask_sanitize_visible_text(answer.strip())
     return {
         "answer": ans,
         "sources": filter_sources_by_citations(ans, sources),
