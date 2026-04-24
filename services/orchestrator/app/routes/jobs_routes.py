@@ -191,6 +191,15 @@ def _job_row_scope_ref(request: Request) -> str | None:
     return user_ref
 
 
+def _work_download_billing_ref(request: Request) -> str:
+    """
+    作品打包下载 / 导出 MP3 的钱包门槛：始终用当前登录用户主引用（UUID 或手机号）。
+    管理员行级 scope 为 None 时若仍传空串，work_download_allowed 会误拦；此处与 /works 列表的 download_allowed 判定对齐。
+    """
+    ref = _current_user_ref_or_401(request)
+    return (ref or "").strip()
+
+
 def _coerce_row_payload(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -975,7 +984,7 @@ def download_job_artifact_api(job_id: str, artifact_id: str, request: Request):
     scope = _job_row_scope_ref(request)
     if not get_job(job_id, user_ref=scope):
         raise HTTPException(status_code=404, detail="job_not_found")
-    if not work_download_allowed(job_id, scope or ""):
+    if not work_download_allowed(job_id, _work_download_billing_ref(request)):
         raise HTTPException(status_code=403, detail="下载需有过钱包充值记录，或当前钱包仍有余额")
     art = get_job_artifact(job_id, artifact_id)
     if not art:
@@ -1129,7 +1138,7 @@ def export_job_audio_mp3_api(
     row = get_job(job_id, user_ref=scope)
     if not row:
         raise HTTPException(status_code=404, detail="job_not_found")
-    if not work_download_allowed(job_id, scope or ""):
+    if not work_download_allowed(job_id, _work_download_billing_ref(request)):
         raise HTTPException(status_code=403, detail="下载需有过钱包充值记录，或当前钱包仍有余额")
     result = _parse_job_result_dict(row.get("result"))
     hx = str(result.get("audio_hex") or "").strip()
@@ -1187,7 +1196,7 @@ def distribution_pack_api(
         raise HTTPException(status_code=404, detail="job_not_found")
     if str(row.get("status") or "") != "succeeded":
         raise HTTPException(status_code=400, detail="job_not_succeeded")
-    if not work_download_allowed(job_id, scope or ""):
+    if not work_download_allowed(job_id, _work_download_billing_ref(request)):
         raise HTTPException(status_code=403, detail="下载需有过钱包充值记录，或当前钱包仍有余额")
     result = _parse_job_result_dict(row.get("result"))
     pack: dict[str, Any] = {

@@ -13,8 +13,19 @@ logger = logging.getLogger(__name__)
 
 _PUBLIC_JOB_TYPES = frozenset({"podcast", "podcast_generate"})
 
-# 「我的作品」内联播放：已登录且为任务所有者；含 TTS 成片（与列表 job_type 一致）
-_OWNER_MY_WORK_LISTEN_TYPES = frozenset({"podcast", "podcast_generate", "podcast_short_video", "text_to_speech", "tts"})
+# 「我的作品」内联播放：已登录且为任务所有者；含 TTS / 笔记本出稿等带成片音频的类型（与列表 job_type 一致）
+_OWNER_MY_WORK_LISTEN_TYPES = frozenset(
+    {
+        "podcast",
+        "podcast_generate",
+        "podcast_short_video",
+        "text_to_speech",
+        "tts",
+        "script_draft",
+        "note_podcast_script",
+        "polish_tts_text",
+    }
+)
 
 
 def _coerce_result(raw: Any) -> dict[str, Any]:
