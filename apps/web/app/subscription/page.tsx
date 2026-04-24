@@ -59,6 +59,11 @@ type WalletAlipayPendingPayload = {
   balanceBeforeCents: number | null;
   /** 跳转支付前「充值记录」条数；用于首充或余额尚未加载时仍能检测入账 */
   rechargeCountBefore?: number;
+  /**
+   * 回到订阅页后「轮询同步」的绝对截止时间（epoch ms），写入 sessionStorage，
+   * 避免 Strict Mode / 路由重挂载反复重置 setInterval 导致永远达不到 maxTicks。
+   */
+  pollDeadlineAt?: number;
 };
 
 /** 设为 1 时：拉取 /api/subscription/plans 后在控制台与充值弹窗输出结构化诊断（需重新 build Next） */
@@ -574,40 +579,99 @@ export default function SubscriptionPage() {
       );
       return undefined;
     }
+
+    const pollMs = 2500;
+    const pollMaxWallMs = 100_000;
+    const timeoutMsgZh = () =>
+      `已自动拉取约 ${Math.round(pollMaxWallMs / 1000)} 秒仍未检测到入账。若支付宝已扣款，多为异步通知未到编排器（可查 alipay_reconcile 日志与 INTERNAL_SIGNING_SECRET）；请刷新页面或稍后在「充值记录」中确认。`;
+
+    let deadline =
+      typeof p.pollDeadlineAt === "number" && Number.isFinite(p.pollDeadlineAt) ? p.pollDeadlineAt : 0;
+
+    if (deadline > 0 && Date.now() >= deadline) {
+      try {
+        sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
+      } catch {
+        /* noop */
+      }
+      setMsg(timeoutMsgZh());
+      return undefined;
+    }
+
+    if (!deadline || deadline < Date.now()) {
+      try {
+        const fresh: WalletAlipayPendingPayload = { ...p, pollDeadlineAt: Date.now() + pollMaxWallMs };
+        sessionStorage.setItem(WALLET_ALIPAY_PENDING_KEY, JSON.stringify(fresh));
+        p = fresh;
+        deadline = fresh.pollDeadlineAt!;
+      } catch {
+        /* noop */
+      }
+    }
+
     setMsg("已从支付宝返回，正在同步余额（通常几秒内完成）…");
     if (rechargeDebugEnabled()) {
       appendRechargeDebug("alipay_return_poll_start", {
-        interval_ms: 2500,
-        max_ticks: 40,
+        interval_ms: pollMs,
+        poll_deadline_at: deadline,
         balance_before_cents: typeof p.balanceBeforeCents === "number" ? p.balanceBeforeCents : null
       });
     }
-    let ticks = 0;
-    const maxTicks = 40;
-    const pollMs = 2500;
+
+    let finished = false;
+    const finishPoll = (reason: string) => {
+      if (finished) return;
+      finished = true;
+      try {
+        sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
+      } catch {
+        /* noop */
+      }
+      setMsg(timeoutMsgZh());
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug("alipay_return_poll_end", { reason });
+      }
+    };
+
     const tick = () => {
       void loadMeRef.current();
     };
     tick();
+
+    const readDeadline = (): number => {
+      try {
+        const r = sessionStorage.getItem(WALLET_ALIPAY_PENDING_KEY);
+        if (!r) return deadline;
+        const parsed = JSON.parse(r) as WalletAlipayPendingPayload;
+        if (typeof parsed.pollDeadlineAt === "number" && Number.isFinite(parsed.pollDeadlineAt)) {
+          return parsed.pollDeadlineAt;
+        }
+      } catch {
+        /* noop */
+      }
+      return deadline;
+    };
+
     const id = window.setInterval(() => {
-      ticks += 1;
       tick();
-      if (ticks >= maxTicks) {
+      if (Date.now() >= readDeadline()) {
         window.clearInterval(id);
-        if (rechargeDebugEnabled()) {
-          appendRechargeDebug("alipay_return_poll_end", { reason: "max_ticks", ticks });
-        }
-        try {
-          sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
-        } catch {
-          /* noop */
-        }
-        setMsg(
-          `已自动拉取约 ${Math.round((maxTicks * pollMs) / 1000)} 秒仍未检测到入账。若支付宝已扣款，多为异步通知未到编排器（可查 alipay_reconcile 日志与 INTERNAL_SIGNING_SECRET）；请刷新页面或稍后在「充值记录」中确认。`
-        );
+        window.clearTimeout(backupTimer);
+        finishPoll("deadline_wall");
       }
     }, pollMs);
-    return () => window.clearInterval(id);
+
+    const remaining = Math.max(0, readDeadline() - Date.now());
+    const backupTimer = window.setTimeout(() => {
+      window.clearInterval(id);
+      finishPoll("deadline_backup_timeout");
+    }, remaining + 800);
+
+    return () => {
+      finished = true;
+      window.clearInterval(id);
+      window.clearTimeout(backupTimer);
+    };
   }, [walletPayEnabled]);
 
   useEffect(() => {
