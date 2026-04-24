@@ -9,6 +9,7 @@ from typing import Tuple
 
 _lock = threading.Lock()
 _phone_hits: dict[str, list[float]] = {}
+_reconcile_phone_hits: dict[str, list[float]] = {}
 _notify_ip_hits: dict[str, list[float]] = {}
 
 
@@ -42,6 +43,15 @@ def check_wallet_alipay_create_rate_limit_for_phone(phone: str) -> Tuple[bool, i
         return True, 0
     p = (phone or "").strip() or "unknown"
     return _sliding_allow(_phone_hits, f"wal_alipay_phone:{p}", limit, 60.0)
+
+
+def check_wallet_alipay_reconcile_rate_limit_for_phone(phone: str) -> Tuple[bool, int]:
+    """同一账号 trade.query 主动对账：默认每 60s 最多 60 次（与前端约 2.5s 轮询兼容）。"""
+    limit = _env_int("FYV_WALLET_ALIPAY_RECONCILE_PER_PHONE_PER_MIN", 60)
+    if limit <= 0:
+        return True, 0
+    p = (phone or "").strip() or "unknown"
+    return _sliding_allow(_reconcile_phone_hits, f"wal_alipay_reconcile:{p}", limit, 60.0)
 
 
 def check_alipay_notify_rate_limit(client_ip: str) -> Tuple[bool, int]:

@@ -11,7 +11,12 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .. import auth_bridge
 from .. import models
-from ..alipay_page_pay import AlipayPagePayConfig, verify_notify_params
+from ..alipay_page_pay import (
+    AlipayPagePayConfig,
+    alipay_total_amount_yuan_to_cents,
+    parse_alipay_notify_time,
+    verify_notify_params,
+)
 from ..fyv_shared.payment_wallet_rate_limit import check_alipay_notify_rate_limit
 from ..fyv_shared.register_send_code_limiter import client_ip_from_request
 from ..security import verify_internal_signature
@@ -322,36 +327,6 @@ async def payment_webhook(request: Request):
     return JSONResponse({"success": True, "reason": reason, "order": row})
 
 
-def _parse_alipay_notify_time(raw: object) -> datetime | None:
-    s = str(raw or "").strip()
-    if not s:
-        return None
-    try:
-        normalized = s.replace("Z", "+00:00") if s.endswith("Z") else s
-        dt = datetime.fromisoformat(normalized)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:
-        pass
-    try:
-        from email.utils import parsedate_to_datetime
-
-        dt2 = parsedate_to_datetime(s)
-        if dt2.tzinfo is None:
-            dt2 = dt2.replace(tzinfo=timezone.utc)
-        return dt2
-    except Exception:
-        return None
-
-
-def _alipay_total_amount_to_cents(total_amount: str) -> int | None:
-    try:
-        return int(round(float(str(total_amount or "").strip()) * 100))
-    except (TypeError, ValueError):
-        return None
-
-
 def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]) -> PlainTextResponse:
     trade_status = str(params.get("trade_status") or "").strip().upper()
     if trade_status not in ("TRADE_SUCCESS", "TRADE_FINISHED"):
@@ -364,10 +339,10 @@ def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]
         return PlainTextResponse("success")
     out_trade_no = str(params.get("out_trade_no") or "").strip()
     trade_no = str(params.get("trade_no") or "").strip()
-    notify_cents = _alipay_total_amount_to_cents(params.get("total_amount") or "")
+    notify_cents = alipay_total_amount_yuan_to_cents(str(params.get("total_amount") or ""))
     if not out_trade_no or notify_cents is None or notify_cents <= 0:
         return PlainTextResponse("success")
-    paid_at = _parse_alipay_notify_time(params.get("gmt_payment") or params.get("notify_time"))
+    paid_at = parse_alipay_notify_time(params.get("gmt_payment") or params.get("notify_time"))
     row_sess = models.alipay_page_get_checkout_session(out_trade_no)
     if not row_sess:
         existing = models.get_payment_order_by_event_id(out_trade_no)

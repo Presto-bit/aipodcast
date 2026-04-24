@@ -57,6 +57,8 @@ type WalletAlipayPendingPayload = {
   balanceBeforeCents: number | null;
   /** 跳转支付前「充值记录」条数；用于首充或余额尚未加载时仍能检测入账 */
   rechargeCountBefore?: number;
+  /** 商户订单号；异步通知缺失时用于服务端 alipay.trade.query 主动对账 */
+  outTradeNo?: string;
   /**
    * 回到订阅页后「轮询同步」的绝对截止时间（epoch ms），写入 sessionStorage，
    * 避免 Strict Mode / 路由重挂载反复重置 setInterval 导致永远达不到 maxTicks。
@@ -463,6 +465,51 @@ export default function SubscriptionPage() {
   const loadMeRef = useRef(loadMe);
   loadMeRef.current = loadMe;
 
+  const reconcileAlipayWalletTopup = useCallback(
+    async (outTradeNo: string) => {
+      const otn = String(outTradeNo || "").trim();
+      if (!otn) return;
+      try {
+        const res = await fetch("/api/subscription/reconcile-alipay-wallet", {
+          method: "POST",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ out_trade_no: otn }),
+          credentials: "same-origin"
+        });
+        const text = await res.text();
+        let data: Record<string, unknown> = {};
+        try {
+          data = JSON.parse(text) as Record<string, unknown>;
+        } catch {
+          /* noop */
+        }
+        appendRechargeDebug(
+          "alipay_wallet_reconcile",
+          {
+            http_ok: res.ok,
+            http_status: res.status,
+            applied: data.applied,
+            detail: data.detail,
+            trade_status: data.trade_status,
+            wallet_balance_cents: data.wallet_balance_cents
+          },
+          undefined,
+          user
+        );
+      } catch (e) {
+        appendRechargeDebug(
+          "alipay_wallet_reconcile_err",
+          { message: String(e instanceof Error ? e.message : e) },
+          undefined,
+          user
+        );
+      }
+    },
+    [getAuthHeaders, user]
+  );
+  const reconcileAlipayWalletTopupRef = useRef(reconcileAlipayWalletTopup);
+  reconcileAlipayWalletTopupRef.current = reconcileAlipayWalletTopup;
+
   useEffect(() => {
     setRechargeDebugUiReady(true);
   }, []);
@@ -497,11 +544,13 @@ export default function SubscriptionPage() {
       undefined,
       user
     );
+    const otnUrl = (q.get("out_trade_no") || "").trim();
+    if (otnUrl) void reconcileAlipayWalletTopup(otnUrl);
     void loadMe();
     void refreshMe();
     setMsg("支付已完成或处理中，正在同步订单…");
     window.history.replaceState({}, "", window.location.pathname);
-  }, [loadMe, refreshMe, user]);
+  }, [loadMe, refreshMe, user, reconcileAlipayWalletTopup]);
 
   const walletPayEnabled = isLoggedInAccountUser(user);
 
@@ -573,7 +622,9 @@ export default function SubscriptionPage() {
     const pollMs = 2500;
     const pollMaxWallMs = 100_000;
     const timeoutMsgZh = () =>
-      `已自动拉取约 ${Math.round(pollMaxWallMs / 1000)} 秒仍未检测到入账。若支付宝已扣款，多为异步通知未到编排器（可查 alipay_reconcile 日志与 INTERNAL_SIGNING_SECRET）；请刷新页面或稍后在「充值记录」中确认。`;
+      `已自动拉取约 ${Math.round(
+        pollMaxWallMs / 1000
+      )} 秒仍未检测到入账。若支付宝已扣款：常见为异步通知未到编排器（请查 BFF→编排器 INTERNAL_SIGNING_SECRET、ALIPAY_NOTIFY_URL 与开放平台是否一致）；系统已并行尝试 trade.query 主动对账。仍无记录请刷新或稍后在「充值记录」中确认。`;
 
     let deadline =
       typeof p.pollDeadlineAt === "number" && Number.isFinite(p.pollDeadlineAt) ? p.pollDeadlineAt : 0;
@@ -625,6 +676,16 @@ export default function SubscriptionPage() {
     };
 
     const tick = () => {
+      try {
+        const r = sessionStorage.getItem(WALLET_ALIPAY_PENDING_KEY);
+        if (r) {
+          const parsed = JSON.parse(r) as WalletAlipayPendingPayload;
+          const otn = typeof parsed.outTradeNo === "string" ? parsed.outTradeNo.trim() : "";
+          if (otn) void reconcileAlipayWalletTopupRef.current(otn);
+        }
+      } catch {
+        /* noop */
+      }
       void loadMeRef.current();
     };
     tick();
@@ -663,7 +724,7 @@ export default function SubscriptionPage() {
       window.clearInterval(id);
       window.clearTimeout(backupTimer);
     };
-  }, [walletPayEnabled, user]);
+  }, [walletPayEnabled, user, reconcileAlipayWalletTopup]);
 
   useEffect(() => {
     if (!walletPayEnabled || typeof window === "undefined") return;
@@ -937,7 +998,8 @@ export default function SubscriptionPage() {
         const payload: WalletAlipayPendingPayload = {
           startedAt: Date.now(),
           balanceBeforeCents: typeof walletBalanceCents === "number" ? walletBalanceCents : null,
-          rechargeCountBefore: rechargeRecords.length
+          rechargeCountBefore: rechargeRecords.length,
+          outTradeNo: String(data.out_trade_no || "").trim() || undefined
         };
         sessionStorage.setItem(WALLET_ALIPAY_PENDING_KEY, JSON.stringify(payload));
       } catch {

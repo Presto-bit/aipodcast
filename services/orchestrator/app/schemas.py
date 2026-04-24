@@ -275,6 +275,12 @@ class AlipayPageWalletCreateRequest(BaseModel):
     amount_cents: int = Field(ge=WALLET_TOPUP_MIN_CENTS, le=WALLET_TOPUP_MAX_CENTS)
 
 
+class AlipayWalletReconcileRequest(BaseModel):
+    """支付宝电脑网站支付：用户返回后主动 trade.query 对账（补异步通知缺口）。"""
+
+    out_trade_no: str = Field(min_length=6, max_length=80)
+
+
 class AuthRegisterRequest(BaseModel):
     password: str = Field(min_length=1, max_length=120)
     invite_code: str = Field(default="", max_length=120)

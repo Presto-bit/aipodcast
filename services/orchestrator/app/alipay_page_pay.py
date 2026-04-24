@@ -12,8 +12,10 @@ import base64
 import logging
 import os
 import secrets
-from typing import Any
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from typing import Any
 from urllib.parse import urlparse
 
 from alipay import AliPay
@@ -222,6 +224,69 @@ def build_page_pay_url(
     except Exception as e:
         _log.warning("alipay page pay build failed: %s", e)
         return False, "alipay_page_pay_build_failed", ""
+
+
+def parse_alipay_notify_time(raw: object) -> datetime | None:
+    """解析异步通知或 trade.query 中的时间字段（gmt_payment / send_pay_date / notify_time）。"""
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        normalized = s.replace("Z", "+00:00") if s.endswith("Z") else s
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        pass
+    try:
+        dt2 = parsedate_to_datetime(s)
+        if dt2.tzinfo is None:
+            dt2 = dt2.replace(tzinfo=timezone.utc)
+        return dt2
+    except Exception:
+        return None
+
+
+def alipay_total_amount_yuan_to_cents(total_amount: str) -> int | None:
+    try:
+        return int(round(float(str(total_amount or "").strip()) * 100))
+    except (TypeError, ValueError):
+        return None
+
+
+def query_alipay_trade_for_page_pay(
+    cfg: AlipayPagePayConfig, *, out_trade_no: str
+) -> tuple[str, dict[str, Any]]:
+    """
+    主动查询电脑网站支付订单状态（alipay.trade.query）。
+    返回 (outcome, response_body)：
+    - outcome: paid | not_paid | not_found | rpc_error
+    - response_body: alipay_trade_query_response 内层字段（或含嵌套时的整包 dict）
+    """
+    oid = (out_trade_no or "").strip()
+    if not oid:
+        return "rpc_error", {}
+    try:
+        client = build_alipay_client(cfg)
+        raw = client.api_alipay_trade_query(out_trade_no=oid)
+    except Exception as e:
+        _log.warning("alipay trade query exception: %s", e)
+        return "rpc_error", {}
+    if not isinstance(raw, dict):
+        return "rpc_error", {}
+    inner = raw.get("alipay_trade_query_response")
+    resp: dict[str, Any] = inner if isinstance(inner, dict) else raw
+    code = str(resp.get("code") or "")
+    sub_code = str(resp.get("sub_code") or "")
+    if code == "40004" and "TRADE_NOT_EXIST" in sub_code:
+        return "not_found", resp
+    if code != "10000":
+        return "not_paid", resp
+    ts = str(resp.get("trade_status") or "").strip().upper()
+    if ts in ("TRADE_SUCCESS", "TRADE_FINISHED"):
+        return "paid", resp
+    return "not_paid", resp
 
 
 def verify_notify_params(cfg: AlipayPagePayConfig, params: dict[str, str], signature: str) -> bool:

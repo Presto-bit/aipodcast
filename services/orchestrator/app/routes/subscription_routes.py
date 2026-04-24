@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..schemas import (
     AlipayPageWalletCreateRequest,
+    AlipayWalletReconcileRequest,
     WalletTopupCheckoutCompleteRequest,
     WalletTopupCheckoutCreateRequest,
 )
@@ -15,8 +16,18 @@ from .. import auth_bridge
 from .. import models
 from ..plan_catalog import build_subscription_plans_response, is_valid_wallet_topup_amount_cents
 from ..subscription_manifest import EXPERIENCE_NEW_USER_TEXT_CHARS, EXPERIENCE_NEW_USER_VOICE_MINUTES
-from ..alipay_page_pay import AlipayPagePayConfig, build_page_pay_url, new_out_trade_no
-from ..fyv_shared.payment_wallet_rate_limit import check_wallet_alipay_create_rate_limit_for_phone
+from ..alipay_page_pay import (
+    AlipayPagePayConfig,
+    alipay_total_amount_yuan_to_cents,
+    build_page_pay_url,
+    new_out_trade_no,
+    parse_alipay_notify_time,
+    query_alipay_trade_for_page_pay,
+)
+from ..fyv_shared.payment_wallet_rate_limit import (
+    check_wallet_alipay_create_rate_limit_for_phone,
+    check_wallet_alipay_reconcile_rate_limit_for_phone,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -254,3 +265,111 @@ def alipay_page_wallet_create(request: Request, body: AlipayPageWalletCreateRequ
         "currency": "CNY",
         "message": "正在跳转支付宝收银台，请使用手机支付宝扫码完成支付",
     }
+
+
+@router.post("/alipay/wallet/reconcile")
+def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReconcileRequest):
+    """
+    用户从支付宝返回后：若异步通知未到，可用商户订单号调 alipay.trade.query 主动履约入账。
+    须与当前登录用户 checkout 会话一致；幂等与异步通知共用 event_id=out_trade_no。
+    """
+    cfg = AlipayPagePayConfig.from_env()
+    if not cfg:
+        raise HTTPException(status_code=403, detail="alipay_page_pay_disabled")
+    if not auth_bridge.is_auth_enabled():
+        raise HTTPException(status_code=400, detail="auth_disabled")
+    sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
+    if not sess:
+        raise HTTPException(status_code=401, detail="未登录")
+    phone = auth_bridge.session_principal(sess).strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="invalid_session")
+    ok_rl, wait_s = check_wallet_alipay_reconcile_rate_limit_for_phone(phone)
+    if not ok_rl:
+        raise HTTPException(
+            status_code=429,
+            detail="wallet_alipay_reconcile_rate_limited",
+            headers={"Retry-After": str(wait_s)},
+        )
+
+    out_trade_no = body.out_trade_no.strip()
+    row_sess = models.alipay_page_get_checkout_session(out_trade_no)
+    if not row_sess:
+        ex = models.get_payment_order_by_event_id(out_trade_no)
+        st_ex = str((ex or {}).get("status") or "").strip().lower()
+        if ex and st_ex in ("paid", "success", "succeeded", "captured"):
+            bal = models.wallet_balance_cents_for_phone(phone)
+            return {"success": True, "applied": False, "detail": "already_settled", "wallet_balance_cents": bal}
+        raise HTTPException(status_code=404, detail="checkout_session_not_found")
+
+    if str(row_sess.get("phone") or "").strip() != phone:
+        raise HTTPException(status_code=403, detail="out_trade_no_mismatch")
+    if str(row_sess.get("kind") or "").strip().lower() != "wallet":
+        raise HTTPException(status_code=400, detail="not_wallet_checkout")
+
+    outcome, qresp = query_alipay_trade_for_page_pay(cfg, out_trade_no=out_trade_no)
+    if outcome == "rpc_error":
+        raise HTTPException(status_code=502, detail="alipay_trade_query_failed")
+    if outcome == "not_found":
+        return {
+            "success": True,
+            "applied": False,
+            "detail": "trade_not_found",
+            "wallet_balance_cents": models.wallet_balance_cents_for_phone(phone),
+        }
+    if outcome != "paid":
+        return {
+            "success": True,
+            "applied": False,
+            "detail": "trade_not_paid_yet",
+            "trade_status": qresp.get("trade_status"),
+            "wallet_balance_cents": models.wallet_balance_cents_for_phone(phone),
+        }
+
+    notify_cents = alipay_total_amount_yuan_to_cents(str(qresp.get("total_amount") or ""))
+    if notify_cents is None or notify_cents <= 0:
+        _log.error(
+            "alipay wallet reconcile invalid total_amount out_trade_no=%s raw=%s",
+            out_trade_no,
+            qresp.get("total_amount"),
+        )
+        raise HTTPException(status_code=502, detail="alipay_query_amount_invalid")
+    session_cents = int(row_sess.get("amount_cents") or 0)
+    if session_cents != notify_cents:
+        _log.error(
+            "alipay wallet reconcile amount_mismatch out_trade_no=%s session=%s query=%s",
+            out_trade_no,
+            session_cents,
+            notify_cents,
+        )
+        raise HTTPException(status_code=409, detail="amount_mismatch")
+
+    trade_no = str(qresp.get("trade_no") or "").strip()
+    paid_at = parse_alipay_notify_time(qresp.get("send_pay_date") or qresp.get("gmt_payment"))
+    ok, reason, _row = auth_bridge.apply_payment_event(
+        out_trade_no,
+        phone,
+        "free",
+        None,
+        "paid",
+        notify_cents,
+        "alipay",
+        channel="alipay",
+        provider_order_id=trade_no or None,
+        currency="CNY",
+        paid_at=paid_at,
+        product_snapshot={
+            "kind": "wallet_topup",
+            "topup_cents": notify_cents,
+            "source": "alipay_page_wallet",
+            "amount_cents": notify_cents,
+        },
+        source="alipay_trade_query_reconcile",
+    )
+    if not ok:
+        _log.error("alipay wallet reconcile apply failed out_trade_no=%s reason=%s", out_trade_no, reason)
+        raise HTTPException(status_code=500, detail=reason or "apply_failed")
+    models.alipay_page_delete_checkout_session(out_trade_no)
+    bal = models.wallet_balance_cents_for_phone(phone)
+    _log.info("alipay wallet reconcile applied out_trade_no=%s cents=%s balance=%s", out_trade_no, notify_cents, bal)
+    return {"success": True, "applied": True, "wallet_balance_cents": bal}
