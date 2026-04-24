@@ -246,6 +246,19 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 
 **示例配置**：仓库根目录 **`deploy/nginx-prestoai.cdn-cache.example.conf`**（注释块内为完整 `server` 片段，按需合并到宝塔或 `sites-available`，`nginx -t` 后 `reload`）。
 
+#### F. 知识库 `/api/notes/ask*` 不经 CDN、直连源站（缓解网关 504）
+
+同一主机名若 **CNAME 到阿里云 CDN**，则 **无法** 做到「仅 `/api/notes/ask` 绕 CDN、其余仍走 CDN」：边缘节点对整站域名统一接管。可行做法是 **第二个 DNS 名直连 ECS**（A/AAAA 到源 IP 或 SLB，**不要**再 CNAME 到 CDN），与主站共用同一套 Next 进程与证书。
+
+1. **DNS**：例如新增 `origin-www.example.com` → 源站公网 IP（或内网 SLB 公网地址），**不**接入 CDN 加速域名。
+2. **TLS / Nginx**：`server_name` 包含 `origin-www.example.com`，证书覆盖该主机名（ACME 多 SAN 或单独证书）。
+3. **会话 Cookie**：登录态要被子域携带时，在 Web 环境设置 **`COOKIE_DOMAIN=.example.com`**（见 `.env.ai-native.example` 中 `COOKIE_DOMAIN`），使 `fym_session` 对 `www` 与 `origin-www` 均可见。
+4. **前端（构建时注入）**：在 Web 构建环境设置 **`NEXT_PUBLIC_NOTES_ASK_BFF_ORIGIN=https://origin-www.example.com`**（无尾斜杠）。笔记页对 **`/api/notes/ask/hints`** 与 **`/api/notes/ask/stream`** 会改为请求该源站域名；未设置时仍走同源相对路径 `/api/...`（即仍经浏览器当前 host，可能为 CDN）。
+5. **CORS**：页面在 `https://www.example.com`、API 在 `https://origin-www.example.com` 时为跨域，须设置 **`NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS`**（逗号分隔，与地址栏 Origin 完全一致，如 `https://www.example.com,https://example.com`）。`middleware` 仅对 **`/api/notes/ask*`** 在 Origin 命中白名单时返回 `Access-Control-Allow-Origin` 与 `Allow-Credentials`；fetch 使用 **`credentials: "include"`**（由 `notesAskFetchCredentials()` 处理）。
+6. **安全**：`NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS` 仅列出自有站点，勿填 `*` 或与业务无关的第三方域。
+
+实现参考：`apps/web/lib/notesAskBffOrigin.ts`、`apps/web/middleware.ts`（`NOTES_ASK_API_PREFIX`）。
+
 ## 支付回调
 
 - **入口（公网）**：支付平台或网关应 POST 至 **Next 对外域名** 下的 BFF 路径（由 `apps/web` 路由转发），由 BFF 将**原始 body** 与 **`X-Payment-Signature`** 转发到编排器 **`POST /api/v1/webhooks/payment`**。

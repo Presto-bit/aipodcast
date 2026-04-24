@@ -36,6 +36,7 @@ import {
   formatNotesAskStreamError,
   type NotesAskStreamErrorMeta
 } from "../../lib/apiError";
+import { notesAskBffUrl, notesAskFetchCredentials } from "../../lib/notesAskBffOrigin";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
 import { rememberJobId } from "../../lib/jobRecent";
 import { buildReferenceJobFields, type ReferenceRagMode } from "../../lib/jobReferencePayload";
@@ -902,9 +903,9 @@ export default function NotesPage() {
           const body: Record<string, unknown> = { notebook: nb, note_ids: ids };
           if (sharedBrowse?.ownerUserId) body.sharedFromOwnerUserId = sharedBrowse.ownerUserId;
           const hintsRid = notesAskClientRequestId();
-          const res = await fetch("/api/notes/ask/hints", {
+          const res = await fetch(notesAskBffUrl("/api/notes/ask/hints"), {
             method: "POST",
-            credentials: "same-origin",
+            credentials: notesAskFetchCredentials(),
             cache: "no-store",
             signal: ac.signal,
             headers: {
@@ -2331,9 +2332,9 @@ export default function NotesPage() {
     setNotesAskQuestion("");
     const streamRid = notesAskClientRequestId();
     try {
-      const res = await fetch("/api/notes/ask/stream", {
+      const res = await fetch(notesAskBffUrl("/api/notes/ask/stream"), {
         method: "POST",
-        credentials: "same-origin",
+        credentials: notesAskFetchCredentials(),
         headers: {
           "content-type": "application/json",
           "x-request-id": streamRid,

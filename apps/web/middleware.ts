@@ -72,6 +72,28 @@ function checkRateLimit(key: string): boolean {
   return true;
 }
 
+/** 浏览器在 www（CDN）而 BFF 直连源站子域时，须配置白名单 Origin，见 NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS */
+const NOTES_ASK_API_PREFIX = "/api/notes/ask";
+
+function notesAskCorsAllowedOrigins(): string[] {
+  const raw = (process.env.NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS || "").trim();
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function applyNotesAskApiCors(req: NextRequest, res: NextResponse): NextResponse {
+  const p = req.nextUrl.pathname;
+  if (!p.startsWith(NOTES_ASK_API_PREFIX)) return res;
+  const allowed = notesAskCorsAllowedOrigins();
+  if (!allowed.length) return res;
+  const origin = req.headers.get("origin")?.trim();
+  if (!origin || !allowed.includes(origin)) return res;
+  res.headers.set("Access-Control-Allow-Origin", origin);
+  res.headers.set("Access-Control-Allow-Credentials", "true");
+  res.headers.set("Access-Control-Expose-Headers", "x-request-id");
+  return res;
+}
+
 export function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
@@ -87,13 +109,13 @@ export function middleware(req: NextRequest) {
           Allow: "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "Access-Control-Allow-Headers":
-            "Content-Type, Authorization, Cookie, X-Internal-Signature, X-Internal-Timestamp, X-Internal-Payload-Sha256"
+            "Content-Type, Authorization, Cookie, X-Request-ID, X-Internal-Signature, X-Internal-Timestamp, X-Internal-Payload-Sha256"
         }
       }),
       CACHE_API
     );
     if (sensitiveApiPath(pathname)) applySensitiveSharedCacheVary(opt, "api");
-    return opt;
+    return applyNotesAskApiCors(req, opt);
   }
 
   if (!pathname.startsWith("/api/")) {
@@ -106,35 +128,35 @@ export function middleware(req: NextRequest) {
 
   /** 支付宝异步通知：路由内另有单列限流，避免与其它 /api 共用 400/min 误伤重试 */
   if (pathname === "/api/webhooks/alipay" && req.method === "POST") {
-    return withCacheHeaders(NextResponse.next(), CACHE_API);
+    return applyNotesAskApiCors(req, withCacheHeaders(NextResponse.next(), CACHE_API));
   }
   /** 由路由内 `/api/image-proxy` 单独按 IP 限速，避免拖满全站 400/min */
   if (pathname === "/api/image-proxy" && req.method === "GET") {
-    return withCacheHeaders(NextResponse.next(), CACHE_API);
+    return applyNotesAskApiCors(req, withCacheHeaders(NextResponse.next(), CACHE_API));
   }
   /** 系统默认音色目录：匿名可读，浏览器可短期复用响应 */
   if (
     req.method === "GET" &&
     (pathname === "/api/default-voices" || pathname.startsWith("/api/default-voices/"))
   ) {
-    return withPrivateShortCache(NextResponse.next());
+    return applyNotesAskApiCors(req, withPrivateShortCache(NextResponse.next()));
   }
   /** 选题助手 GET：路由内按 IP 限速；带 seed 的 URL 各自为缓存键 */
   if (pathname === "/api/create/hot-topics" && req.method === "GET") {
-    return withPrivateShortCache(NextResponse.next());
+    return applyNotesAskApiCors(req, withPrivateShortCache(NextResponse.next()));
   }
   if (req.method === "POST" && RATE_LIMIT_EXEMPT_POST_PATHS.has(pathname)) {
-    return withCacheHeaders(NextResponse.next(), CACHE_API);
+    return applyNotesAskApiCors(req, withCacheHeaders(NextResponse.next(), CACHE_API));
   }
   const clientKey = clientRateLimitKey(req);
   if (!checkRateLimit(clientKey)) {
     const r = withCacheHeaders(NextResponse.json({ error: "rate_limited" }, { status: 429 }), CACHE_API);
     if (sensitiveApiPath(pathname)) applySensitiveSharedCacheVary(r, "api");
-    return r;
+    return applyNotesAskApiCors(req, r);
   }
   const r = withCacheHeaders(NextResponse.next(), CACHE_API);
   if (sensitiveApiPath(pathname)) applySensitiveSharedCacheVary(r, "api");
-  return r;
+  return applyNotesAskApiCors(req, r);
 }
 
 export const config = {
