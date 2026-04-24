@@ -8,6 +8,16 @@ import { PricingHero } from "../../components/subscription/PricingHero";
 import { WalletUsageReference } from "../../components/subscription/WalletUsageReference";
 import type { WalletTopupPayload } from "../../components/subscription/types";
 import { parseSubscriptionErrorBody } from "../../lib/subscriptionError";
+import {
+  RECHARGE_DEBUG_EVENT,
+  appendRechargeDebug,
+  clearRechargeDebug,
+  newRechargeDebugRequestId,
+  readRechargeDebug,
+  rechargeDebugEnabled,
+  summarizePayUrl,
+  type RechargeDebugEntry
+} from "../../lib/rechargeClientDebug";
 
 type RechargeRecordRow = {
   serial_no?: string;
@@ -188,6 +198,8 @@ export default function SubscriptionPage() {
   const [experienceTextTotal, setExperienceTextTotal] = useState<number | null>(null);
   const [plansLoadDiag, setPlansLoadDiag] = useState<PlansLoadDiag | null>(null);
   const [alipayConfigDiag, setAlipayConfigDiag] = useState<unknown>(null);
+  const [rechargeDebugLog, setRechargeDebugLog] = useState<RechargeDebugEntry[]>([]);
+  const [rechargeDebugUiReady, setRechargeDebugUiReady] = useState(false);
 
   /** 防止连续多次 loadPlans 返回顺序错乱，把旧响应写回 state */
   const plansFetchSeqRef = useRef(0);
@@ -374,6 +386,7 @@ export default function SubscriptionPage() {
   }, [getAuthHeaders]);
 
   const loadMe = useCallback(async (filterSince?: string, filterUntil?: string) => {
+    const rid = newRechargeDebugRequestId();
     try {
       const sUse = filterSince !== undefined ? filterSince : consumptionSince;
       const tUse = filterUntil !== undefined ? filterUntil : consumptionUntil;
@@ -381,7 +394,10 @@ export default function SubscriptionPage() {
       if (sUse.trim()) qs.set("consumption_since", sUse.trim());
       if (tUse.trim()) qs.set("consumption_until", tUse.trim());
       const mePath = qs.toString() ? `/api/subscription/me?${qs.toString()}` : "/api/subscription/me";
-      const mr = await fetch(mePath, { headers: getAuthHeaders(), cache: "no-store" });
+      const mr = await fetch(mePath, {
+        headers: { ...getAuthHeaders(), "x-request-id": rid },
+        cache: "no-store"
+      });
       const md = (await mr.json().catch(() => ({}))) as {
         success?: boolean;
         recharge_records?: RechargeRecordRow[];
@@ -395,6 +411,19 @@ export default function SubscriptionPage() {
           text_chars_total?: number | null;
         };
       };
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug(
+          "load_me",
+          {
+            path: mePath,
+            http_ok: mr.ok,
+            success: Boolean(md.success),
+            wallet_balance_cents: typeof md.wallet_balance_cents === "number" ? md.wallet_balance_cents : null,
+            recharge_records_len: Array.isArray(md.recharge_records) ? md.recharge_records.length : null
+          },
+          rid
+        );
+      }
       if (mr.ok && md.success) {
         setRechargeRecords(Array.isArray(md.recharge_records) ? md.recharge_records : []);
         setConsumptionRecords(Array.isArray(md.consumption_records) ? md.consumption_records : []);
@@ -419,14 +448,42 @@ export default function SubscriptionPage() {
           setExperienceVoiceTotal(null);
           setExperienceTextTotal(null);
         }
+      } else if (rechargeDebugEnabled()) {
+        appendRechargeDebug(
+          "load_me_not_ok",
+          { path: mePath, http_ok: mr.ok, success: md.success, http_status: mr.status },
+          rid
+        );
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug(
+          "load_me_error",
+          { message: String(e instanceof Error ? e.message : e) },
+          rid
+        );
+      }
     }
   }, [getAuthHeaders, consumptionSince, consumptionUntil]);
 
   const loadMeRef = useRef(loadMe);
   loadMeRef.current = loadMe;
+
+  useEffect(() => {
+    setRechargeDebugUiReady(true);
+  }, []);
+
+  const refreshRechargeDebugLog = useCallback(() => {
+    setRechargeDebugLog(readRechargeDebug());
+  }, []);
+
+  useEffect(() => {
+    refreshRechargeDebugLog();
+    if (typeof window === "undefined" || !rechargeDebugEnabled()) return undefined;
+    const fn = () => refreshRechargeDebugLog();
+    window.addEventListener(RECHARGE_DEBUG_EVENT, fn);
+    return () => window.removeEventListener(RECHARGE_DEBUG_EVENT, fn);
+  }, [refreshRechargeDebugLog]);
 
   useEffect(() => {
     void loadPlans();
@@ -437,6 +494,12 @@ export default function SubscriptionPage() {
     if (typeof window === "undefined") return;
     const q = new URLSearchParams(window.location.search);
     if (!q.get("out_trade_no") && !q.get("trade_no")) return;
+    if (rechargeDebugEnabled()) {
+      appendRechargeDebug("url_query_trade_params", {
+        has_out_trade_no: Boolean(q.get("out_trade_no")),
+        has_trade_no: Boolean(q.get("trade_no"))
+      });
+    }
     void loadMe();
     void refreshMe();
     setMsg("支付已完成或处理中，正在同步订单…");
@@ -507,6 +570,13 @@ export default function SubscriptionPage() {
       return undefined;
     }
     setMsg("已从支付宝返回，正在同步余额（通常几秒内完成）…");
+    if (rechargeDebugEnabled()) {
+      appendRechargeDebug("alipay_return_poll_start", {
+        interval_ms: 2500,
+        max_ticks: 40,
+        balance_before_cents: typeof p.balanceBeforeCents === "number" ? p.balanceBeforeCents : null
+      });
+    }
     let ticks = 0;
     const maxTicks = 40;
     const tick = () => {
@@ -518,6 +588,9 @@ export default function SubscriptionPage() {
       tick();
       if (ticks >= maxTicks) {
         window.clearInterval(id);
+        if (rechargeDebugEnabled()) {
+          appendRechargeDebug("alipay_return_poll_end", { reason: "max_ticks", ticks });
+        }
         try {
           sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
         } catch {
@@ -554,6 +627,12 @@ export default function SubscriptionPage() {
         /* noop */
       }
       setMsg("充值已入账，余额已更新。");
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug("alipay_pending_cleared_balance_increased", {
+          balance_before_cents: p.balanceBeforeCents,
+          balance_after_cents: walletBalanceCents
+        });
+      }
     }
   }, [walletPayEnabled, walletBalanceCents]);
 
@@ -611,13 +690,17 @@ export default function SubscriptionPage() {
       setMsg(parsed.error);
       return;
     }
+    const rid = newRechargeDebugRequestId();
+    if (rechargeDebugEnabled()) {
+      appendRechargeDebug("sim_wallet_create_start", { amount_cents: parsed.cents }, rid);
+    }
     setWalletCreating(true);
     setMsg("");
     setWalletCheckout(null);
     try {
       const res = await fetch("/api/subscription/wallet-checkout/create", {
         method: "POST",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        headers: { "content-type": "application/json", "x-request-id": rid, ...getAuthHeaders() },
         body: JSON.stringify({ amount_cents: parsed.cents })
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -631,12 +714,22 @@ export default function SubscriptionPage() {
       if (!res.ok || !data.success || !data.checkout_id) {
         throw new Error(data.detail || data.error || `创建失败 ${res.status}`);
       }
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug(
+          "sim_wallet_create_ok",
+          { http_status: res.status, checkout_id_tail: String(data.checkout_id).slice(-12) },
+          rid
+        );
+      }
       setWalletCheckout({
         checkout_id: data.checkout_id,
         amount_cents: Number(data.amount_cents ?? parsed.cents)
       });
       setMsg(data.message || "已创建收银会话，请确认支付");
     } catch (err) {
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug("sim_wallet_create_error", { message: String(err instanceof Error ? err.message : err) }, rid);
+      }
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
       setWalletCreating(false);
@@ -645,12 +738,20 @@ export default function SubscriptionPage() {
 
   async function confirmWalletOrder() {
     if (!walletCheckout) return;
+    const rid = newRechargeDebugRequestId();
+    if (rechargeDebugEnabled()) {
+      appendRechargeDebug(
+        "sim_wallet_complete_start",
+        { checkout_id_tail: String(walletCheckout.checkout_id).slice(-12) },
+        rid
+      );
+    }
     setWalletPaying(true);
     setMsg("");
     try {
       const res = await fetch("/api/subscription/wallet-checkout/complete", {
         method: "POST",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        headers: { "content-type": "application/json", "x-request-id": rid, ...getAuthHeaders() },
         body: JSON.stringify({ checkout_id: walletCheckout.checkout_id })
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -662,12 +763,21 @@ export default function SubscriptionPage() {
       if (!res.ok || !data.success) {
         throw new Error(data.detail || data.error || `支付确认失败 ${res.status}`);
       }
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug("sim_wallet_complete_ok", {
+          http_status: res.status,
+          wallet_balance_cents: typeof data.wallet_balance_cents === "number" ? data.wallet_balance_cents : null
+        }, rid);
+      }
       setMsg("余额已入账");
       setWalletCheckout(null);
       await loadMe();
       await refreshMe();
       setRechargeModalOpen(false);
     } catch (err) {
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug("sim_wallet_complete_error", { message: String(err instanceof Error ? err.message : err) }, rid);
+      }
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
       setWalletPaying(false);
@@ -683,18 +793,40 @@ export default function SubscriptionPage() {
     let didNavigateWallet = false;
     const wac = new AbortController();
     const wTimer = window.setTimeout(() => wac.abort(), 60_000);
+    const rid = newRechargeDebugRequestId();
+    if (rechargeDebugEnabled()) {
+      appendRechargeDebug(
+        "alipay_recharge_start",
+        {
+          amount_cents: parsed.cents,
+          wallet_balance_cents_before: typeof walletBalanceCents === "number" ? walletBalanceCents : null
+        },
+        rid
+      );
+    }
     setAlipayWalletLoading(true);
     setMsg("正在连接支付宝…页面打开后请用手机扫码完成充值。");
     setWalletCheckout(null);
     try {
       const res = await fetch("/api/subscription/recharge", {
         method: "POST",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        headers: { "content-type": "application/json", "x-request-id": rid, ...getAuthHeaders() },
         body: JSON.stringify({ amount_cents: parsed.cents }),
         credentials: "same-origin",
         signal: wac.signal
       });
       const text = await res.text();
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug(
+          "alipay_recharge_http",
+          {
+            http_status: res.status,
+            body_len: text.length,
+            body_preview: text.slice(0, 400).replace(/\s+/g, " ")
+          },
+          rid
+        );
+      }
       const data = (() => {
         try {
           return JSON.parse(text) as {
@@ -702,6 +834,8 @@ export default function SubscriptionPage() {
             pay_page_url?: string;
             out_trade_no?: string;
             amount_cents?: number;
+            error?: string;
+            detail?: string;
           };
         } catch {
           return {};
@@ -713,6 +847,18 @@ export default function SubscriptionPage() {
       const payUrl = typeof data.pay_page_url === "string" ? data.pay_page_url.trim() : "";
       if (!payUrl) throw new Error("收银台未返回有效支付链接，请稍后重试或联系客服");
       if (!data.out_trade_no) throw new Error("订单号缺失，请重试");
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug(
+          "alipay_recharge_order_ok",
+          {
+            http_status: res.status,
+            pay_url_summary: summarizePayUrl(payUrl),
+            out_trade_no_suffix: String(data.out_trade_no).slice(-14),
+            amount_cents: data.amount_cents ?? parsed.cents
+          },
+          rid
+        );
+      }
       try {
         const payload: WalletAlipayPendingPayload = {
           startedAt: Date.now(),
@@ -729,9 +875,19 @@ export default function SubscriptionPage() {
           navErr instanceof Error ? navErr.message : "无法跳转到支付宝收银台，请检查浏览器是否拦截了跳转。"
         );
       }
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug("alipay_recharge_navigate_assign", { pay_url_summary: summarizePayUrl(payUrl) }, rid);
+      }
       didNavigateWallet = true;
     } catch (err) {
       const name = err instanceof Error ? err.name : "";
+      if (rechargeDebugEnabled()) {
+        appendRechargeDebug(
+          "alipay_recharge_error",
+          { name: name || "unknown", message: String(err instanceof Error ? err.message : err) },
+          rid
+        );
+      }
       if (name === "AbortError") {
         setMsg("连接支付宝超时，请检查网络或稍后重试。");
       } else {
@@ -816,6 +972,72 @@ export default function SubscriptionPage() {
         ) : (
           <p className="mt-2 text-sm text-muted">请登录后查看余额、体验包余量与账单流水。</p>
         )}
+        {rechargeDebugUiReady && rechargeDebugEnabled() ? (
+          <details className="mt-5 rounded-lg border border-dashed border-line bg-canvas/40 p-3 text-left">
+            <summary className="cursor-pointer select-none text-sm font-medium text-ink">
+              充值/余额同步排查日志（本机 · {rechargeDebugLog.length} 条）
+            </summary>
+            <p className="mt-2 text-[10px] leading-relaxed text-muted">
+              与网关/编排器对齐：浏览器请求已带{" "}
+              <span className="font-mono text-[10px] text-ink">x-request-id</span>。生产开启：部署时设置{" "}
+              <span className="font-mono text-[10px] text-ink">NEXT_PUBLIC_RECHARGE_DEBUG_UI=1</span>
+              ；或控制台执行{" "}
+              <span className="font-mono text-[10px] text-ink">localStorage.setItem(&quot;recharge_debug_ui&quot;,&quot;1&quot;)</span>{" "}
+              后刷新本页。日志仅存本机 sessionStorage，不含 Cookie/Token。
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-line bg-surface px-2 py-1 text-xs font-medium text-ink hover:bg-fill"
+                onClick={() => {
+                  clearRechargeDebug();
+                  setRechargeDebugLog([]);
+                }}
+              >
+                清空
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-line bg-surface px-2 py-1 text-xs font-medium text-ink hover:bg-fill"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(JSON.stringify(rechargeDebugLog, null, 2));
+                    setMsg("排查日志已复制到剪贴板（可粘贴给技术支持）。");
+                  } catch {
+                    setMsg("复制失败，请展开下方文本手动复制。");
+                  }
+                }}
+              >
+                复制全部 JSON
+              </button>
+            </div>
+            <div className="mt-2 max-h-64 overflow-y-auto rounded-md border border-line/80 bg-surface/90 p-2 text-[10px] leading-snug text-ink">
+              {rechargeDebugLog.length === 0 ? (
+                <p className="text-muted">暂无记录；点击「立即支付」或等待同步轮询后会出现条目。</p>
+              ) : (
+                rechargeDebugLog.map((e, idx) => (
+                  <div
+                    key={`${e.ts}_${idx}_${e.step}`}
+                    className="border-t border-line/50 py-2 first:border-t-0 first:pt-0"
+                  >
+                    <div className="text-muted">{e.ts}</div>
+                    <div className="font-medium text-ink">
+                      {e.step}
+                      {e.requestId ? (
+                        <span className="ml-1 font-mono text-[9px] font-normal text-muted">rid={e.requestId}</span>
+                      ) : null}
+                    </div>
+                    {e.data ? (
+                      <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-all font-mono text-[9px] text-ink/90">
+                        {JSON.stringify(e.data, null, 2)}
+                      </pre>
+                    ) : null}
+                  </div>
+                ))
+              )}
+            </div>
+          </details>
+        ) : null}
       </section>
 
       <section className="mt-10 space-y-10">
