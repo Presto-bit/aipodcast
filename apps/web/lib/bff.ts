@@ -6,8 +6,18 @@ import { resolveOrchestratorBaseUrl } from "./orchestratorBase";
 /** HttpOnly 会话 Cookie，BFF 读取后转发为 Authorization: Bearer（与编排器会话 token 一致） */
 export const SESSION_COOKIE_NAME = "fym_session";
 
-/** 编排器可能因 SMTP/外部 IO 较慢；这些 BFF 路由不宜沿用默认 10s */
-export const ORCHESTRATOR_TIMEOUT_SLOW_UPSTREAM_MS = 60_000;
+/** 编排器可能因 SMTP / PG 慢查询 / 冷启动较慢；显式使用该常量的 BFF 与默认 fetch 超时共用 */
+export const ORCHESTRATOR_TIMEOUT_SLOW_UPSTREAM_MS = 120_000;
+
+/** 未传 `timeoutMs` 时的 BFF→编排器等待上限；可由环境变量覆盖（毫秒，1000～600000） */
+function defaultFetchOrchestratorTimeoutMs(): number {
+  const raw = (process.env.ORCHESTRATOR_FETCH_DEFAULT_TIMEOUT_MS || "").trim();
+  if (raw) {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 1000) return Math.min(n, 600_000);
+  }
+  return ORCHESTRATOR_TIMEOUT_SLOW_UPSTREAM_MS;
+}
 
 const DEFAULT_SESSION_MAX_AGE_SEC = 60 * 60 * 24 * 30;
 
@@ -206,8 +216,7 @@ export async function fetchOrchestrator(path: string, opts: FetchOrchestratorOpt
   const method = opts.method || "GET";
   const defaultPayload = opts.payload ?? "{}";
   const sse = opts.sse === true;
-  // 默认 10s 在生产易误判为「编排器挂了」；首页 /home-overview 等并行多路 GET 任一慢即 503
-  const timeoutMs = sse ? 0 : Math.max(1000, opts.timeoutMs ?? ORCHESTRATOR_TIMEOUT_SLOW_UPSTREAM_MS);
+  const timeoutMs = sse ? 0 : Math.max(1000, opts.timeoutMs ?? defaultFetchOrchestratorTimeoutMs());
   const maxAttempts =
     method === "GET" && opts.retryGetOnce !== false && !sse ? 2 : 1;
 
