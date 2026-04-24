@@ -72,7 +72,8 @@ services:
       dockerfile: services/orchestrator/Dockerfile
       pull: false
       args:
-        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+        # 经华为云 SWR 同步的 library/python，避免部分 Docker Hub mirror 解析 manifest 报 content size of zero
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/python:3.12-slim}
         USE_APT_MIRROR: ${USE_APT_MIRROR:-1}
     env_file:
       - .env.ai-native
@@ -117,7 +118,8 @@ services:
       dockerfile: workers/ai-worker/Dockerfile
       pull: false
       args:
-        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+        # 经华为云 SWR 同步的 library/python，避免部分 Docker Hub mirror 解析 manifest 报 content size of zero
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/python:3.12-slim}
         USE_APT_MIRROR: ${USE_APT_MIRROR:-1}
     env_file:
       - .env.ai-native
@@ -144,7 +146,8 @@ services:
       dockerfile: workers/media-worker/Dockerfile
       pull: false
       args:
-        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+        # 经华为云 SWR 同步的 library/python，避免部分 Docker Hub mirror 解析 manifest 报 content size of zero
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/python:3.12-slim}
         USE_APT_MIRROR: ${USE_APT_MIRROR:-1}
     env_file:
       - .env.ai-native
