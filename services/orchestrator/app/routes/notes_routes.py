@@ -598,6 +598,8 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             raise HTTPException(status_code=400, detail=msg) from e
         raise HTTPException(status_code=400, detail=msg) from e
 
+    rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
+
     def gen():
         for ev in iter_notes_answer_events(
             notebook=body.notebook.strip(),
@@ -606,6 +608,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             user_ref=user_ref,
             prepared_messages_sources=prepared,
             project_owner_user_uuid=project_owner,
+            request_id=rid,
         ):
             yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
@@ -616,6 +619,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Request-ID": rid,
         },
     )
 

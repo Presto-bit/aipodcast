@@ -299,18 +299,24 @@ export async function proxyJsonFromOrchestrator(path: string, opts: FetchOrchest
   try {
     const upstream = await fetchOrchestrator(path, opts);
     const text = await upstream.text();
+    const outboundRid =
+      (upstream.headers.get("x-request-id") || opts.requestId || "").trim() || "";
+    const ridHeaders: Record<string, string> = {};
+    if (outboundRid) ridHeaders["x-request-id"] = outboundRid;
     return new Response(text, {
       status: upstream.status,
-      headers: { "content-type": "application/json" }
+      headers: { "content-type": "application/json", ...ridHeaders }
     });
   } catch (err) {
+    const rid = (opts.requestId || "").trim();
     return Response.json(
       {
         success: false,
         error: "upstream_unreachable",
-        detail: describeOrchestratorUnreachable(err)
+        detail: describeOrchestratorUnreachable(err),
+        ...(rid ? { requestId: rid } : {})
       },
-      { status: 503 }
+      { status: 503, ...(rid ? { headers: { "x-request-id": rid } } : {}) }
     );
   }
 }
@@ -395,28 +401,38 @@ export async function proxySsePostFromOrchestrator(
     });
     const ct = (upstream.headers.get("content-type") || "").toLowerCase();
     const isEventStream = ct.includes("text/event-stream");
+    const outboundRid =
+      (upstream.headers.get("x-request-id") || opts.requestId || "").trim() || "";
+    const ridHeaders: Record<string, string> = {};
+    if (outboundRid) ridHeaders["x-request-id"] = outboundRid;
     /** 校验/鉴权失败等常为 JSON；勿伪装成 SSE，否则前端无法按 JSON 解析 detail */
     if (!upstream.ok || !isEventStream) {
       const text = await upstream.text();
       const outCt = ct.includes("application/json") ? "application/json" : "text/plain; charset=utf-8";
-      return new Response(text, { status: upstream.status, headers: { "content-type": outCt } });
+      return new Response(text, {
+        status: upstream.status,
+        headers: { "content-type": outCt, ...ridHeaders }
+      });
     }
     return new Response(upstream.body, {
       status: upstream.status,
       headers: {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
-        connection: "keep-alive"
+        connection: "keep-alive",
+        ...ridHeaders
       }
     });
   } catch (err) {
+    const rid = (opts.requestId || "").trim();
     return Response.json(
       {
         success: false,
         error: "upstream_unreachable",
-        detail: describeOrchestratorUnreachable(err)
+        detail: describeOrchestratorUnreachable(err),
+        ...(rid ? { requestId: rid } : {})
       },
-      { status: 503 }
+      { status: 503, ...(rid ? { headers: { "x-request-id": rid } } : {}) }
     );
   }
 }

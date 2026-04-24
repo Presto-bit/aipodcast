@@ -13,6 +13,7 @@ from .note_rag_service import NOTE_LAYERED_RAG, build_layered_notes_context
 from .provider_router import (
     invoke_llm_chat_messages_stream_iter,
     invoke_llm_chat_messages_with_minimax_fallback,
+    script_provider,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,56 @@ def _prepare_notes_ask_messages(
     return messages, sources
 
 
+def _notes_ask_stream_error_event(exc: BaseException, *, request_id: str | None) -> dict[str, Any]:
+    """SSE error 事件：便于前端与运维对照日志（勿写入密钥）。"""
+    raw = str(exc).strip() or type(exc).__name__
+    if raw.startswith("text_provider_") and raw.endswith("_config_missing"):
+        code = raw[:200]
+    elif raw in (
+        "empty_answer",
+        "minimax_api_key_missing",
+        "openai_compatible_empty_content",
+        "chat_messages_empty",
+        "upstream_error",
+    ):
+        code = raw
+    else:
+        code = type(exc).__name__
+
+    if raw == "empty_answer":
+        message = (
+            "模型未返回有效正文，请换一个问题或稍后重试；若使用推理类文本模型，可尝试非推理版本或 TEXT_PROVIDER=minimax。"
+        )
+    else:
+        message = raw
+
+    detail_parts = [f"{type(exc).__name__}: {raw}"]
+    cause = exc.__cause__
+    if cause is not None:
+        cs = str(cause).strip()
+        if cs:
+            detail_parts.append(f"cause={type(cause).__name__}: {cs[:480]}")
+    detail = " | ".join(detail_parts)[:1500]
+
+    text_prov = script_provider()
+    tp_env = (os.getenv("TEXT_PROVIDER") or "").strip() or "（未设置，默认 deepseek）"
+    ev: dict[str, Any] = {
+        "type": "error",
+        "message": message,
+        "code": code[:200],
+        "detail": detail,
+        "textProvider": text_prov,
+        "hint": (
+            f"编排器日志搜索：notes_ask_stream_failed；环境 TEXT_PROVIDER={tp_env}，当前路由={text_prov}。"
+            "公网 504 多为 CDN/Nginx 回源超时，见仓库 deploy/nginx 与 DEPLOYMENT.md。"
+        ),
+    }
+    rid = (request_id or "").strip()
+    if rid:
+        ev["requestId"] = rid
+    return ev
+
+
 def iter_notes_answer_events(
     *,
     notebook: str,
@@ -141,11 +192,13 @@ def iter_notes_answer_events(
     api_key: str | None = None,
     prepared_messages_sources: tuple[list[dict[str, str]], list[dict[str, Any]]] | None = None,
     project_owner_user_uuid: str | None = None,
+    request_id: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """SSE 事件：chunk / done / error。
 
     若调用方已通过 `_prepare_notes_ask_messages` 得到 messages/sources，可传入
     `prepared_messages_sources`，避免与校验阶段重复执行向量检索（此前流式接口会构建两遍上下文）。
+    `request_id` 用于 error 事件与日志关联（通常取 X-Request-ID）。
     """
     if prepared_messages_sources is not None:
         messages, sources = prepared_messages_sources
@@ -173,11 +226,13 @@ def iter_notes_answer_events(
         sources = filter_sources_by_citations(full, sources)
         yield {"type": "done", "sources": sources, "traceId": None}
     except Exception as exc:
-        logger.warning("notes_ask_stream_failed: %s", exc)
-        msg = str(exc)
-        if msg == "empty_answer":
-            msg = "模型未返回有效正文，请换一个问题或稍后重试；若使用推理类文本模型，可尝试非推理版本或 TEXT_PROVIDER=minimax。"
-        yield {"type": "error", "message": msg}
+        logger.warning(
+            "notes_ask_stream_failed request_id=%s: %s",
+            (request_id or "").strip() or "-",
+            exc,
+            exc_info=True,
+        )
+        yield _notes_ask_stream_error_event(exc, request_id=request_id)
 
 
 def legacy_build_notes_qa_context(

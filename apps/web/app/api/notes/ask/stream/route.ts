@@ -1,5 +1,9 @@
 import { NextRequest } from "next/server";
-import { incomingAuthHeadersFrom, proxySsePostFromOrchestrator } from "../../../../../lib/bff";
+import {
+  getOrCreateRequestId,
+  incomingAuthHeadersFrom,
+  proxySsePostFromOrchestrator
+} from "../../../../../lib/bff";
 
 const NOTES_ASK_UPSTREAM_TIMEOUT_MS = 0;
 
@@ -8,9 +12,11 @@ export const maxDuration = 180;
 
 export async function POST(req: NextRequest) {
   const raw = await req.text();
+  const requestId = getOrCreateRequestId(req);
   return proxySsePostFromOrchestrator("/api/v1/notes/ask/stream", {
     body: raw || "{}",
     timeoutMs: NOTES_ASK_UPSTREAM_TIMEOUT_MS,
+    requestId,
     headers: { "content-type": "application/json", ...incomingAuthHeadersFrom(req) }
   });
 }

@@ -31,7 +31,11 @@ const NotesAskAnswerDisplay = dynamic(
   { loading: () => <p className="text-muted">加载中…</p> }
 );
 import { createJob } from "../../lib/api";
-import { apiErrorMessage, formatNotesAskStreamError } from "../../lib/apiError";
+import {
+  apiErrorMessage,
+  formatNotesAskStreamError,
+  type NotesAskStreamErrorMeta
+} from "../../lib/apiError";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
 import { rememberJobId } from "../../lib/jobRecent";
 import { buildReferenceJobFields, type ReferenceRagMode } from "../../lib/jobReferencePayload";
@@ -72,7 +76,15 @@ import type { WorkItem } from "../../lib/worksTypes";
 type NotesAskStreamEvent =
   | { type: "chunk"; text: string }
   | { type: "done"; sources?: unknown; traceId?: string | null }
-  | { type: "error"; message: string };
+  | {
+      type: "error";
+      message: string;
+      code?: string;
+      detail?: string;
+      requestId?: string;
+      textProvider?: string;
+      hint?: string;
+    };
 
 type NotesAskTurn = {
   id: string;
@@ -84,6 +96,13 @@ type NotesAskTurn = {
   /** 引导气泡：可点击填入下方输入框 */
   hintSuggestions?: string[];
 };
+
+function notesAskClientRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
 
 type NoteItem = {
   noteId: string;
@@ -882,12 +901,17 @@ export default function NotesPage() {
         try {
           const body: Record<string, unknown> = { notebook: nb, note_ids: ids };
           if (sharedBrowse?.ownerUserId) body.sharedFromOwnerUserId = sharedBrowse.ownerUserId;
+          const hintsRid = notesAskClientRequestId();
           const res = await fetch("/api/notes/ask/hints", {
             method: "POST",
             credentials: "same-origin",
             cache: "no-store",
             signal: ac.signal,
-            headers: { "content-type": "application/json", ...getAuthHeaders() },
+            headers: {
+              "content-type": "application/json",
+              "x-request-id": hintsRid,
+              ...getAuthHeaders()
+            },
             body: JSON.stringify(body)
           });
           const rawText = await res.text();
@@ -909,7 +933,16 @@ export default function NotesPage() {
             const fallback =
               rawText.trim().slice(0, 400) ||
               `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
-            throw new Error(formatNotesAskStreamError(apiErrorMessage(data, fallback)));
+            const ridOut = res.headers.get("x-request-id")?.trim() || hintsRid;
+            const hintsMeta: NotesAskStreamErrorMeta = {
+              httpStatus: res.status,
+              requestId: ridOut,
+              rawPreview:
+                !rawText.trim().startsWith("{") && rawText.trim().length > 0
+                  ? rawText.trim().slice(0, 900)
+                  : undefined
+            };
+            throw new Error(formatNotesAskStreamError(apiErrorMessage(data, fallback), hintsMeta));
           }
           const sug: string[] = [];
           if (Array.isArray(data.suggestions)) {
@@ -2296,11 +2329,16 @@ export default function NotesPage() {
       ];
     });
     setNotesAskQuestion("");
+    const streamRid = notesAskClientRequestId();
     try {
       const res = await fetch("/api/notes/ask/stream", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": streamRid,
+          ...getAuthHeaders()
+        },
         body: JSON.stringify({
           notebook: nb,
           note_ids: draftSelectedNoteIds,
@@ -2314,6 +2352,7 @@ export default function NotesPage() {
           success?: boolean;
           detail?: unknown;
           error?: string;
+          requestId?: string;
         };
         if (rawText.trim()) {
           try {
@@ -2325,12 +2364,30 @@ export default function NotesPage() {
         const fallback =
           rawText.trim().slice(0, 400) ||
           `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
-        throw new Error(formatNotesAskStreamError(apiErrorMessage(data, fallback)));
+        const ridOut =
+          res.headers.get("x-request-id")?.trim() ||
+          (typeof data.requestId === "string" ? data.requestId.trim() : "") ||
+          streamRid;
+        const streamMeta: NotesAskStreamErrorMeta = {
+          httpStatus: res.status,
+          requestId: ridOut,
+          rawPreview:
+            !rawText.trim().startsWith("{") && rawText.trim().length > 0
+              ? rawText.trim().slice(0, 900)
+              : undefined
+        };
+        throw new Error(formatNotesAskStreamError(apiErrorMessage(data, fallback), streamMeta));
       }
       const ct = (res.headers.get("content-type") || "").toLowerCase();
       if (!ct.includes("text/event-stream") || !res.body) {
         const t = await res.text();
-        throw new Error(formatNotesAskStreamError(t || "未返回流式响应"));
+        throw new Error(
+          formatNotesAskStreamError(t || "未返回流式响应", {
+            httpStatus: res.status,
+            requestId: res.headers.get("x-request-id")?.trim() || streamRid,
+            rawPreview: t.trim().slice(0, 900) || undefined
+          })
+        );
       }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -2410,7 +2467,13 @@ export default function NotesPage() {
               } else if (ev.type === "error") {
                 flushChunksNow();
                 throw new Error(
-                  formatNotesAskStreamError(String(ev.message || "").trim() || "问答失败")
+                  formatNotesAskStreamError(String(ev.message || "").trim() || "问答失败", {
+                    code: ev.code,
+                    detail: ev.detail,
+                    requestId: ev.requestId,
+                    textProvider: ev.textProvider,
+                    hint: ev.hint
+                  })
                 );
               }
             }
@@ -3531,8 +3594,12 @@ export default function NotesPage() {
               <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
                 {notesAskError || notesAskHintsError ? (
                   <div className="shrink-0 space-y-1 text-xs text-danger-ink" role="alert">
-                    {notesAskError ? <p>{notesAskError}</p> : null}
-                    {notesAskHintsError ? <p>{notesAskHintsError}</p> : null}
+                    {notesAskError ? (
+                      <p className="whitespace-pre-wrap break-words">{notesAskError}</p>
+                    ) : null}
+                    {notesAskHintsError ? (
+                      <p className="whitespace-pre-wrap break-words">{notesAskHintsError}</p>
+                    ) : null}
                   </div>
                 ) : null}
                 <div
