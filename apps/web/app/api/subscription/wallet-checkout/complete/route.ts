@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { allowWalletMoneyPostPerIp, clientIpFromNextRequest } from "../../../../../lib/authRouteRateLimit";
-import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../../../lib/bff";
+import {
+  incomingAuthHeadersFrom,
+  ORCHESTRATOR_TIMEOUT_SLOW_UPSTREAM_MS,
+  proxyJsonFromOrchestrator
+} from "../../../../../lib/bff";
 import { paymentWriteOriginAllowed } from "../../../../../lib/paymentWriteOrigin";
 
 export async function POST(req: NextRequest) {
@@ -16,6 +20,7 @@ export async function POST(req: NextRequest) {
     method: "POST",
     payload: raw || "{}",
     body: raw || "{}",
+    timeoutMs: ORCHESTRATOR_TIMEOUT_SLOW_UPSTREAM_MS,
     headers: {
       "content-type": "application/json",
       ...incomingAuthHeadersFrom(req)

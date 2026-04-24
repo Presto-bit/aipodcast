@@ -1236,10 +1236,13 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                         </div>
                         <div className="flex flex-col rounded-lg border border-line bg-fill/70 p-2.5">
                           <p className="mb-1.5 text-xs font-medium text-ink">本地上传</p>
+                          <p className="mb-1.5 text-[11px] leading-snug text-muted">
+                            支持 txt / md / pdf / Word / epub / 网页 html；视频文件无法识别正文。
+                          </p>
                           <input
                             ref={uploadInputRef}
                             type="file"
-                            accept=".txt,.md,.markdown,.pdf,.doc,.docx,.epub"
+                            accept=".txt,.md,.markdown,.pdf,.doc,.docx,.epub,.html,.htm,.xhtml"
                             className="hidden"
                             onChange={(e) => void uploadNoteFile(e.target.files?.[0] || null)}
                             disabled={uploadBusy}

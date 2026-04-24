@@ -3894,7 +3894,7 @@ export default function NotesPage() {
             </div>
             <div className="my-4 border-t border-line" />
             <div className="space-y-2">
-              <p className="text-xs text-muted">上传本地文件</p>
+              <p className="text-xs text-muted">上传本地文件（含 .html 网页导出；视频类不支持）</p>
               <input
                 ref={addNoteFileRef}
                 type="file"

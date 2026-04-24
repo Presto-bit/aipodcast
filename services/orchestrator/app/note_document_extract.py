@@ -4,6 +4,7 @@
 - PDF：优先 PyMuPDF（fitz），失败或几乎无字时回退 PyPDF2。
 - DOCX：优先 python-docx，失败回退 word/document.xml 正则。
 - 纯文本：charset-normalizer 探测编码，失败再用 utf-8 ignore。
+- HTML/HTM/XHTML：BeautifulSoup 去脚本样式与嵌入媒体后抽取可见文本。
 - EPUB：临时文件 + content_parser.parse_epub（避免重复实现 spine 逻辑）。
 - DOC：临时文件 + antiword / catdoc / soffice（与旧逻辑一致）。
 """
@@ -175,6 +176,40 @@ def _parse_doc_path(path: str) -> tuple[str, bool]:
     return "", False
 
 
+def _extract_html_from_bytes(data: bytes) -> NoteParseResult:
+    """从本地保存的网页（HTML/XHTML）抽取可见正文，与 parse_url 的 DOM 清洗思路对齐。"""
+    if not data:
+        return NoteParseResult(text="", status="empty", engine="html", detail="空文件")
+    try:
+        from bs4 import BeautifulSoup
+    except Exception as exc:  # pragma: no cover
+        logger.warning("BeautifulSoup unavailable: %s", exc)
+        return NoteParseResult(
+            text="",
+            status="error",
+            engine="html",
+            detail="HTML 解析依赖不可用",
+        )
+    raw, _enc = _decode_plain_bytes(data)
+    soup = BeautifulSoup(raw, "html.parser")
+    for tag in soup(["script", "style", "noscript", "template"]):
+        tag.decompose()
+    # 嵌入媒体/控件无可靠文本，移除以免污染或误把 URL 当正文
+    for tag in soup.find_all(["iframe", "object", "embed", "video", "audio", "svg", "canvas"]):
+        tag.decompose()
+    text_out = soup.get_text(separator="\n", strip=True)
+    lines = [ln.strip() for ln in text_out.split("\n") if ln.strip()]
+    content = "\n".join(lines)
+    if content.strip():
+        return NoteParseResult(text=content.strip(), status="ok", engine="html-bs4", detail=None)
+    return NoteParseResult(
+        text="",
+        status="empty",
+        engine="html-bs4",
+        detail="HTML 中未解析出可见文本（可能为框架页或需登录内容）",
+    )
+
+
 def extract_pdf_from_bytes(data: bytes) -> NoteParseResult:
     text, ok = _pdf_pymupdf(data)
     engine = "pymupdf"
@@ -269,6 +304,9 @@ def extract_text_from_bytes(data: bytes, ext: str) -> NoteParseResult:
                 os.unlink(path)
             except OSError:
                 pass
+
+    if e in ("html", "htm", "xhtml"):
+        return _extract_html_from_bytes(data)
 
     # 未知扩展名：按纯文本尝试
     text, enc = _decode_plain_bytes(data)

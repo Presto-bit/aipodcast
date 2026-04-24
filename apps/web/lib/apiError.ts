@@ -9,6 +9,10 @@ export function apiErrorMessage(data: unknown, fallback: string): string {
   const o = data as Record<string, unknown>;
   if (typeof o.error === "string" && o.error.trim()) {
     const code = o.error.trim();
+    // BFF 在 upstream_unreachable 时会把 describeOrchestratorUnreachable 写入 detail（含 ORCHESTRATOR_URL 等），优先展示便于排障
+    if (code === "upstream_unreachable" && typeof o.detail === "string" && o.detail.trim()) {
+      return o.detail.trim();
+    }
     return KNOWN_ERROR_CODES[code] ?? code;
   }
   if (typeof o.detail === "string" && o.detail.trim()) return o.detail.trim();

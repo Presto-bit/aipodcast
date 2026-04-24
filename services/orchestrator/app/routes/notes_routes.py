@@ -16,6 +16,7 @@ from ..config import settings
 from ..legacy_bridge import parse_url_content
 from ..note_constants import (
     ALLOWED_NOTE_EXT,
+    VIDEO_NOTE_EXT,
     MAX_NOTE_UPLOAD_BYTES,
     MAX_URL_IMPORT_CHARS,
     NOTE_PREVIEW_TEXT_MAX,
@@ -163,6 +164,9 @@ def _mime_for_note_ext(ext: str) -> str:
         "txt": "text/plain; charset=utf-8",
         "md": "text/markdown; charset=utf-8",
         "markdown": "text/markdown; charset=utf-8",
+        "html": "text/html; charset=utf-8",
+        "htm": "text/html; charset=utf-8",
+        "xhtml": "application/xhtml+xml; charset=utf-8",
     }.get(e, "application/octet-stream")
 
 
@@ -186,6 +190,11 @@ def _persist_note_upload(
     if "." not in raw_name:
         raw_name = f"{raw_name}.txt"
     ext = raw_name.rsplit(".", 1)[1].lower()
+    if ext in VIDEO_NOTE_EXT:
+        raise HTTPException(
+            status_code=400,
+            detail="视频类文件暂不支持识别正文，请改用网页链接、HTML 导出或文稿类文件",
+        )
     if ext not in ALLOWED_NOTE_EXT:
         raise HTTPException(status_code=400, detail="笔记格式不支持")
     if len(data) > MAX_NOTE_UPLOAD_BYTES:

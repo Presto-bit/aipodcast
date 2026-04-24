@@ -8,12 +8,78 @@ import requests
 import zipfile
 import re
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
+
 from bs4 import BeautifulSoup
 from typing import Dict, Any
+
+from app.url_fetch_hints import actionable_hint_for_failed_url
+
 from .config import TIMEOUTS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# 常见 CMS / 博客 / 文档站正文容器（按选择器尝试，取长文本）
+_MAIN_CONTENT_SELECTORS: tuple[str, ...] = (
+    "article",
+    "main",
+    '[role="main"]',
+    "#article-root",
+    "#article",
+    "#content",
+    "#main-content",
+    "#main",
+    ".article-content",
+    ".post-content",
+    ".entry-content",
+    ".markdown-body",
+    "#cnblogs_post_body",
+    ".RichText",
+    ".note-content",
+    ".article__content",
+    "div[itemprop='articleBody']",
+)
+
+
+def _normalize_visible_lines(text: str) -> str:
+    lines = [line.strip() for line in (text or "").split("\n") if line.strip()]
+    return "\n".join(lines)
+
+
+def _strip_script_style(soup: BeautifulSoup) -> None:
+    for tag in soup(["script", "style", "noscript", "template"]):
+        tag.decompose()
+
+
+def _strip_chrome_layout(soup: BeautifulSoup) -> None:
+    for tag in soup(["nav", "footer", "header"]):
+        tag.decompose()
+
+
+def _longest_main_like_text(soup: BeautifulSoup) -> str:
+    best = ""
+    for sel in _MAIN_CONTENT_SELECTORS:
+        try:
+            el = soup.select_one(sel)
+        except Exception:
+            continue
+        if not el:
+            continue
+        chunk = _normalize_visible_lines(el.get_text(separator="\n", strip=True))
+        if len(chunk) > len(best):
+            best = chunk
+    return best
+
+
+def _referer_for_url(url: str) -> str:
+    try:
+        p = urlparse(url)
+        if p.scheme and p.netloc:
+            return f"{p.scheme}://{p.netloc}/"
+    except Exception:
+        pass
+    return "https://www.google.com/"
 
 
 class ContentParser:
@@ -33,46 +99,63 @@ class ContentParser:
         logs.append(f"开始解析网址: {url}")
 
         try:
-            # 发送 HTTP 请求，使用更真实的浏览器请求头
+            # 发送 HTTP 请求，使用更真实的浏览器请求头；Referer 与目标站同源，减少部分站点误拦
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0',
-                'Referer': 'https://www.google.com/',  # 添加 Referer，伪装成从搜索引擎来的
-                'DNT': '1'
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "cross-site",
+                "Sec-Fetch-User": "?1",
+                "Cache-Control": "max-age=0",
+                "Referer": _referer_for_url(url),
+                "DNT": "1",
             }
 
-            # 创建 session 以保持 cookies
             session = requests.Session()
             session.headers.update(headers)
 
             response = session.get(url, timeout=TIMEOUTS["url_parsing"], allow_redirects=True)
             response.raise_for_status()
-            response.encoding = response.apparent_encoding
+            response.encoding = response.apparent_encoding or "utf-8"
 
             logs.append(f"成功获取网页内容，状态码: {response.status_code}")
 
-            # 使用 BeautifulSoup 解析 HTML
-            soup = BeautifulSoup(response.text, 'html.parser')
+            soup = BeautifulSoup(response.text, "html.parser")
+            _strip_script_style(soup)
+            main_like = _longest_main_like_text(soup)
 
-            # 移除 script 和 style 标签
-            for script in soup(['script', 'style', 'nav', 'footer', 'header']):
-                script.decompose()
+            soup_full = BeautifulSoup(response.text, "html.parser")
+            _strip_script_style(soup_full)
+            _strip_chrome_layout(soup_full)
+            full_text = _normalize_visible_lines(soup_full.get_text(separator="\n", strip=True))
 
-            # 提取文本内容
-            text = soup.get_text(separator='\n', strip=True)
+            # 若正文区域明显长于「去壳后全文」的一定比例，优先用正文区（常见博客/新闻）
+            if main_like and len(main_like) >= max(200, int(len(full_text) * 0.15)):
+                content = main_like
+                logs.append("使用正文区选择器抽取（main/article 等）")
+            else:
+                content = full_text
+                logs.append("使用整页去壳文本")
 
-            # 清理多余的空行
-            lines = [line.strip() for line in text.split('\n') if line.strip()]
-            content = '\n'.join(lines)
+            if not (content or "").strip():
+                hint = actionable_hint_for_failed_url(url, error_code=None, upstream_error="empty_body")
+                logs.append("抽取结果为空")
+                return {
+                    "success": False,
+                    "error": "页面中未解析出可见正文",
+                    "hint": hint,
+                    "logs": logs,
+                    "source": "url",
+                    "error_code": "empty_body",
+                }
 
             logs.append(f"成功提取文本，共 {len(content)} 字符")
 
@@ -81,48 +164,57 @@ class ContentParser:
                 "content": content,
                 "logs": logs,
                 "source": "url",
-                "url": url
+                "url": url,
             }
 
         except requests.Timeout:
             error_msg = f"网页解析超时（{TIMEOUTS['url_parsing']}秒）"
             logs.append(f"错误: {error_msg}")
             logger.error(error_msg)
+            hint = actionable_hint_for_failed_url(url, error_code="timeout", upstream_error=error_msg)
             return {
                 "success": False,
                 "error": error_msg,
+                "hint": hint,
                 "logs": logs,
-                "source": "url"
+                "source": "url",
+                "error_code": "timeout",
             }
 
         except requests.RequestException as e:
-            # 检查是否是 403 Forbidden 错误
-            if "403" in str(e) or "Forbidden" in str(e):
-                error_msg = f"该网站拒绝了访问请求（403 Forbidden）。这通常是因为网站的反爬虫策略限制了服务器访问。\n\n💡 建议：请复制网页文本内容，直接粘贴到「话题文本」输入框中。"
+            err_s = str(e)
+            if "403" in err_s or "Forbidden" in err_s:
+                error_msg = "该网站拒绝了访问请求（403 Forbidden），常见原因为反爬或需登录。"
                 logs.append(f"访问被拒绝: {url}")
-                logger.warning(f"403 Forbidden: {url}")
+                logger.warning("403 Forbidden: %s", url)
+                code = "403"
             else:
-                error_msg = f"网页请求失败: {str(e)}"
+                error_msg = f"网页请求失败: {err_s}"
                 logs.append(f"错误: {error_msg}")
                 logger.error(error_msg)
+                code = "403" if "403" in err_s else "network_error"
 
+            hint = actionable_hint_for_failed_url(url, error_code=code, upstream_error=err_s)
             return {
                 "success": False,
                 "error": error_msg,
+                "hint": hint,
                 "logs": logs,
                 "source": "url",
-                "error_code": "403" if "403" in str(e) else "network_error"
+                "error_code": code,
             }
 
         except Exception as e:
             error_msg = f"网页解析失败: {str(e)}"
             logs.append(f"错误: {error_msg}")
             logger.error(error_msg)
+            hint = actionable_hint_for_failed_url(url, error_code=None, upstream_error=str(e))
             return {
                 "success": False,
                 "error": error_msg,
+                "hint": hint,
                 "logs": logs,
-                "source": "url"
+                "source": "url",
             }
 
     def parse_pdf(self, pdf_path: str) -> Dict[str, Any]:

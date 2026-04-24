@@ -303,12 +303,12 @@ export async function proxyJsonFromOrchestrator(path: string, opts: FetchOrchest
       status: upstream.status,
       headers: { "content-type": "application/json" }
     });
-  } catch {
+  } catch (err) {
     return Response.json(
       {
         success: false,
         error: "upstream_unreachable",
-        detail: "orchestrator request failed"
+        detail: describeOrchestratorUnreachable(err)
       },
       { status: 503 }
     );
