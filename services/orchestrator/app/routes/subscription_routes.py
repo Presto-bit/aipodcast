@@ -32,6 +32,10 @@ from ..fyv_shared.payment_wallet_rate_limit import (
 
 _log = logging.getLogger(__name__)
 
+# apply_payment_event 在 DB 层失败时可能返回 payment_event_tx_failed（旧）或 transaction_exception（真实异常）；
+# 二者均可能由瞬时错误引起，对账路径上对二者都做退避重试。
+_WALLET_RECONCILE_APPLY_RETRY_REASONS = frozenset({"payment_event_tx_failed", "transaction_exception"})
+
 router = APIRouter(prefix="/api/v1/subscription", tags=["subscription"], dependencies=[Depends(verify_internal_signature)])
 
 
@@ -374,7 +378,7 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
         if ok:
             ok_apply = True
             break
-        if last_reason != "payment_event_tx_failed":
+        if last_reason not in _WALLET_RECONCILE_APPLY_RETRY_REASONS:
             _log.error("alipay wallet reconcile apply failed out_trade_no=%s reason=%s", out_trade_no, last_reason)
             raise HTTPException(status_code=500, detail=last_reason or "apply_failed")
         ex2 = models.get_payment_order_by_event_id(out_trade_no)
