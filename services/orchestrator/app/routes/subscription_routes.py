@@ -1,6 +1,7 @@
 import logging
 import os
 import secrets
+import time
 from datetime import date, datetime, time as dt_time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -346,29 +347,50 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
 
     trade_no = str(qresp.get("trade_no") or "").strip()
     paid_at = parse_alipay_notify_time(qresp.get("send_pay_date") or qresp.get("gmt_payment"))
-    ok, reason, _row = auth_bridge.apply_payment_event(
-        out_trade_no,
-        phone,
-        "free",
-        None,
-        "paid",
-        notify_cents,
-        "alipay",
-        channel="alipay",
-        provider_order_id=trade_no or None,
-        currency="CNY",
-        paid_at=paid_at,
-        product_snapshot={
-            "kind": "wallet_topup",
-            "topup_cents": notify_cents,
-            "source": "alipay_page_wallet",
-            "amount_cents": notify_cents,
-        },
-        source="alipay_trade_query_reconcile",
-    )
-    if not ok:
-        _log.error("alipay wallet reconcile apply failed out_trade_no=%s reason=%s", out_trade_no, reason)
-        raise HTTPException(status_code=500, detail=reason or "apply_failed")
+    ok_apply = False
+    last_reason = ""
+    for attempt in range(5):
+        ok, reason, _row = auth_bridge.apply_payment_event(
+            out_trade_no,
+            phone,
+            "free",
+            None,
+            "paid",
+            notify_cents,
+            "alipay",
+            channel="alipay",
+            provider_order_id=trade_no or None,
+            currency="CNY",
+            paid_at=paid_at,
+            product_snapshot={
+                "kind": "wallet_topup",
+                "topup_cents": notify_cents,
+                "source": "alipay_page_wallet",
+                "amount_cents": notify_cents,
+            },
+            source="alipay_trade_query_reconcile",
+        )
+        last_reason = str(reason or "").strip()
+        if ok:
+            ok_apply = True
+            break
+        if last_reason != "payment_event_tx_failed":
+            _log.error("alipay wallet reconcile apply failed out_trade_no=%s reason=%s", out_trade_no, last_reason)
+            raise HTTPException(status_code=500, detail=last_reason or "apply_failed")
+        ex2 = models.get_payment_order_by_event_id(out_trade_no)
+        st2 = str((ex2 or {}).get("status") or "").strip().lower()
+        if ex2 and st2 in ("paid", "success", "succeeded", "captured"):
+            ok_apply = True
+            break
+        if attempt < 4:
+            time.sleep(0.05 * (2**attempt))
+    if not ok_apply:
+        _log.error(
+            "alipay wallet reconcile apply failed after retries out_trade_no=%s reason=%s",
+            out_trade_no,
+            last_reason,
+        )
+        raise HTTPException(status_code=500, detail=last_reason or "apply_failed")
     models.alipay_page_delete_checkout_session(out_trade_no)
     bal = models.wallet_balance_cents_for_phone(phone)
     _log.info("alipay wallet reconcile applied out_trade_no=%s cents=%s balance=%s", out_trade_no, notify_cents, bal)

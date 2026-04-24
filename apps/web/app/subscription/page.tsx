@@ -469,6 +469,8 @@ export default function SubscriptionPage() {
     async (outTradeNo: string) => {
       const otn = String(outTradeNo || "").trim();
       if (!otn) return;
+      if (reconcileAlipayInFlightRef.current) return;
+      reconcileAlipayInFlightRef.current = true;
       try {
         const res = await fetch("/api/subscription/reconcile-alipay-wallet", {
           method: "POST",
@@ -503,12 +505,16 @@ export default function SubscriptionPage() {
           undefined,
           user
         );
+      } finally {
+        reconcileAlipayInFlightRef.current = false;
       }
     },
     [getAuthHeaders, user]
   );
   const reconcileAlipayWalletTopupRef = useRef(reconcileAlipayWalletTopup);
   reconcileAlipayWalletTopupRef.current = reconcileAlipayWalletTopup;
+  /** 避免 Strict Mode / URL 回跳与轮询同时触发多笔并行对账，引发库侧竞争 */
+  const reconcileAlipayInFlightRef = useRef(false);
 
   useEffect(() => {
     setRechargeDebugUiReady(true);

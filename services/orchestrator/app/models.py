@@ -7021,6 +7021,12 @@ def process_payment_event_transaction(
             conn.commit()
             return True
     except Exception:
+        logger.exception(
+            "process_payment_event_transaction failed event_id=%s phone=%s status=%s",
+            (event_id or "").strip()[:80],
+            (phone or "").strip()[:24],
+            str(status or "")[:32],
+        )
         return False
 
 
