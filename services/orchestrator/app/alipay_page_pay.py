@@ -297,13 +297,19 @@ def query_alipay_trade_for_page_pay(
 
     if timeout_s is None or timeout_s <= 0:
         return _run()
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    # 勿用 with ThreadPoolExecutor：__exit__ 会 shutdown(wait=True)，超时后子线程仍卡在 HTTPS 时会拖死整请求 → 反代 504。
+    pool: ThreadPoolExecutor | None = None
+    try:
+        pool = ThreadPoolExecutor(max_workers=1)
         fut = pool.submit(_run)
         try:
             return fut.result(timeout=float(timeout_s))
         except FuturesTimeoutError:
             _log.warning("alipay trade query timed out out_trade_no=%s timeout_s=%s", oid, timeout_s)
             return "rpc_error", {}
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=False)
 
 
 def verify_notify_params(cfg: AlipayPagePayConfig, params: dict[str, str], signature: str) -> bool:

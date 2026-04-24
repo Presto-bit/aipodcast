@@ -498,6 +498,9 @@ export default function SubscriptionPage() {
           undefined,
           user
         );
+        if (res.ok && data.detail === "reconcile_apply_pending") {
+          setMsg("支付已成功，余额正在入账（系统繁忙时可能需多试几次）；请稍候或刷新本页。");
+        }
       } catch (e) {
         appendRechargeDebug(
           "alipay_wallet_reconcile_err",
@@ -509,7 +512,7 @@ export default function SubscriptionPage() {
         reconcileAlipayInFlightRef.current = false;
       }
     },
-    [getAuthHeaders, user]
+    [getAuthHeaders, user, setMsg]
   );
   const reconcileAlipayWalletTopupRef = useRef(reconcileAlipayWalletTopup);
   reconcileAlipayWalletTopupRef.current = reconcileAlipayWalletTopup;
