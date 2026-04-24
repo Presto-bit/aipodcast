@@ -928,23 +928,23 @@ def _pg_revive_user_with_credentials(
         conn.close()
 
 
-def _pg_delete_user(phone: str) -> bool:
+def _pg_hard_delete_user(*, phone: str = "", user_id: str = "") -> bool:
+    """从 users 表物理删除一行；子表依赖 ON DELETE CASCADE / SET NULL。"""
     if not _pg_available():
+        return False
+    ph = (phone or "").strip()
+    uid = (user_id or "").strip()
+    if not ph and not uid:
         return False
     conn = psycopg2.connect(_pg_dsn())
     try:
         cur = conn.cursor()
-        # 避免长时间等行锁导致 nginx/网关 504：尽快失败由接口返回 400 而非挂死
         cur.execute("SET LOCAL lock_timeout = '12s'")
         cur.execute("SET LOCAL statement_timeout = '25s'")
-        cur.execute(
-            """
-            UPDATE users
-            SET account_status = 'deleted', deleted_at = NOW(), updated_at = NOW()
-            WHERE phone = %s
-            """,
-            (phone,),
-        )
+        if ph:
+            cur.execute("DELETE FROM users WHERE phone = %s", (ph,))
+        else:
+            cur.execute("DELETE FROM users WHERE id = %s::uuid", (uid,))
         conn.commit()
         return cur.rowcount > 0
     except Exception:
@@ -953,24 +953,96 @@ def _pg_delete_user(phone: str) -> bool:
         conn.close()
 
 
-def _pg_soft_delete_user_by_id(user_id: str) -> bool:
-    if not _pg_available() or not user_id:
+def _pg_disable_user(*, phone: str = "", user_id: str = "") -> bool:
+    """将账号标记为 disabled（不可登录）；排除已 deleted 的行。"""
+    if not _pg_available():
+        return False
+    ph = (phone or "").strip()
+    uid = (user_id or "").strip()
+    if not ph and not uid:
         return False
     conn = psycopg2.connect(_pg_dsn())
     try:
         cur = conn.cursor()
         cur.execute("SET LOCAL lock_timeout = '12s'")
         cur.execute("SET LOCAL statement_timeout = '25s'")
-        cur.execute(
-            """
-            UPDATE users
-            SET account_status = 'deleted', deleted_at = NOW(), updated_at = NOW()
-            WHERE id = %s::uuid
-            """,
-            (user_id,),
-        )
+        if ph:
+            cur.execute(
+                """
+                UPDATE users
+                SET account_status = 'disabled', deleted_at = NULL, updated_at = NOW()
+                WHERE phone = %s AND account_status IS DISTINCT FROM 'deleted'
+                """,
+                (ph,),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE users
+                SET account_status = 'disabled', deleted_at = NULL, updated_at = NOW()
+                WHERE id = %s::uuid AND account_status IS DISTINCT FROM 'deleted'
+                """,
+                (uid,),
+            )
         conn.commit()
         return cur.rowcount > 0
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def _pg_reactivate_user(*, phone: str = "", user_id: str = "") -> bool:
+    """将 disabled 账号恢复为 active，并解锁登录凭据表。"""
+    if not _pg_available():
+        return False
+    ph = (phone or "").strip()
+    uid = (user_id or "").strip()
+    if not ph and not uid:
+        return False
+    conn = psycopg2.connect(_pg_dsn())
+    try:
+        cur = conn.cursor()
+        cur.execute("SET LOCAL lock_timeout = '12s'")
+        cur.execute("SET LOCAL statement_timeout = '25s'")
+        if ph:
+            cur.execute(
+                """
+                UPDATE users
+                SET account_status = 'active', deleted_at = NULL, updated_at = NOW()
+                WHERE phone = %s AND account_status = 'disabled'
+                """,
+                (ph,),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE users
+                SET account_status = 'active', deleted_at = NULL, updated_at = NOW()
+                WHERE id = %s::uuid AND account_status = 'disabled'
+                """,
+                (uid,),
+            )
+        n = int(cur.rowcount or 0)
+        uid_for_auth = ""
+        if n > 0:
+            if ph:
+                cur.execute("SELECT id::text FROM users WHERE phone = %s LIMIT 1", (ph,))
+                r = cur.fetchone()
+                uid_for_auth = str((r or [""])[0] or "").strip()
+            else:
+                uid_for_auth = uid
+        if uid_for_auth:
+            cur.execute(
+                """
+                UPDATE user_auth_accounts
+                SET status = 'active', failed_attempts = 0, locked_until = NULL, updated_at = NOW()
+                WHERE user_id = %s::uuid
+                """,
+                (uid_for_auth,),
+            )
+        conn.commit()
+        return n > 0
     except Exception:
         return False
     finally:
@@ -2510,6 +2582,9 @@ def verify_password(user_ref: str, password: str) -> bool:
     u = users.get(ref)
     if not u or not isinstance(u, dict):
         return False
+    st_json = str(u.get("account_status") or "active").strip().lower()
+    if st_json in ("disabled", "deleted"):
+        return False
     ph = u.get("password_hash")
     if not ph:
         return False
@@ -3080,7 +3155,7 @@ def list_users_admin_view() -> list[Dict[str, Any]]:
             {
                 "phone": str(phone),
                 "role": _normalize_role(raw.get("role")),
-                "account_status": "active",
+                "account_status": str(raw.get("account_status") or "active"),
                 "created_at": created_at,
                 "has_password": bool(raw.get("password_hash")),
             }
@@ -3140,6 +3215,9 @@ def admin_create_user(phone: str, password: str, role: str = "user", initial_tie
     if _auth_dual_write() or not _auth_pg_primary() or not _pg_available():
         users = _load_users()
         if p in users and not reused_deleted_pg:
+            st0 = str(users[p].get("account_status") or "active").strip().lower()
+            if st0 == "disabled":
+                return False, "该手机号对应账号已禁用"
             return False, "该手机号已存在"
         users[p] = {
             "password_hash": pw_hash,
@@ -3148,8 +3226,124 @@ def admin_create_user(phone: str, password: str, role: str = "user", initial_tie
             "role": r,
             "display_name": p,
             "created_at": int(_now()),
+            "account_status": "active",
         }
         _save_users(users)
+    return True, None
+
+
+def admin_invalidate_user(user_ref: str) -> Tuple[bool, Optional[str]]:
+    """标记账号失效（disabled），踢掉会话，不可登录；与物理删除不同。"""
+    p = (user_ref or "").strip()
+    if not p:
+        return False, "用户标识无效"
+    exists_pg = False
+    if _auth_pg_primary() and _pg_available():
+        row = _resolve_auth_row_for_principal(p)
+        if not row and validate_phone(p):
+            row = _pg_fetch_auth_user(p)
+        if isinstance(row, dict):
+            exists_pg = True
+            st = str(row.get("account_status") or "active").strip().lower()
+            if st == "deleted":
+                return False, "用户不存在或已删除"
+            uid = str(row.get("user_id") or "").strip()
+            ph = str(row.get("phone") or "").strip()
+            em = str(row.get("email") or "").strip()
+            un = str(row.get("username") or "").strip()
+            if st != "disabled":
+                ok_dis = _pg_disable_user(phone=ph, user_id=uid if not ph else "")
+                if not ok_dis:
+                    return False, "设置失效失败"
+            _invalidate_sessions_for_user(uid, phone=ph, email=em, username=un)
+            if _auth_dual_write() and ph:
+                users = _load_users()
+                if ph in users and isinstance(users[ph], dict):
+                    users[ph]["account_status"] = "disabled"
+                    _save_users(users)
+    if (
+        _auth_pg_primary()
+        and _pg_available()
+        and not exists_pg
+        and not _auth_dual_write()
+    ):
+        return False, "用户不存在"
+    if _auth_dual_write() or not _auth_pg_primary() or not _pg_available():
+        users = _load_users()
+        jk = p
+        if jk not in users and validate_phone(p):
+            jk = p
+        if jk in users:
+            ju = users[jk]
+            if not isinstance(ju, dict):
+                return False, "用户不存在"
+            stj = str(ju.get("account_status") or "active").strip().lower()
+            if stj == "deleted":
+                return False, "用户不存在或已删除"
+            ju["account_status"] = "disabled"
+            _save_users(users)
+            _invalidate_sessions_for_user("", phone=jk if validate_phone(jk) else "")
+        elif not exists_pg:
+            return False, "用户不存在"
+    return True, None
+
+
+def admin_reactivate_user(user_ref: str) -> Tuple[bool, Optional[str]]:
+    """将失效（disabled）账号恢复为可登录；已 active 幂等成功。"""
+    p = (user_ref or "").strip()
+    if not p:
+        return False, "用户标识无效"
+    exists_pg = False
+    if _auth_pg_primary() and _pg_available():
+        row = _resolve_auth_row_for_principal(p)
+        if not row and validate_phone(p):
+            row = _pg_fetch_auth_user(p)
+        if isinstance(row, dict):
+            exists_pg = True
+            st = str(row.get("account_status") or "active").strip().lower()
+            if st == "deleted":
+                return False, "无法恢复已删除的账号"
+            if st == "active":
+                return True, None
+            if st != "disabled":
+                return False, "当前状态不可恢复"
+            uid = str(row.get("user_id") or "").strip()
+            ph = str(row.get("phone") or "").strip()
+            ok = _pg_reactivate_user(phone=ph, user_id=uid if not ph else "")
+            if not ok:
+                return False, "恢复失败"
+            if _auth_dual_write() and ph:
+                users = _load_users()
+                if ph in users and isinstance(users[ph], dict):
+                    users[ph]["account_status"] = "active"
+                    _save_users(users)
+    if (
+        _auth_pg_primary()
+        and _pg_available()
+        and not exists_pg
+        and not _auth_dual_write()
+    ):
+        return False, "用户不存在"
+    if _auth_dual_write() or not _auth_pg_primary() or not _pg_available():
+        users = _load_users()
+        jk = p
+        if jk not in users and validate_phone(p):
+            jk = p
+        if jk in users:
+            ju = users[jk]
+            if not isinstance(ju, dict):
+                return False, "用户不存在"
+            stj = str(ju.get("account_status") or "active").strip().lower()
+            if stj == "deleted":
+                return False, "无法恢复已删除的账号"
+            if stj == "active":
+                return True, None
+            if stj != "disabled":
+                return False, "当前状态不可恢复"
+            ju["account_status"] = "active"
+            _save_users(users)
+        elif not exists_pg:
+            return False, "用户不存在"
     return True, None
 
 
@@ -3166,7 +3360,10 @@ def admin_delete_user(user_ref: str) -> Tuple[bool, Optional[str]]:
             exists_pg = True
             ph = str(row.get("phone") or "").strip()
             uid = str(row.get("user_id") or "").strip()
-            ok_del = _pg_delete_user(ph) if ph else _pg_soft_delete_user_by_id(uid)
+            em = str(row.get("email") or "").strip()
+            un = str(row.get("username") or "").strip()
+            _invalidate_sessions_for_user(uid, phone=ph, email=em, username=un)
+            ok_del = _pg_hard_delete_user(phone=ph, user_id=uid if not ph else "")
             if not ok_del:
                 return False, "删除失败"
     if (

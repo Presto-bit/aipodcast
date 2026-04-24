@@ -12,6 +12,7 @@ type AdminUser = {
   role?: string;
   acct_tier?: string;
   billing_cycle?: string | null;
+  account_status?: string;
   has_password?: boolean;
   created_at?: number;
   email_verified?: boolean;
@@ -38,6 +39,13 @@ function roleLabel(role: string | undefined) {
   return "普通用户";
 }
 
+function accountStatusLabel(status: string | undefined) {
+  const s = (status || "active").trim().toLowerCase();
+  if (s === "disabled") return "已失效";
+  if (s === "deleted") return "已删除";
+  return "正常";
+}
+
 function formatWalletYuan(cents: number | undefined) {
   const c = typeof cents === "number" && Number.isFinite(cents) ? cents : 0;
   return (c / 100).toFixed(2);
@@ -50,6 +58,12 @@ export default function AdminUsersPage() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("user");
+  const [restoreTarget, setRestoreTarget] = useState<AdminUser | null>(null);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [invalidateTarget, setInvalidateTarget] = useState<AdminUser | null>(null);
+  const [invalidateBusy, setInvalidateBusy] = useState(false);
+  const [invalidateError, setInvalidateError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -148,6 +162,62 @@ export default function AdminUsersPage() {
     setDeleteError(null);
   }, [deleteBusy]);
 
+  const closeInvalidateModal = useCallback(() => {
+    if (invalidateBusy) return;
+    setInvalidateTarget(null);
+    setInvalidateError(null);
+  }, [invalidateBusy]);
+
+  const closeRestoreModal = useCallback(() => {
+    if (restoreBusy) return;
+    setRestoreTarget(null);
+    setRestoreError(null);
+  }, [restoreBusy]);
+
+  async function executeRestore() {
+    if (!restoreTarget) return;
+    setRestoreBusy(true);
+    setRestoreError(null);
+    try {
+      const res = await fetch("/api/admin/users/reactivate", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ phone: rowKey(restoreTarget) }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
+      if (!res.ok || !data.success) throw new Error(data.error || data.detail || `操作失败 ${res.status}`);
+      await loadUsers();
+      setMsg("账号已恢复为正常，可重新登录");
+      setRestoreTarget(null);
+    } catch (e) {
+      setRestoreError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setRestoreBusy(false);
+    }
+  }
+
+  async function executeInvalidate() {
+    if (!invalidateTarget) return;
+    setInvalidateBusy(true);
+    setInvalidateError(null);
+    try {
+      const res = await fetch("/api/admin/users/invalidate", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ phone: rowKey(invalidateTarget) }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
+      if (!res.ok || !data.success) throw new Error(data.error || data.detail || `操作失败 ${res.status}`);
+      await loadUsers();
+      setMsg("账号已设为失效，对方将无法登录");
+      setInvalidateTarget(null);
+    } catch (e) {
+      setInvalidateError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setInvalidateBusy(false);
+    }
+  }
+
   async function executeDelete() {
     if (!deleteTarget) return;
     setDeleteBusy(true);
@@ -161,7 +231,7 @@ export default function AdminUsersPage() {
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
       if (!res.ok || !data.success) throw new Error(data.error || data.detail || `删除失败 ${res.status}`);
       await loadUsers();
-      setMsg("已删除");
+      setMsg("已从系统中永久删除该用户账号");
       setDeleteTarget(null);
     } catch (e) {
       setDeleteError(String(e instanceof Error ? e.message : e));
@@ -174,7 +244,7 @@ export default function AdminUsersPage() {
     <main className="min-h-0 min-w-0 w-full max-w-6xl">
       <h1 className="text-2xl font-semibold text-ink">用户管理</h1>
       <p className="mt-2 text-sm text-muted">
-        新增、删除用户，切换管理员/普通用户；可为已存在用户增加钱包余额（不入订单表，仅调账）。计费与体验包由产品策略统一管理。
+        管理员可对任意用户执行下列操作（含本人账号）。「设为失效」禁止登录并清除会话，数据仍保留；「恢复」将已失效账号改回可登录；「永久删除」为数据库物理删除（级联清理关联数据），不可恢复。
       </p>
 
       <section className="mt-6 rounded-xl border border-line bg-surface/60 p-4">
@@ -220,13 +290,14 @@ export default function AdminUsersPage() {
           role="region"
           aria-label="用户列表，可横向滑动查看"
         >
-          <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left text-sm">
+          <table className="w-full min-w-[880px] border-separate border-spacing-0 text-left text-sm">
             <thead className="text-xs text-muted">
               <tr>
                 <th className="px-2 py-2">账号</th>
                 <th className="px-2 py-2">钱包余额</th>
                 <th className="px-2 py-2">注册时间</th>
                 <th className="px-2 py-2">角色</th>
+                <th className="px-2 py-2">状态</th>
                 <th className="px-2 py-2">档位</th>
                 <th className="px-2 py-2">操作</th>
               </tr>
@@ -234,12 +305,15 @@ export default function AdminUsersPage() {
             <tbody>
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-2 py-8 text-center text-muted">
+                  <td colSpan={7} className="px-2 py-8 text-center text-muted">
                     暂无用户
                   </td>
                 </tr>
               ) : null}
-              {users.map((u) => (
+              {users.map((u) => {
+                const st = (u.account_status || "active").trim().toLowerCase();
+                const isInvalid = st === "disabled";
+                return (
                 <tr key={rowKey(u)} className="border-t border-line text-ink">
                   <td className="px-2 py-2 font-mono text-xs">
                     <div className="space-y-0.5">
@@ -252,6 +326,11 @@ export default function AdminUsersPage() {
                   <td className="whitespace-nowrap px-2 py-2 text-xs tabular-nums text-ink">¥{formatWalletYuan(u.wallet_balance_cents)}</td>
                   <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{formatRegisteredAt(u.created_at)}</td>
                   <td className="px-2 py-2 text-xs">{roleLabel(u.role)}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs">
+                    <span className={isInvalid ? "text-amber-700 dark:text-amber-400" : "text-muted"}>
+                      {accountStatusLabel(u.account_status)}
+                    </span>
+                  </td>
                   <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">
                     {(u.acct_tier || "free").toLowerCase()}
                     {u.billing_cycle ? ` · ${u.billing_cycle}` : ""}
@@ -289,19 +368,45 @@ export default function AdminUsersPage() {
                         </button>
                         <button
                           type="button"
+                          className="rounded border border-amber-600/45 px-2 py-1 text-xs text-amber-800 hover:bg-amber-500/10 disabled:opacity-40 dark:border-amber-500/40 dark:text-amber-300 dark:hover:bg-amber-500/10"
+                          disabled={isInvalid}
+                          title={isInvalid ? "已是失效状态" : "禁止登录，保留数据"}
+                          onClick={() => {
+                            setInvalidateError(null);
+                            setInvalidateTarget(u);
+                          }}
+                        >
+                          设为失效
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-line px-2 py-1 text-xs text-ink hover:bg-fill/80 disabled:opacity-40"
+                          disabled={!isInvalid}
+                          title={isInvalid ? "恢复为可登录" : "仅对已失效账号可用"}
+                          onClick={() => {
+                            setRestoreError(null);
+                            setRestoreTarget(u);
+                          }}
+                        >
+                          恢复
+                        </button>
+                        <button
+                          type="button"
                           className="rounded border border-danger/50 px-2 py-1 text-xs text-danger-ink hover:bg-danger-soft dark:border-danger/45 dark:text-danger-ink dark:hover:bg-danger-soft"
+                          title="物理删除用户及级联数据"
                           onClick={() => {
                             setDeleteError(null);
                             setDeleteTarget(u);
                           }}
                         >
-                          删除
+                          永久删除
                         </button>
                       </div>
                     </div>
                   </td>
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </table>
         </div>
@@ -310,14 +415,48 @@ export default function AdminUsersPage() {
       {msg ? <p className="mt-3 text-sm text-muted">{msg}</p> : null}
 
       <SmallConfirmModal
-        open={deleteTarget != null}
-        title="确认删除用户"
+        open={restoreTarget != null}
+        title="确认恢复账号"
         message={
-          deleteTarget
-            ? `确定删除用户「${rowKey(deleteTarget)}」？删除后不可恢复，请谨慎操作。`
+          restoreTarget
+            ? `将用户「${rowKey(restoreTarget)}」恢复为正常状态后，可再次使用该账号登录（需重新登录）。确定继续？`
             : ""
         }
-        confirmLabel="确认删除"
+        confirmLabel="确认恢复"
+        cancelLabel="取消"
+        busy={restoreBusy}
+        busyLabel="处理中…"
+        error={restoreError}
+        onConfirm={() => void executeRestore()}
+        onCancel={closeRestoreModal}
+      />
+
+      <SmallConfirmModal
+        open={invalidateTarget != null}
+        title="确认设为失效"
+        message={
+          invalidateTarget
+            ? `将用户「${rowKey(invalidateTarget)}」设为失效后，其将无法登录（已登录会话会失效），用户数据仍保留在系统中。确定继续？`
+            : ""
+        }
+        confirmLabel="确认设为失效"
+        cancelLabel="取消"
+        busy={invalidateBusy}
+        busyLabel="处理中…"
+        error={invalidateError}
+        onConfirm={() => void executeInvalidate()}
+        onCancel={closeInvalidateModal}
+      />
+
+      <SmallConfirmModal
+        open={deleteTarget != null}
+        title="确认永久删除用户"
+        message={
+          deleteTarget
+            ? `将永久删除用户「${rowKey(deleteTarget)}」的账号记录（数据库 DELETE，级联清理关联数据）。此操作不可恢复。确定继续？`
+            : ""
+        }
+        confirmLabel="确认永久删除"
         cancelLabel="取消"
         danger
         busy={deleteBusy}

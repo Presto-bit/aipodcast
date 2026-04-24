@@ -306,6 +306,14 @@ def admin_delete_user(phone: str) -> tuple[bool, str | None]:
     return auth_service.admin_delete_user(phone)
 
 
+def admin_invalidate_user(phone: str) -> tuple[bool, str | None]:
+    return auth_service.admin_invalidate_user(phone)
+
+
+def admin_reactivate_user(phone: str) -> tuple[bool, str | None]:
+    return auth_service.admin_reactivate_user(phone)
+
+
 def admin_credit_wallet_cents(phone: str, cents: int) -> tuple[bool, str | None, int]:
     """
     管理员调账：增加钱包余额（分）。用户须已存在。

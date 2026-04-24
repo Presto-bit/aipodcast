@@ -63,14 +63,34 @@ def admin_create_user_api(request: Request, body: AdminCreateUserRequest):
 
 @router.delete("/users")
 def admin_delete_user_api(request: Request, body: AdminDeleteUserRequest):
-    actor_phone = _require_admin_phone(request)
+    _require_admin_phone(request)
     target_phone = body.phone.strip()
-    if target_phone == actor_phone:
-        raise HTTPException(status_code=400, detail="不能删除当前管理员账号")
     ok, err = auth_bridge.admin_delete_user(target_phone)
     if not ok:
         raise HTTPException(status_code=400, detail=err or "删除用户失败")
     return {"success": True, "deleted_phone": target_phone}
+
+
+@router.post("/users/invalidate")
+def admin_invalidate_user_api(request: Request, body: AdminDeleteUserRequest):
+    """将账号标记为失效（不可登录），不删除库内用户记录。"""
+    _require_admin_phone(request)
+    target = body.phone.strip()
+    ok, err = auth_bridge.admin_invalidate_user(target)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err or "设置失效失败")
+    return {"success": True, "phone": target}
+
+
+@router.post("/users/reactivate")
+def admin_reactivate_user_api(request: Request, body: AdminDeleteUserRequest):
+    """将失效（disabled）账号恢复为可登录。"""
+    _require_admin_phone(request)
+    target = body.phone.strip()
+    ok, err = auth_bridge.admin_reactivate_user(target)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err or "恢复失败")
+    return {"success": True, "phone": target}
 
 
 @router.post("/users/role")
