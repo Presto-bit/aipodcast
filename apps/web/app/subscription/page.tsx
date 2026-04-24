@@ -713,7 +713,6 @@ export default function SubscriptionPage() {
       const payUrl = typeof data.pay_page_url === "string" ? data.pay_page_url.trim() : "";
       if (!payUrl) throw new Error("收银台未返回有效支付链接，请稍后重试或联系客服");
       if (!data.out_trade_no) throw new Error("订单号缺失，请重试");
-      didNavigateWallet = true;
       try {
         const payload: WalletAlipayPendingPayload = {
           startedAt: Date.now(),
@@ -723,7 +722,14 @@ export default function SubscriptionPage() {
       } catch {
         /* 隐私模式等可能不可用，仍跳转支付 */
       }
-      window.location.assign(payUrl);
+      try {
+        window.location.assign(payUrl);
+      } catch (navErr) {
+        throw new Error(
+          navErr instanceof Error ? navErr.message : "无法跳转到支付宝收银台，请检查浏览器是否拦截了跳转。"
+        );
+      }
+      didNavigateWallet = true;
     } catch (err) {
       const name = err instanceof Error ? err.name : "";
       if (name === "AbortError") {
