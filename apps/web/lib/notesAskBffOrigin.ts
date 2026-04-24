@@ -23,3 +23,13 @@ export function notesAskBffUrl(path: string): string {
 export function notesAskFetchCredentials(): RequestCredentials {
   return notesAskBffBase() ? "include" : "same-origin";
 }
+
+/**
+ * 浏览器内解析为实际请求的绝对 URL（相对路径时拼 `window.location.origin`，
+ * 配置了 `NEXT_PUBLIC_NOTES_ASK_BFF_ORIGIN` 时则为该源 + path）。
+ */
+export function notesAskResolveRequestUrl(path: string): string {
+  if (typeof window === "undefined") return "";
+  const p = notesAskBffUrl(path);
+  return p.startsWith("http") ? p : `${window.location.origin}${p}`;
+}

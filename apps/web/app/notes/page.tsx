@@ -36,7 +36,11 @@ import {
   formatNotesAskStreamError,
   type NotesAskStreamErrorMeta
 } from "../../lib/apiError";
-import { notesAskBffUrl, notesAskFetchCredentials } from "../../lib/notesAskBffOrigin";
+import {
+  notesAskBffUrl,
+  notesAskFetchCredentials,
+  notesAskResolveRequestUrl
+} from "../../lib/notesAskBffOrigin";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
 import { rememberJobId } from "../../lib/jobRecent";
 import { buildReferenceJobFields, type ReferenceRagMode } from "../../lib/jobReferencePayload";
@@ -164,6 +168,28 @@ const NOTEBOOK_STATS_PAGE = 500;
 const NOTES_NEED_NOTEBOOK = "请先进入笔记本";
 /** 未在左侧来源勾选资料时的统一提示（占位、无障碍、按钮与校验） */
 const NOTES_ASK_SOURCE_REQUIRED = "请先勾选左侧资料";
+
+/** 构建时注入；为 `1` 时在对话输入区上方展示与 POST 一致的 JSON 与 curl（勿对终端用户开启） */
+const NOTES_ASK_DEBUG_BODY_ENABLED = String(process.env.NEXT_PUBLIC_NOTES_ASK_DEBUG_BODY || "").trim() === "1";
+
+/** Bash 下单引号字符串转义，供复制 curl 使用 */
+function shellSingleQuoteForCurl(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildNotesAskCurlCommand(url: string, jsonOneLine: string, auth: Record<string, string>): string {
+  const parts: string[] = [`curl -N -v ${shellSingleQuoteForCurl(url)} \\`];
+  parts.push(`  -H ${shellSingleQuoteForCurl("Content-Type: application/json")} \\`);
+  parts.push(`  -H ${shellSingleQuoteForCurl("x-request-id: $(uuidgen)")} \\`);
+  for (const [k, v] of Object.entries(auth)) {
+    const val = String(v || "").trim();
+    if (!val) continue;
+    parts.push(`  -H ${shellSingleQuoteForCurl(`${k}: ${val}`)} \\`);
+  }
+  parts.push(`  -b ${shellSingleQuoteForCurl("fym_session=PASTE")} \\`);
+  parts.push(`  --data-raw ${shellSingleQuoteForCurl(jsonOneLine)}`);
+  return parts.join("\n");
+}
 
 const NOTEBOOK_CARD_THEMES = [
   {
@@ -787,6 +813,10 @@ export default function NotesPage() {
   const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
   const notesAskTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [notesAskNoteBusyId, setNotesAskNoteBusyId] = useState<string | null>(null);
+  const [notesAskDebugClient, setNotesAskDebugClient] = useState(false);
+  const [notesAskDebugCopied, setNotesAskDebugCopied] = useState<"" | "stream" | "hints" | "curlStream" | "curlHints">(
+    ""
+  );
   const [sourcesPanelCollapsed, setSourcesPanelCollapsed] = useState(false);
   const [studioPanelCollapsed, setStudioPanelCollapsed] = useState(false);
   /** 与 AppShell 左侧主导航（首页 / 知识库 / 创作等）折叠状态同步 */
@@ -811,6 +841,11 @@ export default function NotesPage() {
       window.removeEventListener("storage", syncAppNavCollapsedFromStorage);
     };
   }, [storageAccountScope]);
+
+  useEffect(() => {
+    if (!NOTES_ASK_DEBUG_BODY_ENABLED) return;
+    setNotesAskDebugClient(true);
+  }, []);
 
   useEffect(() => {
     setArtCharsInput(String(artChars));
@@ -973,6 +1008,60 @@ export default function NotesPage() {
       notesAskHintsAbortRef.current?.abort();
     };
   }, [hubView, draftSelectedNoteIds, selectedNotebook, sharedBrowse?.ownerUserId, getAuthHeaders]);
+
+  const notesAskDebugPack = useMemo(() => {
+    const nb = selectedNotebook.trim();
+    const idsStream = [...draftSelectedNoteIds];
+    const idsHints = [...draftSelectedNoteIds].filter(Boolean).sort();
+    const q = notesAskQuestion.trim();
+    const owner = (sharedBrowse?.ownerUserId || "").trim();
+    const streamBody: Record<string, unknown> = {
+      notebook: nb,
+      note_ids: idsStream,
+      question: q
+    };
+    if (owner) streamBody.sharedFromOwnerUserId = owner;
+    const hintsBody: Record<string, unknown> = {
+      notebook: nb,
+      note_ids: idsHints
+    };
+    if (owner) hintsBody.sharedFromOwnerUserId = owner;
+    const streamJsonOne = JSON.stringify(streamBody);
+    const hintsJsonOne = JSON.stringify(hintsBody);
+    return {
+      streamJsonPretty: JSON.stringify(streamBody, null, 2),
+      hintsJsonPretty: JSON.stringify(hintsBody, null, 2),
+      streamJsonOne,
+      hintsJsonOne,
+      streamReady: Boolean(nb && idsStream.length && q),
+      hintsReady: Boolean(nb && idsHints.length)
+    };
+  }, [selectedNotebook, draftSelectedNoteIds, notesAskQuestion, sharedBrowse?.ownerUserId]);
+
+  const notesAskDebugCurls = useMemo(() => {
+    if (!notesAskDebugClient || typeof window === "undefined") {
+      return { streamUrl: "", hintsUrl: "", streamCurl: "", hintsCurl: "" };
+    }
+    const auth = getAuthHeaders();
+    const streamUrl = notesAskResolveRequestUrl("/api/notes/ask/stream");
+    const hintsUrl = notesAskResolveRequestUrl("/api/notes/ask/hints");
+    return {
+      streamUrl,
+      hintsUrl,
+      streamCurl: streamUrl ? buildNotesAskCurlCommand(streamUrl, notesAskDebugPack.streamJsonOne, auth) : "",
+      hintsCurl: hintsUrl ? buildNotesAskCurlCommand(hintsUrl, notesAskDebugPack.hintsJsonOne, auth) : ""
+    };
+  }, [notesAskDebugClient, notesAskDebugPack.streamJsonOne, notesAskDebugPack.hintsJsonOne, getAuthHeaders]);
+
+  const copyNotesAskDebug = useCallback(async (text: string, kind: "stream" | "hints" | "curlStream" | "curlHints") => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotesAskDebugCopied(kind);
+      window.setTimeout(() => setNotesAskDebugCopied(""), 1800);
+    } catch {
+      // 拒绝剪贴板权限时静默
+    }
+  }, []);
 
   /** 无用户提问记录时，将摘要与建议作为一条助手消息写入对话区；不展示单独进度条 */
   useEffect(() => {
@@ -3824,6 +3913,92 @@ export default function NotesPage() {
                     )}
                   </button>
                   </div>
+                  {NOTES_ASK_DEBUG_BODY_ENABLED ? (
+                    <div className="rounded-xl border border-amber-500/45 bg-amber-500/[0.08] px-3 py-2 text-xs leading-snug text-ink">
+                      <div className="mb-1.5 font-semibold text-amber-950 dark:text-amber-100">
+                        调试：问答 POST body（NEXT_PUBLIC_NOTES_ASK_DEBUG_BODY=1）
+                      </div>
+                      {!notesAskDebugClient ? (
+                        <p className="text-[11px] text-muted">正在解析请求 URL…</p>
+                      ) : (
+                        <div className="flex flex-col gap-3">
+                          <p className="text-[11px] text-muted">
+                            与当前表单一致：流式含 <code className="text-[10px]">question</code>；导读与后台
+                            hints 请求一致（<code className="text-[10px]">note_ids</code> 已排序）。浏览器已登录时会自动带
+                            Cookie；curl 请把 <code className="text-[10px]">fym_session=PASTE</code> 换成真实值。
+                          </p>
+                          <div>
+                            <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="font-medium">POST /api/notes/ask/stream</span>
+                              {notesAskDebugPack.streamReady ? (
+                                <span className="text-[11px] text-success-ink">可发送</span>
+                              ) : (
+                                <span className="text-[11px] text-rose-600">未满足发送条件（笔记本 / 资料 / 问题）</span>
+                              )}
+                              <button
+                                type="button"
+                                className="rounded-md border border-line/80 bg-surface px-2 py-0.5 text-[11px] hover:bg-fill"
+                                onClick={() => void copyNotesAskDebug(notesAskDebugPack.streamJsonPretty, "stream")}
+                              >
+                                {notesAskDebugCopied === "stream" ? "已复制 JSON" : "复制 JSON"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!notesAskDebugCurls.streamCurl}
+                                className="rounded-md border border-line/80 bg-surface px-2 py-0.5 text-[11px] hover:bg-fill disabled:cursor-not-allowed disabled:opacity-40"
+                                onClick={() => void copyNotesAskDebug(notesAskDebugCurls.streamCurl, "curlStream")}
+                              >
+                                {notesAskDebugCopied === "curlStream" ? "已复制 curl" : "复制 curl"}
+                              </button>
+                            </div>
+                            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-fill/90 p-2 font-mono text-[11px] text-ink">
+                              {notesAskDebugPack.streamJsonPretty}
+                            </pre>
+                            <p className="mt-1 break-all font-mono text-[10px] text-muted">{notesAskDebugCurls.streamUrl}</p>
+                            {notesAskDebugCurls.streamCurl ? (
+                              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-fill/50 p-2 font-mono text-[10px] text-muted">
+                                {notesAskDebugCurls.streamCurl}
+                              </pre>
+                            ) : null}
+                          </div>
+                          <div>
+                            <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="font-medium">POST /api/notes/ask/hints</span>
+                              {notesAskDebugPack.hintsReady ? (
+                                <span className="text-[11px] text-success-ink">可请求</span>
+                              ) : (
+                                <span className="text-[11px] text-rose-600">未满足（须笔记本且至少一条资料）</span>
+                              )}
+                              <button
+                                type="button"
+                                className="rounded-md border border-line/80 bg-surface px-2 py-0.5 text-[11px] hover:bg-fill"
+                                onClick={() => void copyNotesAskDebug(notesAskDebugPack.hintsJsonPretty, "hints")}
+                              >
+                                {notesAskDebugCopied === "hints" ? "已复制 JSON" : "复制 JSON"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!notesAskDebugCurls.hintsCurl}
+                                className="rounded-md border border-line/80 bg-surface px-2 py-0.5 text-[11px] hover:bg-fill disabled:cursor-not-allowed disabled:opacity-40"
+                                onClick={() => void copyNotesAskDebug(notesAskDebugCurls.hintsCurl, "curlHints")}
+                              >
+                                {notesAskDebugCopied === "curlHints" ? "已复制 curl" : "复制 curl"}
+                              </button>
+                            </div>
+                            <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-fill/90 p-2 font-mono text-[11px] text-ink">
+                              {notesAskDebugPack.hintsJsonPretty}
+                            </pre>
+                            <p className="mt-1 break-all font-mono text-[10px] text-muted">{notesAskDebugCurls.hintsUrl}</p>
+                            {notesAskDebugCurls.hintsCurl ? (
+                              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-fill/50 p-2 font-mono text-[10px] text-muted">
+                                {notesAskDebugCurls.hintsCurl}
+                              </pre>
+                            ) : null}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </section>
