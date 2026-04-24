@@ -7259,7 +7259,12 @@ def process_payment_event_transaction(
             pgcode,
             pgerr,
         )
-        return False, "transaction_exception"
+        # 单行可外显摘要：对账/调试 last_apply_reason 可直接见根因（换行会破坏 JSON 观感）
+        safe = (pgerr or "").replace("\r", " ").replace("\n", " ")[:280]
+        code = str(pgcode).strip() if pgcode is not None else ""
+        tail = ":".join(p for p in (code, safe) if p)[:400]
+        detail = ("transaction_exception:" + tail) if tail else "transaction_exception"
+        return False, detail[:512]
 
 
 def get_payment_order_by_event_id(event_id: str) -> dict[str, Any] | None:

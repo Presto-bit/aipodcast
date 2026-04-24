@@ -39,6 +39,14 @@ _WALLET_RECONCILE_APPLY_RETRY_REASONS = frozenset(
 )
 
 
+def _wallet_reconcile_apply_retryable(reason: str) -> bool:
+    """与 apply_payment_event 返回的 reason 对齐；含带 pgcode/摘要的 transaction_exception:… 变体。"""
+    r = (reason or "").strip()
+    if r in _WALLET_RECONCILE_APPLY_RETRY_REASONS:
+        return True
+    return r.startswith("transaction_exception:")
+
+
 def _wallet_reconcile_pending_body(*, bal: int, last_apply_reason: str, pending_kind: str | None = None) -> dict:
     """统一 pending 响应体；last_apply_reason / pending_kind 便于前端与日志检索。"""
     r: dict = {
@@ -415,7 +423,7 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
         if last_reason == "payment_integrity_error":
             _log.error("alipay wallet reconcile integrity out_trade_no=%s", out_trade_no)
             raise HTTPException(status_code=409, detail=last_reason)
-        if last_reason not in _WALLET_RECONCILE_APPLY_RETRY_REASONS:
+        if not _wallet_reconcile_apply_retryable(last_reason):
             _log.error("alipay wallet reconcile apply failed out_trade_no=%s reason=%s", out_trade_no, last_reason)
             raise HTTPException(status_code=500, detail=last_reason or "apply_failed")
         ex2 = models.get_payment_order_by_event_id(out_trade_no)
@@ -432,7 +440,7 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
                 )
             time.sleep(sleep_s)
     if not ok_apply:
-        if last_reason in _WALLET_RECONCILE_APPLY_RETRY_REASONS:
+        if _wallet_reconcile_apply_retryable(last_reason):
             bal = models.wallet_balance_cents_for_phone(phone)
             _log.warning(
                 "alipay wallet reconcile exhausted retries out_trade_no=%s reason=%s balance=%s",
