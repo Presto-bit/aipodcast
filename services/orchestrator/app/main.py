@@ -5,7 +5,9 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import PlainTextResponse
 
 from .config import settings
 from .embedded_rq_ai import start_embedded_ai_rq_worker_thread
@@ -167,6 +169,18 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="AI Native Orchestrator", version="0.1.0", lifespan=_lifespan)
 app.add_middleware(RequestIdMiddleware)
+
+
+@app.exception_handler(HTTPException)
+async def _alipay_webhook_plaintext_auth_errors(request: Request, exc: HTTPException):
+    """
+    支付宝异步通知要求响应体为 success/fail 等纯文本；内部签名校验失败时默认 JSON 不利于对方重试与排障。
+    """
+    path = (request.url.path or "").rstrip("/")
+    if path.endswith("/webhooks/alipay") and exc.status_code in (401, 403):
+        return PlainTextResponse("fail", status_code=exc.status_code, headers=dict(exc.headers or {}))
+    return await http_exception_handler(request, exc)
+
 
 app.include_router(health.router)
 app.include_router(auth_routes.router)
