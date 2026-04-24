@@ -15,14 +15,18 @@ from .embedded_rq_media import start_embedded_media_rq_worker_thread
 from .e2e_smoke import e2e_smoke_secret_configured
 from .clip_store import ensure_clip_studio_schema
 from .models import (
+    ensure_payment_order_items_schema,
     ensure_payment_refunds_schema,
     ensure_payment_orders_schema,
+    ensure_payment_transactions_schema,
     ensure_payment_webhook_deliveries_schema,
     ensure_saved_voices_schema,
     ensure_subscription_current_state_schema,
     ensure_subscription_events_schema,
     ensure_usage_events_user_id_schema,
+    ensure_user_payg_minute_grants_schema,
     ensure_user_preferences_schema,
+    ensure_user_wallet_schema,
     ensure_users_profile_columns,
     ensure_alipay_page_checkout_schema,
     purge_expired_trashed_notes,
@@ -75,6 +79,12 @@ def _run_bootstrap_admin_if_enabled() -> None:
 
 
 def run_startup_tasks() -> None:
+    """
+    编排器进程级初始化：含支付/钱包相关表的幂等 DDL。
+    业务热路径（如 process_payment_event_transaction）依赖此处已执行，不再逐请求 ensure_*，
+    以避免重复访问 PostgreSQL catalog。若在无 lifespan 的环境直接调用 models 支付写入函数，
+    须先手动执行对应 ensure_* 或应用 infra/postgres/init 迁移。
+    """
     assert_production_security_or_exit()
     _startup_step("object_store.ensure_bucket_exists", ensure_bucket_exists)
     notes_routes.ensure_notebooks_schema_startup(strict=settings.strict_schema_startup)
@@ -86,6 +96,11 @@ def run_startup_tasks() -> None:
     _startup_step("ensure_subscription_events_schema", ensure_subscription_events_schema)
     _startup_step("ensure_usage_events_user_id_schema", ensure_usage_events_user_id_schema)
     _startup_step("ensure_payment_orders_schema", ensure_payment_orders_schema)
+    _startup_step("ensure_payment_order_items_schema", ensure_payment_order_items_schema)
+    _startup_step("ensure_payment_transactions_schema", ensure_payment_transactions_schema)
+    _startup_step("ensure_payment_refunds_schema", ensure_payment_refunds_schema)
+    _startup_step("ensure_user_wallet_schema", ensure_user_wallet_schema)
+    _startup_step("ensure_user_payg_minute_grants_schema", ensure_user_payg_minute_grants_schema)
     _startup_step(
         "ensure_payment_webhook_deliveries_schema",
         ensure_payment_webhook_deliveries_schema,
@@ -94,7 +109,6 @@ def run_startup_tasks() -> None:
         "ensure_subscription_current_state_schema",
         ensure_subscription_current_state_schema,
     )
-    _startup_step("ensure_payment_refunds_schema", ensure_payment_refunds_schema)
     _startup_step("ensure_alipay_page_checkout_schema", ensure_alipay_page_checkout_schema)
     _startup_step("ensure_rss_publish_schema", ensure_rss_publish_schema)
     _startup_step("ensure_clip_studio_schema", lambda: ensure_clip_studio_schema(strict=settings.strict_schema_startup))

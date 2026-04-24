@@ -1,11 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import PodcastWorksGallery from "../../components/podcast/PodcastWorksGallery";
 import { IconMic, IconTts } from "../../components/NavIcons";
-import PodcastStudio, { type PodcastStudioActivity } from "../../components/studio/PodcastStudio";
-import TtsStudio, { type TtsStudioActivity } from "../../components/studio/TtsStudio";
+import type { PodcastStudioActivity } from "../../components/studio/PodcastStudio";
+import type { TtsStudioActivity } from "../../components/studio/TtsStudio";
+
+const PodcastStudio = dynamic(() => import("../../components/studio/PodcastStudio"));
+const TtsStudio = dynamic(() => import("../../components/studio/TtsStudio"));
+const PodcastWorksGallery = dynamic(() => import("../../components/podcast/PodcastWorksGallery"), {
+  loading: () => (
+    <div
+      className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
+      aria-busy
+      aria-label="加载作品列表"
+    />
+  )
+});
 import { useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../../lib/worksTypes";
@@ -55,7 +67,7 @@ export default function CreatePage() {
     setHotTopicsErr("");
     try {
       const res = await fetch(`/api/create/hot-topics?seed=${encodeURIComponent(String(seed))}`, {
-        cache: "no-store",
+        cache: "default",
         credentials: "same-origin"
       });
       const data = (await res.json().catch(() => ({}))) as {

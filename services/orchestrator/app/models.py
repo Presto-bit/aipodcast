@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -51,6 +51,18 @@ def _normalize_user_uuid(user_ref: str | None) -> str | None:
         return str(uuid.UUID(raw))
     except (TypeError, ValueError, AttributeError):
         return None
+
+
+def normalize_payment_principal(ref: str) -> str:
+    """
+    支付/对账侧用户主引用：若为合法 UUID 则规范为 canonical 小写串，否则原样（手机号等）。
+    避免 alipay checkout 存盘与 Bearer 会话主键大小写不一致导致对账 403、异步通知与主动对账行为不一致。
+    """
+    raw = (ref or "").strip()
+    if not raw:
+        return raw
+    nu = _normalize_user_uuid(raw)
+    return nu if nu else raw
 
 
 def _resolve_user_uuid_from_ref(cur: Any, user_ref: str | None) -> str | None:
@@ -2465,6 +2477,7 @@ def list_jobs(
         f"""
         j.id, j.project_id, j.status, j.job_type, j.queue_name, j.progress,
         j.created_at, j.started_at, j.completed_at, j.updated_at, j.created_by,
+        j.payload,
         LEFT(COALESCE(j.error_message, ''), 400) AS error_message,
         {_creator_label_sql}
         """
@@ -2519,8 +2532,8 @@ def list_jobs(
                 )
             rows = [dict(x) for x in cur.fetchall()]
     if slim:
+        # 列表仍省略 result（常含 audio_hex 等大字段）；保留 payload 供进行中摘要等 UI。
         for r in rows:
-            r["payload"] = {}
             r["result"] = {}
     return rows
 
@@ -3639,7 +3652,6 @@ def admin_orders_analytics(
         "by_day": [],
         "recent_orders": [],
     }
-    ensure_payment_orders_schema()
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
@@ -5080,6 +5092,11 @@ def record_subscription_event(
 
 
 def ensure_payment_orders_schema() -> None:
+    """
+    幂等 DDL。生产环境由 FastAPI lifespan（main.run_startup_tasks）在进程启动时执行一次；
+    热路径（如 process_payment_event_transaction）不再重复调用以降低 catalog 开销。
+    单测或裸脚本若直接调用支付写入函数，需先执行本函数或跑齐 infra/postgres/init 迁移。
+    """
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
@@ -5766,6 +5783,15 @@ def script_text_billing_try_debit(phone: str, char_count: int) -> tuple[bool, di
                                 f"文本超出体验包约 {rest} 字，需从钱包扣约 ¥{cents / 100:.2f}，余额不足，请先充值。"
                             ),
                         }
+                    _insert_user_wallet_ledger(
+                        cur,
+                        user_id=str(uid),
+                        phone=p,
+                        delta_cents=-cents,
+                        balance_after_cents=int(rw.get("balance_cents") or 0),
+                        entry_type="script_text_billing",
+                        meta={"chars_billed": int(rest)},
+                    )
                 conn.commit()
                 return True, meta
     except Exception as exc:
@@ -5921,7 +5947,17 @@ def _media_billing_try_debit_voice_billed_minutes(
                                 f"需从钱包扣约 ¥{cents / 100:.2f}，余额不足，请先充值。"
                             ),
                         }
-                    meta["balance_cents_after"] = int(row_w.get("balance_cents") or 0)
+                    bal_after_w = int(row_w.get("balance_cents") or 0)
+                    meta["balance_cents_after"] = bal_after_w
+                    _insert_user_wallet_ledger(
+                        cur,
+                        user_id=str(uid),
+                        phone=p,
+                        delta_cents=-cents,
+                        balance_after_cents=bal_after_w,
+                        entry_type="media_voice_billing",
+                        meta={"billed_minutes": float(wallet_min)},
+                    )
                 conn.commit()
                 return True, cents, meta
     except Exception as exc:
@@ -5993,7 +6029,58 @@ def ensure_user_wallet_schema() -> None:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_wallet_checkout_user_created ON wallet_checkout_sessions (user_id, created_at DESC)"
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_wallet_ledger (
+                  id BIGSERIAL PRIMARY KEY,
+                  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  phone TEXT NOT NULL,
+                  delta_cents BIGINT NOT NULL,
+                  balance_after_cents BIGINT NOT NULL,
+                  entry_type TEXT NOT NULL,
+                  ref_id TEXT,
+                  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_wallet_ledger_user_created ON user_wallet_ledger (user_id, created_at DESC)"
+            )
             conn.commit()
+
+
+def _insert_user_wallet_ledger(
+    cur: Any,
+    *,
+    user_id: str,
+    phone: str,
+    delta_cents: int,
+    balance_after_cents: int,
+    entry_type: str,
+    ref_id: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> None:
+    """append-only 流水；须与余额变更同一事务内写入。"""
+    et = (entry_type or "unknown").strip()[:64] or "unknown"
+    ref = (ref_id or "").strip()[:256] or None
+    m = meta if isinstance(meta, dict) else {}
+    cur.execute(
+        """
+        INSERT INTO user_wallet_ledger
+          (user_id, phone, delta_cents, balance_after_cents, entry_type, ref_id, meta)
+        VALUES (%s::uuid, %s, %s, %s, %s, %s, %s::jsonb)
+        """,
+        (
+            user_id,
+            (phone or "").strip(),
+            int(delta_cents),
+            int(balance_after_cents),
+            et,
+            ref,
+            json.dumps(m, ensure_ascii=False),
+        ),
+    )
 
 
 def wallet_balance_cents_for_phone(phone: str) -> int:
@@ -6115,8 +6202,18 @@ def wallet_try_debit_cents(phone: str, cents: int) -> tuple[bool, int]:
                     )
                     bal_row = cur.fetchone() or {}
                     return False, int(bal_row.get("balance_cents") or 0)
+                bal_after = int(row.get("balance_cents") or 0)
+                _insert_user_wallet_ledger(
+                    cur,
+                    user_id=str(uid),
+                    phone=p,
+                    delta_cents=-debit,
+                    balance_after_cents=bal_after,
+                    entry_type="wallet_debit",
+                    meta={"source": "wallet_try_debit_cents"},
+                )
                 conn.commit()
-                return True, int(row.get("balance_cents") or 0)
+                return True, bal_after
     except Exception:
         return False, -1
 
@@ -6159,6 +6256,18 @@ def wallet_credit_cents(phone: str, cents: int) -> bool:
                         """,
                         (uid, p, credit),
                     )
+                    bal_after = credit
+                else:
+                    bal_after = int(row.get("balance_cents") or 0)
+                _insert_user_wallet_ledger(
+                    cur,
+                    user_id=str(uid),
+                    phone=p,
+                    delta_cents=credit,
+                    balance_after_cents=bal_after,
+                    entry_type="wallet_credit",
+                    meta={"source": "wallet_credit_cents"},
+                )
                 conn.commit()
                 return True
     except Exception:
@@ -6316,7 +6425,7 @@ def alipay_page_create_checkout_session(
                       (out_trade_no, user_id, phone, kind, amount_cents, tier, billing_cycle)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (oid, uid, p, k, amt, (tier or None), (billing_cycle or None)),
+                    (oid, uid, normalize_payment_principal(p), k, amt, (tier or None), (billing_cycle or None)),
                 )
             conn.commit()
         return True
@@ -6510,7 +6619,6 @@ def upsert_payment_order(
     refunded_amount = int(refunded_amount_cents) if refunded_amount_cents is not None else None
     payload = raw if isinstance(raw, dict) else {}
     try:
-        ensure_payment_orders_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
                 uid = _ensure_user_id_for_phone_conn(conn, p)
@@ -6670,19 +6778,6 @@ def process_payment_event_transaction(
     et = _normalize_subscription_event_type(f"payment_{st}")
     effective_at = datetime.now(timezone.utc)
     try:
-        ensure_payment_orders_schema()
-        ensure_subscription_events_schema()
-        ensure_subscription_current_state_schema()
-        ensure_payment_refunds_schema()
-        ensure_payment_transactions_schema()
-        ensure_payment_order_items_schema()
-        if is_payg:
-            ensure_user_payg_minute_grants_schema()
-        if is_wallet:
-            ensure_user_wallet_schema()
-        # 钱包 / 分钟包路径会读 users.acct_tier、billing_cycle；旧库未跑迁移时缺列会导致 ProgrammingError → transaction_exception
-        if is_wallet or is_payg:
-            ensure_users_profile_columns()
         with get_conn() as conn:
             uid = _ensure_user_id_for_phone_conn(conn, p)
             if not uid:
@@ -6901,12 +6996,26 @@ def process_payment_event_transaction(
                 if is_wallet and st == "paid":
                     credit = int(amount_cents or 0)
                     snap_topup = snapshot.get("topup_cents")
-                    if snap_topup is not None:
+                    if snap_topup is not None and str(snap_topup).strip() != "":
                         try:
-                            if int(snap_topup) != credit:
+                            top_i = int(
+                                Decimal(str(snap_topup)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                            )
+                            if top_i != credit:
+                                logger.warning(
+                                    "wallet topup amount mismatch event_id=%s amount_cents=%s topup_cents=%r",
+                                    eid,
+                                    credit,
+                                    snap_topup,
+                                )
                                 credit = 0
-                        except (TypeError, ValueError):
-                            credit = 0
+                        except (InvalidOperation, TypeError, ValueError):
+                            # 解析失败时不否决入账：金额以已验单的 amount_cents 为准（notify/reconcile 已校验会话/网关）
+                            logger.warning(
+                                "wallet topup_cents unparseable, using amount_cents only event_id=%s raw=%r",
+                                eid,
+                                snap_topup,
+                            )
                     if credit > 0:
                         cur.execute(
                             """
@@ -6928,6 +7037,21 @@ def process_payment_event_transaction(
                                   updated_at = NOW()
                                 """,
                                 (uid, p, credit),
+                            )
+                            cur.execute(
+                                "SELECT balance_cents FROM user_wallet_balance WHERE user_id = %s",
+                                (uid,),
+                            )
+                            b_top = cur.fetchone() or {}
+                            _insert_user_wallet_ledger(
+                                cur,
+                                user_id=str(uid),
+                                phone=p,
+                                delta_cents=credit,
+                                balance_after_cents=int(b_top.get("balance_cents") or 0),
+                                entry_type="wallet_topup",
+                                ref_id=eid,
+                                meta={"provider": pv},
                             )
 
                 if st in {"refunded", "partially_refunded"}:
@@ -6974,6 +7098,21 @@ def process_payment_event_transaction(
                             WHERE user_id = %s
                             """,
                             (slice_refund, p, uid),
+                        )
+                        cur.execute(
+                            "SELECT balance_cents FROM user_wallet_balance WHERE user_id = %s",
+                            (uid,),
+                        )
+                        b_ref = cur.fetchone() or {}
+                        _insert_user_wallet_ledger(
+                            cur,
+                            user_id=str(uid),
+                            phone=p,
+                            delta_cents=-slice_refund,
+                            balance_after_cents=int(b_ref.get("balance_cents") or 0),
+                            entry_type="wallet_order_refund",
+                            ref_id=eid,
+                            meta={"provider": pv, "refund_id": rid_refund},
                         )
                     cur.execute(
                         "SELECT COALESCE(SUM(refunded_amount_cents), 0) AS total_refund FROM payment_refunds WHERE order_event_id = %s",
@@ -7068,7 +7207,6 @@ def get_payment_order_by_event_id(event_id: str) -> dict[str, Any] | None:
     if not eid:
         return None
     try:
-        ensure_payment_orders_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
                 cur.execute(
@@ -7126,15 +7264,17 @@ def sum_refunded_cents_for_order(order_event_id: str) -> int:
 
 
 def list_payment_orders_for_phone(phone: str, limit: int = 40) -> list[dict[str, Any]]:
+    """仅按 user_id 命中订单行（须已回填 user_id；见 infra/postgres/init/036）。无用户则返回空列表。"""
     p = (phone or "").strip()
     lim = max(1, min(100, int(limit)))
     if not p:
         return []
     try:
-        ensure_payment_orders_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
                 uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return []
                 cur.execute(
                     """
                     SELECT
@@ -7142,11 +7282,11 @@ def list_payment_orders_for_phone(phone: str, limit: int = 40) -> list[dict[str,
                       currency, channel, provider_order_id, refunded_amount_cents,
                       payable_cents, paid_cents, amount_subtotal_cents, discount_cents, tax_cents
                     FROM payment_orders
-                    WHERE (user_id = %s OR phone = %s)
+                    WHERE user_id = %s::uuid
                     ORDER BY created_at DESC
                     LIMIT %s
                     """,
-                    (uid, p, lim),
+                    (uid, lim),
                 )
                 rows = [dict(x) for x in cur.fetchall() or []]
                 return rows
@@ -7210,13 +7350,12 @@ def _wallet_recharge_status_label_zh(status: str | None) -> str:
 
 
 def list_wallet_recharge_rows_for_phone(phone: str, limit: int = 80) -> list[dict[str, Any]]:
-    """钱包充值订单（product_snapshot.kind = wallet_topup）。"""
+    """钱包充值订单（product_snapshot.kind = wallet_topup）；仅按 user_id 查询。"""
     p = (phone or "").strip()
     lim = max(1, min(200, int(limit)))
     if not p:
         return []
     try:
-        ensure_payment_orders_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
                 uid = _ensure_user_id_for_phone_conn(conn, p)
@@ -7235,12 +7374,12 @@ def list_wallet_recharge_rows_for_phone(phone: str, limit: int = 80) -> list[dic
                       COALESCE(paid_at, created_at) AS display_time,
                       EXTRACT(EPOCH FROM COALESCE(paid_at, created_at))::double precision AS display_time_epoch
                     FROM payment_orders
-                    WHERE (user_id = %s::uuid OR phone = %s)
+                    WHERE user_id = %s::uuid
                       AND COALESCE(product_snapshot->>'kind', raw->>'kind', '') = 'wallet_topup'
                     ORDER BY COALESCE(paid_at, created_at) DESC NULLS LAST, created_at DESC
                     LIMIT %s
                     """,
-                    (uid, p, lim),
+                    (uid, lim),
                 )
                 out: list[dict[str, Any]] = []
                 for row in cur.fetchall() or []:

@@ -383,9 +383,12 @@ def apply_payment_event(
     user_agent: str | None = None,
     source: str = "payment_webhook",
 ) -> tuple[bool, str, dict[str, Any] | None]:
+    from .models import normalize_payment_principal
+
+    phone = normalize_payment_principal(str(phone or "").strip())
     base_row = {
         "event_id": str(event_id or "").strip(),
-        "phone": str(phone or "").strip(),
+        "phone": phone,
         "tier": str(tier or "free").strip().lower(),
         "billing_cycle": (str(billing_cycle or "").strip().lower() or None),
         "status": str(status or "unknown").strip().lower(),
@@ -460,7 +463,17 @@ def apply_payment_event(
             # 部分退款不自动降级，避免误伤仍有效的订阅周期；全额退款走 refunded 分支。
             pass
 
-        _sync_profile_from_info(auth_service.user_info_for_principal(str(phone or "").strip()))
+        try:
+            _sync_profile_from_info(auth_service.user_info_for_principal(str(phone or "").strip()))
+        except Exception:
+            logger.exception(
+                "apply_payment_event post_tx sync_profile failed phone=%s skips_subscription=%s",
+                str(phone or "")[:48],
+                skips_subscription_from_product,
+            )
+            # 钱包/分钟包入账已在 PG 提交；不因同步用户档失败让回调方误判失败（否则支付宝反复重试、前端看不到成功态）
+            if not skips_subscription_from_product:
+                return False, "payment_event_tx_exception", base_row
     except Exception:
         return False, "payment_event_tx_exception", base_row
 

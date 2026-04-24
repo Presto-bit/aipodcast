@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import {
   forwardRef,
   useCallback,
@@ -11,7 +12,16 @@ import {
   type ReactNode,
   type SetStateAction
 } from "react";
-import PodcastWorksGallery from "../podcast/PodcastWorksGallery";
+
+const PodcastWorksGallery = dynamic(() => import("../podcast/PodcastWorksGallery"), {
+  loading: () => (
+    <div
+      className="min-h-[100px] rounded-2xl border border-line/50 bg-fill/40"
+      aria-busy
+      aria-label="加载作品列表"
+    />
+  )
+});
 import { chipClass } from "./chipStyles";
 import { PlayIcon, StopIcon } from "./MediaIcons";
 import { VoiceSelect, type VoiceOpt } from "./VoiceSelect";
@@ -287,15 +297,20 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   useEffect(() => {
     void (async () => {
       try {
-        const [d, s] = await Promise.all([
-          fetch("/api/default-voices", { cache: "no-store", headers: { ...getAuthHeaders() } }),
-          fetch("/api/saved_voices", { cache: "no-store", headers: { ...getAuthHeaders() } })
-        ]);
-        const dd = (await d.json().catch(() => ({}))) as {
+        const r = await fetch("/api/voice-presets-bootstrap", {
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { ...getAuthHeaders() }
+        });
+        const pack = (await r.json().catch(() => ({}))) as {
+          defaultVoices?: { data: unknown };
+          savedVoices?: { data: unknown };
+        };
+        const dd = (pack.defaultVoices?.data ?? {}) as {
           voices?: Record<string, Record<string, unknown>>;
           system_voices?: Record<string, Record<string, unknown>>;
         };
-        const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
+        const sd = (pack.savedVoices?.data ?? {}) as { voices?: { voiceId: string; displayName?: string }[] };
         if (dd.voices) setDefaultVoicesMap(dd.voices);
         if (dd.system_voices && typeof dd.system_voices === "object") setSystemVoicesMap(dd.system_voices);
         if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);

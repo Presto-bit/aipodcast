@@ -157,12 +157,12 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
     if (remote.origin === window.location.origin) return directUrl;
     try {
       const r = await fetch(remote.toString(), { mode: "cors", credentials: "omit", cache: "no-store" });
-      if (!r.ok) return null;
+      if (!r.ok) return directUrl;
       const blob = await r.blob();
-      if (!blob?.size) return null;
+      if (!blob?.size) return directUrl;
       const ct = (blob.type || "").toLowerCase();
       if (ct.includes("text/html") || ct.includes("application/json") || ct.includes("xml")) {
-        return null;
+        return directUrl;
       }
       const prev = blobUrlByJobId.current[jobId];
       if (prev) {

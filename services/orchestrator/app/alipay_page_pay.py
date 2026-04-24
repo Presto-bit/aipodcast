@@ -12,6 +12,7 @@ import base64
 import logging
 import os
 import secrets
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -255,24 +256,7 @@ def alipay_total_amount_yuan_to_cents(total_amount: str) -> int | None:
         return None
 
 
-def query_alipay_trade_for_page_pay(
-    cfg: AlipayPagePayConfig, *, out_trade_no: str
-) -> tuple[str, dict[str, Any]]:
-    """
-    主动查询电脑网站支付订单状态（alipay.trade.query）。
-    返回 (outcome, response_body)：
-    - outcome: paid | not_paid | not_found | rpc_error
-    - response_body: alipay_trade_query_response 内层字段（或含嵌套时的整包 dict）
-    """
-    oid = (out_trade_no or "").strip()
-    if not oid:
-        return "rpc_error", {}
-    try:
-        client = build_alipay_client(cfg)
-        raw = client.api_alipay_trade_query(out_trade_no=oid)
-    except Exception as e:
-        _log.warning("alipay trade query exception: %s", e)
-        return "rpc_error", {}
+def _parse_alipay_trade_query_response(raw: object) -> tuple[str, dict[str, Any]]:
     if not isinstance(raw, dict):
         return "rpc_error", {}
     inner = raw.get("alipay_trade_query_response")
@@ -287,6 +271,39 @@ def query_alipay_trade_for_page_pay(
     if ts in ("TRADE_SUCCESS", "TRADE_FINISHED"):
         return "paid", resp
     return "not_paid", resp
+
+
+def query_alipay_trade_for_page_pay(
+    cfg: AlipayPagePayConfig, *, out_trade_no: str, timeout_s: float | None = 12.0
+) -> tuple[str, dict[str, Any]]:
+    """
+    主动查询电脑网站支付订单状态（alipay.trade.query）。
+    返回 (outcome, response_body)：
+    - outcome: paid | not_paid | not_found | rpc_error
+    - response_body: alipay_trade_query_response 内层字段（或含嵌套时的整包 dict）
+    """
+    oid = (out_trade_no or "").strip()
+    if not oid:
+        return "rpc_error", {}
+
+    def _run() -> tuple[str, dict[str, Any]]:
+        try:
+            client = build_alipay_client(cfg)
+            raw = client.api_alipay_trade_query(out_trade_no=oid)
+        except Exception as e:
+            _log.warning("alipay trade query exception: %s", e)
+            return "rpc_error", {}
+        return _parse_alipay_trade_query_response(raw)
+
+    if timeout_s is None or timeout_s <= 0:
+        return _run()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(_run)
+        try:
+            return fut.result(timeout=float(timeout_s))
+        except FuturesTimeoutError:
+            _log.warning("alipay trade query timed out out_trade_no=%s timeout_s=%s", oid, timeout_s)
+            return "rpc_error", {}
 
 
 def verify_notify_params(cfg: AlipayPagePayConfig, params: dict[str, str], signature: str) -> bool:

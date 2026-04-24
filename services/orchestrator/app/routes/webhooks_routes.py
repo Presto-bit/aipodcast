@@ -368,7 +368,7 @@ def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]
             notify_cents,
         )
         return PlainTextResponse("success")
-    phone = str(row_sess.get("phone") or "").strip()
+    phone = models.normalize_payment_principal(str(row_sess.get("phone") or "").strip())
     kind = str(row_sess.get("kind") or "").strip().lower()
     if kind == "wallet":
         ok, reason, _row = auth_bridge.apply_payment_event(

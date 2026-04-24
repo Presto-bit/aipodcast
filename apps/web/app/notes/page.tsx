@@ -7,8 +7,6 @@ import InlineConfirmBar from "../../components/ui/InlineConfirmBar";
 import InlineTextPrompt from "../../components/ui/InlineTextPrompt";
 import SmallPromptModal from "../../components/ui/SmallPromptModal";
 import EmptyState from "../../components/ui/EmptyState";
-import NoteMarkdownPreview from "../../components/notes/NoteMarkdownPreview";
-import { NotesAskAnswerDisplay } from "../../components/notes/NotesAskAnswerDisplay";
 const NotesPodcastRoomModal = dynamic(() => import("../../components/notes/NotesPodcastRoomModal"));
 const PodcastWorksGallery = dynamic(() => import("../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
@@ -19,6 +17,19 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
     />
   )
 });
+const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMarkdownPreview"), {
+  loading: () => (
+    <div
+      className="flex min-h-[200px] items-center justify-center rounded-2xl border border-line/50 bg-fill/40 text-sm text-muted"
+      aria-busy
+      aria-label="加载预览"
+    />
+  )
+});
+const NotesAskAnswerDisplay = dynamic(
+  () => import("../../components/notes/NotesAskAnswerDisplay").then((m) => ({ default: m.NotesAskAnswerDisplay })),
+  { loading: () => <p className="text-muted">加载中…</p> }
+);
 import { createJob } from "../../lib/api";
 import { apiErrorMessage, formatNotesAskStreamError } from "../../lib/apiError";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
@@ -879,15 +890,26 @@ export default function NotesPage() {
             headers: { "content-type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify(body)
           });
-          const data = (await res.json().catch(() => ({}))) as {
+          const rawText = await res.text();
+          let data = {} as {
             success?: boolean;
             summary?: string;
             suggestions?: unknown;
             detail?: unknown;
             error?: string;
           };
+          if (rawText.trim()) {
+            try {
+              data = JSON.parse(rawText) as typeof data;
+            } catch {
+              data = {};
+            }
+          }
           if (!res.ok || !data.success) {
-            throw new Error(formatNotesAskStreamError(apiErrorMessage(data, "hints_failed")));
+            const fallback =
+              rawText.trim().slice(0, 400) ||
+              `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
+            throw new Error(formatNotesAskStreamError(apiErrorMessage(data, fallback)));
           }
           const sug: string[] = [];
           if (Array.isArray(data.suggestions)) {
@@ -2287,12 +2309,23 @@ export default function NotesPage() {
         })
       });
       if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as {
+        const rawText = await res.text();
+        let data = {} as {
           success?: boolean;
           detail?: unknown;
           error?: string;
         };
-        throw new Error(formatNotesAskStreamError(apiErrorMessage(data, "问答失败")));
+        if (rawText.trim()) {
+          try {
+            data = JSON.parse(rawText) as typeof data;
+          } catch {
+            data = {};
+          }
+        }
+        const fallback =
+          rawText.trim().slice(0, 400) ||
+          `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
+        throw new Error(formatNotesAskStreamError(apiErrorMessage(data, fallback)));
       }
       const ct = (res.headers.get("content-type") || "").toLowerCase();
       if (!ct.includes("text/event-stream") || !res.body) {

@@ -1,8 +1,18 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import PodcastWorksGallery from "../../components/podcast/PodcastWorksGallery";
+
+const PodcastWorksGallery = dynamic(() => import("../../components/podcast/PodcastWorksGallery"), {
+  loading: () => (
+    <div
+      className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
+      aria-busy
+      aria-label="加载作品列表"
+    />
+  )
+});
 import WorksActiveJobsPanel from "../../components/works/WorksActiveJobsPanel";
 import { chipClass } from "../../components/studio/chipStyles";
 import EmptyState from "../../components/ui/EmptyState";

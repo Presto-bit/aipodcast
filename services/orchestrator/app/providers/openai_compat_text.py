@@ -30,13 +30,50 @@ def _http_post_json(url: str, headers: dict[str, str], payload: dict[str, Any], 
     return json.loads(body)
 
 
+def _normalize_chat_message_content(val: Any) -> str:
+    """
+    OpenAI 兼容 Chat API 的 message.content / 流式 delta.content：
+    常见为 str；部分厂商返回 list[dict]（如 type=text 片段）或单 dict（含 text 字段）。
+    """
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, list):
+        parts: list[str] = []
+        for item in val:
+            if isinstance(item, dict):
+                typ = str(item.get("type") or "").lower()
+                if typ in ("reasoning", "thought"):
+                    continue
+                t = item.get("text")
+                if isinstance(t, str) and t:
+                    parts.append(t)
+                    continue
+                ot = item.get("output_text")
+                if isinstance(ot, str) and ot:
+                    parts.append(ot)
+            elif isinstance(item, str) and item:
+                parts.append(item)
+        return "".join(parts)
+    if isinstance(val, dict):
+        t = val.get("text")
+        if isinstance(t, str) and t:
+            return t
+        for k in ("content", "value"):
+            inner = val.get(k)
+            if isinstance(inner, str) and inner:
+                return inner
+    return str(val) if val else ""
+
+
 def _content_from_response(resp: dict[str, Any]) -> str:
     choices = resp.get("choices") or []
     if not isinstance(choices, list) or not choices:
         return ""
     msg = choices[0].get("message") if isinstance(choices[0], dict) else {}
     if isinstance(msg, dict):
-        return str(msg.get("content") or "").strip()
+        return _normalize_chat_message_content(msg.get("content")).strip()
     return ""
 
 
@@ -382,24 +419,12 @@ def _openai_stream_delta_text(delta: dict[str, Any]) -> str:
     parts: list[str] = []
 
     def append_piece(val: object) -> None:
-        if val is None:
-            return
-        if isinstance(val, str):
-            if val:
-                parts.append(val)
-            return
-        if isinstance(val, list):
-            for item in val:
-                if isinstance(item, dict):
-                    t = item.get("text")
-                    if t:
-                        parts.append(str(t))
-                elif item is not None:
-                    s = str(item)
-                    if s:
-                        parts.append(s)
+        chunk = _normalize_chat_message_content(val)
+        if chunk:
+            parts.append(chunk)
 
     append_piece(delta.get("reasoning_content"))
+    append_piece(delta.get("reasoning"))
     append_piece(delta.get("content"))
     return "".join(parts)
 

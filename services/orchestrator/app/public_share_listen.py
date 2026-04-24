@@ -42,7 +42,8 @@ def _coerce_result(raw: Any) -> dict[str, Any]:
 
 def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
     """
-    仅成功、未删除、播客成片；返回可直链播放的音频 URL（优先已有 audio_url，否则对 object key 预签名）。
+    仅成功、未删除、播客成片；返回可直链播放的音频 URL。
+    有 audio_object_key 时优先新鲜预签名；失败或为空时回退 result.audio_url。
     """
     jid = (job_id or "").strip()
     if not jid:
@@ -59,15 +60,16 @@ def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
         return None
 
     result = _coerce_result(row.get("result"))
-    audio_url = str(result.get("audio_url") or "").strip()
-    if not audio_url:
-        key = str(result.get("audio_object_key") or "").strip()
-        if key:
-            try:
-                audio_url = presigned_get_url(key, expires_in=86400 * 7)
-            except Exception:
-                logger.warning("public_share_listen presign failed job_id=%s", jid, exc_info=True)
-                audio_url = ""
+    key = str(result.get("audio_object_key") or "").strip()
+    legacy_url = str(result.get("audio_url") or "").strip()
+    audio_url = legacy_url
+    if key:
+        try:
+            fresh = presigned_get_url(key, expires_in=86400 * 7)
+            if fresh:
+                audio_url = str(fresh).strip()
+        except Exception:
+            logger.warning("public_share_listen presign failed job_id=%s", jid, exc_info=True)
     if not audio_url:
         return None
 
@@ -139,15 +141,16 @@ def build_podcast_template_listen_bundle(job_id: str) -> dict[str, Any] | None:
     if jt not in _PUBLIC_JOB_TYPES:
         return None
     result = _coerce_result(row.get("result"))
-    audio_url = str(result.get("audio_url") or "").strip()
-    if not audio_url:
-        key = str(result.get("audio_object_key") or "").strip()
-        if key:
-            try:
-                audio_url = presigned_get_url(key, expires_in=86400 * 7)
-            except Exception:
-                logger.warning("podcast_template_listen presign failed job_id=%s", jid, exc_info=True)
-                audio_url = ""
+    key = str(result.get("audio_object_key") or "").strip()
+    legacy_url = str(result.get("audio_url") or "").strip()
+    audio_url = legacy_url
+    if key:
+        try:
+            fresh = presigned_get_url(key, expires_in=86400 * 7)
+            if fresh:
+                audio_url = str(fresh).strip()
+        except Exception:
+            logger.warning("podcast_template_listen presign failed job_id=%s", jid, exc_info=True)
     if not audio_url:
         return None
     title = str(result.get("title") or "").strip()
@@ -194,7 +197,7 @@ def build_podcast_template_listen_bundle(job_id: str) -> dict[str, Any] | None:
 def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[str, Any] | None:
     """
     已登录用户播放「我的作品」：校验任务归属后返回可播放 URL。
-    成片若仅存对象键（result 已剥离 audio_hex）或预签名过期，则按 audio_object_key 重新签发。
+    有 audio_object_key 时优先新鲜预签名；失败或为空时回退 result.audio_url（兼容仅存旧链或瞬时签发失败）。
     """
     jid = (job_id or "").strip()
     if not jid:
@@ -212,6 +215,7 @@ def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[st
 
     result = _coerce_result(row.get("result"))
     key = str(result.get("audio_object_key") or "").strip()
+    legacy_url = str(result.get("audio_url") or "").strip()
     audio_url = ""
     if key:
         try:
@@ -219,10 +223,8 @@ def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[st
         except Exception:
             logger.warning("owner_work_listen presign failed job_id=%s", jid, exc_info=True)
             audio_url = ""
-        if not audio_url:
-            return None
-    else:
-        audio_url = str(result.get("audio_url") or "").strip()
+    if not audio_url:
+        audio_url = legacy_url
     if not audio_url:
         return None
 

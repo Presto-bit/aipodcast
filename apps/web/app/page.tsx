@@ -1,16 +1,25 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import PodcastWorksGallery from "../components/podcast/PodcastWorksGallery";
 import { IconCreate, IconNotes, IconVoice, IconGrid } from "../components/NavIcons";
+import { SiteBeianBar } from "../components/SiteBeianBar";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../lib/worksTypes";
 import { useAuth, userAccountRef } from "../lib/auth";
 import { useI18n } from "../lib/I18nContext";
 import { isRegisterEmailFormatOk } from "../lib/registerEmail";
-import { SiteBeianBar } from "../components/SiteBeianBar";
 
-const HOME_WORKS_LIMIT = 80;
+const PodcastWorksGallery = dynamic(() => import("../components/podcast/PodcastWorksGallery"), {
+  loading: () => (
+    <div
+      className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
+      aria-busy
+      aria-label="加载作品列表"
+    />
+  )
+});
+
 const HOME_WORKS_PREVIEW = 10;
 
 function countQueuedOrRunningJobs(jobs: unknown[] | undefined): number {
@@ -64,26 +73,24 @@ export default function HomePage() {
         setWorksLoading(true);
         setWorksFetchErr("");
       }
-      const [jobsRes, activeJobsRes, worksRes, notesRes] = await Promise.all([
-        fetch("/api/jobs?limit=1", { cache: "no-store", credentials: "same-origin", headers: { ...authHdr } }),
-        fetch("/api/jobs?limit=80&offset=0&status=queued,running&slim=1", {
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { ...authHdr }
-        }),
-        fetch(`/api/works?limit=${HOME_WORKS_LIMIT}&offset=0`, {
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { ...authHdr }
-        }),
-        fetch("/api/notes", { cache: "no-store", credentials: "same-origin", headers: { ...authHdr } })
-      ]);
-      const jobsData = (await jobsRes.json().catch(() => ({}))) as { jobs?: Array<{ id?: string; status?: string }> };
-      const activeJobsData = (await activeJobsRes.json().catch(() => ({}))) as {
+      const overviewRes = await fetch("/api/home-overview", {
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { ...authHdr }
+      });
+      const pack = (await overviewRes.json().catch(() => ({}))) as {
+        jobsLimit1?: { ok: boolean; status: number; data: unknown };
+        jobsActive?: { ok: boolean; status: number; data: unknown };
+        works?: { ok: boolean; status: number; data: unknown };
+        notes?: { ok: boolean; status: number; data: unknown };
+      };
+      const jobsData = (pack.jobsLimit1?.data ?? {}) as { jobs?: Array<{ id?: string; status?: string }> };
+      const activeJobsData = (pack.jobsActive?.data ?? {}) as {
         jobs?: unknown[];
         success?: boolean;
       };
-      const worksData = (await worksRes.json().catch(() => ({}))) as {
+      const worksPart = pack.works;
+      const worksData = (worksPart?.data ?? {}) as {
         ai?: WorkItem[];
         tts?: WorkItem[];
         notes?: WorkItem[];
@@ -91,10 +98,13 @@ export default function HomePage() {
         error?: string;
         detail?: string;
       };
-      const notesData = (await notesRes.json().catch(() => ({}))) as { notes?: unknown[] };
-      if (!worksRes.ok || worksData.success === false) {
+      const notesData = (pack.notes?.data ?? {}) as { notes?: unknown[] };
+      const worksResOk = worksPart?.ok ?? false;
+      if (!worksResOk || worksData.success === false) {
         if (!silent) {
-          setWorksFetchErr(String(worksData.error || worksData.detail || `作品加载失败 ${worksRes.status}`));
+          setWorksFetchErr(
+            String(worksData.error || worksData.detail || `作品加载失败 ${worksPart?.status ?? overviewRes.status}`)
+          );
         }
       }
       const latest = Array.isArray(jobsData.jobs) && jobsData.jobs.length > 0 ? jobsData.jobs[0] : null;
@@ -103,7 +113,7 @@ export default function HomePage() {
       const notesWorks = Array.isArray(worksData.notes) ? worksData.notes : [];
       const merged = mergeUserFacingWorksByRecency(ai, tts, notesWorks);
       const activeJobsOk =
-        activeJobsRes.ok && activeJobsData.success !== false && Array.isArray(activeJobsData.jobs);
+        Boolean(pack.jobsActive?.ok) && activeJobsData.success !== false && Array.isArray(activeJobsData.jobs);
       const activeJobsCount = activeJobsOk ? countQueuedOrRunningJobs(activeJobsData.jobs) : null;
 
       if (seq !== homeOverviewReqSeq.current) return;

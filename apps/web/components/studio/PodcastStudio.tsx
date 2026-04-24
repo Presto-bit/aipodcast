@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
   forwardRef,
   useCallback,
@@ -20,7 +21,15 @@ import { cancelJob, formatOrchestratorErrorText, previewMediaJob } from "../../l
 import { buildReferenceJobFields } from "../../lib/jobReferencePayload";
 import { rememberJobId } from "../../lib/jobRecent";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
-import PodcastWorksGallery from "../podcast/PodcastWorksGallery";
+const PodcastWorksGallery = dynamic(() => import("../podcast/PodcastWorksGallery"), {
+  loading: () => (
+    <div
+      className="min-h-[100px] rounded-2xl border border-line/50 bg-fill/40"
+      aria-busy
+      aria-label="加载作品列表"
+    />
+  )
+});
 import CreativeTemplatePicker from "./CreativeTemplatePicker";
 import { chipClass } from "./chipStyles";
 import { PlayIcon, StopIcon } from "./MediaIcons";
@@ -471,24 +480,32 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   useEffect(() => {
     void (async () => {
       try {
-        const [d, s, n, nb] = await Promise.all([
-          fetch("/api/default-voices", { cache: "no-store", headers: { ...getAuthHeaders() } }),
-          fetch("/api/saved_voices", { cache: "no-store", headers: { ...getAuthHeaders() } }),
-          fetch("/api/notes", { cache: "no-store", headers: { ...getAuthHeaders() } }),
-          fetch("/api/notebooks", { cache: "no-store", credentials: "same-origin", headers: { ...getAuthHeaders() } })
-        ]);
-        const dd = (await d.json().catch(() => ({}))) as {
+        const r = await fetch("/api/studio-bootstrap", {
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { ...getAuthHeaders() }
+        });
+        const pack = (await r.json().catch(() => ({}))) as {
+          defaultVoices?: { ok: boolean; data: unknown };
+          savedVoices?: { ok: boolean; data: unknown };
+          notes?: { ok: boolean; data: unknown };
+          notebooks?: { ok: boolean; data: unknown };
+        };
+        const dd = (pack.defaultVoices?.data ?? {}) as {
           voices?: Record<string, Record<string, unknown>>;
           system_voices?: Record<string, Record<string, unknown>>;
         };
-        const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
-        const nd = (await n.json().catch(() => ({}))) as { success?: boolean; notes?: { noteId: string; title?: string; notebook?: string }[] };
-        const nbd = (await nb.json().catch(() => ({}))) as { success?: boolean; notebooks?: string[] };
+        const sd = (pack.savedVoices?.data ?? {}) as { voices?: { voiceId: string; displayName?: string }[] };
+        const nd = (pack.notes?.data ?? {}) as {
+          success?: boolean;
+          notes?: { noteId: string; title?: string; notebook?: string }[];
+        };
+        const nbd = (pack.notebooks?.data ?? {}) as { success?: boolean; notebooks?: string[] };
         if (dd.voices) setDefaultVoicesMap(dd.voices);
         if (dd.system_voices && typeof dd.system_voices === "object") setSystemVoicesMap(dd.system_voices);
         if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
-        if (n.ok && nd.success && Array.isArray(nd.notes)) setNotesList(nd.notes.slice(0, 300));
-        if (nb.ok && nbd.success && Array.isArray(nbd.notebooks)) setStudioNotebooks(nbd.notebooks);
+        if (pack.notes?.ok && nd.success && Array.isArray(nd.notes)) setNotesList(nd.notes.slice(0, 300));
+        if (pack.notebooks?.ok && nbd.success && Array.isArray(nbd.notebooks)) setStudioNotebooks(nbd.notebooks);
       } catch {
         // ignore
       }

@@ -280,6 +280,8 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
     用户从支付宝返回后：若异步通知未到，可用商户订单号调 alipay.trade.query 主动履约入账。
     须与当前登录用户 checkout 会话一致；幂等与异步通知共用 event_id=out_trade_no。
     """
+    # 常见反代 proxy_read_timeout≈30s：在此预算内返回 JSON（503）优于整条链 504 无 body。
+    _reconcile_deadline = time.monotonic() + 22.0
     cfg = AlipayPagePayConfig.from_env()
     if not cfg:
         raise HTTPException(status_code=403, detail="alipay_page_pay_disabled")
@@ -309,12 +311,20 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
             return {"success": True, "applied": False, "detail": "already_settled", "wallet_balance_cents": bal}
         raise HTTPException(status_code=404, detail="checkout_session_not_found")
 
-    if str(row_sess.get("phone") or "").strip() != phone:
+    if models.normalize_payment_principal(str(row_sess.get("phone") or "")) != models.normalize_payment_principal(
+        phone
+    ):
         raise HTTPException(status_code=403, detail="out_trade_no_mismatch")
     if str(row_sess.get("kind") or "").strip().lower() != "wallet":
         raise HTTPException(status_code=400, detail="not_wallet_checkout")
 
-    outcome, qresp = query_alipay_trade_for_page_pay(cfg, out_trade_no=out_trade_no)
+    _rem = _reconcile_deadline - time.monotonic()
+    if _rem < 2.0:
+        raise HTTPException(status_code=503, detail="reconcile_deadline_exceeded")
+    _q_timeout = max(3.0, min(12.0, _rem - 1.0))
+    outcome, qresp = query_alipay_trade_for_page_pay(
+        cfg, out_trade_no=out_trade_no, timeout_s=_q_timeout
+    )
     if outcome == "rpc_error":
         raise HTTPException(status_code=502, detail="alipay_trade_query_failed")
     if outcome == "not_found":
@@ -355,7 +365,14 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
     paid_at = parse_alipay_notify_time(qresp.get("send_pay_date") or qresp.get("gmt_payment"))
     ok_apply = False
     last_reason = ""
-    for attempt in range(10):
+    for attempt in range(6):
+        if time.monotonic() >= _reconcile_deadline:
+            _log.warning(
+                "alipay wallet reconcile deadline before apply out_trade_no=%s attempt=%s",
+                out_trade_no,
+                attempt,
+            )
+            raise HTTPException(status_code=503, detail="reconcile_deadline_exceeded")
         ok, reason, _row = auth_bridge.apply_payment_event(
             out_trade_no,
             phone,
@@ -391,8 +408,11 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
         if ex2 and st2 in ("paid", "success", "succeeded", "captured"):
             ok_apply = True
             break
-        if attempt < 9:
-            time.sleep(min(1.5, 0.1 * (2**attempt)))
+        if attempt < 5:
+            sleep_s = min(0.45, 0.06 * (2**attempt))
+            if time.monotonic() + sleep_s >= _reconcile_deadline:
+                raise HTTPException(status_code=503, detail="reconcile_deadline_exceeded")
+            time.sleep(sleep_s)
     if not ok_apply:
         _log.error(
             "alipay wallet reconcile apply failed after retries out_trade_no=%s reason=%s",

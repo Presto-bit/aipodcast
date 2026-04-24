@@ -16,8 +16,8 @@ import { useAuth } from "../../lib/auth";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 
-const POLL_MS = 5000;
-const LIST_LIMIT = 80;
+const POLL_MS = 8000;
+const LIST_LIMIT = 40;
 
 function statusLabel(st: JobStatus): string {
   if (st === "queued") return "排队中";
@@ -54,7 +54,7 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
         limit: LIST_LIMIT,
         offset: 0,
         status: "queued,running",
-        slim: false
+        slim: true
       });
       setJobs(list);
     } catch (e) {
@@ -124,7 +124,7 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
             limit: LIST_LIMIT,
             offset: 0,
             status: "queued,running",
-            slim: false
+            slim: true
           });
           if (refreshed.some((j) => String(j.id) === String(id))) {
             throw pe;

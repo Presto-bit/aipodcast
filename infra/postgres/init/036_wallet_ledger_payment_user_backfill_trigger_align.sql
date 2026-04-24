@@ -1,4 +1,29 @@
--- 支付状态机：禁止状态回退（DB 级兜底；与 app.models._payment_status_rank / _is_payment_status_transition_allowed 对齐）
+-- 钱包流水账（append-only，与 user_wallet_balance 变更同步写入应用层）
+CREATE TABLE IF NOT EXISTS user_wallet_ledger (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  phone TEXT NOT NULL,
+  delta_cents BIGINT NOT NULL,
+  balance_after_cents BIGINT NOT NULL,
+  entry_type TEXT NOT NULL,
+  ref_id TEXT,
+  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_wallet_ledger_user_created
+  ON user_wallet_ledger (user_id, created_at DESC);
+
+-- 历史订单：按当前 users.phone 回填 user_id，便于仅按 user_id 查询用户订单
+UPDATE payment_orders po
+SET user_id = u.id
+FROM users u
+WHERE po.user_id IS NULL
+  AND po.phone IS NOT NULL
+  AND btrim(po.phone) <> ''
+  AND u.phone = po.phone;
+
+-- 支付状态 rank / 触发器：与 app.models._payment_status_rank / _is_payment_status_transition_allowed 对齐
 CREATE OR REPLACE FUNCTION fyv_payment_status_rank(s TEXT)
 RETURNS INTEGER
 LANGUAGE sql
@@ -62,34 +87,3 @@ CREATE TRIGGER trg_guard_payment_status_transition
 BEFORE UPDATE OF status ON payment_orders
 FOR EACH ROW
 EXECUTE FUNCTION fyv_guard_payment_status_transition();
-
--- 支付回调触发的订阅事件幂等键（同一订单事件+事件类型仅一条）
-CREATE UNIQUE INDEX IF NOT EXISTS ux_subscription_events_payment_event_once
-  ON subscription_events(source, order_event_id, event_type)
-  WHERE source = 'payment_webhook' AND order_event_id IS NOT NULL;
-
--- 金额/结算模型补强（可选字段，向前兼容）
-ALTER TABLE payment_orders
-  ADD COLUMN IF NOT EXISTS settlement_amount_cents BIGINT,
-  ADD COLUMN IF NOT EXISTS settlement_currency TEXT,
-  ADD COLUMN IF NOT EXISTS fx_rate_snapshot NUMERIC(18,8),
-  ADD COLUMN IF NOT EXISTS refunded_amount_cents BIGINT;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payment_orders_settlement_amount_nonnegative_ck') THEN
-    ALTER TABLE payment_orders
-      ADD CONSTRAINT payment_orders_settlement_amount_nonnegative_ck
-      CHECK (settlement_amount_cents IS NULL OR settlement_amount_cents >= 0);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payment_orders_refunded_amount_nonnegative_ck') THEN
-    ALTER TABLE payment_orders
-      ADD CONSTRAINT payment_orders_refunded_amount_nonnegative_ck
-      CHECK (refunded_amount_cents IS NULL OR refunded_amount_cents >= 0);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payment_orders_refunded_not_exceed_paid_ck') THEN
-    ALTER TABLE payment_orders
-      ADD CONSTRAINT payment_orders_refunded_not_exceed_paid_ck
-      CHECK (refunded_amount_cents IS NULL OR refunded_amount_cents <= amount_cents);
-  END IF;
-END $$;

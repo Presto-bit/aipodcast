@@ -420,3 +420,50 @@ export async function proxySsePostFromOrchestrator(
     );
   }
 }
+
+/** 编排器 GET 的单段 JSON结果（与浏览器侧 `res.json().catch(() => ({}))` 语义对齐）。 */
+export type OrchestratorJsonPart = {
+  ok: boolean;
+  status: number;
+  /** 解析后的 JSON；非 JSON 或解析失败为 `{}` */
+  data: unknown;
+};
+
+/**
+ * 并行聚合 BFF 用：对编排器发起 GET，返回状态与解析后的 body。
+ * 连接失败时 `ok` 为 false、`status` 503、`data` 为统一错误 JSON。
+ */
+export async function orchestratorGetJsonPart(
+  path: string,
+  headers: Record<string, string>,
+  requestId: string
+): Promise<OrchestratorJsonPart> {
+  try {
+    const upstream = await fetchOrchestrator(path, {
+      method: "GET",
+      payload: "{}",
+      headers,
+      requestId
+    });
+    const text = await upstream.text();
+    let data: unknown = {};
+    if (text) {
+      try {
+        data = JSON.parse(text) as unknown;
+      } catch {
+        data = {};
+      }
+    }
+    return { ok: upstream.ok, status: upstream.status, data };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 503,
+      data: {
+        success: false,
+        error: "upstream_unreachable",
+        detail: describeOrchestratorUnreachable(err)
+      }
+    };
+  }
+}

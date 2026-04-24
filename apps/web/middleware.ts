@@ -18,10 +18,17 @@ const RATE_LIMIT_EXEMPT_POST_PATHS = new Set([
 const CACHE_PAGE = "private, no-cache, no-store, max-age=0, must-revalidate";
 /** BFF / API：不进入共享边缘长期缓存 */
 const CACHE_API = "no-store, max-age=0, must-revalidate";
+/** 浏览器私有短缓存：仅用于匿名/弱个性化只读 GET，减轻重复请求（`private` 不供 CDN 共享） */
+const CACHE_API_PRIVATE_SHORT = "private, max-age=45, stale-while-revalidate=180";
 
 function withCacheHeaders(res: NextResponse, directive: string): NextResponse {
   res.headers.set("Cache-Control", directive);
   res.headers.set("Pragma", "no-cache");
+  return res;
+}
+
+function withPrivateShortCache(res: NextResponse): NextResponse {
+  res.headers.set("Cache-Control", CACHE_API_PRIVATE_SHORT);
   return res;
 }
 
@@ -105,9 +112,16 @@ export function middleware(req: NextRequest) {
   if (pathname === "/api/image-proxy" && req.method === "GET") {
     return withCacheHeaders(NextResponse.next(), CACHE_API);
   }
-  /** 选题助手 GET 由路由内按 IP 限速，避免拖满全站计数 */
+  /** 系统默认音色目录：匿名可读，浏览器可短期复用响应 */
+  if (
+    req.method === "GET" &&
+    (pathname === "/api/default-voices" || pathname.startsWith("/api/default-voices/"))
+  ) {
+    return withPrivateShortCache(NextResponse.next());
+  }
+  /** 选题助手 GET：路由内按 IP 限速；带 seed 的 URL 各自为缓存键 */
   if (pathname === "/api/create/hot-topics" && req.method === "GET") {
-    return withCacheHeaders(NextResponse.next(), CACHE_API);
+    return withPrivateShortCache(NextResponse.next());
   }
   if (req.method === "POST" && RATE_LIMIT_EXEMPT_POST_PATHS.has(pathname)) {
     return withCacheHeaders(NextResponse.next(), CACHE_API);

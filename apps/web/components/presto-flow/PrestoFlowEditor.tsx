@@ -178,6 +178,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const rangeDragAnchorRef = useRef<string | null>(null);
   const rangeDragMovedRef = useRef(false);
   const excludedRef = useRef(excluded);
+  /** 转写/导出轮询：隐藏标签页时暂停，减少无效全量拉工程 */
+  const projectBusyPollVisibleRef = useRef(true);
   const excludedUndoStack = useRef<string[][]>([]);
   const excludedRedoStack = useRef<string[][]>([]);
   const [, bumpExcludedHistory] = useReducer((n: number) => n + 1, 0);
@@ -188,6 +190,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   useEffect(() => {
     excludedRef.current = excluded;
   }, [excluded]);
+
+  useEffect(() => {
+    const onVis = () => {
+      projectBusyPollVisibleRef.current = document.visibilityState === "visible";
+    };
+    onVis();
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   useEffect(() => {
     setMultiSelectIds(new Set());
@@ -576,7 +587,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     const st = project?.transcription_status;
     const ex = project?.export_status;
     if (st === "running" || st === "queued" || ex === "running" || ex === "queued") {
-      const id = window.setInterval(() => void load(), 2500);
+      const busyPollMs = 5500;
+      const id = window.setInterval(() => {
+        if (projectBusyPollVisibleRef.current) void load();
+      }, busyPollMs);
       return () => window.clearInterval(id);
     }
     return undefined;

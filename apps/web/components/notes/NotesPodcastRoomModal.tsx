@@ -281,15 +281,20 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     if (!open) return;
     void (async () => {
       try {
-        const [d, s] = await Promise.all([
-          fetch("/api/default-voices", { cache: "no-store", headers: { ...getAuthHeaders() } }),
-          fetch("/api/saved_voices", { cache: "no-store", headers: { ...getAuthHeaders() } })
-        ]);
-        const dd = (await d.json().catch(() => ({}))) as {
+        const r = await fetch("/api/voice-presets-bootstrap", {
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { ...getAuthHeaders() }
+        });
+        const pack = (await r.json().catch(() => ({}))) as {
+          defaultVoices?: { data: unknown };
+          savedVoices?: { data: unknown };
+        };
+        const dd = (pack.defaultVoices?.data ?? {}) as {
           voices?: Record<string, Record<string, unknown>>;
           system_voices?: Record<string, Record<string, unknown>>;
         };
-        const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
+        const sd = (pack.savedVoices?.data ?? {}) as { voices?: { voiceId: string; displayName?: string }[] };
         if (dd.voices) setDefaultVoicesMap(dd.voices);
         if (dd.system_voices && typeof dd.system_voices === "object") setSystemVoicesMap(dd.system_voices);
         if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
