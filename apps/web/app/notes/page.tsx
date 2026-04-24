@@ -68,6 +68,7 @@ import { BillingShortfallLinks } from "../../components/subscription/BillingShor
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { normalizeNotesAskSources, type NotesAskSource } from "../../lib/notesAskCitation";
 import { loadNotesAskChat, saveNotesAskChat } from "../../lib/notesAskChatStorage";
+import { notesAskClientLog } from "../../lib/notesAskClientLog";
 import {
   accountKeyFromUser,
   readLocalStorageScoped,
@@ -637,7 +638,8 @@ export default function NotesPage() {
   const storageAccountScope = useMemo(() => accountKeyFromUser(user), [user]);
   const skipNotesAskSaveRef = useRef(true);
   const notesAskMessagesSnapshotRef = useRef<NotesAskTurn[]>([]);
-  const prevNotebookForChatRef = useRef<string | null>(null);
+  /** 对话持久化分区：笔记本作用域 + 选中笔记 ID（排序拼接），避免删笔记后同标题新笔记继承旧会话 */
+  const prevNotesAskChatScopeRef = useRef<{ nb: string; idsKey: string } | null>(null);
   const noteRefCap = useMemo(() => maxNotesForReference(), []);
   const createdByPhone = useMemo(() => {
     const uid = typeof user?.user_id === "string" ? user.user_id.trim() : "";
@@ -770,6 +772,10 @@ export default function NotesPage() {
   );
 
   const [draftSelectedNoteIds, setDraftSelectedNoteIds] = useState<string[]>([]);
+  const draftNotesAskIdsKey = useMemo(
+    () => [...draftSelectedNoteIds].filter(Boolean).sort().join("|"),
+    [draftSelectedNoteIds]
+  );
 
   useEffect(() => {
     setDraftSelectedNoteIds((prev) => (prev.length > noteRefCap ? prev.slice(0, noteRefCap) : prev));
@@ -934,10 +940,16 @@ export default function NotesPage() {
       setNotesAskHintsLoading(true);
       setNotesAskHintsError("");
       void (async () => {
+        const hintsRid = notesAskClientRequestId();
         try {
           const body: Record<string, unknown> = { notebook: nb, note_ids: ids };
           if (sharedBrowse?.ownerUserId) body.sharedFromOwnerUserId = sharedBrowse.ownerUserId;
-          const hintsRid = notesAskClientRequestId();
+          notesAskClientLog("info", "hints", "request_start", {
+            requestId: hintsRid,
+            notebook: nb,
+            noteIds: ids,
+            url: notesAskBffUrl("/api/notes/ask/hints")
+          });
           const res = await fetch(notesAskBffUrl("/api/notes/ask/hints"), {
             method: "POST",
             credentials: notesAskFetchCredentials(),
@@ -970,6 +982,13 @@ export default function NotesPage() {
               rawText.trim().slice(0, 400) ||
               `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
             const ridOut = res.headers.get("x-request-id")?.trim() || hintsRid;
+            notesAskClientLog("warn", "hints", "response_not_ok", {
+              requestId: ridOut,
+              httpStatus: res.status,
+              success: data.success,
+              error: typeof data.error === "string" ? data.error : undefined,
+              bodyPreview: rawText.trim().slice(0, 800)
+            });
             const hintsMeta: NotesAskStreamErrorMeta = {
               httpStatus: res.status,
               requestId: ridOut,
@@ -992,12 +1011,23 @@ export default function NotesPage() {
             suggestions: sug.slice(0, 3)
           });
           setNotesAskHintsError("");
+          notesAskClientLog("info", "hints", "response_ok", {
+            requestId: res.headers.get("x-request-id")?.trim() || hintsRid,
+            summaryLen: String(data.summary || "").trim().length,
+            suggestionCount: sug.length
+          });
         } catch (e) {
-          if (ac.signal.aborted) return;
+          if (ac.signal.aborted) {
+            notesAskClientLog("debug", "hints", "request_aborted", { requestId: hintsRid });
+            return;
+          }
+          const errMsg = String(e instanceof Error ? e.message : e) || "hints_failed";
+          notesAskClientLog("error", "hints", "request_failed", {
+            requestId: hintsRid,
+            message: errMsg
+          });
           setNotesAskHints(null);
-          setNotesAskHintsError(
-            formatNotesAskStreamError(String(e instanceof Error ? e.message : e) || "hints_failed")
-          );
+          setNotesAskHintsError(formatNotesAskStreamError(errMsg));
         } finally {
           if (!ac.signal.aborted) setNotesAskHintsLoading(false);
         }
@@ -1067,6 +1097,8 @@ export default function NotesPage() {
   useEffect(() => {
     if (hubView) return;
     const stripBoot = (prev: NotesAskTurn[]) => prev.filter((m) => !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX));
+    const hasVisibleAssistant = (prev: NotesAskTurn[]) =>
+      prev.some((m) => m.role === "assistant" && (m.content || "").trim());
 
     if (draftSelectedNoteIds.length === 0) {
       setNotesAskMessages((prev) => {
@@ -1079,6 +1111,7 @@ export default function NotesPage() {
     if (notesAskHintsLoading) {
       setNotesAskMessages((prev) => {
         if (prev.some((m) => m.role === "user")) return prev;
+        if (hasVisibleAssistant(prev)) return prev;
         return stripBoot(prev);
       });
       return;
@@ -1087,6 +1120,7 @@ export default function NotesPage() {
     if (!notesAskHints || (!notesAskHints.summary.trim() && notesAskHints.suggestions.length === 0)) {
       setNotesAskMessages((prev) => {
         if (prev.some((m) => m.role === "user")) return prev;
+        if (hasVisibleAssistant(prev)) return prev;
         return stripBoot(prev);
       });
       return;
@@ -1096,6 +1130,7 @@ export default function NotesPage() {
     if (!content) {
       setNotesAskMessages((prev) => {
         if (prev.some((m) => m.role === "user")) return prev;
+        if (hasVisibleAssistant(prev)) return prev;
         return stripBoot(prev);
       });
       return;
@@ -1132,22 +1167,30 @@ export default function NotesPage() {
   ]);
 
   useEffect(() => {
-    const nb = selectedNotebook.trim();
-    const prevNb = prevNotebookForChatRef.current;
-    if (prevNb && prevNb !== nb) {
+    const nb = effectiveDraftNotebookKey.trim();
+    const idsKey = draftNotesAskIdsKey;
+    const prev = prevNotesAskChatScopeRef.current;
+    if (prev && (prev.nb !== nb || prev.idsKey !== idsKey)) {
       const snap = notesAskMessagesSnapshotRef.current;
       if (!snap.some((m) => m.streaming)) {
-        saveNotesAskChat(prevNb, snap);
+        const prevIds = prev.idsKey ? prev.idsKey.split("|").filter(Boolean) : [];
+        if (prev.nb) saveNotesAskChat(prev.nb, prevIds, snap);
       }
     }
-    prevNotebookForChatRef.current = nb || null;
+    prevNotesAskChatScopeRef.current = { nb, idsKey };
 
     if (!nb) {
+      notesAskClientLog("debug", "persist", "chat_cleared_no_notebook");
       setNotesAskMessages([]);
       skipNotesAskSaveRef.current = true;
       return;
     }
-    const loaded = loadNotesAskChat(nb);
+    const loaded = loadNotesAskChat(nb, draftSelectedNoteIds);
+    notesAskClientLog("info", "persist", "chat_scope_loaded", {
+      nb,
+      idsKey,
+      messageCount: loaded?.length ?? 0
+    });
     setNotesAskMessages(
       loaded?.length
         ? loaded.map((m) => ({
@@ -1158,39 +1201,50 @@ export default function NotesPage() {
         : []
     );
     skipNotesAskSaveRef.current = true;
-  }, [selectedNotebook, storageAccountScope]);
+  }, [effectiveDraftNotebookKey, draftNotesAskIdsKey, draftSelectedNoteIds, storageAccountScope]);
 
   useEffect(() => {
     if (skipNotesAskSaveRef.current) {
       skipNotesAskSaveRef.current = false;
       return;
     }
-    const nb = selectedNotebook.trim();
+    const nb = effectiveDraftNotebookKey.trim();
     if (!nb) return;
     if (notesAskMessages.some((m) => m.streaming)) return;
     const timer = window.setTimeout(() => {
-      saveNotesAskChat(nb, notesAskMessages);
+      saveNotesAskChat(nb, draftSelectedNoteIds, notesAskMessages);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [notesAskMessages, selectedNotebook, storageAccountScope]);
+  }, [notesAskMessages, effectiveDraftNotebookKey, draftSelectedNoteIds, storageAccountScope]);
 
   const notesAskUnloadRef = useRef({
     messages: [] as NotesAskTurn[],
-    nb: ""
+    nb: "",
+    idsKey: ""
   });
   useEffect(() => {
     notesAskUnloadRef.current = {
       messages: notesAskMessages,
-      nb: selectedNotebook.trim()
+      nb: effectiveDraftNotebookKey.trim(),
+      idsKey: draftNotesAskIdsKey
     };
-  }, [notesAskMessages, selectedNotebook]);
+  }, [notesAskMessages, effectiveDraftNotebookKey, draftNotesAskIdsKey]);
 
   useEffect(() => {
     const onHide = () => {
-      const { messages, nb } = notesAskUnloadRef.current;
+      const { messages, nb, idsKey } = notesAskUnloadRef.current;
       if (!nb) return;
-      if (messages.some((m) => m.streaming)) return;
-      saveNotesAskChat(nb, messages);
+      if (messages.some((m) => m.streaming)) {
+        notesAskClientLog("debug", "persist", "pagehide_skip_streaming");
+        return;
+      }
+      const ids = idsKey ? idsKey.split("|").filter(Boolean) : [];
+      notesAskClientLog("debug", "persist", "pagehide_save", {
+        nb,
+        idsKey,
+        messageCount: messages.length
+      });
+      saveNotesAskChat(nb, ids, messages);
     };
     window.addEventListener("pagehide", onHide);
     return () => window.removeEventListener("pagehide", onHide);
@@ -2410,16 +2464,20 @@ export default function NotesPage() {
     setNotesAskError("");
     setNotesAskHintsError("");
     setNotesAskBusy(true);
-    setNotesAskMessages((prev) => {
-      const base = prev.filter((m) => !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX));
-      return [
-        ...base,
-        { id: userMsgId, role: "user", content: q },
-        { id: assistantId, role: "assistant", content: "", streaming: true }
-      ];
-    });
+    setNotesAskMessages((prev) => [
+      ...prev,
+      { id: userMsgId, role: "user", content: q },
+      { id: assistantId, role: "assistant", content: "", streaming: true }
+    ]);
     setNotesAskQuestion("");
     const streamRid = notesAskClientRequestId();
+    notesAskClientLog("info", "stream", "request_start", {
+      requestId: streamRid,
+      notebook: nb,
+      noteCount: draftSelectedNoteIds.length,
+      questionLen: q.length,
+      url: notesAskBffUrl("/api/notes/ask/stream")
+    });
     try {
       const res = await fetch(notesAskBffUrl("/api/notes/ask/stream"), {
         method: "POST",
@@ -2466,11 +2524,22 @@ export default function NotesPage() {
               ? rawText.trim().slice(0, 900)
               : undefined
         };
+        notesAskClientLog("warn", "stream", "http_error", {
+          requestId: ridOut,
+          httpStatus: res.status,
+          bodyPreview: rawText.trim().slice(0, 800)
+        });
         throw new Error(formatNotesAskStreamError(apiErrorMessage(data, fallback), streamMeta));
       }
       const ct = (res.headers.get("content-type") || "").toLowerCase();
       if (!ct.includes("text/event-stream") || !res.body) {
         const t = await res.text();
+        notesAskClientLog("warn", "stream", "unexpected_content_type", {
+          requestId: res.headers.get("x-request-id")?.trim() || streamRid,
+          httpStatus: res.status,
+          contentType: ct || "(missing)",
+          bodyPreview: t.trim().slice(0, 800)
+        });
         throw new Error(
           formatNotesAskStreamError(t || "未返回流式响应", {
             httpStatus: res.status,
@@ -2479,6 +2548,10 @@ export default function NotesPage() {
           })
         );
       }
+      notesAskClientLog("info", "stream", "sse_opened", {
+        requestId: res.headers.get("x-request-id")?.trim() || streamRid,
+        contentType: ct
+      });
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -2534,6 +2607,10 @@ export default function NotesPage() {
               try {
                 ev = JSON.parse(raw) as NotesAskStreamEvent;
               } catch {
+                notesAskClientLog("warn", "stream", "sse_data_json_parse_failed", {
+                  requestId: streamRid,
+                  rawPreview: raw.slice(0, 400)
+                });
                 continue;
               }
               if (ev.type === "chunk") {
@@ -2556,6 +2633,14 @@ export default function NotesPage() {
                 });
               } else if (ev.type === "error") {
                 flushChunksNow();
+                notesAskClientLog("error", "stream", "sse_error_event", {
+                  requestId: streamRid,
+                  code: ev.code,
+                  message: String(ev.message || "").trim().slice(0, 500),
+                  detail: ev.detail,
+                  textProvider: ev.textProvider,
+                  hint: ev.hint
+                });
                 throw new Error(
                   formatNotesAskStreamError(String(ev.message || "").trim() || "问答失败", {
                     code: ev.code,
@@ -2573,6 +2658,10 @@ export default function NotesPage() {
         flushChunksNow();
       }
       if (!sawDone) {
+        notesAskClientLog("warn", "stream", "incomplete_no_done_event", {
+          requestId: streamRid,
+          bufferTail: buffer.trim().slice(-500)
+        });
         const incomplete =
           "流式回答未正常结束（连接中断或未收到完成事件），请检查网络后重试；若部署在云端，请确认网关与编排器超时时间足够长。";
         setNotesAskError(incomplete);
@@ -2588,9 +2677,15 @@ export default function NotesPage() {
             };
           })
         );
+      } else {
+        notesAskClientLog("info", "stream", "sse_completed", { requestId: streamRid });
       }
     } catch (err) {
       const msg = formatNotesAskStreamError(String(err instanceof Error ? err.message : err));
+      notesAskClientLog("error", "stream", "request_failed", {
+        requestId: streamRid,
+        message: msg.slice(0, 1200)
+      });
       setNotesAskError(msg);
       setNotesAskMessages((prev) => {
         const next = [...prev];
@@ -2605,6 +2700,7 @@ export default function NotesPage() {
         return next;
       });
     } finally {
+      notesAskClientLog("debug", "stream", "request_finished", { requestId: streamRid });
       setNotesAskBusy(false);
     }
   }

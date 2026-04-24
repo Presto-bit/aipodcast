@@ -1,10 +1,11 @@
 /**
- * 知识库「向资料提问」对话持久化（账号 + 笔记本维度，与 userScopedStorage 一致）。
+ * 知识库「向资料提问」对话持久化（账号 + 笔记本 + **选中笔记 ID 集合** 维度，与 userScopedStorage 一致）。
+ * 按笔记 ID 分区：删除后新建同标题笔记（新 ID）不会继承旧对话。
  */
 
 import type { NotesAskSource } from "./notesAskCitation";
 import { normalizeNotesAskSources } from "./notesAskCitation";
-import { getStorageAccountKey, readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
+import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
 
 export type SerializedNotesAskTurn = {
   id: string;
@@ -17,6 +18,8 @@ export type SerializedNotesAskTurn = {
 };
 
 const STORAGE_VERSION = 1;
+/** 存储键分区：v2 起在键名中纳入选中笔记 ID，与仅按笔记本的 v1 键区分 */
+const KEY_SCHEMA = 2;
 const MAX_MESSAGES = 120;
 
 type StoredPayload = {
@@ -24,8 +27,12 @@ type StoredPayload = {
   messages: SerializedNotesAskTurn[];
 };
 
-function baseKey(notebook: string): string {
-  return `fym_notes_ask_chat_v${STORAGE_VERSION}:${encodeURIComponent(notebook.trim())}`;
+/** 逻辑键（再经 userScopedStorage 拼账号后缀） */
+export function notesAskChatBaseKey(notebookScoped: string, noteIds: string[]): string {
+  const nb = notebookScoped.trim();
+  const sorted = [...noteIds].filter(Boolean).sort();
+  const scope = sorted.length ? sorted.join("|") : "_none_";
+  return `fym_notes_ask_chat_v${KEY_SCHEMA}:${encodeURIComponent(nb)}:${encodeURIComponent(scope)}`;
 }
 
 function parseStored(raw: string): SerializedNotesAskTurn[] | null {
@@ -66,56 +73,22 @@ function parseStored(raw: string): SerializedNotesAskTurn[] | null {
   }
 }
 
-/** 旧键：fym_notes_ask_chat_v1:{accountKey}:{notebook} */
-function readLegacyNotebookChat(notebook: string): string | null {
-  if (typeof window === "undefined") return null;
-  const enc = encodeURIComponent(notebook.trim());
-  const acc = getStorageAccountKey();
-  const keys = [`fym_notes_ask_chat_v${STORAGE_VERSION}:${acc}:${enc}`, `fym_notes_ask_chat_v${STORAGE_VERSION}:anon:${enc}`];
-  for (const k of keys) {
-    const raw = window.localStorage.getItem(k);
-    if (raw) return raw;
-  }
-  return null;
-}
-
-function removeLegacyNotebookChat(notebook: string): void {
-  if (typeof window === "undefined") return;
-  const enc = encodeURIComponent(notebook.trim());
-  const acc = getStorageAccountKey();
-  const keys = [`fym_notes_ask_chat_v${STORAGE_VERSION}:${acc}:${enc}`, `fym_notes_ask_chat_v${STORAGE_VERSION}:anon:${enc}`];
-  for (const k of keys) {
-    try {
-      window.localStorage.removeItem(k);
-    } catch {
-      // ignore
-    }
-  }
-}
-
 /**
- * 加载某笔记本下的对话；自动从旧键迁移到按 userScopedStorage 隔离的键。
+ * 加载某笔记本 + 当前选中笔记集合下的对话。
+ * @param notebookScoped 与页面 `effectiveDraftNotebookKey` 一致（含 shared: 前缀时）
  */
-export function loadNotesAskChat(notebook: string): SerializedNotesAskTurn[] | null {
-  const nb = notebook.trim();
+export function loadNotesAskChat(notebookScoped: string, noteIds: string[]): SerializedNotesAskTurn[] | null {
+  const nb = notebookScoped.trim();
   if (!nb) return null;
-  const bk = baseKey(nb);
-  let raw = readLocalStorageScoped(bk);
-  if (!raw) {
-    const leg = readLegacyNotebookChat(nb);
-    if (leg) {
-      writeLocalStorageScoped(bk, leg);
-      removeLegacyNotebookChat(nb);
-      raw = leg;
-    }
-  }
+  const bk = notesAskChatBaseKey(nb, noteIds);
+  const raw = readLocalStorageScoped(bk);
   if (!raw) return null;
   return parseStored(raw);
 }
 
-export function saveNotesAskChat(notebook: string, messages: SerializedNotesAskTurn[]): void {
+export function saveNotesAskChat(notebookScoped: string, noteIds: string[], messages: SerializedNotesAskTurn[]): void {
   try {
-    const bk = baseKey(notebook);
+    const bk = notesAskChatBaseKey(notebookScoped.trim(), noteIds);
     const trimmed = messages.slice(-MAX_MESSAGES).map((m) => {
       const base: SerializedNotesAskTurn = { id: m.id, role: m.role, content: m.content };
       if (m.role === "assistant" && m.sources?.length) {
