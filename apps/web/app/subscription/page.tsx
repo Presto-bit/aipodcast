@@ -47,8 +47,6 @@ type PlansPayload = {
   payment_channels?: {
     alipay_page?: { enabled?: boolean; label_zh?: string };
   };
-  /** 编排器 FYV_EXPOSE_ALIPAY_CONFIG_DIAG=1 时附带，脱敏自检信息 */
-  alipay_config_diag?: unknown;
 };
 
 /** 从支付宝同步回跳后用于短时拉余额，避免仅依赖 30s 轮询 */
@@ -128,31 +126,6 @@ function logSubscriptionPlansDiag(d: PlansLoadDiag): void {
   console.info("[subscription/plans 诊断]", payload);
 }
 
-/** 编排器在 FYV_EXPOSE_ALIPAY_CONFIG_DIAG=1 时经价目接口下发，不含密钥正文。 */
-function AlipayEnvDiagPanel({ diag, defaultOpen }: { diag: unknown; defaultOpen?: boolean }) {
-  if (diag == null) return null;
-  const body = typeof diag === "string" ? diag : JSON.stringify(diag, null, 2);
-  return (
-    <details
-      className="mt-4 rounded-lg border border-dashed border-warning/40 bg-warning-soft/50 p-3 dark:border-warning/35 dark:bg-warning-soft/25"
-      {...(defaultOpen ? { defaultOpen: true } : {})}
-    >
-      <summary className="cursor-pointer select-none text-xs font-medium text-warning-ink">
-        支付宝配置自检（FYV_EXPOSE_ALIPAY_CONFIG_DIAG）
-      </summary>
-      <p className="mt-2 text-[11px] leading-relaxed text-muted">
-        数据来自编排器价目 JSON 字段 alipay_config_diag，已脱敏。生产环境请勿长期开启该环境变量。
-      </p>
-      <pre
-        className="mt-2 max-h-64 overflow-auto rounded-md border border-line bg-canvas p-2 text-left font-mono text-[10px] leading-snug text-ink"
-        aria-label="支付宝配置自检"
-      >
-        {body}
-      </pre>
-    </details>
-  );
-}
-
 /** 与编排器 billing_catalog 一致：支持 JSON 布尔或偶发的字符串/数字 */
 function isTruthyPaymentChannelEnabled(v: unknown): boolean {
   if (v === true || v === 1) return true;
@@ -180,6 +153,21 @@ type WalletCheckoutState = {
   amount_cents: number;
 };
 
+/** 「我的余额」上方展示的充值链路日志：优先支付宝相关步骤，否则退化为最近几条 */
+function entriesForBalanceAlipayLog(entries: RechargeDebugEntry[]): RechargeDebugEntry[] {
+  const pick = (e: RechargeDebugEntry) =>
+    e.step.startsWith("alipay_") ||
+    e.step === "url_query_trade_params" ||
+    e.step.startsWith("sim_wallet_") ||
+    e.step === "load_me" ||
+    e.step === "load_me_not_ok" ||
+    e.step === "load_me_error";
+  const filtered = entries.filter(pick);
+  const tail = filtered.slice(-24);
+  if (tail.length) return tail;
+  return entries.slice(-10);
+}
+
 export default function SubscriptionPage() {
   const { getAuthHeaders, refreshMe, user } = useAuth();
   const [walletTopupInfo, setWalletTopupInfo] = useState<PlansPayload["wallet_topup"]>(undefined);
@@ -204,7 +192,6 @@ export default function SubscriptionPage() {
   const [experienceVoiceTotal, setExperienceVoiceTotal] = useState<number | null>(null);
   const [experienceTextTotal, setExperienceTextTotal] = useState<number | null>(null);
   const [plansLoadDiag, setPlansLoadDiag] = useState<PlansLoadDiag | null>(null);
-  const [alipayConfigDiag, setAlipayConfigDiag] = useState<unknown>(null);
   const [rechargeDebugLog, setRechargeDebugLog] = useState<RechargeDebugEntry[]>([]);
   const [rechargeDebugUiReady, setRechargeDebugUiReady] = useState(false);
 
@@ -263,6 +250,11 @@ export default function SubscriptionPage() {
     [alipayRechargeUiEnabled, mergedWalletTopup.checkout_supported]
   );
 
+  const rechargePathLogEntries = useMemo(
+    () => entriesForBalanceAlipayLog(rechargeDebugLog),
+    [rechargeDebugLog]
+  );
+
   useEffect(() => {
     if (!subscriptionPlansDebugEnabled() || !plansConfigLoaded) return;
     console.info("[subscription 合并态诊断]", {
@@ -303,7 +295,6 @@ export default function SubscriptionPage() {
         return;
       }
       if (!pr.ok) {
-        setAlipayConfigDiag(null);
         setAlipayPageEnabled(false);
         if (pr.status === 404) {
           setPlansLoadError("未找到计费配置接口（HTTP 404）。已使用本站参考价目；请确认 Next BFF 已部署 /api/subscription/plans 且编排器可访问。");
@@ -327,7 +318,6 @@ export default function SubscriptionPage() {
         return;
       }
       if (pd.success) {
-        setAlipayConfigDiag(pd.alipay_config_diag ?? null);
         const wtRaw = pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : {};
         setWalletTopupInfo(wtRaw);
         const wt = Object.keys(wtRaw).length ? (wtRaw as WalletTopupPayload) : null;
@@ -355,7 +345,6 @@ export default function SubscriptionPage() {
         logSubscriptionPlansDiag(okDiag);
         if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(okDiag);
       } else {
-        setAlipayConfigDiag(null);
         setAlipayPageEnabled(false);
         setPlansLoadError("计费接口返回异常，已显示参考价目，请稍后重试。");
         const badDiag: PlansLoadDiag = {
@@ -373,7 +362,6 @@ export default function SubscriptionPage() {
       }
     } catch (e) {
       if (seq === plansFetchSeqRef.current) {
-        setAlipayConfigDiag(null);
         const msg = String(e instanceof Error ? e.message : e);
         setPlansLoadError(msg);
         const netDiag: PlansLoadDiag = {
@@ -991,13 +979,80 @@ export default function SubscriptionPage() {
         </p>
       ) : null}
 
-      {plansConfigLoaded ? <AlipayEnvDiagPanel diag={alipayConfigDiag} defaultOpen /> : null}
-
       <section
         id="balance-billing"
         className="mt-8 scroll-mt-24 rounded-xl border border-line bg-surface/60 p-5 shadow-sm"
         aria-labelledby="balance-billing-title"
       >
+        {rechargeDebugUiReady && rechargeDebugEnabled() ? (
+          <div className="mb-5 rounded-lg border border-line bg-canvas/60 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold text-ink">支付宝充值路径日志</p>
+                <p className="mt-1 text-[10px] leading-relaxed text-muted">
+                  最近多条记录（可与网关/编排器日志中的 <span className="font-mono">x-request-id</span> 对齐）。开启：{" "}
+                  <span className="font-mono">NEXT_PUBLIC_RECHARGE_DEBUG_UI=1</span> 或{" "}
+                  <span className="font-mono">localStorage.recharge_debug_ui=1</span> 后刷新。
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink hover:bg-fill"
+                  onClick={() => {
+                    clearRechargeDebug();
+                    setRechargeDebugLog([]);
+                  }}
+                >
+                  清空
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink hover:bg-fill"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(JSON.stringify(rechargeDebugLog, null, 2));
+                      setMsg("充值路径日志已复制到剪贴板。");
+                    } catch {
+                      setMsg("复制失败，请手动选择下方文字复制。");
+                    }
+                  }}
+                >
+                  复制全部
+                </button>
+              </div>
+            </div>
+            <ul className="mt-2 max-h-56 list-none space-y-2 overflow-y-auto border-t border-line/60 pt-2 pl-0">
+              {rechargePathLogEntries.length === 0 ? (
+                <li className="text-[10px] text-muted">暂无相关记录；完成一次「立即支付」或返回本页同步后将出现多条步骤。</li>
+              ) : (
+                rechargePathLogEntries.map((e, idx) => {
+                  const dataStr = e.data ? JSON.stringify(e.data) : "";
+                  const dataShort = dataStr.length > 220 ? `${dataStr.slice(0, 220)}…` : dataStr;
+                  return (
+                    <li
+                      key={`${e.ts}_${idx}_${e.step}`}
+                      className="border-b border-line/40 pb-2 text-[10px] leading-snug last:border-b-0 last:pb-0"
+                    >
+                      <div className="font-mono text-[9px] text-muted">{e.ts}</div>
+                      <div className="mt-0.5 font-medium text-ink">
+                        {e.step}
+                        {e.requestId ? (
+                          <span className="ml-1 font-mono text-[9px] font-normal text-muted">rid={e.requestId}</span>
+                        ) : null}
+                      </div>
+                      {dataShort ? (
+                        <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-all font-mono text-[9px] text-ink/85">
+                          {dataShort}
+                        </pre>
+                      ) : null}
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+          </div>
+        ) : null}
         <h2 id="balance-billing-title" className="text-base font-semibold text-ink">
           我的余额
         </h2>
@@ -1051,72 +1106,6 @@ export default function SubscriptionPage() {
         ) : (
           <p className="mt-2 text-sm text-muted">请登录后查看余额、体验包余量与账单流水。</p>
         )}
-        {rechargeDebugUiReady && rechargeDebugEnabled() ? (
-          <details className="mt-5 rounded-lg border border-dashed border-line bg-canvas/40 p-3 text-left">
-            <summary className="cursor-pointer select-none text-sm font-medium text-ink">
-              充值/余额同步排查日志（本机 · {rechargeDebugLog.length} 条）
-            </summary>
-            <p className="mt-2 text-[10px] leading-relaxed text-muted">
-              与网关/编排器对齐：浏览器请求已带{" "}
-              <span className="font-mono text-[10px] text-ink">x-request-id</span>。生产开启：部署时设置{" "}
-              <span className="font-mono text-[10px] text-ink">NEXT_PUBLIC_RECHARGE_DEBUG_UI=1</span>
-              ；或控制台执行{" "}
-              <span className="font-mono text-[10px] text-ink">localStorage.setItem(&quot;recharge_debug_ui&quot;,&quot;1&quot;)</span>{" "}
-              后刷新本页。日志仅存本机 sessionStorage，不含 Cookie/Token。
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="rounded-md border border-line bg-surface px-2 py-1 text-xs font-medium text-ink hover:bg-fill"
-                onClick={() => {
-                  clearRechargeDebug();
-                  setRechargeDebugLog([]);
-                }}
-              >
-                清空
-              </button>
-              <button
-                type="button"
-                className="rounded-md border border-line bg-surface px-2 py-1 text-xs font-medium text-ink hover:bg-fill"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(JSON.stringify(rechargeDebugLog, null, 2));
-                    setMsg("排查日志已复制到剪贴板（可粘贴给技术支持）。");
-                  } catch {
-                    setMsg("复制失败，请展开下方文本手动复制。");
-                  }
-                }}
-              >
-                复制全部 JSON
-              </button>
-            </div>
-            <div className="mt-2 max-h-64 overflow-y-auto rounded-md border border-line/80 bg-surface/90 p-2 text-[10px] leading-snug text-ink">
-              {rechargeDebugLog.length === 0 ? (
-                <p className="text-muted">暂无记录；点击「立即支付」或等待同步轮询后会出现条目。</p>
-              ) : (
-                rechargeDebugLog.map((e, idx) => (
-                  <div
-                    key={`${e.ts}_${idx}_${e.step}`}
-                    className="border-t border-line/50 py-2 first:border-t-0 first:pt-0"
-                  >
-                    <div className="text-muted">{e.ts}</div>
-                    <div className="font-medium text-ink">
-                      {e.step}
-                      {e.requestId ? (
-                        <span className="ml-1 font-mono text-[9px] font-normal text-muted">rid={e.requestId}</span>
-                      ) : null}
-                    </div>
-                    {e.data ? (
-                      <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-all font-mono text-[9px] text-ink/90">
-                        {JSON.stringify(e.data, null, 2)}
-                      </pre>
-                    ) : null}
-                  </div>
-                ))
-              )}
-            </div>
-          </details>
-        ) : null}
       </section>
 
       <section className="mt-10 space-y-10">
@@ -1392,7 +1381,6 @@ export default function SubscriptionPage() {
               <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
             </div>
           ) : null}
-          <AlipayEnvDiagPanel diag={alipayConfigDiag} />
           {subscriptionPlansDebugEnabled() && plansLoadDiag ? (
             <div className="mt-4 border-t border-dashed border-line/80 pt-3">
               <p className="mb-2 text-[11px] font-medium text-muted">调试：最近一次 GET /api/subscription/plans（需 build 时含 NEXT_PUBLIC_SUBSCRIPTION_PLANS_DEBUG=1）</p>

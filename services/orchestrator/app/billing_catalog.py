@@ -22,11 +22,7 @@ from .subscription_manifest import (
     WALLET_TOPUP_MIN_CENTS,
     WALLET_TOPUP_SUGGESTED_YUAN,
 )
-from .alipay_page_pay import (
-    alipay_config_diag_exposed,
-    alipay_page_pay_env_diag,
-    alipay_page_pay_ready,
-)
+from .alipay_page_pay import alipay_page_pay_ready
 
 
 def _wallet_usage_reference() -> dict[str, Any]:
@@ -94,6 +90,4 @@ def build_wallet_catalog_response() -> dict[str, Any]:
         },
         "note": "wallet_billing_catalog",
     }
-    if alipay_config_diag_exposed():
-        out["alipay_config_diag"] = alipay_page_pay_env_diag()
     return out
