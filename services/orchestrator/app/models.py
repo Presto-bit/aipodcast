@@ -6304,10 +6304,7 @@ def alipay_page_create_checkout_session(
                     "DELETE FROM alipay_page_checkout_sessions WHERE user_id = %s AND created_at < NOW() - INTERVAL '48 hours'",
                     (uid,),
                 )
-                cur.execute(
-                    "DELETE FROM alipay_page_checkout_sessions WHERE user_id = %s AND kind = %s",
-                    (uid, k),
-                )
+                # 勿按 user_id+kind 全删：用户连续打开多笔待付/新会话会抹掉上一笔 out_trade_no，支付宝回调时找不到会话则无法入账。
                 cur.execute("DELETE FROM alipay_page_checkout_sessions WHERE out_trade_no = %s", (oid,))
                 cur.execute(
                     """

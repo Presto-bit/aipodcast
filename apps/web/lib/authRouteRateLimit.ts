@@ -32,6 +32,15 @@ export const allowImageProxyPerIp = createWindowLimiter(45, 60_000);
 /** 创作页选题助手：聚合外站热点标题，单列按 IP 窗口 */
 export const allowCreateHotTopicsPerIp = createWindowLimiter(24, 60_000);
 
+/**
+ * 钱包充值/模拟收银等写接口：同一 IP 聚合计数，防脚本狂刷下单。
+ * 与编排器侧「按手机号」限流叠加；多副本仍各自计数。
+ */
+export const allowWalletMoneyPostPerIp = createWindowLimiter(32, 60_000);
+
+/** 支付宝异步通知入口：公网易被扫，单列宽松上限（真通知多为支付宝侧 IP 突发重试） */
+export const allowAlipayWebhookPerIp = createWindowLimiter(500, 60_000);
+
 export function clientIpFromNextRequest(req: NextRequest): string {
   const xf = req.headers.get("x-forwarded-for");
   if (xf) return xf.split(",")[0]!.trim();

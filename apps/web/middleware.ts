@@ -97,6 +97,10 @@ export function middleware(req: NextRequest) {
     return res;
   }
 
+  /** 支付宝异步通知：路由内另有单列限流，避免与其它 /api 共用 400/min 误伤重试 */
+  if (pathname === "/api/webhooks/alipay" && req.method === "POST") {
+    return withCacheHeaders(NextResponse.next(), CACHE_API);
+  }
   /** 由路由内 `/api/image-proxy` 单独按 IP 限速，避免拖满全站 400/min */
   if (pathname === "/api/image-proxy" && req.method === "GET") {
     return withCacheHeaders(NextResponse.next(), CACHE_API);

@@ -41,6 +41,14 @@ type PlansPayload = {
   alipay_config_diag?: unknown;
 };
 
+/** 从支付宝同步回跳后用于短时拉余额，避免仅依赖 30s 轮询 */
+const WALLET_ALIPAY_PENDING_KEY = "subscription_alipay_wallet_pending";
+
+type WalletAlipayPendingPayload = {
+  startedAt: number;
+  balanceBeforeCents: number | null;
+};
+
 /** 设为 1 时：拉取 /api/subscription/plans 后在控制台与充值弹窗输出结构化诊断（需重新 build Next） */
 function subscriptionPlansDebugEnabled(): boolean {
   return typeof process !== "undefined" && process.env.NEXT_PUBLIC_SUBSCRIPTION_PLANS_DEBUG === "1";
@@ -417,6 +425,9 @@ export default function SubscriptionPage() {
     }
   }, [getAuthHeaders, consumptionSince, consumptionUntil]);
 
+  const loadMeRef = useRef(loadMe);
+  loadMeRef.current = loadMe;
+
   useEffect(() => {
     void loadPlans();
     void loadMe();
@@ -457,6 +468,94 @@ export default function SubscriptionPage() {
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [walletPayEnabled, loadMe]);
+
+  /** 支付宝页付回跳后（return_url 常不带单号）：短时轮询 /me，待异步通知入账后几秒内刷新余额 */
+  useEffect(() => {
+    if (!walletPayEnabled || typeof window === "undefined") return undefined;
+    let raw: string | null;
+    try {
+      raw = sessionStorage.getItem(WALLET_ALIPAY_PENDING_KEY);
+    } catch {
+      return undefined;
+    }
+    if (!raw) return undefined;
+    let p: WalletAlipayPendingPayload;
+    try {
+      p = JSON.parse(raw) as WalletAlipayPendingPayload;
+    } catch {
+      try {
+        sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
+      } catch {
+        /* noop */
+      }
+      return undefined;
+    }
+    if (!p || typeof p.startedAt !== "number") {
+      try {
+        sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
+      } catch {
+        /* noop */
+      }
+      return undefined;
+    }
+    if (Date.now() - p.startedAt > 10 * 60 * 1000) {
+      try {
+        sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
+      } catch {
+        /* noop */
+      }
+      return undefined;
+    }
+    setMsg("已从支付宝返回，正在同步余额（通常几秒内完成）…");
+    let ticks = 0;
+    const maxTicks = 40;
+    const tick = () => {
+      void loadMeRef.current();
+    };
+    tick();
+    const id = window.setInterval(() => {
+      ticks += 1;
+      tick();
+      if (ticks >= maxTicks) {
+        window.clearInterval(id);
+        try {
+          sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
+        } catch {
+          /* noop */
+        }
+      }
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [walletPayEnabled]);
+
+  useEffect(() => {
+    if (!walletPayEnabled || typeof window === "undefined") return;
+    let raw: string | null;
+    try {
+      raw = sessionStorage.getItem(WALLET_ALIPAY_PENDING_KEY);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    let p: WalletAlipayPendingPayload;
+    try {
+      p = JSON.parse(raw) as WalletAlipayPendingPayload;
+    } catch {
+      return;
+    }
+    if (
+      typeof p.balanceBeforeCents === "number" &&
+      typeof walletBalanceCents === "number" &&
+      walletBalanceCents > p.balanceBeforeCents
+    ) {
+      try {
+        sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
+      } catch {
+        /* noop */
+      }
+      setMsg("充值已入账，余额已更新。");
+    }
+  }, [walletPayEnabled, walletBalanceCents]);
 
   useEffect(() => {
     if (!rechargeModalOpen || !walletPayEnabled) return;
@@ -615,6 +714,15 @@ export default function SubscriptionPage() {
       if (!payUrl) throw new Error("收银台未返回有效支付链接，请稍后重试或联系客服");
       if (!data.out_trade_no) throw new Error("订单号缺失，请重试");
       didNavigateWallet = true;
+      try {
+        const payload: WalletAlipayPendingPayload = {
+          startedAt: Date.now(),
+          balanceBeforeCents: typeof walletBalanceCents === "number" ? walletBalanceCents : null
+        };
+        sessionStorage.setItem(WALLET_ALIPAY_PENDING_KEY, JSON.stringify(payload));
+      } catch {
+        /* 隐私模式等可能不可用，仍跳转支付 */
+      }
       window.location.assign(payUrl);
     } catch (err) {
       const name = err instanceof Error ? err.name : "";

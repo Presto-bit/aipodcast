@@ -6,12 +6,15 @@ import os
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .. import auth_bridge
 from .. import models
 from ..alipay_page_pay import AlipayPagePayConfig, verify_notify_params
+from ..fyv_shared.payment_wallet_rate_limit import check_alipay_notify_rate_limit
+from ..fyv_shared.register_send_code_limiter import client_ip_from_request
+from ..security import verify_internal_signature
 
 router = APIRouter(prefix="/api/v1", tags=["webhooks"])
 _log = logging.getLogger(__name__)
@@ -354,7 +357,10 @@ def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]
     if trade_status not in ("TRADE_SUCCESS", "TRADE_FINISHED"):
         return PlainTextResponse("success")
     if str(params.get("app_id") or "").strip() != cfg.app_id:
-        _log.warning("alipay notify app_id mismatch out_trade_no=%s", params.get("out_trade_no"))
+        _log.error(
+            "alipay_reconcile app_id_mismatch needs_manual_reconciliation=1 out_trade_no=%s",
+            params.get("out_trade_no"),
+        )
         return PlainTextResponse("success")
     out_trade_no = str(params.get("out_trade_no") or "").strip()
     trade_no = str(params.get("trade_no") or "").strip()
@@ -372,12 +378,16 @@ def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]
             "captured",
         ):
             return PlainTextResponse("success")
-        _log.warning("alipay notify: no session and no paid order out_trade_no=%s", out_trade_no)
+        _log.error(
+            "alipay_reconcile no_checkout_session needs_manual_reconciliation=1 out_trade_no=%s "
+            "(无法入账；常见原因：支付完成前又发起新的同类型支付宝下单导致旧会话被替换，或会话已超过保留期)",
+            out_trade_no,
+        )
         return PlainTextResponse("success")
     session_cents = int(row_sess.get("amount_cents") or 0)
     if session_cents != notify_cents:
         _log.error(
-            "alipay amount_mismatch out_trade_no=%s session_cents=%s notify_cents=%s",
+            "alipay_reconcile amount_mismatch needs_manual_reconciliation=1 out_trade_no=%s session_cents=%s notify_cents=%s",
             out_trade_no,
             session_cents,
             notify_cents,
@@ -441,17 +451,25 @@ def _handle_alipay_trade_notify(cfg: AlipayPagePayConfig, params: dict[str, str]
     return PlainTextResponse("success")
 
 
-@router.post("/webhooks/alipay")
+@router.post("/webhooks/alipay", dependencies=[Depends(verify_internal_signature)])
 async def alipay_page_payment_notify(request: Request):
     """
     支付宝电脑网站支付异步通知（application/x-www-form-urlencoded）。
     开放平台 notify_url 应填 Next 公网 HTTPS（由 BFF 转发至此），须与 ALIPAY_NOTIFY_URL 逐字一致，例如：
     https://www.prestoai.cn/api/webhooks/alipay
     （勿将编排器 8008 端口直接暴露公网。）
+    须带 BFF 内部签名头；可选头 x-fym-client-ip 为原始客户端 IP，供限流与审计。
     """
     cfg = AlipayPagePayConfig.from_env()
     if not cfg:
         return PlainTextResponse("fail", status_code=503)
+    hdr_dict = {str(k): str(v) for k, v in request.headers.items()}
+    xfym_ip = (request.headers.get("x-fym-client-ip") or "").strip()
+    peer = request.client.host if request.client else None
+    client_ip = xfym_ip or client_ip_from_request(hdr_dict, peer)
+    ok_nl, wait_nl = check_alipay_notify_rate_limit(client_ip)
+    if not ok_nl:
+        return PlainTextResponse("fail", status_code=429, headers={"Retry-After": str(wait_nl)})
     form = await request.form()
     params: dict[str, str] = {}
     for k, v in form.multi_items():
@@ -459,6 +477,9 @@ async def alipay_page_payment_notify(request: Request):
     signature = str(params.pop("sign", "") or "").strip()
     verify_copy = dict(params)
     if not verify_notify_params(cfg, verify_copy, signature):
-        _log.warning("alipay notify signature verification failed out_trade_no=%s", params.get("out_trade_no"))
+        _log.error(
+            "alipay_reconcile rsa_verify_failed needs_manual_reconciliation=0 out_trade_no=%s",
+            params.get("out_trade_no"),
+        )
         return PlainTextResponse("fail", status_code=400)
     return _handle_alipay_trade_notify(cfg, params)

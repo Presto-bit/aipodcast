@@ -16,6 +16,7 @@ from .. import models
 from ..plan_catalog import build_subscription_plans_response, is_valid_wallet_topup_amount_cents
 from ..subscription_manifest import EXPERIENCE_NEW_USER_TEXT_CHARS, EXPERIENCE_NEW_USER_VOICE_MINUTES
 from ..alipay_page_pay import AlipayPagePayConfig, build_page_pay_url, new_out_trade_no
+from ..fyv_shared.payment_wallet_rate_limit import check_wallet_alipay_create_rate_limit_for_phone
 
 _log = logging.getLogger(__name__)
 
@@ -220,6 +221,13 @@ def alipay_page_wallet_create(request: Request, body: AlipayPageWalletCreateRequ
     phone = auth_bridge.session_principal(sess).strip()
     if not phone:
         raise HTTPException(status_code=400, detail="invalid_session")
+    ok_rl, wait_s = check_wallet_alipay_create_rate_limit_for_phone(phone)
+    if not ok_rl:
+        raise HTTPException(
+            status_code=429,
+            detail="wallet_alipay_create_rate_limited",
+            headers={"Retry-After": str(wait_s)},
+        )
     amt = int(body.amount_cents)
     if not is_valid_wallet_topup_amount_cents(amt):
         raise HTTPException(status_code=400, detail="invalid_topup_amount")

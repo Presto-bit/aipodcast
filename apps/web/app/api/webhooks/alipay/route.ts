@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { allowAlipayWebhookPerIp, clientIpFromNextRequest } from "../../../../lib/authRouteRateLimit";
 import { buildInternalHeaders, orchestratorUrl } from "../../../../lib/bff";
 
 /**
@@ -6,12 +7,20 @@ import { buildInternalHeaders, orchestratorUrl } from "../../../../lib/bff";
  * 开放平台 notify_url 须与编排器 ALIPAY_NOTIFY_URL 一致，例如：https://www.prestoai.cn/api/webhooks/alipay
  */
 export async function POST(req: NextRequest) {
+  const ip = clientIpFromNextRequest(req);
+  if (!allowAlipayWebhookPerIp(ip)) {
+    return new Response("fail", {
+      status: 429,
+      headers: { "content-type": "text/plain; charset=utf-8", "retry-after": "60" }
+    });
+  }
   const raw = await req.text();
   const ct = req.headers.get("content-type") || "application/x-www-form-urlencoded";
   const upstream = await fetch(orchestratorUrl("/api/v1/webhooks/alipay"), {
     method: "POST",
     headers: {
       "content-type": ct,
+      "x-fym-client-ip": ip,
       ...buildInternalHeaders(raw)
     },
     body: raw,
