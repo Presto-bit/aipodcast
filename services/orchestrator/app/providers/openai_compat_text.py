@@ -377,6 +377,33 @@ def chat_completion_openai_compatible(
     return content
 
 
+def _openai_stream_delta_text(delta: dict[str, Any]) -> str:
+    """聚合流式 delta 文本：正文、推理模型 reasoning_content、以及数组型 content 片段。"""
+    parts: list[str] = []
+
+    def append_piece(val: object) -> None:
+        if val is None:
+            return
+        if isinstance(val, str):
+            if val:
+                parts.append(val)
+            return
+        if isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict):
+                    t = item.get("text")
+                    if t:
+                        parts.append(str(t))
+                elif item is not None:
+                    s = str(item)
+                    if s:
+                        parts.append(s)
+
+    append_piece(delta.get("reasoning_content"))
+    append_piece(delta.get("content"))
+    return "".join(parts)
+
+
 def iter_chat_completion_openai_compatible_stream(
     *,
     messages: list[dict[str, str]],
@@ -430,7 +457,7 @@ def iter_chat_completion_openai_compatible_stream(
         delta = c0.get("delta") or {}
         if not isinstance(delta, dict):
             continue
-        piece = delta.get("content")
+        piece = _openai_stream_delta_text(delta)
         if piece:
-            yield str(piece)
+            yield piece
 

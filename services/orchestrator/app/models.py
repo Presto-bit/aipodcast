@@ -7,6 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from psycopg2 import IntegrityError
+from psycopg2.errors import DeadlockDetected
 
 from .db import get_conn, get_cursor
 from .subscription_manifest import (
@@ -7020,12 +7021,34 @@ def process_payment_event_transaction(
                     )
             conn.commit()
             return True, None
-    except Exception:
-        logger.exception(
-            "process_payment_event_transaction failed event_id=%s phone=%s status=%s",
+    except DeadlockDetected:
+        logger.warning(
+            "process_payment_event_transaction deadlock event_id=%s phone=%s status=%s",
             (event_id or "").strip()[:80],
             (phone or "").strip()[:24],
             str(status or "")[:32],
+        )
+        return False, "transaction_deadlock"
+    except IntegrityError as exc:
+        diag = getattr(getattr(exc, "diag", None), "message_detail", None) or str(exc)
+        logger.exception(
+            "process_payment_event_transaction integrity_error event_id=%s phone=%s status=%s detail=%s",
+            (event_id or "").strip()[:80],
+            (phone or "").strip()[:24],
+            str(status or "")[:32],
+            str(diag)[:400],
+        )
+        return False, "payment_integrity_error"
+    except Exception as exc:
+        pgcode = getattr(exc, "pgcode", None)
+        pgerr = (getattr(exc, "pgerror", None) or str(exc))[:500]
+        logger.exception(
+            "process_payment_event_transaction failed event_id=%s phone=%s status=%s pgcode=%s pgerr=%s",
+            (event_id or "").strip()[:80],
+            (phone or "").strip()[:24],
+            str(status or "")[:32],
+            pgcode,
+            pgerr,
         )
         return False, "transaction_exception"
 

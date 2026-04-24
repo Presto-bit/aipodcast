@@ -175,9 +175,20 @@ def invoke_llm_chat_messages_stream_iter(
         )
 
     try:
-        yield from _iter_openai_compat()
+        saw_non_empty = False
+        for piece in _iter_openai_compat():
+            if (piece or "").strip():
+                saw_non_empty = True
+            yield piece
     except Exception as exc:
         logger.warning("invoke_llm_chat_messages_stream provider=%s failed, fallback minimax: %s", prov, exc)
+        yield from _iter_minimax()
+        return
+    if not saw_non_empty:
+        logger.warning(
+            "invoke_llm_chat_messages_stream provider=%s produced no text chunks, fallback minimax",
+            prov,
+        )
         yield from _iter_minimax()
 
 

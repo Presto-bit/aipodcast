@@ -20,7 +20,7 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
   )
 });
 import { createJob } from "../../lib/api";
-import { apiErrorMessage } from "../../lib/apiError";
+import { apiErrorMessage, formatNotesAskStreamError } from "../../lib/apiError";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
 import { rememberJobId } from "../../lib/jobRecent";
 import { buildReferenceJobFields, type ReferenceRagMode } from "../../lib/jobReferencePayload";
@@ -2227,12 +2227,12 @@ export default function NotesPage() {
           detail?: unknown;
           error?: string;
         };
-        throw new Error(apiErrorMessage(data, "问答失败"));
+        throw new Error(formatNotesAskStreamError(apiErrorMessage(data, "问答失败")));
       }
       const ct = (res.headers.get("content-type") || "").toLowerCase();
       if (!ct.includes("text/event-stream") || !res.body) {
         const t = await res.text();
-        throw new Error(t || "未返回流式响应");
+        throw new Error(formatNotesAskStreamError(t || "未返回流式响应"));
       }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -2277,7 +2277,7 @@ export default function NotesPage() {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split("\n\n");
+          const parts = buffer.split(/\r?\n\r?\n/);
           buffer = parts.pop() ?? "";
           for (const block of parts) {
             for (const line of block.split("\n")) {
@@ -2311,7 +2311,9 @@ export default function NotesPage() {
                 });
               } else if (ev.type === "error") {
                 flushChunksNow();
-                throw new Error(String(ev.message || "").trim() || "问答失败");
+                throw new Error(
+                  formatNotesAskStreamError(String(ev.message || "").trim() || "问答失败")
+                );
               }
             }
           }
@@ -2320,12 +2322,23 @@ export default function NotesPage() {
         flushChunksNow();
       }
       if (!sawDone) {
+        const incomplete =
+          "流式回答未正常结束（连接中断或未收到完成事件），请检查网络后重试；若部署在云端，请确认网关与编排器超时时间足够长。";
+        setNotesAskError(incomplete);
         setNotesAskMessages((prev) =>
-          prev.map((m) => (m.id === assistantId && m.streaming ? { ...m, streaming: false } : m))
+          prev.map((m) => {
+            if (m.id !== assistantId || !m.streaming) return m;
+            const body = (m.content || "").trim();
+            return {
+              ...m,
+              streaming: false,
+              content: body || `（${incomplete}）`
+            };
+          })
         );
       }
     } catch (err) {
-      const msg = String(err instanceof Error ? err.message : err);
+      const msg = formatNotesAskStreamError(String(err instanceof Error ? err.message : err));
       setNotesAskError(msg);
       setNotesAskMessages((prev) => {
         const next = [...prev];

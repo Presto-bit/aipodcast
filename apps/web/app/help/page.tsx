@@ -35,6 +35,18 @@ export default function HelpPage() {
         </Section>
         <Section id="legal" title={t("help.legalTitle")}>
           <p>{t("help.legalBody")}</p>
+          <ul className="mt-3 list-disc space-y-1.5 pl-5">
+            <li>
+              <Link href="/legal/privacy" prefetch={false} className="text-brand hover:text-brand/85 hover:underline">
+                {t("footer.linkPrivacyPolicy")}
+              </Link>
+            </li>
+            <li>
+              <Link href="/legal/terms" prefetch={false} className="text-brand hover:text-brand/85 hover:underline">
+                {t("footer.linkTermsOfService")}
+              </Link>
+            </li>
+          </ul>
         </Section>
       </div>
     </main>

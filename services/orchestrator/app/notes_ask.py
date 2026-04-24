@@ -174,7 +174,10 @@ def iter_notes_answer_events(
         yield {"type": "done", "sources": sources, "traceId": None}
     except Exception as exc:
         logger.warning("notes_ask_stream_failed: %s", exc)
-        yield {"type": "error", "message": str(exc)}
+        msg = str(exc)
+        if msg == "empty_answer":
+            msg = "模型未返回有效正文，请换一个问题或稍后重试；若使用推理类文本模型，可尝试非推理版本或 TEXT_PROVIDER=minimax。"
+        yield {"type": "error", "message": msg}
 
 
 def legacy_build_notes_qa_context(
