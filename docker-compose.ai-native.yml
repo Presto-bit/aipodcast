@@ -22,9 +22,10 @@ services:
       # 使用容器内已注入的 POSTGRES_*（与 environment 块一致）
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 45s
+      timeout: 10s
+      retries: 40
+      # 首次 init SQL 较多；linux/amd64 在 Apple Silicon 上模拟启动更慢，过短易被误判 unhealthy
+      start_period: 180s
     restart: unless-stopped
 
   redis:
