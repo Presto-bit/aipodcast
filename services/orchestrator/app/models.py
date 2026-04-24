@@ -6680,6 +6680,9 @@ def process_payment_event_transaction(
             ensure_user_payg_minute_grants_schema()
         if is_wallet:
             ensure_user_wallet_schema()
+        # 钱包 / 分钟包路径会读 users.acct_tier、billing_cycle；旧库未跑迁移时缺列会导致 ProgrammingError → transaction_exception
+        if is_wallet or is_payg:
+            ensure_users_profile_columns()
         with get_conn() as conn:
             uid = _ensure_user_id_for_phone_conn(conn, p)
             if not uid:
