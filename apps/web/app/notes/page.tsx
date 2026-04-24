@@ -622,6 +622,10 @@ export default function NotesPage() {
   const [importTitle, setImportTitle] = useState("");
   const [importUrlError, setImportUrlError] = useState("");
   const [importBusy, setImportBusy] = useState(false);
+  const [pasteNoteTitle, setPasteNoteTitle] = useState("");
+  const [pasteNoteBody, setPasteNoteBody] = useState("");
+  const [pasteNoteBusy, setPasteNoteBusy] = useState(false);
+  const [pasteNoteErr, setPasteNoteErr] = useState("");
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
   const addNoteFileRef = useRef<HTMLInputElement | null>(null);
   const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false);
@@ -746,6 +750,7 @@ export default function NotesPage() {
   const [notesAskError, setNotesAskError] = useState("");
   const [notesAskHints, setNotesAskHints] = useState<{ summary: string; suggestions: string[] } | null>(null);
   const [notesAskHintsLoading, setNotesAskHintsLoading] = useState(false);
+  const [notesAskHintsError, setNotesAskHintsError] = useState("");
   const notesAskHintsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notesAskHintsAbortRef = useRef<AbortController | null>(null);
   const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
@@ -842,6 +847,7 @@ export default function NotesPage() {
     if (hubView) {
       setNotesAskHints(null);
       setNotesAskHintsLoading(false);
+      setNotesAskHintsError("");
       return;
     }
     const nb = selectedNotebook.trim();
@@ -849,6 +855,7 @@ export default function NotesPage() {
     if (!nb || ids.length === 0) {
       setNotesAskHints(null);
       setNotesAskHintsLoading(false);
+      setNotesAskHintsError("");
       return;
     }
     if (notesAskHintsDebounceRef.current) clearTimeout(notesAskHintsDebounceRef.current);
@@ -859,6 +866,7 @@ export default function NotesPage() {
       notesAskHintsAbortRef.current = ac;
       setNotesAskHints(null);
       setNotesAskHintsLoading(true);
+      setNotesAskHintsError("");
       void (async () => {
         try {
           const body: Record<string, unknown> = { notebook: nb, note_ids: ids };
@@ -875,8 +883,12 @@ export default function NotesPage() {
             success?: boolean;
             summary?: string;
             suggestions?: unknown;
+            detail?: unknown;
+            error?: string;
           };
-          if (!res.ok || !data.success) throw new Error("hints_failed");
+          if (!res.ok || !data.success) {
+            throw new Error(formatNotesAskStreamError(apiErrorMessage(data, "hints_failed")));
+          }
           const sug: string[] = [];
           if (Array.isArray(data.suggestions)) {
             for (const x of data.suggestions) {
@@ -888,9 +900,13 @@ export default function NotesPage() {
             summary: String(data.summary || "").trim(),
             suggestions: sug.slice(0, 3)
           });
-        } catch {
+          setNotesAskHintsError("");
+        } catch (e) {
           if (ac.signal.aborted) return;
           setNotesAskHints(null);
+          setNotesAskHintsError(
+            formatNotesAskStreamError(String(e instanceof Error ? e.message : e) || "hints_failed")
+          );
         } finally {
           if (!ac.signal.aborted) setNotesAskHintsLoading(false);
         }
@@ -2074,6 +2090,54 @@ export default function NotesPage() {
     }
   }
 
+  async function submitPasteNote() {
+    const nb = selectedNotebook.trim();
+    const body = pasteNoteBody.trim();
+    setPasteNoteErr("");
+    if (!nb) {
+      setPasteNoteErr("请先选择或新建笔记本");
+      return;
+    }
+    if (!body) {
+      setPasteNoteErr("请先粘贴或输入正文");
+      return;
+    }
+    setPasteNoteBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/notes", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          notebook: nb,
+          title: pasteNoteTitle.trim() || "粘贴摘录",
+          content: body,
+          project_name: NOTES_PODCAST_PROJECT_NAME
+        })
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        noteId?: string;
+        error?: string;
+        detail?: unknown;
+      };
+      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "保存失败"));
+      if (data.noteId) markNoteAsFresh(data.noteId);
+      setPasteNoteTitle("");
+      setPasteNoteBody("");
+      setPasteNoteErr("");
+      setShowAddNoteModal(false);
+      await loadNotebooks();
+      await loadNotebookMeta();
+      await loadNotes();
+    } catch (err) {
+      setPasteNoteErr(String(err instanceof Error ? err.message : err));
+    } finally {
+      setPasteNoteBusy(false);
+    }
+  }
+
   async function confirmDeleteNotebook() {
     const target = deleteNotebookTarget || selectedNotebook;
     setDeleteNotebookConfirm(false);
@@ -2199,6 +2263,7 @@ export default function NotesPage() {
     const userMsgId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
     setNotesAskError("");
+    setNotesAskHintsError("");
     setNotesAskBusy(true);
     setNotesAskMessages((prev) => {
       const base = prev.filter((m) => !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX));
@@ -3218,6 +3283,9 @@ export default function NotesPage() {
                   className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line/90 bg-surface py-2.5 text-sm font-medium text-ink shadow-soft transition-colors hover:border-brand/35 hover:bg-fill/50 disabled:cursor-not-allowed disabled:opacity-45"
                   onClick={() => {
                     setImportUrlError("");
+                    setPasteNoteErr("");
+                    setPasteNoteTitle("");
+                    setPasteNoteBody("");
                     setShowAddNoteModal(true);
                   }}
                 >
@@ -3428,10 +3496,11 @@ export default function NotesPage() {
               </div>
 
               <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-                {notesAskError ? (
-                  <p className="shrink-0 text-xs text-danger-ink" role="alert">
-                    {notesAskError}
-                  </p>
+                {notesAskError || notesAskHintsError ? (
+                  <div className="shrink-0 space-y-1 text-xs text-danger-ink" role="alert">
+                    {notesAskError ? <p>{notesAskError}</p> : null}
+                    {notesAskHintsError ? <p>{notesAskHintsError}</p> : null}
+                  </div>
                 ) : null}
                 <div
                   ref={notesAskScrollRef}
@@ -3869,7 +3938,7 @@ export default function NotesPage() {
                   aria-describedby={importUrlError ? "import-url-err" : undefined}
                 />
                 {importUrlError ? (
-                  <p id="import-url-err" className="mt-1 text-xs font-medium text-danger" role="alert">
+                  <p id="import-url-err" className="mt-1 whitespace-pre-wrap text-xs font-medium text-danger" role="alert">
                     {importUrlError}
                   </p>
                 ) : null}
@@ -3890,6 +3959,45 @@ export default function NotesPage() {
                 onClick={() => void submitUrlImport()}
               >
                 {importBusy ? "导入中…" : "导入链接"}
+              </button>
+            </div>
+            <div className="my-4 border-t border-line" />
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-ink">粘贴为笔记</p>
+              <p className="text-[11px] leading-snug text-muted">
+                链接导入失败时，可在浏览器中复制正文，粘贴到下方保存为文本笔记（与播客工作室「粘贴参考」一致思路）。
+              </p>
+              <input
+                className={`mt-1 block w-full ${inputCls}`}
+                placeholder="标题（可选）"
+                value={pasteNoteTitle}
+                onChange={(e) => {
+                  setPasteNoteTitle(e.target.value);
+                  if (pasteNoteErr) setPasteNoteErr("");
+                }}
+              />
+              <textarea
+                className={`mt-1 block min-h-[6rem] w-full resize-y ${inputCls}`}
+                placeholder="在此粘贴正文…"
+                value={pasteNoteBody}
+                onChange={(e) => {
+                  setPasteNoteBody(e.target.value);
+                  if (pasteNoteErr) setPasteNoteErr("");
+                }}
+                rows={4}
+              />
+              {pasteNoteErr ? (
+                <p className="whitespace-pre-wrap text-xs font-medium text-danger" role="alert">
+                  {pasteNoteErr}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                className="w-full rounded-lg border border-brand/40 bg-fill px-3 py-2 text-sm font-medium text-ink hover:bg-fill disabled:opacity-50"
+                disabled={pasteNoteBusy}
+                onClick={() => void submitPasteNote()}
+              >
+                {pasteNoteBusy ? "保存中…" : "保存粘贴内容"}
               </button>
             </div>
             <div className="my-4 border-t border-line" />

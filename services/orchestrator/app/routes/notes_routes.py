@@ -13,7 +13,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ..config import settings
-from ..legacy_bridge import parse_url_content
+from ..fyv_shared.content_parser import content_parser
+from ..url_fetch_hints import actionable_hint_for_failed_url
 from ..note_constants import (
     ALLOWED_NOTE_EXT,
     VIDEO_NOTE_EXT,
@@ -771,10 +772,16 @@ def import_note_from_url_api(body: NoteImportUrlRequest, request: Request):
     url = (body.url or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="请提供 URL")
-    parsed = parse_url_content(url)
-    if not parsed or not str(parsed).strip():
-        raise HTTPException(status_code=400, detail="未能从网页提取正文")
-    content = str(parsed).strip()
+    fetch = content_parser.parse_url(url)
+    content = str(fetch.get("content") or "").strip()
+    if not fetch.get("success") or not content:
+        hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
+            url,
+            error_code=str(fetch.get("error_code") or "").strip() or None,
+            upstream_error=str(fetch.get("error") or "").strip() or None,
+        )
+        head = str(fetch.get("error") or "").strip() or "未能从网页提取正文"
+        raise HTTPException(status_code=400, detail=f"{head}\n\n{hint}")
     if len(content) > MAX_URL_IMPORT_CHARS:
         content = content[:MAX_URL_IMPORT_CHARS] + "\n\n（内容已截断）"
     notebook = (body.notebook or "").strip()

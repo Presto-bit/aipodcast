@@ -393,6 +393,14 @@ export async function proxySsePostFromOrchestrator(
       payload: raw,
       timeoutMs: opts.timeoutMs ?? 0
     });
+    const ct = (upstream.headers.get("content-type") || "").toLowerCase();
+    const isEventStream = ct.includes("text/event-stream");
+    /** 校验/鉴权失败等常为 JSON；勿伪装成 SSE，否则前端无法按 JSON 解析 detail */
+    if (!upstream.ok || !isEventStream) {
+      const text = await upstream.text();
+      const outCt = ct.includes("application/json") ? "application/json" : "text/plain; charset=utf-8";
+      return new Response(text, { status: upstream.status, headers: { "content-type": outCt } });
+    }
     return new Response(upstream.body, {
       status: upstream.status,
       headers: {
@@ -401,9 +409,13 @@ export async function proxySsePostFromOrchestrator(
         connection: "keep-alive"
       }
     });
-  } catch {
+  } catch (err) {
     return Response.json(
-      { success: false, error: "upstream_unreachable", detail: "orchestrator request failed" },
+      {
+        success: false,
+        error: "upstream_unreachable",
+        detail: describeOrchestratorUnreachable(err)
+      },
       { status: 503 }
     );
   }

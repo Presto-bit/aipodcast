@@ -145,6 +145,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     [controlledText, onContentTextChange]
   );
   const [referenceUrlsBlock, setReferenceUrlsBlock] = useState("");
+  const [referencePasteBlock, setReferencePasteBlock] = useState("");
   const [notebookFilter, setNotebookFilter] = useState("全部");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -269,6 +270,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
         script_language?: string;
         output_mode?: string;
         reference_urls?: string;
+        reference_paste?: string;
         intro_text?: string;
         outro_text?: string;
       };
@@ -284,6 +286,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       const mode = String(parsed.output_mode || "").trim();
       setSpeakerMode(mode === "article" ? "single" : "dual");
       setReferenceUrlsBlock(String(parsed.reference_urls || "").trim());
+      setReferencePasteBlock(String(parsed.reference_paste || "").trim());
       setIntroText(String(parsed.intro_text || "").trim());
       setOutroText(String(parsed.outro_text || "").trim());
       removeSessionStorageScoped(PODCAST_REUSE_TEMPLATE_KEY);
@@ -729,7 +732,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     return buildReferenceJobFields({
       urlListText,
       selectedNoteIds,
-      referenceExtra: "",
+      referenceExtra: referencePasteBlock.trim(),
       useRag: false,
       ragMaxChars: 8000,
       referenceRagMode: "truncate"
@@ -887,7 +890,9 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   async function runPodcast() {
     const trimmed = text.trim();
     const hasLibraryMaterial =
-      referenceUrlsBlock.split(/\n/).some((l) => l.trim().length > 0) || selectedNoteIds.length > 0;
+      referenceUrlsBlock.split(/\n/).some((l) => l.trim().length > 0) ||
+      referencePasteBlock.trim().length > 0 ||
+      selectedNoteIds.length > 0;
     if (!trimmed && !hasLibraryMaterial) {
       applyTaskFromEvent("请先输入内容，或在资料库勾选资料后再开始生成");
       return;
@@ -990,22 +995,24 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       : "未设";
   const creativeSummary = formatCreativeTemplateChip(creativeTemplateValue);
   const refUrlLines = referenceUrlsBlock.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const hasPasteRef = referencePasteBlock.trim().length > 0;
   const librarySummary =
-    refUrlLines.length > 0 || selectedNoteIds.length > 0
-      ? `链接${refUrlLines.length}·笔记${selectedNoteIds.length ? "1" : "0"}`
+    refUrlLines.length > 0 || hasPasteRef || selectedNoteIds.length > 0
+      ? `链接${refUrlLines.length}·粘贴${hasPasteRef ? "有" : "无"}·笔记${selectedNoteIds.length ? "1" : "0"}`
       : "未选资料";
 
   useEffect(() => {
     const lines = referenceUrlsBlock.split(/\n/).map((l) => l.trim()).filter(Boolean);
     const parts: string[] = [];
     if (lines.length) parts.push(`链接 ${lines.length} 条`);
+    if (referencePasteBlock.trim()) parts.push("已粘贴参考正文");
     if (selectedNoteIds.length) {
       const id0 = selectedNoteIds[0];
       const title = id0 ? notesList.find((n) => n.noteId === id0)?.title || id0 : "";
       if (title) parts.push(`笔记：${title}`);
     }
     onLibrarySelectionPreviewChange?.(parts.join(" · "));
-  }, [referenceUrlsBlock, selectedNoteIds, notesList, onLibrarySelectionPreviewChange]);
+  }, [referenceUrlsBlock, referencePasteBlock, selectedNoteIds, notesList, onLibrarySelectionPreviewChange]);
 
   const showTaskPanel = busy || taskPhase.length > 0;
 
@@ -1231,7 +1238,23 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                             rows={2}
                             value={referenceUrlsBlock}
                             onChange={(e) => setReferenceUrlsBlock(e.target.value)}
-                            placeholder=""
+                            placeholder="https://…"
+                          />
+                          <p className="mt-1.5 text-[11px] leading-snug text-muted">
+                            公开静态页优先；小红书等强登录站请用下方「粘贴参考」或本地上传 .html。
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-line bg-fill/70 p-2.5">
+                          <p className="mb-1.5 text-xs font-medium text-ink">粘贴参考</p>
+                          <p className="mb-1.5 text-[11px] leading-snug text-muted">
+                            从浏览器复制正文，作为生成时的补充材料（与链接、笔记可同时使用）。
+                          </p>
+                          <textarea
+                            className="max-h-[5.5rem] w-full resize-y rounded-lg border border-line bg-surface p-2 text-sm leading-snug text-ink placeholder:text-muted"
+                            rows={3}
+                            value={referencePasteBlock}
+                            onChange={(e) => setReferencePasteBlock(e.target.value)}
+                            placeholder="粘贴参考正文…"
                           />
                         </div>
                         <div className="flex flex-col rounded-lg border border-line bg-fill/70 p-2.5">

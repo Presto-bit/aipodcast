@@ -1907,10 +1907,10 @@ Speaker2: 好，我们先帮听众把背景捋清楚。"""
             role = str(m.get("role") or "user").strip().lower()
             if role not in ("system", "user", "assistant"):
                 role = "user"
-            content = str(m.get("content") or "").strip()
-            if not content:
+            raw_content = str(m.get("content") or "")
+            if not raw_content.strip():
                 continue
-            entry: Dict[str, Any] = {"role": role, "content": content}
+            entry: Dict[str, Any] = {"role": role, "content": raw_content}
             name = m.get("name")
             if name:
                 entry["name"] = str(name)
@@ -1955,10 +1955,10 @@ Speaker2: 好，我们先帮听众把背景捋清楚。"""
             role = str(m.get("role") or "user").strip().lower()
             if role not in ("system", "user", "assistant"):
                 role = "user"
-            content = str(m.get("content") or "").strip()
-            if not content:
+            raw_content = str(m.get("content") or "")
+            if not raw_content.strip():
                 continue
-            entry: Dict[str, Any] = {"role": role, "content": content}
+            entry: Dict[str, Any] = {"role": role, "content": raw_content}
             name = m.get("name")
             if name:
                 entry["name"] = str(name)

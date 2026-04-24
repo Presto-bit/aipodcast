@@ -18,6 +18,7 @@ export function apiErrorMessage(data: unknown, fallback: string): string {
   if (typeof o.detail === "string" && o.detail.trim()) return o.detail.trim();
   if (Array.isArray(o.detail) && o.detail.length > 0) {
     const first = o.detail[0];
+    if (typeof first === "string" && first.trim()) return first.trim();
     if (first && typeof first === "object" && first !== null && "msg" in first) {
       return String((first as { msg: unknown }).msg);
     }
@@ -35,7 +36,18 @@ export function formatNotesAskStreamError(message: string): string {
     minimax_api_key_missing: "未配置 MiniMax API Key，无法完成问答。",
     openai_compatible_empty_content: "上游模型返回内容为空，请检查 API 与模型配置后重试。",
     chat_messages_empty: "发送给模型的消息为空，请刷新页面后重试。",
-    upstream_error: "上游模型服务异常，请稍后重试。"
+    upstream_error: "上游模型服务异常，请稍后重试。",
+    empty_context:
+      "当前勾选资料没有可用于问答的正文（可能尚在解析/索引中）。请打开资料预览确认已有文字，或稍后再试。",
+    note_not_found: "部分资料已不存在或无权访问，请刷新列表后重新勾选。",
+    notebook_not_shared: "该分享笔记本不可访问或链接已失效。",
+    notebook_required: "请先选择笔记本。",
+    note_ids_required: "请至少勾选一条资料后再提问。",
+    question_required: "请输入问题。",
+    too_many_notes: "勾选的资料条数超过上限，请减少勾选后再试。",
+    note_notebook_mismatch: "勾选资料与当前笔记本不一致，请刷新后重选。",
+    hints_llm_output_invalid: "导读模型返回格式异常，请稍后重试或换一批资料。",
+    hints_failed: "导读暂时无法生成，请稍后重试。"
   };
   if (map[m]) return map[m];
   if (m.startsWith("text_provider_") && m.endsWith("_config_missing")) {
