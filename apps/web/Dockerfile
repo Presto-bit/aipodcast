@@ -16,7 +16,7 @@ ENV NEXT_PUBLIC_APP_BUILD_ID=${NEXT_PUBLIC_APP_BUILD_ID}
 COPY apps/web/package.json /app/package.json
 # 多源回退：先试 NPM_REGISTRY，再官方 / npmmirror / 腾讯云 / 华为云 / 阿里云（ash 兼容）
 RUN npm config set fetch-timeout 600000 \
-  && npm config set fetch-retries 3 \
+  && npm config set fetch-retries 2 \
   && ok=0 \
   && for reg in "${NPM_REGISTRY}" \
       "https://registry.npmjs.org/" \
