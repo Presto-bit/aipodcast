@@ -257,12 +257,30 @@ export async function fetchOrchestrator(path: string, opts: FetchOrchestratorOpt
   throw e;
 }
 
+/** 编排器不可达时的排障提示（Docker 服务名 orchestrator 在宿主机上无法解析） */
+function orchestratorReachabilityHint(base: string): string {
+  const b = (base || "").trim().replace(/\/+$/, "") || "(未配置)";
+  try {
+    const host = new URL(b.startsWith("http") ? b : `http://${b}`).hostname;
+    if (host === "orchestrator") {
+      return `请在 Web 容器内探测：docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native exec web wget -qO- ${b}/health；并查看编排器日志：docker compose ... logs orchestrator --tail=200。宿主机上直接 curl http://orchestrator:8008 会失败（无法解析服务名）。`;
+    }
+  } catch {
+    // ignore
+  }
+  if (/127\.0\.0\.1|localhost/i.test(b)) {
+    return `本机可执行 curl ${b}/health。`;
+  }
+  return `可请求 ${b}/health 检查上游是否存活。`;
+}
+
 /**
  * fetchOrchestrator 失败时抛出的 Error.message 固定为 upstream_unreachable，真实原因在 error.cause。
  * 用于 BFF 返回可读的中文说明。
  */
 export function describeOrchestratorUnreachable(err: unknown): string {
   const base = resolveOrchestratorBaseUrl();
+  const hint = orchestratorReachabilityHint(base);
   let inner: unknown = err;
   if (inner instanceof Error && inner.message === "upstream_unreachable" && inner.cause != null) {
     inner = inner.cause;
@@ -281,18 +299,18 @@ export function describeOrchestratorUnreachable(err: unknown): string {
   const lower = text.toLowerCase();
 
   if (inner instanceof Error && inner.name === "AbortError") {
-    return `连接编排器超时或中断。请确认 orchestrator 已在 ${base} 监听（本机可执行 curl ${base}/health）；若涉及发验证码/邮件，请检查 SMTP 与编排器日志。ORCHESTRATOR_URL 当前为 ${base}。`;
+    return `连接编排器超时或中断。${hint} 若涉及发验证码/邮件，请检查 SMTP 与编排器负载。ORCHESTRATOR_URL 当前为 ${base}。`;
   }
   if (/aborted|timeout/i.test(lower)) {
-    return `连接编排器超时或中断。请确认 orchestrator 已在 ${base} 监听（本机可执行 curl ${base}/health）；若涉及发验证码/邮件，请检查 SMTP 与编排器日志。ORCHESTRATOR_URL 当前为 ${base}。`;
+    return `连接编排器超时或中断。${hint} 若涉及发验证码/邮件，请检查 SMTP 与编排器负载。ORCHESTRATOR_URL 当前为 ${base}。`;
   }
   if (/econnrefused|enotfound|econnreset|fetch failed|socket|network|aggregateerror/i.test(lower)) {
-    return `无法连上编排器（${text || "网络错误"}）。请在本机启动 orchestrator 并监听 8008，或检查 ORCHESTRATOR_URL（当前 ${base}）。若 Next 跑在 Docker 内，应使用 http://orchestrator:8008。`;
+    return `无法连上编排器（${text || "网络错误"}）。${hint} 请确认 orchestrator 容器为 running、与 web 同属 compose 网络。ORCHESTRATOR_URL 当前为 ${base}。`;
   }
   if (text) {
     return `无法连接编排器：${text}（当前 ${base}）`;
   }
-  return `无法连接编排器。请确认 orchestrator 已在 ${base} 监听（本机可执行 curl ${base}/health）。`;
+  return `无法连接编排器。${hint} ORCHESTRATOR_URL 当前为 ${base}。`;
 }
 
 export async function proxyJsonFromOrchestrator(path: string, opts: FetchOrchestratorOptions = {}): Promise<Response> {

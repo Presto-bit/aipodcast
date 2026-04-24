@@ -194,6 +194,8 @@ services:
       NEXT_PUBLIC_APP_NAME: AI Native Studio
       # 容器内 BFF 必须走编排器服务名，不能用 127.0.0.1（那会指向 web 容器自身）
       ORCHESTRATOR_URL: http://orchestrator:8008
+      # 覆盖 .env：浏览器经 BFF 即可，勿保留 127.0.0.1（避免误打进客户端包 / 误导运维）；确需浏览器直连公网编排器时再在 env_file 配置并删掉下行
+      NEXT_PUBLIC_ORCHESTRATOR_URL: ""
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
