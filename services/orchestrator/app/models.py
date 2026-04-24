@@ -6969,7 +6969,9 @@ def process_payment_event_transaction(
                       (order_event_id, provider, transaction_type, transaction_status, amount_cents, currency, provider_transaction_id, idempotency_key, client_request_id, occurred_at, trace_id, request_id, raw, updated_at)
                     VALUES
                       (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
-                    ON CONFLICT (provider, provider_transaction_id) DO UPDATE SET
+                    ON CONFLICT (provider, provider_transaction_id)
+                      WHERE provider_transaction_id IS NOT NULL AND btrim(provider_transaction_id) <> ''
+                    DO UPDATE SET
                       transaction_status = EXCLUDED.transaction_status,
                       amount_cents = EXCLUDED.amount_cents,
                       currency = EXCLUDED.currency,
