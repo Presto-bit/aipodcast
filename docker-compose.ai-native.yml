@@ -184,6 +184,9 @@ services:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com/}
         NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-development}
         NEXT_PUBLIC_APP_BUILD_ID: ${NEXT_PUBLIC_APP_BUILD_ID:-0}
+        # 与 .env.ai-native 一致；compose --env-file 发版时注入，打进 Web 静态包（仅 runtime env_file 不够）
+        NEXT_PUBLIC_NOTES_ASK_BFF_ORIGIN: ${NEXT_PUBLIC_NOTES_ASK_BFF_ORIGIN:-}
+        NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS: ${NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS:-}
     env_file:
       - .env.ai-native
     environment:

@@ -149,6 +149,16 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
     const unsubPlay = ws.on("play", () => onPlayRef.current?.(true));
     const unsubPause = ws.on("pause", () => onPlayRef.current?.(false));
     const unsubErr = ws.on("error", (err) => {
+      const raw = String(audioUrl || "").trim();
+      const urlHint = raw.startsWith("data:")
+        ? `data:… len=${raw.length}`
+        : raw.length <= 140
+          ? raw
+          : `${raw.slice(0, 140)}…`;
+      console.warn("[fym:clip-waveform] load_error", {
+        urlHint,
+        message: String(err?.message || err || "waveform_error")
+      });
       onLoadErrorRef.current?.(String(err?.message || err || "waveform_error"));
     });
     /* snapSeekMs 仅经 snapSeekRef 读取，不把 snapSeekMs 放进依赖，避免反复销毁 WaveSurfer */

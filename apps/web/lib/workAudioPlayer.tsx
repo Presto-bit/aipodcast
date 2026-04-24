@@ -37,6 +37,39 @@ function formatClock(sec: number): string {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
+/** DevTools 过滤：`[fym:work-audio]` */
+const WORK_AUDIO_LOG = "[fym:work-audio]";
+
+function summarizeAudioSrcForLog(src: string | null | undefined): string {
+  const s = String(src || "").trim();
+  if (!s) return "(empty)";
+  if (s.startsWith("data:")) {
+    const i = s.indexOf(",");
+    const head = i >= 0 ? s.slice(0, Math.min(i + 1 + 28, s.length)) : s.slice(0, 48);
+    return `${head}… totalLen=${s.length}`;
+  }
+  if (s.startsWith("blob:")) {
+    return `blob:…${s.slice(-16)} len=${s.length}`;
+  }
+  try {
+    const u = new URL(s, typeof window !== "undefined" ? window.location.href : "http://localhost/");
+    const tail = u.search ? `${u.pathname}?…` : u.pathname;
+    const out = `${u.origin}${tail}`;
+    return out.length <= 140 ? out : `${out.slice(0, 140)}…`;
+  } catch {
+    return s.length <= 100 ? s : `${s.slice(0, 100)}…`;
+  }
+}
+
+function mediaErrorCodeLabel(code: number | undefined): string {
+  if (code == null || code === 0) return "none_or_unknown";
+  if (code === MediaError.MEDIA_ERR_ABORTED) return "MEDIA_ERR_ABORTED";
+  if (code === MediaError.MEDIA_ERR_NETWORK) return "MEDIA_ERR_NETWORK";
+  if (code === MediaError.MEDIA_ERR_DECODE) return "MEDIA_ERR_DECODE";
+  if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) return "MEDIA_ERR_SRC_NOT_SUPPORTED";
+  return `code_${code}`;
+}
+
 export type WorkAudioToggleMeta = {
   displayTitle: string;
   /** 开始播放或切歌后跳转到该秒（Shownotes / 章节跳转） */
@@ -87,9 +120,14 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   const [durationSec, setDurationSec] = useState(0);
   const [loadingJobId, setLoadingJobId] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
+  const activeJobIdRef = useRef<string | null>(null);
   /** 新开始播放或切换曲目时默认为收起 */
   const [dockExpanded, setDockExpanded] = useState(false);
   const [dockInsetLeftPx, setDockInsetLeftPx] = useState(APP_NAV_SIDEBAR_PX_EXPANDED);
+
+  useEffect(() => {
+    activeJobIdRef.current = activeJobId;
+  }, [activeJobId]);
 
   const stopAndClearAudio = useCallback(() => {
     const el = audioRef.current;
@@ -252,17 +290,32 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           headers: { ...getAuthHeaders() }
         });
         const data = (await res.json().catch(() => ({}))) as { success?: boolean; audio_url?: string };
-        if (!res.ok || data.success === false) return null;
+        if (!res.ok || data.success === false) {
+          console.warn(`${WORK_AUDIO_LOG} ensureSrc:template_listen_failed`, {
+            jobId,
+            httpStatus: res.status,
+            success: data.success
+          });
+          return null;
+        }
         const audioUrl = String(data.audio_url || "").trim();
         if (audioUrl) {
           srcCache.current[jobId] = audioUrl;
           return audioUrl;
         }
+        console.warn(`${WORK_AUDIO_LOG} ensureSrc:template_listen_no_url`, { jobId });
         return null;
       }
       const res = await fetch(`/api/jobs/${jobId}`, { cache: "no-store", headers: { ...getAuthHeaders() } });
-      const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) return null;
+      const row = (await res.json().catch(() => ({}))) as Record<string, unknown> & { detail?: string };
+      if (!res.ok) {
+        console.warn(`${WORK_AUDIO_LOG} ensureSrc:job_fetch_failed`, {
+          jobId,
+          httpStatus: res.status,
+          detail: row.detail ? String(row.detail).slice(0, 200) : undefined
+        });
+        return null;
+      }
       const result = (row.result || {}) as Record<string, unknown>;
       const hex = String(result.audio_hex || "").trim();
       if (hex) {
@@ -271,6 +324,10 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           srcCache.current[jobId] = url;
           return url;
         }
+        console.warn(`${WORK_AUDIO_LOG} ensureSrc:hex_present_but_invalid_data_url`, {
+          jobId,
+          hexLen: hex.length
+        });
       }
       const lr = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/work-listen`, {
         cache: "no-store",
@@ -284,6 +341,18 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           srcCache.current[jobId] = playable;
           return playable;
         }
+        console.warn(`${WORK_AUDIO_LOG} ensureSrc:work_listen_url_unusable`, {
+          jobId,
+          afterWrap: summarizeAudioSrcForLog(fresh)
+        });
+      } else if (!lr.ok || lj.success === false || !fresh) {
+        console.warn(`${WORK_AUDIO_LOG} ensureSrc:work_listen_skipped_or_empty`, {
+          jobId,
+          httpStatus: lr.status,
+          ok: lr.ok,
+          success: lj.success,
+          audioUrlLen: fresh.length
+        });
       }
       const audioUrl = String(result.audio_url || "").trim();
       if (audioUrl) {
@@ -292,7 +361,19 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           srcCache.current[jobId] = playable;
           return playable;
         }
+        console.warn(`${WORK_AUDIO_LOG} ensureSrc:result_audio_url_unusable`, {
+          jobId,
+          summarized: summarizeAudioSrcForLog(audioUrl)
+        });
       }
+      console.warn(`${WORK_AUDIO_LOG} ensureSrc:no_playable_src`, {
+        jobId,
+        hadHex: Boolean(hex),
+        hexLen: hex.length,
+        resultAudioUrl: summarizeAudioSrcForLog(String(result.audio_url || "")),
+        workListenTried: true,
+        workListenStatus: lr.status
+      });
       return null;
     },
     [getAuthHeaders, wrapRemoteAudioAsBlobIfNeeded]
@@ -362,7 +443,15 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         setActiveDisplayTitle(title);
         setProgress01(0);
         await el.play().catch((err) => {
-          setPlayError(err instanceof Error ? err.message : "无法播放（浏览器策略或格式问题）");
+          const msg = err instanceof Error ? err.message : "无法播放（浏览器策略或格式问题）";
+          console.warn(`${WORK_AUDIO_LOG} play() rejected`, {
+            jobId,
+            message: msg,
+            src: summarizeAudioSrcForLog(url),
+            audioReadyState: el.readyState,
+            audioNetworkState: el.networkState
+          });
+          setPlayError(msg);
         });
         if (wantsSeek) {
           const t = seekSec as number;
@@ -377,7 +466,9 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           }
         }
       } catch (e) {
-        setPlayError(e instanceof Error ? e.message : "加载音频失败");
+        const msg = e instanceof Error ? e.message : "加载音频失败";
+        console.warn(`${WORK_AUDIO_LOG} togglePlay:ensureSrc_threw`, { jobId, message: msg });
+        setPlayError(msg);
       } finally {
         setLoadingJobId(null);
       }
@@ -392,7 +483,15 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   const resume = useCallback(() => {
     const el = audioRef.current;
     if (!el || !activeJobId) return;
-    void el.play().catch((err) => setPlayError(err instanceof Error ? err.message : String(err)));
+    void el.play().catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`${WORK_AUDIO_LOG} resume play() rejected`, {
+        jobId: activeJobId,
+        message: msg,
+        src: summarizeAudioSrcForLog(el.currentSrc || el.src)
+      });
+      setPlayError(msg);
+    });
   }, [activeJobId]);
 
   const skipSeconds = useCallback(
@@ -466,7 +565,18 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         onLoadedData={() => setPlayError(null)}
         onError={() => {
           const el = audioRef.current;
-          const code = el?.error?.code;
+          const me = el?.error;
+          const code = me?.code;
+          const src = el?.currentSrc || el?.src || "";
+          console.warn(`${WORK_AUDIO_LOG} media_element_error`, {
+            jobId: activeJobIdRef.current,
+            mediaErrorCode: code,
+            mediaErrorCodeLabel: mediaErrorCodeLabel(code),
+            mediaErrorMessage: me?.message || null,
+            networkState: el?.networkState,
+            readyState: el?.readyState,
+            src: summarizeAudioSrcForLog(src)
+          });
           if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED || code === MediaError.MEDIA_ERR_DECODE) {
             setPlayError("无法解码该音频（链接可能已失效或格式异常），请刷新后重试或从创作记录重新打开");
           } else if (code === MediaError.MEDIA_ERR_NETWORK) {

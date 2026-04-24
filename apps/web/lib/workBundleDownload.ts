@@ -38,6 +38,29 @@ function hexToUint8Array(hex: string): Uint8Array {
   return out;
 }
 
+/** DevTools 过滤前缀：`[fym:work-bundle-download]` */
+const BUNDLE_DL_LOG = "[fym:work-bundle-download]";
+
+function summarizeUrlForLog(url: string, maxLen = 120): string {
+  const u = String(url || "").trim();
+  if (!u) return "(empty)";
+  try {
+    const parsed = new URL(u, typeof window !== "undefined" ? window.location.href : "http://localhost/");
+    const q = parsed.search ? "?…" : "";
+    const path = `${parsed.origin}${parsed.pathname}${q}`;
+    return path.length <= maxLen ? path : `${path.slice(0, maxLen)}…`;
+  } catch {
+    return u.length <= maxLen ? u : `${u.slice(0, maxLen)}…`;
+  }
+}
+
+export type BundleAudioResolveAttempt = {
+  step: string;
+  ok: boolean;
+  status?: number;
+  detail?: string;
+};
+
 function mimeToCoverExt(mime: string): string {
   if (!mime) return "jpg";
   if (mime.includes("png")) return "png";
@@ -170,7 +193,8 @@ async function resolveBundleMp3Bytes(
   result: Record<string, unknown>,
   hex: string,
   exportBody: { title: string; artist: string; album: string; wantChapters: boolean }
-): Promise<{ bytes: Uint8Array; lastError: string }> {
+): Promise<{ bytes: Uint8Array; lastError: string; attempts: BundleAudioResolveAttempt[] }> {
+  const attempts: BundleAudioResolveAttempt[] = [];
   let lastError = "";
   const tryExport = async (embedChapters: boolean) => {
     const r = await fetchJobAudioExportBytes(jobId, authHdr, {
@@ -178,6 +202,12 @@ async function resolveBundleMp3Bytes(
       artist: exportBody.artist,
       album: exportBody.album,
       embed_chapters: embedChapters
+    });
+    attempts.push({
+      step: `POST /api/jobs/…/audio-export embed_chapters=${embedChapters}`,
+      ok: r.ok,
+      status: r.ok ? undefined : r.status,
+      detail: r.ok ? `${r.bytes.length} bytes (mp3)` : r.detail
     });
     if (r.ok) {
       lastError = "";
@@ -193,21 +223,38 @@ async function resolveBundleMp3Bytes(
 
   if (!bytes || bytes.length === 0) {
     const fromHex = hex ? hexToUint8Array(hex) : new Uint8Array();
-    if (fromHex.length > 0) {
+    const hexOk = fromHex.length > 0;
+    attempts.push({
+      step: "fallback audio_hex decode",
+      ok: hexOk,
+      detail: hexOk ? `${fromHex.length} bytes` : hex ? `invalid_or_empty_hex (len ${hex.length})` : "no_hex_in_result"
+    });
+    if (hexOk) {
       bytes = fromHex;
       lastError = "";
     }
   }
 
   if (!bytes || bytes.length === 0) {
-    const fromUrl = await fetchBytesFromAudioUrl(String(result.audio_url || "").trim(), authHdr);
-    if (fromUrl && fromUrl.length > 0) {
-      bytes = fromUrl;
+    const rawUrl = String(result.audio_url || "").trim();
+    const fromUrl = await fetchBytesFromAudioUrl(rawUrl, authHdr);
+    const urlOk = Boolean(fromUrl && fromUrl.length > 0);
+    attempts.push({
+      step: "fallback result.audio_url fetch",
+      ok: urlOk,
+      detail: urlOk
+        ? `${fromUrl!.length} bytes (mp3)`
+        : rawUrl
+          ? `no_valid_mp3_from ${summarizeUrlForLog(rawUrl)}`
+          : "no_audio_url_in_result"
+    });
+    if (urlOk) {
+      bytes = fromUrl!;
       lastError = "";
     }
   }
 
-  return { bytes: bytes || new Uint8Array(), lastError };
+  return { bytes: bytes || new Uint8Array(), lastError, attempts };
 }
 
 type ManuscriptParts = { introT: string; scriptBody: string; outroT: string };
@@ -281,28 +328,54 @@ export async function downloadJobManuscriptMarkdown(opts: JobManuscriptDownloadO
  * 音频默认经服务端写入 ID3（标题、艺人、专辑）与可选章节；失败时回退为原始 hex 解码。
  */
 export async function downloadJobBundleZip(opts: JobBundleExportOptions): Promise<void> {
+  try {
+    await downloadJobBundleZipImpl(opts);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("无法打包音频")) {
+      console.warn(`${BUNDLE_DL_LOG} error`, { jobId: opts.jobId, message: msg });
+    }
+    throw e;
+  }
+}
+
+async function downloadJobBundleZipImpl(opts: JobBundleExportOptions): Promise<void> {
   const { authHdr, result, hex, parts } = await loadJobManuscriptParts(opts.jobId);
   const script = formatManuscriptPlainZip(parts);
   const coverUrl = String(result.cover_image || result.coverImage || "").trim();
   const folderName = sanitizeFolderName(opts.title);
   const embedChapters = opts.embedChaptersInMp3 !== false;
 
-  const { bytes: resolvedAudio, lastError: audioResolveError } = await resolveBundleMp3Bytes(
-    opts.jobId,
-    authHdr,
-    result,
-    hex,
-    {
-      title: (opts.title || folderName).slice(0, 300),
-      artist: (opts.exportArtist || "").trim(),
-      album: (opts.exportAlbum || "").trim(),
-      wantChapters: embedChapters
-    }
-  );
+  const { bytes: resolvedAudio, lastError: audioResolveError, attempts: audioResolveAttempts } =
+    await resolveBundleMp3Bytes(
+      opts.jobId,
+      authHdr,
+      result,
+      hex,
+      {
+        title: (opts.title || folderName).slice(0, 300),
+        artist: (opts.exportArtist || "").trim(),
+        album: (opts.exportAlbum || "").trim(),
+        wantChapters: embedChapters
+      }
+    );
   const audioBytes = Uint8Array.from(resolvedAudio);
 
   const likelyHasEpisodeAudio = resultSuggestsAudioPresent(result, hex);
   if (likelyHasEpisodeAudio && audioBytes.length === 0) {
+    console.warn(`${BUNDLE_DL_LOG} audio_resolve_failed`, {
+      jobId: opts.jobId,
+      title: folderName,
+      lastError: audioResolveError.trim() || null,
+      attempts: audioResolveAttempts,
+      resultHints: {
+        audio_object_key: Boolean(String(result.audio_object_key || "").trim()),
+        audio_url: summarizeUrlForLog(String(result.audio_url || "")),
+        audio_hex_len: hex.length,
+        audio_duration_sec: result.audio_duration_sec,
+        has_audio_hex_flag: result.has_audio_hex === true
+      }
+    });
     throw new Error(
       audioResolveError.trim()
         ? `无法打包音频：${audioResolveError.trim()}`

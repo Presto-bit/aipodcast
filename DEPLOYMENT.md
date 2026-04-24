@@ -259,6 +259,15 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 
 实现参考：`apps/web/lib/notesAskBffOrigin.ts`、`apps/web/middleware.ts`（`NOTES_ASK_API_PREFIX`）。
 
+7. **网关 504（Tengine/HTML 错误页）仍出现时**：说明 **Next 之前的某一跳** 在首字节或流式传输中断开。Next 侧 SSE 已不设上游 Abort 上限；须从外向内排查 **最短的超时**：
+
+   | 位置 | 操作 |
+   |------|------|
+   | **`stream.*` 上 Nginx**（宝塔） | `location ^~ /api/notes/ask` 内 **`proxy_read_timeout` / `proxy_send_timeout` ≥300s**（建议 **600s**），**`proxy_buffering off`**。完整片段见 **`deploy/nginx-stream.prestoai-notes-only.example.conf`**。 |
+   | **SLB / ALB**（公网入口在负载均衡时） | 控制台调大 **空闲超时 / 连接超时 / 数据传输超时**（产品文案不同，常见默认 **30～60s**）。 |
+   | **CDN / DCDN / 全站加速** | 若 `stream` **误经 CDN**，调 **回源 HTTP 响应超时**；更稳妥是 **`stream` DNS 直连 ECS**，不要 CNAME 到静态 CDN。 |
+   | **本机验证** | SSH 到源站：`curl -N -H 'Cookie: fym_session=…' -H 'Content-Type: application/json' -d '{…}' --max-time 120 https://127.0.0.1:3000/api/v1/notes/ask/stream`（编排器）与经 Nginx 的 `https://stream…/api/notes/ask/stream` 对比，判断 504 出在 Nginx 前还是后。 |
+
 ## 支付回调
 
 - **入口（公网）**：支付平台或网关应 POST 至 **Next 对外域名** 下的 BFF 路径（由 `apps/web` 路由转发），由 BFF 将**原始 body** 与 **`X-Payment-Signature`** 转发到编排器 **`POST /api/v1/webhooks/payment`**。
