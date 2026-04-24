@@ -8,7 +8,7 @@ import SmallConfirmModal from "../ui/SmallConfirmModal";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
 import { useAuth } from "../../lib/auth";
-import { GatedSplitAction } from "../SubscriptionVipLink";
+import { GatedSplitAction, SubscriptionVipLink } from "../SubscriptionVipLink";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
 import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
 import { sanitizeShareEpisodeTitle } from "../../lib/sharePublishDefaults";
@@ -32,6 +32,9 @@ import {
 function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
   return w.downloadAllowed === true;
 }
+
+/** 与编排器 downloadAllowed / 打包接口校验文案一致 */
+const WORK_DOWNLOAD_GATE_TIP = "下载需有过钱包充值记录，或当前钱包仍有余额";
 
 const PODCAST_TYPES = new Set(["podcast_generate", "podcast", "podcast_short_video"]);
 const TTS_TYPES = new Set(["text_to_speech", "tts"]);
@@ -247,8 +250,12 @@ type Props = {
    * 用于嵌入窄栏且需与侧栏列表一致的展示。
    */
   compactCards?: boolean;
-  /** 为 true 时下载入口不使用 VIP 皇冠分栏；未许可时为跳转充值页的链接（需历史钱包充值记录） */
+  /** 为 true 时「我的作品」等：未许可时为带皇冠的锁定分栏（跳转订阅）；已许可时为普通下载按钮 */
   plainDownloadGate?: boolean;
+  /**
+   * 首页等：已解锁下载时仍展示右侧皇冠入口（跳转订阅/钱包），与锁定态视觉一致。
+   */
+  showDownloadVipSegment?: boolean;
 };
 
 const NOTE_TITLE_UUID_RE =
@@ -417,7 +424,8 @@ export default function PodcastWorksGallery({
   pendingStudioWork = null,
   pendingStudioSubtitle = "",
   compactCards = false,
-  plainDownloadGate = false
+  plainDownloadGate = false,
+  showDownloadVipSegment = false
 }: Props) {
   const { t } = useI18n();
   const router = useRouter();
@@ -754,26 +762,45 @@ export default function PodcastWorksGallery({
             </button>
           );
         }
-        const subCls = gatedExtras?.lockedLinkClassName
-          ? `${unlockedClassName} ${gatedExtras.lockedLinkClassName}`.trim()
-          : unlockedClassName;
         return (
-          <Link
-            href="/subscription"
-            title="下载需至少完成一次钱包充值（赠送余额不计）"
-            aria-label="下载需至少完成一次钱包充值（赠送余额不计）"
-            className={subCls}
-            onClick={() => gatedExtras?.onLockedNavigate?.()}
+          <GatedSplitAction
+            locked
+            variant="default"
+            upgradeTitle={WORK_DOWNLOAD_GATE_TIP}
+            onClick={() => {}}
+            disabled={busy}
+            unlockedClassName={unlockedClassName}
+            lockedLinkClassName={gatedExtras?.lockedLinkClassName}
+            lockedLabelClassName={gatedExtras?.lockedLabelClassName}
+            onLockedNavigate={() => gatedExtras?.onLockedNavigate?.()}
           >
             {label}
-          </Link>
+          </GatedSplitAction>
+        );
+      }
+      if (allowed && showDownloadVipSegment) {
+        return (
+          <span className="inline-flex max-w-full min-w-0 overflow-hidden rounded-md border border-line bg-surface text-[11px] shadow-sm">
+            <button
+              type="button"
+              className="min-w-0 flex-1 truncate border-0 bg-transparent px-2 py-1 text-left font-medium text-ink outline-none ring-brand/0 transition hover:bg-fill/80 focus-visible:ring-2 focus-visible:ring-brand/40 disabled:pointer-events-none disabled:opacity-40"
+              disabled={busy}
+              onClick={() => {
+                gatedExtras?.onLockedNavigate?.();
+                void onDownload(row);
+              }}
+            >
+              {label}
+            </button>
+            <SubscriptionVipLink segment title="钱包充值与订阅" />
+          </span>
         );
       }
       return (
         <GatedSplitAction
           locked={!allowed}
           variant="default"
-          upgradeTitle="下载需至少完成一次钱包充值（赠送余额不计）"
+          upgradeTitle={WORK_DOWNLOAD_GATE_TIP}
           onClick={() => {
             gatedExtras?.onLockedNavigate?.();
             void onDownload(row);
@@ -787,7 +814,7 @@ export default function PodcastWorksGallery({
         </GatedSplitAction>
       );
     },
-    [plainDownloadGate, onDownload, zipBusy]
+    [plainDownloadGate, showDownloadVipSegment, onDownload, zipBusy]
   );
 
   function downloadBusyLabel(workType: string | undefined): string {
@@ -1231,20 +1258,11 @@ export default function PodcastWorksGallery({
                 >
                   {batchBusy ? "正在批量下载…" : "批量下载"}
                 </button>
-              ) : plainDownloadGate ? (
-                <Link
-                  href="/subscription"
-                  title="下载需至少完成一次钱包充值（赠送余额不计）"
-                  aria-label="下载需至少完成一次钱包充值（赠送余额不计）"
-                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill"
-                >
-                  {batchBusy ? "正在批量下载…" : "批量下载"}
-                </Link>
               ) : (
                 <GatedSplitAction
                   locked
                   variant="default"
-                  upgradeTitle="下载需至少完成一次钱包充值（赠送余额不计）"
+                  upgradeTitle={WORK_DOWNLOAD_GATE_TIP}
                   onClick={() => {}}
                   disabled={false}
                   unlockedClassName="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"

@@ -1,6 +1,7 @@
 /**
  * 充值 / 余额同步：浏览器端排查时间线（sessionStorage），不含 Authorization。
- * 开启：开发环境默认；生产设 NEXT_PUBLIC_RECHARGE_DEBUG_UI=1 或 localStorage.recharge_debug_ui=1 后刷新。
+ * 可见与写入：开发环境默认；生产设 NEXT_PUBLIC_RECHARGE_DEBUG_UI=1 或 localStorage.recharge_debug_ui=1；
+ * 或当前会话 `user.role === "admin"`（与 /api/auth/me 一致）时管理员始终可见、可累积日志。
  */
 
 export const RECHARGE_DEBUG_EVENT = "fym-recharge-debug";
@@ -37,14 +38,32 @@ export function rechargeDebugEnabled(): boolean {
   return false;
 }
 
+/** 与 AppShell /admin 一致：`/api/auth/me` 返回的 role */
+export function authUserIsAdmin(user: unknown): boolean {
+  if (!user || typeof user !== "object") return false;
+  const r = (user as { role?: unknown }).role;
+  return String(r ?? "").trim() === "admin";
+}
+
+/** 订阅页「充值路径日志」展示与写入：管理员或显式调试开关 */
+export function rechargePathLogVisibleForUser(user: unknown): boolean {
+  if (authUserIsAdmin(user)) return true;
+  return rechargeDebugEnabled();
+}
+
 function dispatch(): void {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent(RECHARGE_DEBUG_EVENT));
   }
 }
 
-export function appendRechargeDebug(step: string, data?: Record<string, unknown>, requestId?: string): void {
-  if (!rechargeDebugEnabled()) return;
+export function appendRechargeDebug(
+  step: string,
+  data?: Record<string, unknown>,
+  requestId?: string,
+  userForVisibility?: unknown
+): void {
+  if (!rechargePathLogVisibleForUser(userForVisibility)) return;
   if (typeof window === "undefined") return;
   try {
     const entry: RechargeDebugEntry = {

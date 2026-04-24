@@ -241,8 +241,8 @@ def _job_events_indicate_paid_media_debit(job_id: str) -> bool:
 
 def user_download_allowed_for_succeeded_works(user_phone: str | None) -> bool:
     """
-    作品列表专用：列表中的任务均为 succeeded，下载权限只与用户是否有过钱包充值流水有关，
-    避免对每个 job 重复 get_job 与钱包查询。
+    作品列表专用：列表中的任务均为 succeeded；用户未被
+    user_work_download_blocked_never_paid_free_only 拦截时为 True（有过充值记录或当前钱包有余额）。
     """
     up = (user_phone or "").strip()
     if not up:
@@ -253,7 +253,7 @@ def user_download_allowed_for_succeeded_works(user_phone: str | None) -> bool:
 def work_download_allowed(job_id: str, user_phone: str | None) -> bool:
     """
     是否允许打包下载本条成片：
-    - 用户须在 user_wallet_topups 中有至少一条充值记录（与订阅档位无关；纯赠送余额不算）；
+    - 用户须有过钱包充值记录，或当前钱包余额大于 0；
     - 任务须为 succeeded 且归属当前用户。
     """
     jid = (job_id or "").strip()

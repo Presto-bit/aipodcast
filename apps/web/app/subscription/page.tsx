@@ -14,7 +14,7 @@ import {
   clearRechargeDebug,
   newRechargeDebugRequestId,
   readRechargeDebug,
-  rechargeDebugEnabled,
+  rechargePathLogVisibleForUser,
   summarizePayUrl,
   type RechargeDebugEntry
 } from "../../lib/rechargeClientDebug";
@@ -406,19 +406,18 @@ export default function SubscriptionPage() {
           text_chars_total?: number | null;
         };
       };
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug(
-          "load_me",
-          {
-            path: mePath,
-            http_ok: mr.ok,
-            success: Boolean(md.success),
-            wallet_balance_cents: typeof md.wallet_balance_cents === "number" ? md.wallet_balance_cents : null,
-            recharge_records_len: Array.isArray(md.recharge_records) ? md.recharge_records.length : null
-          },
-          rid
-        );
-      }
+      appendRechargeDebug(
+        "load_me",
+        {
+          path: mePath,
+          http_ok: mr.ok,
+          success: Boolean(md.success),
+          wallet_balance_cents: typeof md.wallet_balance_cents === "number" ? md.wallet_balance_cents : null,
+          recharge_records_len: Array.isArray(md.recharge_records) ? md.recharge_records.length : null
+        },
+        rid,
+        user
+      );
       if (mr.ok && md.success) {
         setRechargeRecords(Array.isArray(md.recharge_records) ? md.recharge_records : []);
         setConsumptionRecords(Array.isArray(md.consumption_records) ? md.consumption_records : []);
@@ -443,23 +442,23 @@ export default function SubscriptionPage() {
           setExperienceVoiceTotal(null);
           setExperienceTextTotal(null);
         }
-      } else if (rechargeDebugEnabled()) {
+      } else {
         appendRechargeDebug(
           "load_me_not_ok",
           { path: mePath, http_ok: mr.ok, success: md.success, http_status: mr.status },
-          rid
+          rid,
+          user
         );
       }
     } catch (e) {
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug(
-          "load_me_error",
-          { message: String(e instanceof Error ? e.message : e) },
-          rid
-        );
-      }
+      appendRechargeDebug(
+        "load_me_error",
+        { message: String(e instanceof Error ? e.message : e) },
+        rid,
+        user
+      );
     }
-  }, [getAuthHeaders, consumptionSince, consumptionUntil]);
+  }, [getAuthHeaders, consumptionSince, consumptionUntil, user]);
 
   const loadMeRef = useRef(loadMe);
   loadMeRef.current = loadMe;
@@ -474,11 +473,11 @@ export default function SubscriptionPage() {
 
   useEffect(() => {
     refreshRechargeDebugLog();
-    if (typeof window === "undefined" || !rechargeDebugEnabled()) return undefined;
+    if (typeof window === "undefined" || !rechargePathLogVisibleForUser(user)) return undefined;
     const fn = () => refreshRechargeDebugLog();
     window.addEventListener(RECHARGE_DEBUG_EVENT, fn);
     return () => window.removeEventListener(RECHARGE_DEBUG_EVENT, fn);
-  }, [refreshRechargeDebugLog]);
+  }, [refreshRechargeDebugLog, user]);
 
   useEffect(() => {
     void loadPlans();
@@ -489,17 +488,20 @@ export default function SubscriptionPage() {
     if (typeof window === "undefined") return;
     const q = new URLSearchParams(window.location.search);
     if (!q.get("out_trade_no") && !q.get("trade_no")) return;
-    if (rechargeDebugEnabled()) {
-      appendRechargeDebug("url_query_trade_params", {
+    appendRechargeDebug(
+      "url_query_trade_params",
+      {
         has_out_trade_no: Boolean(q.get("out_trade_no")),
         has_trade_no: Boolean(q.get("trade_no"))
-      });
-    }
+      },
+      undefined,
+      user
+    );
     void loadMe();
     void refreshMe();
     setMsg("支付已完成或处理中，正在同步订单…");
     window.history.replaceState({}, "", window.location.pathname);
-  }, [loadMe, refreshMe]);
+  }, [loadMe, refreshMe, user]);
 
   const walletPayEnabled = isLoggedInAccountUser(user);
 
@@ -598,13 +600,16 @@ export default function SubscriptionPage() {
     }
 
     setMsg("已从支付宝返回，正在同步余额（通常几秒内完成）…");
-    if (rechargeDebugEnabled()) {
-      appendRechargeDebug("alipay_return_poll_start", {
+    appendRechargeDebug(
+      "alipay_return_poll_start",
+      {
         interval_ms: pollMs,
         poll_deadline_at: deadline,
         balance_before_cents: typeof p.balanceBeforeCents === "number" ? p.balanceBeforeCents : null
-      });
-    }
+      },
+      undefined,
+      user
+    );
 
     let finished = false;
     const finishPoll = (reason: string) => {
@@ -616,9 +621,7 @@ export default function SubscriptionPage() {
         /* noop */
       }
       setMsg(timeoutMsgZh());
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug("alipay_return_poll_end", { reason });
-      }
+      appendRechargeDebug("alipay_return_poll_end", { reason }, undefined, user);
     };
 
     const tick = () => {
@@ -660,7 +663,7 @@ export default function SubscriptionPage() {
       window.clearInterval(id);
       window.clearTimeout(backupTimer);
     };
-  }, [walletPayEnabled]);
+  }, [walletPayEnabled, user]);
 
   useEffect(() => {
     if (!walletPayEnabled || typeof window === "undefined") return;
@@ -690,17 +693,20 @@ export default function SubscriptionPage() {
         /* noop */
       }
       setMsg("充值已入账，余额已更新。");
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug("alipay_pending_cleared_balance_increased", {
+      appendRechargeDebug(
+        "alipay_pending_cleared_balance_increased",
+        {
           balance_before_cents: p.balanceBeforeCents,
           balance_after_cents: walletBalanceCents,
           recharge_count_before: beforeCount,
           recharge_count_after: rechargeRecords.length,
           via: balanceIncreased ? "balance" : "recharge_records"
-        });
-      }
+        },
+        undefined,
+        user
+      );
     }
-  }, [walletPayEnabled, walletBalanceCents, rechargeRecords.length]);
+  }, [walletPayEnabled, walletBalanceCents, rechargeRecords.length, user]);
 
   useEffect(() => {
     if (!rechargeModalOpen || !walletPayEnabled) return;
@@ -757,9 +763,7 @@ export default function SubscriptionPage() {
       return;
     }
     const rid = newRechargeDebugRequestId();
-    if (rechargeDebugEnabled()) {
-      appendRechargeDebug("sim_wallet_create_start", { amount_cents: parsed.cents }, rid);
-    }
+    appendRechargeDebug("sim_wallet_create_start", { amount_cents: parsed.cents }, rid, user);
     setWalletCreating(true);
     setMsg("");
     setWalletCheckout(null);
@@ -780,22 +784,24 @@ export default function SubscriptionPage() {
       if (!res.ok || !data.success || !data.checkout_id) {
         throw new Error(data.detail || data.error || `创建失败 ${res.status}`);
       }
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug(
-          "sim_wallet_create_ok",
-          { http_status: res.status, checkout_id_tail: String(data.checkout_id).slice(-12) },
-          rid
-        );
-      }
+      appendRechargeDebug(
+        "sim_wallet_create_ok",
+        { http_status: res.status, checkout_id_tail: String(data.checkout_id).slice(-12) },
+        rid,
+        user
+      );
       setWalletCheckout({
         checkout_id: data.checkout_id,
         amount_cents: Number(data.amount_cents ?? parsed.cents)
       });
       setMsg(data.message || "已创建收银会话，请确认支付");
     } catch (err) {
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug("sim_wallet_create_error", { message: String(err instanceof Error ? err.message : err) }, rid);
-      }
+      appendRechargeDebug(
+        "sim_wallet_create_error",
+        { message: String(err instanceof Error ? err.message : err) },
+        rid,
+        user
+      );
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
       setWalletCreating(false);
@@ -805,13 +811,12 @@ export default function SubscriptionPage() {
   async function confirmWalletOrder() {
     if (!walletCheckout) return;
     const rid = newRechargeDebugRequestId();
-    if (rechargeDebugEnabled()) {
-      appendRechargeDebug(
-        "sim_wallet_complete_start",
-        { checkout_id_tail: String(walletCheckout.checkout_id).slice(-12) },
-        rid
-      );
-    }
+    appendRechargeDebug(
+      "sim_wallet_complete_start",
+      { checkout_id_tail: String(walletCheckout.checkout_id).slice(-12) },
+      rid,
+      user
+    );
     setWalletPaying(true);
     setMsg("");
     try {
@@ -829,21 +834,27 @@ export default function SubscriptionPage() {
       if (!res.ok || !data.success) {
         throw new Error(data.detail || data.error || `支付确认失败 ${res.status}`);
       }
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug("sim_wallet_complete_ok", {
+      appendRechargeDebug(
+        "sim_wallet_complete_ok",
+        {
           http_status: res.status,
           wallet_balance_cents: typeof data.wallet_balance_cents === "number" ? data.wallet_balance_cents : null
-        }, rid);
-      }
+        },
+        rid,
+        user
+      );
       setMsg("余额已入账");
       setWalletCheckout(null);
       await loadMe();
       await refreshMe();
       setRechargeModalOpen(false);
     } catch (err) {
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug("sim_wallet_complete_error", { message: String(err instanceof Error ? err.message : err) }, rid);
-      }
+      appendRechargeDebug(
+        "sim_wallet_complete_error",
+        { message: String(err instanceof Error ? err.message : err) },
+        rid,
+        user
+      );
       setMsg(String(err instanceof Error ? err.message : err));
     } finally {
       setWalletPaying(false);
@@ -860,16 +871,15 @@ export default function SubscriptionPage() {
     const wac = new AbortController();
     const wTimer = window.setTimeout(() => wac.abort(), 60_000);
     const rid = newRechargeDebugRequestId();
-    if (rechargeDebugEnabled()) {
-      appendRechargeDebug(
-        "alipay_recharge_start",
-        {
-          amount_cents: parsed.cents,
-          wallet_balance_cents_before: typeof walletBalanceCents === "number" ? walletBalanceCents : null
-        },
-        rid
-      );
-    }
+    appendRechargeDebug(
+      "alipay_recharge_start",
+      {
+        amount_cents: parsed.cents,
+        wallet_balance_cents_before: typeof walletBalanceCents === "number" ? walletBalanceCents : null
+      },
+      rid,
+      user
+    );
     setAlipayWalletLoading(true);
     setMsg("正在连接支付宝…页面打开后请用手机扫码完成充值。");
     setWalletCheckout(null);
@@ -882,17 +892,16 @@ export default function SubscriptionPage() {
         signal: wac.signal
       });
       const text = await res.text();
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug(
-          "alipay_recharge_http",
-          {
-            http_status: res.status,
-            body_len: text.length,
-            body_preview: text.slice(0, 400).replace(/\s+/g, " ")
-          },
-          rid
-        );
-      }
+      appendRechargeDebug(
+        "alipay_recharge_http",
+        {
+          http_status: res.status,
+          body_len: text.length,
+          body_preview: text.slice(0, 400).replace(/\s+/g, " ")
+        },
+        rid,
+        user
+      );
       const data = (() => {
         try {
           return JSON.parse(text) as {
@@ -913,18 +922,17 @@ export default function SubscriptionPage() {
       const payUrl = typeof data.pay_page_url === "string" ? data.pay_page_url.trim() : "";
       if (!payUrl) throw new Error("收银台未返回有效支付链接，请稍后重试或联系客服");
       if (!data.out_trade_no) throw new Error("订单号缺失，请重试");
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug(
-          "alipay_recharge_order_ok",
-          {
-            http_status: res.status,
-            pay_url_summary: summarizePayUrl(payUrl),
-            out_trade_no_suffix: String(data.out_trade_no).slice(-14),
-            amount_cents: data.amount_cents ?? parsed.cents
-          },
-          rid
-        );
-      }
+      appendRechargeDebug(
+        "alipay_recharge_order_ok",
+        {
+          http_status: res.status,
+          pay_url_summary: summarizePayUrl(payUrl),
+          out_trade_no_suffix: String(data.out_trade_no).slice(-14),
+          amount_cents: data.amount_cents ?? parsed.cents
+        },
+        rid,
+        user
+      );
       try {
         const payload: WalletAlipayPendingPayload = {
           startedAt: Date.now(),
@@ -942,19 +950,16 @@ export default function SubscriptionPage() {
           navErr instanceof Error ? navErr.message : "无法跳转到支付宝收银台，请检查浏览器是否拦截了跳转。"
         );
       }
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug("alipay_recharge_navigate_assign", { pay_url_summary: summarizePayUrl(payUrl) }, rid);
-      }
+      appendRechargeDebug("alipay_recharge_navigate_assign", { pay_url_summary: summarizePayUrl(payUrl) }, rid, user);
       didNavigateWallet = true;
     } catch (err) {
       const name = err instanceof Error ? err.name : "";
-      if (rechargeDebugEnabled()) {
-        appendRechargeDebug(
-          "alipay_recharge_error",
-          { name: name || "unknown", message: String(err instanceof Error ? err.message : err) },
-          rid
-        );
-      }
+      appendRechargeDebug(
+        "alipay_recharge_error",
+        { name: name || "unknown", message: String(err instanceof Error ? err.message : err) },
+        rid,
+        user
+      );
       if (name === "AbortError") {
         setMsg("连接支付宝超时，请检查网络或稍后重试。");
       } else {
@@ -984,13 +989,13 @@ export default function SubscriptionPage() {
         className="mt-8 scroll-mt-24 rounded-xl border border-line bg-surface/60 p-5 shadow-sm"
         aria-labelledby="balance-billing-title"
       >
-        {rechargeDebugUiReady && rechargeDebugEnabled() ? (
+        {rechargeDebugUiReady && rechargePathLogVisibleForUser(user) ? (
           <div className="mb-5 rounded-lg border border-line bg-canvas/60 p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold text-ink">支付宝充值路径日志</p>
                 <p className="mt-1 text-[10px] leading-relaxed text-muted">
-                  最近多条记录（可与网关/编排器日志中的 <span className="font-mono">x-request-id</span> 对齐）。开启：{" "}
+                  最近多条记录（可与网关/编排器日志中的 <span className="font-mono">x-request-id</span> 对齐）。管理员账号默认可见；其它用户可设{" "}
                   <span className="font-mono">NEXT_PUBLIC_RECHARGE_DEBUG_UI=1</span> 或{" "}
                   <span className="font-mono">localStorage.recharge_debug_ui=1</span> 后刷新。
                 </p>

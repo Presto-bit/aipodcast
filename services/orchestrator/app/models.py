@@ -6066,11 +6066,14 @@ def user_never_had_wallet_topup_balance(phone: str) -> bool:
 
 def user_work_download_blocked_never_paid_free_only(phone: str, current_plan: str | None) -> bool:
     """
-    无历史钱包充值记录时禁止作品打包下载（与订阅档位无关；仅赠送/体验余额不算）。
+    作品打包下载：需满足「曾在 user_wallet_topups 有过充值记录」或「当前钱包余额大于 0」之一。
+    当前余额含赠送/体验入账；纯零余额且无充值记录则禁止下载。
     current_plan 保留参数以兼容调用方，不参与判断。
     """
     _ = current_plan
-    return not user_has_wallet_recharge_history(phone)
+    if user_has_wallet_recharge_history(phone):
+        return False
+    return wallet_balance_cents_for_phone(phone) <= 0
 
 
 def wallet_try_debit_cents(phone: str, cents: int) -> tuple[bool, int]:

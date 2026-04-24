@@ -190,7 +190,8 @@ export default function CreatePage() {
   const templateGalleryWorks = useMemo(() => [...serverPodcastTemplates], [serverPodcastTemplates]);
 
   return (
-    <main className="mx-auto min-h-0 w-full max-w-3xl px-3 pb-12 pt-3 sm:px-4 sm:pt-6">
+    <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-12 pt-3 sm:px-4 sm:pt-6">
+      <div className="mx-auto w-full max-w-3xl">
       <header className="mb-6 border-l-2 border-brand/35 pl-4 sm:mb-10 sm:pl-5">
         {createPageEyebrow ? (
           <p className="text-xs font-semibold uppercase tracking-wider text-muted">{createPageEyebrow}</p>
@@ -422,6 +423,7 @@ export default function CreatePage() {
           </div>
         </div>
       </section>
+      </div>
 
       <section className="mt-8">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
