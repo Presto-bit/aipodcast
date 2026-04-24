@@ -6627,11 +6627,11 @@ def process_payment_event_transaction(
     source: str = "payment_webhook",
     actor_phone: str | None = None,
     meta: dict[str, Any] | None = None,
-) -> bool:
+) -> tuple[bool, str | None]:
     eid = (event_id or "").strip()
     p = (phone or "").strip()
     if not eid or not p:
-        return False
+        return False, "missing_event_id_or_phone"
     t = (tier or "free").strip().lower() or "free"
     if t not in USER_SUBSCRIPTION_TIERS:
         t = "free"
@@ -6683,7 +6683,7 @@ def process_payment_event_transaction(
             uid = _ensure_user_id_for_phone_conn(conn, p)
             if not uid:
                 conn.rollback()
-                return False
+                return False, "user_id_unresolved"
             with get_cursor(conn) as cur:
                 cur.execute("SELECT status FROM payment_orders WHERE event_id = %s LIMIT 1", (eid,))
                 existed = cur.fetchone() or {}
@@ -6691,7 +6691,7 @@ def process_payment_event_transaction(
                 if old_status and not _is_payment_status_transition_allowed(old_status, st):
                     conn.rollback()
                     logger.warning("reject tx payment status rollback event_id=%s old=%s new=%s", eid, old_status, st)
-                    return False
+                    return False, f"payment_status_blocked:{old_status}->{st}"
 
                 if skip_subscription_side_effects:
                     cur.execute(
@@ -7019,7 +7019,7 @@ def process_payment_event_transaction(
                         order_event_id=eid,
                     )
             conn.commit()
-            return True
+            return True, None
     except Exception:
         logger.exception(
             "process_payment_event_transaction failed event_id=%s phone=%s status=%s",
@@ -7027,7 +7027,7 @@ def process_payment_event_transaction(
             (phone or "").strip()[:24],
             str(status or "")[:32],
         )
-        return False
+        return False, "transaction_exception"
 
 
 def get_payment_order_by_event_id(event_id: str) -> dict[str, Any] | None:

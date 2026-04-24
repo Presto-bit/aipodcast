@@ -398,7 +398,7 @@ def apply_payment_event(
     try:
         from .models import process_payment_event_transaction
 
-        tx_ok = process_payment_event_transaction(
+        tx_ok, tx_err = process_payment_event_transaction(
             event_id=event_id,
             phone=phone,
             tier=str(tier or "free"),
@@ -442,7 +442,7 @@ def apply_payment_event(
             },
         )
         if not tx_ok:
-            return False, "payment_event_tx_failed", base_row
+            return False, (tx_err or "payment_event_tx_failed"), base_row
 
         normalized_status = str(status or "").strip().lower()
         if normalized_status in {"paid", "success", "succeeded", "captured"}:
