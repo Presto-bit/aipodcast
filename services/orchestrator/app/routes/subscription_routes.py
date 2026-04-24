@@ -2,9 +2,7 @@ import logging
 import os
 import secrets
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import date, datetime, time as dt_time, timezone
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -36,72 +34,9 @@ _log = logging.getLogger(__name__)
 
 # apply_payment_event 在 DB 层失败时可能返回 payment_event_tx_failed（旧）、transaction_exception（其它 DB 异常）、
 # transaction_deadlock（40P01）；前两者与死锁均可能为瞬时错误，对账路径上做退避重试。
-# apply_payment_event_timeout：独立线程超时返回；后台事务可能仍成功（幂等），前端可继续轮询 /me。
 _WALLET_RECONCILE_APPLY_RETRY_REASONS = frozenset(
-    {
-        "payment_event_tx_failed",
-        "transaction_exception",
-        "transaction_deadlock",
-        "apply_payment_event_timeout",
-    }
+    {"payment_event_tx_failed", "transaction_exception", "transaction_deadlock"}
 )
-
-
-def _wallet_reconcile_apply_payment_timed(
-    *,
-    out_trade_no: str,
-    phone: str,
-    notify_cents: int,
-    trade_no: str | None,
-    paid_at: datetime | None,
-    timeout_s: float,
-) -> tuple[bool, str, dict[str, Any] | None]:
-    """
-    在独立线程执行 apply_payment_event；主线程仅等待 timeout_s。
-    避免 PG 长时间持锁/网络抖动时整段请求超过反代 read_timeout（常见 30s）→ 504 无 JSON。
-    """
-    snap: dict[str, Any] = {
-        "kind": "wallet_topup",
-        "topup_cents": notify_cents,
-        "source": "alipay_page_wallet",
-        "amount_cents": notify_cents,
-    }
-
-    def _run() -> tuple[bool, str, dict[str, Any] | None]:
-        return auth_bridge.apply_payment_event(
-            out_trade_no,
-            phone,
-            "free",
-            None,
-            "paid",
-            notify_cents,
-            "alipay",
-            channel="alipay",
-            provider_order_id=trade_no or None,
-            currency="CNY",
-            paid_at=paid_at,
-            product_snapshot=snap,
-            source="alipay_trade_query_reconcile",
-        )
-
-    if timeout_s <= 0:
-        return False, "apply_timeout_budget_exhausted", None
-    pool: ThreadPoolExecutor | None = None
-    try:
-        pool = ThreadPoolExecutor(max_workers=1)
-        fut = pool.submit(_run)
-        return fut.result(timeout=float(timeout_s))
-    except FuturesTimeoutError:
-        _log.warning(
-            "alipay wallet reconcile apply timed out out_trade_no=%s timeout_s=%s",
-            out_trade_no,
-            timeout_s,
-        )
-        return False, "apply_payment_event_timeout", None
-    finally:
-        if pool is not None:
-            pool.shutdown(wait=False)
-
 
 router = APIRouter(prefix="/api/v1/subscription", tags=["subscription"], dependencies=[Depends(verify_internal_signature)])
 
@@ -345,9 +280,10 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
     用户从支付宝返回后：若异步通知未到，可用商户订单号调 alipay.trade.query 主动履约入账。
     须与当前登录用户 checkout 会话一致；幂等与异步通知共用 event_id=out_trade_no。
     """
-    # 常见反代 proxy_read_timeout≈30s：trade.query 与 apply 均须带硬上限；且 ThreadPoolExecutor 超时后须 shutdown(wait=False)，
-    # 否则 __exit__ 会等子线程结束，仍会导致整请求 >30s → 504。
-    _reconcile_deadline = time.monotonic() + 25.0
+    # 反代常见 read_timeout≈30s。trade.query 的线程池须在 alipay_page_pay 内 shutdown(wait=False)。
+    # 入账 deadline 须在支付宝已确认 paid、金额校验通过之后再起算；若与鉴权/checkout 共用较早的 25s 终点，
+    # 前置步骤稍慢即可在 for 循环首行误判「已超时」从而从不调用 apply，长期 reconcile_apply_pending 且余额不变。
+    _handler_started = time.monotonic()
     cfg = AlipayPagePayConfig.from_env()
     if not cfg:
         raise HTTPException(status_code=403, detail="alipay_page_pay_disabled")
@@ -384,11 +320,11 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
     if str(row_sess.get("kind") or "").strip().lower() != "wallet":
         raise HTTPException(status_code=400, detail="not_wallet_checkout")
 
-    _rem = _reconcile_deadline - time.monotonic()
-    if _rem < 2.5:
+    _elapsed_pre_query = time.monotonic() - _handler_started
+    _q_rem = 24.0 - _elapsed_pre_query
+    if _q_rem < 2.5:
         raise HTTPException(status_code=503, detail="reconcile_deadline_exceeded")
-    # 为 apply 阶段预留时间；trade.query 过长会挤占 DB 入账窗口并触发反代 504。
-    _q_timeout = max(2.0, min(7.0, _rem - 1.0))
+    _q_timeout = max(2.0, min(7.0, _q_rem - 1.0))
     outcome, qresp = query_alipay_trade_for_page_pay(
         cfg, out_trade_no=out_trade_no, timeout_s=_q_timeout
     )
@@ -428,14 +364,16 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
         )
         raise HTTPException(status_code=409, detail="amount_mismatch")
 
+    # 自此支付宝已确认实付金额与 checkout 一致；单独为 PG 入账保留时间窗（与 handler 起点解耦）。
+    _apply_deadline = time.monotonic() + 18.0
     trade_no = str(qresp.get("trade_no") or "").strip()
     paid_at = parse_alipay_notify_time(qresp.get("send_pay_date") or qresp.get("gmt_payment"))
     ok_apply = False
     last_reason = ""
     for attempt in range(4):
-        if time.monotonic() >= _reconcile_deadline - 0.2:
+        if time.monotonic() >= _apply_deadline - 0.15:
             _log.warning(
-                "alipay wallet reconcile deadline before apply out_trade_no=%s attempt=%s",
+                "alipay wallet reconcile apply budget exhausted out_trade_no=%s attempt=%s",
                 out_trade_no,
                 attempt,
             )
@@ -446,15 +384,25 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
                 "detail": "reconcile_apply_pending",
                 "wallet_balance_cents": bal,
             }
-        _apply_budget = _reconcile_deadline - time.monotonic() - 0.25
-        _apply_timeout = min(7.0, max(1.5, _apply_budget))
-        ok, reason, _row = _wallet_reconcile_apply_payment_timed(
-            out_trade_no=out_trade_no,
-            phone=phone,
-            notify_cents=notify_cents,
-            trade_no=trade_no or None,
+        ok, reason, _row = auth_bridge.apply_payment_event(
+            out_trade_no,
+            phone,
+            "free",
+            None,
+            "paid",
+            notify_cents,
+            "alipay",
+            channel="alipay",
+            provider_order_id=trade_no or None,
+            currency="CNY",
             paid_at=paid_at,
-            timeout_s=_apply_timeout,
+            product_snapshot={
+                "kind": "wallet_topup",
+                "topup_cents": notify_cents,
+                "source": "alipay_page_wallet",
+                "amount_cents": notify_cents,
+            },
+            source="alipay_trade_query_reconcile",
         )
         last_reason = str(reason or "").strip()
         if ok:
@@ -463,14 +411,6 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
         if last_reason == "payment_integrity_error":
             _log.error("alipay wallet reconcile integrity out_trade_no=%s", out_trade_no)
             raise HTTPException(status_code=409, detail=last_reason)
-        if last_reason == "apply_timeout_budget_exhausted":
-            bal = models.wallet_balance_cents_for_phone(phone)
-            return {
-                "success": True,
-                "applied": False,
-                "detail": "reconcile_apply_pending",
-                "wallet_balance_cents": bal,
-            }
         if last_reason not in _WALLET_RECONCILE_APPLY_RETRY_REASONS:
             _log.error("alipay wallet reconcile apply failed out_trade_no=%s reason=%s", out_trade_no, last_reason)
             raise HTTPException(status_code=500, detail=last_reason or "apply_failed")
@@ -481,7 +421,7 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
             break
         if attempt < 3:
             sleep_s = min(0.35, 0.05 * (2**attempt))
-            if time.monotonic() + sleep_s >= _reconcile_deadline - 0.15:
+            if time.monotonic() + sleep_s >= _apply_deadline - 0.12:
                 bal = models.wallet_balance_cents_for_phone(phone)
                 return {
                     "success": True,
