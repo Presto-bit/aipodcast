@@ -6698,23 +6698,29 @@ def process_payment_event_transaction(
                     return False, f"payment_status_blocked:{old_status}->{st}"
 
                 if skip_subscription_side_effects:
-                    cur.execute(
-                        "SELECT tier, billing_cycle FROM subscription_current_state WHERE user_id = %s LIMIT 1",
-                        (uid,),
-                    )
-                    row = cur.fetchone()
-                    if row and str(row.get("tier") or "").strip().lower() in USER_SUBSCRIPTION_TIERS:
-                        t = str(row.get("tier") or "free").strip().lower()
-                        bc = (str(row.get("billing_cycle") or "").strip().lower() or None)
+                    if is_wallet:
+                        # 钱包充值不写订阅态；payment_orders.tier 仅为元数据。跳过读 subscription_current_state / users，
+                        # 避免旧库缺列、表结构漂移导致整笔事务失败（前端表现为 transaction_exception、余额不入账）。
+                        t = "free"
+                        bc = None
                     else:
                         cur.execute(
-                            "SELECT acct_tier, billing_cycle FROM users WHERE id = %s LIMIT 1",
+                            "SELECT tier, billing_cycle FROM subscription_current_state WHERE user_id = %s LIMIT 1",
                             (uid,),
                         )
-                        ur = cur.fetchone() or {}
-                        tp = str(ur.get("acct_tier") or "free").strip().lower()
-                        t = tp if tp in USER_SUBSCRIPTION_TIERS else "free"
-                        bc = (str(ur.get("billing_cycle") or "").strip().lower() or None)
+                        row = cur.fetchone()
+                        if row and str(row.get("tier") or "").strip().lower() in USER_SUBSCRIPTION_TIERS:
+                            t = str(row.get("tier") or "free").strip().lower()
+                            bc = (str(row.get("billing_cycle") or "").strip().lower() or None)
+                        else:
+                            cur.execute(
+                                "SELECT acct_tier, billing_cycle FROM users WHERE id = %s LIMIT 1",
+                                (uid,),
+                            )
+                            ur = cur.fetchone() or {}
+                            tp = str(ur.get("acct_tier") or "free").strip().lower()
+                            t = tp if tp in USER_SUBSCRIPTION_TIERS else "free"
+                            bc = (str(ur.get("billing_cycle") or "").strip().lower() or None)
 
                 cur.execute(
                     """

@@ -94,7 +94,7 @@ def invoke_llm_chat_messages_with_minimax_fallback(
         if prov == "deepseek":
             key = str(os.getenv("DEEPSEEK_API_KEY") or "").strip()
             base = str(os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
-            model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-chat").strip()
+            model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-v4-flash").strip()
         else:
             key = str(os.getenv("QWEN_API_KEY") or "").strip()
             base = str(os.getenv("QWEN_BASE_URL") or "").strip()
@@ -151,7 +151,7 @@ def invoke_llm_chat_messages_stream_iter(
         if prov == "deepseek":
             key = str(os.getenv("DEEPSEEK_API_KEY") or "").strip()
             base = str(os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
-            model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-chat").strip()
+            model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-v4-flash").strip()
         else:
             key = str(os.getenv("QWEN_API_KEY") or "").strip()
             base = str(os.getenv("QWEN_BASE_URL") or "").strip()
@@ -247,7 +247,7 @@ def build_script(
         if provider == "deepseek":
             key = str(os.getenv("DEEPSEEK_API_KEY") or "").strip()
             base = str(os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
-            model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-chat").strip()
+            model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-v4-flash").strip()
         else:
             key = str(os.getenv("QWEN_API_KEY") or "").strip()
             base = str(os.getenv("QWEN_BASE_URL") or "").strip()

@@ -10,12 +10,13 @@
   ``MINIMAX_VOICE_DESIGN_REF_CNY_PER_CALL``）。
 - **image-01-live**：0.025 元/张（``MINIMAX_IMAGE_01_LIVE_REF_CNY_PER_IMAGE``）。
 - **MiniMax-M2.7**（元/百万 tokens）：输入 2.1、输出 8.4、缓存读取 0.42、缓存写入 2.625。
-- **DeepSeek**（元/百万 tokens）：输入缓存命中 0.2、缓存未命中 2、输出 3；
+- **DeepSeek V4**（元/百万 tokens，官网定价页）：``deepseek-v4-flash`` 未命中输入 1、输出 2；命中输入 0.2；
+  ``deepseek-v4-pro`` 未命中 12、输出 24；``deepseek-chat`` / ``deepseek-reasoner`` 仍兼容且映射至 Flash 档位。
   ``estimate_llm_cost_cny`` 无缓存命中信息，输入按**未命中**计价（偏保守）。
 - **豆包语音转写**：``DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR``（元/小时音频）。
 
 链接：MiniMax https://platform.minimaxi.com/docs/guides/pricing-paygo
-DeepSeek https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny
+DeepSeek https://api-docs.deepseek.com/zh-cn/quick_start/pricing
 """
 
 from __future__ import annotations
@@ -46,10 +47,17 @@ MINIMAX_M27_OUTPUT_CNY_PER_MTOK = 8.4
 MINIMAX_M27_CACHE_READ_CNY_PER_MTOK = 0.42
 MINIMAX_M27_CACHE_WRITE_CNY_PER_MTOK = 2.625
 
-# DeepSeek deepseek-chat 等：元 / 百万 tokens（reasoner 见函数内分支）
-DEEPSEEK_CHAT_INPUT_CACHE_HIT_CNY_PER_MTOK = 0.2
-DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK = 2.0
-DEEPSEEK_CHAT_OUTPUT_CNY_PER_MTOK = 3.0
+# DeepSeek V4 Flash（元/百万 tokens；与官网「模型 & 价格」表一致）
+DEEPSEEK_V4_FLASH_INPUT_CACHE_HIT_CNY_PER_MTOK = 0.2
+DEEPSEEK_V4_FLASH_INPUT_CACHE_MISS_CNY_PER_MTOK = 1.0
+DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MTOK = 2.0
+# DeepSeek V4 Pro
+DEEPSEEK_V4_PRO_INPUT_CACHE_MISS_CNY_PER_MTOK = 12.0
+DEEPSEEK_V4_PRO_OUTPUT_CNY_PER_MTOK = 24.0
+# 兼容旧名 deepseek-chat / deepseek-reasoner（官方映射至 V4-Flash，计价同 Flash）
+DEEPSEEK_CHAT_INPUT_CACHE_HIT_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_INPUT_CACHE_HIT_CNY_PER_MTOK
+DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_INPUT_CACHE_MISS_CNY_PER_MTOK
+DEEPSEEK_CHAT_OUTPUT_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MTOK
 
 
 def _parse_jsonish(val: Any) -> dict[str, Any]:
@@ -161,7 +169,7 @@ def _billing_text_provider() -> str:
 
 
 def _deepseek_text_model_id() -> str:
-    return str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-chat").strip()
+    return str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-v4-flash").strip()
 
 
 def _qwen_text_model_id() -> str:
@@ -170,22 +178,18 @@ def _qwen_text_model_id() -> str:
 
 def deepseek_text_estimate_input_output_cny_per_mtok(model_id: str) -> tuple[float, float]:
     """
-    DeepSeek 人民币（元/百万 tokens）。
-    - deepseek-chat：输入按缓存**未**命中 2、输出 3；缓存命中输入 0.2 见
-      ``DEEPSEEK_CHAT_INPUT_CACHE_HIT_CNY_PER_MTOK``（``estimate_llm_cost_cny`` 无缓存语义，输入按未命中）。
-    - deepseek-reasoner：未在本次清单中，仍按高价档近似 4 / 16。
+    DeepSeek 人民币（元/百万 tokens）；定价见 https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+    - ``deepseek-v4-pro``：未命中输入 12、输出 24（无缓存命中信息时输入按未命中）。
+    - ``deepseek-v4-flash``、``deepseek-chat``、``deepseek-reasoner`` 及未识别 id：按 Flash 未命中输入 1、输出 2。
     """
-    k = (model_id or "").strip().lower()
-    if "reasoner" in k:
-        return (4.0, 16.0)
-    return (
-        DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK,
-        DEEPSEEK_CHAT_OUTPUT_CNY_PER_MTOK,
-    )
+    k = (model_id or "").strip().lower().replace(" ", "").replace("_", "-")
+    if "v4-pro" in k or k in ("deepseek-pro",):
+        return (DEEPSEEK_V4_PRO_INPUT_CACHE_MISS_CNY_PER_MTOK, DEEPSEEK_V4_PRO_OUTPUT_CNY_PER_MTOK)
+    return (DEEPSEEK_V4_FLASH_INPUT_CACHE_MISS_CNY_PER_MTOK, DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MTOK)
 
 
 def qwen_text_estimate_input_output_cny_per_mtok(model_id: str) -> tuple[float, float]:
-    """通义千问兼容通道：DashScope 标价多为美元，此处用与 deepseek-chat 未命中输入同量级的人民币近似。"""
+    """通义千问兼容通道：DashScope 标价多为美元，此处用与 DeepSeek-V4-Flash 未命中输入同量级的人民币近似。"""
     _ = model_id
     return (
         DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK,
@@ -342,5 +346,5 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
         "tts_model_pricing": tts_model,
         "image_model_hint": image_model if img > 0 else "",
         "pricing_ref": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
-        "pricing_ref_deepseek": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing-details-cny",
+        "pricing_ref_deepseek": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
     }
