@@ -171,12 +171,17 @@ services:
       dockerfile: apps/web/Dockerfile
       # 发版时拉取 NODE_BASE_IMAGE 最新 digest，避免基础镜像层长期不更新
       pull: true
+      # 构建阶段解析 npm/registry 域名；部分环境 Docker 内置 DNS 易 EAI_AGAIN，显式指定公共 DNS
+      dns:
+        - 223.5.5.5
+        - 119.29.29.29
+        - 8.8.8.8
       args:
         # 默认用 DaoCloud 同步的 Hub 官方 library/node（国内直连 hub 常 metadata / content size of zero）
         # 海外或已配 registry-mirrors：在 .env.ai-native 设 NODE_BASE_IMAGE=node:20-alpine
         NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/node:20-alpine}
-        # Web 构建首选 npm 源；Dockerfile 内失败会自动换官方 / npmmirror / 腾讯云 / 华为云 / 阿里云
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+        # Web 构建首选 npm 源；失败则 Dockerfile 内依次换 npmmirror / 腾讯云 / 华为云 / 阿里云 / 官方
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com/}
         NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-development}
         NEXT_PUBLIC_APP_BUILD_ID: ${NEXT_PUBLIC_APP_BUILD_ID:-0}
     env_file:
