@@ -67,11 +67,57 @@ function mapTextProviderConfigHint(message: string): string | undefined {
   return undefined;
 }
 
+/** CDN/Nginx/Tengine 等返回的整页 HTML 错误（避免把 DOCTYPE 当主文案重复刷屏） */
+function looksLikeUpstreamHtmlErrorPage(s: string): boolean {
+  const t = (s || "").trim().toLowerCase();
+  if (!t) return false;
+  if (t.includes("<!doctype html") || t.includes("<!doctype ")) return true;
+  if (t.includes("<html") && (t.includes("gateway time-out") || t.includes("504") || t.includes("502 bad gateway"))) {
+    return true;
+  }
+  if (t.includes("gateway time-out") && t.includes("tengine")) return true;
+  if (t.includes("504 gateway") || t.includes("502 bad gateway")) return true;
+  return false;
+}
+
 /**
  * 知识库流式问答：主文案 + 可选诊断块（编排器 SSE error 事件会带 code/detail/requestId 等）。
  */
 export function formatNotesAskStreamError(message: string, meta?: NotesAskStreamErrorMeta): string {
   const raw = (message || "").trim();
+  const status = meta?.httpStatus;
+  const rp = (meta?.rawPreview || "").trim();
+  const gatewayHtml =
+    (status === 502 || status === 504 || status === 524) &&
+    (looksLikeUpstreamHtmlErrorPage(raw) || looksLikeUpstreamHtmlErrorPage(rp));
+
+  if (gatewayHtml) {
+    const lines: string[] = [];
+    if (status === 504 || status === 524) {
+      lines.push(
+        "网关超时（504）：在「浏览器 → CDN / 负载均衡 → Nginx(Tengine) → Next → 编排器 → 大模型」之间，**某一层的读超时**已到上限。知识库会先检索再等模型首包，整体很容易超过 **30～60 秒** 的常见默认阈值。"
+      );
+    } else {
+      lines.push(
+        "网关错误（502）：反代到 Next 或编排器的连接异常，或上游进程未就绪。"
+      );
+    }
+    lines.push(
+      "请在 **每一跳** 放宽超时并关闭 SSE 缓冲：ECS 上 Nginx/Tengine 的 `proxy_read_timeout` / `proxy_send_timeout`（建议 ≥180s），`location ^~ /api/notes/ask` 设 `proxy_buffering off`；**阿里云 CDN、SLB、全站加速** 控制台里调大「回源 HTTP 响应超时」。更稳妥时让 **`/api/notes/ask*` 不经 CDN** 直连源站。参考仓库 `deploy/nginx-prestoai.cdn-cache.example.conf` 与 `DEPLOYMENT.md`。"
+    );
+    if (status != null && Number.isFinite(status)) {
+      lines.push(`HTTP 状态：${status}`);
+    }
+    if (meta?.textProvider?.trim()) {
+      lines.push(`文本路由（TEXT_PROVIDER 解析结果）：${meta.textProvider.trim()}`);
+    }
+    if (meta?.requestId?.trim()) {
+      lines.push(`请求 ID（对齐编排器 / BFF 日志）：${meta.requestId.trim()}`);
+    }
+    lines.push("（上游返回的是 HTML 错误页，已省略原文以避免刷屏。）");
+    return lines.join("\n\n");
+  }
+
   const code = (meta?.code || "").trim();
   const fromCode = code && NOTES_ASK_CODE_MAP[code] ? NOTES_ASK_CODE_MAP[code] : "";
   const fromMessage = raw && NOTES_ASK_CODE_MAP[raw] ? NOTES_ASK_CODE_MAP[raw] : "";
@@ -91,7 +137,7 @@ export function formatNotesAskStreamError(message: string, meta?: NotesAskStream
   if (meta?.detail?.trim()) {
     lines.push(`诊断详情：${meta.detail.trim()}`);
   }
-  if (meta?.rawPreview?.trim()) {
+  if (meta?.rawPreview?.trim() && !looksLikeUpstreamHtmlErrorPage(meta.rawPreview)) {
     lines.push(`响应片段：${meta.rawPreview.trim()}`);
   }
   if (meta?.hint?.trim()) {
