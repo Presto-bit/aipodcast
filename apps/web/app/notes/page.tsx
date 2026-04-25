@@ -232,6 +232,8 @@ type NotebookMeta = {
   /** 与侧栏「来源」、热门笔记本 API 一致：该笔记本下资料笔记条数（非仅含链接的笔记） */
   sourceCount: number;
   createdAt: string;
+  /** 新建笔记本时生成，参与本地对话存储键，避免同名删除再建串会话 */
+  instanceId?: string;
 };
 
 type NotebookVisual = {
@@ -271,21 +273,8 @@ type SharedBrowseContext = {
 const NOTEBOOK_VISUAL_STORAGE_KEY = "notes:notebook-visuals:v1";
 const POPULAR_PAGE_SIZE = 18;
 const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
-/** 对话区内「首次自动摘要与提问建议」气泡 id 前缀（非流式、不计入用户轮次） */
+/** 历史「导读」助手气泡 id 前缀；加载会话时剔除，避免旧数据占位 */
 const NOTES_ASK_HINTS_BOOT_PREFIX = "__hints_boot__";
-
-function formatNotesAskHintsAssistantMarkdown(hints: { summary: string; suggestions: string[] }): string {
-  const parts: string[] = [];
-  const sum = hints.summary.trim();
-  if (sum) {
-    parts.push("**已选来源摘要**", "", sum);
-  }
-  const sug = hints.suggestions.map((s) => String(s || "").trim()).filter(Boolean);
-  if (sug.length) {
-    parts.push("", "**可试着问**", ...sug.map((q) => `- ${q}`));
-  }
-  return parts.join("\n").trim();
-}
 
 /** 无上传封面时，用稳定哈希为每个笔记本分配主题色与图标（热门列表等） */
 function stableNotebookVisualFromKey(key: string): NotebookVisual {
@@ -640,7 +629,7 @@ export default function NotesPage() {
   const skipNotesAskSaveRef = useRef(true);
   const notesAskMessagesSnapshotRef = useRef<NotesAskTurn[]>([]);
   /** 对话持久化分区：笔记本作用域 + 选中笔记 ID（排序拼接），避免删笔记后同标题新笔记继承旧会话 */
-  const prevNotesAskChatScopeRef = useRef<{ nb: string; idsKey: string } | null>(null);
+  const prevNotesAskChatScopeRef = useRef<{ nb: string; idsKey: string; askSalt: string } | null>(null);
   const noteRefCap = useMemo(() => maxNotesForReference(), []);
   const createdByPhone = useMemo(() => {
     const uid = typeof user?.user_id === "string" ? user.user_id.trim() : "";
@@ -817,18 +806,11 @@ export default function NotesPage() {
   const [notesAskMessages, setNotesAskMessages] = useState<NotesAskTurn[]>([]);
   const [notesAskBusy, setNotesAskBusy] = useState(false);
   const [notesAskError, setNotesAskError] = useState("");
-  const [notesAskHints, setNotesAskHints] = useState<{ summary: string; suggestions: string[] } | null>(null);
-  const [notesAskHintsLoading, setNotesAskHintsLoading] = useState(false);
-  const [notesAskHintsError, setNotesAskHintsError] = useState("");
-  const notesAskHintsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const notesAskHintsAbortRef = useRef<AbortController | null>(null);
   const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
   const notesAskTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [notesAskNoteBusyId, setNotesAskNoteBusyId] = useState<string | null>(null);
   const [notesAskDebugClient, setNotesAskDebugClient] = useState(false);
-  const [notesAskDebugCopied, setNotesAskDebugCopied] = useState<"" | "stream" | "hints" | "curlStream" | "curlHints">(
-    ""
-  );
+  const [notesAskDebugCopied, setNotesAskDebugCopied] = useState<"" | "stream" | "curlStream">("");
   const [sourcesPanelCollapsed, setSourcesPanelCollapsed] = useState(false);
   const [studioPanelCollapsed, setStudioPanelCollapsed] = useState(false);
   /** 与 AppShell 左侧主导航（首页 / 知识库 / 创作等）折叠状态同步 */
@@ -891,6 +873,17 @@ export default function NotesPage() {
     return nb;
   }, [selectedNotebook, sharedBrowse]);
 
+  /** 与 notesAskChatStorage v3 对齐：共享笔记本仅靠 scoped 路径区分，自有笔记本用 instanceId 或最早笔记时间 */
+  const notesAskChatScopeSalt = useMemo(() => {
+    const key = effectiveDraftNotebookKey.trim();
+    if (!key) return "0";
+    if (key.startsWith("shared:")) return "0";
+    const name = selectedNotebook.trim();
+    const m = notebookMetaByName[name];
+    const s = (m?.instanceId || m?.createdAt || "0").trim();
+    return s || "0";
+  }, [effectiveDraftNotebookKey, selectedNotebook, notebookMetaByName]);
+
   const markNoteAsFresh = useCallback((noteId: string) => {
     const id = noteId.trim();
     if (!id) return;
@@ -921,151 +914,9 @@ export default function NotesPage() {
     notesAskMessagesSnapshotRef.current = notesAskMessages;
   }, [notesAskMessages]);
 
-  useEffect(() => {
-    if (hubView) {
-      setNotesAskHints(null);
-      setNotesAskHintsLoading(false);
-      setNotesAskHintsError("");
-      return;
-    }
-    const nb = selectedNotebook.trim();
-    const ids = [...draftSelectedNoteIds].filter(Boolean).sort();
-    if (!nb || ids.length === 0) {
-      setNotesAskHints(null);
-      setNotesAskHintsLoading(false);
-      setNotesAskHintsError("");
-      return;
-    }
-    if (notesAskHintsDebounceRef.current) clearTimeout(notesAskHintsDebounceRef.current);
-    notesAskHintsDebounceRef.current = setTimeout(() => {
-      notesAskHintsDebounceRef.current = null;
-      notesAskHintsAbortRef.current?.abort();
-      const ac = new AbortController();
-      notesAskHintsAbortRef.current = ac;
-      setNotesAskHints(null);
-      setNotesAskHintsLoading(true);
-      setNotesAskHintsError("");
-      void (async () => {
-        const hintsRid = notesAskClientRequestId();
-        try {
-          const body: Record<string, unknown> = { notebook: nb, note_ids: ids };
-          if (sharedBrowse?.ownerUserId) body.sharedFromOwnerUserId = sharedBrowse.ownerUserId;
-          notesAskClientLog("info", "hints", "request_start", {
-            requestId: hintsRid,
-            notebook: nb,
-            noteIds: ids,
-            url: notesAskBffUrl("/api/notes/ask/hints")
-          });
-          const hintsT0 = typeof performance !== "undefined" ? performance.now() : Date.now();
-          const res = await fetch(notesAskBffUrl("/api/notes/ask/hints"), {
-            method: "POST",
-            credentials: notesAskFetchCredentials(),
-            cache: "no-store",
-            signal: ac.signal,
-            headers: {
-              "content-type": "application/json",
-              "x-request-id": hintsRid,
-              ...getAuthHeaders()
-            },
-            body: JSON.stringify(body)
-          });
-          const hintsFetchMs = Math.round(
-            (typeof performance !== "undefined" ? performance.now() : Date.now()) - hintsT0
-          );
-          notesAskClientLog("info", "hints", "fetch_resolved", {
-            requestId: hintsRid,
-            httpStatus: res.status,
-            ms: hintsFetchMs
-          });
-          const rawText = await res.text();
-          let data = {} as {
-            success?: boolean;
-            summary?: string;
-            suggestions?: unknown;
-            detail?: unknown;
-            error?: string;
-          };
-          if (rawText.trim()) {
-            try {
-              data = JSON.parse(rawText) as typeof data;
-            } catch {
-              data = {};
-            }
-          }
-          notesAskClientLog("info", "hints", "response_body_read", {
-            requestId: res.headers.get("x-request-id")?.trim() || hintsRid,
-            httpStatus: res.status,
-            bodyChars: rawText.length,
-            totalMsSinceHintsStart: Math.round(
-              (typeof performance !== "undefined" ? performance.now() : Date.now()) - hintsT0
-            )
-          });
-          if (!res.ok || !data.success) {
-            const fallback =
-              rawText.trim().slice(0, 400) ||
-              `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
-            const ridOut = res.headers.get("x-request-id")?.trim() || hintsRid;
-            notesAskClientLog("warn", "hints", "response_not_ok", {
-              requestId: ridOut,
-              httpStatus: res.status,
-              success: data.success,
-              error: typeof data.error === "string" ? data.error : undefined,
-              bodyPreview: rawText.trim().slice(0, 800)
-            });
-            const hintsMeta: NotesAskStreamErrorMeta = {
-              httpStatus: res.status,
-              requestId: ridOut,
-              rawPreview:
-                !rawText.trim().startsWith("{") && rawText.trim().length > 0
-                  ? rawText.trim().slice(0, 900)
-                  : undefined
-            };
-            throw new Error(formatNotesAskStreamError(apiErrorMessage(data, fallback), hintsMeta));
-          }
-          const sug: string[] = [];
-          if (Array.isArray(data.suggestions)) {
-            for (const x of data.suggestions) {
-              const s = String(x || "").trim();
-              if (s) sug.push(s);
-            }
-          }
-          setNotesAskHints({
-            summary: String(data.summary || "").trim(),
-            suggestions: sug.slice(0, 3)
-          });
-          setNotesAskHintsError("");
-          notesAskClientLog("info", "hints", "response_ok", {
-            requestId: res.headers.get("x-request-id")?.trim() || hintsRid,
-            summaryLen: String(data.summary || "").trim().length,
-            suggestionCount: sug.length
-          });
-        } catch (e) {
-          if (ac.signal.aborted) {
-            notesAskClientLog("debug", "hints", "request_aborted", { requestId: hintsRid });
-            return;
-          }
-          const errMsg = String(e instanceof Error ? e.message : e) || "hints_failed";
-          notesAskClientLog("error", "hints", "request_failed", {
-            requestId: hintsRid,
-            message: errMsg
-          });
-          setNotesAskHints(null);
-          setNotesAskHintsError(formatNotesAskStreamError(errMsg));
-        } finally {
-          if (!ac.signal.aborted) setNotesAskHintsLoading(false);
-        }
-      })();
-    }, 480);
-    return () => {
-      if (notesAskHintsDebounceRef.current) clearTimeout(notesAskHintsDebounceRef.current);
-      notesAskHintsAbortRef.current?.abort();
-    };
-  }, [hubView, draftSelectedNoteIds, selectedNotebook, sharedBrowse?.ownerUserId, getAuthHeaders]);
-
   const notesAskDebugPack = useMemo(() => {
     const nb = selectedNotebook.trim();
     const idsStream = [...draftSelectedNoteIds];
-    const idsHints = [...draftSelectedNoteIds].filter(Boolean).sort();
     const q = notesAskQuestion.trim();
     const owner = (sharedBrowse?.ownerUserId || "").trim();
     const streamBody: Record<string, unknown> = {
@@ -1074,39 +925,27 @@ export default function NotesPage() {
       question: q
     };
     if (owner) streamBody.sharedFromOwnerUserId = owner;
-    const hintsBody: Record<string, unknown> = {
-      notebook: nb,
-      note_ids: idsHints
-    };
-    if (owner) hintsBody.sharedFromOwnerUserId = owner;
     const streamJsonOne = JSON.stringify(streamBody);
-    const hintsJsonOne = JSON.stringify(hintsBody);
     return {
       streamJsonPretty: JSON.stringify(streamBody, null, 2),
-      hintsJsonPretty: JSON.stringify(hintsBody, null, 2),
       streamJsonOne,
-      hintsJsonOne,
-      streamReady: Boolean(nb && idsStream.length && q),
-      hintsReady: Boolean(nb && idsHints.length)
+      streamReady: Boolean(nb && idsStream.length && q)
     };
   }, [selectedNotebook, draftSelectedNoteIds, notesAskQuestion, sharedBrowse?.ownerUserId]);
 
   const notesAskDebugCurls = useMemo(() => {
     if (!notesAskDebugClient || typeof window === "undefined") {
-      return { streamUrl: "", hintsUrl: "", streamCurl: "", hintsCurl: "" };
+      return { streamUrl: "", streamCurl: "" };
     }
     const auth = getAuthHeaders();
     const streamUrl = notesAskResolveRequestUrl("/api/notes/ask/stream");
-    const hintsUrl = notesAskResolveRequestUrl("/api/notes/ask/hints");
     return {
       streamUrl,
-      hintsUrl,
-      streamCurl: streamUrl ? buildNotesAskCurlCommand(streamUrl, notesAskDebugPack.streamJsonOne, auth) : "",
-      hintsCurl: hintsUrl ? buildNotesAskCurlCommand(hintsUrl, notesAskDebugPack.hintsJsonOne, auth) : ""
+      streamCurl: streamUrl ? buildNotesAskCurlCommand(streamUrl, notesAskDebugPack.streamJsonOne, auth) : ""
     };
-  }, [notesAskDebugClient, notesAskDebugPack.streamJsonOne, notesAskDebugPack.hintsJsonOne, getAuthHeaders]);
+  }, [notesAskDebugClient, notesAskDebugPack.streamJsonOne, getAuthHeaders]);
 
-  const copyNotesAskDebug = useCallback(async (text: string, kind: "stream" | "hints" | "curlStream" | "curlHints") => {
+  const copyNotesAskDebug = useCallback(async (text: string, kind: "stream" | "curlStream") => {
     try {
       await navigator.clipboard.writeText(text);
       setNotesAskDebugCopied(kind);
@@ -1116,91 +955,19 @@ export default function NotesPage() {
     }
   }, []);
 
-  /** 无用户提问记录时，将摘要与建议作为一条助手消息写入对话区；不展示单独进度条 */
-  useEffect(() => {
-    if (hubView) return;
-    const stripBoot = (prev: NotesAskTurn[]) => prev.filter((m) => !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX));
-    const hasVisibleAssistant = (prev: NotesAskTurn[]) =>
-      prev.some((m) => m.role === "assistant" && (m.content || "").trim());
-
-    if (draftSelectedNoteIds.length === 0) {
-      setNotesAskMessages((prev) => {
-        if (prev.some((m) => m.role === "user")) return prev;
-        return stripBoot(prev);
-      });
-      return;
-    }
-
-    if (notesAskHintsLoading) {
-      setNotesAskMessages((prev) => {
-        if (prev.some((m) => m.role === "user")) return prev;
-        if (hasVisibleAssistant(prev)) return prev;
-        return stripBoot(prev);
-      });
-      return;
-    }
-
-    if (!notesAskHints || (!notesAskHints.summary.trim() && notesAskHints.suggestions.length === 0)) {
-      setNotesAskMessages((prev) => {
-        if (prev.some((m) => m.role === "user")) return prev;
-        if (hasVisibleAssistant(prev)) return prev;
-        return stripBoot(prev);
-      });
-      return;
-    }
-
-    const content = formatNotesAskHintsAssistantMarkdown(notesAskHints);
-    if (!content) {
-      setNotesAskMessages((prev) => {
-        if (prev.some((m) => m.role === "user")) return prev;
-        if (hasVisibleAssistant(prev)) return prev;
-        return stripBoot(prev);
-      });
-      return;
-    }
-
-    const bootId = `${NOTES_ASK_HINTS_BOOT_PREFIX}:${effectiveDraftNotebookKey}:${[...draftSelectedNoteIds]
-      .filter(Boolean)
-      .sort()
-      .join(",")}`;
-
-    setNotesAskMessages((prev) => {
-      if (prev.some((m) => m.role === "user")) return prev;
-      const rest = stripBoot(prev);
-      const existingIdx = rest.findIndex((m) => m.id === bootId);
-      const nextMsg: NotesAskTurn = {
-        id: bootId,
-        role: "assistant",
-        content,
-        hintSuggestions: notesAskHints.suggestions.length ? [...notesAskHints.suggestions] : undefined
-      };
-      if (existingIdx >= 0) {
-        const next = [...rest];
-        next[existingIdx] = nextMsg;
-        return next;
-      }
-      return [...rest, nextMsg];
-    });
-  }, [
-    hubView,
-    notesAskHints,
-    notesAskHintsLoading,
-    draftSelectedNoteIds,
-    effectiveDraftNotebookKey
-  ]);
-
   useEffect(() => {
     const nb = effectiveDraftNotebookKey.trim();
     const idsKey = draftNotesAskIdsKey;
     const prev = prevNotesAskChatScopeRef.current;
-    if (prev && (prev.nb !== nb || prev.idsKey !== idsKey)) {
+    const askSalt = notesAskChatScopeSalt;
+    if (prev && (prev.nb !== nb || prev.idsKey !== idsKey || prev.askSalt !== askSalt)) {
       const snap = notesAskMessagesSnapshotRef.current;
       if (!snap.some((m) => m.streaming)) {
         const prevIds = prev.idsKey ? prev.idsKey.split("|").filter(Boolean) : [];
-        if (prev.nb) saveNotesAskChat(prev.nb, prevIds, snap);
+        if (prev.nb) saveNotesAskChat(prev.nb, prevIds, snap, prev.askSalt);
       }
     }
-    prevNotesAskChatScopeRef.current = { nb, idsKey };
+    prevNotesAskChatScopeRef.current = { nb, idsKey, askSalt };
 
     if (!nb) {
       notesAskClientLog("debug", "persist", "chat_cleared_no_notebook");
@@ -1208,7 +975,7 @@ export default function NotesPage() {
       skipNotesAskSaveRef.current = true;
       return;
     }
-    const loaded = loadNotesAskChat(nb, draftSelectedNoteIds);
+    const loaded = loadNotesAskChat(nb, draftSelectedNoteIds, askSalt);
     notesAskClientLog("info", "persist", "chat_scope_loaded", {
       nb,
       idsKey,
@@ -1216,15 +983,23 @@ export default function NotesPage() {
     });
     setNotesAskMessages(
       loaded?.length
-        ? loaded.map((m) => ({
-            ...m,
-            streaming: false as boolean | undefined,
-            hintSuggestions: m.hintSuggestions?.length ? [...m.hintSuggestions] : undefined
-          }))
+        ? loaded
+            .filter((m) => !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX))
+            .map((m) => ({
+              ...m,
+              streaming: false as boolean | undefined,
+              hintSuggestions: m.hintSuggestions?.length ? [...m.hintSuggestions] : undefined
+            }))
         : []
     );
     skipNotesAskSaveRef.current = true;
-  }, [effectiveDraftNotebookKey, draftNotesAskIdsKey, draftSelectedNoteIds, storageAccountScope]);
+  }, [
+    effectiveDraftNotebookKey,
+    draftNotesAskIdsKey,
+    draftSelectedNoteIds,
+    notesAskChatScopeSalt,
+    storageAccountScope
+  ]);
 
   useEffect(() => {
     if (skipNotesAskSaveRef.current) {
@@ -1235,27 +1010,29 @@ export default function NotesPage() {
     if (!nb) return;
     if (notesAskMessages.some((m) => m.streaming)) return;
     const timer = window.setTimeout(() => {
-      saveNotesAskChat(nb, draftSelectedNoteIds, notesAskMessages);
+      saveNotesAskChat(nb, draftSelectedNoteIds, notesAskMessages, notesAskChatScopeSalt);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [notesAskMessages, effectiveDraftNotebookKey, draftSelectedNoteIds, storageAccountScope]);
+  }, [notesAskMessages, effectiveDraftNotebookKey, draftSelectedNoteIds, notesAskChatScopeSalt, storageAccountScope]);
 
   const notesAskUnloadRef = useRef({
     messages: [] as NotesAskTurn[],
     nb: "",
-    idsKey: ""
+    idsKey: "",
+    askSalt: "0"
   });
   useEffect(() => {
     notesAskUnloadRef.current = {
       messages: notesAskMessages,
       nb: effectiveDraftNotebookKey.trim(),
-      idsKey: draftNotesAskIdsKey
+      idsKey: draftNotesAskIdsKey,
+      askSalt: notesAskChatScopeSalt
     };
-  }, [notesAskMessages, effectiveDraftNotebookKey, draftNotesAskIdsKey]);
+  }, [notesAskMessages, effectiveDraftNotebookKey, draftNotesAskIdsKey, notesAskChatScopeSalt]);
 
   useEffect(() => {
     const onHide = () => {
-      const { messages, nb, idsKey } = notesAskUnloadRef.current;
+      const { messages, nb, idsKey, askSalt } = notesAskUnloadRef.current;
       if (!nb) return;
       if (messages.some((m) => m.streaming)) {
         notesAskClientLog("debug", "persist", "pagehide_skip_streaming");
@@ -1267,7 +1044,7 @@ export default function NotesPage() {
         idsKey,
         messageCount: messages.length
       });
-      saveNotesAskChat(nb, ids, messages);
+      saveNotesAskChat(nb, ids, messages, askSalt);
     };
     window.addEventListener("pagehide", onHide);
     return () => window.removeEventListener("pagehide", onHide);
@@ -1451,7 +1228,14 @@ export default function NotesPage() {
         }
       }
       setNotebookMetaByName((prev) => {
-        const merged = { ...map };
+        const merged: Record<string, NotebookMeta> = {};
+        for (const [name, meta] of Object.entries(map)) {
+          const prevM = prev[name];
+          merged[name] = {
+            ...meta,
+            ...(prevM?.instanceId ? { instanceId: prevM.instanceId } : {})
+          };
+        }
         for (const [name, meta] of Object.entries(prev)) {
           if (!merged[name]) merged[name] = meta;
         }
@@ -2189,10 +1973,19 @@ export default function NotesPage() {
       setNewNotebookName("");
       setShowNotebookModal(false);
       setError("");
-      setNotebookMetaByName((prev) => ({
-        ...prev,
-        [name]: prev[name] || { noteCount: 0, sourceCount: 0, createdAt: new Date().toISOString() }
-      }));
+      setNotebookMetaByName((prev) => {
+        const rest = { ...prev };
+        delete rest[name];
+        return {
+          ...rest,
+          [name]: {
+            noteCount: 0,
+            sourceCount: 0,
+            createdAt: new Date().toISOString(),
+            instanceId: notesAskClientRequestId()
+          }
+        };
+      });
       setNotebookVisualByName((prev) => {
         if (prev[name]) return prev;
         const next = { ...prev, [name]: randomNotebookVisual() };
@@ -2236,6 +2029,15 @@ export default function NotesPage() {
         writeLastNotebookName(newN);
       }
       setShowRenameNotebook(false);
+      setNotebookMetaByName((prev) => {
+        const carry = prev[oldN];
+        const next = { ...prev };
+        delete next[oldN];
+        if (carry) {
+          next[newN] = { ...carry, ...(next[newN] || {}) };
+        }
+        return next;
+      });
       await loadNotebooks();
       await loadNotebookMeta();
       await loadNotes();
@@ -2404,6 +2206,10 @@ export default function NotesPage() {
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "删除失败"));
+      setNotebookMetaByName((prev) => {
+        const { [target]: _, ...rest } = prev;
+        return rest;
+      });
       if (selectedNotebook === target) {
         userPrefersNotebookHubRef.current = true;
         setSelectedNotebook("");
@@ -2515,7 +2321,6 @@ export default function NotesPage() {
     const userMsgId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
     setNotesAskError("");
-    setNotesAskHintsError("");
     setNotesAskBusy(true);
     setNotesAskMessages((prev) => [
       ...prev,
@@ -3841,14 +3646,9 @@ export default function NotesPage() {
               </div>
 
               <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-                {notesAskError || notesAskHintsError ? (
+                {notesAskError ? (
                   <div className="shrink-0 space-y-1 text-xs text-danger-ink" role="alert">
-                    {notesAskError ? (
-                      <p className="whitespace-pre-wrap break-words">{notesAskError}</p>
-                    ) : null}
-                    {notesAskHintsError ? (
-                      <p className="whitespace-pre-wrap break-words">{notesAskHintsError}</p>
-                    ) : null}
+                    <p className="whitespace-pre-wrap break-words">{notesAskError}</p>
                   </div>
                 ) : null}
                 <div
@@ -4082,9 +3882,9 @@ export default function NotesPage() {
                       ) : (
                         <div className="flex flex-col gap-3">
                           <p className="text-[11px] text-muted">
-                            与当前表单一致：流式含 <code className="text-[10px]">question</code>；导读与后台
-                            hints 请求一致（<code className="text-[10px]">note_ids</code> 已排序）。浏览器已登录时会自动带
-                            Cookie；curl 请把 <code className="text-[10px]">fym_session=PASTE</code> 换成真实值。
+                            与当前表单一致：流式含 <code className="text-[10px]">question</code> 与{" "}
+                            <code className="text-[10px]">note_ids</code>。浏览器已登录时会自动带 Cookie；curl 请把{" "}
+                            <code className="text-[10px]">fym_session=PASTE</code> 换成真实值。
                           </p>
                           <div>
                             <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -4117,40 +3917,6 @@ export default function NotesPage() {
                             {notesAskDebugCurls.streamCurl ? (
                               <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-fill/50 p-2 font-mono text-[10px] text-muted">
                                 {notesAskDebugCurls.streamCurl}
-                              </pre>
-                            ) : null}
-                          </div>
-                          <div>
-                            <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <span className="font-medium">POST /api/notes/ask/hints</span>
-                              {notesAskDebugPack.hintsReady ? (
-                                <span className="text-[11px] text-success-ink">可请求</span>
-                              ) : (
-                                <span className="text-[11px] text-rose-600">未满足（须笔记本且至少一条资料）</span>
-                              )}
-                              <button
-                                type="button"
-                                className="rounded-md border border-line/80 bg-surface px-2 py-0.5 text-[11px] hover:bg-fill"
-                                onClick={() => void copyNotesAskDebug(notesAskDebugPack.hintsJsonPretty, "hints")}
-                              >
-                                {notesAskDebugCopied === "hints" ? "已复制 JSON" : "复制 JSON"}
-                              </button>
-                              <button
-                                type="button"
-                                disabled={!notesAskDebugCurls.hintsCurl}
-                                className="rounded-md border border-line/80 bg-surface px-2 py-0.5 text-[11px] hover:bg-fill disabled:cursor-not-allowed disabled:opacity-40"
-                                onClick={() => void copyNotesAskDebug(notesAskDebugCurls.hintsCurl, "curlHints")}
-                              >
-                                {notesAskDebugCopied === "curlHints" ? "已复制 curl" : "复制 curl"}
-                              </button>
-                            </div>
-                            <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-fill/90 p-2 font-mono text-[11px] text-ink">
-                              {notesAskDebugPack.hintsJsonPretty}
-                            </pre>
-                            <p className="mt-1 break-all font-mono text-[10px] text-muted">{notesAskDebugCurls.hintsUrl}</p>
-                            {notesAskDebugCurls.hintsCurl ? (
-                              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-fill/50 p-2 font-mono text-[10px] text-muted">
-                                {notesAskDebugCurls.hintsCurl}
                               </pre>
                             ) : null}
                           </div>

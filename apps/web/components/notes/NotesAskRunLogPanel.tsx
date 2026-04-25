@@ -9,7 +9,7 @@ import {
   type NotesAskClientLogLevel
 } from "../../lib/notesAskClientLog";
 
-const DIALOG_CHANNELS = new Set<NotesAskClientLogChannel>(["hints", "stream"]);
+const DIALOG_CHANNELS = new Set<NotesAskClientLogChannel>(["stream"]);
 
 const DISPLAY_CAP = 100;
 
@@ -96,7 +96,7 @@ export function NotesAskRunLogPanel() {
       >
         <span className="min-w-0 font-medium">
           运行日志
-          <span className="ml-1.5 font-normal text-muted">（导读 hints / 流式 stream · 对齐 x-request-id）</span>
+          <span className="ml-1.5 font-normal text-muted">（流式 stream · 对齐 x-request-id）</span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
           <span className="max-w-[10rem] truncate text-muted" title={summary}>
@@ -133,7 +133,7 @@ export function NotesAskRunLogPanel() {
             aria-relevant="additions"
           >
             {rows.length === 0 ? (
-              <p className="text-muted">发起导读或提问后，此处会显示请求阶段、HTTP 状态、SSE 等关键节点。</p>
+              <p className="text-muted">发起提问后，此处会显示请求阶段、HTTP 状态、SSE 等关键节点。</p>
             ) : (
               <ul className="flex flex-col gap-1">
                 {rows.map((e, i) => (

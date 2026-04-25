@@ -1,6 +1,7 @@
 /**
- * 知识库「向资料提问」对话持久化（账号 + 笔记本 + **选中笔记 ID 集合** 维度，与 userScopedStorage 一致）。
- * 按笔记 ID 分区：删除后新建同标题笔记（新 ID）不会继承旧对话。
+ * 知识库「向资料提问」对话持久化（账号 + 笔记本 + **选中笔记 ID 集合** + **笔记本代次盐**）。
+ * - 按笔记 ID 分区：删除后新建同标题笔记（新 ID）不会继承旧对话。
+ * - v3 起增加 askSalt（新建笔记本的 instanceId 或最早笔记 createdAt）：同名删除再建笔记本不会串会话。
  */
 
 import type { NotesAskSource } from "./notesAskCitation";
@@ -18,8 +19,8 @@ export type SerializedNotesAskTurn = {
 };
 
 const STORAGE_VERSION = 1;
-/** 存储键分区：v2 起在键名中纳入选中笔记 ID，与仅按笔记本的 v1 键区分 */
-const KEY_SCHEMA = 2;
+/** v2：纳入选中笔记 ID；v3：再纳入 askSalt（笔记本代次，避免同名重建串会话） */
+const KEY_SCHEMA = 3;
 const MAX_MESSAGES = 120;
 
 type StoredPayload = {
@@ -28,11 +29,12 @@ type StoredPayload = {
 };
 
 /** 逻辑键（再经 userScopedStorage 拼账号后缀） */
-export function notesAskChatBaseKey(notebookScoped: string, noteIds: string[]): string {
+export function notesAskChatBaseKey(notebookScoped: string, noteIds: string[], askSalt: string): string {
   const nb = notebookScoped.trim();
   const sorted = [...noteIds].filter(Boolean).sort();
   const scope = sorted.length ? sorted.join("|") : "_none_";
-  return `fym_notes_ask_chat_v${KEY_SCHEMA}:${encodeURIComponent(nb)}:${encodeURIComponent(scope)}`;
+  const salt = (askSalt || "").trim() || "0";
+  return `fym_notes_ask_chat_v${KEY_SCHEMA}:${encodeURIComponent(nb)}:${encodeURIComponent(scope)}:${encodeURIComponent(salt)}`;
 }
 
 function parseStored(raw: string): SerializedNotesAskTurn[] | null {
@@ -76,19 +78,29 @@ function parseStored(raw: string): SerializedNotesAskTurn[] | null {
 /**
  * 加载某笔记本 + 当前选中笔记集合下的对话。
  * @param notebookScoped 与页面 `effectiveDraftNotebookKey` 一致（含 shared: 前缀时）
+ * @param askSalt 笔记本代次（instanceId 或 createdAt），与 save 一致
  */
-export function loadNotesAskChat(notebookScoped: string, noteIds: string[]): SerializedNotesAskTurn[] | null {
+export function loadNotesAskChat(
+  notebookScoped: string,
+  noteIds: string[],
+  askSalt: string
+): SerializedNotesAskTurn[] | null {
   const nb = notebookScoped.trim();
   if (!nb) return null;
-  const bk = notesAskChatBaseKey(nb, noteIds);
+  const bk = notesAskChatBaseKey(nb, noteIds, askSalt);
   const raw = readLocalStorageScoped(bk);
   if (!raw) return null;
   return parseStored(raw);
 }
 
-export function saveNotesAskChat(notebookScoped: string, noteIds: string[], messages: SerializedNotesAskTurn[]): void {
+export function saveNotesAskChat(
+  notebookScoped: string,
+  noteIds: string[],
+  messages: SerializedNotesAskTurn[],
+  askSalt: string
+): void {
   try {
-    const bk = notesAskChatBaseKey(notebookScoped.trim(), noteIds);
+    const bk = notesAskChatBaseKey(notebookScoped.trim(), noteIds, askSalt);
     const trimmed = messages.slice(-MAX_MESSAGES).map((m) => {
       const base: SerializedNotesAskTurn = { id: m.id, role: m.role, content: m.content };
       if (m.role === "assistant" && m.sources?.length) {
