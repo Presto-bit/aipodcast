@@ -94,19 +94,28 @@ function isLikelyMp3Bytes(buf: Uint8Array): boolean {
   return false;
 }
 
-function detailFromMaybeJsonBodyBytes(buf: Uint8Array, httpStatus: number): string {
+function appendRequestIdHint(detail: string, requestId: string): string {
+  const d = String(detail || "").trim();
+  const rid = String(requestId || "").trim();
+  if (!rid) return d;
+  if (/request[_-]?id/i.test(d)) return d;
+  return `${d}（request_id: ${rid}）`;
+}
+
+function detailFromMaybeJsonBodyBytes(buf: Uint8Array, httpStatus: number, requestId: string): string {
   try {
     const asText = new TextDecoder().decode(buf.slice(0, 1200)).trim();
     if (asText.startsWith("{")) {
-      const j = JSON.parse(asText) as { detail?: unknown; error?: unknown };
+      const j = JSON.parse(asText) as { detail?: unknown; error?: unknown; request_id?: unknown; requestId?: unknown };
       const d = j.detail != null ? String(j.detail) : j.error != null ? String(j.error) : "";
-      if (d) return d.slice(0, 280);
+      const rid = String(j.request_id ?? j.requestId ?? requestId ?? "").trim();
+      if (d) return appendRequestIdHint(d.slice(0, 280), rid);
     }
-    if (asText) return asText.slice(0, 280);
+    if (asText) return appendRequestIdHint(asText.slice(0, 280), requestId);
   } catch {
     // ignore
   }
-  return `HTTP ${httpStatus}`;
+  return appendRequestIdHint(`HTTP ${httpStatus}`, requestId);
 }
 
 async function fetchJobAudioExportBytes(
@@ -127,9 +136,10 @@ async function fetchJobAudioExportBytes(
       headers: { "Content-Type": "application/json", ...authHdr },
       body: JSON.stringify(body)
     });
+    const rid = (res.headers.get("x-request-id") || "").trim();
     const buf = new Uint8Array(await res.arrayBuffer());
     if (!res.ok) {
-      return { ok: false, status: res.status, detail: detailFromMaybeJsonBodyBytes(buf, res.status) };
+      return { ok: false, status: res.status, detail: detailFromMaybeJsonBodyBytes(buf, res.status, rid) };
     }
     if (!isLikelyMp3Bytes(buf)) {
       let asText = "";
@@ -139,7 +149,8 @@ async function fetchJobAudioExportBytes(
         asText = "";
       }
       const hint = asText.trim().startsWith("{") ? asText.trim().slice(0, 200) : "响应不是有效的 MP3";
-      return { ok: false, status: res.status, detail: hint };
+      const withRid = appendRequestIdHint(hint, rid);
+      return { ok: false, status: res.status, detail: withRid };
     }
     return { ok: true, bytes: buf };
   } catch (e) {

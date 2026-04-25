@@ -323,6 +323,12 @@ export function describeOrchestratorUnreachable(err: unknown): string {
   return `无法连接编排器。${hint} ORCHESTRATOR_URL 当前为 ${base}。`;
 }
 
+function requestIdFields(rid: string): Record<string, string> | Record<string, never> {
+  const r = String(rid || "").trim();
+  if (!r) return {};
+  return { requestId: r, request_id: r };
+}
+
 export async function proxyJsonFromOrchestrator(path: string, opts: FetchOrchestratorOptions = {}): Promise<Response> {
   try {
     const upstream = await fetchOrchestrator(path, opts);
@@ -342,7 +348,7 @@ export async function proxyJsonFromOrchestrator(path: string, opts: FetchOrchest
         success: false,
         error: "upstream_unreachable",
         detail: describeOrchestratorUnreachable(err),
-        ...(rid ? { requestId: rid } : {})
+        ...requestIdFields(rid)
       },
       { status: 503, ...(rid ? { headers: { "x-request-id": rid } } : {}) }
     );
@@ -361,9 +367,14 @@ export async function proxyBinaryFromOrchestrator(
       ...opts,
       timeoutMs: opts.timeoutMs ?? 120_000
     });
+    const outboundRid =
+      (upstream.headers.get("x-request-id") || opts.requestId || "").trim() || "";
+    const ridHeaders: Record<string, string> = {};
+    if (outboundRid) ridHeaders["x-request-id"] = outboundRid;
     if (!upstream.ok) {
       const t = await upstream.text();
-      return new Response(t, { status: upstream.status });
+      const ct = upstream.headers.get("content-type") || "application/json";
+      return new Response(t, { status: upstream.status, headers: { "content-type": ct, ...ridHeaders } });
     }
     const buf = await upstream.arrayBuffer();
     const cd = upstream.headers.get("content-disposition");
@@ -371,13 +382,20 @@ export async function proxyBinaryFromOrchestrator(
     const headers = new Headers();
     headers.set("content-type", ct);
     if (cd) headers.set("content-disposition", cd);
+    if (outboundRid) headers.set("x-request-id", outboundRid);
     const outStatus =
       opts.forceBinarySuccessStatus !== undefined ? opts.forceBinarySuccessStatus : upstream.status;
     return new Response(buf, { status: outStatus, headers });
-  } catch {
+  } catch (err) {
+    const rid = (opts.requestId || "").trim();
     return Response.json(
-      { success: false, error: "upstream_unreachable", detail: "orchestrator request failed" },
-      { status: 503 }
+      {
+        success: false,
+        error: "upstream_unreachable",
+        detail: describeOrchestratorUnreachable(err),
+        ...requestIdFields(rid)
+      },
+      { status: 503, ...(rid ? { headers: { "x-request-id": rid } } : {}) }
     );
   }
 }
@@ -394,18 +412,27 @@ export async function proxyEventStreamFromOrchestrator(
       sse: true,
       retryGetOnce: false
     });
+    const outboundRid =
+      (upstream.headers.get("x-request-id") || opts.requestId || "").trim() || "";
     return new Response(upstream.body, {
       status: upstream.status,
       headers: {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
-        connection: "keep-alive"
+        connection: "keep-alive",
+        ...(outboundRid ? { "x-request-id": outboundRid } : {})
       }
     });
-  } catch {
+  } catch (err) {
+    const rid = (opts.requestId || "").trim();
     return Response.json(
-      { success: false, error: "upstream_unreachable", detail: "orchestrator request failed" },
-      { status: 503 }
+      {
+        success: false,
+        error: "upstream_unreachable",
+        detail: describeOrchestratorUnreachable(err),
+        ...requestIdFields(rid)
+      },
+      { status: 503, ...(rid ? { headers: { "x-request-id": rid } } : {}) }
     );
   }
 }
@@ -458,7 +485,7 @@ export async function proxySsePostFromOrchestrator(
         success: false,
         error: "upstream_unreachable",
         detail: describeOrchestratorUnreachable(err),
-        ...(rid ? { requestId: rid } : {})
+        ...requestIdFields(rid)
       },
       { status: 503, ...(rid ? { headers: { "x-request-id": rid } } : {}) }
     );
@@ -506,7 +533,8 @@ export async function orchestratorGetJsonPart(
       data: {
         success: false,
         error: "upstream_unreachable",
-        detail: describeOrchestratorUnreachable(err)
+        detail: describeOrchestratorUnreachable(err),
+        ...requestIdFields(requestId)
       }
     };
   }

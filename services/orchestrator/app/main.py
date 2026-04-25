@@ -6,8 +6,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .config import settings
 from .embedded_rq_ai import start_embedded_ai_rq_worker_thread
@@ -56,6 +55,31 @@ from .routes import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _request_id_from_request(request: Request) -> str:
+    rid = getattr(request.state, "request_id", None)
+    return str(rid or "").strip()
+
+
+def _error_payload(
+    *,
+    request: Request,
+    error: str,
+    detail: str,
+    status_code: int,
+) -> dict[str, object]:
+    rid = _request_id_from_request(request)
+    payload: dict[str, object] = {
+        "success": False,
+        "error": error,
+        "detail": detail,
+        "status_code": int(status_code),
+    }
+    if rid:
+        payload["request_id"] = rid
+        payload["requestId"] = rid
+    return payload
 
 
 def _startup_step(label: str, fn: Callable[[], None]) -> None:
@@ -203,7 +227,46 @@ async def _alipay_webhook_plaintext_auth_errors(request: Request, exc: HTTPExcep
     path = (request.url.path or "").rstrip("/")
     if path.endswith("/webhooks/alipay") and exc.status_code in (401, 403):
         return PlainTextResponse("fail", status_code=exc.status_code, headers=dict(exc.headers or {}))
-    return await http_exception_handler(request, exc)
+    detail = str(exc.detail or "request_failed")
+    rid = _request_id_from_request(request) or "-"
+    logger.warning(
+        "http_error request_id=%s status=%s method=%s path=%s detail=%s",
+        rid,
+        exc.status_code,
+        request.method,
+        request.url.path,
+        detail[:300],
+    )
+    return JSONResponse(
+        content=_error_payload(
+            request=request,
+            error="http_exception",
+            detail=detail,
+            status_code=exc.status_code,
+        ),
+        status_code=exc.status_code,
+        headers=dict(exc.headers or {}),
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_json(request: Request, exc: Exception):
+    rid = _request_id_from_request(request) or "-"
+    logger.exception(
+        "unhandled_error request_id=%s method=%s path=%s",
+        rid,
+        request.method,
+        request.url.path,
+    )
+    return JSONResponse(
+        content=_error_payload(
+            request=request,
+            error="internal_server_error",
+            detail="internal_server_error",
+            status_code=500,
+        ),
+        status_code=500,
+    )
 
 
 app.include_router(health.router)
