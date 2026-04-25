@@ -878,11 +878,16 @@ def build_summaries_section(
     user_ref: str | None,
     max_chars: int,
     project_owner_user_uuid: str | None = None,
+    preloaded_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     parts: list[str] = []
     used = 0
     for i, nid in enumerate(ordered_ids, start=1):
-        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
+        row = None
+        if preloaded_by_id is not None:
+            row = preloaded_by_id.get(nid)
+        if row is None:
+            row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
         if not row:
             continue
         title = _metadata_title(row, nid)
@@ -938,6 +943,7 @@ def build_layered_notes_context(
         raise ValueError("note_ids_required")
 
     sources: list[dict[str, str]] = []
+    preloaded_by_id: dict[str, dict[str, Any]] = {}
     for i, nid in enumerate(ordered, start=1):
         row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
         if not row:
@@ -946,6 +952,7 @@ def build_layered_notes_context(
             raise ValueError("note_notebook_mismatch")
         title = _metadata_title(row, nid)
         sources.append({"index": str(i), "noteId": nid, "title": title})
+        preloaded_by_id[nid] = row
 
     notes_ask_profile_emit(
         "layered_load_sources_ms",
@@ -974,6 +981,7 @@ def build_layered_notes_context(
         user_ref=user_ref,
         max_chars=summary_budget,
         project_owner_user_uuid=project_owner_user_uuid,
+        preloaded_by_id=preloaded_by_id,
     )
     notes_ask_profile_emit(
         "layered_summaries_ms",

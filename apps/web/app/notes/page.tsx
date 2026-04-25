@@ -2423,9 +2423,26 @@ export default function NotesPage() {
       const decoder = new TextDecoder();
       let buffer = "";
       let sawDone = false;
-      /** 合并 SSE 片段后再 setState，避免每 token 一次重渲染导致主线程卡顿 */
+      /**
+       * 合并 SSE 片段后再 setState，避免每 token 一次重渲染。
+       * - 勿用 rAF 驱动流式：后台标签页 rAF 会被强烈节流。
+       * - 前台：短 interval + 较大字符阈值，平衡流畅度与渲染次数。
+       * - 后台：timer 常被夹到 ~1s，故降低字符阈值并加长 fallback timer，仍依赖 visibility 立即 flush。
+       */
       let chunkPending = "";
-      let chunkRaf = 0;
+      let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null;
+      const STREAM_FLUSH_MS_VISIBLE = 32;
+      const STREAM_FLUSH_CHARS_VISIBLE = 200;
+      const STREAM_FLUSH_CHARS_HIDDEN = 72;
+      /** 后台短 timer 不可靠，仅作「少量尾字」兜底 */
+      const STREAM_FLUSH_MS_HIDDEN_FALLBACK = 480;
+
+      const streamTabHidden = () =>
+        typeof document !== "undefined" && document.visibilityState === "hidden";
+
+      const streamFlushCharThreshold = () =>
+        streamTabHidden() ? STREAM_FLUSH_CHARS_HIDDEN : STREAM_FLUSH_CHARS_VISIBLE;
+
       const applyPendingChunks = () => {
         if (!chunkPending) return;
         const batch = chunkPending;
@@ -2443,20 +2460,33 @@ export default function NotesPage() {
           return next;
         });
       };
+      const clearChunkFlushTimer = () => {
+        if (chunkFlushTimer != null) {
+          clearTimeout(chunkFlushTimer);
+          chunkFlushTimer = null;
+        }
+      };
       const scheduleChunkFlush = () => {
-        if (chunkRaf) return;
-        chunkRaf = requestAnimationFrame(() => {
-          chunkRaf = 0;
+        if (chunkFlushTimer != null) return;
+        const delay = streamTabHidden()
+          ? STREAM_FLUSH_MS_HIDDEN_FALLBACK
+          : STREAM_FLUSH_MS_VISIBLE;
+        chunkFlushTimer = setTimeout(() => {
+          chunkFlushTimer = null;
           applyPendingChunks();
-        });
+        }, delay);
       };
       const flushChunksNow = () => {
-        if (chunkRaf) {
-          cancelAnimationFrame(chunkRaf);
-          chunkRaf = 0;
-        }
+        clearChunkFlushTimer();
         applyPendingChunks();
       };
+      /** 可见/隐藏切换时都 flush：回前台立刻看到缓冲；切后台提交已收未画出的字 */
+      const onVisibilityFlush = () => {
+        flushChunksNow();
+      };
+      if (typeof document !== "undefined") {
+        document.addEventListener("visibilitychange", onVisibilityFlush);
+      }
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -2482,7 +2512,12 @@ export default function NotesPage() {
               }
               if (ev.type === "chunk") {
                 chunkPending += String(ev.text ?? "");
-                scheduleChunkFlush();
+                if (chunkPending.length >= streamFlushCharThreshold()) {
+                  clearChunkFlushTimer();
+                  applyPendingChunks();
+                } else {
+                  scheduleChunkFlush();
+                }
               } else if (ev.type === "done") {
                 flushChunksNow();
                 sawDone = true;
@@ -2522,6 +2557,9 @@ export default function NotesPage() {
           }
         }
       } finally {
+        if (typeof document !== "undefined") {
+          document.removeEventListener("visibilitychange", onVisibilityFlush);
+        }
         flushChunksNow();
       }
       if (!sawDone) {
