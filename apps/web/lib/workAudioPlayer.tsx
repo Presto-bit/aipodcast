@@ -150,7 +150,31 @@ function logWorkAudioPlay(stage: string, payload: Record<string, unknown>): void
   });
 }
 
-type EnsureSrcOutcome = { ok: true; url: string } | { ok: false; reason: string };
+/** 与 BFF/编排器约定：响应头或 JSON 体中的请求关联 ID */
+function requestIdFromResponse(res: Response, body?: Record<string, unknown>): string {
+  const h = (res.headers.get("x-request-id") || res.headers.get("X-Request-ID") || "").trim();
+  if (h) return h;
+  if (body) {
+    const a = body.request_id;
+    const b = body.requestId;
+    if (typeof a === "string" && a.trim()) return a.trim();
+    if (typeof b === "string" && b.trim()) return b.trim();
+  }
+  return "";
+}
+
+function assignedSrcKind(url: string): string {
+  const u = String(url || "").trim();
+  if (!u) return "(empty)";
+  if (u.startsWith("data:")) return "data_url";
+  if (u.startsWith("blob:")) return "blob_url";
+  if (u.startsWith("/")) return "same_origin_path";
+  return "absolute_http";
+}
+
+type EnsureSrcOutcome =
+  | { ok: true; url: string }
+  | { ok: false; reason: string; requestId?: string };
 
 export type WorkAudioToggleMeta = {
   displayTitle: string;
@@ -203,6 +227,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   const [loadingJobId, setLoadingJobId] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
   const activeJobIdRef = useRef<string | null>(null);
+  const activeDisplayTitleRef = useRef("");
   /** 新开始播放或切换曲目时默认为收起 */
   const [dockExpanded, setDockExpanded] = useState(false);
   const [dockInsetLeftPx, setDockInsetLeftPx] = useState(APP_NAV_SIDEBAR_PX_EXPANDED);
@@ -210,6 +235,10 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     activeJobIdRef.current = activeJobId;
   }, [activeJobId]);
+
+  useEffect(() => {
+    activeDisplayTitleRef.current = activeDisplayTitle;
+  }, [activeDisplayTitle]);
 
   const stopAndClearAudio = useCallback(() => {
     const el = audioRef.current;
@@ -281,6 +310,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         logWorkAudioPlay("wrapRemoteAudio_fetch_non_ok", {
           jobId,
           httpStatus: r.status,
+          request_id: requestIdFromResponse(r) || undefined,
           responseContentType: r.headers.get("content-type"),
           url: summarizeAudioSrcForLog(remote.toString())
         });
@@ -290,6 +320,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       if (!blob?.size) {
         logWorkAudioPlay("wrapRemoteAudio_empty_blob", {
           jobId,
+          request_id: requestIdFromResponse(r) || undefined,
           url: summarizeAudioSrcForLog(remote.toString()),
           reportedBlobType: blob?.type
         });
@@ -299,6 +330,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       if (ct.includes("text/html") || ct.includes("application/json") || ct.includes("xml")) {
         logWorkAudioPlay("wrapRemoteAudio_blob_not_audio", {
           jobId,
+          request_id: requestIdFromResponse(r) || undefined,
           blobType: blob.type,
           blobSize: blob.size,
           url: summarizeAudioSrcForLog(remote.toString())
@@ -391,6 +423,12 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
 
   const ensureSrc = useCallback(
     async (jobId: string, opts?: { usePodcastPublicTemplateListen?: boolean }): Promise<EnsureSrcOutcome> => {
+      const fail = (reason: string, rid?: string): EnsureSrcOutcome => ({
+        ok: false,
+        reason,
+        requestId: (rid || "").trim() || undefined
+      });
+
       if (srcCache.current[jobId]) return { ok: true, url: srcCache.current[jobId]! };
       if (opts?.usePodcastPublicTemplateListen) {
         const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/podcast-template-listen`, {
@@ -401,20 +439,22 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           success?: boolean;
           audio_url?: string;
         };
+        const tplRid = requestIdFromResponse(res, data);
         if (!res.ok || data.success === false) {
           const snip = apiErrorSnippet(data);
           logWorkAudioPlay("ensureSrc:template_listen_failed", {
             jobId,
+            request_id: tplRid || undefined,
             httpStatus: res.status,
             responseContentType: res.headers.get("content-type"),
             response_json_keys: jsonTopKeys(data),
             success: data.success,
             snippet: snip || undefined
           });
-          return {
-            ok: false,
-            reason: `模板试听不可用（HTTP ${res.status}${snip ? `：${snip}` : ""}）。请确认已登录且该内容可访问。`
-          };
+          return fail(
+            `模板试听不可用（HTTP ${res.status}${snip ? `：${snip}` : ""}）。请确认已登录且该内容可访问。`,
+            tplRid
+          );
         }
         const audioUrl = String(data.audio_url || "").trim();
         if (audioUrl) {
@@ -423,30 +463,30 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         }
         logWorkAudioPlay("ensureSrc:template_listen_no_url", {
           jobId,
+          request_id: tplRid || undefined,
           httpStatus: res.status,
           response_json_keys: jsonTopKeys(data),
           audio_url_len: String(data.audio_url || "").trim().length
         });
-        return { ok: false, reason: "模板试听接口未返回音频地址，请稍后重试。" };
+        return fail("模板试听接口未返回音频地址，请稍后重试。", tplRid);
       }
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
         cache: "no-store",
         headers: { ...getAuthHeaders() }
       });
       const row = (await res.json().catch(() => ({}))) as Record<string, unknown> & { detail?: string };
+      const jobRid = requestIdFromResponse(res, row);
       if (!res.ok) {
         const snip = apiErrorSnippet(row);
         logWorkAudioPlay("ensureSrc:job_fetch_failed", {
           jobId,
+          request_id: jobRid || undefined,
           httpStatus: res.status,
           responseContentType: res.headers.get("content-type"),
           response_json_keys: jsonTopKeys(row),
           snippet: snip || undefined
         });
-        return {
-          ok: false,
-          reason: `无法读取作品数据（HTTP ${res.status}${snip ? `：${snip}` : ""}）。若未登录请先登录后再试。`
-        };
+        return fail(`无法读取作品数据（HTTP ${res.status}${snip ? `：${snip}` : ""}）。若未登录请先登录后再试。`, jobRid);
       }
       const result = coerceJobResult(row.result);
       const hex = String(result.audio_hex || "").trim();
@@ -458,13 +498,14 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         }
         logWorkAudioPlay("ensureSrc:hex_present_but_invalid_data_url", {
           jobId,
+          request_id: jobRid || undefined,
           hexLen: hex.length,
           job_row: jobRowDebugSummary(row)
         });
-        return {
-          ok: false,
-          reason: `作品含音频数据但本地解码失败（数据长度约 ${hex.length} 字符）。请刷新页面或从创作记录重新打开。`
-        };
+        return fail(
+          `作品含音频数据但本地解码失败（数据长度约 ${hex.length} 字符）。请刷新页面或从创作记录重新打开。`,
+          jobRid
+        );
       }
       const lr = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/work-listen`, {
         cache: "no-store",
@@ -473,6 +514,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       const lj = (await lr.json().catch(() => ({}))) as Record<string, unknown> & { success?: boolean; audio_url?: string };
       const fresh = String(lj.audio_url || "").trim();
       const listenSnip = apiErrorSnippet(lj);
+      const listenRid = requestIdFromResponse(lr, lj);
       if (lr.ok && lj.success !== false && fresh) {
         const playable = await wrapRemoteAudioAsBlobIfNeeded(jobId, fresh);
         if (playable) {
@@ -481,20 +523,22 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         }
         logWorkAudioPlay("ensureSrc:work_listen_url_unusable", {
           jobId,
+          request_id: listenRid || undefined,
           work_listen_http: lr.status,
           listen_json_keys: jsonTopKeys(lj),
           raw_listen_url: summarizeAudioSrcForLog(fresh),
           afterWrap: summarizeAudioSrcForLog(fresh),
           job_row: jobRowDebugSummary(row)
         });
-        return {
-          ok: false,
-          reason: `已拿到试听链接但无法在浏览器中加载（可能被跨域拦截或内容非有效音频）。接口 HTTP ${lr.status}。`
-        };
+        return fail(
+          `已拿到试听链接但无法在浏览器中加载（可能被跨域拦截或内容非有效音频）。接口 HTTP ${lr.status}。`,
+          listenRid
+        );
       }
       if (!lr.ok || lj.success === false || !fresh) {
         logWorkAudioPlay("ensureSrc:work_listen_skipped_or_empty", {
           jobId,
+          request_id: listenRid || undefined,
           httpStatus: lr.status,
           responseContentType: lr.headers.get("content-type"),
           ok: lr.ok,
@@ -514,14 +558,15 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         }
         logWorkAudioPlay("ensureSrc:result_audio_url_unusable", {
           jobId,
+          request_id: listenRid || jobRid || undefined,
           summarized: summarizeAudioSrcForLog(audioUrl),
           work_listen_http: lr.status,
           job_row: jobRowDebugSummary(row)
         });
-        return {
-          ok: false,
-          reason: `任务结果中的外链音频无法在浏览器中加载（链接可能过期或非 MP3）。摘要：${summarizeAudioSrcForLog(audioUrl)}`
-        };
+        return fail(
+          `任务结果中的外链音频无法在浏览器中加载（链接可能过期或非 MP3）。摘要：${summarizeAudioSrcForLog(audioUrl)}`,
+          listenRid || jobRid
+        );
       }
       const tailParts: string[] = [];
       tailParts.push("任务中无可用内嵌音频片段。");
@@ -533,8 +578,10 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       tailParts.push(audioUrl ? "外链字段存在但未能拉取为可播放源。" : "无外链音频字段。");
       tailParts.push("请到作品详情确认是否已生成完成，或稍后重试。");
       const joinedReason = tailParts.join("");
+      const aggregateRid = listenRid || jobRid;
       logWorkAudioPlay("ensureSrc:no_playable_src", {
         jobId,
+        request_id: aggregateRid || undefined,
         hadHex: Boolean(hex),
         hexLen: hex.length,
         resultAudioUrl: summarizeAudioSrcForLog(String(result.audio_url || "")),
@@ -545,7 +592,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         userFacingReason: joinedReason.slice(0, 500),
         job_row: jobRowDebugSummary(row)
       });
-      return { ok: false, reason: joinedReason };
+      return fail(joinedReason, aggregateRid);
     },
     [getAuthHeaders, wrapRemoteAudioAsBlobIfNeeded]
   );
@@ -593,6 +640,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
               message: msg,
               errName: err instanceof Error ? err.name : typeof err,
               seekSeconds: seekSec,
+              assignedSrcKind: assignedSrcKind(el.currentSrc || el.src),
               src: summarizeAudioSrcForLog(el.currentSrc || el.src),
               audioReadyState: el.readyState,
               audioNetworkState: el.networkState
@@ -609,6 +657,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
               displayTitle: title,
               message: msg,
               errName: err instanceof Error ? err.name : typeof err,
+              assignedSrcKind: assignedSrcKind(el.currentSrc || el.src),
               src: summarizeAudioSrcForLog(el.currentSrc || el.src),
               audioReadyState: el.readyState,
               audioNetworkState: el.networkState
@@ -627,13 +676,15 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           usePodcastPublicTemplateListen: Boolean(meta.usePodcastPublicTemplateListen)
         });
         if (!ensured.ok) {
+          const rid = (ensured.requestId || "").trim();
           logWorkAudioPlay("togglePlay:ensure_src_failed", {
             jobId,
             displayTitle: title,
+            request_id: rid || undefined,
             usePodcastPublicTemplateListen: Boolean(meta.usePodcastPublicTemplateListen),
             userFacingReason: ensured.reason
           });
-          setPlayError(ensured.reason);
+          setPlayError(rid ? `${ensured.reason}（request_id: ${rid}）` : ensured.reason);
           return;
         }
         const url = ensured.url;
@@ -650,7 +701,9 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
             message: msg,
             errName: err instanceof Error ? err.name : typeof err,
             errStack: err instanceof Error ? err.stack?.slice(0, 600) : undefined,
+            intendedSrcKind: assignedSrcKind(url),
             src: summarizeAudioSrcForLog(url),
+            assignedSrcKind: assignedSrcKind(el.src || el.currentSrc),
             assignedSrc: summarizeAudioSrcForLog(el.src || el.currentSrc),
             audioReadyState: el.readyState,
             audioNetworkState: el.networkState
@@ -698,8 +751,10 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       const msg = err instanceof Error ? err.message : String(err);
       logWorkAudioPlay("resume:play_rejected", {
         jobId: activeJobId,
+        displayTitle: activeDisplayTitleRef.current || undefined,
         message: msg,
         errName: err instanceof Error ? err.name : typeof err,
+        assignedSrcKind: assignedSrcKind(el.currentSrc || el.src),
         src: summarizeAudioSrcForLog(el.currentSrc || el.src),
         audioReadyState: el.readyState,
         audioNetworkState: el.networkState
@@ -786,6 +841,8 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           const srcHint = summarizeAudioSrcForLog(src);
           logWorkAudioPlay("media_element:onError", {
             jobId: activeJobIdRef.current,
+            displayTitle: activeDisplayTitleRef.current || undefined,
+            assignedSrcKind: assignedSrcKind(src),
             mediaErrorCode: code,
             mediaErrorCodeLabel: mediaErrorCodeLabel(code),
             mediaErrorCodeLabelZh: mediaErrorCodeLabelZh(code),
