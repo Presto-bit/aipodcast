@@ -1133,57 +1133,66 @@ def export_job_audio_mp3_api(
     request: Request,
     body: JobAudioExportRequest | None = Body(default=None),
 ):
-    opts = body or JobAudioExportRequest()
-    scope = _job_row_scope_ref(request)
-    row = get_job(job_id, user_ref=scope)
-    if not row:
-        raise HTTPException(status_code=404, detail="job_not_found")
-    if not work_download_allowed(job_id, _work_download_billing_ref(request)):
-        raise HTTPException(status_code=403, detail="下载需有过钱包充值记录，或当前钱包仍有余额")
-    result = _parse_job_result_dict(row.get("result"))
-    hx = str(result.get("audio_hex") or "").strip()
-    raw_mp3: bytes
-    if hx and len(hx) % 2 == 0:
-        try:
-            raw_mp3 = bytes.fromhex(hx)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="audio_hex_invalid") from exc
-    else:
-        akey = resolve_job_audio_object_key_from_result(result)
-        if not akey:
-            raise HTTPException(status_code=400, detail="work_audio_missing")
-        try:
-            raw_mp3 = get_object_bytes(akey)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"object_fetch_failed:{exc}") from exc
-        if not raw_mp3:
-            raise HTTPException(status_code=400, detail="work_audio_missing")
-    chapters_raw = result.get("audio_chapters")
-    chapters = chapters_raw if opts.embed_chapters and isinstance(chapters_raw, list) else None
-    title = (opts.title or "").strip() or str(result.get("title") or "")[:300]
-    if not title:
-        prev = str(result.get("preview") or result.get("script_preview") or "").strip()
-        title = (prev[:120] + ("…" if len(prev) > 120 else "")) if prev else "episode"
     try:
-        out_bytes = build_export_mp3(
-            raw_mp3,
-            title=title,
-            artist=(opts.artist or "").strip(),
-            album=(opts.album or "").strip(),
-            chapters=chapters,
+        opts = body or JobAudioExportRequest()
+        scope = _job_row_scope_ref(request)
+        row = get_job(job_id, user_ref=scope)
+        if not row:
+            raise HTTPException(status_code=404, detail="job_not_found")
+        if not work_download_allowed(job_id, _work_download_billing_ref(request)):
+            raise HTTPException(status_code=403, detail="下载需有过钱包充值记录，或当前钱包仍有余额")
+        result = _parse_job_result_dict(row.get("result"))
+        hx = str(result.get("audio_hex") or "").strip()
+        raw_mp3: bytes
+        if hx and len(hx) % 2 == 0:
+            try:
+                raw_mp3 = bytes.fromhex(hx)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="audio_hex_invalid") from exc
+        else:
+            akey = resolve_job_audio_object_key_from_result(result)
+            if not akey:
+                raise HTTPException(status_code=400, detail="work_audio_missing")
+            try:
+                raw_mp3 = get_object_bytes(akey)
+            except Exception as exc:
+                raise HTTPException(status_code=502, detail=f"object_fetch_failed:{exc}") from exc
+            if not raw_mp3:
+                raise HTTPException(status_code=400, detail="work_audio_missing")
+        chapters_raw = result.get("audio_chapters")
+        chapters = chapters_raw if opts.embed_chapters and isinstance(chapters_raw, list) else None
+        title = (opts.title or "").strip() or str(result.get("title") or "")[:300]
+        if not title:
+            prev = str(result.get("preview") or result.get("script_preview") or "").strip()
+            title = (prev[:120] + ("…" if len(prev) > 120 else "")) if prev else "episode"
+        try:
+            out_bytes = build_export_mp3(
+                raw_mp3,
+                title=title,
+                artist=(opts.artist or "").strip(),
+                album=(opts.album or "").strip(),
+                chapters=chapters,
+            )
+        except Exception as exc:
+            _jobs_startup_logger.warning(
+                "audio_export_build_unexpected job_id=%s: %s", job_id, exc, exc_info=True
+            )
+            out_bytes = raw_mp3
+        safe_stub = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in title)[:48] or "episode"
+        filename = f"{safe_stub}.mp3"
+        return Response(
+            content=out_bytes,
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+    except HTTPException:
+        raise
     except Exception as exc:
-        _jobs_startup_logger.warning(
-            "audio_export_build_unexpected job_id=%s: %s", job_id, exc, exc_info=True
+        rid = str(getattr(request.state, "request_id", "") or "")
+        _jobs_startup_logger.exception(
+            "audio_export_unexpected request_id=%s job_id=%s", rid or "-", job_id
         )
-        out_bytes = raw_mp3
-    safe_stub = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in title)[:48] or "episode"
-    filename = f"{safe_stub}.mp3"
-    return Response(
-        content=out_bytes,
-        media_type="audio/mpeg",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+        raise HTTPException(status_code=500, detail=f"audio_export_unexpected:{exc.__class__.__name__}") from exc
 
 
 @router.get("/jobs/{job_id}/distribution-pack")
