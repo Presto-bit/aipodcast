@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from .models import get_job
 from .object_store import (
@@ -248,6 +249,93 @@ def build_podcast_template_listen_bundle(job_id: str) -> dict[str, Any] | None:
         "preview": preview,
         "audio_chapters": safe_chapters,
     }
+
+
+def explain_owner_work_listen_miss(job_id: str, user_ref: str | None) -> dict[str, Any]:
+    """
+    work-listen 无法返回 bundle 时的结构化说明（写入 404 JSON，不含密钥与完整 URL）。
+    用于区分：任务不可见、未成功、result 无引用、仅内网链、预签名失败、桶前缀下无 MP3。
+    """
+    jid = (job_id or "").strip()
+    out: dict[str, Any] = {"job_id": jid or None, "stage": "unknown"}
+    if not jid:
+        out["stage"] = "invalid_job_id"
+        return out
+    row = get_job(jid, user_ref)
+    if not row:
+        out["stage"] = "job_not_found_or_forbidden"
+        return out
+    if row.get("deleted_at"):
+        out["stage"] = "job_deleted"
+        return out
+    st = str(row.get("status") or "").strip().lower()
+    if st != "succeeded":
+        out["stage"] = "job_not_succeeded"
+        out["job_status"] = st
+        return out
+    jt = str(row.get("job_type") or "").strip().lower()
+    out["job_type"] = jt
+    if jt in _OWNER_WORK_LISTEN_DENY_TYPES:
+        out["stage"] = "job_type_not_listenable"
+        return out
+    result = _coerce_result(row.get("result"))
+    legacy = str(result.get("audio_url") or "").strip()
+    has_hex = bool(str(result.get("audio_hex") or "").strip())
+    has_obj_key = bool(str(result.get("audio_object_key") or "").strip())
+    probe_ok = jt in _PODCASTISH_STORAGE_PROBE
+    key = _resolve_audio_object_key(result, row, allow_storage_probe=probe_ok)
+    out["result_has_audio_hex"] = has_hex
+    out["result_has_audio_object_key"] = has_obj_key
+    out["result_has_audio_url"] = bool(legacy)
+    out["podcast_storage_probe_eligible"] = probe_ok
+    out["resolved_object_key"] = bool(key)
+    mp3_sample = 0
+    if probe_ok:
+        cb = row.get("created_by")
+        oid = str(cb).strip() if cb is not None and str(cb).strip() else ""
+        oid = oid or None
+        if oid:
+            mp3_sample += len(list_mp3_object_keys_under_prefix(f"jobs/u/{oid}/{jid}/", max_keys=40))
+        mp3_sample += len(list_mp3_object_keys_under_prefix(f"jobs/{jid}/", max_keys=40))
+        out["mp3_count_under_standard_job_prefixes"] = mp3_sample
+    if not key and not legacy:
+        out["stage"] = "no_object_key_and_no_audio_url"
+        out["hint_zh"] = (
+            "数据库 result 中无 audio_object_key / audio_url；按约定前缀在桶内也未发现 MP3 样本。"
+            "若确认成片应存在：检查编排器镜像是否已更新、MinIO 桶与 OBJECT_ENDPOINT 是否一致，或重跑任务。"
+        )
+        return out
+    if legacy and is_likely_internal_object_store_http_url(legacy) and not key:
+        out["stage"] = "only_internal_storage_audio_url"
+        out["hint_zh"] = (
+            "result.audio_url 为内网对象存储地址且无可用 object key 现签；请配置 OBJECT_PRESIGN_ENDPOINT 为公网 HTTPS，"
+            "或确保桶内成片可被探测并写入 audio_object_key。"
+        )
+        return out
+    if key:
+        try:
+            au = presigned_get_url(key, expires_in=600)
+            if not (au or "").strip():
+                out["stage"] = "presign_returned_empty"
+                return out
+            if is_likely_internal_object_store_http_url(au):
+                out["stage"] = "presigned_url_still_internal_host"
+                out["hint_zh"] = "预签名结果仍指向内网 Host；请设置 OBJECT_PRESIGN_ENDPOINT 为浏览器可达的 HTTPS 域名。"
+                return out
+            pu = urlparse(au)
+            out["stage"] = "presign_ok_public_url_but_bundle_failed_elsewhere"
+            out["presigned_scheme"] = pu.scheme or ""
+            out["presigned_hostname"] = (pu.hostname or "")[:120]
+            out["hint_zh"] = "预签名可生成公网 URL 与 build 失败不一致；请携带 request_id 查编排器日志。"
+            return out
+        except Exception as e:
+            out["stage"] = "presign_failed"
+            out["presign_error_class"] = e.__class__.__name__
+            out["hint_zh"] = "预签名生成失败（检查 OBJECT_* 与 MinIO 连通性）。"
+            return out
+    out["stage"] = "bundle_rejected_other"
+    out["hint_zh"] = "未生成试听 bundle；请携带 request_id 查编排器日志。"
+    return out
 
 
 def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[str, Any] | None:

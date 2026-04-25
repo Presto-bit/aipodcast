@@ -76,6 +76,7 @@ from ..public_share_listen import (
     build_owner_work_listen_bundle,
     build_podcast_template_listen_bundle,
     build_public_share_listen_bundle,
+    explain_owner_work_listen_miss,
     probe_episode_audio_object_key,
 )
 from ..share_publish_llm import (
@@ -705,9 +706,21 @@ def podcast_template_listen_api(job_id: str, request: Request):
 @router.get("/jobs/{job_id}/work-listen")
 def owner_work_listen_api(job_id: str, request: Request):
     """我的作品内联播放：归属校验后返回新鲜预签名 URL（object key 优先于 result 内旧 audio_url）。"""
-    bundle = build_owner_work_listen_bundle(job_id, user_ref=_job_row_scope_ref(request))
+    scope = _job_row_scope_ref(request)
+    bundle = build_owner_work_listen_bundle(job_id, user_ref=scope)
     if not bundle:
-        raise HTTPException(status_code=404, detail="work_listen_not_available")
+        diag = explain_owner_work_listen_miss(job_id, scope)
+        rid = str(getattr(request.state, "request_id", "") or "").strip()
+        body: dict[str, Any] = {
+            "success": False,
+            "error": "work_listen_not_available",
+            "detail": "work_listen_not_available",
+            "work_listen": diag,
+        }
+        if rid:
+            body["request_id"] = rid
+            body["requestId"] = rid
+        return JSONResponse(jsonable_encoder(body), status_code=404)
     return JSONResponse(jsonable_encoder({"success": True, **bundle}))
 
 
