@@ -72,6 +72,7 @@ _SYSTEM = (
     "不要标注未在回答中实际用到的序号；也不要在正文中复述「检索片段」、chunk、score、向量、noteId 等系统或调试用语。\n"
     "不要输出思考过程、提纲或「首先/其次」式推演说明，直接给出面向用户的结论与依据。\n"
     "若问题与多条笔记均相关，请尽量在回答中分别引用不同序号，避免只依赖少数几条而忽略其他相关摘录。"
+    "当勾选来源数 >= 2 且材料可支持时，优先至少引用 2 个不同来源；若只能依据 1 个来源作答，请明确说明其余来源中未检索到可支持该问题的片段。"
 )
 
 
@@ -106,6 +107,9 @@ def filter_sources_by_citations(answer: str, sources: list[dict[str, Any]]) -> l
     """
     若回答中出现至少一处 [n] 角标，则脚注仅保留被引用的序号；否则保留全部来源（兼容未标角标的旧行为）。
     """
+    keep_all = (os.getenv("NOTES_ASK_KEEP_ALL_SELECTED_SOURCES", "1") or "").strip().lower() not in ("0", "false", "no")
+    if keep_all:
+        return sources
     cited = set(re.findall(r"\[(\d+)\]", answer or ""))
     if not cited:
         return sources
