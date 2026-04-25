@@ -9,6 +9,7 @@ from typing import Any
 from .models import get_job
 from .object_store import (
     is_likely_internal_object_store_http_url,
+    list_mp3_object_keys_under_prefix,
     object_key_exists,
     presigned_get_url,
     resolve_job_audio_object_key_from_result,
@@ -64,7 +65,22 @@ def probe_episode_audio_object_key(row: dict[str, Any]) -> str | None:
         seen.add(cand)
         if object_key_exists(cand):
             return cand
-    return None
+    # 约定文件名不存在时：枚举该 job 存储前缀下的 MP3（兼容历史/异常命名）
+    prefixes: list[str] = []
+    if oid:
+        prefixes.append(f"jobs/u/{oid}/{jid}/")
+    prefixes.append(f"jobs/{jid}/")
+    best: tuple[int, str] | None = None
+    for pref in prefixes:
+        for k in list_mp3_object_keys_under_prefix(pref, max_keys=100):
+            if k in seen:
+                continue
+            seen.add(k)
+            leaf = k.rsplit("/", 1)[-1].lower()
+            score = 100 if "episode" in leaf else 70
+            if best is None or score > best[0] or (score == best[0] and len(k) < len(best[1])):
+                best = (score, k)
+    return best[1] if best else None
 
 
 def _resolve_audio_object_key(result: dict[str, Any], row: dict[str, Any], *, allow_storage_probe: bool) -> str:

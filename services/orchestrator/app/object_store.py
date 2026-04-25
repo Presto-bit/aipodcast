@@ -219,6 +219,26 @@ def presigned_get_url(object_key: str, *, expires_in: int = 3600) -> str:
     )
 
 
+def list_mp3_object_keys_under_prefix(prefix: str, *, max_keys: int = 80) -> list[str]:
+    """列出 prefix 下（单层分页）的 .mp3 对象 key；用于 DB 未登记时枚举成片文件。"""
+    p = (prefix or "").strip()
+    if not p:
+        return []
+    lim = max(1, min(500, int(max_keys)))
+    try:
+        resp = _s3().list_objects_v2(Bucket=settings.object_bucket, Prefix=p, MaxKeys=lim)
+    except ClientError:
+        return []
+    except Exception:
+        return []
+    out: list[str] = []
+    for it in resp.get("Contents") or []:
+        k = it.get("Key")
+        if isinstance(k, str) and k.lower().endswith(".mp3"):
+            out.append(k)
+    return out
+
+
 def object_key_exists(object_key: str) -> bool:
     """对象是否存在（用于 DB 未登记 audio_object_key 时按约定路径探测）。"""
     key = (object_key or "").strip()
