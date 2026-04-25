@@ -6,6 +6,7 @@ P2+：reference_rag_mode = keyword | full_coverage | hybrid（见 rag_core：关
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
 import os
@@ -17,6 +18,40 @@ from .note_document_extract import extract_text_from_bytes
 from .object_store import get_object_bytes
 
 logger = logging.getLogger(__name__)
+
+
+def _url_fetch_workers() -> int:
+    try:
+        return max(1, min(8, int(os.getenv("REFERENCE_URL_FETCH_WORKERS", "4") or "4")))
+    except (TypeError, ValueError):
+        return 4
+
+
+def _fetch_reference_urls_parallel(urls: list[str]) -> tuple[list[str], int]:
+    """
+    并发抓取参考网页，返回（按输入顺序拼接的片段列表，成功抓取数量）。
+    目的：避免多 URL 串行解析导致「整理资料」阶段长时间卡住。
+    """
+    if not urls:
+        return [], 0
+    workers = min(_url_fetch_workers(), len(urls))
+    results: list[tuple[int, str]] = []
+    success = 0
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ref-url") as pool:
+        fut_map = {pool.submit(parse_url_content, u): (idx, u) for idx, u in enumerate(urls)}
+        for fut in as_completed(fut_map):
+            idx, u = fut_map[fut]
+            try:
+                body = str(fut.result() or "").strip()
+            except Exception as exc:
+                logger.warning("reference url parse failed: %s (%s)", u, exc)
+                body = ""
+            if not body:
+                continue
+            success += 1
+            results.append((idx, f"【参考网页】\n{body}"))
+    results.sort(key=lambda x: x[0])
+    return [x[1] for x in results], success
 
 
 def _script_layered_top_k() -> int:
@@ -186,17 +221,21 @@ def merge_reference_for_script(
 
     raw_list = payload.get("url_list")
     if isinstance(raw_list, list):
-        # 最多 8 条：减少串行拉取与解析（可显式合并材料）
+        # 最多 8 条：防止请求过多；并发抓取以降低「整理资料」阶段等待。
+        candidates: list[str] = []
+        seen_url: set[str] = set()
         for u in raw_list[:8]:
             if not isinstance(u, str):
                 continue
-            u = u.strip()
-            if not u:
+            s = u.strip()
+            if not s or s in seen_url:
                 continue
-            p = parse_url_content(u)
-            if p:
-                parts.append(f"【参考网页】\n{p.strip()}")
-                meta["extra_urls"] += 1
+            seen_url.add(s)
+            candidates.append(s)
+        blocks, ok_n = _fetch_reference_urls_parallel(candidates)
+        if blocks:
+            parts.extend(blocks)
+        meta["extra_urls"] += int(ok_n)
 
     note_ids = payload.get("selected_note_ids")
     if isinstance(note_ids, list):
