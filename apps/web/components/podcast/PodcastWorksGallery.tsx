@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
+import { unusableInsecureHttpOnHttpsPage } from "../../lib/insecureHttpOnHttpsPage";
 import { useAuth } from "../../lib/auth";
 import { GatedSplitAction } from "../SubscriptionVipLink";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
@@ -631,6 +632,10 @@ export default function PodcastWorksGallery({
           const hex = String(result.audio_hex || "").trim();
           const audioUrl = String(result.audio_url || "").trim();
           if (!hex && !audioUrl) {
+            durationResolvedRef.current.add(id);
+            return;
+          }
+          if (!hex && audioUrl && unusableInsecureHttpOnHttpsPage(audioUrl)) {
             durationResolvedRef.current.add(id);
             return;
           }
@@ -1549,6 +1554,10 @@ export default function PodcastWorksGallery({
                             const orig = String(w.coverImage || "").trim();
                             if (orig && el.src.includes("/api/image-proxy") && !el.dataset.fallback) {
                               el.dataset.fallback = "1";
+                              if (unusableInsecureHttpOnHttpsPage(orig)) {
+                                el.style.display = "none";
+                                return;
+                              }
                               el.src = orig;
                               return;
                             }
@@ -1718,6 +1727,10 @@ export default function PodcastWorksGallery({
                           const orig = String(w.coverImage || "").trim();
                           if (orig && el.src.includes("/api/image-proxy") && !el.dataset.fallback) {
                             el.dataset.fallback = "1";
+                            if (unusableInsecureHttpOnHttpsPage(orig)) {
+                              el.style.display = "none";
+                              return;
+                            }
                             el.src = orig;
                             return;
                           }

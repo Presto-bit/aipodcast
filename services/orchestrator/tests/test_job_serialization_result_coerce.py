@@ -18,3 +18,21 @@ def test_serialize_job_keeps_result_dict():
     row = {"id": "j2", "result": {"title": "t"}}
     out = serialize_job(row)
     assert out["result"] == {"title": "t"}
+
+
+def test_serialize_job_strips_internal_minio_audio_and_cover_urls():
+    internal_audio = "http://minio:9000/aipodcast-artifacts/jobs/u/x/j.mp3?sig=1"
+    internal_cover = "http://minio:9000/aipodcast-artifacts/covers/x.jpg"
+    row = {
+        "id": "j3",
+        "result": {
+            "audio_url": internal_audio,
+            "cover_image": internal_cover,
+            "coverImage": "https://cdn.example.com/ok.png",
+        },
+    }
+    out = serialize_job(row)
+    r = out["result"]
+    assert r["audio_url"] == ""
+    assert r["cover_image"] == ""
+    assert r["coverImage"] == "https://cdn.example.com/ok.png"

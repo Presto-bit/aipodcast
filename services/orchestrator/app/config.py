@@ -57,7 +57,7 @@ class Settings:
     object_secret_key = os.getenv("OBJECT_SECRET_KEY", "minioadmin")
     object_bucket = os.getenv("OBJECT_BUCKET", "aipodcast-artifacts")
     object_force_path_style = os.getenv("OBJECT_FORCE_PATH_STYLE", "1") in ("1", "true", "True")
-    # 预签名 URL 使用的 S3 endpoint（须与反向代理/公网域名一致，供百炼拉取；为空则与 OBJECT_ENDPOINT 相同）
+    # 预签名 URL 使用的 S3 API endpoint（须 https 公网可访问；为空则回退 OBJECT_ENDPOINT，多容器下常为内网 MinIO）
     object_presign_endpoint = (os.getenv("OBJECT_PRESIGN_ENDPOINT") or "").strip()
 
     orchestrator_port = int(os.getenv("ORCHESTRATOR_PORT", "8008"))

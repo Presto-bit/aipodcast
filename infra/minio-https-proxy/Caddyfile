@@ -1,0 +1,7 @@
+# 本地 S3 API 经 TLS 暴露给浏览器（预签名 URL 的 Host 须与此一致）。
+# Compose 默认 OBJECT_PRESIGN_ENDPOINT=https://127.0.0.1:9443
+# 首次访问浏览器可能提示「不受信任的证书」：Caddy tls internal 为开发用自签 CA，点继续即可。
+:9443 {
+    tls internal
+    reverse_proxy minio:9000
+}

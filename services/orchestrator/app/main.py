@@ -33,7 +33,7 @@ from .models import (
     purge_expired_trashed_works,
     strip_redundant_audio_hex_from_job_results,
 )
-from .object_store import ensure_bucket_exists
+from .object_store import ensure_bucket_exists, log_object_presign_endpoint_warnings
 from .startup_payment_checks import run_payment_startup_checks
 from .startup_security import assert_production_security_or_exit
 from .middleware.request_id import RequestIdMiddleware
@@ -113,6 +113,10 @@ def run_startup_tasks() -> None:
     """
     assert_production_security_or_exit()
     _startup_step("object_store.ensure_bucket_exists", ensure_bucket_exists)
+    try:
+        log_object_presign_endpoint_warnings()
+    except Exception:
+        logger.exception("object_store.log_object_presign_endpoint_warnings failed")
     notes_routes.ensure_notebooks_schema_startup(strict=settings.strict_schema_startup)
     jobs_routes.ensure_jobs_trash_schema_startup(strict=settings.strict_schema_startup)
     _startup_step("ensure_saved_voices_schema", ensure_saved_voices_schema)

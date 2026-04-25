@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { normalizeHexForMp3 } from "./audioHex";
+import { unusableInsecureHttpOnHttpsPage } from "./insecureHttpOnHttpsPage";
 import { getBearerAuthHeadersSync } from "./authHeaders";
 import { coerceJobResult } from "./coerceJobResult";
 import { resolveJobScriptBodyText } from "./jobScriptText";
@@ -165,6 +166,10 @@ async function fetchJobAudioExportBytes(
 async function fetchBytesFromAudioUrl(url: string, authHdr: Record<string, string>): Promise<Uint8Array | null> {
   const u = String(url || "").trim();
   if (!u) return null;
+  if (typeof window !== "undefined" && unusableInsecureHttpOnHttpsPage(u)) {
+    console.warn(`${BUNDLE_DL_LOG} fetchBytesFromAudioUrl_skipped_mixed_content`, summarizeUrlForLog(u));
+    return null;
+  }
   try {
     const relative = u.startsWith("/");
     const sameOrigin =

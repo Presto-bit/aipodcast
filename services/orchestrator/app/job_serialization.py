@@ -4,6 +4,8 @@ import math
 from decimal import Decimal
 from typing import Any
 
+from .internal_storage_url import sanitize_job_result_media_urls_for_browser
+
 
 def _payload_sha256(payload: Any) -> str:
     """对 payload 做稳定哈希；遇不可序列化对象时退化为空对象，避免 JSONResponse 构建失败。"""
@@ -63,5 +65,7 @@ def serialize_job(row: dict[str, Any] | None) -> dict[str, Any]:
         out["error_message"] = str(em)
     if "result" in out:
         out["result"] = _coerce_job_result_field(out.get("result"))
+        if isinstance(out.get("result"), dict):
+            sanitize_job_result_media_urls_for_browser(out["result"])
     out["payload_sha256"] = _payload_sha256(out.get("payload"))
     return out

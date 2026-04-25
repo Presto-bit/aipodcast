@@ -97,10 +97,17 @@
 
 ## Compose 默认行为（`docker-compose.ai-native.yml`）
 
-- **宿主机端口**：`5432` / `6379` / `9000` / `9001` / `8008` / `3000` 默认绑定 **`127.0.0.1`**，避免局域网或公网直连数据库、Redis、MinIO 与编排器；Nginx 反代 **`127.0.0.1:3000`** 即可对外提供 Web。
+- **宿主机端口**：`5432` / `6379` / `9000` / `9001` / **`9443`** / `8008` / `3000` 默认绑定 **`127.0.0.1`**，避免局域网或公网直连数据库、Redis、MinIO 与编排器；Nginx 反代 **`127.0.0.1:3000`** 即可对外提供 Web。**`9443`** 为 **`minio-https`**（Caddy）对 MinIO S3 API 的 **HTTPS** 出口，编排器默认 **`OBJECT_PRESIGN_ENDPOINT=https://127.0.0.1:9443`** 生成浏览器可加载的预签名链接；公网站点请在 `.env.ai-native` 改为 **`https://你的域名`** 并在主机反代到 MinIO。
 - **Postgres / MinIO 凭据**：容器内 `POSTGRES_*` 与 MinIO root 用户分别取自 `.env.ai-native` 的 **`DB_*`**、**`OBJECT_ACCESS_KEY` / `OBJECT_SECRET_KEY`**（与编排器连接配置一致）。**若数据卷已用旧密码初始化**，仅改 `.env` 不会自动改库内角色口令，须先在库内 `ALTER USER` 再改 env（见下节）。
 - **可靠性**：核心服务使用 **`restart: unless-stopped`**；编排器与 Web 配置了 **healthcheck**，`web` 与 Worker 在编排器健康后再依赖启动，减少「半启动」竞态。
 - **`release.sh`**：支持 **`GIT_PULL=0`** 跳过 `git fetch/pull`；发布末尾会检查 `orchestrator` / `web` / `ai-worker` / `media-worker` 是否为 **running**。
+
+### 对象存储：公网 HTTPS 预签名（浏览器 / RSS / 外部回调）
+
+- **`OBJECT_ENDPOINT`**：编排器与 Worker **读写** MinIO 用，Compose 内保持 **`http://minio:9000`** 即可。
+- **`minio-https` 服务**：仓库自带 **Caddy** 将 **`https://127.0.0.1:9443`** 反代到 **`minio:9000`**（`tls internal` 自签证书，本机调试用）。编排器环境变量默认 **`OBJECT_PRESIGN_ENDPOINT=${OBJECT_PRESIGN_ENDPOINT:-https://127.0.0.1:9443}`**，与预签名 URL Host 一致即可根治本机 **HTTPS 页播放混合内容**。
+- **`OBJECT_PRESIGN_ENDPOINT`**：仅影响 **`generate_presigned_url` 生成的链接 Host**；**公网生产**须改为 **`https://你的反代域名`**（证书与 DNS 指向反代，反代再转发到 MinIO 9000 API），否则远端用户浏览器无法访问 `127.0.0.1:9443`。
+- 生产 **`FYV_PRODUCTION=1`** 且未配置公网预签名时，编排器启动会 **记录 WARNING**；任务详情 JSON 中误存的 **`http://minio:9000/...` 类 `audio_url` / 封面** 在 API 序列化时会被 **置空**，避免前端混合内容，客户端应依赖 **`audio_object_key` + `/work-listen`** 或重新跑任务生成合法外链。
 
 ### Docker：`web` 构建拉取 Node 基础镜像失败（metadata / content size of zero）
 

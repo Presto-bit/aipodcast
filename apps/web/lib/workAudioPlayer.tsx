@@ -12,6 +12,7 @@ import {
 } from "react";
 import { hexToMp3DataUrl } from "./audioHex";
 import { coerceJobResult } from "./coerceJobResult";
+import { unusableInsecureHttpOnHttpsPage } from "./insecureHttpOnHttpsPage";
 import { useAuth } from "./auth";
 import { APP_SIDEBAR_COLLAPSED_KEY, APP_SIDEBAR_COLLAPSE_EVENT, APP_SIDEBAR_TOGGLE_EVENT } from "./appSidebarCollapse";
 import { readLocalStorageScoped } from "./userScopedStorage";
@@ -303,7 +304,26 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
     } catch {
       return null;
     }
+    if (unusableInsecureHttpOnHttpsPage(directUrl)) {
+      logWorkAudioPlay("wrapRemoteAudio_reject_insecure_http_on_https", {
+        jobId,
+        reason: "mixed_content_audio_src_blocked",
+        url: summarizeAudioSrcForLog(remote.toString())
+      });
+      return null;
+    }
     if (remote.origin === window.location.origin) return directUrl;
+    const fallbackAfterFetchFailure = (): string | null => {
+      if (unusableInsecureHttpOnHttpsPage(directUrl)) {
+        logWorkAudioPlay("wrapRemoteAudio_no_https_fallback", {
+          jobId,
+          reason: "insecure_http_after_fetch_failure",
+          url: summarizeAudioSrcForLog(remote.toString())
+        });
+        return null;
+      }
+      return directUrl;
+    };
     try {
       const r = await fetch(remote.toString(), { mode: "cors", credentials: "omit", cache: "no-store" });
       if (!r.ok) {
@@ -314,7 +334,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           responseContentType: r.headers.get("content-type"),
           url: summarizeAudioSrcForLog(remote.toString())
         });
-        return directUrl;
+        return fallbackAfterFetchFailure();
       }
       const blob = await r.blob();
       if (!blob?.size) {
@@ -324,7 +344,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           url: summarizeAudioSrcForLog(remote.toString()),
           reportedBlobType: blob?.type
         });
-        return directUrl;
+        return fallbackAfterFetchFailure();
       }
       const ct = (blob.type || "").toLowerCase();
       if (ct.includes("text/html") || ct.includes("application/json") || ct.includes("xml")) {
@@ -335,7 +355,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           blobSize: blob.size,
           url: summarizeAudioSrcForLog(remote.toString())
         });
-        return directUrl;
+        return fallbackAfterFetchFailure();
       }
       const prev = blobUrlByJobId.current[jobId];
       if (prev) {
@@ -354,7 +374,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         message: e instanceof Error ? e.message : String(e),
         url: summarizeAudioSrcForLog(remote.toString())
       });
-      return directUrl;
+      return fallbackAfterFetchFailure();
     }
   }, []);
 
@@ -458,8 +478,25 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         }
         const audioUrl = String(data.audio_url || "").trim();
         if (audioUrl) {
-          srcCache.current[jobId] = audioUrl;
-          return { ok: true, url: audioUrl };
+          const playable = await wrapRemoteAudioAsBlobIfNeeded(jobId, audioUrl);
+          if (playable) {
+            srcCache.current[jobId] = playable;
+            return { ok: true, url: playable };
+          }
+          const mixedTpl = unusableInsecureHttpOnHttpsPage(audioUrl);
+          logWorkAudioPlay("ensureSrc:template_listen_url_unusable", {
+            jobId,
+            request_id: tplRid || undefined,
+            httpStatus: res.status,
+            summarized: summarizeAudioSrcForLog(audioUrl),
+            mixed_insecure_http: mixedTpl
+          });
+          return fail(
+            mixedTpl
+              ? "模板试听返回的音频为 http 地址，在 HTTPS 页面无法播放（混合内容）。请检查编排器公网 https 预签名配置。"
+              : "模板试听返回的地址无法在浏览器中加载（可能被跨域拦截或内容非有效音频）。",
+            tplRid
+          );
         }
         logWorkAudioPlay("ensureSrc:template_listen_no_url", {
           jobId,
@@ -530,8 +567,11 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           afterWrap: summarizeAudioSrcForLog(fresh),
           job_row: jobRowDebugSummary(row)
         });
+        const mixedListen = unusableInsecureHttpOnHttpsPage(fresh);
         return fail(
-          `已拿到试听链接但无法在浏览器中加载（可能被跨域拦截或内容非有效音频）。接口 HTTP ${lr.status}。`,
+          mixedListen
+            ? `试听链接为 http 地址，在 HTTPS 页面无法播放（混合内容，常见于内网 MinIO 直链）。请在编排器侧配置公网 HTTPS 的预签名外链（如 OBJECT_PRESIGN_ENDPOINT），或让 work-listen 返回同源/可 CORS 拉取的地址。接口 HTTP ${lr.status}。`
+            : `已拿到试听链接但无法在浏览器中加载（可能被跨域拦截或内容非有效音频）。接口 HTTP ${lr.status}。`,
           listenRid
         );
       }
@@ -563,8 +603,11 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           work_listen_http: lr.status,
           job_row: jobRowDebugSummary(row)
         });
+        const mixedResult = unusableInsecureHttpOnHttpsPage(audioUrl);
         return fail(
-          `任务结果中的外链音频无法在浏览器中加载（链接可能过期或非 MP3）。摘要：${summarizeAudioSrcForLog(audioUrl)}`,
+          mixedResult
+            ? `任务结果中的音频为 http 外链，在 HTTPS 页面无法播放（混合内容）。请让编排器写入公网 https 预签名地址，或修复 work-listen（当前 HTTP ${lr.status}）以提供可试听 URL。摘要：${summarizeAudioSrcForLog(audioUrl)}`
+            : `任务结果中的外链音频无法在浏览器中加载（链接可能过期或非 MP3）。摘要：${summarizeAudioSrcForLog(audioUrl)}`,
           listenRid || jobRid
         );
       }

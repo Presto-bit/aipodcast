@@ -56,7 +56,13 @@ from ..models import (
     wallet_balance_cents_for_phone,
 )
 from ..mp3_export import build_export_mp3
-from ..object_store import get_object_bytes, presigned_get_url, resolve_job_audio_object_key_from_result, upload_bytes
+from ..object_store import (
+    get_object_bytes,
+    presigned_get_url,
+    resolve_job_audio_object_key_from_result,
+    strip_internal_object_store_http_url,
+    upload_bytes,
+)
 from ..rss_publish_store import user_download_allowed_for_succeeded_works, work_download_allowed
 from ..queue import ai_queue, media_queue, redis_conn
 from ..schemas import (
@@ -227,7 +233,9 @@ def _work_cover_display_url(result: dict[str, Any], job_id: str) -> str:
         return f"/api/jobs/{jid}/cover"
     cov = str(result.get("cover_image") or result.get("coverImage") or "").strip()
     if cov:
-        return cov
+        cov = strip_internal_object_store_http_url(cov)
+        if cov:
+            return cov
     return ""
 
 
@@ -282,7 +290,7 @@ def _work_item_dict_from_recent_row(
         "id": _jid,
         "title": title,
         "createdAt": str(row.get("completed_at") or row.get("created_at") or ""),
-        "audioUrl": str(result.get("audio_url") or ""),
+        "audioUrl": strip_internal_object_store_http_url(str(result.get("audio_url") or "")),
         "scriptUrl": str(result.get("script_url") or ""),
         "scriptText": preview_list,
         "hasAudioHex": _work_has_audio_hex(result),
@@ -870,7 +878,7 @@ def list_works_trash_api(
             "title": title,
             "createdAt": str(row.get("completed_at") or row.get("created_at") or ""),
             "deletedAt": str(row.get("deleted_at") or ""),
-            "audioUrl": str(result.get("audio_url") or ""),
+            "audioUrl": strip_internal_object_store_http_url(str(result.get("audio_url") or "")),
             "scriptUrl": str(result.get("script_url") or ""),
             "scriptText": preview_list,
             "hasAudioHex": _work_has_audio_hex(result),

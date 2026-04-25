@@ -8,7 +8,7 @@
 
 | 内容 | 说明 |
 |------|------|
-| **Docker 镜像 tar** | `postgres:16-alpine`、`redis:7-alpine`、`minio/minio:latest`、`node:20-alpine`；Python 侧用 **`aipodcast/python-ffmpeg:3.12-slim-amd64`**（`make build-offline-bases`）避免服务器 `apt-get ffmpeg`。 |
+| **Docker 镜像 tar** | `postgres:16-alpine`、`redis:7-alpine`、`minio/minio:latest`、`caddy:2-alpine`（`minio-https` 预签名 TLS 反代）、`node:20-alpine`；Python 侧用 **`aipodcast/python-ffmpeg:3.12-slim-amd64`**（`make build-offline-bases`）避免服务器 `apt-get ffmpeg`。 |
 | **源码包** | 仓库根目录除 `.git`、`node_modules`、`.venv`、大体积 `legacy_backend/uploads|outputs|data` 外的全部文件；可用 `bash scripts/package-offline-bundle.sh` 生成 `dist/offline-deploy-*/aipodcast-source.tar.gz`。 |
 | **环境文件** | `.env.ai-native` **不提交 Git**，在服务器从 `.env.ai-native.example` 复制并编辑；打包时单独拷贝或内网传递。 |
 

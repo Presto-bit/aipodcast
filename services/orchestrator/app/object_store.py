@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import os
+
 import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
@@ -7,6 +10,11 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from .config import settings
+from .internal_storage_url import (
+    is_likely_internal_object_store_http_url,
+    sanitize_job_result_media_urls_for_browser,
+    strip_internal_object_store_http_url,
+)
 
 
 def object_key_from_storage_http_url(url: str) -> str | None:
@@ -42,20 +50,43 @@ def resolve_job_audio_object_key_from_result(result: dict[str, Any]) -> str:
     return (inferred or "").strip()
 
 
-def is_likely_internal_object_store_http_url(url: str) -> bool:
-    """浏览器无法直接访问的内网/集群对象存储 Host（与预签名公网 URL 区分）。"""
-    u = (url or "").strip()
-    if not u.startswith(("http://", "https://")):
-        return False
+logger = logging.getLogger(__name__)
+
+
+def _presign_effective_endpoint() -> str:
+    return ((settings.object_presign_endpoint or "").strip() or settings.object_endpoint or "").strip()
+
+
+def log_object_presign_endpoint_warnings() -> None:
+    """
+    生产环境启动时提示 OBJECT_PRESIGN_ENDPOINT 配置；不抛异常，避免误拦本机 smoke。
+    FYV_PRODUCTION=1 且预签名实际仍指向内网 / 明文 http 时打 WARNING。
+    """
+    prod = (os.environ.get("FYV_PRODUCTION") or "").strip().lower() in ("1", "true", "yes", "on")
+    if not prod:
+        return
+    pres = (settings.object_presign_endpoint or "").strip()
+    raw_ep = (settings.object_endpoint or "").strip()
+    effective = _presign_effective_endpoint()
     try:
-        host = (urlparse(u).hostname or "").lower()
+        parsed = urlparse(effective)
+        host = (parsed.hostname or "").lower()
+        scheme = (parsed.scheme or "").lower()
     except Exception:
-        return False
-    if host in ("minio", "localhost", "127.0.0.1", "::1"):
-        return True
-    if host.endswith(".svc.cluster.local"):
-        return True
-    return False
+        host, scheme = "", ""
+    internal_host = host in ("minio", "localhost", "127.0.0.1", "::1") or host.endswith(".svc.cluster.local")
+    if not pres and internal_host:
+        logger.warning(
+            "object_presign: FYV_PRODUCTION=1 且未设置 OBJECT_PRESIGN_ENDPOINT，"
+            "预签名将使用 OBJECT_ENDPOINT（%s）。浏览器、RSS enclosure 与外部拉取无法使用该 Host；"
+            "请在 HTTPS 反代 MinIO API 的公网域名上设置 OBJECT_PRESIGN_ENDPOINT=https://…（读写仍用内网 OBJECT_ENDPOINT）。",
+            raw_ep[:120],
+        )
+    elif pres and scheme == "http" and host not in ("localhost", "127.0.0.1", "::1"):
+        logger.warning(
+            "object_presign: OBJECT_PRESIGN_ENDPOINT 为明文 http（%s）；对外 HTTPS 站点易出现混合内容，建议改为 https://",
+            pres[:120],
+        )
 
 
 def _s3():

@@ -65,6 +65,20 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # 将 MinIO S3 API 以 HTTPS 暴露在宿主机 9443，供预签名 URL 在浏览器中加载（混合内容安全）。
+  # 编排器 OBJECT_PRESIGN_ENDPOINT 默认 https://127.0.0.1:9443；生产请在 .env.ai-native 改为公网域名并配主机反代。
+  minio-https:
+    platform: linux/amd64
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    ports:
+      - "127.0.0.1:9443:9443"
+    volumes:
+      - ./infra/minio-https-proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
   orchestrator:
     platform: linux/amd64
     image: aipodcast-orchestrator:${AIPODCAST_IMAGE_TAG:-latest}
@@ -82,6 +96,8 @@ services:
       DB_HOST: postgres
       REDIS_URL: redis://redis:6379/0
       OBJECT_ENDPOINT: http://minio:9000
+      # 默认走本栈 minio-https（宿主机 127.0.0.1:9443）；生产在 .env.ai-native 覆盖为 https://你的域名
+      OBJECT_PRESIGN_ENDPOINT: ${OBJECT_PRESIGN_ENDPOINT:-https://127.0.0.1:9443}
       # 独立 ai-worker / media-worker 已消费队列；编排器内关闭内嵌，避免双消费与 API 同进程抢 CPU
       ORCHESTRATOR_EMBED_RQ_AI_WORKER: "0"
       ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER: "0"
@@ -94,6 +110,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-https:
+        condition: service_started
     healthcheck:
       test:
         [
@@ -128,6 +146,7 @@ services:
       DB_HOST: postgres
       REDIS_URL: redis://redis:6379/0
       OBJECT_ENDPOINT: http://minio:9000
+      # 预签名公网 Host 仅编排器生成 URL 时需要 OBJECT_PRESIGN_ENDPOINT；Worker 写桶用内网 endpoint 即可
     depends_on:
       postgres:
         condition: service_healthy
@@ -156,6 +175,7 @@ services:
       DB_HOST: postgres
       REDIS_URL: redis://redis:6379/0
       OBJECT_ENDPOINT: http://minio:9000
+      # 预签名公网 Host 仅编排器生成 URL 时需要 OBJECT_PRESIGN_ENDPOINT；Worker 写桶用内网 endpoint 即可
     depends_on:
       postgres:
         condition: service_healthy
