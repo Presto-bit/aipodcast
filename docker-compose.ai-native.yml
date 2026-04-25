@@ -101,6 +101,14 @@ services:
       # 独立 ai-worker / media-worker 已消费队列；编排器内关闭内嵌，避免双消费与 API 同进程抢 CPU
       ORCHESTRATOR_EMBED_RQ_AI_WORKER: "0"
       ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER: "0"
+      # 知识库问答：收紧 embedding 超时，避免单次请求被慢上游长时间拖住
+      RAG_EMBEDDING_TIMEOUT_SEC: "8"
+      # 问答检索：先降低 TopK 缩短 context 构建耗时（线上验证后可按质量再调）
+      NOTES_ASK_TOP_K: "24"
+      # 保持问答快速检索路径
+      NOTES_ASK_RETRIEVAL_FAST: "1"
+      # 临时开启阶段 profile 日志，定位瓶颈后建议改回 0
+      NOTES_ASK_PROFILE: "1"
     ports:
       - "127.0.0.1:8008:8008"
     depends_on:
