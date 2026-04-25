@@ -143,6 +143,44 @@ function jobRowDebugSummary(row: Record<string, unknown>): Record<string, unknow
   };
 }
 
+/** 编排器 work-listen 404 时 JSON 内的 `work_listen` 诊断（供 Console / 用户文案） */
+function extractWorkListenDiag(lj: Record<string, unknown>): Record<string, unknown> | undefined {
+  const w = lj.work_listen;
+  if (!w || typeof w !== "object" || Array.isArray(w)) return undefined;
+  const o = w as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of [
+    "stage",
+    "hint_zh",
+    "job_type",
+    "mp3_count_under_standard_job_prefixes",
+    "result_has_audio_hex",
+    "result_has_audio_object_key",
+    "result_has_audio_url",
+    "resolved_object_key",
+    "podcast_storage_probe_eligible",
+    "presign_error_class",
+    "presigned_scheme",
+    "presigned_hostname"
+  ]) {
+    if (k in o) out[k] = o[k];
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function workListenDiagUserLine(lj: Record<string, unknown>): string {
+  const d = extractWorkListenDiag(lj);
+  if (!d) return "";
+  const stage = typeof d.stage === "string" ? d.stage : "";
+  const hint = typeof d.hint_zh === "string" ? d.hint_zh : "";
+  const n = d.mp3_count_under_standard_job_prefixes;
+  const parts: string[] = [];
+  if (stage) parts.push(`编排器诊断：${stage}`);
+  if (n !== undefined) parts.push(`桶前缀下 mp3 样例数≈${String(n)}`);
+  if (hint) parts.push(hint);
+  return parts.filter(Boolean).join(" ");
+}
+
 /** DevTools 过滤：`[fym:work-audio]`；与首参字符串同一行便于检索 */
 function logWorkAudioPlay(stage: string, payload: Record<string, unknown>): void {
   console.warn(`${WORK_AUDIO_LOG} ${stage}`, {
@@ -586,6 +624,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           listen_json_keys: jsonTopKeys(lj),
           listen_snippet: listenSnip || undefined,
           audioUrlLen: fresh.length,
+          work_listen: extractWorkListenDiag(lj),
           job_row: jobRowDebugSummary(row)
         });
       }
@@ -617,6 +656,8 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         tailParts.push(
           `试听接口：HTTP ${lr.status}${listenSnip ? `（${listenSnip}）` : !fresh ? "（未返回地址）" : ""}`
         );
+        const diagLine = workListenDiagUserLine(lj);
+        if (diagLine) tailParts.push(diagLine);
       }
       tailParts.push(audioUrl ? "外链字段存在但未能拉取为可播放源。" : "无外链音频字段。");
       tailParts.push("请到作品详情确认是否已生成完成，或稍后重试。");
@@ -632,6 +673,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         workListenStatus: lr.status,
         listen_json_keys: jsonTopKeys(lj),
         listen_snippet: listenSnip || undefined,
+        work_listen: extractWorkListenDiag(lj),
         userFacingReason: joinedReason.slice(0, 500),
         job_row: jobRowDebugSummary(row)
       });
