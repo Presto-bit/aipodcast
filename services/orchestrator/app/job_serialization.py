@@ -19,6 +19,18 @@ def _payload_sha256(payload: Any) -> str:
         return hashlib.sha256(b"{}").hexdigest()
 
 
+def _coerce_job_result_field(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            j = json.loads(raw)
+            return j if isinstance(j, dict) else {}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return {}
+    return {}
+
+
 def _normalize_progress(val: Any) -> float:
     try:
         if val is None:
@@ -49,5 +61,7 @@ def serialize_job(row: dict[str, Any] | None) -> dict[str, Any]:
     em = out.get("error_message")
     if em is not None and not isinstance(em, str):
         out["error_message"] = str(em)
+    if "result" in out:
+        out["result"] = _coerce_job_result_field(out.get("result"))
     out["payload_sha256"] = _payload_sha256(out.get("payload"))
     return out

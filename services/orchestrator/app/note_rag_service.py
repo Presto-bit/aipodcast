@@ -14,10 +14,12 @@ import hashlib
 import json
 import logging
 import os
+import time
 from collections import defaultdict
 from typing import Any
 
 from .db import get_conn, get_cursor
+from .notes_ask_profile import notes_ask_profile_emit
 from .models import get_note_by_id
 from .rag_core import _cosine, _keyword_score, decompose_retrieval_queries, split_text_into_chunks
 from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
@@ -588,10 +590,17 @@ def retrieve_chunks_across_notes(
 
     历史上「先全量 SELECT embedding」会在块数多时严重拖慢首包（与单篇笔记字数无直接关系）。
     """
+    _t_total = time.perf_counter()
     q = (query or "").strip()
     rows = _load_chunk_rows_light(note_ids)
     light_rows_n = len(rows)
     if not rows or not q:
+        notes_ask_profile_emit(
+            "rag_retrieve_total_ms",
+            (time.perf_counter() - _t_total) * 1000.0,
+            reason="empty_query_or_no_rows",
+            chunk_rows=light_rows_n,
+        )
         return "", [], {"reason": "empty_query_or_no_rows"}
 
     parsed: list[dict[str, Any]] = []
@@ -610,8 +619,21 @@ def retrieve_chunks_across_notes(
         )
 
     if not parsed:
+        notes_ask_profile_emit(
+            "rag_retrieve_total_ms",
+            (time.perf_counter() - _t_total) * 1000.0,
+            reason="no_parsed_chunks",
+            chunk_rows=light_rows_n,
+        )
         return "", [], {"reason": "no_parsed_chunks"}
 
+    notes_ask_profile_emit(
+        "rag_retrieve_load_parse_ms",
+        (time.perf_counter() - _t_total) * 1000.0,
+        chunk_rows=light_rows_n,
+        parsed_n=len(parsed),
+    )
+    _t_embed = time.perf_counter()
     try:
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
@@ -637,8 +659,21 @@ def retrieve_chunks_across_notes(
         emb_backend = ep.active_backend()
     except Exception as exc:
         logger.warning("retrieve query embed failed: %s", exc)
+        notes_ask_profile_emit(
+            "rag_retrieve_total_ms",
+            (time.perf_counter() - _t_total) * 1000.0,
+            reason="query_embed_failed",
+            error=str(exc)[:120],
+        )
         return "", [], {"reason": "query_embed_failed", "error": str(exc)[:200]}
 
+    notes_ask_profile_emit(
+        "rag_retrieve_query_embed_ms",
+        (time.perf_counter() - _t_embed) * 1000.0,
+        subqueries=len(uniq),
+        emb_backend=emb_backend,
+    )
+    _t_pref = time.perf_counter()
     src_idx_map = _note_source_index_map(note_ids)
 
     pref_cap = _note_rag_keyword_prefilter_cap(len(note_ids), top_k)
@@ -661,6 +696,13 @@ def retrieve_chunks_across_notes(
 
     pairs = [(str(p["note_id"]), int(p["chunk_index"])) for p in parsed]
     emb_map = _load_embeddings_by_pairs(pairs)
+    notes_ask_profile_emit(
+        "rag_retrieve_prefilter_load_emb_ms",
+        (time.perf_counter() - _t_pref) * 1000.0,
+        pairs_requested=len(pairs),
+        emb_rows_loaded=len(emb_map),
+    )
+    _t_score = time.perf_counter()
     filtered: list[dict[str, Any]] = []
     dropped_stale = 0
     dropped_missing_emb = 0
@@ -680,6 +722,13 @@ def retrieve_chunks_across_notes(
     if dropped_missing_emb:
         logger.info("note_rag retrieve dropped %s chunks missing embedding row", dropped_missing_emb)
     if not parsed:
+        notes_ask_profile_emit(
+            "rag_retrieve_total_ms",
+            (time.perf_counter() - _t_total) * 1000.0,
+            reason="all_stale_chunks",
+            dropped_stale=dropped_stale,
+            dropped_missing_emb=dropped_missing_emb,
+        )
         return "", [], {
             "reason": "all_stale_chunks",
             "dropped_stale_chunks": dropped_stale,
@@ -727,6 +776,14 @@ def retrieve_chunks_across_notes(
             mmr_applied = True
     scored_for_pick = head_rr + tail
     picked = _pick_top_k_note_fairness(scored_for_pick, top_k, note_ids)
+    notes_ask_profile_emit(
+        "rag_retrieve_score_rerank_pick_ms",
+        (time.perf_counter() - _t_score) * 1000.0,
+        rerank_mode=rerank_mode,
+        top_k=top_k,
+        vector_candidates=len(vecs),
+    )
+    _t_fmt = time.perf_counter()
 
     obs: dict[str, Any] = {
         "embedding_backend": emb_backend,
@@ -790,6 +847,13 @@ def retrieve_chunks_across_notes(
                 )
             break
 
+    notes_ask_profile_emit(
+        "rag_retrieve_format_meta_ms",
+        (time.perf_counter() - _t_fmt) * 1000.0,
+        parts_n=len(parts),
+    )
+    notes_ask_profile_emit("rag_retrieve_total_ms", (time.perf_counter() - _t_total) * 1000.0)
+
     return "\n\n".join(parts).strip(), meta_out, obs
 
 
@@ -839,6 +903,7 @@ def build_layered_notes_context(
     否则返回 (context, sources, meta)。
     """
     meta: dict[str, Any] = {"layered": True, "chunks_indexed": 0}
+    _t_layer = time.perf_counter()
     nb = notebook.strip()
     if not nb:
         raise ValueError("notebook_required")
@@ -864,22 +929,50 @@ def build_layered_notes_context(
         title = _metadata_title(row, nid)
         sources.append({"index": str(i), "noteId": nid, "title": title})
 
+    notes_ask_profile_emit(
+        "layered_load_sources_ms",
+        (time.perf_counter() - _t_layer) * 1000.0,
+        notes_n=len(ordered),
+    )
+    _t_count = time.perf_counter()
     n_chunks = count_rag_chunks_for_notes(ordered)
     meta["chunks_indexed"] = n_chunks
+    notes_ask_profile_emit(
+        "layered_count_chunks_ms",
+        (time.perf_counter() - _t_count) * 1000.0,
+        chunks_indexed=n_chunks,
+    )
     if n_chunks == 0:
+        notes_ask_profile_emit(
+            "layered_context_total_ms",
+            (time.perf_counter() - _t_layer) * 1000.0,
+            branch="no_chunks_fallback",
+        )
         return None, [], meta
 
+    _t_sum = time.perf_counter()
     sum_part = build_summaries_section(
         ordered_ids=ordered,
         user_ref=user_ref,
         max_chars=summary_budget,
         project_owner_user_uuid=project_owner_user_uuid,
     )
+    notes_ask_profile_emit(
+        "layered_summaries_ms",
+        (time.perf_counter() - _t_sum) * 1000.0,
+        summary_chars=len(sum_part),
+    )
+    _t_retr = time.perf_counter()
     retr, retr_meta, retrieve_obs = retrieve_chunks_across_notes(
         note_ids=ordered,
         query=query,
         max_chars=retrieval_budget,
         top_k=top_k,
+    )
+    notes_ask_profile_emit(
+        "layered_retrieve_ms",
+        (time.perf_counter() - _t_retr) * 1000.0,
+        retrieval_chunks=len(retr_meta),
     )
     meta["retrieval_chunks"] = len(retr_meta)
     meta["retrieve_obs"] = retrieve_obs
@@ -893,8 +986,19 @@ def build_layered_notes_context(
 
     ctx = "\n\n---\n\n".join(blocks).strip()
     if not ctx:
+        notes_ask_profile_emit(
+            "layered_context_total_ms",
+            (time.perf_counter() - _t_layer) * 1000.0,
+            branch="empty_ctx",
+        )
         return None, [], meta
 
+    notes_ask_profile_emit(
+        "layered_context_total_ms",
+        (time.perf_counter() - _t_layer) * 1000.0,
+        chunks_indexed=n_chunks,
+        context_chars=len(ctx),
+    )
     return ctx, sources, meta
 
 

@@ -5,11 +5,13 @@ import json
 import logging
 import os
 import re
+import time
 from collections import defaultdict
 from typing import Any, Iterator
 
 from .models import get_note_by_id
 from .note_rag_service import NOTE_LAYERED_RAG, build_layered_notes_context
+from .notes_ask_profile import notes_ask_profile_emit
 from .provider_router import (
     invoke_llm_chat_messages_stream_iter,
     invoke_llm_chat_messages_with_minimax_fallback,
@@ -148,12 +150,19 @@ def _prepare_notes_ask_messages(
     if len(q) > _MAX_QUESTION_CHARS:
         q = q[:_MAX_QUESTION_CHARS]
 
+    _t_ctx = time.perf_counter()
     context, sources = build_notes_qa_context(
         notebook=notebook,
         note_ids=note_ids,
         user_ref=user_ref,
         question=q,
         project_owner_user_uuid=project_owner_user_uuid,
+    )
+    notes_ask_profile_emit(
+        "prepare_build_context_ms",
+        (time.perf_counter() - _t_ctx) * 1000.0,
+        context_chars=len(context or ""),
+        sources_n=len(sources),
     )
     if not context.strip():
         raise ValueError("empty_context")
@@ -245,6 +254,8 @@ def iter_notes_answer_events(
         )
     acc: list[str] = []
     try:
+        _t_llm = time.perf_counter()
+        saw_visible = False
         for piece in invoke_llm_chat_messages_stream_iter(
             messages,
             temperature=0.45,
@@ -253,8 +264,19 @@ def iter_notes_answer_events(
         ):
             vis = _notes_ask_sanitize_visible_text(piece)
             if vis:
+                if not saw_visible:
+                    notes_ask_profile_emit(
+                        "stream_llm_ttft_ms",
+                        (time.perf_counter() - _t_llm) * 1000.0,
+                    )
+                    saw_visible = True
                 acc.append(vis)
                 yield {"type": "chunk", "text": vis}
+        notes_ask_profile_emit(
+            "stream_llm_total_ms",
+            (time.perf_counter() - _t_llm) * 1000.0,
+            visible_chars=len("".join(acc)),
+        )
         full = _notes_ask_sanitize_visible_text("".join(acc)).strip()
         if not full:
             raise RuntimeError("empty_answer")
@@ -349,12 +371,19 @@ def build_notes_qa_context(
             if isinstance(rcm, list) and rcm:
                 sources = _enrich_sources_with_chunks(sources, rcm)
             return layered, sources
-    return legacy_build_notes_qa_context(
+    _t_leg = time.perf_counter()
+    legacy_out = legacy_build_notes_qa_context(
         notebook=notebook,
         note_ids=note_ids,
         user_ref=user_ref,
         project_owner_user_uuid=project_owner_user_uuid,
     )
+    notes_ask_profile_emit(
+        "prepare_legacy_context_ms",
+        (time.perf_counter() - _t_leg) * 1000.0,
+        note_ids_n=len(note_ids),
+    )
+    return legacy_out
 
 
 _HINTS_SYSTEM = (

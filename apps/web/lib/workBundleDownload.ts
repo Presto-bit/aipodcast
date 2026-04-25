@@ -1,5 +1,7 @@
 import JSZip from "jszip";
+import { normalizeHexForMp3 } from "./audioHex";
 import { getBearerAuthHeadersSync } from "./authHeaders";
+import { coerceJobResult } from "./coerceJobResult";
 import { resolveJobScriptBodyText } from "./jobScriptText";
 
 export type JobBundleExportOptions = {
@@ -29,8 +31,8 @@ export function sanitizeFolderName(title: string): string {
 }
 
 function hexToUint8Array(hex: string): Uint8Array {
-  const c = hex.trim();
-  if (!c || c.length % 2 !== 0) return new Uint8Array();
+  const c = normalizeHexForMp3(hex);
+  if (!c || c.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(c)) return new Uint8Array();
   const out = new Uint8Array(c.length / 2);
   for (let i = 0; i < out.length; i++) {
     out[i] = parseInt(c.slice(i * 2, i * 2 + 2), 16);
@@ -266,7 +268,7 @@ async function loadJobManuscriptParts(jobId: string): Promise<{
   parts: ManuscriptParts;
 }> {
   const authHdr = getBearerAuthHeadersSync();
-  const res = await fetch(`/api/jobs/${jobId}`, {
+  const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
     cache: "no-store",
     credentials: "same-origin",
     headers: { ...authHdr }
@@ -276,11 +278,11 @@ async function loadJobManuscriptParts(jobId: string): Promise<{
     const detail = (row as { detail?: string }).detail;
     throw new Error(detail || `HTTP ${res.status}`);
   }
-  const result = (row.result || {}) as Record<string, unknown>;
+  const result = coerceJobResult(row.result);
   const scriptBody = await resolveJobScriptBodyText(jobId, row, authHdr);
   const introT = String(result.tts_intro_text || "").trim();
   const outroT = String(result.tts_outro_text || "").trim();
-  const hex = String(result.audio_hex || "").trim();
+  const hex = normalizeHexForMp3(String(result.audio_hex || ""));
   return { authHdr, result, hex, parts: { introT, scriptBody, outroT } };
 }
 

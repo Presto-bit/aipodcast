@@ -11,6 +11,7 @@ import {
   type ReactNode
 } from "react";
 import { hexToMp3DataUrl } from "./audioHex";
+import { coerceJobResult } from "./coerceJobResult";
 import { useAuth } from "./auth";
 import { APP_SIDEBAR_COLLAPSED_KEY, APP_SIDEBAR_COLLAPSE_EVENT, APP_SIDEBAR_TOGGLE_EVENT } from "./appSidebarCollapse";
 import { readLocalStorageScoped } from "./userScopedStorage";
@@ -306,7 +307,10 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         console.warn(`${WORK_AUDIO_LOG} ensureSrc:template_listen_no_url`, { jobId });
         return null;
       }
-      const res = await fetch(`/api/jobs/${jobId}`, { cache: "no-store", headers: { ...getAuthHeaders() } });
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+        cache: "no-store",
+        headers: { ...getAuthHeaders() }
+      });
       const row = (await res.json().catch(() => ({}))) as Record<string, unknown> & { detail?: string };
       if (!res.ok) {
         console.warn(`${WORK_AUDIO_LOG} ensureSrc:job_fetch_failed`, {
@@ -316,7 +320,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         });
         return null;
       }
-      const result = (row.result || {}) as Record<string, unknown>;
+      const result = coerceJobResult(row.result);
       const hex = String(result.audio_hex || "").trim();
       if (hex) {
         const url = hexToMp3DataUrl(hex);

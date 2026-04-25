@@ -20,6 +20,27 @@ export type NotesAskClientLogEntry = {
 const MAX = 160;
 const buffer: NotesAskClientLogEntry[] = [];
 
+type NotesAskClientLogListener = (entry: NotesAskClientLogEntry) => void;
+const listeners = new Set<NotesAskClientLogListener>();
+
+/** 订阅新日志（仅客户端）；返回取消订阅函数 */
+export function subscribeNotesAskClientLog(fn: NotesAskClientLogListener): () => void {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+}
+
+function notifyListeners(entry: NotesAskClientLogEntry): void {
+  for (const fn of listeners) {
+    try {
+      fn(entry);
+    } catch {
+      // 避免面板回调抛错影响主流程
+    }
+  }
+}
+
 function truncateStr(s: string, max: number): string {
   if (s.length <= max) return s;
   return `${s.slice(0, max)}…(truncated,len=${s.length})`;
@@ -94,6 +115,7 @@ export function notesAskClientLog(
   };
   buffer.push(entry);
   if (buffer.length > MAX) buffer.splice(0, buffer.length - MAX);
+  notifyListeners(entry);
 
   const w = window as unknown as {
     __FYM_NOTES_ASK_LOG__?: NotesAskClientLogEntry[];

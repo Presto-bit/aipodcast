@@ -13,17 +13,12 @@ logger = logging.getLogger(__name__)
 
 _PUBLIC_JOB_TYPES = frozenset({"podcast", "podcast_generate"})
 
-# 「我的作品」内联播放：已登录且为任务所有者；含 TTS / 笔记本出稿等带成片音频的类型（与列表 job_type 一致）
-_OWNER_MY_WORK_LISTEN_TYPES = frozenset(
+# 「我的作品」试听：排除明显无成片音频的内部任务；其余只要 result 里可签发/可回退直链即允许（避免新 job_type 漏进白名单导致 404）
+_OWNER_WORK_LISTEN_DENY_TYPES = frozenset(
     {
-        "podcast",
-        "podcast_generate",
-        "podcast_short_video",
-        "text_to_speech",
-        "tts",
-        "script_draft",
-        "note_podcast_script",
-        "polish_tts_text",
+        "note_rag_index",
+        "auth_register",
+        "auth_login",
     }
 )
 
@@ -38,6 +33,11 @@ def _coerce_result(raw: Any) -> dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return {}
+
+
+def _result_has_streamable_audio_refs(result: dict[str, Any]) -> bool:
+    """work-listen 仅返回 URL：需 object key 或可回退的 audio_url。"""
+    return bool(str(result.get("audio_object_key") or "").strip() or str(result.get("audio_url") or "").strip())
 
 
 def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
@@ -210,10 +210,12 @@ def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[st
     if str(row.get("status") or "").strip().lower() != "succeeded":
         return None
     jt = str(row.get("job_type") or "").strip().lower()
-    if jt not in _OWNER_MY_WORK_LISTEN_TYPES:
+    if jt in _OWNER_WORK_LISTEN_DENY_TYPES:
         return None
 
     result = _coerce_result(row.get("result"))
+    if not _result_has_streamable_audio_refs(result):
+        return None
     key = str(result.get("audio_object_key") or "").strip()
     legacy_url = str(result.get("audio_url") or "").strip()
     audio_url = ""

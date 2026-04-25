@@ -1,3 +1,5 @@
+import { coerceJobResult } from "./coerceJobResult";
+
 type JobArtifactRow = { id?: string | number; artifact_type?: string };
 
 /** 列表/部分任务在 result 里只有约 240 字的 preview；高于此阈值视为 result.script_text 已是全文。 */
@@ -11,7 +13,7 @@ export async function resolveJobScriptBodyText(
   row: Record<string, unknown>,
   authHdr: Record<string, string>
 ): Promise<string> {
-  const result = (row.result || {}) as Record<string, unknown>;
+  const result = coerceJobResult(row.result);
   const fromResult = String(result.script_text || "").trim();
   if (fromResult.length >= SCRIPT_TEXT_LIKELY_FULL_MIN_LEN) {
     return fromResult;

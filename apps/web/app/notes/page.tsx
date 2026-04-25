@@ -69,6 +69,7 @@ import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShor
 import { normalizeNotesAskSources, type NotesAskSource } from "../../lib/notesAskCitation";
 import { loadNotesAskChat, saveNotesAskChat } from "../../lib/notesAskChatStorage";
 import { notesAskClientLog } from "../../lib/notesAskClientLog";
+import { NotesAskRunLogPanel } from "../../components/notes/NotesAskRunLogPanel";
 import {
   accountKeyFromUser,
   readLocalStorageScoped,
@@ -955,6 +956,7 @@ export default function NotesPage() {
             noteIds: ids,
             url: notesAskBffUrl("/api/notes/ask/hints")
           });
+          const hintsT0 = typeof performance !== "undefined" ? performance.now() : Date.now();
           const res = await fetch(notesAskBffUrl("/api/notes/ask/hints"), {
             method: "POST",
             credentials: notesAskFetchCredentials(),
@@ -966,6 +968,14 @@ export default function NotesPage() {
               ...getAuthHeaders()
             },
             body: JSON.stringify(body)
+          });
+          const hintsFetchMs = Math.round(
+            (typeof performance !== "undefined" ? performance.now() : Date.now()) - hintsT0
+          );
+          notesAskClientLog("info", "hints", "fetch_resolved", {
+            requestId: hintsRid,
+            httpStatus: res.status,
+            ms: hintsFetchMs
           });
           const rawText = await res.text();
           let data = {} as {
@@ -982,6 +992,14 @@ export default function NotesPage() {
               data = {};
             }
           }
+          notesAskClientLog("info", "hints", "response_body_read", {
+            requestId: res.headers.get("x-request-id")?.trim() || hintsRid,
+            httpStatus: res.status,
+            bodyChars: rawText.length,
+            totalMsSinceHintsStart: Math.round(
+              (typeof performance !== "undefined" ? performance.now() : Date.now()) - hintsT0
+            )
+          });
           if (!res.ok || !data.success) {
             const fallback =
               rawText.trim().slice(0, 400) ||
@@ -2514,6 +2532,7 @@ export default function NotesPage() {
       url: notesAskBffUrl("/api/notes/ask/stream")
     });
     try {
+      const streamT0 = typeof performance !== "undefined" ? performance.now() : Date.now();
       const res = await fetch(notesAskBffUrl("/api/notes/ask/stream"), {
         method: "POST",
         credentials: notesAskFetchCredentials(),
@@ -2528,6 +2547,14 @@ export default function NotesPage() {
           question: q,
           ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {})
         })
+      });
+      const streamFetchMs = Math.round(
+        (typeof performance !== "undefined" ? performance.now() : Date.now()) - streamT0
+      );
+      notesAskClientLog("info", "stream", "fetch_resolved", {
+        requestId: streamRid,
+        httpStatus: res.status,
+        ms: streamFetchMs
       });
       if (!res.ok) {
         const rawText = await res.text();
@@ -3948,6 +3975,7 @@ export default function NotesPage() {
                     </div>
                   )}
                 </div>
+                <NotesAskRunLogPanel />
                 <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch">
                   <button
                     type="button"

@@ -1,6 +1,13 @@
+/** 去掉空白、可选 0x 前缀，便于数据库存储或复制粘贴带来的格式差异。 */
+export function normalizeHexForMp3(hex: string): string {
+  let s = (hex || "").trim();
+  if (s.startsWith("0x") || s.startsWith("0X")) s = s.slice(2);
+  return s.replace(/\s+/g, "");
+}
+
 /** MP3 hex string (from orchestrator jobs) → data URL for <audio>. */
 export function hexToMp3DataUrl(hex: string): string {
-  const clean = (hex || "").trim();
+  const clean = normalizeHexForMp3(hex);
   if (!clean || clean.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(clean)) return "";
   const byteLen = clean.length / 2;
   const bytes = new Uint8Array(byteLen);
