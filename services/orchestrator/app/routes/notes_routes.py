@@ -582,11 +582,25 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
         project_owner = owner_sid
 
     rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
+    req_t0 = time.perf_counter()
+    _notes_startup_logger.info(
+        "notes_ask_stage stage=request_received request_id=%s notebook=%s note_count=%s question_len=%s",
+        rid,
+        body.notebook.strip(),
+        len(body.note_ids or []),
+        len((body.question or "").strip()),
+    )
 
     def gen():
         # SSE 注释行：尽快向客户端/代理刷出首包，避免把整段 RAG 耗时算进「等响应头」
         yield ": stream-open\n\n"
+        _notes_startup_logger.info(
+            "notes_ask_stage stage=sse_opened request_id=%s elapsed_ms=%.1f",
+            rid,
+            (time.perf_counter() - req_t0) * 1000.0,
+        )
         try:
+            prep_t0 = time.perf_counter()
             prepared = _prepare_notes_ask_messages(
                 notebook=body.notebook.strip(),
                 note_ids=body.note_ids,
@@ -594,13 +608,26 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 user_ref=user_ref,
                 project_owner_user_uuid=project_owner,
             )
+            _notes_startup_logger.info(
+                "notes_ask_stage stage=context_ready request_id=%s elapsed_ms=%.1f context_ms=%.1f",
+                rid,
+                (time.perf_counter() - req_t0) * 1000.0,
+                (time.perf_counter() - prep_t0) * 1000.0,
+            )
         except ValueError as e:
             msg = str(e)
+            _notes_startup_logger.warning(
+                "notes_ask_stage stage=validation_error request_id=%s elapsed_ms=%.1f code=%s",
+                rid,
+                (time.perf_counter() - req_t0) * 1000.0,
+                msg,
+            )
             ev = notes_ask_value_error_sse_event(msg)
             if rid:
                 ev["requestId"] = rid
             yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
             return
+        saw_first_chunk = False
         for ev in iter_notes_answer_events(
             notebook=body.notebook.strip(),
             note_ids=body.note_ids,
@@ -610,6 +637,27 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             project_owner_user_uuid=project_owner,
             request_id=rid,
         ):
+            ev_type = str(ev.get("type") or "").strip()
+            if ev_type == "chunk" and not saw_first_chunk:
+                saw_first_chunk = True
+                _notes_startup_logger.info(
+                    "notes_ask_stage stage=first_chunk_out request_id=%s elapsed_ms=%.1f",
+                    rid,
+                    (time.perf_counter() - req_t0) * 1000.0,
+                )
+            elif ev_type == "done":
+                _notes_startup_logger.info(
+                    "notes_ask_stage stage=stream_done request_id=%s elapsed_ms=%.1f",
+                    rid,
+                    (time.perf_counter() - req_t0) * 1000.0,
+                )
+            elif ev_type == "error":
+                _notes_startup_logger.warning(
+                    "notes_ask_stage stage=stream_error_event request_id=%s elapsed_ms=%.1f code=%s",
+                    rid,
+                    (time.perf_counter() - req_t0) * 1000.0,
+                    str(ev.get("code") or "").strip() or "unknown",
+                )
             yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

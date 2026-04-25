@@ -273,6 +273,12 @@ def iter_notes_answer_events(
     acc: list[str] = []
     try:
         _t_llm = time.perf_counter()
+        rid = (request_id or "").strip() or "-"
+        logger.info(
+            "notes_ask_stage stage=llm_request_start request_id=%s message_count=%s",
+            rid,
+            len(messages),
+        )
         saw_visible = False
         for piece in invoke_llm_chat_messages_stream_iter(
             messages,
@@ -283,17 +289,30 @@ def iter_notes_answer_events(
             vis = _notes_ask_sanitize_visible_text(piece)
             if vis:
                 if not saw_visible:
+                    ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
                     notes_ask_profile_emit(
                         "stream_llm_ttft_ms",
-                        (time.perf_counter() - _t_llm) * 1000.0,
+                        ttft_ms,
+                    )
+                    logger.info(
+                        "notes_ask_stage stage=llm_first_token request_id=%s elapsed_ms=%.1f",
+                        rid,
+                        ttft_ms,
                     )
                     saw_visible = True
                 acc.append(vis)
                 yield {"type": "chunk", "text": vis}
+        llm_total_ms = (time.perf_counter() - _t_llm) * 1000.0
         notes_ask_profile_emit(
             "stream_llm_total_ms",
-            (time.perf_counter() - _t_llm) * 1000.0,
+            llm_total_ms,
             visible_chars=len("".join(acc)),
+        )
+        logger.info(
+            "notes_ask_stage stage=llm_stream_done request_id=%s elapsed_ms=%.1f visible_chars=%s",
+            rid,
+            llm_total_ms,
+            len("".join(acc)),
         )
         full = _notes_ask_sanitize_visible_text("".join(acc)).strip()
         if not full:
