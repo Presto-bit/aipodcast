@@ -585,10 +585,12 @@ def retrieve_chunks_across_notes(
     query: str,
     max_chars: int,
     top_k: int = 32,
+    notes_ask_fast_path: bool = False,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """对已索引块：先轻量读块文本 → 关键词粗排 → 仅对候选批量取向量 → 多子查询向量 max-pool → 重排 → Top-K。
 
     历史上「先全量 SELECT embedding」会在块数多时严重拖慢首包（与单篇笔记字数无直接关系）。
+    `notes_ask_fast_path`：知识库向资料提问专用，默认单查询嵌入、较小 rerank 池、仅用本地 hybrid 重排（跳过 Cohere HTTP）。
     """
     _t_total = time.perf_counter()
     q = (query or "").strip()
@@ -638,7 +640,9 @@ def retrieve_chunks_across_notes(
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
         ep = EmbeddingProvider()
-        if _multi_query_enabled():
+        if notes_ask_fast_path:
+            subqs = [q]
+        elif _multi_query_enabled():
             subqs = decompose_retrieval_queries(q, max_queries=_max_subqueries())
         else:
             subqs = [q]
@@ -747,17 +751,27 @@ def retrieve_chunks_across_notes(
 
     scored.sort(key=lambda x: -x[0])
     try:
-        pool_n = min(
-            len(scored),
-            max(top_k * 2, int(os.getenv("NOTE_RAG_RERANK_POOL", "96") or "96")),
-        )
+        pool_default = int(os.getenv("NOTE_RAG_RERANK_POOL", "96") or "96")
+    except (TypeError, ValueError):
+        pool_default = 96
+    if notes_ask_fast_path:
+        pool_default = min(pool_default, 64)
+    try:
+        pool_n = min(len(scored), max(top_k * 2, pool_default))
     except (TypeError, ValueError):
         pool_n = min(len(scored), max(top_k * 2, 96))
     head = scored[:pool_n]
     tail = scored[pool_n:]
-    from app.fyv_shared.rerank_provider import rerank_retrieval_candidates
+    if notes_ask_fast_path:
+        from app.fyv_shared.rerank_provider import hybrid_lexical_rerank, _hybrid_weights
 
-    head_rr, rerank_mode = rerank_retrieval_candidates(q, head)
+        w_v, w_k = _hybrid_weights()
+        head_rr = hybrid_lexical_rerank(q, head, w_v=w_v, w_k=w_k)
+        rerank_mode = "hybrid_notes_ask_fast"
+    else:
+        from app.fyv_shared.rerank_provider import rerank_retrieval_candidates
+
+        head_rr, rerank_mode = rerank_retrieval_candidates(q, head)
     mmr_applied = False
     if _note_rag_mmr_enabled() and head_rr and qvs:
         try:
@@ -786,6 +800,7 @@ def retrieve_chunks_across_notes(
     _t_fmt = time.perf_counter()
 
     obs: dict[str, Any] = {
+        "notes_ask_fast_path": notes_ask_fast_path,
         "embedding_backend": emb_backend,
         "multi_query_embedded": len(uniq),
         "keyword_pref_cap": pref_cap,
@@ -901,6 +916,9 @@ def build_layered_notes_context(
     """
     若勾选范围内无任何索引块，返回 (None, [], meta) 表示应回退旧逻辑。
     否则返回 (context, sources, meta)。
+
+    检索侧默认启用 `NOTES_ASK_RETRIEVAL_FAST=1`（见 `retrieve_chunks_across_notes` 的 notes_ask_fast_path）：
+    单查询嵌入、较小 rerank 池、仅 hybrid 重排以缩短总耗时；设为 0/false/no 则与脚本参考等路径一致走完整重排。
     """
     meta: dict[str, Any] = {"layered": True, "chunks_indexed": 0}
     _t_layer = time.perf_counter()
@@ -963,11 +981,13 @@ def build_layered_notes_context(
         summary_chars=len(sum_part),
     )
     _t_retr = time.perf_counter()
+    _ask_fast = (os.getenv("NOTES_ASK_RETRIEVAL_FAST", "1") or "").strip().lower() not in ("0", "false", "no")
     retr, retr_meta, retrieve_obs = retrieve_chunks_across_notes(
         note_ids=ordered,
         query=query,
         max_chars=retrieval_budget,
         top_k=top_k,
+        notes_ask_fast_path=_ask_fast,
     )
     notes_ask_profile_emit(
         "layered_retrieve_ms",

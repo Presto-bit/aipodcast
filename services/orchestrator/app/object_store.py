@@ -1,8 +1,61 @@
+from __future__ import annotations
+
 import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
+from typing import Any
+from urllib.parse import unquote, urlparse
 
 from .config import settings
+
+
+def object_key_from_storage_http_url(url: str) -> str | None:
+    """
+    从 path-style 对象 URL 解析出 S3 Key（与 settings.object_bucket 一致的前缀）。
+    用于修复误持久化的内网 MinIO 直链（如 http://minio:9000/aipodcast-artifacts/jobs/u/...），
+    浏览器无法访问该 Host，但编排器可用解析出的 key 经 get_object / 预签名对外提供。
+    """
+    u = (url or "").strip()
+    if not u.startswith(("http://", "https://")):
+        return None
+    try:
+        parsed = urlparse(u)
+    except Exception:
+        return None
+    path = unquote((parsed.path or "").strip())
+    if not path.startswith("/"):
+        return None
+    rest = path.lstrip("/")
+    b = (settings.object_bucket or "").strip()
+    if not b or not rest.startswith(b + "/"):
+        return None
+    key = rest[len(b) :].lstrip("/")
+    return key or None
+
+
+def resolve_job_audio_object_key_from_result(result: dict[str, Any]) -> str:
+    """优先 result.audio_object_key；否则从误存的 path-style audio_url 推断。"""
+    k = str(result.get("audio_object_key") or "").strip()
+    if k:
+        return k
+    inferred = object_key_from_storage_http_url(str(result.get("audio_url") or ""))
+    return (inferred or "").strip()
+
+
+def is_likely_internal_object_store_http_url(url: str) -> bool:
+    """浏览器无法直接访问的内网/集群对象存储 Host（与预签名公网 URL 区分）。"""
+    u = (url or "").strip()
+    if not u.startswith(("http://", "https://")):
+        return False
+    try:
+        host = (urlparse(u).hostname or "").lower()
+    except Exception:
+        return False
+    if host in ("minio", "localhost", "127.0.0.1", "::1"):
+        return True
+    if host.endswith(".svc.cluster.local"):
+        return True
+    return False
 
 
 def _s3():

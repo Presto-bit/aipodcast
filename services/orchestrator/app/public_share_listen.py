@@ -7,7 +7,11 @@ import logging
 from typing import Any
 
 from .models import get_job
-from .object_store import presigned_get_url
+from .object_store import (
+    is_likely_internal_object_store_http_url,
+    presigned_get_url,
+    resolve_job_audio_object_key_from_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +64,7 @@ def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
         return None
 
     result = _coerce_result(row.get("result"))
-    key = str(result.get("audio_object_key") or "").strip()
+    key = resolve_job_audio_object_key_from_result(result)
     legacy_url = str(result.get("audio_url") or "").strip()
     audio_url = legacy_url
     if key:
@@ -71,6 +75,8 @@ def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
         except Exception:
             logger.warning("public_share_listen presign failed job_id=%s", jid, exc_info=True)
     if not audio_url:
+        return None
+    if is_likely_internal_object_store_http_url(audio_url):
         return None
 
     title = str(result.get("title") or "").strip()
@@ -141,7 +147,7 @@ def build_podcast_template_listen_bundle(job_id: str) -> dict[str, Any] | None:
     if jt not in _PUBLIC_JOB_TYPES:
         return None
     result = _coerce_result(row.get("result"))
-    key = str(result.get("audio_object_key") or "").strip()
+    key = resolve_job_audio_object_key_from_result(result)
     legacy_url = str(result.get("audio_url") or "").strip()
     audio_url = legacy_url
     if key:
@@ -152,6 +158,8 @@ def build_podcast_template_listen_bundle(job_id: str) -> dict[str, Any] | None:
         except Exception:
             logger.warning("podcast_template_listen presign failed job_id=%s", jid, exc_info=True)
     if not audio_url:
+        return None
+    if is_likely_internal_object_store_http_url(audio_url):
         return None
     title = str(result.get("title") or "").strip()
     if not title:
@@ -216,7 +224,7 @@ def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[st
     result = _coerce_result(row.get("result"))
     if not _result_has_streamable_audio_refs(result):
         return None
-    key = str(result.get("audio_object_key") or "").strip()
+    key = resolve_job_audio_object_key_from_result(result)
     legacy_url = str(result.get("audio_url") or "").strip()
     audio_url = ""
     if key:
@@ -228,6 +236,8 @@ def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[st
     if not audio_url:
         audio_url = legacy_url
     if not audio_url:
+        return None
+    if is_likely_internal_object_store_http_url(audio_url):
         return None
 
     title = str(result.get("title") or "").strip()

@@ -92,6 +92,64 @@ function apiErrorSnippet(row: Record<string, unknown>, maxLen = 200): string {
   return s ? s.slice(0, maxLen) : "";
 }
 
+function jsonTopKeys(obj: Record<string, unknown>, max = 32): string[] {
+  try {
+    return Object.keys(obj).slice(0, max);
+  } catch {
+    return [];
+  }
+}
+
+/** 作品播放排障：result 内与音频相关的字段摘要（不含大段 hex） */
+function resultAudioDebugSummary(result: Record<string, unknown>): Record<string, unknown> {
+  const hex = String(result.audio_hex || "").trim();
+  const aurl = String(result.audio_url || "").trim();
+  const akey = String(result.audio_object_key || "").trim();
+  let audioUrlHost = "";
+  try {
+    if (aurl.startsWith("http")) {
+      audioUrlHost = new URL(aurl, typeof window !== "undefined" ? window.location.href : "http://localhost/").hostname;
+    } else if (aurl.startsWith("data:")) {
+      audioUrlHost = "(data_url)";
+    } else if (aurl.startsWith("blob:")) {
+      audioUrlHost = "(blob_url)";
+    } else if (aurl) {
+      audioUrlHost = "(relative_or_opaque)";
+    }
+  } catch {
+    audioUrlHost = "(url_parse_error)";
+  }
+  return {
+    has_audio_hex: hex.length > 0,
+    audio_hex_len: hex.length,
+    has_audio_url: aurl.length > 0,
+    audio_url_host: audioUrlHost || "(empty)",
+    audio_url_summary: summarizeAudioSrcForLog(aurl),
+    has_audio_object_key: akey.length > 0,
+    audio_object_key_tail: akey.length > 56 ? `…${akey.slice(-56)}` : akey || "(empty)",
+    audio_duration_sec: result.audio_duration_sec
+  };
+}
+
+function jobRowDebugSummary(row: Record<string, unknown>): Record<string, unknown> {
+  const r = coerceJobResult(row.result);
+  return {
+    job_status: String(row.status ?? ""),
+    job_type: String(row.job_type ?? ""),
+    row_json_keys: jsonTopKeys(row),
+    result_json_keys: jsonTopKeys(r),
+    audio_hints: resultAudioDebugSummary(r)
+  };
+}
+
+/** DevTools 过滤：`[fym:work-audio]`；与首参字符串同一行便于检索 */
+function logWorkAudioPlay(stage: string, payload: Record<string, unknown>): void {
+  console.warn(`${WORK_AUDIO_LOG} ${stage}`, {
+    ts: new Date().toISOString(),
+    ...payload
+  });
+}
+
 type EnsureSrcOutcome = { ok: true; url: string } | { ok: false; reason: string };
 
 export type WorkAudioToggleMeta = {
@@ -219,11 +277,32 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
     if (remote.origin === window.location.origin) return directUrl;
     try {
       const r = await fetch(remote.toString(), { mode: "cors", credentials: "omit", cache: "no-store" });
-      if (!r.ok) return directUrl;
+      if (!r.ok) {
+        logWorkAudioPlay("wrapRemoteAudio_fetch_non_ok", {
+          jobId,
+          httpStatus: r.status,
+          responseContentType: r.headers.get("content-type"),
+          url: summarizeAudioSrcForLog(remote.toString())
+        });
+        return directUrl;
+      }
       const blob = await r.blob();
-      if (!blob?.size) return directUrl;
+      if (!blob?.size) {
+        logWorkAudioPlay("wrapRemoteAudio_empty_blob", {
+          jobId,
+          url: summarizeAudioSrcForLog(remote.toString()),
+          reportedBlobType: blob?.type
+        });
+        return directUrl;
+      }
       const ct = (blob.type || "").toLowerCase();
       if (ct.includes("text/html") || ct.includes("application/json") || ct.includes("xml")) {
+        logWorkAudioPlay("wrapRemoteAudio_blob_not_audio", {
+          jobId,
+          blobType: blob.type,
+          blobSize: blob.size,
+          url: summarizeAudioSrcForLog(remote.toString())
+        });
         return directUrl;
       }
       const prev = blobUrlByJobId.current[jobId];
@@ -237,7 +316,12 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       const obj = URL.createObjectURL(blob);
       blobUrlByJobId.current[jobId] = obj;
       return obj;
-    } catch {
+    } catch (e) {
+      logWorkAudioPlay("wrapRemoteAudio_fetch_threw", {
+        jobId,
+        message: e instanceof Error ? e.message : String(e),
+        url: summarizeAudioSrcForLog(remote.toString())
+      });
       return directUrl;
     }
   }, []);
@@ -319,9 +403,11 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         };
         if (!res.ok || data.success === false) {
           const snip = apiErrorSnippet(data);
-          console.warn(`${WORK_AUDIO_LOG} ensureSrc:template_listen_failed`, {
+          logWorkAudioPlay("ensureSrc:template_listen_failed", {
             jobId,
             httpStatus: res.status,
+            responseContentType: res.headers.get("content-type"),
+            response_json_keys: jsonTopKeys(data),
             success: data.success,
             snippet: snip || undefined
           });
@@ -335,7 +421,12 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           srcCache.current[jobId] = audioUrl;
           return { ok: true, url: audioUrl };
         }
-        console.warn(`${WORK_AUDIO_LOG} ensureSrc:template_listen_no_url`, { jobId });
+        logWorkAudioPlay("ensureSrc:template_listen_no_url", {
+          jobId,
+          httpStatus: res.status,
+          response_json_keys: jsonTopKeys(data),
+          audio_url_len: String(data.audio_url || "").trim().length
+        });
         return { ok: false, reason: "模板试听接口未返回音频地址，请稍后重试。" };
       }
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
@@ -345,10 +436,12 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       const row = (await res.json().catch(() => ({}))) as Record<string, unknown> & { detail?: string };
       if (!res.ok) {
         const snip = apiErrorSnippet(row);
-        console.warn(`${WORK_AUDIO_LOG} ensureSrc:job_fetch_failed`, {
+        logWorkAudioPlay("ensureSrc:job_fetch_failed", {
           jobId,
           httpStatus: res.status,
-          detail: snip || undefined
+          responseContentType: res.headers.get("content-type"),
+          response_json_keys: jsonTopKeys(row),
+          snippet: snip || undefined
         });
         return {
           ok: false,
@@ -363,9 +456,10 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           srcCache.current[jobId] = url;
           return { ok: true, url };
         }
-        console.warn(`${WORK_AUDIO_LOG} ensureSrc:hex_present_but_invalid_data_url`, {
+        logWorkAudioPlay("ensureSrc:hex_present_but_invalid_data_url", {
           jobId,
-          hexLen: hex.length
+          hexLen: hex.length,
+          job_row: jobRowDebugSummary(row)
         });
         return {
           ok: false,
@@ -385,9 +479,13 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           srcCache.current[jobId] = playable;
           return { ok: true, url: playable };
         }
-        console.warn(`${WORK_AUDIO_LOG} ensureSrc:work_listen_url_unusable`, {
+        logWorkAudioPlay("ensureSrc:work_listen_url_unusable", {
           jobId,
-          afterWrap: summarizeAudioSrcForLog(fresh)
+          work_listen_http: lr.status,
+          listen_json_keys: jsonTopKeys(lj),
+          raw_listen_url: summarizeAudioSrcForLog(fresh),
+          afterWrap: summarizeAudioSrcForLog(fresh),
+          job_row: jobRowDebugSummary(row)
         });
         return {
           ok: false,
@@ -395,12 +493,16 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         };
       }
       if (!lr.ok || lj.success === false || !fresh) {
-        console.warn(`${WORK_AUDIO_LOG} ensureSrc:work_listen_skipped_or_empty`, {
+        logWorkAudioPlay("ensureSrc:work_listen_skipped_or_empty", {
           jobId,
           httpStatus: lr.status,
+          responseContentType: lr.headers.get("content-type"),
           ok: lr.ok,
           success: lj.success,
-          audioUrlLen: fresh.length
+          listen_json_keys: jsonTopKeys(lj),
+          listen_snippet: listenSnip || undefined,
+          audioUrlLen: fresh.length,
+          job_row: jobRowDebugSummary(row)
         });
       }
       const audioUrl = String(result.audio_url || "").trim();
@@ -410,23 +512,17 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           srcCache.current[jobId] = playable;
           return { ok: true, url: playable };
         }
-        console.warn(`${WORK_AUDIO_LOG} ensureSrc:result_audio_url_unusable`, {
+        logWorkAudioPlay("ensureSrc:result_audio_url_unusable", {
           jobId,
-          summarized: summarizeAudioSrcForLog(audioUrl)
+          summarized: summarizeAudioSrcForLog(audioUrl),
+          work_listen_http: lr.status,
+          job_row: jobRowDebugSummary(row)
         });
         return {
           ok: false,
           reason: `任务结果中的外链音频无法在浏览器中加载（链接可能过期或非 MP3）。摘要：${summarizeAudioSrcForLog(audioUrl)}`
         };
       }
-      console.warn(`${WORK_AUDIO_LOG} ensureSrc:no_playable_src`, {
-        jobId,
-        hadHex: Boolean(hex),
-        hexLen: hex.length,
-        resultAudioUrl: summarizeAudioSrcForLog(String(result.audio_url || "")),
-        workListenTried: true,
-        workListenStatus: lr.status
-      });
       const tailParts: string[] = [];
       tailParts.push("任务中无可用内嵌音频片段。");
       if (!lr.ok || lj.success === false || !fresh) {
@@ -436,7 +532,20 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       }
       tailParts.push(audioUrl ? "外链字段存在但未能拉取为可播放源。" : "无外链音频字段。");
       tailParts.push("请到作品详情确认是否已生成完成，或稍后重试。");
-      return { ok: false, reason: tailParts.join("") };
+      const joinedReason = tailParts.join("");
+      logWorkAudioPlay("ensureSrc:no_playable_src", {
+        jobId,
+        hadHex: Boolean(hex),
+        hexLen: hex.length,
+        resultAudioUrl: summarizeAudioSrcForLog(String(result.audio_url || "")),
+        workListenTried: true,
+        workListenStatus: lr.status,
+        listen_json_keys: jsonTopKeys(lj),
+        listen_snippet: listenSnip || undefined,
+        userFacingReason: joinedReason.slice(0, 500),
+        job_row: jobRowDebugSummary(row)
+      });
+      return { ok: false, reason: joinedReason };
     },
     [getAuthHeaders, wrapRemoteAudioAsBlobIfNeeded]
   );
@@ -463,27 +572,49 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
 
   const togglePlay = useCallback(
     async (jobId: string, meta: WorkAudioToggleMeta) => {
+      const title = String(meta.displayTitle || "").trim() || jobId;
       const el = audioRef.current;
       if (!el) {
+        logWorkAudioPlay("togglePlay:audio_element_missing", { jobId, displayTitle: title });
         setPlayError("播放器未就绪");
         return;
       }
       setPlayError(null);
-      const title = String(meta.displayTitle || "").trim() || jobId;
       const seekSec = meta.seekSeconds;
       const wantsSeek = seekSec != null && Number.isFinite(seekSec);
       if (activeJobId === jobId) {
         if (wantsSeek) {
           applySeekSeconds(el, seekSec as number);
-          void el.play().catch((err) =>
-            setPlayError(String(err instanceof Error ? err.message : err))
-          );
+          void el.play().catch((err) => {
+            const msg = String(err instanceof Error ? err.message : err);
+            logWorkAudioPlay("togglePlay:same_job_play_after_seek_rejected", {
+              jobId,
+              displayTitle: title,
+              message: msg,
+              errName: err instanceof Error ? err.name : typeof err,
+              seekSeconds: seekSec,
+              src: summarizeAudioSrcForLog(el.currentSrc || el.src),
+              audioReadyState: el.readyState,
+              audioNetworkState: el.networkState
+            });
+            setPlayError(msg);
+          });
           return;
         }
         if (el.paused) {
-          void el.play().catch((err) =>
-            setPlayError(String(err instanceof Error ? err.message : err))
-          );
+          void el.play().catch((err) => {
+            const msg = String(err instanceof Error ? err.message : err);
+            logWorkAudioPlay("togglePlay:same_job_resume_rejected", {
+              jobId,
+              displayTitle: title,
+              message: msg,
+              errName: err instanceof Error ? err.name : typeof err,
+              src: summarizeAudioSrcForLog(el.currentSrc || el.src),
+              audioReadyState: el.readyState,
+              audioNetworkState: el.networkState
+            });
+            setPlayError(msg);
+          });
         } else {
           el.pause();
         }
@@ -496,6 +627,12 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           usePodcastPublicTemplateListen: Boolean(meta.usePodcastPublicTemplateListen)
         });
         if (!ensured.ok) {
+          logWorkAudioPlay("togglePlay:ensure_src_failed", {
+            jobId,
+            displayTitle: title,
+            usePodcastPublicTemplateListen: Boolean(meta.usePodcastPublicTemplateListen),
+            userFacingReason: ensured.reason
+          });
           setPlayError(ensured.reason);
           return;
         }
@@ -507,10 +644,14 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         setProgress01(0);
         await el.play().catch((err) => {
           const msg = err instanceof Error ? err.message : "无法播放（浏览器策略或格式问题）";
-          console.warn(`${WORK_AUDIO_LOG} play() rejected`, {
+          logWorkAudioPlay("togglePlay:play_after_new_src_rejected", {
             jobId,
+            displayTitle: title,
             message: msg,
+            errName: err instanceof Error ? err.name : typeof err,
+            errStack: err instanceof Error ? err.stack?.slice(0, 600) : undefined,
             src: summarizeAudioSrcForLog(url),
+            assignedSrc: summarizeAudioSrcForLog(el.src || el.currentSrc),
             audioReadyState: el.readyState,
             audioNetworkState: el.networkState
           });
@@ -530,7 +671,14 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "加载音频失败";
-        console.warn(`${WORK_AUDIO_LOG} togglePlay:ensureSrc_threw`, { jobId, message: msg });
+        logWorkAudioPlay("togglePlay:ensure_src_threw", {
+          jobId,
+          displayTitle: title,
+          message: msg,
+          errName: e instanceof Error ? e.name : typeof e,
+          errStack: e instanceof Error ? e.stack?.slice(0, 800) : undefined,
+          usePodcastPublicTemplateListen: Boolean(meta.usePodcastPublicTemplateListen)
+        });
         setPlayError(msg);
       } finally {
         setLoadingJobId(null);
@@ -548,10 +696,13 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
     if (!el || !activeJobId) return;
     void el.play().catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`${WORK_AUDIO_LOG} resume play() rejected`, {
+      logWorkAudioPlay("resume:play_rejected", {
         jobId: activeJobId,
         message: msg,
-        src: summarizeAudioSrcForLog(el.currentSrc || el.src)
+        errName: err instanceof Error ? err.name : typeof err,
+        src: summarizeAudioSrcForLog(el.currentSrc || el.src),
+        audioReadyState: el.readyState,
+        audioNetworkState: el.networkState
       });
       setPlayError(msg);
     });
@@ -633,14 +784,19 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           const src = el?.currentSrc || el?.src || "";
           const tech = `类型 ${mediaErrorCodeLabelZh(code)}（${mediaErrorCodeLabel(code)}）· networkState=${el?.networkState ?? "?"} · readyState=${el?.readyState ?? "?"}`;
           const srcHint = summarizeAudioSrcForLog(src);
-          console.warn(`${WORK_AUDIO_LOG} media_element_error`, {
+          logWorkAudioPlay("media_element:onError", {
             jobId: activeJobIdRef.current,
             mediaErrorCode: code,
             mediaErrorCodeLabel: mediaErrorCodeLabel(code),
+            mediaErrorCodeLabelZh: mediaErrorCodeLabelZh(code),
             mediaErrorMessage: me?.message || null,
             networkState: el?.networkState,
             readyState: el?.readyState,
-            src: srcHint
+            src: srcHint,
+            currentTime: el?.currentTime,
+            paused: el?.paused,
+            document_visibility: typeof document !== "undefined" ? document.visibilityState : undefined,
+            navigator_onLine: typeof navigator !== "undefined" ? navigator.onLine : undefined
           });
           if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED || code === MediaError.MEDIA_ERR_DECODE) {
             setPlayError(

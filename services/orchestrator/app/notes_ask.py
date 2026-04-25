@@ -379,8 +379,8 @@ def build_notes_qa_context(
             note_ids=note_ids,
             query=(question or "").strip(),
             user_ref=user_ref,
-            summary_budget=16_000,
-            retrieval_budget=40_000,
+            summary_budget=14_000,
+            retrieval_budget=36_000,
             top_k=_notes_ask_top_k(),
             project_owner_user_uuid=project_owner_user_uuid,
         )

@@ -321,17 +321,22 @@ def _extract_work_audio_and_cover(job_row: dict[str, Any]) -> tuple[str, str, in
         result = result_raw
     else:
         result = {}
-    audio_url = str(result.get("audio_url") or "").strip()
-    if not audio_url:
-        akey = str(result.get("audio_object_key") or "").strip()
-        if akey:
-            try:
-                from .object_store import presigned_get_url
+    from .object_store import (
+        is_likely_internal_object_store_http_url,
+        presigned_get_url,
+        resolve_job_audio_object_key_from_result,
+    )
 
-                audio_url = presigned_get_url(akey, expires_in=86400 * 7)
-            except Exception:
-                audio_url = ""
+    akey = resolve_job_audio_object_key_from_result(result)
+    audio_url = ""
+    if akey:
+        try:
+            audio_url = presigned_get_url(akey, expires_in=86400 * 7)
+        except Exception:
+            audio_url = ""
     if not audio_url:
+        audio_url = str(result.get("audio_url") or "").strip()
+    if not audio_url or is_likely_internal_object_store_http_url(audio_url):
         raise ValueError("work_audio_missing")
     cover = str(result.get("cover_image") or result.get("coverImage") or "").strip()
     dur_raw = result.get("audio_duration_sec")

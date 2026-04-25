@@ -55,7 +55,7 @@ from ..models import (
     wallet_balance_cents_for_phone,
 )
 from ..mp3_export import build_export_mp3
-from ..object_store import get_object_bytes, presigned_get_url, upload_bytes
+from ..object_store import get_object_bytes, presigned_get_url, resolve_job_audio_object_key_from_result, upload_bytes
 from ..rss_publish_store import user_download_allowed_for_succeeded_works, work_download_allowed
 from ..queue import ai_queue, media_queue, redis_conn
 from ..schemas import (
@@ -1149,7 +1149,7 @@ def export_job_audio_mp3_api(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="audio_hex_invalid") from exc
     else:
-        akey = str(result.get("audio_object_key") or "").strip()
+        akey = resolve_job_audio_object_key_from_result(result)
         if not akey:
             raise HTTPException(status_code=400, detail="work_audio_missing")
         try:
@@ -1215,7 +1215,7 @@ def distribution_pack_api(
         },
         "copy_markdown": _distribution_pack_markdown(result),
     }
-    akey = str(result.get("audio_object_key") or "").strip()
+    akey = resolve_job_audio_object_key_from_result(result)
     if akey:
         try:
             pack["urls"]["audio_mp3"] = {
