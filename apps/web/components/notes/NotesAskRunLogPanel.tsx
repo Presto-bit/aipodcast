@@ -37,6 +37,123 @@ function detailOneLine(d: Record<string, unknown> | undefined): string {
   }
 }
 
+type RunSummary = {
+  requestId: string;
+  startedAtIso: string;
+  startedAtMs: number;
+  status: "running" | "completed" | "incomplete" | "failed";
+  noteCount: number | null;
+  questionLen: number | null;
+  httpStatus: number | null;
+  ttfbMs: number | null;
+  ttfChunkMs: number | null;
+  streamMs: number | null;
+  totalMs: number | null;
+  chunkCount: number | null;
+  chunkChars: number | null;
+  lastEvent: string;
+};
+
+function asNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function asString(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+function briefMs(v: number | null): string {
+  if (v == null) return "—";
+  if (v < 1000) return `${v}ms`;
+  return `${(v / 1000).toFixed(2)}s`;
+}
+
+function levelByStatus(status: RunSummary["status"]): string {
+  if (status === "completed") return "text-success-ink";
+  if (status === "incomplete") return "text-amber-700 dark:text-amber-200";
+  if (status === "failed") return "text-danger-ink";
+  return "text-info-ink";
+}
+
+function labelByStatus(status: RunSummary["status"]): string {
+  if (status === "completed") return "已完成";
+  if (status === "incomplete") return "未完整结束";
+  if (status === "failed") return "失败";
+  return "进行中";
+}
+
+function buildRunSummaries(rows: NotesAskClientLogEntry[]): RunSummary[] {
+  const map = new Map<string, RunSummary>();
+  for (const e of rows) {
+    const rid = asString(e.detail?.requestId).trim();
+    if (!rid) continue;
+    const cur =
+      map.get(rid) ||
+      ({
+        requestId: rid,
+        startedAtIso: e.iso,
+        startedAtMs: e.t,
+        status: "running",
+        noteCount: null,
+        questionLen: null,
+        httpStatus: null,
+        ttfbMs: null,
+        ttfChunkMs: null,
+        streamMs: null,
+        totalMs: null,
+        chunkCount: null,
+        chunkChars: null,
+        lastEvent: e.event
+      } satisfies RunSummary);
+    if (e.t < cur.startedAtMs) {
+      cur.startedAtMs = e.t;
+      cur.startedAtIso = e.iso;
+    }
+    cur.lastEvent = e.event;
+    if (e.event === "request_start") {
+      cur.noteCount = asNumber(e.detail?.noteCount);
+      cur.questionLen = asNumber(e.detail?.questionLen);
+    } else if (e.event === "fetch_resolved") {
+      cur.httpStatus = asNumber(e.detail?.httpStatus);
+      cur.ttfbMs = asNumber(e.detail?.ms);
+    } else if (e.event === "first_chunk") {
+      cur.ttfChunkMs = asNumber(e.detail?.ttfChunkMs);
+    } else if (e.event === "sse_completed") {
+      cur.status = "completed";
+      cur.totalMs = asNumber(e.detail?.totalMs);
+      cur.streamMs = asNumber(e.detail?.streamMs);
+      cur.chunkCount = asNumber(e.detail?.chunkCount);
+      cur.chunkChars = asNumber(e.detail?.chunkChars);
+      const ttfb = asNumber(e.detail?.ttfbMs);
+      if (ttfb != null) cur.ttfbMs = ttfb;
+      const ttfChunk = asNumber(e.detail?.ttfChunkMs);
+      if (ttfChunk != null) cur.ttfChunkMs = ttfChunk;
+    } else if (e.event === "incomplete_no_done_event") {
+      cur.status = "incomplete";
+      cur.totalMs = asNumber(e.detail?.totalMs);
+      cur.chunkCount = asNumber(e.detail?.chunkCount);
+      cur.chunkChars = asNumber(e.detail?.chunkChars);
+    } else if (e.event === "request_failed") {
+      cur.status = "failed";
+    } else if (e.event === "request_finished") {
+      const st = asString(e.detail?.outcome);
+      if (st === "completed" || st === "incomplete" || st === "failed") cur.status = st;
+      const totalMs = asNumber(e.detail?.totalMs);
+      if (totalMs != null) cur.totalMs = totalMs;
+      const ttfbMs = asNumber(e.detail?.ttfbMs);
+      if (ttfbMs != null) cur.ttfbMs = ttfbMs;
+      const ttfChunkMs = asNumber(e.detail?.ttfChunkMs);
+      if (ttfChunkMs != null) cur.ttfChunkMs = ttfChunkMs;
+      const chunkCount = asNumber(e.detail?.chunkCount);
+      if (chunkCount != null) cur.chunkCount = chunkCount;
+      const chunkChars = asNumber(e.detail?.chunkChars);
+      if (chunkChars != null) cur.chunkChars = chunkChars;
+    }
+    map.set(rid, cur);
+  }
+  return [...map.values()].sort((a, b) => b.startedAtMs - a.startedAtMs);
+}
+
 export function NotesAskRunLogPanel() {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<NotesAskClientLogEntry[]>(() =>
@@ -84,6 +201,7 @@ export function NotesAskRunLogPanel() {
     const last = rows[n - 1]!;
     return `最近 ${n} 条 · 末条 ${last.event}`;
   }, [rows]);
+  const runs = useMemo(() => buildRunSummaries(rows), [rows]);
 
   return (
     <div className="shrink-0 rounded-xl border border-line/70 bg-fill/30 text-[11px] leading-snug">
@@ -125,6 +243,29 @@ export function NotesAskRunLogPanel() {
               {copied ? "已复制 JSON" : "复制全部 JSON"}
             </button>
             <span className="text-[10px] text-muted">控制台也可执行 __FYM_NOTES_ASK_LOG_EXPORT__()</span>
+          </div>
+          <div className="mb-2 max-h-40 space-y-1.5 overflow-y-auto rounded-lg border border-line/40 bg-surface/90 p-2 text-[10px]">
+            {runs.length === 0 ? (
+              <p className="text-muted">暂无请求汇总；发起提问后会按 requestId 展示各阶段耗时。</p>
+            ) : (
+              runs.slice(0, 10).map((run) => (
+                <div key={run.requestId} className="rounded-md border border-line/40 bg-fill/40 px-2 py-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-ink">{formatClock(run.startedAtIso)}</span>
+                    <span className={`font-medium ${levelByStatus(run.status)}`}>{labelByStatus(run.status)}</span>
+                  </div>
+                  <p className="mt-0.5 break-all text-muted">rid: {run.requestId}</p>
+                  <p className="mt-0.5 text-ink/90">
+                    TTFB {briefMs(run.ttfbMs)} · 首字 {briefMs(run.ttfChunkMs)} · 流式 {briefMs(run.streamMs)} · 总计{" "}
+                    {briefMs(run.totalMs)}
+                  </p>
+                  <p className="mt-0.5 text-muted">
+                    分块 {run.chunkCount ?? "—"} / 字符 {run.chunkChars ?? "—"} / HTTP {run.httpStatus ?? "—"} / 来源{" "}
+                    {run.noteCount ?? "—"} 条 / 问题 {run.questionLen ?? "—"} 字
+                  </p>
+                </div>
+              ))
+            )}
           </div>
           <div
             className="max-h-40 overflow-y-auto rounded-lg border border-line/40 bg-surface/90 px-2 py-1.5 font-mono text-[10px]"

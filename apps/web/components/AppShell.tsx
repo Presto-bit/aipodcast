@@ -214,16 +214,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     [t]
   );
   const navSubscription = useMemo<NavItem[]>(
-    () => [
-      {
-        href: "/subscription",
-        label: t("nav.subscribe"),
-        short: "余",
-        Icon: IconSubscription,
-        activeMatch: (p) => pathMatchesRoot(p, "/subscription")
-      }
-    ],
-    [t]
+    () =>
+      isAdmin
+        ? [
+            {
+              href: "/subscription",
+              label: t("nav.subscribe"),
+              short: "余",
+              Icon: IconSubscription,
+              activeMatch: (p) => pathMatchesRoot(p, "/subscription")
+            }
+          ]
+        : [],
+    [isAdmin, t]
   );
 
   useEffect(() => {

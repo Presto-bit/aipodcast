@@ -2336,8 +2336,14 @@ export default function NotesPage() {
       questionLen: q.length,
       url: notesAskBffUrl("/api/notes/ask/stream")
     });
+    const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+    const streamT0 = nowMs();
+    let firstChunkAt: number | null = null;
+    let chunkCount = 0;
+    let chunkChars = 0;
+    let streamFetchMs = 0;
+    let requestOutcome: "completed" | "failed" | "incomplete" = "failed";
     try {
-      const streamT0 = typeof performance !== "undefined" ? performance.now() : Date.now();
       const res = await fetch(notesAskBffUrl("/api/notes/ask/stream"), {
         method: "POST",
         credentials: notesAskFetchCredentials(),
@@ -2353,9 +2359,7 @@ export default function NotesPage() {
           ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {})
         })
       });
-      const streamFetchMs = Math.round(
-        (typeof performance !== "undefined" ? performance.now() : Date.now()) - streamT0
-      );
+      streamFetchMs = Math.round(nowMs() - streamT0);
       notesAskClientLog("info", "stream", "fetch_resolved", {
         requestId: streamRid,
         httpStatus: res.status,
@@ -2417,7 +2421,8 @@ export default function NotesPage() {
       }
       notesAskClientLog("info", "stream", "sse_opened", {
         requestId: res.headers.get("x-request-id")?.trim() || streamRid,
-        contentType: ct
+        contentType: ct,
+        ttfbMs: streamFetchMs
       });
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -2511,7 +2516,19 @@ export default function NotesPage() {
                 continue;
               }
               if (ev.type === "chunk") {
-                chunkPending += String(ev.text ?? "");
+                const chunkText = String(ev.text ?? "");
+                if (!chunkText) continue;
+                if (firstChunkAt == null) {
+                  firstChunkAt = nowMs();
+                  notesAskClientLog("info", "stream", "first_chunk", {
+                    requestId: streamRid,
+                    ttfChunkMs: Math.round(firstChunkAt - streamT0),
+                    ttfbMs: streamFetchMs
+                  });
+                }
+                chunkCount += 1;
+                chunkChars += chunkText.length;
+                chunkPending += chunkText;
                 if (chunkPending.length >= streamFlushCharThreshold()) {
                   clearChunkFlushTimer();
                   applyPendingChunks();
@@ -2522,6 +2539,12 @@ export default function NotesPage() {
                 flushChunksNow();
                 sawDone = true;
                 const doneSources = normalizeNotesAskSources(ev.sources);
+                notesAskClientLog("info", "stream", "done_event", {
+                  requestId: streamRid,
+                  chunkCount,
+                  chunkChars,
+                  doneMs: Math.round(nowMs() - streamT0)
+                });
                 setNotesAskMessages((prev) => {
                   const next = [...prev];
                   const idx = next.findIndex((m) => m.id === assistantId);
@@ -2565,8 +2588,12 @@ export default function NotesPage() {
       if (!sawDone) {
         notesAskClientLog("warn", "stream", "incomplete_no_done_event", {
           requestId: streamRid,
-          bufferTail: buffer.trim().slice(-500)
+          bufferTail: buffer.trim().slice(-500),
+          chunkCount,
+          chunkChars,
+          totalMs: Math.round(nowMs() - streamT0)
         });
+        requestOutcome = "incomplete";
         const incomplete =
           "流式回答未正常结束（连接中断或未收到完成事件），请检查网络后重试；若部署在云端，请确认网关与编排器超时时间足够长。";
         setNotesAskError(incomplete);
@@ -2583,9 +2610,19 @@ export default function NotesPage() {
           })
         );
       } else {
-        notesAskClientLog("info", "stream", "sse_completed", { requestId: streamRid });
+        requestOutcome = "completed";
+        notesAskClientLog("info", "stream", "sse_completed", {
+          requestId: streamRid,
+          totalMs: Math.round(nowMs() - streamT0),
+          ttfbMs: streamFetchMs,
+          ttfChunkMs: firstChunkAt == null ? null : Math.round(firstChunkAt - streamT0),
+          streamMs: firstChunkAt == null ? null : Math.round(nowMs() - firstChunkAt),
+          chunkCount,
+          chunkChars
+        });
       }
     } catch (err) {
+      requestOutcome = "failed";
       const msg = formatNotesAskStreamError(String(err instanceof Error ? err.message : err));
       notesAskClientLog("error", "stream", "request_failed", {
         requestId: streamRid,
@@ -2605,7 +2642,16 @@ export default function NotesPage() {
         return next;
       });
     } finally {
-      notesAskClientLog("debug", "stream", "request_finished", { requestId: streamRid });
+      const totalMs = Math.round(nowMs() - streamT0);
+      notesAskClientLog("debug", "stream", "request_finished", {
+        requestId: streamRid,
+        outcome: requestOutcome,
+        totalMs,
+        ttfbMs: streamFetchMs,
+        ttfChunkMs: firstChunkAt == null ? null : Math.round(firstChunkAt - streamT0),
+        chunkCount,
+        chunkChars
+      });
       setNotesAskBusy(false);
     }
   }
