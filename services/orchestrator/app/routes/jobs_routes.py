@@ -7,6 +7,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
+from urllib.parse import quote
 
 import psycopg2
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -1178,12 +1179,15 @@ def export_job_audio_mp3_api(
                 "audio_export_build_unexpected job_id=%s: %s", job_id, exc, exc_info=True
             )
             out_bytes = raw_mp3
-        safe_stub = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in title)[:48] or "episode"
+        # Header 值最终走 latin-1 编码；中文标题需放到 RFC5987 filename*，避免 UnicodeEncodeError。
+        safe_stub = "".join(ch if ch.isascii() and (ch.isalnum() or ch in ("-", "_")) else "_" for ch in title)
+        safe_stub = safe_stub[:48] or "episode"
         filename = f"{safe_stub}.mp3"
+        filename_star = quote((title or "episode").strip()[:120] or "episode", safe="")
         return Response(
             content=out_bytes,
             media_type="audio/mpeg",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{filename_star}.mp3"},
         )
     except HTTPException:
         raise
