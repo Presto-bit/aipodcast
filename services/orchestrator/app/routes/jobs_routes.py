@@ -58,6 +58,9 @@ from ..models import (
 from ..mp3_export import build_export_mp3
 from ..object_store import (
     get_object_bytes,
+    head_object_byte_length,
+    iter_object_byte_range,
+    iter_object_chunks,
     presigned_get_url,
     resolve_job_audio_object_key_from_result,
     strip_internal_object_store_http_url,
@@ -78,6 +81,7 @@ from ..public_share_listen import (
     build_public_share_listen_bundle,
     explain_owner_work_listen_miss,
     probe_episode_audio_object_key,
+    resolve_owner_work_listen_storage_key,
 )
 from ..share_publish_llm import (
     build_share_user_source_text,
@@ -703,9 +707,43 @@ def podcast_template_listen_api(job_id: str, request: Request):
     return JSONResponse(jsonable_encoder({"success": True, **bundle}))
 
 
+def _parse_http_bytes_range(range_header: str | None, total: int) -> tuple[int, int] | None:
+    """解析 Range: bytes=…；不支持多段；非法或 total<=0 时返回 None 表示整文件。"""
+    if not range_header or total <= 0:
+        return None
+    r = range_header.strip()
+    if not r.lower().startswith("bytes="):
+        return None
+    spec = r[6:].strip().split(",", 1)[0].strip()
+    if spec.startswith("-"):
+        try:
+            suffix = int(spec[1:])
+        except ValueError:
+            return None
+        if suffix <= 0:
+            return None
+        start = max(0, total - suffix)
+        return start, total - 1
+    if "-" not in spec:
+        return None
+    left, right = spec.split("-", 1)
+    try:
+        start = int(left) if left.strip() else 0
+    except ValueError:
+        return None
+    if right.strip():
+        try:
+            end = int(right)
+        except ValueError:
+            return None
+    else:
+        end = total - 1
+    return start, end
+
+
 @router.get("/jobs/{job_id}/work-listen")
 def owner_work_listen_api(job_id: str, request: Request):
-    """我的作品内联播放：归属校验后返回新鲜预签名 URL（object key 优先于 result 内旧 audio_url）。"""
+    """我的作品内联播放：归属校验后返回可播 URL（有桶 key 时为同源 /api/jobs/:id/work-audio，不经公网预签名）。"""
     scope = _job_row_scope_ref(request)
     bundle = build_owner_work_listen_bundle(job_id, user_ref=scope)
     if not bundle:
@@ -722,6 +760,48 @@ def owner_work_listen_api(job_id: str, request: Request):
             body["requestId"] = rid
         return JSONResponse(jsonable_encoder(body), status_code=404)
     return JSONResponse(jsonable_encoder({"success": True, **bundle}))
+
+
+@router.get("/jobs/{job_id}/work-audio")
+def owner_work_audio_stream(job_id: str, request: Request):
+    """我的作品成片 MP3：同源 BFF 反代本接口，编排器经内网从桶流式读取（支持 Range）。"""
+    scope = _job_row_scope_ref(request)
+    key = resolve_owner_work_listen_storage_key(job_id, user_ref=scope)
+    if not key:
+        raise HTTPException(status_code=404, detail="work_audio_not_available")
+    try:
+        total = head_object_byte_length(key)
+    except Exception:
+        raise HTTPException(status_code=404, detail="work_audio_storage_unreadable")
+    if total <= 0:
+        raise HTTPException(status_code=404, detail="work_audio_empty")
+    rng = request.headers.get("range") or request.headers.get("Range")
+    parsed = _parse_http_bytes_range(rng, total)
+    common_h = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=60"}
+    if parsed is None:
+        return StreamingResponse(
+            iter_object_chunks(key),
+            media_type="audio/mpeg",
+            headers={**common_h, "Content-Length": str(total)},
+        )
+    start, end = parsed
+    if start >= total or end < start:
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{total}"},
+        )
+    end = min(end, total - 1)
+    length = end - start + 1
+    return StreamingResponse(
+        iter_object_byte_range(key, start, end),
+        status_code=206,
+        media_type="audio/mpeg",
+        headers={
+            **common_h,
+            "Content-Range": f"bytes {start}-{end}/{total}",
+            "Content-Length": str(length),
+        },
+    )
 
 
 @router.get("/jobs/{job_id}/podcast-template-reuse")

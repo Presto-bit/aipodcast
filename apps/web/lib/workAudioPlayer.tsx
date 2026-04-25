@@ -181,6 +181,35 @@ function workListenDiagUserLine(lj: Record<string, unknown>): string {
   return parts.filter(Boolean).join(" ");
 }
 
+/**
+ * 顶层扁平诊断字段：Chrome 折叠 `{…}` 时经常看不到嵌套 `work_listen`，
+ * 便于一眼区分「上游未部署诊断 JSON」与具体 stage。
+ */
+function workListenFlatForLog(lj: Record<string, unknown>): Record<string, unknown> {
+  const raw = lj.work_listen;
+  const hasKey = "work_listen" in lj && raw != null;
+  const d = extractWorkListenDiag(lj);
+  if (!d) {
+    return {
+      work_listen_in_json: hasKey,
+      work_listen_diag_parsed: false
+    };
+  }
+  const hint = typeof d.hint_zh === "string" ? d.hint_zh : "";
+  return {
+    work_listen_in_json: hasKey,
+    work_listen_diag_parsed: true,
+    work_listen_stage: typeof d.stage === "string" && d.stage ? d.stage : undefined,
+    work_listen_hint_zh: hint ? (hint.length > 240 ? `${hint.slice(0, 240)}…` : hint) : undefined,
+    work_listen_mp3_sample_count:
+      typeof d.mp3_count_under_standard_job_prefixes === "number"
+        ? d.mp3_count_under_standard_job_prefixes
+        : undefined,
+    work_listen_resolved_key: d.resolved_object_key,
+    work_listen_probe_eligible: d.podcast_storage_probe_eligible
+  };
+}
+
 /** DevTools 过滤：`[fym:work-audio]`；与首参字符串同一行便于检索 */
 function logWorkAudioPlay(stage: string, payload: Record<string, unknown>): void {
   console.warn(`${WORK_AUDIO_LOG} ${stage}`, {
@@ -616,6 +645,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       if (!lr.ok || lj.success === false || !fresh) {
         logWorkAudioPlay("ensureSrc:work_listen_skipped_or_empty", {
           jobId,
+          ...workListenFlatForLog(lj),
           request_id: listenRid || undefined,
           httpStatus: lr.status,
           responseContentType: lr.headers.get("content-type"),
@@ -665,6 +695,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       const aggregateRid = listenRid || jobRid;
       logWorkAudioPlay("ensureSrc:no_playable_src", {
         jobId,
+        ...workListenFlatForLog(lj),
         request_id: aggregateRid || undefined,
         hadHex: Boolean(hex),
         hexLen: hex.length,

@@ -153,6 +153,8 @@ type FetchOrchestratorOptions = {
   retryGetOnce?: boolean;
   /** Server-Sent Events：不设 Abort 超时，避免切断长连接 */
   sse?: boolean;
+  /** 长流式 GET（如同源 MP3）：不设读超时；且关闭 GET 自动重试（避免重复 Range/浪费带宽） */
+  longLivedGet?: boolean;
   /** 上游 2xx 且为二进制成功时，可强制 HTTP 状态（如 artifact 下载固定 200） */
   forceBinarySuccessStatus?: number;
   cache?: RequestCache;
@@ -216,9 +218,10 @@ export async function fetchOrchestrator(path: string, opts: FetchOrchestratorOpt
   const method = opts.method || "GET";
   const defaultPayload = opts.payload ?? "{}";
   const sse = opts.sse === true;
-  const timeoutMs = sse ? 0 : Math.max(1000, opts.timeoutMs ?? defaultFetchOrchestratorTimeoutMs());
+  const longLived = opts.longLivedGet === true;
+  const timeoutMs = sse || longLived ? 0 : Math.max(1000, opts.timeoutMs ?? defaultFetchOrchestratorTimeoutMs());
   const maxAttempts =
-    method === "GET" && opts.retryGetOnce !== false && !sse ? 2 : 1;
+    method === "GET" && opts.retryGetOnce !== false && !sse && !longLived ? 2 : 1;
 
   const bodyForFetch =
     method === "GET" ? undefined : opts.body === null ? undefined : opts.body !== undefined ? opts.body : defaultPayload;
@@ -252,7 +255,7 @@ export async function fetchOrchestrator(path: string, opts: FetchOrchestratorOpt
         headers,
         body: bodyInit,
         cache: opts.cache ?? "no-store",
-        signal: sse ? undefined : AbortSignal.timeout(timeoutMs)
+        signal: sse || longLived ? undefined : AbortSignal.timeout(timeoutMs)
       });
       return upstream;
     } catch (err) {

@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
-from urllib.parse import urlparse
-
 from .models import get_job
 from .object_store import (
     is_likely_internal_object_store_http_url,
@@ -308,40 +306,51 @@ def explain_owner_work_listen_miss(job_id: str, user_ref: str | None) -> dict[st
     if legacy and is_likely_internal_object_store_http_url(legacy) and not key:
         out["stage"] = "only_internal_storage_audio_url"
         out["hint_zh"] = (
-            "result.audio_url 为内网对象存储地址且无可用 object key 现签；请配置 OBJECT_PRESIGN_ENDPOINT 为公网 HTTPS，"
-            "或确保桶内成片可被探测并写入 audio_object_key。"
+            "result.audio_url 为内网对象存储地址且无法解析出 object key；请确保桶内成片可被探测并写入 audio_object_key，"
+            "或升级编排器使「我的作品」试听走同源 /api/jobs/:id/work-audio 流式代理。"
         )
         return out
     if key:
-        try:
-            au = presigned_get_url(key, expires_in=600)
-            if not (au or "").strip():
-                out["stage"] = "presign_returned_empty"
-                return out
-            if is_likely_internal_object_store_http_url(au):
-                out["stage"] = "presigned_url_still_internal_host"
-                out["hint_zh"] = "预签名结果仍指向内网 Host；请设置 OBJECT_PRESIGN_ENDPOINT 为浏览器可达的 HTTPS 域名。"
-                return out
-            pu = urlparse(au)
-            out["stage"] = "presign_ok_public_url_but_bundle_failed_elsewhere"
-            out["presigned_scheme"] = pu.scheme or ""
-            out["presigned_hostname"] = (pu.hostname or "")[:120]
-            out["hint_zh"] = "预签名可生成公网 URL 与 build 失败不一致；请携带 request_id 查编排器日志。"
+        if not object_key_exists(key):
+            out["stage"] = "object_missing_in_bucket"
+            out["hint_zh"] = "result 或桶探测得到 object key，但桶内 head 不存在；可能 key 错误、对象已删或连错桶。"
             return out
-        except Exception as e:
-            out["stage"] = "presign_failed"
-            out["presign_error_class"] = e.__class__.__name__
-            out["hint_zh"] = "预签名生成失败（检查 OBJECT_* 与 MinIO 连通性）。"
-            return out
+        out["stage"] = "unexpected_bundle_miss_key_present"
+        out["hint_zh"] = (
+            "桶内对象存在但 work-listen 未返回 bundle；请确认编排器已部署「同源 work-audio 流式代理」版本并查看日志。"
+        )
+        return out
     out["stage"] = "bundle_rejected_other"
     out["hint_zh"] = "未生成试听 bundle；请携带 request_id 查编排器日志。"
     return out
 
 
+def resolve_owner_work_listen_storage_key(job_id: str, user_ref: str | None) -> str | None:
+    """
+    与 work-listen 归属/状态一致；返回桶内 object key，供 GET …/work-audio 同源流式代理（不经公网预签名）。
+    """
+    jid = (job_id or "").strip()
+    if not jid:
+        return None
+    row = get_job(jid, user_ref)
+    if not row or row.get("deleted_at"):
+        return None
+    if str(row.get("status") or "").strip().lower() != "succeeded":
+        return None
+    jt = str(row.get("job_type") or "").strip().lower()
+    if jt in _OWNER_WORK_LISTEN_DENY_TYPES:
+        return None
+    result = _coerce_result(row.get("result"))
+    probe_ok = jt in _PODCASTISH_STORAGE_PROBE
+    key = (_resolve_audio_object_key(result, row, allow_storage_probe=probe_ok) or "").strip()
+    return key or None
+
+
 def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[str, Any] | None:
     """
     已登录用户播放「我的作品」：校验任务归属后返回可播放 URL。
-    有 audio_object_key 时优先新鲜预签名；失败或为空时回退 result.audio_url（兼容仅存旧链或瞬时签发失败）。
+    有 object key 时返回同源路径 `/api/jobs/{id}/work-audio`（Web 流式反代编排器读桶，无需公网 OBJECT_PRESIGN_ENDPOINT）；
+    否则回退 result.audio_url（须为浏览器可达的外链，非内网 MinIO）。
     """
     jid = (job_id or "").strip()
     if not jid:
@@ -360,19 +369,14 @@ def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[st
     result = _coerce_result(row.get("result"))
     legacy_url = str(result.get("audio_url") or "").strip()
     probe_ok = jt in _PODCASTISH_STORAGE_PROBE
-    key = _resolve_audio_object_key(result, row, allow_storage_probe=probe_ok)
+    key = (_resolve_audio_object_key(result, row, allow_storage_probe=probe_ok) or "").strip()
     if not key and not legacy_url:
         return None
-    audio_url = ""
     if key:
-        try:
-            audio_url = presigned_get_url(key, expires_in=86400 * 7)
-        except Exception:
-            logger.warning("owner_work_listen presign failed job_id=%s", jid, exc_info=True)
-            audio_url = ""
-    if not audio_url:
+        audio_url = f"/api/jobs/{jid}/work-audio"
+    elif legacy_url and not is_likely_internal_object_store_http_url(legacy_url):
         audio_url = legacy_url
-    if not audio_url:
+    else:
         return None
     if is_likely_internal_object_store_http_url(audio_url):
         return None
