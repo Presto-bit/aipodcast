@@ -259,6 +259,25 @@ async function resolveBundleMp3Bytes(
   return { bytes: bytes || new Uint8Array(), lastError, attempts };
 }
 
+function summarizeAudioAttemptsForUser(attempts: BundleAudioResolveAttempt[], maxLen = 380): string {
+  const failed = attempts.filter((a) => !a.ok);
+  if (failed.length === 0) return "";
+  const parts = failed.map((a) => {
+    const shortStep = a.step.includes("audio-export")
+      ? "导出MP3"
+      : a.step.includes("audio_hex")
+        ? "内置hex"
+        : a.step.includes("audio_url")
+          ? "外链拉取"
+          : a.step.slice(0, 40);
+    const st = a.status != null && a.status > 0 ? ` HTTP ${a.status}` : "";
+    const det = a.detail ? ` ${String(a.detail).replace(/\s+/g, " ").slice(0, 96)}` : "";
+    return `${shortStep}${st}${det}`;
+  });
+  const s = parts.join("；");
+  return s.length <= maxLen ? s : `${s.slice(0, maxLen - 1)}…`;
+}
+
 type ManuscriptParts = { introT: string; scriptBody: string; outroT: string };
 
 async function loadJobManuscriptParts(jobId: string): Promise<{
@@ -273,10 +292,20 @@ async function loadJobManuscriptParts(jobId: string): Promise<{
     credentials: "same-origin",
     headers: { ...authHdr }
   });
-  const row = (await res.json()) as Record<string, unknown>;
+  const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
-    const detail = (row as { detail?: string }).detail;
-    throw new Error(detail || `HTTP ${res.status}`);
+    const d = row.detail;
+    const err = row.error;
+    let snippet = "";
+    if (typeof d === "string" && d.trim()) snippet = d.trim();
+    else if (d != null && typeof d !== "object") snippet = String(d).trim();
+    else if (typeof err === "string" && err.trim()) snippet = err.trim();
+    else if (err != null && typeof err !== "object") snippet = String(err).trim();
+    throw new Error(
+      snippet
+        ? `获取作品数据失败（HTTP ${res.status}）：${snippet.slice(0, 280)}`
+        : `获取作品数据失败（HTTP ${res.status}）`
+    );
   }
   const result = coerceJobResult(row.result);
   const scriptBody = await resolveJobScriptBodyText(jobId, row, authHdr);
@@ -378,11 +407,12 @@ async function downloadJobBundleZipImpl(opts: JobBundleExportOptions): Promise<v
         has_audio_hex_flag: result.has_audio_hex === true
       }
     });
-    throw new Error(
+    const attemptLine = summarizeAudioAttemptsForUser(audioResolveAttempts);
+    const base =
       audioResolveError.trim()
         ? `无法打包音频：${audioResolveError.trim()}`
-        : "无法打包音频：服务端导出不可用，且文稿以外的回退来源均未返回有效 MP3。请稍后重试。"
-    );
+        : "无法打包音频：服务端导出不可用，且文稿以外的回退来源均未返回有效 MP3。请稍后重试。";
+    throw new Error(attemptLine ? `${base}（已尝试：${attemptLine}）` : base);
   }
 
   const hasAudio = audioBytes.length > 0;

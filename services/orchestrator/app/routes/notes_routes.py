@@ -67,6 +67,7 @@ from ..notes_ask import (
     answer_notes_question,
     generate_notes_ask_hints,
     iter_notes_answer_events,
+    notes_ask_value_error_sse_event,
 )
 from ..note_rag_service import count_rag_chunks_for_notes, ensure_note_rag_schema
 from ..schemas import (
@@ -568,7 +569,10 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
 
 @router.post("/notes/ask/stream")
 def notes_ask_stream_api(body: NotesAskRequest, request: Request):
-    """基于已选笔记的问答：SSE，`data:` JSON 行，事件 type 为 chunk | done | error。"""
+    """基于已选笔记的问答：SSE，`data:` JSON 行，事件 type 为 chunk | done | error。
+
+    上下文构建（向量检索等）在首个 SSE 字节之后进行，避免客户端长时间卡在「未收到响应头」；
+    校验类错误改为流内 error 事件（仍先返回 200 + event-stream）。"""
     user_ref = _current_user_ref_or_401(request)
     owner_sid = (body.shared_from_owner_user_id or "").strip() or None
     project_owner: str | None = None
@@ -576,31 +580,27 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
         if not get_shared_notebook_public_access(owner_sid, body.notebook.strip()):
             raise HTTPException(status_code=404, detail="notebook_not_shared")
         project_owner = owner_sid
-    try:
-        prepared = _prepare_notes_ask_messages(
-            notebook=body.notebook.strip(),
-            note_ids=body.note_ids,
-            question=body.question.strip(),
-            user_ref=user_ref,
-            project_owner_user_uuid=project_owner,
-        )
-    except ValueError as e:
-        msg = str(e)
-        if msg == "note_not_found":
-            raise HTTPException(status_code=404, detail=msg) from e
-        if msg in (
-            "notebook_required",
-            "question_required",
-            "note_ids_required",
-            "too_many_notes",
-            "note_notebook_mismatch",
-        ):
-            raise HTTPException(status_code=400, detail=msg) from e
-        raise HTTPException(status_code=400, detail=msg) from e
 
     rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
 
     def gen():
+        # SSE 注释行：尽快向客户端/代理刷出首包，避免把整段 RAG 耗时算进「等响应头」
+        yield ": stream-open\n\n"
+        try:
+            prepared = _prepare_notes_ask_messages(
+                notebook=body.notebook.strip(),
+                note_ids=body.note_ids,
+                question=body.question.strip(),
+                user_ref=user_ref,
+                project_owner_user_uuid=project_owner,
+            )
+        except ValueError as e:
+            msg = str(e)
+            ev = notes_ask_value_error_sse_event(msg)
+            if rid:
+                ev["requestId"] = rid
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+            return
         for ev in iter_notes_answer_events(
             notebook=body.notebook.strip(),
             note_ids=body.note_ids,

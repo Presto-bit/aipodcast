@@ -26,11 +26,11 @@ _MAX_PER_NOTE = 16_000
 
 
 def _notes_ask_top_k() -> int:
-    """向量检索 top_k 上限与默认；可用环境变量 NOTES_ASK_TOP_K 覆盖（24–160）。"""
+    """向量检索 top_k 上限与默认；可用环境变量 NOTES_ASK_TOP_K 覆盖（24–160）。默认 56 平衡时延与召回。"""
     try:
-        return max(24, min(160, int(os.getenv("NOTES_ASK_TOP_K", "90") or "90")))
+        return max(24, min(160, int(os.getenv("NOTES_ASK_TOP_K", "56") or "56")))
     except (TypeError, ValueError):
-        return 90
+        return 56
 
 
 # 常见推理模型标签（避免在流式正文中露出）
@@ -173,6 +173,24 @@ def _prepare_notes_ask_messages(
         {"role": "user", "content": user_block},
     ]
     return messages, sources
+
+
+_NOTES_ASK_VALUE_ERROR_MESSAGES: dict[str, str] = {
+    "empty_context": "当前勾选资料没有可用于问答的正文（可能尚在解析/索引中）。请打开资料预览确认已有文字，或稍后再试。",
+    "note_not_found": "部分资料已不存在或无权访问，请刷新列表后重新勾选。",
+    "notebook_required": "请先选择笔记本。",
+    "note_ids_required": "请至少勾选一条资料后再提问。",
+    "question_required": "请输入问题。",
+    "too_many_notes": "勾选的资料条数超过上限，请减少勾选后再试。",
+    "note_notebook_mismatch": "勾选资料与当前笔记本不一致，请刷新后重选。",
+}
+
+
+def notes_ask_value_error_sse_event(code: str) -> dict[str, Any]:
+    """校验类 ValueError → SSE error 行（与 iter 内模型错误形态一致）。"""
+    c = (code or "").strip()[:200] or "invalid_request"
+    msg = _NOTES_ASK_VALUE_ERROR_MESSAGES.get(c, c)
+    return {"type": "error", "message": msg, "code": c}
 
 
 def _notes_ask_stream_error_event(exc: BaseException, *, request_id: str | None) -> dict[str, Any]:

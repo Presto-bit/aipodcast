@@ -71,6 +71,29 @@ function mediaErrorCodeLabel(code: number | undefined): string {
   return `code_${code}`;
 }
 
+function mediaErrorCodeLabelZh(code: number | undefined): string {
+  if (code == null || code === 0) return "未知";
+  if (code === MediaError.MEDIA_ERR_ABORTED) return "已中止";
+  if (code === MediaError.MEDIA_ERR_NETWORK) return "网络错误";
+  if (code === MediaError.MEDIA_ERR_DECODE) return "解码失败";
+  if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) return "格式或地址不支持";
+  return `错误码 ${code}`;
+}
+
+/** 从 API JSON 里摘取可读错误片段（限长） */
+function apiErrorSnippet(row: Record<string, unknown>, maxLen = 200): string {
+  const d = row.detail;
+  const e = row.error;
+  let s = "";
+  if (typeof d === "string" && d.trim()) s = d.trim();
+  else if (d != null && typeof d !== "object") s = String(d).trim();
+  else if (typeof e === "string" && e.trim()) s = e.trim();
+  else if (e != null && typeof e !== "object") s = String(e).trim();
+  return s ? s.slice(0, maxLen) : "";
+}
+
+type EnsureSrcOutcome = { ok: true; url: string } | { ok: false; reason: string };
+
 export type WorkAudioToggleMeta = {
   displayTitle: string;
   /** 开始播放或切歌后跳转到该秒（Shownotes / 章节跳转） */
@@ -283,29 +306,37 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   }, [dockVisible]);
 
   const ensureSrc = useCallback(
-    async (jobId: string, opts?: { usePodcastPublicTemplateListen?: boolean }): Promise<string | null> => {
-      if (srcCache.current[jobId]) return srcCache.current[jobId]!;
+    async (jobId: string, opts?: { usePodcastPublicTemplateListen?: boolean }): Promise<EnsureSrcOutcome> => {
+      if (srcCache.current[jobId]) return { ok: true, url: srcCache.current[jobId]! };
       if (opts?.usePodcastPublicTemplateListen) {
         const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/podcast-template-listen`, {
           cache: "no-store",
           headers: { ...getAuthHeaders() }
         });
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; audio_url?: string };
+        const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
+          success?: boolean;
+          audio_url?: string;
+        };
         if (!res.ok || data.success === false) {
+          const snip = apiErrorSnippet(data);
           console.warn(`${WORK_AUDIO_LOG} ensureSrc:template_listen_failed`, {
             jobId,
             httpStatus: res.status,
-            success: data.success
+            success: data.success,
+            snippet: snip || undefined
           });
-          return null;
+          return {
+            ok: false,
+            reason: `模板试听不可用（HTTP ${res.status}${snip ? `：${snip}` : ""}）。请确认已登录且该内容可访问。`
+          };
         }
         const audioUrl = String(data.audio_url || "").trim();
         if (audioUrl) {
           srcCache.current[jobId] = audioUrl;
-          return audioUrl;
+          return { ok: true, url: audioUrl };
         }
         console.warn(`${WORK_AUDIO_LOG} ensureSrc:template_listen_no_url`, { jobId });
-        return null;
+        return { ok: false, reason: "模板试听接口未返回音频地址，请稍后重试。" };
       }
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
         cache: "no-store",
@@ -313,12 +344,16 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       });
       const row = (await res.json().catch(() => ({}))) as Record<string, unknown> & { detail?: string };
       if (!res.ok) {
+        const snip = apiErrorSnippet(row);
         console.warn(`${WORK_AUDIO_LOG} ensureSrc:job_fetch_failed`, {
           jobId,
           httpStatus: res.status,
-          detail: row.detail ? String(row.detail).slice(0, 200) : undefined
+          detail: snip || undefined
         });
-        return null;
+        return {
+          ok: false,
+          reason: `无法读取作品数据（HTTP ${res.status}${snip ? `：${snip}` : ""}）。若未登录请先登录后再试。`
+        };
       }
       const result = coerceJobResult(row.result);
       const hex = String(result.audio_hex || "").trim();
@@ -326,30 +361,40 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         const url = hexToMp3DataUrl(hex);
         if (url) {
           srcCache.current[jobId] = url;
-          return url;
+          return { ok: true, url };
         }
         console.warn(`${WORK_AUDIO_LOG} ensureSrc:hex_present_but_invalid_data_url`, {
           jobId,
           hexLen: hex.length
         });
+        return {
+          ok: false,
+          reason: `作品含音频数据但本地解码失败（数据长度约 ${hex.length} 字符）。请刷新页面或从创作记录重新打开。`
+        };
       }
       const lr = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/work-listen`, {
         cache: "no-store",
         headers: { ...getAuthHeaders() }
       });
-      const lj = (await lr.json().catch(() => ({}))) as { success?: boolean; audio_url?: string };
+      const lj = (await lr.json().catch(() => ({}))) as Record<string, unknown> & { success?: boolean; audio_url?: string };
       const fresh = String(lj.audio_url || "").trim();
+      const listenSnip = apiErrorSnippet(lj);
       if (lr.ok && lj.success !== false && fresh) {
         const playable = await wrapRemoteAudioAsBlobIfNeeded(jobId, fresh);
         if (playable) {
           srcCache.current[jobId] = playable;
-          return playable;
+          return { ok: true, url: playable };
         }
         console.warn(`${WORK_AUDIO_LOG} ensureSrc:work_listen_url_unusable`, {
           jobId,
           afterWrap: summarizeAudioSrcForLog(fresh)
         });
-      } else if (!lr.ok || lj.success === false || !fresh) {
+        return {
+          ok: false,
+          reason: `已拿到试听链接但无法在浏览器中加载（可能被跨域拦截或内容非有效音频）。接口 HTTP ${lr.status}。`
+        };
+      }
+      if (!lr.ok || lj.success === false || !fresh) {
         console.warn(`${WORK_AUDIO_LOG} ensureSrc:work_listen_skipped_or_empty`, {
           jobId,
           httpStatus: lr.status,
@@ -363,12 +408,16 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         const playable = await wrapRemoteAudioAsBlobIfNeeded(jobId, audioUrl);
         if (playable) {
           srcCache.current[jobId] = playable;
-          return playable;
+          return { ok: true, url: playable };
         }
         console.warn(`${WORK_AUDIO_LOG} ensureSrc:result_audio_url_unusable`, {
           jobId,
           summarized: summarizeAudioSrcForLog(audioUrl)
         });
+        return {
+          ok: false,
+          reason: `任务结果中的外链音频无法在浏览器中加载（链接可能过期或非 MP3）。摘要：${summarizeAudioSrcForLog(audioUrl)}`
+        };
       }
       console.warn(`${WORK_AUDIO_LOG} ensureSrc:no_playable_src`, {
         jobId,
@@ -378,7 +427,16 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         workListenTried: true,
         workListenStatus: lr.status
       });
-      return null;
+      const tailParts: string[] = [];
+      tailParts.push("任务中无可用内嵌音频片段。");
+      if (!lr.ok || lj.success === false || !fresh) {
+        tailParts.push(
+          `试听接口：HTTP ${lr.status}${listenSnip ? `（${listenSnip}）` : !fresh ? "（未返回地址）" : ""}`
+        );
+      }
+      tailParts.push(audioUrl ? "外链字段存在但未能拉取为可播放源。" : "无外链音频字段。");
+      tailParts.push("请到作品详情确认是否已生成完成，或稍后重试。");
+      return { ok: false, reason: tailParts.join("") };
     },
     [getAuthHeaders, wrapRemoteAudioAsBlobIfNeeded]
   );
@@ -434,13 +492,14 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       setLoadingJobId(jobId);
       setDockExpanded(false);
       try {
-        const url = await ensureSrc(jobId, {
+        const ensured = await ensureSrc(jobId, {
           usePodcastPublicTemplateListen: Boolean(meta.usePodcastPublicTemplateListen)
         });
-        if (!url) {
-          setPlayError("暂无可播放音频，请稍后在创作记录中查看是否生成完成");
+        if (!ensured.ok) {
+          setPlayError(ensured.reason);
           return;
         }
+        const url = ensured.url;
         el.pause();
         el.src = url;
         setActiveJobId(jobId);
@@ -572,6 +631,8 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
           const me = el?.error;
           const code = me?.code;
           const src = el?.currentSrc || el?.src || "";
+          const tech = `类型 ${mediaErrorCodeLabelZh(code)}（${mediaErrorCodeLabel(code)}）· networkState=${el?.networkState ?? "?"} · readyState=${el?.readyState ?? "?"}`;
+          const srcHint = summarizeAudioSrcForLog(src);
           console.warn(`${WORK_AUDIO_LOG} media_element_error`, {
             jobId: activeJobIdRef.current,
             mediaErrorCode: code,
@@ -579,14 +640,16 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
             mediaErrorMessage: me?.message || null,
             networkState: el?.networkState,
             readyState: el?.readyState,
-            src: summarizeAudioSrcForLog(src)
+            src: srcHint
           });
           if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED || code === MediaError.MEDIA_ERR_DECODE) {
-            setPlayError("无法解码该音频（链接可能已失效或格式异常），请刷新后重试或从创作记录重新打开");
+            setPlayError(
+              `无法解码或格式不支持（${tech}）。链接可能已失效；源摘要：${srcHint}。请刷新后重试。`
+            );
           } else if (code === MediaError.MEDIA_ERR_NETWORK) {
-            setPlayError("网络错误导致音频加载失败，请检查网络后重试");
+            setPlayError(`网络错误导致音频加载失败（${tech}）。请检查网络或代理；源摘要：${srcHint}`);
           } else {
-            setPlayError("音频加载失败，请刷新页面后重试");
+            setPlayError(`音频加载失败（${tech}）。请刷新页面；源摘要：${srcHint}`);
           }
         }}
       />
@@ -602,50 +665,61 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
             }`}
           >
             {!dockExpanded ? (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-soft hover:opacity-95"
-                  aria-label={isPlaying ? "暂停" : "播放"}
-                  title={isPlaying ? "暂停" : "播放"}
-                  onClick={() => (isPlaying ? pause() : resume())}
-                >
-                  {isPlaying ? (
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
-                      <rect x="6" y="5" width="4" height="14" rx="1" />
-                      <rect x="14" y="5" width="4" height="14" rx="1" />
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-soft hover:opacity-95"
+                    aria-label={isPlaying ? "暂停" : "播放"}
+                    title={isPlaying ? "暂停" : "播放"}
+                    onClick={() => (isPlaying ? pause() : resume())}
+                  >
+                    {isPlaying ? (
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="5" width="4" height="14" rx="1" />
+                        <rect x="14" y="5" width="4" height="14" rx="1" />
+                      </svg>
+                    ) : (
+                      <svg className="ml-px h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    )}
+                  </button>
+                  <p className="min-w-0 flex-1 truncate text-[11px] font-medium leading-tight text-ink" title={activeDisplayTitle}>
+                    {activeDisplayTitle}
+                  </p>
+                  <button
+                    type="button"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-ink"
+                    aria-label="展开播放器"
+                    title="展开"
+                    onClick={() => setDockExpanded(true)}
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                  ) : (
-                    <svg className="ml-px h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M8 5v14l11-7z" />
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-ink"
+                    aria-label="关闭播放器"
+                    title="关闭"
+                    onClick={() => dismiss()}
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
+                      <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
                     </svg>
-                  )}
-                </button>
-                <p className="min-w-0 flex-1 truncate text-[11px] font-medium leading-tight text-ink" title={activeDisplayTitle}>
-                  {activeDisplayTitle}
-                </p>
-                <button
-                  type="button"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-ink"
-                  aria-label="展开播放器"
-                  title="展开"
-                  onClick={() => setDockExpanded(true)}
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                    <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-ink"
-                  aria-label="关闭播放器"
-                  title="关闭"
-                  onClick={() => dismiss()}
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
-                    <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
-                  </svg>
-                </button>
+                  </button>
+                </div>
+                {playError ? (
+                  <p
+                    className="max-h-24 overflow-y-auto break-words text-[9px] leading-snug text-danger-ink"
+                    role="alert"
+                    title={playError}
+                  >
+                    {playError}
+                  </p>
+                ) : null}
               </div>
             ) : (
               <>
@@ -739,7 +813,11 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
                   </button>
                 </div>
                 {playError ? (
-                  <p className="text-center text-[9px] leading-snug text-danger-ink" role="alert">
+                  <p
+                    className="max-h-32 overflow-y-auto break-words text-center text-[9px] leading-snug text-danger-ink whitespace-pre-wrap"
+                    role="alert"
+                    title={playError}
+                  >
                     {playError}
                   </p>
                 ) : null}

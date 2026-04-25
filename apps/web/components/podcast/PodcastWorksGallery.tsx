@@ -728,7 +728,7 @@ export default function PodcastWorksGallery({
       });
       setPlayErrorById((prev) => ({
         ...prev,
-        [id]: `下载失败：${message}`
+        [id]: `下载失败：${message}（任务 ID：${id}；控制台过滤 [fym:work-bundle-download] 可查看完整日志）`
       }));
     } finally {
       setZipBusy(null);
@@ -1142,10 +1142,27 @@ export default function PodcastWorksGallery({
       for (const row of rows) {
         if (!row.id) continue;
         const title = row.displayTitle || row.title || row.id;
-        if (String(row.type || "") === "script_draft") {
-          await downloadJobManuscriptMarkdown({ jobId: row.id, title });
-        } else {
-          await downloadJobBundleZip({ jobId: row.id, title });
+        const id = row.id;
+        try {
+          if (String(row.type || "") === "script_draft") {
+            await downloadJobManuscriptMarkdown({ jobId: id, title });
+          } else {
+            await downloadJobBundleZip({ jobId: id, title });
+          }
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          console.warn("[fym:works-gallery-batch-download] failed", {
+            jobId: id,
+            workType: row.type,
+            title,
+            message,
+            stack: e instanceof Error ? e.stack : undefined
+          });
+          setPlayErrorById((prev) => ({
+            ...prev,
+            [id]: `下载失败：${message}（任务 ID：${id}；控制台过滤 [fym:work-bundle-download] 可查看完整日志）`
+          }));
+          break;
         }
       }
     } finally {
@@ -1464,7 +1481,7 @@ export default function PodcastWorksGallery({
                   ) : null}
                   {rowPlayMsg ? (
                     <p
-                      className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[8px] leading-tight text-danger-ink"
+                      className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[8px] leading-snug text-danger-ink break-words whitespace-pre-wrap"
                       role="status"
                     >
                       {rowPlayMsg}
@@ -1588,7 +1605,7 @@ export default function PodcastWorksGallery({
                   ) : null}
                   {rowPlayMsg ? (
                     <p
-                      className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-tight text-danger-ink"
+                      className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-snug text-danger-ink break-words whitespace-pre-wrap"
                       role="status"
                     >
                       {rowPlayMsg}
@@ -1778,7 +1795,7 @@ export default function PodcastWorksGallery({
                 ) : null}
                 {rowPlayMsg ? (
                   <p
-                    className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-tight text-danger-ink"
+                    className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-snug text-danger-ink break-words whitespace-pre-wrap"
                     role="status"
                   >
                     {rowPlayMsg}
