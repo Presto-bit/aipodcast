@@ -326,8 +326,11 @@ def _extract_work_audio_and_cover(job_row: dict[str, Any]) -> tuple[str, str, in
         presigned_get_url,
         resolve_job_audio_object_key_from_result,
     )
+    from .public_share_listen import probe_episode_audio_object_key
 
     akey = resolve_job_audio_object_key_from_result(result)
+    if not akey:
+        akey = (probe_episode_audio_object_key(job_row) or "").strip()
     audio_url = ""
     if akey:
         try:

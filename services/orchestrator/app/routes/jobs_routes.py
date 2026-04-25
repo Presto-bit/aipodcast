@@ -76,6 +76,7 @@ from ..public_share_listen import (
     build_owner_work_listen_bundle,
     build_podcast_template_listen_bundle,
     build_public_share_listen_bundle,
+    probe_episode_audio_object_key,
 )
 from ..share_publish_llm import (
     build_share_user_source_text,
@@ -1161,6 +1162,8 @@ def export_job_audio_mp3_api(
         else:
             akey = resolve_job_audio_object_key_from_result(result)
             if not akey:
+                akey = (probe_episode_audio_object_key(row) or "").strip()
+            if not akey:
                 raise HTTPException(status_code=400, detail="work_audio_missing")
             try:
                 raw_mp3 = get_object_bytes(akey)
@@ -1237,6 +1240,8 @@ def distribution_pack_api(
         "copy_markdown": _distribution_pack_markdown(result),
     }
     akey = resolve_job_audio_object_key_from_result(result)
+    if not akey:
+        akey = (probe_episode_audio_object_key(row) or "").strip()
     if akey:
         try:
             pack["urls"]["audio_mp3"] = {

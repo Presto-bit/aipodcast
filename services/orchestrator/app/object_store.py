@@ -219,6 +219,26 @@ def presigned_get_url(object_key: str, *, expires_in: int = 3600) -> str:
     )
 
 
+def object_key_exists(object_key: str) -> bool:
+    """对象是否存在（用于 DB 未登记 audio_object_key 时按约定路径探测）。"""
+    key = (object_key or "").strip()
+    if not key:
+        return False
+    try:
+        _s3().head_object(Bucket=settings.object_bucket, Key=key)
+        return True
+    except ClientError as e:
+        err = e.response.get("Error") or {}
+        code = str(err.get("Code") or "")
+        status = int((e.response.get("ResponseMetadata") or {}).get("HTTPStatusCode") or 0)
+        if status == 404 or code in ("404", "NoSuchKey", "NotFound"):
+            return False
+        logger.debug("object_key_exists head_object key=%s code=%s status=%s", key[:120], code[:80], status)
+        return False
+    except Exception:
+        return False
+
+
 def delete_object_key(object_key: str) -> bool:
     """删除对象存储中的单个 key；不存在或失败时返回 False（调用方可忽略）。"""
     key = (object_key or "").strip()

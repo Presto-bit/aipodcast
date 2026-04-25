@@ -9,13 +9,16 @@ from typing import Any
 from .models import get_job
 from .object_store import (
     is_likely_internal_object_store_http_url,
+    object_key_exists,
     presigned_get_url,
     resolve_job_audio_object_key_from_result,
 )
+from .storage_paths import job_artifact_base
 
 logger = logging.getLogger(__name__)
 
 _PUBLIC_JOB_TYPES = frozenset({"podcast", "podcast_generate"})
+_PODCASTISH_STORAGE_PROBE = frozenset({"podcast", "podcast_generate", "podcast_short_video"})
 
 # 「我的作品」试听：排除明显无成片音频的内部任务；其余只要 result 里可签发/可回退直链即允许（避免新 job_type 漏进白名单导致 404）
 _OWNER_WORK_LISTEN_DENY_TYPES = frozenset(
@@ -39,9 +42,38 @@ def _coerce_result(raw: Any) -> dict[str, Any]:
     return {}
 
 
-def _result_has_streamable_audio_refs(result: dict[str, Any]) -> bool:
-    """work-listen 仅返回 URL：需 object key 或可回退的 audio_url。"""
-    return bool(str(result.get("audio_object_key") or "").strip() or str(result.get("audio_url") or "").strip())
+def probe_episode_audio_object_key(row: dict[str, Any]) -> str | None:
+    """
+    result 未写入 audio_object_key / audio_url 时，按成片上传约定探测对象是否存在。
+    兼容：DB 未登记、仅历史内网 URL 被 API 剥离、或写入 result 失败但对象已在桶内。
+    """
+    jid = str(row.get("id") or "").strip()
+    if not jid:
+        return None
+    cb = row.get("created_by")
+    oid = str(cb).strip() if cb is not None and str(cb).strip() else ""
+    oid = oid or None
+    candidates: list[str] = []
+    if oid:
+        candidates.append(f"{job_artifact_base(jid, oid)}/episode_audio.mp3")
+    candidates.append(f"{job_artifact_base(jid, None)}/episode_audio.mp3")
+    seen: set[str] = set()
+    for cand in candidates:
+        if cand in seen:
+            continue
+        seen.add(cand)
+        if object_key_exists(cand):
+            return cand
+    return None
+
+
+def _resolve_audio_object_key(result: dict[str, Any], row: dict[str, Any], *, allow_storage_probe: bool) -> str:
+    k = resolve_job_audio_object_key_from_result(result)
+    if k:
+        return k
+    if not allow_storage_probe:
+        return ""
+    return (probe_episode_audio_object_key(row) or "").strip()
 
 
 def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
@@ -64,7 +96,7 @@ def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
         return None
 
     result = _coerce_result(row.get("result"))
-    key = resolve_job_audio_object_key_from_result(result)
+    key = _resolve_audio_object_key(result, row, allow_storage_probe=True)
     legacy_url = str(result.get("audio_url") or "").strip()
     audio_url = legacy_url
     if key:
@@ -147,7 +179,7 @@ def build_podcast_template_listen_bundle(job_id: str) -> dict[str, Any] | None:
     if jt not in _PUBLIC_JOB_TYPES:
         return None
     result = _coerce_result(row.get("result"))
-    key = resolve_job_audio_object_key_from_result(result)
+    key = _resolve_audio_object_key(result, row, allow_storage_probe=True)
     legacy_url = str(result.get("audio_url") or "").strip()
     audio_url = legacy_url
     if key:
@@ -222,10 +254,11 @@ def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[st
         return None
 
     result = _coerce_result(row.get("result"))
-    if not _result_has_streamable_audio_refs(result):
-        return None
-    key = resolve_job_audio_object_key_from_result(result)
     legacy_url = str(result.get("audio_url") or "").strip()
+    probe_ok = jt in _PODCASTISH_STORAGE_PROBE
+    key = _resolve_audio_object_key(result, row, allow_storage_probe=probe_ok)
+    if not key and not legacy_url:
+        return None
     audio_url = ""
     if key:
         try:
