@@ -27,9 +27,9 @@ export const ART_KIND_PRESETS: Record<
     programName: "笔记文章 · 私人订制"
   },
   xiaohongshu: {
-    label: "小红书爆款",
+    label: "小红书文案",
     textPrefix: XIAOHONGSHU_ART_PREFIX,
-    programName: "笔记文章 · 小红书爆款"
+    programName: "笔记文章 · 小红书文案"
   },
   brief: {
     label: "简报",
