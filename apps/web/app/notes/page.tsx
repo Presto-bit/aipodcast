@@ -26,10 +26,7 @@ const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMar
     />
   )
 });
-const NotesAskAnswerDisplay = dynamic(
-  () => import("../../components/notes/NotesAskAnswerDisplay").then((m) => ({ default: m.NotesAskAnswerDisplay })),
-  { loading: () => <p className="text-muted">加载中…</p> }
-);
+import { NotesAskAnswerDisplay } from "../../components/notes/NotesAskAnswerDisplay";
 import { createJob } from "../../lib/api";
 import {
   apiErrorMessage,
@@ -119,6 +116,10 @@ function notesAskClientRequestId(): string {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function isNotesAskAbortError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { name?: string }).name === "AbortError";
 }
 
 type NoteItem = {
@@ -817,6 +818,8 @@ export default function NotesPage() {
   const [notesAskError, setNotesAskError] = useState("");
   const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
   const notesAskTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /** 当前向资料提问的 fetch；用于「停止生成」 */
+  const notesAskStreamAbortRef = useRef<AbortController | null>(null);
   const [notesAskNoteBusyId, setNotesAskNoteBusyId] = useState<string | null>(null);
   const [notesAskDebugClient, setNotesAskDebugClient] = useState(false);
   const [notesAskDebugCopied, setNotesAskDebugCopied] = useState<"" | "stream" | "curlStream">("");
@@ -892,6 +895,27 @@ export default function NotesPage() {
     const s = (m?.instanceId || m?.createdAt || "0").trim();
     return s || "0";
   }, [effectiveDraftNotebookKey, selectedNotebook, notebookMetaByName]);
+
+  /** 对话列表中时间顺序上最后一条用户消息，用于复制 / 编辑 / 打断后回填 */
+  const notesAskLastUserMessageId = useMemo(() => {
+    for (let i = notesAskMessages.length - 1; i >= 0; i--) {
+      const row = notesAskMessages[i];
+      if (row?.role === "user") return row.id;
+    }
+    return null;
+  }, [notesAskMessages]);
+
+  const beginEditNotesAskUserTurn = useCallback((userTurnId: string, text: string) => {
+    notesAskStreamAbortRef.current?.abort();
+    setNotesAskQuestion(text);
+    setNotesAskError("");
+    setNotesAskMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === userTurnId);
+      if (idx < 0) return prev;
+      return prev.slice(0, idx);
+    });
+    window.setTimeout(() => notesAskTextareaRef.current?.focus(), 0);
+  }, []);
 
   const markNoteAsFresh = useCallback((noteId: string) => {
     const id = noteId.trim();
@@ -2317,11 +2341,14 @@ export default function NotesPage() {
     let chunkCount = 0;
     let chunkChars = 0;
     let streamFetchMs = 0;
-    let requestOutcome: "completed" | "failed" | "incomplete" = "failed";
+    let requestOutcome: "completed" | "failed" | "incomplete" | "aborted" = "failed";
+    const streamAbort = new AbortController();
+    notesAskStreamAbortRef.current = streamAbort;
     try {
       const res = await fetch(notesAskBffUrl("/api/notes/ask/stream"), {
         method: "POST",
         credentials: notesAskFetchCredentials(),
+        signal: streamAbort.signal,
         headers: {
           "content-type": "application/json",
           "x-request-id": streamRid,
@@ -2626,27 +2653,48 @@ export default function NotesPage() {
         });
       }
     } catch (err) {
-      requestOutcome = "failed";
-      const msg = formatNotesAskStreamError(String(err instanceof Error ? err.message : err));
-      notesAskClientLog("error", "stream", "request_failed", {
-        requestId: streamRid,
-        message: msg.slice(0, 1200)
-      });
-      setNotesAskError(msg);
-      setNotesAskMessages((prev) => {
-        const next = [...prev];
-        const idx = next.findIndex((m) => m.id === assistantId);
-        if (idx < 0) return prev;
-        const cur = next[idx]!;
-        next[idx] = {
-          ...cur,
-          streaming: false,
-          streamingReasoning: undefined,
-          content: (cur.content || "").trim() || "（本次未生成正文，详见上方红色错误说明。）"
-        };
-        return next;
-      });
+      if (isNotesAskAbortError(err)) {
+        requestOutcome = "aborted";
+        notesAskClientLog("info", "stream", "user_aborted", { requestId: streamRid });
+        setNotesAskError("");
+        setNotesAskStreamInfo("");
+        if (notesAskStreamInfoTimerRef.current) {
+          clearTimeout(notesAskStreamInfoTimerRef.current);
+          notesAskStreamInfoTimerRef.current = null;
+        }
+        setNotesAskMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId && m.streaming
+              ? { ...m, streaming: false, streamingReasoning: undefined }
+              : m
+          )
+        );
+      } else {
+        requestOutcome = "failed";
+        const msg = formatNotesAskStreamError(String(err instanceof Error ? err.message : err));
+        notesAskClientLog("error", "stream", "request_failed", {
+          requestId: streamRid,
+          message: msg.slice(0, 1200)
+        });
+        setNotesAskError(msg);
+        setNotesAskMessages((prev) => {
+          const next = [...prev];
+          const idx = next.findIndex((m) => m.id === assistantId);
+          if (idx < 0) return prev;
+          const cur = next[idx]!;
+          next[idx] = {
+            ...cur,
+            streaming: false,
+            streamingReasoning: undefined,
+            content: (cur.content || "").trim() || "（本次未生成正文，详见上方红色错误说明。）"
+          };
+          return next;
+        });
+      }
     } finally {
+      if (notesAskStreamAbortRef.current === streamAbort) {
+        notesAskStreamAbortRef.current = null;
+      }
       const totalMs = Math.round(nowMs() - streamT0);
       notesAskClientLog("debug", "stream", "request_finished", {
         requestId: streamRid,
@@ -3760,7 +3808,52 @@ export default function NotesPage() {
                             }
                           >
                             {m.role === "user" ? (
-                              <p className="whitespace-pre-wrap break-words">{m.content}</p>
+                              <div className="flex items-start gap-1.5">
+                                <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{m.content}</p>
+                                {notesAskLastUserMessageId === m.id ? (
+                                  <div className="flex shrink-0 flex-col gap-0.5 self-start pt-0.5">
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-brand/10 hover:text-ink"
+                                      title="复制问题"
+                                      aria-label="复制问题"
+                                      disabled={!(m.content || "").trim()}
+                                      onClick={() => void copyNotesAskAnswer(m.content)}
+                                    >
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path
+                                          d="M6 11c0-1.1.9-2 2-2h7a2 2 0 012 2v9a2 2 0 01-2 2H8a2 2 0 01-2-2v-9z"
+                                          stroke="currentColor"
+                                          strokeWidth="1.75"
+                                        />
+                                        <path
+                                          d="M9 7V6a2 2 0 012-2h7a2 2 0 012 2v9a2 2 0 01-2 2h-2"
+                                          stroke="currentColor"
+                                          strokeWidth="1.75"
+                                        />
+                                      </svg>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-brand/10 hover:text-ink disabled:cursor-not-allowed disabled:opacity-35"
+                                      title="编辑问题（将中止当前生成并回填输入框）"
+                                      aria-label="编辑问题"
+                                      disabled={sharedBrowse?.access === "read_only"}
+                                      onClick={() => beginEditNotesAskUserTurn(m.id, m.content)}
+                                    >
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                                        <path
+                                          d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L8 18l-4 1 1-4L16.5 3.5z"
+                                          stroke="currentColor"
+                                          strokeWidth="1.75"
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                        />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </div>
                             ) : m.streaming &&
                               !(m.content || "").trim() &&
                               !(m.streamingReasoning || "").trim() ? (
@@ -3768,10 +3861,7 @@ export default function NotesPage() {
                             ) : (
                               <div className="min-w-0">
                                 {m.streaming && (m.streamingReasoning || "").trim() ? (
-                                  <div className="mb-2 rounded-lg border border-line/60 bg-fill/35 px-2.5 py-2 text-muted">
-                                    <p className="mb-1 text-[11px] font-medium tracking-tight text-muted">
-                                      模型思考过程（完成后不保留）
-                                    </p>
+                                  <div className="mb-2 rounded-lg border border-line/60 bg-fill/35 px-2.5 py-2">
                                     <p className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink/75">
                                       {m.streamingReasoning}
                                     </p>
@@ -3953,43 +4043,59 @@ export default function NotesPage() {
                     type="button"
                     role="switch"
                     aria-checked={notesAskWebSearch}
-                    aria-label="联网搜索"
+                    aria-label={
+                      notesAskWebSearch
+                        ? "已开启联网参考（回答可叠加互联网摘要）"
+                        : "关闭联网参考（仅依据已选资料）"
+                    }
                     title={
                       notesAskWebSearch
                         ? "已开启：回答可叠加互联网摘要（与资料冲突时以资料库为准）"
                         : "关闭：仅依据已选资料；开启后可能发起联网检索"
                     }
                     disabled={
-                      Boolean(sharedBrowse?.access === "read_only") ||
-                      notesAskBusy ||
-                      draftSelectedNoteIds.length === 0
+                      Boolean(sharedBrowse?.access === "read_only") || draftSelectedNoteIds.length === 0
                     }
                     onClick={() => setNotesAskWebSearch((v) => !v)}
-                    className={`mb-0.5 shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                    className={`mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 shadow-sm transition active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 ${
                       notesAskWebSearch
-                        ? "border-brand/60 bg-brand/15 text-brand"
-                        : "border-line bg-fill/60 text-muted hover:text-ink"
-                    } disabled:cursor-not-allowed disabled:opacity-40`}
+                        ? "border-brand bg-brand/20 text-brand ring-2 ring-brand/30 ring-offset-2 ring-offset-surface dark:ring-offset-[rgb(18,18,20)]"
+                        : "border-line/90 bg-fill/70 text-muted hover:border-amber-500/50 hover:bg-amber-500/[0.12] hover:text-ink"
+                    }`}
                   >
-                    联网
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0">
+                      <path
+                        d="M5 10.5a9.5 9.5 0 0114 0M8.5 14a5.5 5.5 0 017 0M12 17.5h.01"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
                   </button>
-                  <button
-                    type="button"
-                    className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-soft transition-opacity disabled:opacity-40"
-                    disabled={
-                      notesAskBusy ||
-                      draftSelectedNoteIds.length === 0 ||
-                      !notesAskQuestion.trim()
-                    }
-                    title={
-                      draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "提问"
-                    }
-                    aria-label="发送提问"
-                    onClick={() => void submitNotesAsk()}
-                  >
-                    {notesAskBusy ? (
-                      <span className="text-xs">…</span>
-                    ) : (
+                  {notesAskBusy ? (
+                    <button
+                      type="button"
+                      className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-amber-600/55 bg-amber-500/[0.18] text-amber-950 shadow-sm transition hover:bg-amber-500/[0.28] active:scale-[0.96] dark:border-amber-400/50 dark:bg-amber-400/15 dark:text-amber-50"
+                      title="停止生成"
+                      aria-label="停止生成"
+                      onClick={() => notesAskStreamAbortRef.current?.abort()}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                        <rect x="7" y="7" width="10" height="10" rx="1.5" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-soft transition-opacity disabled:opacity-40"
+                      disabled={draftSelectedNoteIds.length === 0 || !notesAskQuestion.trim()}
+                      title={
+                        draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "提问"
+                      }
+                      aria-label="发送提问"
+                      onClick={() => void submitNotesAsk()}
+                    >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
                         <path
                           d="M5 12h14M13 8l6 6-6 6"
@@ -3999,8 +4105,8 @@ export default function NotesPage() {
                           strokeLinejoin="round"
                         />
                       </svg>
-                    )}
-                  </button>
+                    </button>
+                  )}
                   </div>
                   {NOTES_ASK_DEBUG_BODY_ENABLED ? (
                     <div className="rounded-xl border border-amber-500/45 bg-amber-500/[0.08] px-3 py-2 text-xs leading-snug text-ink">

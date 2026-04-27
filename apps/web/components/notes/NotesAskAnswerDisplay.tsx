@@ -1,17 +1,9 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { NotesAskSource, NotesAskWebSource } from "../../lib/notesAskCitation";
-
-const NotesAskAnswerMarkdownBody = dynamic(
-  () => import("./NotesAskAnswerMarkdownBody"),
-  {
-    ssr: false,
-    loading: () => <p className="text-muted text-sm">渲染回答中…</p>
-  }
-);
+import NotesAskAnswerMarkdownBody from "./NotesAskAnswerMarkdownBody";
 
 type Props = {
   text: string;

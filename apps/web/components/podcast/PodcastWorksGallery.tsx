@@ -1545,13 +1545,6 @@ export default function PodcastWorksGallery({
                           "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
                           zipBusy === id ? downloadBusyLabel(w.type) : "下载"
                         )}
-                        <button
-                          type="button"
-                          className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                          onClick={() => void onReuseTemplate(id, templateReuseArgs)}
-                        >
-                          复用
-                        </button>
                         <Link
                           href={`/works/${encodeURIComponent(id)}`}
                           className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
@@ -1784,13 +1777,6 @@ export default function PodcastWorksGallery({
                         "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
                         zipBusy === id ? downloadBusyLabel(w.type) : "下载"
                       )}
-                      <button
-                        type="button"
-                        className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                        onClick={() => void onReuseTemplate(id, templateReuseArgs)}
-                      >
-                        复用
-                      </button>
                       <Link
                         href={`/works/${encodeURIComponent(id)}`}
                         className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
