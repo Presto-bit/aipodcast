@@ -185,6 +185,7 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 
 - **Nginx**
   - **不要**对 `location /` 套 **`proxy_cache`** 且不区分路径，否则容易把 **HTML API 响应** 一并磁盘缓存，发版后仍像旧站。
+  - 对 **`/api/`** 建议单独 `location`：显式 `proxy_intercept_errors off;`、透传 `X-Request-ID`，并保留 PATCH/OPTIONS，避免上游 JSON 错误被网关改写为空 HTML（见 `deploy/nginx-prestoai.cdn-cache.example.conf` 的 API 片段）。
   - 若必须做边缘/磁盘缓存：**只对**明确路径（例如仅 `/_next/static/`）启用，或严格跟随源站 `Cache-Control`。
   - 对 **`/admin`**（管理后台）可在反代层增加 **`Cache-Control: no-cache, private, must-revalidate`**，降低浏览器与中间层长期持有旧 HTML 的概率（**不要**对 `/_next/static/` 强行 `no-store`，以免放弃 hash 文件的长缓存收益）。
 - **CDN（Cloudflare / 阿里云 CDN 等）**

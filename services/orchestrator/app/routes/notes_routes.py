@@ -1006,6 +1006,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
 
 
 @router.patch("/notes/{note_id}")
+@router.post("/notes/{note_id}")
 def patch_note_api(note_id: str, body: NotePatchRequest, request: Request):
     user_ref = _current_user_ref_or_401(request)
     ok = update_note_title(note_id, body.title.strip(), user_ref=user_ref)
@@ -1387,6 +1388,7 @@ def get_notebook_cover_public_api(
 
 
 @router.patch("/notebooks/{notebook_name:path}/share")
+@router.post("/notebooks/{notebook_name:path}/share")
 def patch_notebook_share_api(notebook_name: str, body: NotebookSharingPatchRequest, request: Request):
     user_ref = _current_user_ref_or_401(request)
     pa = (body.public_access or "").strip().lower() if body.public_access else None

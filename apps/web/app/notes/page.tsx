@@ -3189,7 +3189,7 @@ export default function NotesPage() {
           ? crypto.randomUUID()
           : `notes-rename-${Date.now()}`;
       const res = await fetch(`/api/notes/${encodeURIComponent(targetId)}`, {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", "x-request-id": clientRequestId, ...getAuthHeaders() },
         body: JSON.stringify({ title: t })
@@ -3287,7 +3287,7 @@ export default function NotesPage() {
       };
       const startedAt = new Date().toISOString();
       const res = await fetch(`/api/notebooks/${encodeURIComponent(name)}/share`, {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", "x-request-id": clientRequestId, ...getAuthHeaders() },
         body: JSON.stringify(payload)
@@ -3347,7 +3347,7 @@ export default function NotesPage() {
       };
       const startedAt = new Date().toISOString();
       const res = await fetch(`/api/notebooks/${encodeURIComponent(name)}/share`, {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", "x-request-id": clientRequestId, ...getAuthHeaders() },
         body: JSON.stringify(payload)
