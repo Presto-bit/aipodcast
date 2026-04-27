@@ -76,6 +76,7 @@ from ..note_rag_service import (
     clear_note_rag_index_error,
     count_rag_chunks_for_notes,
     ensure_note_rag_schema,
+    invalidate_retrieval_cache_for_notes,
     set_note_rag_index_error,
 )
 from ..schemas import (
@@ -1284,6 +1285,7 @@ def delete_note_api(note_id: str, request: Request):
     ok = delete_note(note_id, user_ref=user_ref)
     if not ok:
         raise HTTPException(status_code=404, detail="note_not_found")
+    invalidate_retrieval_cache_for_notes([note_id])
     return {"success": True, "noteId": note_id, "moved_to_trash": True}
 
 
@@ -1293,6 +1295,7 @@ def restore_note_api(note_id: str, request: Request):
     ok = restore_note(note_id, user_ref=user_ref)
     if not ok:
         raise HTTPException(status_code=404, detail="note_not_found")
+    invalidate_retrieval_cache_for_notes([note_id])
     return {"success": True, "noteId": note_id}
 
 
@@ -1302,6 +1305,7 @@ def purge_note_api(note_id: str, request: Request):
     ok = purge_note_hard(note_id, user_ref=user_ref)
     if not ok:
         raise HTTPException(status_code=404, detail="note_not_found")
+    invalidate_retrieval_cache_for_notes([note_id])
     return {"success": True, "noteId": note_id}
 
 
@@ -1315,6 +1319,7 @@ def reindex_note_api(note_id: str, request: Request):
     if not content_text:
         raise HTTPException(status_code=400, detail="note_content_empty")
     clear_note_rag_index_error(note_id)
+    invalidate_retrieval_cache_for_notes([note_id])
     _try_enqueue_note_rag_index(note_id, user_ref)
     return {"success": True, "noteId": note_id, "status": "reindex_queued"}
 

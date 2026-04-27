@@ -809,6 +809,8 @@ export default function NotesPage() {
   const [importBusy, setImportBusy] = useState(false);
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
   const [showSupportedFormatsModal, setShowSupportedFormatsModal] = useState(false);
+  const [shareDebugLog, setShareDebugLog] = useState("");
+  const [renameDebugLog, setRenameDebugLog] = useState("");
   const addNoteFileRef = useRef<HTMLInputElement | null>(null);
   const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false);
   const [deleteNotebookTarget, setDeleteNotebookTarget] = useState<string | null>(null);
@@ -3147,16 +3149,30 @@ export default function NotesPage() {
       return;
     }
     setBusy(true);
+    setRenameDebugLog("");
     try {
+      const startedAt = new Date().toISOString();
       const res = await fetch(`/api/notes/${encodeURIComponent(targetId)}`, {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ title: t })
       });
-      const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
+      const raw = await res.text();
+      const data = (JSON.parse(raw || "{}") || {}) as { success?: boolean; error?: string; detail?: unknown };
+      setRenameDebugLog(
+        [
+          `time=${startedAt}`,
+          `noteId=${targetId}`,
+          `newTitle=${t}`,
+          `status=${res.status}`,
+          `requestId=${res.headers.get("x-request-id") || "-"}`,
+          `response=${(raw || "").slice(0, 600) || "{}"}`
+        ].join("\n")
+      );
       if (!res.ok || !data.success) throw new Error(`重命名失败：${apiErrorMessage(data, "请稍后重试（可尝试缩短名称）")}`);
       setRenameNoteId(null);
+      setRenameDebugLog("");
       await loadNotes();
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
@@ -3208,19 +3224,39 @@ export default function NotesPage() {
     if (!name) return;
     setShareModalBusy(true);
     setShareModalError("");
+    setShareDebugLog("");
     try {
+      const payload = {
+        isPublic: true,
+        publicAccess: shareFormAccess,
+        /** 与「热门笔记本」一致：分享即允许参与发现筛选（仍受后端内容门槛过滤）；取消分享会清零 */
+        listedInDiscover: true
+      };
+      const startedAt = new Date().toISOString();
       const res = await fetch(`/api/notebooks/${encodeURIComponent(name)}/share`, {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          isPublic: true,
-          publicAccess: shareFormAccess,
-          /** 与「热门笔记本」一致：分享即允许参与发现筛选（仍受后端内容门槛过滤）；取消分享会清零 */
-          listedInDiscover: true
-        })
+        body: JSON.stringify(payload)
       });
-      const data = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      const raw = await res.text();
+      let data: { detail?: unknown } = {};
+      try {
+        data = (JSON.parse(raw || "{}") || {}) as { detail?: unknown };
+      } catch {
+        data = {};
+      }
+      setShareDebugLog(
+        [
+          `time=${startedAt}`,
+          `mode=share`,
+          `notebook=${name}`,
+          `payload=${JSON.stringify(payload)}`,
+          `status=${res.status}`,
+          `requestId=${res.headers.get("x-request-id") || "-"}`,
+          `response=${(raw || "").slice(0, 600) || "{}"}`
+        ].join("\n")
+      );
       if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
@@ -3237,18 +3273,38 @@ export default function NotesPage() {
     if (!name) return;
     setShareModalBusy(true);
     setShareModalError("");
+    setShareDebugLog("");
     try {
+      const payload = {
+        isPublic: false,
+        publicAccess: null,
+        listedInDiscover: false
+      };
+      const startedAt = new Date().toISOString();
       const res = await fetch(`/api/notebooks/${encodeURIComponent(name)}/share`, {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          isPublic: false,
-          publicAccess: null,
-          listedInDiscover: false
-        })
+        body: JSON.stringify(payload)
       });
-      const data = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      const raw = await res.text();
+      let data: { detail?: unknown } = {};
+      try {
+        data = (JSON.parse(raw || "{}") || {}) as { detail?: unknown };
+      } catch {
+        data = {};
+      }
+      setShareDebugLog(
+        [
+          `time=${startedAt}`,
+          `mode=unshare`,
+          `notebook=${name}`,
+          `payload=${JSON.stringify(payload)}`,
+          `status=${res.status}`,
+          `requestId=${res.headers.get("x-request-id") || "-"}`,
+          `response=${(raw || "").slice(0, 600) || "{}"}`
+        ].join("\n")
+      );
       if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
@@ -3477,6 +3533,7 @@ export default function NotesPage() {
                             setShareTargetNotebook(nb);
                             setShareFormAccess(row?.publicAccess === "edit" ? "edit" : "read_only");
                             setShareModalError("");
+                            setShareDebugLog("");
                             setShowShareNotebookModal(true);
                           }}
                           onRenameNotebook={(nb) => {
@@ -3578,6 +3635,7 @@ export default function NotesPage() {
                       setShareTargetNotebook(nb);
                       setShareFormAccess(row?.publicAccess === "edit" ? "edit" : "read_only");
                       setShareModalError("");
+                      setShareDebugLog("");
                       setShowShareNotebookModal(true);
                     }}
                     onRenameNotebook={(nb) => {
@@ -3951,6 +4009,11 @@ export default function NotesPage() {
                             onCancel={() => setRenameNoteId(null)}
                             className="border-line bg-canvas/80"
                           />
+                          {renameDebugLog ? (
+                            <pre className="mt-2 max-h-28 overflow-auto rounded border border-line/60 bg-fill/20 p-2 text-[10px] leading-relaxed text-muted">
+                              {renameDebugLog}
+                            </pre>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -4459,9 +4522,9 @@ export default function NotesPage() {
               </button>
             </div>
             <div className="my-4 border-t border-line" />
-            <div className="space-y-2">
+            <div className="relative space-y-2">
               <div className="flex items-center gap-2 text-xs text-muted">
-                <p>上传本地文件（支持常规文件格式 + 更多）</p>
+                <p>上传本地文件（支持 txt / md / pdf / doc / docx / epub / html + 更多）</p>
                 <button
                   type="button"
                   className="rounded border border-line bg-fill/40 px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill"
@@ -4470,6 +4533,22 @@ export default function NotesPage() {
                   更多
                 </button>
               </div>
+              {showSupportedFormatsModal ? (
+                <div className="absolute -top-2 right-0 z-20 w-[min(92vw,24rem)] rounded-xl border border-line bg-surface p-3 shadow-modal">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-ink">支持的常规文件格式</h3>
+                    <button
+                      type="button"
+                      className="text-xs text-muted hover:text-ink"
+                      onClick={() => setShowSupportedFormatsModal(false)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-muted">文档：txt / md / markdown / pdf / doc / docx / epub / html / htm / xhtml</p>
+                  <p className="mt-1 text-xs text-muted">图片：png / jpg / jpeg / webp / gif / avif（会尝试 OCR 抽正文）</p>
+                </div>
+              ) : null}
               <input
                 ref={addNoteFileRef}
                 type="file"
@@ -4501,30 +4580,7 @@ export default function NotesPage() {
           </div>
         </div>
       ) : null}
-      {showSupportedFormatsModal ? (
-        <div
-          className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 p-4"
-          onPointerDown={(e) => {
-            if (e.target === e.currentTarget) setShowSupportedFormatsModal(false);
-          }}
-        >
-          <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-base font-semibold text-ink">支持的常规文件格式</h3>
-              <button
-                type="button"
-                className="text-sm text-muted hover:text-ink"
-                onClick={() => setShowSupportedFormatsModal(false)}
-              >
-                关闭
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-muted">文档：txt / md / markdown / pdf / doc / docx / epub / html / htm / xhtml</p>
-            <p className="mt-1 text-xs text-muted">图片：png / jpg / jpeg / webp / gif / avif（会尝试 OCR 抽正文）</p>
-            <p className="mt-2 text-xs text-muted">不支持的格式在上传时会自动拦截，不会进入导入流程。</p>
-          </div>
-        </div>
-      ) : null}
+      
 
       {showNotebookCoverModal && notebookCoverModalTarget.trim() ? (
         <div
@@ -4615,6 +4671,7 @@ export default function NotesPage() {
             if (e.target === e.currentTarget && !shareModalBusy) {
               setShowShareNotebookModal(false);
               setShareModalError("");
+              setShareDebugLog("");
               setShareCopyHint("");
             }
           }}
@@ -4703,6 +4760,11 @@ export default function NotesPage() {
                 {shareModalError}
               </p>
             ) : null}
+            {shareDebugLog ? (
+              <pre className="mt-2 max-h-36 overflow-auto rounded-lg border border-line/70 bg-fill/20 p-2 text-[10px] leading-relaxed text-muted">
+                {shareDebugLog}
+              </pre>
+            ) : null}
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <button
                 type="button"
@@ -4712,6 +4774,7 @@ export default function NotesPage() {
                   if (!shareModalBusy) {
                     setShowShareNotebookModal(false);
                     setShareModalError("");
+                    setShareDebugLog("");
                     setShareCopyHint("");
                   }
                 }}

@@ -21,7 +21,8 @@ from typing import Any
 from .db import get_conn, get_cursor
 from .notes_ask_profile import notes_ask_profile_emit
 from .models import get_note_by_id
-from .rag_core import _cosine, _keyword_score, decompose_retrieval_queries, split_text_into_chunks
+from .queue import redis_conn
+from .rag_core import _cosine, _keyword_score, _norm_minmax, decompose_retrieval_queries, split_text_into_chunks
 from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,13 @@ NOTE_LAYERED_RAG = (os.getenv("NOTE_LAYERED_RAG", "1") or "").strip().lower() no
 MAX_CHUNKS_PER_NOTE = max(16, min(256, int(os.getenv("NOTE_RAG_MAX_CHUNKS_PER_NOTE", "160") or "160")))
 _SUMMARY_INPUT_CAP = 44_000
 _SUMMARY_OUTPUT_CHARS = 5000
+_RETRIEVAL_CACHE_L1_MAX = max(64, min(1024, int(os.getenv("NOTE_RAG_RETR_CACHE_L1_MAX", "256") or "256")))
+_RETRIEVAL_CACHE_L1_TTL_SEC = max(5, min(600, int(os.getenv("NOTE_RAG_RETR_CACHE_L1_TTL_SEC", "45") or "45")))
+_RETRIEVAL_CACHE_L2_TTL_SEC = max(10, min(3600, int(os.getenv("NOTE_RAG_RETR_CACHE_L2_TTL_SEC", "180") or "180")))
+_RETRIEVAL_CACHE_VERSION = (os.getenv("NOTE_RAG_RETR_CACHE_VERSION") or "v3").strip() or "v3"
+_RETRIEVAL_CACHE_PREFIX = "note_rag:retrieval"
+_RETRIEVAL_CACHE_NOTE_KEYS_PREFIX = "note_rag:note_keys"
+_RETRIEVAL_CACHE_L1: dict[str, tuple[float, tuple[str, list[dict[str, Any]], dict[str, Any]]]] = {}
 
 _SUMMARY_SYSTEM = (
     "你是编辑助手。下面是一篇资料全文或长摘录。请用中文写一段结构化摘要："
@@ -41,6 +49,140 @@ _SUMMARY_SYSTEM = (
 
 def _body_sha256(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def _cache_now() -> float:
+    return time.time()
+
+
+def _cache_payload_key(note_ids: list[str], query: str, max_chars: int, top_k: int) -> str:
+    qn = " ".join((query or "").strip().lower().split())[:800]
+    payload = {
+        "v": _RETRIEVAL_CACHE_VERSION,
+        "note_ids": [str(x).strip() for x in note_ids if str(x).strip()],
+        "query": qn,
+        "max_chars": int(max_chars),
+        "top_k": int(top_k),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _notes_version_fingerprint(note_ids: list[str]) -> str:
+    ids = [str(x).strip() for x in note_ids if str(x).strip()]
+    if not ids:
+        return "empty"
+    rows: list[tuple[str, str, str, str]] = []
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT id::text AS note_id,
+                       COALESCE(note_rag_body_hash, '') AS h,
+                       COALESCE(note_rag_embedding_sig, '') AS sig,
+                       COALESCE(to_char(note_rag_index_at, 'YYYYMMDDHH24MISS.US'), '') AS at
+                FROM inputs
+                WHERE id = ANY(%s::uuid[])
+                ORDER BY id
+                """,
+                (ids,),
+            )
+            for r in cur.fetchall():
+                rows.append(
+                    (
+                        str(r.get("note_id") or "").strip(),
+                        str(r.get("h") or ""),
+                        str(r.get("sig") or ""),
+                        str(r.get("at") or ""),
+                    )
+                )
+    if not rows:
+        return "none"
+    raw = json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def _retrieval_cache_key(note_ids: list[str], query: str, max_chars: int, top_k: int) -> str:
+    pv = _cache_payload_key(note_ids, query, max_chars, top_k)
+    vv = _notes_version_fingerprint(note_ids)
+    return f"{_RETRIEVAL_CACHE_PREFIX}:{_RETRIEVAL_CACHE_VERSION}:{vv}:{pv}"
+
+
+def _l1_get(cache_key: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]] | None:
+    row = _RETRIEVAL_CACHE_L1.get(cache_key)
+    if not row:
+        return None
+    ts, value = row
+    if _cache_now() - ts > _RETRIEVAL_CACHE_L1_TTL_SEC:
+        _RETRIEVAL_CACHE_L1.pop(cache_key, None)
+        return None
+    return value
+
+
+def _l1_set(cache_key: str, value: tuple[str, list[dict[str, Any]], dict[str, Any]]) -> None:
+    _RETRIEVAL_CACHE_L1[cache_key] = (_cache_now(), value)
+    if len(_RETRIEVAL_CACHE_L1) > _RETRIEVAL_CACHE_L1_MAX:
+        keys = sorted(_RETRIEVAL_CACHE_L1.keys(), key=lambda k: _RETRIEVAL_CACHE_L1[k][0])[
+            : max(8, _RETRIEVAL_CACHE_L1_MAX // 8)
+        ]
+        for k in keys:
+            _RETRIEVAL_CACHE_L1.pop(k, None)
+
+
+def _l2_get(cache_key: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]] | None:
+    try:
+        blob = redis_conn.get(cache_key)
+        if not blob:
+            return None
+        if isinstance(blob, bytes):
+            blob = blob.decode("utf-8")
+        data = json.loads(str(blob))
+        if not isinstance(data, dict):
+            return None
+        context = str(data.get("context") or "")
+        meta = data.get("meta")
+        obs = data.get("obs")
+        if not isinstance(meta, list) or not isinstance(obs, dict):
+            return None
+        return context, meta, obs
+    except Exception:
+        return None
+
+
+def _l2_set(
+    cache_key: str,
+    note_ids: list[str],
+    value: tuple[str, list[dict[str, Any]], dict[str, Any]],
+) -> None:
+    if _RETRIEVAL_CACHE_L2_TTL_SEC <= 0:
+        return
+    try:
+        context, meta, obs = value
+        payload = json.dumps({"context": context, "meta": meta, "obs": obs}, ensure_ascii=False, default=str)
+        redis_conn.setex(cache_key, _RETRIEVAL_CACHE_L2_TTL_SEC, payload)
+        clean_ids = [str(x).strip() for x in note_ids if str(x).strip()]
+        for nid in clean_ids:
+            skey = f"{_RETRIEVAL_CACHE_NOTE_KEYS_PREFIX}:{nid}"
+            redis_conn.sadd(skey, cache_key)
+            redis_conn.expire(skey, _RETRIEVAL_CACHE_L2_TTL_SEC + 60)
+    except Exception:
+        return
+
+
+def invalidate_retrieval_cache_for_notes(note_ids: list[str]) -> None:
+    ids = [str(x).strip() for x in note_ids if str(x).strip()]
+    if not ids:
+        return
+    _RETRIEVAL_CACHE_L1.clear()
+    try:
+        for nid in ids:
+            skey = f"{_RETRIEVAL_CACHE_NOTE_KEYS_PREFIX}:{nid}"
+            keys = redis_conn.smembers(skey) or set()
+            if keys:
+                redis_conn.delete(*list(keys))
+            redis_conn.delete(skey)
+    except Exception:
+        return
 
 
 def ensure_note_rag_schema() -> None:
@@ -86,6 +228,7 @@ def delete_rag_chunks_for_note(note_id: str) -> None:
         with get_cursor(conn) as cur:
             cur.execute("DELETE FROM note_rag_chunks WHERE input_id = %s::uuid", (note_id,))
             conn.commit()
+    invalidate_retrieval_cache_for_notes([note_id])
 
 
 def count_rag_chunks_for_notes(note_ids: list[str]) -> int:
@@ -117,7 +260,9 @@ def _load_chunk_rows_light(note_ids: list[str]) -> list[dict[str, Any]]:
             cur.execute(
                 """
                 SELECT n.input_id::text AS note_id, n.chunk_index, n.chunk_text,
-                       i.note_rag_embedding_sig AS note_sig
+                       i.note_rag_embedding_sig AS note_sig,
+                       i.metadata AS note_metadata,
+                       i.deleted_at
                 FROM note_rag_chunks n
                 JOIN inputs i ON i.id = n.input_id
                 WHERE n.input_id = ANY(%s::uuid[])
@@ -240,6 +385,7 @@ def _clear_note_rag_meta_short_body(note_id: str) -> None:
                 ("", note_id),
             )
             conn.commit()
+    invalidate_retrieval_cache_for_notes([note_id])
 
 
 def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None = None) -> dict[str, Any]:
@@ -311,6 +457,7 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
         summary_text = ""
 
     _update_note_rag_after_success(note_id, summary_text or None, h, sig or "")
+    invalidate_retrieval_cache_for_notes([note_id])
     return {
         "ok": True,
         "chunks": len(chunks),
@@ -597,6 +744,29 @@ def _note_source_index_map(note_ids: list[str]) -> dict[str, str]:
     return out
 
 
+def _metadata_prefilter_enabled() -> bool:
+    return (os.getenv("NOTE_RAG_METADATA_PREFILTER", "1") or "").strip().lower() not in ("0", "false", "no")
+
+
+def _row_passes_metadata_prefilter(row: dict[str, Any]) -> bool:
+    if not _metadata_prefilter_enabled():
+        return True
+    if row.get("deleted_at") is not None:
+        return False
+    md = row.get("note_metadata")
+    if isinstance(md, str):
+        try:
+            md = json.loads(md) if md.strip() else {}
+        except Exception:
+            md = {}
+    if not isinstance(md, dict):
+        md = {}
+    parse_status = str(md.get("parseStatus") or "").strip().lower()
+    if parse_status in ("error", "empty"):
+        return False
+    return True
+
+
 def retrieve_chunks_across_notes(
     *,
     note_ids: list[str],
@@ -611,6 +781,16 @@ def retrieve_chunks_across_notes(
     `notes_ask_fast_path`：知识库向资料提问专用，默认单查询嵌入、较小 rerank 池、仅用本地 hybrid 重排（跳过 Cohere HTTP）。
     """
     _t_total = time.perf_counter()
+    cache_key = _retrieval_cache_key(note_ids, query, max_chars, top_k)
+    hit_l1 = _l1_get(cache_key)
+    if hit_l1 is not None:
+        context, meta, obs = hit_l1
+        return context, meta, {**obs, "cache_hit": "l1"}
+    hit_l2 = _l2_get(cache_key)
+    if hit_l2 is not None:
+        _l1_set(cache_key, hit_l2)
+        context, meta, obs = hit_l2
+        return context, meta, {**obs, "cache_hit": "l2"}
     q = (query or "").strip()
     rows = _load_chunk_rows_light(note_ids)
     light_rows_n = len(rows)
@@ -625,6 +805,8 @@ def retrieve_chunks_across_notes(
 
     parsed: list[dict[str, Any]] = []
     for r in rows:
+        if not _row_passes_metadata_prefilter(r):
+            continue
         ch = str(r.get("chunk_text") or "").strip()
         if not ch:
             continue
@@ -762,10 +944,24 @@ def retrieve_chunks_across_notes(
     for qv in qvs[1:]:
         extra = _batch_cosine_vs_query(qv, vecs)
         sims = [max(a, b) for a, b in zip(sims, extra)]
+    kw_raw = [float(_keyword_score(q, p["_ch"])) for p in parsed]
+    nk = _norm_minmax(kw_raw)
+    nv = _norm_minmax([float(x) for x in sims])
+    try:
+        wv = float(os.getenv("NOTE_RAG_COARSE_VECTOR_WEIGHT", "0.6") or "0.6")
+        wk = float(os.getenv("NOTE_RAG_COARSE_KEYWORD_WEIGHT", "0.4") or "0.4")
+    except (TypeError, ValueError):
+        wv, wk = 0.6, 0.4
+    w_sum = wv + wk
+    if w_sum > 0:
+        wv, wk = wv / w_sum, wk / w_sum
+    coarse = [wv * nv[i] + wk * nk[i] for i in range(len(parsed))]
     scored: list[tuple[float, dict[str, Any]]] = []
-    for sim, p in zip(sims, parsed):
+    for sim, cscore, p in zip(sims, coarse, parsed):
         row = {k: v for k, v in p.items() if not str(k).startswith("_")}
-        scored.append((float(sim), row))
+        row["_vector_score"] = float(sim)
+        row["_coarse_score"] = float(cscore)
+        scored.append((float(cscore), row))
 
     scored.sort(key=lambda x: -x[0])
     try:
@@ -775,11 +971,16 @@ def retrieve_chunks_across_notes(
     if notes_ask_fast_path:
         pool_default = min(pool_default, 64)
     try:
-        pool_n = min(len(scored), max(top_k * 2, pool_default))
+        recall_n = min(len(scored), max(top_k * 4, pool_default * 2))
     except (TypeError, ValueError):
-        pool_n = min(len(scored), max(top_k * 2, 96))
-    head = scored[:pool_n]
-    tail = scored[pool_n:]
+        recall_n = min(len(scored), max(top_k * 4, 192))
+    recalled = scored[:recall_n]
+    try:
+        pool_n = min(len(recalled), max(top_k * 2, pool_default))
+    except (TypeError, ValueError):
+        pool_n = min(len(recalled), max(top_k * 2, 96))
+    head = recalled[:pool_n]
+    tail = recalled[pool_n:] + scored[recall_n:]
     if notes_ask_fast_path:
         from app.fyv_shared.rerank_provider import hybrid_lexical_rerank, _hybrid_weights
 
@@ -818,6 +1019,7 @@ def retrieve_chunks_across_notes(
     _t_fmt = time.perf_counter()
 
     obs: dict[str, Any] = {
+        "cache_hit": "none",
         "notes_ask_fast_path": notes_ask_fast_path,
         "embedding_backend": emb_backend,
         "multi_query_embedded": len(uniq),
@@ -828,6 +1030,9 @@ def retrieve_chunks_across_notes(
         "emb_rows_loaded": len(emb_map),
         "dropped_stale_chunks": dropped_stale,
         "dropped_missing_emb": dropped_missing_emb,
+        "coarse_vector_weight": wv,
+        "coarse_keyword_weight": wk,
+        "recall_n": recall_n,
         "rerank_pool": pool_n,
         "rerank_mode": rerank_mode,
         "mmr_applied": mmr_applied,
@@ -887,7 +1092,10 @@ def retrieve_chunks_across_notes(
     )
     notes_ask_profile_emit("rag_retrieve_total_ms", (time.perf_counter() - _t_total) * 1000.0)
 
-    return "\n\n".join(parts).strip(), meta_out, obs
+    out = ("\n\n".join(parts).strip(), meta_out, obs)
+    _l1_set(cache_key, out)
+    _l2_set(cache_key, note_ids, out)
+    return out
 
 
 def build_summaries_section(
