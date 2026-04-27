@@ -6,7 +6,14 @@ type Params = { params: { name: string } };
 export async function PATCH(req: NextRequest, { params }: Params) {
   const raw = await req.text();
   const requestId = getOrCreateRequestId(req);
-  return proxyJsonFromOrchestrator(`/api/v1/notebooks/${encodeURIComponent(params.name)}/share`, {
+  const nameRaw = String(params?.name || "");
+  let notebookName = nameRaw;
+  try {
+    notebookName = decodeURIComponent(nameRaw);
+  } catch {
+    notebookName = nameRaw;
+  }
+  return proxyJsonFromOrchestrator(`/api/v1/notebooks/${encodeURIComponent(notebookName)}/share`, {
     method: "PATCH",
     payload: raw || "{}",
     body: raw || "{}",

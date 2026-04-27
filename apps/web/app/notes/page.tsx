@@ -3152,10 +3152,14 @@ export default function NotesPage() {
     setRenameDebugLog("");
     try {
       const startedAt = new Date().toISOString();
+      const clientRequestId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `notes-rename-${Date.now()}`;
       const res = await fetch(`/api/notes/${encodeURIComponent(targetId)}`, {
         method: "PATCH",
         credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        headers: { "content-type": "application/json", "x-request-id": clientRequestId, ...getAuthHeaders() },
         body: JSON.stringify({ title: t })
       });
       const raw = await res.text();
@@ -3166,7 +3170,7 @@ export default function NotesPage() {
           `noteId=${targetId}`,
           `newTitle=${t}`,
           `status=${res.status}`,
-          `requestId=${res.headers.get("x-request-id") || "-"}`,
+          `requestId=${res.headers.get("x-request-id") || clientRequestId}`,
           `response=${(raw || "").slice(0, 600) || "{}"}`
         ].join("\n")
       );
@@ -3226,6 +3230,10 @@ export default function NotesPage() {
     setShareModalError("");
     setShareDebugLog("");
     try {
+      const clientRequestId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `notes-share-${Date.now()}`;
       const payload = {
         isPublic: true,
         publicAccess: shareFormAccess,
@@ -3236,7 +3244,7 @@ export default function NotesPage() {
       const res = await fetch(`/api/notebooks/${encodeURIComponent(name)}/share`, {
         method: "PATCH",
         credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        headers: { "content-type": "application/json", "x-request-id": clientRequestId, ...getAuthHeaders() },
         body: JSON.stringify(payload)
       });
       const raw = await res.text();
@@ -3253,7 +3261,7 @@ export default function NotesPage() {
           `notebook=${name}`,
           `payload=${JSON.stringify(payload)}`,
           `status=${res.status}`,
-          `requestId=${res.headers.get("x-request-id") || "-"}`,
+          `requestId=${res.headers.get("x-request-id") || clientRequestId}`,
           `response=${(raw || "").slice(0, 600) || "{}"}`
         ].join("\n")
       );
@@ -3275,6 +3283,10 @@ export default function NotesPage() {
     setShareModalError("");
     setShareDebugLog("");
     try {
+      const clientRequestId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `notes-unshare-${Date.now()}`;
       const payload = {
         isPublic: false,
         publicAccess: null,
@@ -3284,7 +3296,7 @@ export default function NotesPage() {
       const res = await fetch(`/api/notebooks/${encodeURIComponent(name)}/share`, {
         method: "PATCH",
         credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        headers: { "content-type": "application/json", "x-request-id": clientRequestId, ...getAuthHeaders() },
         body: JSON.stringify(payload)
       });
       const raw = await res.text();
@@ -3301,7 +3313,7 @@ export default function NotesPage() {
           `notebook=${name}`,
           `payload=${JSON.stringify(payload)}`,
           `status=${res.status}`,
-          `requestId=${res.headers.get("x-request-id") || "-"}`,
+          `requestId=${res.headers.get("x-request-id") || clientRequestId}`,
           `response=${(raw || "").slice(0, 600) || "{}"}`
         ].join("\n")
       );
