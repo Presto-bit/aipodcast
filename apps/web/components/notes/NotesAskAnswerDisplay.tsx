@@ -125,9 +125,7 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className }: 
   const wrap = className?.trim() ? className : "";
 
   return (
-    <div
-      className={`notes-ask-answer flex min-w-0 flex-col gap-3 text-sm leading-relaxed text-ink [&_blockquote]:border-l-4 [&_blockquote]:border-line [&_blockquote]:pl-3 [&_blockquote]:text-ink/90 [&_code]:rounded [&_code]:bg-fill [&_code]:px-1 [&_code]:py-px [&_code]:text-[0.8125rem] [&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:leading-relaxed [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-line/80 [&_pre]:bg-fill/80 [&_pre]:p-3 [&_pre]:text-xs [&_table]:w-full [&_table]:border-collapse [&_table]:text-left [&_table]:text-xs [&_td]:border [&_td]:border-line/70 [&_td]:px-2 [&_td]:py-1.5 [&_th]:border [&_th]:border-line/70 [&_th]:bg-fill/50 [&_th]:px-2 [&_th]:py-1.5 [&_th]:font-medium [&_ul]:list-disc [&_ul]:pl-5 ${wrap}`}
-    >
+    <div className={`notes-ask-answer flex min-w-0 flex-col gap-3 text-ink ${wrap}`}>
       <NotesAskAnswerMarkdownBody
         text={text}
         sources={sources}
