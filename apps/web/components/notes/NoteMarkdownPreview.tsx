@@ -72,7 +72,7 @@ export default function NoteMarkdownPreview({
     const escaped = highlightTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (!escaped) return;
     const re = new RegExp(escaped, "gi");
-    let firstMark: HTMLElement | null = null;
+    let firstMark: HTMLElement | undefined;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const textNodes: Text[] = [];
     while (walker.nextNode()) {
@@ -107,9 +107,7 @@ export default function NoteMarkdownPreview({
       node.parentNode?.replaceChild(frag, node);
     });
 
-    if (firstMark) {
-      firstMark.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    firstMark?.scrollIntoView({ behavior: "smooth", block: "center" });
 
     return () => {
       unwrap();
