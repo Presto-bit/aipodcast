@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Any
@@ -179,6 +180,138 @@ def _mime_for_note_ext(ext: str) -> str:
     }.get(e, "application/octet-stream")
 
 
+def _display_ext_for_note(*, input_type: str, metadata: dict, source_url: str) -> str:
+    """来源列表展示用扩展名：网页导入不再显示 txt。"""
+    it = (input_type or "").strip()
+    md_ext = str(metadata.get("ext") or "").strip().lower()
+    if md_ext:
+        return md_ext
+    if it == "note_text":
+        return "url" if (source_url or "").strip() else "txt"
+    return ""
+
+
+def _normalize_metadata_dict(row: dict) -> dict:
+    md = row.get("metadata") or {}
+    if isinstance(md, str):
+        try:
+            md = json.loads(md)
+        except Exception:
+            md = {}
+    return md if isinstance(md, dict) else {}
+
+
+def _parse_error_code(parse_status: str, parse_detail: str, parse_engine: str) -> str:
+    st = (parse_status or "").strip().lower()
+    detail = (parse_detail or "").strip().lower()
+    engine = (parse_engine or "").strip().lower()
+    if not st:
+        return ""
+    if st == "ok":
+        return ""
+    if "扫描" in detail or "scanned" in detail:
+        return "PARSE_SCANNED_PDF"
+    if "ocr" in detail and "未配置" in detail:
+        return "OCR_NOT_CONFIGURED"
+    if "forbidden" in detail or "403" in detail:
+        return "URL_FORBIDDEN_403"
+    if "登录" in detail:
+        return "URL_LOGIN_WALL"
+    if st == "error":
+        return "PARSE_ENGINE_ERROR" if engine else "PARSE_ERROR"
+    if st == "empty":
+        return "PARSE_EMPTY"
+    return "PARSE_UNKNOWN"
+
+
+def _derive_source_capabilities(
+    *,
+    input_type: str,
+    content_text: str,
+    parse_status: str,
+    parse_detail: str,
+    parse_engine: str,
+    rag_chunks: int,
+    rag_err: str,
+) -> dict[str, object]:
+    ct = (content_text or "").strip()
+    p_st = (parse_status or "").strip().lower()
+    parse_ok = p_st == "ok" if p_st else (input_type == "note_text" and bool(ct)) or (input_type == "note_file" and len(ct) >= 20)
+    parse_state = "success" if parse_ok else ("failed" if p_st in ("error", "empty") else "partial")
+    parse_error_code = _parse_error_code(parse_status, parse_detail, parse_engine)
+
+    # 可引用：有可用正文即可在回答中做 [n] 引用；正文极短时降级为 limited
+    if not parse_ok:
+        cite_state = "unavailable"
+    elif len(ct) < 120:
+        cite_state = "limited"
+    else:
+        cite_state = "ready"
+
+    if rag_err:
+        retrieve_state = "failed"
+    elif rag_chunks > 0:
+        retrieve_state = "indexed"
+    elif parse_ok:
+        retrieve_state = "indexing"
+    else:
+        retrieve_state = "not_ready"
+
+    if parse_ok and retrieve_state == "indexed":
+        source_ready = True
+        source_hint = "解析完成、可引用、可检索"
+    elif parse_ok and retrieve_state in ("indexing", "not_ready"):
+        source_ready = True
+        source_hint = "正文可用；索引构建中"
+    else:
+        source_ready = False
+        source_hint = "正文未就绪或解析失败，建议预览后重传"
+
+    return {
+        "parseOk": parse_ok,
+        "parseState": parse_state,
+        "parseErrorCode": parse_error_code,
+        "citeState": cite_state,
+        "retrieveState": retrieve_state,
+        "sourceReady": source_ready,
+        "sourceHint": source_hint,
+    }
+
+
+def _build_preprocess_fields(text: str) -> dict[str, object]:
+    """轻量预处理：结构化摘要 + 主题标签 + 关键实体。"""
+    body = (text or "").strip()
+    if not body:
+        return {"preprocessStatus": "empty", "preprocessSummary": "", "preprocessTags": [], "preprocessEntities": []}
+    summary = body[:220] + ("…" if len(body) > 220 else "")
+    token_pat = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}|[\u4e00-\u9fff]{2,6}")
+    stop = {"我们", "你们", "他们", "这个", "那个", "以及", "如果", "但是", "因为", "所以", "可以", "已经"}
+    freq: dict[str, int] = {}
+    for m in token_pat.finditer(body[:8000]):
+        tok = m.group(0).strip().lower()
+        if not tok or tok in stop:
+            continue
+        freq[tok] = freq.get(tok, 0) + 1
+    tags = [k for k, _ in sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))[:8]]
+    ent_pat = re.compile(r"(?:[A-Z][a-zA-Z]{1,}|[\u4e00-\u9fff]{2,8})(?:公司|集团|大学|研究院|平台|系统)?")
+    entities: list[str] = []
+    seen: set[str] = set()
+    for m in ent_pat.finditer(body[:6000]):
+        val = m.group(0).strip()
+        if len(val) < 2 or val in seen:
+            continue
+        seen.add(val)
+        entities.append(val)
+        if len(entities) >= 12:
+            break
+    return {
+        "preprocessStatus": "ready",
+        "preprocessSummary": summary,
+        "preprocessTags": tags,
+        "preprocessEntities": entities,
+    }
+
+
 def _persist_note_upload(
     user_ref: str | None,
     data: bytes,
@@ -293,6 +426,7 @@ def _persist_note_upload(
     if parse_result.encoding:
         extra_meta["parseEncoding"] = str(parse_result.encoding)[:120]
     extra_meta["contentSha256"] = content_sha256
+    extra_meta.update(_build_preprocess_fields(parsed))
     try:
         row_id = create_file_note(
             project_id=project_id,
@@ -377,31 +511,27 @@ def list_notes_api(
     )
     notes: list[dict[str, object]] = []
     for r in rows:
-        md = r.get("metadata") or {}
-        if isinstance(md, str):
-            try:
-                md = json.loads(md)
-            except Exception:
-                md = {}
+        md = _normalize_metadata_dict(r)
         it = str(r.get("input_type") or "")
-        ext = str(md.get("ext") or ("txt" if it == "note_text" else "")).lower()
+        src_url = str(r.get("source_url") or md.get("sourceUrl") or "")
+        ext = _display_ext_for_note(input_type=it, metadata=md, source_url=src_url)
         note_uuid = str(r.get("id"))
         file_key = r.get("file_object_key")
         ct = str(r.get("content_text") or "").strip()
-        if it == "note_text":
-            source_ready = len(ct) > 0
-            source_hint = "文本笔记，可作资料摘录" if source_ready else "正文为空"
-        else:
-            source_ready = len(ct) >= 20
-            source_hint = "正文已抽取，可作资料" if source_ready else "正文过短或未抽取，建议预览或重新上传"
         rag_err = r.get("note_rag_index_error")
         rag_chunks = int(r.get("rag_chunk_count") or 0)
         p_st = str(md.get("parseStatus") or "").strip()
+        p_eng = str(md.get("parseEngine") or "").strip()
         p_de = str(md.get("parseDetail") or "").strip()
-        if p_st:
-            parse_ok = p_st == "ok"
-        else:
-            parse_ok = (it == "note_text") or (it == "note_file" and source_ready)
+        cap = _derive_source_capabilities(
+            input_type=it,
+            content_text=ct,
+            parse_status=p_st,
+            parse_detail=p_de,
+            parse_engine=p_eng,
+            rag_chunks=rag_chunks,
+            rag_err=(str(rag_err).strip() if rag_err else ""),
+        )
         notes.append(
             {
                 "noteId": note_uuid,
@@ -410,18 +540,28 @@ def list_notes_api(
                 "ext": ext or "txt",
                 "relativePath": f"/api/notes/{note_uuid}/file" if file_key else "",
                 "createdAt": str(r.get("created_at") or ""),
-                "sourceUrl": str(r.get("source_url") or md.get("sourceUrl") or ""),
+                "sourceUrl": src_url,
                 "inputType": it,
-                "sourceReady": source_ready,
-                "sourceHint": source_hint,
+                "sourceReady": bool(cap["sourceReady"]),
+                "sourceHint": str(cap["sourceHint"] or ""),
                 "ragChunkCount": rag_chunks,
                 "ragIndexError": (str(rag_err).strip() if rag_err else ""),
                 "ragIndexedAt": str(r.get("note_rag_index_at") or ""),
                 "parseStatus": p_st,
-                "parseEngine": str(md.get("parseEngine") or "").strip(),
+                "parseEngine": p_eng,
                 "parseDetail": p_de,
                 "parseEncoding": str(md.get("parseEncoding") or "").strip(),
-                "parseOk": parse_ok,
+                "parseOk": bool(cap["parseOk"]),
+                "parseState": str(cap["parseState"] or ""),
+                "parseErrorCode": str(cap["parseErrorCode"] or ""),
+                "citeState": str(cap["citeState"] or ""),
+                "retrieveState": str(cap["retrieveState"] or ""),
+                "preprocessStatus": str(md.get("preprocessStatus") or ""),
+                "preprocessSummary": str(md.get("preprocessSummary") or ""),
+                "preprocessTags": md.get("preprocessTags") if isinstance(md.get("preprocessTags"), list) else [],
+                "preprocessEntities": md.get("preprocessEntities")
+                if isinstance(md.get("preprocessEntities"), list)
+                else [],
             }
         )
     has_more = len(rows) >= limit
@@ -449,23 +589,27 @@ def list_trash_notes_api(
     rows = list_trashed_notes(limit=limit, offset=offset, user_ref=user_ref)
     notes: list[dict[str, object]] = []
     for r in rows:
-        md = r.get("metadata") or {}
-        if isinstance(md, str):
-            try:
-                md = json.loads(md)
-            except Exception:
-                md = {}
+        md = _normalize_metadata_dict(r)
         it = str(r.get("input_type") or "")
-        ext = str(md.get("ext") or ("txt" if it == "note_text" else "")).lower()
+        src_url = str(r.get("source_url") or md.get("sourceUrl") or "")
+        ext = _display_ext_for_note(input_type=it, metadata=md, source_url=src_url)
         note_uuid = str(r.get("id"))
         file_key = r.get("file_object_key")
         ct = str(r.get("content_text") or "").strip()
-        if it == "note_text":
-            source_ready = len(ct) > 0
-            source_hint = "文本笔记，可作资料摘录" if source_ready else "正文为空"
-        else:
-            source_ready = len(ct) >= 20
-            source_hint = "正文已抽取，可作资料" if source_ready else "正文过短或未抽取，建议预览或重新上传"
+        rag_err = str(r.get("note_rag_index_error") or "").strip()
+        rag_chunks = int(r.get("rag_chunk_count") or 0)
+        p_st = str(md.get("parseStatus") or "").strip()
+        p_eng = str(md.get("parseEngine") or "").strip()
+        p_de = str(md.get("parseDetail") or "").strip()
+        cap = _derive_source_capabilities(
+            input_type=it,
+            content_text=ct,
+            parse_status=p_st,
+            parse_detail=p_de,
+            parse_engine=p_eng,
+            rag_chunks=rag_chunks,
+            rag_err=rag_err,
+        )
         notes.append(
             {
                 "noteId": note_uuid,
@@ -475,10 +619,15 @@ def list_trash_notes_api(
                 "relativePath": f"/api/notes/{note_uuid}/file" if file_key else "",
                 "createdAt": str(r.get("created_at") or ""),
                 "deletedAt": str(r.get("deleted_at") or ""),
-                "sourceUrl": str(r.get("source_url") or md.get("sourceUrl") or ""),
+                "sourceUrl": src_url,
                 "inputType": it,
-                "sourceReady": source_ready,
-                "sourceHint": source_hint,
+                "sourceReady": bool(cap["sourceReady"]),
+                "sourceHint": str(cap["sourceHint"] or ""),
+                "parseState": str(cap["parseState"] or ""),
+                "parseErrorCode": str(cap["parseErrorCode"] or ""),
+                "citeState": str(cap["citeState"] or ""),
+                "retrieveState": str(cap["retrieveState"] or ""),
+                "preprocessStatus": str(md.get("preprocessStatus") or ""),
             }
         )
     has_more = len(rows) >= limit
@@ -500,6 +649,7 @@ def create_note_api(req: NoteCreateRequest, request: Request):
             content=req.content,
             source_url=(req.source_url or "").strip() or None,
             user_ref=user_ref,
+            extra_metadata=_build_preprocess_fields(req.content),
         )
     except ValueError as e:
         if str(e) == "notebook_required":
@@ -554,6 +704,9 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
             note_ids=body.note_ids,
             question=body.question.strip(),
             user_ref=user_ref,
+            chat_history=body.chat_history,
+            include_all_sources=body.include_all_sources,
+            require_preprocess_ready=body.require_preprocess_ready,
             project_owner_user_uuid=project_owner,
         )
     except ValueError as e:
@@ -566,6 +719,7 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
             "note_ids_required",
             "too_many_notes",
             "note_notebook_mismatch",
+            "preprocess_not_ready",
         ):
             raise HTTPException(status_code=400, detail=msg) from e
         raise HTTPException(status_code=400, detail=msg) from e
@@ -614,6 +768,8 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 note_ids=body.note_ids,
                 question=body.question.strip(),
                 user_ref=user_ref,
+                chat_history=body.chat_history,
+                require_preprocess_ready=body.require_preprocess_ready,
                 project_owner_user_uuid=project_owner,
             )
             _notes_startup_logger.info(
@@ -641,6 +797,9 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             note_ids=body.note_ids,
             question=body.question.strip(),
             user_ref=user_ref,
+            chat_history=body.chat_history,
+            include_all_sources=body.include_all_sources,
+            require_preprocess_ready=body.require_preprocess_ready,
             prepared_messages_sources=prepared,
             project_owner_user_uuid=project_owner,
             request_id=rid,
@@ -712,12 +871,7 @@ def preview_note_text_api(
             row = get_note_by_id(note_id, include_deleted=True, user_ref=user_ref)
     if not row:
         raise HTTPException(status_code=404, detail="note_not_found")
-    md = row.get("metadata") or {}
-    if isinstance(md, str):
-        try:
-            md = json.loads(md)
-        except Exception:
-            md = {}
+    md = _normalize_metadata_dict(row)
     title = str(md.get("title") or note_id).strip()
     ext = str(md.get("ext") or "").strip().lower()
     text = str(row.get("content_text") or "")
@@ -727,7 +881,17 @@ def preview_note_text_api(
         truncated = True
     rag_n = count_rag_chunks_for_notes([str(note_id)])
     p_st = str(md.get("parseStatus") or "").strip()
+    p_eng = str(md.get("parseEngine") or "").strip()
     p_de = str(md.get("parseDetail") or "").strip()
+    cap = _derive_source_capabilities(
+        input_type=str(row.get("input_type") or ""),
+        content_text=str(row.get("content_text") or ""),
+        parse_status=p_st,
+        parse_detail=p_de,
+        parse_engine=p_eng,
+        rag_chunks=rag_n,
+        rag_err=str(row.get("note_rag_index_error") or "").strip(),
+    )
     return {
         "success": True,
         "noteId": note_id,
@@ -739,10 +903,18 @@ def preview_note_text_api(
         "ragIndexError": str(row.get("note_rag_index_error") or "").strip(),
         "ragIndexedAt": str(row.get("note_rag_index_at") or ""),
         "parseStatus": p_st,
-        "parseEngine": str(md.get("parseEngine") or "").strip(),
+        "parseEngine": p_eng,
         "parseDetail": p_de,
         "parseEncoding": str(md.get("parseEncoding") or "").strip(),
-        "parseOk": p_st == "ok" if p_st else True,
+        "parseOk": bool(cap["parseOk"]),
+        "parseState": str(cap["parseState"] or ""),
+        "parseErrorCode": str(cap["parseErrorCode"] or ""),
+        "citeState": str(cap["citeState"] or ""),
+        "retrieveState": str(cap["retrieveState"] or ""),
+        "preprocessStatus": str(md.get("preprocessStatus") or ""),
+        "preprocessSummary": str(md.get("preprocessSummary") or ""),
+        "preprocessTags": md.get("preprocessTags") if isinstance(md.get("preprocessTags"), list) else [],
+        "preprocessEntities": md.get("preprocessEntities") if isinstance(md.get("preprocessEntities"), list) else [],
     }
 
 
@@ -835,13 +1007,14 @@ def import_note_from_url_api(body: NoteImportUrlRequest, request: Request):
     fetch = content_parser.parse_url(url)
     content = str(fetch.get("content") or "").strip()
     if not fetch.get("success") or not content:
+        err_code = str(fetch.get("error_code") or "").strip() or "URL_PARSE_FAILED"
         hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
             url,
             error_code=str(fetch.get("error_code") or "").strip() or None,
             upstream_error=str(fetch.get("error") or "").strip() or None,
         )
         head = str(fetch.get("error") or "").strip() or "未能从网页提取正文"
-        raise HTTPException(status_code=400, detail=f"{head}\n\n{hint}")
+        raise HTTPException(status_code=400, detail=f"[{err_code}] {head}\n\n{hint}")
     if len(content) > MAX_URL_IMPORT_CHARS:
         content = content[:MAX_URL_IMPORT_CHARS] + "\n\n（内容已截断）"
     notebook = (body.notebook or "").strip()
@@ -855,21 +1028,67 @@ def import_note_from_url_api(body: NoteImportUrlRequest, request: Request):
         host = (pu.netloc or "").strip()
         title = f"{host} 摘录" if host else "网页笔记"
     project_id = ensure_default_project(body.project_name, created_by=user_ref)
+    content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    canonical_url = str(fetch.get("url") or url).strip() or url
+    old_rows = list_notes(
+        notebook=notebook,
+        limit=500,
+        offset=0,
+        user_ref=user_ref,
+    )
+    same_url_version = 0
+    for old in old_rows:
+        old_source = str(old.get("source_url") or "").strip()
+        if old_source != canonical_url:
+            continue
+        old_md = _normalize_metadata_dict(old)
+        try:
+            old_v = int(old_md.get("sourceVersion") or 1)
+        except (TypeError, ValueError):
+            old_v = 1
+        same_url_version = max(same_url_version, old_v)
+        old_hash = str(old_md.get("sourceContentSha256") or "").strip()
+        if old_hash and old_hash == content_sha256:
+            return {
+                "success": True,
+                "deduped": True,
+                "noteId": str(old.get("id") or ""),
+                "title": str(old_md.get("title") or ""),
+                "notebook": notebook,
+                "sourceVersion": old_v,
+                "sourceCanonicalUrl": canonical_url,
+            }
+    new_version = same_url_version + 1
     try:
         note_id = create_text_note(
             project_id=project_id,
             title=title,
             notebook=notebook,
             content=content,
-            source_url=url,
+            source_url=canonical_url,
             user_ref=user_ref,
+            extra_metadata={
+                "parseStatus": "ok",
+                "parseEngine": "url-content-parser",
+                "sourceCanonicalUrl": canonical_url,
+                "sourceContentSha256": content_sha256,
+                "sourceVersion": new_version,
+                **_build_preprocess_fields(content),
+            },
         )
     except ValueError as e:
         if str(e) == "notebook_required":
             raise HTTPException(status_code=400, detail="notebook_required") from e
         raise
     _try_enqueue_note_rag_index(note_id, user_ref)
-    return {"success": True, "noteId": note_id, "title": title, "notebook": notebook}
+    return {
+        "success": True,
+        "noteId": note_id,
+        "title": title,
+        "notebook": notebook,
+        "sourceVersion": new_version,
+        "sourceCanonicalUrl": canonical_url,
+    }
 
 
 @router.delete("/notes/{note_id}")

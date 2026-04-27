@@ -11,6 +11,7 @@ from typing import Any, Iterator
 
 from .models import get_note_by_id
 from .note_rag_service import NOTE_LAYERED_RAG, build_layered_notes_context
+from .rag_core import _keyword_score, split_text_into_chunks
 from .notes_ask_profile import notes_ask_profile_emit
 from .provider_router import (
     invoke_llm_chat_messages_stream_iter,
@@ -24,6 +25,9 @@ logger = logging.getLogger(__name__)
 _MAX_QUESTION_CHARS = 800
 _MAX_TOTAL_CONTEXT = 44_000
 _MAX_PER_NOTE = 16_000
+_ASK_HISTORY_MAX_TURNS = 8
+_ASK_CONTEXT_CACHE_TTL_SEC = 30.0
+_ASK_CONTEXT_CACHE: dict[str, tuple[float, str, list[dict[str, Any]]]] = {}
 
 
 def _notes_ask_top_k() -> int:
@@ -122,11 +126,23 @@ def _enrich_sources_with_chunks(sources: list[dict[str, Any]], retr_meta: list[d
     return out
 
 
-def filter_sources_by_citations(answer: str, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def filter_sources_by_citations(
+    answer: str,
+    sources: list[dict[str, Any]],
+    *,
+    include_all_sources: bool | None = None,
+) -> list[dict[str, Any]]:
     """
     若回答中出现至少一处 [n] 角标，则脚注仅保留被引用的序号；否则保留全部来源（兼容未标角标的旧行为）。
     """
-    keep_all = (os.getenv("NOTES_ASK_KEEP_ALL_SELECTED_SOURCES", "1") or "").strip().lower() not in ("0", "false", "no")
+    if include_all_sources is None:
+        keep_all = (os.getenv("NOTES_ASK_KEEP_ALL_SELECTED_SOURCES", "0") or "").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+        )
+    else:
+        keep_all = bool(include_all_sources)
     if keep_all:
         return sources
     cited = set(re.findall(r"\[(\d+)\]", answer or ""))
@@ -159,12 +175,167 @@ def _metadata_title(row: dict[str, Any], note_id: str) -> str:
     return str(md.get("title") or note_id).strip() or note_id
 
 
+def _metadata_preprocess_status(row: dict[str, Any]) -> str:
+    md = row.get("metadata") or {}
+    if isinstance(md, str):
+        try:
+            md = json.loads(md)
+        except Exception:
+            md = {}
+    if not isinstance(md, dict):
+        return ""
+    return str(md.get("preprocessStatus") or "").strip().lower()
+
+
+def _notes_ask_require_preprocess_ready_default() -> bool:
+    return (os.getenv("NOTES_ASK_REQUIRE_PREPROCESS_READY_DEFAULT", "0") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _assert_preprocess_ready_for_notes(
+    *,
+    notebook: str,
+    note_ids: list[str],
+    user_ref: str | None,
+    project_owner_user_uuid: str | None = None,
+) -> None:
+    ordered = _ordered_note_ids(note_ids)
+    if not ordered:
+        raise ValueError("note_ids_required")
+    not_ready_titles: list[str] = []
+    for nid in ordered:
+        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
+        if not row:
+            raise ValueError("note_not_found")
+        if _metadata_notebook(row) != (notebook or "").strip():
+            raise ValueError("note_notebook_mismatch")
+        st = _metadata_preprocess_status(row)
+        if st != "ready":
+            not_ready_titles.append(_metadata_title(row, nid))
+    if not_ready_titles:
+        raise ValueError("preprocess_not_ready")
+
+
+def _ordered_note_ids(note_ids: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw_id in note_ids:
+        nid = str(raw_id or "").strip()
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        ordered.append(nid)
+    return ordered
+
+
+def _question_snippet_windows(text: str, question: str, cap: int) -> str:
+    """
+    legacy 回退时的轻量问题感知选段：按关键词分对切块粗排，优先返回与问题更相关的窗口。
+    """
+    body = (text or "").strip()
+    q = (question or "").strip()
+    if not body:
+        return ""
+    if not q:
+        return body[:cap]
+    chunks = split_text_into_chunks(body)
+    if not chunks:
+        return body[:cap]
+    scored = [(float(_keyword_score(q, ch)), ch) for ch in chunks if (ch or "").strip()]
+    scored.sort(key=lambda x: -x[0])
+    picked: list[str] = []
+    used = 0
+    for score, chunk in scored:
+        if used >= cap:
+            break
+        ch = chunk.strip()
+        if not ch:
+            continue
+        # 关键词全失配时，兜底保留开头窗口避免空上下文。
+        if score <= 0 and picked:
+            continue
+        remain = cap - used
+        part = ch if len(ch) <= remain else ch[:remain]
+        picked.append(part)
+        used += len(part) + 2
+    if not picked:
+        return body[:cap]
+    out = "\n\n".join(picked).strip()
+    if len(body) > len(out):
+        return out + "\n\n（本条摘录已按问题相关性抽样，非全文）"
+    return out
+
+
+def _notes_ask_context_cache_key(
+    *,
+    notebook: str,
+    ordered_note_ids: list[str],
+    user_ref: str | None,
+    project_owner_user_uuid: str | None,
+    question: str,
+) -> str:
+    return "|".join(
+        [
+            (notebook or "").strip(),
+            ",".join(ordered_note_ids),
+            (user_ref or "").strip(),
+            (project_owner_user_uuid or "").strip(),
+            (question or "").strip()[:300],
+        ]
+    )
+
+
+def _notes_ask_context_cache_get(key: str) -> tuple[str, list[dict[str, Any]]] | None:
+    now = time.time()
+    item = _ASK_CONTEXT_CACHE.get(key)
+    if not item:
+        return None
+    ts, context, sources = item
+    if now - ts > _ASK_CONTEXT_CACHE_TTL_SEC:
+        _ASK_CONTEXT_CACHE.pop(key, None)
+        return None
+    return context, [dict(x) for x in sources]
+
+
+def _notes_ask_context_cache_set(key: str, context: str, sources: list[dict[str, Any]]) -> None:
+    _ASK_CONTEXT_CACHE[key] = (time.time(), context, [dict(x) for x in sources])
+    if len(_ASK_CONTEXT_CACHE) > 64:
+        old_keys = sorted(_ASK_CONTEXT_CACHE.keys(), key=lambda k: _ASK_CONTEXT_CACHE[k][0])[:16]
+        for k in old_keys:
+            _ASK_CONTEXT_CACHE.pop(k, None)
+
+
+def _build_history_block(chat_history: list[dict[str, str]] | None) -> str:
+    rows = chat_history or []
+    if not rows:
+        return ""
+    normed: list[str] = []
+    for row in rows[-_ASK_HISTORY_MAX_TURNS:]:
+        role = str(row.get("role") or "").strip().lower()
+        if role not in ("user", "assistant"):
+            continue
+        content = str(row.get("content") or "").strip()
+        if not content:
+            continue
+        who = "用户" if role == "user" else "助手"
+        normed.append(f"{who}：{content[:1200]}")
+    if not normed:
+        return ""
+    return "对话历史（仅作上下文衔接，事实依据仍以本轮资料摘录为准）：\n\n" + "\n\n".join(normed)
+
+
 def _prepare_notes_ask_messages(
     *,
     notebook: str,
     note_ids: list[str],
     question: str,
     user_ref: str | None,
+    chat_history: list[dict[str, str]] | None = None,
+    require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     q = (question or "").strip()
@@ -172,6 +343,16 @@ def _prepare_notes_ask_messages(
         raise ValueError("question_required")
     if len(q) > _MAX_QUESTION_CHARS:
         q = q[:_MAX_QUESTION_CHARS]
+    need_preprocess = _notes_ask_require_preprocess_ready_default() if require_preprocess_ready is None else bool(
+        require_preprocess_ready
+    )
+    if need_preprocess:
+        _assert_preprocess_ready_for_notes(
+            notebook=notebook,
+            note_ids=note_ids,
+            user_ref=user_ref,
+            project_owner_user_uuid=project_owner_user_uuid,
+        )
 
     _t_ctx = time.perf_counter()
     context, sources = build_notes_qa_context(
@@ -190,9 +371,12 @@ def _prepare_notes_ask_messages(
     if not context.strip():
         raise ValueError("empty_context")
 
+    history_block = _build_history_block(chat_history)
     user_block = (
         "资料摘录如下（角标 [n] 须与【来源清单】/摘录中的资料序号一致；关键处尽量用「」短引文后再标 [n]）：\n\n"
-        f"{context}\n\n---\n\n问题：{q}"
+        f"{context}\n\n---\n\n"
+        + (history_block + "\n\n---\n\n" if history_block else "")
+        + f"问题：{q}"
     )
     messages = [
         {"role": "system", "content": _SYSTEM},
@@ -209,6 +393,7 @@ _NOTES_ASK_VALUE_ERROR_MESSAGES: dict[str, str] = {
     "question_required": "请输入问题。",
     "too_many_notes": "勾选的资料条数超过上限，请减少勾选后再试。",
     "note_notebook_mismatch": "勾选资料与当前笔记本不一致，请刷新后重选。",
+    "preprocess_not_ready": "已开启严格准入：请等待所选资料完成预处理（摘要/标签/实体）后再提问。",
 }
 
 
@@ -276,6 +461,9 @@ def iter_notes_answer_events(
     question: str,
     user_ref: str | None,
     api_key: str | None = None,
+    chat_history: list[dict[str, str]] | None = None,
+    include_all_sources: bool | None = None,
+    require_preprocess_ready: bool | None = None,
     prepared_messages_sources: tuple[list[dict[str, str]], list[dict[str, Any]]] | None = None,
     project_owner_user_uuid: str | None = None,
     request_id: str | None = None,
@@ -294,6 +482,8 @@ def iter_notes_answer_events(
             note_ids=note_ids,
             question=question,
             user_ref=user_ref,
+            chat_history=chat_history,
+            require_preprocess_ready=require_preprocess_ready,
             project_owner_user_uuid=project_owner_user_uuid,
         )
     acc_answer: list[str] = []
@@ -406,7 +596,7 @@ def iter_notes_answer_events(
         full = _notes_ask_sanitize_visible_text("".join(acc_answer)).strip()
         if not full:
             raise RuntimeError("empty_answer")
-        sources = filter_sources_by_citations(full, sources)
+        sources = filter_sources_by_citations(full, sources, include_all_sources=include_all_sources)
         done_ev: dict[str, Any] = {"type": "done", "sources": sources, "traceId": None}
         yield done_ev
     except Exception as exc:
@@ -424,20 +614,14 @@ def legacy_build_notes_qa_context(
     notebook: str,
     note_ids: list[str],
     user_ref: str | None,
+    question: str | None = None,
     project_owner_user_uuid: str | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     """前缀截断合并（无向量索引时的回退）。"""
     nb = notebook.strip()
     if not nb:
         raise ValueError("notebook_required")
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for raw_id in note_ids:
-        nid = str(raw_id or "").strip()
-        if not nid or nid in seen:
-            continue
-        seen.add(nid)
-        ordered.append(nid)
+    ordered = _ordered_note_ids(note_ids)
     if not ordered:
         raise ValueError("note_ids_required")
 
@@ -456,9 +640,7 @@ def legacy_build_notes_qa_context(
         cap = min(_MAX_PER_NOTE, budget)
         if cap < 200:
             break
-        chunk = text[:cap] if text else ""
-        if len(text) > cap:
-            chunk = chunk + "\n\n（本条摘录已截断）"
+        chunk = _question_snippet_windows(text, question or "", cap) if text else ""
         sources.append({"index": str(i), "noteId": nid, "title": title})
         if chunk:
             parts.append(f"### 来源 [{i}] {title}\nnoteId: {nid}\n\n{chunk}")
@@ -482,11 +664,24 @@ def build_notes_qa_context(
     """
     优先：异步摘要 + 勾选范围内向量检索；若无索引块则回退 legacy 前缀截断。
     """
-    if NOTE_LAYERED_RAG and (question or "").strip():
+    q = (question or "").strip()
+    ordered = _ordered_note_ids(note_ids)
+    cache_key = _notes_ask_context_cache_key(
+        notebook=notebook,
+        ordered_note_ids=ordered,
+        user_ref=user_ref,
+        project_owner_user_uuid=project_owner_user_uuid,
+        question=q,
+    )
+    cached = _notes_ask_context_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    if NOTE_LAYERED_RAG and q:
         layered, sources, meta = build_layered_notes_context(
             notebook=notebook,
-            note_ids=note_ids,
-            query=(question or "").strip(),
+            note_ids=ordered,
+            query=q,
             user_ref=user_ref,
             summary_budget=14_000,
             retrieval_budget=36_000,
@@ -497,12 +692,14 @@ def build_notes_qa_context(
             rcm = meta.get("retrieval_chunks_meta")
             if isinstance(rcm, list) and rcm:
                 sources = _enrich_sources_with_chunks(sources, rcm)
+            _notes_ask_context_cache_set(cache_key, layered, sources)
             return layered, sources
     _t_leg = time.perf_counter()
     legacy_out = legacy_build_notes_qa_context(
         notebook=notebook,
-        note_ids=note_ids,
+        note_ids=ordered,
         user_ref=user_ref,
+        question=q,
         project_owner_user_uuid=project_owner_user_uuid,
     )
     notes_ask_profile_emit(
@@ -510,6 +707,7 @@ def build_notes_qa_context(
         (time.perf_counter() - _t_leg) * 1000.0,
         note_ids_n=len(note_ids),
     )
+    _notes_ask_context_cache_set(cache_key, legacy_out[0], legacy_out[1])
     return legacy_out
 
 
@@ -571,11 +769,12 @@ def generate_notes_ask_hints(
     if not nb:
         raise ValueError("notebook_required")
     q_hint = "请根据下列摘录，生成导读 JSON（summary + suggestions 共 3 条），严格按系统说明的 JSON 结构输出。"
+    q_for_context = "请概括这些资料的共同主题、关键观点、事实线索与关键术语。"
     context, _sources = build_notes_qa_context(
         notebook=nb,
         note_ids=note_ids,
         user_ref=user_ref,
-        question=q_hint,
+        question=q_for_context,
         project_owner_user_uuid=project_owner_user_uuid,
     )
     if not (context or "").strip():
@@ -602,6 +801,9 @@ def answer_notes_question(
     question: str,
     user_ref: str | None,
     api_key: str | None = None,
+    chat_history: list[dict[str, str]] | None = None,
+    include_all_sources: bool | None = None,
+    require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
 ) -> dict[str, Any]:
     messages, sources = _prepare_notes_ask_messages(
@@ -609,6 +811,8 @@ def answer_notes_question(
         note_ids=note_ids,
         question=question,
         user_ref=user_ref,
+        chat_history=chat_history,
+        require_preprocess_ready=require_preprocess_ready,
         project_owner_user_uuid=project_owner_user_uuid,
     )
     try:
@@ -627,7 +831,7 @@ def answer_notes_question(
     ans = _notes_ask_sanitize_visible_text(answer.strip())
     out: dict[str, Any] = {
         "answer": ans,
-        "sources": filter_sources_by_citations(ans, sources),
+        "sources": filter_sources_by_citations(ans, sources, include_all_sources=include_all_sources),
         "traceId": trace_id,
     }
     return out

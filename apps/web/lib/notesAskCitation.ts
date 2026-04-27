@@ -119,3 +119,13 @@ export function citationTitleForWebIndex(webSources: NotesAskWebSource[] | undef
   if (!s) return `网页 ${index}`;
   return s.title;
 }
+
+export function extractCitedSourceIndexes(text: string): Set<string> {
+  const out = new Set<string>();
+  const input = String(text || "");
+  for (const m of input.matchAll(/\[(\d+)\]/g)) {
+    const idx = String(m[1] || "").trim();
+    if (idx) out.add(idx);
+  }
+  return out;
+}

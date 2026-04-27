@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { NotesAskSource, NotesAskWebSource } from "../../lib/notesAskCitation";
+import { extractCitedSourceIndexes } from "../../lib/notesAskCitation";
 import NotesAskAnswerMarkdownBody from "./NotesAskAnswerMarkdownBody";
 
 type Props = {
@@ -95,11 +96,17 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className }: 
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [webSourcesOpen, setWebSourcesOpen] = useState(false);
+  const [onlyCitedSources, setOnlyCitedSources] = useState(false);
 
   const sortedSources = useMemo(() => {
     if (!sources?.length) return [];
     return [...sources].sort((a, b) => Number(a.index) - Number(b.index));
   }, [sources]);
+  const citedSourceIndexes = useMemo(() => extractCitedSourceIndexes(text), [text]);
+  const visibleSources = useMemo(() => {
+    if (!onlyCitedSources) return sortedSources;
+    return sortedSources.filter((s) => citedSourceIndexes.has(s.index));
+  }, [sortedSources, citedSourceIndexes, onlyCitedSources]);
 
   const sortedWebSources = useMemo(() => {
     if (!webSources?.length) return [];
@@ -153,8 +160,19 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className }: 
             <p className="text-[11px] text-muted">
               点击正文中的 [n] 可跳转到下方对应脚注；关键处若出现「」短引文，可与下方摘录对照。有检索摘录时点击「查看摘录」可在弹窗中阅读块原文。与网页摘要冲突时以资料库为准。
             </p>
+            {citedSourceIndexes.size > 0 ? (
+              <label className="mt-2 inline-flex items-center gap-2 text-[11px] text-muted">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-line"
+                  checked={onlyCitedSources}
+                  onChange={(e) => setOnlyCitedSources(e.target.checked)}
+                />
+                仅显示正文已引用来源
+              </label>
+            ) : null}
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
-              {sortedSources.map((s) => (
+              {visibleSources.map((s) => (
                 <li key={`${s.noteId}-${s.index}`} id={`cite-${s.index}`} className="scroll-mt-20">
                   <span className="font-medium text-ink">{s.title}</span>
                   <span className="ml-1.5 font-mono text-[10px] text-muted" title={s.noteId}>
@@ -170,6 +188,9 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className }: 
                 </li>
               ))}
             </ol>
+            {onlyCitedSources && visibleSources.length === 0 ? (
+              <p className="mt-2 text-[11px] text-muted">正文暂无 [n] 引用角标，已自动隐藏来源列表。</p>
+            ) : null}
           </div>
         </aside>
       ) : null}

@@ -139,6 +139,14 @@ type NoteItem = {
   parseDetail?: string;
   parseEncoding?: string;
   parseOk?: boolean;
+  parseState?: "success" | "partial" | "failed" | string;
+  parseErrorCode?: string;
+  citeState?: "ready" | "limited" | "unavailable" | string;
+  retrieveState?: "indexed" | "indexing" | "failed" | "not_ready" | string;
+  preprocessStatus?: string;
+  preprocessSummary?: string;
+  preprocessTags?: string[];
+  preprocessEntities?: string[];
 };
 
 type NotesResp = {
@@ -164,6 +172,14 @@ type PreviewResp = {
   parseDetail?: string;
   parseEncoding?: string;
   parseOk?: boolean;
+  parseState?: "success" | "partial" | "failed" | string;
+  parseErrorCode?: string;
+  citeState?: "ready" | "limited" | "unavailable" | string;
+  retrieveState?: "indexed" | "indexing" | "failed" | "not_ready" | string;
+  preprocessStatus?: string;
+  preprocessSummary?: string;
+  preprocessTags?: string[];
+  preprocessEntities?: string[];
 };
 
 const card =
@@ -826,6 +842,8 @@ export default function NotesPage() {
   const [notesAskNoteBusyId, setNotesAskNoteBusyId] = useState<string | null>(null);
   const [notesAskDebugClient, setNotesAskDebugClient] = useState(false);
   const [notesAskDebugCopied, setNotesAskDebugCopied] = useState<"" | "stream" | "curlStream">("");
+  const [notesAskIncludeAllSources, setNotesAskIncludeAllSources] = useState(false);
+  const [notesAskRequirePreprocessReady, setNotesAskRequirePreprocessReady] = useState(true);
   const [sourcesPanelCollapsed, setSourcesPanelCollapsed] = useState(false);
   const [studioPanelCollapsed, setStudioPanelCollapsed] = useState(false);
   /** 与 AppShell 左侧主导航（首页 / 知识库 / 创作等）折叠状态同步 */
@@ -964,7 +982,9 @@ export default function NotesPage() {
     const streamBody: Record<string, unknown> = {
       notebook: nb,
       note_ids: idsStream,
-      question: q
+      question: q,
+      includeAllSources: notesAskIncludeAllSources,
+      requirePreprocessReady: notesAskRequirePreprocessReady
     };
     if (owner) streamBody.sharedFromOwnerUserId = owner;
     const streamJsonOne = JSON.stringify(streamBody);
@@ -973,7 +993,14 @@ export default function NotesPage() {
       streamJsonOne,
       streamReady: Boolean(nb && idsStream.length && q)
     };
-  }, [selectedNotebook, draftSelectedNoteIds, notesAskQuestion, sharedBrowse?.ownerUserId]);
+  }, [
+    selectedNotebook,
+    draftSelectedNoteIds,
+    notesAskQuestion,
+    notesAskIncludeAllSources,
+    notesAskRequirePreprocessReady,
+    sharedBrowse?.ownerUserId
+  ]);
 
   const notesAskDebugCurls = useMemo(() => {
     if (!notesAskDebugClient || typeof window === "undefined") {
@@ -1101,6 +1128,11 @@ export default function NotesPage() {
       if (Number.isNaN(tb)) return -1;
       return tb - ta;
     });
+  }, [notes]);
+  const notesById = useMemo(() => {
+    const m = new Map<string, NoteItem>();
+    for (const n of notes) m.set(n.noteId, n);
+    return m;
   }, [notes]);
 
   const selectAllOnPageInputRef = useRef<HTMLInputElement>(null);
@@ -2310,8 +2342,28 @@ export default function NotesPage() {
       setNotesAskError("请输入要问资料的问题");
       return;
     }
+    if (notesAskRequirePreprocessReady) {
+      const notReady = draftSelectedNoteIds
+        .map((id) => notesById.get(id))
+        .filter((n): n is NoteItem => Boolean(n))
+        .filter((n) => (n.preprocessStatus || "").trim().toLowerCase() !== "ready");
+      if (notReady.length > 0) {
+        const names = notReady
+          .slice(0, 3)
+          .map((n) => n.title || n.noteId)
+          .join("、");
+        const more = notReady.length > 3 ? ` 等 ${notReady.length} 条` : "";
+        setNotesAskError(`已开启严格准入：${names}${more} 尚未完成预处理，请稍后重试。`);
+        return;
+      }
+    }
     const userMsgId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
+    const chatHistory = notesAskMessages
+      .filter((m) => !m.streaming && !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX))
+      .slice(-8)
+      .map((m) => ({ role: m.role, content: (m.content || "").trim() }))
+      .filter((m) => m.content);
     setNotesAskError("");
     if (notesAskStreamInfoTimerRef.current) {
       clearTimeout(notesAskStreamInfoTimerRef.current);
@@ -2356,6 +2408,9 @@ export default function NotesPage() {
           notebook: nb,
           note_ids: draftSelectedNoteIds,
           question: q,
+          chatHistory,
+          includeAllSources: notesAskIncludeAllSources,
+          requirePreprocessReady: notesAskRequirePreprocessReady,
           ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {})
         })
       });
@@ -2902,6 +2957,9 @@ export default function NotesPage() {
         statusParts.push(
           `正文解析：${data.parseStatus}${data.parseDetail ? ` — ${data.parseDetail.slice(0, 220)}` : ""}`
         );
+      }
+      if (data.parseErrorCode) {
+        statusParts.push(`解析错误码：${data.parseErrorCode}`);
       }
       if (data.ragIndexError) {
         statusParts.push(`向量索引失败：${data.ragIndexError}`);
@@ -3618,6 +3676,49 @@ export default function NotesPage() {
                             >
                               {n.sourceReady === false ? "待充实" : "可摘录"}
                             </span>
+                            <span
+                              className={`shrink-0 rounded px-1 py-0 text-[9px] font-medium ${
+                                n.parseState === "success"
+                                  ? "bg-success-soft text-success-ink"
+                                  : n.parseState === "failed"
+                                    ? "bg-danger-soft text-danger-ink"
+                                    : "bg-warning-soft text-warning-ink"
+                              }`}
+                              title={n.parseErrorCode ? `解析错误码：${n.parseErrorCode}` : "解析状态"}
+                            >
+                              解析:{n.parseState === "success" ? "可用" : n.parseState === "failed" ? "失败" : "部分"}
+                            </span>
+                            <span
+                              className={`shrink-0 rounded px-1 py-0 text-[9px] font-medium ${
+                                n.citeState === "ready"
+                                  ? "bg-success-soft text-success-ink"
+                                  : n.citeState === "unavailable"
+                                    ? "bg-danger-soft text-danger-ink"
+                                    : "bg-warning-soft text-warning-ink"
+                              }`}
+                              title="可引用状态"
+                            >
+                              引用:{n.citeState === "ready" ? "可用" : n.citeState === "unavailable" ? "不可用" : "受限"}
+                            </span>
+                            <span
+                              className={`shrink-0 rounded px-1 py-0 text-[9px] font-medium ${
+                                n.retrieveState === "indexed"
+                                  ? "bg-success-soft text-success-ink"
+                                  : n.retrieveState === "failed"
+                                    ? "bg-danger-soft text-danger-ink"
+                                    : "bg-warning-soft text-warning-ink"
+                              }`}
+                              title={n.ragIndexError || "可检索状态"}
+                            >
+                              检索:
+                              {n.retrieveState === "indexed"
+                                ? "已就绪"
+                                : n.retrieveState === "failed"
+                                  ? "失败"
+                                  : n.retrieveState === "indexing"
+                                    ? "构建中"
+                                    : "未就绪"}
+                            </span>
                             {freshNoteIds.includes(n.noteId) ? (
                               <span
                                 className="inline-flex shrink-0 text-warning"
@@ -3646,6 +3747,45 @@ export default function NotesPage() {
                             ) : null}
                           </div>
                           <p className="mt-0.5 text-[10px] text-muted">{(n.ext || "-") + " · " + (n.createdAt || "-")}</p>
+                          <div className="mt-1.5 rounded-lg border border-line/60 bg-fill/30 px-2 py-1.5">
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span className="font-medium text-muted">预处理</span>
+                              <span
+                                className={`rounded px-1 py-0 text-[9px] font-medium ${
+                                  (n.preprocessStatus || "").toLowerCase() === "ready"
+                                    ? "bg-success-soft text-success-ink"
+                                    : "bg-warning-soft text-warning-ink"
+                                }`}
+                              >
+                                {(n.preprocessStatus || "").toLowerCase() === "ready" ? "已完成" : "未完成"}
+                              </span>
+                            </div>
+                            {n.preprocessSummary ? (
+                              <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-ink">{n.preprocessSummary}</p>
+                            ) : (
+                              <p className="mt-1 text-[11px] text-muted">暂无摘要，等待预处理完成</p>
+                            )}
+                            {(n.preprocessTags?.length || n.preprocessEntities?.length) ? (
+                              <div className="mt-1 flex flex-wrap items-center gap-1">
+                                {(n.preprocessTags || []).slice(0, 6).map((t) => (
+                                  <span
+                                    key={`tag-${n.noteId}-${t}`}
+                                    className="rounded bg-brand/10 px-1 py-0 text-[10px] font-medium text-brand"
+                                  >
+                                    #{t}
+                                  </span>
+                                ))}
+                                {(n.preprocessEntities || []).slice(0, 4).map((e) => (
+                                  <span
+                                    key={`ent-${n.noteId}-${e}`}
+                                    className="rounded bg-fill px-1 py-0 text-[10px] text-muted"
+                                  >
+                                    {e}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                         <div className="flex shrink-0 items-start gap-0.5">
                           <div className="relative" data-note-overflow-menu>
@@ -4072,6 +4212,24 @@ export default function NotesPage() {
                     </button>
                   )}
                   </div>
+                  <label className="mt-1 inline-flex items-center gap-2 px-1 text-[11px] text-muted">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 rounded border-line"
+                      checked={notesAskIncludeAllSources}
+                      onChange={(e) => setNotesAskIncludeAllSources(e.target.checked)}
+                    />
+                    显示全部勾选来源（关闭后仅返回回答中实际引用的来源）
+                  </label>
+                  <label className="mt-1 inline-flex items-center gap-2 px-1 text-[11px] text-muted">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 rounded border-line"
+                      checked={notesAskRequirePreprocessReady}
+                      onChange={(e) => setNotesAskRequirePreprocessReady(e.target.checked)}
+                    />
+                    严格准入：仅允许预处理完成（摘要/标签/实体）的资料参与问答
+                  </label>
                   {NOTES_ASK_DEBUG_BODY_ENABLED ? (
                     <div className="rounded-xl border border-amber-500/45 bg-amber-500/[0.08] px-3 py-2 text-xs leading-snug text-ink">
                       <div className="mb-1.5 font-semibold text-amber-950 dark:text-amber-100">

@@ -37,7 +37,6 @@ import BrandGlyph from "./brand/BrandGlyph";
 import { SiteBeianBar } from "./SiteBeianBar";
 import { dispatchNotesShowNotebookHub } from "../lib/notesLastNotebook";
 import {
-  FOOTER_LINK_CLASS,
   NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
   NAV_SECTION_LABEL_CLASS,
   ADMIN_ROLE,
@@ -419,22 +418,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <AnimatedPageShell>{children}</AnimatedPageShell>
         <footer className="relative z-[405] mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">
           <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">
-            <nav
-              className="flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-muted"
-              aria-label={t("footer.linksNavLabel")}
-            >
-              {(
-                [
-                  { href: "/help#docs", labelKey: "footer.linkDocs" },
-                  { href: "/help#status", labelKey: "footer.linkStatus" },
-                  { href: "/help#legal", labelKey: "footer.linkLegal" }
-                ] as const
-              ).map(({ href, labelKey }) => (
-                <Link key={href} href={href} prefetch={false} className={FOOTER_LINK_CLASS}>
-                  {t(labelKey)}
-                </Link>
-              ))}
-            </nav>
             <div className="text-center">
               <p className="text-xs tracking-wide text-muted">{t("footer.pageBrandLine")}</p>
               <p className="mt-2 text-sm text-ink">{t("footer.tag2")}</p>

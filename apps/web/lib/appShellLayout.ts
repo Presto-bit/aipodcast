@@ -14,8 +14,6 @@ export const SIDEBAR_WIDTH_EXPANDED_PX = 232;
 export const SIDEBAR_COLLAPSED_STORAGE = "1";
 export const SIDEBAR_EXPANDED_STORAGE = "0";
 
-export const FOOTER_LINK_CLASS = "text-brand hover:underline";
-
 export const NAV_SECTION_LABEL_CLASS =
   "px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted/90";
 

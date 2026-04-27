@@ -140,6 +140,18 @@ class NotesAskRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("shared_from_owner_user_id", "sharedFromOwnerUserId"),
     )
+    chat_history: list[dict[str, str]] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("chat_history", "chatHistory"),
+    )
+    include_all_sources: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("include_all_sources", "includeAllSources"),
+    )
+    require_preprocess_ready: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("require_preprocess_ready", "requirePreprocessReady"),
+    )
 
     @field_validator("note_ids")
     @classmethod
@@ -156,6 +168,24 @@ class NotesAskRequest(BaseModel):
             raise ValueError("note_ids_required")
         if len(out) > BILLING_MAX_NOTE_REFS:
             raise ValueError("too_many_notes")
+        return out
+
+    @field_validator("chat_history")
+    @classmethod
+    def _normalize_chat_history(cls, v: list[dict[str, str]]) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        if not isinstance(v, list):
+            return out
+        for row in v[-8:]:
+            if not isinstance(row, dict):
+                continue
+            role = str(row.get("role") or "").strip().lower()
+            if role not in ("user", "assistant"):
+                continue
+            content = str(row.get("content") or "").strip()
+            if not content:
+                continue
+            out.append({"role": role, "content": content[:1200]})
         return out
 
 

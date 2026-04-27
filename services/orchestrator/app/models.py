@@ -1565,12 +1565,22 @@ def create_text_note(
     content: str,
     source_url: str | None = None,
     user_ref: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> str:
     nb = (notebook or "").strip()
     if not nb:
         raise ValueError("notebook_required")
     register_notebook_name_for_user(nb, user_ref)
-    metadata = {"title": title, "notebook": nb}
+    metadata: dict[str, Any] = {"title": title, "notebook": nb}
+    if source_url:
+        metadata["sourceUrl"] = source_url
+    if extra_metadata:
+        for k, v in extra_metadata.items():
+            if v is None:
+                continue
+            if isinstance(v, str) and not v.strip():
+                continue
+            metadata[k] = v
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
