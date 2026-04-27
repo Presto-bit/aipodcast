@@ -199,7 +199,9 @@ export default function AdminUsersPage() {
       setMsg("账号已恢复为正常，可重新登录");
       setRestoreTarget(null);
     } catch (e) {
-      setRestoreError(String(e instanceof Error ? e.message : e));
+      const msg = String(e instanceof Error ? e.message : e);
+      setRestoreError(msg);
+      setMsg(msg);
     } finally {
       setRestoreBusy(false);
     }
@@ -221,7 +223,9 @@ export default function AdminUsersPage() {
       setMsg("账号已设为失效，对方将无法登录");
       setInvalidateTarget(null);
     } catch (e) {
-      setInvalidateError(String(e instanceof Error ? e.message : e));
+      const msg = String(e instanceof Error ? e.message : e);
+      setInvalidateError(msg);
+      setMsg(msg);
     } finally {
       setInvalidateBusy(false);
     }
@@ -243,7 +247,9 @@ export default function AdminUsersPage() {
       setMsg("已从系统中永久删除该用户账号");
       setDeleteTarget(null);
     } catch (e) {
-      setDeleteError(String(e instanceof Error ? e.message : e));
+      const msg = String(e instanceof Error ? e.message : e);
+      setDeleteError(msg);
+      setMsg(msg);
     } finally {
       setDeleteBusy(false);
     }
@@ -253,7 +259,7 @@ export default function AdminUsersPage() {
     <main className="min-h-0 min-w-0 w-full max-w-6xl">
       <h1 className="text-2xl font-semibold text-ink">用户管理</h1>
       <p className="mt-2 text-sm text-muted">
-        列表含全部账号（含已删除状态）；操作请点「更多」。「设为失效」禁止登录并清除会话，数据仍保留；「恢复」将已失效账号改回可登录；「永久删除」为数据库物理删除（级联清理关联数据），不可恢复。
+        列表仅显示可操作账号（不含已删除状态）；操作请点「更多」。「设为失效」禁止登录并清除会话，数据仍保留；「恢复」将已失效账号改回可登录；「永久删除」为数据库物理删除（级联清理关联数据），不可恢复。
       </p>
 
       <section className="mt-6 rounded-xl border border-line bg-surface/60 p-4">
@@ -361,7 +367,7 @@ export default function AdminUsersPage() {
                     {moreMenuKey === rowKey(u) ? (
                       <div
                         role="menu"
-                        className="absolute right-2 top-full z-50 mt-1 w-[min(18rem,calc(100vw-2rem))] rounded-xl border border-line bg-surface p-2 shadow-card"
+                        className="absolute right-0 top-full z-50 mt-1 w-[min(20rem,calc(100vw-1rem))] max-h-[min(72vh,26rem)] overflow-y-auto rounded-xl border border-line bg-surface p-2 shadow-card md:right-2"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <p className="mb-1.5 text-[10px] font-medium text-muted">加余额（元）</p>

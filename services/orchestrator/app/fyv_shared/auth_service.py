@@ -1120,15 +1120,16 @@ def _pg_mark_login_failure(user_id: str) -> None:
         conn.close()
 
 
-def _pg_list_users() -> list[Dict[str, Any]]:
+def _pg_list_users(*, include_deleted: bool = False) -> list[Dict[str, Any]]:
     if not _pg_available():
         return []
     _ensure_auth_tables_pg()
     conn = psycopg2.connect(_pg_dsn())
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        cond = "" if include_deleted else "WHERE u.account_status IS DISTINCT FROM 'deleted'"
         cur.execute(
-            """
+            f"""
             SELECT
               u.id::text AS user_id,
               u.phone,
@@ -1145,6 +1146,7 @@ def _pg_list_users() -> list[Dict[str, Any]]:
             FROM users u
             LEFT JOIN user_auth_accounts a ON a.user_id = u.id
             LEFT JOIN user_wallet_balance wb ON wb.user_id = u.id
+            {cond}
             ORDER BY u.created_at DESC
             """
         )
@@ -3123,7 +3125,7 @@ def set_user_role(user_ref: str, role: str) -> Tuple[bool, Optional[str]]:
 
 def list_users_admin_view() -> list[Dict[str, Any]]:
     if _auth_pg_primary() and _pg_available():
-        rows = _pg_list_users()
+        rows = _pg_list_users(include_deleted=False)
         if rows:
             out = []
             for raw in rows:
@@ -3148,6 +3150,9 @@ def list_users_admin_view() -> list[Dict[str, Any]]:
     out = []
     for phone, raw in users.items():
         if not isinstance(raw, dict):
+            continue
+        st = str(raw.get("account_status") or "active").strip().lower()
+        if st == "deleted":
             continue
         created_at = int(raw.get("created_at") or 0)
         out.append(

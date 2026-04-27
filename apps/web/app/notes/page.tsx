@@ -3026,6 +3026,14 @@ export default function NotesPage() {
       setPreviewStage(String(data.preprocessStage || ""));
       setPreviewNextAction(String(data.nextAction || ""));
       const statusParts: string[] = [];
+      const capabilityParts: string[] = [];
+      if (data.preprocessStage) capabilityParts.push(`预处理:${data.preprocessStage}`);
+      if (data.parseState) capabilityParts.push(`解析:${data.parseState}`);
+      if (data.citeState) capabilityParts.push(`引用:${data.citeState}`);
+      if (data.retrieveState) capabilityParts.push(`检索:${data.retrieveState}`);
+      if (capabilityParts.length > 0) {
+        statusParts.push(capabilityParts.join(" | "));
+      }
       if (data.parseStatus && data.parseStatus !== "ok") {
         statusParts.push(
           `正文解析：${data.parseStatus}${data.parseDetail ? ` — ${data.parseDetail.slice(0, 220)}` : ""}`
@@ -3532,7 +3540,7 @@ export default function NotesPage() {
               "mb-4 flex min-w-0 items-center gap-2",
               sourcesPanelCollapsed
                 ? "w-full"
-                : "w-full lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
+                : "w-full lg:w-[18.75rem] lg:min-w-[18.75rem] lg:max-w-[21.25rem] xl:w-[22.5rem] xl:max-w-[22.5rem]"
             ].join(" ")}
           >
             <button
@@ -3602,12 +3610,12 @@ export default function NotesPage() {
             )}
           </div>
 
-          <div className="flex min-h-0 flex-col gap-3 lg:h-[min(100dvh-5.5rem,900px)] lg:max-h-[min(100dvh-5.5rem,900px)] lg:flex-row lg:items-stretch lg:gap-4 lg:overflow-hidden">
+          <div className="flex min-h-0 flex-col gap-3 lg:h-[min(100dvh-5.5rem,900px)] lg:max-h-[min(100dvh-5.5rem,900px)] lg:flex-row lg:items-stretch lg:gap-3 lg:overflow-hidden">
             <section
               className={`flex shrink-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 shadow-soft lg:min-h-0 lg:h-full ${
                 sourcesPanelCollapsed
                   ? "w-full max-lg:min-h-0 lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
-                  : "w-full p-4 lg:w-[22.5rem] lg:min-w-[22.5rem] lg:max-w-[25.5rem] xl:w-[27rem] xl:max-w-[27rem]"
+                  : "w-full p-4 lg:w-[18.75rem] lg:min-w-[18.75rem] lg:max-w-[21.25rem] xl:w-[22.5rem] xl:max-w-[22.5rem]"
               }`}
               aria-label="来源"
             >
@@ -3798,45 +3806,47 @@ export default function NotesPage() {
                               </span>
                             ) : null}
                           </div>
-                          <div
-                            className={`mt-1.5 rounded-lg border px-2 py-1.5 ${
-                              preReady ? "border-line/60 bg-fill/30" : "border-line/45 bg-surface/45"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2 text-[10px]">
-                              <span className="font-medium text-muted">预处理</span>
-                              <span
-                                className={`rounded px-1 py-0 text-[9px] font-medium ${
-                                  stageInfo.stage === "可问答"
-                                    ? "bg-success-soft text-success-ink"
-                                    : "bg-warning-soft text-warning-ink"
-                                }`}
-                              >
-                                {stageInfo.stage}
-                              </span>
-                            </div>
-                            <p className="mt-1 text-[11px] text-muted">{stageInfo.nextAction}</p>
-                            {(n.preprocessTags?.length || n.preprocessEntities?.length) ? (
-                              <div className="mt-1 flex flex-wrap items-center gap-1">
-                                {(n.preprocessTags || []).slice(0, 6).map((t) => (
-                                  <span
-                                    key={`tag-${n.noteId}-${t}`}
-                                    className="rounded bg-brand/10 px-1 py-0 text-[10px] font-medium text-brand"
-                                  >
-                                    #{t}
-                                  </span>
-                                ))}
-                                {(n.preprocessEntities || []).slice(0, 4).map((e) => (
-                                  <span
-                                    key={`ent-${n.noteId}-${e}`}
-                                    className="rounded bg-fill px-1 py-0 text-[10px] text-muted"
-                                  >
-                                    {e}
-                                  </span>
-                                ))}
+                          {stageInfo.stage !== "摘要中" ? (
+                            <div
+                              className={`mt-1.5 rounded-lg border px-2 py-1.5 ${
+                                preReady ? "border-line/60 bg-fill/30" : "border-line/45 bg-surface/45"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 text-[10px]">
+                                <span className="font-medium text-muted">预处理</span>
+                                <span
+                                  className={`rounded px-1 py-0 text-[9px] font-medium ${
+                                    stageInfo.stage === "可问答"
+                                      ? "bg-success-soft text-success-ink"
+                                      : "bg-warning-soft text-warning-ink"
+                                  }`}
+                                >
+                                  {stageInfo.stage}
+                                </span>
                               </div>
-                            ) : null}
-                          </div>
+                              <p className="mt-1 text-[11px] text-muted">{stageInfo.nextAction}</p>
+                              {(n.preprocessTags?.length || n.preprocessEntities?.length) ? (
+                                <div className="mt-1 flex flex-wrap items-center gap-1">
+                                  {(n.preprocessTags || []).slice(0, 6).map((t) => (
+                                    <span
+                                      key={`tag-${n.noteId}-${t}`}
+                                      className="rounded bg-brand/10 px-1 py-0 text-[10px] font-medium text-brand"
+                                    >
+                                      #{t}
+                                    </span>
+                                  ))}
+                                  {(n.preprocessEntities || []).slice(0, 4).map((e) => (
+                                    <span
+                                      key={`ent-${n.noteId}-${e}`}
+                                      className="rounded bg-fill px-1 py-0 text-[10px] text-muted"
+                                    >
+                                      {e}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                         <div className="flex shrink-0 items-start gap-0.5">
                           <div className="relative" data-note-overflow-menu>
@@ -3941,15 +3951,9 @@ export default function NotesPage() {
               )}
             </section>
 
-            <div
-              className={`flex min-h-0 min-w-0 flex-1 overflow-hidden ${
-                sourcesPanelCollapsed || appNavCollapsed ? "w-full" : "justify-center"
-              }`}
-            >
+            <div className="flex min-h-0 min-w-0 w-full flex-1 overflow-hidden">
             <section
-              className={`flex min-h-0 h-full w-full min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft ${
-                sourcesPanelCollapsed || appNavCollapsed ? "max-w-none" : "max-w-[min(100%,38rem)]"
-              }`}
+              className="flex min-h-0 h-full w-full min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft"
               role="region"
               aria-label="对话"
             >

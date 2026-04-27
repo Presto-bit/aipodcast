@@ -50,7 +50,7 @@ export default function SmallConfirmModal({
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <div className="fym-workspace-scrim z-[1200] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+    <div className="fym-workspace-scrim z-[1200] flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
       <button
         type="button"
         className="absolute inset-0 bg-surface/50 backdrop-blur-[1px]"
@@ -60,7 +60,7 @@ export default function SmallConfirmModal({
           if (!busy) onCancel();
         }}
       />
-      <div className="fym-modal-card relative z-[1] w-full max-w-sm p-5">
+      <div className="fym-modal-card relative z-[1] w-full max-w-[min(96vw,32rem)] max-h-[min(88vh,42rem)] overflow-y-auto p-4 sm:p-5">
         <h2 id="confirm-modal-title" className="text-sm font-semibold text-ink">
           {title}
         </h2>
