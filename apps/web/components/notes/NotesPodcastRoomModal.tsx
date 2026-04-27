@@ -909,7 +909,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                       </span>
                       <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-flex max-w-full align-top">
                         {!roomFeaturesOk ? (
-                          <LockedToolbarChipPill label={<>加入创意 · {creativeSummary}</>} upgradeTitle="该能力未开启（由服务器配置控制）" />
+                          <LockedToolbarChipPill label={<>人设风格 · {creativeSummary}</>} upgradeTitle="该能力未开启（由服务器配置控制）" />
                         ) : (
                           <>
                             <button
@@ -918,13 +918,13 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                               title={CREATIVE_CHIP_HOVER_HINT}
                               onClick={() => setActivePanel((p) => (p === "creative" ? null : "creative"))}
                             >
-                              加入创意 · {creativeSummary}
+                              人设风格 · {creativeSummary}
                             </button>
                             {renderFloatingPanel(
                               "creative",
                               panelClassAnchorMobile,
                               panelClassAnchorDesktop,
-                              "加入创意",
+                              "人设风格",
                               <CreativeTemplatePicker value={creativeTemplateValue} onChange={setCreativeTemplateValue} />
                             )}
                           </>

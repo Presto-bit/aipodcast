@@ -1117,9 +1117,9 @@ export default function SubscriptionPage() {
               </p>
             ) : null}
           </div>
-          <div className="mt-2 flex flex-wrap items-end gap-3">
+          <div className="mt-2 flex flex-nowrap items-center gap-3 overflow-x-auto pb-0.5 [-webkit-overflow-scrolling:touch]">
             <div
-              className="flex min-w-[10.5rem] cursor-pointer flex-col gap-0.5 rounded-md border border-line bg-canvas p-2 text-xs text-muted shadow-sm transition hover:bg-fill/70"
+              className="flex min-w-0 shrink-0 cursor-pointer flex-nowrap items-center gap-2 rounded-md border border-line bg-canvas py-1.5 pl-2.5 pr-2 text-xs text-muted shadow-sm transition hover:bg-fill/70"
               onClick={(e) => {
                 if ((e.target as HTMLElement).tagName === "INPUT") return;
                 openConsumptionDatePicker(consumptionSinceDateRef.current);
@@ -1127,17 +1127,17 @@ export default function SubscriptionPage() {
               role="group"
               aria-label="消费记录开始日期"
             >
-              <span className="text-[11px] font-medium text-muted">开始日期</span>
+              <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-muted">开始日期</span>
               <input
                 ref={consumptionSinceDateRef}
                 type="date"
-                className="mt-0.5 w-full cursor-pointer rounded border-0 bg-transparent p-0 font-mono text-xs text-ink focus:outline-none focus:ring-0"
+                className="min-w-[9.25rem] max-w-[11rem] shrink-0 cursor-pointer border-0 bg-transparent p-0 font-mono text-xs text-ink focus:outline-none focus:ring-0 [&::-webkit-calendar-picker-indicator]:ml-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
                 value={consumptionSince}
                 onChange={(e) => setConsumptionSince(e.target.value)}
               />
             </div>
             <div
-              className="flex min-w-[10.5rem] cursor-pointer flex-col gap-0.5 rounded-md border border-line bg-canvas p-2 text-xs text-muted shadow-sm transition hover:bg-fill/70"
+              className="flex min-w-0 shrink-0 cursor-pointer flex-nowrap items-center gap-2 rounded-md border border-line bg-canvas py-1.5 pl-2.5 pr-2 text-xs text-muted shadow-sm transition hover:bg-fill/70"
               onClick={(e) => {
                 if ((e.target as HTMLElement).tagName === "INPUT") return;
                 openConsumptionDatePicker(consumptionUntilDateRef.current);
@@ -1145,11 +1145,11 @@ export default function SubscriptionPage() {
               role="group"
               aria-label="消费记录结束日期"
             >
-              <span className="text-[11px] font-medium text-muted">结束日期</span>
+              <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-muted">结束日期</span>
               <input
                 ref={consumptionUntilDateRef}
                 type="date"
-                className="mt-0.5 w-full cursor-pointer rounded border-0 bg-transparent p-0 font-mono text-xs text-ink focus:outline-none focus:ring-0"
+                className="min-w-[9.25rem] max-w-[11rem] shrink-0 cursor-pointer border-0 bg-transparent p-0 font-mono text-xs text-ink focus:outline-none focus:ring-0 [&::-webkit-calendar-picker-indicator]:ml-2 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
                 value={consumptionUntil}
                 onChange={(e) => setConsumptionUntil(e.target.value)}
               />

@@ -1,5 +1,5 @@
 /**
- * 「创作模板」与「加入创意」参数（脚本风格、人设、约束）的解析与应用。
+ * 「创作模板」与「人设风格」参数（脚本风格、人设、约束）的解析与应用。
  */
 import { DEFAULT_SCRIPT_CONSTRAINTS, formatScriptStyleChip } from "./podcastStudioCommon";
 import { PODCAST_STUDIO_PRESETS, type PodcastStudioPreset } from "./podcastStudioPresets";
@@ -21,14 +21,23 @@ const BUILTIN_CREATIVE_BALANCED: PodcastStudioPreset = {
   scriptConstraints: DEFAULT_SCRIPT_CONSTRAINTS
 };
 
-/** 内置创意模板顺序：默认一项 + 四种结构化风格（与主素材 textPrefix 一致，仅用于加入创意时同样生效）。 */
+/** 内置人设风格顺序：默认一项 + 四种结构化风格（与主素材 textPrefix 一致）。 */
 export const BUILTIN_CREATIVE_PRESETS: PodcastStudioPreset[] = [BUILTIN_CREATIVE_BALANCED, ...PODCAST_STUDIO_PRESETS];
 
-/** AI/笔记播客页「加入创意」的默认选项 */
+/** AI/笔记播客页「人设风格」的默认选项 */
 export const DEFAULT_CREATIVE_TEMPLATE_VALUE = `sys:${BUILTIN_CREATIVE_BALANCED.id}`;
 
-export const CREATIVE_TEMPLATE_GROUP_BUILTIN = "默认创意模板";
-export const CREATIVE_TEMPLATE_GROUP_USER = "自定义创意模板";
+export const CREATIVE_TEMPLATE_GROUP_BUILTIN = "默认人设风格";
+export const CREATIVE_TEMPLATE_GROUP_USER = "自定义人设风格";
+
+/** 用户自定义方案在 UserTemplate.category 中的取值；旧数据可能仍为「加入创意」。 */
+export const USER_PERSONA_STYLE_CATEGORY = "人设风格";
+const LEGACY_USER_CREATIVE_CATEGORY = "加入创意";
+
+export function isUserPersonaStyleTemplateCategory(category: string | undefined): boolean {
+  const c = (category || "").trim();
+  return c === USER_PERSONA_STYLE_CATEGORY || c === LEGACY_USER_CREATIVE_CATEGORY;
+}
 
 export type CreativeTemplateSelectOption = {
   value: string;
@@ -38,7 +47,7 @@ export type CreativeTemplateSelectOption = {
 };
 
 /**
- * 加入创意下拉的选项：先系统默认，再当前用户的自定义（本地 + 登录后服务端同步）。
+ * 人设风格下拉的选项：先系统默认，再当前用户的自定义（本地 + 登录后服务端同步）。
  */
 export function mergeCreativeTemplateSelectOptions(): CreativeTemplateSelectOption[] {
   const out: CreativeTemplateSelectOption[] = [];
@@ -50,7 +59,7 @@ export function mergeCreativeTemplateSelectOptions(): CreativeTemplateSelectOpti
       prefix: p.textPrefix
     });
   }
-  const userCreative = listUserTemplates().filter((t) => (t.category || "").trim() === "加入创意");
+  const userCreative = listUserTemplates().filter((t) => isUserPersonaStyleTemplateCategory(t.category));
   for (const p of userCreative) {
     out.push({
       value: `usr:${p.id}`,
@@ -78,7 +87,7 @@ function resolveScriptConstraints(p: PodcastStudioPreset): string {
 }
 
 /**
- * 从一条模板记录得到加入创意四元组；缺省字段用站点默认。
+ * 从一条模板记录得到人设风格四元组；缺省字段用站点默认。
  */
 export function creativeBundleFromPreset(p: PodcastStudioPreset): CreativeBundle {
   return {
@@ -129,7 +138,7 @@ export function labelForCreativeTemplateValue(value: string): string {
   return BUILTIN_CREATIVE_BALANCED.label;
 }
 
-/** 工具栏「加入创意 · …」芯片：标题短截，避免占满一行。 */
+/** 工具栏「人设风格 · …」芯片：标题短截，避免占满一行。 */
 export function formatCreativeTemplateChip(templateValue: string, maxChars = 8): string {
   return formatScriptStyleChip(labelForCreativeTemplateValue(templateValue), maxChars);
 }

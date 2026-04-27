@@ -7619,12 +7619,6 @@ def list_wallet_consumption_rows_for_phone(
                 exv = 0.0
             if am > 1e-9:
                 usage_parts.append(f"语音时长{am:.2f}分钟")
-            try:
-                em = float(pl.get("estimated_minutes") or 0)
-            except (TypeError, ValueError):
-                em = 0.0
-            if em > 1e-9 and abs(em - am) > 0.01:
-                usage_parts.append(f"预估 {em:.2f} 分钟")
             if exv > 1e-9:
                 usage_parts.append(f"体验包 {exv:.2f} 分钟")
         elif "已按预估语音分钟" in msg:

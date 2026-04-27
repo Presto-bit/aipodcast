@@ -151,7 +151,7 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className }: 
           </button>
           <div id="notes-ask-citation-footnotes" className="mt-2" hidden={!sourcesOpen}>
             <p className="text-[11px] text-muted">
-              点击正文中的 [n] 可跳转到下方对应脚注；有检索摘录时点击「查看摘录」可在弹窗中阅读块原文。与网页摘要冲突时以资料库为准。
+              点击正文中的 [n] 可跳转到下方对应脚注；关键处若出现「」短引文，可与下方摘录对照。有检索摘录时点击「查看摘录」可在弹窗中阅读块原文。与网页摘要冲突时以资料库为准。
             </p>
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
               {sortedSources.map((s) => (

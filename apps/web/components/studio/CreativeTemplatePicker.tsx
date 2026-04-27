@@ -15,7 +15,7 @@ type CreativeTemplatePickerProps = {
 export default function CreativeTemplatePicker({
   value,
   onChange,
-  manageHref = "/notes/templates"
+  manageHref = "/voice?tab=persona"
 }: CreativeTemplatePickerProps) {
   const [epoch, setEpoch] = useState(0);
 
@@ -39,17 +39,17 @@ export default function CreativeTemplatePicker({
 
   return (
     <div className="mb-3 rounded-lg border border-line bg-fill/70 p-2.5">
-      <p className="mb-1.5 text-xs font-medium text-ink">加入创意</p>
+      <p className="mb-1.5 text-xs font-medium text-ink">人设风格</p>
       <p className="mb-2 text-[11px] leading-snug text-muted">
         从默认或自定义方案中选择一套脚本风格与人设。需在
         <Link href={manageHref} className="text-brand underline hover:text-brand/80">
-          加入创意管理
+          人设风格管理
         </Link>
         保存自定义方案。
       </p>
       <select
         className="w-full rounded-lg border border-line bg-surface px-2 py-2 text-xs text-ink"
-        aria-label="选择加入创意方案"
+        aria-label="选择人设风格方案"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >

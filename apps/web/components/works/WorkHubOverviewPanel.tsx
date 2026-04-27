@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback } from "react";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
@@ -180,13 +179,7 @@ export function WorkHubOverviewPanel({
       ) : null}
 
       {scriptManuscriptPanel ? (
-        <p className="text-xs leading-relaxed text-muted">
-          纯文稿作品无播客音频，无法试听或走 RSS 发布；可在下方阅读、编辑正文，或前往{" "}
-          <Link href="/notes" className="font-medium text-brand underline">
-            笔记工作台
-          </Link>{" "}
-          用相同素材再出稿。
-        </p>
+        <p className="text-xs leading-relaxed text-muted">纯文稿作品无播客音频，无法试听或走 RSS 发布；可在下方阅读正文</p>
       ) : null}
 
       {scriptManuscriptPanel ? (
@@ -204,6 +197,7 @@ export function WorkHubOverviewPanel({
               regenerateVoiceSupported={false}
               regenerateVoiceBusy={regenerateVoiceBusy}
               onRegenerateVoice={onRegenerateVoice}
+              pureManuscriptOnly
             />
           </div>
         </section>

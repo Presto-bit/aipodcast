@@ -545,7 +545,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     return () => mq.removeEventListener("change", sync);
   }, []);
 
-  /** /podcast?applyCreative=usr:xxx|sys:xxx：从创作模板页一键跳转并打开加入创意 */
+  /** /podcast?applyCreative=usr:xxx|sys:xxx：从人设风格页一键跳转并打开人设风格面板 */
   useEffect(() => {
     if (typeof window === "undefined") return;
     const u = new URL(window.location.href);
@@ -1217,7 +1217,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-flex max-w-full align-top">
                     {!roomFeaturesOk ? (
-                      <LockedToolbarChipPill label={<>风格 · {creativeSummary}</>} upgradeTitle="该能力未开启（由服务器配置控制）" />
+                      <LockedToolbarChipPill label={<>人设风格 · {creativeSummary}</>} upgradeTitle="该能力未开启（由服务器配置控制）" />
                     ) : (
                       <>
                         <button
@@ -1226,13 +1226,13 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                           title={CREATIVE_CHIP_HOVER_HINT}
                           onClick={() => setActivePanel((p) => (p === "creative" ? null : "creative"))}
                         >
-                          风格 · {creativeSummary}
+                          人设风格 · {creativeSummary}
                         </button>
                         {renderFloatingPanel(
                           "creative",
                           panelClassAnchorMobile,
                           panelClassAnchor,
-                          "加入创意",
+                          "人设风格",
                           <CreativeTemplatePicker value={creativeTemplateValue} onChange={setCreativeTemplateValue} />
                         )}
                       </>

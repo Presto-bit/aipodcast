@@ -16,6 +16,8 @@ type Props = {
   regenerateVoiceSupported: boolean;
   regenerateVoiceBusy: boolean;
   onRegenerateVoice?: () => void;
+  /** 纯文稿作品详情：正文区高度加倍，并隐藏「保存后写入…」说明 */
+  pureManuscriptOnly?: boolean;
 };
 
 export function WorkHubManuscriptBar({
@@ -27,7 +29,8 @@ export function WorkHubManuscriptBar({
   canEditScript,
   regenerateVoiceSupported,
   regenerateVoiceBusy,
-  onRegenerateVoice
+  onRegenerateVoice,
+  pureManuscriptOnly = false
 }: Props) {
   const [draft, setDraft] = useState(manuscriptBody);
   const [busy, setBusy] = useState(false);
@@ -157,14 +160,20 @@ export function WorkHubManuscriptBar({
         {canEditScript ? (
           <div className="min-w-0 space-y-1.5">
             <textarea
-              className="max-h-[min(55vh,28rem)] min-h-[12rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
+              className={
+                pureManuscriptOnly
+                  ? "max-h-[min(110vh,56rem)] min-h-[24rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
+                  : "max-h-[min(55vh,28rem)] min-h-[12rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
+              }
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               disabled={busy || scriptResolvePending}
               spellCheck={false}
               aria-label="口播稿正文"
             />
-            <p className="text-[10px] text-muted/90">保存后写入作品结果；简介与 Shownotes 不会自动重写。</p>
+            {!pureManuscriptOnly ? (
+              <p className="text-[10px] text-muted/90">保存后写入作品结果；简介与 Shownotes 不会自动重写。</p>
+            ) : null}
             {err ? <p className="text-xs text-danger-ink">{err}</p> : null}
             <div className="flex justify-end">
               <button
@@ -178,7 +187,13 @@ export function WorkHubManuscriptBar({
             </div>
           </div>
         ) : (
-          <pre className="max-h-[min(40vh,18rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink">
+          <pre
+            className={
+              pureManuscriptOnly
+                ? "max-h-[min(80vh,36rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
+                : "max-h-[min(40vh,18rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
+            }
+          >
             {manuscriptBody.trim() ? manuscriptBody : "（无正文）"}
           </pre>
         )}

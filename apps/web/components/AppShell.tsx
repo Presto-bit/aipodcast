@@ -22,7 +22,6 @@ import {
   IconNotes,
   IconSubscription,
   IconUser,
-  IconTemplate,
   IconTrash,
   IconVoice
 } from "./NavIcons";
@@ -180,28 +179,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         short: t("nav.createShort"),
         Icon: IconCreate,
         activeMatch: (p) => matchesProductStudio(p)
-      },
+      }
+    ];
+    if (showClipNav) items.push(clipItem);
+    return items;
+  }, [t, showClipNav, clipNavPublic]);
+  const navLibrary = useMemo<NavItem[]>(
+    () => [
+      { href: "/works", label: t("nav.works"), short: "作", Icon: IconGrid },
       {
         href: "/voice",
         label: t("nav.voice"),
         short: "音",
         Icon: IconVoice,
         activeMatch: (p) => pathMatchesRoot(p, "/voice")
-      }
-    ];
-    if (showClipNav) items.push(clipItem);
-    items.push({
-      href: "/notes/templates",
-      label: t("nav.templates"),
-      short: "风",
-      Icon: IconTemplate,
-      activeMatch: (p) => pathMatchesRoot(p, NOTES_TEMPLATES_PREFIX)
-    });
-    return items;
-  }, [t, showClipNav, clipNavPublic]);
-  const navLibrary = useMemo<NavItem[]>(
-    () => [
-      { href: "/works", label: t("nav.works"), short: "作", Icon: IconGrid },
+      },
       {
         href: "/drafts",
         label: t("nav.drafts"),

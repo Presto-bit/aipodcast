@@ -70,7 +70,6 @@ import {
 } from "../../lib/notesAskCitation";
 import { loadNotesAskChat, saveNotesAskChat } from "../../lib/notesAskChatStorage";
 import { notesAskClientLog } from "../../lib/notesAskClientLog";
-import { NotesAskRunLogPanel } from "../../components/notes/NotesAskRunLogPanel";
 import {
   accountKeyFromUser,
   readLocalStorageScoped,
@@ -3963,7 +3962,6 @@ export default function NotesPage() {
                     </div>
                   )}
                 </div>
-                <NotesAskRunLogPanel />
                 <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch">
                   <button
                     type="button"
