@@ -1,4 +1,3 @@
-import JSZip from "jszip";
 import { normalizeHexForMp3 } from "./audioHex";
 import { unusableInsecureHttpOnHttpsPage } from "./insecureHttpOnHttpsPage";
 import { getBearerAuthHeadersSync } from "./authHeaders";
@@ -40,9 +39,6 @@ function hexToUint8Array(hex: string): Uint8Array {
   }
   return out;
 }
-
-/** DevTools 过滤前缀：`[fym:work-bundle-download]` */
-const BUNDLE_DL_LOG = "[fym:work-bundle-download]";
 
 function summarizeUrlForLog(url: string, maxLen = 120): string {
   const u = String(url || "").trim();
@@ -167,7 +163,6 @@ async function fetchBytesFromAudioUrl(url: string, authHdr: Record<string, strin
   const u = String(url || "").trim();
   if (!u) return null;
   if (typeof window !== "undefined" && unusableInsecureHttpOnHttpsPage(u)) {
-    console.warn(`${BUNDLE_DL_LOG} fetchBytesFromAudioUrl_skipped_mixed_content`, summarizeUrlForLog(u));
     return null;
   }
   try {
@@ -378,10 +373,6 @@ export async function downloadJobBundleZip(opts: JobBundleExportOptions): Promis
   try {
     await downloadJobBundleZipImpl(opts);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!msg.includes("无法打包音频")) {
-      console.warn(`${BUNDLE_DL_LOG} error`, { jobId: opts.jobId, message: msg });
-    }
     throw e;
   }
 }
@@ -410,19 +401,6 @@ async function downloadJobBundleZipImpl(opts: JobBundleExportOptions): Promise<v
 
   const likelyHasEpisodeAudio = resultSuggestsAudioPresent(result, hex);
   if (likelyHasEpisodeAudio && audioBytes.length === 0) {
-    console.warn(`${BUNDLE_DL_LOG} audio_resolve_failed`, {
-      jobId: opts.jobId,
-      title: folderName,
-      lastError: audioResolveError.trim() || null,
-      attempts: audioResolveAttempts,
-      resultHints: {
-        audio_object_key: Boolean(String(result.audio_object_key || "").trim()),
-        audio_url: summarizeUrlForLog(String(result.audio_url || "")),
-        audio_hex_len: hex.length,
-        audio_duration_sec: result.audio_duration_sec,
-        has_audio_hex_flag: result.has_audio_hex === true
-      }
-    });
     const attemptLine = summarizeAudioAttemptsForUser(audioResolveAttempts);
     const base =
       audioResolveError.trim()
@@ -440,6 +418,7 @@ async function downloadJobBundleZipImpl(opts: JobBundleExportOptions): Promise<v
     throw new Error("任务中没有可打包内容（音频/文稿/封面/Show notes 均为空）");
   }
 
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const root = zip.folder(folderName);
   if (!root) throw new Error("无法创建压缩包");

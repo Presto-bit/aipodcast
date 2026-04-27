@@ -1,3 +1,5 @@
+import { sanitizeClientLogDetail } from "./clientDebugRing";
+
 /**
  * 充值 / 余额同步：浏览器端排查时间线（sessionStorage），不含 Authorization。
  * 可见与写入：开发环境默认；生产设 NEXT_PUBLIC_RECHARGE_DEBUG_UI=1 或 localStorage.recharge_debug_ui=1；
@@ -66,11 +68,12 @@ export function appendRechargeDebug(
   if (!rechargePathLogVisibleForUser(userForVisibility)) return;
   if (typeof window === "undefined") return;
   try {
+    const safeData = sanitizeClientLogDetail(data);
     const entry: RechargeDebugEntry = {
       ts: new Date().toISOString(),
       step,
       ...(requestId ? { requestId } : {}),
-      ...(data && Object.keys(data).length ? { data } : {})
+      ...(safeData && Object.keys(safeData).length ? { data: safeData } : {})
     };
     const raw = sessionStorage.getItem(STORAGE_KEY);
     let arr: RechargeDebugEntry[] = [];

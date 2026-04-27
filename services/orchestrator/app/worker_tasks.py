@@ -15,32 +15,15 @@ from .pydub_setup import ensure_pydub_binaries
 
 ensure_pydub_binaries()
 
-from .legacy_bridge import script_generation_options_from_payload
-from .provider_router import (
-    build_script,
-    clone_voice,
-    default_podcast_voice_ids,
-    generate_cover_image,
-    synthesize_tts,
-)
-from .audio_mix import maybe_mix_podcast_bgm
 from .entitlement_matrix import (
     normalize_script_target_input,
     voice_clone_payg_cents,
 )
-from .cover_image_material import build_cover_material
-from .reference_material import effective_article_script_target_chars, merge_reference_for_script
-from .script_reference_coverage import augment_script_options_for_multi_note_coverage
 from .subscription_limits import tier_allows_ai_polish
 from .subscription_manifest import (
     BILLING_LONG_FORM_SCRIPT_CHARS_CAP,
     BILLING_MAX_NOTE_REFS,
     PRODUCT_ENTITLEMENTS_TIER,
-)
-from .tts_pipeline import (
-    dialogue_speaker_format_issues,
-    normalize_dialogue_speaker_lines,
-    run_extended_tts,
 )
 from .models import (
     add_artifact,
@@ -60,10 +43,9 @@ from .models import (
     wallet_credit_cents,
     wallet_try_debit_cents,
 )
-from .object_store import presigned_get_url, upload_bytes, upload_text
+from .object_store import upload_bytes, upload_text
 from .storage_paths import job_artifact_base, job_cover_object_key
 from .note_work_meta import snapshot_notes_source_titles
-from .work_result_title import assign_work_result_title_with_optional_llm
 
 logger = logging.getLogger(__name__)
 
@@ -410,6 +392,20 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
     source_text = str(payload.get("text") or "").strip()
     source_url = str(payload.get("url") or "").strip()
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
+
+    from .cover_image_material import build_cover_material
+    from .legacy_bridge import script_generation_options_from_payload
+    from .provider_router import (
+        build_script,
+        clone_voice,
+        default_podcast_voice_ids,
+        generate_cover_image,
+        synthesize_tts,
+    )
+    from .reference_material import effective_article_script_target_chars, merge_reference_for_script
+    from .script_reference_coverage import augment_script_options_for_multi_note_coverage
+    from .tts_pipeline import run_extended_tts
+    from .work_result_title import assign_work_result_title_with_optional_llm
 
     try:
         if job_type in ("voice_clone", "clone_voice"):
@@ -934,6 +930,25 @@ def run_media_job(job_id: str) -> dict[str, Any]:
     source_text = str(payload.get("text") or "").strip()
     source_url = str(payload.get("url") or "").strip()
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
+
+    from .audio_mix import maybe_mix_podcast_bgm
+    from .cover_image_material import build_cover_material
+    from .legacy_bridge import script_generation_options_from_payload
+    from .object_store import presigned_get_url
+    from .provider_router import (
+        build_script,
+        default_podcast_voice_ids,
+        generate_cover_image,
+        synthesize_tts,
+    )
+    from .reference_material import merge_reference_for_script
+    from .script_reference_coverage import augment_script_options_for_multi_note_coverage
+    from .tts_pipeline import (
+        dialogue_speaker_format_issues,
+        normalize_dialogue_speaker_lines,
+        run_extended_tts,
+    )
+    from .work_result_title import assign_work_result_title_with_optional_llm
 
     try:
         if job_type == "podcast_short_video":

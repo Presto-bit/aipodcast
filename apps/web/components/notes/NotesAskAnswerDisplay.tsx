@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState, type MouseEventHandler } from "react";
+import dynamic from "next/dynamic";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import {
-  citationTitleForIndex,
-  linkifyCitationMarkers,
-  type NotesAskSource
-} from "../../lib/notesAskCitation";
-import { sanitizeUserMarkdownHref } from "../../lib/safeMarkdownHref";
+import type { NotesAskSource } from "../../lib/notesAskCitation";
+
+const NotesAskAnswerMarkdownBody = dynamic(
+  () => import("./NotesAskAnswerMarkdownBody"),
+  {
+    ssr: false,
+    loading: () => <p className="text-muted text-sm">渲染回答中…</p>
+  }
+);
 
 type Props = {
   text: string;
@@ -18,18 +20,7 @@ type Props = {
   className?: string;
 };
 
-/**
- * 将「向资料提问」的纯文本回答规范化：段间空行保留为段落，段内单行换行转为 Markdown 硬换行，便于阅读。
- */
-export function normalizeNotesAskAnswerForDisplay(raw: string): string {
-  return raw
-    .trim()
-    .replace(/\r\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .split(/\n{2,}/)
-    .map((block) => block.replace(/([^\n])\n(?=[^\n])/g, "$1  \n").trim())
-    .join("\n\n");
-}
+export { normalizeNotesAskAnswerForDisplay } from "../../lib/notesAskAnswerNormalize";
 
 function SourceExcerptModal({
   source,
@@ -110,11 +101,6 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
 
-  const md = useMemo(() => {
-    const n = normalizeNotesAskAnswerForDisplay(text);
-    return linkifyCitationMarkers(n, sources);
-  }, [text, sources]);
-
   const sortedSources = useMemo(() => {
     if (!sources?.length) return [];
     return [...sources].sort((a, b) => Number(a.index) - Number(b.index));
@@ -136,52 +122,7 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
     <div
       className={`notes-ask-answer flex min-w-0 flex-col gap-3 text-sm leading-relaxed text-ink [&_blockquote]:border-l-4 [&_blockquote]:border-line [&_blockquote]:pl-3 [&_blockquote]:text-ink/90 [&_code]:rounded [&_code]:bg-fill [&_code]:px-1 [&_code]:py-px [&_code]:text-[0.8125rem] [&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:leading-relaxed [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-line/80 [&_pre]:bg-fill/80 [&_pre]:p-3 [&_pre]:text-xs [&_table]:w-full [&_table]:border-collapse [&_table]:text-left [&_table]:text-xs [&_td]:border [&_td]:border-line/70 [&_td]:px-2 [&_td]:py-1.5 [&_th]:border [&_th]:border-line/70 [&_th]:bg-fill/50 [&_th]:px-2 [&_th]:py-1.5 [&_th]:font-medium [&_ul]:list-disc [&_ul]:pl-5 ${wrap}`}
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          p: ({ children }) => <p className="min-w-0 whitespace-pre-wrap">{children}</p>,
-          a: ({ href, children, ...rest }) => {
-            const rawHref = String(href || "");
-            if (rawHref.startsWith("#cite-")) {
-              const idx = rawHref.replace(/^#cite-/, "");
-              const title = citationTitleForIndex(sources, idx);
-              return (
-                <a
-                  href={rawHref}
-                  className="ml-0.5 inline align-baseline text-[0.92em] font-semibold text-brand underline decoration-dotted underline-offset-[3px] hover:decoration-solid"
-                  title={title}
-                  {...rest}
-                  onClick={(e) => {
-                    setSourcesOpen(true);
-                    (rest as { onClick?: MouseEventHandler<HTMLAnchorElement> }).onClick?.(e);
-                  }}
-                >
-                  {children}
-                </a>
-              );
-            }
-            const safe = sanitizeUserMarkdownHref(href);
-            if (!safe) {
-              return <span className="break-all text-ink">{children}</span>;
-            }
-            return (
-              <a href={safe} className="break-all text-brand underline" target="_blank" rel="noopener noreferrer" {...rest}>
-                {children}
-              </a>
-            );
-          },
-          code: ({ className: codeClass, children }) =>
-            codeClass ? (
-              <pre>
-                <code>{children}</code>
-              </pre>
-            ) : (
-              <code>{children}</code>
-            )
-        }}
-      >
-        {md || "（无内容）"}
-      </ReactMarkdown>
+      <NotesAskAnswerMarkdownBody text={text} sources={sources} onCitationClick={() => setSourcesOpen(true)} />
 
       {sortedSources.length > 0 ? (
         <aside

@@ -653,16 +653,9 @@ export default function PodcastWorksGallery({
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.warn("[fym:works-gallery-download] failed", {
-        jobId: id,
-        workType: row.type,
-        title,
-        message,
-        stack: e instanceof Error ? e.stack : undefined
-      });
       setPlayErrorById((prev) => ({
         ...prev,
-        [id]: `下载失败：${message}（任务 ID：${id}；控制台过滤 [fym:work-bundle-download] 可查看完整日志）`
+        [id]: `下载失败：${message}（任务 ID：${id}）`
       }));
     } finally {
       setZipBusy(null);
@@ -1085,16 +1078,9 @@ export default function PodcastWorksGallery({
           }
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          console.warn("[fym:works-gallery-batch-download] failed", {
-            jobId: id,
-            workType: row.type,
-            title,
-            message,
-            stack: e instanceof Error ? e.stack : undefined
-          });
           setPlayErrorById((prev) => ({
             ...prev,
-            [id]: `下载失败：${message}（任务 ID：${id}；控制台过滤 [fym:work-bundle-download] 可查看完整日志）`
+            [id]: `下载失败：${message}（任务 ID：${id}）`
           }));
           break;
         }

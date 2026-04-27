@@ -122,13 +122,6 @@ function buildPlansLoadHintZh(d: PlansLoadDiag): string {
   return "";
 }
 
-function logSubscriptionPlansDiag(d: PlansLoadDiag): void {
-  if (!subscriptionPlansDebugEnabled()) return;
-  const hint = d.hint_zh || buildPlansLoadHintZh(d);
-  const payload = { ...d, hint_zh: hint };
-  console.info("[subscription/plans 诊断]", payload);
-}
-
 /** 与编排器 billing_catalog 一致：支持 JSON 布尔或偶发的字符串/数字 */
 function isTruthyPaymentChannelEnabled(v: unknown): boolean {
   if (v === true || v === 1) return true;
@@ -258,26 +251,6 @@ export default function SubscriptionPage() {
     [rechargeDebugLog]
   );
 
-  useEffect(() => {
-    if (!subscriptionPlansDebugEnabled() || !plansConfigLoaded) return;
-    console.info("[subscription 合并态诊断]", {
-      alipayPageEnabled,
-      alipayRechargeUiEnabled,
-      allowMockWallet,
-      merged_wallet_topup_enabled: mergedWalletTopup.enabled,
-      merged_wallet_checkout_supported: mergedWalletTopup.checkout_supported,
-      showWalletRechargeSection
-    });
-  }, [
-    plansConfigLoaded,
-    alipayPageEnabled,
-    alipayRechargeUiEnabled,
-    allowMockWallet,
-    mergedWalletTopup.enabled,
-    mergedWalletTopup.checkout_supported,
-    showWalletRechargeSection
-  ]);
-
   const loadPlans = useCallback(async () => {
     const seq = ++plansFetchSeqRef.current;
     setPlansLoadError("");
@@ -293,7 +266,6 @@ export default function SubscriptionPage() {
           http_status: pr.status,
           hint_zh: buildPlansLoadHintZh({ ts: "", branch: "stale_response_skipped" })
         };
-        logSubscriptionPlansDiag(stale);
         if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(stale);
         return;
       }
@@ -316,7 +288,6 @@ export default function SubscriptionPage() {
               : `HTTP ${pr.status}：暂时无法拉取计费配置`
         };
         errDiag.hint_zh = buildPlansLoadHintZh(errDiag);
-        logSubscriptionPlansDiag(errDiag);
         if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(errDiag);
         return;
       }
@@ -345,7 +316,6 @@ export default function SubscriptionPage() {
           set_alipay_page_enabled_to: enabledNext
         };
         okDiag.hint_zh = buildPlansLoadHintZh(okDiag);
-        logSubscriptionPlansDiag(okDiag);
         if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(okDiag);
       } else {
         setAlipayPageEnabled(false);
@@ -360,7 +330,6 @@ export default function SubscriptionPage() {
           plans_load_error_message: "success 不为 true"
         };
         badDiag.hint_zh = buildPlansLoadHintZh(badDiag);
-        logSubscriptionPlansDiag(badDiag);
         if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(badDiag);
       }
     } catch (e) {
@@ -373,7 +342,6 @@ export default function SubscriptionPage() {
           plans_load_error_message: msg
         };
         netDiag.hint_zh = buildPlansLoadHintZh(netDiag);
-        logSubscriptionPlansDiag(netDiag);
         if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(netDiag);
       }
     } finally {

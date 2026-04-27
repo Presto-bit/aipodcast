@@ -2,6 +2,9 @@
 """
 将用户粘贴的 Markdown 音色表（| 序号 | 语言 | `voice_id` | 名称 |）转为 config.DEFAULT_VOICES 风格片段。
 用法: python md_table_to_default_voices.py < scripts/minimax_voice_table.md > /tmp/voices_snippet.py
+
+编排器系统音色表已改为 `services/orchestrator/app/fyv_shared/minimax_system_voices.json`；
+若本脚本输出需同步到线上表，请将生成的键值合并进该 JSON（或写脚本从 stdout 转 JSON）。
 """
 import re
 import sys

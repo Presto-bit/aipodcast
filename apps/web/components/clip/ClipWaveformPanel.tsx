@@ -1,7 +1,6 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import WaveSurfer from "wavesurfer.js";
 
 export type ClipWaveformHandle = {
   seekToMs: (ms: number) => void;
@@ -35,6 +34,8 @@ type Props = {
   emitTimeUpdates?: boolean;
 };
 
+type WS = Awaited<ReturnType<Awaited<typeof import("wavesurfer.js")>["default"]["create"]>>;
+
 const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWaveformPanel(
   {
     audioUrl,
@@ -52,7 +53,7 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
   ref
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const wsRef = useRef<WaveSurfer | null>(null);
+  const wsRef = useRef<WS | null>(null);
   const lastTimeMsRef = useRef(0);
   const onTimeRef = useRef(onTimeMs);
   const onPlayRef = useRef(onPlayStateChange);
@@ -104,74 +105,88 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
       return undefined;
     }
     el.innerHTML = "";
-    const dock = variant === "dock";
-    const h = typeof waveHeight === "number" && waveHeight > 16 ? waveHeight : dock ? 112 : 96;
-    const ws = WaveSurfer.create({
-      container: el,
-      url: audioUrl,
-      height: h,
-      waveColor: dock ? "rgba(100, 116, 139, 0.28)" : "rgba(100, 100, 115, 0.35)",
-      progressColor: dock ? "rgba(99, 102, 241, 0.55)" : "rgba(59, 130, 246, 0.5)",
-      cursorColor: dock ? "rgb(99, 102, 241)" : "rgb(99, 102, 241)",
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 2,
-      mediaControls: interactive,
-      dragToSeek: interactive,
-      minPxPerSec: interactive ? 40 : 24,
-      /** 同源代理音频须携带 HttpOnly 会话 Cookie，否则 BFF 无法转发 Authorization */
-      fetchParams: { mode: "same-origin", credentials: "include" }
-    });
-    wsRef.current = ws;
-    const r0 = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
-    try {
-      ws.setPlaybackRate(r0, true);
-    } catch {
-      ws.setPlaybackRate(r0);
-    }
-    const unsubInteract =
-      interactive && typeof snapSeekRef.current === "function"
-        ? ws.on("interaction", (t) => {
-            const sec = typeof t === "number" ? t : 0;
-            const ms = sec * 1000;
-            const snapped = snapSeekRef.current!(ms);
-            if (Math.abs(snapped - ms) > 4) {
-              ws.setTime(Math.max(0, snapped / 1000));
-            }
-          })
-        : null;
-    const unsubTime = ws.on("timeupdate", (t) => {
-      const sec = typeof t === "number" ? t : 0;
-      const ms = Math.round(sec * 1000);
-      lastTimeMsRef.current = ms;
-      if (emitTimeUpdates) onTimeRef.current(ms);
-    });
-    const unsubPlay = ws.on("play", () => onPlayRef.current?.(true));
-    const unsubPause = ws.on("pause", () => onPlayRef.current?.(false));
-    const unsubErr = ws.on("error", (err) => {
-      const raw = String(audioUrl || "").trim();
-      const urlHint = raw.startsWith("data:")
-        ? `data:… len=${raw.length}`
-        : raw.length <= 140
-          ? raw
-          : `${raw.slice(0, 140)}…`;
-      console.warn("[fym:clip-waveform] load_error", {
-        urlHint,
-        message: String(err?.message || err || "waveform_error")
+    let cancelled = false;
+    let unsubInteract: (() => void) | null = null;
+    let unsubTime: () => void = () => {};
+    let unsubPlay: () => void = () => {};
+    let unsubPause: () => void = () => {};
+    let unsubErr: () => void = () => {};
+
+    void (async () => {
+      const { default: WaveSurfer } = await import("wavesurfer.js");
+      if (cancelled || containerRef.current !== el) return;
+
+      const dock = variant === "dock";
+      const h = typeof waveHeight === "number" && waveHeight > 16 ? waveHeight : dock ? 112 : 96;
+      const ws = WaveSurfer.create({
+        container: el,
+        url: audioUrl,
+        height: h,
+        waveColor: dock ? "rgba(100, 116, 139, 0.28)" : "rgba(100, 100, 115, 0.35)",
+        progressColor: dock ? "rgba(99, 102, 241, 0.55)" : "rgba(59, 130, 246, 0.5)",
+        cursorColor: dock ? "rgb(99, 102, 241)" : "rgb(99, 102, 241)",
+        barWidth: 2,
+        barGap: 1,
+        barRadius: 2,
+        mediaControls: interactive,
+        dragToSeek: interactive,
+        minPxPerSec: interactive ? 40 : 24,
+        /** 同源代理音频须携带 HttpOnly 会话 Cookie，否则 BFF 无法转发 Authorization */
+        fetchParams: { mode: "same-origin", credentials: "include" }
       });
-      onLoadErrorRef.current?.(String(err?.message || err || "waveform_error"));
-    });
-    /* snapSeekMs 仅经 snapSeekRef 读取，不把 snapSeekMs 放进依赖，避免反复销毁 WaveSurfer */
+      if (cancelled || containerRef.current !== el) {
+        try {
+          ws.destroy();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      wsRef.current = ws;
+      const r0 = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+      try {
+        ws.setPlaybackRate(r0, true);
+      } catch {
+        ws.setPlaybackRate(r0);
+      }
+      unsubInteract =
+        interactive && typeof snapSeekRef.current === "function"
+          ? ws.on("interaction", (t) => {
+              const sec = typeof t === "number" ? t : 0;
+              const ms = sec * 1000;
+              const snapped = snapSeekRef.current!(ms);
+              if (Math.abs(snapped - ms) > 4) {
+                ws.setTime(Math.max(0, snapped / 1000));
+              }
+            })
+          : null;
+      unsubTime = ws.on("timeupdate", (t) => {
+        const sec = typeof t === "number" ? t : 0;
+        const ms = Math.round(sec * 1000);
+        lastTimeMsRef.current = ms;
+        if (emitTimeUpdates) onTimeRef.current(ms);
+      });
+      unsubPlay = ws.on("play", () => onPlayRef.current?.(true));
+      unsubPause = ws.on("pause", () => onPlayRef.current?.(false));
+      unsubErr = ws.on("error", (err) => {
+        onLoadErrorRef.current?.(String(err?.message || err || "waveform_error"));
+      });
+    })();
+
     return () => {
+      cancelled = true;
       unsubTime();
       unsubPlay();
       unsubPause();
       unsubErr();
       if (typeof unsubInteract === "function") unsubInteract();
-      try {
-        ws.destroy();
-      } catch {
-        // ignore
+      const w = wsRef.current;
+      if (w) {
+        try {
+          w.destroy();
+        } catch {
+          // ignore
+        }
       }
       wsRef.current = null;
     };
