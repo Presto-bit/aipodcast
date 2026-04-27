@@ -394,6 +394,7 @@ type SharedBrowseContext = {
 
 const NOTEBOOK_VISUAL_STORAGE_KEY = "notes:notebook-visuals:v1";
 const NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY = "notes:share-last-error:v1";
+const NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK = "notes:share-last-error:fallback:v1";
 const POPULAR_PAGE_SIZE = 18;
 const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
 /** 历史「导读」助手气泡 id 前缀；加载会话时剔除，避免旧数据占位 */
@@ -848,26 +849,78 @@ export default function NotesPage() {
   const shareViewedKeyRef = useRef("");
   const shareLinkHydratedRef = useRef(false);
 
-  useEffect(() => {
+  const readShareLastErrorPayload = useCallback(() => {
+    const tryParse = (raw: string | null) => {
+      if (!raw) return null;
+      try {
+        const parsed = JSON.parse(raw) as {
+          debugLog?: unknown;
+          error?: unknown;
+          notebook?: unknown;
+          at?: unknown;
+        };
+        const debugLog = typeof parsed.debugLog === "string" ? parsed.debugLog : "";
+        if (!debugLog.trim()) return null;
+        return {
+          debugLog,
+          error: typeof parsed.error === "string" ? parsed.error : "",
+          notebook: typeof parsed.notebook === "string" ? parsed.notebook : "",
+          at: typeof parsed.at === "string" ? parsed.at : ""
+        };
+      } catch {
+        return null;
+      }
+    };
+    const scoped = tryParse(readLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY));
+    if (scoped) return scoped;
+    if (typeof window === "undefined") return null;
+    return tryParse(window.localStorage.getItem(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK));
+  }, []);
+
+  const persistShareLastErrorPayload = useCallback((payload: {
+    debugLog: string;
+    error: string;
+    notebook: string;
+    at: string;
+  }) => {
+    const serialized = JSON.stringify(payload);
     try {
-      const raw = readLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as {
-        debugLog?: unknown;
-        error?: unknown;
-        notebook?: unknown;
-        at?: unknown;
-      };
-      const debugLog = typeof saved.debugLog === "string" ? saved.debugLog : "";
-      if (!debugLog.trim()) return;
-      setShareLastDebugLog(debugLog);
-      setShareLastError(typeof saved.error === "string" ? saved.error : "");
-      setShareLastNotebook(typeof saved.notebook === "string" ? saved.notebook : "");
-      setShareLastAt(typeof saved.at === "string" ? saved.at : "");
+      writeLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY, serialized);
+    } catch {
+      // ignore
+    }
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK, serialized);
+      }
     } catch {
       // ignore
     }
   }, []);
+
+  const clearShareLastErrorPayload = useCallback(() => {
+    try {
+      writeLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY, "");
+    } catch {
+      // ignore
+    }
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    const saved = readShareLastErrorPayload();
+    if (!saved) return;
+    setShareLastDebugLog(saved.debugLog);
+    setShareLastError(saved.error);
+    setShareLastNotebook(saved.notebook);
+    setShareLastAt(saved.at);
+  }, [readShareLastErrorPayload]);
 
   const buildNotebookShareUrl = useCallback((notebookName: string, ownerUserId: string, access: "read_only" | "edit") => {
     if (typeof window === "undefined") return "";
@@ -3357,14 +3410,7 @@ export default function NotesPage() {
       setShareLastNotebook(name);
       const nowIso = new Date().toISOString();
       setShareLastAt(nowIso);
-      try {
-        writeLocalStorageScoped(
-          NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY,
-          JSON.stringify({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso })
-        );
-      } catch {
-        // ignore
-      }
+      persistShareLastErrorPayload({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso });
     } finally {
       setShareModalBusy(false);
     }
@@ -3430,14 +3476,7 @@ export default function NotesPage() {
       setShareLastNotebook(name);
       const nowIso = new Date().toISOString();
       setShareLastAt(nowIso);
-      try {
-        writeLocalStorageScoped(
-          NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY,
-          JSON.stringify({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso })
-        );
-      } catch {
-        // ignore
-      }
+      persistShareLastErrorPayload({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso });
     } finally {
       setShareModalBusy(false);
     }
@@ -3533,11 +3572,7 @@ export default function NotesPage() {
                 setShareLastError("");
                 setShareLastNotebook("");
                 setShareLastAt("");
-                try {
-                  writeLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY, "");
-                } catch {
-                  // ignore
-                }
+                clearShareLastErrorPayload();
               }}
             >
               清除
