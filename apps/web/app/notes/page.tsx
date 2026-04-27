@@ -3094,13 +3094,22 @@ export default function NotesPage() {
     }
   }
 
-  async function saveRenameNote() {
-    if (!renameNoteId) return;
+  async function saveRenameNote(noteId?: string) {
+    const targetId = String(noteId || renameNoteId || "").trim();
+    if (!targetId) return;
     const t = renameNoteTitle.trim();
-    if (!t) return;
+    if (!t) {
+      setError("名称不能为空");
+      return;
+    }
+    const current = notesById.get(targetId);
+    if (current && (current.title || "").trim() === t) {
+      setRenameNoteId(null);
+      return;
+    }
     setBusy(true);
     try {
-      const res = await fetch(`/api/notes/${encodeURIComponent(renameNoteId)}`, {
+      const res = await fetch(`/api/notes/${encodeURIComponent(targetId)}`, {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -3899,7 +3908,7 @@ export default function NotesPage() {
                             title="重命名笔记"
                             value={renameNoteTitle}
                             onChange={setRenameNoteTitle}
-                            onSubmit={() => void saveRenameNote()}
+                            onSubmit={() => void saveRenameNote(n.noteId)}
                             onCancel={() => setRenameNoteId(null)}
                             className="border-line bg-canvas/80"
                           />

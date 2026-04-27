@@ -216,10 +216,20 @@ export default function NoteMarkdownPreview({
         i += 1;
       }
       const paragraph = paraLines.join(" ");
-      if (paragraph.length > 420 && !/[。！？.!?]/.test(paragraph.slice(0, 220))) {
+      if (paragraph.length > 260) {
         const chunks = paragraph.split(/(?<=[。！？.!?；;])\s*/).filter(Boolean);
         if (chunks.length > 1) {
-          chunks.forEach((c) => pushParagraph(out, c));
+          let merged = "";
+          for (const c of chunks) {
+            const next = `${merged}${merged ? " " : ""}${c}`.trim();
+            if (next.length >= 180) {
+              pushParagraph(out, next);
+              merged = "";
+            } else {
+              merged = next;
+            }
+          }
+          if (merged) pushParagraph(out, merged);
           continue;
         }
       }
@@ -391,9 +401,10 @@ export default function NoteMarkdownPreview({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-        {statusPills.length > 0 ? (
-          <div className="mb-3 rounded-lg border border-line/70 bg-fill/35 px-3 py-2">
-            <div className="flex flex-wrap items-center gap-1.5">
+        <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-line/70 bg-fill/30 p-3 text-xs text-muted sm:grid-cols-2 lg:grid-cols-3">
+          <p className="sm:col-span-2 lg:col-span-3 text-[11px] font-medium text-muted">基本信息</p>
+          {statusPills.length > 0 ? (
+            <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center gap-1.5">
               {statusPills.map((pill, idx) => (
                 <span
                   key={`${pill}-${idx}`}
@@ -403,13 +414,10 @@ export default function NoteMarkdownPreview({
                 </span>
               ))}
             </div>
-          </div>
-        ) : null}
-        <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-line/70 bg-fill/30 p-3 text-xs text-muted sm:grid-cols-2 lg:grid-cols-3">
+          ) : null}
           <p>来源标题：<span className="text-ink">{title || "未命名来源"}</span></p>
           <p>类型：<span className="text-ink">{sourceType || "未知"}</span></p>
           <p>上传时间：<span className="text-ink">{createdAt || "-"}</span></p>
-          <p>预处理状态：<span className="text-ink">{preprocessStage || "-"}</span></p>
           <p>字数：<span className="text-ink tabular-nums">{typeof wordCount === "number" ? wordCount.toLocaleString() : "-"}</span></p>
           <p>
             视图：

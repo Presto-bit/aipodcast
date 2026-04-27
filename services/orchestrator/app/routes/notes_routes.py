@@ -383,6 +383,22 @@ def _build_structured_blocks_from_text(text: str) -> list[dict[str, object]]:
         para = []
         if not body:
             return
+        if len(body) > 260:
+            parts = [p.strip() for p in re.split(r"(?<=[。！？.!?；;])\s*", body) if p.strip()]
+            if len(parts) > 1:
+                merged = ""
+                for p in parts:
+                    nxt = f"{merged} {p}".strip() if merged else p
+                    if len(nxt) >= 180:
+                        idx += 1
+                        blocks.append({"id": f"text-{idx}", "type": "paragraph", "text": nxt})
+                        merged = ""
+                    else:
+                        merged = nxt
+                if merged:
+                    idx += 1
+                    blocks.append({"id": f"text-{idx}", "type": "paragraph", "text": merged})
+                return
         idx += 1
         blocks.append({"id": f"text-{idx}", "type": "paragraph", "text": body})
 
