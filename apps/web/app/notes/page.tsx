@@ -127,6 +127,41 @@ function noteExtLabel(ext: string | undefined): string {
   return e;
 }
 
+function deriveSourcePreprocessStage(note: {
+  parseState?: string;
+  parseErrorCode?: string;
+  preprocessSummary?: string;
+  preprocessEntities?: string[];
+  preprocessTags?: string[];
+  retrieveState?: string;
+}): { stage: "解析中" | "摘要中" | "实体提取中" | "索引中" | "可问答"; nextAction: string } {
+  if (note.parseState === "failed" || note.parseState === "partial") {
+    return {
+      stage: "解析中",
+      nextAction: note.parseErrorCode
+        ? `解析未成功（${note.parseErrorCode}），建议重传 txt/md/html 或检查原文件质量。`
+        : "解析处理中，请稍后刷新。"
+    };
+  }
+  if (!String(note.preprocessSummary || "").trim()) {
+    return { stage: "摘要中", nextAction: "等待摘要生成完成后即可进入下一阶段。" };
+  }
+  if (!((note.preprocessEntities || []).length > 0)) {
+    return { stage: "实体提取中", nextAction: "等待关键实体抽取完成。" };
+  }
+  if ((note.retrieveState || "") !== "indexed") {
+    return {
+      stage: "索引中",
+      nextAction:
+        note.retrieveState === "failed" ? "索引失败，建议稍后重试或重新上传来源。" : "正在构建检索索引。"
+    };
+  }
+  if (!((note.preprocessTags || []).length > 0)) {
+    return { stage: "索引中", nextAction: "标签补全中，索引已可用。" };
+  }
+  return { stage: "可问答", nextAction: "来源已就绪，可直接提问。" };
+}
+
 type NoteItem = {
   noteId: string;
   title?: string;
@@ -187,6 +222,12 @@ type PreviewResp = {
   preprocessSummary?: string;
   preprocessTags?: string[];
   preprocessEntities?: string[];
+  preprocessStage?: string;
+  nextAction?: string;
+  sourceType?: string;
+  sourceUrl?: string;
+  createdAt?: string;
+  wordCount?: number;
 };
 
 const card =
@@ -211,6 +252,20 @@ const NOTES_ART_TARGET_CHARS_MIN = 200;
 const NOTES_ART_TARGET_CHARS_MAX = 50_000;
 const NOTES_ART_TARGET_CHARS_DEFAULT = 200;
 const NOTES_ART_TARGET_CHARS_SLIDER_STEP = 100;
+
+function simplifySourceText(text: string): string {
+  const lines = String(text || "").split("\n");
+  const out: string[] = [];
+  for (const raw of lines) {
+    const s = raw.trim();
+    if (!s) continue;
+    if (/^(https?:\/\/|www\.)/i.test(s)) continue;
+    if (s.length <= 1) continue;
+    if (/^(导航|目录|上一篇|下一篇|相关阅读|免责声明|版权|返回顶部)$/i.test(s)) continue;
+    out.push(raw);
+  }
+  return out.join("\n");
+}
 
 /** Bash 下单引号字符串转义，供复制 curl 使用 */
 function shellSingleQuoteForCurl(s: string): string {
@@ -703,6 +758,14 @@ export default function NotesPage() {
   const [previewKw, setPreviewKw] = useState("");
   const [previewTruncated, setPreviewTruncated] = useState(false);
   const [previewStatusLine, setPreviewStatusLine] = useState("");
+  const [previewSourceType, setPreviewSourceType] = useState("");
+  const [previewSourceUrl, setPreviewSourceUrl] = useState("");
+  const [previewCreatedAt, setPreviewCreatedAt] = useState("");
+  const [previewWordCount, setPreviewWordCount] = useState<number>(0);
+  const [previewStage, setPreviewStage] = useState("");
+  const [previewNextAction, setPreviewNextAction] = useState("");
+  const [previewSimplified, setPreviewSimplified] = useState(false);
+  const [previewHighlightHint, setPreviewHighlightHint] = useState("");
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
   const [renameNoteTitle, setRenameNoteTitle] = useState("");
   const [importUrl, setImportUrl] = useState("");
@@ -849,10 +912,7 @@ export default function NotesPage() {
   const [notesAskNoteBusyId, setNotesAskNoteBusyId] = useState<string | null>(null);
   const [notesAskDebugClient, setNotesAskDebugClient] = useState(false);
   const [notesAskDebugCopied, setNotesAskDebugCopied] = useState<"" | "stream" | "curlStream">("");
-  const [notesAskIncludeAllSources, setNotesAskIncludeAllSources] = useState(false);
-  const [notesAskRequirePreprocessReady, setNotesAskRequirePreprocessReady] = useState(true);
   const [sourcesPanelCollapsed, setSourcesPanelCollapsed] = useState(false);
-  const [studioPanelCollapsed, setStudioPanelCollapsed] = useState(false);
   /** 与 AppShell 左侧主导航（首页 / 知识库 / 创作等）折叠状态同步 */
   const [appNavCollapsed, setAppNavCollapsed] = useState(false);
 
@@ -989,9 +1049,7 @@ export default function NotesPage() {
     const streamBody: Record<string, unknown> = {
       notebook: nb,
       note_ids: idsStream,
-      question: q,
-      includeAllSources: notesAskIncludeAllSources,
-      requirePreprocessReady: notesAskRequirePreprocessReady
+      question: q
     };
     if (owner) streamBody.sharedFromOwnerUserId = owner;
     const streamJsonOne = JSON.stringify(streamBody);
@@ -1004,8 +1062,6 @@ export default function NotesPage() {
     selectedNotebook,
     draftSelectedNoteIds,
     notesAskQuestion,
-    notesAskIncludeAllSources,
-    notesAskRequirePreprocessReady,
     sharedBrowse?.ownerUserId
   ]);
 
@@ -1143,9 +1199,17 @@ export default function NotesPage() {
   }, [notes]);
 
   const selectAllOnPageInputRef = useRef<HTMLInputElement>(null);
+  const selectableNoteIdsOnPage = useMemo(
+    () =>
+      notesSorted
+        .filter((n) => deriveSourcePreprocessStage(n).stage === "可问答")
+        .map((n) => n.noteId),
+    [notesSorted]
+  );
   const allNotesOnPageSelected =
-    notesSorted.length > 0 && notesSorted.every((x) => draftSelectedNoteIds.includes(x.noteId));
-  const someNotesOnPageSelected = notesSorted.some((x) => draftSelectedNoteIds.includes(x.noteId));
+    selectableNoteIdsOnPage.length > 0 &&
+    selectableNoteIdsOnPage.every((id) => draftSelectedNoteIds.includes(id));
+  const someNotesOnPageSelected = selectableNoteIdsOnPage.some((id) => draftSelectedNoteIds.includes(id));
 
   useLayoutEffect(() => {
     const el = selectAllOnPageInputRef.current;
@@ -1159,18 +1223,6 @@ export default function NotesPage() {
     }
     return m;
   }, [notes]);
-
-  /** 当前笔记本下、且仍绑定该笔记本的作品（删除笔记本后进回收站再恢复的不再出现于此） */
-  const notesStudioWorks = useMemo(() => {
-    const nb = selectedNotebook.trim();
-    return podcastWorks.filter((w) => {
-      if (w.projectName !== NOTES_PODCAST_PROJECT_NAME) return false;
-      if (String(w.type || "") === "note_rag_index") return false;
-      if (w.notesNotebookStudioDetached) return false;
-      if (!nb) return false;
-      return String(w.notesSourceNotebook || "").trim() === nb;
-    });
-  }, [podcastWorks, selectedNotebook]);
 
   const buildPodcastPendingStudioWork = useCallback(
     (jobId: string, status: "queued" | "running"): WorkItem => {
@@ -2289,6 +2341,11 @@ export default function NotesPage() {
   }
 
   function toggleDraftNote(noteId: string) {
+    const hit = notesById.get(noteId);
+    if (!hit || deriveSourcePreprocessStage(hit).stage !== "可问答") {
+      setError("该来源尚未达到“可问答”状态，暂不可勾选。");
+      return;
+    }
     setDraftSelectedNoteIds((prev) => {
       if (prev.includes(noteId)) return prev.filter((x) => x !== noteId);
       if (prev.length >= noteRefCap) {
@@ -2303,7 +2360,7 @@ export default function NotesPage() {
   const onSelectAllOnPageChange = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
       const wantSelect = e.target.checked;
-      const pageIds = notesSorted.map((n) => n.noteId);
+      const pageIds = selectableNoteIdsOnPage;
       if (pageIds.length === 0) return;
       if (!wantSelect) {
         /** 取消「选择全部」：清空当前笔记本下已选资料（含其它分页中已勾选的 ID） */
@@ -2331,7 +2388,7 @@ export default function NotesPage() {
       });
       setError("");
     },
-    [notesSorted, noteRefCap]
+    [selectableNoteIdsOnPage, noteRefCap]
   );
 
   async function submitNotesAsk() {
@@ -2348,21 +2405,6 @@ export default function NotesPage() {
     if (!q) {
       setNotesAskError("请输入要问资料的问题");
       return;
-    }
-    if (notesAskRequirePreprocessReady) {
-      const notReady = draftSelectedNoteIds
-        .map((id) => notesById.get(id))
-        .filter((n): n is NoteItem => Boolean(n))
-        .filter((n) => (n.preprocessStatus || "").trim().toLowerCase() !== "ready");
-      if (notReady.length > 0) {
-        const names = notReady
-          .slice(0, 3)
-          .map((n) => n.title || n.noteId)
-          .join("、");
-        const more = notReady.length > 3 ? ` 等 ${notReady.length} 条` : "";
-        setNotesAskError(`已开启严格准入：${names}${more} 尚未完成预处理，请稍后重试。`);
-        return;
-      }
     }
     const userMsgId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
@@ -2416,8 +2458,6 @@ export default function NotesPage() {
           note_ids: draftSelectedNoteIds,
           question: q,
           chatHistory,
-          includeAllSources: notesAskIncludeAllSources,
-          requirePreprocessReady: notesAskRequirePreprocessReady,
           ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {})
         })
       });
@@ -2934,7 +2974,7 @@ export default function NotesPage() {
     }
   }
 
-  async function openPreview(noteId: string) {
+  async function openPreview(noteId: string, opts: { highlightText?: string } = {}) {
     setPreviewOpen(true);
     setPreviewLoading(true);
     setPreviewTitle("");
@@ -2942,6 +2982,14 @@ export default function NotesPage() {
     setPreviewTruncated(false);
     setPreviewStatusLine("");
     setPreviewKw("");
+    setPreviewSourceType("");
+    setPreviewSourceUrl("");
+    setPreviewCreatedAt("");
+    setPreviewWordCount(0);
+    setPreviewStage("");
+    setPreviewNextAction("");
+    setPreviewSimplified(false);
+    setPreviewHighlightHint("");
     try {
       const pv = new URLSearchParams();
       if (sharedBrowse?.ownerUserId) pv.set("sharedFromOwnerUserId", sharedBrowse.ownerUserId);
@@ -2959,6 +3007,12 @@ export default function NotesPage() {
       setPreviewTitle(data.title || "");
       setPreviewText(data.text || "");
       setPreviewTruncated(!!data.truncated);
+      setPreviewSourceType(String(data.sourceType || ""));
+      setPreviewSourceUrl(String(data.sourceUrl || ""));
+      setPreviewCreatedAt(String(data.createdAt || ""));
+      setPreviewWordCount(Number(data.wordCount || 0));
+      setPreviewStage(String(data.preprocessStage || ""));
+      setPreviewNextAction(String(data.nextAction || ""));
       const statusParts: string[] = [];
       if (data.parseStatus && data.parseStatus !== "ok") {
         statusParts.push(
@@ -2976,6 +3030,12 @@ export default function NotesPage() {
         );
       }
       setPreviewStatusLine(statusParts.join(" · "));
+      const hi = String(opts.highlightText || "").trim();
+      if (hi) {
+        const kw = hi.slice(0, 24);
+        if (kw) setPreviewKw(kw);
+        setPreviewHighlightHint(hi.slice(0, 80));
+      }
     } catch (err) {
       setPreviewText(String(err instanceof Error ? err.message : err));
     } finally {
@@ -3007,11 +3067,12 @@ export default function NotesPage() {
   }
 
   const filteredPreview = useMemo(() => {
+    const base = previewSimplified ? simplifySourceText(previewText) : previewText;
     const kw = previewKw.trim();
-    if (!kw) return previewText;
-    const lines = previewText.split("\n");
+    if (!kw) return base;
+    const lines = base.split("\n");
     return lines.filter((l) => l.includes(kw)).join("\n");
-  }, [previewText, previewKw]);
+  }, [previewText, previewKw, previewSimplified]);
 
   function openNotebook(name: string) {
     setNotebookCardMenu(null);
@@ -3661,10 +3722,18 @@ export default function NotesPage() {
                 {loading ? <p className="mt-2 text-sm text-muted">加载中…</p> : null}
                 <div className="mt-2 space-y-1.5">
                   {notesSorted.map((n) => (
+                    (() => {
+                      const stageInfo = deriveSourcePreprocessStage(n);
+                      const preReady = stageInfo.stage === "可问答";
+                      return (
                     <div
                       key={n.noteId}
                       data-note-id={n.noteId}
-                      className="rounded-xl border border-line/80 bg-surface/95 p-2.5 shadow-soft"
+                      className={`rounded-xl border p-2.5 shadow-soft transition-colors ${
+                        preReady
+                          ? "border-line/80 bg-surface/95"
+                          : "border-line/55 bg-fill/35 opacity-80"
+                      }`}
                     >
                       <div className="flex items-start gap-2">
                         <div className="min-w-0 flex-1">
@@ -3672,60 +3741,32 @@ export default function NotesPage() {
                             <span className="shrink-0 rounded bg-fill px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
                               {noteExtLabel(n.ext)}
                             </span>
-                            <p className="min-w-0 truncate text-sm font-medium text-ink">{n.title || n.noteId}</p>
-                            <span
-                              className={`shrink-0 rounded px-1 py-0 text-[9px] font-medium ${
-                                n.sourceReady === false
-                                  ? "bg-warning-soft text-warning-ink"
-                                  : "bg-success-soft text-success-ink"
+                            <button
+                              type="button"
+                              className={`min-w-0 truncate text-left text-sm font-medium underline-offset-2 hover:underline ${
+                                preReady ? "text-ink" : "text-muted"
                               }`}
-                              title={n.sourceHint || (n.sourceReady === false ? "正文过短或未抽取" : "可作资料摘录")}
+                              onClick={() => void openPreview(n.noteId)}
+                              title="查看来源内容"
                             >
-                              {n.sourceReady === false ? "待充实" : "可摘录"}
-                            </span>
-                            <span
-                              className={`shrink-0 rounded px-1 py-0 text-[9px] font-medium ${
-                                n.parseState === "success"
-                                  ? "bg-success-soft text-success-ink"
-                                  : n.parseState === "failed"
-                                    ? "bg-danger-soft text-danger-ink"
-                                    : "bg-warning-soft text-warning-ink"
-                              }`}
-                              title={n.parseErrorCode ? `解析错误码：${n.parseErrorCode}` : "解析状态"}
-                            >
-                              解析:{n.parseState === "success" ? "可用" : n.parseState === "failed" ? "失败" : "部分"}
-                            </span>
-                            <span
-                              className={`shrink-0 rounded px-1 py-0 text-[9px] font-medium ${
-                                n.citeState === "ready"
-                                  ? "bg-success-soft text-success-ink"
-                                  : n.citeState === "unavailable"
-                                    ? "bg-danger-soft text-danger-ink"
-                                    : "bg-warning-soft text-warning-ink"
-                              }`}
-                              title="可引用状态"
-                            >
-                              引用:{n.citeState === "ready" ? "可用" : n.citeState === "unavailable" ? "不可用" : "受限"}
-                            </span>
-                            <span
-                              className={`shrink-0 rounded px-1 py-0 text-[9px] font-medium ${
-                                n.retrieveState === "indexed"
-                                  ? "bg-success-soft text-success-ink"
-                                  : n.retrieveState === "failed"
-                                    ? "bg-danger-soft text-danger-ink"
-                                    : "bg-warning-soft text-warning-ink"
-                              }`}
-                              title={n.ragIndexError || "可检索状态"}
-                            >
-                              检索:
-                              {n.retrieveState === "indexed"
-                                ? "已就绪"
-                                : n.retrieveState === "failed"
-                                  ? "失败"
-                                  : n.retrieveState === "indexing"
-                                    ? "构建中"
-                                    : "未就绪"}
-                            </span>
+                              {n.title || n.noteId}
+                            </button>
+                            {n.parseState === "failed" || n.sourceReady === false ? (
+                              <span
+                                className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-warning-soft text-warning-ink"
+                                title={n.sourceHint || "来源尚未可用"}
+                              >
+                                来源待就绪
+                              </span>
+                            ) : null}
+                            {n.citeState === "unavailable" ? (
+                              <span
+                                className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-warning-soft text-warning-ink"
+                                title="引用不可用"
+                              >
+                                引用不可用
+                              </span>
+                            ) : null}
                             {freshNoteIds.includes(n.noteId) ? (
                               <span
                                 className="inline-flex shrink-0 text-warning"
@@ -3736,41 +3777,39 @@ export default function NotesPage() {
                                 <FreshNoteSparkleIcon />
                               </span>
                             ) : null}
-                            {n.ragIndexError ? (
+                            {n.retrieveState === "failed" || n.ragIndexError ? (
                               <span
                                 className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-danger-soft text-danger-ink"
-                                title={n.ragIndexError}
+                                title={n.ragIndexError || "检索索引失败"}
                               >
-                                索引失败
-                              </span>
-                            ) : null}
-                            {n.inputType === "note_file" && n.parseOk === false ? (
-                              <span
-                                className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-warning-soft text-warning-ink"
-                                title={n.parseDetail || "正文解析未得到可见文本"}
-                              >
-                                解析异常
+                                检索失败
                               </span>
                             ) : null}
                           </div>
-                          <p className="mt-0.5 text-[10px] text-muted">{noteExtLabel(n.ext) + " · " + (n.createdAt || "-")}</p>
-                          <div className="mt-1.5 rounded-lg border border-line/60 bg-fill/30 px-2 py-1.5">
+                          <p className="mt-0.5 text-[10px] text-muted">
+                            {noteExtLabel(n.ext) + " · " + (n.createdAt || "-")}
+                          </p>
+                          <div
+                            className={`mt-1.5 rounded-lg border px-2 py-1.5 ${
+                              preReady ? "border-line/60 bg-fill/30" : "border-line/45 bg-surface/45"
+                            }`}
+                          >
                             <div className="flex items-center gap-2 text-[10px]">
                               <span className="font-medium text-muted">预处理</span>
                               <span
                                 className={`rounded px-1 py-0 text-[9px] font-medium ${
-                                  (n.preprocessStatus || "").toLowerCase() === "ready"
+                                  stageInfo.stage === "可问答"
                                     ? "bg-success-soft text-success-ink"
                                     : "bg-warning-soft text-warning-ink"
                                 }`}
                               >
-                                {(n.preprocessStatus || "").toLowerCase() === "ready" ? "已完成" : "未完成"}
+                                {stageInfo.stage}
                               </span>
                             </div>
                             {n.preprocessSummary ? (
                               <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-ink">{n.preprocessSummary}</p>
                             ) : (
-                              <p className="mt-1 text-[11px] text-muted">暂无摘要，等待预处理完成</p>
+                              <p className="mt-1 text-[11px] text-muted">{stageInfo.nextAction}</p>
                             )}
                             {(n.preprocessTags?.length || n.preprocessEntities?.length) ? (
                               <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -3807,16 +3846,6 @@ export default function NotesPage() {
                           </button>
                           {noteMenuOpenId === n.noteId ? (
                             <div className="absolute right-0 top-full z-10 mt-0.5 min-w-[7rem] rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card">
-                              <button
-                                type="button"
-                                className="block w-full px-2 py-1.5 text-left hover:bg-fill"
-                                onClick={() => {
-                                  void openPreview(n.noteId);
-                                  setNoteMenuOpenId(null);
-                                }}
-                              >
-                                预览
-                              </button>
                               {sharedBrowse ? null : (
                                 <>
                                   <button
@@ -3848,9 +3877,10 @@ export default function NotesPage() {
                           </div>
                           <input
                             type="checkbox"
-                            className="mt-1.5 h-4 w-4 accent-brand"
+                            className={`mt-1.5 h-4 w-4 ${preReady ? "accent-brand" : "accent-muted"}`}
                             checked={draftSelectedNoteIds.includes(n.noteId)}
                             onChange={() => toggleDraftNote(n.noteId)}
+                            disabled={!preReady}
                             aria-label={`将「${n.title || n.noteId}」纳入资料`}
                           />
                         </div>
@@ -3869,6 +3899,8 @@ export default function NotesPage() {
                         </div>
                       ) : null}
                     </div>
+                      );
+                    })()
                   ))}
                   {!loading && notesSorted.length === 0 ? (
                     <EmptyState
@@ -4012,7 +4044,14 @@ export default function NotesPage() {
                                     </p>
                                   </div>
                                 ) : null}
-                                <NotesAskAnswerDisplay text={m.content} sources={m.sources} webSources={m.webSources} />
+                                <NotesAskAnswerDisplay
+                                  text={m.content}
+                                  sources={m.sources}
+                                  webSources={m.webSources}
+                                  onOpenSourceFromCitation={(p) => {
+                                    void openPreview(p.noteId, { highlightText: p.excerpt });
+                                  }}
+                                />
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
                                 (m.hintSuggestions?.length ?? 0) > 0 ? (
@@ -4219,24 +4258,6 @@ export default function NotesPage() {
                     </button>
                   )}
                   </div>
-                  <label className="mt-1 inline-flex items-center gap-2 px-1 text-[11px] text-muted">
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 rounded border-line"
-                      checked={notesAskIncludeAllSources}
-                      onChange={(e) => setNotesAskIncludeAllSources(e.target.checked)}
-                    />
-                    显示全部勾选来源（关闭后仅返回回答中实际引用的来源）
-                  </label>
-                  <label className="mt-1 inline-flex items-center gap-2 px-1 text-[11px] text-muted">
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 rounded border-line"
-                      checked={notesAskRequirePreprocessReady}
-                      onChange={(e) => setNotesAskRequirePreprocessReady(e.target.checked)}
-                    />
-                    严格准入：仅允许预处理完成（摘要/标签/实体）的资料参与问答
-                  </label>
                   {NOTES_ASK_DEBUG_BODY_ENABLED ? (
                     <div className="rounded-xl border border-amber-500/45 bg-amber-500/[0.08] px-3 py-2 text-xs leading-snug text-ink">
                       <div className="mb-1.5 font-semibold text-amber-950 dark:text-amber-100">
@@ -4294,172 +4315,28 @@ export default function NotesPage() {
             </section>
             </div>
 
-            <section
-              className={`flex shrink-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 shadow-soft lg:min-h-0 lg:h-full ${
-                studioPanelCollapsed
-                  ? "w-full max-lg:min-h-0 lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
-                  : "w-full p-3 lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
-              }`}
-              aria-label="我的作品"
-            >
-              {studioPanelCollapsed ? (
-                <button
-                  type="button"
-                  className="flex w-full flex-1 flex-row items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-surface/60 lg:min-h-0 lg:flex-col lg:items-center lg:justify-start lg:gap-5 lg:px-1 lg:py-8"
-                  aria-label="向左展开我的作品"
-                  title="展开我的作品"
-                  onClick={() => setStudioPanelCollapsed(false)}
-                >
-                  <svg
-                    width="18"
-                    height="18"
-                    className="shrink-0 text-ink"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden
-                  >
-                    <path d="M15 18l-6-6 6-6" />
-                  </svg>
-                  <span className="text-sm font-semibold text-ink lg:text-[11px] lg:[writing-mode:vertical-rl]">我的作品</span>
-                  <svg
-                    width="20"
-                    height="20"
-                    className="shrink-0 text-muted"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    aria-hidden
-                  >
-                    <rect x="3" y="4" width="18" height="16" rx="2" />
-                    <path d="M15 4v16" />
-                  </svg>
-                </button>
-              ) : (
-                <>
-                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-3">
-                    <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
-                    <button
-                      type="button"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface/80 hover:text-ink"
-                      aria-expanded
-                      aria-label="收起我的作品（向右折叠）"
-                      title="向右收起"
-                      onClick={() => setStudioPanelCollapsed(true)}
-                    >
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden
-                      >
-                        <path d="M9 6l6 6-6 6" />
-                      </svg>
-                    </button>
-                  </div>
-              {!hubView && (draftMessage.trim() || podcastGenBusy || podcastGenMessage.trim()) ? (
-                <div className="mt-3 space-y-2">
-                  {podcastGenBusy || podcastGenMessage.trim() ? (
-                    <div
-                      className={`rounded-xl border px-3 py-2 text-xs ${
-                        podcastGenBusy
-                          ? "border-brand/25 bg-fill/90 text-brand"
-                          : podcastGenMessage.includes("完成")
-                            ? "border-success/35 bg-success-soft/80 text-success-ink"
-                            : "border-warning/35 bg-warning-soft/70 text-warning-ink"
-                      }`}
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <p className="leading-snug">{podcastGenMessage || "…"}</p>
-                      {messageSuggestsBillingTopUpOrSubscription(podcastGenMessage) ? (
-                        <BillingShortfallLinks className="mt-2 text-[11px] normal-case" />
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {draftMessage ? (
-                    <div
-                      className={`rounded-xl border px-3 py-2 text-xs ${
-                        draftBusy
-                          ? "border-brand/25 bg-fill/90 text-brand"
-                          : "border-success/35 bg-success-soft/80 text-success-ink"
-                      }`}
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <p className="leading-snug">{draftMessage}</p>
-                      {messageSuggestsBillingTopUpOrSubscription(draftMessage) ? (
-                        <BillingShortfallLinks className="mt-2 text-[11px] normal-case" />
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {articleDraftPreview ? (
-                    <div className="rounded-xl border border-line bg-surface px-3 py-2 shadow-sm">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">文章预览</p>
-                          <p className="mt-0.5 truncate text-sm font-semibold text-ink" title={articleDraftPreview.title}>
-                            {articleDraftPreview.title}
-                          </p>
-                          <p className="mt-0.5 text-[10px] text-muted">任务 {articleDraftPreview.jobId.slice(0, 8)}…</p>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap gap-1.5">
-                          <button
-                            type="button"
-                            className="rounded-lg border border-line bg-fill/50 px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-fill"
-                            onClick={() => void copyArticleDraftBody()}
-                          >
-                            复制全文
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-line px-2.5 py-1 text-[11px] text-muted hover:bg-fill"
-                            onClick={() => setArticleDraftPreview(null)}
-                          >
-                            关闭
-                          </button>
-                        </div>
-                      </div>
-                      <div className="mt-2 max-h-[min(50vh,320px)] overflow-y-auto rounded-lg border border-line/70 bg-fill/20 p-2">
-                        <pre className="whitespace-pre-wrap break-words font-sans text-[11px] leading-relaxed text-ink">
-                          {articleDraftPreview.body}
-                        </pre>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-                  <div className="mt-4 min-h-0 max-h-[min(100dvh-12rem,520px)] flex-1 overflow-y-auto overflow-x-hidden lg:max-h-none">
+          </div>
+          <section className="rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft">
+            <div className="flex items-center justify-between gap-2 border-b border-line/50 pb-3">
+              <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
+              <a
+                href="/works"
+                className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-brand hover:bg-fill"
+              >
+                查看全部
+              </a>
+            </div>
+            <div className="mt-3 max-h-[min(46vh,520px)] overflow-y-auto overflow-x-hidden">
               <PodcastWorksGallery
-                works={notesStudioWorks}
+                works={podcastWorks}
                 loading={podcastWorksLoading}
                 fetchError={podcastWorksError}
                 onDismissError={() => setPodcastWorksError("")}
                 onWorkDeleted={() => void fetchPodcastWorks()}
-                variant="notes_studio"
-                pendingStudioWork={
-                  podcastPendingStudioWork &&
-                  String(podcastPendingStudioWork.notesSourceNotebook || "").trim() ===
-                    selectedNotebook.trim()
-                    ? podcastPendingStudioWork
-                    : null
-                }
-                pendingStudioSubtitle={podcastGenMessage}
+                variant="all"
               />
-              </div>
-                </>
-              )}
-            </section>
-          </div>
+            </div>
+          </section>
         </>
       )}
 
@@ -4658,7 +4535,7 @@ export default function NotesPage() {
               笔记本：{shareTargetNotebook || "—"}
             </p>
             <p className="mt-3 text-[11px] leading-relaxed text-muted">
-              选择分享方式后点击「分享」生效。未登录访客可打开链接查看资料与预览；基于来源的创作需访客登录。已开启分享后可复制链接。
+              选择分享方式后点击「分享」生效。未登录访客可打开链接查看资料与来源内容；基于来源的创作需访客登录。已开启分享后可复制链接。
             </p>
             <fieldset className="mt-4 space-y-3 rounded-xl border border-line/80 p-3">
               <legend className="px-1 text-xs font-semibold text-ink">分享方式</legend>
@@ -4674,7 +4551,7 @@ export default function NotesPage() {
                 <span>
                   <span className="text-sm font-medium text-ink">只读</span>
                   <span className="mt-0.5 block text-[11px] leading-relaxed text-muted">
-                    访客可查看来源与预览、向资料提问；不可添加或修改笔记，不可基于来源生成播客或长文。
+                    访客可查看来源与来源内容、向资料提问；不可添加或修改笔记，不可基于来源生成播客或长文。
                   </span>
                 </span>
               </label>
@@ -5077,13 +4954,22 @@ export default function NotesPage() {
         >
           <div className="max-h-[min(92vh,820px)] w-full max-w-5xl overflow-hidden" onPointerDown={(e) => e.stopPropagation()}>
             <NoteMarkdownPreview
-              title={previewTitle || "笔记预览"}
+              title={previewTitle || "来源内容"}
               filteredText={filteredPreview}
               loading={previewLoading}
               truncated={previewTruncated}
               statusLine={previewStatusLine}
+              sourceType={previewSourceType}
+              createdAt={previewCreatedAt}
+              preprocessStage={previewStage}
+              nextAction={previewNextAction}
+              wordCount={previewWordCount}
+              sourceUrl={previewSourceUrl}
               keyword={previewKw}
               onKeywordChange={setPreviewKw}
+              simplified={previewSimplified}
+              onToggleSimplified={setPreviewSimplified}
+              highlightHint={previewHighlightHint}
               onClose={() => setPreviewOpen(false)}
             />
           </div>

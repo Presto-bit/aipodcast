@@ -278,6 +278,34 @@ def _derive_source_capabilities(
     }
 
 
+def _derive_preprocess_stage(md: dict, cap: dict[str, object]) -> tuple[str, str]:
+    """
+    预处理阶段拆分（展示口径）：
+    解析中 / 摘要中 / 实体提取中 / 索引中 / 可问答
+    """
+    parse_ok = bool(cap.get("parseOk"))
+    retrieve_state = str(cap.get("retrieveState") or "")
+    parse_err_code = str(cap.get("parseErrorCode") or "")
+    if not parse_ok:
+        if parse_err_code:
+            return "解析中", f"解析未成功（{parse_err_code}）：建议重传文本版来源（txt/md/html）或检查原文件质量。"
+        return "解析中", "请等待解析完成；若长时间未完成，可重传为 txt/md/html 或检查原文件质量。"
+    summary = str(md.get("preprocessSummary") or "").strip()
+    tags = md.get("preprocessTags") if isinstance(md.get("preprocessTags"), list) else []
+    ents = md.get("preprocessEntities") if isinstance(md.get("preprocessEntities"), list) else []
+    if not summary:
+        return "摘要中", "正在生成结构化摘要，请稍后刷新。"
+    if not ents:
+        return "实体提取中", "正在抽取关键实体（人名/机构/术语），请稍后刷新。"
+    if retrieve_state != "indexed":
+        if retrieve_state == "failed":
+            return "索引中", "索引失败：可稍后重试，或重新上传来源以触发重建。"
+        return "索引中", "正在建立检索索引，完成后可问答。"
+    if not tags:
+        return "索引中", "标签仍在补全中，索引已可用。"
+    return "可问答", "来源已就绪，可直接提问。"
+
+
 def _build_preprocess_fields(text: str) -> dict[str, object]:
     """轻量预处理：结构化摘要 + 主题标签 + 关键实体。"""
     body = (text or "").strip()
@@ -892,6 +920,12 @@ def preview_note_text_api(
         rag_chunks=rag_n,
         rag_err=str(row.get("note_rag_index_error") or "").strip(),
     )
+    preprocess_stage, next_action = _derive_preprocess_stage(md, cap)
+    content_text = str(row.get("content_text") or "")
+    word_count = len([x for x in re.split(r"\s+", content_text.strip()) if x]) if content_text.strip() else 0
+    source_type = "网页" if str(row.get("source_url") or "").strip() else (
+        "文件" if str(row.get("input_type") or "") == "note_file" else "文本"
+    )
     return {
         "success": True,
         "noteId": note_id,
@@ -915,6 +949,12 @@ def preview_note_text_api(
         "preprocessSummary": str(md.get("preprocessSummary") or ""),
         "preprocessTags": md.get("preprocessTags") if isinstance(md.get("preprocessTags"), list) else [],
         "preprocessEntities": md.get("preprocessEntities") if isinstance(md.get("preprocessEntities"), list) else [],
+        "preprocessStage": preprocess_stage,
+        "nextAction": next_action,
+        "sourceType": source_type,
+        "sourceUrl": str(row.get("source_url") or md.get("sourceUrl") or ""),
+        "createdAt": str(row.get("created_at") or ""),
+        "wordCount": word_count,
     }
 
 

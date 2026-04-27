@@ -20,7 +20,7 @@ export type NotesAskAnswerMarkdownBodyProps = {
   text: string;
   sources?: NotesAskSource[];
   webSources?: NotesAskWebSource[];
-  onCitationClick?: () => void;
+  onCitationClick?: (index: string) => void;
   onWebCitationClick?: () => void;
 };
 
@@ -191,8 +191,8 @@ export default function NotesAskAnswerMarkdownBody({
                   className="ml-0.5 inline align-baseline text-[0.92em] font-semibold text-brand underline decoration-dotted underline-offset-[3px] hover:decoration-solid"
                   title={title}
                   {...rest}
-                  onClick={(e) => {
-                    onCitationClick?.();
+                    onClick={(e) => {
+                      onCitationClick?.(idx);
                     (rest as { onClick?: MouseEventHandler<HTMLAnchorElement> }).onClick?.(e);
                   }}
                 >

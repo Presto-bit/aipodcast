@@ -13,6 +13,7 @@ type Props = {
   /** 联网检索来源，[w1] 外链与脚注 */
   webSources?: NotesAskWebSource[];
   className?: string;
+  onOpenSourceFromCitation?: (payload: { noteId: string; index: string; excerpt?: string }) => void;
 };
 
 export { normalizeNotesAskAnswerForDisplay } from "../../lib/notesAskAnswerNormalize";
@@ -92,7 +93,7 @@ function SourceExcerptModal({
 /**
  * 对话回答区：GFM Markdown + 段落/列表/代码块等排版；可选将 [n] 等标为指向脚注的内链。
  */
-export function NotesAskAnswerDisplay({ text, sources, webSources, className }: Props) {
+export function NotesAskAnswerDisplay({ text, sources, webSources, className, onOpenSourceFromCitation }: Props) {
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [webSourcesOpen, setWebSourcesOpen] = useState(false);
@@ -137,7 +138,17 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className }: 
         text={text}
         sources={sources}
         webSources={webSources}
-        onCitationClick={() => setSourcesOpen(true)}
+        onCitationClick={(index) => {
+          setSourcesOpen(true);
+          const src = sortedSources.find((s) => s.index === index);
+          if (src?.noteId) {
+            onOpenSourceFromCitation?.({
+              noteId: src.noteId,
+              index,
+              excerpt: src.chunks?.[0]?.excerpt
+            });
+          }
+        }}
         onWebCitationClick={() => setWebSourcesOpen(true)}
       />
 
