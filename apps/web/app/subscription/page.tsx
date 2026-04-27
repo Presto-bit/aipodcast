@@ -8,16 +8,7 @@ import { PricingHero } from "../../components/subscription/PricingHero";
 import { WalletUsageReference } from "../../components/subscription/WalletUsageReference";
 import type { WalletTopupPayload } from "../../components/subscription/types";
 import { parseSubscriptionErrorBody } from "../../lib/subscriptionError";
-import {
-  RECHARGE_DEBUG_EVENT,
-  appendRechargeDebug,
-  clearRechargeDebug,
-  newRechargeDebugRequestId,
-  readRechargeDebug,
-  rechargePathLogVisibleForUser,
-  summarizePayUrl,
-  type RechargeDebugEntry
-} from "../../lib/rechargeClientDebug";
+import { appendRechargeDebug, newRechargeDebugRequestId, summarizePayUrl } from "../../lib/rechargeClientDebug";
 import { ADMIN_ROLE } from "../../lib/appShellLayout";
 
 type RechargeRecordRow = {
@@ -149,21 +140,6 @@ type WalletCheckoutState = {
   amount_cents: number;
 };
 
-/** 「我的余额」上方展示的充值链路日志：优先支付宝相关步骤，否则退化为最近几条 */
-function entriesForBalanceAlipayLog(entries: RechargeDebugEntry[]): RechargeDebugEntry[] {
-  const pick = (e: RechargeDebugEntry) =>
-    e.step.startsWith("alipay_") ||
-    e.step === "url_query_trade_params" ||
-    e.step.startsWith("sim_wallet_") ||
-    e.step === "load_me" ||
-    e.step === "load_me_not_ok" ||
-    e.step === "load_me_error";
-  const filtered = entries.filter(pick);
-  const tail = filtered.slice(-24);
-  if (tail.length) return tail;
-  return entries.slice(-10);
-}
-
 export default function SubscriptionPage() {
   const { getAuthHeaders, refreshMe, user } = useAuth();
   const [walletTopupInfo, setWalletTopupInfo] = useState<PlansPayload["wallet_topup"]>(undefined);
@@ -188,11 +164,24 @@ export default function SubscriptionPage() {
   const [experienceVoiceTotal, setExperienceVoiceTotal] = useState<number | null>(null);
   const [experienceTextTotal, setExperienceTextTotal] = useState<number | null>(null);
   const [plansLoadDiag, setPlansLoadDiag] = useState<PlansLoadDiag | null>(null);
-  const [rechargeDebugLog, setRechargeDebugLog] = useState<RechargeDebugEntry[]>([]);
-  const [rechargeDebugUiReady, setRechargeDebugUiReady] = useState(false);
 
   /** 防止连续多次 loadPlans 返回顺序错乱，把旧响应写回 state */
   const plansFetchSeqRef = useRef(0);
+  const consumptionSinceDateRef = useRef<HTMLInputElement>(null);
+  const consumptionUntilDateRef = useRef<HTMLInputElement>(null);
+
+  const openConsumptionDatePicker = useCallback((el: HTMLInputElement | null) => {
+    if (!el) return;
+    try {
+      el.focus();
+      const anyEl = el as HTMLInputElement & { showPicker?: () => void };
+      if (typeof anyEl.showPicker === "function") {
+        anyEl.showPicker();
+      }
+    } catch {
+      /* 部分浏览器在无用户手势或控件不可见时 showPicker 会抛错 */
+    }
+  }, []);
 
   const allowMockWallet =
     typeof process !== "undefined" && process.env.NEXT_PUBLIC_ENABLE_MOCK_WALLET === "1";
@@ -244,11 +233,6 @@ export default function SubscriptionPage() {
   const showSimulatedWalletTopup = useMemo(
     () => !alipayRechargeUiEnabled && mergedWalletTopup.checkout_supported !== false,
     [alipayRechargeUiEnabled, mergedWalletTopup.checkout_supported]
-  );
-
-  const rechargePathLogEntries = useMemo(
-    () => entriesForBalanceAlipayLog(rechargeDebugLog),
-    [rechargeDebugLog]
   );
 
   const loadPlans = useCallback(async () => {
@@ -489,22 +473,6 @@ export default function SubscriptionPage() {
   reconcileAlipayWalletTopupRef.current = reconcileAlipayWalletTopup;
   /** 避免 Strict Mode / URL 回跳与轮询同时触发多笔并行对账，引发库侧竞争 */
   const reconcileAlipayInFlightRef = useRef(false);
-
-  useEffect(() => {
-    setRechargeDebugUiReady(true);
-  }, []);
-
-  const refreshRechargeDebugLog = useCallback(() => {
-    setRechargeDebugLog(readRechargeDebug());
-  }, []);
-
-  useEffect(() => {
-    refreshRechargeDebugLog();
-    if (typeof window === "undefined" || !rechargePathLogVisibleForUser(user)) return undefined;
-    const fn = () => refreshRechargeDebugLog();
-    window.addEventListener(RECHARGE_DEBUG_EVENT, fn);
-    return () => window.removeEventListener(RECHARGE_DEBUG_EVENT, fn);
-  }, [refreshRechargeDebugLog, user]);
 
   useEffect(() => {
     void loadPlans();
@@ -1042,75 +1010,6 @@ export default function SubscriptionPage() {
         className="mt-8 scroll-mt-24 rounded-xl border border-line bg-surface/60 p-5 shadow-sm"
         aria-labelledby="balance-billing-title"
       >
-        {rechargeDebugUiReady && rechargePathLogVisibleForUser(user) ? (
-          <div className="mb-5 rounded-lg border border-line bg-canvas/60 p-3">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <p className="text-xs font-semibold text-ink">支付宝充值路径日志</p>
-                <p className="mt-1 text-[10px] leading-relaxed text-muted">
-                  最近多条记录（可与网关/编排器日志中的 <span className="font-mono">x-request-id</span> 对齐）。管理员账号默认可见；其它用户可设{" "}
-                  <span className="font-mono">NEXT_PUBLIC_RECHARGE_DEBUG_UI=1</span> 或{" "}
-                  <span className="font-mono">localStorage.recharge_debug_ui=1</span> 后刷新。
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink hover:bg-fill"
-                  onClick={() => {
-                    clearRechargeDebug();
-                    setRechargeDebugLog([]);
-                  }}
-                >
-                  清空
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink hover:bg-fill"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(JSON.stringify(rechargeDebugLog, null, 2));
-                      setMsg("充值路径日志已复制到剪贴板。");
-                    } catch {
-                      setMsg("复制失败，请手动选择下方文字复制。");
-                    }
-                  }}
-                >
-                  复制全部
-                </button>
-              </div>
-            </div>
-            <ul className="mt-2 max-h-56 list-none space-y-2 overflow-y-auto border-t border-line/60 pt-2 pl-0">
-              {rechargePathLogEntries.length === 0 ? (
-                <li className="text-[10px] text-muted">暂无相关记录；完成一次「立即支付」或返回本页同步后将出现多条步骤。</li>
-              ) : (
-                rechargePathLogEntries.map((e, idx) => {
-                  const dataStr = e.data ? JSON.stringify(e.data) : "";
-                  const dataShort = dataStr.length > 220 ? `${dataStr.slice(0, 220)}…` : dataStr;
-                  return (
-                    <li
-                      key={`${e.ts}_${idx}_${e.step}`}
-                      className="border-b border-line/40 pb-2 text-[10px] leading-snug last:border-b-0 last:pb-0"
-                    >
-                      <div className="font-mono text-[9px] text-muted">{e.ts}</div>
-                      <div className="mt-0.5 font-medium text-ink">
-                        {e.step}
-                        {e.requestId ? (
-                          <span className="ml-1 font-mono text-[9px] font-normal text-muted">rid={e.requestId}</span>
-                        ) : null}
-                      </div>
-                      {dataShort ? (
-                        <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre-wrap break-all font-mono text-[9px] text-ink/85">
-                          {dataShort}
-                        </pre>
-                      ) : null}
-                    </li>
-                  );
-                })
-              )}
-            </ul>
-          </div>
-        ) : null}
         <h2 id="balance-billing-title" className="text-base font-semibold text-ink">
           我的余额
         </h2>
@@ -1213,30 +1112,48 @@ export default function SubscriptionPage() {
             <h2 className="text-lg font-semibold text-ink">消费记录</h2>
             {consumptionFilteredTotalCents != null ? (
               <p className="text-xs text-muted">
-                筛选时段成功消费合计（钱包扣款）
+                筛选时段累计消费
                 <span className="ml-1 font-mono tabular-nums text-ink">{fmtMoneyYuan(consumptionFilteredTotalCents)}</span>
               </p>
             ) : null}
           </div>
           <div className="mt-2 flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-0.5 text-xs text-muted">
-              开始日期
+            <div
+              className="flex min-w-[10.5rem] cursor-pointer flex-col gap-0.5 rounded-md border border-line bg-canvas p-2 text-xs text-muted shadow-sm transition hover:bg-fill/70"
+              onClick={(e) => {
+                if ((e.target as HTMLElement).tagName === "INPUT") return;
+                openConsumptionDatePicker(consumptionSinceDateRef.current);
+              }}
+              role="group"
+              aria-label="消费记录开始日期"
+            >
+              <span className="text-[11px] font-medium text-muted">开始日期</span>
               <input
+                ref={consumptionSinceDateRef}
                 type="date"
-                className="rounded-md border border-line bg-canvas px-2 py-1 font-mono text-xs text-ink"
+                className="mt-0.5 w-full cursor-pointer rounded border-0 bg-transparent p-0 font-mono text-xs text-ink focus:outline-none focus:ring-0"
                 value={consumptionSince}
                 onChange={(e) => setConsumptionSince(e.target.value)}
               />
-            </label>
-            <label className="flex flex-col gap-0.5 text-xs text-muted">
-              结束日期
+            </div>
+            <div
+              className="flex min-w-[10.5rem] cursor-pointer flex-col gap-0.5 rounded-md border border-line bg-canvas p-2 text-xs text-muted shadow-sm transition hover:bg-fill/70"
+              onClick={(e) => {
+                if ((e.target as HTMLElement).tagName === "INPUT") return;
+                openConsumptionDatePicker(consumptionUntilDateRef.current);
+              }}
+              role="group"
+              aria-label="消费记录结束日期"
+            >
+              <span className="text-[11px] font-medium text-muted">结束日期</span>
               <input
+                ref={consumptionUntilDateRef}
                 type="date"
-                className="rounded-md border border-line bg-canvas px-2 py-1 font-mono text-xs text-ink"
+                className="mt-0.5 w-full cursor-pointer rounded border-0 bg-transparent p-0 font-mono text-xs text-ink focus:outline-none focus:ring-0"
                 value={consumptionUntil}
                 onChange={(e) => setConsumptionUntil(e.target.value)}
               />
-            </label>
+            </div>
             <button
               type="button"
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"

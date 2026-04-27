@@ -16,6 +16,8 @@ export type SerializedNotesAskTurn = {
   sources?: NotesAskSource[];
   /** 知识库引导气泡：可点击填入输入框的建议问句 */
   hintSuggestions?: string[];
+  /** 单轮回答结束后，编排器返回的「接着问」建议（至多 2 条） */
+  followUpQuestions?: string[];
 };
 
 const STORAGE_VERSION = 1;
@@ -60,12 +62,20 @@ function parseStored(raw: string): SerializedNotesAskTurn[] | null {
         .map((x) => String(x || "").trim())
         .filter(Boolean)
         .slice(0, 8);
+      const f1 = (m as { follow_up_questions?: unknown }).follow_up_questions;
+      const f2 = (m as { followUpQuestions?: unknown }).followUpQuestions;
+      const fqArr = Array.isArray(f1) ? f1 : Array.isArray(f2) ? f2 : [];
+      const followUpQuestions = fqArr
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+        .slice(0, 2);
       out.push({
         id,
         role,
         content,
         ...(src && role === "assistant" ? { sources: src } : {}),
-        ...(hintSuggestions.length && role === "assistant" ? { hintSuggestions } : {})
+        ...(hintSuggestions.length && role === "assistant" ? { hintSuggestions } : {}),
+        ...(followUpQuestions.length && role === "assistant" ? { followUpQuestions } : {})
       });
       if (out.length >= MAX_MESSAGES) break;
     }
@@ -108,6 +118,9 @@ export function saveNotesAskChat(
       }
       if (m.role === "assistant" && m.hintSuggestions?.length) {
         base.hintSuggestions = m.hintSuggestions;
+      }
+      if (m.role === "assistant" && m.followUpQuestions?.length) {
+        base.followUpQuestions = m.followUpQuestions;
       }
       return base;
     });

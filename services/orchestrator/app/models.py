@@ -7618,7 +7618,7 @@ def list_wallet_consumption_rows_for_phone(
             except (TypeError, ValueError):
                 exv = 0.0
             if am > 1e-9:
-                usage_parts.append(f"实际语音 {am:.2f} 分钟")
+                usage_parts.append(f"语音时长{am:.2f}分钟")
             try:
                 em = float(pl.get("estimated_minutes") or 0)
             except (TypeError, ValueError):
@@ -7627,8 +7627,6 @@ def list_wallet_consumption_rows_for_phone(
                 usage_parts.append(f"预估 {em:.2f} 分钟")
             if exv > 1e-9:
                 usage_parts.append(f"体验包 {exv:.2f} 分钟")
-            if wallet_cents > 0:
-                usage_parts.append("含钱包扣费")
         elif "已按预估语音分钟" in msg:
             try:
                 em = float(pl.get("estimated_minutes") or 0)
@@ -7639,11 +7637,9 @@ def list_wallet_consumption_rows_for_phone(
             except (TypeError, ValueError):
                 exv = 0.0
             if em > 1e-9:
-                usage_parts.append(f"预估语音 {em:.2f} 分钟")
+                usage_parts.append(f"语音时长{em:.2f}分钟")
             if exv > 1e-9:
                 usage_parts.append(f"体验包 {exv:.2f} 分钟")
-            if wallet_cents > 0:
-                usage_parts.append("含钱包扣费")
         elif "已结算脚本文本费用" in msg:
             sc = int(pl.get("script_chars") or 0)
             ex = int(pl.get("experience_text_chars_consumed") or 0)
@@ -7651,8 +7647,6 @@ def list_wallet_consumption_rows_for_phone(
                 usage_parts.append(f"脚本 {sc:,} 字")
             if ex > 0:
                 usage_parts.append(f"体验包 {ex:,} 字")
-            if wallet_cents > 0:
-                usage_parts.append("含钱包扣费")
         elif "已从钱包扣除单次克隆费用" in msg:
             usage_parts.append("单次音色克隆")
 

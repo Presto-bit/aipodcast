@@ -184,6 +184,12 @@ const NOTES_ASK_SOURCE_REQUIRED = "请先勾选左侧资料";
 /** 构建时注入；为 `1` 时在对话输入区上方展示与 POST 一致的 JSON 与 curl（勿对终端用户开启） */
 const NOTES_ASK_DEBUG_BODY_ENABLED = String(process.env.NEXT_PUBLIC_NOTES_ASK_DEBUG_BODY || "").trim() === "1";
 
+/** 笔记「生成文章」目标字数（含小红书等体裁），与提交 payload 上下限一致 */
+const NOTES_ART_TARGET_CHARS_MIN = 200;
+const NOTES_ART_TARGET_CHARS_MAX = 50_000;
+const NOTES_ART_TARGET_CHARS_DEFAULT = 200;
+const NOTES_ART_TARGET_CHARS_SLIDER_STEP = 100;
+
 /** Bash 下单引号字符串转义，供复制 curl 使用 */
 function shellSingleQuoteForCurl(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -801,8 +807,8 @@ export default function NotesPage() {
   const [articleModalStep, setArticleModalStep] = useState<"pick" | "form">("pick");
   const [artKind, setArtKind] = useState<ArtKindKey>("custom");
   const [artLang, setArtLang] = useState("中文");
-  const [artChars, setArtChars] = useState(2000);
-  const [artCharsInput, setArtCharsInput] = useState("2000");
+  const [artChars, setArtChars] = useState(NOTES_ART_TARGET_CHARS_DEFAULT);
+  const [artCharsInput, setArtCharsInput] = useState(String(NOTES_ART_TARGET_CHARS_DEFAULT));
   const [artText, setArtText] = useState("");
   const [artCoreQuestion, setArtCoreQuestion] = useState("");
   /** 右侧资料区底部输入：带入播客/文章，不在此自动扩写全文 */
@@ -1530,7 +1536,7 @@ export default function NotesPage() {
       const lang = String(parsed.script_language || "").trim();
       if (lang) setArtLang(lang);
       const chars = Number(parsed.script_target_chars || 0);
-      if (Number.isFinite(chars) && chars >= 200 && chars <= 50000) {
+      if (Number.isFinite(chars) && chars >= NOTES_ART_TARGET_CHARS_MIN && chars <= NOTES_ART_TARGET_CHARS_MAX) {
         setArtChars(Math.round(chars));
         setArtCharsInput(String(Math.round(chars)));
       }
@@ -2804,7 +2810,7 @@ export default function NotesPage() {
         created_by: createdByPhone || undefined,
         payload: {
           text: body,
-          script_target_chars: Math.min(50000, Math.max(200, artChars)),
+          script_target_chars: Math.min(NOTES_ART_TARGET_CHARS_MAX, Math.max(NOTES_ART_TARGET_CHARS_MIN, artChars)),
           notes_notebook: selectedNotebook.trim(),
           ...(sharedBrowse?.access === "edit" && sharedBrowse.ownerUserId
             ? { notes_source_owner_user_id: sharedBrowse.ownerUserId }
@@ -3064,7 +3070,8 @@ export default function NotesPage() {
     setArticleModalStep("pick");
     setArtKind("custom");
     setArtLang("中文");
-    setArtChars(2000);
+    setArtChars(NOTES_ART_TARGET_CHARS_DEFAULT);
+    setArtCharsInput(String(NOTES_ART_TARGET_CHARS_DEFAULT));
     setShowArticleModal(true);
   }
 
@@ -3086,7 +3093,10 @@ export default function NotesPage() {
       setArtCharsInput(String(artChars));
       return;
     }
-    const clamped = Math.min(50000, Math.max(200, Math.round(parsed)));
+    const clamped = Math.min(
+      NOTES_ART_TARGET_CHARS_MAX,
+      Math.max(NOTES_ART_TARGET_CHARS_MIN, Math.round(parsed))
+    );
     setArtChars(clamped);
     setArtCharsInput(String(clamped));
   }
@@ -3788,17 +3798,10 @@ export default function NotesPage() {
                             m.role === "user" ? "flex justify-end" : "flex w-full min-w-0 justify-start"
                           }
                         >
-                          <div
-                            className={
-                              m.role === "user"
-                                ? "group/user-msg max-w-[min(92%,24rem)] rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm"
-                                : "w-full min-w-0 max-w-full px-0 py-1 text-sm leading-relaxed text-ink"
-                            }
-                          >
                             {m.role === "user" ? (
-                              <div className="flex items-start gap-1.5">
-                                {notesAskLastUserMessageId === m.id ? (
-                                  <div className="pointer-events-none flex shrink-0 flex-col gap-0.5 self-start pt-0.5 opacity-0 transition-opacity duration-150 group-hover/user-msg:pointer-events-auto group-hover/user-msg:opacity-100 group-focus-within/user-msg:pointer-events-auto group-focus-within/user-msg:opacity-100">
+                              notesAskLastUserMessageId === m.id ? (
+                              <div className="group/user-msg flex max-w-[min(96%,28rem)] min-w-0 items-start gap-2">
+                                <div className="pointer-events-none flex shrink-0 flex-row items-center gap-0.5 self-start pt-1.5 opacity-0 transition-opacity duration-150 group-hover/user-msg:pointer-events-auto group-hover/user-msg:opacity-100 group-focus-within/user-msg:pointer-events-auto group-focus-within/user-msg:opacity-100">
                                     <button
                                       type="button"
                                       className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-brand/10 hover:text-ink"
@@ -3839,10 +3842,18 @@ export default function NotesPage() {
                                       </svg>
                                     </button>
                                   </div>
-                                ) : null}
-                                <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{m.content}</p>
+                                <div className="min-w-0 flex-1 rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm">
+                                  <p className="min-w-0 whitespace-pre-wrap break-words">{m.content}</p>
+                                </div>
                               </div>
-                            ) : m.streaming &&
+                            ) : (
+                              <div className="max-w-[min(92%,24rem)] min-w-0 rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm">
+                                <p className="min-w-0 whitespace-pre-wrap break-words">{m.content}</p>
+                              </div>
+                            )
+                            ) : (
+                              <div className="w-full min-w-0 max-w-full px-0 py-1 text-sm leading-relaxed text-ink">
+                            {m.streaming &&
                               !(m.content || "").trim() &&
                               !(m.streamingReasoning || "").trim() ? (
                               <p className="text-muted">思考中…</p>
@@ -3945,7 +3956,8 @@ export default function NotesPage() {
                                 ) : null}
                               </div>
                             )}
-                          </div>
+                              </div>
+                            )}
                         </div>
                       ))}
                     </div>
@@ -4786,11 +4798,12 @@ export default function NotesPage() {
                     </select>
                   </label>
                   <label className="block text-xs text-ink">
-                    目标字数（200–50000，实际以上限以套餐为准）
+                    目标字数（默认 {NOTES_ART_TARGET_CHARS_DEFAULT}，{NOTES_ART_TARGET_CHARS_MIN}–
+                    {NOTES_ART_TARGET_CHARS_MAX}；实际上限以套餐为准）
                     <input
                       type="number"
-                      min={200}
-                      max={50000}
+                      min={NOTES_ART_TARGET_CHARS_MIN}
+                      max={NOTES_ART_TARGET_CHARS_MAX}
                       className={`mt-1 block w-full ${inputCls}`}
                       value={artCharsInput}
                       onChange={(e) => setArtCharsInput(e.target.value)}
@@ -4803,6 +4816,43 @@ export default function NotesPage() {
                       }}
                     />
                   </label>
+                </div>
+                <div className="mt-2">
+                  <label className="block text-[11px] text-muted">
+                    拖动调整字数
+                    <div className="mt-1.5 flex items-center gap-3">
+                      <input
+                        type="range"
+                        className="h-2 min-w-0 flex-1 cursor-pointer accent-brand"
+                        min={NOTES_ART_TARGET_CHARS_MIN}
+                        max={NOTES_ART_TARGET_CHARS_MAX}
+                        step={NOTES_ART_TARGET_CHARS_SLIDER_STEP}
+                        value={Math.min(
+                          NOTES_ART_TARGET_CHARS_MAX,
+                          Math.max(NOTES_ART_TARGET_CHARS_MIN, artChars)
+                        )}
+                        aria-valuemin={NOTES_ART_TARGET_CHARS_MIN}
+                        aria-valuemax={NOTES_ART_TARGET_CHARS_MAX}
+                        aria-valuenow={artChars}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          if (!Number.isFinite(v)) return;
+                          const clamped = Math.min(
+                            NOTES_ART_TARGET_CHARS_MAX,
+                            Math.max(NOTES_ART_TARGET_CHARS_MIN, Math.round(v))
+                          );
+                          setArtChars(clamped);
+                          setArtCharsInput(String(clamped));
+                        }}
+                      />
+                      <span className="w-[4.5rem] shrink-0 text-right text-xs tabular-nums text-ink">
+                        {artChars} 字
+                      </span>
+                    </div>
+                  </label>
+                  <p className="mt-1 text-[10px] leading-snug text-muted">
+                    滑块步进 {NOTES_ART_TARGET_CHARS_SLIDER_STEP}；需精确值或超出滑块手感时，请用上方数字框。
+                  </p>
                 </div>
                 <label className="mt-3 block text-xs text-ink">
                   核心问题（可选）
