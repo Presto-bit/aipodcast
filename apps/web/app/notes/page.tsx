@@ -810,6 +810,10 @@ export default function NotesPage() {
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
   const [showSupportedFormatsModal, setShowSupportedFormatsModal] = useState(false);
   const [shareDebugLog, setShareDebugLog] = useState("");
+  const [shareLastDebugLog, setShareLastDebugLog] = useState("");
+  const [shareLastError, setShareLastError] = useState("");
+  const [shareLastNotebook, setShareLastNotebook] = useState("");
+  const [shareLastAt, setShareLastAt] = useState("");
   const [renameDebugLog, setRenameDebugLog] = useState("");
   const addNoteFileRef = useRef<HTMLInputElement | null>(null);
   const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false);
@@ -3276,6 +3280,7 @@ export default function NotesPage() {
     setShareModalBusy(true);
     setShareModalError("");
     setShareDebugLog("");
+    let currentDebugLog = "";
     try {
       const clientRequestId =
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -3303,29 +3308,32 @@ export default function NotesPage() {
         parseError = String(e instanceof Error ? e.message : e);
         data = {};
       }
-      setShareDebugLog(
-        buildHttpDebugLog({
-          startedAt,
-          mode: "share",
-          target: name,
-          payload: JSON.stringify(payload),
-          res,
-          raw,
-          parseError,
-          clientRequestId
-        })
-      );
+      currentDebugLog = buildHttpDebugLog({
+        startedAt,
+        mode: "share",
+        target: name,
+        payload: JSON.stringify(payload),
+        res,
+        raw,
+        parseError,
+        clientRequestId
+      });
+      setShareDebugLog(currentDebugLog);
       if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
       setShowShareNotebookModal(false);
     } catch (err) {
-      setShareDebugLog((prev) =>
-        [prev, `exception=${String(err instanceof Error ? err.message : err)}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
-          .filter(Boolean)
-          .join("\n")
-      );
-      setShareModalError(String(err instanceof Error ? err.message : err));
+      const msg = String(err instanceof Error ? err.message : err);
+      currentDebugLog = [currentDebugLog, `exception=${msg}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
+        .filter(Boolean)
+        .join("\n");
+      setShareDebugLog(currentDebugLog);
+      setShareModalError(msg);
+      setShareLastDebugLog(currentDebugLog);
+      setShareLastError(msg);
+      setShareLastNotebook(name);
+      setShareLastAt(new Date().toISOString());
     } finally {
       setShareModalBusy(false);
     }
@@ -3337,6 +3345,7 @@ export default function NotesPage() {
     setShareModalBusy(true);
     setShareModalError("");
     setShareDebugLog("");
+    let currentDebugLog = "";
     try {
       const clientRequestId =
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -3363,29 +3372,32 @@ export default function NotesPage() {
         parseError = String(e instanceof Error ? e.message : e);
         data = {};
       }
-      setShareDebugLog(
-        buildHttpDebugLog({
-          startedAt,
-          mode: "unshare",
-          target: name,
-          payload: JSON.stringify(payload),
-          res,
-          raw,
-          parseError,
-          clientRequestId
-        })
-      );
+      currentDebugLog = buildHttpDebugLog({
+        startedAt,
+        mode: "unshare",
+        target: name,
+        payload: JSON.stringify(payload),
+        res,
+        raw,
+        parseError,
+        clientRequestId
+      });
+      setShareDebugLog(currentDebugLog);
       if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
       setShowShareNotebookModal(false);
     } catch (err) {
-      setShareDebugLog((prev) =>
-        [prev, `exception=${String(err instanceof Error ? err.message : err)}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
-          .filter(Boolean)
-          .join("\n")
-      );
-      setShareModalError(String(err instanceof Error ? err.message : err));
+      const msg = String(err instanceof Error ? err.message : err);
+      currentDebugLog = [currentDebugLog, `exception=${msg}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
+        .filter(Boolean)
+        .join("\n");
+      setShareDebugLog(currentDebugLog);
+      setShareModalError(msg);
+      setShareLastDebugLog(currentDebugLog);
+      setShareLastError(msg);
+      setShareLastNotebook(name);
+      setShareLastAt(new Date().toISOString());
     } finally {
       setShareModalBusy(false);
     }
@@ -3467,6 +3479,31 @@ export default function NotesPage() {
       onPointerDown={onNotesMainPointerDown}
     >
       {error ? <p className="mb-4 text-sm text-danger-ink">{error}</p> : null}
+      {shareLastDebugLog ? (
+        <div className="mb-4 rounded-xl border border-danger/30 bg-danger-soft/20 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-medium text-danger-ink">
+              最近一次分享失败已保留：{shareLastNotebook || "未知笔记本"} {shareLastAt ? `(${shareLastAt.replace("T", " ").slice(0, 19)})` : ""}
+            </p>
+            <button
+              type="button"
+              className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
+              onClick={() => {
+                setShareLastDebugLog("");
+                setShareLastError("");
+                setShareLastNotebook("");
+                setShareLastAt("");
+              }}
+            >
+              清除
+            </button>
+          </div>
+          {shareLastError ? <p className="mt-2 text-xs text-danger-ink">{shareLastError}</p> : null}
+          <pre className="mt-2 max-h-52 overflow-auto rounded-lg border border-line/70 bg-fill/20 p-2 text-[10px] leading-relaxed text-muted">
+            {shareLastDebugLog}
+          </pre>
+        </div>
+      ) : null}
 
       {/* 在笔记本列表页无法看到右侧「我的作品」时，仍显示文章/底稿/播客生成日志（如页面恢复未完成 job） */}
       {hubView && (draftMessage.trim() || podcastGenBusy || podcastGenMessage.trim()) ? (
@@ -4836,7 +4873,7 @@ export default function NotesPage() {
               </p>
             ) : null}
             {shareDebugLog ? (
-              <pre className="mt-2 max-h-36 overflow-auto rounded-lg border border-line/70 bg-fill/20 p-2 text-[10px] leading-relaxed text-muted">
+              <pre className="mt-2 max-h-64 overflow-auto rounded-lg border border-line/70 bg-fill/20 p-2 text-[10px] leading-relaxed text-muted">
                 {shareDebugLog}
               </pre>
             ) : null}
