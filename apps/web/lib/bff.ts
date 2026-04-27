@@ -340,6 +340,21 @@ export async function proxyJsonFromOrchestrator(path: string, opts: FetchOrchest
       (upstream.headers.get("x-request-id") || opts.requestId || "").trim() || "";
     const ridHeaders: Record<string, string> = {};
     if (outboundRid) ridHeaders["x-request-id"] = outboundRid;
+    if (!upstream.ok && !text.trim()) {
+      return Response.json(
+        {
+          success: false,
+          error: "upstream_error_empty_body",
+          detail: `上游返回 ${upstream.status} 且响应体为空`,
+          status: upstream.status,
+          ...requestIdFields(outboundRid || opts.requestId || "")
+        },
+        {
+          status: upstream.status,
+          ...(outboundRid ? { headers: { "x-request-id": outboundRid } } : {})
+        }
+      );
+    }
     return new Response(text, {
       status: upstream.status,
       headers: { "content-type": "application/json", ...ridHeaders }
