@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Tuple
 import base64
 
 from .entitlement_matrix import apply_script_options_subscription_caps
@@ -14,9 +14,11 @@ from .legacy_bridge import (
 )
 from .providers.http_provider_misc import image_via_http_json, tts_via_http_json, voice_clone_via_http_json
 from .providers.openai_compat_text import (
+    StreamSegmentRole,
     chat_completion_openai_compatible,
     generate_script_openai_compatible,
     iter_chat_completion_openai_compatible_stream,
+    iter_chat_completion_openai_compatible_stream_segments,
 )
 from .fyv_shared.minimax_client import minimax_client
 
@@ -191,6 +193,83 @@ def invoke_llm_chat_messages_stream_iter(
             prov,
         )
         yield from _iter_minimax()
+
+
+def invoke_llm_chat_messages_stream_segments_iter(
+    messages: list[dict[str, Any]],
+    *,
+    temperature: float = 0.45,
+    api_key: str | None = None,
+    timeout_sec: int = 120,
+) -> Iterator[Tuple[StreamSegmentRole, str]]:
+    """
+    与 invoke_llm_chat_messages_stream_iter 相同路由与回退策略，但 OpenAI 兼容流按 delta 拆成
+    (reasoning|answer, 文本)；MiniMax 流无独立推理字段时一律视为 answer。
+    """
+    prov = script_provider()
+
+    def _iter_minimax_segments() -> Iterator[Tuple[StreamSegmentRole, str]]:
+        key = (api_key or "").strip() or str(os.getenv("MINIMAX_API_KEY") or "").strip()
+        if not key:
+            raise RuntimeError("minimax_api_key_missing")
+        for piece in minimax_client.iter_chat_completion_messages_stream(
+            messages,
+            api_key=key,
+            temperature=float(temperature),
+        ):
+            yield ("answer", piece)
+
+    if prov == "minimax":
+        yield from _iter_minimax_segments()
+        return
+
+    def _iter_openai_segments() -> Iterator[Tuple[StreamSegmentRole, str]]:
+        if prov == "deepseek":
+            key = str(os.getenv("DEEPSEEK_API_KEY") or "").strip()
+            base = str(os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
+            model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-v4-flash").strip()
+        else:
+            key = str(os.getenv("QWEN_API_KEY") or "").strip()
+            base = str(os.getenv("QWEN_BASE_URL") or "").strip()
+            model = str(os.getenv("QWEN_TEXT_MODEL") or "qwen-plus").strip()
+        if not key or not base:
+            raise RuntimeError(f"text_provider_{prov}_config_missing")
+        norm: list[dict[str, str]] = []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            role = str(m.get("role") or "user").strip()
+            content = str(m.get("content") or "")
+            norm.append({"role": role, "content": content})
+        yield from iter_chat_completion_openai_compatible_stream_segments(
+            messages=norm,
+            api_base=base,
+            api_key=key,
+            model=model,
+            temperature=float(temperature),
+            timeout_sec=int(timeout_sec),
+        )
+
+    try:
+        saw_non_empty = False
+        for role, seg in _iter_openai_segments():
+            if (seg or "").strip():
+                saw_non_empty = True
+            yield (role, seg)
+    except Exception as exc:
+        logger.warning(
+            "invoke_llm_chat_messages_stream_segments provider=%s failed, fallback minimax: %s",
+            prov,
+            exc,
+        )
+        yield from _iter_minimax_segments()
+        return
+    if not saw_non_empty:
+        logger.warning(
+            "invoke_llm_chat_messages_stream_segments provider=%s produced no chunks, fallback minimax",
+            prov,
+        )
+        yield from _iter_minimax_segments()
 
 
 def tts_provider() -> str:

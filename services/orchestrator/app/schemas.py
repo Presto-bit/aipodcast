@@ -138,6 +138,10 @@ class NotesAskRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("shared_from_owner_user_id", "sharedFromOwnerUserId"),
     )
+    enable_web_search: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("enable_web_search", "enableWebSearch"),
+    )
 
     @field_validator("note_ids")
     @classmethod

@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import type { NotesAskSource } from "../../lib/notesAskCitation";
+import type { NotesAskSource, NotesAskWebSource } from "../../lib/notesAskCitation";
 
 const NotesAskAnswerMarkdownBody = dynamic(
   () => import("./NotesAskAnswerMarkdownBody"),
@@ -17,6 +17,8 @@ type Props = {
   text: string;
   /** 与编排器 done.sources 一致；有则 [n] 可点击并展示脚注。 */
   sources?: NotesAskSource[];
+  /** 联网检索来源，[w1] 外链与脚注 */
+  webSources?: NotesAskWebSource[];
   className?: string;
 };
 
@@ -97,19 +99,31 @@ function SourceExcerptModal({
 /**
  * 对话回答区：GFM Markdown + 段落/列表/代码块等排版；可选将 [n] 等标为指向脚注的内链。
  */
-export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
+export function NotesAskAnswerDisplay({ text, sources, webSources, className }: Props) {
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [webSourcesOpen, setWebSourcesOpen] = useState(false);
 
   const sortedSources = useMemo(() => {
     if (!sources?.length) return [];
     return [...sources].sort((a, b) => Number(a.index) - Number(b.index));
   }, [sources]);
 
+  const sortedWebSources = useMemo(() => {
+    if (!webSources?.length) return [];
+    return [...webSources].sort((a, b) => {
+      const na = Number(String(a.index).replace(/^w/i, "")) || 0;
+      const nb = Number(String(b.index).replace(/^w/i, "")) || 0;
+      return na - nb;
+    });
+  }, [webSources]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const expandIfCitationHash = () => {
-      if (/^#cite-/.test(window.location.hash || "")) setSourcesOpen(true);
+      const h = window.location.hash || "";
+      if (/^#cite-w\d/i.test(h)) setWebSourcesOpen(true);
+      else if (/^#cite-/.test(h)) setSourcesOpen(true);
     };
     expandIfCitationHash();
     window.addEventListener("hashchange", expandIfCitationHash);
@@ -122,7 +136,13 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
     <div
       className={`notes-ask-answer flex min-w-0 flex-col gap-3 text-sm leading-relaxed text-ink [&_blockquote]:border-l-4 [&_blockquote]:border-line [&_blockquote]:pl-3 [&_blockquote]:text-ink/90 [&_code]:rounded [&_code]:bg-fill [&_code]:px-1 [&_code]:py-px [&_code]:text-[0.8125rem] [&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:text-sm [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:leading-relaxed [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-line/80 [&_pre]:bg-fill/80 [&_pre]:p-3 [&_pre]:text-xs [&_table]:w-full [&_table]:border-collapse [&_table]:text-left [&_table]:text-xs [&_td]:border [&_td]:border-line/70 [&_td]:px-2 [&_td]:py-1.5 [&_th]:border [&_th]:border-line/70 [&_th]:bg-fill/50 [&_th]:px-2 [&_th]:py-1.5 [&_th]:font-medium [&_ul]:list-disc [&_ul]:pl-5 ${wrap}`}
     >
-      <NotesAskAnswerMarkdownBody text={text} sources={sources} onCitationClick={() => setSourcesOpen(true)} />
+      <NotesAskAnswerMarkdownBody
+        text={text}
+        sources={sources}
+        webSources={webSources}
+        onCitationClick={() => setSourcesOpen(true)}
+        onWebCitationClick={() => setWebSourcesOpen(true)}
+      />
 
       {sortedSources.length > 0 ? (
         <aside
@@ -136,12 +156,12 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
             aria-expanded={sourcesOpen}
             aria-controls="notes-ask-citation-footnotes"
           >
-            <span className="font-semibold">引用来源</span>
+            <span className="font-semibold">引用来源（资料库）</span>
             <span className="shrink-0 text-[11px] font-medium text-muted">{sourcesOpen ? "收起" : "展开"}</span>
           </button>
           <div id="notes-ask-citation-footnotes" className="mt-2" hidden={!sourcesOpen}>
             <p className="text-[11px] text-muted">
-              点击正文中的 [n] 可跳转到下方对应脚注；有检索摘录时点击「查看摘录」可在弹窗中阅读块原文。
+              点击正文中的 [n] 可跳转到下方对应脚注；有检索摘录时点击「查看摘录」可在弹窗中阅读块原文。与网页摘要冲突时以资料库为准。
             </p>
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
               {sortedSources.map((s) => (
@@ -157,6 +177,44 @@ export function NotesAskAnswerDisplay({ text, sources, className }: Props) {
                   >
                     查看摘录
                   </button>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </aside>
+      ) : null}
+
+      {sortedWebSources.length > 0 ? (
+        <aside
+          className="mt-1 border-t border-line/70 pt-3 text-xs text-ink"
+          aria-label="网页参考"
+        >
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 rounded-lg py-0.5 text-left text-ink hover:bg-fill/50"
+            onClick={() => setWebSourcesOpen((o) => !o)}
+            aria-expanded={webSourcesOpen}
+            aria-controls="notes-ask-web-footnotes"
+          >
+            <span className="font-semibold">网页参考（联网检索）</span>
+            <span className="shrink-0 text-[11px] font-medium text-muted">{webSourcesOpen ? "收起" : "展开"}</span>
+          </button>
+          <div id="notes-ask-web-footnotes" className="mt-2" hidden={!webSourcesOpen}>
+            <p className="text-[11px] text-muted">
+              正文中的 [w1] 等为互联网摘要角标，仅供参考；与资料库冲突时以资料库为准。点击标题在新标签页打开。
+            </p>
+            <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
+              {sortedWebSources.map((s) => (
+                <li key={s.index} id={`cite-${s.index}`} className="scroll-mt-20">
+                  <a
+                    href={s.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-brand underline break-all"
+                  >
+                    [{s.index}] {s.title}
+                  </a>
+                  {s.snippet ? <p className="mt-1 text-[11px] leading-snug text-muted">{s.snippet}</p> : null}
                 </li>
               ))}
             </ol>

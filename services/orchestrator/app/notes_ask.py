@@ -14,6 +14,7 @@ from .note_rag_service import NOTE_LAYERED_RAG, build_layered_notes_context
 from .notes_ask_profile import notes_ask_profile_emit
 from .provider_router import (
     invoke_llm_chat_messages_stream_iter,
+    invoke_llm_chat_messages_stream_segments_iter,
     invoke_llm_chat_messages_with_minimax_fallback,
     script_provider,
 )
@@ -31,6 +32,14 @@ def _notes_ask_top_k() -> int:
         return max(24, min(160, int(os.getenv("NOTES_ASK_TOP_K", "56") or "56")))
     except (TypeError, ValueError):
         return 56
+
+
+def _notes_ask_reasoning_stream_cap_chars() -> int:
+    """单轮 SSE 推理片段累计上限（防极端长推理占满带宽）；默认 120000，可用 NOTES_ASK_REASONING_MAX_CHARS 覆盖。"""
+    try:
+        return max(4_000, min(200_000, int(os.getenv("NOTES_ASK_REASONING_MAX_CHARS", "120000") or "120000")))
+    except (TypeError, ValueError):
+        return 120_000
 
 
 # 常见推理模型标签（避免在流式正文中露出）
@@ -70,10 +79,55 @@ _SYSTEM = (
     "若材料不足以回答，请明确说明「材料中未提及」或「摘录中看不到」，不要编造事实。\n"
     "回答使用中文；仅在确实依据某一来源时，在对应句子或段落后用 [1]、[2] 等形式标注来源序号（与摘录或来源清单中的序号 [n] 一致）。"
     "不要标注未在回答中实际用到的序号；也不要在正文中复述「检索片段」、chunk、score、向量、noteId 等系统或调试用语。\n"
+    "若模型接口将推理与正文分列返回，仅将面向用户的结论写在正文部分，勿在正文中重复粘贴完整推理过程。\n"
     "不要输出思考过程、提纲或「首先/其次」式推演说明，直接给出面向用户的结论与依据。\n"
     "若问题与多条笔记均相关，请尽量在回答中分别引用不同序号，避免只依赖少数几条而忽略其他相关摘录。"
     "当勾选来源数 >= 2 且材料可支持时，优先至少引用 2 个不同来源；若只能依据 1 个来源作答，请明确说明其余来源中未检索到可支持该问题的片段。"
 )
+
+_SYSTEM_WITH_WEB = (
+    _SYSTEM
+    + "\n\n若上下文中包含「互联网检索摘要」段落：该段仅作补充参考；与资料摘录事实冲突时一律以资料摘录为准，并可用一句话说明「网页摘要与资料不一致，以下以资料为准」。\n"
+    "引用互联网结论时请使用 [w1]、[w2] 等形式，编号须与摘要小标题「互联网来源 [w*]」一致；勿与资料库数字角标 [1][2] 混用。\n"
+    "凡使用互联网摘要中的信息，须在对应句末或段末标注相应 [w*]；不要编造未出现在摘要中的网址或事实。"
+)
+
+
+def system_prompt_notes_ask(*, with_web: bool) -> str:
+    return _SYSTEM_WITH_WEB if with_web else _SYSTEM
+
+
+def augment_prepared_messages_with_internet(
+    messages: list[dict[str, str]],
+    internet_block: str,
+) -> list[dict[str, str]]:
+    """在已组好的 messages 上插入互联网块并切换 system 为带网页规则。"""
+    ib = (internet_block or "").strip()
+    if not ib:
+        return messages
+    marker = "\n\n---\n\n问题："
+    out: list[dict[str, str]] = []
+    for m in messages:
+        role = str(m.get("role") or "")
+        if role == "system":
+            out.append({"role": "system", "content": system_prompt_notes_ask(with_web=True)})
+            continue
+        if role == "user":
+            u = str(m.get("content") or "")
+            if marker in u:
+                head, tail = u.split(marker, 1)
+                insert = (
+                    "\n\n---\n\n"
+                    "## 互联网检索摘要（仅供参考；与资料冲突时以资料摘录为准）\n\n"
+                    f"{ib}"
+                    f"{marker}{tail}"
+                )
+                out.append({"role": "user", "content": head + insert})
+            else:
+                out.append(m)
+            continue
+        out.append(m)
+    return out
 
 
 def _enrich_sources_with_chunks(sources: list[dict[str, Any]], retr_meta: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -173,7 +227,7 @@ def _prepare_notes_ask_messages(
 
     user_block = f"资料摘录如下：\n\n{context}\n\n---\n\n问题：{q}"
     messages = [
-        {"role": "system", "content": _SYSTEM},
+        {"role": "system", "content": system_prompt_notes_ask(with_web=False)},
         {"role": "user", "content": user_block},
     ]
     return messages, sources
@@ -257,6 +311,7 @@ def iter_notes_answer_events(
     prepared_messages_sources: tuple[list[dict[str, str]], list[dict[str, Any]]] | None = None,
     project_owner_user_uuid: str | None = None,
     request_id: str | None = None,
+    web_sources: list[dict[str, Any]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """SSE 事件：chunk / done / error。
 
@@ -274,7 +329,7 @@ def iter_notes_answer_events(
             user_ref=user_ref,
             project_owner_user_uuid=project_owner_user_uuid,
         )
-    acc: list[str] = []
+    acc_answer: list[str] = []
     try:
         _t_llm = time.perf_counter()
         rid = (request_id or "").strip() or "-"
@@ -284,14 +339,44 @@ def iter_notes_answer_events(
             len(messages),
         )
         saw_visible = False
-        for piece in invoke_llm_chat_messages_stream_iter(
-            messages,
-            temperature=0.45,
-            api_key=api_key,
-            timeout_sec=120,
-        ):
-            vis = _notes_ask_sanitize_visible_text(piece)
-            if vis:
+        reasoning_cap = _notes_ask_reasoning_stream_cap_chars()
+        reasoning_emitted = 0
+        stream_chunks_out = 0
+
+        def _clip_reasoning(vis: str) -> str:
+            nonlocal reasoning_emitted
+            if reasoning_emitted >= reasoning_cap:
+                return ""
+            room = reasoning_cap - reasoning_emitted
+            if len(vis) <= room:
+                reasoning_emitted += len(vis)
+                return vis
+            if room <= 1:
+                reasoning_emitted = reasoning_cap
+                return "…" if room == 1 else ""
+            out = vis[: room - 1] + "…"
+            reasoning_emitted = reasoning_cap
+            return out
+
+        try:
+            for role, piece in invoke_llm_chat_messages_stream_segments_iter(
+                messages,
+                temperature=0.45,
+                api_key=api_key,
+                timeout_sec=120,
+            ):
+                vis = _notes_ask_sanitize_visible_text(piece)
+                if not vis:
+                    continue
+                is_reasoning = str(role or "").strip().lower() == "reasoning"
+                if is_reasoning:
+                    clipped = _clip_reasoning(vis)
+                    if not clipped:
+                        continue
+                    ev_out: dict[str, Any] = {"type": "chunk", "text": clipped, "streamRole": "reasoning"}
+                else:
+                    acc_answer.append(vis)
+                    ev_out = {"type": "chunk", "text": vis, "streamRole": "answer"}
                 if not saw_visible:
                     ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
                     notes_ask_profile_emit(
@@ -304,25 +389,61 @@ def iter_notes_answer_events(
                         ttft_ms,
                     )
                     saw_visible = True
-                acc.append(vis)
-                yield {"type": "chunk", "text": vis}
+                yield ev_out
+                stream_chunks_out += 1
+        except Exception as seg_exc:
+            if stream_chunks_out == 0:
+                logger.warning(
+                    "notes_ask_stream_segments_failed_no_output request_id=%s fallback_plain_stream: %s",
+                    rid,
+                    seg_exc,
+                )
+                for piece in invoke_llm_chat_messages_stream_iter(
+                    messages,
+                    temperature=0.45,
+                    api_key=api_key,
+                    timeout_sec=120,
+                ):
+                    vis = _notes_ask_sanitize_visible_text(piece)
+                    if not vis:
+                        continue
+                    if not saw_visible:
+                        ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
+                        notes_ask_profile_emit(
+                            "stream_llm_ttft_ms",
+                            ttft_ms,
+                        )
+                        logger.info(
+                            "notes_ask_stage stage=llm_first_token request_id=%s elapsed_ms=%.1f",
+                            rid,
+                            ttft_ms,
+                        )
+                        saw_visible = True
+                    acc_answer.append(vis)
+                    yield {"type": "chunk", "text": vis}
+                    stream_chunks_out += 1
+            else:
+                raise seg_exc
         llm_total_ms = (time.perf_counter() - _t_llm) * 1000.0
         notes_ask_profile_emit(
             "stream_llm_total_ms",
             llm_total_ms,
-            visible_chars=len("".join(acc)),
+            visible_chars=len("".join(acc_answer)),
         )
         logger.info(
             "notes_ask_stage stage=llm_stream_done request_id=%s elapsed_ms=%.1f visible_chars=%s",
             rid,
             llm_total_ms,
-            len("".join(acc)),
+            len("".join(acc_answer)),
         )
-        full = _notes_ask_sanitize_visible_text("".join(acc)).strip()
+        full = _notes_ask_sanitize_visible_text("".join(acc_answer)).strip()
         if not full:
             raise RuntimeError("empty_answer")
         sources = filter_sources_by_citations(full, sources)
-        yield {"type": "done", "sources": sources, "traceId": None}
+        done_ev: dict[str, Any] = {"type": "done", "sources": sources, "traceId": None}
+        if web_sources:
+            done_ev["webSources"] = web_sources
+        yield done_ev
     except Exception as exc:
         logger.warning(
             "notes_ask_stream_failed request_id=%s: %s",
@@ -517,6 +638,7 @@ def answer_notes_question(
     user_ref: str | None,
     api_key: str | None = None,
     project_owner_user_uuid: str | None = None,
+    enable_web_search: bool = False,
 ) -> dict[str, Any]:
     messages, sources = _prepare_notes_ask_messages(
         notebook=notebook,
@@ -525,6 +647,16 @@ def answer_notes_question(
         user_ref=user_ref,
         project_owner_user_uuid=project_owner_user_uuid,
     )
+    web_sources: list[dict[str, Any]] = []
+    if enable_web_search:
+        from .notes_ask_web import fetch_web_supplement, skip_web_search_reason
+
+        qstrip = (question or "").strip()
+        if not skip_web_search_reason(qstrip):
+            block, ws_list, _err = fetch_web_supplement(qstrip, request_id=None)
+            if block:
+                messages = augment_prepared_messages_with_internet(messages, block)
+                web_sources = ws_list
     try:
         answer, trace_id = invoke_llm_chat_messages_with_minimax_fallback(
             messages,
@@ -539,8 +671,11 @@ def answer_notes_question(
         raise RuntimeError("empty_answer")
 
     ans = _notes_ask_sanitize_visible_text(answer.strip())
-    return {
+    out: dict[str, Any] = {
         "answer": ans,
         "sources": filter_sources_by_citations(ans, sources),
         "traceId": trace_id,
     }
+    if web_sources:
+        out["webSources"] = web_sources
+    return out

@@ -3,14 +3,23 @@
 import type { MouseEventHandler } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { citationTitleForIndex, linkifyCitationMarkers, type NotesAskSource } from "../../lib/notesAskCitation";
+import {
+  citationTitleForIndex,
+  citationTitleForWebIndex,
+  linkifyCitationMarkers,
+  linkifyWebCitationMarkers,
+  type NotesAskSource,
+  type NotesAskWebSource
+} from "../../lib/notesAskCitation";
 import { sanitizeUserMarkdownHref } from "../../lib/safeMarkdownHref";
 import { normalizeNotesAskAnswerForDisplay } from "../../lib/notesAskAnswerNormalize";
 
 export type NotesAskAnswerMarkdownBodyProps = {
   text: string;
   sources?: NotesAskSource[];
+  webSources?: NotesAskWebSource[];
   onCitationClick?: () => void;
+  onWebCitationClick?: () => void;
 };
 
 /**
@@ -19,9 +28,12 @@ export type NotesAskAnswerMarkdownBodyProps = {
 export default function NotesAskAnswerMarkdownBody({
   text,
   sources,
-  onCitationClick
+  webSources,
+  onCitationClick,
+  onWebCitationClick
 }: NotesAskAnswerMarkdownBodyProps) {
-  const md = linkifyCitationMarkers(normalizeNotesAskAnswerForDisplay(text), sources);
+  const normalized = normalizeNotesAskAnswerForDisplay(text);
+  const md = linkifyWebCitationMarkers(linkifyCitationMarkers(normalized, sources), webSources);
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -29,8 +41,34 @@ export default function NotesAskAnswerMarkdownBody({
         p: ({ children }) => <p className="min-w-0 whitespace-pre-wrap">{children}</p>,
         a: ({ href, children, ...rest }) => {
           const rawHref = String(href || "");
+          if (rawHref.startsWith("#cite-w")) {
+            const widx = rawHref.replace(/^#cite-/, "");
+            const ws = webSources?.find((x) => x.index === widx);
+            const title = citationTitleForWebIndex(webSources, widx);
+            if (ws?.url) {
+              return (
+                <a
+                  href={ws.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-0.5 inline align-baseline text-[0.92em] font-semibold text-brand underline decoration-dotted underline-offset-[3px] hover:decoration-solid"
+                  title={title}
+                  {...rest}
+                  onClick={(e) => {
+                    onWebCitationClick?.();
+                    (rest as { onClick?: MouseEventHandler<HTMLAnchorElement> }).onClick?.(e);
+                  }}
+                >
+                  {children}
+                </a>
+              );
+            }
+          }
           if (rawHref.startsWith("#cite-")) {
             const idx = rawHref.replace(/^#cite-/, "");
+            if (/^w\d+$/i.test(idx)) {
+              return <span className="ml-0.5 text-brand">{children}</span>;
+            }
             const title = citationTitleForIndex(sources, idx);
             return (
               <a

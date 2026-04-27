@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Literal
 from urllib import request
 
 import requests
@@ -414,6 +414,24 @@ def chat_completion_openai_compatible(
     return content
 
 
+StreamSegmentRole = Literal["reasoning", "answer"]
+
+
+def _openai_stream_delta_segments(delta: dict[str, Any]) -> list[tuple[StreamSegmentRole, str]]:
+    """单条 choices[0].delta 内按顺序拆成 (reasoning|answer, 文本) 片段（推理与正文分列，避免混在同一字符串）。"""
+    out: list[tuple[StreamSegmentRole, str]] = []
+    rc = _normalize_chat_message_content(delta.get("reasoning_content"))
+    if rc:
+        out.append(("reasoning", rc))
+    rr = _normalize_chat_message_content(delta.get("reasoning"))
+    if rr:
+        out.append(("reasoning", rr))
+    c = _normalize_chat_message_content(delta.get("content"))
+    if c:
+        out.append(("answer", c))
+    return out
+
+
 def _openai_stream_delta_text(delta: dict[str, Any], *, content_only: bool = False) -> str:
     """聚合流式 delta 文本：正文、推理模型 reasoning_content、以及数组型 content 片段。
 
@@ -490,4 +508,62 @@ def iter_chat_completion_openai_compatible_stream(
         piece = _openai_stream_delta_text(delta, content_only=content_only)
         if piece:
             yield piece
+
+
+def iter_chat_completion_openai_compatible_stream_segments(
+    *,
+    messages: list[dict[str, str]],
+    api_base: str,
+    api_key: str,
+    model: str,
+    temperature: float = 0.65,
+    timeout_sec: int = 120,
+) -> Iterator[tuple[StreamSegmentRole, str]]:
+    """OpenAI 兼容流式：逐段产出 (reasoning|answer, 文本)，供笔记问答等区分展示。"""
+    base = api_base.rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": float(temperature),
+        "stream": True,
+    }
+    resp = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        stream=True,
+        timeout=(10, int(timeout_sec)),
+    )
+    resp.raise_for_status()
+    for line in resp.iter_lines(decode_unicode=True):
+        if not line:
+            continue
+        line_s = str(line).strip()
+        if not line_s.startswith("data:"):
+            continue
+        raw = line_s[5:].strip()
+        if raw == "[DONE]":
+            break
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        err = data.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            raise RuntimeError(str(err.get("message") or "upstream_error"))
+        choices = data.get("choices") or []
+        if not isinstance(choices, list) or not choices:
+            continue
+        c0 = choices[0] if isinstance(choices[0], dict) else {}
+        delta = c0.get("delta") or {}
+        if not isinstance(delta, dict):
+            continue
+        for role, seg in _openai_stream_delta_segments(delta):
+            if seg:
+                yield (role, seg)
 

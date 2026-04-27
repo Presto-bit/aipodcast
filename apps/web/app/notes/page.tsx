@@ -66,7 +66,12 @@ import { notebookCoverImageUrl } from "../../lib/notebookCoverDisplay";
 import { maxNotesForReference, notesRefSelectionLimitMessage } from "../../lib/noteReferenceLimits";
 import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
-import { normalizeNotesAskSources, type NotesAskSource } from "../../lib/notesAskCitation";
+import {
+  normalizeNotesAskSources,
+  normalizeNotesAskWebSources,
+  type NotesAskSource,
+  type NotesAskWebSource
+} from "../../lib/notesAskCitation";
 import { loadNotesAskChat, saveNotesAskChat } from "../../lib/notesAskChatStorage";
 import { notesAskClientLog } from "../../lib/notesAskClientLog";
 import { NotesAskRunLogPanel } from "../../components/notes/NotesAskRunLogPanel";
@@ -81,8 +86,9 @@ import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
 
 type NotesAskStreamEvent =
-  | { type: "chunk"; text: string }
-  | { type: "done"; sources?: unknown; traceId?: string | null }
+  | { type: "chunk"; text: string; streamRole?: "reasoning" | "answer" }
+  | { type: "done"; sources?: unknown; webSources?: unknown; traceId?: string | null }
+  | { type: "info"; message: string; code?: string; requestId?: string }
   | {
       type: "error";
       message: string;
@@ -98,8 +104,12 @@ type NotesAskTurn = {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+  /** 流式阶段暂存模型推理文本；完成或中断后不写入持久化 */
+  streamingReasoning?: string;
   /** 编排器 done 事件中的 sources，用于 [n] 脚注与内链 */
   sources?: NotesAskSource[];
+  /** 联网检索 done.webSources，[w1] 脚注 */
+  webSources?: NotesAskWebSource[];
   /** 引导气泡：可点击填入下方输入框 */
   hintSuggestions?: string[];
 };
@@ -800,6 +810,10 @@ export default function NotesPage() {
   const [notesAskQuestion, setNotesAskQuestion] = useState("");
   const [notesAskMessages, setNotesAskMessages] = useState<NotesAskTurn[]>([]);
   const [notesAskBusy, setNotesAskBusy] = useState(false);
+  /** 本页有效、默认关，不跨路由持久化（离开笔记页即丢失） */
+  const [notesAskWebSearch, setNotesAskWebSearch] = useState(false);
+  const [notesAskStreamInfo, setNotesAskStreamInfo] = useState("");
+  const notesAskStreamInfoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notesAskError, setNotesAskError] = useState("");
   const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
   const notesAskTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -909,6 +923,16 @@ export default function NotesPage() {
     notesAskMessagesSnapshotRef.current = notesAskMessages;
   }, [notesAskMessages]);
 
+  useEffect(() => {
+    setNotesAskWebSearch(false);
+  }, [selectedNotebook]);
+
+  useEffect(() => {
+    return () => {
+      if (notesAskStreamInfoTimerRef.current) clearTimeout(notesAskStreamInfoTimerRef.current);
+    };
+  }, []);
+
   const notesAskDebugPack = useMemo(() => {
     const nb = selectedNotebook.trim();
     const idsStream = [...draftSelectedNoteIds];
@@ -917,7 +941,8 @@ export default function NotesPage() {
     const streamBody: Record<string, unknown> = {
       notebook: nb,
       note_ids: idsStream,
-      question: q
+      question: q,
+      enableWebSearch: notesAskWebSearch
     };
     if (owner) streamBody.sharedFromOwnerUserId = owner;
     const streamJsonOne = JSON.stringify(streamBody);
@@ -926,7 +951,7 @@ export default function NotesPage() {
       streamJsonOne,
       streamReady: Boolean(nb && idsStream.length && q)
     };
-  }, [selectedNotebook, draftSelectedNoteIds, notesAskQuestion, sharedBrowse?.ownerUserId]);
+  }, [selectedNotebook, draftSelectedNoteIds, notesAskQuestion, notesAskWebSearch, sharedBrowse?.ownerUserId]);
 
   const notesAskDebugCurls = useMemo(() => {
     if (!notesAskDebugClient || typeof window === "undefined") {
@@ -2266,6 +2291,11 @@ export default function NotesPage() {
     const userMsgId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
     setNotesAskError("");
+    if (notesAskStreamInfoTimerRef.current) {
+      clearTimeout(notesAskStreamInfoTimerRef.current);
+      notesAskStreamInfoTimerRef.current = null;
+    }
+    setNotesAskStreamInfo("");
     setNotesAskBusy(true);
     setNotesAskMessages((prev) => [
       ...prev,
@@ -2301,6 +2331,7 @@ export default function NotesPage() {
           notebook: nb,
           note_ids: draftSelectedNoteIds,
           question: q,
+          enableWebSearch: notesAskWebSearch,
           ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {})
         })
       });
@@ -2379,7 +2410,8 @@ export default function NotesPage() {
        * - 前台：短 interval + 较大字符阈值，平衡流畅度与渲染次数。
        * - 后台：timer 常被夹到 ~1s，故降低字符阈值并加长 fallback timer，仍依赖 visibility 立即 flush。
        */
-      let chunkPending = "";
+      let chunkPendingAnswer = "";
+      let chunkPendingReasoning = "";
       let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null;
       const STREAM_FLUSH_MS_VISIBLE = 32;
       const STREAM_FLUSH_CHARS_VISIBLE = 200;
@@ -2394,9 +2426,11 @@ export default function NotesPage() {
         streamTabHidden() ? STREAM_FLUSH_CHARS_HIDDEN : STREAM_FLUSH_CHARS_VISIBLE;
 
       const applyPendingChunks = () => {
-        if (!chunkPending) return;
-        const batch = chunkPending;
-        chunkPending = "";
+        const batchA = chunkPendingAnswer;
+        const batchR = chunkPendingReasoning;
+        chunkPendingAnswer = "";
+        chunkPendingReasoning = "";
+        if (!batchA && !batchR) return;
         setNotesAskMessages((prev) => {
           const next = [...prev];
           const idx = next.findIndex((m) => m.id === assistantId);
@@ -2404,7 +2438,8 @@ export default function NotesPage() {
           const cur = next[idx]!;
           next[idx] = {
             ...cur,
-            content: (cur.content || "") + batch,
+            ...(batchA ? { content: (cur.content || "") + batchA } : {}),
+            ...(batchR ? { streamingReasoning: (cur.streamingReasoning || "") + batchR } : {}),
             streaming: true
           };
           return next;
@@ -2460,9 +2495,22 @@ export default function NotesPage() {
                 });
                 continue;
               }
-              if (ev.type === "chunk") {
+              if (ev.type === "info") {
+                const msg = String((ev as { message?: string }).message ?? "").trim();
+                if (msg) {
+                  setNotesAskStreamInfo(msg);
+                  if (notesAskStreamInfoTimerRef.current) clearTimeout(notesAskStreamInfoTimerRef.current);
+                  notesAskStreamInfoTimerRef.current = setTimeout(() => {
+                    setNotesAskStreamInfo("");
+                    notesAskStreamInfoTimerRef.current = null;
+                  }, 14000);
+                }
+              } else if (ev.type === "chunk") {
                 const chunkText = String(ev.text ?? "");
                 if (!chunkText) continue;
+                const rawRole = (ev as { streamRole?: string }).streamRole;
+                const streamRole =
+                  rawRole === "reasoning" || rawRole === "answer" ? rawRole : "answer";
                 if (firstChunkAt == null) {
                   firstChunkAt = nowMs();
                   notesAskClientLog("info", "stream", "first_chunk", {
@@ -2473,8 +2521,13 @@ export default function NotesPage() {
                 }
                 chunkCount += 1;
                 chunkChars += chunkText.length;
-                chunkPending += chunkText;
-                if (chunkPending.length >= streamFlushCharThreshold()) {
+                if (streamRole === "reasoning") {
+                  chunkPendingReasoning += chunkText;
+                } else {
+                  chunkPendingAnswer += chunkText;
+                }
+                const pendingTotal = chunkPendingAnswer.length + chunkPendingReasoning.length;
+                if (pendingTotal >= streamFlushCharThreshold()) {
                   clearChunkFlushTimer();
                   applyPendingChunks();
                 } else {
@@ -2484,6 +2537,9 @@ export default function NotesPage() {
                 flushChunksNow();
                 sawDone = true;
                 const doneSources = normalizeNotesAskSources(ev.sources);
+                const doneWebSources = normalizeNotesAskWebSources(
+                  (ev as { webSources?: unknown }).webSources
+                );
                 notesAskClientLog("info", "stream", "done_event", {
                   requestId: streamRid,
                   chunkCount,
@@ -2497,7 +2553,9 @@ export default function NotesPage() {
                   next[idx] = {
                     ...next[idx]!,
                     streaming: false,
-                    ...(doneSources?.length ? { sources: doneSources } : {})
+                    streamingReasoning: undefined,
+                    ...(doneSources?.length ? { sources: doneSources } : {}),
+                    ...(doneWebSources?.length ? { webSources: doneWebSources } : {})
                   };
                   return next;
                 });
@@ -2549,6 +2607,7 @@ export default function NotesPage() {
             return {
               ...m,
               streaming: false,
+              streamingReasoning: undefined,
               // 完整说明已在上方红字区，避免气泡内再嵌一整段重复
               content: body || "（本次未生成正文，详见上方红色错误说明。）"
             };
@@ -2582,6 +2641,7 @@ export default function NotesPage() {
         next[idx] = {
           ...cur,
           streaming: false,
+          streamingReasoning: undefined,
           content: (cur.content || "").trim() || "（本次未生成正文，详见上方红色错误说明。）"
         };
         return next;
@@ -3701,11 +3761,23 @@ export default function NotesPage() {
                           >
                             {m.role === "user" ? (
                               <p className="whitespace-pre-wrap break-words">{m.content}</p>
-                            ) : m.streaming && !(m.content || "").trim() ? (
+                            ) : m.streaming &&
+                              !(m.content || "").trim() &&
+                              !(m.streamingReasoning || "").trim() ? (
                               <p className="text-muted">思考中…</p>
                             ) : (
                               <div className="min-w-0">
-                                <NotesAskAnswerDisplay text={m.content} sources={m.sources} />
+                                {m.streaming && (m.streamingReasoning || "").trim() ? (
+                                  <div className="mb-2 rounded-lg border border-line/60 bg-fill/35 px-2.5 py-2 text-muted">
+                                    <p className="mb-1 text-[11px] font-medium tracking-tight text-muted">
+                                      模型思考过程（完成后不保留）
+                                    </p>
+                                    <p className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink/75">
+                                      {m.streamingReasoning}
+                                    </p>
+                                  </div>
+                                ) : null}
+                                <NotesAskAnswerDisplay text={m.content} sources={m.sources} webSources={m.webSources} />
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
                                 (m.hintSuggestions?.length ?? 0) > 0 ? (
@@ -3833,6 +3905,14 @@ export default function NotesPage() {
                   </button>
                 </div>
                 <div className="flex min-w-0 shrink-0 flex-col gap-2">
+                  {notesAskStreamInfo ? (
+                    <p
+                      role="status"
+                      className="rounded-lg border border-amber-500/35 bg-amber-500/[0.08] px-2.5 py-1.5 text-[11px] leading-snug text-amber-950 dark:text-amber-100"
+                    >
+                      {notesAskStreamInfo}
+                    </p>
+                  ) : null}
                   <div
                     className={`flex shrink-0 items-end gap-2 rounded-2xl border border-line/90 px-3 py-2 shadow-soft ring-1 ring-line/60 ${
                       draftSelectedNoteIds.length === 0 ? "bg-fill/50" : "bg-surface"
@@ -3869,6 +3949,30 @@ export default function NotesPage() {
                   <span className="mb-1 shrink-0 rounded-full bg-fill px-2 py-0.5 text-[10px] font-medium text-muted tabular-nums">
                     {draftSelectedNoteIds.length} 条
                   </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={notesAskWebSearch}
+                    aria-label="联网搜索"
+                    title={
+                      notesAskWebSearch
+                        ? "已开启：回答可叠加互联网摘要（与资料冲突时以资料库为准）"
+                        : "关闭：仅依据已选资料；开启后可能发起联网检索"
+                    }
+                    disabled={
+                      Boolean(sharedBrowse?.access === "read_only") ||
+                      notesAskBusy ||
+                      draftSelectedNoteIds.length === 0
+                    }
+                    onClick={() => setNotesAskWebSearch((v) => !v)}
+                    className={`mb-0.5 shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                      notesAskWebSearch
+                        ? "border-brand/60 bg-brand/15 text-brand"
+                        : "border-line bg-fill/60 text-muted hover:text-ink"
+                    } disabled:cursor-not-allowed disabled:opacity-40`}
+                  >
+                    联网
+                  </button>
                   <button
                     type="button"
                     className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-soft transition-opacity disabled:opacity-40"
