@@ -1012,14 +1012,17 @@ def build_layered_notes_context(
     if retr:
         blocks.append("## 与问题相关的原文摘录（向量检索，勾选范围内）\n\n" + retr)
 
-    ctx = "\n\n---\n\n".join(blocks).strip()
-    if not ctx:
+    if not blocks:
         notes_ask_profile_emit(
             "layered_context_total_ms",
             (time.perf_counter() - _t_layer) * 1000.0,
             branch="empty_ctx",
         )
         return None, [], meta
+
+    # 与 build_layered_reference_block 一致：先固定「第 k 条 ↔ 标题 ↔ 角标 [k]」，减少模型只认检索片段频次而偏袒某一序号。
+    manifest = _layered_source_manifest_block(ordered, user_ref, project_owner_user_uuid)
+    ctx = (manifest + "\n\n---\n\n" + "\n\n---\n\n".join(blocks)).strip()
 
     notes_ask_profile_emit(
         "layered_context_total_ms",

@@ -1184,7 +1184,7 @@ export function SharePublishClient({
       {publishChromeVisible && shareJobHydrated && audioBlocked ? (
         <p className="mb-4 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-ink">
           {scriptDraft
-            ? "仅有文稿、无音频，无法在此页收听或发布。"
+            ? "纯文稿作品无播客音频：请在「预览」页查看与编辑正文；RSS 发布需有可播放成片。"
             : "暂无可播放音频，请确认任务已成功完成。"}
         </p>
       ) : null}

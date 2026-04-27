@@ -83,7 +83,11 @@ export function WorkHubOverviewPanel({
       ? formatClock(durationSecHint)
       : null;
 
-  const showChapterSection = !audioBlocked && (showManuscriptTools || (chapterOutline && chapterOutline.length > 0));
+  const scriptManuscriptPanel = scriptDraft && showManuscriptTools;
+  const podcastChapterSection =
+    !scriptDraft &&
+    !audioBlocked &&
+    (showManuscriptTools || (chapterOutline && chapterOutline.length > 0));
   const chapterSeekDisabled = !hasAudio || loadingThis;
 
   const regenProgressEl =
@@ -169,26 +173,43 @@ export function WorkHubOverviewPanel({
         </div>
       </div>
 
-      {audioBlocked ? (
+      {audioBlocked && !scriptDraft ? (
         <div className="rounded-2xl border border-warning/30 bg-warning-soft/80 px-4 py-4 text-sm text-warning-ink">
-          {scriptDraft ? (
-            <>
-              <p>仅有文稿、无音频，无法在此试听或发布 RSS。</p>
-              <p className="mt-2 text-xs text-warning-ink/90">
-                可在{" "}
-                <Link href="/notes" className="font-medium text-brand underline">
-                  笔记工作台
-                </Link>{" "}
-                继续编辑文稿。
-              </p>
-            </>
-          ) : (
-            <p>暂无可播放音频，请确认任务已成功完成。</p>
-          )}
+          <p>暂无可播放音频，请确认任务已成功完成。</p>
         </div>
       ) : null}
 
-      {showChapterSection ? (
+      {scriptManuscriptPanel ? (
+        <p className="text-xs leading-relaxed text-muted">
+          纯文稿作品无播客音频，无法试听或走 RSS 发布；可在下方阅读、编辑正文，或前往{" "}
+          <Link href="/notes" className="font-medium text-brand underline">
+            笔记工作台
+          </Link>{" "}
+          用相同素材再出稿。
+        </p>
+      ) : null}
+
+      {scriptManuscriptPanel ? (
+        <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
+          {regenProgressEl}
+          <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">文稿</h3>
+          <div className="mt-3 min-w-0">
+            <WorkHubManuscriptBar
+              jobId={jobId}
+              displayTitle={displayTitleForDownload}
+              manuscriptBody={manuscriptBody}
+              scriptResolvePending={scriptResolvePending}
+              onManuscriptSaved={onManuscriptSaved}
+              canEditScript={canEditScript}
+              regenerateVoiceSupported={false}
+              regenerateVoiceBusy={regenerateVoiceBusy}
+              onRegenerateVoice={onRegenerateVoice}
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {podcastChapterSection ? (
         <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
           {regenProgressEl}
           <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">章节</h3>
@@ -232,9 +253,9 @@ export function WorkHubOverviewPanel({
             </p>
           )}
         </section>
-      ) : (
+      ) : !scriptManuscriptPanel ? (
         regenProgressEl
-      )}
+      ) : null}
     </div>
   );
 }
