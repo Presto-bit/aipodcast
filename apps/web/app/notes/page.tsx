@@ -3131,6 +3131,38 @@ export default function NotesPage() {
     }
   }
 
+  function buildHttpDebugLog(args: {
+    startedAt: string;
+    mode: string;
+    target: string;
+    payload: string;
+    res: Response;
+    raw: string;
+    parseError?: string;
+    clientRequestId: string;
+  }): string {
+    const contentType = args.res.headers.get("content-type") || "-";
+    const contentLength = args.res.headers.get("content-length") || String((args.raw || "").length || 0);
+    const serverRequestId = args.res.headers.get("x-request-id") || "";
+    const appVersion = args.res.headers.get("x-app-version") || args.res.headers.get("x-build-sha") || "-";
+    const responseSnippet = (args.raw || "").slice(0, 1200) || "{}";
+    return [
+      `time=${args.startedAt}`,
+      `mode=${args.mode}`,
+      `target=${args.target}`,
+      `payload=${args.payload}`,
+      `status=${args.res.status}`,
+      `statusText=${args.res.statusText || "-"}`,
+      `requestId=${serverRequestId || args.clientRequestId}`,
+      `clientRequestId=${args.clientRequestId}`,
+      `contentType=${contentType}`,
+      `contentLength=${contentLength}`,
+      `appVersion=${appVersion}`,
+      `parseError=${args.parseError || "-"}`,
+      `response=${responseSnippet}`
+    ].join("\n");
+  }
+
   async function saveRenameNote(noteId?: string) {
     const targetId = String(noteId || renameNoteId || "").trim();
     if (!targetId) return;
@@ -3163,22 +3195,35 @@ export default function NotesPage() {
         body: JSON.stringify({ title: t })
       });
       const raw = await res.text();
-      const data = (JSON.parse(raw || "{}") || {}) as { success?: boolean; error?: string; detail?: unknown };
+      let parseError = "";
+      let data: { success?: boolean; error?: string; detail?: unknown } = {};
+      try {
+        data = (JSON.parse(raw || "{}") || {}) as { success?: boolean; error?: string; detail?: unknown };
+      } catch (e) {
+        parseError = String(e instanceof Error ? e.message : e);
+      }
       setRenameDebugLog(
-        [
-          `time=${startedAt}`,
-          `noteId=${targetId}`,
-          `newTitle=${t}`,
-          `status=${res.status}`,
-          `requestId=${res.headers.get("x-request-id") || clientRequestId}`,
-          `response=${(raw || "").slice(0, 600) || "{}"}`
-        ].join("\n")
+        buildHttpDebugLog({
+          startedAt,
+          mode: "rename_note",
+          target: targetId,
+          payload: JSON.stringify({ title: t }),
+          res,
+          raw,
+          parseError,
+          clientRequestId
+        })
       );
       if (!res.ok || !data.success) throw new Error(`重命名失败：${apiErrorMessage(data, "请稍后重试（可尝试缩短名称）")}`);
       setRenameNoteId(null);
       setRenameDebugLog("");
       await loadNotes();
     } catch (err) {
+      setRenameDebugLog((prev) =>
+        [prev, `exception=${String(err instanceof Error ? err.message : err)}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
+          .filter(Boolean)
+          .join("\n")
+      );
       setError(String(err instanceof Error ? err.message : err));
     } finally {
       setBusy(false);
@@ -3248,28 +3293,36 @@ export default function NotesPage() {
         body: JSON.stringify(payload)
       });
       const raw = await res.text();
+      let parseError = "";
       let data: { detail?: unknown } = {};
       try {
         data = (JSON.parse(raw || "{}") || {}) as { detail?: unknown };
-      } catch {
+      } catch (e) {
+        parseError = String(e instanceof Error ? e.message : e);
         data = {};
       }
       setShareDebugLog(
-        [
-          `time=${startedAt}`,
-          `mode=share`,
-          `notebook=${name}`,
-          `payload=${JSON.stringify(payload)}`,
-          `status=${res.status}`,
-          `requestId=${res.headers.get("x-request-id") || clientRequestId}`,
-          `response=${(raw || "").slice(0, 600) || "{}"}`
-        ].join("\n")
+        buildHttpDebugLog({
+          startedAt,
+          mode: "share",
+          target: name,
+          payload: JSON.stringify(payload),
+          res,
+          raw,
+          parseError,
+          clientRequestId
+        })
       );
       if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
       setShowShareNotebookModal(false);
     } catch (err) {
+      setShareDebugLog((prev) =>
+        [prev, `exception=${String(err instanceof Error ? err.message : err)}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
+          .filter(Boolean)
+          .join("\n")
+      );
       setShareModalError(String(err instanceof Error ? err.message : err));
     } finally {
       setShareModalBusy(false);
@@ -3300,28 +3353,36 @@ export default function NotesPage() {
         body: JSON.stringify(payload)
       });
       const raw = await res.text();
+      let parseError = "";
       let data: { detail?: unknown } = {};
       try {
         data = (JSON.parse(raw || "{}") || {}) as { detail?: unknown };
-      } catch {
+      } catch (e) {
+        parseError = String(e instanceof Error ? e.message : e);
         data = {};
       }
       setShareDebugLog(
-        [
-          `time=${startedAt}`,
-          `mode=unshare`,
-          `notebook=${name}`,
-          `payload=${JSON.stringify(payload)}`,
-          `status=${res.status}`,
-          `requestId=${res.headers.get("x-request-id") || clientRequestId}`,
-          `response=${(raw || "").slice(0, 600) || "{}"}`
-        ].join("\n")
+        buildHttpDebugLog({
+          startedAt,
+          mode: "unshare",
+          target: name,
+          payload: JSON.stringify(payload),
+          res,
+          raw,
+          parseError,
+          clientRequestId
+        })
       );
       if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
       setShowShareNotebookModal(false);
     } catch (err) {
+      setShareDebugLog((prev) =>
+        [prev, `exception=${String(err instanceof Error ? err.message : err)}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
+          .filter(Boolean)
+          .join("\n")
+      );
       setShareModalError(String(err instanceof Error ? err.message : err));
     } finally {
       setShareModalBusy(false);
