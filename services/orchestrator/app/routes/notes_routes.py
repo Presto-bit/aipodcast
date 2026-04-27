@@ -6,6 +6,7 @@ import os
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -71,7 +72,12 @@ from ..notes_ask import (
     iter_notes_answer_events,
     notes_ask_value_error_sse_event,
 )
-from ..note_rag_service import count_rag_chunks_for_notes, ensure_note_rag_schema
+from ..note_rag_service import (
+    clear_note_rag_index_error,
+    count_rag_chunks_for_notes,
+    ensure_note_rag_schema,
+    set_note_rag_index_error,
+)
 from ..schemas import (
     NoteCreateRequest,
     NoteImportUrlRequest,
@@ -129,6 +135,10 @@ def _try_enqueue_note_rag_index(note_id: str, user_ref: str | None) -> None:
         jid = create_job(pid, "note_rag_index", "ai", {"note_id": note_id}, user_ref)
         ai_queue.enqueue(run_ai_job, jid, job_timeout="15m")
     except Exception as exc:
+        try:
+            set_note_rag_index_error(note_id, f"enqueue_failed: {str(exc)[:220]}")
+        except Exception:
+            pass
         _notes_startup_logger.warning("note_rag_index enqueue failed note_id=%s: %s", note_id, exc)
 
 
@@ -233,6 +243,8 @@ def _derive_source_capabilities(
     parse_engine: str,
     rag_chunks: int,
     rag_err: str,
+    created_at: str,
+    rag_index_at: str,
 ) -> dict[str, object]:
     ct = (content_text or "").strip()
     p_st = (parse_status or "").strip().lower()
@@ -257,6 +269,22 @@ def _derive_source_capabilities(
     else:
         retrieve_state = "not_ready"
 
+    idx_timeout = False
+    if retrieve_state == "indexing":
+        t_raw = (created_at or "").strip()
+        if t_raw:
+            try:
+                ts = datetime.fromisoformat(t_raw.replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                age_sec = (datetime.now(timezone.utc) - ts).total_seconds()
+                if age_sec >= 20 * 60:
+                    idx_timeout = True
+            except Exception:
+                idx_timeout = False
+        if idx_timeout and not (rag_index_at or "").strip():
+            retrieve_state = "failed"
+
     if parse_ok and retrieve_state == "indexed":
         source_ready = True
         source_hint = "解析完成、可引用、可检索"
@@ -265,7 +293,7 @@ def _derive_source_capabilities(
         source_hint = "正文可用；索引构建中"
     else:
         source_ready = False
-        source_hint = "正文未就绪或解析失败，建议预览后重传"
+        source_hint = "索引长时间未完成，请稍后重试或重新上传来源触发重建" if idx_timeout else "正文未就绪或解析失败，建议预览后重传"
 
     return {
         "parseOk": parse_ok,
@@ -338,6 +366,78 @@ def _build_preprocess_fields(text: str) -> dict[str, object]:
         "preprocessTags": tags,
         "preprocessEntities": entities,
     }
+
+
+def _build_structured_blocks_from_text(text: str) -> list[dict[str, object]]:
+    """为纯文本来源生成结构块；有标题时保留目录层级，无标题时按段落建块。"""
+    lines = [ln.rstrip() for ln in str(text or "").split("\n")]
+    blocks: list[dict[str, object]] = []
+    para: list[str] = []
+    idx = 0
+
+    def flush_para() -> None:
+        nonlocal idx, para
+        if not para:
+            return
+        body = " ".join([x.strip() for x in para if x.strip()]).strip()
+        para = []
+        if not body:
+            return
+        idx += 1
+        blocks.append({"id": f"text-{idx}", "type": "paragraph", "text": body})
+
+    for raw in lines:
+        s = raw.strip()
+        if not s:
+            flush_para()
+            continue
+        hm = re.match(r"^(#{1,3})\s+(.+)$", s)
+        if hm:
+            flush_para()
+            idx += 1
+            blocks.append({
+                "id": f"text-{idx}",
+                "type": "heading",
+                "level": len(hm.group(1)),
+                "text": hm.group(2).strip(),
+            })
+            continue
+        if re.match(r"^(\- |\* |\d+\.\s+)", s):
+            flush_para()
+            idx += 1
+            blocks.append({"id": f"text-{idx}", "type": "list_item", "text": s})
+            continue
+        if s.startswith("|"):
+            flush_para()
+            idx += 1
+            blocks.append({"id": f"text-{idx}", "type": "table_row", "text": s})
+            continue
+        para.append(s)
+    flush_para()
+    return blocks[:800]
+
+
+def _coerce_structured_blocks(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, object]] = []
+    for item in value[:1000]:
+        if not isinstance(item, dict):
+            continue
+        txt = str(item.get("text") or "").strip()
+        typ = str(item.get("type") or "").strip() or "paragraph"
+        if not txt:
+            continue
+        row: dict[str, object] = {
+            "id": str(item.get("id") or f"blk-{len(out) + 1}"),
+            "type": typ,
+            "text": txt,
+        }
+        lv = item.get("level")
+        if isinstance(lv, int) and 1 <= lv <= 6:
+            row["level"] = lv
+        out.append(row)
+    return out
 
 
 def _estimate_word_count(text: str) -> int:
@@ -468,6 +568,7 @@ def _persist_note_upload(
     if parse_result.encoding:
         extra_meta["parseEncoding"] = str(parse_result.encoding)[:120]
     extra_meta["contentSha256"] = content_sha256
+    extra_meta["structuredBlocks"] = _build_structured_blocks_from_text(parsed)
     extra_meta.update(_build_preprocess_fields(parsed))
     try:
         row_id = create_file_note(
@@ -573,6 +674,8 @@ def list_notes_api(
             parse_engine=p_eng,
             rag_chunks=rag_chunks,
             rag_err=(str(rag_err).strip() if rag_err else ""),
+            created_at=str(r.get("created_at") or ""),
+            rag_index_at=str(r.get("note_rag_index_at") or ""),
         )
         notes.append(
             {
@@ -651,6 +754,8 @@ def list_trash_notes_api(
             parse_engine=p_eng,
             rag_chunks=rag_chunks,
             rag_err=rag_err,
+            created_at=str(r.get("created_at") or ""),
+            rag_index_at=str(r.get("note_rag_index_at") or ""),
         )
         notes.append(
             {
@@ -684,6 +789,8 @@ def create_note_api(req: NoteCreateRequest, request: Request):
         raise HTTPException(status_code=400, detail="notebook_required")
     project_id = ensure_default_project(req.project_name, created_by=user_ref)
     try:
+        extra_meta = _build_preprocess_fields(req.content)
+        extra_meta["structuredBlocks"] = _build_structured_blocks_from_text(req.content)
         note_id = create_text_note(
             project_id=project_id,
             title=req.title.strip() or "未命名笔记",
@@ -691,7 +798,7 @@ def create_note_api(req: NoteCreateRequest, request: Request):
             content=req.content,
             source_url=(req.source_url or "").strip() or None,
             user_ref=user_ref,
-            extra_metadata=_build_preprocess_fields(req.content),
+            extra_metadata=extra_meta,
         )
     except ValueError as e:
         if str(e) == "notebook_required":
@@ -933,10 +1040,15 @@ def preview_note_text_api(
         parse_engine=p_eng,
         rag_chunks=rag_n,
         rag_err=str(row.get("note_rag_index_error") or "").strip(),
+        created_at=str(row.get("created_at") or ""),
+        rag_index_at=str(row.get("note_rag_index_at") or ""),
     )
     preprocess_stage, next_action = _derive_preprocess_stage(md, cap)
     content_text = str(row.get("content_text") or "")
     word_count = _estimate_word_count(content_text)
+    structured_blocks = _coerce_structured_blocks(md.get("structuredBlocks"))
+    if not structured_blocks:
+        structured_blocks = _build_structured_blocks_from_text(content_text)
     source_type = "网页" if str(row.get("source_url") or "").strip() else (
         "文件" if str(row.get("input_type") or "") == "note_file" else "文本"
     )
@@ -969,6 +1081,7 @@ def preview_note_text_api(
         "sourceUrl": str(row.get("source_url") or md.get("sourceUrl") or ""),
         "createdAt": str(row.get("created_at") or ""),
         "wordCount": word_count,
+        "structuredBlocks": structured_blocks,
     }
 
 
@@ -1127,6 +1240,7 @@ def import_note_from_url_api(body: NoteImportUrlRequest, request: Request):
                 "sourceCanonicalUrl": canonical_url,
                 "sourceContentSha256": content_sha256,
                 "sourceVersion": new_version,
+                "structuredBlocks": _coerce_structured_blocks(fetch.get("structured_blocks")),
                 **_build_preprocess_fields(content),
             },
         )
@@ -1173,6 +1287,20 @@ def purge_note_api(note_id: str, request: Request):
     if not ok:
         raise HTTPException(status_code=404, detail="note_not_found")
     return {"success": True, "noteId": note_id}
+
+
+@router.post("/notes/{note_id}/reindex")
+def reindex_note_api(note_id: str, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    row = get_note_by_id(note_id, user_ref=user_ref)
+    if not row:
+        raise HTTPException(status_code=404, detail="note_not_found")
+    content_text = str(row.get("content_text") or "").strip()
+    if not content_text:
+        raise HTTPException(status_code=400, detail="note_content_empty")
+    clear_note_rag_index_error(note_id)
+    _try_enqueue_note_rag_index(note_id, user_ref)
+    return {"success": True, "noteId": note_id, "status": "reindex_queued"}
 
 
 @router.get("/notebooks")

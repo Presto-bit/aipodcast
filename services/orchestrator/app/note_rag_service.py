@@ -208,6 +208,24 @@ def _update_note_rag_index_error(note_id: str, error: str) -> None:
             conn.commit()
 
 
+def set_note_rag_index_error(note_id: str, error: str) -> None:
+    """对外暴露：记录索引失败原因，供入队失败等场景回写。"""
+    _update_note_rag_index_error(note_id, error)
+
+
+def clear_note_rag_index_error(note_id: str) -> None:
+    """对外暴露：清理索引错误，表示已重新进入索引流程。"""
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE inputs SET note_rag_index_error = NULL WHERE id = %s::uuid
+                """,
+                (note_id,),
+            )
+            conn.commit()
+
+
 def _clear_note_rag_meta_short_body(note_id: str) -> None:
     with get_conn() as conn:
         with get_cursor(conn) as cur:

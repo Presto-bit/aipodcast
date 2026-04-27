@@ -204,6 +204,12 @@ type PreviewResp = {
   sourceUrl?: string;
   createdAt?: string;
   wordCount?: number;
+  structuredBlocks?: Array<{
+    id?: string;
+    type?: string;
+    text?: string;
+    level?: number;
+  }>;
 };
 
 const card =
@@ -260,6 +266,23 @@ function buildNotesAskCurlCommand(url: string, jsonOneLine: string, auth: Record
   parts.push(`  -b ${shellSingleQuoteForCurl("fym_session=PASTE")} \\`);
   parts.push(`  --data-raw ${shellSingleQuoteForCurl(jsonOneLine)}`);
   return parts.join("\n");
+}
+
+function dedupeStatusLine(raw: string): string {
+  const src = String(raw || "").trim();
+  if (!src) return "";
+  const chunks = src
+    .split("·")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of chunks) {
+    if (seen.has(part)) continue;
+    seen.add(part);
+    out.push(part);
+  }
+  return out.join(" · ");
 }
 
 const NOTEBOOK_CARD_THEMES = [
@@ -731,9 +754,15 @@ export default function NotesPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewTitle, setPreviewTitle] = useState("");
   const [previewText, setPreviewText] = useState("");
+  const [previewStructuredBlocks, setPreviewStructuredBlocks] = useState<
+    Array<{ id?: string; type?: string; text?: string; level?: number }>
+  >([]);
   const [previewKw, setPreviewKw] = useState("");
   const [previewTruncated, setPreviewTruncated] = useState(false);
   const [previewStatusLine, setPreviewStatusLine] = useState("");
+  const [previewNoteId, setPreviewNoteId] = useState("");
+  const [previewCanReindex, setPreviewCanReindex] = useState(false);
+  const [previewReindexBusy, setPreviewReindexBusy] = useState(false);
   const [previewSourceType, setPreviewSourceType] = useState("");
   const [previewSourceUrl, setPreviewSourceUrl] = useState("");
   const [previewCreatedAt, setPreviewCreatedAt] = useState("");
@@ -2960,10 +2989,14 @@ export default function NotesPage() {
   async function openPreview(noteId: string, opts: { highlightText?: string } = {}) {
     setPreviewOpen(true);
     setPreviewLoading(true);
+    setPreviewNoteId(noteId);
     setPreviewTitle("");
     setPreviewText("");
+    setPreviewStructuredBlocks([]);
     setPreviewTruncated(false);
     setPreviewStatusLine("");
+    setPreviewCanReindex(false);
+    setPreviewReindexBusy(false);
     setPreviewKw("");
     setPreviewSourceType("");
     setPreviewSourceUrl("");
@@ -2989,6 +3022,7 @@ export default function NotesPage() {
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "预览失败"));
       setPreviewTitle(data.title || "");
       setPreviewText(data.text || "");
+      setPreviewStructuredBlocks(Array.isArray(data.structuredBlocks) ? data.structuredBlocks : []);
       setPreviewTruncated(!!data.truncated);
       setPreviewSourceType(String(data.sourceType || ""));
       setPreviewSourceUrl(String(data.sourceUrl || ""));
@@ -3020,7 +3054,10 @@ export default function NotesPage() {
           `向量块 ${data.ragChunkCount} 条${data.ragIndexedAt ? ` · ${data.ragIndexedAt}` : ""}`
         );
       }
-      setPreviewStatusLine(statusParts.join(" · "));
+      const retrieveFailed = String(data.retrieveState || "") === "failed";
+      const hasIndexError = String(data.ragIndexError || "").trim().length > 0;
+      setPreviewCanReindex(retrieveFailed || hasIndexError);
+      setPreviewStatusLine(dedupeStatusLine(statusParts.join(" · ")));
       const hi = String(opts.highlightText || "").trim();
       if (hi) {
         const kw = hi.slice(0, 24);
@@ -3029,8 +3066,31 @@ export default function NotesPage() {
       }
     } catch (err) {
       setPreviewText(String(err instanceof Error ? err.message : err));
+      setPreviewStructuredBlocks([]);
     } finally {
       setPreviewLoading(false);
+    }
+  }
+
+  async function reindexPreviewNote() {
+    const nid = previewNoteId.trim();
+    if (!nid || previewReindexBusy) return;
+    setPreviewReindexBusy(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/notes/${encodeURIComponent(nid)}/reindex`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: "{}"
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
+      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "重建索引失败"));
+      await openPreview(nid);
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err));
+    } finally {
+      setPreviewReindexBusy(false);
     }
   }
 
@@ -3728,9 +3788,6 @@ export default function NotesPage() {
                       <div className="flex items-start gap-2">
                         <div className="min-w-0 flex-1">
                           <div className="flex min-w-0 flex-wrap items-center gap-1">
-                            <span className="shrink-0 rounded bg-fill px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
-                              {noteExtLabel(n.ext)}
-                            </span>
                             <button
                               type="button"
                               className={`min-w-0 truncate text-left text-sm font-medium underline-offset-2 hover:underline ${
@@ -3739,7 +3796,12 @@ export default function NotesPage() {
                               onClick={() => void openPreview(n.noteId)}
                               title="查看来源内容"
                             >
-                              {n.title || n.noteId}
+                              <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                                <span className="shrink-0 rounded bg-fill px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
+                                  {noteExtLabel(n.ext)}
+                                </span>
+                                <span className="truncate">{n.title || n.noteId}</span>
+                              </span>
                             </button>
                             {n.parseState === "failed" || n.sourceReady === false ? (
                               <span
@@ -4908,6 +4970,7 @@ export default function NotesPage() {
             <NoteMarkdownPreview
               title={previewTitle || "来源内容"}
               filteredText={filteredPreview}
+              structuredBlocks={previewStructuredBlocks}
               loading={previewLoading}
               truncated={previewTruncated}
               statusLine={previewStatusLine}
@@ -4917,6 +4980,9 @@ export default function NotesPage() {
               nextAction={previewNextAction}
               wordCount={previewWordCount}
               sourceUrl={previewSourceUrl}
+              canReindex={previewCanReindex}
+              reindexBusy={previewReindexBusy}
+              onReindex={() => void reindexPreviewNote()}
               keyword={previewKw}
               onKeywordChange={setPreviewKw}
               simplified={previewSimplified}

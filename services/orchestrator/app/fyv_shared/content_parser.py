@@ -72,6 +72,45 @@ def _longest_main_like_text(soup: BeautifulSoup) -> str:
     return best
 
 
+def _extract_structured_blocks_from_html(soup: BeautifulSoup) -> list[dict[str, Any]]:
+    """从 HTML 提取轻量结构块，供预览分块渲染与目录锚点。"""
+    blocks: list[dict[str, Any]] = []
+    idx = 0
+    for el in soup.find_all(["h1", "h2", "h3", "p", "li", "table", "img"]):
+        txt = ""
+        t = el.name.lower()
+        if t == "img":
+            src = (el.get("src") or "").strip()
+            if not src:
+                continue
+            txt = f"![{(el.get('alt') or '').strip()}]({src})"
+        elif t == "table":
+            rows = []
+            for tr in el.find_all("tr"):
+                cols = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+                if cols:
+                    rows.append("| " + " | ".join(cols) + " |")
+            if not rows:
+                continue
+            if len(rows) >= 1 and not re.search(r"\|\s*-+\s*\|", rows[1] if len(rows) > 1 else ""):
+                sep = "| " + " | ".join(["---"] * max(1, rows[0].count("|") - 1)) + " |"
+                rows = [rows[0], sep, *rows[1:]]
+            txt = "\n".join(rows)
+        else:
+            txt = el.get_text(" ", strip=True)
+        txt = (txt or "").strip()
+        if not txt:
+            continue
+        idx += 1
+        block: dict[str, Any] = {"id": f"html-{idx}", "type": t, "text": txt}
+        if t in ("h1", "h2", "h3"):
+            block["level"] = int(t[1])
+        blocks.append(block)
+        if len(blocks) >= 800:
+            break
+    return blocks
+
+
 def _referer_for_url(url: str) -> str:
     try:
         p = urlparse(url)
@@ -144,6 +183,7 @@ class ContentParser:
             else:
                 content = full_text
                 logs.append("使用整页去壳文本")
+            structured_blocks = _extract_structured_blocks_from_html(soup)
 
             if not (content or "").strip():
                 hint = actionable_hint_for_failed_url(url, error_code=None, upstream_error="empty_body")
@@ -162,6 +202,7 @@ class ContentParser:
             return {
                 "success": True,
                 "content": content,
+                "structured_blocks": structured_blocks,
                 "logs": logs,
                 "source": "url",
                 "url": url,

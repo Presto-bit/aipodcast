@@ -21,6 +21,15 @@ type Props = {
   nextAction?: string;
   wordCount?: number;
   sourceUrl?: string;
+  canReindex?: boolean;
+  reindexBusy?: boolean;
+  onReindex?: () => void;
+  structuredBlocks?: Array<{
+    id?: string;
+    type?: string;
+    text?: string;
+    level?: number;
+  }>;
   keyword: string;
   onKeywordChange: (v: string) => void;
   onToggleSimplified: (enabled: boolean) => void;
@@ -28,6 +37,48 @@ type Props = {
   highlightHint?: string;
   onClose?: () => void;
 };
+
+type RenderBlock = {
+  id: string;
+  markdown: string;
+  tocText?: string;
+  tocLevel?: number;
+  synthetic?: boolean;
+};
+
+function statusPillClass(text: string): string {
+  const s = String(text || "").toLowerCase();
+  const isFail =
+    s.includes("failed") ||
+    s.includes("error") ||
+    s.includes("不可用") ||
+    s.includes("失败") ||
+    s.includes("未就绪");
+  if (isFail) {
+    return "border-danger/45 bg-danger-soft text-danger-ink";
+  }
+  const isProgress =
+    s.includes("indexing") ||
+    s.includes("处理中") ||
+    s.includes("解析中") ||
+    s.includes("索引中") ||
+    s.includes("摘要中") ||
+    s.includes("提取中");
+  if (isProgress) {
+    return "border-warning/45 bg-warning-soft text-warning-ink";
+  }
+  const isSuccess =
+    s.includes("success") ||
+    s.includes("ready") ||
+    s.includes("indexed") ||
+    s.includes("可问答") ||
+    s.includes("可引用") ||
+    s.includes("可检索");
+  if (isSuccess) {
+    return "border-success/45 bg-success-soft text-success-ink";
+  }
+  return "border-line/70 bg-surface text-ink";
+}
 
 export default function NoteMarkdownPreview({
   title,
@@ -41,6 +92,10 @@ export default function NoteMarkdownPreview({
   nextAction,
   wordCount,
   sourceUrl,
+  canReindex,
+  reindexBusy,
+  onReindex,
+  structuredBlocks,
   keyword,
   onKeywordChange,
   onToggleSimplified,
@@ -49,43 +104,195 @@ export default function NoteMarkdownPreview({
   onClose
 }: Props) {
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const [matchCount, setMatchCount] = useState(0);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
-  const [renderChars, setRenderChars] = useState(16000);
+  const [visibleBlocks, setVisibleBlocks] = useState(20);
   const headingPrefix = useId().replace(/:/g, "");
   const highlightTerm = (keyword || highlightHint || "").trim();
-  const canLoadMore = filteredText.length > renderChars;
-  const renderText = useMemo(() => filteredText.slice(0, renderChars), [filteredText, renderChars]);
-  const doc = useMemo(
-    () => <NoteMarkdownDoc filteredText={renderText} headingIdPrefix={headingPrefix} />,
-    [headingPrefix, renderText]
-  );
+  const blocks = useMemo<RenderBlock[]>(() => {
+    const normalizeFromStored = (items: NonNullable<Props["structuredBlocks"]>): RenderBlock[] => {
+      const out: RenderBlock[] = [];
+      for (const row of items) {
+        const text = String(row?.text || "").trim();
+        const typ = String(row?.type || "").trim().toLowerCase();
+        const level = Number(row?.level || 0);
+        if (!text) continue;
+        const id = String(row?.id || `sb-${out.length + 1}`);
+        if (typ === "heading" || typ === "h1" || typ === "h2" || typ === "h3") {
+          const lv = level >= 1 && level <= 3 ? level : 2;
+          out.push({ id, markdown: `${"#".repeat(lv)} ${text}`, tocText: text, tocLevel: lv });
+        } else if (typ === "table" || typ === "table_row") {
+          out.push({ id, markdown: text });
+        } else if (typ === "image" || typ === "img") {
+          out.push({ id, markdown: text.startsWith("![") ? text : `![image](${text})` });
+        } else if (typ === "list_item" || typ === "li") {
+          out.push({ id, markdown: text.startsWith("- ") ? text : `- ${text}` });
+        } else {
+          out.push({ id, markdown: text });
+        }
+      }
+      return out;
+    };
+    if (Array.isArray(structuredBlocks) && structuredBlocks.length > 0) {
+      const stored = normalizeFromStored(structuredBlocks);
+      if (stored.length > 0) return stored;
+    }
+    const normalizeStickyLines = (raw: string): string => {
+      const lines = raw.split("\n");
+      const out: string[] = [];
+      const endPunct = /[。！？.!?;；:：]$/;
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) {
+          out.push("");
+          continue;
+        }
+        const prev = out.length ? out[out.length - 1] : "";
+        const shouldJoin =
+          !!prev &&
+          prev.trim().length < 90 &&
+          line.length < 120 &&
+          !endPunct.test(prev.trim()) &&
+          !/^([#>\-|*]|\d+\.)/.test(line);
+        if (shouldJoin) out[out.length - 1] = `${prev.trim()} ${line}`;
+        else out.push(line);
+      }
+      return out.join("\n");
+    };
+    const pushParagraph = (target: RenderBlock[], txt: string) => {
+      const t = txt.trim();
+      if (!t) return;
+      target.push({ id: `b-${target.length + 1}`, markdown: t });
+    };
+    const normalized = normalizeStickyLines(filteredText || "");
+    const lines = normalized.split("\n");
+    const out: RenderBlock[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      const trimmed = (lines[i] || "").trim();
+      if (!trimmed) {
+        i += 1;
+        continue;
+      }
+      const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+      if (heading) {
+        out.push({
+          id: `b-${out.length + 1}`,
+          markdown: trimmed,
+          tocText: heading[2].trim(),
+          tocLevel: heading[1].length
+        });
+        i += 1;
+        continue;
+      }
+      if (trimmed.startsWith("|")) {
+        const table: string[] = [trimmed];
+        i += 1;
+        while (i < lines.length && (lines[i] || "").trim().startsWith("|")) {
+          table.push((lines[i] || "").trim());
+          i += 1;
+        }
+        out.push({ id: `b-${out.length + 1}`, markdown: table.join("\n") });
+        continue;
+      }
+      if (/^(\- |\* |\d+\.\s+)/.test(trimmed)) {
+        const list: string[] = [trimmed];
+        i += 1;
+        while (i < lines.length && /^(\- |\* |\d+\.\s+)/.test((lines[i] || "").trim())) {
+          list.push((lines[i] || "").trim());
+          i += 1;
+        }
+        out.push({ id: `b-${out.length + 1}`, markdown: list.join("\n") });
+        continue;
+      }
+      const paraLines: string[] = [trimmed];
+      i += 1;
+      while (i < lines.length) {
+        const cur = (lines[i] || "").trim();
+        if (!cur) break;
+        if (/^(#{1,3})\s+/.test(cur) || cur.startsWith("|") || /^(\- |\* |\d+\.\s+)/.test(cur)) break;
+        paraLines.push(cur);
+        i += 1;
+      }
+      const paragraph = paraLines.join(" ");
+      if (paragraph.length > 420 && !/[。！？.!?]/.test(paragraph.slice(0, 220))) {
+        const chunks = paragraph.split(/(?<=[。！？.!?；;])\s*/).filter(Boolean);
+        if (chunks.length > 1) {
+          chunks.forEach((c) => pushParagraph(out, c));
+          continue;
+        }
+      }
+      pushParagraph(out, paragraph);
+    }
+    if (out.some((b) => b.tocText)) return out;
+    const withSynthetic: RenderBlock[] = [];
+    let syntheticIndex = 0;
+    let charAcc = 0;
+    let sectionHint = "";
+    for (const b of out) {
+      const md = b.markdown.trim();
+      if (!md) continue;
+      charAcc += md.length;
+      sectionHint += `${sectionHint ? " " : ""}${md.slice(0, 40)}`;
+      if (charAcc >= 1200) {
+        syntheticIndex += 1;
+        const title = `章节 ${syntheticIndex} · ${(sectionHint || "内容").slice(0, 18)}`;
+        withSynthetic.push({
+          id: `s-${syntheticIndex}`,
+          markdown: `## ${title}`,
+          tocText: title,
+          tocLevel: 2,
+          synthetic: true
+        });
+        charAcc = 0;
+        sectionHint = "";
+      }
+      withSynthetic.push(b);
+    }
+    return withSynthetic;
+  }, [filteredText, structuredBlocks]);
+  const canLoadMore = blocks.length > visibleBlocks;
+  const renderBlocks = useMemo(() => blocks.slice(0, visibleBlocks), [blocks, visibleBlocks]);
+  const statusPills = useMemo(() => {
+    const raw = String(statusLine || "").trim();
+    if (!raw) return [] as string[];
+    return raw
+      .split("·")
+      .flatMap((chunk) => chunk.split("|"))
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [statusLine]);
   const tocItems = useMemo(() => {
-    const lines = renderText.split("\n");
-    const slugs: Record<string, number> = {};
     const out: Array<{ id: string; text: string; level: number }> = [];
-    for (const line of lines) {
-      const m = /^(#{1,3})\s+(.+)$/.exec(line.trim());
-      if (!m) continue;
-      const level = m[1].length;
-      const text = m[2].trim();
-      const slugBase = text
-        .toLowerCase()
-        .replace(/[^\u4e00-\u9fffa-z0-9\s-]/g, "")
-        .replace(/\s+/g, "-")
-        .replace(/-+/g, "-") || "section";
-      const n = (slugs[slugBase] || 0) + 1;
-      slugs[slugBase] = n;
-      const id = `${headingPrefix}-${slugBase}${n > 1 ? `-${n}` : ""}`;
-      out.push({ id, text, level });
-      if (out.length >= 20) break;
+    for (const b of blocks) {
+      if (!b.tocText || !b.tocLevel) continue;
+      out.push({ id: `${headingPrefix}-${b.id}`, text: b.tocText, level: b.tocLevel });
+      if (out.length >= 36) break;
     }
     return out;
-  }, [headingPrefix, renderText]);
+  }, [blocks, headingPrefix]);
 
   useEffect(() => {
-    setRenderChars(16000);
-  }, [filteredText]);
+    setVisibleBlocks(20);
+  }, [filteredText, simplified]);
+
+  useEffect(() => {
+    if (!canLoadMore) return;
+    const sentinel = loadMoreRef.current;
+    const root = contentRef.current;
+    if (!sentinel || !root) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleBlocks((n) => Math.min(n + 12, blocks.length));
+        }
+      },
+      { root, rootMargin: "300px 0px 300px 0px" }
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [blocks.length, canLoadMore, renderBlocks.length]);
 
   useEffect(() => {
     const root = contentRef.current;
@@ -158,7 +365,7 @@ export default function NoteMarkdownPreview({
     return () => {
       unwrap();
     };
-  }, [renderText, highlightTerm]);
+  }, [renderBlocks, highlightTerm]);
 
   function jumpToMatch(offset: number) {
     const root = contentRef.current;
@@ -184,6 +391,20 @@ export default function NoteMarkdownPreview({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+        {statusPills.length > 0 ? (
+          <div className="mb-3 rounded-lg border border-line/70 bg-fill/35 px-3 py-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {statusPills.map((pill, idx) => (
+                <span
+                  key={`${pill}-${idx}`}
+                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${statusPillClass(pill)}`}
+                >
+                  {pill}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-line/70 bg-fill/30 p-3 text-xs text-muted sm:grid-cols-2 lg:grid-cols-3">
           <p>来源标题：<span className="text-ink">{title || "未命名来源"}</span></p>
           <p>类型：<span className="text-ink">{sourceType || "未知"}</span></p>
@@ -210,6 +431,18 @@ export default function NoteMarkdownPreview({
               下一步：<span className="text-ink">{nextAction}</span>
             </p>
           ) : null}
+          {canReindex ? (
+            <p className="sm:col-span-2 lg:col-span-3">
+              <button
+                type="button"
+                className="rounded border border-line bg-surface px-2 py-1 text-[11px] text-ink hover:bg-fill disabled:opacity-50"
+                disabled={!!reindexBusy}
+                onClick={onReindex}
+              >
+                {reindexBusy ? "重建中…" : "手动重建索引"}
+              </button>
+            </p>
+          ) : null}
         </div>
         <input
           className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
@@ -220,7 +453,7 @@ export default function NoteMarkdownPreview({
         />
         {tocItems.length > 0 ? (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded border border-line/70 bg-fill/20 p-2">
-            <span className="text-[11px] font-medium text-muted">目录</span>
+            <span className="text-[11px] font-medium text-muted">目录（h1~h3/智能章节）</span>
             {tocItems.map((t) => (
               <button
                 key={t.id}
@@ -263,7 +496,6 @@ export default function NoteMarkdownPreview({
           </div>
         ) : null}
         {truncated ? <p className="mt-2 text-xs text-warning-ink">内容已截断展示</p> : null}
-        {statusLine ? <p className="mt-2 text-xs text-muted">{statusLine}</p> : null}
         {highlightHint ? (
           <p className="mt-2 rounded border border-brand/30 bg-brand/10 px-2 py-1 text-xs text-brand">
             已定位引用片段：{highlightHint}
@@ -275,16 +507,26 @@ export default function NoteMarkdownPreview({
           ref={contentRef}
           className="markdown-body mt-3 max-h-[min(65vh,28rem)] min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-surface p-3"
         >
-          {doc}
+          {renderBlocks.map((b) => (
+            <section key={b.id} className={b.synthetic ? "opacity-90" : ""}>
+              {b.tocText ? (
+                <h4 id={`${headingPrefix}-${b.id}`} className="mb-1 mt-2 text-xs font-semibold text-muted">
+                  {b.tocText}
+                </h4>
+              ) : null}
+              <NoteMarkdownDoc filteredText={b.markdown} headingIdPrefix={`${headingPrefix}-${b.id}`} />
+            </section>
+          ))}
+          <div ref={loadMoreRef} className="h-2 w-full" />
         </div>
         {canLoadMore ? (
           <div className="mt-2 flex justify-center">
             <button
               type="button"
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink hover:bg-fill"
-              onClick={() => setRenderChars((n) => n + 16000)}
+              onClick={() => setVisibleBlocks((n) => Math.min(n + 12, blocks.length))}
             >
-              加载更多（剩余约 {(filteredText.length - renderChars).toLocaleString()} 字符）
+              加载更多（剩余约 {(blocks.length - visibleBlocks).toLocaleString()} 块）
             </button>
           </div>
         ) : null}
