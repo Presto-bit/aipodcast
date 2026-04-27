@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 const NoteMarkdownDoc = dynamic(() => import("./NoteMarkdownDoc"), {
   ssr: false,
@@ -49,8 +49,43 @@ export default function NoteMarkdownPreview({
   onClose
 }: Props) {
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const doc = useMemo(() => <NoteMarkdownDoc filteredText={filteredText} />, [filteredText]);
+  const [matchCount, setMatchCount] = useState(0);
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const [renderChars, setRenderChars] = useState(16000);
+  const headingPrefix = useId().replace(/:/g, "");
   const highlightTerm = (keyword || highlightHint || "").trim();
+  const canLoadMore = filteredText.length > renderChars;
+  const renderText = useMemo(() => filteredText.slice(0, renderChars), [filteredText, renderChars]);
+  const doc = useMemo(
+    () => <NoteMarkdownDoc filteredText={renderText} headingIdPrefix={headingPrefix} />,
+    [headingPrefix, renderText]
+  );
+  const tocItems = useMemo(() => {
+    const lines = renderText.split("\n");
+    const slugs: Record<string, number> = {};
+    const out: Array<{ id: string; text: string; level: number }> = [];
+    for (const line of lines) {
+      const m = /^(#{1,3})\s+(.+)$/.exec(line.trim());
+      if (!m) continue;
+      const level = m[1].length;
+      const text = m[2].trim();
+      const slugBase = text
+        .toLowerCase()
+        .replace(/[^\u4e00-\u9fffa-z0-9\s-]/g, "")
+        .replace(/\s+/g, "-")
+        .replace(/-+/g, "-") || "section";
+      const n = (slugs[slugBase] || 0) + 1;
+      slugs[slugBase] = n;
+      const id = `${headingPrefix}-${slugBase}${n > 1 ? `-${n}` : ""}`;
+      out.push({ id, text, level });
+      if (out.length >= 20) break;
+    }
+    return out;
+  }, [headingPrefix, renderText]);
+
+  useEffect(() => {
+    setRenderChars(16000);
+  }, [filteredText]);
 
   useEffect(() => {
     const root = contentRef.current;
@@ -67,7 +102,11 @@ export default function NoteMarkdownPreview({
     };
 
     unwrap();
-    if (!highlightTerm) return;
+    if (!highlightTerm) {
+      setMatchCount(0);
+      setActiveMatchIndex(0);
+      return;
+    }
 
     const escaped = highlightTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (!escaped) return;
@@ -107,12 +146,29 @@ export default function NoteMarkdownPreview({
       node.parentNode?.replaceChild(frag, node);
     });
 
-    firstMark?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const marks = Array.from(root.querySelectorAll<HTMLElement>("mark[data-note-highlight='1']"));
+    setMatchCount(marks.length);
+    if (marks.length > 0) {
+      setActiveMatchIndex(0);
+      marks[0]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else {
+      setActiveMatchIndex(0);
+    }
 
     return () => {
       unwrap();
     };
-  }, [filteredText, highlightTerm]);
+  }, [renderText, highlightTerm]);
+
+  function jumpToMatch(offset: number) {
+    const root = contentRef.current;
+    if (!root || matchCount <= 0) return;
+    const marks = Array.from(root.querySelectorAll<HTMLElement>("mark[data-note-highlight='1']"));
+    if (!marks.length) return;
+    const next = (activeMatchIndex + offset + marks.length) % marks.length;
+    setActiveMatchIndex(next);
+    marks[next]?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
 
   return (
     <div className="flex max-h-[min(92vh,800px)] w-full max-w-5xl flex-col rounded-2xl border border-line bg-surface shadow-modal">
@@ -162,6 +218,50 @@ export default function NoteMarkdownPreview({
           onChange={(e) => onKeywordChange(e.target.value)}
           aria-label="关键字过滤"
         />
+        {tocItems.length > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded border border-line/70 bg-fill/20 p-2">
+            <span className="text-[11px] font-medium text-muted">目录</span>
+            {tocItems.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`rounded border border-line/60 bg-surface px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill ${
+                  t.level >= 3 ? "ml-1" : ""
+                }`}
+                onClick={() => {
+                  const root = contentRef.current;
+                  if (!root) return;
+                  const el = root.querySelector<HTMLElement>(`#${CSS.escape(t.id)}`);
+                  el?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                title={t.text}
+              >
+                {t.text}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {matchCount > 0 ? (
+          <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+            <span>
+              命中 {activeMatchIndex + 1}/{matchCount}
+            </span>
+            <button
+              type="button"
+              className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill"
+              onClick={() => jumpToMatch(-1)}
+            >
+              上一个
+            </button>
+            <button
+              type="button"
+              className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill"
+              onClick={() => jumpToMatch(1)}
+            >
+              下一个
+            </button>
+          </div>
+        ) : null}
         {truncated ? <p className="mt-2 text-xs text-warning-ink">内容已截断展示</p> : null}
         {statusLine ? <p className="mt-2 text-xs text-muted">{statusLine}</p> : null}
         {highlightHint ? (
@@ -177,6 +277,17 @@ export default function NoteMarkdownPreview({
         >
           {doc}
         </div>
+        {canLoadMore ? (
+          <div className="mt-2 flex justify-center">
+            <button
+              type="button"
+              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink hover:bg-fill"
+              onClick={() => setRenderChars((n) => n + 16000)}
+            >
+              加载更多（剩余约 {(filteredText.length - renderChars).toLocaleString()} 字符）
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
