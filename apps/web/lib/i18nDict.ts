@@ -451,7 +451,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "create.card.notes.desc": "建笔记本、上传资料，再变长文或可听播客",
     "footer.tag1": "Presto · 灵感不设限，创作即刻起",
     "footer.pageBrandLine": "Presto · 灵感不设限，创作即刻起",
-    "footer.tag2": "语音与播客生产工作台",
+    "footer.tag2": "基于知识库的创作平台",
     "footer.loggedInAs": "已登录",
     "footer.logout": "退出登录",
     "footer.localMode": "当前为本地体验，无需登录",
