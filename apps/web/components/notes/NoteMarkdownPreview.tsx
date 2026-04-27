@@ -264,6 +264,11 @@ export default function NoteMarkdownPreview({
   }, [filteredText, structuredBlocks]);
   const canLoadMore = blocks.length > visibleBlocks;
   const renderBlocks = useMemo(() => blocks.slice(0, visibleBlocks), [blocks, visibleBlocks]);
+  const remainingChars = useMemo(() => {
+    const total = blocks.reduce((n, b) => n + (b.markdown || "").length, 0);
+    const shown = renderBlocks.reduce((n, b) => n + (b.markdown || "").length, 0);
+    return Math.max(0, total - shown);
+  }, [blocks, renderBlocks]);
   const statusPills = useMemo(() => {
     const raw = String(statusLine || "").trim();
     if (!raw) return [] as string[];
@@ -534,7 +539,7 @@ export default function NoteMarkdownPreview({
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink hover:bg-fill"
               onClick={() => setVisibleBlocks((n) => Math.min(n + 12, blocks.length))}
             >
-              加载更多（剩余约 {(blocks.length - visibleBlocks).toLocaleString()} 块）
+              加载更多（剩余约 {remainingChars.toLocaleString()} 字）
             </button>
           </div>
         ) : null}

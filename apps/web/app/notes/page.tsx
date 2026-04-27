@@ -3102,6 +3102,10 @@ export default function NotesPage() {
       setError("名称不能为空");
       return;
     }
+    if (t.length > 300) {
+      setError("重命名失败：名称最长 300 个字符");
+      return;
+    }
     const current = notesById.get(targetId);
     if (current && (current.title || "").trim() === t) {
       setRenameNoteId(null);
@@ -3116,7 +3120,7 @@ export default function NotesPage() {
         body: JSON.stringify({ title: t })
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
-      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "重命名失败"));
+      if (!res.ok || !data.success) throw new Error(`重命名失败：${apiErrorMessage(data, "请稍后重试（可尝试缩短名称）")}`);
       setRenameNoteId(null);
       await loadNotes();
     } catch (err) {

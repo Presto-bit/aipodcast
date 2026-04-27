@@ -1796,10 +1796,10 @@ def update_note_title(note_id: str, new_title: str, user_ref: str | None = None)
             cur.execute(
                 """
                 UPDATE inputs i
-                SET metadata = jsonb_set(i.metadata, '{title}', to_jsonb(%s::text), true)
+                SET metadata = jsonb_set(COALESCE(i.metadata, '{}'::jsonb), '{title}', to_jsonb(%s::text), true)
                 FROM projects p
                 WHERE i.project_id = p.id
-                  AND i.id = %s
+                  AND i.id = %s::uuid
                   AND i.input_type IN ('note_text', 'note_file')
                   AND i.deleted_at IS NULL
                   AND (%s::uuid IS NULL OR p.user_id = %s::uuid)
