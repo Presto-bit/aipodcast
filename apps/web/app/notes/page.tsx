@@ -393,6 +393,7 @@ type SharedBrowseContext = {
 };
 
 const NOTEBOOK_VISUAL_STORAGE_KEY = "notes:notebook-visuals:v1";
+const NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY = "notes:share-last-error:v1";
 const POPULAR_PAGE_SIZE = 18;
 const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
 /** 历史「导读」助手气泡 id 前缀；加载会话时剔除，避免旧数据占位 */
@@ -846,6 +847,27 @@ export default function NotesPage() {
   const [shareCopyHint, setShareCopyHint] = useState("");
   const shareViewedKeyRef = useRef("");
   const shareLinkHydratedRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      const raw = readLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as {
+        debugLog?: unknown;
+        error?: unknown;
+        notebook?: unknown;
+        at?: unknown;
+      };
+      const debugLog = typeof saved.debugLog === "string" ? saved.debugLog : "";
+      if (!debugLog.trim()) return;
+      setShareLastDebugLog(debugLog);
+      setShareLastError(typeof saved.error === "string" ? saved.error : "");
+      setShareLastNotebook(typeof saved.notebook === "string" ? saved.notebook : "");
+      setShareLastAt(typeof saved.at === "string" ? saved.at : "");
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const buildNotebookShareUrl = useCallback((notebookName: string, ownerUserId: string, access: "read_only" | "edit") => {
     if (typeof window === "undefined") return "";
@@ -3301,7 +3323,7 @@ export default function NotesPage() {
       });
       const raw = await res.text();
       let parseError = "";
-      let data: { detail?: unknown } = {};
+      let data: { success?: boolean; detail?: unknown } = {};
       try {
         data = (JSON.parse(raw || "{}") || {}) as { detail?: unknown };
       } catch (e) {
@@ -3319,7 +3341,7 @@ export default function NotesPage() {
         clientRequestId
       });
       setShareDebugLog(currentDebugLog);
-      if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
+      if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
       setShowShareNotebookModal(false);
@@ -3333,7 +3355,16 @@ export default function NotesPage() {
       setShareLastDebugLog(currentDebugLog);
       setShareLastError(msg);
       setShareLastNotebook(name);
-      setShareLastAt(new Date().toISOString());
+      const nowIso = new Date().toISOString();
+      setShareLastAt(nowIso);
+      try {
+        writeLocalStorageScoped(
+          NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY,
+          JSON.stringify({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso })
+        );
+      } catch {
+        // ignore
+      }
     } finally {
       setShareModalBusy(false);
     }
@@ -3365,7 +3396,7 @@ export default function NotesPage() {
       });
       const raw = await res.text();
       let parseError = "";
-      let data: { detail?: unknown } = {};
+      let data: { success?: boolean; detail?: unknown } = {};
       try {
         data = (JSON.parse(raw || "{}") || {}) as { detail?: unknown };
       } catch (e) {
@@ -3383,7 +3414,7 @@ export default function NotesPage() {
         clientRequestId
       });
       setShareDebugLog(currentDebugLog);
-      if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
+      if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
       setShowShareNotebookModal(false);
@@ -3397,7 +3428,16 @@ export default function NotesPage() {
       setShareLastDebugLog(currentDebugLog);
       setShareLastError(msg);
       setShareLastNotebook(name);
-      setShareLastAt(new Date().toISOString());
+      const nowIso = new Date().toISOString();
+      setShareLastAt(nowIso);
+      try {
+        writeLocalStorageScoped(
+          NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY,
+          JSON.stringify({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso })
+        );
+      } catch {
+        // ignore
+      }
     } finally {
       setShareModalBusy(false);
     }
@@ -3493,6 +3533,11 @@ export default function NotesPage() {
                 setShareLastError("");
                 setShareLastNotebook("");
                 setShareLastAt("");
+                try {
+                  writeLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY, "");
+                } catch {
+                  // ignore
+                }
               }}
             >
               清除
