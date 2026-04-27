@@ -3803,15 +3803,14 @@ export default function NotesPage() {
                           <div
                             className={
                               m.role === "user"
-                                ? "max-w-[min(92%,24rem)] rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm"
+                                ? "group/user-msg max-w-[min(92%,24rem)] rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm"
                                 : "w-full min-w-0 max-w-full px-0 py-1 text-sm leading-relaxed text-ink"
                             }
                           >
                             {m.role === "user" ? (
                               <div className="flex items-start gap-1.5">
-                                <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{m.content}</p>
                                 {notesAskLastUserMessageId === m.id ? (
-                                  <div className="flex shrink-0 flex-col gap-0.5 self-start pt-0.5">
+                                  <div className="pointer-events-none flex shrink-0 flex-col gap-0.5 self-start pt-0.5 opacity-0 transition-opacity duration-150 group-hover/user-msg:pointer-events-auto group-hover/user-msg:opacity-100 group-focus-within/user-msg:pointer-events-auto group-focus-within/user-msg:opacity-100">
                                     <button
                                       type="button"
                                       className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted transition hover:bg-brand/10 hover:text-ink"
@@ -3853,6 +3852,7 @@ export default function NotesPage() {
                                     </button>
                                   </div>
                                 ) : null}
+                                <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{m.content}</p>
                               </div>
                             ) : m.streaming &&
                               !(m.content || "").trim() &&
@@ -3991,7 +3991,7 @@ export default function NotesPage() {
                     >
                       📝
                     </span>
-                    <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">生成长文</span>
+                    <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">生成文章</span>
                   </button>
                 </div>
                 <div className="flex min-w-0 shrink-0 flex-col gap-2">

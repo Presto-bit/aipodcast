@@ -34,6 +34,9 @@ export default function NotesAskAnswerMarkdownBody({
 }: NotesAskAnswerMarkdownBodyProps) {
   const normalized = normalizeNotesAskAnswerForDisplay(text);
   const md = linkifyWebCitationMarkers(linkifyCitationMarkers(normalized, sources), webSources);
+  if (!md.trim()) {
+    return null;
+  }
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -105,7 +108,7 @@ export default function NotesAskAnswerMarkdownBody({
           )
       }}
     >
-      {md || "（无内容）"}
+      {md}
     </ReactMarkdown>
   );
 }
