@@ -127,41 +127,6 @@ function noteExtLabel(ext: string | undefined): string {
   return e;
 }
 
-function deriveSourcePreprocessStage(note: {
-  parseState?: string;
-  parseErrorCode?: string;
-  preprocessSummary?: string;
-  preprocessEntities?: string[];
-  preprocessTags?: string[];
-  retrieveState?: string;
-}): { stage: "解析中" | "摘要中" | "实体提取中" | "索引中" | "可问答"; nextAction: string } {
-  if (note.parseState === "failed" || note.parseState === "partial") {
-    return {
-      stage: "解析中",
-      nextAction: note.parseErrorCode
-        ? `解析未成功（${note.parseErrorCode}），建议重传 txt/md/html 或检查原文件质量。`
-        : "解析处理中，请稍后刷新。"
-    };
-  }
-  if (!String(note.preprocessSummary || "").trim()) {
-    return { stage: "摘要中", nextAction: "等待摘要生成完成后即可进入下一阶段。" };
-  }
-  if (!((note.preprocessEntities || []).length > 0)) {
-    return { stage: "实体提取中", nextAction: "等待关键实体抽取完成。" };
-  }
-  if ((note.retrieveState || "") !== "indexed") {
-    return {
-      stage: "索引中",
-      nextAction:
-        note.retrieveState === "failed" ? "索引失败，建议稍后重试或重新上传来源。" : "正在构建检索索引。"
-    };
-  }
-  if (!((note.preprocessTags || []).length > 0)) {
-    return { stage: "索引中", nextAction: "标签补全中，索引已可用。" };
-  }
-  return { stage: "可问答", nextAction: "来源已就绪，可直接提问。" };
-}
-
 function isSourceUsable(note: {
   parseState?: string;
   sourceReady?: boolean;
@@ -1730,7 +1695,13 @@ export default function NotesPage() {
         detail?: string;
       };
       if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-      setPodcastWorks(Array.isArray(data.ai) ? data.ai : []);
+      const allWorks = Array.isArray(data.ai) ? data.ai : [];
+      const notesOnlyWorks = allWorks.filter((w) => {
+        const project = String(w.projectName || "").trim();
+        const notesNotebook = String(w.notesSourceNotebook || "").trim();
+        return project === NOTES_PODCAST_PROJECT_NAME || !!notesNotebook;
+      });
+      setPodcastWorks(notesOnlyWorks);
     } catch (e) {
       setPodcastWorksError(String(e instanceof Error ? e.message : e));
       setPodcastWorks([]);
@@ -3743,7 +3714,6 @@ export default function NotesPage() {
                 <div className="mt-2 space-y-1.5">
                   {notesSorted.map((n) => (
                     (() => {
-                      const stageInfo = deriveSourcePreprocessStage(n);
                       const preReady = isSourceUsable(n);
                       return (
                     <div
@@ -3806,47 +3776,7 @@ export default function NotesPage() {
                               </span>
                             ) : null}
                           </div>
-                          {stageInfo.stage !== "摘要中" ? (
-                            <div
-                              className={`mt-1.5 rounded-lg border px-2 py-1.5 ${
-                                preReady ? "border-line/60 bg-fill/30" : "border-line/45 bg-surface/45"
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 text-[10px]">
-                                <span className="font-medium text-muted">预处理</span>
-                                <span
-                                  className={`rounded px-1 py-0 text-[9px] font-medium ${
-                                    stageInfo.stage === "可问答"
-                                      ? "bg-success-soft text-success-ink"
-                                      : "bg-warning-soft text-warning-ink"
-                                  }`}
-                                >
-                                  {stageInfo.stage}
-                                </span>
-                              </div>
-                              <p className="mt-1 text-[11px] text-muted">{stageInfo.nextAction}</p>
-                              {(n.preprocessTags?.length || n.preprocessEntities?.length) ? (
-                                <div className="mt-1 flex flex-wrap items-center gap-1">
-                                  {(n.preprocessTags || []).slice(0, 6).map((t) => (
-                                    <span
-                                      key={`tag-${n.noteId}-${t}`}
-                                      className="rounded bg-brand/10 px-1 py-0 text-[10px] font-medium text-brand"
-                                    >
-                                      #{t}
-                                    </span>
-                                  ))}
-                                  {(n.preprocessEntities || []).slice(0, 4).map((e) => (
-                                    <span
-                                      key={`ent-${n.noteId}-${e}`}
-                                      className="rounded bg-fill px-1 py-0 text-[10px] text-muted"
-                                    >
-                                      {e}
-                                    </span>
-                                  ))}
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : null}
+                          
                         </div>
                         <div className="flex shrink-0 items-start gap-0.5">
                           <div className="relative" data-note-overflow-menu>
