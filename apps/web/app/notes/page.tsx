@@ -162,6 +162,17 @@ function deriveSourcePreprocessStage(note: {
   return { stage: "可问答", nextAction: "来源已就绪，可直接提问。" };
 }
 
+function isSourceUsable(note: {
+  parseState?: string;
+  sourceReady?: boolean;
+  citeState?: string;
+}): boolean {
+  if ((note.parseState || "") === "failed") return false;
+  if (note.sourceReady === false) return false;
+  if ((note.citeState || "") === "unavailable") return false;
+  return true;
+}
+
 type NoteItem = {
   noteId: string;
   title?: string;
@@ -766,6 +777,7 @@ export default function NotesPage() {
   const [previewNextAction, setPreviewNextAction] = useState("");
   const [previewSimplified, setPreviewSimplified] = useState(false);
   const [previewHighlightHint, setPreviewHighlightHint] = useState("");
+  const [worksPanelExpanded, setWorksPanelExpanded] = useState(false);
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
   const [renameNoteTitle, setRenameNoteTitle] = useState("");
   const [importUrl, setImportUrl] = useState("");
@@ -1202,7 +1214,7 @@ export default function NotesPage() {
   const selectableNoteIdsOnPage = useMemo(
     () =>
       notesSorted
-        .filter((n) => deriveSourcePreprocessStage(n).stage === "可问答")
+        .filter((n) => isSourceUsable(n))
         .map((n) => n.noteId),
     [notesSorted]
   );
@@ -2342,8 +2354,8 @@ export default function NotesPage() {
 
   function toggleDraftNote(noteId: string) {
     const hit = notesById.get(noteId);
-    if (!hit || deriveSourcePreprocessStage(hit).stage !== "可问答") {
-      setError("该来源尚未达到“可问答”状态，暂不可勾选。");
+    if (!hit || !isSourceUsable(hit)) {
+      setError("该来源当前不可用，暂不可勾选。");
       return;
     }
     setDraftSelectedNoteIds((prev) => {
@@ -3590,12 +3602,12 @@ export default function NotesPage() {
             )}
           </div>
 
-          <div className="flex min-h-0 flex-col gap-3 lg:h-[min(100dvh-5.5rem,900px)] lg:max-h-[min(100dvh-5.5rem,900px)] lg:flex-row lg:items-stretch lg:gap-3 lg:overflow-hidden">
+          <div className="flex min-h-0 flex-col gap-3 lg:h-[min(100dvh-5.5rem,900px)] lg:max-h-[min(100dvh-5.5rem,900px)] lg:flex-row lg:items-stretch lg:gap-4 lg:overflow-hidden">
             <section
               className={`flex shrink-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 shadow-soft lg:min-h-0 lg:h-full ${
                 sourcesPanelCollapsed
                   ? "w-full max-lg:min-h-0 lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
-                  : "w-full p-4 lg:w-64 lg:min-w-[15rem] lg:max-w-[17rem] xl:w-72 xl:max-w-[18rem]"
+                  : "w-full p-4 lg:w-[22.5rem] lg:min-w-[22.5rem] lg:max-w-[25.5rem] xl:w-[27rem] xl:max-w-[27rem]"
               }`}
               aria-label="来源"
             >
@@ -3724,7 +3736,7 @@ export default function NotesPage() {
                   {notesSorted.map((n) => (
                     (() => {
                       const stageInfo = deriveSourcePreprocessStage(n);
-                      const preReady = stageInfo.stage === "可问答";
+                      const preReady = isSourceUsable(n);
                       return (
                     <div
                       key={n.noteId}
@@ -3786,9 +3798,6 @@ export default function NotesPage() {
                               </span>
                             ) : null}
                           </div>
-                          <p className="mt-0.5 text-[10px] text-muted">
-                            {noteExtLabel(n.ext) + " · " + (n.createdAt || "-")}
-                          </p>
                           <div
                             className={`mt-1.5 rounded-lg border px-2 py-1.5 ${
                               preReady ? "border-line/60 bg-fill/30" : "border-line/45 bg-surface/45"
@@ -3806,11 +3815,7 @@ export default function NotesPage() {
                                 {stageInfo.stage}
                               </span>
                             </div>
-                            {n.preprocessSummary ? (
-                              <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-ink">{n.preprocessSummary}</p>
-                            ) : (
-                              <p className="mt-1 text-[11px] text-muted">{stageInfo.nextAction}</p>
-                            )}
+                            <p className="mt-1 text-[11px] text-muted">{stageInfo.nextAction}</p>
                             {(n.preprocessTags?.length || n.preprocessEntities?.length) ? (
                               <div className="mt-1 flex flex-wrap items-center gap-1">
                                 {(n.preprocessTags || []).slice(0, 6).map((t) => (
@@ -4316,17 +4321,30 @@ export default function NotesPage() {
             </div>
 
           </div>
-          <section className="rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft">
+          <section className="mt-6 rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft lg:mt-8">
             <div className="flex items-center justify-between gap-2 border-b border-line/50 pb-3">
               <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
-              <a
-                href="/works"
-                className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-brand hover:bg-fill"
-              >
-                查看全部
-              </a>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-ink hover:bg-fill"
+                  onClick={() => setWorksPanelExpanded((v) => !v)}
+                >
+                  {worksPanelExpanded ? "收起" : "展开"}
+                </button>
+                <a
+                  href="/works"
+                  className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-brand hover:bg-fill"
+                >
+                  查看全部
+                </a>
+              </div>
             </div>
-            <div className="mt-3 max-h-[min(46vh,520px)] overflow-y-auto overflow-x-hidden">
+            <div
+              className={`mt-4 overflow-y-auto overflow-x-hidden transition-[max-height] duration-200 ${
+                worksPanelExpanded ? "max-h-[min(92vh,1040px)]" : "max-h-[min(46vh,520px)]"
+              }`}
+            >
               <PodcastWorksGallery
                 works={podcastWorks}
                 loading={podcastWorksLoading}

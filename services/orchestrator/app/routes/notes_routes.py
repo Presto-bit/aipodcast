@@ -340,6 +340,20 @@ def _build_preprocess_fields(text: str) -> dict[str, object]:
     }
 
 
+def _estimate_word_count(text: str) -> int:
+    """
+    统一字数口径：
+    - 中文按单字计数
+    - 英文/数字按词计数
+    """
+    body = (text or "").strip()
+    if not body:
+        return 0
+    cjk_n = len(re.findall(r"[\u4e00-\u9fff]", body))
+    latin_token_n = len(re.findall(r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*", body))
+    return cjk_n + latin_token_n
+
+
 def _persist_note_upload(
     user_ref: str | None,
     data: bytes,
@@ -922,7 +936,7 @@ def preview_note_text_api(
     )
     preprocess_stage, next_action = _derive_preprocess_stage(md, cap)
     content_text = str(row.get("content_text") or "")
-    word_count = len([x for x in re.split(r"\s+", content_text.strip()) if x]) if content_text.strip() else 0
+    word_count = _estimate_word_count(content_text)
     source_type = "网页" if str(row.get("source_url") or "").strip() else (
         "文件" if str(row.get("input_type") or "") == "note_file" else "文本"
     )
