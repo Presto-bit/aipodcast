@@ -392,9 +392,19 @@ type SharedBrowseContext = {
   access: "read_only" | "edit";
 };
 
+type ShareFailureEntry = {
+  id: string;
+  mode: "share" | "unshare";
+  notebook: string;
+  error: string;
+  at: string;
+  debugLog: string;
+};
+
 const NOTEBOOK_VISUAL_STORAGE_KEY = "notes:notebook-visuals:v1";
 const NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY = "notes:share-last-error:v1";
 const NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK = "notes:share-last-error:fallback:v1";
+const NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY = "notes:share-failure-history:v1";
 const POPULAR_PAGE_SIZE = 18;
 const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
 /** 历史「导读」助手气泡 id 前缀；加载会话时剔除，避免旧数据占位 */
@@ -816,6 +826,7 @@ export default function NotesPage() {
   const [shareLastError, setShareLastError] = useState("");
   const [shareLastNotebook, setShareLastNotebook] = useState("");
   const [shareLastAt, setShareLastAt] = useState("");
+  const [shareFailureHistory, setShareFailureHistory] = useState<ShareFailureEntry[]>([]);
   const [renameDebugLog, setRenameDebugLog] = useState("");
   const addNoteFileRef = useRef<HTMLInputElement | null>(null);
   const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false);
@@ -913,6 +924,27 @@ export default function NotesPage() {
     }
   }, []);
 
+  const persistShareFailureHistory = useCallback((items: ShareFailureEntry[]) => {
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY, JSON.stringify(items));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const appendShareFailureHistory = useCallback(
+    (entry: ShareFailureEntry) => {
+      setShareFailureHistory((prev) => {
+        const next = [entry, ...prev].slice(0, 20);
+        persistShareFailureHistory(next);
+        return next;
+      });
+    },
+    [persistShareFailureHistory]
+  );
+
   useEffect(() => {
     const saved = readShareLastErrorPayload();
     if (!saved) return;
@@ -921,6 +953,34 @@ export default function NotesPage() {
     setShareLastNotebook(saved.notebook);
     setShareLastAt(saved.at);
   }, [readShareLastErrorPayload]);
+
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      const raw = window.localStorage.getItem(NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return;
+      const normalized: ShareFailureEntry[] = parsed
+        .map((x) => {
+          if (!x || typeof x !== "object") return null;
+          const r = x as Record<string, unknown>;
+          const id = typeof r.id === "string" ? r.id : "";
+          const mode = r.mode === "unshare" ? "unshare" : "share";
+          const notebook = typeof r.notebook === "string" ? r.notebook : "";
+          const error = typeof r.error === "string" ? r.error : "";
+          const at = typeof r.at === "string" ? r.at : "";
+          const debugLog = typeof r.debugLog === "string" ? r.debugLog : "";
+          if (!id || !debugLog) return null;
+          return { id, mode, notebook, error, at, debugLog };
+        })
+        .filter((x): x is ShareFailureEntry => Boolean(x))
+        .slice(0, 20);
+      if (normalized.length > 0) setShareFailureHistory(normalized);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const buildNotebookShareUrl = useCallback((notebookName: string, ownerUserId: string, access: "read_only" | "edit") => {
     if (typeof window === "undefined") return "";
@@ -3411,6 +3471,14 @@ export default function NotesPage() {
       const nowIso = new Date().toISOString();
       setShareLastAt(nowIso);
       persistShareLastErrorPayload({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso });
+      appendShareFailureHistory({
+        id: `${nowIso}-share-${name}`,
+        mode: "share",
+        notebook: name,
+        error: msg,
+        at: nowIso,
+        debugLog: currentDebugLog
+      });
     } finally {
       setShareModalBusy(false);
     }
@@ -3477,6 +3545,14 @@ export default function NotesPage() {
       const nowIso = new Date().toISOString();
       setShareLastAt(nowIso);
       persistShareLastErrorPayload({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso });
+      appendShareFailureHistory({
+        id: `${nowIso}-unshare-${name}`,
+        mode: "unshare",
+        notebook: name,
+        error: msg,
+        at: nowIso,
+        debugLog: currentDebugLog
+      });
     } finally {
       setShareModalBusy(false);
     }
@@ -3583,6 +3659,45 @@ export default function NotesPage() {
             {shareLastDebugLog}
           </pre>
         </div>
+      ) : null}
+      {shareFailureHistory.length > 0 ? (
+        <details className="mb-4 rounded-xl border border-line/80 bg-surface p-3">
+          <summary className="cursor-pointer text-xs font-medium text-ink">
+            分享失败历史（最近 {shareFailureHistory.length} 条，不自动清空）
+          </summary>
+          <div className="mt-3 space-y-2">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
+                onClick={() => {
+                  setShareFailureHistory([]);
+                  try {
+                    if (typeof window !== "undefined") {
+                      window.localStorage.removeItem(NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY);
+                    }
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                清空历史
+              </button>
+            </div>
+            {shareFailureHistory.map((item) => (
+              <div key={item.id} className="rounded-lg border border-line/70 bg-fill/20 p-2">
+                <p className="text-[11px] text-ink">
+                  [{item.mode === "share" ? "分享" : "取消分享"}] {item.notebook || "未知笔记本"} ·{" "}
+                  {item.at ? item.at.replace("T", " ").slice(0, 19) : "-"}
+                </p>
+                {item.error ? <p className="mt-1 text-[11px] text-danger-ink">{item.error}</p> : null}
+                <pre className="mt-1 max-h-40 overflow-auto rounded border border-line/70 bg-surface p-2 text-[10px] leading-relaxed text-muted">
+                  {item.debugLog}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </details>
       ) : null}
 
       {/* 在笔记本列表页无法看到右侧「我的作品」时，仍显示文章/底稿/播客生成日志（如页面恢复未完成 job） */}
