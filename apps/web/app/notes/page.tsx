@@ -120,6 +120,13 @@ function isNotesAskAbortError(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { name?: string }).name === "AbortError";
 }
 
+function noteExtLabel(ext: string | undefined): string {
+  const e = String(ext || "").trim().toLowerCase();
+  if (!e) return "txt";
+  if (e === "url" || e === "web") return "网页";
+  return e;
+}
+
 type NoteItem = {
   noteId: string;
   title?: string;
@@ -3663,7 +3670,7 @@ export default function NotesPage() {
                         <div className="min-w-0 flex-1">
                           <div className="flex min-w-0 flex-wrap items-center gap-1">
                             <span className="shrink-0 rounded bg-fill px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
-                              {n.ext || "txt"}
+                              {noteExtLabel(n.ext)}
                             </span>
                             <p className="min-w-0 truncate text-sm font-medium text-ink">{n.title || n.noteId}</p>
                             <span
@@ -3746,7 +3753,7 @@ export default function NotesPage() {
                               </span>
                             ) : null}
                           </div>
-                          <p className="mt-0.5 text-[10px] text-muted">{(n.ext || "-") + " · " + (n.createdAt || "-")}</p>
+                          <p className="mt-0.5 text-[10px] text-muted">{noteExtLabel(n.ext) + " · " + (n.createdAt || "-")}</p>
                           <div className="mt-1.5 rounded-lg border border-line/60 bg-fill/30 px-2 py-1.5">
                             <div className="flex items-center gap-2 text-[10px]">
                               <span className="font-medium text-muted">预处理</span>
