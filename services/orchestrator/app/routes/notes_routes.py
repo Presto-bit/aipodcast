@@ -169,6 +169,12 @@ def _mime_for_note_ext(ext: str) -> str:
         "html": "text/html; charset=utf-8",
         "htm": "text/html; charset=utf-8",
         "xhtml": "application/xhtml+xml; charset=utf-8",
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp",
+        "gif": "image/gif",
+        "avif": "image/avif",
     }.get(e, "application/octet-stream")
 
 

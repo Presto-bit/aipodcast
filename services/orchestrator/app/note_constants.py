@@ -1,5 +1,22 @@
 NOTE_PREVIEW_TEXT_MAX = 400_000
-ALLOWED_NOTE_EXT = {"txt", "md", "markdown", "pdf", "doc", "docx", "epub", "html", "htm", "xhtml"}
+ALLOWED_NOTE_EXT = {
+    "txt",
+    "md",
+    "markdown",
+    "pdf",
+    "doc",
+    "docx",
+    "epub",
+    "html",
+    "htm",
+    "xhtml",
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "gif",
+    "avif",
+}
 MAX_NOTE_UPLOAD_BYTES = 15 * 1024 * 1024
 # 视频容器：正文无法可靠抽取，上传前即拒绝（与「除视频外可识别」一致）
 VIDEO_NOTE_EXT = frozenset(

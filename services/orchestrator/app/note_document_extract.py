@@ -7,9 +7,11 @@
 - HTML/HTM/XHTML：BeautifulSoup 去脚本样式与嵌入媒体后抽取可见文本。
 - EPUB：临时文件 + content_parser.parse_epub（避免重复实现 spine 逻辑）。
 - DOC：临时文件 + antiword / catdoc / soffice（与旧逻辑一致）。
+- 图片（png/jpg/jpeg/webp/gif/avif）：优先走可配置的视觉模型 OCR（Qwen VL）；未配置时仅存档。
 """
 from __future__ import annotations
 
+import base64
 import io
 import logging
 import os
@@ -19,6 +21,8 @@ import tempfile
 import zipfile
 from dataclasses import dataclass
 from typing import Any
+
+from .providers.openai_compat_text import chat_completion_openai_compatible
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +214,76 @@ def _extract_html_from_bytes(data: bytes) -> NoteParseResult:
     )
 
 
+def _ocr_image_via_openai_compat(data: bytes, ext: str) -> NoteParseResult:
+    """
+    图片 OCR（可选能力）：
+    - 需配置 QWEN_API_KEY + QWEN_BASE_URL
+    - 模型默认 QWEN_VL_MODEL=qwen-vl-plus（可覆写）
+    """
+    key = str(os.getenv("QWEN_API_KEY") or "").strip()
+    base = str(os.getenv("QWEN_BASE_URL") or "").strip()
+    model = str(os.getenv("QWEN_VL_MODEL") or "qwen-vl-plus").strip()
+    if not key or not base:
+        return NoteParseResult(
+            text="",
+            status="empty",
+            engine="image-ocr-disabled",
+            detail="图片已上传；未配置 OCR（需 QWEN_API_KEY / QWEN_BASE_URL）",
+        )
+
+    mime_map = {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp",
+        "gif": "image/gif",
+        "avif": "image/avif",
+    }
+    mime = mime_map.get((ext or "").lower(), "image/png")
+    b64 = base64.b64encode(data).decode("ascii")
+    image_data_url = f"data:{mime};base64,{b64}"
+    prompt = (
+        "请对这张图片做 OCR，只输出可读正文，不要解释。"
+        "要求：保留段落与换行；忽略装饰元素；若无可读正文返回空字符串。"
+    )
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "你是 OCR 助手，只返回识别后的正文。"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ],
+        },
+    ]
+    try:
+        txt = chat_completion_openai_compatible(
+            messages=messages,  # type: ignore[arg-type]
+            api_base=base,
+            api_key=key,
+            model=model,
+            temperature=0.0,
+            timeout_sec=120,
+        )
+    except Exception as exc:
+        logger.warning("image ocr failed model=%s: %s", model, exc)
+        return NoteParseResult(
+            text="",
+            status="empty",
+            engine="image-ocr-error",
+            detail=f"OCR 失败：{exc}",
+        )
+    text = str(txt or "").strip()
+    if text:
+        return NoteParseResult(text=text, status="ok", engine=f"qwen-vl:{model}", detail=None)
+    return NoteParseResult(
+        text="",
+        status="empty",
+        engine=f"qwen-vl:{model}",
+        detail="OCR 未识别到可用正文",
+    )
+
+
 def extract_pdf_from_bytes(data: bytes) -> NoteParseResult:
     text, ok = _pdf_pymupdf(data)
     engine = "pymupdf"
@@ -307,6 +381,9 @@ def extract_text_from_bytes(data: bytes, ext: str) -> NoteParseResult:
 
     if e in ("html", "htm", "xhtml"):
         return _extract_html_from_bytes(data)
+
+    if e in ("png", "jpg", "jpeg", "webp", "gif", "avif"):
+        return _ocr_image_via_openai_compat(data, e)
 
     # 未知扩展名：按纯文本尝试
     text, enc = _decode_plain_bytes(data)

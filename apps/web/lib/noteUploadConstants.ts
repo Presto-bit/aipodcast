@@ -11,7 +11,13 @@ export const ALLOWED_NOTE_EXT = new Set([
   "epub",
   "html",
   "htm",
-  "xhtml"
+  "xhtml",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "avif"
 ]);
 
 /** 视频类：与编排器 VIDEO_NOTE_EXT 一致，前端提前拦截 */
@@ -60,7 +66,7 @@ export function validateNoteFileMeta(file: File): { ok: true } | { ok: false; er
     };
   }
   if (!ALLOWED_NOTE_EXT.has(ext)) {
-    return { ok: false, error: "不支持的文件格式（支持 txt、md、pdf、doc、docx、epub、html）" };
+    return { ok: false, error: "不支持的文件格式（支持 txt、md、pdf、doc、docx、epub、html、图片）" };
   }
   return { ok: true };
 }

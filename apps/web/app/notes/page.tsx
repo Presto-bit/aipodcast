@@ -668,13 +668,8 @@ export default function NotesPage() {
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
   const [renameNoteTitle, setRenameNoteTitle] = useState("");
   const [importUrl, setImportUrl] = useState("");
-  const [importTitle, setImportTitle] = useState("");
   const [importUrlError, setImportUrlError] = useState("");
   const [importBusy, setImportBusy] = useState(false);
-  const [pasteNoteTitle, setPasteNoteTitle] = useState("");
-  const [pasteNoteBody, setPasteNoteBody] = useState("");
-  const [pasteNoteBusy, setPasteNoteBusy] = useState(false);
-  const [pasteNoteErr, setPasteNoteErr] = useState("");
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
   const addNoteFileRef = useRef<HTMLInputElement | null>(null);
   const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false);
@@ -2118,8 +2113,7 @@ export default function NotesPage() {
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           url: u,
-          notebook: nb,
-          title: importTitle.trim()
+          notebook: nb
         })
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -2131,7 +2125,6 @@ export default function NotesPage() {
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "导入失败"));
       if (data.noteId) markNoteAsFresh(data.noteId);
       setImportUrl("");
-      setImportTitle("");
       setImportUrlError("");
       setShowAddNoteModal(false);
       await loadNotebooks();
@@ -2141,54 +2134,6 @@ export default function NotesPage() {
       setImportUrlError(String(err instanceof Error ? err.message : err));
     } finally {
       setImportBusy(false);
-    }
-  }
-
-  async function submitPasteNote() {
-    const nb = selectedNotebook.trim();
-    const body = pasteNoteBody.trim();
-    setPasteNoteErr("");
-    if (!nb) {
-      setPasteNoteErr("请先选择或新建笔记本");
-      return;
-    }
-    if (!body) {
-      setPasteNoteErr("请先粘贴或输入正文");
-      return;
-    }
-    setPasteNoteBusy(true);
-    setError("");
-    try {
-      const res = await fetch("/api/notes", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          notebook: nb,
-          title: pasteNoteTitle.trim() || "粘贴摘录",
-          content: body,
-          project_name: NOTES_PODCAST_PROJECT_NAME
-        })
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        noteId?: string;
-        error?: string;
-        detail?: unknown;
-      };
-      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "保存失败"));
-      if (data.noteId) markNoteAsFresh(data.noteId);
-      setPasteNoteTitle("");
-      setPasteNoteBody("");
-      setPasteNoteErr("");
-      setShowAddNoteModal(false);
-      await loadNotebooks();
-      await loadNotebookMeta();
-      await loadNotes();
-    } catch (err) {
-      setPasteNoteErr(String(err instanceof Error ? err.message : err));
-    } finally {
-      setPasteNoteBusy(false);
     }
   }
 
@@ -4229,15 +4174,6 @@ export default function NotesPage() {
                   </p>
                 ) : null}
               </label>
-              <label className="block text-xs text-ink">
-                标题（可选）
-                <input
-                  className={`mt-1 block w-full ${inputCls}`}
-                  placeholder="留空则使用页面标题"
-                  value={importTitle}
-                  onChange={(e) => setImportTitle(e.target.value)}
-                />
-              </label>
               <button
                 type="button"
                 className="w-full rounded-lg bg-mint px-3 py-2 text-sm text-mint-foreground shadow-soft hover:bg-mint/90 disabled:opacity-50"
@@ -4249,49 +4185,11 @@ export default function NotesPage() {
             </div>
             <div className="my-4 border-t border-line" />
             <div className="space-y-2">
-              <p className="text-xs font-medium text-ink">粘贴为笔记</p>
-              <p className="text-[11px] leading-snug text-muted">
-                链接导入失败时，可在浏览器中复制正文，粘贴到下方保存为文本笔记（与播客工作室「粘贴参考」一致思路）。
-              </p>
-              <input
-                className={`mt-1 block w-full ${inputCls}`}
-                placeholder="标题（可选）"
-                value={pasteNoteTitle}
-                onChange={(e) => {
-                  setPasteNoteTitle(e.target.value);
-                  if (pasteNoteErr) setPasteNoteErr("");
-                }}
-              />
-              <textarea
-                className={`mt-1 block min-h-[6rem] w-full resize-y ${inputCls}`}
-                placeholder="在此粘贴正文…"
-                value={pasteNoteBody}
-                onChange={(e) => {
-                  setPasteNoteBody(e.target.value);
-                  if (pasteNoteErr) setPasteNoteErr("");
-                }}
-                rows={4}
-              />
-              {pasteNoteErr ? (
-                <p className="whitespace-pre-wrap text-xs font-medium text-danger" role="alert">
-                  {pasteNoteErr}
-                </p>
-              ) : null}
-              <button
-                type="button"
-                className="w-full rounded-lg border border-brand/40 bg-fill px-3 py-2 text-sm font-medium text-ink hover:bg-fill disabled:opacity-50"
-                disabled={pasteNoteBusy}
-                onClick={() => void submitPasteNote()}
-              >
-                {pasteNoteBusy ? "保存中…" : "保存粘贴内容"}
-              </button>
-            </div>
-            <div className="my-4 border-t border-line" />
-            <div className="space-y-2">
-              <p className="text-xs text-muted">上传本地文件（含 .html 网页导出；视频类不支持）</p>
+              <p className="text-xs text-muted">上传本地文件（支持 txt/md/pdf/doc/docx/epub/html 与图片；图片会尝试 OCR 抽正文）</p>
               <input
                 ref={addNoteFileRef}
                 type="file"
+                accept=".txt,.md,.markdown,.pdf,.doc,.docx,.epub,.html,.htm,.xhtml,.png,.jpg,.jpeg,.webp,.gif,.avif,image/png,image/jpeg,image/webp,image/gif,image/avif"
                 className="hidden"
                 onChange={(e) => {
                   void uploadFile(e.target.files?.[0] || null);
