@@ -812,7 +812,20 @@ def set_notebook_sharing(
             )
             prev = cur.fetchone()
             if not prev:
-                return False, "笔记本不存在"
+                # 兼容历史数据：部分老账号只在 notes 元数据里有 notebook，未写入 user_notebooks。
+                register_notebook_name_for_user(nb, user_ref)
+                cur.execute(
+                    """
+                    SELECT is_public, COALESCE(listed_in_discover, FALSE) AS listed_in_discover
+                    FROM user_notebooks
+                    WHERE user_id = %s::uuid AND name = %s
+                    LIMIT 1
+                    """,
+                    (user_uuid, nb),
+                )
+                prev = cur.fetchone()
+                if not prev:
+                    return False, "笔记本不存在"
             was_public = bool(prev.get("is_public"))
             prev_listed = bool(prev.get("listed_in_discover"))
             if not is_public:

@@ -234,6 +234,36 @@ const NOTES_ART_TARGET_CHARS_MIN = 200;
 const NOTES_ART_TARGET_CHARS_MAX = 50_000;
 const NOTES_ART_TARGET_CHARS_DEFAULT = 200;
 const NOTES_ART_TARGET_CHARS_SLIDER_STEP = 100;
+const SUPPORTED_NOTE_FILE_EXTS = [
+  "txt",
+  "md",
+  "markdown",
+  "pdf",
+  "doc",
+  "docx",
+  "epub",
+  "html",
+  "htm",
+  "xhtml",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "avif",
+] as const;
+const SUPPORTED_NOTE_FILE_ACCEPT = [
+  ".txt,.md,.markdown,.pdf,.doc,.docx,.epub,.html,.htm,.xhtml,.png,.jpg,.jpeg,.webp,.gif,.avif",
+  "image/png,image/jpeg,image/webp,image/gif,image/avif",
+].join(",");
+
+function isSupportedNoteFile(file: File): boolean {
+  const name = (file.name || "").toLowerCase();
+  const ext = name.includes(".") ? name.split(".").pop() || "" : "";
+  if (SUPPORTED_NOTE_FILE_EXTS.includes(ext as (typeof SUPPORTED_NOTE_FILE_EXTS)[number])) return true;
+  const mt = (file.type || "").toLowerCase();
+  return mt.startsWith("image/");
+}
 
 function simplifySourceText(text: string): string {
   const lines = String(text || "").split("\n");
@@ -778,6 +808,7 @@ export default function NotesPage() {
   const [importUrlError, setImportUrlError] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
+  const [showSupportedFormatsModal, setShowSupportedFormatsModal] = useState(false);
   const addNoteFileRef = useRef<HTMLInputElement | null>(null);
   const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false);
   const [deleteNotebookTarget, setDeleteNotebookTarget] = useState<string | null>(null);
@@ -2322,6 +2353,10 @@ export default function NotesPage() {
 
   async function uploadFile(file: File | null) {
     if (!file) return;
+    if (!isSupportedNoteFile(file)) {
+      setError("文件格式暂不支持。请点击“更多”查看完整支持格式。");
+      return;
+    }
     const nb = selectedNotebook.trim();
     if (!nb) {
       setError(`${NOTES_NEED_NOTEBOOK}后再上传`);
@@ -4425,11 +4460,20 @@ export default function NotesPage() {
             </div>
             <div className="my-4 border-t border-line" />
             <div className="space-y-2">
-              <p className="text-xs text-muted">上传本地文件（支持 txt/md/pdf/doc/docx/epub/html 与图片；图片会尝试 OCR 抽正文）</p>
+              <div className="flex items-center gap-2 text-xs text-muted">
+                <p>上传本地文件（支持常规文件格式 + 更多）</p>
+                <button
+                  type="button"
+                  className="rounded border border-line bg-fill/40 px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill"
+                  onClick={() => setShowSupportedFormatsModal(true)}
+                >
+                  更多
+                </button>
+              </div>
               <input
                 ref={addNoteFileRef}
                 type="file"
-                accept=".txt,.md,.markdown,.pdf,.doc,.docx,.epub,.html,.htm,.xhtml,.png,.jpg,.jpeg,.webp,.gif,.avif,image/png,image/jpeg,image/webp,image/gif,image/avif"
+                accept={SUPPORTED_NOTE_FILE_ACCEPT}
                 className="hidden"
                 onChange={(e) => {
                   void uploadFile(e.target.files?.[0] || null);
@@ -4454,6 +4498,30 @@ export default function NotesPage() {
                 </div>
               ) : null}
             </div>
+          </div>
+        </div>
+      ) : null}
+      {showSupportedFormatsModal ? (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 p-4"
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) setShowSupportedFormatsModal(false);
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-base font-semibold text-ink">支持的常规文件格式</h3>
+              <button
+                type="button"
+                className="text-sm text-muted hover:text-ink"
+                onClick={() => setShowSupportedFormatsModal(false)}
+              >
+                关闭
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-muted">文档：txt / md / markdown / pdf / doc / docx / epub / html / htm / xhtml</p>
+            <p className="mt-1 text-xs text-muted">图片：png / jpg / jpeg / webp / gif / avif（会尝试 OCR 抽正文）</p>
+            <p className="mt-2 text-xs text-muted">不支持的格式在上传时会自动拦截，不会进入导入流程。</p>
           </div>
         </div>
       ) : null}
