@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .subscription_manifest import BILLING_MAX_NOTE_REFS, WALLET_TOPUP_MAX_CENTS, WALLET_TOPUP_MIN_CENTS
 
@@ -131,16 +131,14 @@ class NotesAskHintsRequest(BaseModel):
 class NotesAskRequest(BaseModel):
     """对当前笔记本内已选笔记做轻量问答（基于正文摘录）。"""
 
+    model_config = ConfigDict(extra="ignore")
+
     notebook: str = Field(min_length=1, max_length=120)
     note_ids: list[str] = Field(min_length=1, max_length=BILLING_MAX_NOTE_REFS)
     question: str = Field(min_length=1, max_length=800)
     shared_from_owner_user_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("shared_from_owner_user_id", "sharedFromOwnerUserId"),
-    )
-    enable_web_search: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("enable_web_search", "enableWebSearch"),
     )
 
     @field_validator("note_ids")

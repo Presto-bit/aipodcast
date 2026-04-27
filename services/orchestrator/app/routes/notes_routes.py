@@ -65,7 +65,6 @@ from ..note_document_extract import NoteParseResult, extract_text_from_bytes
 from ..object_store import delete_object_key, get_object_bytes, upload_bytes
 from ..notes_ask import (
     _prepare_notes_ask_messages,
-    augment_prepared_messages_with_internet,
     answer_notes_question,
     generate_notes_ask_hints,
     iter_notes_answer_events,
@@ -556,7 +555,6 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
             question=body.question.strip(),
             user_ref=user_ref,
             project_owner_user_uuid=project_owner,
-            enable_web_search=bool(body.enable_web_search),
         )
     except ValueError as e:
         msg = str(e)
@@ -594,12 +592,11 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
     rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
     req_t0 = time.perf_counter()
     _notes_startup_logger.info(
-        "notes_ask_stage stage=request_received request_id=%s notebook=%s note_count=%s question_len=%s enable_web_search=%s",
+        "notes_ask_stage stage=request_received request_id=%s notebook=%s note_count=%s question_len=%s",
         rid,
         body.notebook.strip(),
         len(body.note_ids or []),
         len((body.question or "").strip()),
-        bool(body.enable_web_search),
     )
 
     def gen():
@@ -619,46 +616,6 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 user_ref=user_ref,
                 project_owner_user_uuid=project_owner,
             )
-            msgs, srcs = prepared
-            web_sources_out: list[dict[str, Any]] = []
-            if body.enable_web_search:
-                from ..notes_ask_web import (
-                    fetch_web_supplement,
-                    skip_web_search_reason,
-                    user_visible_message_for_failure,
-                    user_visible_message_for_skip,
-                )
-
-                qstrip = body.question.strip()
-                skip = skip_web_search_reason(qstrip)
-                if skip:
-                    ev_info = {
-                        "type": "info",
-                        "message": user_visible_message_for_skip(skip),
-                        "code": skip,
-                    }
-                    if rid:
-                        ev_info["requestId"] = rid
-                    yield f"data: {json.dumps(ev_info, ensure_ascii=False)}\n\n"
-                else:
-                    block, ws_list, err = fetch_web_supplement(qstrip, request_id=rid)
-                    if err:
-                        ev_info = {
-                            "type": "info",
-                            "message": (
-                                user_visible_message_for_skip(err)
-                                if err in ("web_search_unconfigured", "question_too_short")
-                                else user_visible_message_for_failure(err)
-                            ),
-                            "code": err,
-                        }
-                        if rid:
-                            ev_info["requestId"] = rid
-                        yield f"data: {json.dumps(ev_info, ensure_ascii=False)}\n\n"
-                    if block:
-                        msgs = augment_prepared_messages_with_internet(msgs, block)
-                        web_sources_out = ws_list
-                prepared = (msgs, srcs)
             _notes_startup_logger.info(
                 "notes_ask_stage stage=context_ready request_id=%s elapsed_ms=%.1f context_ms=%.1f",
                 rid,
@@ -687,7 +644,6 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             prepared_messages_sources=prepared,
             project_owner_user_uuid=project_owner,
             request_id=rid,
-            web_sources=(web_sources_out if (body.enable_web_search and web_sources_out) else None),
         ):
             ev_type = str(ev.get("type") or "").strip()
             if ev_type == "chunk" and not saw_first_chunk:

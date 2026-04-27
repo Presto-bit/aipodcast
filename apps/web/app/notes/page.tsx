@@ -65,7 +65,6 @@ import { BillingShortfallLinks } from "../../components/subscription/BillingShor
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import {
   normalizeNotesAskSources,
-  normalizeNotesAskWebSources,
   type NotesAskSource,
   type NotesAskWebSource
 } from "../../lib/notesAskCitation";
@@ -812,7 +811,6 @@ export default function NotesPage() {
   const [notesAskMessages, setNotesAskMessages] = useState<NotesAskTurn[]>([]);
   const [notesAskBusy, setNotesAskBusy] = useState(false);
   /** 本页有效、默认关，不跨路由持久化（离开笔记页即丢失） */
-  const [notesAskWebSearch, setNotesAskWebSearch] = useState(false);
   const [notesAskStreamInfo, setNotesAskStreamInfo] = useState("");
   const notesAskStreamInfoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notesAskError, setNotesAskError] = useState("");
@@ -948,10 +946,6 @@ export default function NotesPage() {
   }, [notesAskMessages]);
 
   useEffect(() => {
-    setNotesAskWebSearch(false);
-  }, [selectedNotebook]);
-
-  useEffect(() => {
     return () => {
       if (notesAskStreamInfoTimerRef.current) clearTimeout(notesAskStreamInfoTimerRef.current);
     };
@@ -965,8 +959,7 @@ export default function NotesPage() {
     const streamBody: Record<string, unknown> = {
       notebook: nb,
       note_ids: idsStream,
-      question: q,
-      enableWebSearch: notesAskWebSearch
+      question: q
     };
     if (owner) streamBody.sharedFromOwnerUserId = owner;
     const streamJsonOne = JSON.stringify(streamBody);
@@ -975,7 +968,7 @@ export default function NotesPage() {
       streamJsonOne,
       streamReady: Boolean(nb && idsStream.length && q)
     };
-  }, [selectedNotebook, draftSelectedNoteIds, notesAskQuestion, notesAskWebSearch, sharedBrowse?.ownerUserId]);
+  }, [selectedNotebook, draftSelectedNoteIds, notesAskQuestion, sharedBrowse?.ownerUserId]);
 
   const notesAskDebugCurls = useMemo(() => {
     if (!notesAskDebugClient || typeof window === "undefined") {
@@ -2358,7 +2351,6 @@ export default function NotesPage() {
           notebook: nb,
           note_ids: draftSelectedNoteIds,
           question: q,
-          enableWebSearch: notesAskWebSearch,
           ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {})
         })
       });
@@ -2564,9 +2556,6 @@ export default function NotesPage() {
                 flushChunksNow();
                 sawDone = true;
                 const doneSources = normalizeNotesAskSources(ev.sources);
-                const doneWebSources = normalizeNotesAskWebSources(
-                  (ev as { webSources?: unknown }).webSources
-                );
                 notesAskClientLog("info", "stream", "done_event", {
                   requestId: streamRid,
                   chunkCount,
@@ -2581,8 +2570,7 @@ export default function NotesPage() {
                     ...next[idx]!,
                     streaming: false,
                     streamingReasoning: undefined,
-                    ...(doneSources?.length ? { sources: doneSources } : {}),
-                    ...(doneWebSources?.length ? { webSources: doneWebSources } : {})
+                    ...(doneSources?.length ? { sources: doneSources } : {})
                   };
                   return next;
                 });
@@ -4039,40 +4027,6 @@ export default function NotesPage() {
                   <span className="mb-1 shrink-0 rounded-full bg-fill px-2 py-0.5 text-[10px] font-medium text-muted tabular-nums">
                     {draftSelectedNoteIds.length} 条
                   </span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={notesAskWebSearch}
-                    aria-label={
-                      notesAskWebSearch
-                        ? "已开启联网参考（回答可叠加互联网摘要）"
-                        : "关闭联网参考（仅依据已选资料）"
-                    }
-                    title={
-                      notesAskWebSearch
-                        ? "已开启：回答可叠加互联网摘要（与资料冲突时以资料库为准）"
-                        : "关闭：仅依据已选资料；开启后可能发起联网检索"
-                    }
-                    disabled={
-                      Boolean(sharedBrowse?.access === "read_only") || draftSelectedNoteIds.length === 0
-                    }
-                    onClick={() => setNotesAskWebSearch((v) => !v)}
-                    className={`mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 shadow-sm transition active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 ${
-                      notesAskWebSearch
-                        ? "border-brand bg-brand/20 text-brand ring-2 ring-brand/30 ring-offset-2 ring-offset-surface dark:ring-offset-[rgb(18,18,20)]"
-                        : "border-line/90 bg-fill/70 text-muted hover:border-amber-500/50 hover:bg-amber-500/[0.12] hover:text-ink"
-                    }`}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0">
-                      <path
-                        d="M5 10.5a9.5 9.5 0 0114 0M8.5 14a5.5 5.5 0 017 0M12 17.5h.01"
-                        stroke="currentColor"
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
                   {notesAskBusy ? (
                     <button
                       type="button"
