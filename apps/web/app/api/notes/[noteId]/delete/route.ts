@@ -3,20 +3,9 @@ import { getOrCreateRequestId, incomingAuthHeadersFrom, proxyJsonFromOrchestrato
 
 type Params = { params: { noteId: string } };
 
-export async function DELETE(req: NextRequest, { params }: Params) {
-  const requestId = getOrCreateRequestId(req);
-  return proxyJsonFromOrchestrator(`/api/v1/notes/${encodeURIComponent(params.noteId)}/purge`, {
-    method: "DELETE",
-    payload: "{}",
-    body: null,
-    headers: { ...incomingAuthHeadersFrom(req) },
-    requestId
-  });
-}
-
 export async function POST(req: NextRequest, { params }: Params) {
   const requestId = getOrCreateRequestId(req);
-  return proxyJsonFromOrchestrator(`/api/v1/notes/${encodeURIComponent(params.noteId)}/purge`, {
+  return proxyJsonFromOrchestrator(`/api/v1/notes/${encodeURIComponent(params.noteId)}/delete`, {
     method: "POST",
     payload: "{}",
     body: "{}",

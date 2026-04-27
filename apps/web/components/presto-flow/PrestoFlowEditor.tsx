@@ -601,7 +601,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       setSaveExcludedHint("saving");
       try {
         const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-          method: "PATCH",
+          method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({ excluded_word_ids: [...next] })

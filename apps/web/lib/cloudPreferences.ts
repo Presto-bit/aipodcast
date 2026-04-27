@@ -90,7 +90,7 @@ export async function pullCloudPreferences(): Promise<void> {
     }
     if (Object.keys(toUpload).length > 0) {
       await fetch("/api/user/preferences", {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ data: toUpload })
@@ -125,7 +125,7 @@ export function scheduleCloudPreferencesPush() {
     const data = buildLocalPatchPayload();
     if (!Object.keys(data).length) return;
     void fetch("/api/user/preferences", {
-      method: "PATCH",
+      method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ data })

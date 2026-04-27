@@ -260,7 +260,7 @@ export default function ClipRoughCutPanel({
       onError("");
       try {
         const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-          method: "PATCH",
+          method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({ export_pause_policy: next })
@@ -294,7 +294,7 @@ export default function ClipRoughCutPanel({
       .slice(0, 200);
     try {
       const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({

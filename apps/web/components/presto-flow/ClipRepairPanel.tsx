@@ -85,7 +85,7 @@ export default function ClipRepairPanel({
       onError("");
       try {
         const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-          method: "PATCH",
+          method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({ repair_loudness_i_lufs: next })

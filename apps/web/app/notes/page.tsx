@@ -2195,7 +2195,7 @@ export default function NotesPage() {
     setBusy(true);
     try {
       const res = await fetch(`/api/notebooks/${encodeURIComponent(oldN)}`, {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ new_name: newN })
@@ -2233,7 +2233,7 @@ export default function NotesPage() {
     setNotebookCoverModalErr("");
     try {
       const res = await fetch(`/api/notebooks/${encodeURIComponent(name)}`, {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify(body)
@@ -2327,10 +2327,11 @@ export default function NotesPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(`/api/notebooks/${encodeURIComponent(target)}`, {
-        method: "DELETE",
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(target)}/delete`, {
+        method: "POST",
         credentials: "same-origin",
-        headers: { ...getAuthHeaders() }
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: "{}"
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "删除失败"));
@@ -3005,10 +3006,11 @@ export default function NotesPage() {
   async function confirmDeleteNote(noteId: string) {
     setBusy(true);
     try {
-      const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`, {
-        method: "DELETE",
+      const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}/delete`, {
+        method: "POST",
         credentials: "same-origin",
-        headers: { ...getAuthHeaders() }
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: "{}"
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "删除失败"));

@@ -9,10 +9,10 @@ export async function GET(req: NextRequest) {
   });
 }
 
-export async function PATCH(req: NextRequest) {
+async function proxyPreferencesWrite(req: NextRequest, method: "PATCH" | "POST") {
   const raw = await req.text();
   return proxyJsonFromOrchestrator("/api/v1/user/preferences", {
-    method: "PATCH",
+    method,
     payload: raw || "{}",
     body: raw || "{}",
     headers: {
@@ -20,4 +20,12 @@ export async function PATCH(req: NextRequest) {
       ...incomingAuthHeadersFrom(req)
     }
   });
+}
+
+export async function PATCH(req: NextRequest) {
+  return proxyPreferencesWrite(req, "PATCH");
+}
+
+export async function POST(req: NextRequest) {
+  return proxyPreferencesWrite(req, "POST");
 }

@@ -15,15 +15,23 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   });
 }
 
-export async function PATCH(req: NextRequest, ctx: Ctx) {
+async function proxyClipProjectWrite(req: NextRequest, ctx: Ctx, method: "PATCH" | "POST") {
   const { id } = await ctx.params;
   const raw = await req.text();
   return proxyJsonFromOrchestrator(`/api/v1/clip/projects/${encodeURIComponent(id)}`, {
-    method: "PATCH",
+    method,
     payload: raw || "{}",
     body: raw || "{}",
     headers: { "content-type": "application/json", ...incomingAuthHeadersFrom(req) }
   });
+}
+
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  return proxyClipProjectWrite(req, ctx, "PATCH");
+}
+
+export async function POST(req: NextRequest, ctx: Ctx) {
+  return proxyClipProjectWrite(req, ctx, "POST");
 }
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {

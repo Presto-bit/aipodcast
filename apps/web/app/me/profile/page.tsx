@@ -163,7 +163,7 @@ export default function MeProfilePage() {
     setNicknameErr("");
     try {
       const res = await fetch("/api/auth/profile", {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ display_name: v })

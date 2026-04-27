@@ -1278,6 +1278,7 @@ def import_note_from_url_api(body: NoteImportUrlRequest, request: Request):
 
 
 @router.delete("/notes/{note_id}")
+@router.post("/notes/{note_id}/delete")
 def delete_note_api(note_id: str, request: Request):
     user_ref = _current_user_ref_or_401(request)
     row = get_note_by_id(note_id, user_ref=user_ref)
@@ -1301,6 +1302,7 @@ def restore_note_api(note_id: str, request: Request):
 
 
 @router.delete("/notes/{note_id}/purge")
+@router.post("/notes/{note_id}/purge")
 def purge_note_api(note_id: str, request: Request):
     user_ref = _current_user_ref_or_401(request)
     ok = purge_note_hard(note_id, user_ref=user_ref)
@@ -1440,6 +1442,7 @@ async def upload_notebook_cover_api(notebook_name: str, request: Request):
 
 
 @router.patch("/notebooks/{notebook_name:path}")
+@router.post("/notebooks/{notebook_name:path}")
 def patch_notebook_api(notebook_name: str, body: NotebookPatchRequest, request: Request):
     user_ref = _current_user_ref_or_401(request)
     nb0 = notebook_name.strip()
@@ -1465,6 +1468,7 @@ def patch_notebook_api(notebook_name: str, body: NotebookPatchRequest, request: 
 
 
 @router.delete("/notebooks/{notebook_name:path}")
+@router.post("/notebooks/{notebook_name:path}/delete")
 def delete_notebook_api(notebook_name: str, request: Request):
     user_ref = _current_user_ref_or_401(request)
     ok, err, notes_purged, jobs_trashed = delete_notebook_db(notebook_name.strip(), user_ref=user_ref)

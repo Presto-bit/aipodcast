@@ -3,10 +3,10 @@ import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../../
 
 type Params = { params: { jobId: string } };
 
-export async function PATCH(req: NextRequest, { params }: Params) {
+async function proxyPodcastTemplateWrite(req: NextRequest, { params }: Params, method: "PATCH" | "POST") {
   const raw = await req.text();
   return proxyJsonFromOrchestrator(`/api/v1/admin/jobs/${params.jobId}/podcast-template`, {
-    method: "PATCH",
+    method,
     payload: raw || "{}",
     body: raw || "{}",
     headers: {
@@ -14,4 +14,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       ...incomingAuthHeadersFrom(req)
     }
   });
+}
+
+export async function PATCH(req: NextRequest, params: Params) {
+  return proxyPodcastTemplateWrite(req, params, "PATCH");
+}
+
+export async function POST(req: NextRequest, params: Params) {
+  return proxyPodcastTemplateWrite(req, params, "POST");
 }

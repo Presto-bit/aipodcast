@@ -31,8 +31,9 @@ async function postRestoreNote(noteId: string, headers: Record<string, string>) 
 
 async function deletePurgeNote(noteId: string, headers: Record<string, string>) {
   const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}/purge`, {
-    method: "DELETE",
-    headers: { ...headers }
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: "{}"
   });
   const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
   return { ok: res.ok && Boolean(data.success), detail: String(data.detail || res.status) };
@@ -50,8 +51,9 @@ async function postRestoreWork(workId: string, headers: Record<string, string>) 
 
 async function deletePurgeWork(workId: string, headers: Record<string, string>) {
   const res = await fetch(`/api/jobs/${encodeURIComponent(workId)}/purge`, {
-    method: "DELETE",
-    headers: { ...headers }
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: "{}"
   });
   const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
   return { ok: res.ok && Boolean(data.success), detail: String(data.detail || res.status) };

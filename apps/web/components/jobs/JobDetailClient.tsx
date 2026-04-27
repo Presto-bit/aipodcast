@@ -155,7 +155,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       setPodcastTemplateBusy(true);
       try {
         const res = await fetch(`/api/admin/jobs/${encodeURIComponent(jobId)}/podcast-template`, {
-          method: "PATCH",
+          method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({ enabled: next })

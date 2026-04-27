@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../../lib/bff";
 
-export async function PATCH(req: NextRequest) {
+async function proxyProfileWrite(req: NextRequest, method: "PATCH" | "POST") {
   const raw = await req.text();
   return proxyJsonFromOrchestrator("/api/v1/auth/profile", {
-    method: "PATCH",
+    method,
     payload: raw || "{}",
     body: raw || "{}",
     headers: {
@@ -12,4 +12,12 @@ export async function PATCH(req: NextRequest) {
       ...incomingAuthHeadersFrom(req)
     }
   });
+}
+
+export async function PATCH(req: NextRequest) {
+  return proxyProfileWrite(req, "PATCH");
+}
+
+export async function POST(req: NextRequest) {
+  return proxyProfileWrite(req, "POST");
 }

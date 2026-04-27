@@ -236,8 +236,8 @@ export default function AdminUsersPage() {
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      const res = await fetch("/api/admin/users", {
-        method: "DELETE",
+      const res = await fetch("/api/admin/users/delete", {
+        method: "POST",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ phone: rowKey(deleteTarget) }),
       });

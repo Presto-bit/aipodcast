@@ -116,7 +116,7 @@ export default function ClipHub() {
     setErr("");
     try {
       const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ title })
@@ -143,10 +143,11 @@ export default function ClipHub() {
     setDeleteBusy(true);
     setDeleteErr(null);
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(deleteTarget.id)}`, {
-        method: "DELETE",
+      const res = await fetch(`/api/clip/projects/${encodeURIComponent(deleteTarget.id)}/delete`, {
+        method: "POST",
         credentials: "same-origin",
-        headers: { ...getAuthHeaders() }
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: "{}"
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
       if (!res.ok || data.success === false) {
