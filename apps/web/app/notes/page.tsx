@@ -3462,9 +3462,6 @@ export default function NotesPage() {
                   className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line/90 bg-surface py-2.5 text-sm font-medium text-ink shadow-soft transition-colors hover:border-brand/35 hover:bg-fill/50 disabled:cursor-not-allowed disabled:opacity-45"
                   onClick={() => {
                     setImportUrlError("");
-                    setPasteNoteErr("");
-                    setPasteNoteTitle("");
-                    setPasteNoteBody("");
                     setShowAddNoteModal(true);
                   }}
                 >
