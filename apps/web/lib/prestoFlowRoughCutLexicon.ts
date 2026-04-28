@@ -227,6 +227,7 @@ export function collectSubstringMatchWordIds(
   }
   if (out.length > 0) return out;
   // Fallback: support multi-word phrase queries by matching against joined transcript text.
+  // 计数按“短语出现次数”而非“命中的字数/词数”。
   const tokens: Array<{ id: string; text: string }> = [];
   for (const w of words) {
     if (excluded.has(w.id)) continue;
@@ -238,15 +239,24 @@ export function collectSubstringMatchWordIds(
   const latin = /[a-z]/i.test(q) && !/[\u4e00-\u9fff]/.test(q);
   const needleJoined = latin ? qLower : q;
   const joined = (latin ? tokens.map((t) => t.text.toLowerCase()) : tokens.map((t) => t.text)).join("");
-  const idx = joined.indexOf(needleJoined);
-  if (idx < 0) return out;
-  let pos = 0;
-  const matched = new Set<string>();
-  for (const t of tokens) {
-    const end = pos + t.text.length;
-    if (end > idx && pos < idx + needleJoined.length) matched.add(t.id);
-    pos = end;
-    if (pos >= idx + needleJoined.length) break;
+  const matchedOccurrenceAnchorIds: string[] = [];
+  let seekFrom = 0;
+  while (seekFrom <= joined.length - needleJoined.length) {
+    const idx = joined.indexOf(needleJoined, seekFrom);
+    if (idx < 0) break;
+    let pos = 0;
+    let anchorId: string | null = null;
+    for (const t of tokens) {
+      const end = pos + t.text.length;
+      if (end > idx && pos <= idx) {
+        anchorId = t.id;
+        break;
+      }
+      pos = end;
+    }
+    if (anchorId) matchedOccurrenceAnchorIds.push(anchorId);
+    // 前进到本次命中的末尾，避免同一短语内部被重复计数
+    seekFrom = idx + Math.max(1, needleJoined.length);
   }
-  return [...matched];
+  return matchedOccurrenceAnchorIds;
 }
