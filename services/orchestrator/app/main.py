@@ -266,7 +266,7 @@ async def _unhandled_exception_json(request: Request, exc: Exception):
         content=_error_payload(
             request=request,
             error="internal_server_error",
-            detail="internal_server_error",
+            detail=f"internal_server_error:{exc.__class__.__name__}",
             status_code=500,
         ),
         status_code=500,

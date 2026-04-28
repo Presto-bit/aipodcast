@@ -79,6 +79,7 @@ type LogControlStore = {
 const STORE_KEY = "__fymLogControlStore";
 const MAX_AUDIT_RECORDS = 120;
 const MAX_EVENT_RECORDS = 400;
+const EVENT_DEDUP_WINDOW_MS = 12_000;
 const REDIS_AUDITS_KEY = "fym:logs:audits";
 const REDIS_EVENTS_KEY = "fym:logs:events";
 
@@ -286,23 +287,34 @@ export async function appendLogEvent(params: {
 }): Promise<void> {
   const ts = nowMs();
   const errorCode = String(params.errorCode || "").trim().slice(0, 120) || "UNKNOWN_ERROR";
+  const normalizedRequestId = String(params.requestId || "").slice(0, 120);
+  const normalizedRoute = String(params.route || "").trim().slice(0, 240);
+  const normalizedModule = String(params.module || "web").trim().slice(0, 120) || "web";
+  const normalizedMessage = String(params.message || "").slice(0, 1200);
+  const dedupKey = `${params.scope}|${normalizedRequestId}|${errorCode}|${normalizedModule}|${normalizedRoute}|${normalizedMessage}`;
+  const s = store();
+  const duplicated = s.events.some((e) => {
+    if (ts - e.atMs > EVENT_DEDUP_WINDOW_MS) return false;
+    const key = `${e.scope}|${e.requestId}|${e.errorCode}|${e.module}|${e.route}|${e.message}`;
+    return key === dedupKey;
+  });
+  if (duplicated) return;
   const entry: LogEventEntry = {
     id: `${ts}-${Math.random().toString(36).slice(2, 8)}`,
     scope: params.scope,
-    requestId: String(params.requestId || "").slice(0, 120),
+    requestId: normalizedRequestId,
     traceId: String(params.traceId || "").slice(0, 120),
     errorCode,
     level: params.level,
     env: APP_ENV,
     release: String(params.release || "").trim().slice(0, 48) || APP_RELEASE,
-    module: String(params.module || "web").trim().slice(0, 120) || "web",
-    route: String(params.route || "").trim().slice(0, 240),
-    message: String(params.message || "").slice(0, 1200),
+    module: normalizedModule,
+    route: normalizedRoute,
+    message: normalizedMessage,
     location: params.location ? String(params.location).slice(0, 240) : undefined,
     payload: params.payload && typeof params.payload === "object" ? params.payload : {},
     atMs: ts
   };
-  const s = store();
   s.events = [entry, ...s.events].slice(0, MAX_EVENT_RECORDS);
   const redis = getRedisClient();
   if (redis) {
