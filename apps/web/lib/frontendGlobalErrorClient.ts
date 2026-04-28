@@ -37,6 +37,17 @@ function canReport(payload: GlobalErrorPayload): boolean {
   return true;
 }
 
+function generateTraceId(): string {
+  const seed = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let out = "";
+  for (let i = 0; i < seed.length; i += 1) {
+    const code = seed.charCodeAt(i) & 0xff;
+    out += code.toString(16).padStart(2, "0");
+    if (out.length >= 32) break;
+  }
+  return out.padEnd(32, "0");
+}
+
 export function reportFrontendGlobalError(payload: GlobalErrorPayload): void {
   if (typeof window === "undefined") return;
   const normalized: GlobalErrorPayload = {
@@ -48,8 +59,16 @@ export function reportFrontendGlobalError(payload: GlobalErrorPayload): void {
   if (!canReport(normalized)) return;
   fetch("/api/frontend-global-error", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-trace-id": generateTraceId() },
     credentials: "same-origin",
-    body: JSON.stringify(normalized)
+    body: JSON.stringify({
+      ...normalized,
+      route: window.location.pathname,
+      release:
+        (typeof process !== "undefined" &&
+          process.env &&
+          (process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_APP_VERSION)) ||
+        "web-dev"
+    })
   }).catch(() => {});
 }

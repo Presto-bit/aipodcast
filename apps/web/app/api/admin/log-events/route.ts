@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminRequest } from "../../../../lib/adminRouteAuth";
-import { LOG_SCOPES, LogScope, listLogEvents } from "../../../../lib/logManagement";
+import { LOG_SCOPES, LogScope, listLogEvents, topErrorClusters } from "../../../../lib/logManagement";
 
 const DEFAULT_SCOPE: LogScope = "notebook_share_client";
 
@@ -16,6 +16,13 @@ function parseLimit(raw: string | null): number {
   return Math.max(1, Math.min(200, n));
 }
 
+function parseMs(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return n;
+}
+
 export async function GET(req: NextRequest) {
   const auth = await verifyAdminRequest(req);
   if (!auth.ok) {
@@ -23,10 +30,18 @@ export async function GET(req: NextRequest) {
   }
   const scope = parseScope(req.nextUrl.searchParams.get("scope"));
   const limit = parseLimit(req.nextUrl.searchParams.get("limit"));
-  const events = listLogEvents(scope, limit);
+  const levelRaw = req.nextUrl.searchParams.get("level");
+  const level = levelRaw === "error" || levelRaw === "info" ? levelRaw : undefined;
+  const requestId = (req.nextUrl.searchParams.get("requestId") || "").trim();
+  const errorCode = (req.nextUrl.searchParams.get("errorCode") || "").trim();
+  const fromMs = parseMs(req.nextUrl.searchParams.get("fromMs"));
+  const toMs = parseMs(req.nextUrl.searchParams.get("toMs"));
+  const events = listLogEvents(scope, limit, { level, requestId, errorCode, fromMs, toMs });
+  const clusters = topErrorClusters(scope, 24 * 60 * 60 * 1000, 8);
   return NextResponse.json({
     success: true,
     scope,
-    events
+    events,
+    clusters
   });
 }

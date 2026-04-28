@@ -31,11 +31,27 @@ type LogEvent = {
   id: string;
   scope: LogScope;
   requestId: string;
+  traceId: string;
+  errorCode: string;
+  env: string;
+  release: string;
+  module: string;
+  route: string;
   level: "info" | "error";
   message: string;
   location?: string;
   payload?: Record<string, unknown>;
   atMs: number;
+};
+
+type ErrorCluster = {
+  key: string;
+  errorCode: string;
+  route: string;
+  module: string;
+  level: "info" | "error";
+  count: number;
+  latestAtMs: number;
 };
 
 function formatTime(tsMs: number | null | undefined): string {
@@ -61,7 +77,12 @@ export default function AdminLogManagementPage() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [events, setEvents] = useState<LogEvent[]>([]);
+  const [clusters, setClusters] = useState<ErrorCluster[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [queryRequestId, setQueryRequestId] = useState("");
+  const [queryErrorCode, setQueryErrorCode] = useState("");
+  const [queryLevel, setQueryLevel] = useState<"" | "info" | "error">("");
+  const [queryRangeHours, setQueryRangeHours] = useState("24");
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/admin/log-management?scope=${encodeURIComponent(scope)}`, {
@@ -96,7 +117,17 @@ export default function AdminLogManagementPage() {
   const loadEvents = useCallback(async () => {
     setEventsLoading(true);
     try {
-      const res = await fetch(`/api/admin/log-events?scope=${encodeURIComponent(scope)}&limit=80`, {
+      const hours = Number.parseInt(queryRangeHours, 10);
+      const fromMs =
+        Number.isFinite(hours) && hours > 0 ? Date.now() - Math.min(hours, 24 * 30) * 60 * 60 * 1000 : undefined;
+      const params = new URLSearchParams();
+      params.set("scope", scope);
+      params.set("limit", "120");
+      if (queryRequestId.trim()) params.set("requestId", queryRequestId.trim());
+      if (queryErrorCode.trim()) params.set("errorCode", queryErrorCode.trim());
+      if (queryLevel) params.set("level", queryLevel);
+      if (fromMs) params.set("fromMs", String(fromMs));
+      const res = await fetch(`/api/admin/log-events?${params.toString()}`, {
         headers: getAuthHeaders(),
         cache: "no-store"
       });
@@ -104,17 +135,19 @@ export default function AdminLogManagementPage() {
         success?: boolean;
         error?: string;
         events?: LogEvent[];
+        clusters?: ErrorCluster[];
       };
       if (!res.ok || !data.success) {
         throw new Error(data.error || `日志加载失败 ${res.status}`);
       }
       setEvents(Array.isArray(data.events) ? data.events : []);
+      setClusters(Array.isArray(data.clusters) ? data.clusters : []);
     } catch (e) {
       setMsg(String(e instanceof Error ? e.message : e));
     } finally {
       setEventsLoading(false);
     }
-  }, [getAuthHeaders, scope]);
+  }, [getAuthHeaders, scope, queryRequestId, queryErrorCode, queryLevel, queryRangeHours]);
 
   useEffect(() => {
     void loadEvents();
@@ -311,13 +344,80 @@ export default function AdminLogManagementPage() {
             {eventsLoading ? "刷新中…" : "刷新"}
           </button>
         </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-4">
+          <input
+            className="rounded bg-canvas p-2 text-xs text-ink"
+            placeholder="按 requestId 筛选"
+            value={queryRequestId}
+            onChange={(e) => setQueryRequestId(e.target.value)}
+          />
+          <input
+            className="rounded bg-canvas p-2 text-xs text-ink"
+            placeholder="按 error.code 筛选"
+            value={queryErrorCode}
+            onChange={(e) => setQueryErrorCode(e.target.value)}
+          />
+          <select
+            className="rounded bg-canvas p-2 text-xs text-ink"
+            value={queryLevel}
+            onChange={(e) => setQueryLevel((e.target.value || "") as "" | "info" | "error")}
+          >
+            <option value="">全部级别</option>
+            <option value="error">error</option>
+            <option value="info">info</option>
+          </select>
+          <input
+            className="rounded bg-canvas p-2 text-xs text-ink"
+            inputMode="numeric"
+            placeholder="时间范围(小时)"
+            value={queryRangeHours}
+            onChange={(e) => setQueryRangeHours(e.target.value)}
+          />
+        </div>
+        <div className="mt-3 min-w-0 overflow-x-auto">
+          <h3 className="mb-2 text-xs font-medium text-muted">24 小时错误聚类 Top</h3>
+          <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left text-sm">
+            <thead className="text-xs text-muted">
+              <tr>
+                <th className="px-2 py-2">error.code</th>
+                <th className="px-2 py-2">模块</th>
+                <th className="px-2 py-2">路由</th>
+                <th className="px-2 py-2">级别</th>
+                <th className="px-2 py-2">次数</th>
+                <th className="px-2 py-2">最近出现</th>
+              </tr>
+            </thead>
+            <tbody>
+              {clusters.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-2 py-4 text-xs text-muted">
+                    暂无聚类数据
+                  </td>
+                </tr>
+              ) : null}
+              {clusters.map((c) => (
+                <tr key={c.key} className="border-t border-line text-ink">
+                  <td className="whitespace-nowrap px-2 py-2 font-mono text-xs">{c.errorCode}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{c.module}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{c.route}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs">{c.level}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs tabular-nums">{c.count}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{formatTime(c.latestAtMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <div className="mt-3 min-w-0 overflow-x-auto">
           <table className="w-full min-w-[980px] border-separate border-spacing-0 text-left text-sm">
             <thead className="text-xs text-muted">
               <tr>
                 <th className="px-2 py-2">时间</th>
                 <th className="px-2 py-2">级别</th>
+                <th className="px-2 py-2">error.code</th>
                 <th className="px-2 py-2">requestId</th>
+                <th className="px-2 py-2">traceId</th>
+                <th className="px-2 py-2">模块/路由</th>
                 <th className="px-2 py-2">位置</th>
                 <th className="px-2 py-2">信息</th>
                 <th className="px-2 py-2">摘要</th>
@@ -326,7 +426,7 @@ export default function AdminLogManagementPage() {
             <tbody>
               {events.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-2 py-8 text-center text-muted">
+                  <td colSpan={9} className="px-2 py-8 text-center text-muted">
                     暂无日志事件（请确认 scope 已开启且已复现问题）
                   </td>
                 </tr>
@@ -337,7 +437,12 @@ export default function AdminLogManagementPage() {
                   <td className="whitespace-nowrap px-2 py-2 text-xs">
                     <span className={item.level === "error" ? "text-danger-ink" : "text-muted"}>{item.level}</span>
                   </td>
+                  <td className="whitespace-nowrap px-2 py-2 font-mono text-[11px]">{item.errorCode || "UNKNOWN_ERROR"}</td>
                   <td className="whitespace-nowrap px-2 py-2 font-mono text-[11px] text-muted">{item.requestId || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-2 font-mono text-[11px] text-muted">{item.traceId || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">
+                    {item.module || "web"} / {item.route || "—"}
+                  </td>
                   <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{item.location || "—"}</td>
                   <td className="max-w-[24rem] truncate px-2 py-2 text-xs" title={item.message}>
                     {item.message || "—"}

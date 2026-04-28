@@ -31,11 +31,35 @@ export type LogEventEntry = {
   id: string;
   scope: LogScope;
   requestId: string;
+  traceId: string;
+  errorCode: string;
   level: "info" | "error";
+  env: string;
+  release: string;
+  module: string;
+  route: string;
   message: string;
   location?: string;
   payload: Record<string, unknown>;
   atMs: number;
+};
+
+export type LogEventFilters = {
+  level?: "info" | "error";
+  requestId?: string;
+  errorCode?: string;
+  fromMs?: number;
+  toMs?: number;
+};
+
+export type LogErrorCluster = {
+  key: string;
+  errorCode: string;
+  route: string;
+  module: string;
+  level: "info" | "error";
+  count: number;
+  latestAtMs: number;
 };
 
 type LogControlStore = {
@@ -52,6 +76,11 @@ function appEnv(): string {
   const raw = String(process.env.APP_ENV || process.env.NODE_ENV || "development").trim().toLowerCase();
   if (!raw) return "development";
   return raw;
+}
+
+function appRelease(): string {
+  const raw = String(process.env.VERCEL_GIT_COMMIT_SHA || process.env.APP_VERSION || "dev").trim();
+  return raw.slice(0, 48) || "dev";
 }
 
 function nowMs(): number {
@@ -186,17 +215,29 @@ export function shouldIngestForScope(scope: LogScope, requestId: string): boolea
 export function appendLogEvent(params: {
   scope: LogScope;
   requestId: string;
+  traceId?: string;
   level: "info" | "error";
+  errorCode: string;
+  module?: string;
+  route?: string;
+  release?: string;
   message: string;
   location?: string;
   payload?: Record<string, unknown>;
 }): void {
   const ts = nowMs();
+  const errorCode = String(params.errorCode || "").trim().slice(0, 120) || "UNKNOWN_ERROR";
   const entry: LogEventEntry = {
     id: `${ts}-${Math.random().toString(36).slice(2, 8)}`,
     scope: params.scope,
     requestId: String(params.requestId || "").slice(0, 120),
+    traceId: String(params.traceId || "").slice(0, 120),
+    errorCode,
     level: params.level,
+    env: appEnv(),
+    release: String(params.release || "").trim().slice(0, 48) || appRelease(),
+    module: String(params.module || "web").trim().slice(0, 120) || "web",
+    route: String(params.route || "").trim().slice(0, 240),
     message: String(params.message || "").slice(0, 1200),
     location: params.location ? String(params.location).slice(0, 240) : undefined,
     payload: params.payload && typeof params.payload === "object" ? params.payload : {},
@@ -206,8 +247,45 @@ export function appendLogEvent(params: {
   s.events = [entry, ...s.events].slice(0, MAX_EVENT_RECORDS);
 }
 
-export function listLogEvents(scope: LogScope, limit: number): LogEventEntry[] {
+export function listLogEvents(scope: LogScope, limit: number, filters?: LogEventFilters): LogEventEntry[] {
   const n = Math.max(1, Math.min(200, Math.floor(limit || 50)));
-  const all = store().events.filter((x) => x.scope === scope);
+  const all = store().events.filter((x) => {
+    if (x.scope !== scope) return false;
+    if (filters?.level && x.level !== filters.level) return false;
+    if (filters?.requestId && !x.requestId.includes(filters.requestId)) return false;
+    if (filters?.errorCode && !x.errorCode.toLowerCase().includes(filters.errorCode.toLowerCase())) return false;
+    if (typeof filters?.fromMs === "number" && x.atMs < filters.fromMs) return false;
+    if (typeof filters?.toMs === "number" && x.atMs > filters.toMs) return false;
+    return true;
+  });
   return all.slice(0, n);
+}
+
+export function topErrorClusters(scope: LogScope, windowMs: number, maxItems: number): LogErrorCluster[] {
+  const now = nowMs();
+  const start = now - Math.max(60_000, windowMs);
+  const grouped = new Map<string, LogErrorCluster>();
+  for (const item of store().events) {
+    if (item.scope !== scope) continue;
+    if (item.atMs < start) continue;
+    const key = `${item.errorCode}|${item.route}|${item.module}|${item.level}`;
+    const prev = grouped.get(key);
+    if (!prev) {
+      grouped.set(key, {
+        key,
+        errorCode: item.errorCode,
+        route: item.route || "/",
+        module: item.module || "web",
+        level: item.level,
+        count: 1,
+        latestAtMs: item.atMs
+      });
+      continue;
+    }
+    prev.count += 1;
+    if (item.atMs > prev.latestAtMs) prev.latestAtMs = item.atMs;
+  }
+  return [...grouped.values()]
+    .sort((a, b) => b.count - a.count || b.latestAtMs - a.latestAtMs)
+    .slice(0, Math.max(1, Math.min(20, maxItems)));
 }

@@ -71,17 +71,6 @@ import {
 import { loadNotesAskChat, saveNotesAskChat } from "../../lib/notesAskChatStorage";
 import { notesAskClientLog } from "../../lib/notesAskClientLog";
 import {
-  NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY,
-  NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY,
-  NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK,
-  agentDebugLog,
-  clearNotebookShareFailureHistoryStorage,
-  notifyNotebookShareDiagnosticsUpdated,
-  readNotebookShareFailureHistory,
-  readNotebookShareLastError,
-  type ShareFailureEntry
-} from "../../lib/notebookShareDiagnostics";
-import {
   accountKeyFromUser,
   readLocalStorageScoped,
   readSessionStorageScoped,
@@ -267,6 +256,38 @@ const SUPPORTED_NOTE_FILE_ACCEPT = [
   ".txt,.md,.markdown,.pdf,.doc,.docx,.epub,.html,.htm,.xhtml,.png,.jpg,.jpeg,.webp,.gif,.avif",
   "image/png,image/jpeg,image/webp,image/gif,image/avif",
 ].join(",");
+
+function formatNotebookShareFailureMessage(raw: string, mode: "share" | "unshare"): string {
+  const msg = String(raw || "").trim();
+  const prefix = mode === "unshare" ? "取消分享失败" : "分享失败";
+  if (!msg) return `${prefix}：服务暂时不可用，请稍后重试。`;
+  if (msg.includes("未登录") || msg.includes("401")) {
+    return `${prefix}：登录状态已失效，请重新登录后再试。`;
+  }
+  if (msg.includes("笔记本不存在")) {
+    return `${prefix}：该笔记本不存在或已被删除，请刷新列表后重试。`;
+  }
+  if (msg.includes("笔记本名称不能为空")) {
+    return `${prefix}：未识别到笔记本名称，请重新选择笔记本后重试。`;
+  }
+  if (msg.includes("公开访问需选择") || msg.includes("read_only") || msg.includes("edit")) {
+    return `${prefix}：未选择有效分享权限，请选择“只读”或“可创作”后再试。`;
+  }
+  if (
+    msg.includes("Failed to fetch") ||
+    msg.includes("NetworkError") ||
+    msg.includes("upstream_unreachable") ||
+    msg.includes("网关") ||
+    msg.includes("超时")
+  ) {
+    return `${prefix}：网络或服务连接异常（可能超时），请稍后重试。`;
+  }
+  if (msg.includes("保存失败")) {
+    return `${prefix}：服务未成功保存设置，请稍后重试。`;
+  }
+  if (msg.startsWith("分享失败") || msg.startsWith("取消分享失败")) return msg;
+  return `${prefix}：${msg}`;
+}
 
 function isSupportedNoteFile(file: File): boolean {
   const name = (file.name || "").toLowerCase();
@@ -820,12 +841,6 @@ export default function NotesPage() {
   const [importBusy, setImportBusy] = useState(false);
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
   const [showSupportedFormatsModal, setShowSupportedFormatsModal] = useState(false);
-  const [shareDebugLog, setShareDebugLog] = useState("");
-  const [shareLastDebugLog, setShareLastDebugLog] = useState("");
-  const [shareLastError, setShareLastError] = useState("");
-  const [shareLastNotebook, setShareLastNotebook] = useState("");
-  const [shareLastAt, setShareLastAt] = useState("");
-  const [shareFailureHistory, setShareFailureHistory] = useState<ShareFailureEntry[]>([]);
   const [renameDebugLog, setRenameDebugLog] = useState("");
   const addNoteFileRef = useRef<HTMLInputElement | null>(null);
   const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false);
@@ -858,107 +873,6 @@ export default function NotesPage() {
   const [shareCopyHint, setShareCopyHint] = useState("");
   const shareViewedKeyRef = useRef("");
   const shareLinkHydratedRef = useRef(false);
-  const shareDiagnosticsRef = useRef<HTMLDivElement | null>(null);
-
-  const persistShareLastErrorPayload = useCallback((payload: {
-    debugLog: string;
-    error: string;
-    notebook: string;
-    at: string;
-  }) => {
-    const serialized = JSON.stringify(payload);
-    try {
-      writeLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY, serialized);
-    } catch {
-      // ignore
-    }
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK, serialized);
-      }
-    } catch {
-      // ignore
-    }
-    notifyNotebookShareDiagnosticsUpdated();
-    // #region agent log
-    agentDebugLog(
-      {
-        hypothesisId: "H3",
-        location: "notes/page.tsx:persistShareLastErrorPayload",
-        message: "persisted last share error",
-        data: { payloadLen: serialized.length }
-      },
-      { serverReport: true }
-    );
-    // #endregion
-  }, []);
-
-  const clearShareLastErrorPayload = useCallback(() => {
-    try {
-      writeLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY, "");
-    } catch {
-      // ignore
-    }
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK);
-      }
-    } catch {
-      // ignore
-    }
-    notifyNotebookShareDiagnosticsUpdated();
-  }, []);
-
-  const persistShareFailureHistory = useCallback((items: ShareFailureEntry[]) => {
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY, JSON.stringify(items));
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const appendShareFailureHistory = useCallback((entry: ShareFailureEntry) => {
-    setShareFailureHistory((prev) => {
-      const next = [entry, ...prev].slice(0, 20);
-      queueMicrotask(() => {
-        try {
-          persistShareFailureHistory(next);
-        } catch {
-          // ignore
-        }
-        notifyNotebookShareDiagnosticsUpdated();
-        // #region agent log
-        agentDebugLog(
-          {
-            hypothesisId: "H4",
-            location: "notes/page.tsx:appendShareFailureHistory:microtask",
-            message: "failure history persisted",
-            data: { nextLen: next.length }
-          },
-          { serverReport: true }
-        );
-        // #endregion
-      });
-      return next;
-    });
-  }, [persistShareFailureHistory]);
-
-  useEffect(() => {
-    const saved = readNotebookShareLastError();
-    if (!saved) return;
-    setShareLastDebugLog(saved.debugLog);
-    setShareLastError(saved.error);
-    setShareLastNotebook(saved.notebook);
-    setShareLastAt(saved.at);
-  }, []);
-
-  useEffect(() => {
-    const list = readNotebookShareFailureHistory();
-    if (list.length > 0) setShareFailureHistory(list);
-  }, []);
-
   const buildNotebookShareUrl = useCallback((notebookName: string, ownerUserId: string, access: "read_only" | "edit") => {
     if (typeof window === "undefined") return "";
     const u = new URL(`${window.location.origin}/notes`);
@@ -3391,8 +3305,6 @@ export default function NotesPage() {
     if (!name) return;
     setShareModalBusy(true);
     setShareModalError("");
-    setShareDebugLog("");
-    let currentDebugLog = "";
     try {
       const clientRequestId =
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -3404,7 +3316,6 @@ export default function NotesPage() {
         /** 与「热门笔记本」一致：分享即允许参与发现筛选（仍受后端内容门槛过滤）；取消分享会清零 */
         listedInDiscover: true
       };
-      const startedAt = new Date().toISOString();
       const res = await fetch(`/api/notebooks/${encodeURIComponent(name)}/share`, {
         method: "POST",
         credentials: "same-origin",
@@ -3412,93 +3323,19 @@ export default function NotesPage() {
         body: JSON.stringify(payload)
       });
       const raw = await res.text();
-      let parseError = "";
       let data: { success?: boolean; detail?: unknown } = {};
       try {
         data = (JSON.parse(raw || "{}") || {}) as { detail?: unknown };
-      } catch (e) {
-        parseError = String(e instanceof Error ? e.message : e);
+      } catch {
         data = {};
       }
-      currentDebugLog = buildHttpDebugLog({
-        startedAt,
-        mode: "share",
-        target: name,
-        payload: JSON.stringify(payload),
-        res,
-        raw,
-        parseError,
-        clientRequestId
-      });
-      setShareDebugLog(currentDebugLog);
-      // #region agent log
-      agentDebugLog(
-        {
-          hypothesisId: "H1",
-          location: "notes/page.tsx:submitNotebookSharing:preThrow",
-          message: "share response before branch",
-          data: {
-            resOk: res.ok,
-            successField: data.success,
-            debugLen: currentDebugLog.length
-          }
-        },
-        { serverReport: true }
-      );
-      // #endregion
       if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
+      setShowShareNotebookModal(false);
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
-      currentDebugLog = [currentDebugLog, `exception=${msg}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
-        .filter(Boolean)
-        .join("\n");
-      // #region agent log
-      agentDebugLog(
-        {
-          hypothesisId: "H2",
-          location: "notes/page.tsx:submitNotebookSharing:catch",
-          message: "share catch entered",
-          data: { msgLen: msg.length, dbgLen: currentDebugLog.length }
-        },
-        { serverReport: true }
-      );
-      // #endregion
-      setShareDebugLog(currentDebugLog);
-      setShareModalError(msg);
-      setShareLastDebugLog(currentDebugLog);
-      setShareLastError(msg);
-      setShareLastNotebook(name);
-      const nowIso = new Date().toISOString();
-      setShareLastAt(nowIso);
-      persistShareLastErrorPayload({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso });
-      const entryId =
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `${nowIso}-share-${name}-${Math.random().toString(36).slice(2, 9)}`;
-      appendShareFailureHistory({
-        id: entryId,
-        mode: "share",
-        notebook: name,
-        error: msg,
-        at: nowIso,
-        debugLog: currentDebugLog
-      });
-      // #region agent log
-      agentDebugLog(
-        {
-          hypothesisId: "H4",
-          location: "notes/page.tsx:submitNotebookSharing:afterAppend",
-          message: "share failure persisted to state queue",
-          data: { entryIdLen: entryId.length, dbgLen: currentDebugLog.length }
-        },
-        { serverReport: true }
-      );
-      // #endregion
-      queueMicrotask(() => {
-        shareDiagnosticsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
+      setShareModalError(formatNotebookShareFailureMessage(msg, "share"));
     } finally {
       setShareModalBusy(false);
     }
@@ -3509,8 +3346,6 @@ export default function NotesPage() {
     if (!name) return;
     setShareModalBusy(true);
     setShareModalError("");
-    setShareDebugLog("");
-    let currentDebugLog = "";
     try {
       const clientRequestId =
         typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -3521,7 +3356,6 @@ export default function NotesPage() {
         publicAccess: null,
         listedInDiscover: false
       };
-      const startedAt = new Date().toISOString();
       const res = await fetch(`/api/notebooks/${encodeURIComponent(name)}/share`, {
         method: "POST",
         credentials: "same-origin",
@@ -3529,83 +3363,19 @@ export default function NotesPage() {
         body: JSON.stringify(payload)
       });
       const raw = await res.text();
-      let parseError = "";
       let data: { success?: boolean; detail?: unknown } = {};
       try {
         data = (JSON.parse(raw || "{}") || {}) as { detail?: unknown };
-      } catch (e) {
-        parseError = String(e instanceof Error ? e.message : e);
+      } catch {
         data = {};
       }
-      currentDebugLog = buildHttpDebugLog({
-        startedAt,
-        mode: "unshare",
-        target: name,
-        payload: JSON.stringify(payload),
-        res,
-        raw,
-        parseError,
-        clientRequestId
-      });
-      setShareDebugLog(currentDebugLog);
-      // #region agent log
-      agentDebugLog(
-        {
-          hypothesisId: "H1",
-          location: "notes/page.tsx:submitStopNotebookSharing:preThrow",
-          message: "unshare response before branch",
-          data: {
-            resOk: res.ok,
-            successField: data.success,
-            debugLen: currentDebugLog.length
-          }
-        },
-        { serverReport: true }
-      );
-      // #endregion
       if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
       setShowShareNotebookModal(false);
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
-      currentDebugLog = [currentDebugLog, `exception=${msg}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
-        .filter(Boolean)
-        .join("\n");
-      // #region agent log
-      agentDebugLog(
-        {
-          hypothesisId: "H2",
-          location: "notes/page.tsx:submitStopNotebookSharing:catch",
-          message: "unshare catch entered",
-          data: { msgLen: msg.length, dbgLen: currentDebugLog.length }
-        },
-        { serverReport: true }
-      );
-      // #endregion
-      setShareDebugLog(currentDebugLog);
-      setShareModalError(msg);
-      setShareLastDebugLog(currentDebugLog);
-      setShareLastError(msg);
-      setShareLastNotebook(name);
-      const nowIso = new Date().toISOString();
-      setShareLastAt(nowIso);
-      persistShareLastErrorPayload({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso });
-      const entryId =
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `${nowIso}-unshare-${name}-${Math.random().toString(36).slice(2, 9)}`;
-      appendShareFailureHistory({
-        id: entryId,
-        mode: "unshare",
-        notebook: name,
-        error: msg,
-        at: nowIso,
-        debugLog: currentDebugLog
-      });
-      queueMicrotask(() => {
-        shareDiagnosticsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
+      setShareModalError(formatNotebookShareFailureMessage(msg, "unshare"));
     } finally {
       setShareModalBusy(false);
     }
@@ -3687,89 +3457,6 @@ export default function NotesPage() {
       onPointerDown={onNotesMainPointerDown}
     >
       {error ? <p className="mb-4 text-sm text-danger-ink">{error}</p> : null}
-      <div
-        ref={shareDiagnosticsRef}
-        className={`${shareLastDebugLog || shareFailureHistory.length > 0 ? "sticky top-0 z-40 mb-4 border-b border-line/80 bg-canvas/95 py-2 backdrop-blur-sm" : "hidden"}`}
-        aria-label="笔记本分享失败诊断"
-      >
-        {shareLastDebugLog ? (
-          <div className="mb-3 rounded-xl border border-danger/30 bg-danger-soft/20 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs font-medium text-danger-ink">
-                最近一次分享失败已保留：{shareLastNotebook || "未知笔记本"}{" "}
-                {shareLastAt ? `(${shareLastAt.replace("T", " ").slice(0, 19)})` : ""}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
-                  onClick={() => {
-                    const text = `${shareLastError ? `${shareLastError}\n\n` : ""}${shareLastDebugLog}`;
-                    void (async () => {
-                      try {
-                        await navigator.clipboard.writeText(text);
-                      } catch {
-                        window.prompt("请手动复制以下诊断信息：", text);
-                      }
-                    })();
-                  }}
-                >
-                  复制诊断
-                </button>
-                <button
-                  type="button"
-                  className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
-                  onClick={() => {
-                    setShareLastDebugLog("");
-                    setShareLastError("");
-                    setShareLastNotebook("");
-                    setShareLastAt("");
-                    clearShareLastErrorPayload();
-                  }}
-                >
-                  清除
-                </button>
-              </div>
-            </div>
-            {shareLastError ? <p className="mt-2 text-xs text-danger-ink">{shareLastError}</p> : null}
-            <pre className="mt-2 max-h-52 overflow-auto rounded-lg border border-line/70 bg-fill/20 p-2 text-[10px] leading-relaxed text-muted">
-              {shareLastDebugLog}
-            </pre>
-          </div>
-        ) : null}
-        {shareFailureHistory.length > 0 ? (
-          <div className="rounded-xl border border-line/80 bg-surface p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-medium text-ink">分享失败历史（最近 {shareFailureHistory.length} 条，不自动清空）</p>
-              <button
-                type="button"
-                className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
-                onClick={() => {
-                  setShareFailureHistory([]);
-                  clearNotebookShareFailureHistoryStorage();
-                  notifyNotebookShareDiagnosticsUpdated();
-                }}
-              >
-                清空历史
-              </button>
-            </div>
-            <div className="mt-3 max-h-[min(50vh,22rem)] space-y-2 overflow-y-auto pr-1">
-              {shareFailureHistory.map((item) => (
-                <div key={item.id} className="rounded-lg border border-line/70 bg-fill/20 p-2">
-                  <p className="text-[11px] text-ink">
-                    [{item.mode === "share" ? "分享" : "取消分享"}] {item.notebook || "未知笔记本"} ·{" "}
-                    {item.at ? item.at.replace("T", " ").slice(0, 19) : "-"}
-                  </p>
-                  {item.error ? <p className="mt-1 text-[11px] text-danger-ink">{item.error}</p> : null}
-                  <pre className="mt-1 max-h-40 overflow-auto rounded border border-line/70 bg-surface p-2 text-[10px] leading-relaxed text-muted">
-                    {item.debugLog}
-                  </pre>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
 
       {/* 在笔记本列表页无法看到右侧「我的作品」时，仍显示文章/底稿/播客生成日志（如页面恢复未完成 job） */}
       {hubView && (draftMessage.trim() || podcastGenBusy || podcastGenMessage.trim()) ? (
@@ -5135,11 +4822,6 @@ export default function NotesPage() {
               <p className="mt-2 text-xs text-danger-ink" role="alert">
                 {shareModalError}
               </p>
-            ) : null}
-            {shareDebugLog ? (
-              <pre className="mt-2 max-h-64 overflow-auto rounded-lg border border-line/70 bg-fill/20 p-2 text-[10px] leading-relaxed text-muted">
-                {shareDebugLog}
-              </pre>
             ) : null}
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <button

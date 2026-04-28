@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   const requestId = getOrCreateRequestId(req);
+  const traceId = (req.headers.get("x-trace-id") || req.headers.get("traceparent") || "").slice(0, 120);
   if (!shouldIngestForScope("frontend_global_error", requestId)) {
     return NextResponse.json({ ok: true, requestId, skipped: true });
   }
@@ -34,12 +35,18 @@ export async function POST(req: NextRequest) {
     typeof rec.message === "string" ? rec.message.slice(0, 1200) : "frontend_global_error_message_missing";
   const location = typeof rec.location === "string" ? rec.location.slice(0, 240) : undefined;
   const source = rec.source === "unhandledrejection" ? "unhandledrejection" : "onerror";
+  const route = typeof rec.route === "string" ? rec.route.slice(0, 240) : "";
+  const release = typeof rec.release === "string" ? rec.release.slice(0, 48) : "";
   const data = sanitizeClientDiagnosticsValue(rec.data ?? {}, 4, 4000);
   const line = JSON.stringify({
     type: "frontend_global_error",
     ts: new Date().toISOString(),
     requestId,
+    traceId,
+    errorCode: source === "unhandledrejection" ? "FRONTEND_UNHANDLED_REJECTION" : "FRONTEND_WINDOW_ERROR",
     source,
+    route,
+    release,
     message,
     location,
     data
@@ -48,7 +55,12 @@ export async function POST(req: NextRequest) {
   appendLogEvent({
     scope: "frontend_global_error",
     requestId,
+    traceId,
     level: "error",
+    errorCode: source === "unhandledrejection" ? "FRONTEND_UNHANDLED_REJECTION" : "FRONTEND_WINDOW_ERROR",
+    module: "frontend",
+    route,
+    release,
     message,
     location,
     payload: {

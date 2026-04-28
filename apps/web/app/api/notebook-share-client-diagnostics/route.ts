@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
   }
   const rec = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   const requestId = getOrCreateRequestId(req);
+  const traceId = (req.headers.get("x-trace-id") || req.headers.get("traceparent") || "").slice(0, 120);
   if (!shouldIngestForScope("notebook_share_client", requestId)) {
     return NextResponse.json({ ok: true, requestId, skipped: true });
   }
@@ -41,13 +42,19 @@ export async function POST(req: NextRequest) {
     typeof rec.message === "string" ? rec.message.slice(0, 600) : "notebook_share_client_message_missing";
   const sessionId = typeof rec.sessionId === "string" ? rec.sessionId.slice(0, 80) : undefined;
   const timestamp = typeof rec.timestamp === "number" && Number.isFinite(rec.timestamp) ? rec.timestamp : undefined;
+  const route = typeof rec.route === "string" ? rec.route.slice(0, 240) : "";
+  const release = typeof rec.release === "string" ? rec.release.slice(0, 48) : "";
   const data = sanitizeClientDiagnosticsValue(rec.data ?? {}, 4, 8000);
 
   const line = JSON.stringify({
     type: "notebook_share_client",
     ts: new Date().toISOString(),
     requestId,
+    traceId,
+    errorCode: "NOTEBOOK_SHARE_CLIENT_DIAGNOSTIC",
     hypothesisId,
+    route,
+    release,
     location,
     message,
     sessionId,
@@ -58,7 +65,12 @@ export async function POST(req: NextRequest) {
   appendLogEvent({
     scope: "notebook_share_client",
     requestId,
+    traceId,
     level: "info",
+    errorCode: "NOTEBOOK_SHARE_CLIENT_DIAGNOSTIC",
+    module: "notebook_share",
+    route,
+    release,
     message,
     location,
     payload: {

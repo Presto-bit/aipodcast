@@ -28,6 +28,12 @@ export function agentDebugLog(payload: Record<string, unknown>, opts?: AgentDebu
   if (typeof window === "undefined") return;
   const body = JSON.stringify({
     sessionId: DEBUG_SESSION,
+    route: window.location.pathname,
+    release:
+      (typeof process !== "undefined" &&
+        process.env &&
+        (process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_APP_VERSION)) ||
+      "web-dev",
     ...payload,
     timestamp: Date.now()
   });
