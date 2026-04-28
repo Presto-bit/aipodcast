@@ -879,6 +879,20 @@ export default function NotesPage() {
       // ignore
     }
     notifyNotebookShareDiagnosticsUpdated();
+    // #region agent log
+    fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
+      body: JSON.stringify({
+        sessionId: "f9896b",
+        hypothesisId: "H3",
+        location: "notes/page.tsx:persistShareLastErrorPayload",
+        message: "persisted last share error",
+        data: { payloadLen: serialized.length },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
   }, []);
 
   const clearShareLastErrorPayload = useCallback(() => {
@@ -917,6 +931,20 @@ export default function NotesPage() {
           // ignore
         }
         notifyNotebookShareDiagnosticsUpdated();
+        // #region agent log
+        fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
+          body: JSON.stringify({
+            sessionId: "f9896b",
+            hypothesisId: "H4",
+            location: "notes/page.tsx:appendShareFailureHistory:microtask",
+            message: "failure history persisted",
+            data: { nextLen: next.length },
+            timestamp: Date.now()
+          })
+        }).catch(() => {});
+        // #endregion
       });
       return next;
     });
@@ -3408,6 +3436,24 @@ export default function NotesPage() {
         clientRequestId
       });
       setShareDebugLog(currentDebugLog);
+      // #region agent log
+      fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
+        body: JSON.stringify({
+          sessionId: "f9896b",
+          hypothesisId: "H1",
+          location: "notes/page.tsx:submitNotebookSharing:preThrow",
+          message: "share response before branch",
+          data: {
+            resOk: res.ok,
+            successField: data.success,
+            debugLen: currentDebugLog.length
+          },
+          timestamp: Date.now()
+        })
+      }).catch(() => {});
+      // #endregion
       if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
@@ -3417,6 +3463,20 @@ export default function NotesPage() {
       currentDebugLog = [currentDebugLog, `exception=${msg}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
         .filter(Boolean)
         .join("\n");
+      // #region agent log
+      fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
+        body: JSON.stringify({
+          sessionId: "f9896b",
+          hypothesisId: "H2",
+          location: "notes/page.tsx:submitNotebookSharing:catch",
+          message: "share catch entered",
+          data: { msgLen: msg.length, dbgLen: currentDebugLog.length },
+          timestamp: Date.now()
+        })
+      }).catch(() => {});
+      // #endregion
       setShareDebugLog(currentDebugLog);
       setShareModalError(msg);
       setShareLastDebugLog(currentDebugLog);
@@ -3437,6 +3497,20 @@ export default function NotesPage() {
         at: nowIso,
         debugLog: currentDebugLog
       });
+      // #region agent log
+      fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
+        body: JSON.stringify({
+          sessionId: "f9896b",
+          hypothesisId: "H4",
+          location: "notes/page.tsx:submitNotebookSharing:afterAppend",
+          message: "share failure persisted to state queue",
+          data: { entryIdLen: entryId.length, dbgLen: currentDebugLog.length },
+          timestamp: Date.now()
+        })
+      }).catch(() => {});
+      // #endregion
       queueMicrotask(() => {
         shareDiagnosticsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });

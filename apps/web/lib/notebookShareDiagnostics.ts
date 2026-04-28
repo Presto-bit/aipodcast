@@ -47,9 +47,31 @@ function tryParseLast(raw: string | null): ShareLastErrorPayload | null {
 /** 读取最近一次分享失败快照（scoped 优先，其次全局 fallback）。 */
 export function readNotebookShareLastError(): ShareLastErrorPayload | null {
   if (typeof window === "undefined") return null;
-  const scoped = tryParseLast(readLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY));
+  const scopedRaw = readLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY);
+  const scoped = tryParseLast(scopedRaw);
+  const fallback = tryParseLast(window.localStorage.getItem(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK));
+  const out = scoped || fallback;
+  // #region agent log
+  fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
+    body: JSON.stringify({
+      sessionId: "f9896b",
+      hypothesisId: "H3",
+      location: "notebookShareDiagnostics.ts:readNotebookShareLastError",
+      message: "read last share error",
+      data: {
+        scopedRawLen: scopedRaw ? scopedRaw.length : 0,
+        hasScoped: Boolean(scoped),
+        hasFallback: Boolean(fallback),
+        hasOut: Boolean(out)
+      },
+      timestamp: Date.now()
+    })
+  }).catch(() => {});
+  // #endregion
   if (scoped) return scoped;
-  return tryParseLast(window.localStorage.getItem(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK));
+  return fallback;
 }
 
 /** 读取分享失败历史（非 scoped，与笔记页一致）。 */
