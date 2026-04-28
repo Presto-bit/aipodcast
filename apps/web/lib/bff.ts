@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import type { IncomingHttpHeaders } from "http";
 import type { NextRequest } from "next/server";
+import { ingestLogEvent } from "../core/observability";
 import { resolveOrchestratorBaseUrl } from "./orchestratorBase";
 
 /** HttpOnly 会话 Cookie，BFF 读取后转发为 Authorization: Bearer（与编排器会话 token 一致） */
@@ -257,6 +258,18 @@ export async function fetchOrchestrator(path: string, opts: FetchOrchestratorOpt
         cache: opts.cache ?? "no-store",
         signal: sse || longLived ? undefined : AbortSignal.timeout(timeoutMs)
       });
+      if (!upstream.ok) {
+        const statusCode = upstream.status;
+        const upstreamRid = (upstream.headers.get("x-request-id") || rid).trim();
+        await ingestServerErrorEvent({
+          scope: "orchestrator_api_error",
+          requestId: upstreamRid,
+          route: path,
+          errorCode: `HTTP_${statusCode}`,
+          message: `Upstream returned ${statusCode} for ${method} ${path}`,
+          payload: { method, status: statusCode, path, attempt }
+        });
+      }
       return upstream;
     } catch (err) {
       lastError = err;
@@ -267,6 +280,14 @@ export async function fetchOrchestrator(path: string, opts: FetchOrchestratorOpt
 
   const e = new Error("upstream_unreachable");
   (e as { cause?: unknown }).cause = lastError;
+  await ingestServerErrorEvent({
+    scope: "orchestrator_api_error",
+    requestId: rid,
+    route: path,
+    errorCode: "UPSTREAM_UNREACHABLE",
+    message: describeOrchestratorUnreachable(lastError).slice(0, 600),
+    payload: { method, path }
+  });
   throw e;
 }
 
@@ -330,6 +351,33 @@ function requestIdFields(rid: string): Record<string, string> | Record<string, n
   const r = String(rid || "").trim();
   if (!r) return {};
   return { requestId: r, request_id: r };
+}
+
+async function ingestServerErrorEvent(params: {
+  scope: "bff_api_error" | "orchestrator_api_error";
+  requestId: string;
+  route: string;
+  errorCode: string;
+  message: string;
+  payload?: Record<string, unknown>;
+}): Promise<void> {
+  const requestId = String(params.requestId || "").trim();
+  if (!requestId) return;
+  try {
+    await ingestLogEvent({
+      scope: params.scope,
+      requestId,
+      level: "error",
+      errorCode: params.errorCode,
+      module: params.scope === "bff_api_error" ? "bff" : "orchestrator",
+      route: params.route,
+      message: params.message,
+      payload: params.payload || {},
+      logger: "error"
+    });
+  } catch {
+    // ignore log-ingest failures
+  }
 }
 
 export async function proxyJsonFromOrchestrator(path: string, opts: FetchOrchestratorOptions = {}): Promise<Response> {

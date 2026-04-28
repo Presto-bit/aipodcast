@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ingestLogEvent } from "../core/observability";
 import { fetchOrchestrator, getOrCreateRequestId, incomingAuthHeadersFrom } from "./bff";
 import { MAX_NOTE_UPLOAD_BYTES, validateNoteFileMeta } from "./noteUploadConstants";
 import { NOTES_PODCAST_PROJECT_NAME } from "./notesProject";
@@ -23,12 +24,24 @@ export async function handleNoteUploadPOST(req: NextRequest): Promise<Response> 
 }
 
 async function handleMultipartNoteUpload(req: NextRequest): Promise<Response> {
+  const requestId = getOrCreateRequestId(req);
   let form: FormData;
   try {
     form = await req.formData();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[note-upload] multipart parse error:", msg);
+    await ingestLogEvent({
+      scope: "bff_api_error",
+      requestId,
+      level: "error",
+      errorCode: "BFF_MULTIPART_PARSE_ERROR",
+      module: "bff",
+      route: "/api/note-upload",
+      message: msg.slice(0, 600),
+      payload: { route: "/api/note-upload" },
+      logger: "error"
+    });
     return NextResponse.json(
       { success: false, detail: "无法解析上传表单，若文件较大请确认网关与 Next 的请求体上限已放宽。" },
       { status: 400 }
@@ -79,7 +92,7 @@ async function handleMultipartNoteUpload(req: NextRequest): Promise<Response> {
       body: buf,
       headers: { "content-type": "application/octet-stream", ...incomingAuthHeadersFrom(req) },
       timeoutMs: 120_000,
-      requestId: getOrCreateRequestId(req)
+      requestId
     });
     const text = await upstream.text();
     return new Response(text, {
@@ -89,11 +102,23 @@ async function handleMultipartNoteUpload(req: NextRequest): Promise<Response> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[note-upload] multipart upstream error:", msg);
+    await ingestLogEvent({
+      scope: "bff_api_error",
+      requestId,
+      level: "error",
+      errorCode: "BFF_NOTE_UPLOAD_PROXY_ERROR",
+      module: "bff",
+      route: "/api/note-upload",
+      message: msg.slice(0, 600),
+      payload: { target: "/api/v1/notes/upload_raw" },
+      logger: "error"
+    });
     return NextResponse.json({ success: false, detail: `笔记上传处理失败：${msg}` }, { status: 500 });
   }
 }
 
 async function handleJsonNoteUpload(req: NextRequest): Promise<Response> {
+  const requestId = getOrCreateRequestId(req);
   let body: NoteUploadJsonBody;
   try {
     body = (await req.json()) as NoteUploadJsonBody;
@@ -130,7 +155,7 @@ async function handleJsonNoteUpload(req: NextRequest): Promise<Response> {
       body: raw,
       headers: { "content-type": "application/json", ...incomingAuthHeadersFrom(req) },
       timeoutMs: 120_000,
-      requestId: getOrCreateRequestId(req)
+      requestId
     });
     const text = await upstream.text();
     return new Response(text, {
@@ -140,6 +165,17 @@ async function handleJsonNoteUpload(req: NextRequest): Promise<Response> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[note-upload] json app route error:", msg);
+    await ingestLogEvent({
+      scope: "bff_api_error",
+      requestId,
+      level: "error",
+      errorCode: "BFF_NOTE_UPLOAD_JSON_PROXY_ERROR",
+      module: "bff",
+      route: "/api/notes/upload",
+      message: msg.slice(0, 600),
+      payload: { target: "/api/v1/notes/upload_json" },
+      logger: "error"
+    });
     return NextResponse.json({ success: false, detail: `笔记上传处理失败：${msg}` }, { status: 500 });
   }
 }

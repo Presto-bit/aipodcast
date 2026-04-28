@@ -1,7 +1,12 @@
 import { APP_ENV, APP_RELEASE } from "../core/config";
 import { getRedisClient } from "../infrastructure/redis/client";
 
-export const LOG_SCOPES = ["notebook_share_client", "frontend_global_error"] as const;
+export const LOG_SCOPES = [
+  "notebook_share_client",
+  "frontend_global_error",
+  "bff_api_error",
+  "orchestrator_api_error"
+] as const;
 export type LogScope = (typeof LOG_SCOPES)[number];
 type LogLevel = "info" | "debug";
 

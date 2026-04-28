@@ -14,7 +14,7 @@ type LogSwitchConfig = {
   updatedBy: string;
   reason: string;
 };
-type LogScope = "notebook_share_client" | "frontend_global_error";
+type LogScope = "notebook_share_client" | "frontend_global_error" | "bff_api_error" | "orchestrator_api_error";
 
 type LogAudit = {
   id: string;
@@ -66,7 +66,12 @@ function formatTime(tsMs: number | null | undefined): string {
 export default function AdminLogManagementPage() {
   const { getAuthHeaders } = useAuth();
   const [scope, setScope] = useState<LogScope>("notebook_share_client");
-  const [scopes, setScopes] = useState<LogScope[]>(["notebook_share_client", "frontend_global_error"]);
+  const [scopes, setScopes] = useState<LogScope[]>([
+    "notebook_share_client",
+    "frontend_global_error",
+    "bff_api_error",
+    "orchestrator_api_error"
+  ]);
   const [config, setConfig] = useState<LogSwitchConfig | null>(null);
   const [audits, setAudits] = useState<LogAudit[]>([]);
   const [enabled, setEnabled] = useState(false);

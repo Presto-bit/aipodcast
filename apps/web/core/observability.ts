@@ -18,7 +18,7 @@ type IngestClientLogParams = {
 /**
  * 统一客户端诊断事件写入：先检查 scope 开关/采样，再输出结构化日志并落地事件存储。
  */
-export async function ingestClientLogEvent(params: IngestClientLogParams): Promise<boolean> {
+export async function ingestLogEvent(params: IngestClientLogParams): Promise<boolean> {
   const allowed = await shouldIngestForScope(params.scope, params.requestId);
   if (!allowed) return false;
   const line = JSON.stringify({
@@ -49,4 +49,8 @@ export async function ingestClientLogEvent(params: IngestClientLogParams): Promi
     payload: params.payload
   });
   return true;
+}
+
+export async function ingestClientLogEvent(params: IngestClientLogParams): Promise<boolean> {
+  return ingestLogEvent(params);
 }
