@@ -29,7 +29,7 @@ NOTES_PODCAST_STUDIO_PROJECT = "notes-podcast-studio"
 DEFAULT_LIBRARY_NOTEBOOK_NAME = "默认资料库"
 
 # 「热门笔记本」发现列表：内容门槛与浏览去重（与 increment_public_notebook_view / list_popular_public_notebooks 一致）
-_POPULAR_MIN_SOURCES = 2
+_POPULAR_MIN_SOURCES = 1
 _POPULAR_MAX_SOURCE_STALE_DAYS = 365
 _POPULAR_VIEW_DEDUP_HOURS = 24
 

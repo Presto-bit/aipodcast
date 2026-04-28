@@ -644,7 +644,7 @@ function HubPopularNotebookGrid({
       {!popularLoading && popularItems.length === 0 ? (
         <EmptyState
           title="暂无热门分享"
-          description="在分享中勾选「在热门笔记本中展示」，并保证至少 2 条来源且近一年有更新；满足门槛后按质量分排序。"
+          description="在分享中勾选「在热门笔记本中展示」，并保证至少 1 条来源且近一年有更新；满足门槛后按质量分排序。"
           className="mt-4 border-dashed border-line bg-fill/40 py-8"
         />
       ) : null}
