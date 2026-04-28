@@ -54,6 +54,13 @@ type ErrorCluster = {
   latestAtMs: number;
 };
 
+const ALL_LOG_SCOPES: LogScope[] = [
+  "notebook_share_client",
+  "frontend_global_error",
+  "bff_api_error",
+  "orchestrator_api_error"
+];
+
 function formatTime(tsMs: number | null | undefined): string {
   if (!tsMs || !Number.isFinite(tsMs)) return "—";
   try {
@@ -66,12 +73,8 @@ function formatTime(tsMs: number | null | undefined): string {
 export default function AdminLogManagementPage() {
   const { getAuthHeaders } = useAuth();
   const scope: LogScope = "notebook_share_client";
-  const [scopes, setScopes] = useState<LogScope[]>([
-    "notebook_share_client",
-    "frontend_global_error",
-    "bff_api_error",
-    "orchestrator_api_error"
-  ]);
+  const [scopes, setScopes] = useState<LogScope[]>(ALL_LOG_SCOPES);
+  const [configsByScope, setConfigsByScope] = useState<Partial<Record<LogScope, LogSwitchConfig>>>({});
   const [config, setConfig] = useState<LogSwitchConfig | null>(null);
   const [audits, setAudits] = useState<LogAudit[]>([]);
   const [enabled, setEnabled] = useState(false);
@@ -143,30 +146,46 @@ export default function AdminLogManagementPage() {
   }
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/admin/log-management?scope=${encodeURIComponent(scope)}`, {
-      headers: getAuthHeaders(),
-      cache: "no-store"
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      success?: boolean;
-      error?: string;
-      scopes?: LogScope[];
-      config?: LogSwitchConfig;
-      audits?: LogAudit[];
-    };
-    if (!res.ok || !data.success || !data.config) {
-      throw new Error(pickErrorMessage(data, `加载失败 ${res.status}`));
+    const scopeList = scopes.length > 0 ? scopes : ALL_LOG_SCOPES;
+    const rows = await Promise.all(
+      scopeList.map(async (scopeItem) => {
+        const res = await fetch(`/api/admin/log-management?scope=${encodeURIComponent(scopeItem)}`, {
+          headers: getAuthHeaders(),
+          cache: "no-store"
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          error?: string;
+          scopes?: LogScope[];
+          config?: LogSwitchConfig;
+          audits?: LogAudit[];
+        };
+        if (!res.ok || !data.success || !data.config) {
+          throw new Error(pickErrorMessage(data, `加载失败 ${res.status}`));
+        }
+        return { scopeItem, data };
+      })
+    );
+
+    const nextConfigs: Partial<Record<LogScope, LogSwitchConfig>> = {};
+    const mergedAudits = rows.flatMap((r) => (Array.isArray(r.data.audits) ? r.data.audits : []));
+    for (const row of rows) {
+      nextConfigs[row.scopeItem] = row.data.config!;
     }
-    setConfig(data.config);
-    if (Array.isArray(data.scopes) && data.scopes.length > 0) {
-      setScopes(data.scopes);
+    setConfigsByScope(nextConfigs);
+    setConfig(nextConfigs[scope] || null);
+    setAudits(mergedAudits.sort((a, b) => b.atMs - a.atMs).slice(0, 80));
+    const enabledCount = Object.values(nextConfigs).filter((x) => Boolean(x?.enabled)).length;
+    setEnabled(enabledCount > 0);
+    const baseCfg = nextConfigs[scope] || Object.values(nextConfigs)[0] || null;
+    if (baseCfg) {
+      setTtlMinutes(
+        baseCfg.expiresAtMs ? String(Math.max(1, Math.round((baseCfg.expiresAtMs - Date.now()) / 60_000))) : "30"
+      );
+      setSampleRate(String(baseCfg.sampleRate ?? 1));
+      setMinLevel(baseCfg.minLevel === "debug" ? "debug" : "info");
     }
-    setAudits(Array.isArray(data.audits) ? data.audits : []);
-    setEnabled(Boolean(data.config.enabled));
-    setTtlMinutes(data.config.expiresAtMs ? String(Math.max(1, Math.round((data.config.expiresAtMs - Date.now()) / 60_000))) : "30");
-    setSampleRate(String(data.config.sampleRate ?? 1));
-    setMinLevel(data.config.minLevel === "debug" ? "debug" : "info");
-  }, [getAuthHeaders, scope]);
+  }, [getAuthHeaders, scope, scopes]);
 
   useEffect(() => {
     void load().catch((e) => setMsg(String(e instanceof Error ? e.message : e)));
@@ -232,29 +251,33 @@ export default function AdminLogManagementPage() {
     try {
       const ttl = Number.parseInt(ttlMinutes.trim(), 10);
       const sample = Number.parseFloat(sampleRate.trim());
-      const res = await fetch("/api/admin/log-management", {
-        method: "POST",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          enabled: nextEnabled,
-          scope,
-          ttlMinutes: Number.isFinite(ttl) ? ttl : 30,
-          sampleRate: Number.isFinite(sample) ? sample : 1,
-          minLevel,
-          reason: reason.trim()
+      const scopeList = scopes.length > 0 ? scopes : ALL_LOG_SCOPES;
+      await Promise.all(
+        scopeList.map(async (scopeItem) => {
+          const res = await fetch("/api/admin/log-management", {
+            method: "POST",
+            headers: { "content-type": "application/json", ...getAuthHeaders() },
+            body: JSON.stringify({
+              enabled: nextEnabled,
+              scope: scopeItem,
+              ttlMinutes: Number.isFinite(ttl) ? ttl : 30,
+              sampleRate: Number.isFinite(sample) ? sample : 1,
+              minLevel,
+              reason: reason.trim()
+            })
+          });
+          const data = (await res.json().catch(() => ({}))) as {
+            success?: boolean;
+            error?: unknown;
+            config?: LogSwitchConfig;
+          };
+          if (!res.ok || !data.success || !data.config) {
+            throw new Error(pickErrorMessage(data, `更新失败 ${res.status}`));
+          }
         })
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        error?: unknown;
-        config?: LogSwitchConfig;
-      };
-      if (!res.ok || !data.success || !data.config) {
-        throw new Error(pickErrorMessage(data, `更新失败 ${res.status}`));
-      }
-      setConfig(data.config);
-      setEnabled(data.config.enabled);
-      setMsg(data.config.enabled ? "日志调试已开启" : "日志调试已关闭");
+      );
+      setEnabled(nextEnabled);
+      setMsg(nextEnabled ? "日志调试（全部范围）已开启" : "日志调试（全部范围）已关闭");
       await load();
     } catch (e) {
       setMsg(String(e instanceof Error ? e.message : e));
@@ -274,7 +297,10 @@ export default function AdminLogManagementPage() {
         <h2 className="text-sm font-medium text-ink">当前状态</h2>
         <div className="mt-3 grid gap-2 text-sm text-muted md:grid-cols-2">
           <p>范围：全部</p>
-          <p>开关：{config?.enabled ? "开启" : "关闭"}</p>
+          <p>
+            开关：
+            {Object.values(configsByScope).filter((x) => Boolean(x?.enabled)).length}/{scopes.length} 已开启
+          </p>
           <p>环境：{config?.env || "—"}</p>
           <p>最小级别：{config?.minLevel || "—"}</p>
           <p>采样率：{typeof config?.sampleRate === "number" ? config.sampleRate : "—"}</p>
