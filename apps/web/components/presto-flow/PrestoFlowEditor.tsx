@@ -89,6 +89,17 @@ function initialWordMarkersFromSuggestions(
   return m;
 }
 
+function firstWordIdAtOrAfterMs(words: readonly ClipWord[], ms: number, excluded: ReadonlySet<string>): string | null {
+  let best: ClipWord | null = null;
+  for (const w of words) {
+    if (excluded.has(w.id)) continue;
+    if (w.s_ms >= ms - 2) {
+      if (!best || w.s_ms < best.s_ms) best = w;
+    }
+  }
+  return best?.id ?? null;
+}
+
 function suggestionFeedbackPayload(
   s: ClipEditSuggestion,
   kind: "suggestion_apply" | "suggestion_undo"
@@ -236,6 +247,30 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const lines = useMemo(() => groupSpeakerSentenceLines(buildFlowUnits(words)), [words]);
 
+  const silenceCutRanges = useMemo(() => {
+    const tl = project?.timeline_json;
+    const cutsRaw = tl && typeof tl === "object" ? (tl as { silence_cuts?: unknown }).silence_cuts : null;
+    if (!Array.isArray(cutsRaw)) return [];
+    const out: { start_ms: number; end_ms: number; cap_ms?: number | null }[] = [];
+    for (const it of cutsRaw) {
+      if (!it || typeof it !== "object") continue;
+      const rec = it as { start_ms?: unknown; end_ms?: unknown; cap_ms?: unknown };
+      const s = Number(rec.start_ms);
+      const e = Number(rec.end_ms);
+      if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue;
+      const rawCap = rec.cap_ms == null ? null : Number(rec.cap_ms);
+      const cap =
+        rawCap == null || !Number.isFinite(rawCap) ? null : Math.max(0, Math.min(10_000, Math.round(rawCap)));
+      out.push({ start_ms: Math.round(s), end_ms: Math.round(e), cap_ms: cap });
+    }
+    return out;
+  }, [project?.timeline_json]);
+
+  const silenceCutKeySet = useMemo(
+    () => new Set(silenceCutRanges.map((x) => `sil:${Math.round(x.start_ms)}-${Math.round(x.end_ms)}`)),
+    [silenceCutRanges]
+  );
+
   const renameSpeaker = useCallback(
     (speaker: number, nextName: string) => {
       const name = nextName.trim();
@@ -252,6 +287,62 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       });
     },
     [projectId]
+  );
+
+  const upsertSilenceCut = useCallback(
+    async (startMs: number, endMs: number, opts?: { remove?: boolean; capMs?: number | null }) => {
+      const key = `sil:${Math.round(startMs)}-${Math.round(endMs)}`;
+      const prevTimeline = project?.timeline_json && typeof project.timeline_json === "object" ? project.timeline_json : {};
+      const normalizedCap =
+        opts?.capMs == null ? null : Math.max(0, Math.min(10_000, Math.round(Number(opts.capMs) || 0)));
+      const nextRanges = (() => {
+        const kept = silenceCutRanges.filter(
+          (x) => !(Math.round(x.start_ms) === Math.round(startMs) && Math.round(x.end_ms) === Math.round(endMs))
+        );
+        if (opts?.remove) return kept;
+        return [
+          ...kept,
+          { start_ms: Math.round(startMs), end_ms: Math.round(endMs), cap_ms: normalizedCap }
+        ];
+      })();
+      const nextTimeline = {
+        ...prevTimeline,
+        silence_cuts: nextRanges
+      };
+      setProject((prev) => (prev ? { ...prev, timeline_json: nextTimeline } : prev));
+      try {
+        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
+          method: "PUT",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ timeline: nextTimeline })
+        });
+        const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+        if (!res.ok || data.success === false) {
+          throw new Error(data.detail || `保存静音裁剪失败 ${res.status}`);
+        }
+      } catch (e) {
+        setProject((prev) => (prev ? { ...prev, timeline_json: prevTimeline } : prev));
+        setErr(String(e instanceof Error ? e.message : e));
+      }
+    },
+    [getAuthHeaders, project?.timeline_json, projectId, silenceCutRanges]
+  );
+
+  const toggleSilenceCut = useCallback(
+    async (startMs: number, endMs: number) => {
+      const key = `sil:${Math.round(startMs)}-${Math.round(endMs)}`;
+      const removing = silenceCutKeySet.has(key);
+      await upsertSilenceCut(startMs, endMs, removing ? { remove: true } : { capMs: 0 });
+    },
+    [silenceCutKeySet, upsertSilenceCut]
+  );
+
+  const setSilenceCapMs = useCallback(
+    async (startMs: number, endMs: number, capMs: number) => {
+      await upsertSilenceCut(startMs, endMs, { capMs });
+    },
+    [upsertSilenceCut]
   );
 
   const scriptSearchHitIdsOrdered = useMemo(
@@ -284,6 +375,40 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     if (!q) return new Set(tic);
     return new Set([...tic, ...searchHlWordIds]);
   }, [words, excluded, roughCutExemptSet, scriptSearch, searchHlWordIds, dismissedRoughKeys]);
+
+  const transcriptSilenceCards = useMemo(() => {
+    const segs = silenceSegments;
+    if (!Array.isArray(segs) || !segs.length) return [];
+    const threshold = 2500;
+    const rows: {
+      start: number;
+      end: number;
+      dur: number;
+      key: string;
+      cut: boolean;
+      capMs: number | null;
+      jumpWordId: string | null;
+    }[] = [];
+    for (const s of segs) {
+      const start = Number(s.start_ms);
+      const end = Number(s.end_ms);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+      const dur = end - start;
+      if (dur < threshold) continue;
+      const key = `sil:${Math.round(start)}-${Math.round(end)}`;
+      rows.push({
+        start: Math.round(start),
+        end: Math.round(end),
+        dur,
+        key,
+        cut: silenceCutKeySet.has(key),
+        capMs: (silenceCutRanges.find((x) => `sil:${Math.round(x.start_ms)}-${Math.round(x.end_ms)}` === key)?.cap_ms ??
+          null) as number | null,
+        jumpWordId: firstWordIdAtOrAfterMs(words, end, excluded)
+      });
+    }
+    return rows.slice(0, 24);
+  }, [excluded, silenceCutKeySet, silenceCutRanges, silenceSegments, words]);
 
   const searchAllHitsSelected = useMemo(() => {
     if (scriptSearchHitIdsOrdered.length === 0) return false;
@@ -762,6 +887,16 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       if (e.key === "Backspace" || e.key === "Delete") {
         const el = document.activeElement as HTMLElement | null;
         if (isTypingTarget(el)) return;
+        const silenceEl = el?.closest?.("[data-silence-start][data-silence-end]") as HTMLElement | null;
+        if (silenceEl) {
+          const s = Number(silenceEl.getAttribute("data-silence-start"));
+          const ee = Number(silenceEl.getAttribute("data-silence-end"));
+          if (Number.isFinite(s) && Number.isFinite(ee) && ee > s) {
+            e.preventDefault();
+            void toggleSilenceCut(Math.round(s), Math.round(ee));
+            return;
+          }
+        }
 
         const bulk = [...multiSelectIds];
         if (bulk.length > 0) {
@@ -923,7 +1058,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     words,
     scheduleSaveExcluded,
     hasServerAudio,
-    flushExcludedSave
+    flushExcludedSave,
+    toggleSilenceCut
   ]);
 
   const onRangeDragPointerDown = useCallback((w: ClipWord, e: ReactPointerEvent<HTMLButtonElement>) => {
@@ -1567,6 +1703,13 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       markersByWordId={transcriptMarkers}
                       roughCutHighlightIds={roughCutHighlightIds}
                       dismissedRoughKeys={dismissedRoughKeys}
+                      silenceCards={transcriptSilenceCards}
+                      onToggleSilenceCut={(s, e) => void toggleSilenceCut(s, e)}
+                      onSetSilenceCapMs={(s, e, cap) => void setSilenceCapMs(s, e, cap)}
+                      onJumpToSilence={(seg) => {
+                        if (seg.jumpWordId) jumpToWordInTranscript(seg.jumpWordId);
+                        else seekPreviewMs(seg.end + 1);
+                      }}
                     />
                   </div>
                 </section>
@@ -1705,6 +1848,13 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         markersByWordId={transcriptMarkers}
                         roughCutHighlightIds={roughCutHighlightIds}
                         dismissedRoughKeys={dismissedRoughKeys}
+                        silenceCards={transcriptSilenceCards}
+                        onToggleSilenceCut={(s, e) => void toggleSilenceCut(s, e)}
+                        onSetSilenceCapMs={(s, e, cap) => void setSilenceCapMs(s, e, cap)}
+                        onJumpToSilence={(seg) => {
+                          if (seg.jumpWordId) jumpToWordInTranscript(seg.jumpWordId);
+                          else seekPreviewMs(seg.end + 1);
+                        }}
                       />
                     </div>
                   </section>
@@ -1802,9 +1952,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             onError={(msg) => setErr(msg)}
                             exemptCores={roughCutExemptSet}
                             silenceSegments={silenceSegments}
+                            silenceCutKeys={silenceCutKeySet}
                             onJumpWord={jumpToWordInTranscript}
                             onSeekPreviewMs={seekPreviewMs}
                             onRefreshSilences={loadSilenceSegments}
+                            onToggleSilenceCut={toggleSilenceCut}
+                            onSetSilenceCapMs={setSilenceCapMs}
                             roughCutSuggestions={roughPanelSuggestions}
                             onExecuteSuggestion={onExecuteSuggestion}
                             dismissedRoughKeys={dismissedRoughKeys}

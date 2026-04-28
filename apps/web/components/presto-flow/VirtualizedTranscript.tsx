@@ -91,6 +91,17 @@ type Props = {
   dismissedRoughKeys?: ReadonlySet<string>;
   /** 与内部滚动容器同步，供父级拖选 hit-test */
   transcriptScrollRef?: MutableRefObject<HTMLDivElement | null>;
+  silenceCards?: ReadonlyArray<{
+    key: string;
+    start: number;
+    end: number;
+    cut: boolean;
+    capMs: number | null;
+    jumpWordId: string | null;
+  }>;
+  onToggleSilenceCut?: (startMs: number, endMs: number) => void;
+  onSetSilenceCapMs?: (startMs: number, endMs: number, capMs: number) => void;
+  onJumpToSilence?: (card: { start: number; end: number; jumpWordId: string | null }) => void;
 };
 
 const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(function VirtualizedTranscript(
@@ -120,7 +131,11 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
     markersByWordId,
     roughCutHighlightIds,
     dismissedRoughKeys,
-    transcriptScrollRef
+    transcriptScrollRef,
+    silenceCards,
+    onToggleSilenceCut,
+    onSetSilenceCapMs,
+    onJumpToSilence
   },
   ref
 ) {
@@ -144,6 +159,15 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
     if (transcriptScrollRef) transcriptScrollRef.current = el;
   };
   const count = lines.length;
+  const lineEndMs = (line: SpeakerLine): number => {
+    let end = 0;
+    for (const u of line.units) {
+      if (u.kind === "single") end = Math.max(end, u.word.e_ms);
+      else if (u.words.length) end = Math.max(end, u.words[u.words.length - 1]!.e_ms);
+    }
+    return end;
+  };
+  const lineStart = (line: SpeakerLine): number => lineStartMs(line) ?? 0;
 
   const virtualizer = useVirtualizer({
     count,
@@ -197,6 +221,9 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
           const speaker = speakerNames?.[line.speaker] ?? speakerLabel(line.speaker, hostLabel, guestLabel);
           const startTimeLabel = formatLineStart(lineStartMs(line));
           const inEdit = editingSpeaker === line.speaker;
+          const prevLineEnd = vi.index > 0 ? lineEndMs(lines[vi.index - 1]!) : -1;
+          const curLineStart = lineStart(line);
+          const inlineSilenceCards = (silenceCards || []).filter((c) => c.start >= prevLineEnd && c.start < curLineStart);
           return (
             <div
               key={vi.key}
@@ -211,6 +238,68 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
               aria-label={linePlainText(line)}
               aria-current={linePlaybackActive ? "true" : undefined}
             >
+              {inlineSilenceCards.length > 0 ? (
+                <div className="mb-1.5 flex flex-wrap gap-1.5 rounded-lg border border-line/60 bg-fill/20 px-2 py-1">
+                  {inlineSilenceCards.map((seg) => (
+                    <div
+                      key={`inline-${seg.key}`}
+                      className={[
+                        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px]",
+                        seg.cut ? "border-brand/40 bg-brand/10 text-brand" : "border-line bg-surface text-ink"
+                      ].join(" ")}
+                    >
+                      <button
+                        type="button"
+                        data-silence-start={seg.start}
+                        data-silence-end={seg.end}
+                        className="font-mono hover:text-brand"
+                        onClick={() => onJumpToSilence?.({ start: seg.start, end: seg.end, jumpWordId: seg.jumpWordId })}
+                      >
+                        {`${formatLineStart(seg.start)}-${formatLineStart(seg.end)}`}
+                      </button>
+                      <button
+                        type="button"
+                        data-silence-start={seg.start}
+                        data-silence-end={seg.end}
+                        className="rounded border border-line/70 px-1 hover:bg-fill"
+                        onClick={() => onSetSilenceCapMs?.(seg.start, seg.end, 200)}
+                      >
+                        200ms
+                      </button>
+                      <button
+                        type="button"
+                        data-silence-start={seg.start}
+                        data-silence-end={seg.end}
+                        className={[
+                          "rounded border px-1 hover:bg-fill",
+                          seg.capMs === 300 ? "border-brand/50 text-brand" : "border-line/70"
+                        ].join(" ")}
+                        onClick={() => onSetSilenceCapMs?.(seg.start, seg.end, 300)}
+                      >
+                        300ms
+                      </button>
+                      <button
+                        type="button"
+                        data-silence-start={seg.start}
+                        data-silence-end={seg.end}
+                        className="rounded border border-line/70 px-1 hover:bg-fill"
+                        onClick={() => onSetSilenceCapMs?.(seg.start, seg.end, 500)}
+                      >
+                        500ms
+                      </button>
+                      <button
+                        type="button"
+                        data-silence-start={seg.start}
+                        data-silence-end={seg.end}
+                        className="rounded border border-line/70 px-1 hover:bg-fill"
+                        onClick={() => onToggleSilenceCut?.(seg.start, seg.end)}
+                      >
+                        {seg.cut ? "恢复" : "剪掉"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <div className="border-b border-line/40 pb-2 pt-1">
                 <div className="mb-1.5 flex items-center gap-2 text-left select-none">
                   {inEdit ? (

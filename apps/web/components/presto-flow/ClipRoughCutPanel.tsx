@@ -92,6 +92,9 @@ type Props = {
   onJumpWord?: (wordId: string, opts?: { lineEndAutopause?: boolean }) => void;
   onSeekPreviewMs?: (ms: number) => void;
   onRefreshSilences?: () => void | Promise<void>;
+  silenceCutKeys?: ReadonlySet<string>;
+  onToggleSilenceCut?: (startMs: number, endMs: number) => void;
+  onSetSilenceCapMs?: (startMs: number, endMs: number, capMs: number) => void;
   /** 口癖 / 叠字 / 规则 / AI 等可执行建议（已在外层过滤 dismiss） */
   roughCutSuggestions: readonly ClipEditSuggestion[];
   onExecuteSuggestion: (s: ClipEditSuggestion) => void;
@@ -136,6 +139,9 @@ export default function ClipRoughCutPanel({
   onJumpWord,
   onSeekPreviewMs,
   onRefreshSilences,
+  silenceCutKeys,
+  onToggleSilenceCut,
+  onSetSilenceCapMs,
   roughCutSuggestions,
   onExecuteSuggestion,
   dismissedRoughKeys,
@@ -334,6 +340,7 @@ export default function ClipRoughCutPanel({
   }, [onError, onRefreshSilences]);
 
   const hasAnyHint = hasVerbalAdjust || longSilenceRows.length > 0;
+  const silenceCutCount = silenceCutKeys?.size ?? 0;
 
   const exemptNonEmptyLineCount = useMemo(
     () => exemptDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length,
@@ -695,6 +702,7 @@ export default function ClipRoughCutPanel({
             {pauseEnabled ? t("presto.flow.roughCut.pauseSectionExportOn") : t("presto.flow.roughCut.pauseSectionExportOff")}
             {" · "}
             {t("presto.flow.roughCut.pauseSectionSilences").replace("{n}", String(longSilenceRows.length))}
+            {silenceCutCount > 0 ? ` · 已裁 ${silenceCutCount}` : ""}
           </span>
         </button>
         {pauseSectionOpen ? (
@@ -716,7 +724,7 @@ export default function ClipRoughCutPanel({
                   const bridge = silenceBridgeLabel(words, r.start, r.end, excluded);
                   const jumpId = firstWordIdAtOrAfterMs(words, r.end, excluded);
                   const rowDismissed = dismissedRoughKeys.has(sk);
-                  const scissorsIsRestore = pauseEnabled;
+                  const scissorsIsRestore = Boolean(silenceCutKeys?.has(sk));
                   return (
                     <li
                       key={sk}
@@ -736,7 +744,8 @@ export default function ClipRoughCutPanel({
                           title={t("presto.flow.roughCut.pauseSilenceJumpTip")}
                           className={[
                             "w-full truncate text-left font-mono text-[10px] text-muted transition hover:text-brand",
-                            (!jumpId || !onJumpWord) && !onSeekPreviewMs ? "pointer-events-none opacity-40" : ""
+                            (!jumpId || !onJumpWord) && !onSeekPreviewMs ? "pointer-events-none opacity-40" : "",
+                            scissorsIsRestore ? "line-through decoration-ink/50" : ""
                           ].join(" ")}
                           onClick={() => {
                             if (jumpId && onJumpWord) onJumpWord(jumpId);
@@ -752,23 +761,49 @@ export default function ClipRoughCutPanel({
                       <div className="flex shrink-0 items-center gap-0.5">
                         <button
                           type="button"
-                          disabled={pauseBusy}
-                          className={iconBtnClass(pauseBusy)}
+                          disabled={!onSetSilenceCapMs}
+                          className={iconBtnClass(!onSetSilenceCapMs)}
+                          title={t("presto.flow.roughCut.pauseSilenceScissorsOnTip")}
+                          aria-label={t("presto.flow.roughCut.pauseSilenceScissorsOnTip")}
+                          onClick={() => onSetSilenceCapMs?.(r.start, r.end, 200)}
+                        >
+                          <span className="text-[9px] font-semibold">200</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!onSetSilenceCapMs}
+                          className={iconBtnClass(!onSetSilenceCapMs)}
+                          title={t("presto.flow.roughCut.pauseSilenceScissorsOnTip")}
+                          aria-label={t("presto.flow.roughCut.pauseSilenceScissorsOnTip")}
+                          onClick={() => onSetSilenceCapMs?.(r.start, r.end, 300)}
+                        >
+                          <span className="text-[9px] font-semibold">300</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!onSetSilenceCapMs}
+                          className={iconBtnClass(!onSetSilenceCapMs)}
+                          title={t("presto.flow.roughCut.pauseSilenceScissorsOnTip")}
+                          aria-label={t("presto.flow.roughCut.pauseSilenceScissorsOnTip")}
+                          onClick={() => onSetSilenceCapMs?.(r.start, r.end, 500)}
+                        >
+                          <span className="text-[9px] font-semibold">500</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={pauseBusy || !onToggleSilenceCut}
+                          className={iconBtnClass(pauseBusy || !onToggleSilenceCut)}
                           title={
                             scissorsIsRestore
-                              ? t("presto.flow.roughCut.pauseSilenceScissorsOffTip")
-                              : t("presto.flow.roughCut.pauseSilenceScissorsOnTip")
+                              ? t("presto.flow.roughCut.iconRestoreTip")
+                              : t("presto.flow.roughCut.iconCutTip")
                           }
                           aria-label={
                             scissorsIsRestore
-                              ? t("presto.flow.roughCut.pauseSilenceScissorsOffTip")
-                              : t("presto.flow.roughCut.pauseSilenceScissorsOnTip")
+                              ? t("presto.flow.roughCut.iconRestoreTip")
+                              : t("presto.flow.roughCut.iconCutTip")
                           }
-                          onClick={() =>
-                            void savePausePolicy(
-                              pauseEnabled ? null : { enabled: true, long_gap_ms: 2000, cap_ms: 500 }
-                            )
-                          }
+                          onClick={() => onToggleSilenceCut?.(r.start, r.end)}
                         >
                           <Scissors className="h-3.5 w-3.5" aria-hidden />
                         </button>

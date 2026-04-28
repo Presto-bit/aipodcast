@@ -43,6 +43,7 @@ export type ClipTimelineTrack = {
 export type ClipTimelineDoc = {
   version?: number;
   tracks?: ClipTimelineTrack[];
+  silence_cuts?: { start_ms: number; end_ms: number; cap_ms?: number | null }[];
 };
 
 export type ClipStudioSnapshot = {

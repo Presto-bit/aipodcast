@@ -1627,6 +1627,30 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
             long_pause_cap_ms = max(50, min(5000, int(pol_raw.get("cap_ms", 500))))
         except (TypeError, ValueError):
             long_pause_ms, long_pause_cap_ms = 0, 500
+    silence_cuts: list[tuple[int, int, int]] = []
+    tl_raw = row.get("timeline_json")
+    if isinstance(tl_raw, str):
+        try:
+            tl_raw = json.loads(tl_raw)
+        except Exception:
+            tl_raw = None
+    if isinstance(tl_raw, dict):
+        cuts_raw = tl_raw.get("silence_cuts")
+        if isinstance(cuts_raw, list):
+            for it in cuts_raw:
+                if not isinstance(it, dict):
+                    continue
+                try:
+                    s = int(it.get("start_ms"))
+                    e = int(it.get("end_ms"))
+                except (TypeError, ValueError):
+                    continue
+                if e > s:
+                    try:
+                        cap = int(it.get("cap_ms")) if it.get("cap_ms") is not None else 0
+                    except (TypeError, ValueError):
+                        cap = 0
+                    silence_cuts.append((s, e, max(0, min(10_000, cap))))
     try:
         b = get_object_bytes(audio_key)
         out = export_clip_mp3_from_bytes(
@@ -1636,6 +1660,7 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
             merge_gap_ms=merge_gap_ms,
             long_pause_ms=long_pause_ms,
             long_pause_cap_ms=long_pause_cap_ms,
+            silence_cut_ranges=silence_cuts,
             loudnorm_i_lufs=resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs")),
         )
         out_key = f"clip/{owner or 'anon'}/{pid}/export.mp3"

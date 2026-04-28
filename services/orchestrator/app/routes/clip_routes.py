@@ -255,6 +255,36 @@ def _serialize_clip_row(row: dict[str, Any]) -> dict[str, Any]:
     return d
 
 
+def _silence_cut_ranges_from_timeline_doc(doc: Any) -> list[tuple[int, int, int]]:
+    if isinstance(doc, str):
+        try:
+            doc = json.loads(doc)
+        except Exception:
+            doc = None
+    if not isinstance(doc, dict):
+        return []
+    raw = doc.get("silence_cuts")
+    if not isinstance(raw, list):
+        return []
+    out: list[tuple[int, int, int]] = []
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        try:
+            s = int(it.get("start_ms"))
+            e = int(it.get("end_ms"))
+        except (TypeError, ValueError):
+            continue
+        if e <= s:
+            continue
+        try:
+            cap = int(it.get("cap_ms")) if it.get("cap_ms") is not None else 0
+        except (TypeError, ValueError):
+            cap = 0
+        out.append((s, e, max(0, min(10_000, cap))))
+    return out
+
+
 @router.post("/clip/projects")
 def clip_create_project(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
     uid = _owner_uuid(request)
@@ -758,6 +788,7 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
             long_pause_ms, long_pause_cap_ms = 0, 500
     owner_seg = uid or "anon"
     pk = _wordchain_preview_object_key(owner_seg, project_id)
+    silence_cuts = _silence_cut_ranges_from_timeline_doc(row.get("timeline_json"))
     try:
         raw = get_object_bytes(audio_key)
         out = export_clip_mp3_from_bytes(
@@ -767,6 +798,7 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
             merge_gap_ms=merge_gap_ms,
             long_pause_ms=long_pause_ms,
             long_pause_cap_ms=long_pause_cap_ms,
+            silence_cut_ranges=silence_cuts,
             loudnorm_i_lufs=resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs")),
         )
     except Exception as exc:

@@ -146,6 +146,7 @@ def _word_chain_segments(
     max_bridge_ms: int,
     long_pause_ms: int,
     long_pause_cap_ms: int,
+    silence_cut_ranges: list[tuple[int, int, int]] | None = None,
 ) -> list[tuple[int, int]]:
     """与逐段导出相同的 (起点 ms, 时长 ms) 序列，供单次 filter_complex 使用。"""
     spans: list[tuple[int, int]] = []
@@ -163,6 +164,16 @@ def _word_chain_segments(
         gap = max(0, ns - e)
         if gap <= 0:
             continue
+        if silence_cut_ranges:
+            cut_ms = 0
+            for rs, re, cap_ms in silence_cut_ranges:
+                ov = min(ns, re) - max(e, rs)
+                if ov > 0:
+                    cut_ms += max(0, ov - max(0, cap_ms))
+            if cut_ms > 0:
+                gap = max(0, gap - cut_ms)
+            if gap <= 0:
+                continue
         if long_pause_ms > 0 and gap >= long_pause_ms:
             bridge = min(gap, max(long_pause_cap_ms, 1))
         else:
@@ -423,6 +434,7 @@ def _export_word_chain_with_bridges(
     afade_ms: int,
     long_pause_ms: int = 0,
     long_pause_cap_ms: int = 500,
+    silence_cut_ranges: list[tuple[int, int, int]] | None = None,
     segment_lame_q: int = 4,
 ) -> Path:
     """逐词切段，词间仅保留源音频中最多 max_bridge_ms 的「桥接」静音（含自然 room tone），再拼接。"""
@@ -431,6 +443,7 @@ def _export_word_chain_with_bridges(
         max_bridge_ms=max_bridge_ms,
         long_pause_ms=long_pause_ms,
         long_pause_cap_ms=long_pause_cap_ms,
+        silence_cut_ranges=silence_cut_ranges,
     )
     if not segments:
         raise RuntimeError("词链导出：无有效片段")
@@ -508,6 +521,7 @@ def export_clip_mp3_from_bytes(
     final_lame_q: int = 2,
     range_start_ms: int | None = None,
     range_end_ms: int | None = None,
+    silence_cut_ranges: list[tuple[int, int, int]] | None = None,
     metadata: dict[str, str] | None = None,
 ) -> bytes:
     """
@@ -542,7 +556,8 @@ def export_clip_mp3_from_bytes(
     seg_q = max(0, min(9, int(segment_lame_q)))
     fin_q = max(0, min(9, int(final_lame_q)))
 
-    use_word_chain = max_bridge_ms > 0 and word_chain_max > 0 and len(kept) <= word_chain_max
+    has_silence_cuts = bool(silence_cut_ranges)
+    use_word_chain = has_silence_cuts or (max_bridge_ms > 0 and word_chain_max > 0 and len(kept) <= word_chain_max)
 
     ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
     with tempfile.TemporaryDirectory(prefix="fyv_clip_export_") as td:
@@ -561,6 +576,7 @@ def export_clip_mp3_from_bytes(
                 afade_ms=afade_ms,
                 long_pause_ms=max(0, int(long_pause_ms)),
                 long_pause_cap_ms=max(50, min(5000, int(long_pause_cap_ms))),
+                silence_cut_ranges=silence_cut_ranges,
                 segment_lame_q=seg_q,
             )
         else:
