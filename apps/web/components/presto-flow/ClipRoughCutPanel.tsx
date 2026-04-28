@@ -95,6 +95,15 @@ type Props = {
   silenceCutKeys?: ReadonlySet<string>;
   onToggleSilenceCut?: (startMs: number, endMs: number) => void;
   onSetSilenceCapMs?: (startMs: number, endMs: number, capMs: number) => void;
+  audioEvents?: ReadonlyArray<{
+    id: string;
+    start_ms: number;
+    end_ms: number;
+    label: string;
+    confidence: number | null;
+    action: "keep" | "cut" | "duck";
+  }>;
+  onSetAudioEventAction?: (eventId: string, nextAction: "keep" | "cut" | "duck") => void;
   /** 口癖 / 叠字 / 规则 / AI 等可执行建议（已在外层过滤 dismiss） */
   roughCutSuggestions: readonly ClipEditSuggestion[];
   onExecuteSuggestion: (s: ClipEditSuggestion) => void;
@@ -142,6 +151,8 @@ export default function ClipRoughCutPanel({
   silenceCutKeys,
   onToggleSilenceCut,
   onSetSilenceCapMs,
+  audioEvents,
+  onSetAudioEventAction,
   roughCutSuggestions,
   onExecuteSuggestion,
   dismissedRoughKeys,
@@ -341,6 +352,7 @@ export default function ClipRoughCutPanel({
 
   const hasAnyHint = hasVerbalAdjust || longSilenceRows.length > 0;
   const silenceCutCount = silenceCutKeys?.size ?? 0;
+  const audioEventRows = (audioEvents || []).slice(0, 60);
 
   const exemptNonEmptyLineCount = useMemo(
     () => exemptDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length,
@@ -631,6 +643,54 @@ export default function ClipRoughCutPanel({
           </>
         )}
 
+      </section>
+
+      <section className="rounded-xl border border-line bg-fill/30 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-[11px] font-semibold text-ink">非语音事件（P2 预留）</p>
+          <span className="text-[10px] text-muted">{audioEventRows.length}</span>
+        </div>
+        {audioEventRows.length === 0 ? (
+          <p className="text-[10px] text-muted">暂无事件数据（后续接入 AED 自动填充）</p>
+        ) : (
+          <ul className="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
+            {audioEventRows.map((ev) => (
+              <li
+                key={ev.id}
+                className="flex items-center gap-2 rounded-lg border border-line/80 bg-surface/70 px-2 py-1.5 text-[10px]"
+              >
+                <span className="shrink-0 rounded bg-fill px-1 py-px font-semibold uppercase">{ev.label}</span>
+                <span className="shrink-0 font-mono text-muted">
+                  {formatMs(ev.start_ms)}-{formatMs(ev.end_ms)}
+                </span>
+                {ev.confidence != null ? (
+                  <span className="shrink-0 text-muted">{`${Math.round(ev.confidence * 100)}%`}</span>
+                ) : null}
+                <div className="min-w-0 flex-1" />
+                <button
+                  type="button"
+                  className={[
+                    "rounded border px-1.5 py-0.5",
+                    ev.action === "keep" ? "border-brand/50 text-brand" : "border-line text-muted hover:bg-fill"
+                  ].join(" ")}
+                  onClick={() => onSetAudioEventAction?.(ev.id, "keep")}
+                >
+                  保留
+                </button>
+                <button
+                  type="button"
+                  className={[
+                    "rounded border px-1.5 py-0.5",
+                    ev.action === "cut" ? "border-danger/60 text-danger-ink" : "border-line text-muted hover:bg-fill"
+                  ].join(" ")}
+                  onClick={() => onSetAudioEventAction?.(ev.id, "cut")}
+                >
+                  删除
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="rounded-xl border border-line bg-fill/30 p-3">

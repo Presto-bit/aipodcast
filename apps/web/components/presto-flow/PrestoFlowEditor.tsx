@@ -174,6 +174,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const skipNextWordActivateRef = useRef(false);
   const rangeDragAnchorRef = useRef<string | null>(null);
   const rangeDragMovedRef = useRef(false);
+  /** 记录当前多选是否来源于左键拖选，用于 Delete/Backspace 批量删除 */
+  const leftDragMultiSelectRef = useRef(false);
   const excludedRef = useRef(excluded);
   /** 转写/导出轮询：隐藏标签页时暂停，减少无效全量拉工程 */
   const projectBusyPollVisibleRef = useRef(true);
@@ -200,6 +202,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   useEffect(() => {
     setMultiSelectIds(new Set());
     rangeAnchorWordIdRef.current = null;
+    leftDragMultiSelectRef.current = false;
   }, [projectId]);
 
   useEffect(() => {
@@ -270,6 +273,48 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     () => new Set(silenceCutRanges.map((x) => `sil:${Math.round(x.start_ms)}-${Math.round(x.end_ms)}`)),
     [silenceCutRanges]
   );
+
+  const audioEvents = useMemo(() => {
+    const tl = project?.timeline_json;
+    const raw = tl && typeof tl === "object" ? (tl as { audio_events?: unknown }).audio_events : null;
+    if (!Array.isArray(raw)) return [];
+    const out: {
+      id: string;
+      start_ms: number;
+      end_ms: number;
+      label: string;
+      confidence: number | null;
+      action: "keep" | "cut" | "duck";
+    }[] = [];
+    for (const it of raw) {
+      if (!it || typeof it !== "object") continue;
+      const rec = it as {
+        id?: unknown;
+        start_ms?: unknown;
+        end_ms?: unknown;
+        label?: unknown;
+        confidence?: unknown;
+        action?: unknown;
+      };
+      const s = Number(rec.start_ms);
+      const e = Number(rec.end_ms);
+      if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue;
+      const label = String(rec.label || "").trim() || "noise";
+      const actionRaw = String(rec.action || "keep").toLowerCase();
+      const action: "keep" | "cut" | "duck" =
+        actionRaw === "cut" ? "cut" : actionRaw === "duck" ? "duck" : "keep";
+      const confRaw = rec.confidence == null ? null : Number(rec.confidence);
+      out.push({
+        id: String(rec.id || `${label}-${Math.round(s)}-${Math.round(e)}`),
+        start_ms: Math.round(s),
+        end_ms: Math.round(e),
+        label,
+        confidence: confRaw != null && Number.isFinite(confRaw) ? confRaw : null,
+        action
+      });
+    }
+    return out;
+  }, [project?.timeline_json]);
 
   const renameSpeaker = useCallback(
     (speaker: number, nextName: string) => {
@@ -343,6 +388,35 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       await upsertSilenceCut(startMs, endMs, { capMs });
     },
     [upsertSilenceCut]
+  );
+
+  const setAudioEventAction = useCallback(
+    async (eventId: string, nextAction: "keep" | "cut" | "duck") => {
+      const prevTimeline = project?.timeline_json && typeof project.timeline_json === "object" ? project.timeline_json : {};
+      const prevEvents = audioEvents;
+      const nextEvents = prevEvents.map((ev) => (ev.id === eventId ? { ...ev, action: nextAction } : ev));
+      const nextTimeline = {
+        ...prevTimeline,
+        audio_events: nextEvents
+      };
+      setProject((prev) => (prev ? { ...prev, timeline_json: nextTimeline } : prev));
+      try {
+        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
+          method: "PUT",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ timeline: nextTimeline })
+        });
+        const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+        if (!res.ok || data.success === false) {
+          throw new Error(data.detail || `保存事件策略失败 ${res.status}`);
+        }
+      } catch (e) {
+        setProject((prev) => (prev ? { ...prev, timeline_json: prevTimeline } : prev));
+        setErr(String(e instanceof Error ? e.message : e));
+      }
+    },
+    [audioEvents, getAuthHeaders, project?.timeline_json, projectId]
   );
 
   const scriptSearchHitIdsOrdered = useMemo(
@@ -655,6 +729,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     if (!scriptSearchHitIdsOrdered.length) return;
     setSearchHlWordIds(new Set(scriptSearchHitIdsOrdered));
     setMultiSelectIds(new Set(scriptSearchHitIdsOrdered));
+    leftDragMultiSelectRef.current = false;
     const last = scriptSearchHitIdsOrdered[scriptSearchHitIdsOrdered.length - 1]!;
     setFocusedWordId(last);
   }, [scriptSearchHitIdsOrdered]);
@@ -882,6 +957,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       if (e.key === "Escape" && multiSelectIds.size > 0) {
         e.preventDefault();
         setMultiSelectIds(new Set());
+        leftDragMultiSelectRef.current = false;
         return;
       }
       if (e.key === "Backspace" || e.key === "Delete") {
@@ -898,13 +974,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           }
         }
 
-        const bulk = [...multiSelectIds];
+        const bulk = leftDragMultiSelectRef.current ? [...multiSelectIds] : [];
         if (bulk.length > 0) {
           e.preventDefault();
           const ex = excludedRef.current;
           const anyKeep = bulk.some((id) => !ex.has(id));
           if (!anyKeep) {
             setMultiSelectIds(new Set());
+            leftDragMultiSelectRef.current = false;
             return;
           }
           setExcluded((prev) => {
@@ -917,6 +994,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           });
           bumpExcludedHistory();
           setMultiSelectIds(new Set());
+          leftDragMultiSelectRef.current = false;
           return;
         }
 
@@ -938,6 +1016,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           });
           bumpExcludedHistory();
           setMultiSelectIds(new Set());
+          leftDragMultiSelectRef.current = false;
           const next = ordered.find((x) => !ex.has(x.id) && x.s_ms >= w.e_ms + 1) || ordered.find((x) => !ex.has(x.id));
           if (next) {
             setFocusedWordId(next.id);
@@ -956,6 +1035,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         const w0 = ordered[0]!;
         setFocusedWordId(w0.id);
         setMultiSelectIds(new Set());
+        leftDragMultiSelectRef.current = true;
         transcriptRef.current?.scrollToWordId(w0.id);
         return;
       }
@@ -968,6 +1048,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         const w1 = ordered[ordered.length - 1]!;
         setFocusedWordId(w1.id);
         setMultiSelectIds(new Set());
+        leftDragMultiSelectRef.current = true;
         transcriptRef.current?.scrollToWordId(w1.id);
         return;
       }
@@ -982,6 +1063,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         if (!ordered.length) return;
         const ids = ordered.map((w) => w.id);
         setMultiSelectIds(new Set(ids));
+        leftDragMultiSelectRef.current = false;
         setFocusedWordId(ids[ids.length - 1] ?? null);
         return;
       }
@@ -1025,6 +1107,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           if (!w) return;
           setFocusedWordId(w.id);
           setMultiSelectIds(new Set([w.id]));
+          leftDragMultiSelectRef.current = true;
           transcriptRef.current?.scrollToWordId(w.id);
           return;
         }
@@ -1035,6 +1118,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         const nw = ordered[j]!;
         setFocusedWordId(nw.id);
         setMultiSelectIds(new Set([nw.id]));
+        leftDragMultiSelectRef.current = true;
         transcriptRef.current?.scrollToWordId(nw.id);
         return;
       }
@@ -1073,6 +1157,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setMultiSelectIds(new Set([w.id]));
     setFocusedWordId(w.id);
     rangeAnchorWordIdRef.current = w.id;
+    leftDragMultiSelectRef.current = true;
 
     const move = (ev: globalThis.PointerEvent) => {
       if ((ev.buttons & 1) !== 1) return;
@@ -1084,6 +1169,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       const ids = wordIdsBetweenInclusive(words, anchor, curId);
       setMultiSelectIds(new Set(ids.length ? ids : [curId]));
       setFocusedWordId(curId);
+      leftDragMultiSelectRef.current = true;
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -1104,6 +1190,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     const ids = wordIdsBetweenInclusive(words, anchor, w.id);
     setMultiSelectIds(new Set(ids.length ? ids : [w.id]));
     setFocusedWordId(w.id);
+    leftDragMultiSelectRef.current = true;
   }, [words]);
 
   const handleWordActivate = useCallback(
@@ -1119,6 +1206,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         const ids = wordIdsBetweenInclusive(words, anchor, w.id);
         setMultiSelectIds(new Set(ids.length ? ids : [w.id]));
         setFocusedWordId(w.id);
+        leftDragMultiSelectRef.current = false;
         return;
       }
       if (e.metaKey || e.ctrlKey) {
@@ -1131,11 +1219,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         });
         rangeAnchorWordIdRef.current = w.id;
         setFocusedWordId(w.id);
+        leftDragMultiSelectRef.current = false;
         return;
       }
       rangeAnchorWordIdRef.current = w.id;
       setMultiSelectIds(new Set([w.id]));
       setFocusedWordId(w.id);
+      // 左键单击单词后，Delete/Backspace 也按“选区删除”处理（单词选区）。
+      leftDragMultiSelectRef.current = true;
       sentenceAutopauseEndMsRef.current = null;
       waveformRef.current?.seekToMs(w.s_ms);
       void waveformRef.current?.play();
@@ -1958,6 +2049,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             onRefreshSilences={loadSilenceSegments}
                             onToggleSilenceCut={toggleSilenceCut}
                             onSetSilenceCapMs={setSilenceCapMs}
+                            audioEvents={audioEvents}
+                            onSetAudioEventAction={setAudioEventAction}
                             roughCutSuggestions={roughPanelSuggestions}
                             onExecuteSuggestion={onExecuteSuggestion}
                             dismissedRoughKeys={dismissedRoughKeys}

@@ -44,6 +44,14 @@ export type ClipTimelineDoc = {
   version?: number;
   tracks?: ClipTimelineTrack[];
   silence_cuts?: { start_ms: number; end_ms: number; cap_ms?: number | null }[];
+  audio_events?: {
+    id?: string;
+    start_ms: number;
+    end_ms: number;
+    label: "music" | "noise" | "laughter" | "applause" | string;
+    confidence?: number | null;
+    action?: "keep" | "cut" | "duck" | string;
+  }[];
 };
 
 export type ClipStudioSnapshot = {
