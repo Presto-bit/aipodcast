@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Download, PanelRightClose, PanelRightOpen, Search, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Download, History, PanelRightClose, PanelRightOpen, Search, SlidersHorizontal, Sparkles } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -129,7 +129,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [actionBusy, setActionBusy] = useState(false);
   const [playbackMs, setPlaybackMs] = useState(0);
   const [focusedWordId, setFocusedWordId] = useState<string | null>(null);
-  const [saveExcludedHint, setSaveExcludedHint] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [llmSugs, setLlmSugs] = useState<ClipEditSuggestion[]>([]);
   /** idle | outline | structured | expand */
   const [llmPhase, setLlmPhase] = useState<"idle" | "outline" | "structured" | "expand">("idle");
@@ -142,7 +141,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   );
   /** 右侧工作台：默认收起以加宽稿面与音频区；可随时点开 */
   const [rightDrawerOpen, setRightDrawerOpen] = useState(false);
-  const [workbenchTab, setWorkbenchTab] = useState<"suggestions" | "engine" | "search">("suggestions");
+  const [workbenchTab, setWorkbenchTab] = useState<"suggestions" | "engine" | "search" | "history">("suggestions");
   /** 侧栏「搜索」：稿面子串高亮与批量删词 */
   const [scriptSearch, setScriptSearch] = useState("");
   /** 稿面仅高亮当前搜索命中子集（默认首处；下一个 / 全选 / 点句子后更新） */
@@ -165,7 +164,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [audioEventsAnalyzeHint, setAudioEventsAnalyzeHint] = useState<string | null>(null);
   const [collapsedSpeakers, setCollapsedSpeakers] = useState<Set<number>>(() => new Set());
   const [speakerFocusSet, setSpeakerFocusSet] = useState<Set<number>>(() => new Set());
-  const [editorMode, setEditorMode] = useState<"read" | "edit" | "review">("edit");
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [actionHint, setActionHint] = useState<string>("");
   const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number; visible: boolean }>({
@@ -180,8 +178,17 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const historyApplyingRef = useRef(false);
   const editUndoStackRef = useRef<Array<{ excludedIds: string[]; timeline: Record<string, unknown> | null; label: string }>>([]);
   const editRedoStackRef = useRef<Array<{ excludedIds: string[]; timeline: Record<string, unknown> | null; label: string }>>([]);
-  const [historyActions, setHistoryActions] = useState<Array<{ id: string; label: string; at: number; seekMs: number | null }>>([]);
-  const [historyPanelOpen, setHistoryPanelOpen] = useState(false);
+  const [historyActions, setHistoryActions] = useState<
+    Array<{
+      id: string;
+      label: string;
+      at: number;
+      seekMs: number | null;
+      snapshot: { excludedIds: string[]; timeline: Record<string, unknown> | null };
+    }>
+  >([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const waveformRef = useRef<ClipWaveformHandle | null>(null);
   const transcriptRef = useRef<VirtualizedTranscriptHandle | null>(null);
   /** 稿面滚动容器，拖选时用 elementsFromPoint 限定在稿面内 */
@@ -247,10 +254,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setAudioEventsAnalyzeBusy(false);
     setCollapsedSpeakers(new Set());
     setSpeakerFocusSet(new Set());
-    setEditorMode("edit");
     setShortcutHelpOpen(false);
     setActionHint("");
-    setHistoryPanelOpen(false);
+    setSelectedHistoryId(null);
   }, [projectId]);
 
   const pushActionHint = useCallback((msg: string) => {
@@ -290,11 +296,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const pushEditHistory = useCallback(
     (label: string, opts?: { seekMs?: number | null }) => {
       if (historyApplyingRef.current) return;
-      editUndoStackRef.current.push(snapshotCurrentEditState(label));
+      const snap = snapshotCurrentEditState(label);
+      editUndoStackRef.current.push(snap);
       if (editUndoStackRef.current.length > 20) editUndoStackRef.current.shift();
       editRedoStackRef.current = [];
       const seekMs = opts?.seekMs != null && Number.isFinite(opts.seekMs) ? Math.max(0, Math.round(opts.seekMs)) : null;
-      setHistoryActions((prev) => [{ id: `${Date.now()}-${Math.random()}`, label, at: Date.now(), seekMs }, ...prev].slice(0, 20));
+      setHistoryActions((prev) => [{ id: `${Date.now()}-${Math.random()}`, label, at: Date.now(), seekMs, snapshot: snap }, ...prev].slice(0, 20));
     },
     [snapshotCurrentEditState]
   );
@@ -460,29 +467,26 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const toggleSilenceCut = useCallback(
     async (startMs: number, endMs: number) => {
-      if (editorMode !== "edit") return;
       pushEditHistory("静音裁剪切换", { seekMs: startMs });
       const key = `sil:${Math.round(startMs)}-${Math.round(endMs)}`;
       const removing = silenceCutKeySet.has(key);
       await upsertSilenceCut(startMs, endMs, removing ? { remove: true } : { capMs: 0 });
       pushActionHint(removing ? "静音恢复保留" : "静音已剪掉");
     },
-    [editorMode, pushActionHint, pushEditHistory, silenceCutKeySet, upsertSilenceCut]
+    [pushActionHint, pushEditHistory, silenceCutKeySet, upsertSilenceCut]
   );
 
   const setSilenceCapMs = useCallback(
     async (startMs: number, endMs: number, capMs: number) => {
-      if (editorMode !== "edit") return;
       pushEditHistory("静音 cap 调整", { seekMs: startMs });
       await upsertSilenceCut(startMs, endMs, { capMs });
       pushActionHint(`静音已缩短到 ${capMs}ms`);
     },
-    [editorMode, pushActionHint, pushEditHistory, upsertSilenceCut]
+    [pushActionHint, pushEditHistory, upsertSilenceCut]
   );
 
   const setAudioEventAction = useCallback(
     async (eventId: string, nextAction: "keep" | "cut" | "duck") => {
-      if (editorMode !== "edit") return;
       pushEditHistory(`事件设为 ${nextAction.toUpperCase()}`, {
         seekMs: audioEvents.find((ev) => ev.id === eventId)?.start_ms ?? null
       });
@@ -512,12 +516,11 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       }
       pushActionHint(`事件动作已设为 ${nextAction.toUpperCase()}`);
     },
-    [audioEvents, editorMode, getAuthHeaders, project?.timeline_json, projectId, pushActionHint, pushEditHistory]
+    [audioEvents, getAuthHeaders, project?.timeline_json, projectId, pushActionHint, pushEditHistory]
   );
 
   const batchSetAudioEventAction = useCallback(
     async (label: string, nextAction: "keep" | "cut" | "duck") => {
-      if (editorMode !== "edit") return;
       pushEditHistory(`${label} 批量设为 ${nextAction.toUpperCase()}`, {
         seekMs: audioEvents.find((ev) => ev.label === label)?.start_ms ?? null
       });
@@ -543,7 +546,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       }
       pushActionHint(`${label} 已批量设为 ${nextAction.toUpperCase()}`);
     },
-    [audioEvents, editorMode, getAuthHeaders, project?.timeline_json, projectId, pushActionHint, pushEditHistory]
+    [audioEvents, getAuthHeaders, project?.timeline_json, projectId, pushActionHint, pushEditHistory]
   );
 
   const analyzeAudioEvents = useCallback(async () => {
@@ -705,27 +708,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     () => [...multiSelectIds].some((id) => excluded.has(id)),
     [multiSelectIds, excluded]
   );
-  const focusedWordText = useMemo(() => {
-    if (!focusedWordId) return "";
-    const w = words.find((x) => x.id === focusedWordId);
-    if (!w) return "";
-    return `${w.text}${w.punct ?? ""}`.trim();
-  }, [focusedWordId, words]);
-  const deleteTargetHint = useMemo(() => {
-    if (multiSelectIds.size > 0) {
-      return t("presto.flow.deleteTargetSelection").replace("{count}", String(multiSelectIds.size));
-    }
-    if (focusedWordText) {
-      return t("presto.flow.deleteTargetFocused").replace("{text}", focusedWordText);
-    }
-    return t("presto.flow.deleteTargetNone");
-  }, [multiSelectIds, focusedWordText, t]);
-  const reviewSummary = useMemo(() => {
-    const silCuts = silenceCutRanges.length;
-    const eventCuts = audioEvents.filter((e) => e.action === "cut").length;
-    const eventDucks = audioEvents.filter((e) => e.action === "duck").length;
-    return `审阅结果：删词 ${excluded.size}，静音裁剪 ${silCuts}，事件 Cut ${eventCuts}，事件 Duck ${eventDucks}`;
-  }, [audioEvents, excluded.size, silenceCutRanges.length]);
   const focusedSpeakerWordIds = useMemo(() => {
     if (!speakerFocusSet.size) return [] as string[];
     const ids: string[] = [];
@@ -1019,7 +1001,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       editUndoStackRef.current = [];
       editRedoStackRef.current = [];
       setHistoryActions([]);
-      setSaveExcludedHint("idle");
       bumpExcludedHistory();
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -1047,7 +1028,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const persistExcludedNow = useCallback(
     async (next: Set<string>, opts?: { showSavingHint?: boolean }) => {
-      if (opts?.showSavingHint) setSaveExcludedHint("saving");
       try {
         const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
           method: "POST",
@@ -1059,14 +1039,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         if (!res.ok || data.success === false) {
           throw new Error(data.detail || `保存失败 ${res.status}`);
         }
-        setSaveExcludedHint("saved");
-        window.setTimeout(() => {
-          setSaveExcludedHint((h) => (h === "saved" ? "idle" : h));
-        }, 2200);
       } catch (e) {
-        setSaveExcludedHint("error");
         setErr(String(e instanceof Error ? e.message : e));
       }
+      void opts;
     },
     [getAuthHeaders, projectId]
   );
@@ -1094,6 +1070,19 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       }
     },
     [persistTimelineNow, scheduleSaveExcluded]
+  );
+
+  const restoreHistoryAction = useCallback(
+    async (id: string) => {
+      const hit = historyActions.find((x) => x.id === id);
+      if (!hit) return;
+      editUndoStackRef.current.push(snapshotCurrentEditState(`恢复前:${hit.label}`));
+      if (editUndoStackRef.current.length > 20) editUndoStackRef.current.shift();
+      editRedoStackRef.current = [];
+      await applyEditSnapshot(hit.snapshot);
+      pushActionHint(`已恢复到：${hit.label}`);
+    },
+    [applyEditSnapshot, historyActions, pushActionHint, snapshotCurrentEditState]
   );
 
   /** Word 式 Ctrl+S：立即落盘当前删词状态（跳过防抖） */
@@ -1126,7 +1115,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const markManyExcluded = useCallback(
     (ids: readonly string[]) => {
       if (!ids.length) return;
-      if (editorMode !== "edit") return;
       if (ids.length >= 50 && !window.confirm(`即将删除 ${ids.length} 个词，是否继续？`)) return;
       pushEditHistory(`删除 ${ids.length} 词`, {
         seekMs: words.find((w) => w.id === ids[0])?.s_ms ?? null
@@ -1142,7 +1130,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       bumpExcludedHistory();
       pushActionHint(`已删除 ${ids.length} 个词`);
     },
-    [editorMode, pushActionHint, pushEditHistory, scheduleSaveExcluded, words]
+    [pushActionHint, pushEditHistory, scheduleSaveExcluded, words]
   );
 
   const deleteAllScriptSearchHits = useCallback(() => {
@@ -1158,7 +1146,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const markManyRestored = useCallback(
     (ids: readonly string[]) => {
       if (!ids.length) return;
-      if (editorMode !== "edit") return;
       pushEditHistory(`恢复 ${ids.length} 词`, {
         seekMs: words.find((w) => w.id === ids[0])?.s_ms ?? null
       });
@@ -1172,7 +1159,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       });
       bumpExcludedHistory();
     },
-    [editorMode, pushEditHistory, scheduleSaveExcluded, words]
+    [pushEditHistory, scheduleSaveExcluded, words]
   );
 
   /** 将当前多选（或仅焦点词）从「已删」恢复为保留（显式按钮；与 Word 键盘 Backspace 删除选区不同） */
@@ -1550,6 +1537,18 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     const top = Math.min(...rects.map((r) => r.top));
     setSelectionToolbar({ x: (left + right) / 2, y: Math.max(12, top - 8), visible: true });
   }, [multiSelectIds]);
+
+  useEffect(() => {
+    if (!selectionToolbar.visible) return;
+    const onDown = (e: globalThis.MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (selectionToolbarRef.current?.contains(target)) return;
+      setSelectionToolbar((p) => ({ ...p, visible: false }));
+    };
+    window.addEventListener("mousedown", onDown, true);
+    return () => window.removeEventListener("mousedown", onDown, true);
+  }, [selectionToolbar.visible]);
 
   const handleWordActivate = useCallback(
     (w: ClipWord, e: MouseEvent<HTMLButtonElement>) => {
@@ -1957,7 +1956,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       ? t("presto.flow.drawer.tabSuggestions")
       : workbenchTab === "engine"
         ? t("presto.flow.drawer.tabEngine")
-        : t("presto.flow.drawer.tabSearch");
+        : workbenchTab === "search"
+          ? t("presto.flow.drawer.tabSearch")
+          : "变更历史";
 
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
@@ -2095,6 +2096,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 {selectionToolbar.visible ? (
                   <div
+                    ref={selectionToolbarRef}
                     className="pointer-events-auto fixed z-[12000] -translate-x-1/2 -translate-y-full rounded-lg border border-line bg-surface px-1.5 py-1 shadow-soft"
                     style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
                   >
@@ -2137,20 +2139,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           <p className="line-clamp-2 shrink-0 text-[10px] leading-relaxed text-muted">{t("presto.flow.multiSelectHint")}</p>
                         ) : null}
                         <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px]">
-                          <span className="text-muted">模式</span>
-                          {(["read", "edit", "review"] as const).map((m) => (
-                            <button
-                              key={`mode-a-${m}`}
-                              type="button"
-                              className={[
-                                "rounded border px-1.5 py-0.5",
-                                editorMode === m ? "border-brand/50 text-brand" : "border-line text-muted hover:bg-fill"
-                              ].join(" ")}
-                              onClick={() => setEditorMode(m)}
-                            >
-                              {m === "read" ? "阅读" : m === "edit" ? "剪辑" : "审阅"}
-                            </button>
-                          ))}
                           <button
                             type="button"
                             className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
@@ -2204,86 +2192,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             </>
                           ) : null}
                         </div>
-                        <p className="shrink-0 text-[10px] text-muted">{deleteTargetHint}</p>
                         {deleteFeedback ? (
                           <p className="shrink-0 text-[10px] font-semibold text-brand">{deleteFeedback}</p>
                         ) : null}
                         {actionHint ? <p className="shrink-0 text-[10px] font-semibold text-emerald-600">{actionHint}</p> : null}
-                        <div className="relative flex flex-wrap items-center gap-1 text-[10px]">
-                          <span className="text-muted">历史</span>
-                          <button
-                            type="button"
-                            className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill disabled:opacity-40"
-                            disabled={editUndoStackRef.current.length === 0}
-                            onClick={() => undoExcluded()}
-                          >
-                            撤销
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill disabled:opacity-40"
-                            disabled={editRedoStackRef.current.length === 0}
-                            onClick={() => redoExcluded()}
-                          >
-                            重做
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
-                            onClick={() => setHistoryPanelOpen((v) => !v)}
-                          >
-                            记录
-                          </button>
-                          {historyActions[0] ? <span className="text-muted">最近：{historyActions[0].label}</span> : null}
-                          {historyPanelOpen ? (
-                            <div className="absolute left-0 top-6 z-20 w-[22rem] max-w-[92vw] rounded-lg border border-line bg-surface p-2 shadow-soft">
-                              <div className="mb-1 flex items-center justify-between">
-                                <span className="text-[10px] font-semibold text-ink">历史记录（最近 20 条）</span>
-                                <button
-                                  type="button"
-                                  className="rounded border border-line px-1 py-0.5 text-[10px] text-muted hover:bg-fill"
-                                  onClick={() => setHistoryPanelOpen(false)}
-                                >
-                                  关闭
-                                </button>
-                              </div>
-                              {historyActions.length === 0 ? (
-                                <p className="text-[10px] text-muted">暂无编辑记录</p>
-                              ) : (
-                                <ul className="max-h-44 space-y-1 overflow-y-auto">
-                                  {historyActions.map((it) => (
-                                    <li key={it.id} className="flex items-center gap-2 rounded border border-line/70 bg-fill/20 px-2 py-1 text-[10px]">
-                                      <span className="shrink-0 font-mono text-muted">{formatHistoryTime(it.at)}</span>
-                                      <span className="min-w-0 flex-1 truncate text-ink">{it.label}</span>
-                                      <button
-                                        type="button"
-                                        disabled={it.seekMs == null}
-                                        className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:bg-fill disabled:opacity-40"
-                                        onClick={() => {
-                                          if (it.seekMs == null) return;
-                                          seekPreviewMs(it.seekMs);
-                                          setHistoryPanelOpen(false);
-                                        }}
-                                      >
-                                        回看
-                                      </button>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </div>
-                          ) : null}
-                        </div>
-                        {editorMode === "review" ? <p className="shrink-0 text-[10px] text-amber-700 dark:text-amber-300">{reviewSummary}</p> : null}
-                        {saveExcludedHint !== "idle" ? (
-                          <p className="shrink-0 text-[10px] text-muted">
-                            {saveExcludedHint === "saving"
-                              ? t("clip.editor.saveExcludedSaving")
-                              : saveExcludedHint === "saved"
-                                ? t("clip.editor.saveExcludedSaved")
-                                : t("clip.editor.saveExcludedFailed")}
-                          </p>
-                        ) : null}
                       </div>
                       <button
                         type="button"
@@ -2400,6 +2312,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-0 lg:flex-row lg:items-stretch">
                 {selectionToolbar.visible ? (
                   <div
+                    ref={selectionToolbarRef}
                     className="pointer-events-auto fixed z-[12000] -translate-x-1/2 -translate-y-full rounded-lg border border-line bg-surface px-1.5 py-1 shadow-soft"
                     style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
                   >
@@ -2484,20 +2397,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             <p className="line-clamp-2 shrink-0 text-[10px] leading-relaxed text-muted">{t("presto.flow.multiSelectHint")}</p>
                           ) : null}
                           <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px]">
-                            <span className="text-muted">模式</span>
-                            {(["read", "edit", "review"] as const).map((m) => (
-                              <button
-                                key={`mode-b-${m}`}
-                                type="button"
-                                className={[
-                                  "rounded border px-1.5 py-0.5",
-                                  editorMode === m ? "border-brand/50 text-brand" : "border-line text-muted hover:bg-fill"
-                                ].join(" ")}
-                                onClick={() => setEditorMode(m)}
-                              >
-                                {m === "read" ? "阅读" : m === "edit" ? "剪辑" : "审阅"}
-                              </button>
-                            ))}
                             <button
                               type="button"
                               className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
@@ -2551,86 +2450,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                               </>
                             ) : null}
                           </div>
-                          <p className="shrink-0 text-[10px] text-muted">{deleteTargetHint}</p>
                           {deleteFeedback ? (
                             <p className="shrink-0 text-[10px] font-semibold text-brand">{deleteFeedback}</p>
                           ) : null}
                           {actionHint ? <p className="shrink-0 text-[10px] font-semibold text-emerald-600">{actionHint}</p> : null}
-                          <div className="relative flex flex-wrap items-center gap-1 text-[10px]">
-                            <span className="text-muted">历史</span>
-                            <button
-                              type="button"
-                              className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill disabled:opacity-40"
-                              disabled={editUndoStackRef.current.length === 0}
-                              onClick={() => undoExcluded()}
-                            >
-                              撤销
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill disabled:opacity-40"
-                              disabled={editRedoStackRef.current.length === 0}
-                              onClick={() => redoExcluded()}
-                            >
-                              重做
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
-                              onClick={() => setHistoryPanelOpen((v) => !v)}
-                            >
-                              记录
-                            </button>
-                            {historyActions[0] ? <span className="text-muted">最近：{historyActions[0].label}</span> : null}
-                            {historyPanelOpen ? (
-                              <div className="absolute left-0 top-6 z-20 w-[22rem] max-w-[92vw] rounded-lg border border-line bg-surface p-2 shadow-soft">
-                                <div className="mb-1 flex items-center justify-between">
-                                  <span className="text-[10px] font-semibold text-ink">历史记录（最近 20 条）</span>
-                                  <button
-                                    type="button"
-                                    className="rounded border border-line px-1 py-0.5 text-[10px] text-muted hover:bg-fill"
-                                    onClick={() => setHistoryPanelOpen(false)}
-                                  >
-                                    关闭
-                                  </button>
-                                </div>
-                                {historyActions.length === 0 ? (
-                                  <p className="text-[10px] text-muted">暂无编辑记录</p>
-                                ) : (
-                                  <ul className="max-h-44 space-y-1 overflow-y-auto">
-                                    {historyActions.map((it) => (
-                                      <li key={it.id} className="flex items-center gap-2 rounded border border-line/70 bg-fill/20 px-2 py-1 text-[10px]">
-                                        <span className="shrink-0 font-mono text-muted">{formatHistoryTime(it.at)}</span>
-                                        <span className="min-w-0 flex-1 truncate text-ink">{it.label}</span>
-                                        <button
-                                          type="button"
-                                          disabled={it.seekMs == null}
-                                          className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:bg-fill disabled:opacity-40"
-                                          onClick={() => {
-                                            if (it.seekMs == null) return;
-                                            seekPreviewMs(it.seekMs);
-                                            setHistoryPanelOpen(false);
-                                          }}
-                                        >
-                                          回看
-                                        </button>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
-                          {editorMode === "review" ? <p className="shrink-0 text-[10px] text-amber-700 dark:text-amber-300">{reviewSummary}</p> : null}
-                          {saveExcludedHint !== "idle" ? (
-                            <p className="shrink-0 text-[10px] text-muted">
-                              {saveExcludedHint === "saving"
-                                ? t("clip.editor.saveExcludedSaving")
-                                : saveExcludedHint === "saved"
-                                  ? t("clip.editor.saveExcludedSaved")
-                                  : t("clip.editor.saveExcludedFailed")}
-                            </p>
-                          ) : null}
                         </div>
                         <button
                           type="button"
@@ -2755,6 +2578,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       [
                         ["suggestions", Sparkles, t("presto.flow.drawer.tabSuggestions")] as const,
                         ["engine", SlidersHorizontal, t("presto.flow.drawer.tabEngine")] as const,
+                        ["history", History, "变更历史"] as const,
                         ["search", Search, t("presto.flow.drawer.tabSearch")] as const
                       ] as const
                     ).map(([id, Icon, label]) => {
@@ -2837,18 +2661,11 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             exemptCores={roughCutExemptSet}
                             silenceSegments={silenceSegments}
                             silenceCutKeys={silenceCutKeySet}
-                            silenceCutRanges={silenceCutRanges}
                             onJumpWord={jumpToWordInTranscript}
                             onSeekPreviewMs={seekPreviewMs}
                             onRefreshSilences={loadSilenceSegments}
                             onToggleSilenceCut={toggleSilenceCut}
                             onSetSilenceCapMs={setSilenceCapMs}
-                            audioEvents={audioEvents}
-                            onSetAudioEventAction={setAudioEventAction}
-                            onBatchSetAudioEventAction={batchSetAudioEventAction}
-                            onAnalyzeAudioEvents={() => void analyzeAudioEvents()}
-                            analyzeAudioEventsBusy={audioEventsAnalyzeBusy}
-                            analyzeAudioEventsHint={audioEventsAnalyzeHint}
                             roughCutSuggestions={roughPanelSuggestions}
                             onExecuteSuggestion={onExecuteSuggestion}
                             dismissedRoughKeys={dismissedRoughKeys}
@@ -2901,6 +2718,78 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             allSearchHitsHighlighted={allSearchHitsHighlighted}
                             onDeleteAllSearchHits={deleteAllScriptSearchHits}
                           />
+                        ) : null}
+                        {workbenchTab === "history" ? (
+                          <section className="p-3">
+                            <div className="mb-2 flex items-center gap-2">
+                              <button
+                                type="button"
+                                className="rounded border border-line px-2 py-0.5 text-[10px] text-muted hover:bg-fill disabled:opacity-40"
+                                disabled={editUndoStackRef.current.length === 0}
+                                onClick={() => undoExcluded()}
+                              >
+                                撤销
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded border border-line px-2 py-0.5 text-[10px] text-muted hover:bg-fill disabled:opacity-40"
+                                disabled={editRedoStackRef.current.length === 0}
+                                onClick={() => redoExcluded()}
+                              >
+                                重做
+                              </button>
+                            </div>
+                            {historyActions.length === 0 ? (
+                              <p className="text-[11px] text-muted">暂无变更历史</p>
+                            ) : (
+                              <ul className="flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto">
+                                {historyActions.map((it) => (
+                                  <li
+                                    key={it.id}
+                                    className={[
+                                      "rounded-lg border px-2 py-1.5 text-[10px] transition",
+                                      selectedHistoryId === it.id
+                                        ? "border-brand/50 bg-brand/5"
+                                        : "border-line/80 bg-surface/70 hover:bg-fill/40"
+                                    ].join(" ")}
+                                  >
+                                    <div className="mb-1 flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                                        onClick={() => setSelectedHistoryId((prev) => (prev === it.id ? null : it.id))}
+                                      >
+                                        <span className="shrink-0 font-mono text-muted">{formatHistoryTime(it.at)}</span>
+                                        <span className="min-w-0 flex-1 truncate text-ink">{it.label}</span>
+                                      </button>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        disabled={it.seekMs == null}
+                                        className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill disabled:opacity-40"
+                                        onClick={() => {
+                                          if (it.seekMs == null) return;
+                                          seekPreviewMs(it.seekMs);
+                                        }}
+                                      >
+                                        回看定位
+                                      </button>
+                                      {selectedHistoryId === it.id ? (
+                                        <button
+                                          type="button"
+                                          className="rounded border border-brand/40 px-1.5 py-0.5 text-brand hover:bg-brand/10"
+                                          onClick={() => void restoreHistoryAction(it.id)}
+                                        >
+                                          恢复这一步
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </section>
                         ) : null}
                       </div>
                     </div>

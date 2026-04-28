@@ -211,19 +211,40 @@ export function collectVerbalTicWordIds(
 export function collectSubstringMatchWordIds(
   words: readonly ClipWord[],
   query: string,
-  excluded: ReadonlySet<string>
+  _excluded: ReadonlySet<string>
 ): string[] {
   const q = query.trim();
   if (!q) return [];
   const qLower = q.toLowerCase();
   const out: string[] = [];
   for (const w of words) {
-    if (excluded.has(w.id)) continue;
     const disp = displayToken(w);
     if (!disp) continue;
     const hay = /[a-z]/i.test(q) && !/[\u4e00-\u9fff]/.test(q) ? disp.toLowerCase() : disp;
     const needle = /[a-z]/i.test(q) && !/[\u4e00-\u9fff]/.test(q) ? qLower : q;
     if (hay.includes(needle)) out.push(w.id);
   }
-  return out;
+  if (out.length > 0) return out;
+  // Fallback: support multi-word phrase queries by matching against joined transcript text.
+  const tokens: Array<{ id: string; text: string }> = [];
+  for (const w of words) {
+    const disp = displayToken(w);
+    if (!disp) continue;
+    tokens.push({ id: w.id, text: disp });
+  }
+  if (!tokens.length) return out;
+  const latin = /[a-z]/i.test(q) && !/[\u4e00-\u9fff]/.test(q);
+  const needleJoined = latin ? qLower : q;
+  const joined = (latin ? tokens.map((t) => t.text.toLowerCase()) : tokens.map((t) => t.text)).join("");
+  const idx = joined.indexOf(needleJoined);
+  if (idx < 0) return out;
+  let pos = 0;
+  const matched = new Set<string>();
+  for (const t of tokens) {
+    const end = pos + t.text.length;
+    if (end > idx && pos < idx + needleJoined.length) matched.add(t.id);
+    pos = end;
+    if (pos >= idx + needleJoined.length) break;
+  }
+  return [...matched];
 }

@@ -848,9 +848,6 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
     pk = _wordchain_preview_object_key(owner_seg, project_id)
     tl_doc = row.get("timeline_json")
     silence_cuts = _silence_cut_ranges_from_timeline_doc(tl_doc)
-    event_cuts = _audio_event_cut_ranges_from_timeline_doc(tl_doc)
-    event_ducks = _audio_event_duck_ranges_from_timeline_doc(tl_doc)
-    combined_cuts = [*silence_cuts, *event_cuts]
     try:
         raw = get_object_bytes(audio_key)
         out = export_clip_mp3_from_bytes(
@@ -860,8 +857,8 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
             merge_gap_ms=merge_gap_ms,
             long_pause_ms=long_pause_ms,
             long_pause_cap_ms=long_pause_cap_ms,
-            silence_cut_ranges=combined_cuts,
-            duck_ranges=event_ducks,
+            silence_cut_ranges=silence_cuts,
+            duck_ranges=None,
             loudnorm_i_lufs=resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs")),
         )
     except Exception as exc:

@@ -1,8 +1,7 @@
-"""轻量 AED（占位版）：基于能量与频谱特征提取非语音事件片段。"""
+"""AED: PANNs first, heuristic fallback."""
 
 from __future__ import annotations
 
-import math
 import os
 import shutil
 import subprocess
@@ -53,6 +52,34 @@ def _decode_wav_mono_16k_from_file(src: Path) -> tuple[np.ndarray, int]:
         return np.zeros(0, dtype=np.float32), 16000
     pcm = np.frombuffer(raw[44:], dtype=np.int16).astype(np.float32) / 32768.0
     return pcm, 16000
+
+
+def _decode_wav_mono_32k_from_file(src: Path) -> tuple[np.ndarray, int]:
+    ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
+    with tempfile.NamedTemporaryFile(prefix="fyv_aed_32k_", suffix=".wav", delete=True) as tf:
+        out_wav = Path(tf.name)
+        cmd = [
+            ffmpeg_bin,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(src),
+            "-ac",
+            "1",
+            "-ar",
+            "32000",
+            "-f",
+            "wav",
+            str(out_wav),
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+        raw = out_wav.read_bytes()
+    if len(raw) <= 44:
+        return np.zeros(0, dtype=np.float32), 32000
+    pcm = np.frombuffer(raw[44:], dtype=np.int16).astype(np.float32) / 32768.0
+    return pcm, 32000
 
 
 def _label_window(x: np.ndarray, sr: int) -> tuple[str, float]:
@@ -128,7 +155,92 @@ def _merge_labeled_segments(
     return res
 
 
+def _panns_label_aliases() -> dict[str, set[str]]:
+    return {
+        "music": {"music", "background music"},
+        "noise": {"noise", "static", "hiss", "hum", "crowd", "traffic", "engine", "wind", "rain"},
+        "laughter": {"laughter", "giggle", "chuckle"},
+        "applause": {"applause", "clapping", "cheering"},
+    }
+
+
+def _map_panns_classes_to_labels(class_names: list[str]) -> dict[str, list[int]]:
+    aliases = _panns_label_aliases()
+    out: dict[str, list[int]] = {k: [] for k in aliases}
+    for i, name in enumerate(class_names):
+        n = str(name or "").strip().lower()
+        if not n:
+            continue
+        for lb, keys in aliases.items():
+            if any(k in n for k in keys):
+                out[lb].append(i)
+    return out
+
+
+def _detect_audio_events_panns(file_path: Path) -> list[dict[str, Any]]:
+    # Lazy import to keep service boot light and allow fallback.
+    try:
+        from panns_inference import AudioTagging  # type: ignore
+        from panns_inference.labels import labels as panns_labels  # type: ignore
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError(f"panns_unavailable:{e}") from e
+
+    pcm, sr = _decode_wav_mono_32k_from_file(file_path)
+    if pcm.size == 0:
+        return []
+    if sr != 32000:
+        return []
+
+    tagger = AudioTagging(checkpoint_path=None, device="cuda" if os.getenv("CLIP_AED_PANNS_CUDA", "0") == "1" else "cpu")
+    # panns_inference expects int16-like waveform in float32 range [-1,1], mono
+    clipwise_output, _embedding = tagger.inference(pcm[None, :])
+    if clipwise_output is None or len(clipwise_output) == 0:
+        return []
+    scores = np.asarray(clipwise_output[0], dtype=np.float32)
+    class_names = list(panns_labels) if isinstance(panns_labels, (list, tuple)) else []
+    if not class_names or scores.size != len(class_names):
+        return []
+
+    idx_map = _map_panns_classes_to_labels(class_names)
+    conf_th = max(0.05, min(0.95, _env_float("CLIP_AED_PANNS_CONF_TH", 0.18)))
+
+    # PANNs is clip-level; emit full-span events for high-confidence classes.
+    duration_ms = int(round((pcm.size / 32000.0) * 1000.0))
+    out: list[dict[str, Any]] = []
+    for lb in ("music", "noise", "laughter", "applause"):
+        ids = idx_map.get(lb) or []
+        if not ids:
+            continue
+        conf = float(np.max(scores[ids]))
+        if conf < conf_th:
+            continue
+        out.append(
+            {
+                "id": f"{lb}-0-{duration_ms}",
+                "start_ms": 0,
+                "end_ms": duration_ms,
+                "label": lb,
+                "confidence": round(conf, 4),
+                "action": "keep",
+            }
+        )
+    return out
+
+
 def detect_audio_events_from_file(file_path: Path) -> list[dict[str, Any]]:
+    backend = str(os.getenv("CLIP_AED_BACKEND") or "panns").strip().lower()
+    if backend in {"panns", "auto"}:
+        try:
+            panns_events = _detect_audio_events_panns(file_path)
+            if panns_events:
+                return panns_events
+            if backend == "panns":
+                return []
+        except Exception:
+            if backend == "panns":
+                return []
+
+    # Heuristic fallback.
     pcm, sr = _decode_wav_mono_16k_from_file(file_path)
     if pcm.size == 0:
         return []
