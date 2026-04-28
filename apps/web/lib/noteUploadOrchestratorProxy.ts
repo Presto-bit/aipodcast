@@ -65,6 +65,29 @@ function parseUpstreamError(text: string, status: number): { code: string; messa
   }
 }
 
+async function emitUploadDiag(params: {
+  requestId: string;
+  route: string;
+  stage: string;
+  payload?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await ingestLogEvent({
+      scope: "bff_api_error",
+      requestId: params.requestId,
+      level: "info",
+      errorCode: "UPLOAD_DIAG",
+      module: "upload_diag",
+      route: params.route,
+      message: `upload_diag:${params.stage}`,
+      payload: { stage: params.stage, ...(params.payload || {}) },
+      logger: "log"
+    });
+  } catch {
+    // ignore diagnostic logging failures
+  }
+}
+
 /**
  * multipart（推荐）→ 编排器 `upload_raw`；JSON（兼容旧客户端）→ `upload_json`。
  */
@@ -81,6 +104,12 @@ async function handleMultipartNoteUpload(req: NextRequest): Promise<Response> {
   let form: FormData;
   try {
     form = await req.formData();
+    await emitUploadDiag({
+      requestId,
+      route: "/api/note-upload",
+      stage: "multipart_form_parsed",
+      payload: { contentType: req.headers.get("content-type") || "" }
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[note-upload] multipart parse error:", msg);
@@ -123,6 +152,12 @@ async function handleMultipartNoteUpload(req: NextRequest): Promise<Response> {
   let buf: Buffer;
   try {
     buf = Buffer.from(await file.arrayBuffer());
+    await emitUploadDiag({
+      requestId,
+      route: "/api/note-upload",
+      stage: "multipart_file_buffered",
+      payload: { fileSize: buf.length, notebook, filename: fname, projectName }
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ success: false, detail: `读取文件失败：${msg}` }, { status: 400 });
@@ -148,6 +183,12 @@ async function handleMultipartNoteUpload(req: NextRequest): Promise<Response> {
       requestId
     });
     const text = await upstream.text();
+    await emitUploadDiag({
+      requestId,
+      route: "/api/v1/notes/upload_raw",
+      stage: "multipart_upstream_returned",
+      payload: { status: upstream.status, ok: upstream.ok, notebook, filename: fname }
+    });
     if (!upstream.ok) {
       const parsedErr = parseUpstreamError(text, upstream.status);
       await ingestLogEvent({
@@ -189,6 +230,12 @@ async function handleJsonNoteUpload(req: NextRequest): Promise<Response> {
   let body: NoteUploadJsonBody;
   try {
     body = (await req.json()) as NoteUploadJsonBody;
+    await emitUploadDiag({
+      requestId,
+      route: "/api/note-upload",
+      stage: "json_body_parsed",
+      payload: { contentType: req.headers.get("content-type") || "" }
+    });
   } catch {
     return NextResponse.json({ success: false, detail: "请求体不是合法 JSON" }, { status: 400 });
   }
@@ -225,6 +272,12 @@ async function handleJsonNoteUpload(req: NextRequest): Promise<Response> {
       requestId
     });
     const text = await upstream.text();
+    await emitUploadDiag({
+      requestId,
+      route: "/api/v1/notes/upload_json",
+      stage: "json_upstream_returned",
+      payload: { status: upstream.status, ok: upstream.ok, notebook, filename }
+    });
     if (!upstream.ok) {
       const parsedErr = parseUpstreamError(text, upstream.status);
       await ingestLogEvent({

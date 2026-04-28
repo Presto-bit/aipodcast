@@ -99,6 +99,32 @@ from ..security import verify_internal_signature
 
 router = APIRouter(prefix="/api/v1", tags=["notes"], dependencies=[Depends(verify_internal_signature)])
 NOTE_TRASH_RETENTION_DAYS = settings.trash_retention_days
+UPLOAD_DEBUG_MODE = (os.getenv("UPLOAD_DEBUG_MODE") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _upload_diag(event: str, **fields: object) -> None:
+    if not UPLOAD_DEBUG_MODE:
+        return
+    payload: dict[str, object] = {"event": event}
+    for k, v in fields.items():
+        if v is None:
+            continue
+        if isinstance(v, (bytes, bytearray)):
+            payload[k] = f"<bytes:{len(v)}>"
+        elif isinstance(v, str):
+            payload[k] = v[:220]
+        elif isinstance(v, (int, float, bool)):
+            payload[k] = v
+        elif isinstance(v, (list, tuple)):
+            payload[k] = f"<list:{len(v)}>"
+        elif isinstance(v, dict):
+            payload[k] = f"<dict:{len(v)}>"
+        else:
+            payload[k] = str(v)[:220]
+    try:
+        _notes_startup_logger.warning("upload_diag %s", json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        _notes_startup_logger.warning("upload_diag event=%s fields=%s", event, list(payload.keys()))
 
 
 def _metadata_notebook_from_row(row: dict) -> str:
@@ -643,6 +669,14 @@ def _persist_note_upload(
     project_name: str,
 ) -> dict:
     """写入对象存储、解析正文、落库；供 upload_json 与 upload_raw 共用。"""
+    _upload_diag(
+        "persist_start",
+        user_ref=bool((user_ref or "").strip()),
+        raw_name=raw_name,
+        notebook=notebook,
+        project_name=project_name,
+        data_len=len(data),
+    )
     try:
         ensure_notebooks_schema()
     except Exception as exc:
@@ -673,6 +707,7 @@ def _persist_note_upload(
     content_sha256 = hashlib.sha256(data).hexdigest()
     try:
         project_id = ensure_default_project(project_name, created_by=user_ref)
+        _upload_diag("persist_project_ok", project_id=project_id)
     except UnicodeDecodeError as exc:
         _raise_upload_unicode_error("ensure_default_project", exc)
     try:
@@ -736,6 +771,7 @@ def _persist_note_upload(
     object_key = note_upload_object_key(note_id, ext, owner_uuid)
     try:
         upload_bytes(object_key, data, content_type=_mime_for_note_ext(ext))
+        _upload_diag("persist_object_upload_ok", object_key=object_key, ext=ext, data_len=len(data))
     except Exception as exc:
         _notes_startup_logger.exception("notes upload: object store upload failed")
         raise HTTPException(
@@ -745,6 +781,13 @@ def _persist_note_upload(
     parse_started = time.perf_counter()
     try:
         parse_result = extract_text_from_bytes(data, ext)
+        _upload_diag(
+            "persist_parse_ok",
+            parse_status=parse_result.status,
+            parse_engine=parse_result.engine,
+            parse_encoding=parse_result.encoding or "",
+            parse_detail=(parse_result.detail or "")[:120],
+        )
     except UnicodeDecodeError as exc:
         _raise_upload_unicode_error("extract_text_from_bytes", exc)
     except Exception as exc:
@@ -790,6 +833,7 @@ def _persist_note_upload(
             user_ref=user_ref,
             extra_metadata=extra_meta,
         )
+        _upload_diag("persist_db_insert_ok", note_id=row_id, parse_error_code=parse_error_code or "", parse_text_chars=len(parsed))
     except UnicodeDecodeError as exc:
         delete_object_key(object_key)
         _raise_upload_unicode_error("create_file_note", exc)
@@ -1344,6 +1388,7 @@ def download_note_file_api(
 @router.post("/notes/upload_json")
 async def upload_note_json_api(request: Request):
     user_ref = _current_user_ref_or_401(request)
+    rid = (request.headers.get("x-request-id") or "").strip()
     try:
         raw_body = await request.body()
     except Exception:
@@ -1358,6 +1403,13 @@ async def upload_note_json_api(request: Request):
             raise HTTPException(status_code=400, detail="invalid_json_body") from None
     if not isinstance(body_obj, dict):
         raise HTTPException(status_code=400, detail="invalid_json_body")
+    _upload_diag(
+        "upload_json_body_parsed",
+        request_id=rid or "-",
+        content_type=request.headers.get("content-type") or "",
+        raw_body_len=len(raw_body),
+        body_keys=list(body_obj.keys())[:20],
+    )
     data_base64 = str(body_obj.get("data_base64") or "").strip()
     filename = str(body_obj.get("filename") or "").strip()
     title = str(body_obj.get("title") or "").strip()
@@ -1397,6 +1449,16 @@ async def upload_note_raw_api(
     filename = _query_param_lossy_utf8(request, "filename", "")
     title = _query_param_lossy_utf8(request, "title", "")
     project_name = _query_param_lossy_utf8(request, "project_name", NOTES_PODCAST_STUDIO_PROJECT)
+    _upload_diag(
+        "upload_raw_request_parsed",
+        request_id=(request.headers.get("x-request-id") or "").strip() or "-",
+        content_type=request.headers.get("content-type") or "",
+        body_len=len(data),
+        notebook=notebook,
+        filename=filename,
+        project_name=project_name,
+        query_len=len(bytes(request.scope.get("query_string", b""))) if isinstance(request.scope.get("query_string", b""), (bytes, bytearray)) else -1,
+    )
     if not (notebook or "").strip():
         raise HTTPException(status_code=400, detail="notebook_required")
     if not (filename or "").strip():
@@ -1440,6 +1502,13 @@ async def import_note_from_url_api(request: Request):
             raise HTTPException(status_code=400, detail="invalid_json_body") from None
     if not isinstance(body_obj, dict):
         raise HTTPException(status_code=400, detail="invalid_json_body")
+    _upload_diag(
+        "import_url_body_parsed",
+        request_id=(request.headers.get("x-request-id") or "").strip() or "-",
+        content_type=request.headers.get("content-type") or "",
+        raw_body_len=len(raw_body),
+        body_keys=list(body_obj.keys())[:20],
+    )
     url = str(body_obj.get("url") or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="请提供 URL")
