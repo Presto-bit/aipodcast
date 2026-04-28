@@ -126,6 +126,66 @@ def _safe_user_text(value: str | None, *, max_len: int = 500) -> str:
     return safe
 
 
+def _query_param_lossy_utf8(request: Request, name: str, default: str = "") -> str:
+    """
+    直接从 ASGI 原始 query_string 解析参数，并以容错 UTF-8 解码。
+    避免框架层对异常字节做严格 UTF-8 解码时报 UnicodeDecodeError。
+    """
+    query_raw = request.scope.get("query_string", b"")
+    if not isinstance(query_raw, (bytes, bytearray)):
+        return default
+    needle = (name or "").strip().encode("ascii", errors="ignore")
+    if not needle:
+        return default
+    for seg in bytes(query_raw).split(b"&"):
+        if not seg:
+            continue
+        key_raw, sep, val_raw = seg.partition(b"=")
+        if not sep:
+            continue
+        key = key_raw.replace(b"+", b" ")
+        val = val_raw.replace(b"+", b" ")
+        try:
+            k_bytes = bytearray()
+            i = 0
+            while i < len(key):
+                if key[i:i + 1] == b"%" and i + 2 < len(key):
+                    try:
+                        k_bytes.append(int(key[i + 1:i + 3], 16))
+                        i += 3
+                        continue
+                    except ValueError:
+                        pass
+                k_bytes.extend(key[i:i + 1])
+                i += 1
+            if bytes(k_bytes).decode("ascii", errors="ignore") != name:
+                continue
+            v_bytes = bytearray()
+            j = 0
+            while j < len(val):
+                if val[j:j + 1] == b"%" and j + 2 < len(val):
+                    try:
+                        v_bytes.append(int(val[j + 1:j + 3], 16))
+                        j += 3
+                        continue
+                    except ValueError:
+                        pass
+                v_bytes.extend(val[j:j + 1])
+                j += 1
+            return bytes(v_bytes).decode("utf-8", errors="replace")
+        except Exception:
+            continue
+    return default
+
+
+def _raise_upload_unicode_error(stage: str, exc: UnicodeDecodeError) -> None:
+    reason = str(exc).replace("\n", " ").strip()[:240]
+    raise HTTPException(
+        status_code=400,
+        detail=f"invalid_text_encoding:{stage}:{reason}",
+    ) from exc
+
+
 def _shared_list_owner_uuid_or_none(
     request: Request,
     *,
@@ -610,14 +670,20 @@ def _persist_note_upload(
         raise HTTPException(status_code=400, detail="notebook_required")
     project_name = _safe_user_text(project_name, max_len=120) or NOTES_PODCAST_STUDIO_PROJECT
     content_sha256 = hashlib.sha256(data).hexdigest()
-    project_id = ensure_default_project(project_name, created_by=user_ref)
-    dup_id = find_duplicate_file_note_id(
-        project_id,
-        notebook,
-        content_sha256=content_sha256,
-        original_filename=raw_name,
-        size=len(data),
-    )
+    try:
+        project_id = ensure_default_project(project_name, created_by=user_ref)
+    except UnicodeDecodeError as exc:
+        _raise_upload_unicode_error("ensure_default_project", exc)
+    try:
+        dup_id = find_duplicate_file_note_id(
+            project_id,
+            notebook,
+            content_sha256=content_sha256,
+            original_filename=raw_name,
+            size=len(data),
+        )
+    except UnicodeDecodeError as exc:
+        _raise_upload_unicode_error("find_duplicate_file_note_id", exc)
     if dup_id:
         row = get_note_by_id(dup_id, user_ref=user_ref)
         if row:
@@ -678,6 +744,8 @@ def _persist_note_upload(
     parse_started = time.perf_counter()
     try:
         parse_result = extract_text_from_bytes(data, ext)
+    except UnicodeDecodeError as exc:
+        _raise_upload_unicode_error("extract_text_from_bytes", exc)
     except Exception as exc:
         _notes_startup_logger.exception("notes upload: extract_text_from_bytes failed")
         parse_result = NoteParseResult(
@@ -702,8 +770,11 @@ def _persist_note_upload(
     if parse_error_code:
         extra_meta["parseErrorCode"] = parse_error_code
     extra_meta["contentSha256"] = content_sha256
-    extra_meta["structuredBlocks"] = _build_structured_blocks_from_text(parsed)
-    extra_meta.update(_build_preprocess_fields(parsed))
+    try:
+        extra_meta["structuredBlocks"] = _build_structured_blocks_from_text(parsed)
+        extra_meta.update(_build_preprocess_fields(parsed))
+    except UnicodeDecodeError as exc:
+        _raise_upload_unicode_error("build_preprocess_metadata", exc)
     try:
         row_id = create_file_note(
             project_id=project_id,
@@ -718,6 +789,9 @@ def _persist_note_upload(
             user_ref=user_ref,
             extra_metadata=extra_meta,
         )
+    except UnicodeDecodeError as exc:
+        delete_object_key(object_key)
+        _raise_upload_unicode_error("create_file_note", exc)
     except ValueError as e:
         delete_object_key(object_key)
         if str(e) == "notebook_required":
@@ -1294,16 +1368,20 @@ def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
 @router.post("/notes/upload_raw")
 async def upload_note_raw_api(
     request: Request,
-    notebook: str = Query(...),
-    filename: str = Query(...),
-    title: str = Query(default=""),
-    project_name: str = Query(default=NOTES_PODCAST_STUDIO_PROJECT),
 ):
     """BFF 二进制转发：body 为原始文件字节，元数据在 query（避免对整段 multipart 做内部签名）。"""
     user_ref = _current_user_ref_or_401(request)
     data = await request.body()
     if not data:
         raise HTTPException(status_code=400, detail="空文件")
+    notebook = _query_param_lossy_utf8(request, "notebook", "")
+    filename = _query_param_lossy_utf8(request, "filename", "")
+    title = _query_param_lossy_utf8(request, "title", "")
+    project_name = _query_param_lossy_utf8(request, "project_name", NOTES_PODCAST_STUDIO_PROJECT)
+    if not (notebook or "").strip():
+        raise HTTPException(status_code=400, detail="notebook_required")
+    if not (filename or "").strip():
+        raise HTTPException(status_code=400, detail="无效文件名")
     fname = (filename or "").strip()
     pn = (project_name or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
     try:
