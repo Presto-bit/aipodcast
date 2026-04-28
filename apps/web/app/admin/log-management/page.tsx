@@ -27,6 +27,17 @@ type LogAudit = {
   atMs: number;
 };
 
+type LogEvent = {
+  id: string;
+  scope: LogScope;
+  requestId: string;
+  level: "info" | "error";
+  message: string;
+  location?: string;
+  payload?: Record<string, unknown>;
+  atMs: number;
+};
+
 function formatTime(tsMs: number | null | undefined): string {
   if (!tsMs || !Number.isFinite(tsMs)) return "—";
   try {
@@ -49,6 +60,8 @@ export default function AdminLogManagementPage() {
   const [reason, setReason] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [events, setEvents] = useState<LogEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/admin/log-management?scope=${encodeURIComponent(scope)}`, {
@@ -79,6 +92,33 @@ export default function AdminLogManagementPage() {
   useEffect(() => {
     void load().catch((e) => setMsg(String(e instanceof Error ? e.message : e)));
   }, [load]);
+
+  const loadEvents = useCallback(async () => {
+    setEventsLoading(true);
+    try {
+      const res = await fetch(`/api/admin/log-events?scope=${encodeURIComponent(scope)}&limit=80`, {
+        headers: getAuthHeaders(),
+        cache: "no-store"
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+        events?: LogEvent[];
+      };
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `日志加载失败 ${res.status}`);
+      }
+      setEvents(Array.isArray(data.events) ? data.events : []);
+    } catch (e) {
+      setMsg(String(e instanceof Error ? e.message : e));
+    } finally {
+      setEventsLoading(false);
+    }
+  }, [getAuthHeaders, scope]);
+
+  useEffect(() => {
+    void loadEvents();
+  }, [loadEvents]);
 
   const expiresText = useMemo(() => formatTime(config?.expiresAtMs), [config?.expiresAtMs]);
 
@@ -252,6 +292,59 @@ export default function AdminLogManagementPage() {
                   <td className="whitespace-nowrap px-2 py-2 text-xs tabular-nums">{item.sampleRate}</td>
                   <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{item.ttlMinutes ? `${item.ttlMinutes} 分钟` : "—"}</td>
                   <td className="px-2 py-2 text-xs text-muted">{item.reason || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="mt-6 min-w-0 rounded-xl border border-line bg-surface/60 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-medium text-ink">最近日志事件</h2>
+          <button
+            type="button"
+            className="rounded border border-line bg-canvas px-2.5 py-1 text-xs text-ink hover:bg-fill disabled:opacity-60"
+            disabled={eventsLoading}
+            onClick={() => void loadEvents()}
+          >
+            {eventsLoading ? "刷新中…" : "刷新"}
+          </button>
+        </div>
+        <div className="mt-3 min-w-0 overflow-x-auto">
+          <table className="w-full min-w-[980px] border-separate border-spacing-0 text-left text-sm">
+            <thead className="text-xs text-muted">
+              <tr>
+                <th className="px-2 py-2">时间</th>
+                <th className="px-2 py-2">级别</th>
+                <th className="px-2 py-2">requestId</th>
+                <th className="px-2 py-2">位置</th>
+                <th className="px-2 py-2">信息</th>
+                <th className="px-2 py-2">摘要</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-2 py-8 text-center text-muted">
+                    暂无日志事件（请确认 scope 已开启且已复现问题）
+                  </td>
+                </tr>
+              ) : null}
+              {events.map((item) => (
+                <tr key={item.id} className="border-t border-line text-ink">
+                  <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{formatTime(item.atMs)}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs">
+                    <span className={item.level === "error" ? "text-danger-ink" : "text-muted"}>{item.level}</span>
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2 font-mono text-[11px] text-muted">{item.requestId || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{item.location || "—"}</td>
+                  <td className="max-w-[24rem] truncate px-2 py-2 text-xs" title={item.message}>
+                    {item.message || "—"}
+                  </td>
+                  <td className="max-w-[20rem] truncate px-2 py-2 text-xs text-muted" title={JSON.stringify(item.payload || {})}>
+                    {JSON.stringify(item.payload || {})}
+                  </td>
                 </tr>
               ))}
             </tbody>

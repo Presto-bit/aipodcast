@@ -3449,7 +3449,6 @@ export default function NotesPage() {
       if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
-      setShowShareNotebookModal(false);
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       currentDebugLog = [currentDebugLog, `exception=${msg}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]

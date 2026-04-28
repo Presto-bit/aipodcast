@@ -27,13 +27,26 @@ export type LogSwitchAuditEntry = {
   atMs: number;
 };
 
+export type LogEventEntry = {
+  id: string;
+  scope: LogScope;
+  requestId: string;
+  level: "info" | "error";
+  message: string;
+  location?: string;
+  payload: Record<string, unknown>;
+  atMs: number;
+};
+
 type LogControlStore = {
   configByScope: Partial<Record<LogScope, LogSwitchConfig>>;
   audits: LogSwitchAuditEntry[];
+  events: LogEventEntry[];
 };
 
 const STORE_KEY = "__fymLogControlStore";
 const MAX_AUDIT_RECORDS = 120;
+const MAX_EVENT_RECORDS = 400;
 
 function appEnv(): string {
   const raw = String(process.env.APP_ENV || process.env.NODE_ENV || "development").trim().toLowerCase();
@@ -48,7 +61,7 @@ function nowMs(): number {
 function store(): LogControlStore {
   const g = globalThis as typeof globalThis & { [STORE_KEY]?: LogControlStore };
   if (!g[STORE_KEY]) {
-    g[STORE_KEY] = { configByScope: {}, audits: [] };
+    g[STORE_KEY] = { configByScope: {}, audits: [], events: [] };
   }
   return g[STORE_KEY] as LogControlStore;
 }
@@ -168,4 +181,33 @@ export function shouldIngestForScope(scope: LogScope, requestId: string): boolea
   const normalizedId = String(requestId || "");
   const bucket = fnv1aHash(normalizedId) % 10_000;
   return bucket < Math.floor(p * 10_000);
+}
+
+export function appendLogEvent(params: {
+  scope: LogScope;
+  requestId: string;
+  level: "info" | "error";
+  message: string;
+  location?: string;
+  payload?: Record<string, unknown>;
+}): void {
+  const ts = nowMs();
+  const entry: LogEventEntry = {
+    id: `${ts}-${Math.random().toString(36).slice(2, 8)}`,
+    scope: params.scope,
+    requestId: String(params.requestId || "").slice(0, 120),
+    level: params.level,
+    message: String(params.message || "").slice(0, 1200),
+    location: params.location ? String(params.location).slice(0, 240) : undefined,
+    payload: params.payload && typeof params.payload === "object" ? params.payload : {},
+    atMs: ts
+  };
+  const s = store();
+  s.events = [entry, ...s.events].slice(0, MAX_EVENT_RECORDS);
+}
+
+export function listLogEvents(scope: LogScope, limit: number): LogEventEntry[] {
+  const n = Math.max(1, Math.min(200, Math.floor(limit || 50)));
+  const all = store().events.filter((x) => x.scope === scope);
+  return all.slice(0, n);
 }

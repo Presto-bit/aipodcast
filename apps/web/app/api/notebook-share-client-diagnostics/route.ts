@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateRequestId, incomingAuthHeadersFrom } from "../../../lib/bff";
 import { sanitizeClientDiagnosticsValue } from "../../../lib/clientDiagnosticsSanitize";
-import { shouldIngestForScope } from "../../../lib/logManagement";
+import { appendLogEvent, shouldIngestForScope } from "../../../lib/logManagement";
 
 const MAX_BODY_BYTES = 28_000;
 
@@ -55,6 +55,19 @@ export async function POST(req: NextRequest) {
     data
   });
   console.log(line);
+  appendLogEvent({
+    scope: "notebook_share_client",
+    requestId,
+    level: "info",
+    message,
+    location,
+    payload: {
+      hypothesisId,
+      sessionId,
+      clientTimestamp: timestamp,
+      data
+    }
+  });
 
   return NextResponse.json({ ok: true, requestId });
 }
