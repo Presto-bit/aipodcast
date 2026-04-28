@@ -3598,7 +3598,6 @@ export default function NotesPage() {
                             setShareTargetNotebook(nb);
                             setShareFormAccess(row?.publicAccess === "edit" ? "edit" : "read_only");
                             setShareModalError("");
-                            setShareDebugLog("");
                             setShowShareNotebookModal(true);
                           }}
                           onRenameNotebook={(nb) => {
@@ -3700,7 +3699,6 @@ export default function NotesPage() {
                       setShareTargetNotebook(nb);
                       setShareFormAccess(row?.publicAccess === "edit" ? "edit" : "read_only");
                       setShareModalError("");
-                      setShareDebugLog("");
                       setShowShareNotebookModal(true);
                     }}
                     onRenameNotebook={(nb) => {
