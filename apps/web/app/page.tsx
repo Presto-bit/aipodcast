@@ -9,6 +9,7 @@ import { mergeUserFacingWorksByRecency, type WorkItem } from "../lib/worksTypes"
 import { useAuth, userAccountRef } from "../lib/auth";
 import { useI18n } from "../lib/I18nContext";
 import { isRegisterEmailFormatOk } from "../lib/registerEmail";
+import NotebookShareDiagnosticsHomeBanner from "../components/notebook/NotebookShareDiagnosticsHomeBanner";
 
 const PodcastWorksGallery = dynamic(() => import("../components/podcast/PodcastWorksGallery"), {
   loading: () => (
@@ -267,6 +268,7 @@ export default function HomePage() {
   if (!ready) {
     return (
       <main className="mx-auto min-h-screen max-w-3xl p-8">
+        <NotebookShareDiagnosticsHomeBanner />
         <p className="text-sm text-muted">正在加载…</p>
       </main>
     );
@@ -276,6 +278,7 @@ export default function HomePage() {
     return (
       <div className="flex min-h-screen flex-col bg-canvas">
         <main className="mx-auto flex w-full max-w-md flex-1 flex-col p-8">
+        <NotebookShareDiagnosticsHomeBanner />
         <h1 className="text-2xl font-semibold text-ink">Presto</h1>
         <div className="mt-5 flex gap-2">
           <button
@@ -445,6 +448,7 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto min-h-0 w-full max-w-6xl space-y-6 px-3 pb-12 pt-2 sm:space-y-8 sm:px-4 sm:pt-4">
+      <NotebookShareDiagnosticsHomeBanner />
       <div className="fym-surface-card fym-tech-cap p-5 sm:p-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between lg:gap-10">
           <div className="min-w-0 max-w-xl flex-1">

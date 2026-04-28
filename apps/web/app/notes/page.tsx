@@ -71,6 +71,16 @@ import {
 import { loadNotesAskChat, saveNotesAskChat } from "../../lib/notesAskChatStorage";
 import { notesAskClientLog } from "../../lib/notesAskClientLog";
 import {
+  NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY,
+  NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY,
+  NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK,
+  clearNotebookShareFailureHistoryStorage,
+  notifyNotebookShareDiagnosticsUpdated,
+  readNotebookShareFailureHistory,
+  readNotebookShareLastError,
+  type ShareFailureEntry
+} from "../../lib/notebookShareDiagnostics";
+import {
   accountKeyFromUser,
   readLocalStorageScoped,
   readSessionStorageScoped,
@@ -392,19 +402,7 @@ type SharedBrowseContext = {
   access: "read_only" | "edit";
 };
 
-type ShareFailureEntry = {
-  id: string;
-  mode: "share" | "unshare";
-  notebook: string;
-  error: string;
-  at: string;
-  debugLog: string;
-};
-
 const NOTEBOOK_VISUAL_STORAGE_KEY = "notes:notebook-visuals:v1";
-const NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY = "notes:share-last-error:v1";
-const NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK = "notes:share-last-error:fallback:v1";
-const NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY = "notes:share-failure-history:v1";
 const POPULAR_PAGE_SIZE = 18;
 const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
 /** 历史「导读」助手气泡 id 前缀；加载会话时剔除，避免旧数据占位 */
@@ -861,34 +859,6 @@ export default function NotesPage() {
   const shareLinkHydratedRef = useRef(false);
   const shareDiagnosticsRef = useRef<HTMLDivElement | null>(null);
 
-  const readShareLastErrorPayload = useCallback(() => {
-    const tryParse = (raw: string | null) => {
-      if (!raw) return null;
-      try {
-        const parsed = JSON.parse(raw) as {
-          debugLog?: unknown;
-          error?: unknown;
-          notebook?: unknown;
-          at?: unknown;
-        };
-        const debugLog = typeof parsed.debugLog === "string" ? parsed.debugLog : "";
-        if (!debugLog.trim()) return null;
-        return {
-          debugLog,
-          error: typeof parsed.error === "string" ? parsed.error : "",
-          notebook: typeof parsed.notebook === "string" ? parsed.notebook : "",
-          at: typeof parsed.at === "string" ? parsed.at : ""
-        };
-      } catch {
-        return null;
-      }
-    };
-    const scoped = tryParse(readLocalStorageScoped(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY));
-    if (scoped) return scoped;
-    if (typeof window === "undefined") return null;
-    return tryParse(window.localStorage.getItem(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK));
-  }, []);
-
   const persistShareLastErrorPayload = useCallback((payload: {
     debugLog: string;
     error: string;
@@ -908,6 +878,7 @@ export default function NotesPage() {
     } catch {
       // ignore
     }
+    notifyNotebookShareDiagnosticsUpdated();
   }, []);
 
   const clearShareLastErrorPayload = useCallback(() => {
@@ -923,6 +894,7 @@ export default function NotesPage() {
     } catch {
       // ignore
     }
+    notifyNotebookShareDiagnosticsUpdated();
   }, []);
 
   const persistShareFailureHistory = useCallback((items: ShareFailureEntry[]) => {
@@ -944,46 +916,24 @@ export default function NotesPage() {
         } catch {
           // ignore
         }
+        notifyNotebookShareDiagnosticsUpdated();
       });
       return next;
     });
   }, [persistShareFailureHistory]);
 
   useEffect(() => {
-    const saved = readShareLastErrorPayload();
+    const saved = readNotebookShareLastError();
     if (!saved) return;
     setShareLastDebugLog(saved.debugLog);
     setShareLastError(saved.error);
     setShareLastNotebook(saved.notebook);
     setShareLastAt(saved.at);
-  }, [readShareLastErrorPayload]);
+  }, []);
 
   useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      const raw = window.localStorage.getItem(NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) return;
-      const normalized: ShareFailureEntry[] = parsed
-        .map((x) => {
-          if (!x || typeof x !== "object") return null;
-          const r = x as Record<string, unknown>;
-          const id = typeof r.id === "string" ? r.id : "";
-          const mode = r.mode === "unshare" ? "unshare" : "share";
-          const notebook = typeof r.notebook === "string" ? r.notebook : "";
-          const error = typeof r.error === "string" ? r.error : "";
-          const at = typeof r.at === "string" ? r.at : "";
-          const debugLog = typeof r.debugLog === "string" ? r.debugLog : "";
-          if (!id || !debugLog) return null;
-          return { id, mode, notebook, error, at, debugLog };
-        })
-        .filter((x): x is ShareFailureEntry => Boolean(x))
-        .slice(0, 20);
-      if (normalized.length > 0) setShareFailureHistory(normalized);
-    } catch {
-      // ignore
-    }
+    const list = readNotebookShareFailureHistory();
+    if (list.length > 0) setShareFailureHistory(list);
   }, []);
 
   const buildNotebookShareUrl = useCallback((notebookName: string, ownerUserId: string, access: "read_only" | "edit") => {
@@ -3711,13 +3661,8 @@ export default function NotesPage() {
                 className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
                 onClick={() => {
                   setShareFailureHistory([]);
-                  try {
-                    if (typeof window !== "undefined") {
-                      window.localStorage.removeItem(NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY);
-                    }
-                  } catch {
-                    // ignore
-                  }
+                  clearNotebookShareFailureHistoryStorage();
+                  notifyNotebookShareDiagnosticsUpdated();
                 }}
               >
                 清空历史
