@@ -238,7 +238,7 @@ export async function fetchOrchestrator(path: string, opts: FetchOrchestratorOpt
     ...buildInternalHeaders(signingMaterial),
     ...(opts.headers || {})
   };
-  const rid = (opts.requestId || "").trim();
+  const rid = (opts.requestId || "").trim() || crypto.randomUUID();
   if (rid) headers["x-request-id"] = rid;
   let lastError: unknown;
 

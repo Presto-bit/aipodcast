@@ -61,6 +61,25 @@ const ALL_LOG_SCOPES: LogScope[] = [
   "orchestrator_api_error"
 ];
 
+function collapseAudits(items: LogAudit[]): LogAudit[] {
+  const sorted = [...items].sort((a, b) => b.atMs - a.atMs);
+  const out: LogAudit[] = [];
+  for (const item of sorted) {
+    const prev = out[out.length - 1];
+    if (
+      prev &&
+      prev.action === item.action &&
+      prev.operator === item.operator &&
+      (prev.reason || "") === (item.reason || "") &&
+      Math.abs(prev.atMs - item.atMs) <= 5000
+    ) {
+      continue;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
 function formatTime(tsMs: number | null | undefined): string {
   if (!tsMs || !Number.isFinite(tsMs)) return "—";
   try {
@@ -174,7 +193,7 @@ export default function AdminLogManagementPage() {
     }
     setConfigsByScope(nextConfigs);
     setConfig(nextConfigs[scope] || null);
-    setAudits(mergedAudits.sort((a, b) => b.atMs - a.atMs).slice(0, 80));
+    setAudits(collapseAudits(mergedAudits).slice(0, 80));
     const enabledCount = Object.values(nextConfigs).filter((x) => Boolean(x?.enabled)).length;
     setEnabled(enabledCount > 0);
     const baseCfg = nextConfigs[scope] || Object.values(nextConfigs)[0] || null;
@@ -414,7 +433,7 @@ export default function AdminLogManagementPage() {
 
       <section className="mt-6 min-w-0 rounded-xl border border-line bg-surface/60 p-4">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-medium text-ink">最近日志事件</h2>
+          <h2 className="text-sm font-medium text-ink">最近日志事件（全部范围）</h2>
           <button
             type="button"
             className="rounded border border-line bg-canvas px-2.5 py-1 text-xs text-ink hover:bg-fill disabled:opacity-60"
