@@ -1274,6 +1274,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
             leftDragMultiSelectRef.current = false;
             return;
           }
+          pushEditHistory(`删除 ${bulk.length} 词`, {
+            seekMs: words.find((w) => w.id === bulk[0])?.s_ms ?? null
+          });
           setExcluded((prev) => {
             excludedUndoStack.current.push([...prev].sort());
             excludedRedoStack.current = [];
@@ -1302,6 +1305,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           const ordered = words;
           const w = ordered.find((x) => x.id === wid) ?? words.find((x) => x.id === wid);
           if (!w || ex.has(w.id)) return;
+          pushEditHistory("删除 1 词", { seekMs: w.s_ms });
           setExcluded((prev) => {
             excludedUndoStack.current.push([...prev].sort());
             excludedRedoStack.current = [];
@@ -1473,6 +1477,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     flushExcludedSave,
     toggleSilenceCut,
     setAudioEventAction,
+    pushEditHistory,
     t
   ]);
 
