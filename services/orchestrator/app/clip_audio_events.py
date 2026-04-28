@@ -1,4 +1,4 @@
-"""AED: PANNs first, heuristic fallback."""
+"""AED backends: YAMNet + heuristic fallback."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import csv
 from pathlib import Path
 from typing import Any
 
@@ -52,34 +53,6 @@ def _decode_wav_mono_16k_from_file(src: Path) -> tuple[np.ndarray, int]:
         return np.zeros(0, dtype=np.float32), 16000
     pcm = np.frombuffer(raw[44:], dtype=np.int16).astype(np.float32) / 32768.0
     return pcm, 16000
-
-
-def _decode_wav_mono_32k_from_file(src: Path) -> tuple[np.ndarray, int]:
-    ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
-    with tempfile.NamedTemporaryFile(prefix="fyv_aed_32k_", suffix=".wav", delete=True) as tf:
-        out_wav = Path(tf.name)
-        cmd = [
-            ffmpeg_bin,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(src),
-            "-ac",
-            "1",
-            "-ar",
-            "32000",
-            "-f",
-            "wav",
-            str(out_wav),
-        ]
-        subprocess.run(cmd, check=True, capture_output=True, timeout=300)
-        raw = out_wav.read_bytes()
-    if len(raw) <= 44:
-        return np.zeros(0, dtype=np.float32), 32000
-    pcm = np.frombuffer(raw[44:], dtype=np.int16).astype(np.float32) / 32768.0
-    return pcm, 32000
 
 
 def _label_window(x: np.ndarray, sr: int) -> tuple[str, float]:
@@ -155,17 +128,17 @@ def _merge_labeled_segments(
     return res
 
 
-def _panns_label_aliases() -> dict[str, set[str]]:
+def _yamnet_label_aliases() -> dict[str, set[str]]:
     return {
-        "music": {"music", "background music"},
+        "music": {"music", "background music", "musical"},
         "noise": {"noise", "static", "hiss", "hum", "crowd", "traffic", "engine", "wind", "rain"},
         "laughter": {"laughter", "giggle", "chuckle"},
         "applause": {"applause", "clapping", "cheering"},
     }
 
 
-def _map_panns_classes_to_labels(class_names: list[str]) -> dict[str, list[int]]:
-    aliases = _panns_label_aliases()
+def _map_yamnet_classes_to_labels(class_names: list[str]) -> dict[str, list[int]]:
+    aliases = _yamnet_label_aliases()
     out: dict[str, list[int]] = {k: [] for k in aliases}
     for i, name in enumerate(class_names):
         n = str(name or "").strip().lower()
@@ -177,68 +150,80 @@ def _map_panns_classes_to_labels(class_names: list[str]) -> dict[str, list[int]]
     return out
 
 
-def _detect_audio_events_panns(file_path: Path) -> list[dict[str, Any]]:
-    # Lazy import to keep service boot light and allow fallback.
+def _detect_audio_events_yamnet(file_path: Path) -> list[dict[str, Any]]:
     try:
-        from panns_inference import AudioTagging  # type: ignore
-        from panns_inference.labels import labels as panns_labels  # type: ignore
+        import tensorflow as tf  # type: ignore
+        import tensorflow_hub as hub  # type: ignore
     except Exception as e:  # pragma: no cover
-        raise RuntimeError(f"panns_unavailable:{e}") from e
+        raise RuntimeError(f"yamnet_unavailable:{e}") from e
 
-    pcm, sr = _decode_wav_mono_32k_from_file(file_path)
-    if pcm.size == 0:
-        return []
-    if sr != 32000:
+    pcm, sr = _decode_wav_mono_16k_from_file(file_path)
+    if pcm.size == 0 or sr != 16000:
         return []
 
-    tagger = AudioTagging(checkpoint_path=None, device="cuda" if os.getenv("CLIP_AED_PANNS_CUDA", "0") == "1" else "cpu")
-    # panns_inference expects int16-like waveform in float32 range [-1,1], mono
-    clipwise_output, _embedding = tagger.inference(pcm[None, :])
-    if clipwise_output is None or len(clipwise_output) == 0:
-        return []
-    scores = np.asarray(clipwise_output[0], dtype=np.float32)
-    class_names = list(panns_labels) if isinstance(panns_labels, (list, tuple)) else []
-    if not class_names or scores.size != len(class_names):
+    model_url = str(os.getenv("CLIP_AED_YAMNET_URL") or "https://tfhub.dev/google/yamnet/1").strip()
+    model = hub.load(model_url)
+
+    waveform = tf.convert_to_tensor(pcm, dtype=tf.float32)
+    scores, _embeddings, _spectrogram = model(waveform)
+    scores_np = np.asarray(scores.numpy(), dtype=np.float32)
+    if scores_np.ndim != 2 or scores_np.shape[0] == 0:
         return []
 
-    idx_map = _map_panns_classes_to_labels(class_names)
-    conf_th = max(0.05, min(0.95, _env_float("CLIP_AED_PANNS_CONF_TH", 0.18)))
+    # Resolve YAMNet class names from bundled class_map CSV.
+    class_names: list[str] = []
+    try:
+        class_map_path = model.class_map_path().numpy().decode("utf-8")
+        with open(class_map_path, "r", encoding="utf-8") as f:
+            rd = csv.DictReader(f)
+            for row in rd:
+                class_names.append(str(row.get("display_name") or "").strip())
+    except Exception:
+        return []
+    if not class_names or scores_np.shape[1] != len(class_names):
+        return []
 
-    # PANNs is clip-level; emit full-span events for high-confidence classes.
-    duration_ms = int(round((pcm.size / 32000.0) * 1000.0))
-    out: list[dict[str, Any]] = []
-    for lb in ("music", "noise", "laughter", "applause"):
-        ids = idx_map.get(lb) or []
-        if not ids:
-            continue
-        conf = float(np.max(scores[ids]))
-        if conf < conf_th:
-            continue
-        out.append(
-            {
-                "id": f"{lb}-0-{duration_ms}",
-                "start_ms": 0,
-                "end_ms": duration_ms,
-                "label": lb,
-                "confidence": round(conf, 4),
-                "action": "keep",
-            }
-        )
-    return out
+    idx_map = _map_yamnet_classes_to_labels(class_names)
+    conf_th = max(0.05, min(0.95, _env_float("CLIP_AED_YAMNET_CONF_TH", 0.2)))
+    duration_ms = (pcm.size * 1000.0) / 16000.0
+    frame_count = max(1, scores_np.shape[0])
+    frame_ms = duration_ms / frame_count
+
+    raw: list[tuple[int, int, str, float]] = []
+    for fi in range(frame_count):
+        s_ms = int(round(fi * frame_ms))
+        e_ms = int(round((fi + 1) * frame_ms))
+        vec = scores_np[fi]
+        for lb in ("music", "noise", "laughter", "applause"):
+            ids = idx_map.get(lb) or []
+            if not ids:
+                continue
+            conf = float(np.max(vec[ids]))
+            if conf >= conf_th:
+                raw.append((s_ms, e_ms, lb, conf))
+
+    if not raw:
+        return []
+    merged = _merge_labeled_segments(raw, min_ms=max(200, _env_int("CLIP_AED_MIN_KEEP_MS", 450)))
+    return merged
 
 
 def detect_audio_events_from_file(file_path: Path) -> list[dict[str, Any]]:
-    backend = str(os.getenv("CLIP_AED_BACKEND") or "panns").strip().lower()
-    if backend in {"panns", "auto"}:
+    backend = str(os.getenv("CLIP_AED_BACKEND") or "auto").strip().lower()
+    if backend in {"yamnet", "auto"}:
         try:
-            panns_events = _detect_audio_events_panns(file_path)
-            if panns_events:
-                return panns_events
-            if backend == "panns":
+            yamnet_events = _detect_audio_events_yamnet(file_path)
+            if yamnet_events:
+                return yamnet_events
+            if backend == "yamnet":
                 return []
         except Exception:
-            if backend == "panns":
+            if backend == "yamnet":
                 return []
+
+    if backend == "panns":
+        # Backward compatibility: treat removed PANNs backend as auto fallback.
+        backend = "auto"
 
     # Heuristic fallback.
     pcm, sr = _decode_wav_mono_16k_from_file(file_path)
