@@ -148,6 +148,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [multiSelectIds, setMultiSelectIds] = useState<Set<string>>(() => new Set());
   /** 文稿区域全屏模式 */
   const [transcriptFullscreen, setTranscriptFullscreen] = useState(false);
+  const [speakerNames, setSpeakerNames] = useState<Record<number, string>>({});
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const waveformRef = useRef<ClipWaveformHandle | null>(null);
@@ -201,6 +202,25 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`presto-speaker-names:${projectId}`);
+      if (!raw) {
+        setSpeakerNames({});
+        return;
+      }
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const next: Record<number, string> = {};
+      for (const [k, v] of Object.entries(parsed || {})) {
+        const ix = Number(k);
+        if (Number.isInteger(ix) && typeof v === "string" && v.trim()) next[ix] = v.trim();
+      }
+      setSpeakerNames(next);
+    } catch {
+      setSpeakerNames({});
+    }
+  }, [projectId]);
+
+  useEffect(() => {
     if (!project?.export_pause_policy?.enabled) setWordchainPreviewOn(false);
   }, [project?.export_pause_policy?.enabled]);
 
@@ -215,6 +235,24 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   );
 
   const lines = useMemo(() => groupSpeakerSentenceLines(buildFlowUnits(words)), [words]);
+
+  const renameSpeaker = useCallback(
+    (speaker: number, nextName: string) => {
+      const name = nextName.trim();
+      setSpeakerNames((prev) => {
+        const next = { ...prev };
+        if (!name) delete next[speaker];
+        else next[speaker] = name;
+        try {
+          localStorage.setItem(`presto-speaker-names:${projectId}`, JSON.stringify(next));
+        } catch {
+          /* ignore */
+        }
+        return next;
+      });
+    },
+    [projectId]
+  );
 
   const scriptSearchHitIdsOrdered = useMemo(
     () => collectSubstringMatchWordIds(words, scriptSearch, excluded),
@@ -1519,6 +1557,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       ariaCutLabel={t("clip.editor.wordAriaCut")}
                       hostLabel={t("presto.flow.speakerHost")}
                       guestLabel={t("presto.flow.speakerGuest")}
+                      speakerNames={speakerNames}
+                      onRenameSpeaker={renameSpeaker}
                       emptyLabel={
                         hasServerAudio ? t("presto.flow.transcriptEmpty") : t("presto.flow.editorNoAudioHint")
                       }
@@ -1655,6 +1695,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         ariaCutLabel={t("clip.editor.wordAriaCut")}
                         hostLabel={t("presto.flow.speakerHost")}
                         guestLabel={t("presto.flow.speakerGuest")}
+                        speakerNames={speakerNames}
+                        onRenameSpeaker={renameSpeaker}
                         emptyLabel={
                           hasServerAudio ? t("presto.flow.transcriptEmpty") : t("presto.flow.editorNoAudioHint")
                         }

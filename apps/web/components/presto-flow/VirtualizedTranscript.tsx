@@ -3,11 +3,14 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useRef,
+  useState,
   type MouseEvent,
   type MutableRefObject,
-  type PointerEvent
+  type PointerEvent,
+  type KeyboardEvent as ReactKeyboardEvent
 } from "react";
 import type { ClipWord } from "../../lib/clipTypes";
 import { displayToken, type SpeakerLine } from "../../lib/prestoFlowTranscript";
@@ -75,6 +78,8 @@ type Props = {
   keepFirstLabel?: string;
   hostLabel: string;
   guestLabel: string;
+  speakerNames?: Readonly<Record<number, string>>;
+  onRenameSpeaker?: (speaker: number, nextName: string) => void;
   emptyLabel: string;
   stutterDupHint: string;
   stutterGroupHint: string;
@@ -107,6 +112,8 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
     keepFirstLabel,
     hostLabel,
     guestLabel,
+    speakerNames,
+    onRenameSpeaker,
     emptyLabel,
     stutterDupHint,
     stutterGroupHint,
@@ -118,6 +125,20 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
   ref
 ) {
   const parentRef = useRef<HTMLDivElement | null>(null);
+  const [editingSpeaker, setEditingSpeaker] = useState<number | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+
+  useEffect(() => {
+    if (editingSpeaker == null) return;
+    const fallback = speakerLabel(editingSpeaker, hostLabel, guestLabel);
+    setEditingValue(speakerNames?.[editingSpeaker] ?? fallback);
+  }, [editingSpeaker, hostLabel, guestLabel, speakerNames]);
+
+  const commitRename = (speaker: number) => {
+    const next = editingValue.trim();
+    onRenameSpeaker?.(speaker, next);
+    setEditingSpeaker(null);
+  };
   const setScrollContainer = (el: HTMLDivElement | null) => {
     parentRef.current = el;
     if (transcriptScrollRef) transcriptScrollRef.current = el;
@@ -173,8 +194,9 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
           const line = lines[vi.index];
           if (!line) return null;
           const linePlaybackActive = playbackLineIndex != null && playbackLineIndex === vi.index;
-          const speaker = speakerLabel(line.speaker, hostLabel, guestLabel);
+          const speaker = speakerNames?.[line.speaker] ?? speakerLabel(line.speaker, hostLabel, guestLabel);
           const startTimeLabel = formatLineStart(lineStartMs(line));
+          const inEdit = editingSpeaker === line.speaker;
           return (
             <div
               key={vi.key}
@@ -191,7 +213,34 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
             >
               <div className="border-b border-line/40 pb-2 pt-1">
                 <div className="mb-1.5 flex items-center gap-2 text-left select-none">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-brand">{speaker}</span>
+                  {inEdit ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={editingValue}
+                      onChange={(e) => setEditingValue(e.target.value)}
+                      onBlur={() => commitRename(line.speaker)}
+                      onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitRename(line.speaker);
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setEditingSpeaker(null);
+                        }
+                      }}
+                      className="h-5 min-w-[3.5rem] rounded border border-brand/40 bg-surface px-1.5 text-[10px] font-semibold tracking-wide text-brand outline-none focus-visible:ring-1 focus-visible:ring-brand/60"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="rounded px-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand hover:bg-brand/10"
+                      onDoubleClick={() => setEditingSpeaker(line.speaker)}
+                      title="Double click to rename speaker"
+                    >
+                      {speaker}
+                    </button>
+                  )}
                   <span className="text-[10px] tabular-nums text-muted">{startTimeLabel}</span>
                 </div>
                 <div className="min-w-0 whitespace-pre-wrap break-words text-left text-sm leading-normal [word-break:break-word]">
