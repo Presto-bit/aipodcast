@@ -1155,7 +1155,18 @@ def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
     title = (body.title or "").strip()
     notebook = (body.notebook or "").strip()
     project_name = (body.project_name or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
-    return _persist_note_upload(user_ref, data, raw_name, title, notebook, project_name)
+    try:
+        return _persist_note_upload(user_ref, data, raw_name, title, notebook, project_name)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        rid = (request.headers.get("x-request-id") or "").strip()
+        _notes_startup_logger.exception("notes upload_json unexpected error request_id=%s", rid or "-")
+        hint = f"（request_id={rid}）" if rid else ""
+        raise HTTPException(
+            status_code=500,
+            detail=f"上传处理失败：{exc.__class__.__name__}{hint}",
+        ) from exc
 
 
 @router.post("/notes/upload_raw")
@@ -1173,14 +1184,25 @@ async def upload_note_raw_api(
         raise HTTPException(status_code=400, detail="空文件")
     fname = (filename or "").strip()
     pn = (project_name or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
-    return _persist_note_upload(
-        user_ref,
-        data,
-        fname,
-        (title or "").strip(),
-        (notebook or "").strip(),
-        pn,
-    )
+    try:
+        return _persist_note_upload(
+            user_ref,
+            data,
+            fname,
+            (title or "").strip(),
+            (notebook or "").strip(),
+            pn,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        rid = (request.headers.get("x-request-id") or "").strip()
+        _notes_startup_logger.exception("notes upload_raw unexpected error request_id=%s", rid or "-")
+        hint = f"（request_id={rid}）" if rid else ""
+        raise HTTPException(
+            status_code=500,
+            detail=f"上传处理失败：{exc.__class__.__name__}{hint}",
+        ) from exc
 
 
 @router.post("/notes/import_url")
