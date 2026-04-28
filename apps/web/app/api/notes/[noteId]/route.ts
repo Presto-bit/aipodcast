@@ -6,7 +6,11 @@ type Params = { params: { noteId: string } };
 async function proxyNoteWrite(req: NextRequest, { params }: Params, method: "PATCH" | "POST") {
   const raw = await req.text();
   const requestId = getOrCreateRequestId(req);
-  return proxyJsonFromOrchestrator(`/api/v1/notes/${encodeURIComponent(params.noteId)}`, {
+  const targetPath =
+    method === "POST"
+      ? `/api/v1/notes/${encodeURIComponent(params.noteId)}/patch`
+      : `/api/v1/notes/${encodeURIComponent(params.noteId)}`;
+  return proxyJsonFromOrchestrator(targetPath, {
     method,
     payload: raw || "{}",
     body: raw || "{}",
