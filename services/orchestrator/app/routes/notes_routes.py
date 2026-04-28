@@ -80,6 +80,7 @@ from ..note_rag_service import (
     invalidate_retrieval_cache_for_notes,
     set_note_rag_index_error,
 )
+from ..text_decode import safe_decode_bytes
 from ..schemas import (
     NoteCreateRequest,
     NoteImportUrlRequest,
@@ -1341,16 +1342,34 @@ def download_note_file_api(
 
 
 @router.post("/notes/upload_json")
-def upload_note_json_api(body: NoteUploadJsonRequest, request: Request):
+async def upload_note_json_api(request: Request):
     user_ref = _current_user_ref_or_401(request)
     try:
-        data = base64.b64decode(body.data_base64, validate=True)
+        raw_body = await request.body()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体读取失败")
+    try:
+        body_obj = json.loads(raw_body or b"{}")
+    except Exception:
+        # 兼容异常字节：先容错解码再尝试 JSON 解析，避免 UnicodeDecodeError 泄漏到全局。
+        try:
+            body_obj = json.loads(safe_decode_bytes(raw_body))
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid_json_body") from None
+    if not isinstance(body_obj, dict):
+        raise HTTPException(status_code=400, detail="invalid_json_body")
+    data_base64 = str(body_obj.get("data_base64") or "").strip()
+    filename = str(body_obj.get("filename") or "").strip()
+    title = str(body_obj.get("title") or "").strip()
+    notebook = str(body_obj.get("notebook") or "").strip()
+    project_name = str(body_obj.get("project_name") or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
+    if not data_base64:
+        raise HTTPException(status_code=400, detail="文件数据无效")
+    try:
+        data = base64.b64decode(data_base64, validate=True)
     except Exception:
         raise HTTPException(status_code=400, detail="文件数据无效")
-    raw_name = (body.filename or "").strip()
-    title = (body.title or "").strip()
-    notebook = (body.notebook or "").strip()
-    project_name = (body.project_name or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
+    raw_name = filename
     try:
         return _persist_note_upload(user_ref, data, raw_name, title, notebook, project_name)
     except HTTPException:
@@ -1406,9 +1425,22 @@ async def upload_note_raw_api(
 
 
 @router.post("/notes/import_url")
-def import_note_from_url_api(body: NoteImportUrlRequest, request: Request):
+async def import_note_from_url_api(request: Request):
     user_ref = _current_user_ref_or_401(request)
-    url = (body.url or "").strip()
+    try:
+        raw_body = await request.body()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体读取失败")
+    try:
+        body_obj = json.loads(raw_body or b"{}")
+    except Exception:
+        try:
+            body_obj = json.loads(safe_decode_bytes(raw_body))
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid_json_body") from None
+    if not isinstance(body_obj, dict):
+        raise HTTPException(status_code=400, detail="invalid_json_body")
+    url = str(body_obj.get("url") or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="请提供 URL")
     fetch = content_parser.parse_url(url)
@@ -1424,17 +1456,18 @@ def import_note_from_url_api(body: NoteImportUrlRequest, request: Request):
         raise HTTPException(status_code=400, detail=f"[{err_code}] {head}\n\n{hint}")
     if len(content) > MAX_URL_IMPORT_CHARS:
         content = content[:MAX_URL_IMPORT_CHARS] + "\n\n（内容已截断）"
-    notebook = (body.notebook or "").strip()
+    notebook = str(body_obj.get("notebook") or "").strip()
     if not notebook:
         raise HTTPException(status_code=400, detail="notebook_required")
-    custom_title = (body.title or "").strip()
+    custom_title = str(body_obj.get("title") or "").strip()
     if custom_title:
         title = custom_title
     else:
         pu = urlparse(url)
         host = (pu.netloc or "").strip()
         title = f"{host} 摘录" if host else "网页笔记"
-    project_id = ensure_default_project(body.project_name, created_by=user_ref)
+    project_name = str(body_obj.get("project_name") or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
+    project_id = ensure_default_project(project_name, created_by=user_ref)
     content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
     canonical_url = str(fetch.get("url") or url).strip() or url
     old_rows = list_notes(
