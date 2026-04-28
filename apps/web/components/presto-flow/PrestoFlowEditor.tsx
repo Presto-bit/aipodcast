@@ -1524,14 +1524,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       if (e.shiftKey || e.metaKey || e.ctrlKey) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest("[data-word-id]")) return;
-      const anchor = findWordIdUnderPoint(e.clientX, e.clientY);
-      if (!anchor) return;
-      rangeDragAnchorRef.current = anchor;
+      const downWordId = findWordIdUnderPoint(e.clientX, e.clientY);
+      rangeDragAnchorRef.current = downWordId;
       rangeDragMovedRef.current = false;
-      setMultiSelectIds(new Set([anchor]));
-      setFocusedWordId(anchor);
-      rangeAnchorWordIdRef.current = anchor;
-      leftDragMultiSelectRef.current = true;
+      if (downWordId) {
+        setMultiSelectIds(new Set([downWordId]));
+        setFocusedWordId(downWordId);
+        rangeAnchorWordIdRef.current = downWordId;
+        leftDragMultiSelectRef.current = true;
+      }
       const sx = e.clientX;
       const sy = e.clientY;
       const move = (ev: globalThis.PointerEvent) => {
@@ -1539,9 +1540,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         if ((ev.clientX - sx) ** 2 + (ev.clientY - sy) ** 2 > 36) rangeDragMovedRef.current = true;
         const curId = findWordIdUnderPoint(ev.clientX, ev.clientY);
         if (!curId) return;
+        const anchor = rangeDragAnchorRef.current || curId;
+        if (!rangeDragAnchorRef.current) {
+          rangeDragAnchorRef.current = curId;
+          rangeAnchorWordIdRef.current = curId;
+        }
         const ids = wordIdsBetweenInclusive(words, anchor, curId);
         setMultiSelectIds(new Set(ids.length ? ids : [curId]));
         setFocusedWordId(curId);
+        leftDragMultiSelectRef.current = true;
       };
       const up = () => {
         window.removeEventListener("pointermove", move);
