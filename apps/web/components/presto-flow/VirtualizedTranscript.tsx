@@ -180,12 +180,7 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
               key={vi.key}
               data-index={vi.index}
               ref={virtualizer.measureElement}
-              className={[
-                "absolute left-0 top-0 w-full pr-1",
-                linePlaybackActive ? "rounded-lg ring-1 ring-brand/25 bg-brand/5" : ""
-              ]
-                .filter(Boolean)
-                .join(" ")}
+              className="absolute left-0 top-0 w-full pr-1"
               style={{
                 transform: `translateY(${vi.start}px)`,
                 minHeight: EST_LINE_PX

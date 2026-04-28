@@ -597,8 +597,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   }, [load, project?.transcription_status, project?.export_status]);
 
   const persistExcludedNow = useCallback(
-    async (next: Set<string>) => {
-      setSaveExcludedHint("saving");
+    async (next: Set<string>, opts?: { showSavingHint?: boolean }) => {
+      if (opts?.showSavingHint) setSaveExcludedHint("saving");
       try {
         const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
           method: "POST",
@@ -625,7 +625,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const scheduleSaveExcluded = useCallback(
     (next: Set<string>) => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => void persistExcludedNow(next), 500);
+      saveTimer.current = setTimeout(() => void persistExcludedNow(next, { showSavingHint: false }), 500);
     },
     [persistExcludedNow]
   );
@@ -636,7 +636,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
-    void persistExcludedNow(new Set(excludedRef.current));
+    void persistExcludedNow(new Set(excludedRef.current), { showSavingHint: true });
   }, [persistExcludedNow]);
 
   const undoExcluded = useCallback(() => {
