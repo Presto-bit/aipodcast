@@ -427,6 +427,29 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     [audioEvents, getAuthHeaders, project?.timeline_json, projectId]
   );
 
+  const analyzeAudioEvents = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio-events/analyze`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: "{}"
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        detail?: string;
+      };
+      if (!res.ok || data.success === false) {
+        throw new Error(data.detail || `事件分析提交失败 ${res.status}`);
+      }
+      window.setTimeout(() => {
+        void load();
+      }, 1800);
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+    }
+  }, [getAuthHeaders, load, projectId]);
+
   const scriptSearchHitIdsOrdered = useMemo(
     () => collectSubstringMatchWordIds(words, scriptSearch, excluded),
     [words, scriptSearch, excluded]
@@ -2113,6 +2136,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             onSetSilenceCapMs={setSilenceCapMs}
                             audioEvents={audioEvents}
                             onSetAudioEventAction={setAudioEventAction}
+                            onAnalyzeAudioEvents={() => void analyzeAudioEvents()}
                             roughCutSuggestions={roughPanelSuggestions}
                             onExecuteSuggestion={onExecuteSuggestion}
                             dismissedRoughKeys={dismissedRoughKeys}

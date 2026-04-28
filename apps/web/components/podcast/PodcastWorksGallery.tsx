@@ -399,6 +399,7 @@ export default function PodcastWorksGallery({
   const [coverUploadBusy, setCoverUploadBusy] = useState<string | null>(null);
   const coverFileInputRef = useRef<HTMLInputElement | null>(null);
   const coverUploadTargetIdRef = useRef<string | null>(null);
+  const prewarmedCoverSrcRef = useRef<Set<string>>(new Set());
 
   const {
     activeJobId,
@@ -476,6 +477,20 @@ export default function PodcastWorksGallery({
     if (variant !== "notes_studio" || cap < 1) return 0;
     return Math.max(0, items.length - cap);
   }, [items.length, variant, sidebarMaxItems]);
+
+  useEffect(() => {
+    const firstFour = visibleItems.slice(0, 4);
+    for (const w of firstFour) {
+      const id = String(w.id || "").trim();
+      if (!id || !String(w.coverImage || "").trim()) continue;
+      const src = workCoverImageSrc(w.coverImage, coverBustById[id], id);
+      if (!src || prewarmedCoverSrcRef.current.has(src)) continue;
+      prewarmedCoverSrcRef.current.add(src);
+      const img = new Image();
+      img.decoding = "async";
+      img.src = src;
+    }
+  }, [visibleItems, coverBustById]);
 
   useEffect(() => {
     const ids = items
@@ -1227,8 +1242,9 @@ export default function PodcastWorksGallery({
               : "grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
           }
         >
-          {visibleItems.map((w) => {
+          {visibleItems.map((w, index) => {
             const id = w.id!;
+            const eagerCover = index < 4;
             const isPublicTpl = Boolean(w.isPodcastPublicTemplate);
             const templateReuseArgs = isPublicTpl ? ({ publicTemplate: true } as const) : undefined;
             const isScriptDraft = String(w.type || "") === "script_draft";
@@ -1444,11 +1460,12 @@ export default function PodcastWorksGallery({
                     {w.coverImage ? (
                       /* eslint-disable-next-line @next/next/no-img-element */
                       <img
-                        src={workCoverImageSrc(w.coverImage, coverBustById[id])}
+                        src={workCoverImageSrc(w.coverImage, coverBustById[id], id)}
                         alt=""
                         className="relative z-[1] h-full w-full object-cover"
                         referrerPolicy="no-referrer"
-                        loading="lazy"
+                        loading={eagerCover ? "eager" : "lazy"}
+                        fetchPriority={eagerCover ? "high" : "auto"}
                         decoding="async"
                         onError={(e) => {
                           const el = e.target as HTMLImageElement;
@@ -1657,11 +1674,12 @@ export default function PodcastWorksGallery({
                   {w.coverImage ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
-                      src={workCoverImageSrc(w.coverImage, coverBustById[id])}
+                      src={workCoverImageSrc(w.coverImage, coverBustById[id], id)}
                       alt=""
                       className="relative z-[1] h-full w-full object-cover"
                       referrerPolicy="no-referrer"
-                      loading="lazy"
+                      loading={eagerCover ? "eager" : "lazy"}
+                      fetchPriority={eagerCover ? "high" : "auto"}
                       decoding="async"
                       onError={(e) => {
                         const el = e.target as HTMLImageElement;

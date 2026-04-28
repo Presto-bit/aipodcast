@@ -75,7 +75,7 @@ from ..object_store import (
 from ..queue import ai_queue
 from ..security import verify_internal_signature
 from ..volcengine_seed_asr_client import volc_seed_auth_configured
-from ..worker_tasks import run_clip_export_job, run_clip_transcription_job
+from ..worker_tasks import run_clip_audio_events_job, run_clip_export_job, run_clip_transcription_job
 
 logger = logging.getLogger(__name__)
 
@@ -1178,6 +1178,25 @@ def clip_post_qc_analyze(project_id: str, request: Request):
     if not update_qc_report(project_id=project_id, user_uuid=uid, report=report):
         raise HTTPException(status_code=500, detail="写入质检报告失败")
     return {"success": True, "qc_report": report}
+
+
+@router.post("/clip/projects/{project_id}/audio-events/analyze")
+def clip_post_audio_events_analyze(project_id: str, request: Request):
+    """触发非语音事件分析（P2）：写入 timeline_json.audio_events。"""
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    if not str(row.get("audio_object_key") or "").strip():
+        raise HTTPException(status_code=400, detail="无主素材音频")
+    try:
+        rq_job = ai_queue.enqueue(run_clip_audio_events_job, project_id, job_timeout="30m")
+        rq_id = getattr(rq_job, "id", None)
+        logger.info("clip audio_events enqueued project_id=%s rq_job_id=%s", project_id, rq_id)
+        return {"success": True, "queued": True, "rq_job_id": rq_id}
+    except Exception:
+        logger.exception("clip audio_events enqueue failed project_id=%s", project_id)
+        raise HTTPException(status_code=503, detail="事件分析任务入队失败，请稍后重试") from None
 
 
 @router.post("/clip/projects/{project_id}/transcribe")

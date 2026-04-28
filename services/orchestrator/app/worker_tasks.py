@@ -1688,3 +1688,45 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
         update_clip_export_failed(project_id=pid, user_uuid=owner, message=msg)
         logger.exception("clip export failed project_id=%s", pid)
         return {"status": "failed", "error": msg}
+
+
+def run_clip_audio_events_job(project_id: str) -> dict[str, Any]:
+    from .clip_audio_events import detect_audio_events_from_file
+    from .clip_store import get_clip_project_by_id, update_clip_timeline_json
+    from .object_store import get_object_bytes
+
+    pid = (project_id or "").strip()
+    row = get_clip_project_by_id(pid)
+    if not row:
+        return {"status": "failed", "error": "project_not_found"}
+    owner = _clip_owner_uuid_str(row.get("user_id"))
+    audio_key = str(row.get("audio_object_key") or "").strip()
+    if not audio_key:
+        return {"status": "failed", "error": "no_audio"}
+
+    tl = row.get("timeline_json")
+    if isinstance(tl, str):
+        try:
+            tl = json.loads(tl)
+        except Exception:
+            tl = {}
+    if not isinstance(tl, dict):
+        tl = {}
+    try:
+        from pathlib import Path
+        import tempfile
+
+        raw = get_object_bytes(audio_key)
+        suffix = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
+        with tempfile.NamedTemporaryFile(prefix="fyv_aed_src_", suffix=suffix, delete=True) as tf:
+            tf.write(raw)
+            tf.flush()
+            events = detect_audio_events_from_file(Path(tf.name))
+        next_tl = {**tl, "audio_events": events}
+        ok = update_clip_timeline_json(project_id=pid, user_uuid=owner, timeline=next_tl)
+        if not ok:
+            return {"status": "failed", "error": "timeline_update_failed"}
+        return {"status": "succeeded", "event_count": len(events)}
+    except Exception as exc:
+        logger.exception("clip audio_events analyze failed project_id=%s", pid)
+        return {"status": "failed", "error": str(exc)[:500]}

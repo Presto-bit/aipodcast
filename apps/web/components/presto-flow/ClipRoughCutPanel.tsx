@@ -104,6 +104,7 @@ type Props = {
     action: "keep" | "cut" | "duck";
   }>;
   onSetAudioEventAction?: (eventId: string, nextAction: "keep" | "cut" | "duck") => void;
+  onAnalyzeAudioEvents?: () => void | Promise<void>;
   /** 口癖 / 叠字 / 规则 / AI 等可执行建议（已在外层过滤 dismiss） */
   roughCutSuggestions: readonly ClipEditSuggestion[];
   onExecuteSuggestion: (s: ClipEditSuggestion) => void;
@@ -153,6 +154,7 @@ export default function ClipRoughCutPanel({
   onSetSilenceCapMs,
   audioEvents,
   onSetAudioEventAction,
+  onAnalyzeAudioEvents,
   roughCutSuggestions,
   onExecuteSuggestion,
   dismissedRoughKeys,
@@ -650,6 +652,15 @@ export default function ClipRoughCutPanel({
           <p className="text-[11px] font-semibold text-ink">非语音事件（P2 预留）</p>
           <span className="text-[10px] text-muted">{audioEventRows.length}</span>
         </div>
+        {onAnalyzeAudioEvents ? (
+          <button
+            type="button"
+            className="mb-2 rounded-lg border border-line bg-surface px-2 py-1 text-[10px] font-semibold text-ink hover:bg-fill"
+            onClick={() => void onAnalyzeAudioEvents()}
+          >
+            重新分析事件
+          </button>
+        ) : null}
         {audioEventRows.length === 0 ? (
           <p className="text-[10px] text-muted">暂无事件数据（后续接入 AED 自动填充）</p>
         ) : (
