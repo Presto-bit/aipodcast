@@ -31,6 +31,26 @@ function speakerLabel(speaker: number, hostLabel: string, guestLabel: string): s
   return `S${speaker + 1}`;
 }
 
+function lineStartMs(line: SpeakerLine): number | null {
+  const first = line.units[0];
+  if (!first) return null;
+  if (first.kind === "single") return first.word.s_ms;
+  return first.words[0]?.s_ms ?? null;
+}
+
+function formatLineStart(ms: number | null): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "--:--";
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  return `${String(totalMinutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 export type VirtualizedTranscriptHandle = {
   scrollToWordId: (wordId: string) => void;
 };
@@ -153,6 +173,8 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
           const line = lines[vi.index];
           if (!line) return null;
           const linePlaybackActive = playbackLineIndex != null && playbackLineIndex === vi.index;
+          const speaker = speakerLabel(line.speaker, hostLabel, guestLabel);
+          const startTimeLabel = formatLineStart(lineStartMs(line));
           return (
             <div
               key={vi.key}
@@ -172,14 +194,13 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
               aria-label={linePlainText(line)}
               aria-current={linePlaybackActive ? "true" : undefined}
             >
-              <div className="flex gap-2 border-b border-line/40 pb-2 pt-1">
-                <div className="mt-0.5 flex w-[3.25rem] shrink-0 flex-col items-stretch select-none">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-brand">
-                    {speakerLabel(line.speaker, hostLabel, guestLabel)}
-                  </span>
+              <div className="border-b border-line/40 pb-2 pt-1">
+                <div className="mb-1.5 flex items-center gap-2 text-left select-none">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-brand">{speaker}</span>
+                  <span className="text-[10px] tabular-nums text-muted">{startTimeLabel}</span>
                 </div>
-                <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-left leading-relaxed [word-break:break-word]">
-                  <span className="inline-flex flex-wrap content-start gap-x-0.5 gap-y-1">
+                <div className="min-w-0 whitespace-pre-wrap break-words text-left text-sm leading-normal [word-break:break-word]">
+                  <span className="inline-flex flex-wrap content-start gap-x-0 gap-y-0.5">
                   {line.units.flatMap((u) => {
                     if (u.kind === "single") {
                       return [

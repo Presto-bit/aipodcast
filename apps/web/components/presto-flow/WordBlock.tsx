@@ -152,7 +152,7 @@ export default function WordBlock({
       }
       title={trimHintTitle}
       className={[
-        "rounded px-0.5 py-0.5 text-[13px] leading-snug transition outline-none",
+        "rounded px-0 py-0.5 text-sm leading-normal transition outline-none",
         "hover:bg-brand/12 focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-offset-1 focus-visible:ring-offset-canvas",
         excluded
           ? "opacity-[0.22] line-through decoration-danger/60 text-muted"
@@ -162,7 +162,7 @@ export default function WordBlock({
           : "",
         focused && !excluded ? "ring-1 ring-brand/70" : "",
         focused && excluded ? "ring-1 ring-line" : "",
-        multiSelectActive ? "ring-2 ring-amber-500/65 ring-offset-1 ring-offset-canvas" : "",
+        multiSelectActive && !excluded ? "text-blue-600 dark:text-blue-400 underline underline-offset-[2px]" : "",
         roughCutHighlight && !excluded ? "ring-2 ring-rose-500/55 ring-offset-1 ring-offset-canvas" : "",
         trimExtraClass || "",
         suggestionUnderline
