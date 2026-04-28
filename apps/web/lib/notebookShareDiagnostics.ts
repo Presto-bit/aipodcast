@@ -11,6 +11,31 @@ export const NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY = "notes:share-failure-h
 
 export const NOTEBOOK_SHARE_DIAGNOSTICS_UPDATED_EVENT = "fym-notebook-share-diagnostics-updated";
 
+const DEBUG_INGEST = "http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98";
+const DEBUG_SESSION = "f9896b";
+
+/** 双写：ingest + 开发环境同源落盘，便于在无 ingest 时读取 `.cursor/debug-f9896b.log`。 */
+export function agentDebugLog(payload: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  const body = JSON.stringify({
+    sessionId: DEBUG_SESSION,
+    ...payload,
+    timestamp: Date.now()
+  });
+  fetch(DEBUG_INGEST, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": DEBUG_SESSION },
+    body
+  }).catch(() => {});
+  if (process.env.NODE_ENV !== "production") {
+    fetch("/api/debug-agent-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body
+    }).catch(() => {});
+  }
+}
+
 export type ShareLastErrorPayload = {
   debugLog: string;
   error: string;
@@ -51,25 +76,17 @@ export function readNotebookShareLastError(): ShareLastErrorPayload | null {
   const scoped = tryParseLast(scopedRaw);
   const fallback = tryParseLast(window.localStorage.getItem(NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK));
   const out = scoped || fallback;
-  // #region agent log
-  fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
-    body: JSON.stringify({
-      sessionId: "f9896b",
-      hypothesisId: "H3",
-      location: "notebookShareDiagnostics.ts:readNotebookShareLastError",
-      message: "read last share error",
-      data: {
-        scopedRawLen: scopedRaw ? scopedRaw.length : 0,
-        hasScoped: Boolean(scoped),
-        hasFallback: Boolean(fallback),
-        hasOut: Boolean(out)
-      },
-      timestamp: Date.now()
-    })
-  }).catch(() => {});
-  // #endregion
+  agentDebugLog({
+    hypothesisId: "H3",
+    location: "notebookShareDiagnostics.ts:readNotebookShareLastError",
+    message: "read last share error",
+    data: {
+      scopedRawLen: scopedRaw ? scopedRaw.length : 0,
+      hasScoped: Boolean(scoped),
+      hasFallback: Boolean(fallback),
+      hasOut: Boolean(out)
+    }
+  });
   if (scoped) return scoped;
   return fallback;
 }

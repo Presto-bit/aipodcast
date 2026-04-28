@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   NOTEBOOK_SHARE_DIAGNOSTICS_UPDATED_EVENT,
+  agentDebugLog,
   readNotebookShareFailureHistory,
   readNotebookShareLastError,
   type ShareFailureEntry,
@@ -21,18 +22,12 @@ export default function NotebookShareDiagnosticsHomeBanner() {
     const nextLast = readNotebookShareLastError();
     const nextHist = readNotebookShareFailureHistory();
     // #region agent log
-    fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
-      body: JSON.stringify({
-        sessionId: "f9896b",
-        hypothesisId: "H5",
-        location: "NotebookShareDiagnosticsHomeBanner.tsx:refresh",
-        message: "home banner refresh",
-        data: { hasLast: Boolean(nextLast), histLen: nextHist.length },
-        timestamp: Date.now()
-      })
-    }).catch(() => {});
+    agentDebugLog({
+      hypothesisId: "H5",
+      location: "NotebookShareDiagnosticsHomeBanner.tsx:refresh",
+      message: "home banner refresh",
+      data: { hasLast: Boolean(nextLast), histLen: nextHist.length }
+    });
     // #endregion
     setLast(nextLast);
     setHistory(nextHist);

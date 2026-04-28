@@ -74,6 +74,7 @@ import {
   NOTEBOOK_SHARE_FAILURE_HISTORY_STORAGE_KEY,
   NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY,
   NOTEBOOK_SHARE_LAST_ERROR_STORAGE_KEY_FALLBACK,
+  agentDebugLog,
   clearNotebookShareFailureHistoryStorage,
   notifyNotebookShareDiagnosticsUpdated,
   readNotebookShareFailureHistory,
@@ -880,18 +881,12 @@ export default function NotesPage() {
     }
     notifyNotebookShareDiagnosticsUpdated();
     // #region agent log
-    fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
-      body: JSON.stringify({
-        sessionId: "f9896b",
-        hypothesisId: "H3",
-        location: "notes/page.tsx:persistShareLastErrorPayload",
-        message: "persisted last share error",
-        data: { payloadLen: serialized.length },
-        timestamp: Date.now()
-      })
-    }).catch(() => {});
+    agentDebugLog({
+      hypothesisId: "H3",
+      location: "notes/page.tsx:persistShareLastErrorPayload",
+      message: "persisted last share error",
+      data: { payloadLen: serialized.length }
+    });
     // #endregion
   }, []);
 
@@ -932,18 +927,12 @@ export default function NotesPage() {
         }
         notifyNotebookShareDiagnosticsUpdated();
         // #region agent log
-        fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
-          body: JSON.stringify({
-            sessionId: "f9896b",
-            hypothesisId: "H4",
-            location: "notes/page.tsx:appendShareFailureHistory:microtask",
-            message: "failure history persisted",
-            data: { nextLen: next.length },
-            timestamp: Date.now()
-          })
-        }).catch(() => {});
+        agentDebugLog({
+          hypothesisId: "H4",
+          location: "notes/page.tsx:appendShareFailureHistory:microtask",
+          message: "failure history persisted",
+          data: { nextLen: next.length }
+        });
         // #endregion
       });
       return next;
@@ -3437,22 +3426,16 @@ export default function NotesPage() {
       });
       setShareDebugLog(currentDebugLog);
       // #region agent log
-      fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
-        body: JSON.stringify({
-          sessionId: "f9896b",
-          hypothesisId: "H1",
-          location: "notes/page.tsx:submitNotebookSharing:preThrow",
-          message: "share response before branch",
-          data: {
-            resOk: res.ok,
-            successField: data.success,
-            debugLen: currentDebugLog.length
-          },
-          timestamp: Date.now()
-        })
-      }).catch(() => {});
+      agentDebugLog({
+        hypothesisId: "H1",
+        location: "notes/page.tsx:submitNotebookSharing:preThrow",
+        message: "share response before branch",
+        data: {
+          resOk: res.ok,
+          successField: data.success,
+          debugLen: currentDebugLog.length
+        }
+      });
       // #endregion
       if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
@@ -3464,18 +3447,12 @@ export default function NotesPage() {
         .filter(Boolean)
         .join("\n");
       // #region agent log
-      fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
-        body: JSON.stringify({
-          sessionId: "f9896b",
-          hypothesisId: "H2",
-          location: "notes/page.tsx:submitNotebookSharing:catch",
-          message: "share catch entered",
-          data: { msgLen: msg.length, dbgLen: currentDebugLog.length },
-          timestamp: Date.now()
-        })
-      }).catch(() => {});
+      agentDebugLog({
+        hypothesisId: "H2",
+        location: "notes/page.tsx:submitNotebookSharing:catch",
+        message: "share catch entered",
+        data: { msgLen: msg.length, dbgLen: currentDebugLog.length }
+      });
       // #endregion
       setShareDebugLog(currentDebugLog);
       setShareModalError(msg);
@@ -3498,18 +3475,12 @@ export default function NotesPage() {
         debugLog: currentDebugLog
       });
       // #region agent log
-      fetch("http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f9896b" },
-        body: JSON.stringify({
-          sessionId: "f9896b",
-          hypothesisId: "H4",
-          location: "notes/page.tsx:submitNotebookSharing:afterAppend",
-          message: "share failure persisted to state queue",
-          data: { entryIdLen: entryId.length, dbgLen: currentDebugLog.length },
-          timestamp: Date.now()
-        })
-      }).catch(() => {});
+      agentDebugLog({
+        hypothesisId: "H4",
+        location: "notes/page.tsx:submitNotebookSharing:afterAppend",
+        message: "share failure persisted to state queue",
+        data: { entryIdLen: entryId.length, dbgLen: currentDebugLog.length }
+      });
       // #endregion
       queueMicrotask(() => {
         shareDiagnosticsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
