@@ -14,6 +14,7 @@ type LogSwitchConfig = {
   updatedBy: string;
   reason: string;
 };
+type LogScope = "notebook_share_client" | "frontend_global_error";
 
 type LogAudit = {
   id: string;
@@ -37,6 +38,8 @@ function formatTime(tsMs: number | null | undefined): string {
 
 export default function AdminLogManagementPage() {
   const { getAuthHeaders } = useAuth();
+  const [scope, setScope] = useState<LogScope>("notebook_share_client");
+  const [scopes, setScopes] = useState<LogScope[]>(["notebook_share_client", "frontend_global_error"]);
   const [config, setConfig] = useState<LogSwitchConfig | null>(null);
   const [audits, setAudits] = useState<LogAudit[]>([]);
   const [enabled, setEnabled] = useState(false);
@@ -48,13 +51,14 @@ export default function AdminLogManagementPage() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/admin/log-management", {
+    const res = await fetch(`/api/admin/log-management?scope=${encodeURIComponent(scope)}`, {
       headers: getAuthHeaders(),
       cache: "no-store"
     });
     const data = (await res.json().catch(() => ({}))) as {
       success?: boolean;
       error?: string;
+      scopes?: LogScope[];
       config?: LogSwitchConfig;
       audits?: LogAudit[];
     };
@@ -62,12 +66,15 @@ export default function AdminLogManagementPage() {
       throw new Error(data.error || `加载失败 ${res.status}`);
     }
     setConfig(data.config);
+    if (Array.isArray(data.scopes) && data.scopes.length > 0) {
+      setScopes(data.scopes);
+    }
     setAudits(Array.isArray(data.audits) ? data.audits : []);
     setEnabled(Boolean(data.config.enabled));
     setTtlMinutes(data.config.expiresAtMs ? String(Math.max(1, Math.round((data.config.expiresAtMs - Date.now()) / 60_000))) : "30");
     setSampleRate(String(data.config.sampleRate ?? 1));
     setMinLevel(data.config.minLevel === "debug" ? "debug" : "info");
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, scope]);
 
   useEffect(() => {
     void load().catch((e) => setMsg(String(e instanceof Error ? e.message : e)));
@@ -86,6 +93,7 @@ export default function AdminLogManagementPage() {
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           enabled: nextEnabled,
+          scope,
           ttlMinutes: Number.isFinite(ttl) ? ttl : 30,
           sampleRate: Number.isFinite(sample) ? sample : 1,
           minLevel,
@@ -119,8 +127,26 @@ export default function AdminLogManagementPage() {
       </p>
 
       <section className="mt-6 rounded-xl border border-line bg-surface/60 p-4">
+        <h2 className="text-sm font-medium text-ink">日志范围</h2>
+        <div className="mt-3 max-w-xs">
+          <select
+            className="w-full rounded bg-canvas p-2 text-sm text-ink"
+            value={scope}
+            onChange={(e) => setScope(e.target.value as LogScope)}
+          >
+            {scopes.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-xl border border-line bg-surface/60 p-4">
         <h2 className="text-sm font-medium text-ink">当前状态</h2>
         <div className="mt-3 grid gap-2 text-sm text-muted md:grid-cols-2">
+          <p>范围：{scope}</p>
           <p>开关：{config?.enabled ? "开启" : "关闭"}</p>
           <p>环境：{config?.env || "—"}</p>
           <p>最小级别：{config?.minLevel || "—"}</p>

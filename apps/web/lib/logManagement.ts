@@ -1,4 +1,5 @@
-type LogScope = "notebook_share_client";
+export const LOG_SCOPES = ["notebook_share_client", "frontend_global_error"] as const;
+export type LogScope = (typeof LOG_SCOPES)[number];
 type LogLevel = "info" | "debug";
 
 export type LogSwitchConfig = {

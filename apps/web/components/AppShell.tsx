@@ -56,6 +56,7 @@ import {
   pathMatchesRoot
 } from "../lib/navPaths";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../lib/userScopedStorage";
+import { reportFrontendGlobalError } from "../lib/frontendGlobalErrorClient";
 
 type NavItem = {
   href: string;
@@ -233,6 +234,44 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const onRequestCollapse = () => setCollapsed(true);
     window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
     return () => window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
+  }, []);
+
+  useEffect(() => {
+    const onWindowError = (event: ErrorEvent) => {
+      reportFrontendGlobalError({
+        source: "onerror",
+        message: event.message || "window_error",
+        location:
+          typeof event.filename === "string" && event.filename
+            ? `${event.filename}:${event.lineno || 0}:${event.colno || 0}`
+            : undefined,
+        data: {
+          stack: event.error && typeof event.error === "object" ? (event.error as { stack?: unknown }).stack : undefined
+        }
+      });
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const message =
+        reason && typeof reason === "object" && "message" in (reason as object)
+          ? String((reason as { message?: unknown }).message || "promise_rejection")
+          : String(reason ?? "promise_rejection");
+      const stack =
+        reason && typeof reason === "object" && "stack" in (reason as object)
+          ? String((reason as { stack?: unknown }).stack || "")
+          : "";
+      reportFrontendGlobalError({
+        source: "unhandledrejection",
+        message,
+        data: { stack }
+      });
+    };
+    window.addEventListener("error", onWindowError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    return () => {
+      window.removeEventListener("error", onWindowError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
   }, []);
 
   useLayoutEffect(() => {
