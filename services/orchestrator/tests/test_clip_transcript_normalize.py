@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from app.clip_transcript_normalize import normalize_volc_flash_transcript
 
 
@@ -76,3 +78,76 @@ def test_middle_comma_between_chars() -> None:
     words = norm["words"]
     assert words[1]["text"] == "好"
     assert "，" in words[1]["punct"]
+
+
+def test_sentence_boundary_rescore_by_pause_and_length() -> None:
+    old_threshold = os.environ.get("CLIP_ASR_BOUNDARY_SCORE_THRESHOLD")
+    os.environ["CLIP_ASR_BOUNDARY_SCORE_THRESHOLD"] = "0.72"
+    try:
+        raw = {
+            "audio_info": {"duration": 5000},
+            "result": {
+                "utterances": [
+                    {
+                        "speaker_id": 0,
+                        "text": "今天我们讨论模型效果然后看下优化方向",
+                        "words": [
+                            {"start_time": 0, "end_time": 120, "text": "今天"},
+                            {"start_time": 130, "end_time": 240, "text": "我们"},
+                            {"start_time": 250, "end_time": 360, "text": "讨论"},
+                            {"start_time": 370, "end_time": 490, "text": "模型"},
+                            {"start_time": 500, "end_time": 620, "text": "效果"},
+                            {"start_time": 1250, "end_time": 1380, "text": "然后"},
+                            {"start_time": 1390, "end_time": 1510, "text": "看下"},
+                            {"start_time": 1520, "end_time": 1660, "text": "优化"},
+                            {"start_time": 1670, "end_time": 1830, "text": "方向"},
+                        ],
+                    }
+                ]
+            },
+        }
+        norm = normalize_volc_flash_transcript(raw, profile="interview", speaker_hint=2)
+        words = norm["words"]
+        assert words[5]["text"] == "然后"
+        assert words[5]["utt_new"] is True
+    finally:
+        if old_threshold is None:
+            os.environ.pop("CLIP_ASR_BOUNDARY_SCORE_THRESHOLD", None)
+        else:
+            os.environ["CLIP_ASR_BOUNDARY_SCORE_THRESHOLD"] = old_threshold
+
+
+def test_speaker_short_jitter_is_smoothed() -> None:
+    raw = {
+        "audio_info": {"duration": 2000},
+        "result": {
+            "utterances": [
+                {
+                    "speaker_id": 0,
+                    "text": "我们开始",
+                    "words": [
+                        {"start_time": 0, "end_time": 200, "text": "我们"},
+                        {"start_time": 210, "end_time": 340, "text": "开始"},
+                    ],
+                },
+                {
+                    "speaker_id": 1,
+                    "text": "嗯",
+                    "words": [{"start_time": 345, "end_time": 420, "text": "嗯"}],
+                },
+                {
+                    "speaker_id": 0,
+                    "text": "继续说",
+                    "words": [
+                        {"start_time": 430, "end_time": 560, "text": "继续"},
+                        {"start_time": 570, "end_time": 760, "text": "说"},
+                    ],
+                },
+            ]
+        },
+    }
+    norm = normalize_volc_flash_transcript(raw)
+    words = norm["words"]
+    # 中间极短抖动 speaker 应被平滑回前后一致的 0
+    assert words[2]["text"] == "嗯"
+    assert words[2]["speaker"] == 0

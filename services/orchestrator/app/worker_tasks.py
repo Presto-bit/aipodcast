@@ -1398,6 +1398,7 @@ def run_clip_transcription_job(project_id: str) -> dict[str, Any]:
         update_clip_transcribe_queued,
         update_clip_transcribe_succeeded,
     )
+    from .clip_transcript_refine import refine_transcript_two_stage
     from .clip_transcript_normalize import normalize_volc_flash_transcript
     from .object_store import get_object_bytes, presigned_get_url
     from .volcengine_seed_asr_client import volc_seed_recognize_url_wait
@@ -1529,7 +1530,26 @@ def run_clip_transcription_job(project_id: str) -> dict[str, Any]:
             corpus_hotwords=corpus_hw if corpus_hw else None,
             corpus_scene=corpus_scene,
         )
-        normalized = normalize_volc_flash_transcript(raw_tr)
+        try:
+            normalized, refine_meta = refine_transcript_two_stage(
+                raw_transcript=raw_tr,
+                audio_bytes=audio_bytes,
+                audio_filename=str(row.get("audio_filename") or "").strip() or None,
+                audio_mime=str(row.get("audio_mime") or "").strip() or None,
+                diarization_enabled=diar,
+                speaker_hint=int(row.get("speaker_count") or 2),
+                channel_ids=channel_ids,
+                corpus_hotwords=corpus_hw if corpus_hw else None,
+                corpus_scene=corpus_scene,
+            )
+            logger.info("clip transcribe second_stage project_id=%s meta=%s", pid, refine_meta)
+        except Exception as refine_exc:
+            logger.warning("clip transcribe second_stage_failed project_id=%s err=%s", pid, refine_exc)
+            normalized = normalize_volc_flash_transcript(
+                raw_tr,
+                profile="auto",
+                speaker_hint=int(row.get("speaker_count") or 2),
+            )
         update_clip_transcribe_succeeded(project_id=pid, user_uuid=owner, raw=raw_tr, normalized=normalized)
         return {"status": "succeeded", "word_count": len(normalized.get("words") or [])}
     except Exception as exc:

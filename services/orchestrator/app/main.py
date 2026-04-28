@@ -262,11 +262,15 @@ async def _unhandled_exception_json(request: Request, exc: Exception):
         request.method,
         request.url.path,
     )
+    err_msg = str(exc or "").strip().replace("\n", " ")[:220]
+    detail = f"internal_server_error:{exc.__class__.__name__}"
+    if err_msg:
+        detail = f"{detail}:{err_msg}"
     return JSONResponse(
         content=_error_payload(
             request=request,
             error="internal_server_error",
-            detail=f"internal_server_error:{exc.__class__.__name__}",
+            detail=detail,
             status_code=500,
         ),
         status_code=500,

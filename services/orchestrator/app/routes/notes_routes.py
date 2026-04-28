@@ -6,6 +6,7 @@ import os
 import re
 import time
 import uuid
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -109,6 +110,20 @@ def _metadata_notebook_from_row(row: dict) -> str:
     if not isinstance(md, dict):
         return ""
     return str(md.get("notebook") or "").strip()
+
+
+def _safe_user_text(value: str | None, *, max_len: int = 500) -> str:
+    """清理异常 Unicode 输入，避免下游解码/序列化失败。"""
+    raw = str(value or "")
+    try:
+        normalized = unicodedata.normalize("NFC", raw)
+    except Exception:
+        normalized = raw
+    safe = normalized.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
+    safe = safe.replace("\x00", "").strip()
+    if len(safe) > max_len:
+        safe = safe[:max_len].rstrip()
+    return safe
 
 
 def _shared_list_owner_uuid_or_none(
@@ -485,7 +500,7 @@ def _persist_note_upload(
     except Exception as exc:
         _notes_startup_logger.exception("notes upload: ensure_notebooks_schema failed")
         raise HTTPException(status_code=503, detail="笔记存储未就绪，请稍后重试。") from exc
-    raw_name = (raw_name or "").strip()
+    raw_name = _safe_user_text(raw_name, max_len=240)
     if not raw_name:
         raise HTTPException(status_code=400, detail="无效文件名")
     if "." not in raw_name:
@@ -501,10 +516,11 @@ def _persist_note_upload(
     if len(data) > MAX_NOTE_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="文件过大")
     original_title = raw_name.rsplit(".", 1)[0].strip() if "." in raw_name else raw_name
-    title = (title_in or "").strip() or original_title or raw_name
-    notebook = (notebook or "").strip()
+    title = _safe_user_text(title_in, max_len=240) or original_title or raw_name
+    notebook = _safe_user_text(notebook, max_len=120)
     if not notebook:
         raise HTTPException(status_code=400, detail="notebook_required")
+    project_name = _safe_user_text(project_name, max_len=120) or NOTES_PODCAST_STUDIO_PROJECT
     content_sha256 = hashlib.sha256(data).hexdigest()
     project_id = ensure_default_project(project_name, created_by=user_ref)
     dup_id = find_duplicate_file_note_id(

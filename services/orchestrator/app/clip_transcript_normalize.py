@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import unicodedata
+import os
 from typing import Any
 
 # 词末可拆入 punct 的符号（便于前端按句末标点分行；避免把字母数字尾部误拆）
 _TRAIL_PUNCT_CHARS = frozenset(
     "。！？，、；：…,.!?;:\"\"''（）()【】[]「」『』《》·—－"
 )
+_SENT_END_PUNCT = frozenset("。！？!?…")
+_CLAUSE_PUNCT = frozenset("，,、；;：:")
 
 
 def _is_insertable_between_chars(ch: str) -> bool:
@@ -114,7 +117,175 @@ def _speaker_canonical_index(raw_spk: Any, order: list[int]) -> int:
     return order.index(x)
 
 
-def normalize_volc_flash_transcript(raw: dict[str, Any]) -> dict[str, Any]:
+def _word_confidence(w: dict[str, Any]) -> float:
+    """统一抽取词置信度，缺失时返回中性值。"""
+    for k in ("confidence", "conf", "probability"):
+        v = w.get(k)
+        try:
+            if v is None:
+                continue
+            f = float(v)
+            if 0.0 <= f <= 1.0:
+                return f
+            if f > 1.0:
+                return min(1.0, f / 100.0)
+        except (TypeError, ValueError):
+            continue
+    return 0.6
+
+
+def _speaker_smooth(words: list[dict[str, Any]], *, min_switch_ms: int) -> None:
+    """
+    平滑 speaker 抖动：A-B-A 且 B 持续极短时并回 A。
+    仅改标签，不改原始音频与时间戳。
+    """
+    if len(words) < 3:
+        return
+    for i in range(1, len(words) - 1):
+        prev_sp = words[i - 1].get("speaker")
+        cur_sp = words[i].get("speaker")
+        nxt_sp = words[i + 1].get("speaker")
+        if prev_sp != nxt_sp or cur_sp == prev_sp:
+            continue
+        dur = int(words[i].get("e_ms", 0)) - int(words[i].get("s_ms", 0))
+        if dur <= max(50, min_switch_ms):
+            words[i]["speaker"] = prev_sp
+
+
+def _boundary_score(
+    *,
+    prev_word: dict[str, Any],
+    cur_word: dict[str, Any],
+    line_len_chars: int,
+    line_dur_ms: int,
+    min_pause_ms: int,
+) -> float:
+    """
+    句边界融合打分：
+    - 停顿
+    - 末标点
+    - 说话人切换
+    - 置信度下降
+    - 句长兜底
+    """
+    pause_ms = max(0, int(cur_word.get("s_ms", 0)) - int(prev_word.get("e_ms", 0)))
+    prev_tail = str(prev_word.get("punct") or "").strip()
+    prev_conf = float(prev_word.get("conf", 0.6))
+    cur_conf = float(cur_word.get("conf", 0.6))
+    score = 0.0
+
+    if pause_ms >= min_pause_ms:
+        score += min(0.85, 0.55 + (pause_ms - min_pause_ms) / 1200.0)
+    if any(ch in _SENT_END_PUNCT for ch in prev_tail):
+        score += 0.7
+    elif any(ch in _CLAUSE_PUNCT for ch in prev_tail):
+        score += 0.25
+    if prev_word.get("speaker") != cur_word.get("speaker"):
+        score += 0.45
+    if prev_conf - cur_conf >= 0.28:
+        score += 0.2
+    if line_len_chars >= 42:
+        score += 0.28
+    if line_dur_ms >= 7200:
+        score += 0.25
+    return score
+
+
+def _resegment_utt_new(words: list[dict[str, Any]], *, min_pause_ms: int, threshold: float) -> None:
+    """重算 utt_new，让句边界由多信号决定而非仅 ASR 原始 utterance。"""
+    if not words:
+        return
+    words[0]["utt_new"] = False
+    line_chars = len(str(words[0].get("text") or "") + str(words[0].get("punct") or ""))
+    line_start_ms = int(words[0].get("s_ms", 0))
+    for i in range(1, len(words)):
+        prev_w = words[i - 1]
+        cur_w = words[i]
+        cur_line_dur = max(0, int(prev_w.get("e_ms", 0)) - line_start_ms)
+        score = _boundary_score(
+            prev_word=prev_w,
+            cur_word=cur_w,
+            line_len_chars=line_chars,
+            line_dur_ms=cur_line_dur,
+            min_pause_ms=min_pause_ms,
+        )
+        should_cut = score >= threshold
+        cur_w["utt_new"] = should_cut
+        if should_cut:
+            line_chars = 0
+            line_start_ms = int(cur_w.get("s_ms", 0))
+        line_chars += len(str(cur_w.get("text") or "") + str(cur_w.get("punct") or ""))
+
+
+def _quality_score(words: list[dict[str, Any]], *, min_pause_ms: int) -> float:
+    """粗略质量分，用于异常回退为保守分句策略。"""
+    if not words:
+        return 0.0
+    conf_sum = 0.0
+    conf_n = 0
+    boundary_hits = 0
+    for i, w in enumerate(words):
+        conf_sum += float(w.get("conf", 0.6))
+        conf_n += 1
+        if i > 0:
+            pause_ms = max(0, int(w.get("s_ms", 0)) - int(words[i - 1].get("e_ms", 0)))
+            if pause_ms >= min_pause_ms or bool(w.get("utt_new")):
+                boundary_hits += 1
+    avg_conf = conf_sum / max(1, conf_n)
+    boundary_ratio = boundary_hits / max(1, len(words) - 1)
+    # 过密或过稀断句都降分
+    boundary_balance = 1.0 - min(1.0, abs(boundary_ratio - 0.18) * 2.8)
+    return max(0.0, min(1.0, 0.7 * avg_conf + 0.3 * boundary_balance))
+
+
+def _resolve_profile(
+    raw: dict[str, Any],
+    *,
+    profile: str | None,
+    speaker_hint: int | None,
+) -> str:
+    p = str(profile or "").strip().lower()
+    if p in ("monologue", "interview", "meeting"):
+        return p
+    if isinstance(speaker_hint, int) and speaker_hint >= 3:
+        return "meeting"
+    if isinstance(speaker_hint, int) and speaker_hint >= 2:
+        return "interview"
+    utts = raw.get("result", {}).get("utterances") if isinstance(raw.get("result"), dict) else None
+    if isinstance(utts, list):
+        spks: set[int] = set()
+        for ut in utts:
+            if not isinstance(ut, dict):
+                continue
+            s = ut.get("speaker_id")
+            if s is None:
+                s = ut.get("speaker")
+            try:
+                spks.add(int(s))
+            except (TypeError, ValueError):
+                continue
+        if len(spks) >= 3:
+            return "meeting"
+        if len(spks) >= 2:
+            return "interview"
+    return "monologue"
+
+
+def _profile_default_params(profile_name: str) -> tuple[int, float, int]:
+    """返回 (min_pause_ms, boundary_threshold, speaker_switch_min_ms)。"""
+    if profile_name == "interview":
+        return 360, 0.74, 420
+    if profile_name == "meeting":
+        return 320, 0.7, 480
+    return 460, 0.86, 300
+
+
+def normalize_volc_flash_transcript(
+    raw: dict[str, Any],
+    *,
+    profile: str | None = None,
+    speaker_hint: int | None = None,
+) -> dict[str, Any]:
     """
     豆包录音文件识别 2.0（及火山极速版等）OpenSpeech 响应体 → 剪辑台词级结构。
     参考：https://www.volcengine.com/docs/6561/1631584
@@ -190,9 +361,45 @@ def normalize_volc_flash_transcript(raw: dict[str, Any]) -> dict[str, Any]:
                     "e_ms": e_ms,
                     "punct": punct,
                     "utt_new": utt_new,
+                    "conf": _word_confidence(w),
                 }
             )
         if len(words_out) > n_words_before:
             utt_processed += 1
+
+    profile_name = _resolve_profile(raw, profile=profile, speaker_hint=speaker_hint)
+    def_min_pause, def_threshold, def_smooth = _profile_default_params(profile_name)
+    try:
+        smooth_ms = int(os.getenv("CLIP_ASR_SPEAKER_SWITCH_MIN_MS") or str(def_smooth))
+    except (TypeError, ValueError):
+        smooth_ms = def_smooth
+    _speaker_smooth(words_out, min_switch_ms=max(80, min(1200, smooth_ms)))
+
+    try:
+        min_pause_ms = int(os.getenv("CLIP_ASR_BOUNDARY_MIN_PAUSE_MS") or str(def_min_pause))
+    except (TypeError, ValueError):
+        min_pause_ms = def_min_pause
+    min_pause_ms = max(120, min(1800, min_pause_ms))
+    try:
+        threshold = float(os.getenv("CLIP_ASR_BOUNDARY_SCORE_THRESHOLD") or str(def_threshold))
+    except (TypeError, ValueError):
+        threshold = def_threshold
+    threshold = max(0.45, min(1.6, threshold))
+    _resegment_utt_new(words_out, min_pause_ms=min_pause_ms, threshold=threshold)
+
+    q = _quality_score(words_out, min_pause_ms=min_pause_ms)
+    if q < 0.52:
+        # 回退：保守断句，仅在停顿明显或句末标点时断
+        for i, w in enumerate(words_out):
+            if i == 0:
+                w["utt_new"] = False
+                continue
+            prev = words_out[i - 1]
+            pause_ms = max(0, int(w.get("s_ms", 0)) - int(prev.get("e_ms", 0)))
+            prev_p = str(prev.get("punct") or "")
+            w["utt_new"] = bool(pause_ms >= max(520, min_pause_ms) or any(ch in _SENT_END_PUNCT for ch in prev_p))
+
+    for w in words_out:
+        w.pop("conf", None)
 
     return {"version": 1, "words": words_out, "duration_ms": duration_ms}
