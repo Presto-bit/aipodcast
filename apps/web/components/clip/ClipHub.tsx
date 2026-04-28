@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Check, Pencil, Trash2, X } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../lib/auth";
 import { clipJobLabel } from "../../lib/clipJobLabels";
@@ -28,7 +28,9 @@ function clipHubProgressLine(
   const tr = transcriptionStatus || "idle";
   const ex = exportStatus || "idle";
   if (tr !== "idle") {
-    parts.push(`${t("clip.status.transcription")}: ${clipJobLabel(t, "transcription", tr)}`);
+    if (tr !== "succeeded") {
+      parts.push(`${t("clip.status.transcription")}: ${clipJobLabel(t, "transcription", tr)}`);
+    }
   }
   if (ex !== "idle") {
     parts.push(`${t("clip.status.export")}: ${clipJobLabel(t, "export", ex)}`);
@@ -184,7 +186,9 @@ export default function ClipHub() {
 
       <header className="border-b border-line pb-8 pt-6 sm:pt-8">
         <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t("clip.pageTitle")}</h1>
-        <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted sm:text-[15px]">{t("clip.pageSubtitle")}</p>
+        {t("clip.pageSubtitle").trim() ? (
+          <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted sm:text-[15px]">{t("clip.pageSubtitle")}</p>
+        ) : null}
         <div className="mt-6 flex flex-wrap gap-3">
           <button
             type="button"
@@ -193,14 +197,6 @@ export default function ClipHub() {
             onClick={() => void createProject()}
           >
             {busy ? t("clip.creating") : t("clip.cta.primary")}
-          </button>
-          <button
-            type="button"
-            className="rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-fill"
-            disabled={loading}
-            onClick={() => void load()}
-          >
-            {t("clip.refresh")}
           </button>
         </div>
         {err ? (
@@ -249,6 +245,10 @@ export default function ClipHub() {
                           aria-label={t("clip.editor.renameFieldAria")}
                           className="min-w-[12rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
                           autoComplete="off"
+                          autoFocus
+                          onBlur={() => {
+                            if (!renameBusy) setRenamingId(null);
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
@@ -260,29 +260,16 @@ export default function ClipHub() {
                             }
                           }}
                         />
-                        <button
-                          type="button"
-                          disabled={renameBusy}
-                          className="shrink-0 rounded-md border border-line bg-surface p-1.5 text-mint shadow-soft hover:bg-fill disabled:opacity-50"
-                          aria-label={t("clip.hub.renameSave")}
-                          onClick={() => void saveRename(p.id)}
-                        >
-                          <Check className="h-4 w-4" aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={renameBusy}
-                          className="shrink-0 rounded-md border border-line bg-surface p-1.5 text-muted shadow-soft hover:bg-fill disabled:opacity-50"
-                          aria-label={t("clip.hub.renameCancel")}
-                          onClick={() => setRenamingId(null)}
-                        >
-                          <X className="h-4 w-4" aria-hidden />
-                        </button>
                       </div>
                     ) : (
                       <Link
                         href={`/clip/${encodeURIComponent(p.id)}`}
                         className="block text-sm font-medium text-ink transition hover:opacity-90"
+                        onDoubleClick={(e) => {
+                          e.preventDefault();
+                          setRenameDraft(p.title || p.id);
+                          setRenamingId(p.id);
+                        }}
                       >
                         <span className="flex flex-wrap items-center gap-2">
                           {p.title || p.id}
@@ -312,18 +299,6 @@ export default function ClipHub() {
                   </div>
                   {renamingId !== p.id ? (
                     <div className="flex shrink-0 items-center gap-1">
-                      <button
-                        type="button"
-                        className="rounded-lg border border-line bg-surface p-2 text-muted shadow-soft hover:bg-fill hover:text-ink"
-                        aria-label={t("clip.hub.rename")}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setRenameDraft(p.title || p.id);
-                          setRenamingId(p.id);
-                        }}
-                      >
-                        <Pencil className="h-4 w-4" aria-hidden />
-                      </button>
                       <button
                         type="button"
                         className="rounded-lg border border-danger/40 bg-surface p-2 text-danger-ink shadow-soft hover:bg-danger-soft"

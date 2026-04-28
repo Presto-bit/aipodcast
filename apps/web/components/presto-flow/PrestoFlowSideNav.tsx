@@ -37,7 +37,7 @@ export default function PrestoFlowSideNav({ active, onSelect, onDownloadClick, h
   return (
     <nav
       className="relative z-20 flex w-14 shrink-0 flex-col items-center gap-2 border-r border-line bg-fill/40 py-3 sm:w-16"
-      aria-label="Presto Flow"
+      aria-label="Audio Flow"
     >
       {btn("storyboard", <Layers className="h-5 w-5" aria-hidden />, labels.storyboard)}
       {btn("music", <Music className="h-5 w-5" aria-hidden />, labels.music)}
