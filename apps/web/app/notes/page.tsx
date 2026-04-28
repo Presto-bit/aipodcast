@@ -859,6 +859,7 @@ export default function NotesPage() {
   const [shareCopyHint, setShareCopyHint] = useState("");
   const shareViewedKeyRef = useRef("");
   const shareLinkHydratedRef = useRef(false);
+  const shareDiagnosticsRef = useRef<HTMLDivElement | null>(null);
 
   const readShareLastErrorPayload = useCallback(() => {
     const tryParse = (raw: string | null) => {
@@ -934,16 +935,19 @@ export default function NotesPage() {
     }
   }, []);
 
-  const appendShareFailureHistory = useCallback(
-    (entry: ShareFailureEntry) => {
-      setShareFailureHistory((prev) => {
-        const next = [entry, ...prev].slice(0, 20);
-        persistShareFailureHistory(next);
-        return next;
+  const appendShareFailureHistory = useCallback((entry: ShareFailureEntry) => {
+    setShareFailureHistory((prev) => {
+      const next = [entry, ...prev].slice(0, 20);
+      queueMicrotask(() => {
+        try {
+          persistShareFailureHistory(next);
+        } catch {
+          // ignore
+        }
       });
-    },
-    [persistShareFailureHistory]
-  );
+      return next;
+    });
+  }, [persistShareFailureHistory]);
 
   useEffect(() => {
     const saved = readShareLastErrorPayload();
@@ -3471,13 +3475,20 @@ export default function NotesPage() {
       const nowIso = new Date().toISOString();
       setShareLastAt(nowIso);
       persistShareLastErrorPayload({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso });
+      const entryId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${nowIso}-share-${name}-${Math.random().toString(36).slice(2, 9)}`;
       appendShareFailureHistory({
-        id: `${nowIso}-share-${name}`,
+        id: entryId,
         mode: "share",
         notebook: name,
         error: msg,
         at: nowIso,
         debugLog: currentDebugLog
+      });
+      queueMicrotask(() => {
+        shareDiagnosticsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     } finally {
       setShareModalBusy(false);
@@ -3545,13 +3556,20 @@ export default function NotesPage() {
       const nowIso = new Date().toISOString();
       setShareLastAt(nowIso);
       persistShareLastErrorPayload({ debugLog: currentDebugLog, error: msg, notebook: name, at: nowIso });
+      const entryId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${nowIso}-unshare-${name}-${Math.random().toString(36).slice(2, 9)}`;
       appendShareFailureHistory({
-        id: `${nowIso}-unshare-${name}`,
+        id: entryId,
         mode: "unshare",
         notebook: name,
         error: msg,
         at: nowIso,
         debugLog: currentDebugLog
+      });
+      queueMicrotask(() => {
+        shareDiagnosticsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     } finally {
       setShareModalBusy(false);
@@ -3634,39 +3652,60 @@ export default function NotesPage() {
       onPointerDown={onNotesMainPointerDown}
     >
       {error ? <p className="mb-4 text-sm text-danger-ink">{error}</p> : null}
-      {shareLastDebugLog ? (
-        <div className="mb-4 rounded-xl border border-danger/30 bg-danger-soft/20 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-medium text-danger-ink">
-              最近一次分享失败已保留：{shareLastNotebook || "未知笔记本"} {shareLastAt ? `(${shareLastAt.replace("T", " ").slice(0, 19)})` : ""}
-            </p>
-            <button
-              type="button"
-              className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
-              onClick={() => {
-                setShareLastDebugLog("");
-                setShareLastError("");
-                setShareLastNotebook("");
-                setShareLastAt("");
-                clearShareLastErrorPayload();
-              }}
-            >
-              清除
-            </button>
+      <div
+        ref={shareDiagnosticsRef}
+        className={`${shareLastDebugLog || shareFailureHistory.length > 0 ? "sticky top-0 z-40 mb-4 border-b border-line/80 bg-canvas/95 py-2 backdrop-blur-sm" : "hidden"}`}
+        aria-label="笔记本分享失败诊断"
+      >
+        {shareLastDebugLog ? (
+          <div className="mb-3 rounded-xl border border-danger/30 bg-danger-soft/20 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs font-medium text-danger-ink">
+                最近一次分享失败已保留：{shareLastNotebook || "未知笔记本"}{" "}
+                {shareLastAt ? `(${shareLastAt.replace("T", " ").slice(0, 19)})` : ""}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
+                  onClick={() => {
+                    const text = `${shareLastError ? `${shareLastError}\n\n` : ""}${shareLastDebugLog}`;
+                    void (async () => {
+                      try {
+                        await navigator.clipboard.writeText(text);
+                      } catch {
+                        window.prompt("请手动复制以下诊断信息：", text);
+                      }
+                    })();
+                  }}
+                >
+                  复制诊断
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
+                  onClick={() => {
+                    setShareLastDebugLog("");
+                    setShareLastError("");
+                    setShareLastNotebook("");
+                    setShareLastAt("");
+                    clearShareLastErrorPayload();
+                  }}
+                >
+                  清除
+                </button>
+              </div>
+            </div>
+            {shareLastError ? <p className="mt-2 text-xs text-danger-ink">{shareLastError}</p> : null}
+            <pre className="mt-2 max-h-52 overflow-auto rounded-lg border border-line/70 bg-fill/20 p-2 text-[10px] leading-relaxed text-muted">
+              {shareLastDebugLog}
+            </pre>
           </div>
-          {shareLastError ? <p className="mt-2 text-xs text-danger-ink">{shareLastError}</p> : null}
-          <pre className="mt-2 max-h-52 overflow-auto rounded-lg border border-line/70 bg-fill/20 p-2 text-[10px] leading-relaxed text-muted">
-            {shareLastDebugLog}
-          </pre>
-        </div>
-      ) : null}
-      {shareFailureHistory.length > 0 ? (
-        <details className="mb-4 rounded-xl border border-line/80 bg-surface p-3">
-          <summary className="cursor-pointer text-xs font-medium text-ink">
-            分享失败历史（最近 {shareFailureHistory.length} 条，不自动清空）
-          </summary>
-          <div className="mt-3 space-y-2">
-            <div className="flex justify-end">
+        ) : null}
+        {shareFailureHistory.length > 0 ? (
+          <div className="rounded-xl border border-line/80 bg-surface p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-medium text-ink">分享失败历史（最近 {shareFailureHistory.length} 条，不自动清空）</p>
               <button
                 type="button"
                 className="rounded border border-line px-2 py-1 text-[11px] text-ink hover:bg-fill"
@@ -3684,21 +3723,23 @@ export default function NotesPage() {
                 清空历史
               </button>
             </div>
-            {shareFailureHistory.map((item) => (
-              <div key={item.id} className="rounded-lg border border-line/70 bg-fill/20 p-2">
-                <p className="text-[11px] text-ink">
-                  [{item.mode === "share" ? "分享" : "取消分享"}] {item.notebook || "未知笔记本"} ·{" "}
-                  {item.at ? item.at.replace("T", " ").slice(0, 19) : "-"}
-                </p>
-                {item.error ? <p className="mt-1 text-[11px] text-danger-ink">{item.error}</p> : null}
-                <pre className="mt-1 max-h-40 overflow-auto rounded border border-line/70 bg-surface p-2 text-[10px] leading-relaxed text-muted">
-                  {item.debugLog}
-                </pre>
-              </div>
-            ))}
+            <div className="mt-3 max-h-[min(50vh,22rem)] space-y-2 overflow-y-auto pr-1">
+              {shareFailureHistory.map((item) => (
+                <div key={item.id} className="rounded-lg border border-line/70 bg-fill/20 p-2">
+                  <p className="text-[11px] text-ink">
+                    [{item.mode === "share" ? "分享" : "取消分享"}] {item.notebook || "未知笔记本"} ·{" "}
+                    {item.at ? item.at.replace("T", " ").slice(0, 19) : "-"}
+                  </p>
+                  {item.error ? <p className="mt-1 text-[11px] text-danger-ink">{item.error}</p> : null}
+                  <pre className="mt-1 max-h-40 overflow-auto rounded border border-line/70 bg-surface p-2 text-[10px] leading-relaxed text-muted">
+                    {item.debugLog}
+                  </pre>
+                </div>
+              ))}
+            </div>
           </div>
-        </details>
-      ) : null}
+        ) : null}
+      </div>
 
       {/* 在笔记本列表页无法看到右侧「我的作品」时，仍显示文章/底稿/播客生成日志（如页面恢复未完成 job） */}
       {hubView && (draftMessage.trim() || podcastGenBusy || podcastGenMessage.trim()) ? (
@@ -4977,8 +5018,6 @@ export default function NotesPage() {
           onPointerDown={(e) => {
             if (e.target === e.currentTarget && !shareModalBusy) {
               setShowShareNotebookModal(false);
-              setShareModalError("");
-              setShareDebugLog("");
               setShareCopyHint("");
             }
           }}
@@ -5080,8 +5119,6 @@ export default function NotesPage() {
                 onClick={() => {
                   if (!shareModalBusy) {
                     setShowShareNotebookModal(false);
-                    setShareModalError("");
-                    setShareDebugLog("");
                     setShareCopyHint("");
                   }
                 }}
