@@ -12,6 +12,11 @@ _TRAIL_PUNCT_CHARS = frozenset(
 )
 _SENT_END_PUNCT = frozenset("。！？!?…")
 _CLAUSE_PUNCT = frozenset("，,、；;：:")
+_CONNECTOR_TOKENS = frozenset(
+    ("然后", "所以", "但是", "因为", "而且", "就是", "其实", "并且", "不过", "另外", "同时")
+)
+_FILLER_TOKENS = frozenset(("嗯", "啊", "哦", "呃", "诶", "哎", "对", "好", "是的"))
+_ENUM_START_TOKENS = frozenset(("第一", "第二", "第三", "第四", "第五", "首先", "其次", "最后", "一是", "二是", "三是"))
 
 
 def _is_insertable_between_chars(ch: str) -> bool:
@@ -191,6 +196,39 @@ def _boundary_score(
     return score
 
 
+def _looks_like_numeric_or_time_unit(t: str) -> bool:
+    s = str(t or "").strip()
+    if not s:
+        return False
+    if any(ch.isdigit() for ch in s):
+        return True
+    return s in {"年", "月", "日", "点", "分", "秒", "%", "％", "元", "块", "号"}
+
+
+def _structural_block_cut(prev_word: dict[str, Any], cur_word: dict[str, Any], quote_balance: int) -> bool:
+    """结构保护：连接词、数字时间单元、引号未闭合时阻止切句。"""
+    prev_t = str(prev_word.get("text") or "").strip()
+    cur_t = str(cur_word.get("text") or "").strip()
+    if cur_t in _CONNECTOR_TOKENS:
+        return True
+    if _looks_like_numeric_or_time_unit(prev_t) and _looks_like_numeric_or_time_unit(cur_t):
+        return True
+    if quote_balance > 0:
+        return True
+    return False
+
+
+def _filler_attach_cut(prev_word: dict[str, Any], cur_word: dict[str, Any], pause_ms: int) -> bool:
+    """短语气词吸附：优先并入主句，避免单独成句。"""
+    cur_t = str(cur_word.get("text") or "").strip()
+    prev_t = str(prev_word.get("text") or "").strip()
+    if cur_t in _FILLER_TOKENS and pause_ms <= 420:
+        return False
+    if prev_t in _FILLER_TOKENS and pause_ms <= 420:
+        return False
+    return True
+
+
 def _resegment_utt_new(words: list[dict[str, Any]], *, min_pause_ms: int, threshold: float) -> None:
     """重算 utt_new，让句边界由多信号决定而非仅 ASR 原始 utterance。"""
     if not words:
@@ -198,9 +236,15 @@ def _resegment_utt_new(words: list[dict[str, Any]], *, min_pause_ms: int, thresh
     words[0]["utt_new"] = False
     line_chars = len(str(words[0].get("text") or "") + str(words[0].get("punct") or ""))
     line_start_ms = int(words[0].get("s_ms", 0))
+    quote_balance = 0
     for i in range(1, len(words)):
         prev_w = words[i - 1]
         cur_w = words[i]
+        prev_disp = f"{prev_w.get('text') or ''}{prev_w.get('punct') or ''}"
+        quote_balance += prev_disp.count("“") + prev_disp.count("「") + prev_disp.count("『")
+        quote_balance -= prev_disp.count("”") + prev_disp.count("」") + prev_disp.count("』")
+        quote_balance = max(0, quote_balance)
+        pause_ms = max(0, int(cur_w.get("s_ms", 0)) - int(prev_w.get("e_ms", 0)))
         cur_line_dur = max(0, int(prev_w.get("e_ms", 0)) - line_start_ms)
         score = _boundary_score(
             prev_word=prev_w,
@@ -209,6 +253,17 @@ def _resegment_utt_new(words: list[dict[str, Any]], *, min_pause_ms: int, thresh
             line_dur_ms=cur_line_dur,
             min_pause_ms=min_pause_ms,
         )
+        if i >= 2:
+            prev2_t = str(words[i - 2].get("text") or "").strip()
+            prev_t = str(prev_w.get("text") or "").strip()
+            cur_t = str(cur_w.get("text") or "").strip()
+            # 枚举项边界：在“第一/第二/首先...”前适度放宽切句阈值
+            if cur_t in _ENUM_START_TOKENS and prev_t != cur_t and prev2_t != cur_t:
+                score += 0.22
+        if _structural_block_cut(prev_w, cur_w, quote_balance=quote_balance):
+            score -= 0.5
+        if not _filler_attach_cut(prev_w, cur_w, pause_ms=pause_ms):
+            score -= 0.45
         should_cut = score >= threshold
         cur_w["utt_new"] = should_cut
         if should_cut:
