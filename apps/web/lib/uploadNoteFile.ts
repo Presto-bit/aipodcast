@@ -30,7 +30,18 @@ type UploadClientDiagnostic = {
   errorCode?: string;
   errorMessage: string;
   detailPreview?: string;
+  clientRequestId?: string;
+  responseRequestId?: string;
+  projectName?: string;
+  fileLastModified?: number;
+  userAgent?: string;
+  networkOnline?: boolean;
 };
+
+function clientRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 function pickUploadErrorCode(data: UploadJson, status: number): string {
   if (data.error && typeof data.error === "object" && typeof (data.error as { code?: unknown }).code === "string") {
@@ -64,8 +75,14 @@ async function reportUploadClientDiagnostic(payload: UploadClientDiagnostic): Pr
         fileSize: payload.fileSize,
         status: payload.status,
         requestId: payload.requestId || "",
+        clientRequestId: payload.clientRequestId || "",
+        responseRequestId: payload.responseRequestId || "",
         errorCode: payload.errorCode || "",
-        detailPreview: payload.detailPreview || ""
+        detailPreview: payload.detailPreview || "",
+        projectName: payload.projectName || "",
+        fileLastModified: payload.fileLastModified || 0,
+        userAgent: payload.userAgent || "",
+        networkOnline: typeof payload.networkOnline === "boolean" ? payload.networkOnline : null
       }
     };
     await fetch("/api/frontend-global-error", {
@@ -170,9 +187,11 @@ export function uploadNoteFileWithProgress(
 
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
+    const rid = clientRequestId();
     xhr.open("POST", "/api/note-upload");
     xhr.withCredentials = true;
     xhr.responseType = "text";
+    xhr.setRequestHeader("x-request-id", rid);
     const authHdr = getBearerAuthHeadersSync();
     for (const [k, v] of Object.entries(authHdr)) {
       xhr.setRequestHeader(k, v);
@@ -211,9 +230,15 @@ export function uploadNoteFileWithProgress(
         fileSize: Number(file.size || 0),
         status,
         requestId: responseRequestId || data.requestId || data.request_id || "",
+        clientRequestId: rid,
+        responseRequestId,
         errorCode: pickUploadErrorCode(data, status),
         errorMessage: parsedError,
-        detailPreview: previewText(rawText)
+        detailPreview: previewText(rawText),
+        projectName: (opts.projectName || NOTES_PODCAST_PROJECT_NAME).trim() || NOTES_PODCAST_PROJECT_NAME,
+        fileLastModified: Number(file.lastModified || 0),
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+        networkOnline: typeof navigator !== "undefined" ? navigator.onLine : undefined
       });
       resolve({ ok: false, error: parsedError });
     };
@@ -226,8 +251,13 @@ export function uploadNoteFileWithProgress(
         filename: file.name || "note.txt",
         fileType: file.type || "",
         fileSize: Number(file.size || 0),
+        clientRequestId: rid,
         errorCode: "XHR_NETWORK_ERROR",
-        errorMessage: msg
+        errorMessage: msg,
+        projectName: (opts.projectName || NOTES_PODCAST_PROJECT_NAME).trim() || NOTES_PODCAST_PROJECT_NAME,
+        fileLastModified: Number(file.lastModified || 0),
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+        networkOnline: typeof navigator !== "undefined" ? navigator.onLine : undefined
       });
       resolve({ ok: false, error: msg });
     };
@@ -239,8 +269,13 @@ export function uploadNoteFileWithProgress(
         filename: file.name || "note.txt",
         fileType: file.type || "",
         fileSize: Number(file.size || 0),
+        clientRequestId: rid,
         errorCode: "XHR_ABORT",
-        errorMessage: msg
+        errorMessage: msg,
+        projectName: (opts.projectName || NOTES_PODCAST_PROJECT_NAME).trim() || NOTES_PODCAST_PROJECT_NAME,
+        fileLastModified: Number(file.lastModified || 0),
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+        networkOnline: typeof navigator !== "undefined" ? navigator.onLine : undefined
       });
       resolve({ ok: false, error: msg });
     };

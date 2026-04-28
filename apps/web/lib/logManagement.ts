@@ -1,5 +1,5 @@
 import { APP_ENV, APP_RELEASE } from "../core/config";
-import { getRedisClient } from "../infrastructure/redis/client";
+import { getRedisClient, redisEnabled } from "../infrastructure/redis/client";
 
 export const LOG_SCOPES = [
   "notebook_share_client",
@@ -256,6 +256,11 @@ function fnv1aHash(input: string): number {
 }
 
 export async function shouldIngestForScope(scope: LogScope, requestId: string): Promise<boolean> {
+  // 无 Redis 时开关配置无法跨实例共享。为避免线上“开关已开但采集不到”：
+  // 对关键排障 scope 采用 fail-open，保证错误事件可落地。
+  if (!redisEnabled() && (scope === "frontend_global_error" || scope === "bff_api_error" || scope === "orchestrator_api_error")) {
+    return true;
+  }
   const cfg = await getLogSwitchConfig(scope);
   if (!cfg.enabled) return false;
   const p = normalizeSampleRate(cfg.sampleRate);
