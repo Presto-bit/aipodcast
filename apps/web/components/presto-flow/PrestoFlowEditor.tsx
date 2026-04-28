@@ -77,21 +77,6 @@ function readRoughDismissedSet(projectId: string): Set<string> {
   }
 }
 
-/** Word 式「向前删除」：删除插入点左侧的上一块可见词（尚未标记删除） */
-function findPrevUnexcludedWordId(
-  words: readonly ClipWord[],
-  fromId: string,
-  excluded: ReadonlySet<string>
-): string | null {
-  const ix = words.findIndex((w) => w.id === fromId);
-  if (ix < 1) return null;
-  for (let j = ix - 1; j >= 0; j--) {
-    const id = words[j]!.id;
-    if (!excluded.has(id)) return id;
-  }
-  return null;
-}
-
 function initialWordMarkersFromSuggestions(
   sugs: readonly ClipEditSuggestion[]
 ): Record<string, { suggestionKey: string; status: "pending" }> {
@@ -768,36 +753,23 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           e.preventDefault();
           const ex = excludedRef.current;
           const ordered = words;
-
-          if (e.key === "Delete") {
-            const w = ordered.find((x) => x.id === wid) ?? words.find((x) => x.id === wid);
-            if (!w || ex.has(w.id)) return;
-            setExcluded((prev) => {
-              excludedUndoStack.current.push([...prev].sort());
-              excludedRedoStack.current = [];
-              const n = new Set(prev);
-              n.add(w.id);
-              scheduleSaveExcluded(n);
-              return n;
-            });
-            bumpExcludedHistory();
-            return;
-          }
-
-          const anchorList = ordered.some((x) => x.id === wid) ? ordered : words;
-          const prey = findPrevUnexcludedWordId(anchorList, wid, ex);
-          if (!prey) return;
+          const w = ordered.find((x) => x.id === wid) ?? words.find((x) => x.id === wid);
+          if (!w || ex.has(w.id)) return;
           setExcluded((prev) => {
             excludedUndoStack.current.push([...prev].sort());
             excludedRedoStack.current = [];
             const n = new Set(prev);
-            n.add(prey);
+            n.add(w.id);
             scheduleSaveExcluded(n);
             return n;
           });
           bumpExcludedHistory();
-          setFocusedWordId(prey);
-          transcriptRef.current?.scrollToWordId(prey);
+          setMultiSelectIds(new Set());
+          const next = ordered.find((x) => !ex.has(x.id) && x.s_ms >= w.e_ms + 1) || ordered.find((x) => !ex.has(x.id));
+          if (next) {
+            setFocusedWordId(next.id);
+            transcriptRef.current?.scrollToWordId(next.id);
+          }
           return;
         }
       }
@@ -960,23 +932,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setFocusedWordId(w.id);
   }, [words]);
 
-  const toggleWord = useCallback(
-    (w: ClipWord) => {
-      setExcluded((prev) => {
-        excludedUndoStack.current.push([...prev].sort());
-        excludedRedoStack.current = [];
-        const n = new Set(prev);
-        if (n.has(w.id)) n.delete(w.id);
-        else n.add(w.id);
-        scheduleSaveExcluded(n);
-        return n;
-      });
-      bumpExcludedHistory();
-      waveformRef.current?.seekToMs(w.s_ms);
-    },
-    [scheduleSaveExcluded]
-  );
-
   const handleWordActivate = useCallback(
     (w: ClipWord, e: MouseEvent<HTMLButtonElement>) => {
       if (skipNextWordActivateRef.current && !e.shiftKey && !e.metaKey && !e.ctrlKey && e.detail < 2) {
@@ -1005,10 +960,13 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         return;
       }
       rangeAnchorWordIdRef.current = w.id;
-      setMultiSelectIds(new Set());
-      toggleWord(w);
+      setMultiSelectIds(new Set([w.id]));
+      setFocusedWordId(w.id);
+      sentenceAutopauseEndMsRef.current = null;
+      waveformRef.current?.seekToMs(w.s_ms);
+      void waveformRef.current?.play();
     },
-    [focusedWordId, toggleWord, words]
+    [focusedWordId, words]
   );
 
   const onKeepStutterFirst = useCallback(
