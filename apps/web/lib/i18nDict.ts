@@ -113,7 +113,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "clip.editor.noAudioYet": "尚未上传源文件。",
     "clip.editor.uploading": "上传中…",
     "clip.editor.transcribe": "开始转写",
-    "clip.editor.export": "导出剪辑 MP3",
+    "clip.editor.export": "导出文件",
     "clip.editor.downloadExport": "下载导出",
     "clip.editor.multiUploadIntro":
       "可选多段：一次选择多个文件将按各文件的修改时间从早到晚排序后暂存，并在下方列表中自动排队合并；单文件仍直接覆盖主素材（先合成再识别）。",
@@ -176,8 +176,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.stutterDupHint": "建议剪掉该次重复口癖；悬停整组可看说明。单击仍可按词切换剪/留。",
     "presto.flow.stutterGroupHint":
       "检测到连续重复发音：带虚下划线的为建议剪掉片段；悬停此处可看说明。叠字组以划线提示为主，不再在稿面提供「仅保留首词」按钮。",
-    "presto.flow.multiSelectHint":
-      "与 Word 稿面一致：拖动左键选范围；Shift+点击选区间；Shift+←/→ 连续扩选；⌘/Ctrl+点击多选。Delete / Backspace 均优先删除当前选区（标记剪掉）；无选区时删除当前焦点词。⌘A 全选词块；⌘←/⌘→ 按词移动焦点；Home/End 到稿首/稿尾；⌘Z / ⇧⌘Z 撤销重做；⌘S 立即保存删词；⌘F 打开侧栏搜索。",
+    "presto.flow.multiSelectHint": "",
     "presto.flow.multiSelectBanner":
       "已选中 {count} 个词：Delete 或 Backspace 标记删除；Esc 取消选择。侧栏「还原所选」可恢复已删。",
     "presto.flow.deleteTargetSelection": "当前删除目标：已选 {count} 个词",
@@ -743,7 +742,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "clip.editor.noAudioYet": "No source file uploaded yet.",
     "clip.editor.uploading": "Uploading…",
     "clip.editor.transcribe": "Start transcription",
-    "clip.editor.export": "Export edited MP3",
+    "clip.editor.export": "Export file",
     "clip.editor.downloadExport": "Download export",
     "clip.editor.multiUploadIntro":
       "Multi-file: files are sorted by last-modified time (oldest first), staged in that order, then merged automatically. A single file still replaces the main asset (merge-then-recognize).",
@@ -809,8 +808,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.stutterDupHint": "Suggested cut for this repeated filler; hover the group for more. Click toggles cut/keep per token.",
     "presto.flow.stutterGroupHint":
       "Repeated tokens detected: dashed underline marks suggested cuts; hover here for tips. Stutter stacks are underline-first; we no longer show a “keep first only” control on the transcript.",
-    "presto.flow.multiSelectHint":
-      "Word-like editing: drag to select; Shift-click spans; Shift+←/→ extends selection; ⌘/Ctrl-click adds to selection. Delete / Backspace always cut the current selection first; when no range is selected, cut the focused token. ⌘A selects all tokens; ⌘←/⌘→ moves focus by token; Home/End jumps to first/last token; ⌘Z / ⇧⌘Z undo/redo; ⌘S saves cuts now; ⌘F opens sidebar search.",
+    "presto.flow.multiSelectHint": "",
     "presto.flow.multiSelectBanner":
       "{count} tokens selected: Delete or Backspace marks cut; Esc clears. Use sidebar “Restore selection” to un-cut.",
     "presto.flow.deleteTargetSelection": "Delete target: {count} selected token(s)",

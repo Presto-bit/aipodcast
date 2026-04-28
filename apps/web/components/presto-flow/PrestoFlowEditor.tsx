@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Download, History, PanelRightClose, PanelRightOpen, Search, SlidersHorizontal, Sparkles } from "lucide-react";
+import { CircleHelp, Download, History, PanelRightClose, PanelRightOpen, Search, SlidersHorizontal, Sparkles } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -125,6 +125,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<ClipProjectRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [projectTitleEditing, setProjectTitleEditing] = useState(false);
+  const [projectTitleDraft, setProjectTitleDraft] = useState("");
+  const [projectTitleBusy, setProjectTitleBusy] = useState(false);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [actionBusy, setActionBusy] = useState(false);
   const [playbackMs, setPlaybackMs] = useState(0);
@@ -1013,6 +1016,31 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     void load();
   }, [load]);
 
+  const saveProjectTitle = useCallback(async () => {
+    if (!project) return;
+    const nextTitle = projectTitleDraft.trim().slice(0, 200) || t("clip.defaultProjectTitle");
+    setProjectTitleBusy(true);
+    setErr("");
+    try {
+      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ title: nextTitle })
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string; project?: ClipProjectRow };
+      if (!res.ok || data.success === false) {
+        throw new Error(data.detail || `重命名失败 ${res.status}`);
+      }
+      setProject((prev) => (prev ? { ...prev, title: nextTitle } : prev));
+      setProjectTitleEditing(false);
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setProjectTitleBusy(false);
+    }
+  }, [getAuthHeaders, project, projectId, projectTitleDraft, t]);
+
   useEffect(() => {
     const st = project?.transcription_status;
     const ex = project?.export_status;
@@ -1484,6 +1512,45 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
   }, [words, findWordIdUnderPoint]);
+
+  const onTranscriptBlankPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      if (e.shiftKey || e.metaKey || e.ctrlKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("[data-word-id]")) return;
+      const anchor = findWordIdUnderPoint(e.clientX, e.clientY);
+      if (!anchor) return;
+      rangeDragAnchorRef.current = anchor;
+      rangeDragMovedRef.current = false;
+      setMultiSelectIds(new Set([anchor]));
+      setFocusedWordId(anchor);
+      rangeAnchorWordIdRef.current = anchor;
+      leftDragMultiSelectRef.current = true;
+      const sx = e.clientX;
+      const sy = e.clientY;
+      const move = (ev: globalThis.PointerEvent) => {
+        if ((ev.buttons & 1) !== 1) return;
+        if ((ev.clientX - sx) ** 2 + (ev.clientY - sy) ** 2 > 36) rangeDragMovedRef.current = true;
+        const curId = findWordIdUnderPoint(ev.clientX, ev.clientY);
+        if (!curId) return;
+        const ids = wordIdsBetweenInclusive(words, anchor, curId);
+        setMultiSelectIds(new Set(ids.length ? ids : [curId]));
+        setFocusedWordId(curId);
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+        if (rangeDragMovedRef.current) skipNextWordActivateRef.current = true;
+        rangeDragAnchorRef.current = null;
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    },
+    [findWordIdUnderPoint, words]
+  );
 
   const onRangeDragPointerEnter = useCallback((w: ClipWord, e: ReactPointerEvent<HTMLButtonElement>) => {
     const anchor = rangeDragAnchorRef.current;
@@ -2011,9 +2078,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
             </div>
             <ul className="space-y-1 text-[12px] text-ink">
               <li>`Space` 播放/暂停</li>
-              <li>`Delete/Backspace` 删除当前选中词（或聚焦事件设为 Cut）</li>
+              <li>`鼠标左键拖拽` 可直接框选词（无需先单击一个词）</li>
+              <li>`Shift + 点击 / Shift + ←/→` 连续扩选，`Ctrl/Cmd + 点击` 增量多选</li>
+              <li>`Delete/Backspace` 删除当前选区（或聚焦事件设为 Cut）</li>
+              <li>`Esc` 取消当前选区</li>
+              <li>`Ctrl/Cmd + A` 全选词块</li>
+              <li>`Ctrl/Cmd + ←/→` 按词移动焦点，`Home/End` 到稿首/稿尾</li>
+              <li>`Ctrl/Cmd + Z` 撤销，`Shift + Ctrl/Cmd + Z` 重做</li>
               <li>`K / U / D` 事件卡片设为 Keep / Duck / Cut</li>
-              <li>`Shift + 点击` 范围选词，`Ctrl/Cmd + 点击` 增量选词</li>
               <li>`Ctrl/Cmd + F` 打开搜索，`Ctrl/Cmd + S` 立即保存删词</li>
               <li>`?` 打开/关闭本面板</li>
             </ul>
@@ -2027,6 +2099,42 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               backHref="/clip"
               backLabel={t("clip.backToList")}
               title={project.title || projectId}
+              titleOverride={
+                projectTitleEditing ? (
+                  <input
+                    autoFocus
+                    type="text"
+                    value={projectTitleDraft}
+                    onChange={(e) => setProjectTitleDraft(e.target.value)}
+                    disabled={projectTitleBusy}
+                    maxLength={200}
+                    className="min-w-[16rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink"
+                    onBlur={() => {
+                      if (!projectTitleBusy) setProjectTitleEditing(false);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void saveProjectTitle();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setProjectTitleEditing(false);
+                      }
+                    }}
+                  />
+                ) : (
+                  <h1
+                    className="min-w-0 truncate text-sm font-semibold text-ink sm:text-base"
+                    onDoubleClick={() => {
+                      setProjectTitleDraft(project.title || projectId);
+                      setProjectTitleEditing(true);
+                    }}
+                    title="双击重命名"
+                  >
+                    {project.title || projectId}
+                  </h1>
+                )
+              }
               engineLabel={engineLabel}
               engineState={engineState}
               beforeTranscribe={
@@ -2036,17 +2144,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     projectId={projectId}
                     getAuthHeaders={getAuthHeaders}
                     hasMainAudio={hasServerAudio}
-                    disabled={
-                      actionBusy ||
-                      transcriptionActive ||
-                      exportActive ||
-                      project.transcription_status === "succeeded"
-                    }
-                    disabledReason={
-                      project.transcription_status === "succeeded"
-                        ? t("presto.flow.importDisabledTranscribed")
-                        : undefined
-                    }
+                    disabled={actionBusy || transcriptionActive || exportActive}
                     label={t("presto.flow.importAudio")}
                     busyLabel={t("presto.flow.importBusy")}
                     hint={t("presto.flow.importHint")}
@@ -2135,18 +2233,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                               </button>
                             ) : null}
                           </div>
-                        ) : words.length > 0 ? (
-                          <p className="line-clamp-2 shrink-0 text-[10px] leading-relaxed text-muted">{t("presto.flow.multiSelectHint")}</p>
                         ) : null}
-                        <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px]">
-                          <button
-                            type="button"
-                            className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
-                            onClick={() => setShortcutHelpOpen(true)}
-                          >
-                            快捷键 ?
-                          </button>
-                        </div>
                         <div className="mb-1 flex flex-wrap items-center gap-1 text-[10px]">
                           <span className="text-muted">说话人</span>
                           {[...new Set(lines.map((l) => l.speaker))].map((spk) => {
@@ -2197,6 +2284,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         ) : null}
                         {actionHint ? <p className="shrink-0 text-[10px] font-semibold text-emerald-600">{actionHint}</p> : null}
                       </div>
+                      <button
+                        type="button"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:bg-fill hover:text-ink"
+                        aria-label="快捷键与交互说明"
+                        title="快捷键与交互说明"
+                        onClick={() => setShortcutHelpOpen(true)}
+                      >
+                        <CircleHelp className="h-4 w-4" aria-hidden />
+                      </button>
                       <button
                         type="button"
                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:bg-fill hover:text-ink"
@@ -2257,54 +2353,56 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         </div>
                       </div>
                     ) : null}
-                    <VirtualizedTranscript
-                      ref={transcriptRef}
-                      lines={lines}
-                      excluded={excluded}
-                      playbackWordId={playbackWordId}
-                      playbackLineIndex={playbackLineIndex}
-                      focusedWordId={focusedWordId}
-                      multiSelectIds={multiSelectIds}
-                      onFocusWordId={setFocusedWordId}
-                      onActivateWord={handleWordActivate}
-                      onRangeDragPointerDown={onRangeDragPointerDown}
-                      onRangeDragPointerEnter={onRangeDragPointerEnter}
-                      transcriptScrollRef={transcriptScrollElRef}
-                      onLongPressWord={() => {}}
-                      ariaKeepLabel={t("clip.editor.wordAriaKeep")}
-                      ariaCutLabel={t("clip.editor.wordAriaCut")}
-                      hostLabel={t("presto.flow.speakerHost")}
-                      guestLabel={t("presto.flow.speakerGuest")}
-                      speakerNames={speakerNames}
-                      onRenameSpeaker={renameSpeaker}
-                      emptyLabel={
-                        hasServerAudio ? t("presto.flow.transcriptEmpty") : t("presto.flow.editorNoAudioHint")
-                      }
-                      stutterDupHint={t("presto.flow.stutterDupHint")}
-                      stutterGroupHint={t("presto.flow.stutterGroupHint")}
-                      markersByWordId={transcriptMarkers}
-                      roughCutHighlightIds={roughCutHighlightIds}
-                      dismissedRoughKeys={dismissedRoughKeys}
-                      silenceCards={transcriptSilenceCards}
-                      onToggleSilenceCut={(s, e) => void toggleSilenceCut(s, e)}
-                      onSetSilenceCapMs={(s, e, cap) => void setSilenceCapMs(s, e, cap)}
-                      onJumpToSilence={(seg) => {
-                        if (seg.jumpWordId) jumpToWordInTranscript(seg.jumpWordId);
-                        else seekPreviewMs(seg.end + 1);
-                      }}
-                      audioEventCards={transcriptAudioEventCards}
-                      onSetAudioEventAction={(id, action) => void setAudioEventAction(id, action)}
-                      collapsedSpeakers={collapsedSpeakers}
-                      onToggleSpeakerCollapse={(speaker) =>
-                        setCollapsedSpeakers((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(speaker)) next.delete(speaker);
-                          else next.add(speaker);
-                          return next;
-                        })
-                      }
-                      speakerFilterSet={speakerFocusSet}
-                    />
+                    <div className="min-h-0 min-w-0 flex-1" onPointerDownCapture={onTranscriptBlankPointerDown}>
+                      <VirtualizedTranscript
+                        ref={transcriptRef}
+                        lines={lines}
+                        excluded={excluded}
+                        playbackWordId={playbackWordId}
+                        playbackLineIndex={playbackLineIndex}
+                        focusedWordId={focusedWordId}
+                        multiSelectIds={multiSelectIds}
+                        onFocusWordId={setFocusedWordId}
+                        onActivateWord={handleWordActivate}
+                        onRangeDragPointerDown={onRangeDragPointerDown}
+                        onRangeDragPointerEnter={onRangeDragPointerEnter}
+                        transcriptScrollRef={transcriptScrollElRef}
+                        onLongPressWord={() => {}}
+                        ariaKeepLabel={t("clip.editor.wordAriaKeep")}
+                        ariaCutLabel={t("clip.editor.wordAriaCut")}
+                        hostLabel={t("presto.flow.speakerHost")}
+                        guestLabel={t("presto.flow.speakerGuest")}
+                        speakerNames={speakerNames}
+                        onRenameSpeaker={renameSpeaker}
+                        emptyLabel={
+                          hasServerAudio ? t("presto.flow.transcriptEmpty") : t("presto.flow.editorNoAudioHint")
+                        }
+                        stutterDupHint={t("presto.flow.stutterDupHint")}
+                        stutterGroupHint={t("presto.flow.stutterGroupHint")}
+                        markersByWordId={transcriptMarkers}
+                        roughCutHighlightIds={roughCutHighlightIds}
+                        dismissedRoughKeys={dismissedRoughKeys}
+                        silenceCards={transcriptSilenceCards}
+                        onToggleSilenceCut={(s, e) => void toggleSilenceCut(s, e)}
+                        onSetSilenceCapMs={(s, e, cap) => void setSilenceCapMs(s, e, cap)}
+                        onJumpToSilence={(seg) => {
+                          if (seg.jumpWordId) jumpToWordInTranscript(seg.jumpWordId);
+                          else seekPreviewMs(seg.end + 1);
+                        }}
+                        audioEventCards={transcriptAudioEventCards}
+                        onSetAudioEventAction={(id, action) => void setAudioEventAction(id, action)}
+                        collapsedSpeakers={collapsedSpeakers}
+                        onToggleSpeakerCollapse={(speaker) =>
+                          setCollapsedSpeakers((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(speaker)) next.delete(speaker);
+                            else next.add(speaker);
+                            return next;
+                          })
+                        }
+                        speakerFilterSet={speakerFocusSet}
+                      />
+                    </div>
                   </div>
                 </section>
               </div>
@@ -2393,18 +2491,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                                 </button>
                               ) : null}
                             </div>
-                          ) : words.length > 0 ? (
-                            <p className="line-clamp-2 shrink-0 text-[10px] leading-relaxed text-muted">{t("presto.flow.multiSelectHint")}</p>
                           ) : null}
-                          <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px]">
-                            <button
-                              type="button"
-                              className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
-                              onClick={() => setShortcutHelpOpen(true)}
-                            >
-                              快捷键 ?
-                            </button>
-                          </div>
                           <div className="mb-1 flex flex-wrap items-center gap-1 text-[10px]">
                             <span className="text-muted">说话人</span>
                             {[...new Set(lines.map((l) => l.speaker))].map((spk) => {
@@ -2455,6 +2542,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           ) : null}
                           {actionHint ? <p className="shrink-0 text-[10px] font-semibold text-emerald-600">{actionHint}</p> : null}
                         </div>
+                        <button
+                          type="button"
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:bg-fill hover:text-ink"
+                          aria-label="快捷键与交互说明"
+                          title="快捷键与交互说明"
+                          onClick={() => setShortcutHelpOpen(true)}
+                        >
+                          <CircleHelp className="h-4 w-4" aria-hidden />
+                        </button>
                         <button
                           type="button"
                           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:bg-fill hover:text-ink"
@@ -2515,54 +2611,56 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           </div>
                         </div>
                       ) : null}
-                      <VirtualizedTranscript
-                        ref={transcriptRef}
-                        lines={lines}
-                        excluded={excluded}
-                        playbackWordId={playbackWordId}
-                        playbackLineIndex={playbackLineIndex}
-                        focusedWordId={focusedWordId}
-                        multiSelectIds={multiSelectIds}
-                        onFocusWordId={setFocusedWordId}
-                        onActivateWord={handleWordActivate}
-                        onRangeDragPointerDown={onRangeDragPointerDown}
-                        onRangeDragPointerEnter={onRangeDragPointerEnter}
-                        transcriptScrollRef={transcriptScrollElRef}
-                        onLongPressWord={() => {}}
-                        ariaKeepLabel={t("clip.editor.wordAriaKeep")}
-                        ariaCutLabel={t("clip.editor.wordAriaCut")}
-                        hostLabel={t("presto.flow.speakerHost")}
-                        guestLabel={t("presto.flow.speakerGuest")}
-                        speakerNames={speakerNames}
-                        onRenameSpeaker={renameSpeaker}
-                        emptyLabel={
-                          hasServerAudio ? t("presto.flow.transcriptEmpty") : t("presto.flow.editorNoAudioHint")
-                        }
-                        stutterDupHint={t("presto.flow.stutterDupHint")}
-                        stutterGroupHint={t("presto.flow.stutterGroupHint")}
-                        markersByWordId={transcriptMarkers}
-                        roughCutHighlightIds={roughCutHighlightIds}
-                        dismissedRoughKeys={dismissedRoughKeys}
-                        silenceCards={transcriptSilenceCards}
-                        onToggleSilenceCut={(s, e) => void toggleSilenceCut(s, e)}
-                        onSetSilenceCapMs={(s, e, cap) => void setSilenceCapMs(s, e, cap)}
-                        onJumpToSilence={(seg) => {
-                          if (seg.jumpWordId) jumpToWordInTranscript(seg.jumpWordId);
-                          else seekPreviewMs(seg.end + 1);
-                        }}
-                        audioEventCards={transcriptAudioEventCards}
-                        onSetAudioEventAction={(id, action) => void setAudioEventAction(id, action)}
-                        collapsedSpeakers={collapsedSpeakers}
-                        onToggleSpeakerCollapse={(speaker) =>
-                          setCollapsedSpeakers((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(speaker)) next.delete(speaker);
-                            else next.add(speaker);
-                            return next;
-                          })
-                        }
-                        speakerFilterSet={speakerFocusSet}
-                      />
+                      <div className="min-h-0 min-w-0 flex-1" onPointerDownCapture={onTranscriptBlankPointerDown}>
+                        <VirtualizedTranscript
+                          ref={transcriptRef}
+                          lines={lines}
+                          excluded={excluded}
+                          playbackWordId={playbackWordId}
+                          playbackLineIndex={playbackLineIndex}
+                          focusedWordId={focusedWordId}
+                          multiSelectIds={multiSelectIds}
+                          onFocusWordId={setFocusedWordId}
+                          onActivateWord={handleWordActivate}
+                          onRangeDragPointerDown={onRangeDragPointerDown}
+                          onRangeDragPointerEnter={onRangeDragPointerEnter}
+                          transcriptScrollRef={transcriptScrollElRef}
+                          onLongPressWord={() => {}}
+                          ariaKeepLabel={t("clip.editor.wordAriaKeep")}
+                          ariaCutLabel={t("clip.editor.wordAriaCut")}
+                          hostLabel={t("presto.flow.speakerHost")}
+                          guestLabel={t("presto.flow.speakerGuest")}
+                          speakerNames={speakerNames}
+                          onRenameSpeaker={renameSpeaker}
+                          emptyLabel={
+                            hasServerAudio ? t("presto.flow.transcriptEmpty") : t("presto.flow.editorNoAudioHint")
+                          }
+                          stutterDupHint={t("presto.flow.stutterDupHint")}
+                          stutterGroupHint={t("presto.flow.stutterGroupHint")}
+                          markersByWordId={transcriptMarkers}
+                          roughCutHighlightIds={roughCutHighlightIds}
+                          dismissedRoughKeys={dismissedRoughKeys}
+                          silenceCards={transcriptSilenceCards}
+                          onToggleSilenceCut={(s, e) => void toggleSilenceCut(s, e)}
+                          onSetSilenceCapMs={(s, e, cap) => void setSilenceCapMs(s, e, cap)}
+                          onJumpToSilence={(seg) => {
+                            if (seg.jumpWordId) jumpToWordInTranscript(seg.jumpWordId);
+                            else seekPreviewMs(seg.end + 1);
+                          }}
+                          audioEventCards={transcriptAudioEventCards}
+                          onSetAudioEventAction={(id, action) => void setAudioEventAction(id, action)}
+                          collapsedSpeakers={collapsedSpeakers}
+                          onToggleSpeakerCollapse={(speaker) =>
+                            setCollapsedSpeakers((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(speaker)) next.delete(speaker);
+                              else next.add(speaker);
+                              return next;
+                            })
+                          }
+                          speakerFilterSet={speakerFocusSet}
+                        />
+                      </div>
                     </div>
                   </section>
                 </div>

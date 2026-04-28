@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../lib/auth";
 import { clipJobLabel } from "../../lib/clipJobLabels";
@@ -265,11 +265,6 @@ export default function ClipHub() {
                       <Link
                         href={`/clip/${encodeURIComponent(p.id)}`}
                         className="block text-sm font-medium text-ink transition hover:opacity-90"
-                        onDoubleClick={(e) => {
-                          e.preventDefault();
-                          setRenameDraft(p.title || p.id);
-                          setRenamingId(p.id);
-                        }}
                       >
                         <span className="flex flex-wrap items-center gap-2">
                           {p.title || p.id}
@@ -299,6 +294,18 @@ export default function ClipHub() {
                   </div>
                   {renamingId !== p.id ? (
                     <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        className="rounded-lg border border-line bg-surface p-2 text-muted shadow-soft hover:bg-fill hover:text-ink"
+                        aria-label={t("clip.hub.rename")}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setRenameDraft(p.title || p.id);
+                          setRenamingId(p.id);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" aria-hidden />
+                      </button>
                       <button
                         type="button"
                         className="rounded-lg border border-danger/40 bg-surface p-2 text-danger-ink shadow-soft hover:bg-danger-soft"

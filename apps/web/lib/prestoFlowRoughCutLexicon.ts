@@ -211,13 +211,14 @@ export function collectVerbalTicWordIds(
 export function collectSubstringMatchWordIds(
   words: readonly ClipWord[],
   query: string,
-  _excluded: ReadonlySet<string>
+  excluded: ReadonlySet<string>
 ): string[] {
   const q = query.trim();
   if (!q) return [];
   const qLower = q.toLowerCase();
   const out: string[] = [];
   for (const w of words) {
+    if (excluded.has(w.id)) continue;
     const disp = displayToken(w);
     if (!disp) continue;
     const hay = /[a-z]/i.test(q) && !/[\u4e00-\u9fff]/.test(q) ? disp.toLowerCase() : disp;
@@ -228,6 +229,7 @@ export function collectSubstringMatchWordIds(
   // Fallback: support multi-word phrase queries by matching against joined transcript text.
   const tokens: Array<{ id: string; text: string }> = [];
   for (const w of words) {
+    if (excluded.has(w.id)) continue;
     const disp = displayToken(w);
     if (!disp) continue;
     tokens.push({ id: w.id, text: disp });
