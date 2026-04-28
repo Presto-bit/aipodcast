@@ -77,6 +77,32 @@ def _docx_python_docx(data: bytes) -> str:
 def _decode_plain_bytes(data: bytes) -> tuple[str, str | None]:
     if not data:
         return "", None
+    # 常见带 BOM 文本优先：避免 UTF-16/UTF-32 被误判后出现乱码或空文本。
+    bom_codecs: list[tuple[bytes, str]] = [
+        (b"\xef\xbb\xbf", "utf-8-sig"),
+        (b"\xff\xfe\x00\x00", "utf-32-le"),
+        (b"\x00\x00\xfe\xff", "utf-32-be"),
+        (b"\xff\xfe", "utf-16-le"),
+        (b"\xfe\xff", "utf-16-be"),
+    ]
+    for bom, enc in bom_codecs:
+        if data.startswith(bom):
+            try:
+                txt = data.decode(enc)
+                if txt.strip():
+                    return txt, enc
+            except Exception:
+                break
+
+    # 无 BOM 时按常见编码做一轮严格解码尝试（先 utf-8，再 utf-16，再 gb18030）。
+    preferred_codecs = ("utf-8", "utf-16", "utf-16-le", "utf-16-be", "gb18030")
+    for enc in preferred_codecs:
+        try:
+            txt = data.decode(enc)
+            if txt.strip():
+                return txt, enc
+        except Exception:
+            continue
     try:
         from charset_normalizer import from_bytes  # type: ignore
 
@@ -88,7 +114,8 @@ def _decode_plain_bytes(data: bytes) -> tuple[str, str | None]:
                 return s, enc
     except Exception as exc:
         logger.debug("charset_normalizer failed: %s", exc)
-    return data.decode("utf-8", errors="ignore"), None
+    # 最后兜底：保证不抛错，并尽量保留可见字符。
+    return data.decode("utf-8", errors="ignore"), "utf-8-ignore"
 
 
 def _pdf_pymupdf(data: bytes) -> tuple[str, bool]:

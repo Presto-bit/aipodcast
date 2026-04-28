@@ -17,6 +17,7 @@ import tempfile
 from collections import deque
 from typing import Iterator, Dict, Any, Optional, Tuple
 from ..cover_image_style import coarse_cover_style_type, normalize_minimax_image_style_type
+from ..text_decode import safe_decode_bytes
 
 from .config import (
     MINIMAX_TEXT_API_KEY,
@@ -609,7 +610,7 @@ Speaker2: 好，我们先帮听众把背景捋清楚。"""
             finish_reason: Optional[str] = None
             for line in response.iter_lines():
                 if line:
-                    line = line.decode('utf-8')
+                    line = safe_decode_bytes(line)
                     raw_sse = line[5:].strip() if line.startswith('data:') else ""
                     if line.startswith('data:') and raw_sse == '[DONE]':
                         break
@@ -1982,7 +1983,7 @@ Speaker2: 好，我们先帮听众把背景捋清楚。"""
         for line in response.iter_lines():
             if not line:
                 continue
-            line_s = line.decode("utf-8") if isinstance(line, bytes) else str(line)
+            line_s = safe_decode_bytes(line)
             raw_sse = line_s[5:].strip() if line_s.startswith("data:") else ""
             if line_s.startswith("data:") and raw_sse == "[DONE]":
                 break

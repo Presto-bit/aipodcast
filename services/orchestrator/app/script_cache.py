@@ -8,6 +8,8 @@ import logging
 import os
 from typing import Any, Callable
 
+from .text_decode import safe_decode_bytes
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,8 +50,8 @@ def cache_get(key: str) -> dict[str, Any] | None:
         blob = redis_conn.get(key)
         if not blob:
             return None
-        if isinstance(blob, bytes):
-            blob = blob.decode("utf-8")
+        if isinstance(blob, (bytes, bytearray)):
+            blob = safe_decode_bytes(blob)
         data = json.loads(blob)
         return data if isinstance(data, dict) else None
     except Exception as exc:

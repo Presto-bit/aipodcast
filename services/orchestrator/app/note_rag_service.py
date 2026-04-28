@@ -24,6 +24,7 @@ from .models import get_note_by_id
 from .queue import redis_conn
 from .rag_core import _cosine, _keyword_score, _norm_minmax, decompose_retrieval_queries, split_text_into_chunks
 from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
+from .text_decode import safe_decode_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +135,8 @@ def _l2_get(cache_key: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]] 
         blob = redis_conn.get(cache_key)
         if not blob:
             return None
-        if isinstance(blob, bytes):
-            blob = blob.decode("utf-8")
+        if isinstance(blob, (bytes, bytearray)):
+            blob = safe_decode_bytes(blob)
         data = json.loads(str(blob))
         if not isinstance(data, dict):
             return None

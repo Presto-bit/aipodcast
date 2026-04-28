@@ -218,7 +218,8 @@ async def payment_webhook(request: Request):
     else:
         signature_ok = True
     try:
-        body = json.loads(raw.decode("utf-8") or "{}")
+        # json.loads(bytes) 会自动识别 UTF-8/16/32，避免手工 utf-8 解码抛 UnicodeDecodeError。
+        body = json.loads(raw or b"{}")
     except Exception:
         raise HTTPException(status_code=400, detail="invalid_json") from None
     if not isinstance(body, dict):

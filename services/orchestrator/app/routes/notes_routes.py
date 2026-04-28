@@ -250,6 +250,93 @@ def _parse_error_code(parse_status: str, parse_detail: str, parse_engine: str) -
     return "PARSE_UNKNOWN"
 
 
+def _sniff_ext_from_bytes(data: bytes) -> str:
+    b = data[:64]
+    if b.startswith(b"%PDF-"):
+        return "pdf"
+    if b.startswith(b"PK\x03\x04"):
+        return "zip_like"
+    if len(b) >= 8 and b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if len(b) >= 3 and b[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if b.startswith(b"GIF87a") or b.startswith(b"GIF89a"):
+        return "gif"
+    if len(b) >= 12 and b[0:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "webp"
+    if len(b) >= 12 and b[4:8] == b"ftyp":
+        return "mp4_like"
+    return ""
+
+
+def _looks_like_text_payload(data: bytes) -> bool:
+    if not data:
+        return True
+    sample = data[:4096]
+    if b"\x00" in sample:
+        return False
+    printable = 0
+    for c in sample:
+        if c in (9, 10, 13) or 32 <= c <= 126:
+            printable += 1
+    ratio = printable / max(1, len(sample))
+    return ratio >= 0.7
+
+
+def _validate_upload_ext_matches_bytes(ext: str, data: bytes) -> None:
+    sniff = _sniff_ext_from_bytes(data)
+    e = (ext or "").lower().strip()
+    if not sniff:
+        if e in ("txt", "md", "markdown", "html", "htm", "xhtml") and not _looks_like_text_payload(data):
+            raise HTTPException(status_code=400, detail="FILE_TYPE_MISMATCH:文本扩展名与二进制内容不一致")
+        return
+    # zip 容器类：docx/epub 共享签名，不做强拒绝。
+    if sniff == "zip_like":
+        if e not in ("docx", "epub"):
+            raise HTTPException(status_code=400, detail="FILE_TYPE_MISMATCH:压缩容器与扩展名不一致")
+        return
+    if sniff == "mp4_like" and e in VIDEO_NOTE_EXT:
+        return
+    allowed: dict[str, tuple[str, ...]] = {
+        "pdf": ("pdf",),
+        "png": ("png",),
+        "jpg": ("jpg", "jpeg"),
+        "gif": ("gif",),
+        "webp": ("webp",),
+    }
+    exts = allowed.get(sniff)
+    if exts and e not in exts:
+        raise HTTPException(status_code=400, detail=f"FILE_TYPE_MISMATCH:{sniff}签名与扩展名不一致")
+
+
+def _parse_error_code_for_upload(ext: str, parse_result: NoteParseResult) -> str:
+    code = _parse_error_code(parse_result.status, parse_result.detail or "", parse_result.engine or "")
+    if code and code != "PARSE_EMPTY":
+        return code
+    e = (ext or "").lower().strip()
+    st = (parse_result.status or "").lower().strip()
+    detail = (parse_result.detail or "").lower()
+    if st == "ok":
+        return ""
+    if "ocr" in detail and "未配置" in detail:
+        return "OCR_NOT_CONFIGURED"
+    if e == "pdf":
+        return "PARSE_SCANNED_PDF" if "扫描" in detail or "scanned" in detail else "PDF_TEXT_EMPTY"
+    if e == "epub":
+        return "EPUB_TEXT_EMPTY" if st == "empty" else "EPUB_PARSE_ERROR"
+    if e == "docx":
+        return "DOCX_TEXT_EMPTY" if st == "empty" else "DOCX_PARSE_ERROR"
+    if e == "doc":
+        if "antiword" in detail or "catdoc" in detail or "libreoffice" in detail:
+            return "DOC_TOOL_MISSING"
+        return "DOC_PARSE_ERROR"
+    if e in ("txt", "md", "markdown"):
+        return "TEXT_DECODE_EMPTY"
+    if e in ("html", "htm", "xhtml"):
+        return "HTML_TEXT_EMPTY"
+    return "PARSE_EMPTY" if st == "empty" else "PARSE_ENGINE_ERROR"
+
+
 def _derive_source_capabilities(
     *,
     input_type: str,
@@ -515,6 +602,7 @@ def _persist_note_upload(
         raise HTTPException(status_code=400, detail="笔记格式不支持")
     if len(data) > MAX_NOTE_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="文件过大")
+    _validate_upload_ext_matches_bytes(ext, data)
     original_title = raw_name.rsplit(".", 1)[0].strip() if "." in raw_name else raw_name
     title = _safe_user_text(title_in, max_len=240) or original_title or raw_name
     notebook = _safe_user_text(notebook, max_len=120)
@@ -545,6 +633,9 @@ def _persist_note_upload(
             p_eng = str(md.get("parseEngine") or "").strip()
             p_de = str(md.get("parseDetail") or "").strip()[:500]
             p_enc = str(md.get("parseEncoding") or "").strip()[:120]
+            p_code = str(md.get("parseErrorCode") or "").strip()[:80]
+            p_ms = int(md.get("parseDurationMs") or 0)
+            p_chars = int(md.get("parseTextChars") or 0)
             tit = str(md.get("title") or title).strip() or title
             ext_out = str(md.get("ext") or ext).lower() or ext
             ct = str(row.get("content_text") or "").strip()
@@ -565,6 +656,9 @@ def _persist_note_upload(
                     "engine": p_eng,
                     "detail": p_de,
                     "encoding": p_enc,
+                    "errorCode": p_code,
+                    "durationMs": p_ms,
+                    "textChars": p_chars,
                 },
             }
             if parse_empty:
@@ -581,6 +675,7 @@ def _persist_note_upload(
             status_code=503,
             detail="文件暂无法上传到存储，请确认对象存储可用后重试。",
         ) from exc
+    parse_started = time.perf_counter()
     try:
         parse_result = extract_text_from_bytes(data, ext)
     except Exception as exc:
@@ -591,15 +686,21 @@ def _persist_note_upload(
             engine="exception",
             detail=str(exc)[:400],
         )
+    parse_duration_ms = int((time.perf_counter() - parse_started) * 1000)
     parsed = (parse_result.text or "").strip()
+    parse_error_code = _parse_error_code_for_upload(ext, parse_result)
     extra_meta: dict[str, object] = {
         "parseStatus": parse_result.status,
         "parseEngine": parse_result.engine,
+        "parseDurationMs": parse_duration_ms,
+        "parseTextChars": len(parsed),
     }
     if parse_result.detail:
         extra_meta["parseDetail"] = str(parse_result.detail)[:500]
     if parse_result.encoding:
         extra_meta["parseEncoding"] = str(parse_result.encoding)[:120]
+    if parse_error_code:
+        extra_meta["parseErrorCode"] = parse_error_code
     extra_meta["contentSha256"] = content_sha256
     extra_meta["structuredBlocks"] = _build_structured_blocks_from_text(parsed)
     extra_meta.update(_build_preprocess_fields(parsed))
@@ -651,6 +752,9 @@ def _persist_note_upload(
             "engine": parse_result.engine,
             "detail": (parse_result.detail or "")[:500],
             "encoding": (parse_result.encoding or "")[:120],
+            "errorCode": parse_error_code,
+            "durationMs": parse_duration_ms,
+            "textChars": len(parsed),
         },
     }
     if parse_empty:
@@ -699,6 +803,7 @@ def list_notes_api(
         p_st = str(md.get("parseStatus") or "").strip()
         p_eng = str(md.get("parseEngine") or "").strip()
         p_de = str(md.get("parseDetail") or "").strip()
+        explicit_parse_error_code = str(md.get("parseErrorCode") or "").strip()
         cap = _derive_source_capabilities(
             input_type=it,
             content_text=ct,
@@ -731,7 +836,7 @@ def list_notes_api(
                 "parseEncoding": str(md.get("parseEncoding") or "").strip(),
                 "parseOk": bool(cap["parseOk"]),
                 "parseState": str(cap["parseState"] or ""),
-                "parseErrorCode": str(cap["parseErrorCode"] or ""),
+                "parseErrorCode": explicit_parse_error_code or str(cap["parseErrorCode"] or ""),
                 "citeState": str(cap["citeState"] or ""),
                 "retrieveState": str(cap["retrieveState"] or ""),
                 "preprocessStatus": str(md.get("preprocessStatus") or ""),
@@ -779,6 +884,7 @@ def list_trash_notes_api(
         p_st = str(md.get("parseStatus") or "").strip()
         p_eng = str(md.get("parseEngine") or "").strip()
         p_de = str(md.get("parseDetail") or "").strip()
+        explicit_parse_error_code = str(md.get("parseErrorCode") or "").strip()
         cap = _derive_source_capabilities(
             input_type=it,
             content_text=ct,
@@ -804,7 +910,7 @@ def list_trash_notes_api(
                 "sourceReady": bool(cap["sourceReady"]),
                 "sourceHint": str(cap["sourceHint"] or ""),
                 "parseState": str(cap["parseState"] or ""),
-                "parseErrorCode": str(cap["parseErrorCode"] or ""),
+                "parseErrorCode": explicit_parse_error_code or str(cap["parseErrorCode"] or ""),
                 "citeState": str(cap["citeState"] or ""),
                 "retrieveState": str(cap["retrieveState"] or ""),
                 "preprocessStatus": str(md.get("preprocessStatus") or ""),
