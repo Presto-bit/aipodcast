@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useRef } from "react";
+import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { sanitizeUserMarkdownHref } from "../../lib/safeMarkdownHref";
@@ -88,11 +89,13 @@ export default function NoteMarkdownDoc({ filteredText, headingIdPrefix = "note-
           const safe = sanitizeUserMarkdownHref(src);
           if (!safe) return <span className="text-muted">[图片链接不可用]</span>;
           return (
-            <img
+            <Image
               src={safe}
               alt={String(alt || "")}
+              width={1200}
+              height={800}
+              unoptimized
               loading="lazy"
-              decoding="async"
               className="my-2 h-auto max-w-full rounded-lg border border-line/50"
             />
           );

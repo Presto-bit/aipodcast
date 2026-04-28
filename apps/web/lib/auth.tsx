@@ -286,7 +286,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [authRequired, user?.phone, user?.user_id, user?.email, user?.username]);
+  }, [authRequired, user, user?.phone, user?.user_id, user?.email, user?.username]);
 
   const refreshMe = useCallback(async () => {
     if (!authRequired) return;

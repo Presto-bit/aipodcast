@@ -161,6 +161,8 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const activeJobIdRef = useRef<string | null>(null);
   const resolveWaitRef = useRef<(() => void) | null>(null);
   const cancelledRef = useRef(false);
+  const runTtsRef = useRef<() => Promise<void>>(async () => {});
+  const stopGenerationRef = useRef<() => Promise<void>>(async () => {});
   const logSuccessHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recoveryStartedRef = useRef(false);
 
@@ -353,7 +355,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     } catch {
       // ignore
     }
-  }, []);
+  }, [setText]);
 
   useEffect(() => {
     try {
@@ -375,7 +377,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     } catch {
       // ignore
     }
-  }, []);
+  }, [setText]);
 
   useEffect(() => {
     const last = readLastIntroOutro("tts");
@@ -749,6 +751,9 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     }
   }
 
+  runTtsRef.current = runTts;
+  stopGenerationRef.current = stopGeneration;
+
   const showTaskPanel = busy || taskPhase.length > 0;
   const etaMinutesRemaining = useMemo(() => {
     if (!busy && taskProgressPct <= 0) return null;
@@ -804,13 +809,13 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     ref,
     () => ({
       generate: () => {
-        void runTts();
+        void runTtsRef.current();
       },
       stop: () => {
-        void stopGeneration();
+        void stopGenerationRef.current();
       }
     }),
-    [runTts, stopGeneration]
+    []
   );
 
   const rootClass = embedded ? "min-w-0 flex-1" : "mx-auto min-h-0 w-full max-w-6xl px-3 pb-10 sm:px-4";

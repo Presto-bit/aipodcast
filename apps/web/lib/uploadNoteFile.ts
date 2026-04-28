@@ -19,6 +19,69 @@ type UploadJson = {
   request_id?: string;
 };
 
+type UploadClientDiagnostic = {
+  stage: "xhr_onload" | "xhr_error" | "xhr_abort";
+  notebook: string;
+  filename: string;
+  fileType: string;
+  fileSize: number;
+  status?: number;
+  requestId?: string;
+  errorCode?: string;
+  errorMessage: string;
+  detailPreview?: string;
+};
+
+function pickUploadErrorCode(data: UploadJson, status: number): string {
+  if (data.error && typeof data.error === "object" && typeof (data.error as { code?: unknown }).code === "string") {
+    const code = String((data.error as { code: string }).code).trim();
+    if (code) return code;
+  }
+  if (typeof data.error === "string" && data.error.trim()) return data.error.trim();
+  if (status >= 400) return `HTTP_${status}`;
+  return "UPLOAD_UNKNOWN_ERROR";
+}
+
+function previewText(raw: string, max = 500): string {
+  const text = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+async function reportUploadClientDiagnostic(payload: UploadClientDiagnostic): Promise<void> {
+  try {
+    const body = {
+      source: "onerror",
+      route: "/notes",
+      release: "",
+      message: payload.errorMessage,
+      location: "uploadNoteFileWithProgress",
+      data: {
+        uploadStage: payload.stage,
+        notebook: payload.notebook,
+        filename: payload.filename,
+        fileType: payload.fileType,
+        fileSize: payload.fileSize,
+        status: payload.status,
+        requestId: payload.requestId || "",
+        errorCode: payload.errorCode || "",
+        detailPreview: payload.detailPreview || ""
+      }
+    };
+    await fetch("/api/frontend-global-error", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        ...(payload.requestId ? { "x-request-id": payload.requestId } : {})
+      },
+      body: JSON.stringify(body)
+    });
+  } catch {
+    // ignore diagnostics failures
+  }
+}
+
 function parseError(data: UploadJson, status: number, rawText: string, responseRequestId?: string): string {
   const requestId = (responseRequestId || data.requestId || data.request_id || "").trim();
   const detail = (data as { detail?: unknown }).detail;
@@ -139,11 +202,48 @@ export function uploadNoteFileWithProgress(
         resolve({ ok: true, data });
         return;
       }
-      resolve({ ok: false, error: parseError(data, status, rawText, responseRequestId) });
+      const parsedError = parseError(data, status, rawText, responseRequestId);
+      void reportUploadClientDiagnostic({
+        stage: "xhr_onload",
+        notebook: nb,
+        filename: file.name || "note.txt",
+        fileType: file.type || "",
+        fileSize: Number(file.size || 0),
+        status,
+        requestId: responseRequestId || data.requestId || data.request_id || "",
+        errorCode: pickUploadErrorCode(data, status),
+        errorMessage: parsedError,
+        detailPreview: previewText(rawText)
+      });
+      resolve({ ok: false, error: parsedError });
     };
 
-    xhr.onerror = () => resolve({ ok: false, error: "网络异常，上传中断" });
-    xhr.onabort = () => resolve({ ok: false, error: "上传已取消" });
+    xhr.onerror = () => {
+      const msg = "网络异常，上传中断";
+      void reportUploadClientDiagnostic({
+        stage: "xhr_error",
+        notebook: nb,
+        filename: file.name || "note.txt",
+        fileType: file.type || "",
+        fileSize: Number(file.size || 0),
+        errorCode: "XHR_NETWORK_ERROR",
+        errorMessage: msg
+      });
+      resolve({ ok: false, error: msg });
+    };
+    xhr.onabort = () => {
+      const msg = "上传已取消";
+      void reportUploadClientDiagnostic({
+        stage: "xhr_abort",
+        notebook: nb,
+        filename: file.name || "note.txt",
+        fileType: file.type || "",
+        fileSize: Number(file.size || 0),
+        errorCode: "XHR_ABORT",
+        errorMessage: msg
+      });
+      resolve({ ok: false, error: msg });
+    };
 
     const form = new FormData();
     form.append("file", file, file.name || "note.txt");

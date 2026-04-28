@@ -20,7 +20,10 @@ export default function IntroOutroPresetBar({ scope, buildSnapshot, onApplySnaps
   const [msg, setMsg] = useState("");
   const [listEpoch, setListEpoch] = useState(0);
 
-  const named = useMemo(() => listIntroOutroNamed(scope), [scope, listEpoch]);
+  const named = useMemo(() => {
+    void listEpoch;
+    return listIntroOutroNamed(scope);
+  }, [scope, listEpoch]);
 
   const bump = useCallback(() => setListEpoch((n) => n + 1), []);
 

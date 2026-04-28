@@ -134,6 +134,7 @@ export default function MeProfilePage() {
     ready,
     authRequired,
     refreshMe,
+    user,
     user?.user_id,
     user?.phone,
     user?.email,

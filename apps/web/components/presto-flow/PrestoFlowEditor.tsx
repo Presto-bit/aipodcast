@@ -911,7 +911,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     redoExcluded,
     undoExcluded,
     words,
-    words,
     scheduleSaveExcluded,
     hasServerAudio,
     flushExcludedSave

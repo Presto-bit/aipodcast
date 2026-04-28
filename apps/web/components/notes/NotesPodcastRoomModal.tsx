@@ -6,6 +6,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
   type SetStateAction
@@ -165,6 +166,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   const [voiceKey2, setVoiceKey2] = useState("max");
   const [activePanel, setActivePanel] = useState<PanelId>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const runPodcastRef = useRef<() => Promise<void>>(async () => {});
 
   const stopPanelPointer = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -336,7 +338,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     const prefix = preset.textPrefix.trim();
     setText(prefix ? `${prefix}\n\n` : "");
     setCreativeTemplateValue(DEFAULT_CREATIVE_TEMPLATE_VALUE);
-  }, [open, presetKey]);
+  }, [open, presetKey, setText]);
 
   useEffect(() => {
     if (introVoiceFollow) setIntroVoiceKey(voiceKey1);
@@ -521,6 +523,8 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     }
   }
 
+  runPodcastRef.current = runPodcast;
+
   const durationLabel = DURATION_PRESETS.find((p) => p.chars === scriptTargetChars)?.label ?? "自定义";
   const durationPresetHighlight = durationInputMatchesCommitted(scriptTargetChars, scriptTargetCharsInput);
   const voiceSummary =
@@ -580,10 +584,10 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     ref,
     () => ({
       generate: () => {
-        void runPodcast();
+        void runPodcastRef.current();
       }
     }),
-    [runPodcast]
+    []
   );
 
   const presetLabel = PODCAST_ROOM_PRESETS[presetKey].label;

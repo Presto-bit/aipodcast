@@ -294,7 +294,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
     } finally {
       setCopyManuscriptBusy(false);
     }
-  }, [jobId, streamingTail, job?.artifacts, job?.result, job?.job_type, job?.status, scriptArtifactId]);
+  }, [jobId, streamingTail, job?.result, job?.job_type, job?.status, scriptArtifactId]);
 
   const stage = useMemo(() => deriveJobStage(job, events), [job, events]);
   const timelineEvents = useMemo(() => visibleJobEventsForUserTimeline(events), [events]);

@@ -207,6 +207,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const activeJobIdRef = useRef<string | null>(null);
   const resolveWaitRef = useRef<(() => void) | null>(null);
   const cancelledRef = useRef(false);
+  const runPodcastRef = useRef<() => Promise<void>>(async () => {});
+  const stopGenerationRef = useRef<() => Promise<void>>(async () => {});
   const logSuccessHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 浏览器中 `window.setTimeout` 返回 `number`，与 Node 的 `Timeout` 类型不同 */
   const mediaQueueStallHintTimerRef = useRef<number | null>(null);
@@ -302,7 +304,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     } catch {
       // ignore
     }
-  }, []);
+  }, [setText]);
 
   useEffect(() => {
     try {
@@ -335,7 +337,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     } catch {
       // ignore
     }
-  }, []);
+  }, [setText]);
 
   function clearPartialRedoContext() {
     setPartialRedoMeta(null);
@@ -627,6 +629,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
         cancelledRef.current = false;
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在挂载后恢复一次任务监听
   }, [getAuthHeaders]);
 
   useEffect(() => {
@@ -994,6 +997,9 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     }
   }
 
+  runPodcastRef.current = runPodcast;
+  stopGenerationRef.current = stopGeneration;
+
   const durationLabel = DURATION_PRESETS.find((p) => p.chars === scriptTargetChars)?.label ?? "自定义";
   const durationPresetHighlight = durationInputMatchesCommitted(scriptTargetChars, scriptTargetCharsInput);
   const voiceSummary =
@@ -1086,13 +1092,13 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     ref,
     () => ({
       generate: () => {
-        void runPodcast();
+        void runPodcastRef.current();
       },
       stop: () => {
-        void stopGeneration();
+        void stopGenerationRef.current();
       }
     }),
-    [runPodcast, stopGeneration]
+    []
   );
 
   const Root = embedded ? "div" : "main";

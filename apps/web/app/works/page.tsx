@@ -175,15 +175,18 @@ export default function WorksPage() {
   const keyword = query.trim().toLowerCase();
   const recentThresholdMs = useMemo(() => Date.now() - 1000 * 60 * 60 * 24 * 14, []);
 
-  function matchesFilter(w: WorkItem): boolean {
-    const title = String(w.title || w.id || "").toLowerCase();
-    if (keyword && !title.includes(keyword)) return false;
-    if (!recentOnly) return true;
-    const ts = new Date(String(w.createdAt || "")).getTime();
-    return Number.isFinite(ts) && ts >= recentThresholdMs;
-  }
+  const matchesFilter = useCallback(
+    (w: WorkItem): boolean => {
+      const title = String(w.title || w.id || "").toLowerCase();
+      if (keyword && !title.includes(keyword)) return false;
+      if (!recentOnly) return true;
+      const ts = new Date(String(w.createdAt || "")).getTime();
+      return Number.isFinite(ts) && ts >= recentThresholdMs;
+    },
+    [keyword, recentOnly, recentThresholdMs]
+  );
 
-  const filteredNotesWorks = useMemo(() => notesDraftWorks.filter(matchesFilter), [notesDraftWorks, keyword, recentOnly, recentThresholdMs]);
+  const filteredNotesWorks = useMemo(() => notesDraftWorks.filter(matchesFilter), [notesDraftWorks, matchesFilter]);
   const audioFinishedWorks = useMemo(() => {
     const merged = [...aiPodcastWorks, ...tts];
     merged.sort((a, b) => {
@@ -197,7 +200,7 @@ export default function WorksPage() {
   }, [aiPodcastWorks, tts]);
   const filteredAudioFinishedWorks = useMemo(
     () => audioFinishedWorks.filter(matchesFilter),
-    [audioFinishedWorks, keyword, recentOnly, recentThresholdMs]
+    [audioFinishedWorks, matchesFilter]
   );
 
   const emptyAll = !loading && ai.length === 0 && tts.length === 0;

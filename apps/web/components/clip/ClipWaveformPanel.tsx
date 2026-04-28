@@ -143,7 +143,7 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
         return;
       }
       wsRef.current = ws;
-      const r0 = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+      const r0 = 1;
       try {
         ws.setPlaybackRate(r0, true);
       } catch {
