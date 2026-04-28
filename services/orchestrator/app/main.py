@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import ENCODERS_BY_TYPE
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .config import settings
@@ -87,6 +88,30 @@ def _error_payload(
         payload["request_id"] = rid
         payload["requestId"] = rid
     return payload
+
+
+def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        raw_input = row.get("input")
+        if isinstance(raw_input, (bytes, bytearray)):
+            row["input"] = bytes(raw_input).decode("utf-8", errors="replace")
+        elif raw_input is not None and not isinstance(raw_input, (str, int, float, bool, dict, list)):
+            row["input"] = str(raw_input)
+        ctx = row.get("ctx")
+        if isinstance(ctx, dict):
+            ctx2 = dict(ctx)
+            for k, v in list(ctx2.items()):
+                if isinstance(v, (bytes, bytearray)):
+                    ctx2[k] = bytes(v).decode("utf-8", errors="replace")
+                elif v is not None and not isinstance(v, (str, int, float, bool, dict, list)):
+                    ctx2[k] = str(v)
+            row["ctx"] = ctx2
+        out.append(row)
+    return out
 
 
 def _startup_step(label: str, fn: Callable[[], None]) -> None:
@@ -268,6 +293,28 @@ async def _alipay_webhook_plaintext_auth_errors(request: Request, exc: HTTPExcep
         status_code=exc.status_code,
         headers=dict(exc.headers or {}),
     )
+
+
+@app.exception_handler(RequestValidationError)
+async def _request_validation_error_json(request: Request, exc: RequestValidationError):
+    rid = _request_id_from_request(request) or "-"
+    path = _safe_request_path(request)
+    details = _sanitize_validation_errors(exc.errors())
+    logger.warning(
+        "request_validation_error request_id=%s method=%s path=%s count=%s",
+        rid,
+        request.method,
+        path,
+        len(details),
+    )
+    payload = _error_payload(
+        request=request,
+        error="invalid_request_body",
+        detail="invalid_request_body",
+        status_code=422,
+    )
+    payload["validation_errors"] = details[:20]
+    return JSONResponse(content=payload, status_code=422)
 
 
 @app.exception_handler(UnicodeDecodeError)
