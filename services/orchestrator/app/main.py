@@ -223,12 +223,22 @@ app = FastAPI(title="AI Native Orchestrator", version="0.1.0", lifespan=_lifespa
 app.add_middleware(RequestIdMiddleware)
 
 
+def _safe_request_path(request: Request) -> str:
+    p = request.scope.get("path")
+    if isinstance(p, str) and p:
+        return p
+    raw = request.scope.get("raw_path", b"")
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw).decode("latin-1", errors="replace")
+    return "/"
+
+
 @app.exception_handler(HTTPException)
 async def _alipay_webhook_plaintext_auth_errors(request: Request, exc: HTTPException):
     """
     支付宝异步通知要求响应体为 success/fail 等纯文本；内部签名校验失败时默认 JSON 不利于对方重试与排障。
     """
-    path = (request.url.path or "").rstrip("/")
+    path = (_safe_request_path(request) or "").rstrip("/")
     if path.endswith("/webhooks/alipay") and exc.status_code in (401, 403):
         return PlainTextResponse("fail", status_code=exc.status_code, headers=dict(exc.headers or {}))
     detail = str(exc.detail or "request_failed")
@@ -238,7 +248,7 @@ async def _alipay_webhook_plaintext_auth_errors(request: Request, exc: HTTPExcep
         rid,
         exc.status_code,
         request.method,
-        request.url.path,
+        _safe_request_path(request),
         detail[:300],
     )
     return JSONResponse(
@@ -261,7 +271,7 @@ async def _unicode_decode_error_json(request: Request, exc: UnicodeDecodeError):
         "unicode_decode_error request_id=%s method=%s path=%s detail=%s",
         rid,
         request.method,
-        request.url.path,
+        _safe_request_path(request),
         reason,
     )
     detail = "invalid_text_encoding:文件或参数编码不兼容，请使用 UTF-8（文本）或重新导出后重试"
@@ -287,7 +297,7 @@ async def _unhandled_exception_json(request: Request, exc: Exception):
         "unhandled_error request_id=%s method=%s path=%s",
         rid,
         request.method,
-        request.url.path,
+        _safe_request_path(request),
     )
     err_msg = str(exc or "").strip().replace("\n", " ")[:220]
     detail = f"internal_server_error:{exc.__class__.__name__}"

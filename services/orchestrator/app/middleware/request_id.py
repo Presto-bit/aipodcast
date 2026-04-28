@@ -14,6 +14,16 @@ from starlette.responses import Response
 _access = logging.getLogger("fyv.access")
 
 
+def _safe_scope_path(request: Request) -> str:
+    p = request.scope.get("path")
+    if isinstance(p, str) and p:
+        return p
+    raw = request.scope.get("raw_path", b"")
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw).decode("latin-1", errors="replace")
+    return "/"
+
+
 class RequestIdMiddleware(BaseHTTPMiddleware):
     """从 X-Request-ID / X-Correlation-ID 继承，否则生成 UUID；响应头回写。"""
 
@@ -32,7 +42,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
                 "request_id=%s %s %s -> %s %.1fms",
                 rid,
                 request.method,
-                request.url.path,
+                _safe_scope_path(request),
                 response.status_code,
                 ms,
             )
