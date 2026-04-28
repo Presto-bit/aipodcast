@@ -65,7 +65,7 @@ function formatTime(tsMs: number | null | undefined): string {
 
 export default function AdminLogManagementPage() {
   const { getAuthHeaders } = useAuth();
-  const [scope, setScope] = useState<LogScope>("notebook_share_client");
+  const scope: LogScope = "notebook_share_client";
   const [scopes, setScopes] = useState<LogScope[]>([
     "notebook_share_client",
     "frontend_global_error",
@@ -98,6 +98,48 @@ export default function AdminLogManagementPage() {
       if (typeof code === "string" && code) return code;
     }
     return fallback;
+  }
+
+  function mergeClusters(list: ErrorCluster[]): ErrorCluster[] {
+    const grouped = new Map<string, ErrorCluster>();
+    for (const item of list) {
+      const key = `${item.errorCode}|${item.module}|${item.route}|${item.level}`;
+      const prev = grouped.get(key);
+      if (!prev) {
+        grouped.set(key, { ...item, key });
+      } else {
+        prev.count += Number(item.count || 0);
+        if (item.latestAtMs > prev.latestAtMs) prev.latestAtMs = item.latestAtMs;
+      }
+    }
+    return [...grouped.values()]
+      .sort((a, b) => b.count - a.count || b.latestAtMs - a.latestAtMs)
+      .slice(0, 8);
+  }
+
+  async function copyEventRow(item: LogEvent): Promise<void> {
+    const text = JSON.stringify(
+      {
+        time: formatTime(item.atMs),
+        level: item.level,
+        errorCode: item.errorCode,
+        requestId: item.requestId,
+        traceId: item.traceId,
+        module: item.module,
+        route: item.route,
+        location: item.location || "",
+        message: item.message,
+        payload: item.payload || {}
+      },
+      null,
+      2
+    );
+    try {
+      await navigator.clipboard.writeText(text);
+      setMsg("已复制日志事件");
+    } catch {
+      window.prompt("请手动复制日志事件：", text);
+    }
   }
 
   const load = useCallback(async () => {
@@ -136,34 +178,47 @@ export default function AdminLogManagementPage() {
       const hours = Number.parseInt(queryRangeHours, 10);
       const fromMs =
         Number.isFinite(hours) && hours > 0 ? Date.now() - Math.min(hours, 24 * 30) * 60 * 60 * 1000 : undefined;
-      const params = new URLSearchParams();
-      params.set("scope", scope);
-      params.set("limit", "120");
-      if (queryRequestId.trim()) params.set("requestId", queryRequestId.trim());
-      if (queryErrorCode.trim()) params.set("errorCode", queryErrorCode.trim());
-      if (queryLevel) params.set("level", queryLevel);
-      if (fromMs) params.set("fromMs", String(fromMs));
-      const res = await fetch(`/api/admin/log-events?${params.toString()}`, {
-        headers: getAuthHeaders(),
-        cache: "no-store"
+      const scopeList = scopes.length > 0 ? scopes : (["notebook_share_client", "frontend_global_error"] as LogScope[]);
+      const requests = scopeList.map(async (scopeItem) => {
+        const params = new URLSearchParams();
+        params.set("scope", scopeItem);
+        params.set("limit", "120");
+        if (queryRequestId.trim()) params.set("requestId", queryRequestId.trim());
+        if (queryErrorCode.trim()) params.set("errorCode", queryErrorCode.trim());
+        if (queryLevel) params.set("level", queryLevel);
+        if (fromMs) params.set("fromMs", String(fromMs));
+        const res = await fetch(`/api/admin/log-events?${params.toString()}`, {
+          headers: getAuthHeaders(),
+          cache: "no-store"
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          error?: unknown;
+          events?: LogEvent[];
+          clusters?: ErrorCluster[];
+        };
+        if (!res.ok || !data.success) {
+          throw new Error(pickErrorMessage(data, `日志加载失败 ${res.status}`));
+        }
+        return {
+          events: Array.isArray(data.events) ? data.events : [],
+          clusters: Array.isArray(data.clusters) ? data.clusters : []
+        };
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        error?: unknown;
-        events?: LogEvent[];
-        clusters?: ErrorCluster[];
-      };
-      if (!res.ok || !data.success) {
-        throw new Error(pickErrorMessage(data, `日志加载失败 ${res.status}`));
-      }
-      setEvents(Array.isArray(data.events) ? data.events : []);
-      setClusters(Array.isArray(data.clusters) ? data.clusters : []);
+      const results = await Promise.all(requests);
+      const mergedEvents = results
+        .flatMap((x) => x.events)
+        .sort((a, b) => b.atMs - a.atMs)
+        .slice(0, 120);
+      const mergedClusters = mergeClusters(results.flatMap((x) => x.clusters));
+      setEvents(mergedEvents);
+      setClusters(mergedClusters);
     } catch (e) {
       setMsg(String(e instanceof Error ? e.message : e));
     } finally {
       setEventsLoading(false);
     }
-  }, [getAuthHeaders, scope, queryRequestId, queryErrorCode, queryLevel, queryRangeHours]);
+  }, [getAuthHeaders, scopes, queryRequestId, queryErrorCode, queryLevel, queryRangeHours]);
 
   useEffect(() => {
     void loadEvents();
@@ -216,26 +271,9 @@ export default function AdminLogManagementPage() {
       </p>
 
       <section className="mt-6 rounded-xl border border-line bg-surface/60 p-4">
-        <h2 className="text-sm font-medium text-ink">日志范围</h2>
-        <div className="mt-3 max-w-xs">
-          <select
-            className="w-full rounded bg-canvas p-2 text-sm text-ink"
-            value={scope}
-            onChange={(e) => setScope(e.target.value as LogScope)}
-          >
-            {scopes.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-        </div>
-      </section>
-
-      <section className="mt-6 rounded-xl border border-line bg-surface/60 p-4">
         <h2 className="text-sm font-medium text-ink">当前状态</h2>
         <div className="mt-3 grid gap-2 text-sm text-muted md:grid-cols-2">
-          <p>范围：{scope}</p>
+          <p>范围：全部</p>
           <p>开关：{config?.enabled ? "开启" : "关闭"}</p>
           <p>环境：{config?.env || "—"}</p>
           <p>最小级别：{config?.minLevel || "—"}</p>
@@ -437,13 +475,14 @@ export default function AdminLogManagementPage() {
                 <th className="px-2 py-2">位置</th>
                 <th className="px-2 py-2">信息</th>
                 <th className="px-2 py-2">摘要</th>
+                <th className="px-2 py-2">操作</th>
               </tr>
             </thead>
             <tbody>
               {events.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-2 py-8 text-center text-muted">
-                    暂无日志事件（请确认 scope 已开启且已复现问题）
+                  <td colSpan={10} className="px-2 py-8 text-center text-muted">
+                    暂无日志事件（请确认已开启日志调试且已复现问题）
                   </td>
                 </tr>
               ) : null}
@@ -465,6 +504,15 @@ export default function AdminLogManagementPage() {
                   </td>
                   <td className="max-w-[20rem] truncate px-2 py-2 text-xs text-muted" title={JSON.stringify(item.payload || {})}>
                     {JSON.stringify(item.payload || {})}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2 text-xs">
+                    <button
+                      type="button"
+                      className="rounded border border-line bg-canvas px-2 py-1 text-[11px] text-ink hover:bg-fill"
+                      onClick={() => void copyEventRow(item)}
+                    >
+                      复制
+                    </button>
                   </td>
                 </tr>
               ))}
