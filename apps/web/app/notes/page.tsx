@@ -4585,15 +4585,18 @@ export default function NotesPage() {
             </div>
             <div className="my-4 border-t border-line" />
             <div className="relative space-y-2">
-              <div className="flex items-center gap-2 text-xs text-muted">
-                <p>上传本地文件（支持 txt / md / pdf / doc / docx / epub / html + 更多）</p>
-                <button
-                  type="button"
-                  className="rounded border border-line bg-fill/40 px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill"
-                  onClick={() => setShowSupportedFormatsModal(true)}
-                >
-                  更多
-                </button>
+              <div className="text-xs text-muted">
+                <p>
+                  上传本地文件（支持 txt / md / pdf / doc / docx / epub / html +{" "}
+                  <button
+                    type="button"
+                    className="text-brand underline underline-offset-2 hover:text-brand/80"
+                    onClick={() => setShowSupportedFormatsModal(true)}
+                  >
+                    更多
+                  </button>
+                  ）
+                </p>
               </div>
               {showSupportedFormatsModal ? (
                 <div className="absolute -top-2 right-0 z-20 w-[min(92vw,24rem)] rounded-xl border border-line bg-surface p-3 shadow-modal">

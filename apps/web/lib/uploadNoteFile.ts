@@ -14,10 +14,13 @@ type UploadJson = {
     encoding?: string;
   };
   detail?: unknown;
-  error?: string;
+  error?: unknown;
+  requestId?: string;
+  request_id?: string;
 };
 
-function parseError(data: UploadJson, status: number, rawText: string): string {
+function parseError(data: UploadJson, status: number, rawText: string, responseRequestId?: string): string {
+  const requestId = (responseRequestId || data.requestId || data.request_id || "").trim();
   const detail = (data as { detail?: unknown }).detail;
   const detailText =
     typeof detail === "string" && detail.trim()
@@ -25,13 +28,29 @@ function parseError(data: UploadJson, status: number, rawText: string): string {
       : Array.isArray(detail) && detail[0] && typeof (detail[0] as { msg?: string }).msg === "string"
         ? String((detail[0] as { msg: string }).msg).trim()
         : "";
+  const errorText =
+    typeof data.error === "string" && data.error.trim()
+      ? data.error.trim()
+      : data.error && typeof data.error === "object" && typeof (data.error as { message?: unknown }).message === "string"
+        ? String((data.error as { message: string }).message).trim()
+        : "";
+  const errorCode =
+    data.error && typeof data.error === "object" && typeof (data.error as { code?: unknown }).code === "string"
+      ? String((data.error as { code: string }).code).trim()
+      : typeof data.error === "string"
+        ? data.error.trim()
+        : "";
+  const genericInternal =
+    errorCode === "internal_server_error" ||
+    errorText === "internal_server_error" ||
+    detailText === "internal_server_error";
 
-  if (typeof data.error === "string" && data.error.trim()) {
-    const err = data.error.trim();
+  if (errorCode) {
+    const err = errorCode;
     if (err === "upstream_unreachable" || err === "orchestrator request failed") {
       return "无法连接编排器或请求中断。请确认 orchestrator 已启动，且 Next 的 ORCHESTRATOR_URL 指向可访问地址（本机开发多为 http://127.0.0.1:8008；Docker 内多为 http://orchestrator:8008）。";
     }
-    if (err === "internal_server_error" && detailText) {
+    if (err === "internal_server_error" && detailText && detailText !== "internal_server_error") {
       return `服务内部错误：${detailText}`;
     }
   }
@@ -45,13 +64,17 @@ function parseError(data: UploadJson, status: number, rawText: string): string {
   if (status >= 400 && (lower.includes("body exceeded") || lower.includes("body size"))) {
     return "请求体积超过 Next 或反代单次限制。请调大 body 上限（建议 ≥25MB）或改用较小文件。";
   }
-  if (detailText) return detailText;
-  if (typeof data.error === "string" && data.error.trim()) {
-    const err = data.error.trim();
-    if (err === "internal_server_error") {
-      return "服务内部错误（internal_server_error），请稍后重试；若持续出现，请联系管理员排查服务端日志。";
+  if (detailText && detailText !== "internal_server_error") return detailText;
+  if (genericInternal) {
+    const ridLine = requestId ? `（请求ID：${requestId}）` : "";
+    return `上传失败：服务内部异常，可能由存储服务、数据库或解析服务暂时不可用导致，请稍后重试${ridLine}。`;
+  }
+  if (errorText) {
+    if (errorText === "internal_server_error") {
+      const ridLine = requestId ? `（请求ID：${requestId}）` : "";
+      return `上传失败：服务内部异常，请稍后重试${ridLine}。`;
     }
-    return err;
+    return errorText;
   }
   if (rawText.trim() && !rawText.trim().startsWith("{")) {
     return `上传失败（HTTP ${status}）。若持续出现，请查看 Next 终端或反代错误日志（响应非 JSON，多为 BFF/运行时异常）。`;
@@ -111,11 +134,12 @@ export function uploadNoteFileWithProgress(
         data = {};
       }
       const status = xhr.status;
+      const responseRequestId = (xhr.getResponseHeader("x-request-id") || "").trim();
       if (status >= 200 && status < 300 && data.success !== false) {
         resolve({ ok: true, data });
         return;
       }
-      resolve({ ok: false, error: parseError(data, status, rawText) });
+      resolve({ ok: false, error: parseError(data, status, rawText, responseRequestId) });
     };
 
     xhr.onerror = () => resolve({ ok: false, error: "网络异常，上传中断" });
