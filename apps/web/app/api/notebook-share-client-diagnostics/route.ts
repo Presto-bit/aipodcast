@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateRequestId, incomingAuthHeadersFrom } from "../../../lib/bff";
 import { sanitizeClientDiagnosticsValue } from "../../../lib/clientDiagnosticsSanitize";
+import { shouldIngestForScope } from "../../../lib/logManagement";
 
 const MAX_BODY_BYTES = 28_000;
 
@@ -30,6 +31,9 @@ export async function POST(req: NextRequest) {
   }
   const rec = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   const requestId = getOrCreateRequestId(req);
+  if (!shouldIngestForScope("notebook_share_client", requestId)) {
+    return NextResponse.json({ ok: true, requestId, skipped: true });
+  }
   const hypothesisId =
     typeof rec.hypothesisId === "string" ? rec.hypothesisId.slice(0, 48) : undefined;
   const location = typeof rec.location === "string" ? rec.location.slice(0, 240) : undefined;
