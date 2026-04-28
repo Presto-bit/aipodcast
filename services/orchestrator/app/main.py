@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import ENCODERS_BY_TYPE
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .config import settings
@@ -56,6 +57,11 @@ from .routes import (
 )
 
 logger = logging.getLogger(__name__)
+
+# FastAPI 默认对 bytes 使用 .decode("utf-8")，遇到脏字节会抛 UnicodeDecodeError。
+# 这里统一改为 replace，避免序列化阶段把业务请求打成 500/400。
+ENCODERS_BY_TYPE[bytes] = lambda v: bytes(v).decode("utf-8", errors="replace")
+ENCODERS_BY_TYPE[bytearray] = lambda v: bytes(v).decode("utf-8", errors="replace")
 
 
 def _request_id_from_request(request: Request) -> str:
