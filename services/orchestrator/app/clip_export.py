@@ -522,6 +522,7 @@ def export_clip_mp3_from_bytes(
     range_start_ms: int | None = None,
     range_end_ms: int | None = None,
     silence_cut_ranges: list[tuple[int, int, int]] | None = None,
+    duck_ranges: list[tuple[int, int]] | None = None,
     metadata: dict[str, str] | None = None,
 ) -> bytes:
     """
@@ -565,6 +566,41 @@ def export_clip_mp3_from_bytes(
         src = td_path / "source.bin"
         src.write_bytes(audio_bytes)
         inp = str(src)
+        if duck_ranges:
+            dr = [(max(0, int(s)), max(0, int(e))) for s, e in duck_ranges if int(e) > int(s)]
+            if dr:
+                ducked = td_path / "source_duck.wav"
+                ffmpeg_duck = shutil.which("ffmpeg") or "ffmpeg"
+                max_events = 80
+                chains: list[str] = []
+                for idx, (s, e) in enumerate(dr[:max_events]):
+                    chains.append(f"volume=0.28:enable='between(t,{s/1000.0:.3f},{e/1000.0:.3f})'")
+                filt = ",".join(chains)
+                if filt:
+                    cmd_duck = [
+                        ffmpeg_duck,
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-i",
+                        str(src),
+                        "-af",
+                        filt,
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "44100",
+                        "-c:a",
+                        "pcm_s16le",
+                        str(ducked),
+                    ]
+                    try:
+                        subprocess.run(cmd_duck, check=True, capture_output=True, timeout=900)
+                        if ducked.is_file() and ducked.stat().st_size > 44:
+                            inp = str(ducked)
+                    except Exception:
+                        logger.warning("clip export duck preprocess failed, fallback raw source")
 
         if use_word_chain:
             raw_concat = _export_word_chain_with_bridges(

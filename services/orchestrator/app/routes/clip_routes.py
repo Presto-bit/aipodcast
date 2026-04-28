@@ -314,6 +314,35 @@ def _audio_event_cut_ranges_from_timeline_doc(doc: Any) -> list[tuple[int, int, 
     return out
 
 
+def _audio_event_duck_ranges_from_timeline_doc(doc: Any) -> list[tuple[int, int]]:
+    if isinstance(doc, str):
+        try:
+            doc = json.loads(doc)
+        except Exception:
+            doc = None
+    if not isinstance(doc, dict):
+        return []
+    raw = doc.get("audio_events")
+    if not isinstance(raw, list):
+        return []
+    out: list[tuple[int, int]] = []
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        action = str(it.get("action") or "keep").strip().lower()
+        if action != "duck":
+            continue
+        try:
+            s = int(it.get("start_ms"))
+            e = int(it.get("end_ms"))
+        except (TypeError, ValueError):
+            continue
+        if e <= s:
+            continue
+        out.append((s, e))
+    return out
+
+
 @router.post("/clip/projects")
 def clip_create_project(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
     uid = _owner_uuid(request)
@@ -820,6 +849,7 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
     tl_doc = row.get("timeline_json")
     silence_cuts = _silence_cut_ranges_from_timeline_doc(tl_doc)
     event_cuts = _audio_event_cut_ranges_from_timeline_doc(tl_doc)
+    event_ducks = _audio_event_duck_ranges_from_timeline_doc(tl_doc)
     combined_cuts = [*silence_cuts, *event_cuts]
     try:
         raw = get_object_bytes(audio_key)
@@ -831,6 +861,7 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
             long_pause_ms=long_pause_ms,
             long_pause_cap_ms=long_pause_cap_ms,
             silence_cut_ranges=combined_cuts,
+            duck_ranges=event_ducks,
             loudnorm_i_lufs=resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs")),
         )
     except Exception as exc:

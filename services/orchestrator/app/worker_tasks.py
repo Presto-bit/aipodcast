@@ -1629,6 +1629,7 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
             long_pause_ms, long_pause_cap_ms = 0, 500
     silence_cuts: list[tuple[int, int, int]] = []
     event_cuts: list[tuple[int, int, int]] = []
+    event_ducks: list[tuple[int, int]] = []
     tl_raw = row.get("timeline_json")
     if isinstance(tl_raw, str):
         try:
@@ -1658,15 +1659,15 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
                 if not isinstance(it, dict):
                     continue
                 action = str(it.get("action") or "keep").strip().lower()
-                if action != "cut":
-                    continue
                 try:
                     s = int(it.get("start_ms"))
                     e = int(it.get("end_ms"))
                 except (TypeError, ValueError):
                     continue
-                if e > s:
+                if e > s and action == "cut":
                     event_cuts.append((s, e, 0))
+                elif e > s and action == "duck":
+                    event_ducks.append((s, e))
     try:
         b = get_object_bytes(audio_key)
         out = export_clip_mp3_from_bytes(
@@ -1677,6 +1678,7 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
             long_pause_ms=long_pause_ms,
             long_pause_cap_ms=long_pause_cap_ms,
             silence_cut_ranges=[*silence_cuts, *event_cuts],
+            duck_ranges=event_ducks,
             loudnorm_i_lufs=resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs")),
         )
         out_key = f"clip/{owner or 'anon'}/{pid}/export.mp3"

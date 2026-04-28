@@ -102,6 +102,18 @@ type Props = {
   onToggleSilenceCut?: (startMs: number, endMs: number) => void;
   onSetSilenceCapMs?: (startMs: number, endMs: number, capMs: number) => void;
   onJumpToSilence?: (card: { start: number; end: number; jumpWordId: string | null }) => void;
+  audioEventCards?: ReadonlyArray<{
+    id: string;
+    start: number;
+    end: number;
+    label: string;
+    action: "keep" | "cut" | "duck";
+    jumpWordId: string | null;
+  }>;
+  onSetAudioEventAction?: (eventId: string, nextAction: "keep" | "cut" | "duck") => void;
+  collapsedSpeakers?: ReadonlySet<number>;
+  onToggleSpeakerCollapse?: (speaker: number) => void;
+  speakerFilterSet?: ReadonlySet<number> | null;
 };
 
 const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(function VirtualizedTranscript(
@@ -135,7 +147,12 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
     silenceCards,
     onToggleSilenceCut,
     onSetSilenceCapMs,
-    onJumpToSilence
+    onJumpToSilence,
+    audioEventCards,
+    onSetAudioEventAction,
+    collapsedSpeakers,
+    onToggleSpeakerCollapse,
+    speakerFilterSet
   },
   ref
 ) {
@@ -158,7 +175,12 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
     parentRef.current = el;
     if (transcriptScrollRef) transcriptScrollRef.current = el;
   };
-  const count = lines.length;
+  const visibleLineIndices = lines
+    .map((line, idx) => ({ line, idx }))
+    .filter((x) => !speakerFilterSet || speakerFilterSet.size === 0 || speakerFilterSet.has(x.line.speaker))
+    .map((x) => x.idx);
+  const visibleLines = visibleLineIndices.map((idx) => lines[idx]!).filter(Boolean);
+  const count = visibleLines.length;
   const lineEndMs = (line: SpeakerLine): number => {
     let end = 0;
     for (const u of line.units) {
@@ -184,7 +206,7 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
     ref,
     () => ({
       scrollToWordId: (wordId: string) => {
-        const idx = lines.findIndex((line) =>
+        const idx = visibleLines.findIndex((line) =>
           line.units.some((u) =>
             u.kind === "single" ? u.word.id === wordId : u.words.some((w) => w.id === wordId)
           )
@@ -192,7 +214,7 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
         if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "center" });
       }
     }),
-    [lines, virtualizer]
+    [visibleLines, virtualizer]
   );
 
   if (count === 0) {
@@ -215,15 +237,20 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
     >
       <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
         {virtualizer.getVirtualItems().map((vi) => {
-          const line = lines[vi.index];
+          const line = visibleLines[vi.index];
           if (!line) return null;
-          const linePlaybackActive = playbackLineIndex != null && playbackLineIndex === vi.index;
+          const sourceLineIndex = visibleLineIndices[vi.index] ?? -1;
+          const linePlaybackActive = playbackLineIndex != null && playbackLineIndex === sourceLineIndex;
           const speaker = speakerNames?.[line.speaker] ?? speakerLabel(line.speaker, hostLabel, guestLabel);
           const startTimeLabel = formatLineStart(lineStartMs(line));
           const inEdit = editingSpeaker === line.speaker;
-          const prevLineEnd = vi.index > 0 ? lineEndMs(lines[vi.index - 1]!) : -1;
+          const speakerCollapsed = Boolean(collapsedSpeakers?.has(line.speaker));
+          const prevLineEnd = vi.index > 0 ? lineEndMs(visibleLines[vi.index - 1]!) : -1;
           const curLineStart = lineStart(line);
           const inlineSilenceCards = (silenceCards || []).filter((c) => c.start >= prevLineEnd && c.start < curLineStart);
+          const inlineAudioEventCards = (audioEventCards || []).filter(
+            (c) => c.start >= prevLineEnd && c.start < curLineStart
+          );
           return (
             <div
               key={vi.key}
@@ -300,6 +327,71 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
                   ))}
                 </div>
               ) : null}
+              {inlineAudioEventCards.length > 0 ? (
+                <div className="mb-1.5 flex flex-wrap gap-1.5 rounded-lg border border-line/60 bg-fill/20 px-2 py-1">
+                  {inlineAudioEventCards.map((ev) => (
+                    <div
+                      key={`ev-${ev.id}`}
+                      className={[
+                        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px]",
+                        ev.action === "cut"
+                          ? "border-danger/60 bg-danger-soft text-danger-ink"
+                          : ev.action === "duck"
+                            ? "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                            : "border-line bg-surface text-ink"
+                      ].join(" ")}
+                    >
+                      <button
+                        type="button"
+                        data-audio-event-id={ev.id}
+                        className="font-mono hover:text-brand focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand/60"
+                        aria-label={`${ev.label} ${formatLineStart(ev.start)}-${formatLineStart(ev.end)}`}
+                        onClick={() => onJumpToSilence?.({ start: ev.start, end: ev.end, jumpWordId: ev.jumpWordId })}
+                      >
+                        {`${ev.label}:${formatLineStart(ev.start)}-${formatLineStart(ev.end)}`}
+                      </button>
+                      <button
+                        type="button"
+                        data-audio-event-id={ev.id}
+                        className={[
+                          "rounded border px-1 hover:bg-fill focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand/60",
+                          ev.action === "keep" ? "border-brand/50 text-brand" : "border-line/70"
+                        ].join(" ")}
+                        aria-label="Set audio event action keep"
+                        onClick={() => onSetAudioEventAction?.(ev.id, "keep")}
+                      >
+                        Keep
+                      </button>
+                      <button
+                        type="button"
+                        data-audio-event-id={ev.id}
+                        className={[
+                          "rounded border px-1 hover:bg-fill focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand/60",
+                          ev.action === "duck"
+                            ? "border-amber-500/70 text-amber-700 dark:text-amber-300"
+                            : "border-line/70"
+                        ].join(" ")}
+                        aria-label="Set audio event action duck"
+                        onClick={() => onSetAudioEventAction?.(ev.id, "duck")}
+                      >
+                        Duck
+                      </button>
+                      <button
+                        type="button"
+                        data-audio-event-id={ev.id}
+                        className={[
+                          "rounded border px-1 hover:bg-fill focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand/60",
+                          ev.action === "cut" ? "border-danger/60 text-danger-ink" : "border-line/70"
+                        ].join(" ")}
+                        aria-label="Set audio event action cut"
+                        onClick={() => onSetAudioEventAction?.(ev.id, "cut")}
+                      >
+                        Cut
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <div className="border-b border-line/40 pb-2 pt-1">
                 <div className="mb-1.5 flex items-center gap-2 text-left select-none">
                   {inEdit ? (
@@ -330,8 +422,19 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
                       {speaker}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="rounded border border-line/70 px-1 text-[9px] text-muted hover:bg-fill"
+                    onClick={() => onToggleSpeakerCollapse?.(line.speaker)}
+                    title={speakerCollapsed ? "展开该说话人" : "折叠该说话人"}
+                  >
+                    {speakerCollapsed ? "展开" : "折叠"}
+                  </button>
                   <span className="text-[10px] tabular-nums text-muted">{startTimeLabel}</span>
                 </div>
+                {speakerCollapsed ? (
+                  <div className="min-w-0 text-[11px] text-muted">（已折叠）</div>
+                ) : (
                 <div className="min-w-0 whitespace-pre-wrap break-words text-left text-sm leading-normal [word-break:break-word]">
                   <span className="inline-flex flex-wrap content-start gap-x-0 gap-y-0.5">
                   {line.units.flatMap((u) => {
@@ -404,6 +507,7 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
                   })}
                   </span>
                 </div>
+                )}
               </div>
             </div>
           );

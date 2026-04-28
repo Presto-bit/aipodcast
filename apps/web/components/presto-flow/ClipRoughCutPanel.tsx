@@ -93,6 +93,7 @@ type Props = {
   onSeekPreviewMs?: (ms: number) => void;
   onRefreshSilences?: () => void | Promise<void>;
   silenceCutKeys?: ReadonlySet<string>;
+  silenceCutRanges?: ReadonlyArray<{ start: number; end: number; capMs: number }>;
   onToggleSilenceCut?: (startMs: number, endMs: number) => void;
   onSetSilenceCapMs?: (startMs: number, endMs: number, capMs: number) => void;
   audioEvents?: ReadonlyArray<{
@@ -104,7 +105,10 @@ type Props = {
     action: "keep" | "cut" | "duck";
   }>;
   onSetAudioEventAction?: (eventId: string, nextAction: "keep" | "cut" | "duck") => void;
+  onBatchSetAudioEventAction?: (label: string, nextAction: "keep" | "cut" | "duck") => void;
   onAnalyzeAudioEvents?: () => void | Promise<void>;
+  analyzeAudioEventsBusy?: boolean;
+  analyzeAudioEventsHint?: string | null;
   /** 口癖 / 叠字 / 规则 / AI 等可执行建议（已在外层过滤 dismiss） */
   roughCutSuggestions: readonly ClipEditSuggestion[];
   onExecuteSuggestion: (s: ClipEditSuggestion) => void;
@@ -150,11 +154,15 @@ export default function ClipRoughCutPanel({
   onSeekPreviewMs,
   onRefreshSilences,
   silenceCutKeys,
+  silenceCutRanges,
   onToggleSilenceCut,
   onSetSilenceCapMs,
   audioEvents,
   onSetAudioEventAction,
+  onBatchSetAudioEventAction,
   onAnalyzeAudioEvents,
+  analyzeAudioEventsBusy = false,
+  analyzeAudioEventsHint = null,
   roughCutSuggestions,
   onExecuteSuggestion,
   dismissedRoughKeys,
@@ -355,6 +363,39 @@ export default function ClipRoughCutPanel({
   const hasAnyHint = hasVerbalAdjust || longSilenceRows.length > 0;
   const silenceCutCount = silenceCutKeys?.size ?? 0;
   const audioEventRows = (audioEvents || []).slice(0, 60);
+  const audioCutCount = audioEventRows.filter((x) => x.action === "cut").length;
+  const audioDuckCount = audioEventRows.filter((x) => x.action === "duck").length;
+  const excludedOrdered = useMemo(
+    () => words.filter((w) => excluded.has(w.id)).map((w) => w.id),
+    [excluded, words]
+  );
+  const firstSilenceCutMs = useMemo(() => {
+    const arr = longSilenceRows
+      .filter((seg) => (silenceCutKeys?.has(`sil:${seg.start}-${seg.end}`) ?? false))
+      .map((seg) => seg.start);
+    return arr.length ? Math.min(...arr) : null;
+  }, [longSilenceRows, silenceCutKeys]);
+  const firstAudioCutMs = useMemo(() => {
+    const arr = audioEventRows.filter((x) => x.action === "cut").map((x) => x.start_ms);
+    return arr.length ? Math.min(...arr) : null;
+  }, [audioEventRows]);
+  const firstAudioDuckMs = useMemo(() => {
+    const arr = audioEventRows.filter((x) => x.action === "duck").map((x) => x.start_ms);
+    return arr.length ? Math.min(...arr) : null;
+  }, [audioEventRows]);
+  const estimatedReduceMs = useMemo(() => {
+    const excludedMs = words
+      .filter((w) => excluded.has(w.id))
+      .reduce((acc, w) => acc + Math.max(0, w.e_ms - w.s_ms), 0);
+    const silenceMs = (silenceCutRanges || []).reduce(
+      (acc, s) => acc + Math.max(0, (s.end - s.start) - Math.max(0, s.capMs || 0)),
+      0
+    );
+    const eventCutMs = (audioEvents || [])
+      .filter((ev) => ev.action === "cut")
+      .reduce((acc, ev) => acc + Math.max(0, ev.end_ms - ev.start_ms), 0);
+    return Math.max(0, excludedMs + silenceMs + eventCutMs);
+  }, [audioEvents, excluded, silenceCutRanges, words]);
 
   const exemptNonEmptyLineCount = useMemo(
     () => exemptDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length,
@@ -363,6 +404,54 @@ export default function ClipRoughCutPanel({
 
   return (
     <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-1">
+      <section className="rounded-xl border border-line bg-fill/30 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-[11px] font-semibold text-ink">变更摘要</p>
+          <span className="text-[10px] text-muted">实时</span>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            disabled={!excludedOrdered.length || !onJumpWord}
+            className="rounded-lg border border-line bg-surface px-2 py-1 text-left text-[10px] hover:bg-fill disabled:opacity-40"
+            onClick={() => onJumpWord?.(excludedOrdered[0]!, { lineEndAutopause: true })}
+          >
+            <p className="text-muted">删词</p>
+            <p className="font-semibold text-ink">{excludedOrdered.length}</p>
+          </button>
+          <button
+            type="button"
+            disabled={silenceCutCount <= 0 || firstSilenceCutMs == null || !onSeekPreviewMs}
+            className="rounded-lg border border-line bg-surface px-2 py-1 text-left text-[10px] hover:bg-fill disabled:opacity-40"
+            onClick={() => onSeekPreviewMs?.(firstSilenceCutMs ?? 0)}
+          >
+            <p className="text-muted">静音裁剪</p>
+            <p className="font-semibold text-ink">{silenceCutCount}</p>
+          </button>
+          <button
+            type="button"
+            disabled={audioCutCount <= 0 || firstAudioCutMs == null || !onSeekPreviewMs}
+            className="rounded-lg border border-line bg-surface px-2 py-1 text-left text-[10px] hover:bg-fill disabled:opacity-40"
+            onClick={() => onSeekPreviewMs?.(firstAudioCutMs ?? 0)}
+          >
+            <p className="text-muted">事件 Cut</p>
+            <p className="font-semibold text-danger-ink">{audioCutCount}</p>
+          </button>
+          <button
+            type="button"
+            disabled={audioDuckCount <= 0 || firstAudioDuckMs == null || !onSeekPreviewMs}
+            className="rounded-lg border border-line bg-surface px-2 py-1 text-left text-[10px] hover:bg-fill disabled:opacity-40"
+            onClick={() => onSeekPreviewMs?.(firstAudioDuckMs ?? 0)}
+          >
+            <p className="text-muted">事件 Duck</p>
+            <p className="font-semibold text-amber-700 dark:text-amber-300">{audioDuckCount}</p>
+          </button>
+        </div>
+        <div className="mt-1.5 rounded-lg border border-line/70 bg-surface px-2 py-1 text-[10px]">
+          <span className="text-muted">预计减少时长</span>
+          <span className="ml-1 font-mono font-semibold text-ink">{formatMs(estimatedReduceMs)}</span>
+        </div>
+      </section>
       <section className="rounded-xl border border-line bg-fill/30 p-3">
         <div className="mb-2 flex items-center justify-end gap-1 border-b border-line/60 pb-2">
           {onLoadDeepseekOutline ? (
@@ -655,16 +744,47 @@ export default function ClipRoughCutPanel({
         {onAnalyzeAudioEvents ? (
           <button
             type="button"
-            className="mb-2 rounded-lg border border-line bg-surface px-2 py-1 text-[10px] font-semibold text-ink hover:bg-fill"
+            disabled={analyzeAudioEventsBusy}
+            className="mb-2 rounded-lg border border-line bg-surface px-2 py-1 text-[10px] font-semibold text-ink hover:bg-fill disabled:opacity-40"
             onClick={() => void onAnalyzeAudioEvents()}
           >
-            重新分析事件
+            {analyzeAudioEventsBusy ? "分析中…" : "重新分析事件"}
           </button>
         ) : null}
+        {analyzeAudioEventsHint ? <p className="mb-2 text-[10px] text-muted">{analyzeAudioEventsHint}</p> : null}
         {audioEventRows.length === 0 ? (
           <p className="text-[10px] text-muted">暂无事件数据（后续接入 AED 自动填充）</p>
         ) : (
-          <ul className="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
+          <>
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              {(["music", "noise", "laughter", "applause"] as const).map((lb) => (
+                <div key={lb} className="inline-flex items-center gap-1 rounded border border-line/70 px-1 py-0.5">
+                  <span className="text-[9px] uppercase text-muted">{lb}</span>
+                  <button
+                    type="button"
+                    className="rounded border border-line px-1 text-[9px] hover:bg-fill"
+                    onClick={() => onBatchSetAudioEventAction?.(lb, "keep")}
+                  >
+                    Keep
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-line px-1 text-[9px] hover:bg-fill"
+                    onClick={() => onBatchSetAudioEventAction?.(lb, "duck")}
+                  >
+                    Duck
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded border border-line px-1 text-[9px] hover:bg-fill"
+                    onClick={() => onBatchSetAudioEventAction?.(lb, "cut")}
+                  >
+                    Cut
+                  </button>
+                </div>
+              ))}
+            </div>
+            <ul className="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
             {audioEventRows.map((ev) => (
               <li
                 key={ev.id}
@@ -698,9 +818,20 @@ export default function ClipRoughCutPanel({
                 >
                   删除
                 </button>
+                <button
+                  type="button"
+                  className={[
+                    "rounded border px-1.5 py-0.5",
+                    ev.action === "duck" ? "border-amber-500/70 text-amber-700 dark:text-amber-300" : "border-line text-muted hover:bg-fill"
+                  ].join(" ")}
+                  onClick={() => onSetAudioEventAction?.(ev.id, "duck")}
+                >
+                  Duck
+                </button>
               </li>
             ))}
-          </ul>
+            </ul>
+          </>
         )}
       </section>
 
