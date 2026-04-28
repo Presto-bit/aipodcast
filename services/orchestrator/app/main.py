@@ -256,18 +256,24 @@ async def _alipay_webhook_plaintext_auth_errors(request: Request, exc: HTTPExcep
 @app.exception_handler(UnicodeDecodeError)
 async def _unicode_decode_error_json(request: Request, exc: UnicodeDecodeError):
     rid = _request_id_from_request(request) or "-"
+    reason = str(exc).replace("\n", " ").strip()[:260]
     logger.warning(
         "unicode_decode_error request_id=%s method=%s path=%s detail=%s",
         rid,
         request.method,
         request.url.path,
-        str(exc)[:300],
+        reason,
     )
+    detail = "invalid_text_encoding:文件或参数编码不兼容，请使用 UTF-8（文本）或重新导出后重试"
+    if reason:
+        detail = f"{detail}（原因：{reason}）"
+    if rid and rid != "-":
+        detail = f"{detail}（request_id={rid}）"
     return JSONResponse(
         content=_error_payload(
             request=request,
             error="invalid_text_encoding",
-            detail="invalid_text_encoding:文件或参数编码不兼容，请使用 UTF-8（文本）或重新导出后重试",
+            detail=detail,
             status_code=400,
         ),
         status_code=400,
