@@ -93,7 +93,7 @@ type Props = {
   onSeekPreviewMs?: (ms: number) => void;
   onRefreshSilences?: () => void | Promise<void>;
   silenceCutKeys?: ReadonlySet<string>;
-  silenceCutRanges?: ReadonlyArray<{ start: number; end: number; capMs: number }>;
+  silenceCutRanges?: ReadonlyArray<{ start_ms: number; end_ms: number; cap_ms?: number | null }>;
   onToggleSilenceCut?: (startMs: number, endMs: number) => void;
   onSetSilenceCapMs?: (startMs: number, endMs: number, capMs: number) => void;
   audioEvents?: ReadonlyArray<{
@@ -387,10 +387,13 @@ export default function ClipRoughCutPanel({
     const excludedMs = words
       .filter((w) => excluded.has(w.id))
       .reduce((acc, w) => acc + Math.max(0, w.e_ms - w.s_ms), 0);
-    const silenceMs = (silenceCutRanges || []).reduce(
-      (acc, s) => acc + Math.max(0, (s.end - s.start) - Math.max(0, s.capMs || 0)),
-      0
-    );
+    const silenceMs = (silenceCutRanges || []).reduce((acc, s) => {
+      const ss = Number(s.start_ms);
+      const ee = Number(s.end_ms);
+      const cap = s.cap_ms == null ? 0 : Number(s.cap_ms);
+      if (!Number.isFinite(ss) || !Number.isFinite(ee) || ee <= ss) return acc;
+      return acc + Math.max(0, (ee - ss) - Math.max(0, Number.isFinite(cap) ? cap : 0));
+    }, 0);
     const eventCutMs = (audioEvents || [])
       .filter((ev) => ev.action === "cut")
       .reduce((acc, ev) => acc + Math.max(0, ev.end_ms - ev.start_ms), 0);

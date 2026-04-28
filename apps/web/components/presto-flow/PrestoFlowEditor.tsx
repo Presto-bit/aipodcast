@@ -299,23 +299,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     [snapshotCurrentEditState]
   );
 
-  const applyEditSnapshot = useCallback(
-    async (snap: { excludedIds: string[]; timeline: Record<string, unknown> | null }) => {
-      historyApplyingRef.current = true;
-      const nextExcluded = new Set(snap.excludedIds);
-      setExcluded(nextExcluded);
-      excludedRef.current = nextExcluded;
-      scheduleSaveExcluded(nextExcluded);
-      setProject((prev) => (prev ? { ...prev, timeline_json: snap.timeline ?? {} } : prev));
-      try {
-        await persistTimelineNow(snap.timeline);
-      } finally {
-        historyApplyingRef.current = false;
-      }
-    },
-    [persistTimelineNow, scheduleSaveExcluded]
-  );
-
   useEffect(() => {
     try {
       const raw = localStorage.getItem(`presto-speaker-names:${projectId}`);
@@ -582,7 +565,17 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         throw new Error(data.detail || `事件分析提交失败 ${res.status}`);
       }
       await new Promise((r) => window.setTimeout(r, 1800));
-      await load();
+      const refresh = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
+        credentials: "same-origin",
+        headers: { ...getAuthHeaders() }
+      });
+      const refreshData = (await refresh.json().catch(() => ({}))) as {
+        success?: boolean;
+        project?: ClipProjectRow;
+      };
+      if (refresh.ok && refreshData.success !== false && refreshData.project) {
+        setProject(refreshData.project);
+      }
       setAudioEventsAnalyzeHint("事件分析任务已提交，若未更新可稍后再次刷新。");
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -590,7 +583,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     } finally {
       setAudioEventsAnalyzeBusy(false);
     }
-  }, [audioEventsAnalyzeBusy, getAuthHeaders, load, projectId]);
+  }, [audioEventsAnalyzeBusy, getAuthHeaders, projectId]);
 
   const scriptSearchHitIdsOrdered = useMemo(
     () => collectSubstringMatchWordIds(words, scriptSearch, excluded),
@@ -735,8 +728,16 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   }, [audioEvents, excluded.size, silenceCutRanges.length]);
   const focusedSpeakerWordIds = useMemo(() => {
     if (!speakerFocusSet.size) return [] as string[];
-    return words.filter((w) => speakerFocusSet.has(w.spk)).map((w) => w.id);
-  }, [speakerFocusSet, words]);
+    const ids: string[] = [];
+    for (const line of lines) {
+      if (!speakerFocusSet.has(line.speaker)) continue;
+      for (const unit of line.units) {
+        if (unit.kind === "single") ids.push(unit.word.id);
+        else ids.push(...unit.words.map((w) => w.id));
+      }
+    }
+    return ids;
+  }, [lines, speakerFocusSet]);
   const focusedSpeakerExcludedIds = useMemo(
     () => focusedSpeakerWordIds.filter((id) => excluded.has(id)),
     [excluded, focusedSpeakerWordIds]
@@ -1076,6 +1077,23 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       saveTimer.current = setTimeout(() => void persistExcludedNow(next, { showSavingHint: false }), 500);
     },
     [persistExcludedNow]
+  );
+
+  const applyEditSnapshot = useCallback(
+    async (snap: { excludedIds: string[]; timeline: Record<string, unknown> | null }) => {
+      historyApplyingRef.current = true;
+      const nextExcluded = new Set(snap.excludedIds);
+      setExcluded(nextExcluded);
+      excludedRef.current = nextExcluded;
+      scheduleSaveExcluded(nextExcluded);
+      setProject((prev) => (prev ? { ...prev, timeline_json: snap.timeline ?? {} } : prev));
+      try {
+        await persistTimelineNow(snap.timeline);
+      } finally {
+        historyApplyingRef.current = false;
+      }
+    },
+    [persistTimelineNow, scheduleSaveExcluded]
   );
 
   /** Word 式 Ctrl+S：立即落盘当前删词状态（跳过防抖） */
