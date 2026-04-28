@@ -37,11 +37,20 @@ type LogEvent = {
   release: string;
   module: string;
   route: string;
+  instanceId?: string;
   level: "info" | "error";
   message: string;
   location?: string;
   payload?: Record<string, unknown>;
   atMs: number;
+};
+
+type LogStorageInfo = {
+  instanceId: string;
+  redisConfigured: boolean;
+  redisConnected: boolean;
+  mode: "redis" | "memory";
+  note: string;
 };
 
 type ErrorCluster = {
@@ -105,6 +114,7 @@ export default function AdminLogManagementPage() {
   const [busy, setBusy] = useState(false);
   const [events, setEvents] = useState<LogEvent[]>([]);
   const [clusters, setClusters] = useState<ErrorCluster[]>([]);
+  const [storageInfo, setStorageInfo] = useState<LogStorageInfo | null>(null);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [queryRequestId, setQueryRequestId] = useState("");
   const [queryErrorCode, setQueryErrorCode] = useState("");
@@ -234,13 +244,15 @@ export default function AdminLogManagementPage() {
           error?: unknown;
           events?: LogEvent[];
           clusters?: ErrorCluster[];
+          storage?: LogStorageInfo;
         };
         if (!res.ok || !data.success) {
           throw new Error(pickErrorMessage(data, `日志加载失败 ${res.status}`));
         }
         return {
           events: Array.isArray(data.events) ? data.events : [],
-          clusters: Array.isArray(data.clusters) ? data.clusters : []
+          clusters: Array.isArray(data.clusters) ? data.clusters : [],
+          storage: data.storage || null
         };
       });
       const results = await Promise.all(requests);
@@ -249,8 +261,10 @@ export default function AdminLogManagementPage() {
         .sort((a, b) => b.atMs - a.atMs)
         .slice(0, 120);
       const mergedClusters = mergeClusters(results.flatMap((x) => x.clusters));
+      const firstStorage = results.find((x) => x.storage)?.storage || null;
       setEvents(mergedEvents);
       setClusters(mergedClusters);
+      setStorageInfo(firstStorage);
     } catch (e) {
       setMsg(String(e instanceof Error ? e.message : e));
     } finally {
@@ -443,6 +457,11 @@ export default function AdminLogManagementPage() {
             {eventsLoading ? "刷新中…" : "刷新"}
           </button>
         </div>
+        {storageInfo ? (
+          <p className="mt-2 text-xs text-muted">
+            存储模式：{storageInfo.mode === "redis" ? "Redis（跨实例）" : "内存（仅本实例）"}；实例：{storageInfo.instanceId}。{storageInfo.note}
+          </p>
+        ) : null}
         <div className="mt-3 grid gap-2 md:grid-cols-4">
           <input
             className="rounded bg-canvas p-2 text-xs text-ink"
@@ -517,6 +536,7 @@ export default function AdminLogManagementPage() {
                 <th className="px-2 py-2">requestId</th>
                 <th className="px-2 py-2">traceId</th>
                 <th className="px-2 py-2">模块/路由</th>
+                <th className="px-2 py-2">实例</th>
                 <th className="px-2 py-2">位置</th>
                 <th className="px-2 py-2">信息</th>
                 <th className="px-2 py-2">摘要</th>
@@ -526,7 +546,7 @@ export default function AdminLogManagementPage() {
             <tbody>
               {events.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-2 py-8 text-center text-muted">
+                  <td colSpan={11} className="px-2 py-8 text-center text-muted">
                     暂无日志事件（请确认已开启日志调试且已复现问题）
                   </td>
                 </tr>
@@ -543,6 +563,7 @@ export default function AdminLogManagementPage() {
                   <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">
                     {item.module || "web"} / {item.route || "—"}
                   </td>
+                  <td className="whitespace-nowrap px-2 py-2 font-mono text-[11px] text-muted">{item.instanceId || "—"}</td>
                   <td className="whitespace-nowrap px-2 py-2 text-xs text-muted">{item.location || "—"}</td>
                   <td className="max-w-[24rem] truncate px-2 py-2 text-xs" title={item.message}>
                     {item.message || "—"}

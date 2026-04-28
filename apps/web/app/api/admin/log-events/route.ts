@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminPermission } from "../../../../lib/adminRouteAuth";
 import { AppErrorCodes, errorJson } from "../../../../core/errors";
-import { LOG_SCOPES, LogScope, listLogEvents, topErrorClusters } from "../../../../lib/logManagement";
+import { LOG_SCOPES, LogScope, getLogStorageInfo, listLogEvents, topErrorClusters } from "../../../../lib/logManagement";
 
 const DEFAULT_SCOPE: LogScope = "notebook_share_client";
 
@@ -40,10 +40,12 @@ export async function GET(req: NextRequest) {
   const toMs = parseMs(req.nextUrl.searchParams.get("toMs"));
   const events = await listLogEvents(scope, limit, { level, requestId, errorCode, fromMs, toMs });
   const clusters = await topErrorClusters(scope, 24 * 60 * 60 * 1000, 8);
+  const storage = getLogStorageInfo();
   return NextResponse.json({
     success: true,
     scope,
     events,
-    clusters
+    clusters,
+    storage
   });
 }

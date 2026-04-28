@@ -46,6 +46,7 @@ export type LogEventEntry = {
   release: string;
   module: string;
   route: string;
+  instanceId: string;
   message: string;
   location?: string;
   payload: Record<string, unknown>;
@@ -82,6 +83,17 @@ const MAX_EVENT_RECORDS = 400;
 const EVENT_DEDUP_WINDOW_MS = 12_000;
 const REDIS_AUDITS_KEY = "fym:logs:audits";
 const REDIS_EVENTS_KEY = "fym:logs:events";
+const INSTANCE_ID =
+  String(process.env.LOG_INSTANCE_ID || process.env.HOSTNAME || process.env.VERCEL_REGION || "").trim() ||
+  `web-${Math.random().toString(36).slice(2, 8)}`;
+
+export type LogStorageInfo = {
+  instanceId: string;
+  redisConfigured: boolean;
+  redisConnected: boolean;
+  mode: "redis" | "memory";
+  note: string;
+};
 
 function nowMs(): number {
   return Date.now();
@@ -310,6 +322,7 @@ export async function appendLogEvent(params: {
     release: String(params.release || "").trim().slice(0, 48) || APP_RELEASE,
     module: normalizedModule,
     route: normalizedRoute,
+    instanceId: INSTANCE_ID,
     message: normalizedMessage,
     location: params.location ? String(params.location).slice(0, 240) : undefined,
     payload: params.payload && typeof params.payload === "object" ? params.payload : {},
@@ -325,6 +338,22 @@ export async function appendLogEvent(params: {
       // ignore redis errors
     }
   }
+}
+
+export function getLogStorageInfo(): LogStorageInfo {
+  const configured = redisEnabled();
+  const connected = Boolean(getRedisClient());
+  const mode: "redis" | "memory" = configured && connected ? "redis" : "memory";
+  return {
+    instanceId: INSTANCE_ID,
+    redisConfigured: configured,
+    redisConnected: connected,
+    mode,
+    note:
+      mode === "redis"
+        ? "日志事件存储在 Redis，可跨实例检索。"
+        : "日志事件存储在当前实例内存，仅本实例可见；多实例部署下可能查不到其他实例的日志。"
+  };
 }
 
 async function ensureEventsLoaded(): Promise<LogEventEntry[]> {
