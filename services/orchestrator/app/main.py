@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import traceback
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
@@ -275,8 +276,19 @@ async def _unicode_decode_error_json(request: Request, exc: UnicodeDecodeError):
         reason,
     )
     detail = "invalid_text_encoding:文件或参数编码不兼容，请使用 UTF-8（文本）或重新导出后重试"
+    tb = traceback.extract_tb(exc.__traceback__) if exc.__traceback__ else []
+    if tb:
+        last = tb[-1]
+        loc_file = str(last.filename or "").split("/")[-1]
+        loc_fn = str(last.name or "")
+        loc_ln = int(last.lineno or 0)
+        loc = f"{loc_file}:{loc_ln}:{loc_fn}" if loc_file and loc_fn else ""
+    else:
+        loc = ""
     if reason:
         detail = f"{detail}（原因：{reason}）"
+    if loc:
+        detail = f"{detail}（位置：{loc}）"
     if rid and rid != "-":
         detail = f"{detail}（request_id={rid}）"
     return JSONResponse(
