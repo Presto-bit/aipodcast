@@ -118,7 +118,7 @@ export default function ClipHub() {
     setErr("");
     try {
       const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-        method: "POST",
+        method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ title })
