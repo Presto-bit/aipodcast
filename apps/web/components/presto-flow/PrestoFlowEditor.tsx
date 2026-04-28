@@ -155,6 +155,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [exportGateOpen, setExportGateOpen] = useState(false);
   const [exportGatePhase, setExportGatePhase] = useState<"idle" | "analyze" | "export">("idle");
   const [exportGateErr, setExportGateErr] = useState<string | null>(null);
+  const [deleteFeedback, setDeleteFeedback] = useState<string>("");
   /** Shift+点击或「整句」选中的词 id，Delete 批量标记删除 */
   const [multiSelectIds, setMultiSelectIds] = useState<Set<string>>(() => new Set());
   /** 文稿区域全屏模式 */
@@ -162,6 +163,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [speakerNames, setSpeakerNames] = useState<Record<number, string>>({});
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deleteFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const waveformRef = useRef<ClipWaveformHandle | null>(null);
   const transcriptRef = useRef<VirtualizedTranscriptHandle | null>(null);
   /** 稿面滚动容器，拖选时用 elementsFromPoint 限定在稿面内 */
@@ -189,6 +191,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   useEffect(() => {
     excludedRef.current = excluded;
   }, [excluded]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteFeedbackTimerRef.current) clearTimeout(deleteFeedbackTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     const onVis = () => {
@@ -526,6 +534,21 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     () => [...multiSelectIds].some((id) => excluded.has(id)),
     [multiSelectIds, excluded]
   );
+  const focusedWordText = useMemo(() => {
+    if (!focusedWordId) return "";
+    const w = words.find((x) => x.id === focusedWordId);
+    if (!w) return "";
+    return `${w.text}${w.punct ?? ""}`.trim();
+  }, [focusedWordId, words]);
+  const deleteTargetHint = useMemo(() => {
+    if (multiSelectIds.size > 0) {
+      return t("presto.flow.deleteTargetSelection").replace("{count}", String(multiSelectIds.size));
+    }
+    if (focusedWordText) {
+      return t("presto.flow.deleteTargetFocused").replace("{text}", focusedWordText);
+    }
+    return t("presto.flow.deleteTargetNone");
+  }, [multiSelectIds, focusedWordText, t]);
 
   const durationMs = useMemo(() => {
     const d = project?.transcript_normalized?.duration_ms;
@@ -974,7 +997,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           }
         }
 
-        const bulk = leftDragMultiSelectRef.current ? [...multiSelectIds] : [];
+        const bulk = multiSelectIds.size > 0 ? [...multiSelectIds] : [];
         if (bulk.length > 0) {
           e.preventDefault();
           const ex = excludedRef.current;
@@ -995,6 +1018,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           bumpExcludedHistory();
           setMultiSelectIds(new Set());
           leftDragMultiSelectRef.current = false;
+          const keptCount = bulk.filter((id) => !ex.has(id)).length;
+          setDeleteFeedback(
+            t("presto.flow.deleteFeedbackBatch").replace("{count}", String(Math.max(1, keptCount)))
+          );
+          if (deleteFeedbackTimerRef.current) clearTimeout(deleteFeedbackTimerRef.current);
+          deleteFeedbackTimerRef.current = setTimeout(() => setDeleteFeedback(""), 3000);
           return;
         }
 
@@ -1017,6 +1046,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           bumpExcludedHistory();
           setMultiSelectIds(new Set());
           leftDragMultiSelectRef.current = false;
+          setDeleteFeedback(t("presto.flow.deleteFeedbackSingle"));
+          if (deleteFeedbackTimerRef.current) clearTimeout(deleteFeedbackTimerRef.current);
+          deleteFeedbackTimerRef.current = setTimeout(() => setDeleteFeedback(""), 3000);
           const next = ordered.find((x) => !ex.has(x.id) && x.s_ms >= w.e_ms + 1) || ordered.find((x) => !ex.has(x.id));
           if (next) {
             setFocusedWordId(next.id);
@@ -1050,6 +1082,27 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         setMultiSelectIds(new Set());
         leftDragMultiSelectRef.current = true;
         transcriptRef.current?.scrollToWordId(w1.id);
+        return;
+      }
+
+      if (e.shiftKey && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+        const ordered = words;
+        if (!ordered.length) return;
+        e.preventDefault();
+        const dir = e.code === "ArrowLeft" ? -1 : 1;
+        let anchor = rangeAnchorWordIdRef.current || focusedWordId || ordered[0]!.id;
+        if (ordered.findIndex((w) => w.id === anchor) < 0) anchor = focusedWordId || ordered[0]!.id;
+        const focus = focusedWordId || anchor;
+        const ix = ordered.findIndex((w) => w.id === focus);
+        if (ix < 0) return;
+        const j = ix + dir;
+        if (j < 0 || j >= ordered.length) return;
+        const nw = ordered[j]!;
+        const ids = wordIdsBetweenInclusive(ordered, anchor, nw.id);
+        setFocusedWordId(nw.id);
+        setMultiSelectIds(new Set(ids.length ? ids : [nw.id]));
+        leftDragMultiSelectRef.current = true;
+        transcriptRef.current?.scrollToWordId(nw.id);
         return;
       }
 
@@ -1143,7 +1196,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     scheduleSaveExcluded,
     hasServerAudio,
     flushExcludedSave,
-    toggleSilenceCut
+    toggleSilenceCut,
+    t
   ]);
 
   const onRangeDragPointerDown = useCallback((w: ClipWord, e: ReactPointerEvent<HTMLButtonElement>) => {
@@ -1729,6 +1783,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         ) : words.length > 0 ? (
                           <p className="line-clamp-2 shrink-0 text-[10px] leading-relaxed text-muted">{t("presto.flow.multiSelectHint")}</p>
                         ) : null}
+                        <p className="shrink-0 text-[10px] text-muted">{deleteTargetHint}</p>
+                        {deleteFeedback ? (
+                          <p className="shrink-0 text-[10px] font-semibold text-brand">{deleteFeedback}</p>
+                        ) : null}
                         {saveExcludedHint !== "idle" ? (
                           <p className="shrink-0 text-[10px] text-muted">
                             {saveExcludedHint === "saving"
@@ -1873,6 +1931,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             </div>
                           ) : words.length > 0 ? (
                             <p className="line-clamp-2 shrink-0 text-[10px] leading-relaxed text-muted">{t("presto.flow.multiSelectHint")}</p>
+                          ) : null}
+                          <p className="shrink-0 text-[10px] text-muted">{deleteTargetHint}</p>
+                          {deleteFeedback ? (
+                            <p className="shrink-0 text-[10px] font-semibold text-brand">{deleteFeedback}</p>
                           ) : null}
                           {saveExcludedHint !== "idle" ? (
                             <p className="shrink-0 text-[10px] text-muted">

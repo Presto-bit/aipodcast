@@ -178,9 +178,14 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.stutterGroupHint":
       "检测到连续重复发音：带虚下划线的为建议剪掉片段；悬停此处可看说明。叠字组以划线提示为主，不再在稿面提供「仅保留首词」按钮。",
     "presto.flow.multiSelectHint":
-      "与 Word 稿面一致：拖动左键选范围；Shift+点击选区间；⌘/Ctrl+点击多选。Delete / Backspace 均删除选区（标记剪掉）；单光标时 Delete 删当前词、Backspace 删左侧一词；⌘A 全选词块；⌘←/⌘→ 按词移动光标；Home/End 到稿首/稿尾；⌘Z / ⇧⌘Z 撤销重做；⌘S 立即保存删词；⌘F 打开侧栏搜索。未框选时单击词块可切换剪/留（再点恢复）。",
+      "与 Word 稿面一致：拖动左键选范围；Shift+点击选区间；Shift+←/→ 连续扩选；⌘/Ctrl+点击多选。Delete / Backspace 均优先删除当前选区（标记剪掉）；无选区时删除当前焦点词。⌘A 全选词块；⌘←/⌘→ 按词移动焦点；Home/End 到稿首/稿尾；⌘Z / ⇧⌘Z 撤销重做；⌘S 立即保存删词；⌘F 打开侧栏搜索。",
     "presto.flow.multiSelectBanner":
       "已选中 {count} 个词：Delete 或 Backspace 标记删除；Esc 取消选择。侧栏「还原所选」可恢复已删。",
+    "presto.flow.deleteTargetSelection": "当前删除目标：已选 {count} 个词",
+    "presto.flow.deleteTargetFocused": "当前删除目标：{text}",
+    "presto.flow.deleteTargetNone": "当前删除目标：无（请先选词）",
+    "presto.flow.deleteFeedbackSingle": "已删除 1 个词，可按 ⌘/Ctrl+Z 撤销",
+    "presto.flow.deleteFeedbackBatch": "已删除 {count} 个词，可按 ⌘/Ctrl+Z 撤销",
     "presto.flow.restoreSelection": "还原所选",
     "presto.flow.speakerHost": "Host",
     "presto.flow.speakerGuest": "Guest",
@@ -807,9 +812,14 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.stutterGroupHint":
       "Repeated tokens detected: dashed underline marks suggested cuts; hover here for tips. Stutter stacks are underline-first; we no longer show a “keep first only” control on the transcript.",
     "presto.flow.multiSelectHint":
-      "Word-like editing: drag to select; Shift-click spans; ⌘/Ctrl-click adds to selection. Delete / Backspace both delete the selection (mark cut). Single caret: Delete cuts the focused token; Backspace cuts the token to the left. ⌘A select all tokens; ⌘←/⌘→ move by token; Home/End to first/last token; ⌘Z / ⇧⌘Z undo/redo; ⌘S save cuts now; ⌘F opens sidebar search. With no range selection, a single click toggles cut/keep (click again to restore).",
+      "Word-like editing: drag to select; Shift-click spans; Shift+←/→ extends selection; ⌘/Ctrl-click adds to selection. Delete / Backspace always cut the current selection first; when no range is selected, cut the focused token. ⌘A selects all tokens; ⌘←/⌘→ moves focus by token; Home/End jumps to first/last token; ⌘Z / ⇧⌘Z undo/redo; ⌘S saves cuts now; ⌘F opens sidebar search.",
     "presto.flow.multiSelectBanner":
       "{count} tokens selected: Delete or Backspace marks cut; Esc clears. Use sidebar “Restore selection” to un-cut.",
+    "presto.flow.deleteTargetSelection": "Delete target: {count} selected token(s)",
+    "presto.flow.deleteTargetFocused": "Delete target: {text}",
+    "presto.flow.deleteTargetNone": "Delete target: none (select a token first)",
+    "presto.flow.deleteFeedbackSingle": "Deleted 1 token. Press ⌘/Ctrl+Z to undo.",
+    "presto.flow.deleteFeedbackBatch": "Deleted {count} token(s). Press ⌘/Ctrl+Z to undo.",
     "presto.flow.restoreSelection": "Restore selection",
     "presto.flow.speakerHost": "Host",
     "presto.flow.speakerGuest": "Guest",
