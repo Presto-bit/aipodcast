@@ -1,3 +1,6 @@
+import { APP_ENV, APP_RELEASE } from "../core/config";
+import { getRedisClient } from "../infrastructure/redis/client";
+
 export const LOG_SCOPES = ["notebook_share_client", "frontend_global_error"] as const;
 export type LogScope = (typeof LOG_SCOPES)[number];
 type LogLevel = "info" | "debug";
@@ -71,17 +74,8 @@ type LogControlStore = {
 const STORE_KEY = "__fymLogControlStore";
 const MAX_AUDIT_RECORDS = 120;
 const MAX_EVENT_RECORDS = 400;
-
-function appEnv(): string {
-  const raw = String(process.env.APP_ENV || process.env.NODE_ENV || "development").trim().toLowerCase();
-  if (!raw) return "development";
-  return raw;
-}
-
-function appRelease(): string {
-  const raw = String(process.env.VERCEL_GIT_COMMIT_SHA || process.env.APP_VERSION || "dev").trim();
-  return raw.slice(0, 48) || "dev";
-}
+const REDIS_AUDITS_KEY = "fym:logs:audits";
+const REDIS_EVENTS_KEY = "fym:logs:events";
 
 function nowMs(): number {
   return Date.now();
@@ -93,6 +87,10 @@ function store(): LogControlStore {
     g[STORE_KEY] = { configByScope: {}, audits: [], events: [] };
   }
   return g[STORE_KEY] as LogControlStore;
+}
+
+function redisConfigKey(scope: LogScope): string {
+  return `fym:logs:switch:${scope}`;
 }
 
 function normalizeSampleRate(value: number | undefined): number {
@@ -115,7 +113,7 @@ function defaultConfig(scope: LogScope): LogSwitchConfig {
   return {
     scope,
     enabled: false,
-    env: appEnv(),
+    env: APP_ENV,
     minLevel: "info",
     sampleRate: 1,
     expiresAtMs: null,
@@ -125,8 +123,30 @@ function defaultConfig(scope: LogScope): LogSwitchConfig {
   };
 }
 
-export function getLogSwitchConfig(scope: LogScope): LogSwitchConfig {
+async function persistConfig(scope: LogScope, cfg: LogSwitchConfig): Promise<void> {
+  const redis = getRedisClient();
+  if (!redis) return;
+  try {
+    await redis.set(redisConfigKey(scope), JSON.stringify(cfg));
+  } catch {
+    // ignore redis errors
+  }
+}
+
+export async function getLogSwitchConfig(scope: LogScope): Promise<LogSwitchConfig> {
   const s = store();
+  const redis = getRedisClient();
+  if (!s.configByScope[scope] && redis) {
+    try {
+      const raw = await redis.get(redisConfigKey(scope));
+      if (raw) {
+        const parsed = JSON.parse(raw) as LogSwitchConfig;
+        s.configByScope[scope] = parsed;
+      }
+    } catch {
+      // ignore redis errors
+    }
+  }
   const current = s.configByScope[scope];
   if (!current) return defaultConfig(scope);
   if (current.enabled && isExpired(current, nowMs())) {
@@ -139,18 +159,37 @@ export function getLogSwitchConfig(scope: LogScope): LogSwitchConfig {
       reason: "ttl_expired_auto_disable"
     };
     s.configByScope[scope] = disabled;
+    await persistConfig(scope, disabled);
     return disabled;
   }
   return current;
 }
 
-export function listLogSwitchAudits(scope?: LogScope): LogSwitchAuditEntry[] {
-  const items = store().audits;
+export async function listLogSwitchAudits(scope?: LogScope): Promise<LogSwitchAuditEntry[]> {
+  const s = store();
+  const redis = getRedisClient();
+  if (s.audits.length === 0 && redis) {
+    try {
+      const raw = await redis.lrange(REDIS_AUDITS_KEY, 0, MAX_AUDIT_RECORDS - 1);
+      s.audits = raw
+        .map((x) => {
+          try {
+            return JSON.parse(x) as LogSwitchAuditEntry;
+          } catch {
+            return null;
+          }
+        })
+        .filter((x): x is LogSwitchAuditEntry => Boolean(x));
+    } catch {
+      // ignore redis errors
+    }
+  }
+  const items = s.audits;
   if (!scope) return [...items];
   return items.filter((x) => x.scope === scope);
 }
 
-export function updateLogSwitchConfig(params: {
+export async function updateLogSwitchConfig(params: {
   scope: LogScope;
   enabled: boolean;
   ttlMinutes: number | null;
@@ -158,16 +197,16 @@ export function updateLogSwitchConfig(params: {
   sampleRate?: number;
   reason?: string;
   operator: string;
-}): LogSwitchConfig {
+}): Promise<LogSwitchConfig> {
   const s = store();
-  const prev = getLogSwitchConfig(params.scope);
+  const prev = await getLogSwitchConfig(params.scope);
   const ts = nowMs();
   const ttlMinutes = params.ttlMinutes && params.ttlMinutes > 0 ? Math.floor(params.ttlMinutes) : null;
   const expiresAtMs = params.enabled && ttlMinutes ? ts + ttlMinutes * 60_000 : null;
   const next: LogSwitchConfig = {
     scope: params.scope,
     enabled: params.enabled,
-    env: appEnv(),
+    env: APP_ENV,
     minLevel: params.minLevel || prev.minLevel || "info",
     sampleRate: normalizeSampleRate(params.sampleRate),
     expiresAtMs,
@@ -176,6 +215,7 @@ export function updateLogSwitchConfig(params: {
     reason: sanitizeReason(params.reason || "")
   };
   s.configByScope[params.scope] = next;
+  await persistConfig(params.scope, next);
   const audit: LogSwitchAuditEntry = {
     id: `${ts}-${Math.random().toString(36).slice(2, 8)}`,
     scope: params.scope,
@@ -189,6 +229,15 @@ export function updateLogSwitchConfig(params: {
     atMs: ts
   };
   s.audits = [audit, ...s.audits].slice(0, MAX_AUDIT_RECORDS);
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      await redis.lpush(REDIS_AUDITS_KEY, JSON.stringify(audit));
+      await redis.ltrim(REDIS_AUDITS_KEY, 0, MAX_AUDIT_RECORDS - 1);
+    } catch {
+      // ignore redis errors
+    }
+  }
   return next;
 }
 
@@ -201,8 +250,8 @@ function fnv1aHash(input: string): number {
   return h >>> 0;
 }
 
-export function shouldIngestForScope(scope: LogScope, requestId: string): boolean {
-  const cfg = getLogSwitchConfig(scope);
+export async function shouldIngestForScope(scope: LogScope, requestId: string): Promise<boolean> {
+  const cfg = await getLogSwitchConfig(scope);
   if (!cfg.enabled) return false;
   const p = normalizeSampleRate(cfg.sampleRate);
   if (p <= 0) return false;
@@ -212,7 +261,7 @@ export function shouldIngestForScope(scope: LogScope, requestId: string): boolea
   return bucket < Math.floor(p * 10_000);
 }
 
-export function appendLogEvent(params: {
+export async function appendLogEvent(params: {
   scope: LogScope;
   requestId: string;
   traceId?: string;
@@ -224,7 +273,7 @@ export function appendLogEvent(params: {
   message: string;
   location?: string;
   payload?: Record<string, unknown>;
-}): void {
+}): Promise<void> {
   const ts = nowMs();
   const errorCode = String(params.errorCode || "").trim().slice(0, 120) || "UNKNOWN_ERROR";
   const entry: LogEventEntry = {
@@ -234,8 +283,8 @@ export function appendLogEvent(params: {
     traceId: String(params.traceId || "").slice(0, 120),
     errorCode,
     level: params.level,
-    env: appEnv(),
-    release: String(params.release || "").trim().slice(0, 48) || appRelease(),
+    env: APP_ENV,
+    release: String(params.release || "").trim().slice(0, 48) || APP_RELEASE,
     module: String(params.module || "web").trim().slice(0, 120) || "web",
     route: String(params.route || "").trim().slice(0, 240),
     message: String(params.message || "").slice(0, 1200),
@@ -245,11 +294,43 @@ export function appendLogEvent(params: {
   };
   const s = store();
   s.events = [entry, ...s.events].slice(0, MAX_EVENT_RECORDS);
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      await redis.lpush(REDIS_EVENTS_KEY, JSON.stringify(entry));
+      await redis.ltrim(REDIS_EVENTS_KEY, 0, MAX_EVENT_RECORDS - 1);
+    } catch {
+      // ignore redis errors
+    }
+  }
 }
 
-export function listLogEvents(scope: LogScope, limit: number, filters?: LogEventFilters): LogEventEntry[] {
+async function ensureEventsLoaded(): Promise<LogEventEntry[]> {
+  const s = store();
+  if (s.events.length > 0) return s.events;
+  const redis = getRedisClient();
+  if (!redis) return s.events;
+  try {
+    const raw = await redis.lrange(REDIS_EVENTS_KEY, 0, MAX_EVENT_RECORDS - 1);
+    s.events = raw
+      .map((x) => {
+        try {
+          return JSON.parse(x) as LogEventEntry;
+        } catch {
+          return null;
+        }
+      })
+      .filter((x): x is LogEventEntry => Boolean(x));
+  } catch {
+    // ignore redis errors
+  }
+  return s.events;
+}
+
+export async function listLogEvents(scope: LogScope, limit: number, filters?: LogEventFilters): Promise<LogEventEntry[]> {
   const n = Math.max(1, Math.min(200, Math.floor(limit || 50)));
-  const all = store().events.filter((x) => {
+  const events = await ensureEventsLoaded();
+  const all = events.filter((x) => {
     if (x.scope !== scope) return false;
     if (filters?.level && x.level !== filters.level) return false;
     if (filters?.requestId && !x.requestId.includes(filters.requestId)) return false;
@@ -261,11 +342,12 @@ export function listLogEvents(scope: LogScope, limit: number, filters?: LogEvent
   return all.slice(0, n);
 }
 
-export function topErrorClusters(scope: LogScope, windowMs: number, maxItems: number): LogErrorCluster[] {
+export async function topErrorClusters(scope: LogScope, windowMs: number, maxItems: number): Promise<LogErrorCluster[]> {
   const now = nowMs();
   const start = now - Math.max(60_000, windowMs);
   const grouped = new Map<string, LogErrorCluster>();
-  for (const item of store().events) {
+  const events = await ensureEventsLoaded();
+  for (const item of events) {
     if (item.scope !== scope) continue;
     if (item.atMs < start) continue;
     const key = `${item.errorCode}|${item.route}|${item.module}|${item.level}`;

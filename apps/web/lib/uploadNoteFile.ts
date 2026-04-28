@@ -18,10 +18,21 @@ type UploadJson = {
 };
 
 function parseError(data: UploadJson, status: number, rawText: string): string {
+  const detail = (data as { detail?: unknown }).detail;
+  const detailText =
+    typeof detail === "string" && detail.trim()
+      ? detail.trim()
+      : Array.isArray(detail) && detail[0] && typeof (detail[0] as { msg?: string }).msg === "string"
+        ? String((detail[0] as { msg: string }).msg).trim()
+        : "";
+
   if (typeof data.error === "string" && data.error.trim()) {
     const err = data.error.trim();
     if (err === "upstream_unreachable" || err === "orchestrator request failed") {
       return "无法连接编排器或请求中断。请确认 orchestrator 已启动，且 Next 的 ORCHESTRATOR_URL 指向可访问地址（本机开发多为 http://127.0.0.1:8008；Docker 内多为 http://orchestrator:8008）。";
+    }
+    if (err === "internal_server_error" && detailText) {
+      return `服务内部错误：${detailText}`;
     }
   }
   if (status === 413) {
@@ -34,13 +45,13 @@ function parseError(data: UploadJson, status: number, rawText: string): string {
   if (status >= 400 && (lower.includes("body exceeded") || lower.includes("body size"))) {
     return "请求体积超过 Next 或反代单次限制。请调大 body 上限（建议 ≥25MB）或改用较小文件。";
   }
+  if (detailText) return detailText;
   if (typeof data.error === "string" && data.error.trim()) {
-    return data.error.trim();
-  }
-  const d = (data as { detail?: unknown }).detail;
-  if (typeof d === "string" && d.trim()) return d.trim();
-  if (Array.isArray(d) && d[0] && typeof (d[0] as { msg?: string }).msg === "string") {
-    return String((d[0] as { msg: string }).msg).trim();
+    const err = data.error.trim();
+    if (err === "internal_server_error") {
+      return "服务内部错误（internal_server_error），请稍后重试；若持续出现，请联系管理员排查服务端日志。";
+    }
+    return err;
   }
   if (rawText.trim() && !rawText.trim().startsWith("{")) {
     return `上传失败（HTTP ${status}）。若持续出现，请查看 Next 终端或反代错误日志（响应非 JSON，多为 BFF/运行时异常）。`;

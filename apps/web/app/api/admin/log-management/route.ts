@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyAdminRequest } from "../../../../lib/adminRouteAuth";
+import { verifyAdminPermission } from "../../../../lib/adminRouteAuth";
+import { LOG_MANAGEMENT_TTL_MAX_MINUTES } from "../../../../core/config";
+import { AppErrorCodes, errorJson } from "../../../../core/errors";
 import {
   LOG_SCOPES,
   LogScope,
@@ -8,7 +10,6 @@ import {
   updateLogSwitchConfig
 } from "../../../../lib/logManagement";
 
-const TTL_MINUTES_MAX = 24 * 60;
 const DEFAULT_SCOPE: LogScope = "notebook_share_client";
 
 function parseScope(raw: string | null): LogScope {
@@ -18,13 +19,14 @@ function parseScope(raw: string | null): LogScope {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await verifyAdminRequest(req);
+  const auth = await verifyAdminPermission(req, "log:view");
   if (!auth.ok) {
-    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+    if (auth.status === 403) return errorJson(403, AppErrorCodes.ForbiddenAdminOnly, auth.error);
+    return errorJson(401, AppErrorCodes.Unauthorized, auth.error);
   }
   const scope = parseScope(req.nextUrl.searchParams.get("scope"));
-  const config = getLogSwitchConfig(scope);
-  const audits = listLogSwitchAudits(scope).slice(0, 50);
+  const config = await getLogSwitchConfig(scope);
+  const audits = (await listLogSwitchAudits(scope)).slice(0, 50);
   return NextResponse.json({
     success: true,
     scope,
@@ -35,9 +37,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await verifyAdminRequest(req);
+  const auth = await verifyAdminPermission(req, "log:manage");
   if (!auth.ok) {
-    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+    if (auth.status === 403) return errorJson(403, AppErrorCodes.ForbiddenAdminOnly, auth.error);
+    return errorJson(401, AppErrorCodes.Unauthorized, auth.error);
   }
   const body = (await req.json().catch(() => ({}))) as {
     enabled?: unknown;
@@ -48,21 +51,23 @@ export async function POST(req: NextRequest) {
     reason?: unknown;
   };
   if (typeof body.enabled !== "boolean") {
-    return NextResponse.json({ success: false, error: "enabled_must_be_boolean" }, { status: 400 });
+    return errorJson(400, AppErrorCodes.BadRequest, "enabled_must_be_boolean");
   }
   const ttlRaw = typeof body.ttlMinutes === "number" && Number.isFinite(body.ttlMinutes) ? body.ttlMinutes : 0;
   const ttlMinutes = Math.floor(ttlRaw);
-  if (ttlMinutes < 0 || ttlMinutes > TTL_MINUTES_MAX) {
-    return NextResponse.json(
-      { success: false, error: `ttl_minutes_out_of_range_0_${TTL_MINUTES_MAX}` },
-      { status: 400 }
+  if (ttlMinutes < 0 || ttlMinutes > LOG_MANAGEMENT_TTL_MAX_MINUTES) {
+    return errorJson(
+      400,
+      AppErrorCodes.BadRequest,
+      `ttl_minutes_out_of_range_0_${LOG_MANAGEMENT_TTL_MAX_MINUTES}`,
+      { maxTtlMinutes: LOG_MANAGEMENT_TTL_MAX_MINUTES }
     );
   }
   const scope = parseScope(typeof body.scope === "string" ? body.scope : null);
   const minLevel = body.minLevel === "debug" ? "debug" : "info";
   const sampleRate = typeof body.sampleRate === "number" ? body.sampleRate : 1;
   const reason = typeof body.reason === "string" ? body.reason : "";
-  const config = updateLogSwitchConfig({
+  const config = await updateLogSwitchConfig({
     scope,
     enabled: body.enabled,
     ttlMinutes: body.enabled ? ttlMinutes || 30 : null,

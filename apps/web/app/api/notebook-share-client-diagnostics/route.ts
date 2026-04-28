@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { APP_RELEASE, NOTEBOOK_SHARE_SERVER_DIAGNOSTICS_ENABLED } from "../../../core/config";
+import { ingestClientLogEvent } from "../../../core/observability";
+import { AppErrorCodes, errorJson } from "../../../core/errors";
 import { getOrCreateRequestId, incomingAuthHeadersFrom } from "../../../lib/bff";
 import { sanitizeClientDiagnosticsValue } from "../../../lib/clientDiagnosticsSanitize";
-import { appendLogEvent, shouldIngestForScope } from "../../../lib/logManagement";
 
 const MAX_BODY_BYTES = 28_000;
 
@@ -11,30 +13,27 @@ const MAX_BODY_BYTES = 28_000;
  * 关闭：`NOTEBOOK_SHARE_SERVER_DIAGNOSTICS=0`
  */
 export async function POST(req: NextRequest) {
-  if (process.env.NOTEBOOK_SHARE_SERVER_DIAGNOSTICS === "0") {
-    return NextResponse.json({ ok: false, error: "disabled" }, { status: 404 });
+  if (!NOTEBOOK_SHARE_SERVER_DIAGNOSTICS_ENABLED) {
+    return errorJson(404, AppErrorCodes.Disabled, "disabled");
   }
   const auth = incomingAuthHeadersFrom(req);
   if (!auth.authorization) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    return errorJson(401, AppErrorCodes.Unauthorized, "unauthorized");
   }
   const raw = await req.text();
-  if (!raw.trim()) return NextResponse.json({ ok: false, error: "empty" }, { status: 400 });
+  if (!raw.trim()) return errorJson(400, AppErrorCodes.EmptyPayload, "empty");
   if (raw.length > MAX_BODY_BYTES) {
-    return NextResponse.json({ ok: false, error: "payload_too_large" }, { status: 413 });
+    return errorJson(413, AppErrorCodes.PayloadTooLarge, "payload_too_large");
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch {
-    return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
+    return errorJson(400, AppErrorCodes.InvalidJson, "invalid_json");
   }
   const rec = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   const requestId = getOrCreateRequestId(req);
   const traceId = (req.headers.get("x-trace-id") || req.headers.get("traceparent") || "").slice(0, 120);
-  if (!shouldIngestForScope("notebook_share_client", requestId)) {
-    return NextResponse.json({ ok: true, requestId, skipped: true });
-  }
   const hypothesisId =
     typeof rec.hypothesisId === "string" ? rec.hypothesisId.slice(0, 48) : undefined;
   const location = typeof rec.location === "string" ? rec.location.slice(0, 240) : undefined;
@@ -43,26 +42,10 @@ export async function POST(req: NextRequest) {
   const sessionId = typeof rec.sessionId === "string" ? rec.sessionId.slice(0, 80) : undefined;
   const timestamp = typeof rec.timestamp === "number" && Number.isFinite(rec.timestamp) ? rec.timestamp : undefined;
   const route = typeof rec.route === "string" ? rec.route.slice(0, 240) : "";
-  const release = typeof rec.release === "string" ? rec.release.slice(0, 48) : "";
+  const release = typeof rec.release === "string" ? rec.release.slice(0, 48) : APP_RELEASE;
   const data = sanitizeClientDiagnosticsValue(rec.data ?? {}, 4, 8000);
 
-  const line = JSON.stringify({
-    type: "notebook_share_client",
-    ts: new Date().toISOString(),
-    requestId,
-    traceId,
-    errorCode: "NOTEBOOK_SHARE_CLIENT_DIAGNOSTIC",
-    hypothesisId,
-    route,
-    release,
-    location,
-    message,
-    sessionId,
-    clientTimestamp: timestamp,
-    data
-  });
-  console.log(line);
-  appendLogEvent({
+  const accepted = await ingestClientLogEvent({
     scope: "notebook_share_client",
     requestId,
     traceId,
@@ -73,6 +56,7 @@ export async function POST(req: NextRequest) {
     release,
     message,
     location,
+    logger: "log",
     payload: {
       hypothesisId,
       sessionId,
@@ -80,6 +64,7 @@ export async function POST(req: NextRequest) {
       data
     }
   });
+  if (!accepted) return NextResponse.json({ ok: true, requestId, skipped: true });
 
   return NextResponse.json({ ok: true, requestId });
 }

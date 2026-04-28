@@ -1,8 +1,10 @@
 import { NextRequest } from "next/server";
 import { fetchOrchestrator, incomingAuthHeadersFrom } from "./bff";
 
+export type AdminPermission = "log:view" | "log:manage";
+
 type AdminAuthResult =
-  | { ok: true; operator: string }
+  | { ok: true; operator: string; permissions: AdminPermission[] }
   | { ok: false; status: number; error: string };
 
 function normalizeOperator(user: Record<string, unknown>): string {
@@ -11,6 +13,42 @@ function normalizeOperator(user: Record<string, unknown>): string {
     if (typeof val === "string" && val.trim()) return val.trim().slice(0, 120);
   }
   return "admin";
+}
+
+function parseExplicitPermissions(user: Record<string, unknown>): AdminPermission[] {
+  const src = user.permissions;
+  if (!Array.isArray(src)) return [];
+  const out = new Set<AdminPermission>();
+  for (const item of src) {
+    const p = String(item || "").trim();
+    if (p === "log:view") out.add("log:view");
+    if (p === "log:manage") out.add("log:manage");
+  }
+  return [...out];
+}
+
+function parseAllowlist(envName: string): Set<string> {
+  const raw = String(process.env[envName] || "").trim();
+  if (!raw) return new Set();
+  return new Set(
+    raw
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+  );
+}
+
+function resolvePermissions(user: Record<string, unknown>, operator: string): AdminPermission[] {
+  const explicit = parseExplicitPermissions(user);
+  if (explicit.length > 0) return explicit;
+  const role = String(user.role || "").trim().toLowerCase();
+  if (role !== "admin") return [];
+  const allowView = parseAllowlist("LOG_VIEW_ALLOWED_OPERATORS");
+  const allowManage = parseAllowlist("LOG_MANAGE_ALLOWED_OPERATORS");
+  const perms = new Set<AdminPermission>();
+  if (allowView.size === 0 || allowView.has(operator)) perms.add("log:view");
+  if (allowManage.size === 0 || allowManage.has(operator)) perms.add("log:manage");
+  return [...perms];
 }
 
 export async function verifyAdminRequest(req: NextRequest): Promise<AdminAuthResult> {
@@ -40,5 +78,19 @@ export async function verifyAdminRequest(req: NextRequest): Promise<AdminAuthRes
   if (role !== "admin") {
     return { ok: false, status: 403, error: "forbidden_admin_only" };
   }
-  return { ok: true, operator: normalizeOperator(data.user) };
+  const operator = normalizeOperator(data.user);
+  const permissions = resolvePermissions(data.user, operator);
+  return { ok: true, operator, permissions };
+}
+
+export async function verifyAdminPermission(
+  req: NextRequest,
+  permission: AdminPermission
+): Promise<AdminAuthResult> {
+  const auth = await verifyAdminRequest(req);
+  if (!auth.ok) return auth;
+  if (!auth.permissions.includes(permission)) {
+    return { ok: false, status: 403, error: "forbidden_permission_denied" };
+  }
+  return auth;
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyAdminRequest } from "../../../../lib/adminRouteAuth";
+import { verifyAdminPermission } from "../../../../lib/adminRouteAuth";
+import { AppErrorCodes, errorJson } from "../../../../core/errors";
 import { LOG_SCOPES, LogScope, listLogEvents, topErrorClusters } from "../../../../lib/logManagement";
 
 const DEFAULT_SCOPE: LogScope = "notebook_share_client";
@@ -24,9 +25,10 @@ function parseMs(raw: string | null): number | undefined {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await verifyAdminRequest(req);
+  const auth = await verifyAdminPermission(req, "log:view");
   if (!auth.ok) {
-    return NextResponse.json({ success: false, error: auth.error }, { status: auth.status });
+    if (auth.status === 403) return errorJson(403, AppErrorCodes.ForbiddenAdminOnly, auth.error);
+    return errorJson(401, AppErrorCodes.Unauthorized, auth.error);
   }
   const scope = parseScope(req.nextUrl.searchParams.get("scope"));
   const limit = parseLimit(req.nextUrl.searchParams.get("limit"));
@@ -36,8 +38,8 @@ export async function GET(req: NextRequest) {
   const errorCode = (req.nextUrl.searchParams.get("errorCode") || "").trim();
   const fromMs = parseMs(req.nextUrl.searchParams.get("fromMs"));
   const toMs = parseMs(req.nextUrl.searchParams.get("toMs"));
-  const events = listLogEvents(scope, limit, { level, requestId, errorCode, fromMs, toMs });
-  const clusters = topErrorClusters(scope, 24 * 60 * 60 * 1000, 8);
+  const events = await listLogEvents(scope, limit, { level, requestId, errorCode, fromMs, toMs });
+  const clusters = await topErrorClusters(scope, 24 * 60 * 60 * 1000, 8);
   return NextResponse.json({
     success: true,
     scope,

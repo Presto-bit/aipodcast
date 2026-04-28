@@ -84,6 +84,17 @@ export default function AdminLogManagementPage() {
   const [queryLevel, setQueryLevel] = useState<"" | "info" | "error">("");
   const [queryRangeHours, setQueryRangeHours] = useState("24");
 
+  function pickErrorMessage(data: { error?: unknown }, fallback: string): string {
+    if (typeof data.error === "string" && data.error) return data.error;
+    if (data.error && typeof data.error === "object") {
+      const msg = (data.error as { message?: unknown }).message;
+      if (typeof msg === "string" && msg) return msg;
+      const code = (data.error as { code?: unknown }).code;
+      if (typeof code === "string" && code) return code;
+    }
+    return fallback;
+  }
+
   const load = useCallback(async () => {
     const res = await fetch(`/api/admin/log-management?scope=${encodeURIComponent(scope)}`, {
       headers: getAuthHeaders(),
@@ -97,7 +108,7 @@ export default function AdminLogManagementPage() {
       audits?: LogAudit[];
     };
     if (!res.ok || !data.success || !data.config) {
-      throw new Error(data.error || `加载失败 ${res.status}`);
+      throw new Error(pickErrorMessage(data, `加载失败 ${res.status}`));
     }
     setConfig(data.config);
     if (Array.isArray(data.scopes) && data.scopes.length > 0) {
@@ -133,12 +144,12 @@ export default function AdminLogManagementPage() {
       });
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
-        error?: string;
+        error?: unknown;
         events?: LogEvent[];
         clusters?: ErrorCluster[];
       };
       if (!res.ok || !data.success) {
-        throw new Error(data.error || `日志加载失败 ${res.status}`);
+        throw new Error(pickErrorMessage(data, `日志加载失败 ${res.status}`));
       }
       setEvents(Array.isArray(data.events) ? data.events : []);
       setClusters(Array.isArray(data.clusters) ? data.clusters : []);
@@ -175,11 +186,11 @@ export default function AdminLogManagementPage() {
       });
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
-        error?: string;
+        error?: unknown;
         config?: LogSwitchConfig;
       };
       if (!res.ok || !data.success || !data.config) {
-        throw new Error(data.error || `更新失败 ${res.status}`);
+        throw new Error(pickErrorMessage(data, `更新失败 ${res.status}`));
       }
       setConfig(data.config);
       setEnabled(data.config.enabled);

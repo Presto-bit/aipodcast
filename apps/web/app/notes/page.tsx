@@ -233,7 +233,6 @@ const NOTES_ASK_DEBUG_BODY_ENABLED = String(process.env.NEXT_PUBLIC_NOTES_ASK_DE
 const NOTES_ART_TARGET_CHARS_MIN = 200;
 const NOTES_ART_TARGET_CHARS_MAX = 50_000;
 const NOTES_ART_TARGET_CHARS_DEFAULT = 200;
-const NOTES_ART_TARGET_CHARS_SLIDER_STEP = 100;
 const SUPPORTED_NOTE_FILE_EXTS = [
   "txt",
   "md",
@@ -5068,43 +5067,6 @@ export default function NotesPage() {
                       }}
                     />
                   </label>
-                </div>
-                <div className="mt-2">
-                  <label className="block text-[11px] text-muted">
-                    拖动调整字数
-                    <div className="mt-1.5 flex items-center gap-3">
-                      <input
-                        type="range"
-                        className="h-2 min-w-0 flex-1 cursor-pointer accent-brand"
-                        min={NOTES_ART_TARGET_CHARS_MIN}
-                        max={NOTES_ART_TARGET_CHARS_MAX}
-                        step={NOTES_ART_TARGET_CHARS_SLIDER_STEP}
-                        value={Math.min(
-                          NOTES_ART_TARGET_CHARS_MAX,
-                          Math.max(NOTES_ART_TARGET_CHARS_MIN, artChars)
-                        )}
-                        aria-valuemin={NOTES_ART_TARGET_CHARS_MIN}
-                        aria-valuemax={NOTES_ART_TARGET_CHARS_MAX}
-                        aria-valuenow={artChars}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          if (!Number.isFinite(v)) return;
-                          const clamped = Math.min(
-                            NOTES_ART_TARGET_CHARS_MAX,
-                            Math.max(NOTES_ART_TARGET_CHARS_MIN, Math.round(v))
-                          );
-                          setArtChars(clamped);
-                          setArtCharsInput(String(clamped));
-                        }}
-                      />
-                      <span className="w-[4.5rem] shrink-0 text-right text-xs tabular-nums text-ink">
-                        {artChars} 字
-                      </span>
-                    </div>
-                  </label>
-                  <p className="mt-1 text-[10px] leading-snug text-muted">
-                    滑块步进 {NOTES_ART_TARGET_CHARS_SLIDER_STEP}；需精确值或超出滑块手感时，请用上方数字框。
-                  </p>
                 </div>
                 <label className="mt-3 block text-xs text-ink">
                   核心问题（可选）

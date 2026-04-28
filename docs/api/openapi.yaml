@@ -1,0 +1,136 @@
+openapi: 3.0.3
+info:
+  title: AI Podcast Web Admin Log API
+  version: 1.0.0
+  description: >
+    日志管理相关接口规范（管理员配置日志开关、查询日志事件、前端全局异常上报）。
+servers:
+  - url: /
+paths:
+  /api/admin/log-management:
+    get:
+      summary: 获取日志开关配置
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [notebook_share_client, frontend_global_error]
+      responses:
+        "200":
+          description: 成功
+        "401":
+          description: 未登录
+        "403":
+          description: 非管理员
+    post:
+      summary: 更新日志开关配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                scope:
+                  type: string
+                  enum: [notebook_share_client, frontend_global_error]
+                enabled:
+                  type: boolean
+                ttlMinutes:
+                  type: integer
+                minLevel:
+                  type: string
+                  enum: [info, debug]
+                sampleRate:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: 成功
+        "400":
+          description: 参数错误
+        "401":
+          description: 未登录
+        "403":
+          description: 非管理员
+  /api/admin/log-events:
+    get:
+      summary: 查询日志事件与错误聚类
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [notebook_share_client, frontend_global_error]
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - in: query
+          name: level
+          schema:
+            type: string
+            enum: [info, error]
+        - in: query
+          name: requestId
+          schema:
+            type: string
+        - in: query
+          name: errorCode
+          schema:
+            type: string
+        - in: query
+          name: fromMs
+          schema:
+            type: integer
+        - in: query
+          name: toMs
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 成功
+        "401":
+          description: 未登录
+        "403":
+          description: 非管理员
+  /api/frontend-global-error:
+    post:
+      summary: 前端全局异常上报
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, message]
+              properties:
+                source:
+                  type: string
+                  enum: [onerror, unhandledrejection]
+                message:
+                  type: string
+                location:
+                  type: string
+                route:
+                  type: string
+                release:
+                  type: string
+                data:
+                  type: object
+      responses:
+        "200":
+          description: 成功（可能包含 skipped）
+        "400":
+          description: 参数错误
+        "401":
+          description: 未登录
+        "413":
+          description: 负载过大
