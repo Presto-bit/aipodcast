@@ -1630,7 +1630,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         const ids = wordIdsBetweenInclusive(words, anchor, w.id);
         setMultiSelectIds(new Set(ids.length ? ids : [w.id]));
         setFocusedWordId(w.id);
-        leftDragMultiSelectRef.current = false;
+        // 与「框选」保持同一语义：都视为范围选区
+        leftDragMultiSelectRef.current = true;
         return;
       }
       if (e.metaKey || e.ctrlKey) {
@@ -1643,7 +1644,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         });
         rangeAnchorWordIdRef.current = w.id;
         setFocusedWordId(w.id);
-        leftDragMultiSelectRef.current = false;
+        // 与「框选」保持同一语义：都视为范围选区
+        leftDragMultiSelectRef.current = true;
         return;
       }
       rangeAnchorWordIdRef.current = w.id;
