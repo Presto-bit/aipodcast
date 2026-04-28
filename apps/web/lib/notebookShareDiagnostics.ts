@@ -14,8 +14,17 @@ export const NOTEBOOK_SHARE_DIAGNOSTICS_UPDATED_EVENT = "fym-notebook-share-diag
 const DEBUG_INGEST = "http://127.0.0.1:7784/ingest/19ebcc68-23a5-4b58-8422-e77d07554c98";
 const DEBUG_SESSION = "f9896b";
 
-/** 双写：ingest + 开发环境同源落盘，便于在无 ingest 时读取 `.cursor/debug-f9896b.log`。 */
-export function agentDebugLog(payload: Record<string, unknown>): void {
+export type AgentDebugLogOptions = {
+  /**
+   * 为 true 时在生产环境向 `/api/notebook-share-client-diagnostics` 上报一行结构化日志，
+   * 便于在托管平台日志中检索 `notebook_share_client`（需已登录，携带会话 Cookie）。
+   * 勿在高频路径（如每次读 localStorage）开启，以免刷屏与噪音。
+   */
+  serverReport?: boolean;
+};
+
+/** 双写：ingest + 开发环境同源落盘；可选生产上报（见 `serverReport`）。 */
+export function agentDebugLog(payload: Record<string, unknown>, opts?: AgentDebugLogOptions): void {
   if (typeof window === "undefined") return;
   const body = JSON.stringify({
     sessionId: DEBUG_SESSION,
@@ -31,6 +40,14 @@ export function agentDebugLog(payload: Record<string, unknown>): void {
     fetch("/api/debug-agent-log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      body
+    }).catch(() => {});
+  }
+  if (opts?.serverReport === true && process.env.NODE_ENV === "production") {
+    fetch("/api/notebook-share-client-diagnostics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body
     }).catch(() => {});
   }

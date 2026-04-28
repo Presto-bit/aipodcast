@@ -881,12 +881,15 @@ export default function NotesPage() {
     }
     notifyNotebookShareDiagnosticsUpdated();
     // #region agent log
-    agentDebugLog({
-      hypothesisId: "H3",
-      location: "notes/page.tsx:persistShareLastErrorPayload",
-      message: "persisted last share error",
-      data: { payloadLen: serialized.length }
-    });
+    agentDebugLog(
+      {
+        hypothesisId: "H3",
+        location: "notes/page.tsx:persistShareLastErrorPayload",
+        message: "persisted last share error",
+        data: { payloadLen: serialized.length }
+      },
+      { serverReport: true }
+    );
     // #endregion
   }, []);
 
@@ -927,12 +930,15 @@ export default function NotesPage() {
         }
         notifyNotebookShareDiagnosticsUpdated();
         // #region agent log
-        agentDebugLog({
-          hypothesisId: "H4",
-          location: "notes/page.tsx:appendShareFailureHistory:microtask",
-          message: "failure history persisted",
-          data: { nextLen: next.length }
-        });
+        agentDebugLog(
+          {
+            hypothesisId: "H4",
+            location: "notes/page.tsx:appendShareFailureHistory:microtask",
+            message: "failure history persisted",
+            data: { nextLen: next.length }
+          },
+          { serverReport: true }
+        );
         // #endregion
       });
       return next;
@@ -3426,16 +3432,19 @@ export default function NotesPage() {
       });
       setShareDebugLog(currentDebugLog);
       // #region agent log
-      agentDebugLog({
-        hypothesisId: "H1",
-        location: "notes/page.tsx:submitNotebookSharing:preThrow",
-        message: "share response before branch",
-        data: {
-          resOk: res.ok,
-          successField: data.success,
-          debugLen: currentDebugLog.length
-        }
-      });
+      agentDebugLog(
+        {
+          hypothesisId: "H1",
+          location: "notes/page.tsx:submitNotebookSharing:preThrow",
+          message: "share response before branch",
+          data: {
+            resOk: res.ok,
+            successField: data.success,
+            debugLen: currentDebugLog.length
+          }
+        },
+        { serverReport: true }
+      );
       // #endregion
       if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
@@ -3447,12 +3456,15 @@ export default function NotesPage() {
         .filter(Boolean)
         .join("\n");
       // #region agent log
-      agentDebugLog({
-        hypothesisId: "H2",
-        location: "notes/page.tsx:submitNotebookSharing:catch",
-        message: "share catch entered",
-        data: { msgLen: msg.length, dbgLen: currentDebugLog.length }
-      });
+      agentDebugLog(
+        {
+          hypothesisId: "H2",
+          location: "notes/page.tsx:submitNotebookSharing:catch",
+          message: "share catch entered",
+          data: { msgLen: msg.length, dbgLen: currentDebugLog.length }
+        },
+        { serverReport: true }
+      );
       // #endregion
       setShareDebugLog(currentDebugLog);
       setShareModalError(msg);
@@ -3475,12 +3487,15 @@ export default function NotesPage() {
         debugLog: currentDebugLog
       });
       // #region agent log
-      agentDebugLog({
-        hypothesisId: "H4",
-        location: "notes/page.tsx:submitNotebookSharing:afterAppend",
-        message: "share failure persisted to state queue",
-        data: { entryIdLen: entryId.length, dbgLen: currentDebugLog.length }
-      });
+      agentDebugLog(
+        {
+          hypothesisId: "H4",
+          location: "notes/page.tsx:submitNotebookSharing:afterAppend",
+          message: "share failure persisted to state queue",
+          data: { entryIdLen: entryId.length, dbgLen: currentDebugLog.length }
+        },
+        { serverReport: true }
+      );
       // #endregion
       queueMicrotask(() => {
         shareDiagnosticsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -3534,6 +3549,21 @@ export default function NotesPage() {
         clientRequestId
       });
       setShareDebugLog(currentDebugLog);
+      // #region agent log
+      agentDebugLog(
+        {
+          hypothesisId: "H1",
+          location: "notes/page.tsx:submitStopNotebookSharing:preThrow",
+          message: "unshare response before branch",
+          data: {
+            resOk: res.ok,
+            successField: data.success,
+            debugLen: currentDebugLog.length
+          }
+        },
+        { serverReport: true }
+      );
+      // #endregion
       if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
       void loadPopularNotebooks(false);
@@ -3543,6 +3573,17 @@ export default function NotesPage() {
       currentDebugLog = [currentDebugLog, `exception=${msg}`, err instanceof Error && err.stack ? `stack=${err.stack}` : ""]
         .filter(Boolean)
         .join("\n");
+      // #region agent log
+      agentDebugLog(
+        {
+          hypothesisId: "H2",
+          location: "notes/page.tsx:submitStopNotebookSharing:catch",
+          message: "unshare catch entered",
+          data: { msgLen: msg.length, dbgLen: currentDebugLog.length }
+        },
+        { serverReport: true }
+      );
+      // #endregion
       setShareDebugLog(currentDebugLog);
       setShareModalError(msg);
       setShareLastDebugLog(currentDebugLog);
