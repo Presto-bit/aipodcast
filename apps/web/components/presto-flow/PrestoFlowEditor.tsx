@@ -218,6 +218,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
   const [clipToolsOpen, setClipToolsOpen] = useState(false);
   const [dragSegmentId, setDragSegmentId] = useState<string | null>(null);
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [insertingSegmentAudio, setInsertingSegmentAudio] = useState(false);
   /** 词链试听：与终版导出同 ffmpeg 算法，单独对象键；波形 URL 切换，稿面时间戳仍对原片 */
   const [wordchainPreviewOn, setWordchainPreviewOn] = useState(false);
@@ -428,17 +429,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setAudioSegments((prev) => (prev.length ? prev : buildInitialAudioSegments(rawWords)));
   }, [rawWords]);
 
+  useEffect(() => {
+    if (!selectedSegmentId) return;
+    if (audioSegments.some((seg) => seg.id === selectedSegmentId)) return;
+    setSelectedSegmentId(null);
+  }, [audioSegments, selectedSegmentId]);
+
   const words = useMemo(() => reorderWordsBySegments(rawWords, audioSegments), [rawWords, audioSegments]);
   const rawWordById = useMemo(() => new Map(rawWords.map((w) => [w.id, w])), [rawWords]);
-  const segmentBoundaryWordIds = useMemo(() => {
-    const out = new Set<string>();
-    for (let i = 1; i < audioSegments.length; i += 1) {
-      const ids = audioSegments[i]?.wordIds || [];
-      const firstWordId = ids.find((id) => rawWordById.has(id));
-      if (firstWordId) out.add(firstWordId);
-    }
-    return out;
-  }, [audioSegments, rawWordById]);
 
   const roughCutExemptSet = useMemo(
     () => buildRoughCutExemptSet(project?.rough_cut_lexicon_exempt),
@@ -1196,6 +1194,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           index: idx + 1,
           leftPct: Math.max(0, Math.min(100, (seg.endMs / segmentTimelineTotalMs) * 100))
         })),
+    [audioSegments, segmentTimelineTotalMs]
+  );
+  const timelineSegments = useMemo(
+    () =>
+      audioSegments.map((seg, idx) => {
+        const leftPct = Math.max(0, Math.min(100, (seg.startMs / segmentTimelineTotalMs) * 100));
+        const widthPct = Math.max(1.4, ((seg.endMs - seg.startMs) / segmentTimelineTotalMs) * 100);
+        return { seg, idx, leftPct, widthPct };
+      }),
     [audioSegments, segmentTimelineTotalMs]
   );
   const dualInterview = isDualChannels(project?.channel_ids);
@@ -2018,8 +2025,21 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         pushSegmentHistory(prev);
         return normalizeSegmentTimeline(next);
       });
+      setSelectedSegmentId(segmentId);
     },
     [pushSegmentHistory, segmentEditLocked]
+  );
+
+  const focusSegment = useCallback(
+    (segmentId: string) => {
+      const seg = audioSegments.find((s) => s.id === segmentId);
+      if (!seg) return;
+      setSelectedSegmentId(segmentId);
+      waveformRef.current?.seekToMs(seg.startMs);
+      const firstWordId = seg.wordIds.find((id) => rawWordById.has(id));
+      if (firstWordId) setFocusedWordId(firstWordId);
+    },
+    [audioSegments, rawWordById]
   );
 
   const performExport = useCallback(async () => {
@@ -2701,7 +2721,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         ref={transcriptRef}
                         lines={lines}
                         excluded={excluded}
-                        segmentBoundaryWordIds={segmentBoundaryWordIds}
                         playbackWordId={playbackWordId}
                         playbackLineIndex={playbackLineIndex}
                         focusedWordId={focusedWordId}
@@ -2788,35 +2807,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           </button>
                         </div>
                       ) : null}
-                      <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                        {audioSegments.map((seg, idx) => (
-                          <button
-                            key={`seg-chip-${seg.id}`}
-                            type="button"
-                            draggable={!segmentEditLocked}
-                            onDragStart={() => setDragSegmentId(seg.id)}
-                            onDragEnd={() => setDragSegmentId(null)}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              if (!dragSegmentId) return;
-                              reorderAudioSegment(dragSegmentId, idx);
-                              setDragSegmentId(null);
-                            }}
-                            className={[
-                              "inline-flex h-5 items-center gap-1 rounded border px-1.5 text-[10px]",
-                              dragSegmentId === seg.id
-                                ? "border-brand/50 bg-brand/10 text-brand"
-                                : "border-line bg-surface text-ink hover:bg-fill"
-                            ].join(" ")}
-                            title="拖拽调整主时间线分段顺序"
-                          >
-                            <span className="text-muted">≡</span>
-                            <span>{idx + 1}</span>
-                            {seg.source === "inserted" ? <span className="text-brand">新</span> : null}
-                          </button>
-                        ))}
-                      </div>
                       <div className="mb-2 h-[69px] overflow-hidden rounded-lg border border-line bg-track/40">
                         {waveformAudioUrl ? (
                           <div className="group relative h-full w-full">
@@ -2847,6 +2837,34 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                               zoomLevel={waveZoomLevel}
                               className="!border-0 !bg-transparent"
                             />
+                            <div className="pointer-events-none absolute inset-0 z-[2]">
+                              {timelineSegments.map(({ seg, idx, leftPct, widthPct }) => (
+                                <button
+                                  key={`seg-overlay-${seg.id}`}
+                                  type="button"
+                                  draggable={!segmentEditLocked}
+                                  onDragStart={() => setDragSegmentId(seg.id)}
+                                  onDragEnd={() => setDragSegmentId(null)}
+                                  onDragOver={(e) => e.preventDefault()}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    if (!dragSegmentId) return;
+                                    reorderAudioSegment(dragSegmentId, idx);
+                                    setDragSegmentId(null);
+                                  }}
+                                  onDoubleClick={() => focusSegment(seg.id)}
+                                  className={[
+                                    "pointer-events-auto absolute top-[6px] h-[56px] rounded-md border transition",
+                                    selectedSegmentId === seg.id
+                                      ? "border-brand bg-brand/20 shadow-[0_0_0_1px_rgba(99,102,241,0.45)]"
+                                      : "border-line/70 bg-slate-300/10 hover:bg-slate-300/20",
+                                    dragSegmentId === seg.id ? "opacity-70" : ""
+                                  ].join(" ")}
+                                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                  title="双击选中该音频段；拖拽可重排"
+                                />
+                              ))}
+                            </div>
                             {middleInsertBoundaries.map((b) => (
                               <button
                                 key={`mid-insert-${b.index}`}
@@ -3020,7 +3038,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           ref={transcriptRef}
                           lines={lines}
                           excluded={excluded}
-                          segmentBoundaryWordIds={segmentBoundaryWordIds}
                           playbackWordId={playbackWordId}
                           playbackLineIndex={playbackLineIndex}
                           focusedWordId={focusedWordId}
