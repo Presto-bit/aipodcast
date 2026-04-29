@@ -9,6 +9,7 @@ import zipfile
 import re
 import json
 import os
+import ipaddress
 import html as ihtml
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
@@ -88,20 +89,31 @@ def _strip_chrome_layout(soup: BeautifulSoup) -> None:
 
 
 def _strip_noise_by_attr(soup: BeautifulSoup) -> None:
+    to_remove: list[Tag] = []
     for tag in soup.find_all(True):
+        # decompose 过的节点 attrs/name 可能被置空，跳过避免 NoneType.get 异常
+        if not isinstance(getattr(tag, "attrs", None), dict):
+            continue
+        class_attr = tag.attrs.get("class")
+        class_s = " ".join(class_attr) if isinstance(class_attr, list) else str(class_attr or "")
         attrs = " ".join(
             str(x or "")
             for x in (
-                tag.get("id"),
-                " ".join(tag.get("class", [])) if isinstance(tag.get("class"), list) else tag.get("class"),
-                tag.get("role"),
-                tag.get("aria-label"),
+                tag.attrs.get("id"),
+                class_s,
+                tag.attrs.get("role"),
+                tag.attrs.get("aria-label"),
             )
         ).lower()
-        if not attrs:
-            continue
-        if any(x in attrs for x in ("nav", "footer", "header", "menu", "sidebar", "comment", "related", "ad-")):
+        if attrs and any(
+            x in attrs for x in ("nav", "footer", "header", "menu", "sidebar", "comment", "related", "ad-")
+        ):
+            to_remove.append(tag)
+    for tag in to_remove:
+        try:
             tag.decompose()
+        except Exception:
+            continue
 
 
 def _dedupe_lines(text: str) -> str:
@@ -117,6 +129,10 @@ def _dedupe_lines(text: str) -> str:
         seen.add(key)
         out.append(s)
     return "\n".join(out)
+
+
+def _strip_nul_chars(text: str) -> str:
+    return (text or "").replace("\x00", "")
 
 
 def _is_likely_noise_line(line: str) -> bool:
@@ -441,6 +457,37 @@ def _referer_for_url(url: str) -> str:
     return "https://www.google.com/"
 
 
+def _is_private_or_local_host(host: str) -> bool:
+    h = (host or "").strip().lower()
+    if not h:
+        return True
+    if h in ("localhost",):
+        return True
+    if h.endswith(".local") or h.endswith(".internal"):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+        return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved)
+    except ValueError:
+        return False
+
+
+def _validate_url_safety(url: str) -> tuple[bool, str, str]:
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False, "invalid_url", "无效 URL"
+    scheme = (p.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return False, "invalid_url", "仅支持 http/https 链接"
+    host = (p.hostname or "").strip().lower()
+    if not host:
+        return False, "invalid_url", "URL 缺少主机名"
+    if _is_private_or_local_host(host):
+        return False, "unsafe_url", "为安全起见，不支持内网或本机地址"
+    return True, "", ""
+
+
 def _is_js_shell_html(html: str, text_content: str) -> bool:
     body = (html or "").lower()
     text = (text_content or "").strip().lower()
@@ -529,6 +576,18 @@ class ContentParser:
         logs = []
         logs.append(f"开始解析网址: {url}")
         host = _normalized_host(url)
+        safe, safe_code, safe_msg = _validate_url_safety(url)
+        if not safe:
+            hint = actionable_hint_for_failed_url(url, error_code=safe_code, upstream_error=safe_msg)
+            logs.append(f"错误: {safe_msg}")
+            return {
+                "success": False,
+                "error": safe_msg,
+                "hint": hint,
+                "logs": logs,
+                "source": "url",
+                "error_code": safe_code,
+            }
 
         try:
             # 发送 HTTP 请求，使用更真实的浏览器请求头；Referer 与目标站同源，减少部分站点误拦
@@ -557,7 +616,7 @@ class ContentParser:
             response = session.get(url, timeout=TIMEOUTS["url_parsing"], allow_redirects=True)
             response.raise_for_status()
             response.encoding = response.apparent_encoding or "utf-8"
-            raw_html = response.text
+            raw_html = _strip_nul_chars(response.text)
 
             logs.append(f"成功获取网页内容，状态码: {response.status_code}")
 
@@ -628,6 +687,7 @@ class ContentParser:
                         best_name = "js_rendered_semantic"
                         best_quality = rendered_quality
                         candidate_root = rendered_root
+                        soup_base = rendered_soup
                         logs.append(f"触发 JS 渲染回退成功：{rendered_detail}（score={best_score:.2f}）")
                     else:
                         logs.append(
@@ -649,13 +709,15 @@ class ContentParser:
                         "avg_line_len": int(sum(len(x) for x in link_lines) / max(1, len(link_lines))),
                     }
                     logs.append(f"列表页策略：提取候选链接 {len(list_links)} 条")
+            xhs_script_extract_hit = False
             if host.endswith("xiaohongshu.com"):
                 xhs_title, xhs_desc = _extract_xiaohongshu_note_parts(raw_html, _note_id_from_xiaohongshu_url(url))
                 if xhs_title:
-                    page_title = xhs_title
+                    page_title = _strip_nul_chars(xhs_title)
                 # 小红书正文优先使用脚本态 desc（可见 DOM 常常只有壳层文本）。
                 if len((xhs_desc or "").strip()) >= 40:
-                    content = xhs_desc
+                    content = _strip_nul_chars(xhs_desc)
+                    xhs_script_extract_hit = True
                     logs.append("使用小红书脚本态正文抽取")
                 elif _looks_like_xiaohongshu_shell_text(content):
                     hint = actionable_hint_for_failed_url(
@@ -677,9 +739,14 @@ class ContentParser:
                 content = f"{content}\n\n{meta_text}".strip() if content else meta_text
                 logs.append("触发低置信度回退：meta/JSON-LD")
                 logs.append("使用 meta/JSON-LD 兜底抽取")
+            content = _strip_nul_chars(content)
+            page_title = _strip_nul_chars(page_title)
             structured_blocks = _extract_structured_blocks_from_html(
                 BeautifulSoup(str(candidate_root), "html.parser")
             )
+            for block in structured_blocks:
+                if isinstance(block.get("text"), str):
+                    block["text"] = _strip_nul_chars(str(block.get("text") or ""))
 
             if not (content or "").strip():
                 hint = actionable_hint_for_failed_url(url, error_code=None, upstream_error="empty_body")
@@ -707,6 +774,7 @@ class ContentParser:
                     "quality": best_quality,
                     "js_render_fallback": best_name == "js_rendered_semantic",
                     "list_links_count": len(list_links) if page_kind == "list" else 0,
+                    "xhs_script_extract_hit": xhs_script_extract_hit,
                 },
                 "logs": logs,
                 "source": "url",

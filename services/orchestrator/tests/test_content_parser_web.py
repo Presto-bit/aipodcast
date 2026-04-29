@@ -5,7 +5,9 @@ from app.fyv_shared.content_parser import (
     _detect_page_kind,
     _extract_semantic_text,
     _is_js_shell_html,
+    _validate_url_safety,
     _score_content_quality,
+    _strip_nul_chars,
     _should_try_js_render,
     _strip_chrome_layout,
     _strip_noise_by_attr,
@@ -75,3 +77,34 @@ def test_extract_links_for_list_page():
     links = _extract_links_for_list_page(soup, "https://example.com/list")
     assert len(links) == 2
     assert links[0]["url"].startswith("https://example.com/")
+
+
+def test_strip_nul_chars():
+    assert _strip_nul_chars("a\x00b\x00c") == "abc"
+
+
+def test_strip_noise_by_attr_not_crash_on_nested_remove():
+    html = """
+    <html><body>
+      <div id="sidebar">
+        <div class="comment-box"><a href="/a">A</a></div>
+      </div>
+      <main><p>正文内容</p></main>
+    </body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    _strip_noise_by_attr(soup)
+    text = soup.get_text(" ", strip=True)
+    assert "正文内容" in text
+
+
+def test_validate_url_safety_blocks_local():
+    ok, code, _ = _validate_url_safety("http://127.0.0.1:8000/a")
+    assert ok is False
+    assert code == "unsafe_url"
+
+
+def test_validate_url_safety_allows_public():
+    ok, code, _ = _validate_url_safety("https://example.com/post")
+    assert ok is True
+    assert code == ""

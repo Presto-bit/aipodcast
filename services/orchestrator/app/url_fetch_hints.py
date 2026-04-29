@@ -102,6 +102,16 @@ def actionable_hint_for_failed_url(
             return hint
 
     err = (upstream_error or "").lower()
+    if error_code == "unsafe_url":
+        return (
+            "该链接指向本机或内网地址，出于安全考虑不支持服务端抓取。\n"
+            "请改用公开可访问的网页链接，或将内容保存为本地 txt/md/html/pdf 后上传。"
+        )
+    if error_code == "invalid_url":
+        return (
+            "链接格式无效或协议不受支持。\n"
+            "请使用完整的 http/https 链接（例如 https://example.com/path）。"
+        )
     if error_code == "403" or "403" in err or "forbidden" in err:
         return (
             "站点拒绝了服务端访问（常见于反爬）。\n"
