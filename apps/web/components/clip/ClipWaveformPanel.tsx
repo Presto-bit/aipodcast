@@ -11,6 +11,8 @@ export type ClipWaveformHandle = {
   getCurrentTimeMs: () => number;
   /** 变速审听；preservePitch 由 wavesurfer 在支持的浏览器中处理 */
   setPlaybackRate: (rate: number) => void;
+  /** 1~10，对应波形可视缩放 */
+  setZoom: (level: number) => void;
 };
 
 type Props = {
@@ -32,6 +34,8 @@ type Props = {
   interactive?: boolean;
   /** false：不向父组件上报 timeupdate（避免多实例抢进度） */
   emitTimeUpdates?: boolean;
+  /** 1~10，默认 1 */
+  zoomLevel?: number;
 };
 
 type WS = Awaited<ReturnType<Awaited<typeof import("wavesurfer.js")>["default"]["create"]>>;
@@ -48,7 +52,8 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
     playbackRate = 1,
     snapSeekMs,
     interactive = true,
-    emitTimeUpdates = true
+    emitTimeUpdates = true,
+    zoomLevel = 1
   },
   ref
 ) {
@@ -96,6 +101,17 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
       } catch {
         ws.setPlaybackRate(r);
       }
+    },
+    setZoom: (level: number) => {
+      const ws = wsRef.current;
+      if (!ws) return;
+      const lv = Math.max(1, Math.min(10, Math.round(level)));
+      const pxPerSec = interactive ? 40 * lv : 24;
+      try {
+        ws.setOptions({ minPxPerSec: pxPerSec });
+      } catch {
+        // ignore
+      }
     }
   }));
 
@@ -130,7 +146,7 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
         barRadius: 2,
         mediaControls: interactive,
         dragToSeek: interactive,
-        minPxPerSec: interactive ? 40 : 24,
+        minPxPerSec: interactive ? 40 * Math.max(1, Math.min(10, Math.round(zoomLevel))) : 24,
         /** 同源代理音频须携带 HttpOnly 会话 Cookie，否则 BFF 无法转发 Authorization */
         fetchParams: { mode: "same-origin", credentials: "include" }
       });
@@ -191,7 +207,7 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
       wsRef.current = null;
     };
     /* onLoadError / onPlayStateChange 经 ref 读取，避免父组件每次渲染传入新函数引用时反复销毁 WaveSurfer（会导致无法持续播放） */
-  }, [audioUrl, variant, waveHeight, interactive, emitTimeUpdates]);
+  }, [audioUrl, variant, waveHeight, interactive, emitTimeUpdates, zoomLevel]);
 
   useEffect(() => {
     const ws = wsRef.current;

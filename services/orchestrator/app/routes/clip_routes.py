@@ -1229,7 +1229,7 @@ def clip_post_audio_events_analyze(project_id: str, request: Request):
 
 
 @router.post("/clip/projects/{project_id}/transcribe")
-def clip_start_transcribe(project_id: str, request: Request):
+async def clip_start_transcribe(project_id: str, request: Request):
     uid = _owner_uuid(request)
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
@@ -1239,7 +1239,14 @@ def clip_start_transcribe(project_id: str, request: Request):
         return {"success": True, "queued": False, "message": "转写任务已在进行中"}
     if t_st == "queued":
         return {"success": True, "queued": False, "message": "转写任务已在队列中，请稍候刷新"}
-    if t_st == "succeeded":
+    payload = {}
+    try:
+        payload = await request.json() or {}
+    except Exception:
+        payload = {}
+    mode = str((payload or {}).get("mode") or "full").strip().lower()
+    force_retranscribe = mode == "partial"
+    if t_st == "succeeded" and not force_retranscribe:
         raise HTTPException(
             status_code=400,
             detail="已转写成功；如需重新转写请先重新上传音频。",
@@ -1271,7 +1278,12 @@ def clip_start_transcribe(project_id: str, request: Request):
             }
         raise HTTPException(status_code=409, detail="无法占用转写队列，请刷新后重试")
     try:
-        rq_job = ai_queue.enqueue(run_clip_transcription_job, project_id, job_timeout="3h")
+        rq_job = ai_queue.enqueue(
+            run_clip_transcription_job,
+            project_id,
+            force_retranscribe=force_retranscribe,
+            job_timeout="3h",
+        )
         rq_id = getattr(rq_job, "id", None)
         logger.info("clip transcribe enqueued project_id=%s rq_job_id=%s", project_id, rq_id)
         return {"success": True, "queued": True, "rq_job_id": rq_id}

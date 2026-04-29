@@ -8,10 +8,11 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
+  const raw = await req.text();
   return proxyJsonFromOrchestrator(`/api/v1/clip/projects/${encodeURIComponent(id)}/transcribe`, {
     method: "POST",
-    body: "{}",
-    payload: "{}",
+    body: raw || "{}",
+    payload: raw || "{}",
     headers: { "content-type": "application/json", ...incomingAuthHeadersFrom(req) },
     timeoutMs: 30_000
   });

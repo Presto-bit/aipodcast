@@ -36,6 +36,10 @@ type Props = {
   mirrorWaveformCount?: number;
   /** 多轨 / 双声道说明文案，显示在波形区上方 */
   multiTrackHint?: string;
+  zoomLevel?: number;
+  durationMs?: number;
+  currentTimeMs?: number;
+  onSeekMs?: (ms: number) => void;
 };
 
 const DEFAULT_RATES = [1, 1.25, 1.5, 2] as const;
@@ -59,7 +63,11 @@ export default function AudioConsole({
   dockEmbed = false,
   rateSelectAriaLabel = "播放倍速",
   mirrorWaveformCount = 0,
-  multiTrackHint
+  multiTrackHint,
+  zoomLevel = 1,
+  durationMs = 0,
+  currentTimeMs = 0,
+  onSeekMs
 }: Props) {
   const [playing, setPlaying] = useState(false);
   const [rateMenuOpen, setRateMenuOpen] = useState(false);
@@ -188,6 +196,7 @@ export default function AudioConsole({
                 onPlayStateChange={setPlaying}
                 playbackRate={playbackRate}
                 snapSeekMs={snapSeekMs}
+                zoomLevel={zoomLevel}
                 className="!border-0 !bg-transparent"
               />
             ) : (
@@ -206,6 +215,7 @@ export default function AudioConsole({
                     audioUrl={audioUrl}
                     onTimeMs={() => {}}
                     playbackRate={playbackRate}
+                    zoomLevel={zoomLevel}
                     interactive={false}
                     emitTimeUpdates={false}
                     className="!border-0 !bg-transparent"
@@ -214,6 +224,18 @@ export default function AudioConsole({
               ))
             : null}
         </div>
+        {durationMs > 0 ? (
+          <div className="px-1">
+            <input
+              type="range"
+              min={0}
+              max={Math.max(1, durationMs)}
+              value={Math.max(0, Math.min(durationMs, currentTimeMs))}
+              className="h-2 w-full accent-indigo-500"
+              onChange={(e) => onSeekMs?.(Number(e.target.value) || 0)}
+            />
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
           {onMagneticSnapChange && magneticSnapLabel ? (
             <label

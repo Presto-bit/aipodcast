@@ -14,6 +14,7 @@ import {
 } from "react";
 import { Maximize2, Minimize2 } from "lucide-react";
 import { useAuth } from "../../lib/auth";
+import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import type { ClipProjectRow, ClipSilenceSegment, ClipWord } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";
 import {
@@ -53,6 +54,7 @@ import ClipScriptSearchPanel from "./ClipScriptSearchPanel";
 import PrestoFlowHeader from "./PrestoFlowHeader";
 import PrestoFlowImportBar from "./PrestoFlowImportBar";
 import VirtualizedTranscript, { type VirtualizedTranscriptHandle } from "./VirtualizedTranscript";
+import WaveformSegmentEditor, { type WaveformSegmentItem } from "./WaveformSegmentEditor";
 
 function isDualChannels(ch: unknown): boolean {
   return Array.isArray(ch) && ch.length >= 2;
@@ -118,6 +120,59 @@ function suggestionFeedbackPayload(
   };
 }
 
+type EditorAudioSegment = WaveformSegmentItem & {
+  wordIds: string[];
+};
+
+function normalizeSegmentTimeline(segments: readonly EditorAudioSegment[]): EditorAudioSegment[] {
+  let cursor = 0;
+  return segments.map((seg) => {
+    const duration = Math.max(120, seg.endMs - seg.startMs);
+    const next: EditorAudioSegment = {
+      ...seg,
+      startMs: cursor,
+      endMs: cursor + duration
+    };
+    cursor += duration;
+    return next;
+  });
+}
+
+function buildInitialAudioSegments(words: readonly ClipWord[]): EditorAudioSegment[] {
+  if (!words.length) return [];
+  const start = Math.min(...words.map((x) => x.s_ms));
+  const end = Math.max(...words.map((x) => x.e_ms));
+  return [
+    {
+      id: "seg-main-0",
+      startMs: Math.max(0, start),
+      endMs: Math.max(start + 1, end),
+      source: "original",
+      transcribed: true,
+      wordIds: words.map((x) => x.id)
+    }
+  ];
+}
+
+function reorderWordsBySegments(words: readonly ClipWord[], segments: readonly EditorAudioSegment[]): ClipWord[] {
+  if (!segments.length) return [...words];
+  const byId = new Map(words.map((w) => [w.id, w]));
+  const out: ClipWord[] = [];
+  const used = new Set<string>();
+  for (const seg of segments) {
+    for (const id of seg.wordIds) {
+      const w = byId.get(id);
+      if (!w || used.has(id)) continue;
+      out.push(w);
+      used.add(id);
+    }
+  }
+  for (const w of words) {
+    if (!used.has(w.id)) out.push(w);
+  }
+  return out;
+}
+
 export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const { t } = useI18n();
   const { getAuthHeaders } = useAuth();
@@ -150,6 +205,11 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   /** 稿面仅高亮当前搜索命中子集（默认首处；下一个 / 全选 / 点句子后更新） */
   const [searchHlWordIds, setSearchHlWordIds] = useState<Set<string>>(() => new Set());
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [waveZoomLevel, setWaveZoomLevel] = useState(1);
+  const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
+  const [dropTargetSegmentId, setDropTargetSegmentId] = useState<string | null>(null);
+  const [insertMenuBoundaryIndex, setInsertMenuBoundaryIndex] = useState<number | null>(null);
+  const [insertingSegmentAudio, setInsertingSegmentAudio] = useState(false);
   /** 词链试听：与终版导出同 ffmpeg 算法，单独对象键；波形 URL 切换，稿面时间戳仍对原片 */
   const [wordchainPreviewOn, setWordchainPreviewOn] = useState(false);
   const [wordchainPreviewNonce, setWordchainPreviewNonce] = useState(0);
@@ -205,6 +265,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const skipNextWordActivateRef = useRef(false);
   const rangeDragAnchorRef = useRef<string | null>(null);
   const rangeDragMovedRef = useRef(false);
+  const insertBoundaryIndexRef = useRef<number | null>(null);
+  const insertAudioInputRef = useRef<HTMLInputElement | null>(null);
+  const segmentUndoStackRef = useRef<EditorAudioSegment[][]>([]);
+  const segmentRedoStackRef = useRef<EditorAudioSegment[][]>([]);
   /** 记录当前多选是否来源于左键拖选，用于 Delete/Backspace 批量删除 */
   const leftDragMultiSelectRef = useRef(false);
   const excludedRef = useRef(excluded);
@@ -251,6 +315,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   useEffect(() => {
     setWordchainPreviewOn(false);
     setWordchainPreviewNonce(0);
+    setWaveZoomLevel(1);
+    setAudioSegments([]);
+    segmentUndoStackRef.current = [];
+    segmentRedoStackRef.current = [];
   }, [projectId]);
 
   useEffect(() => {
@@ -333,10 +401,21 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     if (!project?.export_pause_policy?.enabled) setWordchainPreviewOn(false);
   }, [project?.export_pause_policy?.enabled]);
 
-  const words = useMemo(() => {
+  const rawWords = useMemo(() => {
     const w = project?.transcript_normalized?.words;
     return Array.isArray(w) ? (w as ClipWord[]) : [];
   }, [project]);
+
+  useEffect(() => {
+    if (!rawWords.length) {
+      setAudioSegments([]);
+      return;
+    }
+    setAudioSegments((prev) => (prev.length ? prev : buildInitialAudioSegments(rawWords)));
+  }, [rawWords]);
+
+  const words = useMemo(() => reorderWordsBySegments(rawWords, audioSegments), [rawWords, audioSegments]);
+  const rawWordById = useMemo(() => new Map(rawWords.map((w) => [w.id, w])), [rawWords]);
 
   const roughCutExemptSet = useMemo(
     () => buildRoughCutExemptSet(project?.rough_cut_lexicon_exempt),
@@ -818,6 +897,13 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   }, []);
 
   const snapSeekMs = useCallback((seekMs: number) => snapMsNearWordEdges(words, seekMs, 140), [words]);
+  const segmentEditLocked =
+    actionBusy ||
+    insertingSegmentAudio ||
+    project?.transcription_status === "running" ||
+    project?.transcription_status === "queued" ||
+    project?.export_status === "running" ||
+    project?.export_status === "queued";
 
   /** 有主音频文件即可走同源 /audio/file；避免仅 has_audio 未回写时无法试听 */
   const hasServerAudio =
@@ -951,9 +1037,148 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     void waveformRef.current?.play();
   }, []);
 
+  const pushSegmentHistory = useCallback((prev: EditorAudioSegment[]) => {
+    segmentUndoStackRef.current.push(prev.map((s) => ({ ...s, wordIds: [...s.wordIds] })));
+    if (segmentUndoStackRef.current.length > 80) segmentUndoStackRef.current.shift();
+    segmentRedoStackRef.current = [];
+  }, []);
+
+  const splitAtCursor = useCallback(
+    (mode: "split" | "left" | "right") => {
+      if (segmentEditLocked) return;
+      setAudioSegments((prev) => {
+        const idx = prev.findIndex((s) => playbackMs > s.startMs && playbackMs < s.endMs);
+        if (idx < 0) return prev;
+        const seg = prev[idx]!;
+        const cutMs = Math.max(seg.startMs + 80, Math.min(seg.endMs - 80, playbackMs));
+        const leftWordIds = seg.wordIds.filter((id) => (rawWordById.get(id)?.e_ms ?? 0) <= cutMs);
+        const rightWordIds = seg.wordIds.filter((id) => (rawWordById.get(id)?.s_ms ?? 0) >= cutMs);
+        const left: EditorAudioSegment = { ...seg, id: `${seg.id}-l-${cutMs}`, endMs: cutMs, wordIds: leftWordIds };
+        const right: EditorAudioSegment = { ...seg, id: `${seg.id}-r-${cutMs}`, startMs: cutMs, wordIds: rightWordIds };
+        const next = [...prev];
+        if (mode === "split") {
+          next.splice(idx, 1, left, right);
+        } else if (mode === "left") {
+          next.splice(idx, 1, left);
+        } else {
+          next.splice(idx, 1, right);
+        }
+        pushSegmentHistory(prev);
+        if (mode === "left" || mode === "split") {
+          const wid = left.wordIds[left.wordIds.length - 1];
+          if (wid) setFocusedWordId(wid);
+        }
+        if (mode === "right" || mode === "split") {
+          const wid = right.wordIds[0];
+          if (wid) setFocusedWordId(wid);
+        }
+        return normalizeSegmentTimeline(next);
+      });
+    },
+    [
+      playbackMs,
+      pushSegmentHistory,
+      rawWordById,
+      segmentEditLocked
+    ]
+  );
+
+  const undoSegmentEdit = useCallback(() => {
+    const snap = segmentUndoStackRef.current.pop();
+    if (!snap) return;
+    setAudioSegments((prev) => {
+      segmentRedoStackRef.current.push(prev.map((s) => ({ ...s, wordIds: [...s.wordIds] })));
+      return snap.map((s) => ({ ...s, wordIds: [...s.wordIds] }));
+    });
+  }, []);
+
+  const reorderSegments = useCallback(
+    (fromId: string, toId: string) => {
+      if (segmentEditLocked) return;
+      if (!fromId || !toId || fromId === toId) return;
+      setAudioSegments((prev) => {
+        const fromIx = prev.findIndex((x) => x.id === fromId);
+        const toIx = prev.findIndex((x) => x.id === toId);
+        if (fromIx < 0 || toIx < 0) return prev;
+        const next = [...prev];
+        const [moved] = next.splice(fromIx, 1);
+        next.splice(toIx, 0, moved!);
+        pushSegmentHistory(prev);
+        setDropTargetSegmentId(null);
+        void fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/staging/reorder`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ segment_ids: next.map((x) => x.id) })
+        }).catch(() => {});
+        return normalizeSegmentTimeline(next);
+      });
+    },
+    [getAuthHeaders, projectId, pushSegmentHistory, segmentEditLocked]
+  );
+
+  const uploadInsertedAudioAtBoundary = useCallback(
+    async (file: File, boundaryIndex: number) => {
+      if (segmentEditLocked) return;
+      setInsertingSegmentAudio(true);
+      const durationFromFile = await new Promise<number>((resolve) => {
+        const audioEl = document.createElement("audio");
+        const objectUrl = URL.createObjectURL(file);
+        audioEl.src = objectUrl;
+        audioEl.onloadedmetadata = () => {
+          const v = Number.isFinite(audioEl.duration) ? Math.round(audioEl.duration * 1000) : 3000;
+          URL.revokeObjectURL(objectUrl);
+          resolve(Math.max(500, v));
+        };
+        audioEl.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve(3000);
+        };
+      });
+      try {
+        const stageRes = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "content-type": file.type || "application/octet-stream",
+            "x-clip-filename": encodeClipFilenameForHttpHeader(file.name, "segment.mp3"),
+            ...getAuthHeaders()
+          },
+          body: file
+        });
+        const stageData = (await stageRes.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+        if (!stageRes.ok || stageData.success === false) {
+          throw new Error(stageData.detail || `暂存失败 ${stageRes.status}`);
+        }
+        setAudioSegments((prev) => {
+          const next = [...prev];
+          const anchor = boundaryIndex <= 0 ? prev[0]?.startMs ?? 0 : prev[boundaryIndex - 1]?.endMs ?? 0;
+          const seg: EditorAudioSegment = {
+            id: `inserted-${Date.now()}`,
+            startMs: anchor,
+            endMs: anchor + durationFromFile,
+            source: "inserted",
+            transcribed: false,
+            wordIds: []
+          };
+          next.splice(Math.max(0, Math.min(boundaryIndex, next.length)), 0, seg);
+          pushSegmentHistory(prev);
+          return normalizeSegmentTimeline(next);
+        });
+      } finally {
+        setInsertingSegmentAudio(false);
+      }
+    },
+    [getAuthHeaders, projectId, pushSegmentHistory, segmentEditLocked]
+  );
+
   const transcriptionActive =
     project?.transcription_status === "running" || project?.transcription_status === "queued";
   const exportActive = project?.export_status === "running" || project?.export_status === "queued";
+  const pendingInsertedSegments = useMemo(
+    () => audioSegments.filter((s) => s.source === "inserted" && !s.transcribed),
+    [audioSegments]
+  );
   const dualInterview = isDualChannels(project?.channel_ids);
 
   const activeWordIndex = useMemo(
@@ -1726,14 +1951,34 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setActionBusy(true);
     setErr("");
     try {
+      const pendingInserted = pendingInsertedSegments;
+      const payload =
+        pendingInserted.length > 0
+          ? {
+              mode: "partial",
+              segments: pendingInserted.map((seg) => ({
+                id: seg.id,
+                start_ms: seg.startMs,
+                end_ms: seg.endMs
+              }))
+            }
+          : { mode: "full" };
       const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/transcribe`, {
         method: "POST",
         credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() }
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(payload)
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
       if (!res.ok || data.success === false) {
         throw new Error(data.detail || `提交转写失败 ${res.status}`);
+      }
+      if (pendingInserted.length > 0) {
+        setAudioSegments((prev) =>
+          prev.map((seg) =>
+            seg.source === "inserted" ? { ...seg, transcribed: true } : seg
+          )
+        );
       }
       await load();
     } catch (e) {
@@ -2187,10 +2432,11 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               exportLabel={t("clip.editor.export")}
               transcribeDisabled={
                 actionBusy ||
+                insertingSegmentAudio ||
                 !hasServerAudio ||
                 project.transcription_status === "running" ||
                 project.transcription_status === "queued" ||
-                project.transcription_status === "succeeded"
+                (project.transcription_status === "succeeded" && pendingInsertedSegments.length === 0)
               }
               exportDisabled={
                 actionBusy ||
@@ -2344,39 +2590,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         {t("clip.editor.exportingBody")}
                       </div>
                     ) : null}
-                    {durationMs ? (
-                      <div className="mb-2 rounded-lg border border-line/60 bg-fill/20 px-2 py-1">
-                        <div className="relative h-2 rounded bg-line/40">
-                          {playbackMs > 0 ? (
-                            <button
-                              type="button"
-                              className="absolute top-0 h-2 w-1 rounded bg-brand"
-                              style={{ left: `${Math.max(0, Math.min(100, (playbackMs / durationMs) * 100))}%` }}
-                              onClick={() => seekPreviewMs(playbackMs)}
-                            />
-                          ) : null}
-                          {focusedWordId ? (
-                            <button
-                              type="button"
-                              className="absolute top-0 h-2 w-1 rounded bg-emerald-500"
-                              style={{
-                                left: `${Math.max(
-                                  0,
-                                  Math.min(
-                                    100,
-                                    ((words.find((w) => w.id === focusedWordId)?.s_ms ?? 0) / durationMs) * 100
-                                  )
-                                )}%`
-                              }}
-                              onClick={() => {
-                                const w = words.find((x) => x.id === focusedWordId);
-                                if (w) seekPreviewMs(w.s_ms);
-                              }}
-                            />
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
                     <div className="min-h-0 min-w-0 flex-1" onPointerDownCapture={onTranscriptBlankPointerDown}>
                       <VirtualizedTranscript
                         ref={transcriptRef}
@@ -2477,24 +2690,65 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           </button>
                         </div>
                       ) : null}
-                      <AudioConsole
-                        dockEmbed
-                        audioUrl={waveformAudioUrl}
-                        onTimeMs={handlePlaybackTimeMs}
-                        onLoadError={handleWaveformLoadError}
-                        waveformRef={waveformRef}
-                        snapSeekMs={snapSeekMs}
-                        playbackRate={playbackRate}
-                        onPlaybackRateChange={setPlaybackRate}
-                        mirrorWaveformCount={dualChannelMirror ? 1 : 0}
-                        multiTrackHint={dualChannelMirror ? t("presto.flow.audioMultiTrack.dualHint") : undefined}
-                        rateOptionLabels={[
-                          t("presto.flow.playbackRate1"),
-                          t("presto.flow.playbackRate125"),
-                          t("presto.flow.playbackRate150"),
-                          t("presto.flow.playbackRate200")
-                        ]}
-                        rateSelectAriaLabel={t("presto.flow.playbackRateAria")}
+                      <WaveformSegmentEditor
+                        segments={audioSegments}
+                        zoomLevel={waveZoomLevel}
+                        onZoomChange={(next) => {
+                          setWaveZoomLevel(next);
+                          waveformRef.current?.setZoom(next);
+                        }}
+                        onSplit={() => splitAtCursor("split")}
+                        onSplitLeft={() => splitAtCursor("left")}
+                        onSplitRight={() => splitAtCursor("right")}
+                        onUndo={undoSegmentEdit}
+                        undoDisabled={segmentUndoStackRef.current.length === 0}
+                        onInsertAtBoundary={(boundaryIndex) => {
+                          insertBoundaryIndexRef.current = boundaryIndex;
+                          setInsertMenuBoundaryIndex(boundaryIndex);
+                        }}
+                        onReorder={reorderSegments}
+                        activeDropSegmentId={dropTargetSegmentId}
+                        onHoverDropTarget={setDropTargetSegmentId}
+                        disabled={segmentEditLocked}
+                      />
+                      {insertMenuBoundaryIndex != null ? (
+                        <div className="mt-2 flex items-center gap-2 rounded-md border border-line/70 bg-surface/70 px-2 py-1.5 text-[11px]">
+                          <span className="text-muted">在该边界插入音频：</span>
+                          <button
+                            type="button"
+                            disabled={segmentEditLocked}
+                            className="rounded border border-line bg-surface px-2 py-0.5 hover:bg-fill"
+                            onClick={() => {
+                              insertBoundaryIndexRef.current = insertMenuBoundaryIndex;
+                              insertAudioInputRef.current?.click();
+                            }}
+                          >
+                            {insertingSegmentAudio ? "上传中..." : "本地上传"}
+                          </button>
+                          <button
+                            type="button"
+                            className="ml-auto rounded border border-line bg-surface px-2 py-0.5 text-muted hover:bg-fill"
+                            onClick={() => setInsertMenuBoundaryIndex(null)}
+                          >
+                            关闭
+                          </button>
+                        </div>
+                      ) : null}
+                      <input
+                        ref={insertAudioInputRef}
+                        type="file"
+                        className="sr-only"
+                        accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          const ix = insertBoundaryIndexRef.current;
+                          if (!f || ix == null) return;
+                          void uploadInsertedAudioAtBoundary(f, ix).catch((error) => {
+                            setErr(String(error instanceof Error ? error.message : error));
+                          });
+                          setInsertMenuBoundaryIndex(null);
+                          e.currentTarget.value = "";
+                        }}
                       />
                     </div>
                     <div className="flex min-h-0 min-w-0 flex-1 flex-col px-2 pb-2 pt-2">
@@ -2907,6 +3161,31 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               </div>
             )}
           </div>
+          <AudioConsole
+            dockEmbed
+            audioUrl={waveformAudioUrl}
+            onTimeMs={handlePlaybackTimeMs}
+            onLoadError={handleWaveformLoadError}
+            waveformRef={waveformRef}
+            snapSeekMs={snapSeekMs}
+            playbackRate={playbackRate}
+            onPlaybackRateChange={setPlaybackRate}
+            mirrorWaveformCount={dualChannelMirror ? 1 : 0}
+            multiTrackHint={dualChannelMirror ? t("presto.flow.audioMultiTrack.dualHint") : undefined}
+            rateOptionLabels={[
+              t("presto.flow.playbackRate1"),
+              t("presto.flow.playbackRate125"),
+              t("presto.flow.playbackRate150"),
+              t("presto.flow.playbackRate200")
+            ]}
+            rateSelectAriaLabel={t("presto.flow.playbackRateAria")}
+            zoomLevel={waveZoomLevel}
+            durationMs={durationMs}
+            currentTimeMs={playbackMs}
+            onSeekMs={(ms) => {
+              waveformRef.current?.seekToMs(ms);
+            }}
+          />
         </div>
       </div>
   );

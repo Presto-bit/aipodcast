@@ -1386,7 +1386,7 @@ def _clip_owner_uuid_str(uid: Any) -> str | None:
     return s or None
 
 
-def run_clip_transcription_job(project_id: str) -> dict[str, Any]:
+def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False) -> dict[str, Any]:
     from pathlib import Path
 
     from .clip_audio_merge import ffprobe_audio_channels
@@ -1412,11 +1412,11 @@ def run_clip_transcription_job(project_id: str) -> dict[str, Any]:
     owner = _clip_owner_uuid_str(row.get("user_id"))
     t_st = str(row.get("transcription_status") or "").strip() or "idle"
     logger.info("clip transcribe worker_start project_id=%s transcription_status=%s", pid, t_st)
-    if t_st == "succeeded" and row.get("transcript_normalized"):
+    if t_st == "succeeded" and row.get("transcript_normalized") and not force_retranscribe:
         return {"status": "skipped", "reason": "already_succeeded"}
     if t_st == "running":
         return {"status": "skipped", "reason": "already_running"}
-    if t_st in ("idle", "failed"):
+    if t_st in ("idle", "failed") or (force_retranscribe and t_st == "succeeded"):
         if not try_claim_clip_transcription_queued(project_id=pid, user_uuid=owner):
             return {"status": "skipped", "reason": "transcription_claim_failed"}
     elif t_st != "queued":
