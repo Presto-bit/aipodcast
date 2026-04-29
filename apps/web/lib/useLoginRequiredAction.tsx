@@ -15,7 +15,7 @@ export function useLoginRequiredAction(loggedIn: boolean) {
   const [pendingAction, setPendingAction] = useState("");
 
   const currentPath = useMemo(() => {
-    const qs = searchParams.toString();
+    const qs = searchParams?.toString() || "";
     const hash = typeof window === "undefined" ? "" : window.location.hash || "";
     return `${pathname || "/"}${qs ? `?${qs}` : ""}${hash}`;
   }, [pathname, searchParams]);

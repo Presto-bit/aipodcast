@@ -61,6 +61,8 @@ export type VirtualizedTranscriptHandle = {
 type Props = {
   lines: SpeakerLine[];
   excluded: Set<string>;
+  /** 段切换起始词 id，用于在文稿中显示音频衔接标识 */
+  segmentBoundaryWordIds?: ReadonlySet<string>;
   playbackWordId: string | null;
   /** 与播放进度对应的「句」行索引，用于整句弱高亮 */
   playbackLineIndex?: number | null;
@@ -118,6 +120,7 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
   {
     lines,
     excluded,
+    segmentBoundaryWordIds,
     playbackWordId,
     playbackLineIndex = null,
     focusedWordId,
@@ -422,8 +425,22 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
                 <div className="min-w-0 whitespace-pre-wrap break-words text-left text-sm leading-normal [word-break:break-word]">
                   <span className="inline-flex flex-wrap content-start gap-x-0 gap-y-0.5">
                   {line.units.flatMap((u) => {
+                    const firstWordId = u.kind === "single" ? u.word.id : (u.words[0]?.id ?? "");
+                    const boundaryMarker = firstWordId && segmentBoundaryWordIds?.has(firstWordId)
+                      ? [
+                          <span
+                            key={`seg-boundary-${firstWordId}`}
+                            className="mx-1 inline-flex h-4 items-center rounded border border-brand/35 bg-brand/10 px-1 text-[9px] font-medium leading-none text-brand/90"
+                            title="音频切割衔接"
+                            aria-label="音频切割衔接"
+                          >
+                            |
+                          </span>
+                        ]
+                      : [];
                     if (u.kind === "single") {
                       return [
+                        ...boundaryMarker,
                         <WordBlock
                           key={u.word.id}
                           word={u.word}
@@ -445,27 +462,31 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
                     }
                     const stutterSuggestionId = `stutter-${u.words[0]!.id}`;
                     if (dismissedRoughKeys?.has(stutterSuggestionId)) {
-                      return u.words.map((w) => (
-                        <WordBlock
-                          key={w.id}
-                          word={w}
-                          excluded={excluded.has(w.id)}
-                          playbackActive={playbackWordId === w.id}
-                          focused={focusedWordId === w.id}
-                          multiSelectActive={multiSelectIds.has(w.id)}
-                          ariaKeepLabel={ariaKeepLabel}
-                          ariaCutLabel={ariaCutLabel}
-                          onActivate={onActivateWord}
-                          onFocusId={onFocusWordId}
-                          onLongPress={onLongPressWord}
-                          onRangeDragPointerDown={onRangeDragPointerDown}
-                          onRangeDragPointerEnter={onRangeDragPointerEnter}
-                          suggestionMarker={markersByWordId?.[w.id]}
-                          roughCutHighlight={Boolean(roughCutHighlightIds?.has(w.id))}
-                        />
-                      ));
+                      return [
+                        ...boundaryMarker,
+                        ...u.words.map((w) => (
+                          <WordBlock
+                            key={w.id}
+                            word={w}
+                            excluded={excluded.has(w.id)}
+                            playbackActive={playbackWordId === w.id}
+                            focused={focusedWordId === w.id}
+                            multiSelectActive={multiSelectIds.has(w.id)}
+                            ariaKeepLabel={ariaKeepLabel}
+                            ariaCutLabel={ariaCutLabel}
+                            onActivate={onActivateWord}
+                            onFocusId={onFocusWordId}
+                            onLongPress={onLongPressWord}
+                            onRangeDragPointerDown={onRangeDragPointerDown}
+                            onRangeDragPointerEnter={onRangeDragPointerEnter}
+                            suggestionMarker={markersByWordId?.[w.id]}
+                            roughCutHighlight={Boolean(roughCutHighlightIds?.has(w.id))}
+                          />
+                        ))
+                      ];
                     }
                     return [
+                      ...boundaryMarker,
                       <StutterGroup
                         key={`${u.words[0]!.id}-stutter-${u.words.length}`}
                         words={u.words}

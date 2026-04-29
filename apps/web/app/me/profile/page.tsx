@@ -46,7 +46,7 @@ export default function MeProfilePage() {
       setAuthError("");
       try {
         await login(authPhone.trim(), authPassword);
-        const target = consumePostAuthReturnTo(searchParams.get("returnTo"));
+        const target = consumePostAuthReturnTo(searchParams?.get("returnTo") ?? null);
         if (target) router.replace(target);
       } catch (err) {
         setAuthError(String(err instanceof Error ? err.message : err));
@@ -75,7 +75,7 @@ export default function MeProfilePage() {
         code: regOtp
       });
       await registerComplete({ registration_ticket, password: authPassword });
-      const target = consumePostAuthReturnTo(searchParams.get("returnTo"));
+      const target = consumePostAuthReturnTo(searchParams?.get("returnTo") ?? null);
       if (target) router.replace(target);
       setRegCodeSent(false);
       setRegOtp("");
