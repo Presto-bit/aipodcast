@@ -1023,18 +1023,39 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setErr("");
     try {
       const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ title: nextTitle })
       });
-      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string; project?: ClipProjectRow };
+      const rawText = await res.text().catch(() => "");
+      const data = ((() => {
+        try {
+          return rawText ? JSON.parse(rawText) : {};
+        } catch {
+          return {};
+        }
+      })()) as { success?: boolean; detail?: string; error?: string; project?: ClipProjectRow };
       if (!res.ok || data.success === false) {
-        throw new Error(data.detail || `重命名失败 ${res.status}`);
+        const detail = String(data.detail || data.error || "").trim();
+        const hint = detail || rawText || `HTTP ${res.status}`;
+        console.error("[clip][editor-rename] project rename failed", {
+          projectId,
+          method: "POST",
+          status: res.status,
+          statusText: res.statusText,
+          response: rawText
+        });
+        throw new Error(`重命名失败（${res.status}）: ${hint}`);
       }
       setProject((prev) => (prev ? { ...prev, title: nextTitle } : prev));
       setProjectTitleEditing(false);
     } catch (e) {
+      console.error("[clip][editor-rename] project rename exception", {
+        projectId,
+        method: "POST",
+        error: String(e instanceof Error ? e.message : e)
+      });
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
       setProjectTitleBusy(false);

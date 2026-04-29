@@ -454,6 +454,7 @@ def admin_reset_tts_polish_prompts(request: Request):
 
 
 @router.patch("/jobs/{job_id}/podcast-template")
+@router.post("/jobs/{job_id}/podcast-template")
 def admin_patch_job_podcast_template(job_id: str, request: Request, body: AdminPodcastTemplatePatch):
     """将成功播客成片标记为（或取消）全站创作页模板。"""
     _require_admin_phone(request)

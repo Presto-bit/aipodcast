@@ -228,6 +228,7 @@ def auth_change_password_api(request: Request, body: AuthChangePasswordRequest):
 
 
 @router.patch("/profile")
+@router.post("/profile")
 def auth_profile_patch_api(request: Request, body: AuthProfilePatchRequest):
     if not auth_bridge.is_auth_enabled():
         raise HTTPException(status_code=400, detail="认证未启用")

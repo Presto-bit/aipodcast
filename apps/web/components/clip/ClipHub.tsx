@@ -118,22 +118,44 @@ export default function ClipHub() {
     setErr("");
     try {
       const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-        method: "PATCH",
+        method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ title })
       });
-      const data = (await res.json().catch(() => ({}))) as {
+      const rawText = await res.text().catch(() => "");
+      const data = ((() => {
+        try {
+          return rawText ? JSON.parse(rawText) : {};
+        } catch {
+          return {};
+        }
+      })()) as {
         success?: boolean;
         project?: ClipProjectRow;
         detail?: string;
+        error?: string;
       };
       if (!res.ok || data.success === false) {
-        throw new Error(data.detail || `重命名失败 ${res.status}`);
+        const detail = String(data.detail || data.error || "").trim();
+        const hint = detail || rawText || `HTTP ${res.status}`;
+        console.error("[clip][rename] project rename failed", {
+          projectId,
+          method: "POST",
+          status: res.status,
+          statusText: res.statusText,
+          response: rawText
+        });
+        throw new Error(`重命名失败（${res.status}）: ${hint}`);
       }
       setRenamingId(null);
       await load();
     } catch (e) {
+      console.error("[clip][rename] project rename exception", {
+        projectId,
+        method: "POST",
+        error: String(e instanceof Error ? e.message : e)
+      });
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
       setRenameBusy(false);

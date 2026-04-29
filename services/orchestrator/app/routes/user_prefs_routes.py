@@ -29,6 +29,7 @@ def get_user_preferences_api(request: Request):
 
 
 @router.patch("/preferences")
+@router.post("/preferences")
 def patch_user_preferences_api(request: Request, body: UserPreferencesPatchRequest):
     phone = _current_phone_or_401(request)
     ok, err = merge_user_preferences_for_phone(phone, dict(body.data or {}))
