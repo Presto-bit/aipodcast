@@ -375,6 +375,7 @@ def clip_get_project(project_id: str, request: Request):
 
 
 @router.patch("/clip/projects/{project_id}")
+@router.post("/clip/projects/{project_id}")
 def clip_patch_project(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
     uid = _owner_uuid(request)
     row = get_clip_project(project_id=project_id, user_uuid=uid)
