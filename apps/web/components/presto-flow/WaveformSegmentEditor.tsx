@@ -44,15 +44,15 @@ function ToolButton({
 
 function CutModeIcon({ mode }: { mode: "split" | "left" | "right" }) {
   return (
-    <span className="relative inline-flex h-4 w-4 items-center justify-center">
-      <span className="absolute bottom-0 left-1/2 h-2 w-0 -translate-x-1/2 border-l border-brand/80" />
-      <span className="absolute left-1/2 top-[3px] h-0 w-[7px] -translate-x-[7px] rotate-[28deg] border-t border-brand/80" />
-      <span className="absolute left-1/2 top-[3px] h-0 w-[7px] -rotate-[28deg] border-t border-brand/80" />
+    <span className="relative inline-flex h-3.5 w-3.5 items-center justify-center text-ink">
+      <span className="absolute bottom-0 left-1/2 h-[7px] w-0 -translate-x-1/2 border-l border-current" />
+      <span className="absolute left-1/2 top-[2px] h-0 w-[6px] -translate-x-[6px] rotate-[28deg] border-t border-current" />
+      <span className="absolute left-1/2 top-[2px] h-0 w-[6px] -rotate-[28deg] border-t border-current" />
       {mode !== "split" ? (
         <span
           className={[
-            "absolute top-[1px] h-0 w-[8px] border-t border-dashed border-brand/90",
-            mode === "left" ? "right-[1px]" : "left-[1px]"
+            "absolute top-[1px] h-0 w-[7px] border-t border-dashed border-current",
+            mode === "left" ? "right-0" : "left-0"
           ].join(" ")}
         />
       ) : null}
@@ -107,7 +107,7 @@ export default function WaveformSegmentEditor({
           </button>
           {zoomPopoverOpen ? (
             <div className="absolute left-0 top-[calc(100%+6px)] z-[20] min-w-[220px] rounded-md border border-line bg-surface p-2 shadow-lg">
-              <p className="mb-2 text-[10px] text-muted">左右拖动缩放波形（1x~10x）</p>
+          <p className="mb-2 text-[10px] text-muted">左右拖动缩放波形（1x~10x）</p>
               <input
                 type="range"
                 min={1}
@@ -130,7 +130,7 @@ export default function WaveformSegmentEditor({
           <CutModeIcon mode="right" />
         </ToolButton>
         <ToolButton title="撤销" onClick={onUndo} disabled={disabled || undoDisabled}>
-          <Undo2 className="h-4 w-4" aria-hidden />
+          <Undo2 className="h-3.5 w-3.5" aria-hidden />
         </ToolButton>
       </div>
 

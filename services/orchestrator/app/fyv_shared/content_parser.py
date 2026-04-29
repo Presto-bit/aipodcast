@@ -8,6 +8,7 @@ import requests
 import zipfile
 import re
 import json
+import html as ihtml
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 
@@ -173,12 +174,12 @@ def _json_unescape_maybe(raw: str) -> str:
         return ""
     try:
         # 利用 JSON 字符串解码规则，处理 \n、\uXXXX、转义引号等。
-        return json.loads(f'"{s}"')
+        return ihtml.unescape(json.loads(f'"{s}"'))
     except Exception:
-        return s
+        return ihtml.unescape(s)
 
 
-def _extract_xiaohongshu_note_text(html: str) -> str:
+def _extract_xiaohongshu_note_text(html: str, note_id: str = "") -> str:
     """
     小红书网页正文常在 window.__INITIAL_STATE__.note.noteDetailMap.*.note.desc 中，
     DOM 可见文本不稳定时优先使用该数据。
@@ -186,9 +187,16 @@ def _extract_xiaohongshu_note_text(html: str) -> str:
     body = html or ""
     if not body:
         return ""
+    scope = body
+    nid = (note_id or "").strip()
+    # 先按 note_id 缩小范围，优先抓目标笔记，避免误命中站点其他脚本字段。
+    if nid:
+        p = body.find(f'"{nid}"')
+        if p >= 0:
+            scope = body[p:p + 220000]
     # 从脚本态里抓取 note.title / note.desc，desc 往往是完整正文。
-    desc_candidates = re.findall(r'"desc"\s*:\s*"((?:\\.|[^"\\])*)"', body, flags=re.S)
-    title_candidates = re.findall(r'"title"\s*:\s*"((?:\\.|[^"\\])*)"', body, flags=re.S)
+    desc_candidates = re.findall(r'"desc"\s*:\s*"((?:\\.|[^"\\])*)"', scope, flags=re.S)
+    title_candidates = re.findall(r'"title"\s*:\s*"((?:\\.|[^"\\])*)"', scope, flags=re.S)
     desc = ""
     if desc_candidates:
         desc = max((_json_unescape_maybe(x) for x in desc_candidates), key=lambda x: len(x or ""))
@@ -211,6 +219,15 @@ def _normalized_host(url: str) -> str:
     if netloc.startswith("www."):
         netloc = netloc[4:]
     return re.sub(r":\d+$", "", netloc)
+
+
+def _note_id_from_xiaohongshu_url(url: str) -> str:
+    try:
+        path = (urlparse(url).path or "").strip()
+    except Exception:
+        return ""
+    m = re.search(r"/explore/([a-zA-Z0-9]+)", path)
+    return (m.group(1) if m else "").strip()
 
 
 def _referer_for_url(url: str) -> str:
@@ -289,7 +306,7 @@ class ContentParser:
                 content = full_text
                 logs.append("使用整页去壳文本")
             if host.endswith("xiaohongshu.com"):
-                xhs_text = _extract_xiaohongshu_note_text(raw_html)
+                xhs_text = _extract_xiaohongshu_note_text(raw_html, _note_id_from_xiaohongshu_url(url))
                 if len((xhs_text or "").strip()) >= max(40, len((content or "").strip())):
                     content = xhs_text
                     logs.append("使用小红书脚本态正文抽取")

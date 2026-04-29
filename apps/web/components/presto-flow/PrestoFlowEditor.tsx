@@ -257,6 +257,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   >([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
+  const clipToolsWrapRef = useRef<HTMLDivElement | null>(null);
   const waveformRef = useRef<ClipWaveformHandle | null>(null);
   const transcriptRef = useRef<VirtualizedTranscriptHandle | null>(null);
   const autoStructuredSuggestionRequestedRef = useRef(false);
@@ -296,6 +297,18 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       if (actionHintTimerRef.current) clearTimeout(actionHintTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!clipToolsOpen) return;
+    const onDown = (e: globalThis.MouseEvent) => {
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      if (clipToolsWrapRef.current?.contains(t)) return;
+      setClipToolsOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [clipToolsOpen]);
 
   useEffect(() => {
     const onVis = () => {
@@ -2336,15 +2349,34 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               beforeTranscribe={
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
-                      onClick={() => setClipToolsOpen((v) => !v)}
-                    >
-                      <Scissors className="h-3.5 w-3.5" aria-hidden />
-                      <span>音频剪辑</span>
-                      <span className="text-muted">{clipToolsOpen ? "收起" : "展开"}</span>
-                    </button>
+                    <div ref={clipToolsWrapRef} className="relative">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
+                        onClick={() => setClipToolsOpen((v) => !v)}
+                      >
+                        <Scissors className="h-3.5 w-3.5" aria-hidden />
+                        <span>音频剪辑</span>
+                        <span className="text-muted">{clipToolsOpen ? "收起" : "展开"}</span>
+                      </button>
+                      {clipToolsOpen ? (
+                        <div className="absolute right-0 top-[calc(100%+6px)] z-[120] w-[min(66vw,26rem)] max-w-[26rem] min-w-[16rem] rounded-lg border border-line bg-surface p-2 shadow-xl">
+                          <WaveformSegmentEditor
+                            zoomLevel={waveZoomLevel}
+                            onZoomChange={(next) => {
+                              setWaveZoomLevel(next);
+                              waveformRef.current?.setZoom(next);
+                            }}
+                            onSplit={() => splitAtCursor("split")}
+                            onSplitLeft={() => splitAtCursor("left")}
+                            onSplitRight={() => splitAtCursor("right")}
+                            onUndo={undoSegmentEdit}
+                            undoDisabled={segmentUndoStackRef.current.length === 0}
+                            disabled={segmentEditLocked}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
                     <PrestoFlowImportBar
                       variant="inline"
                       projectId={projectId}
@@ -2626,23 +2658,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           >
                             {t("presto.flow.roughCut.wordchainPreviewExit")}
                           </button>
-                        </div>
-                      ) : null}
-                      {clipToolsOpen ? (
-                        <div className="mb-2">
-                          <WaveformSegmentEditor
-                            zoomLevel={waveZoomLevel}
-                            onZoomChange={(next) => {
-                              setWaveZoomLevel(next);
-                              waveformRef.current?.setZoom(next);
-                            }}
-                            onSplit={() => splitAtCursor("split")}
-                            onSplitLeft={() => splitAtCursor("left")}
-                            onSplitRight={() => splitAtCursor("right")}
-                            onUndo={undoSegmentEdit}
-                            undoDisabled={segmentUndoStackRef.current.length === 0}
-                            disabled={segmentEditLocked}
-                          />
                         </div>
                       ) : null}
                       <div className="mb-2 h-20 overflow-hidden rounded-lg border border-line bg-track/40">
