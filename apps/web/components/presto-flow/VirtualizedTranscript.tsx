@@ -111,8 +111,6 @@ type Props = {
     jumpWordId: string | null;
   }>;
   onSetAudioEventAction?: (eventId: string, nextAction: "keep" | "cut" | "duck") => void;
-  collapsedSpeakers?: ReadonlySet<number>;
-  onToggleSpeakerCollapse?: (speaker: number) => void;
   speakerFilterSet?: ReadonlySet<number> | null;
 };
 
@@ -150,8 +148,6 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
     onJumpToSilence,
     audioEventCards,
     onSetAudioEventAction,
-    collapsedSpeakers,
-    onToggleSpeakerCollapse,
     speakerFilterSet
   },
   ref
@@ -244,7 +240,6 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
           const speaker = speakerNames?.[line.speaker] ?? speakerLabel(line.speaker, hostLabel, guestLabel);
           const startTimeLabel = formatLineStart(lineStartMs(line));
           const inEdit = editingSpeaker === line.speaker;
-          const speakerCollapsed = Boolean(collapsedSpeakers?.has(line.speaker));
           const prevLineEnd = vi.index > 0 ? lineEndMs(visibleLines[vi.index - 1]!) : -1;
           const curLineStart = lineStart(line);
           const inlineSilenceCards = (silenceCards || []).filter((c) => c.start >= prevLineEnd && c.start < curLineStart);
@@ -417,24 +412,13 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
                       type="button"
                       className="rounded px-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand hover:bg-brand/10"
                       onDoubleClick={() => setEditingSpeaker(line.speaker)}
-                      title="Double click to rename speaker"
+                      title="双击修改说话人名称"
                     >
                       {speaker}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    className="rounded border border-line/70 px-1 text-[9px] text-muted hover:bg-fill"
-                    onClick={() => onToggleSpeakerCollapse?.(line.speaker)}
-                    title={speakerCollapsed ? "展开该说话人" : "折叠该说话人"}
-                  >
-                    {speakerCollapsed ? "展开" : "折叠"}
-                  </button>
                   <span className="text-[10px] tabular-nums text-muted">{startTimeLabel}</span>
                 </div>
-                {speakerCollapsed ? (
-                  <div className="min-w-0 text-[11px] text-muted">（已折叠）</div>
-                ) : (
                 <div className="min-w-0 whitespace-pre-wrap break-words text-left text-sm leading-normal [word-break:break-word]">
                   <span className="inline-flex flex-wrap content-start gap-x-0 gap-y-0.5">
                   {line.units.flatMap((u) => {
@@ -507,7 +491,6 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
                   })}
                   </span>
                 </div>
-                )}
               </div>
             </div>
           );

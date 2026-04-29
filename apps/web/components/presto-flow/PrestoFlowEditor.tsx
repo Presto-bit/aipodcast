@@ -213,7 +213,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [waveZoomLevel, setWaveZoomLevel] = useState(1);
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
   const [clipToolsOpen, setClipToolsOpen] = useState(false);
-  const [waveformFullscreen, setWaveformFullscreen] = useState(false);
+  const [clipToolsAlign, setClipToolsAlign] = useState<"left" | "right">("left");
   const [insertingSegmentAudio, setInsertingSegmentAudio] = useState(false);
   /** 词链试听：与终版导出同 ffmpeg 算法，单独对象键；波形 URL 切换，稿面时间戳仍对原片 */
   const [wordchainPreviewOn, setWordchainPreviewOn] = useState(false);
@@ -230,8 +230,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [speakerNames, setSpeakerNames] = useState<Record<number, string>>({});
   const [audioEventsAnalyzeBusy, setAudioEventsAnalyzeBusy] = useState(false);
   const [audioEventsAnalyzeHint, setAudioEventsAnalyzeHint] = useState<string | null>(null);
-  const [collapsedSpeakers, setCollapsedSpeakers] = useState<Set<number>>(() => new Set());
   const [speakerFocusSet, setSpeakerFocusSet] = useState<Set<number>>(() => new Set());
+  const [onlySelectedSpeakers, setOnlySelectedSpeakers] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [actionHint, setActionHint] = useState<string>("");
   const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number; visible: boolean }>({
@@ -300,14 +300,28 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     if (!clipToolsOpen) return;
+    const recalc = () => {
+      const el = clipToolsWrapRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const panelMinWidth = 256; // min-w-[16rem]
+      const rightSpace = window.innerWidth - rect.left;
+      const leftSpace = rect.right;
+      setClipToolsAlign(rightSpace >= panelMinWidth || rightSpace >= leftSpace ? "right" : "left");
+    };
+    recalc();
     const onDown = (e: globalThis.MouseEvent) => {
       const t = e.target;
       if (!(t instanceof Node)) return;
       if (clipToolsWrapRef.current?.contains(t)) return;
       setClipToolsOpen(false);
     };
+    window.addEventListener("resize", recalc);
     document.addEventListener("mousedown", onDown, true);
-    return () => document.removeEventListener("mousedown", onDown, true);
+    return () => {
+      window.removeEventListener("resize", recalc);
+      document.removeEventListener("mousedown", onDown, true);
+    };
   }, [clipToolsOpen]);
 
   useEffect(() => {
@@ -342,12 +356,16 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   useEffect(() => {
     setAudioEventsAnalyzeHint(null);
     setAudioEventsAnalyzeBusy(false);
-    setCollapsedSpeakers(new Set());
     setSpeakerFocusSet(new Set());
+    setOnlySelectedSpeakers(false);
     setShortcutHelpOpen(false);
     setActionHint("");
     setSelectedHistoryId(null);
   }, [projectId]);
+
+  useEffect(() => {
+    if (speakerFocusSet.size === 0) setOnlySelectedSpeakers(false);
+  }, [speakerFocusSet]);
 
   const pushActionHint = useCallback((msg: string) => {
     setActionHint(msg);
@@ -824,6 +842,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const focusedSpeakerExcludedIds = useMemo(
     () => focusedSpeakerWordIds.filter((id) => excluded.has(id)),
     [excluded, focusedSpeakerWordIds]
+  );
+  const transcriptSpeakerFilterSet = useMemo(
+    () => (onlySelectedSpeakers ? speakerFocusSet : null),
+    [onlySelectedSpeakers, speakerFocusSet]
   );
   const formatHistoryTime = useCallback((ts: number) => {
     try {
@@ -2360,7 +2382,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         <span className="text-muted">{clipToolsOpen ? "收起" : "展开"}</span>
                       </button>
                       {clipToolsOpen ? (
-                        <div className="absolute right-0 top-[calc(100%+6px)] z-[120] w-[min(66vw,26rem)] max-w-[26rem] min-w-[16rem] rounded-lg border border-line bg-surface p-2 shadow-xl">
+                        <div
+                          className={[
+                            "absolute top-[calc(100%+6px)] z-[120] w-[min(66vw,26rem)] max-w-[26rem] min-w-[16rem] rounded-lg border border-line bg-surface p-2 shadow-xl",
+                            clipToolsAlign === "right" ? "left-0" : "right-0"
+                          ].join(" ")}
+                        >
                           <WaveformSegmentEditor
                             zoomLevel={waveZoomLevel}
                             onZoomChange={(next) => {
@@ -2504,6 +2531,16 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             <>
                               <button
                                 type="button"
+                                className={[
+                                  "rounded border px-1.5 py-0.5",
+                                  onlySelectedSpeakers ? "border-brand/50 text-brand" : "border-line text-muted hover:bg-fill"
+                                ].join(" ")}
+                                onClick={() => setOnlySelectedSpeakers((v) => !v)}
+                              >
+                                只看已选说话人
+                              </button>
+                              <button
+                                type="button"
                                 className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
                                 onClick={() => markManyExcluded(focusedSpeakerWordIds)}
                               >
@@ -2598,16 +2635,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         }}
                         audioEventCards={transcriptAudioEventCards}
                         onSetAudioEventAction={(id, action) => void setAudioEventAction(id, action)}
-                        collapsedSpeakers={collapsedSpeakers}
-                        onToggleSpeakerCollapse={(speaker) =>
-                          setCollapsedSpeakers((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(speaker)) next.delete(speaker);
-                            else next.add(speaker);
-                            return next;
-                          })
-                        }
-                        speakerFilterSet={speakerFocusSet}
+                        speakerFilterSet={transcriptSpeakerFilterSet}
                       />
                     </div>
                   </div>
@@ -2663,15 +2691,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       <div className="mb-2 h-20 overflow-hidden rounded-lg border border-line bg-track/40">
                         {waveformAudioUrl ? (
                           <div className="group relative h-full w-full">
-                            <button
-                              type="button"
-                              className="absolute right-2 top-2 z-[4] inline-flex h-6 w-6 items-center justify-center rounded-md border border-line/80 bg-surface/80 text-ink hover:bg-fill"
-                              aria-label={waveformFullscreen ? "退出波形全屏" : "波形全屏编辑"}
-                              title={waveformFullscreen ? "退出波形全屏" : "波形全屏编辑"}
-                              onClick={() => setWaveformFullscreen(true)}
-                            >
-                              <Maximize2 className="h-3.5 w-3.5" aria-hidden />
-                            </button>
                             <button
                               type="button"
                               className="absolute left-0 top-0 z-[3] h-full w-5 -translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
@@ -2784,6 +2803,16 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                               <>
                                 <button
                                   type="button"
+                                  className={[
+                                    "rounded border px-1.5 py-0.5",
+                                    onlySelectedSpeakers ? "border-brand/50 text-brand" : "border-line text-muted hover:bg-fill"
+                                  ].join(" ")}
+                                  onClick={() => setOnlySelectedSpeakers((v) => !v)}
+                                >
+                                  只看已选说话人
+                                </button>
+                                <button
+                                  type="button"
                                   className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
                                   onClick={() => markManyExcluded(focusedSpeakerWordIds)}
                                 >
@@ -2878,16 +2907,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           }}
                           audioEventCards={transcriptAudioEventCards}
                           onSetAudioEventAction={(id, action) => void setAudioEventAction(id, action)}
-                          collapsedSpeakers={collapsedSpeakers}
-                          onToggleSpeakerCollapse={(speaker) =>
-                            setCollapsedSpeakers((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(speaker)) next.delete(speaker);
-                              else next.add(speaker);
-                              return next;
-                            })
-                          }
-                          speakerFilterSet={speakerFocusSet}
+                          speakerFilterSet={transcriptSpeakerFilterSet}
                         />
                       </div>
                     </div>
@@ -3112,82 +3132,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               </div>
             )}
           </div>
-          {waveformFullscreen ? (
-            <div className="fixed inset-0 z-[13000] bg-canvas/95 p-4 backdrop-blur-sm">
-              <div className="flex h-full w-full flex-col rounded-xl border border-line bg-surface p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-ink">波形全屏编辑</p>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink hover:bg-fill"
-                    onClick={() => setWaveformFullscreen(false)}
-                  >
-                    <Minimize2 className="h-3.5 w-3.5" aria-hidden />
-                    退出全屏
-                  </button>
-                </div>
-                {clipToolsOpen ? (
-                  <div className="mb-3">
-                    <WaveformSegmentEditor
-                      zoomLevel={waveZoomLevel}
-                      onZoomChange={(next) => {
-                        setWaveZoomLevel(next);
-                        waveformRef.current?.setZoom(next);
-                      }}
-                      onSplit={() => splitAtCursor("split")}
-                      onSplitLeft={() => splitAtCursor("left")}
-                      onSplitRight={() => splitAtCursor("right")}
-                      onUndo={undoSegmentEdit}
-                      undoDisabled={segmentUndoStackRef.current.length === 0}
-                      disabled={segmentEditLocked}
-                    />
-                  </div>
-                ) : null}
-                <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-line bg-track/35">
-                  <button
-                    type="button"
-                    className="absolute left-0 top-0 z-[3] h-full w-6 -translate-x-1/2 opacity-30 transition hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
-                    disabled={segmentEditLocked}
-                    aria-label="在开头插入音频"
-                    onClick={() => {
-                      insertBoundaryIndexRef.current = 0;
-                      insertAudioInputRef.current?.click();
-                    }}
-                  >
-                    <span className="absolute left-1/2 top-1/2 inline-flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-xs text-brand-foreground">
-                      +
-                    </span>
-                  </button>
-                  <ClipWaveformPanel
-                    ref={waveformRef}
-                    variant="panel"
-                    waveHeight={220}
-                    audioUrl={waveformAudioUrl}
-                    onTimeMs={handlePlaybackTimeMs}
-                    onLoadError={handleWaveformLoadError}
-                    playbackRate={playbackRate}
-                    snapSeekMs={snapSeekMs}
-                    zoomLevel={waveZoomLevel}
-                    className="!h-full !border-0 !bg-transparent"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-0 top-0 z-[3] h-full w-6 translate-x-1/2 opacity-30 transition hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
-                    disabled={segmentEditLocked}
-                    aria-label="在结尾插入音频"
-                    onClick={() => {
-                      insertBoundaryIndexRef.current = audioSegments.length;
-                      insertAudioInputRef.current?.click();
-                    }}
-                  >
-                    <span className="absolute left-1/2 top-1/2 inline-flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-xs text-brand-foreground">
-                      +
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
           <AudioConsole
             dockEmbed
             waveformRef={waveformRef}
