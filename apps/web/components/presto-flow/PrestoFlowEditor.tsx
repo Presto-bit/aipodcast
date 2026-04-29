@@ -1053,8 +1053,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     (mode: "split" | "left" | "right") => {
       if (segmentEditLocked) return;
       const cursorMs = Math.max(0, Math.round(waveformRef.current?.getCurrentTimeMs() ?? playbackMs));
+      let didSplit = false;
       setAudioSegments((prev) => {
-        const idx = prev.findIndex((s) => cursorMs >= s.startMs && cursorMs <= s.endMs);
+        let idx = prev.findIndex((s) => cursorMs >= s.startMs && cursorMs <= s.endMs);
+        if (idx < 0) idx = prev.findIndex((s) => cursorMs >= s.startMs - 120 && cursorMs <= s.endMs + 120);
         if (idx < 0) return prev;
         const seg = prev[idx]!;
         const cutMs = Math.max(seg.startMs + 80, Math.min(seg.endMs - 80, cursorMs));
@@ -1079,11 +1081,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           const wid = right.wordIds[0];
           if (wid) setFocusedWordId(wid);
         }
+        didSplit = true;
         return normalizeSegmentTimeline(next);
       });
+      pushActionHint(didSplit ? "切割成功" : "未命中可切割片段");
     },
     [
       playbackMs,
+      pushActionHint,
       pushSegmentHistory,
       rawWordById,
       segmentEditLocked
@@ -1582,9 +1587,41 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         return;
       }
 
+      if (e.shiftKey && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+        const ordered = words;
+        if (!ordered.length) return;
+        e.preventDefault();
+        const dir = e.code === "ArrowLeft" ? -1 : 1;
+        let anchor = rangeAnchorWordIdRef.current || focusedWordId || ordered[0]!.id;
+        if (ordered.findIndex((w) => w.id === anchor) < 0) anchor = focusedWordId || ordered[0]!.id;
+        const focus = focusedWordId || anchor;
+        const ix = ordered.findIndex((w) => w.id === focus);
+        if (ix < 0) return;
+        const j = ix + dir;
+        if (j < 0 || j >= ordered.length) return;
+        const nw = ordered[j]!;
+        const ids = wordIdsBetweenInclusive(ordered, anchor, nw.id);
+        setFocusedWordId(nw.id);
+        setMultiSelectIds(new Set(ids.length ? ids : [nw.id]));
+        leftDragMultiSelectRef.current = true;
+        transcriptRef.current?.scrollToWordId(nw.id);
+        return;
+      }
+
       if (!(e.ctrlKey || e.metaKey)) return;
       const elAct = document.activeElement as HTMLElement | null;
       if (isTypingTarget(elAct)) return;
+
+      if ((e.key === "a" || e.key === "A") && !e.shiftKey) {
+        e.preventDefault();
+        const ordered = words;
+        if (!ordered.length) return;
+        const ids = ordered.map((w) => w.id);
+        setMultiSelectIds(new Set(ids));
+        leftDragMultiSelectRef.current = false;
+        setFocusedWordId(ids[ids.length - 1] ?? null);
+        return;
+      }
 
       if (e.key === "f" || e.key === "F") {
         e.preventDefault();
@@ -1600,6 +1637,44 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       if (e.key === "s" || e.key === "S") {
         e.preventDefault();
         flushExcludedSave();
+        return;
+      }
+
+      if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
+        e.preventDefault();
+        const ordered = words;
+        if (!ordered.length) return;
+        const dir = e.code === "ArrowLeft" ? -1 : 1;
+        let anchor = focusedWordId;
+        if (multiSelectIds.size > 0) {
+          const ixs = [...multiSelectIds]
+            .map((id) => ordered.findIndex((w) => w.id === id))
+            .filter((i) => i >= 0);
+          if (ixs.length) {
+            const minI = Math.min(...ixs);
+            const maxI = Math.max(...ixs);
+            const edgeIx = dir < 0 ? minI : maxI;
+            anchor = ordered[edgeIx]!.id;
+          }
+        }
+        if (!anchor) {
+          const w = ordered[dir === 1 ? 0 : ordered.length - 1];
+          if (!w) return;
+          setFocusedWordId(w.id);
+          setMultiSelectIds(new Set([w.id]));
+          leftDragMultiSelectRef.current = true;
+          transcriptRef.current?.scrollToWordId(w.id);
+          return;
+        }
+        const ix = ordered.findIndex((w) => w.id === anchor);
+        if (ix < 0) return;
+        const j = ix + dir;
+        if (j < 0 || j >= ordered.length) return;
+        const nw = ordered[j]!;
+        setFocusedWordId(nw.id);
+        setMultiSelectIds(new Set([nw.id]));
+        leftDragMultiSelectRef.current = true;
+        transcriptRef.current?.scrollToWordId(nw.id);
         return;
       }
 
@@ -1686,6 +1761,50 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     leftDragMultiSelectRef.current = true;
   }, [words]);
 
+  useEffect(() => {
+    const root = transcriptScrollElRef.current;
+    if (!root) return;
+    const onDown = (ev: PointerEvent) => {
+      if (ev.pointerType && ev.pointerType !== "mouse") return;
+      if (ev.button !== 0) return;
+      const target = ev.target;
+      if (!(target instanceof Element)) return;
+      // Word blocks already have their own drag-selection handlers.
+      if (target.closest("[data-word-id]")) return;
+      const sx = ev.clientX;
+      const sy = ev.clientY;
+      let anchor: string | null = null;
+      rangeDragMovedRef.current = false;
+      const move = (mv: PointerEvent) => {
+        if ((mv.buttons & 1) !== 1) return;
+        if ((mv.clientX - sx) ** 2 + (mv.clientY - sy) ** 2 > 36) rangeDragMovedRef.current = true;
+        const curId = findWordIdUnderPoint(mv.clientX, mv.clientY);
+        if (!curId) return;
+        if (!anchor) {
+          anchor = curId;
+          setMultiSelectIds(new Set([curId]));
+          setFocusedWordId(curId);
+          leftDragMultiSelectRef.current = true;
+          return;
+        }
+        const ids = wordIdsBetweenInclusive(words, anchor, curId);
+        setMultiSelectIds(new Set(ids.length ? ids : [curId]));
+        setFocusedWordId(curId);
+        leftDragMultiSelectRef.current = true;
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    };
+    root.addEventListener("pointerdown", onDown, true);
+    return () => root.removeEventListener("pointerdown", onDown, true);
+  }, [findWordIdUnderPoint, words]);
+
   const autoSaveSnapshot = useCallback(async () => {
     try {
       await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/snapshots`, {
@@ -1747,6 +1866,31 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         skipNextWordActivateRef.current = false;
         return;
       }
+      if (e.shiftKey) {
+        e.preventDefault();
+        let anchor = rangeAnchorWordIdRef.current || focusedWordId || w.id;
+        if (words.findIndex((x) => x.id === anchor) < 0) anchor = w.id;
+        const ids = wordIdsBetweenInclusive(words, anchor, w.id);
+        setMultiSelectIds(new Set(ids.length ? ids : [w.id]));
+        setFocusedWordId(w.id);
+        // 与「框选」保持同一语义：都视为范围选区
+        leftDragMultiSelectRef.current = true;
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        setMultiSelectIds((prev) => {
+          const n = new Set(prev);
+          if (n.has(w.id)) n.delete(w.id);
+          else n.add(w.id);
+          return n;
+        });
+        rangeAnchorWordIdRef.current = w.id;
+        setFocusedWordId(w.id);
+        // 与「框选」保持同一语义：都视为范围选区
+        leftDragMultiSelectRef.current = true;
+        return;
+      }
       rangeAnchorWordIdRef.current = w.id;
       setMultiSelectIds(new Set([w.id]));
       setFocusedWordId(w.id);
@@ -1754,8 +1898,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       leftDragMultiSelectRef.current = true;
       sentenceAutopauseEndMsRef.current = null;
       waveformRef.current?.seekToMs(w.s_ms);
+      void waveformRef.current?.play();
     },
-    []
+    [focusedWordId, words]
   );
 
   const deleteSelectionFromToolbar = useCallback(() => {

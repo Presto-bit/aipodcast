@@ -77,15 +77,32 @@ export default function WaveformSegmentEditor({
   compact = false
 }: Props) {
   const [zoomPopoverOpen, setZoomPopoverOpen] = useState(false);
+  const [zoomPopoverPlacement, setZoomPopoverPlacement] = useState<"top" | "bottom">("bottom");
   const zoomWrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!zoomPopoverOpen) return;
+    const recalcPlacement = () => {
+      const el = zoomWrapRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const panelH = 116;
+      const gap = 8;
+      const spaceBelow = window.innerHeight - r.bottom - gap;
+      const spaceAbove = r.top - gap;
+      if (spaceBelow < panelH && spaceAbove > spaceBelow) setZoomPopoverPlacement("top");
+      else setZoomPopoverPlacement("bottom");
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setZoomPopoverOpen(false);
     };
+    recalcPlacement();
+    window.addEventListener("resize", recalcPlacement);
+    window.addEventListener("scroll", recalcPlacement, true);
     window.addEventListener("keydown", onKey);
     return () => {
+      window.removeEventListener("resize", recalcPlacement);
+      window.removeEventListener("scroll", recalcPlacement, true);
       window.removeEventListener("keydown", onKey);
     };
   }, [zoomPopoverOpen]);
@@ -106,8 +123,8 @@ export default function WaveformSegmentEditor({
           {zoomPopoverOpen ? (
             <div
               className={[
-                "absolute left-0 z-[220] min-w-[220px] rounded-md border border-line bg-surface p-2 shadow-lg",
-                compact ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"
+                "absolute left-0 z-[260] min-w-[220px] rounded-md border border-line bg-surface p-2 shadow-lg",
+                zoomPopoverPlacement === "top" ? "bottom-[calc(100%+8px)]" : "top-[calc(100%+6px)]"
               ].join(" ")}
             >
           <p className="mb-2 text-[10px] text-muted">左右拖动缩放波形（1x~10x）</p>
