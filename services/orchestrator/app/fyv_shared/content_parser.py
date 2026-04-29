@@ -167,6 +167,52 @@ def _extract_meta_content(soup: BeautifulSoup) -> str:
     return "\n".join(parts).strip()
 
 
+def _json_unescape_maybe(raw: str) -> str:
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    try:
+        # 利用 JSON 字符串解码规则，处理 \n、\uXXXX、转义引号等。
+        return json.loads(f'"{s}"')
+    except Exception:
+        return s
+
+
+def _extract_xiaohongshu_note_text(html: str) -> str:
+    """
+    小红书网页正文常在 window.__INITIAL_STATE__.note.noteDetailMap.*.note.desc 中，
+    DOM 可见文本不稳定时优先使用该数据。
+    """
+    body = html or ""
+    if not body:
+        return ""
+    # 从脚本态里抓取 note.title / note.desc，desc 往往是完整正文。
+    desc_candidates = re.findall(r'"desc"\s*:\s*"((?:\\.|[^"\\])*)"', body, flags=re.S)
+    title_candidates = re.findall(r'"title"\s*:\s*"((?:\\.|[^"\\])*)"', body, flags=re.S)
+    desc = ""
+    if desc_candidates:
+        desc = max((_json_unescape_maybe(x) for x in desc_candidates), key=lambda x: len(x or ""))
+    title = ""
+    if title_candidates:
+        title = max((_json_unescape_maybe(x) for x in title_candidates), key=lambda x: len(x or ""))
+    # 清理常见站点噪音标题（如备案信息）。
+    if "小红书_沪ICP备" in title or title.strip() == "小红书":
+        title = ""
+    out = f"{title}\n\n{desc}".strip() if title and desc else (desc or title)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out
+
+
+def _normalized_host(url: str) -> str:
+    try:
+        netloc = (urlparse(url).netloc or "").strip().lower()
+    except Exception:
+        return ""
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    return re.sub(r":\d+$", "", netloc)
+
+
 def _referer_for_url(url: str) -> str:
     try:
         p = urlparse(url)
@@ -192,6 +238,7 @@ class ContentParser:
         """
         logs = []
         logs.append(f"开始解析网址: {url}")
+        host = _normalized_host(url)
 
         try:
             # 发送 HTTP 请求，使用更真实的浏览器请求头；Referer 与目标站同源，减少部分站点误拦
@@ -220,15 +267,16 @@ class ContentParser:
             response = session.get(url, timeout=TIMEOUTS["url_parsing"], allow_redirects=True)
             response.raise_for_status()
             response.encoding = response.apparent_encoding or "utf-8"
+            raw_html = response.text
 
             logs.append(f"成功获取网页内容，状态码: {response.status_code}")
 
-            soup = BeautifulSoup(response.text, "html.parser")
+            soup = BeautifulSoup(raw_html, "html.parser")
             meta_text = _extract_meta_content(soup)
             _strip_script_style(soup)
             main_like = _longest_main_like_text(soup)
 
-            soup_full = BeautifulSoup(response.text, "html.parser")
+            soup_full = BeautifulSoup(raw_html, "html.parser")
             _strip_script_style(soup_full)
             _strip_chrome_layout(soup_full)
             full_text = _normalize_visible_lines(soup_full.get_text(separator="\n", strip=True))
@@ -240,6 +288,11 @@ class ContentParser:
             else:
                 content = full_text
                 logs.append("使用整页去壳文本")
+            if host.endswith("xiaohongshu.com"):
+                xhs_text = _extract_xiaohongshu_note_text(raw_html)
+                if len((xhs_text or "").strip()) >= max(40, len((content or "").strip())):
+                    content = xhs_text
+                    logs.append("使用小红书脚本态正文抽取")
             # 动态站点（如小红书）常无可见正文，兜底回退到 meta/JSON-LD。
             if len((content or "").strip()) < 80 and len(meta_text) >= 40:
                 content = f"{content}\n\n{meta_text}".strip() if content else meta_text

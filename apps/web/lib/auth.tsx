@@ -31,6 +31,12 @@ function formatFastApiDetail(data: unknown): string {
 }
 
 function apiFailureMessage(data: unknown, fallback: string): string {
+  if (data && typeof data === "object") {
+    const code = String((data as { code?: unknown }).code || "").trim();
+    if (code === "AUTH_REQUIRED" || code === "FEATURE_AUTH_REQUIRED") {
+      return "登录状态已失效，请重新登录后重试";
+    }
+  }
   const fmt = formatFastApiDetail(data);
   if (fmt) return fmt;
   if (data && typeof data === "object") {
@@ -304,6 +310,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setPhone(hint);
           persistPhone(hint);
         }
+        return;
+      }
+      if (res.status === 401 || res.status === 403) {
+        setUser(null);
+        clearLegacyToken();
       }
     } catch {
       // ignore
@@ -326,6 +337,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       message?: string;
     };
     if (!res.ok || !data.success || !data.token) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error("登录状态已失效，请刷新页面后重新登录");
+      }
       throw new Error(apiFailureMessage(data, `登录失败 ${res.status}`));
     }
     clearLegacyToken();
@@ -361,6 +375,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         dev_otp_logged?: boolean;
       };
       if (!res.ok || !data.success) {
+        if (res.status === 401 || res.status === 403) {
+          throw new Error("登录状态已失效，请刷新页面后重新登录");
+        }
         throw new Error(apiFailureMessage(data, `发送失败 ${res.status}`));
       }
       if (data.dev_otp_logged) {
@@ -387,6 +404,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       detail?: string;
     };
     if (!res.ok || !data.success || !data.registration_ticket) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error("登录状态已失效，请刷新页面后重新登录");
+      }
       throw new Error(apiFailureMessage(data, `验证失败 ${res.status}`));
     }
     return { registration_ticket: data.registration_ticket };
@@ -410,6 +430,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         detail?: string;
       };
       if (!res.ok || !data.success || !data.token) {
+        if (res.status === 401 || res.status === 403) {
+          throw new Error("登录状态已失效，请刷新页面后重新登录");
+        }
         throw new Error(apiFailureMessage(data, `注册失败 ${res.status}`));
       }
       clearLegacyToken();

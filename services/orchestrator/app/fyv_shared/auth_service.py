@@ -54,6 +54,7 @@ _lock = threading.Lock()
 _redis_client: Any = None
 _redis_checked = False
 _redis_migrated_once = False
+_session_backend_checked = False
 _pg_checked = False
 _pg_enabled = False
 _users_phone_nullable: Optional[bool] = None
@@ -1351,12 +1352,45 @@ def _now() -> float:
 
 
 def _session_backend() -> str:
+    global _session_backend_checked
     raw = (os.environ.get("FYV_AUTH_SESSION_BACKEND") or "redis").strip().lower()
     if raw not in ("redis", "file"):
-        return "redis"
-    if raw == "redis" and _get_redis_client() is None:
+        raw = "redis"
+    # 认证开启时，强制使用 Redis 会话，避免 file 模式在多进程/多实例下出现会话覆盖。
+    if is_auth_enabled():
+        if raw != "redis":
+            raise RuntimeError(
+                "认证已启用：FYV_AUTH_SESSION_BACKEND 必须为 redis（禁止 file，会导致多端会话不一致）"
+            )
+        if _get_redis_client() is None:
+            raise RuntimeError(
+                "认证已启用但 Redis 不可用：请配置可用的 REDIS_URL，禁止回退 file 会话后端"
+            )
+    elif raw == "redis" and _get_redis_client() is None:
         return "file"
+    if not _session_backend_checked:
+        _session_backend_checked = True
+        logger.info("auth_session_backend backend=%s", raw)
     return raw
+
+
+def _concurrent_login_policy() -> str:
+    """
+    并发登录策略：当前固定为允许多端同时在线。
+    """
+    return "allow_multi"
+
+
+def _session_log(event: str, **fields: Any) -> None:
+    payload = {"event": event}
+    for k, v in fields.items():
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        payload[k] = s[:200]
+    logger.info("auth_session_event %s", json.dumps(payload, ensure_ascii=False))
 
 
 def _redis_key(token: str) -> str:
@@ -1897,7 +1931,7 @@ def _invalidate_sessions_for_user(
     phone: str = "",
     email: str = "",
     username: str = "",
-) -> None:
+) -> int:
     uid = (user_id or "").strip()
     ph = (phone or "").strip()
     em = (email or "").strip().lower()
@@ -1906,6 +1940,7 @@ def _invalidate_sessions_for_user(
         cli = _get_redis_client()
         if cli is not None:
             try:
+                deleted = 0
                 for key in cli.scan_iter(match="fym:auth:session:*", count=200):
                     try:
                         raw = cli.get(key)
@@ -1922,10 +1957,20 @@ def _invalidate_sessions_for_user(
                         if not match and un and str(s.get("username") or "").strip() == un:
                             match = True
                         if match:
-                            cli.delete(key)
+                            deleted += int(cli.delete(key) or 0)
                     except Exception:
                         pass
-                return
+                if deleted > 0:
+                    _session_log(
+                        "invalidate_user_sessions",
+                        backend="redis",
+                        user_id=uid,
+                        phone=ph,
+                        email=em,
+                        username=un,
+                        deleted=str(deleted),
+                    )
+                return deleted
             except Exception:
                 pass
     sessions = _load_sessions()
@@ -1947,6 +1992,16 @@ def _invalidate_sessions_for_user(
         for t in to_del:
             sessions.pop(t, None)
         _save_sessions(sessions)
+        _session_log(
+            "invalidate_user_sessions",
+            backend="file",
+            user_id=uid,
+            phone=ph,
+            email=em,
+            username=un,
+            deleted=str(len(to_del)),
+        )
+    return len(to_del)
 
 
 def reset_password_with_token(raw_token: str, new_password: str) -> Tuple[bool, str]:
@@ -2665,16 +2720,21 @@ def login_user(login_id: str, password: str) -> Tuple[Optional[str], Optional[st
         return None, "账号或密码错误"
     if isinstance(pg_row, dict):
         _pg_mark_login_success(str(pg_row.get("user_id") or ""))
-        return (
-            create_session(
-                user_id=str(pg_row.get("user_id") or ""),
-                phone=str(pg_row.get("phone") or "").strip() or None,
-                email=str(pg_row.get("email") or "").strip() or None,
-                username=str(pg_row.get("username") or "").strip() or None,
-                feature_unlocked=False,
-            ),
-            None,
+        token = create_session(
+            user_id=str(pg_row.get("user_id") or ""),
+            phone=str(pg_row.get("phone") or "").strip() or None,
+            email=str(pg_row.get("email") or "").strip() or None,
+            username=str(pg_row.get("username") or "").strip() or None,
+            feature_unlocked=False,
         )
+        _session_log(
+            "login_succeeded",
+            policy=_concurrent_login_policy(),
+            login_id=lid,
+            user_id=str(pg_row.get("user_id") or ""),
+            session_id=token,
+        )
+        return (token, None)
     if validate_phone(lid) and verify_password(lid, password):
         return create_session(user_id="", phone=lid, feature_unlocked=False), None
     return None, "账号或密码错误"
@@ -2705,6 +2765,13 @@ def create_session(
         if cli is not None:
             try:
                 cli.set(_redis_key(token), json.dumps(sess, ensure_ascii=False), ex=_session_ttl_seconds(sess))
+                _session_log(
+                    "session_created",
+                    backend="redis",
+                    policy=_concurrent_login_policy(),
+                    user_id=str(sess.get("user_id") or ""),
+                    session_id=token,
+                )
                 return token
             except Exception:
                 pass
@@ -2712,6 +2779,13 @@ def create_session(
     _purge_expired_sessions(sessions)
     sessions[token] = sess
     _save_sessions(sessions)
+    _session_log(
+        "session_created",
+        backend="file",
+        policy=_concurrent_login_policy(),
+        user_id=str(sess.get("user_id") or ""),
+        session_id=token,
+    )
     return token
 
 
@@ -2723,6 +2797,7 @@ def delete_session(token: str) -> None:
         if cli is not None:
             try:
                 cli.delete(_redis_key(token))
+                _session_log("session_deleted", backend="redis", session_id=token, reason="logout_or_expire")
                 return
             except Exception:
                 pass
@@ -2730,6 +2805,7 @@ def delete_session(token: str) -> None:
     if token in sessions:
         del sessions[token]
         _save_sessions(sessions)
+        _session_log("session_deleted", backend="file", session_id=token, reason="logout_or_expire")
 
 
 def _persist_session_dict(token: str, s: Dict[str, Any]) -> None:
@@ -2783,12 +2859,15 @@ def get_session(token: str) -> Optional[Dict[str, Any]]:
             try:
                 raw = cli.get(_redis_key(token))
                 if not raw:
+                    _session_log("session_lookup_miss", backend="redis", session_id=token, reason="not_found")
                     return None
                 s = json.loads(raw)
                 if not isinstance(s, dict):
+                    _session_log("session_lookup_miss", backend="redis", session_id=token, reason="bad_payload")
                     return None
                 if float(s.get("expires") or 0) < _now():
                     cli.delete(_redis_key(token))
+                    _session_log("session_lookup_miss", backend="redis", session_id=token, reason="expired")
                     return None
                 if s.get("feature_unlocked") and s.get("feature_unlock_expires"):
                     if _now() > float(s["feature_unlock_expires"]):
@@ -2803,9 +2882,11 @@ def get_session(token: str) -> Optional[Dict[str, Any]]:
     _purge_expired_sessions(sessions)
     s = sessions.get(token)
     if not isinstance(s, dict):
+        _session_log("session_lookup_miss", backend="file", session_id=token, reason="not_found")
         return None
     if float(s.get("expires") or 0) < _now():
         delete_session(token)
+        _session_log("session_lookup_miss", backend="file", session_id=token, reason="expired")
         return None
     # 功能解锁过期：需重新验证
     if s.get("feature_unlocked") and s.get("feature_unlock_expires"):
@@ -3480,6 +3561,7 @@ def auth_config_dict() -> Dict[str, Any]:
     return {
         "auth_required": bool(is_auth_enabled()),
         "invite_hint": "需要管理员提供的邀请码" if is_auth_enabled() and is_register_invite_required() else "",
+        "concurrent_login_policy": _concurrent_login_policy(),
         "unified_pg": bool(_auth_unified_pg_profile()),
         "pg_primary": bool(_auth_pg_primary()),
         "dual_write_json": bool(_auth_dual_write()),
