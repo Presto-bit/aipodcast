@@ -44,7 +44,7 @@ import {
   maxEndMsForLineContainingWordId,
   wordIdsBetweenInclusive
 } from "../../lib/prestoFlowTranscript";
-import type { ClipWaveformHandle } from "../clip/ClipWaveformPanel";
+import ClipWaveformPanel, { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
 import AudioConsole from "./AudioConsole";
 import ClipStagingTracksBar from "./ClipStagingTracksBar";
 import ClipExportQcGateModal from "./ClipExportQcGateModal";
@@ -54,7 +54,7 @@ import ClipScriptSearchPanel from "./ClipScriptSearchPanel";
 import PrestoFlowHeader from "./PrestoFlowHeader";
 import PrestoFlowImportBar from "./PrestoFlowImportBar";
 import VirtualizedTranscript, { type VirtualizedTranscriptHandle } from "./VirtualizedTranscript";
-import WaveformSegmentEditor, { type WaveformSegmentItem } from "./WaveformSegmentEditor";
+import WaveformSegmentEditor from "./WaveformSegmentEditor";
 
 function isDualChannels(ch: unknown): boolean {
   return Array.isArray(ch) && ch.length >= 2;
@@ -120,7 +120,12 @@ function suggestionFeedbackPayload(
   };
 }
 
-type EditorAudioSegment = WaveformSegmentItem & {
+type EditorAudioSegment = {
+  id: string;
+  startMs: number;
+  endMs: number;
+  source: "original" | "inserted";
+  transcribed: boolean;
   wordIds: string[];
 };
 
@@ -207,8 +212,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [waveZoomLevel, setWaveZoomLevel] = useState(1);
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
-  const [dropTargetSegmentId, setDropTargetSegmentId] = useState<string | null>(null);
-  const [insertMenuBoundaryIndex, setInsertMenuBoundaryIndex] = useState<number | null>(null);
   const [insertingSegmentAudio, setInsertingSegmentAudio] = useState(false);
   /** 词链试听：与终版导出同 ffmpeg 算法，单独对象键；波形 URL 切换，稿面时间戳仍对原片 */
   const [wordchainPreviewOn, setWordchainPreviewOn] = useState(false);
@@ -918,12 +921,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       ? `/api/clip/projects/${encodeURIComponent(projectId)}/audio/wordchain-preview?cb=${wordchainPreviewNonce}`
       : masterAudioUrl;
 
-  const dualChannelMirror =
-    Boolean(waveformAudioUrl) &&
-    !wordchainPreviewOn &&
-    Array.isArray(project?.channel_ids) &&
-    (project?.channel_ids?.length ?? 0) >= 2;
-
   const audioStagingEntries = useMemo(() => {
     const st = project?.audio_staging_keys;
     return Array.isArray(st) ? st : [];
@@ -1091,31 +1088,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       return snap.map((s) => ({ ...s, wordIds: [...s.wordIds] }));
     });
   }, []);
-
-  const reorderSegments = useCallback(
-    (fromId: string, toId: string) => {
-      if (segmentEditLocked) return;
-      if (!fromId || !toId || fromId === toId) return;
-      setAudioSegments((prev) => {
-        const fromIx = prev.findIndex((x) => x.id === fromId);
-        const toIx = prev.findIndex((x) => x.id === toId);
-        if (fromIx < 0 || toIx < 0) return prev;
-        const next = [...prev];
-        const [moved] = next.splice(fromIx, 1);
-        next.splice(toIx, 0, moved!);
-        pushSegmentHistory(prev);
-        setDropTargetSegmentId(null);
-        void fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/staging/reorder`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify({ segment_ids: next.map((x) => x.id) })
-        }).catch(() => {});
-        return normalizeSegmentTimeline(next);
-      });
-    },
-    [getAuthHeaders, projectId, pushSegmentHistory, segmentEditLocked]
-  );
 
   const uploadInsertedAudioAtBoundary = useCallback(
     async (file: File, boundaryIndex: number) => {
@@ -1767,9 +1739,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     window.addEventListener("pointercancel", up);
   }, [words, findWordIdUnderPoint]);
 
-  const onTranscriptBlankPointerDown = useCallback(
-    (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (e.pointerType && e.pointerType !== "mouse") return;
+  const onTranscriptBlankMouseDown = useCallback(
+    (e: MouseEvent<HTMLDivElement>) => {
       if (e.button !== 0) return;
       if (e.shiftKey || e.metaKey || e.ctrlKey) return;
       const target = e.target as HTMLElement | null;
@@ -2590,7 +2561,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         {t("clip.editor.exportingBody")}
                       </div>
                     ) : null}
-                    <div className="min-h-0 min-w-0 flex-1" onPointerDownCapture={onTranscriptBlankPointerDown}>
+                    <div className="min-h-0 min-w-0 flex-1" onMouseDownCapture={onTranscriptBlankMouseDown}>
                       <VirtualizedTranscript
                         ref={transcriptRef}
                         lines={lines}
@@ -2690,8 +2661,57 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           </button>
                         </div>
                       ) : null}
+                      <div className="mb-2 h-20 overflow-hidden rounded-lg border border-line bg-track/40">
+                        {waveformAudioUrl ? (
+                          <div className="group relative h-full w-full">
+                            <button
+                              type="button"
+                              className="absolute left-0 top-0 z-[3] h-full w-5 -translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
+                              aria-label="在开头插入音频"
+                              title="在开头插入音频"
+                              disabled={segmentEditLocked}
+                              onClick={() => {
+                                insertBoundaryIndexRef.current = 0;
+                                insertAudioInputRef.current?.click();
+                              }}
+                            >
+                              <span className="absolute left-1/2 top-1/2 inline-flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground">
+                                +
+                              </span>
+                            </button>
+                            <ClipWaveformPanel
+                              ref={waveformRef}
+                              variant="panel"
+                              waveHeight={72}
+                              audioUrl={waveformAudioUrl}
+                              onTimeMs={handlePlaybackTimeMs}
+                              onLoadError={handleWaveformLoadError}
+                              playbackRate={playbackRate}
+                              snapSeekMs={snapSeekMs}
+                              zoomLevel={waveZoomLevel}
+                              className="!border-0 !bg-transparent"
+                            />
+                            <button
+                              type="button"
+                              className="absolute right-0 top-0 z-[3] h-full w-5 translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
+                              aria-label="在结尾插入音频"
+                              title="在结尾插入音频"
+                              disabled={segmentEditLocked}
+                              onClick={() => {
+                                insertBoundaryIndexRef.current = audioSegments.length;
+                                insertAudioInputRef.current?.click();
+                              }}
+                            >
+                              <span className="absolute left-1/2 top-1/2 inline-flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground">
+                                +
+                              </span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-[10px] text-muted">—</div>
+                        )}
+                      </div>
                       <WaveformSegmentEditor
-                        segments={audioSegments}
                         zoomLevel={waveZoomLevel}
                         onZoomChange={(next) => {
                           setWaveZoomLevel(next);
@@ -2702,38 +2722,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         onSplitRight={() => splitAtCursor("right")}
                         onUndo={undoSegmentEdit}
                         undoDisabled={segmentUndoStackRef.current.length === 0}
-                        onInsertAtBoundary={(boundaryIndex) => {
-                          insertBoundaryIndexRef.current = boundaryIndex;
-                          setInsertMenuBoundaryIndex(boundaryIndex);
-                        }}
-                        onReorder={reorderSegments}
-                        activeDropSegmentId={dropTargetSegmentId}
-                        onHoverDropTarget={setDropTargetSegmentId}
                         disabled={segmentEditLocked}
                       />
-                      {insertMenuBoundaryIndex != null ? (
-                        <div className="mt-2 flex items-center gap-2 rounded-md border border-line/70 bg-surface/70 px-2 py-1.5 text-[11px]">
-                          <span className="text-muted">在该边界插入音频：</span>
-                          <button
-                            type="button"
-                            disabled={segmentEditLocked}
-                            className="rounded border border-line bg-surface px-2 py-0.5 hover:bg-fill"
-                            onClick={() => {
-                              insertBoundaryIndexRef.current = insertMenuBoundaryIndex;
-                              insertAudioInputRef.current?.click();
-                            }}
-                          >
-                            {insertingSegmentAudio ? "上传中..." : "本地上传"}
-                          </button>
-                          <button
-                            type="button"
-                            className="ml-auto rounded border border-line bg-surface px-2 py-0.5 text-muted hover:bg-fill"
-                            onClick={() => setInsertMenuBoundaryIndex(null)}
-                          >
-                            关闭
-                          </button>
-                        </div>
-                      ) : null}
                       <input
                         ref={insertAudioInputRef}
                         type="file"
@@ -2746,7 +2736,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           void uploadInsertedAudioAtBoundary(f, ix).catch((error) => {
                             setErr(String(error instanceof Error ? error.message : error));
                           });
-                          setInsertMenuBoundaryIndex(null);
                           e.currentTarget.value = "";
                         }}
                       />
@@ -2889,7 +2878,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           </div>
                         </div>
                       ) : null}
-                      <div className="min-h-0 min-w-0 flex-1" onPointerDownCapture={onTranscriptBlankPointerDown}>
+                      <div className="min-h-0 min-w-0 flex-1" onMouseDownCapture={onTranscriptBlankMouseDown}>
                         <VirtualizedTranscript
                           ref={transcriptRef}
                           lines={lines}
@@ -3163,15 +3152,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           </div>
           <AudioConsole
             dockEmbed
-            audioUrl={waveformAudioUrl}
-            onTimeMs={handlePlaybackTimeMs}
-            onLoadError={handleWaveformLoadError}
             waveformRef={waveformRef}
-            snapSeekMs={snapSeekMs}
             playbackRate={playbackRate}
             onPlaybackRateChange={setPlaybackRate}
-            mirrorWaveformCount={dualChannelMirror ? 1 : 0}
-            multiTrackHint={dualChannelMirror ? t("presto.flow.audioMultiTrack.dualHint") : undefined}
             rateOptionLabels={[
               t("presto.flow.playbackRate1"),
               t("presto.flow.playbackRate125"),
@@ -3179,7 +3162,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               t("presto.flow.playbackRate200")
             ]}
             rateSelectAriaLabel={t("presto.flow.playbackRateAria")}
-            zoomLevel={waveZoomLevel}
             durationMs={durationMs ?? 0}
             currentTimeMs={playbackMs}
             onSeekMs={(ms) => {

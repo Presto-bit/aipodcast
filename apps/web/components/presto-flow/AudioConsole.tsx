@@ -4,14 +4,11 @@ import type { RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, FastForward, Pause, Play, Rewind } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import ClipWaveformPanel, { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
+import { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
 
 const SKIP_SEC = 5;
 
 type Props = {
-  audioUrl: string | undefined;
-  onTimeMs: (ms: number) => void;
-  onLoadError?: (msg: string) => void;
   waveformRef: RefObject<ClipWaveformHandle | null>;
   /** 以当前焦点词为中心，试听前后各 5 秒（含原片，不跳过剪掉段） */
   clipPreviewAroundLabel?: string;
@@ -26,17 +23,10 @@ type Props = {
   magneticSnap?: boolean;
   onMagneticSnapChange?: (v: boolean) => void;
   magneticSnapLabel?: string;
-  /** 波形 seek 磁吸；未传则不启用 */
-  snapSeekMs?: (ms: number) => number;
   /** 嵌入「音频区域」分栏：弱化顶边与底板，与上方转写区连成一体 */
   dockEmbed?: boolean;
   /** 倍速下拉 aria 标签 */
   rateSelectAriaLabel?: string;
-  /** 主轨下方额外示意波形条数（如双声道时 1，与主轨同源、不单独上报进度） */
-  mirrorWaveformCount?: number;
-  /** 多轨 / 双声道说明文案，显示在波形区上方 */
-  multiTrackHint?: string;
-  zoomLevel?: number;
   durationMs?: number;
   currentTimeMs?: number;
   onSeekMs?: (ms: number) => void;
@@ -45,9 +35,6 @@ type Props = {
 const DEFAULT_RATES = [1, 1.25, 1.5, 2] as const;
 
 export default function AudioConsole({
-  audioUrl,
-  onTimeMs,
-  onLoadError,
   waveformRef,
   clipPreviewAroundLabel,
   onClipPreviewAround,
@@ -59,12 +46,8 @@ export default function AudioConsole({
   magneticSnap = false,
   onMagneticSnapChange,
   magneticSnapLabel = "磁吸",
-  snapSeekMs,
   dockEmbed = false,
   rateSelectAriaLabel = "播放倍速",
-  mirrorWaveformCount = 0,
-  multiTrackHint,
-  zoomLevel = 1,
   durationMs = 0,
   currentTimeMs = 0,
   onSeekMs
@@ -180,50 +163,6 @@ export default function AudioConsole({
         {keyboardHint ? (
           <p className="text-center text-[10px] text-muted sm:text-left">{keyboardHint}</p>
         ) : null}
-        {multiTrackHint ? (
-          <p className="text-[9px] leading-snug text-muted sm:text-left">{multiTrackHint}</p>
-        ) : null}
-        <div className="flex flex-col gap-1">
-          <div className="h-12 overflow-hidden rounded-lg border border-line bg-track/50">
-            {audioUrl ? (
-              <ClipWaveformPanel
-                ref={waveformRef as RefObject<ClipWaveformHandle>}
-                variant="dock"
-                waveHeight={44}
-                audioUrl={audioUrl}
-                onTimeMs={onTimeMs}
-                onLoadError={onLoadError}
-                onPlayStateChange={setPlaying}
-                playbackRate={playbackRate}
-                snapSeekMs={snapSeekMs}
-                zoomLevel={zoomLevel}
-                className="!border-0 !bg-transparent"
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center text-[10px] text-muted">—</div>
-            )}
-          </div>
-          {audioUrl && mirrorWaveformCount > 0
-            ? Array.from({ length: mirrorWaveformCount }, (_, i) => (
-                <div
-                  key={`mirror-${i}`}
-                  className="h-9 overflow-hidden rounded-md border border-line/70 bg-track/35"
-                >
-                  <ClipWaveformPanel
-                    variant="dock"
-                    waveHeight={30}
-                    audioUrl={audioUrl}
-                    onTimeMs={() => {}}
-                    playbackRate={playbackRate}
-                    zoomLevel={zoomLevel}
-                    interactive={false}
-                    emitTimeUpdates={false}
-                    className="!border-0 !bg-transparent"
-                  />
-                </div>
-              ))
-            : null}
-        </div>
         {durationMs > 0 ? (
           <div className="px-1">
             <input

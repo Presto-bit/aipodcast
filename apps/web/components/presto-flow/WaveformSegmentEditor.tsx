@@ -1,24 +1,12 @@
 "use client";
 
 import {
-  Minus,
-  Plus,
-  Scissors,
-  Split,
+  ChevronDown,
   Undo2
 } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
-
-export type WaveformSegmentItem = {
-  id: string;
-  startMs: number;
-  endMs: number;
-  source: "original" | "inserted";
-  transcribed: boolean;
-};
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 type Props = {
-  segments: WaveformSegmentItem[];
   zoomLevel: number;
   onZoomChange: (next: number) => void;
   onSplit: () => void;
@@ -26,19 +14,8 @@ type Props = {
   onSplitRight: () => void;
   onUndo: () => void;
   undoDisabled?: boolean;
-  onInsertAtBoundary: (boundaryIndex: number) => void;
-  onReorder: (fromId: string, toId: string) => void;
-  activeDropSegmentId?: string | null;
-  onHoverDropTarget?: (segmentId: string | null) => void;
   disabled?: boolean;
 };
-
-function formatMs(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
 
 function ToolButton({
   title,
@@ -65,8 +42,23 @@ function ToolButton({
   );
 }
 
+function CutModeIcon({ mode }: { mode: "split" | "left" | "right" }) {
+  return (
+    <span className="relative inline-flex h-4 w-4 items-center justify-center rounded border border-line/80">
+      <span className="absolute inset-y-0 left-1/2 w-0 border-l border-dashed border-brand/70" />
+      {mode !== "split" ? (
+        <span
+          className={[
+            "absolute inset-y-0 w-1/2 bg-brand/15",
+            mode === "left" ? "right-0 border-l border-dashed border-brand/80" : "left-0 border-r border-dashed border-brand/80"
+          ].join(" ")}
+        />
+      ) : null}
+    </span>
+  );
+}
+
 export default function WaveformSegmentEditor({
-  segments,
   zoomLevel,
   onZoomChange,
   onSplit,
@@ -74,114 +66,72 @@ export default function WaveformSegmentEditor({
   onSplitRight,
   onUndo,
   undoDisabled,
-  onInsertAtBoundary,
-  onReorder,
-  activeDropSegmentId,
-  onHoverDropTarget,
   disabled = false
 }: Props) {
-  const totalMs = useMemo(() => {
-    if (!segments.length) return 0;
-    return Math.max(...segments.map((x) => x.endMs), 0);
-  }, [segments]);
+  const [zoomPopoverOpen, setZoomPopoverOpen] = useState(false);
+  const zoomWrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!zoomPopoverOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      if (zoomWrapRef.current?.contains(t)) return;
+      setZoomPopoverOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setZoomPopoverOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [zoomPopoverOpen]);
 
   return (
     <div className="rounded-lg border border-line bg-fill/10 p-2">
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        <ToolButton
-          title="缩小波形"
-          onClick={() => onZoomChange(Math.max(1, zoomLevel - 1))}
-          disabled={disabled}
-        >
-          <Minus className="h-4 w-4" aria-hidden />
+        <div ref={zoomWrapRef} className="relative">
+          <button
+            type="button"
+            disabled={disabled}
+            className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-[10px] font-semibold text-ink hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+            onClick={() => setZoomPopoverOpen((v) => !v)}
+          >
+            <span>{zoomLevel}x</span>
+            <ChevronDown className="h-3 w-3" aria-hidden />
+          </button>
+          {zoomPopoverOpen ? (
+            <div className="absolute left-0 top-[calc(100%+6px)] z-[20] min-w-[220px] rounded-md border border-line bg-surface p-2 shadow-lg">
+              <p className="mb-2 text-[10px] text-muted">左右拖动缩放波形（1x~10x）</p>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                step={1}
+                value={zoomLevel}
+                className="h-2 w-full cursor-ew-resize accent-brand"
+                onChange={(e) => onZoomChange(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+              />
+            </div>
+          ) : null}
+        </div>
+        <ToolButton title="分割（在光标处切成两段）" onClick={onSplit} disabled={disabled}>
+          <CutModeIcon mode="split" />
         </ToolButton>
-        <span className="rounded-md border border-line bg-surface px-2 py-1 text-[10px] font-semibold text-muted">
-          {zoomLevel}x
-        </span>
-        <ToolButton
-          title="放大波形"
-          onClick={() => onZoomChange(Math.min(10, zoomLevel + 1))}
-          disabled={disabled}
-        >
-          <Plus className="h-4 w-4" aria-hidden />
+        <ToolButton title="左分割（保留左侧，右侧删除）" onClick={onSplitLeft} disabled={disabled}>
+          <CutModeIcon mode="left" />
         </ToolButton>
-        <ToolButton title="分割" onClick={onSplit} disabled={disabled}>
-          <Scissors className="h-4 w-4" aria-hidden />
-        </ToolButton>
-        <ToolButton title="左分割" onClick={onSplitLeft} disabled={disabled}>
-          <Split className="h-4 w-4 -scale-x-100" aria-hidden />
-        </ToolButton>
-        <ToolButton title="右分割" onClick={onSplitRight} disabled={disabled}>
-          <Split className="h-4 w-4" aria-hidden />
+        <ToolButton title="右分割（保留右侧，左侧删除）" onClick={onSplitRight} disabled={disabled}>
+          <CutModeIcon mode="right" />
         </ToolButton>
         <ToolButton title="撤销" onClick={onUndo} disabled={disabled || undoDisabled}>
           <Undo2 className="h-4 w-4" aria-hidden />
         </ToolButton>
       </div>
 
-      <div className="flex h-12 items-stretch overflow-hidden rounded-md border border-line bg-canvas/50">
-        {segments.map((seg, idx) => {
-          const widthPct = totalMs > 0 ? Math.max(6, ((seg.endMs - seg.startMs) / totalMs) * 100) : 100;
-          return (
-            <div
-              key={seg.id}
-              className={[
-                "group relative flex h-full min-w-[5rem] border-r border-line/60 transition",
-                activeDropSegmentId === seg.id ? "ring-1 ring-brand/60" : ""
-              ].join(" ")}
-              style={{ width: `${widthPct}%` }}
-              draggable={!disabled}
-              onDragStart={(e) => e.dataTransfer.setData("text/plain", seg.id)}
-              onDragEnter={() => onHoverDropTarget?.(seg.id)}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const fromId = e.dataTransfer.getData("text/plain");
-                if (fromId) onReorder(fromId, seg.id);
-              }}
-              onDragLeave={() => onHoverDropTarget?.(null)}
-            >
-              <button
-                type="button"
-                className="absolute -left-2 top-1/2 z-[2] hidden h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground group-hover:inline-flex"
-                onClick={() => onInsertAtBoundary(idx)}
-                aria-label="在该位置插入音频"
-                title="在该位置插入音频"
-                disabled={disabled}
-              >
-                +
-              </button>
-              <button
-                type="button"
-                className={[
-                  "flex h-full w-full flex-col items-start justify-center px-2 text-left text-[10px]",
-                  seg.source === "inserted" ? "bg-brand/20" : "bg-brand/10"
-                ].join(" ")}
-                title={`${formatMs(seg.startMs)} - ${formatMs(seg.endMs)}`}
-              >
-                <span className="font-medium text-ink">
-                  {seg.source === "inserted" ? "新片段" : "原片段"}
-                </span>
-                <span className="text-muted">
-                  {seg.transcribed ? "已转写" : "未转写"}
-                </span>
-              </button>
-              {idx === segments.length - 1 ? (
-                <button
-                  type="button"
-                  className="absolute -right-2 top-1/2 z-[2] hidden h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground group-hover:inline-flex"
-                  onClick={() => onInsertAtBoundary(idx + 1)}
-                  aria-label="在该位置插入音频"
-                  title="在该位置插入音频"
-                  disabled={disabled}
-                >
-                  +
-                </button>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
