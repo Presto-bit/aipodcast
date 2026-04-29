@@ -1633,6 +1633,9 @@ async def import_note_from_url_api(request: Request):
                     "sourceContentSha256": content_sha256,
                     "sourceVersion": new_version,
                     "structuredBlocks": _coerce_structured_blocks(fetch.get("structured_blocks")),
+                    "sourceParseMeta": fetch.get("parse_meta")
+                    if isinstance(fetch.get("parse_meta"), dict)
+                    else {},
                     **_build_preprocess_fields(content),
                 },
             )

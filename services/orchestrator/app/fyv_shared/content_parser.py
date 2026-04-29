@@ -8,11 +8,12 @@ import requests
 import zipfile
 import re
 import json
+import os
 import html as ihtml
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from typing import Dict, Any
 
 from app.url_fetch_hints import actionable_hint_for_failed_url
@@ -43,6 +44,33 @@ _MAIN_CONTENT_SELECTORS: tuple[str, ...] = (
     "div[itemprop='articleBody']",
 )
 
+_NOISE_TEXT_MARKERS: tuple[str, ...] = (
+    "cookie",
+    "隐私政策",
+    "隐私",
+    "登录",
+    "注册",
+    "copyright",
+    "版权所有",
+    "上一篇",
+    "下一篇",
+    "推荐阅读",
+    "相关阅读",
+)
+
+_CONTENT_TAGS: tuple[str, ...] = (
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "p",
+    "li",
+    "blockquote",
+    "pre",
+    "code",
+    "table",
+)
+
 
 def _normalize_visible_lines(text: str) -> str:
     lines = [line.strip() for line in (text or "").split("\n") if line.strip()]
@@ -55,8 +83,51 @@ def _strip_script_style(soup: BeautifulSoup) -> None:
 
 
 def _strip_chrome_layout(soup: BeautifulSoup) -> None:
-    for tag in soup(["nav", "footer", "header"]):
+    for tag in soup(["nav", "footer", "header", "aside", "form"]):
         tag.decompose()
+
+
+def _strip_noise_by_attr(soup: BeautifulSoup) -> None:
+    for tag in soup.find_all(True):
+        attrs = " ".join(
+            str(x or "")
+            for x in (
+                tag.get("id"),
+                " ".join(tag.get("class", [])) if isinstance(tag.get("class"), list) else tag.get("class"),
+                tag.get("role"),
+                tag.get("aria-label"),
+            )
+        ).lower()
+        if not attrs:
+            continue
+        if any(x in attrs for x in ("nav", "footer", "header", "menu", "sidebar", "comment", "related", "ad-")):
+            tag.decompose()
+
+
+def _dedupe_lines(text: str) -> str:
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in (text or "").split("\n"):
+        s = line.strip()
+        if not s:
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return "\n".join(out)
+
+
+def _is_likely_noise_line(line: str) -> bool:
+    t = (line or "").strip().lower()
+    if not t:
+        return True
+    if len(t) <= 1:
+        return True
+    if any(marker in t for marker in _NOISE_TEXT_MARKERS):
+        return True
+    return False
 
 
 def _longest_main_like_text(soup: BeautifulSoup) -> str:
@@ -72,6 +143,38 @@ def _longest_main_like_text(soup: BeautifulSoup) -> str:
         if len(chunk) > len(best):
             best = chunk
     return best
+
+
+def _extract_candidate_root(soup: BeautifulSoup) -> Tag | BeautifulSoup:
+    best_node: Tag | BeautifulSoup = soup
+    best_len = 0
+    for sel in _MAIN_CONTENT_SELECTORS:
+        try:
+            node = soup.select_one(sel)
+        except Exception:
+            continue
+        if not node:
+            continue
+        chunk = _normalize_visible_lines(node.get_text(separator="\n", strip=True))
+        if len(chunk) > best_len:
+            best_len = len(chunk)
+            best_node = node
+    return best_node
+
+
+def _extract_semantic_text(root: Tag | BeautifulSoup) -> str:
+    lines: list[str] = []
+    for el in root.find_all(_CONTENT_TAGS):
+        txt = el.get_text(" ", strip=True)
+        txt = re.sub(r"\s+", " ", txt).strip()
+        if _is_likely_noise_line(txt):
+            continue
+        if len(txt) < 6:
+            continue
+        lines.append(txt)
+        if len(lines) >= 2000:
+            break
+    return _dedupe_lines("\n".join(lines))
 
 
 def _extract_structured_blocks_from_html(soup: BeautifulSoup) -> list[dict[str, Any]]:
@@ -111,6 +214,68 @@ def _extract_structured_blocks_from_html(soup: BeautifulSoup) -> list[dict[str, 
         if len(blocks) >= 800:
             break
     return blocks
+
+
+def _detect_page_kind(url: str, soup: BeautifulSoup, content_hint: str) -> str:
+    path = (urlparse(url).path or "").lower()
+    if any(x in path for x in ("/docs/", "/doc/", "/wiki/", "/reference/")):
+        return "doc"
+    if any(x in path for x in ("/article/", "/post/", "/news/", "/blog/", "/explore/")):
+        return "article"
+    lines = [x.strip() for x in (content_hint or "").split("\n") if x.strip()]
+    heading_count = len(soup.find_all(["h1", "h2", "h3"]))
+    link_count = len(soup.find_all("a"))
+    if heading_count >= 6 and any("```" in ln for ln in lines):
+        return "doc"
+    if link_count >= 40 and len(lines) <= 30:
+        return "list"
+    if len(lines) >= 8:
+        return "article"
+    return "generic"
+
+
+def _score_content_quality(text: str, *, page_kind: str) -> tuple[float, dict[str, Any]]:
+    lines = [x.strip() for x in (text or "").split("\n") if x.strip()]
+    total = len(lines)
+    if total == 0:
+        return 0.0, {"lines": 0, "noise_ratio": 1.0, "avg_line_len": 0}
+    noise = sum(1 for ln in lines if _is_likely_noise_line(ln))
+    avg_len = sum(len(ln) for ln in lines) / total
+    density = min(1.0, len(text) / 4000.0)
+    struct_bonus = 0.08 if any(ln.startswith("#") for ln in lines[:40]) else 0.0
+    if page_kind == "doc":
+        struct_bonus += 0.06
+    if page_kind == "list":
+        struct_bonus -= 0.08
+    score = max(0.0, min(1.0, 0.45 * density + 0.35 * (1 - noise / total) + 0.2 * min(1.0, avg_len / 80.0) + struct_bonus))
+    return score, {"lines": total, "noise_ratio": round(noise / total, 3), "avg_line_len": int(avg_len)}
+
+
+def _extract_links_for_list_page(soup: BeautifulSoup, url: str) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for a in soup.find_all("a"):
+        href = str(a.get("href") or "").strip()
+        text = re.sub(r"\s+", " ", a.get_text(" ", strip=True) or "").strip()
+        if not href or not text:
+            continue
+        # 仅保留 http(s) 链接或站内绝对路径，跳过锚点/javascript
+        if href.startswith("#") or href.lower().startswith("javascript:"):
+            continue
+        if href.startswith("/"):
+            p = urlparse(url)
+            if p.scheme and p.netloc:
+                href = f"{p.scheme}://{p.netloc}{href}"
+        if not href.startswith("http://") and not href.startswith("https://"):
+            continue
+        key = f"{href.lower()}|{text.lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append({"title": text[:180], "url": href[:1000]})
+        if len(items) >= 60:
+            break
+    return items
 
 
 def _extract_meta_content(soup: BeautifulSoup) -> str:
@@ -276,6 +441,78 @@ def _referer_for_url(url: str) -> str:
     return "https://www.google.com/"
 
 
+def _is_js_shell_html(html: str, text_content: str) -> bool:
+    body = (html or "").lower()
+    text = (text_content or "").strip().lower()
+    if not body:
+        return False
+    script_cnt = len(re.findall(r"<script\b", body))
+    shell_markers = ("__next", "__nuxt", "id=\"app\"", "webpack", "hydration", "root")
+    has_shell_marker = any(m in body for m in shell_markers)
+    has_too_little_text = len(text) < 120
+    return script_cnt >= 12 and has_shell_marker and has_too_little_text
+
+
+def _js_render_enabled() -> bool:
+    return (os.getenv("URL_PARSER_ENABLE_JS_RENDER", "1") or "").strip().lower() not in ("0", "false", "no")
+
+
+def _should_try_js_render(*, best_score: float, html: str, content: str, host: str) -> bool:
+    if not _js_render_enabled():
+        return False
+    # 小红书已有专用路径，避免多余浏览器开销。
+    if host.endswith("xiaohongshu.com"):
+        return False
+    if best_score < 0.22 and len((content or "").strip()) < 220:
+        return True
+    return _is_js_shell_html(html, content)
+
+
+def _fetch_rendered_html_with_playwright(url: str, timeout_sec: int) -> tuple[str, str]:
+    """
+    返回 (html, detail)。detail 用于日志排查。
+    依赖未安装或浏览器不可用时抛出异常，由上层降级。
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(f"playwright_unavailable:{exc}") from exc
+
+    timeout_ms = max(3000, min(120000, int(timeout_sec * 1000)))
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+            )
+            page = context.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            # 轻量滚动与短等待，覆盖懒加载与客户端渲染首屏。
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.6)")
+            page.wait_for_timeout(500)
+            # 尝试点击常见“展开全文”按钮。
+            for sel in ("text=展开全文", "text=Read more", "button:has-text('展开')"):
+                try:
+                    locator = page.locator(sel).first
+                    if locator.count() > 0:
+                        locator.click(timeout=1200)
+                        page.wait_for_timeout(300)
+                        break
+                except Exception:
+                    continue
+            html = page.content() or ""
+            return html, "playwright:domcontentloaded+scroll"
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+            browser.close()
+
+
 class ContentParser:
     """内容解析器"""
 
@@ -327,21 +564,91 @@ class ContentParser:
             soup = BeautifulSoup(raw_html, "html.parser")
             meta_text = _extract_meta_content(soup)
             page_title = _extract_page_title(soup)
-            _strip_script_style(soup)
-            main_like = _longest_main_like_text(soup)
+            page_kind = "generic"
 
-            soup_full = BeautifulSoup(raw_html, "html.parser")
-            _strip_script_style(soup_full)
-            _strip_chrome_layout(soup_full)
-            full_text = _normalize_visible_lines(soup_full.get_text(separator="\n", strip=True))
+            soup_base = BeautifulSoup(raw_html, "html.parser")
+            _strip_script_style(soup_base)
+            _strip_chrome_layout(soup_base)
+            _strip_noise_by_attr(soup_base)
+            full_text = _dedupe_lines(_normalize_visible_lines(soup_base.get_text(separator="\n", strip=True)))
+            page_kind = _detect_page_kind(url, soup_base, full_text)
 
-            # 若正文区域明显长于「去壳后全文」的一定比例，优先用正文区（常见博客/新闻）
-            if main_like and len(main_like) >= max(200, int(len(full_text) * 0.15)):
-                content = main_like
-                logs.append("使用正文区选择器抽取（main/article 等）")
-            else:
-                content = full_text
-                logs.append("使用整页去壳文本")
+            candidate_root = _extract_candidate_root(soup_base)
+            main_like = _dedupe_lines(
+                _normalize_visible_lines(candidate_root.get_text(separator="\n", strip=True))
+            )
+            semantic_text = _extract_semantic_text(candidate_root)
+            merged_content_first = _dedupe_lines("\n".join(x for x in (semantic_text, main_like) if x.strip()))
+
+            candidates: list[tuple[str, str]] = [
+                ("semantic_main", merged_content_first),
+                ("main_selector", main_like),
+                ("full_page", full_text),
+            ]
+            if meta_text:
+                candidates.append(("meta_jsonld", _dedupe_lines(meta_text)))
+            best_name = "full_page"
+            best_content = ""
+            best_score = -1.0
+            best_quality: dict[str, Any] = {}
+            for name, txt in candidates:
+                score, quality = _score_content_quality(txt, page_kind=page_kind)
+                if score > best_score:
+                    best_name = name
+                    best_content = txt
+                    best_score = score
+                    best_quality = quality
+            content = best_content
+            logs.append(f"网页类型识别: {page_kind}")
+            logs.append(f"抽取策略: {best_name}（score={best_score:.2f}）")
+            if _should_try_js_render(
+                best_score=best_score,
+                html=raw_html,
+                content=content,
+                host=host,
+            ):
+                try:
+                    rendered_html, rendered_detail = _fetch_rendered_html_with_playwright(url, TIMEOUTS["url_parsing"])
+                    rendered_soup = BeautifulSoup(rendered_html, "html.parser")
+                    _strip_script_style(rendered_soup)
+                    _strip_chrome_layout(rendered_soup)
+                    _strip_noise_by_attr(rendered_soup)
+                    rendered_root = _extract_candidate_root(rendered_soup)
+                    rendered_semantic = _extract_semantic_text(rendered_root)
+                    rendered_full = _dedupe_lines(
+                        _normalize_visible_lines(rendered_soup.get_text(separator="\n", strip=True))
+                    )
+                    rendered_content = _dedupe_lines(
+                        "\n".join(x for x in (rendered_semantic, rendered_full) if x.strip())
+                    )
+                    rendered_score, rendered_quality = _score_content_quality(rendered_content, page_kind=page_kind)
+                    if rendered_score > best_score and len(rendered_content.strip()) >= max(120, len(content.strip())):
+                        content = rendered_content
+                        best_score = rendered_score
+                        best_name = "js_rendered_semantic"
+                        best_quality = rendered_quality
+                        candidate_root = rendered_root
+                        logs.append(f"触发 JS 渲染回退成功：{rendered_detail}（score={best_score:.2f}）")
+                    else:
+                        logs.append(
+                            f"触发 JS 渲染回退但未优于现有结果（old={best_score:.2f}, new={rendered_score:.2f}）"
+                        )
+                except Exception as exc:
+                    logs.append(f"JS 渲染回退不可用，已降级 HTTP 解析：{str(exc)[:180]}")
+            list_links: list[dict[str, str]] = []
+            if page_kind == "list":
+                list_links = _extract_links_for_list_page(soup_base, url)
+                if list_links:
+                    link_lines = [f"- {x['title']}: {x['url']}" for x in list_links[:40]]
+                    content = "【列表页链接索引】\n" + "\n".join(link_lines)
+                    best_name = "list_links_index"
+                    best_score = max(best_score, 0.35)
+                    best_quality = {
+                        "lines": len(link_lines),
+                        "noise_ratio": 0.0,
+                        "avg_line_len": int(sum(len(x) for x in link_lines) / max(1, len(link_lines))),
+                    }
+                    logs.append(f"列表页策略：提取候选链接 {len(list_links)} 条")
             if host.endswith("xiaohongshu.com"):
                 xhs_title, xhs_desc = _extract_xiaohongshu_note_parts(raw_html, _note_id_from_xiaohongshu_url(url))
                 if xhs_title:
@@ -365,11 +672,14 @@ class ContentParser:
                         "source": "url",
                         "error_code": "login_wall",
                     }
-            # 动态站点（如小红书）常无可见正文，兜底回退到 meta/JSON-LD。
-            if len((content or "").strip()) < 80 and len(meta_text) >= 40:
+            # 动态站点常无可见正文，且低置信度时回退到 meta/JSON-LD。
+            if (best_score < 0.28 or len((content or "").strip()) < 80) and len(meta_text) >= 40:
                 content = f"{content}\n\n{meta_text}".strip() if content else meta_text
+                logs.append("触发低置信度回退：meta/JSON-LD")
                 logs.append("使用 meta/JSON-LD 兜底抽取")
-            structured_blocks = _extract_structured_blocks_from_html(soup)
+            structured_blocks = _extract_structured_blocks_from_html(
+                BeautifulSoup(str(candidate_root), "html.parser")
+            )
 
             if not (content or "").strip():
                 hint = actionable_hint_for_failed_url(url, error_code=None, upstream_error="empty_body")
@@ -390,6 +700,14 @@ class ContentParser:
                 "content": content,
                 "title": page_title,
                 "structured_blocks": structured_blocks,
+                "parse_meta": {
+                    "page_kind": page_kind,
+                    "strategy": best_name,
+                    "quality_score": round(best_score, 3),
+                    "quality": best_quality,
+                    "js_render_fallback": best_name == "js_rendered_semantic",
+                    "list_links_count": len(list_links) if page_kind == "list" else 0,
+                },
                 "logs": logs,
                 "source": "url",
                 "url": url,
