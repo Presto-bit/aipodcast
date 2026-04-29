@@ -367,6 +367,62 @@ def _score_content_quality(text: str, *, page_kind: str) -> tuple[float, dict[st
     return score, {"lines": total, "noise_ratio": round(noise / total, 3), "avg_line_len": int(avg_len)}
 
 
+def _quality_reason_codes(
+    *,
+    text: str,
+    page_kind: str,
+    score: float,
+    quality: dict[str, Any],
+    title: str,
+    host: str,
+) -> list[str]:
+    reasons: list[str] = []
+    body = (text or "").strip()
+    lines = int(quality.get("lines") or 0)
+    noise_ratio = float(quality.get("noise_ratio") or 0.0)
+    avg_len = int(quality.get("avg_line_len") or 0)
+    low_sample = f"{(title or '').strip()}\n{body[:1200]}"
+    if score < 0.2:
+        reasons.append("quality_very_low")
+    if score < 0.3:
+        reasons.append("quality_low")
+    if len(body) < 120:
+        reasons.append("too_short")
+    if lines <= 3:
+        reasons.append("too_few_lines")
+    if noise_ratio >= 0.45:
+        reasons.append("high_noise_ratio")
+    if avg_len <= 6:
+        reasons.append("low_avg_line_len")
+    if page_kind == "list":
+        reasons.append("list_page")
+    shell_markers = (
+        "载入中",
+        "loading",
+        "返回首页",
+        "问题反馈",
+        "人机验证",
+        "安全验证",
+        "请完成验证",
+        "网络不给力",
+    )
+    if any(m in low_sample.lower() for m in (x.lower() for x in shell_markers)):
+        reasons.append("shell_page")
+    if _looks_like_bot_verification_page(host=host, title=title, content=body):
+        reasons.append("bot_verification")
+    if _looks_like_douban_shell_page(host=host, title=title, content=body):
+        reasons.append("dynamic_shell_page")
+    # 去重保序
+    out: list[str] = []
+    seen: set[str] = set()
+    for r in reasons:
+        if r in seen:
+            continue
+        seen.add(r)
+        out.append(r)
+    return out
+
+
 def _extract_links_for_list_page(soup: BeautifulSoup, url: str) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -566,6 +622,18 @@ def _looks_like_bot_verification_page(*, host: str, title: str, content: str) ->
     if ("baidu.com" in h or "baijiahao.baidu.com" in h) and hit >= 1:
         return True
     return hit >= 2
+
+
+def _looks_like_douban_shell_page(*, host: str, title: str, content: str) -> bool:
+    h = (host or "").lower().strip()
+    if "douban.com" not in h:
+        return False
+    t = (title or "").strip().lower()
+    c = (content or "").strip().lower()
+    sample = f"{t}\n{c}"
+    short_shell = len(c) <= 80 and ("载入中" in sample or "douban" in sample)
+    letter_stack = bool(re.search(r"(?:\n[a-z]){4,}", c))
+    return short_shell or letter_stack
 
 
 def _referer_for_url(url: str) -> str:
@@ -876,6 +944,21 @@ class ContentParser:
                     "source": "url",
                     "error_code": "login_wall",
                 }
+            if _looks_like_douban_shell_page(host=host, title=page_title, content=content):
+                hint = actionable_hint_for_failed_url(
+                    url,
+                    error_code="login_wall",
+                    upstream_error="douban_shell_page",
+                )
+                logs.append("命中豆瓣动态壳页，正文不可用")
+                return {
+                    "success": False,
+                    "error": "豆瓣页面仅返回前端壳内容，未提供可解析正文",
+                    "hint": hint,
+                    "logs": logs,
+                    "source": "url",
+                    "error_code": "login_wall",
+                }
             structured_blocks = _extract_structured_blocks_from_html(
                 BeautifulSoup(str(candidate_root), "html.parser")
             )
@@ -896,6 +979,15 @@ class ContentParser:
                 }
 
             logs.append(f"成功提取文本，共 {len(content)} 字符")
+            final_score, final_quality = _score_content_quality(content, page_kind=page_kind)
+            reason_codes = _quality_reason_codes(
+                text=content,
+                page_kind=page_kind,
+                score=final_score,
+                quality=final_quality,
+                title=page_title,
+                host=host,
+            )
 
             return {
                 "success": True,
@@ -905,8 +997,9 @@ class ContentParser:
                 "parse_meta": {
                     "page_kind": page_kind,
                     "strategy": best_name,
-                    "quality_score": round(best_score, 3),
-                    "quality": best_quality,
+                    "quality_score": round(final_score, 3),
+                    "quality": final_quality,
+                    "reason_codes": reason_codes,
                     "js_render_fallback": best_name == "js_rendered_semantic",
                     "list_links_count": len(list_links) if page_kind == "list" else 0,
                     "xhs_script_extract_hit": xhs_script_extract_hit,

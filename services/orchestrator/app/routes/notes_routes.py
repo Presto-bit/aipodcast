@@ -443,6 +443,28 @@ def _looks_like_xiaohongshu_shell_text(text: str) -> bool:
     return hit >= 2 and not has_paragraph_like
 
 
+def _url_parse_should_reject_low_quality(parse_meta: dict, content: str) -> tuple[bool, str]:
+    try:
+        score = float(parse_meta.get("quality_score") or 0.0)
+    except Exception:
+        score = 0.0
+    reasons_raw = parse_meta.get("reason_codes")
+    reasons = [str(x).strip() for x in reasons_raw] if isinstance(reasons_raw, list) else []
+    reason_set = {r for r in reasons if r}
+    body_len = len((content or "").strip())
+    if score < 0.2:
+        return True, "quality_very_low"
+    if score < 0.3 and (
+        "shell_page" in reason_set
+        or "bot_verification" in reason_set
+        or "dynamic_shell_page" in reason_set
+        or "high_noise_ratio" in reason_set
+        or body_len < 120
+    ):
+        return True, "quality_low_with_shell_signals"
+    return False, ""
+
+
 def _derive_source_capabilities(
     *,
     input_type: str,
@@ -1571,6 +1593,20 @@ async def import_note_from_url_api(request: Request):
             raise HTTPException(
                 status_code=400,
                 detail=f"[URL_LOGIN_WALL] 小红书仅返回页面壳层文本，未解析到正文\n\n{hint}",
+            )
+        parse_meta = fetch.get("parse_meta") if isinstance(fetch.get("parse_meta"), dict) else {}
+        low_quality_reject, low_quality_code = _url_parse_should_reject_low_quality(parse_meta, content)
+        if low_quality_reject:
+            hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
+                url,
+                error_code="quality_low",
+                upstream_error=low_quality_code,
+            )
+            reason_codes = parse_meta.get("reason_codes") if isinstance(parse_meta.get("reason_codes"), list) else []
+            reason_text = ",".join([str(x).strip() for x in reason_codes if str(x).strip()][:6]) or low_quality_code
+            raise HTTPException(
+                status_code=400,
+                detail=f"[URL_PARSE_LOW_QUALITY] 网页正文质量不足，已阻止入库（{reason_text}）\n\n{hint}",
             )
         notebook = str(body_obj.get("notebook") or "").strip()
         if not notebook:
