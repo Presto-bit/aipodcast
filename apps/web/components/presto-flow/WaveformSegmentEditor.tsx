@@ -44,13 +44,15 @@ function ToolButton({
 
 function CutModeIcon({ mode }: { mode: "split" | "left" | "right" }) {
   return (
-    <span className="relative inline-flex h-4 w-4 items-center justify-center rounded border border-line/80">
-      <span className="absolute inset-y-0 left-1/2 w-0 border-l border-dashed border-brand/70" />
+    <span className="relative inline-flex h-4 w-4 items-center justify-center">
+      <span className="absolute bottom-0 left-1/2 h-2 w-0 -translate-x-1/2 border-l border-brand/80" />
+      <span className="absolute left-1/2 top-[3px] h-0 w-[7px] -translate-x-[7px] rotate-[28deg] border-t border-brand/80" />
+      <span className="absolute left-1/2 top-[3px] h-0 w-[7px] -rotate-[28deg] border-t border-brand/80" />
       {mode !== "split" ? (
         <span
           className={[
-            "absolute inset-y-0 w-1/2 bg-brand/15",
-            mode === "left" ? "right-0 border-l border-dashed border-brand/80" : "left-0 border-r border-dashed border-brand/80"
+            "absolute top-[1px] h-0 w-[8px] border-t border-dashed border-brand/90",
+            mode === "left" ? "right-[1px]" : "left-[1px]"
           ].join(" ")}
         />
       ) : null}

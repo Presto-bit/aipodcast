@@ -396,6 +396,21 @@ export default function MeProfilePage() {
                 <>
                   <input
                     className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
+                    type="email"
+                    placeholder="邮箱"
+                    value={regEmail}
+                    onChange={(e) => {
+                      setRegEmail(e.target.value);
+                      setRegCodeSent(false);
+                      setRegDispatchHint("");
+                      setRegPasswordConfirm("");
+                    }}
+                    required
+                    autoComplete="email"
+                    aria-label="邮箱"
+                  />
+                  <input
+                    className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
                     placeholder="账号名称（3～32 位字母、数字或下划线）"
                     value={regUsername}
                     onChange={(e) => {
@@ -410,41 +425,6 @@ export default function MeProfilePage() {
                     autoComplete="username"
                     aria-label="账号名称"
                   />
-                  <input
-                    className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
-                    type="email"
-                    placeholder="邮箱"
-                    value={regEmail}
-                    onChange={(e) => {
-                      setRegEmail(e.target.value);
-                      setRegCodeSent(false);
-                      setRegDispatchHint("");
-                      setRegPasswordConfirm("");
-                    }}
-                    required
-                    autoComplete="email"
-                    aria-label="邮箱"
-                  />
-                  <div className="flex w-full items-stretch overflow-hidden rounded-lg border border-line bg-fill shadow-sm transition focus-within:border-brand focus-within:ring-1 focus-within:ring-brand/25">
-                    <input
-                      className="min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-sm text-ink outline-none ring-0 placeholder:text-muted focus:ring-0"
-                      inputMode="numeric"
-                      placeholder="请输入 6 位验证码"
-                      value={regOtp}
-                      onChange={(e) => setRegOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                      autoComplete="one-time-code"
-                      aria-label="验证码"
-                    />
-                    <button
-                      type="button"
-                      className="shrink-0 border-l border-line bg-canvas px-3 py-2 text-sm text-ink transition hover:bg-fill disabled:opacity-50"
-                      disabled={regSendCodeBusy}
-                      onClick={() => void sendRegisterCode()}
-                    >
-                      {regSendCodeBusy ? "提交中…" : regCodeSent ? (regDispatchHint ? "已生成" : "已发送") : "发送验证码"}
-                    </button>
-                  </div>
-                  {regDispatchHint ? <p className="text-xs text-muted">{regDispatchHint}</p> : null}
                   <input
                     className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
                     type="password"
@@ -469,6 +449,26 @@ export default function MeProfilePage() {
                     autoComplete="new-password"
                     aria-label="确认密码"
                   />
+                  <div className="flex w-full items-stretch overflow-hidden rounded-lg border border-line bg-fill shadow-sm transition focus-within:border-brand focus-within:ring-1 focus-within:ring-brand/25">
+                    <input
+                      className="min-w-0 flex-1 border-0 bg-transparent px-3 py-2 text-sm text-ink outline-none ring-0 placeholder:text-muted focus:ring-0"
+                      inputMode="numeric"
+                      placeholder="请输入 6 位验证码"
+                      value={regOtp}
+                      onChange={(e) => setRegOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      autoComplete="one-time-code"
+                      aria-label="验证码"
+                    />
+                    <button
+                      type="button"
+                      className="shrink-0 border-l border-line bg-canvas px-3 py-2 text-sm text-ink transition hover:bg-fill disabled:opacity-50"
+                      disabled={regSendCodeBusy}
+                      onClick={() => void sendRegisterCode()}
+                    >
+                      {regSendCodeBusy ? "提交中…" : regCodeSent ? (regDispatchHint ? "已生成" : "已发送") : "发送验证码"}
+                    </button>
+                  </div>
+                  {regDispatchHint ? <p className="text-xs text-muted">{regDispatchHint}</p> : null}
                 </>
               ) : null}
               {authMode === "login" ? (

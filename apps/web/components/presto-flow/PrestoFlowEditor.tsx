@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CircleHelp, Download, History, PanelRightClose, PanelRightOpen, Search, SlidersHorizontal, Sparkles } from "lucide-react";
+import { CircleHelp, Download, History, PanelRightClose, PanelRightOpen, Scissors, Search, SlidersHorizontal, Sparkles } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -212,6 +212,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [waveZoomLevel, setWaveZoomLevel] = useState(1);
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
+  const [clipToolsOpen, setClipToolsOpen] = useState(false);
+  const [waveformFullscreen, setWaveformFullscreen] = useState(false);
   const [insertingSegmentAudio, setInsertingSegmentAudio] = useState(false);
   /** 词链试听：与终版导出同 ffmpeg 算法，单独对象键；波形 URL 切换，稿面时间戳仍对原片 */
   const [wordchainPreviewOn, setWordchainPreviewOn] = useState(false);
@@ -2379,24 +2381,35 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               engineState={engineState}
               beforeTranscribe={
                 <div className="min-w-0 flex-1">
-                  <PrestoFlowImportBar
-                    variant="inline"
-                    projectId={projectId}
-                    getAuthHeaders={getAuthHeaders}
-                    hasMainAudio={hasServerAudio}
-                    disabled={actionBusy || transcriptionActive || exportActive}
-                    label={t("presto.flow.importAudio")}
-                    busyLabel={t("presto.flow.importBusy")}
-                    hint={t("presto.flow.importHint")}
-                    replaceWarn={t("presto.flow.importReplaceWarn")}
-                    onDone={() => void load()}
-                    onError={(msg) => setErr(msg)}
-                    allowMultiSegment={
-                      project.transcription_status !== "succeeded" &&
-                      project.transcription_status !== "running" &&
-                      project.transcription_status !== "queued"
-                    }
-                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
+                      onClick={() => setClipToolsOpen((v) => !v)}
+                    >
+                      <Scissors className="h-3.5 w-3.5" aria-hidden />
+                      <span>音频剪辑</span>
+                      <span className="text-muted">{clipToolsOpen ? "收起" : "展开"}</span>
+                    </button>
+                    <PrestoFlowImportBar
+                      variant="inline"
+                      projectId={projectId}
+                      getAuthHeaders={getAuthHeaders}
+                      hasMainAudio={hasServerAudio}
+                      disabled={actionBusy || transcriptionActive || exportActive}
+                      label={t("presto.flow.importAudio")}
+                      busyLabel={t("presto.flow.importBusy")}
+                      hint={t("presto.flow.importHint")}
+                      replaceWarn={t("presto.flow.importReplaceWarn")}
+                      onDone={() => void load()}
+                      onError={(msg) => setErr(msg)}
+                      allowMultiSegment={
+                        project.transcription_status !== "succeeded" &&
+                        project.transcription_status !== "running" &&
+                        project.transcription_status !== "queued"
+                      }
+                    />
+                  </div>
                 </div>
               }
               transcribeLabel={t("clip.editor.transcribeShort")}
@@ -2661,9 +2674,35 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           </button>
                         </div>
                       ) : null}
+                      {clipToolsOpen ? (
+                        <div className="mb-2">
+                          <WaveformSegmentEditor
+                            zoomLevel={waveZoomLevel}
+                            onZoomChange={(next) => {
+                              setWaveZoomLevel(next);
+                              waveformRef.current?.setZoom(next);
+                            }}
+                            onSplit={() => splitAtCursor("split")}
+                            onSplitLeft={() => splitAtCursor("left")}
+                            onSplitRight={() => splitAtCursor("right")}
+                            onUndo={undoSegmentEdit}
+                            undoDisabled={segmentUndoStackRef.current.length === 0}
+                            disabled={segmentEditLocked}
+                          />
+                        </div>
+                      ) : null}
                       <div className="mb-2 h-20 overflow-hidden rounded-lg border border-line bg-track/40">
                         {waveformAudioUrl ? (
                           <div className="group relative h-full w-full">
+                            <button
+                              type="button"
+                              className="absolute right-2 top-2 z-[4] inline-flex h-6 w-6 items-center justify-center rounded-md border border-line/80 bg-surface/80 text-ink hover:bg-fill"
+                              aria-label={waveformFullscreen ? "退出波形全屏" : "波形全屏编辑"}
+                              title={waveformFullscreen ? "退出波形全屏" : "波形全屏编辑"}
+                              onClick={() => setWaveformFullscreen(true)}
+                            >
+                              <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                            </button>
                             <button
                               type="button"
                               className="absolute left-0 top-0 z-[3] h-full w-5 -translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
@@ -2711,19 +2750,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           <div className="flex h-full items-center justify-center text-[10px] text-muted">—</div>
                         )}
                       </div>
-                      <WaveformSegmentEditor
-                        zoomLevel={waveZoomLevel}
-                        onZoomChange={(next) => {
-                          setWaveZoomLevel(next);
-                          waveformRef.current?.setZoom(next);
-                        }}
-                        onSplit={() => splitAtCursor("split")}
-                        onSplitLeft={() => splitAtCursor("left")}
-                        onSplitRight={() => splitAtCursor("right")}
-                        onUndo={undoSegmentEdit}
-                        undoDisabled={segmentUndoStackRef.current.length === 0}
-                        disabled={segmentEditLocked}
-                      />
                       <input
                         ref={insertAudioInputRef}
                         type="file"
@@ -3150,6 +3176,82 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               </div>
             )}
           </div>
+          {waveformFullscreen ? (
+            <div className="fixed inset-0 z-[13000] bg-canvas/95 p-4 backdrop-blur-sm">
+              <div className="flex h-full w-full flex-col rounded-xl border border-line bg-surface p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-ink">波形全屏编辑</p>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink hover:bg-fill"
+                    onClick={() => setWaveformFullscreen(false)}
+                  >
+                    <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                    退出全屏
+                  </button>
+                </div>
+                {clipToolsOpen ? (
+                  <div className="mb-3">
+                    <WaveformSegmentEditor
+                      zoomLevel={waveZoomLevel}
+                      onZoomChange={(next) => {
+                        setWaveZoomLevel(next);
+                        waveformRef.current?.setZoom(next);
+                      }}
+                      onSplit={() => splitAtCursor("split")}
+                      onSplitLeft={() => splitAtCursor("left")}
+                      onSplitRight={() => splitAtCursor("right")}
+                      onUndo={undoSegmentEdit}
+                      undoDisabled={segmentUndoStackRef.current.length === 0}
+                      disabled={segmentEditLocked}
+                    />
+                  </div>
+                ) : null}
+                <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-line bg-track/35">
+                  <button
+                    type="button"
+                    className="absolute left-0 top-0 z-[3] h-full w-6 -translate-x-1/2 opacity-30 transition hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
+                    disabled={segmentEditLocked}
+                    aria-label="在开头插入音频"
+                    onClick={() => {
+                      insertBoundaryIndexRef.current = 0;
+                      insertAudioInputRef.current?.click();
+                    }}
+                  >
+                    <span className="absolute left-1/2 top-1/2 inline-flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-xs text-brand-foreground">
+                      +
+                    </span>
+                  </button>
+                  <ClipWaveformPanel
+                    ref={waveformRef}
+                    variant="panel"
+                    waveHeight={220}
+                    audioUrl={waveformAudioUrl}
+                    onTimeMs={handlePlaybackTimeMs}
+                    onLoadError={handleWaveformLoadError}
+                    playbackRate={playbackRate}
+                    snapSeekMs={snapSeekMs}
+                    zoomLevel={waveZoomLevel}
+                    className="!h-full !border-0 !bg-transparent"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-0 top-0 z-[3] h-full w-6 translate-x-1/2 opacity-30 transition hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
+                    disabled={segmentEditLocked}
+                    aria-label="在结尾插入音频"
+                    onClick={() => {
+                      insertBoundaryIndexRef.current = audioSegments.length;
+                      insertAudioInputRef.current?.click();
+                    }}
+                  >
+                    <span className="absolute left-1/2 top-1/2 inline-flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-xs text-brand-foreground">
+                      +
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           <AudioConsole
             dockEmbed
             waveformRef={waveformRef}

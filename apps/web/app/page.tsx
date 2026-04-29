@@ -333,6 +333,20 @@ export default function HomePage() {
             <>
               <input
                 className="w-full rounded border border-line bg-canvas p-3 text-sm"
+                type="email"
+                placeholder="邮箱"
+                value={regEmail}
+                onChange={(e) => {
+                  setRegEmail(e.target.value);
+                  setRegCodeSent(false);
+                  setRegDispatchHint("");
+                }}
+                required
+                autoComplete="email"
+                aria-label="邮箱"
+              />
+              <input
+                className="w-full rounded border border-line bg-canvas p-3 text-sm"
                 placeholder="账号名称（3～32 位字母、数字或下划线）"
                 value={regUsername}
                 onChange={(e) => {
@@ -348,17 +362,15 @@ export default function HomePage() {
               />
               <input
                 className="w-full rounded border border-line bg-canvas p-3 text-sm"
-                type="email"
-                placeholder="邮箱"
-                value={regEmail}
-                onChange={(e) => {
-                  setRegEmail(e.target.value);
-                  setRegCodeSent(false);
-                  setRegDispatchHint("");
-                }}
+                type="password"
+                placeholder="密码（至少 6 位）"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
                 required
-                autoComplete="email"
-                aria-label="邮箱"
+                minLength={6}
+                maxLength={128}
+                autoComplete="new-password"
+                aria-label="密码"
               />
               <div className="flex w-full items-stretch overflow-hidden rounded border border-line bg-canvas shadow-sm transition focus-within:border-brand focus-within:ring-1 focus-within:ring-brand/25">
                 <input
@@ -380,18 +392,6 @@ export default function HomePage() {
                 </button>
               </div>
               {regDispatchHint ? <p className="text-xs text-muted">{regDispatchHint}</p> : null}
-              <input
-                className="w-full rounded border border-line bg-canvas p-3 text-sm"
-                type="password"
-                placeholder="密码（至少 6 位）"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                required
-                minLength={6}
-                maxLength={128}
-                autoComplete="new-password"
-                aria-label="密码"
-              />
             </>
           ) : null}
           {authMode === "login" ? (
