@@ -3180,7 +3180,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
             ]}
             rateSelectAriaLabel={t("presto.flow.playbackRateAria")}
             zoomLevel={waveZoomLevel}
-            durationMs={durationMs}
+            durationMs={durationMs ?? 0}
             currentTimeMs={playbackMs}
             onSeekMs={(ms) => {
               waveformRef.current?.seekToMs(ms);

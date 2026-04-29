@@ -192,6 +192,7 @@ export default function ClipRoughCutPanel({
 
   const pausePolicy = project.export_pause_policy;
   const pauseEnabled = Boolean(pausePolicy?.enabled);
+  const transcriptionSucceeded = project.transcription_status === "succeeded";
   const longGapMs = pauseEnabled ? Math.max(500, Number(pausePolicy?.long_gap_ms) || 2000) : 2500;
 
   const longSilenceRows = useMemo(() => {
