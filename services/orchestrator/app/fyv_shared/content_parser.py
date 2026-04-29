@@ -245,6 +245,27 @@ def _note_id_from_xiaohongshu_url(url: str) -> str:
     return (m.group(1) if m else "").strip()
 
 
+def _looks_like_xiaohongshu_shell_text(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return True
+    low = t.lower()
+    markers = (
+        "沪icp备",
+        "营业执照",
+        "沪公网安备",
+        "增值电信业务经营许可证",
+        "互联网药品信息服务资格证书",
+        "行吟信息科技（上海）有限公司",
+        "地址：上海市黄浦区马当路",
+        "发现\n直播\n发布\n通知",
+    )
+    hit = sum(1 for m in markers if m in t or m in low)
+    # 命中多个备案/壳层关键词，且几乎没有正文段落特征时，判定为壳文本。
+    has_dialog_like = ("“" in t and "”" in t) or ("。" in t and len(t) >= 120)
+    return hit >= 2 and not has_dialog_like
+
+
 def _referer_for_url(url: str) -> str:
     try:
         p = urlparse(url)
@@ -325,9 +346,25 @@ class ContentParser:
                 xhs_title, xhs_desc = _extract_xiaohongshu_note_parts(raw_html, _note_id_from_xiaohongshu_url(url))
                 if xhs_title:
                     page_title = xhs_title
-                if len((xhs_desc or "").strip()) >= max(40, int(len((content or "").strip()) * 0.3)):
+                # 小红书正文优先使用脚本态 desc（可见 DOM 常常只有壳层文本）。
+                if len((xhs_desc or "").strip()) >= 40:
                     content = xhs_desc
                     logs.append("使用小红书脚本态正文抽取")
+                elif _looks_like_xiaohongshu_shell_text(content):
+                    hint = actionable_hint_for_failed_url(
+                        url,
+                        error_code="login_wall",
+                        upstream_error="xiaohongshu_shell_text_only",
+                    )
+                    logs.append("小红书仅获取到页面壳层文本，未命中正文")
+                    return {
+                        "success": False,
+                        "error": "小红书页面仅获取到导航/备案等壳层文本，未解析到正文",
+                        "hint": hint,
+                        "logs": logs,
+                        "source": "url",
+                        "error_code": "login_wall",
+                    }
             # 动态站点（如小红书）常无可见正文，兜底回退到 meta/JSON-LD。
             if len((content or "").strip()) < 80 and len(meta_text) >= 40:
                 content = f"{content}\n\n{meta_text}".strip() if content else meta_text
