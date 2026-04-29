@@ -1531,123 +1531,133 @@ async def import_note_from_url_api(request: Request):
     url = str(body_obj.get("url") or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="请提供 URL")
-    fetch = content_parser.parse_url(url)
-    content = str(fetch.get("content") or "").strip()
-    fetch_logs = fetch.get("logs") if isinstance(fetch.get("logs"), list) else []
-    if not fetch.get("success") or not content:
-        err_code = str(fetch.get("error_code") or "").strip() or "URL_PARSE_FAILED"
-        hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
-            url,
-            error_code=str(fetch.get("error_code") or "").strip() or None,
-            upstream_error=str(fetch.get("error") or "").strip() or None,
-        )
-        head = str(fetch.get("error") or "").strip() or "未能从网页提取正文"
-        raise HTTPException(status_code=400, detail=f"[{err_code}] {head}\n\n{hint}")
-    if len(content) > MAX_URL_IMPORT_CHARS:
-        content = content[:MAX_URL_IMPORT_CHARS] + "\n\n（内容已截断）"
-    host = (urlparse(url).netloc or "").strip().lower()
-    if host.startswith("www."):
-        host = host[4:]
-    if host.endswith("xiaohongshu.com"):
-        used_script_extract = any("小红书脚本态正文抽取" in str(x or "") for x in fetch_logs)
-        if not used_script_extract:
+    try:
+        fetch = content_parser.parse_url(url)
+        content = str(fetch.get("content") or "").strip()
+        fetch_logs = fetch.get("logs") if isinstance(fetch.get("logs"), list) else []
+        if not fetch.get("success") or not content:
+            err_code = str(fetch.get("error_code") or "").strip() or "URL_PARSE_FAILED"
+            hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
+                url,
+                error_code=str(fetch.get("error_code") or "").strip() or None,
+                upstream_error=str(fetch.get("error") or "").strip() or None,
+            )
+            head = str(fetch.get("error") or "").strip() or "未能从网页提取正文"
+            raise HTTPException(status_code=400, detail=f"[{err_code}] {head}\n\n{hint}")
+        if len(content) > MAX_URL_IMPORT_CHARS:
+            content = content[:MAX_URL_IMPORT_CHARS] + "\n\n（内容已截断）"
+        host = (urlparse(url).netloc or "").strip().lower()
+        if host.startswith("www."):
+            host = host[4:]
+        if host.endswith("xiaohongshu.com"):
+            used_script_extract = any("小红书脚本态正文抽取" in str(x or "") for x in fetch_logs)
+            if not used_script_extract:
+                hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
+                    url,
+                    error_code="login_wall",
+                    upstream_error="xiaohongshu_script_extract_missing",
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"[URL_LOGIN_WALL] 小红书链接未命中正文抽取通道（仅获取到壳层页面）\n\n{hint}",
+                )
+        if host.endswith("xiaohongshu.com") and _looks_like_xiaohongshu_shell_text(content):
             hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
                 url,
                 error_code="login_wall",
-                upstream_error="xiaohongshu_script_extract_missing",
+                upstream_error="xiaohongshu_shell_text_only",
             )
             raise HTTPException(
                 status_code=400,
-                detail=f"[URL_LOGIN_WALL] 小红书链接未命中正文抽取通道（仅获取到壳层页面）\n\n{hint}",
+                detail=f"[URL_LOGIN_WALL] 小红书仅返回页面壳层文本，未解析到正文\n\n{hint}",
             )
-    if host.endswith("xiaohongshu.com") and _looks_like_xiaohongshu_shell_text(content):
-        hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
-            url,
-            error_code="login_wall",
-            upstream_error="xiaohongshu_shell_text_only",
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=f"[URL_LOGIN_WALL] 小红书仅返回页面壳层文本，未解析到正文\n\n{hint}",
-        )
-    notebook = str(body_obj.get("notebook") or "").strip()
-    if not notebook:
-        raise HTTPException(status_code=400, detail="notebook_required")
-    custom_title = str(body_obj.get("title") or "").strip()
-    fetched_title = str(fetch.get("title") or "").strip()
-    if custom_title:
-        title = custom_title
-    elif fetched_title:
-        title = fetched_title
-    else:
-        pu = urlparse(url)
-        host = (pu.netloc or "").strip()
-        title = f"{host} 摘录" if host else "网页笔记"
-    title = _safe_user_text(title, max_len=240) or "网页笔记"
-    project_name = str(body_obj.get("project_name") or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
-    project_id = ensure_default_project(project_name, created_by=user_ref)
-    content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    canonical_url = str(fetch.get("url") or url).strip() or url
-    old_rows = list_notes(
-        notebook=notebook,
-        limit=500,
-        offset=0,
-        user_ref=user_ref,
-    )
-    same_url_version = 0
-    for old in old_rows:
-        old_source = str(old.get("source_url") or "").strip()
-        if old_source != canonical_url:
-            continue
-        old_md = _normalize_metadata_dict(old)
-        try:
-            old_v = int(old_md.get("sourceVersion") or 1)
-        except (TypeError, ValueError):
-            old_v = 1
-        same_url_version = max(same_url_version, old_v)
-        old_hash = str(old_md.get("sourceContentSha256") or "").strip()
-        if old_hash and old_hash == content_sha256:
-            return {
-                "success": True,
-                "deduped": True,
-                "noteId": str(old.get("id") or ""),
-                "title": str(old_md.get("title") or ""),
-                "notebook": notebook,
-                "sourceVersion": old_v,
-                "sourceCanonicalUrl": canonical_url,
-            }
-    new_version = same_url_version + 1
-    try:
-        note_id = create_text_note(
-            project_id=project_id,
-            title=title,
+        notebook = str(body_obj.get("notebook") or "").strip()
+        if not notebook:
+            raise HTTPException(status_code=400, detail="notebook_required")
+        custom_title = str(body_obj.get("title") or "").strip()
+        fetched_title = str(fetch.get("title") or "").strip()
+        if custom_title:
+            title = custom_title
+        elif fetched_title:
+            title = fetched_title
+        else:
+            pu = urlparse(url)
+            host = (pu.netloc or "").strip()
+            title = f"{host} 摘录" if host else "网页笔记"
+        title = _safe_user_text(title, max_len=240) or "网页笔记"
+        project_name = str(body_obj.get("project_name") or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
+        project_id = ensure_default_project(project_name, created_by=user_ref)
+        content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        canonical_url = str(fetch.get("url") or url).strip() or url
+        old_rows = list_notes(
             notebook=notebook,
-            content=content,
-            source_url=canonical_url,
+            limit=500,
+            offset=0,
             user_ref=user_ref,
-            extra_metadata={
-                "parseStatus": "ok",
-                "parseEngine": "url-content-parser",
-                "sourceCanonicalUrl": canonical_url,
-                "sourceContentSha256": content_sha256,
-                "sourceVersion": new_version,
-                "structuredBlocks": _coerce_structured_blocks(fetch.get("structured_blocks")),
-                **_build_preprocess_fields(content),
-            },
         )
-    except ValueError as e:
-        if str(e) == "notebook_required":
-            raise HTTPException(status_code=400, detail="notebook_required") from e
+        same_url_version = 0
+        for old in old_rows:
+            old_source = str(old.get("source_url") or "").strip()
+            if old_source != canonical_url:
+                continue
+            old_md = _normalize_metadata_dict(old)
+            try:
+                old_v = int(old_md.get("sourceVersion") or 1)
+            except (TypeError, ValueError):
+                old_v = 1
+            same_url_version = max(same_url_version, old_v)
+            old_hash = str(old_md.get("sourceContentSha256") or "").strip()
+            if old_hash and old_hash == content_sha256:
+                return {
+                    "success": True,
+                    "deduped": True,
+                    "noteId": str(old.get("id") or ""),
+                    "title": str(old_md.get("title") or ""),
+                    "notebook": notebook,
+                    "sourceVersion": old_v,
+                    "sourceCanonicalUrl": canonical_url,
+                }
+        new_version = same_url_version + 1
+        try:
+            note_id = create_text_note(
+                project_id=project_id,
+                title=title,
+                notebook=notebook,
+                content=content,
+                source_url=canonical_url,
+                user_ref=user_ref,
+                extra_metadata={
+                    "parseStatus": "ok",
+                    "parseEngine": "url-content-parser",
+                    "sourceCanonicalUrl": canonical_url,
+                    "sourceContentSha256": content_sha256,
+                    "sourceVersion": new_version,
+                    "structuredBlocks": _coerce_structured_blocks(fetch.get("structured_blocks")),
+                    **_build_preprocess_fields(content),
+                },
+            )
+        except ValueError as e:
+            if str(e) == "notebook_required":
+                raise HTTPException(status_code=400, detail="notebook_required") from e
+            raise
+        _try_enqueue_note_rag_index(note_id, user_ref)
+        return {
+            "success": True,
+            "noteId": note_id,
+            "title": title,
+            "notebook": notebook,
+            "sourceVersion": new_version,
+            "sourceCanonicalUrl": canonical_url,
+        }
+    except HTTPException:
         raise
-    _try_enqueue_note_rag_index(note_id, user_ref)
-    return {
-        "success": True,
-        "noteId": note_id,
-        "title": title,
-        "notebook": notebook,
-        "sourceVersion": new_version,
-        "sourceCanonicalUrl": canonical_url,
-    }
+    except Exception as exc:
+        rid = (request.headers.get("x-request-id") or "").strip() or "-"
+        _notes_startup_logger.exception("notes import_url unexpected error request_id=%s", rid)
+        raise HTTPException(
+            status_code=500,
+            detail=f"url_import_runtime_error:{exc.__class__.__name__}:{str(exc)[:220]}（request_id={rid}）",
+        ) from exc
 
 
 @router.delete("/notes/{note_id}")
