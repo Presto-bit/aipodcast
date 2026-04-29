@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
   useCallback,
@@ -47,7 +47,6 @@ import {
 } from "../lib/appShellLayout";
 import { isClipNavPublicForAllUsers } from "../lib/clipNavAccess";
 import {
-  isAuthPublicPath,
   matchesNotesWorkbench,
   matchesProductStudio,
   normalizePathname,
@@ -126,18 +125,8 @@ function NavIconBox({ active, children }: { active: boolean; children: ReactNode
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const path = pathname ?? "";
-  const router = useRouter();
-  const routerRef = useRef(router);
-  routerRef.current = router;
   const { ready, authRequired, user } = useAuth();
 
-  /** 需鉴权且无会话时，子路由回到可登录页（首页或设置内嵌登录） */
-  useEffect(() => {
-    if (!ready || authRequired !== true) return;
-    if (user) return;
-    if (!pathname || isAuthPublicPath(pathname)) return;
-    routerRef.current.replace("/");
-  }, [ready, authRequired, user, pathname]);
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
   /**

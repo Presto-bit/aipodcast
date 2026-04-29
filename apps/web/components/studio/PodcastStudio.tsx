@@ -742,7 +742,9 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 
   function refPayloadMinimal() {
     return buildReferenceJobFields({
+      urlListText: "",
       selectedNoteIds,
+      referenceExtra: "",
       useRag: false,
       ragMaxChars: 8000,
       referenceRagMode: "truncate"
