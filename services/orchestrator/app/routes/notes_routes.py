@@ -83,6 +83,7 @@ from ..note_rag_service import (
 from ..text_decode import safe_decode_bytes
 from ..schemas import (
     NoteCreateRequest,
+    NoteImportExtractedTextRequest,
     NoteImportUrlRequest,
     NotePatchRequest,
     NoteUploadJsonRequest,
@@ -1698,6 +1699,113 @@ async def import_note_from_url_api(request: Request):
             status_code=500,
             detail=f"url_import_runtime_error:{exc.__class__.__name__}:{str(exc)[:220]}（request_id={rid}）",
         ) from exc
+
+
+@router.post("/notes/import_extracted_text")
+async def import_note_from_extracted_text_api(request: Request):
+    """二级兜底：客户端已提取正文后直接入库（绕过服务端 URL 抓取风控）。"""
+    user_ref = _current_user_ref_or_401(request)
+    try:
+        raw_body = await request.body()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体读取失败")
+    try:
+        body_obj = json.loads(raw_body or b"{}")
+    except Exception:
+        try:
+            body_obj = json.loads(safe_decode_bytes(raw_body))
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid_json_body") from None
+    if not isinstance(body_obj, dict):
+        raise HTTPException(status_code=400, detail="invalid_json_body")
+    try:
+        payload = NoteImportExtractedTextRequest.model_validate(body_obj)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_request_body")
+
+    url = str(payload.url or "").strip()
+    notebook = str(payload.notebook or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="请提供 URL")
+    if not notebook:
+        raise HTTPException(status_code=400, detail="notebook_required")
+    content = _safe_user_text(payload.content, max_len=MAX_URL_IMPORT_CHARS).strip()
+    if not content or len(content) < 20:
+        raise HTTPException(status_code=400, detail="正文过短，请粘贴完整内容后再导入")
+    canonical_url = url
+    project_name = str(payload.project_name or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
+    project_id = ensure_default_project(project_name, created_by=user_ref)
+    content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    custom_title = str(payload.title or "").strip()
+    if custom_title:
+        title = custom_title
+    else:
+        pu = urlparse(url)
+        host = (pu.netloc or "").strip()
+        title = f"{host} 摘录" if host else "网页笔记"
+    title = _safe_user_text(title, max_len=240) or "网页笔记"
+
+    old_rows = list_notes(
+        notebook=notebook,
+        limit=500,
+        offset=0,
+        user_ref=user_ref,
+    )
+    same_url_version = 0
+    for old in old_rows:
+        old_source = str(old.get("source_url") or "").strip()
+        if old_source != canonical_url:
+            continue
+        old_md = _normalize_metadata_dict(old)
+        try:
+            old_v = int(old_md.get("sourceVersion") or 1)
+        except (TypeError, ValueError):
+            old_v = 1
+        same_url_version = max(same_url_version, old_v)
+        old_hash = str(old_md.get("sourceContentSha256") or "").strip()
+        if old_hash and old_hash == content_sha256:
+            return {
+                "success": True,
+                "deduped": True,
+                "noteId": str(old.get("id") or ""),
+                "title": str(old_md.get("title") or ""),
+                "notebook": notebook,
+                "sourceVersion": old_v,
+                "sourceCanonicalUrl": canonical_url,
+            }
+
+    new_version = same_url_version + 1
+    try:
+        note_id = create_text_note(
+            project_id=project_id,
+            title=title,
+            notebook=notebook,
+            content=content,
+            source_url=canonical_url,
+            user_ref=user_ref,
+            extra_metadata={
+                "parseStatus": "ok",
+                "parseEngine": "client-extracted-text",
+                "sourceCanonicalUrl": canonical_url,
+                "sourceContentSha256": content_sha256,
+                "sourceVersion": new_version,
+                "structuredBlocks": _build_structured_blocks_from_text(content),
+                **_build_preprocess_fields(content),
+            },
+        )
+    except ValueError as e:
+        if str(e) == "notebook_required":
+            raise HTTPException(status_code=400, detail="notebook_required") from e
+        raise
+    _try_enqueue_note_rag_index(note_id, user_ref)
+    return {
+        "success": True,
+        "noteId": note_id,
+        "title": title,
+        "notebook": notebook,
+        "sourceVersion": new_version,
+        "sourceCanonicalUrl": canonical_url,
+    }
 
 
 @router.delete("/notes/{note_id}")

@@ -11,7 +11,8 @@ const LIMIT = 400;
 const RATE_LIMIT_EXEMPT_POST_PATHS = new Set([
   "/api/note-upload",
   "/api/notes/upload",
-  "/api/notes/import_url"
+  "/api/notes/import_url",
+  "/api/notes/import_extracted_text"
 ]);
 
 /** 页面与 RSC：禁止浏览器与遵守源站的 CDN 长期缓存 HTML（与 layout force-dynamic 叠加） */
