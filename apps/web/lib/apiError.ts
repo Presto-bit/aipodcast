@@ -30,6 +30,11 @@ export function apiErrorMessage(data: unknown, fallback: string): string {
   const o = data as Record<string, unknown>;
   if (typeof o.error === "string" && o.error.trim()) {
     const code = o.error.trim();
+    const detail = typeof o.detail === "string" ? o.detail.trim() : "";
+    // 通用包装错误应优先展示后端 detail（否则用户只能看到 "http_exception"）。
+    if ((code === "http_exception" || code === "internal_server_error") && detail) {
+      return detail;
+    }
     // BFF 在 upstream_unreachable 时会把 describeOrchestratorUnreachable 写入 detail（含 ORCHESTRATOR_URL 等），优先展示便于排障
     if (code === "upstream_unreachable" && typeof o.detail === "string" && o.detail.trim()) {
       return o.detail.trim();
