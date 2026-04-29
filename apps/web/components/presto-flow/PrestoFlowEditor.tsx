@@ -213,7 +213,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [waveZoomLevel, setWaveZoomLevel] = useState(1);
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
   const [clipToolsOpen, setClipToolsOpen] = useState(false);
-  const [clipToolsAlign, setClipToolsAlign] = useState<"left" | "right">("left");
   const [insertingSegmentAudio, setInsertingSegmentAudio] = useState(false);
   /** 词链试听：与终版导出同 ffmpeg 算法，单独对象键；波形 URL 切换，稿面时间戳仍对原片 */
   const [wordchainPreviewOn, setWordchainPreviewOn] = useState(false);
@@ -300,26 +299,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     if (!clipToolsOpen) return;
-    const recalc = () => {
-      const el = clipToolsWrapRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const panelMinWidth = 256; // min-w-[16rem]
-      const rightSpace = window.innerWidth - rect.left;
-      const leftSpace = rect.right;
-      setClipToolsAlign(rightSpace >= panelMinWidth || rightSpace >= leftSpace ? "right" : "left");
-    };
-    recalc();
     const onDown = (e: globalThis.MouseEvent) => {
       const t = e.target;
       if (!(t instanceof Node)) return;
       if (clipToolsWrapRef.current?.contains(t)) return;
       setClipToolsOpen(false);
     };
-    window.addEventListener("resize", recalc);
     document.addEventListener("mousedown", onDown, true);
     return () => {
-      window.removeEventListener("resize", recalc);
       document.removeEventListener("mousedown", onDown, true);
     };
   }, [clipToolsOpen]);
@@ -2374,7 +2361,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     <div ref={clipToolsWrapRef} className="relative">
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
+                        className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
                         onClick={() => setClipToolsOpen((v) => !v)}
                       >
                         <Scissors className="h-3.5 w-3.5" aria-hidden />
@@ -2383,10 +2370,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       </button>
                       {clipToolsOpen ? (
                         <div
-                          className={[
-                            "absolute top-[calc(100%+6px)] z-[120] w-[min(66vw,26rem)] max-w-[26rem] min-w-[16rem] rounded-lg border border-line bg-surface p-2 shadow-xl",
-                            clipToolsAlign === "right" ? "left-0" : "right-0"
-                          ].join(" ")}
+                          className="absolute right-0 top-[calc(100%+6px)] z-[120] w-[min(66vw,26rem)] max-w-[26rem] min-w-[16rem] rounded-lg border border-line bg-surface p-2 shadow-xl"
                         >
                           <WaveformSegmentEditor
                             zoomLevel={waveZoomLevel}
@@ -2432,7 +2416,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 insertingSegmentAudio ||
                 !hasServerAudio ||
                 project.transcription_status === "running" ||
-                project.transcription_status === "queued"
+                project.transcription_status === "queued" ||
+                (project.transcription_status === "succeeded" && pendingInsertedSegments.length === 0)
               }
               exportDisabled={
                 actionBusy ||
@@ -2482,8 +2467,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                   className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface/20"
                 >
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col px-2 pb-2 pt-2">
-                    <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
-                      <div className="flex-1">
+                    <div className="mb-2 flex shrink-0 items-start justify-between gap-2">
+                      <div className="flex-1 text-right">
                         {multiSelectIds.size > 0 ? (
                           <div className="flex shrink-0 flex-wrap items-center gap-2 text-[10px] leading-relaxed text-muted">
                             <p className="min-w-0 flex-1">
@@ -2500,7 +2485,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             ) : null}
                           </div>
                         ) : null}
-                        <div className="mb-1 flex flex-wrap items-center gap-1 text-[10px]">
+                        <div className="mb-1 flex flex-wrap items-center justify-end gap-1 text-[10px]">
                           <span className="text-muted">说话人</span>
                           {[...new Set(lines.map((l) => l.speaker))].map((spk) => {
                             const active = speakerFocusSet.size === 0 || speakerFocusSet.has(spk);
@@ -2596,7 +2581,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         {t("clip.editor.exportingBody")}
                       </div>
                     ) : null}
-                    <div className="min-h-0 min-w-0 flex-1">
+                    <div className="min-h-0 min-w-0 h-0 flex-1 overflow-hidden">
                       <VirtualizedTranscript
                         ref={transcriptRef}
                         lines={lines}
@@ -2754,8 +2739,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       />
                     </div>
                     <div className="flex min-h-0 min-w-0 flex-1 flex-col px-2 pb-2 pt-2">
-                      <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
-                        <div className="flex-1">
+                      <div className="mb-2 flex shrink-0 items-start justify-between gap-2">
+                        <div className="flex-1 text-right">
                           {multiSelectIds.size > 0 ? (
                             <div className="flex shrink-0 flex-wrap items-center gap-2 text-[10px] leading-relaxed text-muted">
                               <p className="min-w-0 flex-1">
@@ -2772,7 +2757,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                               ) : null}
                             </div>
                           ) : null}
-                          <div className="mb-1 flex flex-wrap items-center gap-1 text-[10px]">
+                          <div className="mb-1 flex flex-wrap items-center justify-end gap-1 text-[10px]">
                             <span className="text-muted">说话人</span>
                             {[...new Set(lines.map((l) => l.speaker))].map((spk) => {
                               const active = speakerFocusSet.size === 0 || speakerFocusSet.has(spk);
@@ -2868,7 +2853,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           {t("clip.editor.exportingBody")}
                         </div>
                       ) : null}
-                      <div className="min-h-0 min-w-0 flex-1">
+                      <div className="min-h-0 min-w-0 h-0 flex-1 overflow-hidden">
                         <VirtualizedTranscript
                           ref={transcriptRef}
                           lines={lines}

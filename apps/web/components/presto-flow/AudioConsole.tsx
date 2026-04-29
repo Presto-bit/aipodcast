@@ -60,7 +60,10 @@ export default function AudioConsole({
 }: Props) {
   const [playing, setPlaying] = useState(false);
   const [rateMenuOpen, setRateMenuOpen] = useState(false);
+  const [volumeOpen, setVolumeOpen] = useState(false);
+  const [volume, setVolume] = useState(1);
   const rateWrapRef = useRef<HTMLDivElement | null>(null);
+  const volumeWrapRef = useRef<HTMLDivElement | null>(null);
   const rateBtnRef = useRef<HTMLButtonElement | null>(null);
   const rateMenuRef = useRef<HTMLUListElement | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -104,19 +107,21 @@ export default function AudioConsole({
     return () => document.removeEventListener("click", close, true);
   }, [rateMenuOpen]);
 
+  useEffect(() => {
+    if (!volumeOpen) return;
+    const close = (e: MouseEvent) => {
+      const wrap = volumeWrapRef.current;
+      const t = e.target;
+      if (t instanceof Node && wrap?.contains(t)) return;
+      setVolumeOpen(false);
+    };
+    document.addEventListener("click", close, true);
+    return () => document.removeEventListener("click", close, true);
+  }, [volumeOpen]);
+
   const togglePlay = useCallback(() => {
     waveformRef.current?.playPause();
   }, [waveformRef]);
-
-  const skip = useCallback(
-    (sec: number) => {
-      const ws = waveformRef.current;
-      if (!ws) return;
-      const cur = ws.getCurrentTimeMs();
-      ws.seekToMs(Math.max(0, cur + sec * 1000));
-    },
-    [waveformRef]
-  );
 
   const rates = DEFAULT_RATES;
   const labels = rateOptionLabels?.length === rates.length ? rateOptionLabels : null;
@@ -158,14 +163,14 @@ export default function AudioConsole({
   return (
     <div
       className={[
-        "shrink-0 px-3 py-2 sm:px-4",
+        "shrink-0 px-3 pb-1.5 pt-1 sm:px-4",
         dockEmbed
           ? "border-t-0 bg-fill/40 backdrop-blur-sm"
           : "border-t border-line bg-fill/60 backdrop-blur-sm"
       ].join(" ")}
     >
       {ratePortal}
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-1.5">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-1">
         {keyboardHint ? (
           <p className="text-center text-[10px] text-muted sm:text-left">{keyboardHint}</p>
         ) : null}
@@ -188,13 +193,38 @@ export default function AudioConsole({
               </button>
             </div>
           ) : null}
-          <button
-            type="button"
-            aria-label="音量"
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink hover:bg-fill"
-          >
-            <Volume2 className="h-4 w-4" aria-hidden />
-          </button>
+          <div ref={volumeWrapRef} className="relative shrink-0">
+            <button
+              type="button"
+              aria-label="音量"
+              aria-expanded={volumeOpen}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ink hover:bg-fill"
+              onClick={(e) => {
+                e.stopPropagation();
+                setVolumeOpen((v) => !v);
+              }}
+            >
+              <Volume2 className="h-4 w-4" aria-hidden />
+            </button>
+            {volumeOpen ? (
+              <div className="absolute left-0 top-[calc(100%+6px)] z-[10020] w-28 rounded-md border border-line bg-surface p-2 shadow-xl">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Math.round(volume * 100)}
+                  className="h-1.5 w-full cursor-pointer accent-zinc-900 dark:accent-zinc-100"
+                  onChange={(e) => {
+                    const next = Math.max(0, Math.min(100, Number(e.target.value) || 0)) / 100;
+                    setVolume(next);
+                    waveformRef.current?.setVolume(next);
+                  }}
+                />
+                <p className="mt-1 text-center text-[10px] tabular-nums text-muted">{Math.round(volume * 100)}%</p>
+              </div>
+            ) : null}
+          </div>
           {durationMs > 0 ? (
             <div className="mx-1 flex min-w-0 flex-1 items-center gap-2">
               <span className="shrink-0 text-sm tabular-nums text-muted">{formatClock(boundedCurrentMs)}</span>
@@ -227,7 +257,7 @@ export default function AudioConsole({
             <ChevronDown className="h-4 w-4" aria-hidden />
           </button>
         </div>
-        <div className="flex flex-wrap items-center justify-center gap-2 px-1 sm:justify-start">
+        <div className="hidden flex-wrap items-center justify-center gap-2 px-1 sm:justify-start">
           {onMagneticSnapChange && magneticSnapLabel ? (
             <label
               className="flex cursor-pointer items-center gap-1.5 text-[10px] text-muted"

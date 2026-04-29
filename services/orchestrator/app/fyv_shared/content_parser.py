@@ -168,6 +168,23 @@ def _extract_meta_content(soup: BeautifulSoup) -> str:
     return "\n".join(parts).strip()
 
 
+def _extract_page_title(soup: BeautifulSoup) -> str:
+    for selector in (
+        'meta[property="og:title"]',
+        'meta[name="twitter:title"]',
+        "title",
+    ):
+        if selector == "title":
+            txt = soup.title.get_text(" ", strip=True) if soup.title else ""
+        else:
+            el = soup.select_one(selector)
+            txt = str((el.get("content") if el else "") or "").strip()
+        txt = re.sub(r"\s+", " ", txt).strip()
+        if len(txt) >= 2:
+            return txt
+    return ""
+
+
 def _json_unescape_maybe(raw: str) -> str:
     s = (raw or "").strip()
     if not s:
@@ -179,14 +196,14 @@ def _json_unescape_maybe(raw: str) -> str:
         return ihtml.unescape(s)
 
 
-def _extract_xiaohongshu_note_text(html: str, note_id: str = "") -> str:
+def _extract_xiaohongshu_note_parts(html: str, note_id: str = "") -> tuple[str, str]:
     """
     小红书网页正文常在 window.__INITIAL_STATE__.note.noteDetailMap.*.note.desc 中，
     DOM 可见文本不稳定时优先使用该数据。
     """
     body = html or ""
     if not body:
-        return ""
+        return "", ""
     scope = body
     nid = (note_id or "").strip()
     # 先按 note_id 缩小范围，优先抓目标笔记，避免误命中站点其他脚本字段。
@@ -206,9 +223,7 @@ def _extract_xiaohongshu_note_text(html: str, note_id: str = "") -> str:
     # 清理常见站点噪音标题（如备案信息）。
     if "小红书_沪ICP备" in title or title.strip() == "小红书":
         title = ""
-    out = f"{title}\n\n{desc}".strip() if title and desc else (desc or title)
-    out = re.sub(r"\n{3,}", "\n\n", out).strip()
-    return out
+    return title.strip(), re.sub(r"\n{3,}", "\n\n", desc).strip()
 
 
 def _normalized_host(url: str) -> str:
@@ -290,6 +305,7 @@ class ContentParser:
 
             soup = BeautifulSoup(raw_html, "html.parser")
             meta_text = _extract_meta_content(soup)
+            page_title = _extract_page_title(soup)
             _strip_script_style(soup)
             main_like = _longest_main_like_text(soup)
 
@@ -306,9 +322,11 @@ class ContentParser:
                 content = full_text
                 logs.append("使用整页去壳文本")
             if host.endswith("xiaohongshu.com"):
-                xhs_text = _extract_xiaohongshu_note_text(raw_html, _note_id_from_xiaohongshu_url(url))
-                if len((xhs_text or "").strip()) >= max(40, len((content or "").strip())):
-                    content = xhs_text
+                xhs_title, xhs_desc = _extract_xiaohongshu_note_parts(raw_html, _note_id_from_xiaohongshu_url(url))
+                if xhs_title:
+                    page_title = xhs_title
+                if len((xhs_desc or "").strip()) >= max(40, int(len((content or "").strip()) * 0.3)):
+                    content = xhs_desc
                     logs.append("使用小红书脚本态正文抽取")
             # 动态站点（如小红书）常无可见正文，兜底回退到 meta/JSON-LD。
             if len((content or "").strip()) < 80 and len(meta_text) >= 40:
@@ -333,6 +351,7 @@ class ContentParser:
             return {
                 "success": True,
                 "content": content,
+                "title": page_title,
                 "structured_blocks": structured_blocks,
                 "logs": logs,
                 "source": "url",

@@ -13,6 +13,8 @@ export type ClipWaveformHandle = {
   setPlaybackRate: (rate: number) => void;
   /** 1~10，对应波形可视缩放 */
   setZoom: (level: number) => void;
+  /** 0~1，播放器音量 */
+  setVolume: (volume: number) => void;
 };
 
 type Props = {
@@ -109,6 +111,16 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
       const pxPerSec = interactive ? 40 * lv : 24;
       try {
         ws.setOptions({ minPxPerSec: pxPerSec });
+      } catch {
+        // ignore
+      }
+    },
+    setVolume: (volume: number) => {
+      const ws = wsRef.current;
+      if (!ws) return;
+      const v = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1;
+      try {
+        ws.setVolume(v);
       } catch {
         // ignore
       }

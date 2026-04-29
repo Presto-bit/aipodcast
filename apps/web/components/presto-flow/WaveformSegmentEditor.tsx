@@ -43,19 +43,23 @@ function ToolButton({
 }
 
 function CutModeIcon({ mode }: { mode: "split" | "left" | "right" }) {
+  const leftMuted = mode === "right";
+  const rightMuted = mode === "left";
   return (
     <span className="relative inline-flex h-3.5 w-3.5 items-center justify-center text-ink">
-      <span className="absolute bottom-0 left-1/2 h-[7px] w-0 -translate-x-1/2 border-l border-current" />
-      <span className="absolute left-1/2 top-[2px] h-0 w-[6px] -translate-x-[6px] rotate-[28deg] border-t border-current" />
-      <span className="absolute left-1/2 top-[2px] h-0 w-[6px] -rotate-[28deg] border-t border-current" />
-      {mode !== "split" ? (
-        <span
-          className={[
-            "absolute top-[1px] h-0 w-[7px] border-t border-dashed border-current",
-            mode === "left" ? "right-0" : "left-0"
-          ].join(" ")}
-        />
-      ) : null}
+      <span className="absolute bottom-[1px] left-1/2 h-[7px] w-0 -translate-x-1/2 border-l border-current" />
+      <span
+        className={[
+          "absolute left-1/2 top-[2px] h-0 w-[6px] -translate-x-[6px] rotate-[28deg] border-t",
+          leftMuted ? "border-line/70" : "border-current"
+        ].join(" ")}
+      />
+      <span
+        className={[
+          "absolute left-1/2 top-[2px] h-0 w-[6px] -rotate-[28deg] border-t",
+          rightMuted ? "border-line/70" : "border-current"
+        ].join(" ")}
+      />
     </span>
   );
 }

@@ -1529,12 +1529,16 @@ async def import_note_from_url_api(request: Request):
     if not notebook:
         raise HTTPException(status_code=400, detail="notebook_required")
     custom_title = str(body_obj.get("title") or "").strip()
+    fetched_title = str(fetch.get("title") or "").strip()
     if custom_title:
         title = custom_title
+    elif fetched_title:
+        title = fetched_title
     else:
         pu = urlparse(url)
         host = (pu.netloc or "").strip()
         title = f"{host} 摘录" if host else "网页笔记"
+    title = _safe_user_text(title, max_len=240) or "网页笔记"
     project_name = str(body_obj.get("project_name") or NOTES_PODCAST_STUDIO_PROJECT).strip() or NOTES_PODCAST_STUDIO_PROJECT
     project_id = ensure_default_project(project_name, created_by=user_ref)
     content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
