@@ -127,14 +127,40 @@ def _decode_html_response(response: requests.Response) -> str:
 
 def _repair_common_mojibake(text: str) -> str:
     s = text or ""
-    # UTF-8 被按 latin-1 解码时常见痕迹：Ã/Â 成片出现。
-    if s.count("Ã") + s.count("Â") < 4:
+    # UTF-8 被按 latin-1/cp1252 误解码时的常见痕迹。
+    weird_markers = (
+        "Ã",
+        "Â",
+        "â€",
+        "â€œ",
+        "â€\x9d",
+        "â€”",
+        "å",
+        "æ",
+        "ç",
+        "ï¿½",
+    )
+    weird_count = sum(s.count(m) for m in weird_markers)
+    cjk_count = len(re.findall(r"[\u4e00-\u9fff]", s))
+    # 文本里异常痕迹很少时不做重解码，避免误伤正常内容。
+    if weird_count < 3 and not (weird_count >= 1 and cjk_count <= 3):
         return s
-    try:
-        fixed = s.encode("latin-1", errors="ignore").decode("utf-8", errors="ignore")
-    except Exception:
-        return s
-    if len(re.findall(r"[\u4e00-\u9fff]", fixed)) > len(re.findall(r"[\u4e00-\u9fff]", s)):
+    fixed = ""
+    for enc in ("cp1252", "latin-1"):
+        try:
+            fixed = s.encode(enc, errors="strict").decode("utf-8", errors="strict")
+            break
+        except Exception:
+            continue
+    if not fixed:
+        try:
+            fixed = s.encode("latin-1", errors="ignore").decode("utf-8", errors="ignore")
+        except Exception:
+            return s
+    fixed_cjk = len(re.findall(r"[\u4e00-\u9fff]", fixed))
+    # 修复后中文占比明显提升，或异常符号显著减少时采用修复结果。
+    fixed_weird = sum(fixed.count(m) for m in weird_markers)
+    if fixed_cjk > cjk_count or fixed_weird + 2 < weird_count:
         return fixed
     return s
 
