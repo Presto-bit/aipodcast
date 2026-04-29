@@ -518,7 +518,7 @@ export default function NoteMarkdownPreview({
 
         <div
           ref={contentRef}
-          className="markdown-body mt-3 max-h-[min(65vh,28rem)] min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-surface p-3"
+          className="markdown-body mt-3 max-h-[min(72vh,34rem)] min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-surface px-4 py-3 text-[15px] leading-7 text-ink [word-break:break-word]"
         >
           {renderBlocks.map((b) => (
             <section key={b.id} className={b.synthetic ? "opacity-90" : ""}>

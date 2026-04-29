@@ -11,6 +11,7 @@ import json
 import os
 import ipaddress
 import html as ihtml
+import unicodedata
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 
@@ -76,6 +77,79 @@ _CONTENT_TAGS: tuple[str, ...] = (
 def _normalize_visible_lines(text: str) -> str:
     lines = [line.strip() for line in (text or "").split("\n") if line.strip()]
     return "\n".join(lines)
+
+
+def _score_decoded_html_text(text: str) -> tuple[int, int]:
+    s = text or ""
+    replacement = s.count("\ufffd")
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", s))
+    return replacement, -cjk
+
+
+def _decode_html_response(response: requests.Response) -> str:
+    raw = response.content or b""
+    if not raw:
+        return ""
+    candidates: list[str] = []
+    ct = str(response.headers.get("content-type") or "")
+    m = re.search(r"charset=([A-Za-z0-9._-]+)", ct, flags=re.I)
+    if m:
+        candidates.append(m.group(1).strip())
+    app = str(getattr(response, "apparent_encoding", "") or "").strip()
+    if app:
+        candidates.append(app)
+    req_enc = str(getattr(response, "encoding", "") or "").strip()
+    if req_enc:
+        candidates.append(req_enc)
+    candidates.extend(["utf-8", "gb18030", "gbk", "big5"])
+    seen: set[str] = set()
+    best = ""
+    best_score = (10**9, 0)
+    for enc in candidates:
+        e = enc.lower()
+        if not e or e in seen:
+            continue
+        seen.add(e)
+        try:
+            txt = raw.decode(e, errors="replace")
+        except Exception:
+            continue
+        score = _score_decoded_html_text(txt)
+        if score < best_score:
+            best = txt
+            best_score = score
+            if score[0] == 0 and score[1] <= -40:
+                break
+    if not best:
+        best = raw.decode("utf-8", errors="replace")
+    return best
+
+
+def _repair_common_mojibake(text: str) -> str:
+    s = text or ""
+    # UTF-8 被按 latin-1 解码时常见痕迹：Ã/Â 成片出现。
+    if s.count("Ã") + s.count("Â") < 4:
+        return s
+    try:
+        fixed = s.encode("latin-1", errors="ignore").decode("utf-8", errors="ignore")
+    except Exception:
+        return s
+    if len(re.findall(r"[\u4e00-\u9fff]", fixed)) > len(re.findall(r"[\u4e00-\u9fff]", s)):
+        return fixed
+    return s
+
+
+def _clean_extracted_text(text: str) -> str:
+    s = unicodedata.normalize("NFC", str(text or ""))
+    s = _strip_nul_chars(s)
+    s = _repair_common_mojibake(s)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = s.replace("\u00a0", " ").replace("\u200b", "").replace("\ufeff", "")
+    # 去除不可见控制字符（保留换行与 tab）
+    s = "".join(ch for ch in s if ch == "\n" or ch == "\t" or ord(ch) >= 32)
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
 
 
 def _strip_script_style(soup: BeautifulSoup) -> None:
@@ -447,6 +521,27 @@ def _looks_like_xiaohongshu_shell_text(text: str) -> bool:
     return hit >= 2 and not has_dialog_like
 
 
+def _looks_like_bot_verification_page(*, host: str, title: str, content: str) -> bool:
+    h = (host or "").lower().strip()
+    t = (title or "").strip().lower()
+    c = (content or "").strip().lower()
+    sample = f"{t}\n{c}"[:1200]
+    markers = (
+        "安全验证",
+        "百度安全验证",
+        "网络不给力，请稍后重试",
+        "请完成验证",
+        "行为验证",
+        "人机验证",
+        "访问过于频繁",
+        "稍后重试",
+    )
+    hit = sum(1 for m in markers if m.lower() in sample)
+    if ("baidu.com" in h or "baijiahao.baidu.com" in h) and hit >= 1:
+        return True
+    return hit >= 2
+
+
 def _referer_for_url(url: str) -> str:
     try:
         p = urlparse(url)
@@ -615,8 +710,7 @@ class ContentParser:
 
             response = session.get(url, timeout=TIMEOUTS["url_parsing"], allow_redirects=True)
             response.raise_for_status()
-            response.encoding = response.apparent_encoding or "utf-8"
-            raw_html = _strip_nul_chars(response.text)
+            raw_html = _clean_extracted_text(_decode_html_response(response))
 
             logs.append(f"成功获取网页内容，状态码: {response.status_code}")
 
@@ -739,14 +833,29 @@ class ContentParser:
                 content = f"{content}\n\n{meta_text}".strip() if content else meta_text
                 logs.append("触发低置信度回退：meta/JSON-LD")
                 logs.append("使用 meta/JSON-LD 兜底抽取")
-            content = _strip_nul_chars(content)
-            page_title = _strip_nul_chars(page_title)
+            content = _clean_extracted_text(content)
+            page_title = _clean_extracted_text(page_title)
+            if _looks_like_bot_verification_page(host=host, title=page_title, content=content):
+                hint = actionable_hint_for_failed_url(
+                    url,
+                    error_code="login_wall",
+                    upstream_error="bot_verification_page",
+                )
+                logs.append("命中站点安全验证页，正文不可用")
+                return {
+                    "success": False,
+                    "error": "目标站点返回安全验证页，未提供可解析正文",
+                    "hint": hint,
+                    "logs": logs,
+                    "source": "url",
+                    "error_code": "login_wall",
+                }
             structured_blocks = _extract_structured_blocks_from_html(
                 BeautifulSoup(str(candidate_root), "html.parser")
             )
             for block in structured_blocks:
                 if isinstance(block.get("text"), str):
-                    block["text"] = _strip_nul_chars(str(block.get("text") or ""))
+                    block["text"] = _clean_extracted_text(str(block.get("text") or ""))
 
             if not (content or "").strip():
                 hint = actionable_hint_for_failed_url(url, error_code=None, upstream_error="empty_body")
