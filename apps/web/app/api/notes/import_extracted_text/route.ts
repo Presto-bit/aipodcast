@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../../../lib/bff";
+import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../../lib/bff";
 
 export async function POST(req: NextRequest) {
   const raw = await req.text();
