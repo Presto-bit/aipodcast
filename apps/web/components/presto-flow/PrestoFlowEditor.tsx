@@ -256,7 +256,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   >([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
-  const clipToolsWrapRef = useRef<HTMLDivElement | null>(null);
   const waveformRef = useRef<ClipWaveformHandle | null>(null);
   const transcriptRef = useRef<VirtualizedTranscriptHandle | null>(null);
   const autoStructuredSuggestionRequestedRef = useRef(false);
@@ -296,20 +295,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       if (actionHintTimerRef.current) clearTimeout(actionHintTimerRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    if (!clipToolsOpen) return;
-    const onDown = (e: globalThis.MouseEvent) => {
-      const t = e.target;
-      if (!(t instanceof Node)) return;
-      if (clipToolsWrapRef.current?.contains(t)) return;
-      setClipToolsOpen(false);
-    };
-    document.addEventListener("mousedown", onDown, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown, true);
-    };
-  }, [clipToolsOpen]);
 
   useEffect(() => {
     const onVis = () => {
@@ -2357,8 +2342,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               engineState={engineState}
               beforeTranscribe={
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <div ref={clipToolsWrapRef} className="relative">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
@@ -2368,26 +2353,23 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         <span>音频剪辑</span>
                         <span className="text-muted">{clipToolsOpen ? "收起" : "展开"}</span>
                       </button>
-                      {clipToolsOpen ? (
-                        <div
-                          className="absolute right-0 top-[calc(100%+6px)] z-[120] w-[min(66vw,26rem)] max-w-[26rem] min-w-[16rem] rounded-lg border border-line bg-surface p-2 shadow-xl"
-                        >
-                          <WaveformSegmentEditor
-                            zoomLevel={waveZoomLevel}
-                            onZoomChange={(next) => {
-                              setWaveZoomLevel(next);
-                              waveformRef.current?.setZoom(next);
-                            }}
-                            onSplit={() => splitAtCursor("split")}
-                            onSplitLeft={() => splitAtCursor("left")}
-                            onSplitRight={() => splitAtCursor("right")}
-                            onUndo={undoSegmentEdit}
-                            undoDisabled={segmentUndoStackRef.current.length === 0}
-                            disabled={segmentEditLocked}
-                          />
-                        </div>
-                      ) : null}
                     </div>
+                    {clipToolsOpen ? (
+                      <WaveformSegmentEditor
+                        compact
+                        zoomLevel={waveZoomLevel}
+                        onZoomChange={(next) => {
+                          setWaveZoomLevel(next);
+                          waveformRef.current?.setZoom(next);
+                        }}
+                        onSplit={() => splitAtCursor("split")}
+                        onSplitLeft={() => splitAtCursor("left")}
+                        onSplitRight={() => splitAtCursor("right")}
+                        onUndo={undoSegmentEdit}
+                        undoDisabled={segmentUndoStackRef.current.length === 0}
+                        disabled={segmentEditLocked}
+                      />
+                    ) : null}
                     <PrestoFlowImportBar
                       variant="inline"
                       projectId={projectId}
@@ -2581,7 +2563,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         {t("clip.editor.exportingBody")}
                       </div>
                     ) : null}
-                    <div className="min-h-0 min-w-0 h-0 flex-1 overflow-hidden">
+                    <div className="min-h-0 min-w-0 flex-1">
                       <VirtualizedTranscript
                         ref={transcriptRef}
                         lines={lines}
@@ -2853,7 +2835,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           {t("clip.editor.exportingBody")}
                         </div>
                       ) : null}
-                      <div className="min-h-0 min-w-0 h-0 flex-1 overflow-hidden">
+                      <div className="min-h-0 min-w-0 flex-1">
                         <VirtualizedTranscript
                           ref={transcriptRef}
                           lines={lines}

@@ -15,6 +15,7 @@ type Props = {
   onUndo: () => void;
   undoDisabled?: boolean;
   disabled?: boolean;
+  compact?: boolean;
 };
 
 function ToolButton({
@@ -72,7 +73,8 @@ export default function WaveformSegmentEditor({
   onSplitRight,
   onUndo,
   undoDisabled,
-  disabled = false
+  disabled = false,
+  compact = false
 }: Props) {
   const [zoomPopoverOpen, setZoomPopoverOpen] = useState(false);
   const zoomWrapRef = useRef<HTMLDivElement | null>(null);
@@ -97,8 +99,8 @@ export default function WaveformSegmentEditor({
   }, [zoomPopoverOpen]);
 
   return (
-    <div className="rounded-lg border border-line bg-fill/10 p-2">
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+    <div className={compact ? "" : "rounded-lg border border-line bg-fill/10 p-2"}>
+      <div className={compact ? "flex flex-wrap items-center gap-1.5" : "mb-2 flex flex-wrap items-center gap-1.5"}>
         <div ref={zoomWrapRef} className="relative">
           <button
             type="button"
@@ -137,7 +139,6 @@ export default function WaveformSegmentEditor({
           <Undo2 className="h-3.5 w-3.5" aria-hidden />
         </ToolButton>
       </div>
-
     </div>
   );
 }

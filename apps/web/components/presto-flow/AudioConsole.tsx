@@ -2,7 +2,7 @@
 
 import type { RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Pause, Play, Volume2 } from "lucide-react";
+import { Pause, Play, Volume2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
 
@@ -175,6 +175,14 @@ export default function AudioConsole({
           <p className="text-center text-[10px] text-muted sm:text-left">{keyboardHint}</p>
         ) : null}
         <div className="flex items-center gap-2 px-1">
+          <button
+            type="button"
+            aria-label={playing ? "Pause" : "Play"}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-ink text-surface shadow-soft hover:opacity-95"
+            onClick={togglePlay}
+          >
+            {playing ? <Pause className="h-5 w-5" aria-hidden /> : <Play className="h-5 w-5 pl-0.5" aria-hidden />}
+          </button>
           {onPlaybackRateChange ? (
             <div ref={rateWrapRef} className="relative shrink-0">
               <button
@@ -241,21 +249,6 @@ export default function AudioConsole({
           ) : (
             <div className="mx-1 flex-1" />
           )}
-          <button
-            type="button"
-            aria-label={playing ? "Pause" : "Play"}
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-ink text-surface shadow-soft hover:opacity-95"
-            onClick={togglePlay}
-          >
-            {playing ? <Pause className="h-5 w-5" aria-hidden /> : <Play className="h-5 w-5 pl-0.5" aria-hidden />}
-          </button>
-          <button
-            type="button"
-            aria-label="收起播放器"
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink hover:bg-fill"
-          >
-            <ChevronDown className="h-4 w-4" aria-hidden />
-          </button>
         </div>
         <div className="hidden flex-wrap items-center justify-center gap-2 px-1 sm:justify-start">
           {onMagneticSnapChange && magneticSnapLabel ? (
