@@ -162,8 +162,8 @@ export default function WordBlock({
           ? "opacity-[0.22] line-through decoration-danger/60 text-muted"
           : "text-ink",
         activePlayback ? "z-[2] bg-brand text-brand-foreground shadow-[0_0_14px_color-mix(in_srgb,var(--dawn-brand)_40%,transparent)]" : "",
-        !activePlayback && activeSelection ? "z-[1] bg-brand/85 text-brand-foreground" : "",
-        !activePlayback && !activeSelection && activeFocus ? "ring-1 ring-brand/70 bg-brand/18 text-ink" : "",
+        !activePlayback && activeSelection ? "z-[1] bg-zinc-200 text-ink ring-1 ring-zinc-300 dark:bg-zinc-700/65 dark:ring-zinc-500/60" : "",
+        !activePlayback && !activeSelection && activeFocus ? "bg-zinc-200 text-ink ring-1 ring-zinc-300 dark:bg-zinc-700/65 dark:ring-zinc-500/60" : "",
         focused && excluded ? "ring-1 ring-line" : "",
         roughCutHighlight && !excluded ? "ring-2 ring-rose-500/55 ring-offset-1 ring-offset-canvas" : "",
         trimExtraClass || "",

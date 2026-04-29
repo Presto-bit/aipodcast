@@ -100,14 +100,6 @@ class NoteImportUrlRequest(BaseModel):
     title: str = Field(default="", max_length=300)
 
 
-class NoteImportExtractedTextRequest(BaseModel):
-    project_name: str = Field(default="notes-podcast-studio", min_length=1, max_length=120)
-    url: str = Field(min_length=1, max_length=4000)
-    notebook: str = Field(min_length=1, max_length=120)
-    title: str = Field(default="", max_length=300)
-    content: str = Field(min_length=1, max_length=800_000)
-
-
 class NotesAskHintsRequest(BaseModel):
     """根据已选资料生成短摘要与 3 个可点击的提问引导（供输入框旁展示）。"""
 

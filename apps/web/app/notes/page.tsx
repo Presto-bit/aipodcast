@@ -838,9 +838,6 @@ export default function NotesPage() {
   const [importUrl, setImportUrl] = useState("");
   const [importUrlError, setImportUrlError] = useState("");
   const [importBusy, setImportBusy] = useState(false);
-  const [importExtractTitle, setImportExtractTitle] = useState("");
-  const [importExtractContent, setImportExtractContent] = useState("");
-  const [importExtractBusy, setImportExtractBusy] = useState(false);
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
   const [showSupportedFormatsModal, setShowSupportedFormatsModal] = useState(false);
   const [renameDebugLog, setRenameDebugLog] = useState("");
@@ -2364,60 +2361,6 @@ export default function NotesPage() {
       setImportUrlError(String(err instanceof Error ? err.message : err));
     } finally {
       setImportBusy(false);
-    }
-  }
-
-  async function submitExtractedTextImport() {
-    const u = importUrl.trim();
-    const nb = selectedNotebook.trim();
-    const text = importExtractContent.trim();
-    setImportUrlError("");
-    if (!u) {
-      setImportUrlError("请先填写原始网页链接");
-      return;
-    }
-    if (!nb) {
-      setImportUrlError("请先选择或新建笔记本");
-      return;
-    }
-    if (text.length < 20) {
-      setImportUrlError("请粘贴完整正文（至少 20 字）");
-      return;
-    }
-    setImportExtractBusy(true);
-    setError("");
-    try {
-      const res = await fetch("/api/notes/import_extracted_text", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          url: u,
-          notebook: nb,
-          title: importExtractTitle.trim(),
-          content: text
-        })
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        noteId?: string;
-        error?: string;
-        detail?: unknown;
-      };
-      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "导入失败"));
-      if (data.noteId) markNoteAsFresh(data.noteId);
-      setImportUrl("");
-      setImportExtractTitle("");
-      setImportExtractContent("");
-      setImportUrlError("");
-      setShowAddNoteModal(false);
-      await loadNotebooks();
-      await loadNotebookMeta();
-      await loadNotes();
-    } catch (err) {
-      setImportUrlError(String(err instanceof Error ? err.message : err));
-    } finally {
-      setImportExtractBusy(false);
     }
   }
 
@@ -4654,34 +4597,6 @@ export default function NotesPage() {
               >
                 {importBusy ? "导入中…" : "导入链接"}
               </button>
-              <div className="rounded-lg border border-line bg-fill/20 p-2">
-                <p className="mb-1 text-xs text-muted">
-                  链接受限时可走二级兜底：在浏览器复制正文后粘贴到下方直接入库
-                </p>
-                <input
-                  className={`mb-2 block w-full ${inputCls}`}
-                  placeholder="可选：自定义标题（留空则用网页标题/域名）"
-                  value={importExtractTitle}
-                  onChange={(e) => setImportExtractTitle(e.target.value)}
-                />
-                <textarea
-                  className={`block min-h-24 w-full ${inputCls}`}
-                  placeholder="粘贴从网页复制的正文..."
-                  value={importExtractContent}
-                  onChange={(e) => {
-                    setImportExtractContent(e.target.value);
-                    if (importUrlError) setImportUrlError("");
-                  }}
-                />
-                <button
-                  type="button"
-                  className="mt-2 w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink hover:bg-fill disabled:opacity-50"
-                  disabled={importExtractBusy}
-                  onClick={() => void submitExtractedTextImport()}
-                >
-                  {importExtractBusy ? "导入中…" : "导入提取正文"}
-                </button>
-              </div>
             </div>
             <div className="my-4 border-t border-line" />
             <div className="relative space-y-2">

@@ -104,7 +104,12 @@ export default function WaveformSegmentEditor({
             <ChevronDown className="h-3 w-3" aria-hidden />
           </button>
           {zoomPopoverOpen ? (
-            <div className="absolute left-0 top-[calc(100%+6px)] z-[20] min-w-[220px] rounded-md border border-line bg-surface p-2 shadow-lg">
+            <div
+              className={[
+                "absolute left-0 z-[220] min-w-[220px] rounded-md border border-line bg-surface p-2 shadow-lg",
+                compact ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]"
+              ].join(" ")}
+            >
           <p className="mb-2 text-[10px] text-muted">左右拖动缩放波形（1x~10x）</p>
               <input
                 type="range"

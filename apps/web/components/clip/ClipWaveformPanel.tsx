@@ -183,6 +183,10 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
               const sec = typeof t === "number" ? t : 0;
               const ms = sec * 1000;
               const snapped = snapSeekRef.current!(ms);
+              const nextMs = Math.max(0, Math.round(snapped));
+              // Ensure paused seek/click still updates cursor-dependent actions (split/selection).
+              lastTimeMsRef.current = nextMs;
+              if (emitTimeUpdates) onTimeRef.current(nextMs);
               if (Math.abs(snapped - ms) > 4) {
                 ws.setTime(Math.max(0, snapped / 1000));
               }
