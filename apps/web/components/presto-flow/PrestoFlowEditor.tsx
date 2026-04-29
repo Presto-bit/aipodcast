@@ -1052,11 +1052,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const splitAtCursor = useCallback(
     (mode: "split" | "left" | "right") => {
       if (segmentEditLocked) return;
+      const cursorMs = Math.max(0, Math.round(waveformRef.current?.getCurrentTimeMs() ?? playbackMs));
       setAudioSegments((prev) => {
-        const idx = prev.findIndex((s) => playbackMs > s.startMs && playbackMs < s.endMs);
+        const idx = prev.findIndex((s) => cursorMs > s.startMs && cursorMs < s.endMs);
         if (idx < 0) return prev;
         const seg = prev[idx]!;
-        const cutMs = Math.max(seg.startMs + 80, Math.min(seg.endMs - 80, playbackMs));
+        const cutMs = Math.max(seg.startMs + 80, Math.min(seg.endMs - 80, cursorMs));
         const leftWordIds = seg.wordIds.filter((id) => (rawWordById.get(id)?.e_ms ?? 0) <= cutMs);
         const rightWordIds = seg.wordIds.filter((id) => (rawWordById.get(id)?.s_ms ?? 0) >= cutMs);
         const left: EditorAudioSegment = { ...seg, id: `${seg.id}-l-${cutMs}`, endMs: cutMs, wordIds: leftWordIds };
@@ -1496,28 +1497,24 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         if (bulk.length > 0) {
           if (bulk.length >= 50 && !window.confirm(`即将删除 ${bulk.length} 个词，是否继续？`)) return;
           e.preventDefault();
-          const ex = excludedRef.current;
-          const anyKeep = bulk.some((id) => !ex.has(id));
-          if (!anyKeep) {
-            setMultiSelectIds(new Set());
-            leftDragMultiSelectRef.current = false;
-            return;
-          }
           pushEditHistory(`删除 ${bulk.length} 词`, {
             seekMs: words.find((w) => w.id === bulk[0])?.s_ms ?? null
           });
+          let keptCount = 0;
           setExcluded((prev) => {
             excludedUndoStack.current.push([...prev].sort());
             excludedRedoStack.current = [];
             const n = new Set(prev);
-            for (const id of bulk) n.add(id);
+            for (const id of bulk) {
+              if (!n.has(id)) keptCount += 1;
+              n.add(id);
+            }
             scheduleSaveExcluded(n);
             return n;
           });
           bumpExcludedHistory();
           setMultiSelectIds(new Set());
           leftDragMultiSelectRef.current = false;
-          const keptCount = bulk.filter((id) => !ex.has(id)).length;
           setDeleteFeedback(
             t("presto.flow.deleteFeedbackBatch").replace("{count}", String(Math.max(1, keptCount)))
           );

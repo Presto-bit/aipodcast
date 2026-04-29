@@ -81,19 +81,11 @@ export default function WaveformSegmentEditor({
 
   useEffect(() => {
     if (!zoomPopoverOpen) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target;
-      if (!(t instanceof Node)) return;
-      if (zoomWrapRef.current?.contains(t)) return;
-      setZoomPopoverOpen(false);
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setZoomPopoverOpen(false);
     };
-    document.addEventListener("mousedown", onDown, true);
     window.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown, true);
       window.removeEventListener("keydown", onKey);
     };
   }, [zoomPopoverOpen]);
