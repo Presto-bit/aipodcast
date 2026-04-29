@@ -424,6 +424,25 @@ def _parse_error_code_for_upload(ext: str, parse_result: NoteParseResult) -> str
     return "PARSE_EMPTY" if st == "empty" else "PARSE_ENGINE_ERROR"
 
 
+def _looks_like_xiaohongshu_shell_text(text: str) -> bool:
+    body = (text or "").strip()
+    if not body:
+        return True
+    markers = (
+        "沪ICP备",
+        "营业执照",
+        "沪公网安备",
+        "增值电信业务经营许可证",
+        "互联网药品信息服务资格证书",
+        "行吟信息科技（上海）有限公司",
+        "地址：上海市黄浦区马当路",
+        "发现\n直播\n发布\n通知",
+    )
+    hit = sum(1 for m in markers if m in body)
+    has_paragraph_like = ("“" in body and "”" in body) or ("。" in body and len(body) >= 120)
+    return hit >= 2 and not has_paragraph_like
+
+
 def _derive_source_capabilities(
     *,
     input_type: str,
@@ -1525,6 +1544,19 @@ async def import_note_from_url_api(request: Request):
         raise HTTPException(status_code=400, detail=f"[{err_code}] {head}\n\n{hint}")
     if len(content) > MAX_URL_IMPORT_CHARS:
         content = content[:MAX_URL_IMPORT_CHARS] + "\n\n（内容已截断）"
+    host = (urlparse(url).netloc or "").strip().lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host.endswith("xiaohongshu.com") and _looks_like_xiaohongshu_shell_text(content):
+        hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
+            url,
+            error_code="login_wall",
+            upstream_error="xiaohongshu_shell_text_only",
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"[URL_LOGIN_WALL] 小红书仅返回页面壳层文本，未解析到正文\n\n{hint}",
+        )
     notebook = str(body_obj.get("notebook") or "").strip()
     if not notebook:
         raise HTTPException(status_code=400, detail="notebook_required")

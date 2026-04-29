@@ -35,7 +35,7 @@ function ToolButton({
       title={title}
       aria-label={title}
       disabled={disabled}
-      className="rounded-md border border-line bg-surface p-1.5 text-ink hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-line bg-surface text-ink hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
       onClick={onClick}
     >
       {children}
@@ -47,17 +47,17 @@ function CutModeIcon({ mode }: { mode: "split" | "left" | "right" }) {
   const leftMuted = mode === "right";
   const rightMuted = mode === "left";
   return (
-    <span className="relative inline-flex h-3.5 w-3.5 items-center justify-center text-ink">
-      <span className="absolute bottom-[1px] left-1/2 h-[7px] w-0 -translate-x-1/2 border-l border-current" />
+    <span className="relative inline-flex h-4 w-4 items-center justify-center text-ink">
+      <span className="absolute bottom-[1px] left-1/2 h-[8px] w-0 -translate-x-1/2 border-l border-current" />
       <span
         className={[
-          "absolute left-1/2 top-[2px] h-0 w-[6px] -translate-x-[6px] rotate-[28deg] border-t",
+          "absolute left-1/2 top-[2px] h-0 w-[7px] -translate-x-[7px] rotate-[28deg] border-t",
           leftMuted ? "border-line/70" : "border-current"
         ].join(" ")}
       />
       <span
         className={[
-          "absolute left-1/2 top-[2px] h-0 w-[6px] -rotate-[28deg] border-t",
+          "absolute left-1/2 top-[2px] h-0 w-[7px] -rotate-[28deg] border-t",
           rightMuted ? "border-line/70" : "border-current"
         ].join(" ")}
       />
@@ -100,7 +100,7 @@ export default function WaveformSegmentEditor({
 
   return (
     <div className={compact ? "" : "rounded-lg border border-line bg-fill/10 p-2"}>
-      <div className={compact ? "flex flex-wrap items-center gap-1.5" : "mb-2 flex flex-wrap items-center gap-1.5"}>
+      <div className={compact ? "flex flex-wrap flex-row-reverse items-center gap-1.5" : "mb-2 flex flex-wrap items-center gap-1.5"}>
         <div ref={zoomWrapRef} className="relative">
           <button
             type="button"

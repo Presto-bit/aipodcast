@@ -2343,7 +2343,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               beforeTranscribe={
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex items-center gap-2">
+                    <div className="relative flex items-center gap-2">
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
@@ -2353,23 +2353,25 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         <span>音频剪辑</span>
                         <span className="text-muted">{clipToolsOpen ? "收起" : "展开"}</span>
                       </button>
+                      {clipToolsOpen ? (
+                        <div className="absolute right-0 top-[calc(100%+6px)] z-[120] min-w-max rounded-lg border border-line bg-surface p-2 shadow-xl">
+                          <WaveformSegmentEditor
+                            compact
+                            zoomLevel={waveZoomLevel}
+                            onZoomChange={(next) => {
+                              setWaveZoomLevel(next);
+                              waveformRef.current?.setZoom(next);
+                            }}
+                            onSplit={() => splitAtCursor("split")}
+                            onSplitLeft={() => splitAtCursor("left")}
+                            onSplitRight={() => splitAtCursor("right")}
+                            onUndo={undoSegmentEdit}
+                            undoDisabled={segmentUndoStackRef.current.length === 0}
+                            disabled={segmentEditLocked}
+                          />
+                        </div>
+                      ) : null}
                     </div>
-                    {clipToolsOpen ? (
-                      <WaveformSegmentEditor
-                        compact
-                        zoomLevel={waveZoomLevel}
-                        onZoomChange={(next) => {
-                          setWaveZoomLevel(next);
-                          waveformRef.current?.setZoom(next);
-                        }}
-                        onSplit={() => splitAtCursor("split")}
-                        onSplitLeft={() => splitAtCursor("left")}
-                        onSplitRight={() => splitAtCursor("right")}
-                        onUndo={undoSegmentEdit}
-                        undoDisabled={segmentUndoStackRef.current.length === 0}
-                        disabled={segmentEditLocked}
-                      />
-                    ) : null}
                     <PrestoFlowImportBar
                       variant="inline"
                       projectId={projectId}
@@ -2563,7 +2565,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         {t("clip.editor.exportingBody")}
                       </div>
                     ) : null}
-                    <div className="min-h-0 min-w-0 flex-1">
+                    <div className="min-h-0 min-w-0 h-0 flex-1 overflow-hidden">
                       <VirtualizedTranscript
                         ref={transcriptRef}
                         lines={lines}
@@ -2835,7 +2837,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           {t("clip.editor.exportingBody")}
                         </div>
                       ) : null}
-                      <div className="min-h-0 min-w-0 flex-1">
+                      <div className="min-h-0 min-w-0 h-0 flex-1 overflow-hidden">
                         <VirtualizedTranscript
                           ref={transcriptRef}
                           lines={lines}
