@@ -1540,6 +1540,33 @@ def _pg_format_integrity_err_user_insert(exc: BaseException) -> str:
     return "注册失败：数据约束冲突，请稍后再试或更换邮箱/用户名"
 
 
+def _pg_purge_deleted_login_conflicts_on_cur(cur: Any, *, email: Optional[str], username: Optional[str]) -> bool:
+    """
+    清理被标记为 deleted 但仍占用邮箱/用户名唯一索引的历史行。
+    仅删除 deleted 行，不影响 active/disabled 账号。
+    """
+    em = (email or "").strip().lower()
+    un = (username or "").strip()
+    if not em and not un:
+        return False
+    try:
+        cur.execute(
+            """
+            DELETE FROM users
+            WHERE account_status = 'deleted'
+              AND (
+                (%s <> '' AND lower(btrim(email)) = lower(btrim(%s)))
+                OR
+                (%s <> '' AND lower(btrim(username)) = lower(btrim(%s)))
+              )
+            """,
+            (em, em, un, un),
+        )
+        return int(cur.rowcount or 0) > 0
+    except Exception:
+        return False
+
+
 def _pg_insert_user_with_credentials_on_cur(
     cur: Any,
     *,
@@ -1557,34 +1584,48 @@ def _pg_insert_user_with_credentials_on_cur(
     em = (email or "").strip().lower() or None
     un = (username or "").strip() or None
     dn = (display_name or "").strip() or (un or em or p or "User")
-    try:
-        cur.execute(
-            """
-            INSERT INTO users (phone, email, username, display_name, role, acct_tier, billing_cycle, account_status, email_verified_at, updated_at)
-            VALUES (%s, %s, %s, %s, 'user', 'free', NULL, 'active', %s, NOW())
-            RETURNING id::text AS uid
-            """,
-            (p, em, un, dn, email_verified_at),
-        )
-        row = cur.fetchone()
-        uid = ""
-        if row:
-            if isinstance(row, dict):
-                uid = str(row.get("uid") or "").strip()
-            else:
-                uid = str(row[0] or "").strip()
-        if not uid:
-            return None, "注册失败"
-        cur.execute(
-            """
-            INSERT INTO user_auth_accounts (user_id, password_hash, status, updated_at)
-            VALUES (%s::uuid, %s, 'active', NOW())
-            """,
-            (uid, password_hash),
-        )
-        return uid, None
-    except PsycopgIntegrityError as exc:
-        return None, _pg_format_integrity_err_user_insert(exc)
+    for attempt in range(2):
+        sp = f"sp_user_insert_{attempt}"
+        cur.execute(f"SAVEPOINT {sp}")
+        try:
+            cur.execute(
+                """
+                INSERT INTO users (phone, email, username, display_name, role, acct_tier, billing_cycle, account_status, email_verified_at, updated_at)
+                VALUES (%s, %s, %s, %s, 'user', 'free', NULL, 'active', %s, NOW())
+                RETURNING id::text AS uid
+                """,
+                (p, em, un, dn, email_verified_at),
+            )
+            row = cur.fetchone()
+            uid = ""
+            if row:
+                if isinstance(row, dict):
+                    uid = str(row.get("uid") or "").strip()
+                else:
+                    uid = str(row[0] or "").strip()
+            if not uid:
+                cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                cur.execute(f"RELEASE SAVEPOINT {sp}")
+                return None, "注册失败"
+            cur.execute(
+                """
+                INSERT INTO user_auth_accounts (user_id, password_hash, status, updated_at)
+                VALUES (%s::uuid, %s, 'active', NOW())
+                """,
+                (uid, password_hash),
+            )
+            cur.execute(f"RELEASE SAVEPOINT {sp}")
+            return uid, None
+        except PsycopgIntegrityError as exc:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+            cur.execute(f"RELEASE SAVEPOINT {sp}")
+            can_retry = attempt == 0 and _pg_purge_deleted_login_conflicts_on_cur(
+                cur, email=em, username=un
+            )
+            if can_retry:
+                continue
+            return None, _pg_format_integrity_err_user_insert(exc)
+    return None, "注册失败"
 
 
 def _pg_insert_user_with_credentials(

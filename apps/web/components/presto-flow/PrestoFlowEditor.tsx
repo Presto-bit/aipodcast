@@ -1741,52 +1741,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     window.addEventListener("pointercancel", up);
   }, [words, findWordIdUnderPoint]);
 
-  const onTranscriptBlankMouseDown = useCallback(
-    (e: MouseEvent<HTMLDivElement>) => {
-      if (e.button !== 0) return;
-      if (e.shiftKey || e.metaKey || e.ctrlKey) return;
-      const target = e.target as HTMLElement | null;
-      if (target?.closest("[data-word-id]")) return;
-      const downWordId = findWordIdUnderPoint(e.clientX, e.clientY);
-      rangeDragAnchorRef.current = downWordId;
-      rangeDragMovedRef.current = false;
-      if (downWordId) {
-        setMultiSelectIds(new Set([downWordId]));
-        setFocusedWordId(downWordId);
-        rangeAnchorWordIdRef.current = downWordId;
-        leftDragMultiSelectRef.current = true;
-      }
-      const sx = e.clientX;
-      const sy = e.clientY;
-      const move = (ev: globalThis.PointerEvent) => {
-        if ((ev.buttons & 1) !== 1) return;
-        if ((ev.clientX - sx) ** 2 + (ev.clientY - sy) ** 2 > 36) rangeDragMovedRef.current = true;
-        const curId = findWordIdUnderPoint(ev.clientX, ev.clientY);
-        if (!curId) return;
-        const anchor = rangeDragAnchorRef.current || curId;
-        if (!rangeDragAnchorRef.current) {
-          rangeDragAnchorRef.current = curId;
-          rangeAnchorWordIdRef.current = curId;
-        }
-        const ids = wordIdsBetweenInclusive(words, anchor, curId);
-        setMultiSelectIds(new Set(ids.length ? ids : [curId]));
-        setFocusedWordId(curId);
-        leftDragMultiSelectRef.current = true;
-      };
-      const up = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        window.removeEventListener("pointercancel", up);
-        if (rangeDragMovedRef.current) skipNextWordActivateRef.current = true;
-        rangeDragAnchorRef.current = null;
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-      window.addEventListener("pointercancel", up);
-    },
-    [findWordIdUnderPoint, words]
-  );
-
   const onRangeDragPointerEnter = useCallback((w: ClipWord, e: ReactPointerEvent<HTMLButtonElement>) => {
     if (e.pointerType && e.pointerType !== "mouse") return;
     const anchor = rangeDragAnchorRef.current;
@@ -2574,7 +2528,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         {t("clip.editor.exportingBody")}
                       </div>
                     ) : null}
-                    <div className="min-h-0 min-w-0 flex-1" onMouseDownCapture={onTranscriptBlankMouseDown}>
+                    <div className="min-h-0 min-w-0 flex-1">
                       <VirtualizedTranscript
                         ref={transcriptRef}
                         lines={lines}
@@ -2871,40 +2825,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           {t("clip.editor.exportingBody")}
                         </div>
                       ) : null}
-                      {durationMs ? (
-                        <div className="mb-2 rounded-lg border border-line/60 bg-fill/20 px-2 py-1">
-                          <div className="relative h-2 rounded bg-line/40">
-                            {playbackMs > 0 ? (
-                              <button
-                                type="button"
-                                className="absolute top-0 h-2 w-1 rounded bg-brand"
-                                style={{ left: `${Math.max(0, Math.min(100, (playbackMs / durationMs) * 100))}%` }}
-                                onClick={() => seekPreviewMs(playbackMs)}
-                              />
-                            ) : null}
-                            {focusedWordId ? (
-                              <button
-                                type="button"
-                                className="absolute top-0 h-2 w-1 rounded bg-emerald-500"
-                                style={{
-                                  left: `${Math.max(
-                                    0,
-                                    Math.min(
-                                      100,
-                                      ((words.find((w) => w.id === focusedWordId)?.s_ms ?? 0) / durationMs) * 100
-                                    )
-                                  )}%`
-                                }}
-                                onClick={() => {
-                                  const w = words.find((x) => x.id === focusedWordId);
-                                  if (w) seekPreviewMs(w.s_ms);
-                                }}
-                              />
-                            ) : null}
-                          </div>
-                        </div>
-                      ) : null}
-                      <div className="min-h-0 min-w-0 flex-1" onMouseDownCapture={onTranscriptBlankMouseDown}>
+                      <div className="min-h-0 min-w-0 flex-1">
                         <VirtualizedTranscript
                           ref={transcriptRef}
                           lines={lines}
