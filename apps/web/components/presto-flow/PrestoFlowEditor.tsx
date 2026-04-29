@@ -2432,8 +2432,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 insertingSegmentAudio ||
                 !hasServerAudio ||
                 project.transcription_status === "running" ||
-                project.transcription_status === "queued" ||
-                (project.transcription_status === "succeeded" && pendingInsertedSegments.length === 0)
+                project.transcription_status === "queued"
               }
               exportDisabled={
                 actionBusy ||
@@ -2688,7 +2687,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           </button>
                         </div>
                       ) : null}
-                      <div className="mb-2 h-20 overflow-hidden rounded-lg border border-line bg-track/40">
+                      <div className="mb-2 h-[69px] overflow-hidden rounded-lg border border-line bg-track/40">
                         {waveformAudioUrl ? (
                           <div className="group relative h-full w-full">
                             <button

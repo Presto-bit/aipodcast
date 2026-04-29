@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
 
 type EngineState = "idle" | "queued" | "running" | "ready" | "failed";
@@ -48,9 +49,11 @@ export default function PrestoFlowHeader({
       {backHref && backLabel ? (
         <Link
           href={backHref}
-          className="shrink-0 rounded-md px-2 py-1.5 text-xs text-muted transition hover:bg-fill hover:text-ink"
+          className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted transition hover:bg-fill hover:text-ink"
+          aria-label={backLabel}
+          title={backLabel}
         >
-          {backLabel}
+          <ArrowLeft className="h-4 w-4" aria-hidden />
         </Link>
       ) : null}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">

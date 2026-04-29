@@ -2,11 +2,9 @@
 
 import type { RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, FastForward, Pause, Play, Rewind } from "lucide-react";
+import { ChevronDown, Pause, Play, Volume2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
-
-const SKIP_SEC = 5;
 
 type Props = {
   waveformRef: RefObject<ClipWaveformHandle | null>;
@@ -33,6 +31,14 @@ type Props = {
 };
 
 const DEFAULT_RATES = [1, 1.25, 1.5, 2] as const;
+
+function formatClock(ms: number): string {
+  const safe = Number.isFinite(ms) ? Math.max(0, Math.floor(ms)) : 0;
+  const totalSeconds = Math.floor(safe / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
 
 export default function AudioConsole({
   waveformRef,
@@ -117,7 +123,7 @@ export default function AudioConsole({
   const currentLabel = labels
     ? labels[rates.indexOf(playbackRate as (typeof rates)[number])] ?? `${playbackRate}×`
     : `${playbackRate}×`;
-
+  const boundedCurrentMs = Math.max(0, Math.min(durationMs || 0, currentTimeMs || 0));
   const ratePortal =
     rateMenuOpen && onPlaybackRateChange && menuPos && typeof document !== "undefined"
       ? createPortal(
@@ -152,30 +158,76 @@ export default function AudioConsole({
   return (
     <div
       className={[
-        "shrink-0 px-3 py-2.5 sm:px-4",
+        "shrink-0 px-3 py-2 sm:px-4",
         dockEmbed
           ? "border-t-0 bg-fill/40 backdrop-blur-sm"
           : "border-t border-line bg-fill/60 backdrop-blur-sm"
       ].join(" ")}
     >
       {ratePortal}
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-2">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-1.5">
         {keyboardHint ? (
           <p className="text-center text-[10px] text-muted sm:text-left">{keyboardHint}</p>
         ) : null}
-        {durationMs > 0 ? (
-          <div className="px-1">
-            <input
-              type="range"
-              min={0}
-              max={Math.max(1, durationMs)}
-              value={Math.max(0, Math.min(durationMs, currentTimeMs))}
-              className="h-2 w-full accent-indigo-500"
-              onChange={(e) => onSeekMs?.(Number(e.target.value) || 0)}
-            />
-          </div>
-        ) : null}
-        <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
+        <div className="flex items-center gap-2 px-1">
+          {onPlaybackRateChange ? (
+            <div ref={rateWrapRef} className="relative shrink-0">
+              <button
+                ref={rateBtnRef}
+                type="button"
+                aria-label={rateSelectAriaLabel}
+                aria-expanded={rateMenuOpen}
+                aria-haspopup="listbox"
+                className="inline-flex h-7 min-w-[3rem] items-center justify-center rounded-md px-1.5 text-sm font-semibold text-ink hover:bg-fill"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRateMenuOpen((o) => !o);
+                }}
+              >
+                <span>{currentLabel.replace("×", "x")}</span>
+              </button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            aria-label="音量"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink hover:bg-fill"
+          >
+            <Volume2 className="h-4 w-4" aria-hidden />
+          </button>
+          {durationMs > 0 ? (
+            <div className="mx-1 flex min-w-0 flex-1 items-center gap-2">
+              <span className="shrink-0 text-sm tabular-nums text-muted">{formatClock(boundedCurrentMs)}</span>
+              <input
+                type="range"
+                min={0}
+                max={Math.max(1, durationMs)}
+                value={Math.max(0, Math.min(durationMs, currentTimeMs))}
+                className="h-1.5 w-full min-w-0 cursor-pointer accent-zinc-900 dark:accent-zinc-100"
+                onChange={(e) => onSeekMs?.(Number(e.target.value) || 0)}
+              />
+              <span className="shrink-0 text-sm tabular-nums text-muted">{formatClock(durationMs || 0)}</span>
+            </div>
+          ) : (
+            <div className="mx-1 flex-1" />
+          )}
+          <button
+            type="button"
+            aria-label={playing ? "Pause" : "Play"}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-ink text-surface shadow-soft hover:opacity-95"
+            onClick={togglePlay}
+          >
+            {playing ? <Pause className="h-5 w-5" aria-hidden /> : <Play className="h-5 w-5 pl-0.5" aria-hidden />}
+          </button>
+          <button
+            type="button"
+            aria-label="收起播放器"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink hover:bg-fill"
+          >
+            <ChevronDown className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-2 px-1 sm:justify-start">
           {onMagneticSnapChange && magneticSnapLabel ? (
             <label
               className="flex cursor-pointer items-center gap-1.5 text-[10px] text-muted"
@@ -191,49 +243,6 @@ export default function AudioConsole({
               />
               <span>{magneticSnapLabel}</span>
             </label>
-          ) : null}
-          <button
-            type="button"
-            aria-label={`后退 ${SKIP_SEC} 秒`}
-            className="rounded-full border border-line bg-surface p-2 text-ink shadow-soft hover:bg-fill"
-            onClick={() => skip(-SKIP_SEC)}
-          >
-            <Rewind className="h-5 w-5" aria-hidden />
-          </button>
-          <button
-            type="button"
-            aria-label={playing ? "Pause" : "Play"}
-            className="rounded-full border border-line bg-brand p-3 text-brand-foreground shadow-soft hover:opacity-95"
-            onClick={togglePlay}
-          >
-            {playing ? <Pause className="h-6 w-6" aria-hidden /> : <Play className="h-6 w-6 pl-0.5" aria-hidden />}
-          </button>
-          <button
-            type="button"
-            aria-label={`快进 ${SKIP_SEC} 秒`}
-            className="rounded-full border border-line bg-surface p-2 text-ink shadow-soft hover:bg-fill"
-            onClick={() => skip(SKIP_SEC)}
-          >
-            <FastForward className="h-5 w-5" aria-hidden />
-          </button>
-          {onPlaybackRateChange ? (
-            <div ref={rateWrapRef} className="relative">
-              <button
-                ref={rateBtnRef}
-                type="button"
-                aria-label={rateSelectAriaLabel}
-                aria-expanded={rateMenuOpen}
-                aria-haspopup="listbox"
-                className="inline-flex min-w-[4.5rem] items-center justify-between gap-1 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[10px] font-semibold text-ink shadow-soft hover:bg-fill"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRateMenuOpen((o) => !o);
-                }}
-              >
-                <span>{currentLabel}</span>
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
-              </button>
-            </div>
           ) : null}
           {clipPreviewAroundLabel && onClipPreviewAround ? (
             <button
