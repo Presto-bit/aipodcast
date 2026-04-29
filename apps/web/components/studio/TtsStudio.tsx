@@ -144,7 +144,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const [outroBgm3StoredHex, setOutroBgm3StoredHex] = useState<string | null>(null);
   const [introOutroHydrated, setIntroOutroHydrated] = useState(false);
   const [generateCover, setGenerateCover] = useState(true);
-  /** 默认关闭：仅用户打开开关时才会在任务 payload 中携带 ai_polish；不会在未点击「AI 润色」时自动润色 */
+  /** 默认关闭：仅用户打开开关时才会在任务 payload 中携带 ai_polish；不会在未点击「口语润色」时自动润色 */
   const [aiPolish, setAiPolish] = useState(false);
   const [busy, setBusy] = useState(false);
   const [polishing, setPolishing] = useState(false);
@@ -724,7 +724,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
       return;
     }
     setPolishing(true);
-    applyTaskFromEvent("AI 润色中…", 8);
+    applyTaskFromEvent("口语润色中…", 8);
     try {
       const res = await fetch("/api/tts_polish", {
         method: "POST",
@@ -829,7 +829,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     <TtsStudioRoot embedded={embedded} className={rootClass}>
       {!embedded ? (
         <div className="mb-6 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">文字转语音</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">文本转语音</h1>
           <p className="mx-auto mt-2 max-w-xl text-sm text-muted">
             建议先粘贴<strong className="text-ink">一小段</strong>试听后，再提交长文，便于确认音色与效果、也更省用量。
           </p>
@@ -1056,9 +1056,9 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                         setAiPolish((v) => !v);
                       }}
                       disabled={polishing}
-                      title="开启后会改动内容，让文字更口语化。开：合成前润色。Shift+点：仅润色正文"
+                      title="开启后会改动内容，让文字更口语化。开：合成前口语润色。Shift+点：仅润色正文"
                     >
-                      {polishing ? "润色中…" : "AI润色"}
+                      {polishing ? "润色中…" : "口语润色"}
                     </button>
                   </span>
                   <span data-tts-toolbar-chip className="relative inline-block align-top">

@@ -133,8 +133,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [playbackMs, setPlaybackMs] = useState(0);
   const [focusedWordId, setFocusedWordId] = useState<string | null>(null);
   const [llmSugs, setLlmSugs] = useState<ClipEditSuggestion[]>([]);
-  /** idle | outline | structured | expand */
-  const [llmPhase, setLlmPhase] = useState<"idle" | "outline" | "structured" | "expand">("idle");
+  /** idle | structured | expand */
+  const [llmPhase, setLlmPhase] = useState<"idle" | "structured" | "expand">("idle");
   const [silenceSegments, setSilenceSegments] = useState<ClipSilenceSegment[] | null>(null);
   /** 粗剪侧栏：不再展示的建议（口癖行 / 规则&AI / 长静音），按工程存 localStorage */
   const [dismissedRoughKeys, setDismissedRoughKeys] = useState<Set<string>>(() => new Set());
@@ -194,6 +194,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const waveformRef = useRef<ClipWaveformHandle | null>(null);
   const transcriptRef = useRef<VirtualizedTranscriptHandle | null>(null);
+  const autoStructuredSuggestionRequestedRef = useRef(false);
   /** 稿面滚动容器，拖选时用 elementsFromPoint 限定在稿面内 */
   const transcriptScrollElRef = useRef<HTMLDivElement | null>(null);
   /** 侧栏「搜索」Tab 内搜索框；⌘F / Ctrl+F 聚焦并打开该 Tab */
@@ -763,6 +764,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setWordMarkers({});
     setSilenceSegments(null);
     setLlmPhase("idle");
+    autoStructuredSuggestionRequestedRef.current = false;
   }, [projectId]);
 
   useEffect(() => {
@@ -1891,35 +1893,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     [words, onKeepStutterFirst, scheduleSaveExcluded, postSuggestionFeedback, openExportGate]
   );
 
-  const loadDeepseekOutline = useCallback(async () => {
-    if (project?.transcription_status !== "succeeded") return;
-    setLlmPhase("outline");
-    setErr("");
-    try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/edit-suggestions`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ llm: true, mode: "outline", max_words: 1000 })
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        items?: LlmSuggestionApiItem[];
-        detail?: string;
-      };
-      if (!res.ok || data.success === false) {
-        throw new Error(data.detail || `意向建议失败 ${res.status}`);
-      }
-      const mapped = mapLlmApiItemsToSuggestions(Array.isArray(data.items) ? data.items : []);
-      setLlmSugs(mapped);
-      setWordMarkers({});
-    } catch (e) {
-      setErr(String(e instanceof Error ? e.message : e));
-    } finally {
-      setLlmPhase("idle");
-    }
-  }, [getAuthHeaders, projectId, project?.transcription_status]);
-
   const loadDeepseekStructured = useCallback(async () => {
     if (project?.transcription_status !== "succeeded") return;
     setLlmPhase("structured");
@@ -1948,6 +1921,13 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       setLlmPhase("idle");
     }
   }, [getAuthHeaders, projectId, project?.transcription_status]);
+
+  useEffect(() => {
+    if (project?.transcription_status !== "succeeded") return;
+    if (autoStructuredSuggestionRequestedRef.current) return;
+    autoStructuredSuggestionRequestedRef.current = true;
+    void loadDeepseekStructured();
+  }, [loadDeepseekStructured, project?.transcription_status]);
 
   const loadDeepseekExpandOutline = useCallback(
     async (src: ClipOutlineSource) => {
@@ -2102,8 +2082,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         }}
       />
       {shortcutHelpOpen ? (
-        <div className="fixed inset-0 z-[13000] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-line bg-surface p-4 shadow-soft">
+        <div
+          className="fixed inset-0 z-[13000] flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShortcutHelpOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl border border-line bg-surface p-4 shadow-soft"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-ink">快捷键与交互说明</h3>
               <button
@@ -2806,20 +2792,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             onExecuteSuggestion={onExecuteSuggestion}
                             dismissedRoughKeys={dismissedRoughKeys}
                             onToggleDismissRoughKey={toggleDismissRoughKey}
-                            transcriptionSucceeded={project.transcription_status === "succeeded"}
-                            deepseekOutlineBusy={llmPhase === "outline"}
-                            deepseekStructuredBusy={llmPhase === "structured"}
                             outlineExpandBusy={llmPhase === "expand"}
-                            onLoadDeepseekOutline={
-                              project.transcription_status === "succeeded"
-                                ? () => void loadDeepseekOutline()
-                                : undefined
-                            }
-                            onLoadDeepseekStructured={
-                              project.transcription_status === "succeeded"
-                                ? () => void loadDeepseekStructured()
-                                : undefined
-                            }
                             onExpandOutline={(src) => void loadDeepseekExpandOutline(src)}
                             hasServerAudio={hasServerAudio}
                             wordchainPreviewActive={wordchainPreviewOn}

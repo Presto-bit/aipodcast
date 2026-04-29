@@ -42,7 +42,7 @@ export function WalletUsageReference({ refData }: Props) {
           <span className="text-muted">：</span>
           {typeof podcast === "number" && Number.isFinite(podcast) ? (
             <span className="text-ink">
-              成片音频每分钟（文稿 + 合成至成片，已含进 TTS 前 AI 润色）约{" "}
+              成片音频每分钟（文稿 + 合成至成片，已含进 TTS 前口语润色）约{" "}
               <span className="font-medium">{fmtYuanTwoDecimals(podcast)}</span> / 分钟
             </span>
           ) : (

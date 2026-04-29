@@ -227,7 +227,7 @@ export default function CreatePage() {
           <label className="sr-only" htmlFor="create-draft">
             输入主题或正文
           </label>
-          {/* 角标摘要仅叠在正文框内，模式条独立在下方，避免遮挡「创作播客 / 文字转语音」 */}
+          {/* 角标摘要仅叠在正文框内，模式条独立在下方，避免遮挡「创作播客 / 文本转语音」 */}
           <div className="overflow-hidden rounded-xl border border-line bg-fill ring-brand/20 focus-within:ring-2">
             <div className="relative">
               <textarea

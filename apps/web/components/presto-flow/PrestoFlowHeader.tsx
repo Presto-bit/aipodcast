@@ -5,13 +5,6 @@ import type { ReactNode } from "react";
 
 type EngineState = "idle" | "queued" | "running" | "ready" | "failed";
 
-function engineDot(st: EngineState): string {
-  if (st === "running" || st === "queued") return "bg-warning shadow-[0_0_8px_color-mix(in_srgb,var(--dawn-warning)_45%,transparent)]";
-  if (st === "ready") return "bg-mint shadow-[0_0_8px_color-mix(in_srgb,var(--dawn-mint)_40%,transparent)]";
-  if (st === "failed") return "bg-danger";
-  return "bg-muted";
-}
-
 type Props = {
   backHref?: string;
   backLabel?: string;
@@ -39,8 +32,8 @@ export default function PrestoFlowHeader({
   title,
   titleOverride,
   titleActions,
-  engineLabel,
-  engineState,
+  engineLabel: _engineLabel,
+  engineState: _engineState,
   beforeTranscribe,
   transcribeLabel,
   exportLabel,
@@ -67,10 +60,6 @@ export default function PrestoFlowHeader({
             {titleActions}
           </>
         )}
-      </div>
-      <div className="hidden items-center gap-2 rounded-full border border-line bg-fill/80 px-3 py-1.5 text-xs text-muted md:flex">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${engineDot(engineState)}`} aria-hidden />
-        <span className="max-w-[14rem] truncate whitespace-nowrap text-ink">{engineLabel}</span>
       </div>
       {beforeTranscribe ? (
         <div className="flex w-full min-w-0 basis-full items-center border-t border-line/60 pt-2 sm:w-auto sm:basis-auto sm:border-t-0 sm:pt-0">

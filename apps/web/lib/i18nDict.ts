@@ -8,7 +8,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "nav.create": "创作播客",
     "nav.createShort": "创",
     "nav.podcast": "做一期播客",
-    "nav.tts": "文字转语音",
+    "nav.tts": "文本转语音",
     "nav.voice": "音色管理",
     "nav.clip": "音频剪辑",
     "nav.clipShort": "剪",
@@ -154,7 +154,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
       "播放头与下方词同步高亮；点击词会跳转波形并切换剪/留。波形经本站同源代理加载，一般不依赖对象存储 CORS。",
     "clip.editor.waveformProxyHint": "若代理仍失败，请检查登录态与编排器对象存储连通性。",
     "presto.flow.engineCaption": "云端识别",
-    "presto.flow.refineCta": "AI 一键精修",
+    "presto.flow.refineCta": "口语润色",
     "presto.flow.interviewDual": "当前工程为双轨访谈模式（声道 0+1）。",
     "presto.flow.diar.title": "转写：说话人",
     "presto.flow.diar.hintStereo":
@@ -448,7 +448,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "create.card.podcast.desc": "主题或素材 → 脚本与对话 → 混音与封面",
     "podcast.studio.queueStallHint":
       "仍在排队，请稍候片刻。若长时间没有变化，可尝试刷新页面；若持续异常请联系支持。",
-    "create.card.tts.title": "文字转语音",
+    "create.card.tts.title": "文本转语音",
     "create.card.tts.desc": "粘贴文字，快速合成自然语音",
     "create.card.notes.title": "笔记本",
     "create.card.notes.desc": "建笔记本、上传资料，再变长文或可听播客",
@@ -784,7 +784,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
       "Playhead highlights the active word below; clicking a word seeks the waveform and toggles cut/keep. The waveform is loaded via same-origin proxy, so object-store CORS is usually not required.",
     "clip.editor.waveformProxyHint": "If the proxy still fails, check your session and orchestrator/object-store connectivity.",
     "presto.flow.engineCaption": "Cloud recognition",
-    "presto.flow.refineCta": "AI polish",
+    "presto.flow.refineCta": "Spoken polish",
     "presto.flow.interviewDual": "This project uses dual-track interview mode (channels 0+1).",
     "presto.flow.diar.title": "Transcription: speakers",
     "presto.flow.diar.hintStereo":

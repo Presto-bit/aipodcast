@@ -62,6 +62,10 @@ function lexNormKey(c: string): string {
   return c;
 }
 
+function phraseNormKey(c: string): string {
+  return lexNormKey(c).replace(/\s+/g, "");
+}
+
 /** 工程配置的嘉宾名 / 公司名 / 专业词：整词核命中则不作为口癖 */
 export function buildRoughCutExemptSet(phrases: readonly string[] | null | undefined): ReadonlySet<string> {
   const s = new Set<string>();
@@ -75,6 +79,53 @@ export function buildRoughCutExemptSet(phrases: readonly string[] | null | undef
 
 function wordCore(w: ClipWord): string {
   return displayToken(w).replace(/[，,。.!！?？、；;:""''「」…]+$/u, "").trim();
+}
+
+/**
+ * 计算“短语豁免”命中的词 id（支持跨多个词的短语，如 "you know"）。
+ * 说明：按转写词顺序将词核拼接后做短语匹配，命中区间覆盖到的词均视为豁免。
+ */
+export function buildPhraseExemptWordIdSet(
+  words: readonly ClipWord[],
+  exemptCores?: ReadonlySet<string>
+): ReadonlySet<string> {
+  if (!exemptCores?.size || !words.length) return new Set<string>();
+  const tokens: Array<{ id: string; core: string }> = [];
+  for (const w of words) {
+    const core = phraseNormKey(wordCore(w));
+    if (!core) continue;
+    tokens.push({ id: w.id, core });
+  }
+  if (!tokens.length) return new Set<string>();
+
+  const joined = tokens.map((t) => t.core).join("");
+  if (!joined) return new Set<string>();
+
+  const offsets: number[] = [];
+  let pos = 0;
+  for (const t of tokens) {
+    offsets.push(pos);
+    pos += t.core.length;
+  }
+
+  const hitIds = new Set<string>();
+  for (const phrase of exemptCores) {
+    const needle = phraseNormKey(String(phrase || "").trim());
+    if (!needle) continue;
+    let seekFrom = 0;
+    while (seekFrom <= joined.length - needle.length) {
+      const idx = joined.indexOf(needle, seekFrom);
+      if (idx < 0) break;
+      const end = idx + needle.length;
+      for (let i = 0; i < tokens.length; i += 1) {
+        const s = offsets[i]!;
+        const e = s + tokens[i]!.core.length;
+        if (e > idx && s < end) hitIds.add(tokens[i]!.id);
+      }
+      seekFrom = idx + Math.max(1, needle.length);
+    }
+  }
+  return hitIds;
 }
 
 /** 词核是否命中口癖表（整词匹配短语或单字语气词） */
@@ -120,8 +171,10 @@ export function aggregateVerbalTicRows(
   exemptCores?: ReadonlySet<string>,
   maxKinds = 20
 ): VerbalTicAggRow[] {
+  const phraseExemptWordIds = buildPhraseExemptWordIdSet(words, exemptCores);
   const byKey = new Map<string, { activeIds: string[]; excludedIds: string[]; label: string }>();
   for (const w of words) {
+    if (phraseExemptWordIds.has(w.id)) continue;
     if (!wordIsVerbalTic(w, exemptCores)) continue;
     const core = lexNormKey(wordCore(w));
     if (!core) continue;
@@ -156,8 +209,10 @@ export function summarizeVerbalTicHits(
   exemptCores?: ReadonlySet<string>,
   maxKinds = 14
 ): VerbalTicHitSummary[] {
+  const phraseExemptWordIds = buildPhraseExemptWordIdSet(words, exemptCores);
   const byKey = new Map<string, { count: number; sampleWordId: string; label: string; coreKey: string }>();
   for (const w of words) {
+    if (phraseExemptWordIds.has(w.id)) continue;
     if (excluded.has(w.id)) continue;
     if (!wordIsVerbalTic(w, exemptCores)) continue;
     const core = lexNormKey(wordCore(w));
@@ -184,10 +239,12 @@ export function collectVerbalTicWordIdsForCore(
   exemptCores: ReadonlySet<string> | undefined,
   coreKey: string
 ): string[] {
+  const phraseExemptWordIds = buildPhraseExemptWordIdSet(words, exemptCores);
   const want = lexNormKey(String(coreKey || "").trim());
   if (!want) return [];
   const out: string[] = [];
   for (const w of words) {
+    if (phraseExemptWordIds.has(w.id)) continue;
     if (excluded.has(w.id)) continue;
     if (!wordIsVerbalTic(w, exemptCores)) continue;
     if (lexNormKey(wordCore(w)) === want) out.push(w.id);
@@ -200,8 +257,10 @@ export function collectVerbalTicWordIds(
   excluded: ReadonlySet<string>,
   exemptCores?: ReadonlySet<string>
 ): string[] {
+  const phraseExemptWordIds = buildPhraseExemptWordIdSet(words, exemptCores);
   const out: string[] = [];
   for (const w of words) {
+    if (phraseExemptWordIds.has(w.id)) continue;
     if (excluded.has(w.id)) continue;
     if (wordIsVerbalTic(w, exemptCores)) out.push(w.id);
   }

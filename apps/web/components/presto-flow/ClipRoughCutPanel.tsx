@@ -1,13 +1,11 @@
 "use client";
 
 import {
-  AlignJustify,
   ChevronDown,
   ChevronRight,
   ChevronUp,
   CircleX,
-  Scissors,
-  Sparkles
+  Scissors
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipExportPausePolicy, ClipProjectRow, ClipSilenceSegment, ClipWord } from "../../lib/clipTypes";
@@ -100,12 +98,7 @@ type Props = {
   onExecuteSuggestion: (s: ClipEditSuggestion) => void;
   dismissedRoughKeys: ReadonlySet<string>;
   onToggleDismissRoughKey: (id: string) => void;
-  transcriptionSucceeded: boolean;
-  deepseekOutlineBusy: boolean;
-  deepseekStructuredBusy: boolean;
   outlineExpandBusy: boolean;
-  onLoadDeepseekOutline?: () => void;
-  onLoadDeepseekStructured?: () => void;
   onExpandOutline?: (src: ClipOutlineSource) => void;
   /** 主音频已就绪（与编辑器 hasServerAudio 一致） */
   hasServerAudio: boolean;
@@ -146,12 +139,7 @@ export default function ClipRoughCutPanel({
   onExecuteSuggestion,
   dismissedRoughKeys,
   onToggleDismissRoughKey,
-  transcriptionSucceeded,
-  deepseekOutlineBusy,
-  deepseekStructuredBusy,
   outlineExpandBusy,
-  onLoadDeepseekOutline,
-  onLoadDeepseekStructured,
   onExpandOutline,
   hasServerAudio,
   wordchainPreviewActive = false,
@@ -229,8 +217,6 @@ export default function ClipRoughCutPanel({
     () => aggregateVerbalTicRows(words, excluded, exemptCores, 20),
     [words, excluded, exemptCores]
   );
-
-  const llmBusy = Boolean(deepseekOutlineBusy || deepseekStructuredBusy || outlineExpandBusy);
 
   const hasVerbalAdjust = ticAggRows.length > 0 || roughCutSuggestions.length > 0;
 
@@ -350,33 +336,6 @@ export default function ClipRoughCutPanel({
   return (
     <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-1">
       <section className="rounded-xl border border-line bg-fill/30 p-3">
-        <div className="mb-2 flex items-center justify-end gap-1 border-b border-line/60 pb-2">
-          {onLoadDeepseekOutline ? (
-            <button
-              type="button"
-              disabled={llmBusy || !transcriptionSucceeded}
-              title={t("presto.flow.roughCut.dsOutlineIconTip")}
-              aria-label={t("presto.flow.roughCut.dsOutlineIconTip")}
-              className={iconBtnClass(llmBusy || !transcriptionSucceeded)}
-              onClick={() => onLoadDeepseekOutline()}
-            >
-              <Sparkles className="h-3.5 w-3.5 shrink-0 text-brand" aria-hidden />
-            </button>
-          ) : null}
-          {onLoadDeepseekStructured ? (
-            <button
-              type="button"
-              disabled={llmBusy || !transcriptionSucceeded}
-              title={t("presto.flow.roughCut.dsStructIconTip")}
-              aria-label={t("presto.flow.roughCut.dsStructIconTip")}
-              className={iconBtnClass(llmBusy || !transcriptionSucceeded)}
-              onClick={() => onLoadDeepseekStructured()}
-            >
-              <AlignJustify className="h-3.5 w-3.5 shrink-0 text-ink" aria-hidden />
-            </button>
-          ) : null}
-        </div>
-
         {!hasAnyHint ? (
           <p className="text-[10px] leading-relaxed text-muted">{t("presto.flow.roughCut.unifiedEmpty")}</p>
         ) : (

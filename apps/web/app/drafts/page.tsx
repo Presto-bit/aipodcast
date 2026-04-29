@@ -139,7 +139,7 @@ export default function DraftsPage() {
     <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-10 sm:px-4">
       <div className="mb-6 text-center">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">播客草稿箱</h1>
-        <p className="mt-2 text-sm text-muted">本地文稿；可送到「文字转语音」。</p>
+        <p className="mt-2 text-sm text-muted">本地文稿；可送到「文本转语音」。</p>
         <p className="mt-1 text-xs text-muted">{storageHint}</p>
       </div>
 
@@ -170,7 +170,7 @@ export default function DraftsPage() {
                     笔记本
                   </Link>
                 </p>
-                <p className="mt-1 text-muted">写好后可用右侧「送到文字转语音」。</p>
+                <p className="mt-1 text-muted">写好后可用右侧「送到文本转语音」。</p>
               </li>
             ) : null}
             {sortedDrafts.map((d) => (
@@ -223,7 +223,7 @@ export default function DraftsPage() {
                   className="rounded-lg bg-mint px-3 py-1.5 text-xs text-mint-foreground hover:bg-mint/90"
                   onClick={importToTts}
                 >
-                  送到文字转语音
+                  送到文本转语音
                 </button>
               </div>
               <textarea

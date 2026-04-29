@@ -1,5 +1,9 @@
 import type { ClipSilenceSegment, ClipWord } from "./clipTypes";
-import { ROUGH_CUT_FILLER_PHRASES as FILLER_CORE, ROUGH_CUT_HESITATION_TOKENS as HESITATION_CORE } from "./prestoFlowRoughCutLexicon";
+import {
+  buildPhraseExemptWordIdSet,
+  ROUGH_CUT_FILLER_PHRASES as FILLER_CORE,
+  ROUGH_CUT_HESITATION_TOKENS as HESITATION_CORE
+} from "./prestoFlowRoughCutLexicon";
 import { buildFlowUnits, displayToken } from "./prestoFlowTranscript";
 
 /** 可执行的建议动作（由侧栏「执行」触发） */
@@ -66,6 +70,7 @@ export function buildClipEditSuggestions(
   const out: ClipEditSuggestion[] = [];
   const units = buildFlowUnits(words);
   const exm = exemptCores;
+  const phraseExemptWordIds = buildPhraseExemptWordIdSet(words, exm);
 
   let stutterN = 0;
   for (const u of units) {
@@ -104,7 +109,7 @@ export function buildClipEditSuggestions(
     if (exm?.size && exm.has(core)) continue;
     if (!FILLER_CORE.has(core) || count < 3 || ids.length === 0) continue;
     const sample = ids[0]!;
-    const notExcluded = ids.filter((id) => !excluded.has(id));
+    const notExcluded = ids.filter((id) => !excluded.has(id) && !phraseExemptWordIds.has(id));
     if (notExcluded.length === 0) continue;
     out.push({
       id: `filler-${sample}`,
@@ -120,6 +125,7 @@ export function buildClipEditSuggestions(
   const hesIds: string[] = [];
   const hesByCore = new Map<string, number>();
   for (const w of words) {
+    if (phraseExemptWordIds.has(w.id)) continue;
     const c = lexNormKey(wordCore(w));
     if (exm?.size && exm.has(c)) continue;
     if (!HESITATION_CORE.has(c)) continue;

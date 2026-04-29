@@ -48,7 +48,7 @@ export function IconMic(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 创作入口：圆内加号（聚合播客 / 文字转语音 / 笔记等起点） */
+/** 创作入口：圆内加号（聚合播客 / 文本转语音 / 笔记等起点） */
 export function IconCreate(props: SVGProps<SVGSVGElement>) {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={STROKE} aria-hidden {...props}>
@@ -58,7 +58,7 @@ export function IconCreate(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** 文字转语音：段落 + 扬声器 */
+/** 文本转语音：段落 + 扬声器 */
 export function IconTts(props: SVGProps<SVGSVGElement>) {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={STROKE} aria-hidden {...props}>

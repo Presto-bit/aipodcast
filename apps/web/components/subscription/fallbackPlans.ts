@@ -38,7 +38,7 @@ export const FALLBACK_SUBSCRIPTION_PLANS: PricingPlan[] = [
     inherits_label: "相对 Free 的提升：",
     feature_bullets: [
       "月目标生成时长更高；单次成稿字数等配额见上表",
-      "标准导出（mp3）；不含去水印与 AI 润色（Pro 起）",
+      "标准导出（mp3）；不含去水印与口语润色（Pro 起）",
       "每月含 1 次音色克隆（超出可按 ¥9.9/次购买）",
       "适合轻量周更"
     ]
@@ -59,7 +59,7 @@ export const FALLBACK_SUBSCRIPTION_PLANS: PricingPlan[] = [
     feature_bullets: [
       "更高月目标生成时长与单次成稿字数上限（见上表）",
       "高质量导出、去水印",
-      "AI 润色（TTS 前）每月至多 30 次",
+      "口语润色（TTS 前）每月至多 30 次",
       "每月 2 次音色克隆额度（超出可按次购买）",
       "标准商用授权"
     ]
@@ -79,7 +79,7 @@ export const FALLBACK_SUBSCRIPTION_PLANS: PricingPlan[] = [
     feature_bullets: [
       "顶配月目标生成时长与单次成稿字数上限（见上表）",
       "批量处理、更高队列优先级（产品口径）",
-      "AI 润色（TTS 前）不限（矩阵语义）",
+      "口语润色（TTS 前）不限（矩阵语义）",
       "每月 3 次音色克隆额度",
       "增强商用授权与发布能力"
     ]

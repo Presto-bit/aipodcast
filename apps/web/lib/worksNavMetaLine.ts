@@ -6,7 +6,7 @@ const TTS_TYPES = new Set(["text_to_speech", "tts"]);
 export function worksNavPrimaryKind(type: string | undefined): string {
   const t = String(type || "");
   if (t === "script_draft") return "文章";
-  if (TTS_TYPES.has(t)) return "文字转语音";
+  if (TTS_TYPES.has(t)) return "文本转语音";
   return "播客";
 }
 
