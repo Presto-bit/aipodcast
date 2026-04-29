@@ -7,6 +7,7 @@ import logging
 import requests
 import zipfile
 import re
+import json
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 
@@ -111,6 +112,61 @@ def _extract_structured_blocks_from_html(soup: BeautifulSoup) -> list[dict[str, 
     return blocks
 
 
+def _extract_meta_content(soup: BeautifulSoup) -> str:
+    """提取页面 meta/JSON-LD 中的文本作为动态站点兜底正文。"""
+    parts: list[str] = []
+    seen: set[str] = set()
+
+    def push(raw: str | None) -> None:
+        txt = (raw or "").strip()
+        if not txt:
+            return
+        txt = re.sub(r"\s+", " ", txt).strip()
+        if len(txt) < 8:
+            return
+        key = txt.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        parts.append(txt)
+
+    # 常见 SEO 文本
+    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    push(title)
+    for selector in (
+        'meta[property="og:title"]',
+        'meta[name="twitter:title"]',
+        'meta[name="description"]',
+        'meta[property="og:description"]',
+        'meta[name="twitter:description"]',
+        'meta[property="og:site_name"]',
+    ):
+        el = soup.select_one(selector)
+        if not el:
+            continue
+        push(el.get("content"))
+
+    # JSON-LD 里可能有 articleBody/description/headline（部分站点含正文摘要）
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = (script.string or script.get_text() or "").strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+        rows = payload if isinstance(payload, list) else [payload]
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            push(str(row.get("headline") or ""))
+            push(str(row.get("name") or ""))
+            push(str(row.get("description") or ""))
+            push(str(row.get("articleBody") or ""))
+
+    return "\n".join(parts).strip()
+
+
 def _referer_for_url(url: str) -> str:
     try:
         p = urlparse(url)
@@ -168,6 +224,7 @@ class ContentParser:
             logs.append(f"成功获取网页内容，状态码: {response.status_code}")
 
             soup = BeautifulSoup(response.text, "html.parser")
+            meta_text = _extract_meta_content(soup)
             _strip_script_style(soup)
             main_like = _longest_main_like_text(soup)
 
@@ -183,6 +240,10 @@ class ContentParser:
             else:
                 content = full_text
                 logs.append("使用整页去壳文本")
+            # 动态站点（如小红书）常无可见正文，兜底回退到 meta/JSON-LD。
+            if len((content or "").strip()) < 80 and len(meta_text) >= 40:
+                content = f"{content}\n\n{meta_text}".strip() if content else meta_text
+                logs.append("使用 meta/JSON-LD 兜底抽取")
             structured_blocks = _extract_structured_blocks_from_html(soup)
 
             if not (content or "").strip():
