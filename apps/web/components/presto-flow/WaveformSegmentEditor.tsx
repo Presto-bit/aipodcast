@@ -79,7 +79,7 @@ export default function WaveformSegmentEditor({
 }: Props) {
   return (
     <div className={compact ? "" : "rounded-lg border border-line bg-fill/10 p-2"}>
-      <div className={compact ? "flex flex-wrap flex-row-reverse items-center gap-1.5" : "mb-2 flex flex-wrap items-center gap-1.5"}>
+      <div className={compact ? "flex flex-wrap items-center gap-1.5" : "mb-2 flex flex-wrap items-center gap-1.5"}>
         <ToolButton title="缩小波形" onClick={() => onZoomChange(Math.max(1, zoomLevel - 1))} disabled={disabled || zoomLevel <= 1}>
           <Minus className="h-3.5 w-3.5" aria-hidden />
         </ToolButton>

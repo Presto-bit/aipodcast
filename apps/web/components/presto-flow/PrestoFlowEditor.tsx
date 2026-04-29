@@ -2031,11 +2031,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   );
 
   const focusSegment = useCallback(
-    (segmentId: string) => {
+    (segmentId: string, seekMsOverride?: number) => {
       const seg = audioSegments.find((s) => s.id === segmentId);
       if (!seg) return;
       setSelectedSegmentId(segmentId);
-      waveformRef.current?.seekToMs(seg.startMs);
+      const seekMs =
+        typeof seekMsOverride === "number"
+          ? Math.max(seg.startMs, Math.min(seg.endMs, Math.round(seekMsOverride)))
+          : seg.startMs;
+      waveformRef.current?.seekToMs(seekMs);
       const firstWordId = seg.wordIds.find((id) => rawWordById.has(id));
       if (firstWordId) setFocusedWordId(firstWordId);
     },
@@ -2852,6 +2856,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                                     reorderAudioSegment(dragSegmentId, idx);
                                     setDragSegmentId(null);
                                   }}
+                                  onClick={(e) => {
+                                    const el = e.currentTarget;
+                                    const rect = el.getBoundingClientRect();
+                                    const ratio = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0;
+                                    const clamped = Math.max(0, Math.min(1, ratio));
+                                    const seekMs = seg.startMs + (seg.endMs - seg.startMs) * clamped;
+                                    focusSegment(seg.id, seekMs);
+                                  }}
                                   onDoubleClick={() => focusSegment(seg.id)}
                                   className={[
                                     "pointer-events-auto absolute top-[6px] h-[56px] rounded-md border transition",
@@ -2861,7 +2873,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                                     dragSegmentId === seg.id ? "opacity-70" : ""
                                   ].join(" ")}
                                   style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                                  title="双击选中该音频段；拖拽可重排"
+                                  title="单击选中定位；双击高亮该音频段；拖拽可重排"
                                 />
                               ))}
                             </div>

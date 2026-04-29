@@ -42,6 +42,14 @@ type Props = {
 
 type WS = Awaited<ReturnType<Awaited<typeof import("wavesurfer.js")>["default"]["create"]>>;
 
+function zoomLevelToMinPxPerSec(level: number, interactive: boolean): number {
+  if (!interactive) return 24;
+  const lv = Math.max(1, Math.min(10, Math.round(level)));
+  // At 1x, fit full duration in panel; zoom in progressively from 2x.
+  if (lv <= 1) return 0;
+  return 40 * (lv - 1);
+}
+
 const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWaveformPanel(
   {
     audioUrl,
@@ -107,8 +115,7 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
     setZoom: (level: number) => {
       const ws = wsRef.current;
       if (!ws) return;
-      const lv = Math.max(1, Math.min(10, Math.round(level)));
-      const pxPerSec = interactive ? 40 * lv : 24;
+      const pxPerSec = zoomLevelToMinPxPerSec(level, interactive);
       try {
         ws.setOptions({ minPxPerSec: pxPerSec });
       } catch {
@@ -158,7 +165,7 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
         barRadius: 2,
         mediaControls: interactive,
         dragToSeek: interactive,
-        minPxPerSec: interactive ? 40 * Math.max(1, Math.min(10, Math.round(zoomLevel))) : 24,
+        minPxPerSec: zoomLevelToMinPxPerSec(zoomLevel, interactive),
         /** 同源代理音频须携带 HttpOnly 会话 Cookie，否则 BFF 无法转发 Authorization */
         fetchParams: { mode: "same-origin", credentials: "include" }
       });
