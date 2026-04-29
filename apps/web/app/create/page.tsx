@@ -18,7 +18,7 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
     />
   )
 });
-import { useAuth } from "../../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../../lib/worksTypes";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
@@ -37,7 +37,8 @@ const DRAFT_PLACEHOLDER = "输入主题或正文";
 
 export default function CreatePage() {
   const { t } = useI18n();
-  const { getAuthHeaders } = useAuth();
+  const { user, getAuthHeaders } = useAuth();
+  const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
 
   const [draftText, setDraftText] = useState("");
   const [libraryPreview, setLibraryPreview] = useState("");
@@ -145,8 +146,14 @@ export default function CreatePage() {
   }, [getAuthHeaders]);
 
   useEffect(() => {
+    if (!isLoggedIn) {
+      setHomeWorks([]);
+      setWorksLoading(false);
+      setWorksErr("");
+      return;
+    }
     void refreshWorks();
-  }, [refreshWorks]);
+  }, [refreshWorks, isLoggedIn]);
 
   const refreshPodcastTemplates = useCallback(async () => {
     setTemplatesErr("");
@@ -176,8 +183,14 @@ export default function CreatePage() {
   }, [getAuthHeaders]);
 
   useEffect(() => {
+    if (!isLoggedIn) {
+      setServerPodcastTemplates([]);
+      setTemplatesLoading(false);
+      setTemplatesErr("");
+      return;
+    }
     void refreshPodcastTemplates();
-  }, [refreshPodcastTemplates]);
+  }, [refreshPodcastTemplates, isLoggedIn]);
 
   useEffect(() => {
     setCreateWorksTabOverride(null);

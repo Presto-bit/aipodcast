@@ -43,11 +43,13 @@ import { readLastIntroOutro, writeLastIntroOutro } from "../../lib/introOutroSto
 import type { WorkItem } from "../../lib/worksTypes";
 import FloatingPopover from "../ui/FloatingPopover";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
-import { useAuth, userAccountRef } from "../../lib/auth";
+import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { readSessionStorageScoped, removeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { notesRoomFeaturesEnabled } from "../../lib/noteReferenceLimits";
+import { useLoginRequiredAction } from "../../lib/useLoginRequiredAction";
+import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
 
 type PanelId = "mode" | "voice" | "intro" | null;
 
@@ -106,6 +108,8 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
 ) {
   const { user, phone, getAuthHeaders } = useAuth();
   const { t } = useI18n();
+  const loggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
+  const { ensureLoggedInForAction, loginPromptNode } = useLoginRequiredAction(loggedIn);
   const createdByPhone = useMemo(() => userAccountRef(user) || String(phone || "").trim(), [user, phone]);
   const roomFeaturesOk = useMemo(() => notesRoomFeaturesEnabled(), []);
   const [defaultVoicesMap, setDefaultVoicesMap] = useState<Record<string, Record<string, unknown>>>({});
@@ -162,6 +166,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const resolveWaitRef = useRef<(() => void) | null>(null);
   const cancelledRef = useRef(false);
   const runTtsRef = useRef<() => Promise<void>>(async () => {});
+  const runAiPolishRef = useRef<() => Promise<void>>(async () => {});
   const stopGenerationRef = useRef<() => Promise<void>>(async () => {});
   const logSuccessHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recoveryStartedRef = useRef(false);
@@ -293,10 +298,32 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   }, [getAuthHeaders]);
 
   useEffect(() => {
-    void fetchTtsWorks();
-  }, [fetchTtsWorks]);
+    if (!loggedIn) return;
+    const action = consumePostAuthActionForCurrentPath(["tts.generate", "tts.polish"]);
+    if (action === "tts.generate") {
+      void runTtsRef.current();
+    } else if (action === "tts.polish") {
+      void runAiPolishRef.current();
+    }
+  }, [loggedIn]);
 
   useEffect(() => {
+    if (!loggedIn) {
+      setWorks([]);
+      setWorksLoading(false);
+      setWorksError("");
+      return;
+    }
+    void fetchTtsWorks();
+  }, [fetchTtsWorks, loggedIn]);
+
+  useEffect(() => {
+    if (!loggedIn) {
+      setDefaultVoicesMap({});
+      setSystemVoicesMap({});
+      setSavedCustomVoices([]);
+      return;
+    }
     void (async () => {
       try {
         const r = await fetch("/api/voice-presets-bootstrap", {
@@ -320,7 +347,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
         // ignore
       }
     })();
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, loggedIn]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -573,6 +600,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   }
 
   async function runTts() {
+    if (!ensureLoggedInForAction("开始合成", "tts.generate")) return;
     let body = text.trim();
     if (!body && !introText.trim() && !outroText.trim()) {
       applyTaskFromEvent("请输入文本，或填写开场/结尾");
@@ -714,6 +742,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   }
 
   async function runAiPolish() {
+    if (!ensureLoggedInForAction("口语润色", "tts.polish")) return;
     const source = text.trim();
     if (!source) {
       applyTaskFromEvent("请先输入要润色的正文");
@@ -752,6 +781,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   }
 
   runTtsRef.current = runTts;
+  runAiPolishRef.current = runAiPolish;
   stopGenerationRef.current = stopGeneration;
 
   const showTaskPanel = busy || taskPhase.length > 0;
@@ -827,6 +857,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
 
   return (
     <TtsStudioRoot embedded={embedded} className={rootClass}>
+      {loginPromptNode}
       {!embedded ? (
         <div className="mb-6 text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-ink">文本转语音</h1>

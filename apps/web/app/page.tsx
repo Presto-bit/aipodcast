@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconCreate, IconNotes, IconVoice, IconGrid } from "../components/NavIcons";
 import { SiteBeianBar } from "../components/SiteBeianBar";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../lib/worksTypes";
-import { useAuth, userAccountRef } from "../lib/auth";
+import { isLoggedInAccountUser, useAuth, userAccountRef } from "../lib/auth";
 import { useI18n } from "../lib/I18nContext";
 import { isRegisterEmailFormatOk } from "../lib/registerEmail";
+import { consumePostAuthReturnTo } from "../lib/authReturnTo";
 import NotebookShareDiagnosticsHomeBanner from "../components/notebook/NotebookShareDiagnosticsHomeBanner";
 
 const PodcastWorksGallery = dynamic(() => import("../components/podcast/PodcastWorksGallery"), {
@@ -35,9 +37,12 @@ function countQueuedOrRunningJobs(jobs: unknown[] | undefined): number {
 }
 
 export default function HomePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { t } = useI18n();
   const { ready, authRequired, user, login, registerSendCode, registerVerifyCode, registerComplete, getAuthHeaders } =
     useAuth();
+  const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const homeAccountKey = userAccountRef(user);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authPhone, setAuthPhone] = useState("");
@@ -135,11 +140,24 @@ export default function HomePage() {
   }, [getAuthHeaders]);
 
   useEffect(() => {
+    if (!isLoggedIn) {
+      setHomeWorks([]);
+      setOverview({
+        latestJobId: "",
+        latestJobStatus: "—",
+        worksCount: 0,
+        notesCount: 0,
+        activeJobsCount: 0
+      });
+      setWorksLoading(false);
+      setWorksFetchErr("");
+      return;
+    }
     void refreshHomeOverview();
-  }, [refreshHomeOverview, worksRefreshKey, homeAccountKey]);
+  }, [refreshHomeOverview, worksRefreshKey, homeAccountKey, isLoggedIn]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!isLoggedIn) return;
     const tick = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void refreshHomeOverview({ silent: true });
@@ -153,7 +171,7 @@ export default function HomePage() {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [user, refreshHomeOverview]);
+  }, [isLoggedIn, refreshHomeOverview]);
 
   useEffect(() => {
     if (!regA11ySuccess) return;
@@ -231,6 +249,8 @@ export default function HomePage() {
       setAuthError("");
       try {
         await login(authPhone.trim(), authPassword);
+        const target = consumePostAuthReturnTo(searchParams.get("returnTo"));
+        if (target) router.replace(target);
       } catch (err) {
         setAuthError(String(err instanceof Error ? err.message : err));
       } finally {
@@ -254,6 +274,8 @@ export default function HomePage() {
         code: regOtp
       });
       await registerComplete({ registration_ticket, password: authPassword });
+      const target = consumePostAuthReturnTo(searchParams.get("returnTo"));
+      if (target) router.replace(target);
       setRegCodeSent(false);
       setRegOtp("");
       setRegDispatchHint("");
@@ -274,7 +296,8 @@ export default function HomePage() {
     );
   }
 
-  if (authRequired && !user) {
+  const showFullScreenAuth = false;
+  if (showFullScreenAuth && authRequired && !user) {
     return (
       <div className="flex min-h-screen flex-col bg-canvas">
         <main className="mx-auto flex w-full max-w-md flex-1 flex-col p-8">

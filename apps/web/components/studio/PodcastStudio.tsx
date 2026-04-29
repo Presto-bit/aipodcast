@@ -50,7 +50,7 @@ import {
   resolveScriptTargetCharsForJob,
   resolveVoiceId
 } from "../../lib/podcastStudioCommon";
-import { useAuth, userAccountRef } from "../../lib/auth";
+import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import { maxNotesForReference, notesRoomFeaturesEnabled } from "../../lib/noteReferenceLimits";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
@@ -67,6 +67,8 @@ import { readLocalStorageScoped, readSessionStorageScoped, removeSessionStorageS
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
 import FloatingPopover from "../ui/FloatingPopover";
+import { useLoginRequiredAction } from "../../lib/useLoginRequiredAction";
+import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
 import {
   CREATIVE_CHIP_HOVER_HINT
 } from "../../lib/studioHoverHints";
@@ -135,6 +137,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 ) {
   const { user, phone, getAuthHeaders } = useAuth();
   const { t } = useI18n();
+  const loggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
+  const { ensureLoggedInForAction, loginPromptNode } = useLoginRequiredAction(loggedIn);
   const noteRefCap = useMemo(() => maxNotesForReference(), []);
   const roomFeaturesOk = useMemo(() => notesRoomFeaturesEnabled(), []);
   const createdByPhone = useMemo(() => userAccountRef(user) || String(phone || "").trim(), [user, phone]);
@@ -469,10 +473,32 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }, [getAuthHeaders]);
 
   useEffect(() => {
-    void fetchPodcastWorks();
-  }, [fetchPodcastWorks]);
+    if (!loggedIn) return;
+    const action = consumePostAuthActionForCurrentPath(["podcast.generate"]);
+    if (action === "podcast.generate") {
+      void runPodcastRef.current();
+    }
+  }, [loggedIn]);
 
   useEffect(() => {
+    if (!loggedIn) {
+      setWorks([]);
+      setWorksLoading(false);
+      setWorksError("");
+      return;
+    }
+    void fetchPodcastWorks();
+  }, [fetchPodcastWorks, loggedIn]);
+
+  useEffect(() => {
+    if (!loggedIn) {
+      setDefaultVoicesMap({});
+      setSystemVoicesMap({});
+      setSavedCustomVoices([]);
+      setNotesList([]);
+      setStudioNotebooks([]);
+      return;
+    }
     void (async () => {
       try {
         const r = await fetch("/api/studio-bootstrap", {
@@ -505,7 +531,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
         // ignore
       }
     })();
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, loggedIn]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -835,6 +861,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 
   async function uploadNoteFile(file: File | null) {
     if (!file) return;
+    if (!ensureLoggedInForAction("上传资料", "podcast.upload")) return;
     const targetNb = (await ensureDefaultStudioNotebook())?.trim() || "";
     if (!targetNb) {
       applyTaskFromEvent("请先在「知识库」侧栏新建笔记本，或稍后重试上传");
@@ -899,6 +926,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }
 
   async function runPodcast() {
+    if (!ensureLoggedInForAction("开始生成", "podcast.generate")) return;
     const trimmed = text.trim();
     const hasLibraryMaterial =
       selectedNoteIds.length > 0;
@@ -1095,6 +1123,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 
   return (
     <Root className={rootClass}>
+      {loginPromptNode}
       {!embedded ? (
         <div className="mb-6 text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-ink">开始生成播客</h1>

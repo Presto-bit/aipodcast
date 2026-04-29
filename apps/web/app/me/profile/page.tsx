@@ -2,14 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 import { useI18n } from "../../../lib/I18nContext";
 import { useTheme } from "../../../lib/ThemeContext";
+import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
 import ChangePasswordModal from "../../../components/ui/ChangePasswordModal";
 import InlineTextPrompt from "../../../components/ui/InlineTextPrompt";
 
 export default function MeProfilePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { t, lang, setLang } = useI18n();
   const { theme, setTheme } = useTheme();
   const { ready, authRequired, logout, user, login, registerSendCode, registerVerifyCode, registerComplete, refreshMe } =
@@ -42,6 +46,8 @@ export default function MeProfilePage() {
       setAuthError("");
       try {
         await login(authPhone.trim(), authPassword);
+        const target = consumePostAuthReturnTo(searchParams.get("returnTo"));
+        if (target) router.replace(target);
       } catch (err) {
         setAuthError(String(err instanceof Error ? err.message : err));
       } finally {
@@ -69,6 +75,8 @@ export default function MeProfilePage() {
         code: regOtp
       });
       await registerComplete({ registration_ticket, password: authPassword });
+      const target = consumePostAuthReturnTo(searchParams.get("returnTo"));
+      if (target) router.replace(target);
       setRegCodeSent(false);
       setRegOtp("");
       setRegDispatchHint("");

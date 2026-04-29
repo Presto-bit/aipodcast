@@ -13,7 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent
 } from "react";
 import { Maximize2, Minimize2 } from "lucide-react";
-import { useAuth } from "../../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import type { ClipProjectRow, ClipSilenceSegment, ClipWord } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";
@@ -55,6 +55,8 @@ import PrestoFlowHeader from "./PrestoFlowHeader";
 import PrestoFlowImportBar from "./PrestoFlowImportBar";
 import VirtualizedTranscript, { type VirtualizedTranscriptHandle } from "./VirtualizedTranscript";
 import WaveformSegmentEditor from "./WaveformSegmentEditor";
+import { useLoginRequiredAction } from "../../lib/useLoginRequiredAction";
+import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
 
 function isDualChannels(ch: unknown): boolean {
   return Array.isArray(ch) && ch.length >= 2;
@@ -180,7 +182,9 @@ function reorderWordsBySegments(words: readonly ClipWord[], segments: readonly E
 
 export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const { t } = useI18n();
-  const { getAuthHeaders } = useAuth();
+  const { user, getAuthHeaders } = useAuth();
+  const loggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
+  const { ensureLoggedInForAction, loginPromptNode } = useLoginRequiredAction(loggedIn);
 
   const [project, setProject] = useState<ClipProjectRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -347,6 +351,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const persistTimelineNow = useCallback(
     async (timeline: Record<string, unknown> | null) => {
+      if (!loggedIn) return;
       const nextTimeline = timeline && typeof timeline === "object" ? timeline : {};
       const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
         method: "PUT",
@@ -359,7 +364,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         throw new Error(data.detail || `保存时间线失败 ${res.status}`);
       }
     },
-    [getAuthHeaders, projectId]
+    [getAuthHeaders, loggedIn, projectId]
   );
 
   const snapshotCurrentEditState = useCallback(
@@ -936,6 +941,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   }, [project?.audio_staging_keys]);
 
   const generateWordchainPreview = useCallback(async () => {
+    if (!ensureLoggedInForAction("词链试听", "presto.wordchain.preview")) return;
     if (!hasServerAudio || project?.transcription_status !== "succeeded") return;
     setWordchainPreviewBusy(true);
     setErr("");
@@ -957,7 +963,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     } finally {
       setWordchainPreviewBusy(false);
     }
-  }, [getAuthHeaders, hasServerAudio, project?.transcription_status, projectId]);
+  }, [ensureLoggedInForAction, getAuthHeaders, hasServerAudio, project?.transcription_status, projectId]);
 
   /** 主音频 object_key 就绪即可拉静音分析，不依赖转写完成 */
   const loadSilenceSegments = useCallback(async () => {
@@ -1106,6 +1112,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const uploadInsertedAudioAtBoundary = useCallback(
     async (file: File, boundaryIndex: number) => {
+      if (!ensureLoggedInForAction("插入音频", "presto.insert.audio")) return;
       if (segmentEditLocked) return;
       setInsertingSegmentAudio(true);
       const durationFromFile = await new Promise<number>((resolve) => {
@@ -1156,7 +1163,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         setInsertingSegmentAudio(false);
       }
     },
-    [getAuthHeaders, projectId, pushSegmentHistory, segmentEditLocked]
+    [ensureLoggedInForAction, getAuthHeaders, projectId, pushSegmentHistory, segmentEditLocked]
   );
 
   const transcriptionActive =
@@ -1232,6 +1239,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const saveProjectTitle = useCallback(async () => {
     if (!project) return;
+    if (!ensureLoggedInForAction("重命名工程", "presto.rename")) return;
     const nextTitle = projectTitleDraft.trim().slice(0, 200) || t("clip.defaultProjectTitle");
     setProjectTitleBusy(true);
     setErr("");
@@ -1274,7 +1282,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     } finally {
       setProjectTitleBusy(false);
     }
-  }, [getAuthHeaders, project, projectId, projectTitleDraft, t]);
+  }, [ensureLoggedInForAction, getAuthHeaders, project, projectId, projectTitleDraft, t]);
 
   useEffect(() => {
     const st = project?.transcription_status;
@@ -1291,6 +1299,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const persistExcludedNow = useCallback(
     async (next: Set<string>, opts?: { showSavingHint?: boolean }) => {
+      if (!loggedIn) return;
       try {
         const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
           method: "POST",
@@ -1307,7 +1316,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       }
       void opts;
     },
-    [getAuthHeaders, projectId]
+    [getAuthHeaders, loggedIn, projectId]
   );
 
   const scheduleSaveExcluded = useCallback(
@@ -1927,7 +1936,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     [scheduleSaveExcluded]
   );
 
-  async function startTranscribe() {
+  const startTranscribe = useCallback(async () => {
+    if (!ensureLoggedInForAction("提交转写", "presto.transcribe")) return;
     setActionBusy(true);
     setErr("");
     try {
@@ -1966,9 +1976,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     } finally {
       setActionBusy(false);
     }
-  }
+  }, [ensureLoggedInForAction, pendingInsertedSegments, projectId, getAuthHeaders, load]);
 
   const performExport = useCallback(async () => {
+    if (!ensureLoggedInForAction("导出成片", "presto.export")) return;
     setActionBusy(true);
     setErr("");
     try {
@@ -1987,15 +1998,17 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     } finally {
       setActionBusy(false);
     }
-  }, [getAuthHeaders, projectId, load]);
+  }, [ensureLoggedInForAction, getAuthHeaders, projectId, load]);
 
   const openExportGate = useCallback(() => {
+    if (!ensureLoggedInForAction("导出成片", "presto.export")) return;
     setExportGateErr(null);
     setExportGatePhase("idle");
     setExportGateOpen(true);
-  }, []);
+  }, [ensureLoggedInForAction]);
 
   const runAnalyzeFromExportGate = useCallback(async () => {
+    if (!ensureLoggedInForAction("导出前质检", "presto.export.analyze")) return;
     setExportGateErr(null);
     setExportGatePhase("analyze");
     try {
@@ -2015,7 +2028,26 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     } finally {
       setExportGatePhase("idle");
     }
-  }, [getAuthHeaders, projectId, load]);
+  }, [ensureLoggedInForAction, getAuthHeaders, projectId, load]);
+
+  useEffect(() => {
+    if (!loggedIn) return;
+    const action = consumePostAuthActionForCurrentPath([
+      "presto.transcribe",
+      "presto.export",
+      "presto.export.analyze",
+      "presto.wordchain.preview"
+    ]);
+    if (action === "presto.transcribe") {
+      void startTranscribe();
+    } else if (action === "presto.export") {
+      openExportGate();
+    } else if (action === "presto.export.analyze") {
+      void runAnalyzeFromExportGate();
+    } else if (action === "presto.wordchain.preview") {
+      void generateWordchainPreview();
+    }
+  }, [generateWordchainPreview, loggedIn, openExportGate, runAnalyzeFromExportGate, startTranscribe]);
 
   const clearMarkersForSuggestion = useCallback((s: ClipEditSuggestion) => {
     const ex = s.execute;
@@ -2282,6 +2314,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
+      {loginPromptNode}
       <ClipExportQcGateModal
         open={exportGateOpen}
         title={t("presto.flow.exportGate.title")}
@@ -2431,7 +2464,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       projectId={projectId}
                       getAuthHeaders={getAuthHeaders}
                       hasMainAudio={hasServerAudio}
-                      disabled={actionBusy || transcriptionActive || exportActive}
+                      disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
                       label={t("presto.flow.importAudio")}
                       busyLabel={t("presto.flow.importBusy")}
                       hint={t("presto.flow.importHint")}
