@@ -2334,7 +2334,22 @@ export default function NotesPage() {
         error?: string;
         detail?: unknown;
       };
-      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "导入失败"));
+      if (!res.ok || !data.success) {
+        const msg = apiErrorMessage(data, "导入失败");
+        console.warn("[notes.import_url] failed", {
+          status: res.status,
+          urlHost: (() => {
+            try {
+              return new URL(u).host;
+            } catch {
+              return "";
+            }
+          })(),
+          detail: typeof data.detail === "string" ? data.detail : undefined,
+          error: typeof data.error === "string" ? data.error : undefined
+        });
+        throw new Error(msg);
+      }
       if (data.noteId) markNoteAsFresh(data.noteId);
       setImportUrl("");
       setImportUrlError("");

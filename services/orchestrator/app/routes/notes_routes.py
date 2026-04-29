@@ -1533,6 +1533,7 @@ async def import_note_from_url_api(request: Request):
         raise HTTPException(status_code=400, detail="请提供 URL")
     fetch = content_parser.parse_url(url)
     content = str(fetch.get("content") or "").strip()
+    fetch_logs = fetch.get("logs") if isinstance(fetch.get("logs"), list) else []
     if not fetch.get("success") or not content:
         err_code = str(fetch.get("error_code") or "").strip() or "URL_PARSE_FAILED"
         hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
@@ -1547,6 +1548,18 @@ async def import_note_from_url_api(request: Request):
     host = (urlparse(url).netloc or "").strip().lower()
     if host.startswith("www."):
         host = host[4:]
+    if host.endswith("xiaohongshu.com"):
+        used_script_extract = any("小红书脚本态正文抽取" in str(x or "") for x in fetch_logs)
+        if not used_script_extract:
+            hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
+                url,
+                error_code="login_wall",
+                upstream_error="xiaohongshu_script_extract_missing",
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"[URL_LOGIN_WALL] 小红书链接未命中正文抽取通道（仅获取到壳层页面）\n\n{hint}",
+            )
     if host.endswith("xiaohongshu.com") and _looks_like_xiaohongshu_shell_text(content):
         hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
             url,

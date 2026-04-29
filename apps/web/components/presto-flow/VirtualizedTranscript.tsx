@@ -218,7 +218,7 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
       <div
         ref={setScrollContainer}
         data-presto-transcript-scroll="1"
-        className="flex flex-1 items-center justify-center rounded-xl border border-line bg-surface/50 p-8 text-sm text-muted"
+        className="flex h-full min-h-0 items-center justify-center rounded-xl border border-line bg-surface/50 p-8 text-sm text-muted"
       >
         {emptyLabel}
       </div>
@@ -229,7 +229,7 @@ const VirtualizedTranscript = forwardRef<VirtualizedTranscriptHandle, Props>(fun
     <div
       ref={setScrollContainer}
       data-presto-transcript-scroll="1"
-      className="min-h-0 flex-1 touch-pan-y overflow-y-scroll rounded-xl border border-line bg-surface/50 px-2 py-2 [overscroll-behavior-y:auto] [-webkit-overflow-scrolling:touch]"
+      className="h-full min-h-0 touch-pan-y overflow-y-auto rounded-xl border border-line bg-surface/50 px-2 py-2 [overscroll-behavior-y:auto] [-webkit-overflow-scrolling:touch]"
     >
       <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
         {virtualizer.getVirtualItems().map((vi) => {

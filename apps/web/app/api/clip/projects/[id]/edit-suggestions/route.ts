@@ -14,6 +14,6 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     body: raw || "{}",
     payload: "{}",
     headers: { "content-type": "application/json", ...incomingAuthHeadersFrom(req) },
-    timeoutMs: 120_000
+    timeoutMs: 180_000
   });
 }

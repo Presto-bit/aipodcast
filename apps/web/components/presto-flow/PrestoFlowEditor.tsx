@@ -2077,17 +2077,27 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setLlmPhase("structured");
     setErr("");
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/edit-suggestions`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ llm: true, mode: "structured", max_words: 1000 })
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        items?: LlmSuggestionApiItem[];
-        detail?: string;
+      const requestStructured = async (maxWords: number) => {
+        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/edit-suggestions`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ llm: true, mode: "structured", max_words: maxWords })
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          items?: LlmSuggestionApiItem[];
+          detail?: string;
+        };
+        return { res, data };
       };
+      let { res, data } = await requestStructured(700);
+      if (
+        (!res.ok || data.success === false) &&
+        (res.status === 504 || /504|网关超时|timed?\s*out/i.test(String(data.detail || "")))
+      ) {
+        ({ res, data } = await requestStructured(420));
+      }
       if (!res.ok || data.success === false) {
         throw new Error(data.detail || `词级建议失败 ${res.status}`);
       }
@@ -2129,7 +2139,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
             title: src.title,
             body: src.body,
             suggestion_id: src.suggestionId,
-            max_words: 1000
+            max_words: 700
           })
         });
         const data = (await res.json().catch(() => ({}))) as {
@@ -2342,8 +2352,24 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               engineState={engineState}
               beforeTranscribe={
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="relative flex items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    {clipToolsOpen ? (
+                      <WaveformSegmentEditor
+                        compact
+                        zoomLevel={waveZoomLevel}
+                        onZoomChange={(next) => {
+                          setWaveZoomLevel(next);
+                          waveformRef.current?.setZoom(next);
+                        }}
+                        onSplit={() => splitAtCursor("split")}
+                        onSplitLeft={() => splitAtCursor("left")}
+                        onSplitRight={() => splitAtCursor("right")}
+                        onUndo={undoSegmentEdit}
+                        undoDisabled={segmentUndoStackRef.current.length === 0}
+                        disabled={segmentEditLocked}
+                      />
+                    ) : null}
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
@@ -2353,24 +2379,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         <span>音频剪辑</span>
                         <span className="text-muted">{clipToolsOpen ? "收起" : "展开"}</span>
                       </button>
-                      {clipToolsOpen ? (
-                        <div className="absolute right-0 top-[calc(100%+6px)] z-[120] min-w-max rounded-lg border border-line bg-surface p-2 shadow-xl">
-                          <WaveformSegmentEditor
-                            compact
-                            zoomLevel={waveZoomLevel}
-                            onZoomChange={(next) => {
-                              setWaveZoomLevel(next);
-                              waveformRef.current?.setZoom(next);
-                            }}
-                            onSplit={() => splitAtCursor("split")}
-                            onSplitLeft={() => splitAtCursor("left")}
-                            onSplitRight={() => splitAtCursor("right")}
-                            onUndo={undoSegmentEdit}
-                            undoDisabled={segmentUndoStackRef.current.length === 0}
-                            disabled={segmentEditLocked}
-                          />
-                        </div>
-                      ) : null}
                     </div>
                     <PrestoFlowImportBar
                       variant="inline"
