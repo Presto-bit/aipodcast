@@ -1503,6 +1503,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   ]);
 
   const onRangeDragPointerDown = useCallback((w: ClipWord, e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType && e.pointerType !== "mouse") return;
     if (e.button !== 0) return;
     if (e.shiftKey || e.metaKey || e.ctrlKey) return;
     if ((e.detail ?? 0) >= 2) return;
@@ -1541,6 +1542,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const onTranscriptBlankPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.pointerType && e.pointerType !== "mouse") return;
       if (e.button !== 0) return;
       if (e.shiftKey || e.metaKey || e.ctrlKey) return;
       const target = e.target as HTMLElement | null;
@@ -1586,6 +1588,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   );
 
   const onRangeDragPointerEnter = useCallback((w: ClipWord, e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType && e.pointerType !== "mouse") return;
     const anchor = rangeDragAnchorRef.current;
     if (!anchor || (e.buttons & 1) !== 1) return;
     rangeDragMovedRef.current = true;
