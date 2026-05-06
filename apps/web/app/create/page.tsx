@@ -2,13 +2,29 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { IconMic, IconTts } from "../../components/NavIcons";
 import type { PodcastStudioActivity } from "../../components/studio/PodcastStudio";
 import type { TtsStudioActivity } from "../../components/studio/TtsStudio";
 
-const PodcastStudio = dynamic(() => import("../../components/studio/PodcastStudio"));
-const TtsStudio = dynamic(() => import("../../components/studio/TtsStudio"));
+const PodcastStudio = dynamic(() => import("../../components/studio/PodcastStudio"), {
+  loading: () => (
+    <div
+      className="min-h-[200px] rounded-xl border border-line/50 bg-fill/40"
+      aria-busy
+      aria-label="加载播客工作室"
+    />
+  )
+});
+const TtsStudio = dynamic(() => import("../../components/studio/TtsStudio"), {
+  loading: () => (
+    <div
+      className="min-h-[180px] rounded-xl border border-line/50 bg-fill/40"
+      aria-busy
+      aria-label="加载语音合成工作室"
+    />
+  )
+});
 const PodcastWorksGallery = dynamic(() => import("../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
     <div
@@ -42,7 +58,11 @@ export default function CreatePage() {
 
   const [draftText, setDraftText] = useState("");
   const [libraryPreview, setLibraryPreview] = useState("");
-  const [mode, setMode] = useState<CreateMode | null>("podcast");
+  /**
+   * 未登录访客默认 null：避免一进 /create 就拉取 PodcastStudio/TtsStudio 巨型 chunk（侧栏点「创作播客」体感卡顿）。
+   * 已登录仍默认展开播客模式（见下方 useLayoutEffect）。
+   */
+  const [mode, setMode] = useState<CreateMode | null>(null);
 
   const [podcastAct, setPodcastAct] = useState<PodcastStudioActivity>({ busy: false, phase: "", progressPct: 0 });
   const [ttsAct, setTtsAct] = useState<TtsStudioActivity>({ busy: false, phase: "", progressPct: 0 });
@@ -62,6 +82,14 @@ export default function CreatePage() {
   const [serverPodcastTemplates, setServerPodcastTemplates] = useState<WorkItem[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesErr, setTemplatesErr] = useState("");
+
+  useLayoutEffect(() => {
+    if (!isLoggedIn) {
+      setMode(null);
+      return;
+    }
+    setMode((m) => m ?? "podcast");
+  }, [isLoggedIn]);
 
   const fetchHotTopics = useCallback(async (seed: number, opts?: { preserveOnError?: boolean }) => {
     setHotTopicsLoading(true);

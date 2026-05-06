@@ -45,7 +45,7 @@ export function useLoginRequiredAction(loggedIn: boolean) {
     if (pendingAction) rememberPostAuthAction(window.location.pathname, pendingAction);
     setOpen(false);
     setPendingAction("");
-    router.push(`/me/profile?returnTo=${encodeURIComponent(currentPath)}`);
+    router.push(`/login?returnTo=${encodeURIComponent(currentPath)}`);
   }, [currentPath, pendingAction, router]);
 
   const loginPromptNode = (
