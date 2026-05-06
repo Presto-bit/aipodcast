@@ -40,6 +40,7 @@ import { mergeUserFacingWorksByRecency, type WorkItem } from "../../lib/worksTyp
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
+import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../components/studio/CreateStudioIdleShell";
 
 type HotTopicAssistantItem = { label: string; text: string };
 
@@ -58,11 +59,11 @@ export default function CreatePage() {
 
   const [draftText, setDraftText] = useState("");
   const [libraryPreview, setLibraryPreview] = useState("");
+  const [mode, setMode] = useState<CreateMode | null>("podcast");
   /**
-   * 未登录访客默认 null：避免一进 /create 就拉取 PodcastStudio/TtsStudio 巨型 chunk（侧栏点「创作播客」体感卡顿）。
-   * 已登录仍默认展开播客模式（见下方 useLayoutEffect）。
+   * 访客首屏先渲染轻量工具条壳，再在浏览器空闲时挂载真实 Studio，兼顾「看得见工具条」与进页轻量。
    */
-  const [mode, setMode] = useState<CreateMode | null>(null);
+  const [guestHeavyStudioReady, setGuestHeavyStudioReady] = useState(false);
 
   const [podcastAct, setPodcastAct] = useState<PodcastStudioActivity>({ busy: false, phase: "", progressPct: 0 });
   const [ttsAct, setTtsAct] = useState<TtsStudioActivity>({ busy: false, phase: "", progressPct: 0 });
@@ -84,12 +85,27 @@ export default function CreatePage() {
   const [templatesErr, setTemplatesErr] = useState("");
 
   useLayoutEffect(() => {
-    if (!isLoggedIn) {
-      setMode(null);
-      return;
+    if (isLoggedIn) return;
+    setGuestHeavyStudioReady(false);
+    let cancelled = false;
+    const arm = () => {
+      if (!cancelled) setGuestHeavyStudioReady(true);
+    };
+    if (typeof requestIdleCallback !== "undefined") {
+      const id = requestIdleCallback(arm, { timeout: 720 });
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(id);
+      };
     }
-    setMode((m) => m ?? "podcast");
+    const tid = window.setTimeout(arm, 32);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tid);
+    };
   }, [isLoggedIn]);
+
+  const loadHeavyStudio = isLoggedIn || guestHeavyStudioReady;
 
   const fetchHotTopics = useCallback(async (seed: number, opts?: { preserveOnError?: boolean }) => {
     setHotTopicsLoading(true);
@@ -322,18 +338,22 @@ export default function CreatePage() {
           {!mode ? null : (
             <div className="mt-4">
               {mode === "podcast" ? (
-                <PodcastStudio
-                  embedded
-                  blendOuterCard
-                  contentText={draftText}
-                  onContentTextChange={setDraftText}
-                  hideGenerateButton={false}
-                  showGallery={false}
-                  onActivityChange={setPodcastAct}
-                  onExternalListRefresh={() => void refreshWorks()}
-                  onLibrarySelectionPreviewChange={setLibraryPreview}
-                />
-              ) : (
+                loadHeavyStudio ? (
+                  <PodcastStudio
+                    embedded
+                    blendOuterCard
+                    contentText={draftText}
+                    onContentTextChange={setDraftText}
+                    hideGenerateButton={false}
+                    showGallery={false}
+                    onActivityChange={setPodcastAct}
+                    onExternalListRefresh={() => void refreshWorks()}
+                    onLibrarySelectionPreviewChange={setLibraryPreview}
+                  />
+                ) : (
+                  <CreatePodcastStudioIdleShell />
+                )
+              ) : loadHeavyStudio ? (
                 <TtsStudio
                   embedded
                   blendOuterCard
@@ -344,6 +364,8 @@ export default function CreatePage() {
                   onActivityChange={setTtsAct}
                   onExternalListRefresh={() => void refreshWorks()}
                 />
+              ) : (
+                <CreateTtsStudioIdleShell />
               )}
             </div>
           )}
