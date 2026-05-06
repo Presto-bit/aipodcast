@@ -125,7 +125,7 @@ function NavIconBox({ active, children }: { active: boolean; children: ReactNode
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const path = pathname ?? "";
-  const { ready, authRequired, user } = useAuth();
+  const { ready, user } = useAuth();
 
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
@@ -276,15 +276,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       document.documentElement.style.removeProperty("--fym-app-sidebar-w");
       return;
     }
-    if (authRequired && !user && path === "/") {
-      document.documentElement.style.removeProperty("--fym-app-sidebar-w");
-      return;
-    }
     const px = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
     document.documentElement.style.setProperty("--fym-app-sidebar-w", `${px}px`);
     // 不在 cleanup 里 removeProperty：Strict Mode / 依赖重跑时会出现一帧变量缺失，
     // 全屏级 z-index 遮罩会短暂盖住侧栏；无壳场景由上面分支显式清除即可。
-  }, [collapsed, ready, authRequired, user, path]);
+  }, [collapsed, ready]);
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => {
@@ -309,11 +305,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <p className="text-sm">加载中…</p>
       </div>
     );
-  }
-
-  // 会话已解析且无用户时在首页全屏登录；设置页内嵌登录保留侧栏
-  if (authRequired && !user && path === "/") {
-    return <>{children}</>;
   }
 
   function linkActive(item: NavItem): boolean {

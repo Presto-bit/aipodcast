@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { pullCloudPreferences, setCloudPrefsSyncEnabled } from "./cloudPreferences";
 import { accountKeyFromUser, setStorageAccountSync } from "./userScopedStorage";
 
@@ -120,8 +120,8 @@ function persistPhone(phone: string) {
 }
 
 /**
- * 拉取当前会话。对 401/403 做多次退避重试：Set-Cookie 与后续 fetch 的竞态、编排器/Redis 瞬时抖动时，
- * 单次 /me 失败不应立刻把用户踢回首页。
+ * 拉取当前会话。401/403 仅再试一次（短退避）：覆盖登录后 Set-Cookie 与紧随其后的 /me 竞态。
+ * 真实未登录会稳定 401，原先 4 次请求 + ~920ms 固定退避会造成整站首屏门闩明显卡顿。
  */
 async function fetchAuthMe(signal?: AbortSignal): Promise<Response> {
   const doFetch = () =>
@@ -130,7 +130,7 @@ async function fetchAuthMe(signal?: AbortSignal): Promise<Response> {
       cache: "no-store",
       signal
     });
-  const backoffMs = [0, 120, 280, 520];
+  const backoffMs = [0, 120];
   let res: Response | null = null;
   for (let i = 0; i < backoffMs.length; i++) {
     if (signal?.aborted) break;
@@ -149,9 +149,6 @@ async function fetchAuthMe(signal?: AbortSignal): Promise<Response> {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  /** 勿把 router 放进拉会话的 effect 依赖：导航时引用变化会反复 abort /me，易偶发 401 后被当成登出。 */
-  const routerRef = useRef(router);
-  routerRef.current = router;
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
   const [phone, setPhone] = useState("");
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -240,9 +237,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (res.status === 401 || res.status === 403) {
           setUser(null);
           clearLegacyToken();
-          if (!cancelled && typeof window !== "undefined" && window.location.pathname !== "/") {
-            routerRef.current.replace("/");
-          }
           return;
         }
         setUser((prev) => {
