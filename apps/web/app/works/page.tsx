@@ -17,7 +17,7 @@ import WorksActiveJobsPanel from "../../components/works/WorksActiveJobsPanel";
 import { chipClass } from "../../components/studio/chipStyles";
 import EmptyState from "../../components/ui/EmptyState";
 import type { WorkItem } from "../../lib/worksTypes";
-import { useAuth } from "../../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import { listJobs } from "../../lib/api";
 
@@ -34,7 +34,8 @@ export default function WorksPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { t } = useI18n();
-  const { getAuthHeaders, ready } = useAuth();
+  const { getAuthHeaders, ready, user } = useAuth();
+  const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const [ai, setAi] = useState<WorkItem[]>([]);
   const [tts, setTts] = useState<WorkItem[]>([]);
   const [error, setError] = useState("");
@@ -53,6 +54,10 @@ export default function WorksPage() {
       setActiveJobCount(null);
       return;
     }
+    if (!isLoggedIn) {
+      setActiveJobCount(0);
+      return;
+    }
     try {
       const { jobs } = await listJobs({
         limit: ACTIVE_JOBS_LIMIT,
@@ -64,7 +69,7 @@ export default function WorksPage() {
     } catch {
       setActiveJobCount(null);
     }
-  }, [ready]);
+  }, [ready, isLoggedIn]);
 
   const fetchWorks = useCallback(
     async (append: boolean) => {
@@ -73,6 +78,16 @@ export default function WorksPage() {
       else setLoading(true);
       const o = append ? offset : 0;
       try {
+        if (!isLoggedIn) {
+          if (!append) {
+            setAi([]);
+            setTts([]);
+            setOffset(0);
+            setHasMore(false);
+            setActiveJobCount(0);
+          }
+          return;
+        }
         if (!append) {
           const [res, jobsPack] = await Promise.all([
             fetch(`/api/works?limit=${WORKS_LIMIT}&offset=0`, {
@@ -136,7 +151,7 @@ export default function WorksPage() {
         setLoadingMore(false);
       }
     },
-    [offset, getAuthHeaders]
+    [offset, getAuthHeaders, isLoggedIn]
   );
 
   useEffect(() => {
@@ -144,7 +159,7 @@ export default function WorksPage() {
     void fetchWorks(false);
     // 仅随登录态刷新全表；勿依赖 fetchWorks/offset，否则会「加载更多」后重复首屏请求
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, getAuthHeaders]);
+  }, [ready, getAuthHeaders, user]);
 
   useEffect(() => {
     const t = searchParams?.get("tab");

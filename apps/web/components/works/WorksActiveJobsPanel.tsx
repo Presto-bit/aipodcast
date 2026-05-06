@@ -12,7 +12,7 @@ import EmptyState from "../ui/EmptyState";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
 import { classifyErrorTone, errorPageCopy } from "../../lib/errorCopy";
-import { useAuth } from "../../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 
@@ -38,7 +38,7 @@ type WorksActiveJobsPanelProps = {
 
 export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiveJobsPanelProps = {}) {
   const { t } = useI18n();
-  const { phone, ready } = useAuth();
+  const { phone, ready, user } = useAuth();
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -49,6 +49,11 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
   const visibleRef = useRef(true);
   const load = useCallback(async () => {
     setErr("");
+    if (!isLoggedInAccountUser(user)) {
+      setJobs([]);
+      setLoading(false);
+      return;
+    }
     try {
       const { jobs: list } = await listJobs({
         limit: LIST_LIMIT,
@@ -62,12 +67,12 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (!ready) return;
     void load();
-  }, [load, ready, phone]);
+  }, [load, ready, phone, user]);
 
   useEffect(() => {
     function onVis() {
