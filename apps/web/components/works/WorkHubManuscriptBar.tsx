@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getBearerAuthHeadersSync } from "../../lib/authHeaders";
 import { downloadJobManuscriptMarkdown } from "../../lib/workBundleDownload";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
@@ -18,6 +18,10 @@ type Props = {
   onRegenerateVoice?: () => void;
   /** 纯文稿作品详情：正文区高度加倍，并隐藏「保存后写入…」说明 */
   pureManuscriptOnly?: boolean;
+  /**
+   * 播客「章节」区：默认只显示工具栏，正文通过「编辑」展开（用于编辑口播稿）。
+   */
+  collapseScriptUntilEdit?: boolean;
 };
 
 export function WorkHubManuscriptBar({
@@ -30,19 +34,27 @@ export function WorkHubManuscriptBar({
   regenerateVoiceSupported,
   regenerateVoiceBusy,
   onRegenerateVoice,
-  pureManuscriptOnly = false
+  pureManuscriptOnly = false,
+  collapseScriptUntilEdit = false
 }: Props) {
   const [draft, setDraft] = useState(manuscriptBody);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  const [scriptEditOpen, setScriptEditOpen] = useState(false);
 
   useEffect(() => {
     setDraft(manuscriptBody);
   }, [manuscriptBody]);
 
   const dirty = canEditScript && draft !== manuscriptBody;
+
+  const showScriptSurface = useMemo(() => {
+    if (!collapseScriptUntilEdit) return true;
+    if (canEditScript) return scriptEditOpen;
+    return false;
+  }, [collapseScriptUntilEdit, canEditScript, scriptEditOpen]);
 
   const copyAll = useCallback(async () => {
     const t = manuscriptBody.trim();
@@ -112,6 +124,19 @@ export function WorkHubManuscriptBar({
     <>
       <div className="flex w-full min-w-0 flex-col gap-2">
         <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {collapseScriptUntilEdit && canEditScript ? (
+            <button
+              type="button"
+              disabled={scriptResolvePending}
+              onClick={() => {
+                setErr(null);
+                setScriptEditOpen((o) => !o);
+              }}
+              className="rounded-lg border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink hover:bg-fill disabled:opacity-40"
+            >
+              {scriptEditOpen ? "收起" : "编辑"}
+            </button>
+          ) : null}
           <button
             type="button"
             disabled={scriptResolvePending}
@@ -157,46 +182,48 @@ export function WorkHubManuscriptBar({
           </button>
         </div>
 
-        {canEditScript ? (
-          <div className="min-w-0 space-y-1.5">
-            <textarea
+        {showScriptSurface ? (
+          canEditScript ? (
+            <div className="min-w-0 space-y-1.5">
+              <textarea
+                className={
+                  pureManuscriptOnly
+                    ? "max-h-[min(110vh,56rem)] min-h-[24rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
+                    : "max-h-[min(55vh,28rem)] min-h-[12rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
+                }
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                disabled={busy || scriptResolvePending}
+                spellCheck={false}
+                aria-label="口播稿正文"
+              />
+              {!pureManuscriptOnly ? (
+                <p className="text-[10px] text-muted/90">保存后写入作品结果；简介与 Shownotes 不会自动重写。</p>
+              ) : null}
+              {err ? <p className="text-xs text-danger-ink">{err}</p> : null}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  disabled={busy || scriptResolvePending || !dirty}
+                  onClick={() => void saveDraft()}
+                  className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground hover:opacity-95 disabled:opacity-40"
+                >
+                  {busy ? "保存中…" : "保存"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <pre
               className={
                 pureManuscriptOnly
-                  ? "max-h-[min(110vh,56rem)] min-h-[24rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
-                  : "max-h-[min(55vh,28rem)] min-h-[12rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
+                  ? "max-h-[min(80vh,36rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
+                  : "max-h-[min(40vh,18rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
               }
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              disabled={busy || scriptResolvePending}
-              spellCheck={false}
-              aria-label="口播稿正文"
-            />
-            {!pureManuscriptOnly ? (
-              <p className="text-[10px] text-muted/90">保存后写入作品结果；简介与 Shownotes 不会自动重写。</p>
-            ) : null}
-            {err ? <p className="text-xs text-danger-ink">{err}</p> : null}
-            <div className="flex justify-end">
-              <button
-                type="button"
-                disabled={busy || scriptResolvePending || !dirty}
-                onClick={() => void saveDraft()}
-                className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground hover:opacity-95 disabled:opacity-40"
-              >
-                {busy ? "保存中…" : "保存"}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <pre
-            className={
-              pureManuscriptOnly
-                ? "max-h-[min(80vh,36rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
-                : "max-h-[min(40vh,18rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
-            }
-          >
-            {manuscriptBody.trim() ? manuscriptBody : "（无正文）"}
-          </pre>
-        )}
+            >
+              {manuscriptBody.trim() ? manuscriptBody : "（无正文）"}
+            </pre>
+          )
+        ) : null}
       </div>
 
       <SmallConfirmModal

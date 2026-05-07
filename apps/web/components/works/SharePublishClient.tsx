@@ -10,7 +10,6 @@ import {
   clearShareFormDraft,
   computeSharePublishHints,
   defaultSummaryFromJobResult,
-  extractEpisodeOverviewFromShowNotes,
   loadShareFormDraft,
   saveShareFormDraft,
   sanitizeShareEpisodeTitle,
@@ -666,17 +665,6 @@ export function SharePublishClient({
     if (!ownerJobRecord) return "";
     return formatUnifiedWorksNavMetaLineFromJobRecord(ownerJobRecord, worksNavAuthorDisplay);
   }, [ownerJobRecord, worksNavAuthorDisplay]);
-
-  /**
-   * 作品详情预览简介：优先 Shownotes「## 本期概览」节；否则 result 的 preview 类字段（约 600 字内）；再否则表单 summary。
-   */
-  const previewIntro = useMemo(() => {
-    const fromNotes = extractEpisodeOverviewFromShowNotes(showNotes).trim();
-    if (fromNotes) return fromNotes;
-    const r = ownerJobRecord?.result as Record<string, unknown> | undefined;
-    const fromJob = r ? defaultSummaryFromJobResult(r).trim() : "";
-    return fromJob || summary.trim();
-  }, [ownerJobRecord, summary, showNotes]);
 
   const canEditWorkScript = useMemo(() => {
     const jt = String(ownerJobRecord?.job_type || "").trim().toLowerCase();
@@ -1445,7 +1433,6 @@ export function SharePublishClient({
             jobId={jobId}
             displayTitleForDownload={episodeTitle.trim() || jobTitle || jobId}
             episodeTitle={episodeTitle}
-            previewIntro={previewIntro}
             coverUrl={jobCoverUrl}
             navMetaPipe={navMetaPipe}
             chapterOutline={chapterOutline}

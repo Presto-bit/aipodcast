@@ -17,8 +17,6 @@ type Props = {
   jobId: string;
   displayTitleForDownload: string;
   episodeTitle: string;
-  /** 预览区完整简介（可与发布表单 RSS 摘要长度策略不同） */
-  previewIntro: string;
   coverUrl: string;
   /** 与「我的作品」卡片 meta 一致，用 | 分隔 */
   navMetaPipe: string;
@@ -45,7 +43,6 @@ export function WorkHubOverviewPanel({
   jobId,
   displayTitleForDownload,
   episodeTitle,
-  previewIntro,
   coverUrl,
   navMetaPipe,
   chapterOutline,
@@ -106,28 +103,28 @@ export function WorkHubOverviewPanel({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-stretch lg:gap-6">
-        <div className="relative mx-auto aspect-square w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-2xl border border-line bg-fill/30 shadow-soft lg:mx-0 lg:aspect-auto lg:h-[280px] lg:w-[280px] lg:max-w-[280px]">
+      <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-5">
+        <div className="relative h-[4.5rem] w-[4.5rem] shrink-0 overflow-hidden rounded-xl border border-line bg-fill/30 shadow-soft sm:h-[4.75rem] sm:w-[4.75rem]">
           {coverSrc ? (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img
               src={coverSrc}
               alt=""
-              className="aspect-square w-full object-cover"
+              className="h-full w-full object-cover"
               referrerPolicy="no-referrer"
               loading="eager"
             />
           ) : (
-            <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-4 text-center lg:aspect-auto lg:h-[280px] lg:min-h-[280px]">
-              <span className="text-3xl" aria-hidden>
+            <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-1 text-center">
+              <span className="text-lg leading-none" aria-hidden>
                 {scriptDraft ? "📝" : "🎙️"}
               </span>
-              <span className="text-xs text-muted">{scriptDraft ? "文稿作品" : "暂无封面"}</span>
+              <span className="scale-90 text-[9px] leading-tight text-muted">{scriptDraft ? "文稿" : "无封面"}</span>
             </div>
           )}
 
           {!audioBlocked && hasAudio ? (
-            <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-2 sm:p-3">
+            <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-1">
               <button
                 type="button"
                 disabled={loadingThis}
@@ -135,19 +132,19 @@ export function WorkHubOverviewPanel({
                   e.stopPropagation();
                   onCoverPlayClick();
                 }}
-                className="pointer-events-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-ink/80 text-brand-foreground shadow-lg backdrop-blur-sm transition hover:bg-ink/90 disabled:opacity-50"
+                className="pointer-events-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink/80 text-brand-foreground shadow-md backdrop-blur-sm transition hover:bg-ink/90 disabled:opacity-50"
                 aria-label={playingThis ? "暂停" : "播放"}
                 title={playingThis ? "暂停" : totalHint ? `播放（约 ${totalHint}）` : "播放"}
               >
                 {loadingThis ? (
-                  <span className="h-5 w-5 animate-pulse rounded-full bg-brand-foreground/70" aria-hidden />
+                  <span className="h-3 w-3 animate-pulse rounded-full bg-brand-foreground/70" aria-hidden />
                 ) : playingThis ? (
-                  <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <svg className="h-3 w-3 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                     <rect x="6" y="5" width="4" height="14" rx="1" />
                     <rect x="14" y="5" width="4" height="14" rx="1" />
                   </svg>
                 ) : (
-                  <svg className="ml-0.5 h-6 w-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <svg className="ml-px h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                     <path d="M8 5v14l11-7z" />
                   </svg>
                 )}
@@ -155,20 +152,11 @@ export function WorkHubOverviewPanel({
             </div>
           ) : null}
         </div>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:h-[280px] lg:max-h-[280px] lg:overflow-hidden">
-          <h2 className="shrink-0 text-balance text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5 text-center sm:text-left">
+          <h2 className="text-balance text-xl font-semibold tracking-tight text-ink sm:text-2xl">
             {episodeTitle.trim() || "未命名作品"}
           </h2>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain lg:min-h-0">
-            {previewIntro.trim() ? (
-              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted sm:text-[15px]">
-                {previewIntro.trim()}
-              </p>
-            ) : (
-              <p className="text-sm text-muted">暂无简介</p>
-            )}
-          </div>
-          <p className="shrink-0 text-[11px] leading-relaxed text-muted break-words">{navMetaPipe.trim() || "—"}</p>
+          <p className="text-[11px] leading-relaxed text-muted break-words sm:text-xs">{navMetaPipe.trim() || "—"}</p>
         </div>
       </div>
 
@@ -219,6 +207,7 @@ export function WorkHubOverviewPanel({
                 regenerateVoiceSupported={regenerateVoiceSupported}
                 regenerateVoiceBusy={regenerateVoiceBusy}
                 onRegenerateVoice={onRegenerateVoice}
+                collapseScriptUntilEdit
               />
             </div>
           ) : null}
