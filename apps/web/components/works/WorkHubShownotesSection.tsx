@@ -1,7 +1,8 @@
 "use client";
 
+import { useMemo } from "react";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
-import type { SharePublishHints } from "../../lib/sharePublishDefaults";
+import { reorderShowNotesGoldenQuotesAfterListen, type SharePublishHints } from "../../lib/sharePublishDefaults";
 
 type Props = {
   notesTab: "preview" | "edit" | "ai";
@@ -36,6 +37,11 @@ export function WorkHubShownotesSection({
   scriptResolvePending,
   hasOwner
 }: Props) {
+  const previewMarkdown = useMemo(
+    () => reorderShowNotesGoldenQuotesAfterListen(showNotes),
+    [showNotes]
+  );
+
   return (
     <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
       <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">Shownotes</h3>
@@ -108,7 +114,7 @@ export function WorkHubShownotesSection({
         ) : (
           <div className="max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/20 p-3">
             <ShowNotesMarkdownPreview
-              markdown={showNotes}
+              markdown={previewMarkdown}
               onSeekSeconds={onSeekSeconds}
               className="!max-h-none overflow-visible border-0 bg-transparent p-0"
             />

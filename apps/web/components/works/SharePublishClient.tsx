@@ -34,12 +34,8 @@ import {
 } from "../../lib/api";
 import type { JobRecord } from "../../lib/types";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
-import {
-  DEFAULT_PUBLISH_PLATFORM_ID,
-  type PublishPlatformId,
-  PUBLISH_PLATFORMS,
-  getPublishPlatformMeta
-} from "../../lib/publishPlatforms";
+import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, PUBLISH_PLATFORMS } from "../../lib/publishPlatforms";
+import { PUBLISH_PLATFORM_ICON_URL } from "../../lib/publishPlatformAssets";
 import { resolveJobScriptBodyText, SCRIPT_TEXT_LIKELY_FULL_MIN_LEN } from "../../lib/jobScriptText";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { buildWorksSharePageUrl } from "../../lib/rssPublicBase";
@@ -184,7 +180,6 @@ export function SharePublishClient({
   const [summary, setSummary] = useState("");
   const [showNotes, setShowNotes] = useState("");
   const [notesTab, setNotesTab] = useState<"preview" | "edit" | "ai">("preview");
-  const [titleSummaryOpen, setTitleSummaryOpen] = useState(false);
   const [listenCoverUrl, setListenCoverUrl] = useState("");
   const [sharePublicAudioUrl, setSharePublicAudioUrl] = useState("");
   const [listenDurationSec, setListenDurationSec] = useState<number | null>(null);
@@ -239,6 +234,11 @@ export function SharePublishClient({
   const [regenerateVoiceBusy, setRegenerateVoiceBusy] = useState(false);
   const audioRegenAbortRef = useRef(false);
   const aiShownotesPromptRef = useRef<HTMLTextAreaElement | null>(null);
+  const morePlatformsRef = useRef<HTMLDivElement | null>(null);
+  const [morePlatformsOpen, setMorePlatformsOpen] = useState(false);
+  const [publishPlatformIconBroken, setPublishPlatformIconBroken] = useState<
+    Partial<Record<PublishPlatformId, boolean>>
+  >({});
 
   const shareGenContextRef = useRef<ShareGenContext | null>(null);
   /** 主人进入分享页后至多触发一次「persist 写入 result」的 AI 初稿（Strict Mode 取消时会复位）。 */
@@ -369,7 +369,6 @@ export function SharePublishClient({
       setSharePublicAudioUrl("");
       setListenDurationSec(null);
       setPublishedHint("");
-      setTitleSummaryOpen(false);
 
       if (layout === "standalone") {
         let pubStandalone: Awaited<ReturnType<typeof fetchPublicShareListen>> = null;
@@ -681,6 +680,16 @@ export function SharePublishClient({
     if (layout !== "work_hub") return;
     setDetailTab("edit");
   }, [layout, jobId]);
+
+  useEffect(() => {
+    if (!morePlatformsOpen) return;
+    const close = (e: MouseEvent) => {
+      const el = morePlatformsRef.current;
+      if (el && !el.contains(e.target as Node)) setMorePlatformsOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [morePlatformsOpen]);
 
   const workHubPublishModalVisible = layout === "work_hub" && shareConfigModalOpen;
 
@@ -1572,48 +1581,81 @@ export function SharePublishClient({
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     {PINNED_PUBLISH_PLATFORM_IDS.map((pid) => {
-                      const meta = getPublishPlatformMeta(pid);
-                      const label = meta?.label ?? pid;
+                      const label = PUBLISH_PLATFORMS.find((p) => p.id === pid)?.label ?? pid;
                       const active = publishPlatform === pid;
+                      const src = PUBLISH_PLATFORM_ICON_URL[pid];
+                      const broken = publishPlatformIconBroken[pid];
                       return (
                         <button
                           key={pid}
                           type="button"
                           title={label}
                           disabled={busy || shareAiBusy}
-                          onClick={() => setPublishPlatform(pid)}
-                          className={`flex h-11 w-11 items-center justify-center rounded-xl border text-xs font-semibold transition-colors disabled:opacity-40 ${
+                          onClick={() => {
+                            setPublishPlatform(pid);
+                            setMorePlatformsOpen(false);
+                          }}
+                          className={`flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl border transition-colors disabled:opacity-40 ${
                             active
-                              ? "border-brand bg-brand/15 text-brand"
-                              : "border-line bg-fill/40 text-ink hover:bg-fill"
+                              ? "border-brand bg-brand/15 ring-2 ring-brand/35"
+                              : "border-line bg-fill/40 hover:bg-fill"
                           }`}
                         >
                           <span className="sr-only">{label}</span>
-                          <span aria-hidden className="leading-none">
-                            {pid === "xiaoyuzhou" ? "宇" : "雅"}
-                          </span>
+                          {src && !broken ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                              src={src}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              referrerPolicy="no-referrer"
+                              onError={() =>
+                                setPublishPlatformIconBroken((m) => ({ ...m, [pid]: true }))
+                              }
+                            />
+                          ) : (
+                            <span aria-hidden className="text-[10px] font-semibold leading-none">
+                              {pid === "xiaoyuzhou" ? "宇" : "雅"}
+                            </span>
+                          )}
                         </button>
                       );
                     })}
-                    <label className="flex min-w-[10rem] flex-1 flex-col text-[10px] font-medium uppercase tracking-wide text-muted">
-                      其他平台
-                      <select
-                        className="mt-1 rounded-lg border border-line bg-fill/40 px-2 py-2 text-sm text-ink"
-                        value={PINNED_PUBLISH_PLATFORM_SET.has(publishPlatform) ? "" : publishPlatform}
-                        onChange={(e) => {
-                          const v = e.target.value as PublishPlatformId;
-                          if (v) setPublishPlatform(v);
-                        }}
+                    <div className="relative" ref={morePlatformsRef}>
+                      <button
+                        type="button"
                         disabled={busy || shareAiBusy}
+                        onClick={() => setMorePlatformsOpen((o) => !o)}
+                        className={`rounded-xl border px-3 py-2 text-xs font-medium transition-colors disabled:opacity-40 ${
+                          !PINNED_PUBLISH_PLATFORM_SET.has(publishPlatform)
+                            ? "border-brand bg-brand/15 text-brand"
+                            : "border-line bg-fill/40 text-ink hover:bg-fill"
+                        }`}
                       >
-                        <option value="">选择…</option>
-                        {otherPublishPlatforms.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        更多
+                      </button>
+                      {morePlatformsOpen ? (
+                        <div
+                          role="menu"
+                          className="absolute right-0 top-[calc(100%+0.25rem)] z-[1300] min-w-[11rem] rounded-xl border border-line bg-surface py-1 shadow-card"
+                        >
+                          {otherPublishPlatforms.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              role="menuitem"
+                              className="flex w-full px-3 py-2 text-left text-sm text-ink hover:bg-fill/80"
+                              onClick={() => {
+                                setPublishPlatform(p.id);
+                                setMorePlatformsOpen(false);
+                              }}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="mt-5">
@@ -1643,50 +1685,7 @@ export function SharePublishClient({
               </div>
             ) : (
               <div className="space-y-6">
-                <section className="space-y-0">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-2 rounded-xl border border-line bg-fill/30 px-3 py-2.5 text-left text-sm font-medium text-ink hover:bg-fill/50"
-                    aria-expanded={titleSummaryOpen}
-                    onClick={() => setTitleSummaryOpen((o) => !o)}
-                  >
-                    <span>标题与简介</span>
-                    <span className="shrink-0 text-xs text-muted">{titleSummaryOpen ? "收起" : "展开"}</span>
-                  </button>
-                  {titleSummaryOpen ? (
-                    <div className="mt-4 space-y-4">
-                      <label className="block text-sm text-muted">
-                        节目标题
-                        <input
-                          className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                          value={episodeTitle}
-                          onChange={(e) => setEpisodeTitle(e.target.value)}
-                          disabled={busy || shareAiBusy}
-                          maxLength={300}
-                          placeholder="RSS / 小宇宙单集标题"
-                        />
-                      </label>
-                      <div className="text-sm text-muted">
-                        <span>简介</span>
-                        <textarea
-                          className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                          rows={3}
-                          value={summary}
-                          onChange={(e) => setSummary(e.target.value.slice(0, AUTO_PROGRAM_SUMMARY_MAX))}
-                          disabled={busy || shareAiBusy}
-                          maxLength={AUTO_PROGRAM_SUMMARY_MAX}
-                          placeholder="RSS 列表用短摘要"
-                        />
-                        {hints.summaryLooksLikeDialogue ? (
-                          <p className="mt-1 text-[11px] text-warning-ink">简介含对白标记，列表展示可能不佳。</p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </section>
-
-                <div className="border-t border-line pt-6">
-                  <section className="space-y-3">
+                <section className="space-y-3">
                     <h3 className="text-sm font-medium text-ink">RSS 渠道</h3>
                     {channelsLoading ? (
                       <p className="text-sm text-muted">加载中…</p>
@@ -1719,8 +1718,7 @@ export function SharePublishClient({
                         </select>
                       </label>
                     )}
-                  </section>
-                </div>
+                </section>
 
                 {formErr ? <p className="mt-5 text-sm text-danger-ink">{formErr}</p> : null}
                 {formOk ? <p className="mt-5 text-sm text-success-ink">{formOk}</p> : null}

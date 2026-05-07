@@ -6,6 +6,10 @@ type Props = {
   manuscriptBody: string;
   scriptResolvePending: boolean;
   canEditScript: boolean;
+  /** 口播稿编辑展开（与复制左侧「编辑 / 完成」联动） */
+  scriptEditing?: boolean;
+  onToggleScriptEditing?: () => void;
+  showScriptEditToggle?: boolean;
   regenerateVoiceSupported: boolean;
   regenerateVoiceBusy: boolean;
   onRegenerateVoice?: () => void;
@@ -16,6 +20,9 @@ export function WorkHubScriptActions({
   manuscriptBody,
   scriptResolvePending,
   canEditScript,
+  scriptEditing = false,
+  onToggleScriptEditing,
+  showScriptEditToggle = false,
   regenerateVoiceSupported,
   regenerateVoiceBusy,
   onRegenerateVoice,
@@ -36,6 +43,16 @@ export function WorkHubScriptActions({
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-1.5">
+      {showScriptEditToggle && canEditScript ? (
+        <button
+          type="button"
+          disabled={scriptResolvePending}
+          onClick={() => onToggleScriptEditing?.()}
+          className="rounded-lg border border-line bg-surface px-2 py-1 text-[11px] font-medium text-ink hover:bg-fill disabled:opacity-40"
+        >
+          {scriptEditing ? "完成" : "编辑"}
+        </button>
+      ) : null}
       <button
         type="button"
         disabled={scriptResolvePending}

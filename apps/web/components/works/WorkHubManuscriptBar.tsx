@@ -24,6 +24,10 @@ type Props = {
   scriptAutosave?: boolean;
   /** 递增时打开「清空口播稿」确认框（供外部工具栏触发删除） */
   requestDelete?: number;
+  /**
+   * 章节口播：`hideToolbar` + `scriptAutosave` 时为 false 则只读预览；true 时为编辑态（仅一处正文）。
+   */
+  chapterEditorOpen?: boolean;
 };
 
 export function WorkHubManuscriptBar({
@@ -38,7 +42,8 @@ export function WorkHubManuscriptBar({
   pureManuscriptOnly = false,
   hideToolbar = false,
   scriptAutosave = false,
-  requestDelete = 0
+  requestDelete = 0,
+  chapterEditorOpen
 }: Props) {
   const [draft, setDraft] = useState(manuscriptBody);
   const [busy, setBusy] = useState(false);
@@ -53,6 +58,20 @@ export function WorkHubManuscriptBar({
   useEffect(() => {
     setDraft(manuscriptBody);
   }, [manuscriptBody]);
+
+  const chapterCollapsed =
+    hideToolbar && scriptAutosave && canEditScript && chapterEditorOpen === false;
+
+  const prevChapterEditorOpenRef = useRef<boolean | undefined>(undefined);
+  useEffect(() => {
+    if (!hideToolbar || !scriptAutosave) return;
+    const wasOpen = prevChapterEditorOpenRef.current === true;
+    prevChapterEditorOpenRef.current = chapterEditorOpen === true;
+    if (chapterEditorOpen === true && !wasOpen) {
+      setDraft(manuscriptBody);
+      setErr(null);
+    }
+  }, [chapterEditorOpen, manuscriptBody, hideToolbar, scriptAutosave]);
 
   useEffect(() => {
     if (!requestDelete || requestDelete === requestDeletePrevRef.current) return;
@@ -99,7 +118,7 @@ export function WorkHubManuscriptBar({
   }, [canEditScript, draft, persistDraft]);
 
   useEffect(() => {
-    if (!scriptAutosave || !canEditScript) return;
+    if (!scriptAutosave || !canEditScript || chapterCollapsed) return;
     if (draft === manuscriptBody) return;
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     setAutosaveStatus((s) => (s === "saved" ? s : "idle"));
@@ -123,7 +142,7 @@ export function WorkHubManuscriptBar({
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
-  }, [draft, manuscriptBody, scriptAutosave, canEditScript, persistDraft]);
+  }, [draft, manuscriptBody, scriptAutosave, canEditScript, persistDraft, chapterCollapsed]);
 
   useEffect(() => {
     return () => {
@@ -211,7 +230,7 @@ export function WorkHubManuscriptBar({
           </div>
         ) : null}
 
-        {canEditScript ? (
+        {canEditScript && !chapterCollapsed ? (
           <div className="min-w-0 space-y-1.5">
             <textarea
               className={

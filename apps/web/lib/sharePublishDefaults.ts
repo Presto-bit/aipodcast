@@ -927,6 +927,63 @@ export type ShareFormDraft = {
 
 export type ShareFormFields = Omit<ShareFormDraft, "savedAt">;
 
+/** 将 Shownotes 按二级标题拆成前言 + 若干节（用于调整「金句」相对「节目导听」的顺序）。 */
+export function parseH2MarkdownSections(markdown: string): {
+  preamble: string;
+  sections: Array<{ heading: string; body: string }>;
+} {
+  const normalized = String(markdown || "").replace(/\r\n/g, "\n").trimEnd();
+  const parts = normalized.split(/^## /m);
+  const preamble = (parts.shift() || "").trimEnd();
+  const sections: Array<{ heading: string; body: string }> = [];
+  for (const chunk of parts) {
+    const nl = chunk.indexOf("\n");
+    const heading = nl === -1 ? chunk.trim() : chunk.slice(0, nl).trim();
+    const body = nl === -1 ? "" : chunk.slice(nl + 1).trimEnd();
+    sections.push({ heading, body });
+  }
+  return { preamble, sections };
+}
+
+export function serializeH2MarkdownSections(
+  preamble: string,
+  sections: Array<{ heading: string; body: string }>
+): string {
+  const out: string[] = [];
+  if (preamble.trim()) out.push(preamble.trim());
+  for (const s of sections) {
+    out.push(`## ${s.heading}\n\n${s.body.trim()}`);
+  }
+  return `${out.join("\n\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
+}
+
+/**
+ * 预览用：保证「金句」紧跟在「节目导听」之后；若无「金句」节则在导听后插入占位。
+ */
+export function reorderShowNotesGoldenQuotesAfterListen(markdown: string): string {
+  const raw = String(markdown || "");
+  if (!raw.trim()) return raw;
+  const { preamble, sections } = parseH2MarkdownSections(raw);
+  const listenIdx = sections.findIndex((s) => s.heading.trim() === "节目导听");
+  if (listenIdx === -1) return raw;
+
+  let next = [...sections];
+  const quotesIdx = next.findIndex((s) => s.heading.trim() === "金句");
+  const defaultQuotes = { heading: "金句", body: "- （可提炼适合传播的短句）" };
+
+  if (quotesIdx === -1) {
+    next.splice(listenIdx + 1, 0, defaultQuotes);
+    return serializeH2MarkdownSections(preamble, next);
+  }
+
+  if (quotesIdx === listenIdx + 1) return raw;
+
+  const [quotesSec] = next.splice(quotesIdx, 1);
+  const listenIdx2 = next.findIndex((s) => s.heading.trim() === "节目导听");
+  next.splice(listenIdx2 + 1, 0, quotesSec);
+  return serializeH2MarkdownSections(preamble, next);
+}
+
 export function shareFormFieldsDiffer(a: ShareFormFields, b: ShareFormFields): boolean {
   return a.episodeTitle !== b.episodeTitle || a.summary !== b.summary || a.showNotes !== b.showNotes;
 }

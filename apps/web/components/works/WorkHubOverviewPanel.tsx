@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { WorkHubManuscriptBar } from "./WorkHubManuscriptBar";
@@ -81,6 +81,11 @@ export function WorkHubOverviewPanel({
   const loadingThis = workAudio.loadingJobId === jobId;
   const playingThis = activeThis && workAudio.isPlaying;
   const [scriptDeleteBump, setScriptDeleteBump] = useState(0);
+  const [scriptChapterEditing, setScriptChapterEditing] = useState(false);
+
+  useEffect(() => {
+    setScriptChapterEditing(false);
+  }, [jobId]);
 
   const onCoverPlayClick = useCallback(() => {
     if (!hasAudio || audioBlocked) return;
@@ -252,6 +257,9 @@ export function WorkHubOverviewPanel({
                     manuscriptBody={manuscriptBody}
                     scriptResolvePending={scriptResolvePending}
                     canEditScript={canEditScript}
+                    showScriptEditToggle={canEditScript}
+                    scriptEditing={scriptChapterEditing}
+                    onToggleScriptEditing={() => setScriptChapterEditing((v) => !v)}
                     regenerateVoiceSupported={regenerateVoiceSupported}
                     regenerateVoiceBusy={regenerateVoiceBusy}
                     onRegenerateVoice={onRegenerateVoice}
@@ -273,6 +281,7 @@ export function WorkHubOverviewPanel({
                     hideToolbar
                     scriptAutosave
                     requestDelete={scriptDeleteBump}
+                    chapterEditorOpen={scriptChapterEditing}
                   />
                 </div>
               ) : null}
