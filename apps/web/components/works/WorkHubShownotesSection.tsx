@@ -20,7 +20,6 @@ type Props = {
   scriptResolvePending: boolean;
   hasOwner: boolean;
   jobGenerating?: boolean;
-  generatingPlaceholder?: string;
 };
 
 export function WorkHubShownotesSection({
@@ -38,8 +37,7 @@ export function WorkHubShownotesSection({
   showNotesSaveBusy,
   scriptResolvePending,
   hasOwner,
-  jobGenerating = false,
-  generatingPlaceholder = "生成中,请稍等..."
+  jobGenerating = false
 }: Props) {
   const previewMarkdown = useMemo(
     () => reorderShowNotesGoldenQuotesAfterListen(showNotes),
@@ -116,9 +114,7 @@ export function WorkHubShownotesSection({
           </div>
         ) : (
           <div className="max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/20 p-3">
-            {jobGenerating && !previewMarkdown.trim() ? (
-              <p className="text-sm leading-relaxed text-muted">{generatingPlaceholder}</p>
-            ) : (
+            {jobGenerating && !previewMarkdown.trim() ? null : (
               <ShowNotesMarkdownPreview
                 markdown={previewMarkdown}
                 onSeekSeconds={onSeekSeconds}

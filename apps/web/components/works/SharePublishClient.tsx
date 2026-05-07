@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AUTO_PROGRAM_SUMMARY_MAX,
@@ -250,7 +250,11 @@ export function SharePublishClient({
   const audioRegenAbortRef = useRef(false);
   const aiShownotesPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const morePlatformsRef = useRef<HTMLDivElement | null>(null);
+  const moreMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const [morePlatformsOpen, setMorePlatformsOpen] = useState(false);
+  const [moreMenuFixedStyle, setMoreMenuFixedStyle] = useState<{ top: number; left: number; width: number } | null>(
+    null
+  );
   const [publishPlatformIconBroken, setPublishPlatformIconBroken] = useState<
     Partial<Record<PublishPlatformId, boolean>>
   >({});
@@ -344,15 +348,39 @@ export function SharePublishClient({
       const defaultEpisodeTitle = sanitizeShareEpisodeTitle(rawTitle, "").trim().slice(0, 300);
       const sum = defaultSummaryFromJobResult(result);
 
-      setEpisodeTitle(defaultEpisodeTitle);
-      setSummary(truncateSummaryToAutoMax(sum));
-      setShowNotes("正在生成 Shownotes…");
+      const status = String(row["status"] || "");
+      const rowIsGenerating = status === "queued" || status === "running";
+      const autoSum = String(result.auto_share_summary || "").trim();
+      const autoNotes = String(result.auto_share_show_notes || "").trim();
+      const hasAutoShareBoth = Boolean(autoSum && autoNotes);
 
-      initialSnapshotRef.current = {
-        episodeTitle: defaultEpisodeTitle,
-        summary: truncateSummaryToAutoMax(sum),
-        showNotes: "正在生成 Shownotes…"
-      };
+      setEpisodeTitle(defaultEpisodeTitle);
+
+      if (rowIsGenerating && !hasAutoShareBoth) {
+        setSummary("");
+        setShowNotes("");
+        initialSnapshotRef.current = {
+          episodeTitle: defaultEpisodeTitle,
+          summary: "",
+          showNotes: ""
+        };
+      } else if (rowIsGenerating && hasAutoShareBoth) {
+        setSummary(truncateSummaryToAutoMax(autoSum));
+        setShowNotes(autoNotes);
+        initialSnapshotRef.current = {
+          episodeTitle: defaultEpisodeTitle,
+          summary: truncateSummaryToAutoMax(autoSum),
+          showNotes: autoNotes
+        };
+      } else {
+        setSummary(truncateSummaryToAutoMax(sum));
+        setShowNotes("正在生成 Shownotes…");
+        initialSnapshotRef.current = {
+          episodeTitle: defaultEpisodeTitle,
+          summary: truncateSummaryToAutoMax(sum),
+          showNotes: "正在生成 Shownotes…"
+        };
+      }
     },
     [jobId]
   );
@@ -426,6 +454,10 @@ export function SharePublishClient({
         fallbackSummary: defaultSummaryFromJobResult(resultEarly)
       });
 
+      const autoShareS = String(resultEarly.auto_share_summary || "").trim();
+      const autoShareN = String(resultEarly.auto_share_show_notes || "").trim();
+      const hasAutoSharePair = Boolean(autoShareS && autoShareN);
+
       if (succeeded) {
         setEpisodeTitle((prev) => {
           const nextEt = prev.trim() ? prev : derived.episodeTitle;
@@ -436,11 +468,18 @@ export function SharePublishClient({
           };
           return nextEt;
         });
+        setSummary(truncateSummaryToAutoMax(derived.summary));
+        setShowNotes(derived.showNotes);
       } else {
         setEpisodeTitle((prev) => (prev.trim() ? prev : derived.episodeTitle));
+        if (hasAutoSharePair) {
+          setSummary(truncateSummaryToAutoMax(derived.summary));
+          setShowNotes(derived.showNotes);
+        } else {
+          setSummary("");
+          setShowNotes("");
+        }
       }
-      setSummary(derived.summary);
-      setShowNotes(derived.showNotes);
       setManuscriptBody(String(fullScript || "").trim());
 
       const coverFromResult = jobResultCoverUrl(resultEarly);
@@ -595,6 +634,12 @@ export function SharePublishClient({
           }
 
           if (!canceled) {
+            const rowStatus = row.status;
+            const rowIsGeneratingLoad = rowStatus === "queued" || rowStatus === "running";
+            const autoSLoad = String(resultEarly.auto_share_summary || "").trim();
+            const autoNLoad = String(resultEarly.auto_share_show_notes || "").trim();
+            const hasAutoBothLoad = Boolean(autoSLoad && autoNLoad);
+
             shareGenContextRef.current = {
               payload,
               displayTitleHint: rawTitle,
@@ -613,11 +658,24 @@ export function SharePublishClient({
             });
             setEpisodeTitle((prev) => {
               const nextEt = prev.trim() ? prev : derived.episodeTitle;
-              initialSnapshotRef.current = { ...derived, episodeTitle: nextEt };
+              if (rowIsGeneratingLoad && !hasAutoBothLoad) {
+                initialSnapshotRef.current = {
+                  episodeTitle: nextEt,
+                  summary: "",
+                  showNotes: ""
+                };
+              } else {
+                initialSnapshotRef.current = { ...derived, episodeTitle: nextEt };
+              }
               return nextEt;
             });
-            setSummary(derived.summary);
-            setShowNotes(derived.showNotes);
+            if (rowIsGeneratingLoad && !hasAutoBothLoad) {
+              setSummary("");
+              setShowNotes("");
+            } else {
+              setSummary(derived.summary);
+              setShowNotes(derived.showNotes);
+            }
             setManuscriptBody(String(fullScript || "").trim());
           }
 
@@ -932,14 +990,24 @@ export function SharePublishClient({
   useEffect(() => {
     if (!morePlatformsOpen) return;
     const close = (e: MouseEvent) => {
-      const el = morePlatformsRef.current;
-      if (el && !el.contains(e.target as Node)) setMorePlatformsOpen(false);
+      const t = e.target as Node;
+      const wrap = morePlatformsRef.current;
+      const panel = moreMenuPanelRef.current;
+      if (wrap?.contains(t) || panel?.contains(t)) return;
+      setMorePlatformsOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [morePlatformsOpen]);
 
   const workHubPublishModalVisible = layout === "work_hub" && shareConfigModalOpen;
+
+  useEffect(() => {
+    if (!(layout === "work_hub" && shareConfigModalOpen)) {
+      setMorePlatformsOpen(false);
+      setMoreMenuFixedStyle(null);
+    }
+  }, [layout, shareConfigModalOpen]);
 
   const backNavTarget = sanitizeWorkDetailReturnTo(
     returnToProp,
@@ -1584,6 +1652,35 @@ export function SharePublishClient({
 
   const mainMax = layout === "work_hub" ? "max-w-4xl" : "max-w-2xl";
   const otherPublishPlatforms = PUBLISH_PLATFORMS.filter((p) => !PINNED_PUBLISH_PLATFORM_SET.has(p.id));
+
+  useLayoutEffect(() => {
+    if (!morePlatformsOpen) {
+      setMoreMenuFixedStyle(null);
+      return;
+    }
+    const update = () => {
+      const wrap = morePlatformsRef.current;
+      if (!wrap) return;
+      const r = wrap.getBoundingClientRect();
+      const itemCount = otherPublishPlatforms.length;
+      const estH = Math.min(360, Math.max(96, itemCount * 40 + 8));
+      const gap = 6;
+      const mw = 11 * 16;
+      const spaceBelow = window.innerHeight - r.bottom - gap;
+      const openBelow = spaceBelow >= estH || r.bottom <= window.innerHeight * 0.42;
+      const top = openBelow ? r.bottom + gap : Math.max(8, r.top - estH - gap);
+      const left = Math.min(Math.max(8, r.right - mw), window.innerWidth - mw - 8);
+      setMoreMenuFixedStyle({ top, left, width: mw });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [morePlatformsOpen, otherPublishPlatforms.length]);
+
   const showWorkHubShareEntry =
     layout === "work_hub" &&
     shareJobHydrated &&
@@ -1736,22 +1833,32 @@ export function SharePublishClient({
                 {episodeTitle.trim() || "未命名作品"}
               </h2>
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain lg:min-h-0">
-                <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted sm:text-[15px]">
-                  {summary.trim() || "暂无简介"}
-                </p>
+                {jobGenerating ? null : summary.trim() ? (
+                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted sm:text-[15px]">
+                    {summary.trim()}
+                  </p>
+                ) : (
+                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted sm:text-[15px]">
+                    暂无简介
+                  </p>
+                )}
               </div>
             </div>
           </div>
-          <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
-            <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">Shownotes</h3>
-            <div className="mt-3 max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/15 p-3">
-              <ShowNotesMarkdownPreview
-                markdown={showNotes}
-                onSeekSeconds={seekFromNotes}
-                className="!max-h-none overflow-visible border-0 bg-transparent p-0"
-              />
-            </div>
-          </section>
+          {!(jobGenerating && !showNotes.trim()) ? (
+            <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
+              <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                Shownotes
+              </h3>
+              <div className="mt-3 max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/15 p-3">
+                <ShowNotesMarkdownPreview
+                  markdown={showNotes}
+                  onSeekSeconds={seekFromNotes}
+                  className="!max-h-none overflow-visible border-0 bg-transparent p-0"
+                />
+              </div>
+            </section>
+          ) : null}
         </div>
       ) : null}
 
@@ -1818,7 +1925,6 @@ export function SharePublishClient({
                 scriptResolvePending={scriptResolvePending}
                 hasOwner={Boolean(ownerJobRecord)}
                 jobGenerating={jobGenerating}
-                generatingPlaceholder={JOB_GEN_PLACEHOLDER}
               />
             }
           />
@@ -1931,27 +2037,6 @@ export function SharePublishClient({
                       >
                         更多
                       </button>
-                      {morePlatformsOpen ? (
-                        <div
-                          role="menu"
-                          className="absolute right-0 top-[calc(100%+0.25rem)] z-[1300] min-w-[11rem] rounded-xl border border-line bg-surface py-1 shadow-card"
-                        >
-                          {otherPublishPlatforms.map((p) => (
-                            <button
-                              key={p.id}
-                              type="button"
-                              role="menuitem"
-                              className="flex w-full px-3 py-2 text-left text-sm text-ink hover:bg-fill/80"
-                              onClick={() => {
-                                setPublishPlatform(p.id);
-                                setMorePlatformsOpen(false);
-                              }}
-                            >
-                              {p.label}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
                     </div>
                   </div>
 
@@ -2252,6 +2337,42 @@ export function SharePublishClient({
                   </button>
                 </div>
               </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {workHubPublishModalVisible &&
+      morePlatformsOpen &&
+      moreMenuFixedStyle &&
+      typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={moreMenuPanelRef}
+              role="menu"
+              className="z-[1400] max-h-[min(50vh,20rem)] overflow-y-auto rounded-xl border border-line bg-surface py-1 shadow-card"
+              style={{
+                position: "fixed",
+                top: moreMenuFixedStyle.top,
+                left: moreMenuFixedStyle.left,
+                width: moreMenuFixedStyle.width,
+                minWidth: moreMenuFixedStyle.width
+              }}
+            >
+              {otherPublishPlatforms.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full px-3 py-2 text-left text-sm text-ink hover:bg-fill/80"
+                  onClick={() => {
+                    setPublishPlatform(p.id);
+                    setMorePlatformsOpen(false);
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
             </div>,
             document.body
           )

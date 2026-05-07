@@ -146,8 +146,6 @@ export function WorkHubOverviewPanel({
       </div>
     ) : null;
 
-  const summaryLine = episodeSummary.trim() || (jobGenerating ? jobGenPlaceholder : "");
-
   return (
     <div className="space-y-6">
       {jobFailedMessage?.trim() ? (
@@ -210,10 +208,10 @@ export function WorkHubOverviewPanel({
             {episodeTitle.trim() || "未命名作品"}
           </h2>
           {!scriptDraft ? (
-            summaryLine ? (
-              <p className="text-[13px] leading-relaxed text-muted sm:text-sm">{summaryLine}</p>
+            jobGenerating ? null : episodeSummary.trim() ? (
+              <p className="text-[13px] leading-relaxed text-muted sm:text-sm">{episodeSummary.trim()}</p>
             ) : (
-              <p className="text-[13px] text-muted sm:text-sm">{jobGenerating ? jobGenPlaceholder : "暂无简介"}</p>
+              <p className="text-[13px] text-muted sm:text-sm">暂无简介</p>
             )
           ) : null}
           <p className="text-[11px] leading-relaxed text-muted break-words sm:text-xs">{navMetaPipe.trim() || "—"}</p>
