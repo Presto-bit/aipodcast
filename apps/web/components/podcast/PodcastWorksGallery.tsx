@@ -254,7 +254,17 @@ type Props = {
    * 用于嵌入窄栏且需与侧栏列表一致的展示。
    */
   compactCards?: boolean;
+  /** 进入作品详情时写入 `?returnTo=`，供返回上一级页面 */
+  workDetailReturnTo?: string;
 };
+
+function buildWorkDetailHref(jobId: string, opts?: { returnTo?: string; tabPublish?: boolean }) {
+  const q = new URLSearchParams();
+  if (opts?.returnTo) q.set("returnTo", opts.returnTo);
+  if (opts?.tabPublish) q.set("tab", "publish");
+  const s = q.toString();
+  return `/works/${encodeURIComponent(jobId)}${s ? `?${s}` : ""}`;
+}
 
 const NOTE_TITLE_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -350,7 +360,8 @@ export default function PodcastWorksGallery({
   sidebarMaxItems,
   pendingStudioWork = null,
   pendingStudioSubtitle = "",
-  compactCards = false
+  compactCards = false,
+  workDetailReturnTo
 }: Props) {
   const { t } = useI18n();
   const router = useRouter();
@@ -935,7 +946,7 @@ export default function PodcastWorksGallery({
       } catch {
         /* ignore */
       }
-      router.push(`/works/${encodeURIComponent(id)}?tab=publish`);
+      router.push(buildWorkDetailHref(id, { returnTo: workDetailReturnTo, tabPublish: true }));
     },
     [router]
   );
@@ -1318,7 +1329,7 @@ export default function PodcastWorksGallery({
                   ) : null}
                   <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
                     <Link
-                      href={`/works/${encodeURIComponent(id)}`}
+                      href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
                       className="block min-w-0 rounded-md outline-none ring-brand/0 transition hover:bg-fill/45 focus-visible:ring-2 focus-visible:ring-brand"
                       aria-label={`查看作品详情：${headlineFull}`}
                     >
@@ -1442,7 +1453,7 @@ export default function PodcastWorksGallery({
                     </label>
                   ) : null}
                   <Link
-                    href={`/works/${encodeURIComponent(id)}`}
+                    href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
                     className="relative block aspect-[4/3] w-full shrink-0 overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill outline-none ring-brand/0 transition hover:opacity-[0.97] focus-visible:ring-2 focus-visible:ring-brand"
                     aria-label={`查看作品详情：${w.displayTitle}`}
                   >
@@ -1552,7 +1563,7 @@ export default function PodcastWorksGallery({
                           zipBusy === id ? downloadBusyLabel(w.type) : "下载"
                         )}
                         <Link
-                          href={`/works/${encodeURIComponent(id)}`}
+                          href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
                           className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
                         >
                           {sharedNotebookForeign ? "查看文稿" : "修改文稿"}
@@ -1664,7 +1675,7 @@ export default function PodcastWorksGallery({
                   </label>
                 ) : null}
                 <Link
-                  href={`/works/${encodeURIComponent(id)}`}
+                  href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
                   className="relative block aspect-[4/3] w-full overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill outline-none ring-brand/0 transition hover:opacity-[0.97] focus-visible:ring-2 focus-visible:ring-brand"
                   aria-label={`查看作品详情：${w.displayTitle}`}
                 >
@@ -1795,7 +1806,7 @@ export default function PodcastWorksGallery({
                         zipBusy === id ? downloadBusyLabel(w.type) : "下载"
                       )}
                       <Link
-                        href={`/works/${encodeURIComponent(id)}`}
+                        href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
                         className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
                       >
                         {sharedNotebookForeign ? "查看文稿" : "修改文稿"}

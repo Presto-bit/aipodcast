@@ -562,6 +562,7 @@ export default function CreatePage() {
             else setTemplatesErr("");
           }}
           onWorkDeleted={() => void refreshWorks()}
+          workDetailReturnTo="/create"
         />
       </section>
     </main>

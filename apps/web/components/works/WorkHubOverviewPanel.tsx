@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback } from "react";
+import type { ReactNode } from "react";
+import { useCallback, useState } from "react";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { WorkHubManuscriptBar } from "./WorkHubManuscriptBar";
+import { WorkHubScriptActions } from "./WorkHubScriptActions";
 
 function formatClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "—";
@@ -13,10 +15,14 @@ function formatClock(sec: number): string {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
+export type WorkHubDetailTab = "edit" | "shownotes";
+
 type Props = {
   jobId: string;
   displayTitleForDownload: string;
   episodeTitle: string;
+  /** 发布表单中的简介（RSS 摘要），展示在标题下方 */
+  episodeSummary: string;
   coverUrl: string;
   /** 与「我的作品」卡片 meta 一致，用 | 分隔 */
   navMetaPipe: string;
@@ -37,12 +43,16 @@ type Props = {
   audioRegenActive: boolean;
   audioRegenProgress: number;
   audioRegenMessage: string;
+  detailTab: WorkHubDetailTab;
+  onDetailTabChange: (t: WorkHubDetailTab) => void;
+  shownotesPanel: ReactNode;
 };
 
 export function WorkHubOverviewPanel({
   jobId,
   displayTitleForDownload,
   episodeTitle,
+  episodeSummary,
   coverUrl,
   navMetaPipe,
   chapterOutline,
@@ -61,12 +71,16 @@ export function WorkHubOverviewPanel({
   onRegenerateVoice,
   audioRegenActive,
   audioRegenProgress,
-  audioRegenMessage
+  audioRegenMessage,
+  detailTab,
+  onDetailTabChange,
+  shownotesPanel
 }: Props) {
   const workAudio = useWorkAudioPlayer();
   const activeThis = workAudio.activeJobId === jobId;
   const loadingThis = workAudio.loadingJobId === jobId;
   const playingThis = activeThis && workAudio.isPlaying;
+  const [scriptDeleteBump, setScriptDeleteBump] = useState(0);
 
   const onCoverPlayClick = useCallback(() => {
     if (!hasAudio || audioBlocked) return;
@@ -100,6 +114,8 @@ export function WorkHubOverviewPanel({
         </p>
       </div>
     ) : null;
+
+  const summaryLine = episodeSummary.trim();
 
   return (
     <div className="space-y-6">
@@ -152,12 +168,42 @@ export function WorkHubOverviewPanel({
             </div>
           ) : null}
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5 text-center sm:text-left">
-          <h2 className="text-balance text-xl font-semibold tracking-tight text-ink sm:text-2xl">
+        <div className="flex min-w-0 flex-1 flex-col gap-2 text-center sm:text-left">
+          <h2 className="text-balance text-base font-semibold tracking-tight text-ink sm:text-lg">
             {episodeTitle.trim() || "未命名作品"}
           </h2>
+          {summaryLine ? (
+            <p className="text-[13px] leading-relaxed text-muted sm:text-sm">{summaryLine}</p>
+          ) : (
+            <p className="text-[13px] text-muted sm:text-sm">暂无简介</p>
+          )}
           <p className="text-[11px] leading-relaxed text-muted break-words sm:text-xs">{navMetaPipe.trim() || "—"}</p>
         </div>
+      </div>
+
+      <div className="flex gap-1 rounded-xl border border-line bg-fill/35 p-1">
+        <button
+          type="button"
+          onClick={() => onDetailTabChange("edit")}
+          className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+            detailTab === "edit"
+              ? "bg-surface text-ink shadow-soft"
+              : "text-muted hover:bg-fill/60 hover:text-ink"
+          }`}
+        >
+          编辑
+        </button>
+        <button
+          type="button"
+          onClick={() => onDetailTabChange("shownotes")}
+          className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+            detailTab === "shownotes"
+              ? "bg-surface text-ink shadow-soft"
+              : "text-muted hover:bg-fill/60 hover:text-ink"
+          }`}
+        >
+          Shownotes
+        </button>
       </div>
 
       {audioBlocked && !scriptDraft ? (
@@ -166,79 +212,102 @@ export function WorkHubOverviewPanel({
         </div>
       ) : null}
 
-      {scriptManuscriptPanel ? (
-        <p className="text-xs leading-relaxed text-muted">纯文稿作品无播客音频，无法试听或走 RSS 发布；可在下方阅读正文</p>
-      ) : null}
-
-      {scriptManuscriptPanel ? (
-        <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
-          {regenProgressEl}
-          <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">文稿</h3>
-          <div className="mt-3 min-w-0">
-            <WorkHubManuscriptBar
-              jobId={jobId}
-              displayTitle={displayTitleForDownload}
-              manuscriptBody={manuscriptBody}
-              scriptResolvePending={scriptResolvePending}
-              onManuscriptSaved={onManuscriptSaved}
-              canEditScript={canEditScript}
-              regenerateVoiceSupported={false}
-              regenerateVoiceBusy={regenerateVoiceBusy}
-              onRegenerateVoice={onRegenerateVoice}
-              pureManuscriptOnly
-            />
-          </div>
-        </section>
-      ) : null}
-
-      {podcastChapterSection ? (
-        <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
-          {regenProgressEl}
-          <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">章节</h3>
-          {showManuscriptTools ? (
-            <div className="mt-3 min-w-0">
-              <WorkHubManuscriptBar
-                jobId={jobId}
-                displayTitle={displayTitleForDownload}
-                manuscriptBody={manuscriptBody}
-                scriptResolvePending={scriptResolvePending}
-                onManuscriptSaved={onManuscriptSaved}
-                canEditScript={canEditScript}
-                regenerateVoiceSupported={regenerateVoiceSupported}
-                regenerateVoiceBusy={regenerateVoiceBusy}
-                onRegenerateVoice={onRegenerateVoice}
-                collapseScriptUntilEdit
-              />
-            </div>
-          ) : null}
-          {chapterOutline && chapterOutline.length > 0 ? (
-            <ul className={`space-y-1.5 ${showManuscriptTools ? "mt-4" : "mt-2"}`}>
-              {chapterOutline.map((c, i) => {
-                const sec = Math.floor((c.start_ms || 0) / 1000);
-                return (
-                  <li key={`${c.title}-${i}`}>
-                    <button
-                      type="button"
-                      disabled={chapterSeekDisabled}
-                      onClick={() => onSeekSeconds(sec)}
-                      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-ink hover:bg-surface disabled:opacity-40"
-                    >
-                      <span className="min-w-0 truncate">{c.title || `章节 ${i + 1}`}</span>
-                      <span className="shrink-0 tabular-nums text-xs text-muted">{formatClock(sec)}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className={`text-[11px] text-muted ${showManuscriptTools ? "mt-4" : "mt-2"}`}>
-              暂无章节时间轴（可在「发布」页编辑 Shownotes 插入章节）。
+      {detailTab === "edit" ? (
+        <>
+          {scriptManuscriptPanel ? (
+            <p className="text-xs leading-relaxed text-muted">
+              纯文稿作品无播客音频，无法试听或走 RSS 发布；可在下方阅读正文
             </p>
-          )}
-        </section>
-      ) : !scriptManuscriptPanel ? (
-        regenProgressEl
-      ) : null}
+          ) : null}
+
+          {scriptManuscriptPanel ? (
+            <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
+              {regenProgressEl}
+              <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                文稿
+              </h3>
+              <div className="mt-3 min-w-0">
+                <WorkHubManuscriptBar
+                  jobId={jobId}
+                  manuscriptBody={manuscriptBody}
+                  scriptResolvePending={scriptResolvePending}
+                  onManuscriptSaved={onManuscriptSaved}
+                  canEditScript={canEditScript}
+                  regenerateVoiceSupported={false}
+                  regenerateVoiceBusy={regenerateVoiceBusy}
+                  onRegenerateVoice={onRegenerateVoice}
+                  pureManuscriptOnly
+                />
+              </div>
+            </section>
+          ) : null}
+
+          {podcastChapterSection ? (
+            <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
+              {regenProgressEl}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">章节</h3>
+                {showManuscriptTools ? (
+                  <WorkHubScriptActions
+                    manuscriptBody={manuscriptBody}
+                    scriptResolvePending={scriptResolvePending}
+                    canEditScript={canEditScript}
+                    regenerateVoiceSupported={regenerateVoiceSupported}
+                    regenerateVoiceBusy={regenerateVoiceBusy}
+                    onRegenerateVoice={onRegenerateVoice}
+                    onDeleteClick={() => setScriptDeleteBump((n) => n + 1)}
+                  />
+                ) : null}
+              </div>
+              {showManuscriptTools ? (
+                <div className="mt-3 min-w-0">
+                  <WorkHubManuscriptBar
+                    jobId={jobId}
+                    manuscriptBody={manuscriptBody}
+                    scriptResolvePending={scriptResolvePending}
+                    onManuscriptSaved={onManuscriptSaved}
+                    canEditScript={canEditScript}
+                    regenerateVoiceSupported={regenerateVoiceSupported}
+                    regenerateVoiceBusy={regenerateVoiceBusy}
+                    onRegenerateVoice={onRegenerateVoice}
+                    hideToolbar
+                    scriptAutosave
+                    requestDelete={scriptDeleteBump}
+                  />
+                </div>
+              ) : null}
+              {chapterOutline && chapterOutline.length > 0 ? (
+                <ul className={`space-y-1.5 ${showManuscriptTools ? "mt-4" : "mt-2"}`}>
+                  {chapterOutline.map((c, i) => {
+                    const sec = Math.floor((c.start_ms || 0) / 1000);
+                    return (
+                      <li key={`${c.title}-${i}`}>
+                        <button
+                          type="button"
+                          disabled={chapterSeekDisabled}
+                          onClick={() => onSeekSeconds(sec)}
+                          className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-ink hover:bg-surface disabled:opacity-40"
+                        >
+                          <span className="min-w-0 truncate">{c.title || `章节 ${i + 1}`}</span>
+                          <span className="shrink-0 tabular-nums text-xs text-muted">{formatClock(sec)}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className={`text-[11px] text-muted ${showManuscriptTools ? "mt-4" : "mt-2"}`}>
+                  暂无章节时间轴（可在「Shownotes」中编辑并插入章节）。
+                </p>
+              )}
+            </section>
+          ) : !scriptManuscriptPanel ? (
+            regenProgressEl
+          ) : null}
+        </>
+      ) : (
+        shownotesPanel
+      )}
     </div>
   );
 }

@@ -1650,6 +1650,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
           fetchError={worksError}
           onDismissError={() => setWorksError("")}
           onWorkDeleted={() => void fetchPodcastWorks()}
+          workDetailReturnTo="/create"
         />
       </section>
       ) : null}

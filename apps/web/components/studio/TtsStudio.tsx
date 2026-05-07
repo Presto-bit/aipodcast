@@ -1164,6 +1164,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
           fetchError={worksError}
           onDismissError={() => setWorksError("")}
           onWorkDeleted={() => void fetchTtsWorks()}
+          workDetailReturnTo="/create"
         />
       </section>
       ) : null}

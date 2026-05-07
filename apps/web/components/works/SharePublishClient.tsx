@@ -34,7 +34,12 @@ import {
 } from "../../lib/api";
 import type { JobRecord } from "../../lib/types";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
-import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, PUBLISH_PLATFORMS } from "../../lib/publishPlatforms";
+import {
+  DEFAULT_PUBLISH_PLATFORM_ID,
+  type PublishPlatformId,
+  PUBLISH_PLATFORMS,
+  getPublishPlatformMeta
+} from "../../lib/publishPlatforms";
 import { resolveJobScriptBodyText, SCRIPT_TEXT_LIKELY_FULL_MIN_LEN } from "../../lib/jobScriptText";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { buildWorksSharePageUrl } from "../../lib/rssPublicBase";
@@ -43,7 +48,8 @@ import { blobToDataUrlBase64 } from "../../lib/podcastCoverImage";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { formatUnifiedWorksNavMetaLineFromJobRecord } from "../../lib/worksNavMetaLine";
 import { useWorkAudioPlayer, type WorkAudioToggleMeta } from "../../lib/workAudioPlayer";
-import { WorkHubOverviewPanel } from "./WorkHubOverviewPanel";
+import { WorkHubOverviewPanel, type WorkHubDetailTab } from "./WorkHubOverviewPanel";
+import { WorkHubShownotesSection } from "./WorkHubShownotesSection";
 import { RssChannelEditor } from "../rss/RssChannelEditor";
 
 const RSS_LAST_CHANNEL_STORAGE_KEY = "fym_rss_last_channel_id";
@@ -69,13 +75,35 @@ function IconShareCheck({ className }: { className?: string }) {
   );
 }
 
+function IconShareExport({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M12 3v12" strokeLinecap="round" />
+      <path d="m8 7 4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 14v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 type Props = {
   jobId: string;
   /** `work_hub`：作品详情（概览 + 发布分组）；默认与旧版 `/works/share` 一致 */
   layout?: "standalone" | "work_hub";
-  /** 仅 `layout === "work_hub"` 时生效；`publish` 对应 URL `?tab=publish` */
+  /** 仅 `layout === "work_hub"` 时生效；`publish` 对应 URL `?tab=publish`，打开分享弹窗 */
   initialHubTab?: "overview" | "publish";
+  /** 站内返回路径（查询参数 `returnTo`）；无效时回退为 /works 或首页 */
+  returnTo?: string | null;
 };
+
+const PINNED_PUBLISH_PLATFORM_IDS: PublishPlatformId[] = ["xiaoyuzhou", "ximalaya"];
+const PINNED_PUBLISH_PLATFORM_SET = new Set<PublishPlatformId>(PINNED_PUBLISH_PLATFORM_IDS);
+
+function sanitizeWorkDetailReturnTo(raw: string | null | undefined, fallback: string): string {
+  const t = String(raw ?? "").trim();
+  if (!t.startsWith("/") || t.startsWith("//")) return fallback;
+  if (t.includes(":")) return fallback;
+  return t.split("?")[0].split("#")[0] || fallback;
+}
 
 /** 成片可能只有对象存储 URL / key，不一定内联 audio_hex（大文件会省略 hex）。 */
 function jobResultHasPlayableAudio(result: Record<string, unknown>): boolean {
@@ -141,7 +169,8 @@ function formatListenClock(sec: number): string {
 export function SharePublishClient({
   jobId,
   layout = "standalone",
-  initialHubTab = "overview"
+  initialHubTab = "overview",
+  returnTo: returnToProp = null
 }: Props) {
   const router = useRouter();
   const { user, phone } = useAuth();
@@ -159,8 +188,9 @@ export function SharePublishClient({
   const [listenCoverUrl, setListenCoverUrl] = useState("");
   const [sharePublicAudioUrl, setSharePublicAudioUrl] = useState("");
   const [listenDurationSec, setListenDurationSec] = useState<number | null>(null);
-  const [hubTab, setHubTab] = useState<"overview" | "publish">(() =>
-    layout === "work_hub" && initialHubTab === "publish" ? "publish" : "overview"
+  const [detailTab, setDetailTab] = useState<WorkHubDetailTab>("edit");
+  const [shareConfigModalOpen, setShareConfigModalOpen] = useState(
+    () => layout === "work_hub" && initialHubTab === "publish"
   );
   const [manuscriptBody, setManuscriptBody] = useState("");
   const [publishAt, setPublishAt] = useState("");
@@ -639,7 +669,7 @@ export function SharePublishClient({
 
   useEffect(() => {
     if (layout !== "work_hub") return;
-    setHubTab(initialHubTab === "publish" ? "publish" : "overview");
+    setShareConfigModalOpen(initialHubTab === "publish");
   }, [layout, jobId, initialHubTab]);
 
   useEffect(() => {
@@ -647,7 +677,17 @@ export function SharePublishClient({
     setNotesTab("preview");
   }, [layout, jobId]);
 
-  const publishChromeVisible = layout === "work_hub" && hubTab === "publish";
+  useEffect(() => {
+    if (layout !== "work_hub") return;
+    setDetailTab("edit");
+  }, [layout, jobId]);
+
+  const workHubPublishModalVisible = layout === "work_hub" && shareConfigModalOpen;
+
+  const backNavTarget = sanitizeWorkDetailReturnTo(
+    returnToProp,
+    ownerJobRecord ? "/works" : "/"
+  );
 
   const worksNavAuthorDisplay = useMemo(() => {
     const u = user as { display_name?: string; username?: string; phone?: string } | null | undefined;
@@ -1263,50 +1303,48 @@ export function SharePublishClient({
     }
   }
 
-  const mainMax = layout === "work_hub" ? "max-w-3xl" : "max-w-2xl";
+  const mainMax = layout === "work_hub" ? "max-w-4xl" : "max-w-2xl";
+  const otherPublishPlatforms = PUBLISH_PLATFORMS.filter((p) => !PINNED_PUBLISH_PLATFORM_SET.has(p.id));
+  const showWorkHubShareEntry =
+    layout === "work_hub" && shareJobHydrated && !loadErr && formReady && Boolean(ownerJobRecord);
 
   return (
     <main className={`mx-auto min-h-0 w-full ${mainMax} px-3 pb-12 pt-5 sm:px-4`}>
-      <div className="mb-5 flex flex-col gap-1">
-        <Link
-          href={ownerJobRecord ? "/works" : "/"}
-          className="text-sm text-brand hover:underline"
-        >
-          {ownerJobRecord ? "← 返回我的作品" : "← 返回首页"}
-        </Link>
-        <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
-          {layout === "work_hub" ? "作品详情" : "发给朋友听"}
-        </h1>
-      </div>
-
-      {layout === "work_hub" && shareJobHydrated && !loadErr ? (
-        <div className="sticky top-0 z-[60] -mx-3 mb-5 border-b border-line/80 bg-canvas/95 px-1 pb-2 pt-1 backdrop-blur-md supports-[backdrop-filter]:bg-canvas/80 sm:-mx-4">
-          <div className="flex gap-1 rounded-xl border border-line bg-fill/35 p-1">
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="inline-flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-brand">
             <button
               type="button"
-              onClick={() => setHubTab("overview")}
-              className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
-                hubTab === "overview"
-                  ? "bg-surface text-ink shadow-soft"
-                  : "text-muted hover:bg-fill/60 hover:text-ink"
-              }`}
+              onClick={() => router.push(backNavTarget)}
+              className="rounded px-0.5 py-0 font-medium hover:underline"
+              aria-label={ownerJobRecord ? "返回我的作品" : "返回首页"}
             >
-              预览
+              ←
             </button>
             <button
               type="button"
-              onClick={() => setHubTab("publish")}
-              className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
-                hubTab === "publish"
-                  ? "bg-surface text-ink shadow-soft"
-                  : "text-muted hover:bg-fill/60 hover:text-ink"
-              }`}
+              onClick={() => router.push(backNavTarget)}
+              className="rounded px-0.5 py-0 font-medium hover:underline"
             >
-              发布
+              {ownerJobRecord ? "返回我的作品" : "返回首页"}
             </button>
           </div>
+          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
+            {layout === "work_hub" ? "作品详情" : "发给朋友听"}
+          </h1>
         </div>
-      ) : null}
+        {showWorkHubShareEntry ? (
+          <button
+            type="button"
+            onClick={() => setShareConfigModalOpen(true)}
+            className="mt-1 shrink-0 rounded-xl border border-line bg-fill/40 p-2.5 text-ink hover:bg-fill disabled:opacity-40"
+            aria-label="分享与发布"
+            title="分享与发布"
+          >
+            <IconShareExport className="h-5 w-5" />
+          </button>
+        ) : null}
+      </div>
 
       {loadErr ? (
         <p className="mb-4 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger-ink">{loadErr}</p>
@@ -1421,18 +1459,19 @@ export function SharePublishClient({
         <p className="mb-4 rounded-lg border border-success/35 bg-success-soft/70 px-3 py-2 text-xs text-success-ink">{publishedHint}</p>
       ) : null}
 
-      {layout === "work_hub" && hubTab === "overview" && shareJobHydrated && !loadErr && !formReady ? (
+      {layout === "work_hub" && shareJobHydrated && !loadErr && !formReady ? (
         <p className="mb-4 rounded-lg border border-line bg-fill/60 px-3 py-2 text-sm text-muted" role="status">
           加载作品信息…
         </p>
       ) : null}
 
-      {layout === "work_hub" && hubTab === "overview" && shareJobHydrated && !loadErr && formReady ? (
+      {layout === "work_hub" && shareJobHydrated && !loadErr && formReady ? (
         <div className="mb-8">
           <WorkHubOverviewPanel
             jobId={jobId}
             displayTitleForDownload={episodeTitle.trim() || jobTitle || jobId}
             episodeTitle={episodeTitle}
+            episodeSummary={summary}
             coverUrl={jobCoverUrl}
             navMetaPipe={navMetaPipe}
             chapterOutline={chapterOutline}
@@ -1452,19 +1491,35 @@ export function SharePublishClient({
             audioRegenActive={audioRegenActive}
             audioRegenProgress={audioRegenProgress}
             audioRegenMessage={audioRegenMessage}
+            detailTab={detailTab}
+            onDetailTabChange={setDetailTab}
+            shownotesPanel={
+              <WorkHubShownotesSection
+                notesTab={notesTab}
+                onNotesTab={setNotesTab}
+                showNotes={showNotes}
+                onShowNotesChange={setShowNotes}
+                onSaveShowNotes={() => void saveShowNotesToServer()}
+                onOpenAiModal={() => {
+                  setAiShownotesErr("");
+                  setAiShownotesPromptDraft("");
+                  setAiShownotesModalOpen(true);
+                }}
+                hints={hints}
+                hasAudio={hasAudio}
+                onSeekSeconds={seekFromNotes}
+                busy={busy}
+                shareAiBusy={shareAiBusy}
+                showNotesSaveBusy={showNotesSaveBusy}
+                scriptResolvePending={scriptResolvePending}
+                hasOwner={Boolean(ownerJobRecord)}
+              />
+            }
           />
         </div>
       ) : null}
 
-      {publishChromeVisible && shareJobHydrated && audioBlocked ? (
-        <p className="mb-4 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-ink">
-          {scriptDraft
-            ? "纯文稿作品无播客音频：请在「预览」页查看与编辑正文；RSS 发布需有可播放成片。"
-            : "暂无可播放音频，请确认任务已成功完成。"}
-        </p>
-      ) : null}
-
-      {publishChromeVisible && showShareAndPublish && !ownerJobRecord ? (
+      {layout === "work_hub" && shareJobHydrated && showShareAndPublish && !ownerJobRecord ? (
         <p className="mb-4 text-xs text-muted">
           <Link href="/create" className="text-brand underline">
             登录
@@ -1473,44 +1528,104 @@ export function SharePublishClient({
         </p>
       ) : null}
 
-      {publishChromeVisible && showShareAndPublish && ownerJobRecord ? (
-        <div className="mb-6 rounded-2xl border border-line bg-surface px-4 py-5 shadow-soft sm:px-6 sm:py-6">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-              <h2 className="text-sm font-medium text-ink">发布到播客平台</h2>
-              {showShareAndPublish && sharePageFullUrl ? (
+      {workHubPublishModalVisible && ownerJobRecord ? (
+        typeof document !== "undefined"
+          ? createPortal(
+              <div
+                className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+                role="presentation"
+              >
                 <button
                   type="button"
-                  disabled={busy || shareAiBusy}
-                  onClick={() => void copySharePageLink()}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
-                  title={shareLinkCopied ? "已复制" : "复制分享链接"}
+                  className="absolute inset-0 cursor-default"
+                  aria-label="关闭"
+                  onClick={() => setShareConfigModalOpen(false)}
+                />
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="work-share-publish-modal-title"
+                  className="relative z-10 max-h-[min(92vh,44rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6"
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  {shareLinkCopied ? (
-                    <IconShareCheck className="h-3.5 w-3.5 text-success-ink" />
-                  ) : (
-                    <IconShareClipboard className="h-3.5 w-3.5 text-muted" />
-                  )}
-                  {shareLinkCopied ? "已复制" : "复制链接"}
-                </button>
-              ) : null}
-            </div>
-            <select
-              className="max-w-[11rem] rounded-lg border border-line bg-fill/40 px-3 py-2 text-sm text-ink"
-              value={publishPlatform}
-              onChange={(e) => setPublishPlatform(e.target.value as PublishPlatformId)}
-              disabled={busy || shareAiBusy}
-            >
-              {PUBLISH_PLATFORMS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </div>
+                  <div className="flex items-start justify-between gap-3 border-b border-line pb-4">
+                    <h2 id="work-share-publish-modal-title" className="text-base font-semibold text-ink">
+                      分享与发布
+                    </h2>
+                    {sharePageFullUrl ? (
+                      <button
+                        type="button"
+                        disabled={busy || shareAiBusy}
+                        onClick={() => void copySharePageLink()}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
+                        title={shareLinkCopied ? "已复制" : "复制分享链接"}
+                      >
+                        {shareLinkCopied ? (
+                          <IconShareCheck className="h-3.5 w-3.5 text-success-ink" />
+                        ) : (
+                          <IconShareClipboard className="h-3.5 w-3.5 text-muted" />
+                        )}
+                        {shareLinkCopied ? "已复制" : "复制链接"}
+                      </button>
+                    ) : null}
+                  </div>
 
-          <div className="mt-5">
-            {publishPlatform !== "xiaoyuzhou" ? (
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    {PINNED_PUBLISH_PLATFORM_IDS.map((pid) => {
+                      const meta = getPublishPlatformMeta(pid);
+                      const label = meta?.label ?? pid;
+                      const active = publishPlatform === pid;
+                      return (
+                        <button
+                          key={pid}
+                          type="button"
+                          title={label}
+                          disabled={busy || shareAiBusy}
+                          onClick={() => setPublishPlatform(pid)}
+                          className={`flex h-11 w-11 items-center justify-center rounded-xl border text-xs font-semibold transition-colors disabled:opacity-40 ${
+                            active
+                              ? "border-brand bg-brand/15 text-brand"
+                              : "border-line bg-fill/40 text-ink hover:bg-fill"
+                          }`}
+                        >
+                          <span className="sr-only">{label}</span>
+                          <span aria-hidden className="leading-none">
+                            {pid === "xiaoyuzhou" ? "宇" : "雅"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    <label className="flex min-w-[10rem] flex-1 flex-col text-[10px] font-medium uppercase tracking-wide text-muted">
+                      其他平台
+                      <select
+                        className="mt-1 rounded-lg border border-line bg-fill/40 px-2 py-2 text-sm text-ink"
+                        value={PINNED_PUBLISH_PLATFORM_SET.has(publishPlatform) ? "" : publishPlatform}
+                        onChange={(e) => {
+                          const v = e.target.value as PublishPlatformId;
+                          if (v) setPublishPlatform(v);
+                        }}
+                        disabled={busy || shareAiBusy}
+                      >
+                        <option value="">选择…</option>
+                        {otherPublishPlatforms.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="mt-5">
+            {!showShareAndPublish ? (
+              <div className="rounded-xl border border-warning/35 bg-warning-soft/60 px-4 py-5 text-sm text-warning-ink">
+                <p>
+                  {scriptDraft
+                    ? "纯文稿作品无播客成片，无法通过 RSS 发布音频节目。"
+                    : "暂无可发布的播客音频，请确认任务已成功完成后再试。"}
+                </p>
+              </div>
+            ) : publishPlatform !== "xiaoyuzhou" ? (
               <div className="py-12 text-center text-sm text-muted">该平台暂未接入</div>
             ) : rssGate === "idle" || rssGate === "loading" ? (
               <div className="py-12 text-center">
@@ -1572,91 +1687,6 @@ export function SharePublishClient({
 
                 <div className="border-t border-line pt-6">
                   <section className="space-y-3">
-                    <h3 className="text-sm font-medium text-ink">Shownotes</h3>
-                    <div className="flex gap-1 rounded-lg border border-line bg-fill/30 p-0.5">
-                      <button
-                        type="button"
-                        className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                          notesTab === "preview"
-                            ? "bg-surface text-ink shadow-soft"
-                            : "text-muted hover:bg-fill/60 hover:text-ink"
-                        }`}
-                        onClick={() => setNotesTab("preview")}
-                      >
-                        预览
-                      </button>
-                      <button
-                        type="button"
-                        className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                          notesTab === "edit"
-                            ? "bg-surface text-ink shadow-soft"
-                            : "text-muted hover:bg-fill/60 hover:text-ink"
-                        }`}
-                        onClick={() => setNotesTab("edit")}
-                      >
-                        编辑
-                      </button>
-                      <button
-                        type="button"
-                        className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                          notesTab === "ai"
-                            ? "bg-surface text-ink shadow-soft"
-                            : "text-muted hover:bg-fill/60 hover:text-ink"
-                        }`}
-                        disabled={busy || shareAiBusy || scriptResolvePending}
-                        onClick={() => {
-                          setNotesTab("ai");
-                          setAiShownotesErr("");
-                          setAiShownotesPromptDraft("");
-                          setAiShownotesModalOpen(true);
-                        }}
-                      >
-                        AI优化
-                      </button>
-                    </div>
-                    {notesTab === "edit" ? (
-                      <p className="text-[11px] text-muted/90">
-                        Markdown；跳转 <code className="rounded bg-fill px-1">[3:20 标题](t:200)</code>
-                        {hasAudio ? "，预览可点。" : "。"}
-                      </p>
-                    ) : null}
-                    {notesTab === "edit" ? (
-                      <div className="relative">
-                        <button
-                          type="button"
-                          className="absolute right-2 top-2 z-10 rounded-md border border-line bg-surface/95 px-2.5 py-1 text-xs font-medium text-ink shadow-sm backdrop-blur-sm hover:bg-fill disabled:opacity-40"
-                          disabled={busy || shareAiBusy || showNotesSaveBusy || !ownerJobRecord}
-                          title={ownerJobRecord ? "保存到作品并更新分享页" : "请先登录"}
-                          onClick={() => void saveShowNotesToServer()}
-                        >
-                          {showNotesSaveBusy ? "保存中…" : "保存"}
-                        </button>
-                        <textarea
-                          className="w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 pr-[4.5rem] pt-10 font-mono text-sm leading-relaxed text-ink"
-                          rows={12}
-                          value={showNotes}
-                          onChange={(e) => setShowNotes(e.target.value)}
-                          disabled={busy || shareAiBusy || showNotesSaveBusy}
-                          maxLength={20_000}
-                        />
-                      </div>
-                    ) : (
-                      <div className="max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/20 p-3">
-                        <ShowNotesMarkdownPreview
-                          markdown={showNotes}
-                          onSeekSeconds={seekFromNotes}
-                          className="!max-h-none overflow-visible border-0 bg-transparent p-0"
-                        />
-                      </div>
-                    )}
-                    {hints.showNotesVeryShort ? (
-                      <p className="text-[11px] text-warning-ink">Shownotes 偏短。</p>
-                    ) : null}
-                  </section>
-                </div>
-
-                <div className="border-t border-line pt-6">
-                  <section className="space-y-3">
                     <h3 className="text-sm font-medium text-ink">RSS 渠道</h3>
                     {channelsLoading ? (
                       <p className="text-sm text-muted">加载中…</p>
@@ -1696,9 +1726,13 @@ export function SharePublishClient({
                 {formOk ? <p className="mt-5 text-sm text-success-ink">{formOk}</p> : null}
 
                 <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
-                  <Link href="/works" className="text-sm text-muted hover:text-ink">
-                    取消
-                  </Link>
+                  <button
+                    type="button"
+                    className="text-sm text-muted hover:text-ink"
+                    onClick={() => setShareConfigModalOpen(false)}
+                  >
+                    关闭
+                  </button>
                   <div className="flex flex-wrap items-center justify-end gap-3 sm:gap-4">
                     <div className="flex items-center gap-2">
                       <button
@@ -1748,8 +1782,12 @@ export function SharePublishClient({
                 </div>
               </div>
             )}
-          </div>
-        </div>
+                  </div>
+                </div>
+              </div>,
+              document.body
+            )
+          : null
       ) : null}
 
       {scheduleModalOpen && typeof document !== "undefined"

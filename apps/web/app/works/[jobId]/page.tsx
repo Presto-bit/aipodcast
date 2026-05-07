@@ -11,6 +11,7 @@ export default function WorkDetailPage() {
     .trim()
     .toLowerCase();
   const initialHubTab = tab === "publish" ? ("publish" as const) : ("overview" as const);
+  const returnTo = searchParams?.get("returnTo")?.trim() || null;
 
   if (!jobId) {
     return (
@@ -19,6 +20,12 @@ export default function WorkDetailPage() {
   }
 
   return (
-    <SharePublishClient key={jobId} jobId={jobId} layout="work_hub" initialHubTab={initialHubTab} />
+    <SharePublishClient
+      key={jobId}
+      jobId={jobId}
+      layout="work_hub"
+      initialHubTab={initialHubTab}
+      returnTo={returnTo}
+    />
   );
 }

@@ -4568,6 +4568,7 @@ export default function NotesPage() {
                 onDismissError={() => setPodcastWorksError("")}
                 onWorkDeleted={() => void fetchPodcastWorks()}
                 variant="all"
+                workDetailReturnTo="/notes"
               />
             </div>
           </section>

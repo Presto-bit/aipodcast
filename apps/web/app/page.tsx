@@ -651,6 +651,7 @@ export default function HomePage() {
             fetchError={worksFetchErr}
             onDismissError={() => setWorksFetchErr("")}
             onWorkDeleted={() => setWorksRefreshKey((k) => k + 1)}
+            workDetailReturnTo="/"
           />
         </div>
         {!worksLoading && homeWorks.length > HOME_WORKS_PREVIEW ? (
