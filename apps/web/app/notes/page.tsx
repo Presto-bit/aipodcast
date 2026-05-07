@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import type { ChangeEvent, Dispatch, PointerEvent, SetStateAction } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import InlineConfirmBar from "../../components/ui/InlineConfirmBar";
@@ -17,6 +18,7 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
     />
   )
 });
+const WorksActiveJobsPanel = dynamic(() => import("../../components/works/WorksActiveJobsPanel"));
 const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMarkdownPreview"), {
   loading: () => (
     <div
@@ -27,7 +29,7 @@ const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMar
   )
 });
 import { NotesAskAnswerDisplay } from "../../components/notes/NotesAskAnswerDisplay";
-import { createJob } from "../../lib/api";
+import { createJob, listJobs } from "../../lib/api";
 import {
   apiErrorMessage,
   formatNotesAskStreamError,
@@ -41,9 +43,6 @@ import {
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
 import { rememberJobId } from "../../lib/jobRecent";
 import { buildReferenceJobFields, type ReferenceRagMode } from "../../lib/jobReferencePayload";
-import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
-import { presentJobProgressMessageForUser } from "../../lib/jobProgressUserText";
-import { MEDIA_QUEUE_STALL_HINT_MS } from "../../lib/mediaQueueStallHint";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
 import { ART_KIND_PRESETS, type ArtKindKey } from "../../lib/artKindPresets";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
@@ -60,7 +59,6 @@ import {
   requestAppSidebarCollapse
 } from "../../lib/appSidebarCollapse";
 import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
-import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import type { NotebookCoverMeta } from "../../lib/notebookCoverDisplay";
@@ -84,6 +82,9 @@ import {
 } from "../../lib/userScopedStorage";
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
+import { chipClass } from "../../components/studio/chipStyles";
+
+const NOTES_WORKS_ACTIVE_LIMIT = 80;
 
 type NotesAskStreamEvent =
   | { type: "chunk"; text: string; streamRole?: "reasoning" | "answer" }
@@ -779,6 +780,7 @@ function FreshNoteSparkleIcon({ className }: { className?: string }) {
 }
 
 export default function NotesPage() {
+  const router = useRouter();
   const { t } = useI18n();
   const { user, phone, getAuthHeaders, ready } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
@@ -837,7 +839,6 @@ export default function NotesPage() {
   const [previewNextAction, setPreviewNextAction] = useState("");
   const [previewSimplified, setPreviewSimplified] = useState(false);
   const [previewHighlightHint, setPreviewHighlightHint] = useState("");
-  const [worksPanelExpanded, setWorksPanelExpanded] = useState(false);
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
   const [renameNoteTitle, setRenameNoteTitle] = useState("");
   const [importUrl, setImportUrl] = useState("");
@@ -1017,23 +1018,19 @@ export default function NotesPage() {
     setArtCharsInput(String(artChars));
   }, [artChars]);
 
-  const [podcastWorks, setPodcastWorks] = useState<WorkItem[]>([]);
-  const [podcastWorksLoading, setPodcastWorksLoading] = useState(true);
-  const [podcastWorksError, setPodcastWorksError] = useState("");
-  const podcastEventSourceRef = useRef<EventSource | null>(null);
-  const podcastResolveWaitRef = useRef<(() => void) | null>(null);
-  const podcastQueueStallTimerRef = useRef<number | null>(null);
-  const podcastCancelledRef = useRef(false);
+  const [notesWorksAudio, setNotesWorksAudio] = useState<WorkItem[]>([]);
+  const [notesWorksScript, setNotesWorksScript] = useState<WorkItem[]>([]);
+  const [notesWorksView, setNotesWorksView] = useState<"audio" | "script" | "active">("audio");
+  const [notesWorksQuery, setNotesWorksQuery] = useState("");
+  const [notesWorksRecentOnly, setNotesWorksRecentOnly] = useState(false);
+  const [notesWorksLoading, setNotesWorksLoading] = useState(true);
+  const [notesWorksError, setNotesWorksError] = useState("");
+  const [notesActiveJobCount, setNotesActiveJobCount] = useState<number | null>(null);
   const podcastRecoveryStartedRef = useRef(false);
-  const podcastActiveJobIdRef = useRef<string | null>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
   /** 来自 /notes?note=<id> 深链：解析笔记本并滚动到对应卡片 */
   const pendingFocusNoteIdRef = useRef<string | null>(null);
   /** 与「来源」持久化配合：仅在当前笔记本已做过一次恢复后再写入，避免切换瞬间用旧笔记本的勾选覆盖新键 */
   const draftSourcesPersistNotebookRef = useRef<string>("");
-  const activeDraftJobIdRef = useRef<string | null>(null);
-  const resolveDraftWaitRef = useRef<(() => void) | null>(null);
-  const draftCancelledRef = useRef(false);
   const draftRecoveryStartedRef = useRef(false);
 
   const stats = useMemo(() => ({ total: notes.length }), [notes.length]);
@@ -1824,9 +1821,37 @@ export default function NotesPage() {
     return null;
   }, [podcastGenBusy, podcastGenMessage, draftBusy, draftMessage]);
 
-  const fetchPodcastWorks = useCallback(async () => {
-    setPodcastWorksError("");
+  const refreshNotesActiveJobCount = useCallback(async () => {
+    if (!ready) {
+      setNotesActiveJobCount(null);
+      return;
+    }
+    if (!isLoggedIn) {
+      setNotesActiveJobCount(0);
+      return;
+    }
     try {
+      const { jobs } = await listJobs({
+        limit: NOTES_WORKS_ACTIVE_LIMIT,
+        offset: 0,
+        status: "queued,running",
+        slim: true
+      });
+      setNotesActiveJobCount(jobs.length);
+    } catch {
+      setNotesActiveJobCount(null);
+    }
+  }, [ready, isLoggedIn]);
+
+  const fetchPodcastWorks = useCallback(async () => {
+    setNotesWorksError("");
+    try {
+      if (!isLoggedIn) {
+        setNotesWorksAudio([]);
+        setNotesWorksScript([]);
+        setNotesActiveJobCount(0);
+        return;
+      }
       const params = new URLSearchParams({ limit: "80", offset: "0" });
       const shareOwner = (sharedBrowse?.ownerUserId || "").trim();
       const nb = (selectedNotebook || "").trim();
@@ -1842,186 +1867,97 @@ export default function NotesPage() {
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
         ai?: WorkItem[];
+        tts?: WorkItem[];
         error?: string;
         detail?: string;
       };
       if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-      const allWorks = Array.isArray(data.ai) ? data.ai : [];
-      const notesOnlyWorks = allWorks.filter((w) => {
+
+      const notesOnly = (w: WorkItem) => {
         const project = String(w.projectName || "").trim();
         const notesNotebook = String(w.notesSourceNotebook || "").trim();
         return project === NOTES_PODCAST_PROJECT_NAME || !!notesNotebook;
+      };
+
+      const nextAi = Array.isArray(data.ai) ? data.ai : [];
+      const nextTts = Array.isArray(data.tts) ? data.tts : [];
+      const aiF = nextAi.filter(notesOnly);
+      const ttsF = nextTts.filter(notesOnly);
+      const aiPodcast = aiF.filter((w) => ["podcast_generate", "podcast"].includes(String(w.type || "")));
+      const audioMerged = [...aiPodcast, ...ttsF];
+      audioMerged.sort((a, b) => {
+        const ta = new Date(String(a.createdAt || 0)).getTime();
+        const tb = new Date(String(b.createdAt || 0)).getTime();
+        const na = Number.isFinite(ta) ? ta : 0;
+        const nb = Number.isFinite(tb) ? tb : 0;
+        return nb - na;
       });
-      setPodcastWorks(notesOnlyWorks);
+      const scriptDrafts = aiF.filter((w) => String(w.type || "") === "script_draft");
+      scriptDrafts.sort((a, b) => {
+        const ta = new Date(String(a.createdAt || 0)).getTime();
+        const tb = new Date(String(b.createdAt || 0)).getTime();
+        const na = Number.isFinite(ta) ? ta : 0;
+        const nb = Number.isFinite(tb) ? tb : 0;
+        return nb - na;
+      });
+      setNotesWorksAudio(audioMerged);
+      setNotesWorksScript(scriptDrafts);
+      await refreshNotesActiveJobCount();
     } catch (e) {
-      setPodcastWorksError(String(e instanceof Error ? e.message : e));
-      setPodcastWorks([]);
+      setNotesWorksError(String(e instanceof Error ? e.message : e));
+      setNotesWorksAudio([]);
+      setNotesWorksScript([]);
     } finally {
-      setPodcastWorksLoading(false);
+      setNotesWorksLoading(false);
     }
-  }, [getAuthHeaders, sharedBrowse?.ownerUserId, selectedNotebook]);
+  }, [getAuthHeaders, sharedBrowse?.ownerUserId, selectedNotebook, isLoggedIn, refreshNotesActiveJobCount]);
 
   useEffect(() => {
     void fetchPodcastWorks();
   }, [fetchPodcastWorks]);
 
-  const clearPodcastQueueStallHintTimer = useCallback(() => {
-    const tid = podcastQueueStallTimerRef.current;
-    if (tid != null) {
-      window.clearTimeout(tid);
-      podcastQueueStallTimerRef.current = null;
-    }
-  }, []);
-
-  const waitPodcastJobEvents = useCallback(
-    (jobId: string): Promise<void> => {
-      return new Promise((resolve) => {
-        clearPodcastQueueStallHintTimer();
-        podcastResolveWaitRef.current = resolve;
-        podcastQueueStallTimerRef.current = window.setTimeout(() => {
-          podcastQueueStallTimerRef.current = null;
-          if (podcastActiveJobIdRef.current === jobId && podcastResolveWaitRef.current) {
-            setPodcastGenMessage(t("podcast.studio.queueStallHint"));
-          }
-        }, MEDIA_QUEUE_STALL_HINT_MS);
-        const es = new EventSource(jobEventsSourceUrl(jobId, 0));
-        podcastEventSourceRef.current = es;
-        es.onmessage = (evt) => {
-          try {
-            const data = JSON.parse(evt.data) as {
-              type?: string;
-              message?: string;
-              payload?: { progress?: number };
-            };
-            if (data.type === "terminal") {
-              clearPodcastQueueStallHintTimer();
-              es.close();
-              podcastEventSourceRef.current = null;
-              podcastResolveWaitRef.current = null;
-              resolve();
-              return;
-            }
-            if (isJobEventLogOnlyForUi(data.type)) {
-              return;
-            }
-            const msg = String(data.message || "").trim();
-            if (msg) {
-              setPodcastGenMessage(presentJobProgressMessageForUser(msg));
-              setPodcastPendingStudioWork((prev) =>
-                prev && prev.id === jobId ? { ...prev, status: "running" } : prev
-              );
-            }
-          } catch {
-            // ignore
-          }
-        };
-        es.onerror = () => {
-          clearPodcastQueueStallHintTimer();
-          setPodcastGenMessage("连接暂时中断，请到侧栏「创作记录」查看这一条的状态。");
-          es.close();
-          podcastEventSourceRef.current = null;
-          podcastResolveWaitRef.current = null;
-          resolve();
-        };
-      });
-    },
-    [clearPodcastQueueStallHintTimer, t]
-  );
-
   useEffect(() => {
-    return () => {
-      clearPodcastQueueStallHintTimer();
-      try {
-        podcastEventSourceRef.current?.close();
-      } catch {
-        /* ignore */
-      }
-      podcastEventSourceRef.current = null;
-      podcastResolveWaitRef.current?.();
-      podcastResolveWaitRef.current = null;
-      try {
-        eventSourceRef.current?.close();
-      } catch {
-        /* ignore */
-      }
-      eventSourceRef.current = null;
-      resolveDraftWaitRef.current?.();
-      resolveDraftWaitRef.current = null;
-    };
-  }, [clearPodcastQueueStallHintTimer]);
+    if (notesWorksView === "active") void refreshNotesActiveJobCount();
+  }, [notesWorksView, refreshNotesActiveJobCount]);
 
-  const finalizePodcastJob = useCallback(
-    async (jobId: string): Promise<boolean> => {
-      try {
-        const terminal = (await fetch(`/api/jobs/${jobId}`, {
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { ...getAuthHeaders() }
-        }).then((r) => r.json())) as Record<string, unknown>;
-        const status = String(terminal.status || "");
-        const succeeded = status === "succeeded";
-        void fetchPodcastWorks();
-        return succeeded;
-      } catch {
-        void fetchPodcastWorks();
-        return false;
-      }
+  const notesWorksKeyword = notesWorksQuery.trim().toLowerCase();
+  const notesWorksRecentThresholdMs = useMemo(() => Date.now() - 1000 * 60 * 60 * 24 * 14, []);
+
+  const matchesNotesWorksFilter = useCallback(
+    (w: WorkItem): boolean => {
+      const title = String(w.title || w.id || "").toLowerCase();
+      if (notesWorksKeyword && !title.includes(notesWorksKeyword)) return false;
+      if (!notesWorksRecentOnly) return true;
+      const ts = new Date(String(w.createdAt || "")).getTime();
+      return Number.isFinite(ts) && ts >= notesWorksRecentThresholdMs;
     },
-    [fetchPodcastWorks, getAuthHeaders]
+    [notesWorksKeyword, notesWorksRecentOnly, notesWorksRecentThresholdMs]
   );
+
+  const filteredNotesWorksAudio = useMemo(
+    () => notesWorksAudio.filter(matchesNotesWorksFilter),
+    [notesWorksAudio, matchesNotesWorksFilter]
+  );
+  const filteredNotesWorksScript = useMemo(
+    () => notesWorksScript.filter(matchesNotesWorksFilter),
+    [notesWorksScript, matchesNotesWorksFilter]
+  );
+
+  const notesWorksEmptyAll = !notesWorksLoading && notesWorksAudio.length === 0 && notesWorksScript.length === 0;
+
+  const onNotesActiveJobsChanged = useCallback(() => {
+    void refreshNotesActiveJobCount();
+    void fetchPodcastWorks();
+  }, [refreshNotesActiveJobCount, fetchPodcastWorks]);
 
   const onPodcastJobCreated = useCallback(
     (jobId: string) => {
-      podcastCancelledRef.current = false;
-      podcastActiveJobIdRef.current = jobId;
       rememberJobId(jobId);
-      setPodcastGenBusy(true);
-      setPodcastGenMessage("任务已创建，正在排队处理…");
-      setPodcastPendingStudioWork(buildPodcastPendingStudioWork(jobId, "queued"));
-      void (async () => {
-        try {
-          await waitPodcastJobEvents(jobId);
-          if (!podcastCancelledRef.current) {
-            const ok = await finalizePodcastJob(jobId);
-            if (!podcastCancelledRef.current) {
-              if (ok) {
-                setPodcastGenMessage(
-                  `播客生成完成（${jobId.slice(0, 8)}…）。可在下方「我的作品」或侧栏「创作记录」查看。`
-                );
-              } else {
-                try {
-                  const row = (await fetch(`/api/jobs/${jobId}`, {
-                    credentials: "same-origin",
-                    cache: "no-store",
-                    headers: { ...getAuthHeaders() }
-                  }).then((r) => r.json())) as Record<string, unknown>;
-                  const st = String(row.status || "");
-                  const err = String(row.error_message || "");
-                  setPodcastGenMessage(`处理结果：${st}${err ? ` — ${err}` : ""}`.trim());
-                } catch {
-                  setPodcastGenMessage("生成未完成或失败，请在「创作记录」查看详情。");
-                }
-              }
-            }
-          }
-        } finally {
-          clearPodcastQueueStallHintTimer();
-          clearActiveGenerationJob("podcast");
-          podcastActiveJobIdRef.current = null;
-          podcastCancelledRef.current = false;
-          setPodcastPendingStudioWork(null);
-          setPodcastGenBusy(false);
-        }
-      })();
+      clearActiveGenerationJob("podcast");
+      void fetchPodcastWorks();
+      router.push(`/works/${encodeURIComponent(jobId)}?returnTo=${encodeURIComponent("/notes")}`);
     },
-    [
-      waitPodcastJobEvents,
-      finalizePodcastJob,
-      selectedNotebook,
-      buildPodcastPendingStudioWork,
-      getAuthHeaders,
-      clearPodcastQueueStallHintTimer
-    ]
+    [router, fetchPodcastWorks]
   );
 
   useEffect(() => {
@@ -2042,142 +1978,16 @@ export default function NotesPage() {
           return;
         }
         if (st === "queued" || st === "running") {
-          podcastCancelledRef.current = false;
-          podcastActiveJobIdRef.current = sid;
           rememberJobId(sid);
-          const payload =
-            row.payload && typeof row.payload === "object" ? (row.payload as Record<string, unknown>) : {};
-          const nbFromJob = String(payload.notes_notebook || "").trim();
-          const jt = String(row.job_type || "podcast_generate").trim();
-          setPodcastGenBusy(true);
-          setPodcastGenMessage("恢复未完成的生成…");
-          setPodcastPendingStudioWork({
-            id: sid,
-            type: jt || "podcast_generate",
-            projectName: NOTES_PODCAST_PROJECT_NAME,
-            status: st === "running" ? "running" : "queued",
-            notesSourceNotebook: nbFromJob || selectedNotebook.trim() || undefined,
-            createdAt: typeof row.created_at === "string" ? row.created_at : new Date().toISOString()
-          });
-          await waitPodcastJobEvents(sid);
-          if (!podcastCancelledRef.current) {
-            const ok = await finalizePodcastJob(sid);
-            if (!podcastCancelledRef.current) {
-              if (ok) {
-                setPodcastGenMessage(
-                  `播客生成完成（${sid.slice(0, 8)}…）。可在下方「我的作品」或侧栏「创作记录」查看。`
-                );
-              } else {
-                try {
-                  const term = (await fetch(`/api/jobs/${sid}`, {
-                    credentials: "same-origin",
-                    cache: "no-store",
-                    headers: { ...getAuthHeaders() }
-                  }).then((r) => r.json())) as Record<string, unknown>;
-                  const st2 = String(term.status || "");
-                  const err = String(term.error_message || "");
-                  setPodcastGenMessage(`处理结果：${st2}${err ? ` — ${err}` : ""}`.trim());
-                } catch {
-                  setPodcastGenMessage("生成未完成或失败，请在「创作记录」查看详情。");
-                }
-              }
-            }
-          }
-          podcastActiveJobIdRef.current = null;
+          clearActiveGenerationJob("podcast");
+          router.replace(`/works/${encodeURIComponent(sid)}?returnTo=${encodeURIComponent("/notes")}`);
         }
       } catch {
         clearActiveGenerationJob("podcast");
-      } finally {
-        clearPodcastQueueStallHintTimer();
-        clearActiveGenerationJob("podcast");
-        podcastCancelledRef.current = false;
-        setPodcastPendingStudioWork(null);
-        setPodcastGenBusy(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载时尝试恢复
-  }, [waitPodcastJobEvents, finalizePodcastJob, getAuthHeaders, selectedNotebook, clearPodcastQueueStallHintTimer]);
-
-  const waitDraftJobEvents = useCallback((jobId: string): Promise<void> => {
-    return new Promise((resolve) => {
-      resolveDraftWaitRef.current = resolve;
-      const es = new EventSource(jobEventsSourceUrl(jobId, 0));
-      eventSourceRef.current = es;
-      activeDraftJobIdRef.current = jobId;
-      es.onmessage = (evt) => {
-        try {
-          const data = JSON.parse(evt.data) as {
-            type?: string;
-            message?: string;
-            payload?: { progress?: number };
-          };
-          if (data.type === "terminal") {
-            es.close();
-            eventSourceRef.current = null;
-            resolveDraftWaitRef.current = null;
-            resolve();
-            return;
-          }
-          if (isJobEventLogOnlyForUi(data.type)) return;
-          const msg = String(data.message || "").trim();
-          if (msg) setDraftMessage(presentJobProgressMessageForUser(msg));
-        } catch {
-          // ignore
-        }
-      };
-      es.onerror = () => {
-        setDraftMessage("连接暂时中断，请到侧栏「创作记录」查看这一条的状态。");
-        es.close();
-        eventSourceRef.current = null;
-        resolveDraftWaitRef.current = null;
-        resolve();
-      };
-    });
-  }, []);
-
-  const finalizeDraftJob = useCallback(async (jobId: string): Promise<void> => {
-    try {
-      const terminal = (await fetch(`/api/jobs/${jobId}`, {
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: { ...getAuthHeaders() }
-      }).then((r) => r.json())) as Record<string, unknown>;
-      const status = String(terminal.status || "");
-      const err = String(terminal.error_message || "");
-      if (status === "succeeded") {
-        const payloadRaw = terminal.payload;
-        const payload =
-          payloadRaw && typeof payloadRaw === "object" && !Array.isArray(payloadRaw)
-            ? (payloadRaw as Record<string, unknown>)
-            : {};
-        const outMode = String(payload.output_mode || payload.outputMode || "").toLowerCase();
-        const resultRaw = terminal.result;
-        const result =
-          resultRaw && typeof resultRaw === "object" && !Array.isArray(resultRaw)
-            ? (resultRaw as Record<string, unknown>)
-            : {};
-        const script = String(
-          result.script_text || result.scriptText || result.preview || result.script_preview || ""
-        ).trim();
-        if (outMode === "article" && script.length >= 40) {
-          const title = String(result.title || "文章").trim() || "文章";
-          setArticleDraftPreview({ jobId, title, body: script });
-          setDraftMessage(
-            `生成完成（${jobId.slice(0, 8)}…）。下方可阅读全文并复制；也可在侧栏「创作记录」或右侧「笔记本作品」里查看。`
-          );
-        } else {
-          setArticleDraftPreview(null);
-          setDraftMessage(`生成完成（${jobId.slice(0, 8)}…）。可在侧栏「创作记录」或右侧「笔记本作品」里查看。`);
-        }
-      } else {
-        setArticleDraftPreview(null);
-        setDraftMessage(`处理结果：${status}${err ? ` — ${err}` : ""}`);
-      }
-    } catch (e) {
-      setArticleDraftPreview(null);
-      setDraftMessage(String(e instanceof Error ? e.message : e));
-    }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, router]);
 
   useEffect(() => {
     if (draftRecoveryStartedRef.current) return;
@@ -2197,24 +2007,16 @@ export default function NotesPage() {
           return;
         }
         if (st === "queued" || st === "running") {
-          draftCancelledRef.current = false;
-          setDraftBusy(true);
-          setDraftMessage(`恢复未完成的生成 ${sid}…`);
           rememberJobId(sid);
-          activeDraftJobIdRef.current = sid;
-          await waitDraftJobEvents(sid);
-          if (!draftCancelledRef.current) await finalizeDraftJob(sid);
+          clearActiveGenerationJob("script_draft");
+          router.replace(`/works/${encodeURIComponent(sid)}?returnTo=${encodeURIComponent("/notes")}`);
         }
       } catch {
         clearActiveGenerationJob("script_draft");
-      } finally {
-        clearActiveGenerationJob("script_draft");
-        setDraftBusy(false);
-        draftCancelledRef.current = false;
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载时尝试恢复
-  }, [waitDraftJobEvents, finalizeDraftJob, getAuthHeaders]);
+  }, [getAuthHeaders, router]);
 
   async function createNotebook() {
     const name = newNotebookName.trim();
@@ -3052,7 +2854,6 @@ export default function NotesPage() {
     }
     const preset = ART_KIND_PRESETS[artKind];
     const programName = (preset.programName && preset.programName.trim()) || "笔记文章";
-    draftCancelledRef.current = false;
     setDraftBusy(true);
     setDraftMessage("");
     setArticleDraftPreview(null);
@@ -3091,19 +2892,15 @@ export default function NotesPage() {
         }
       });
       rememberJobId(data.id);
-      setActiveGenerationJob("script_draft", data.id);
-      setDraftMessage(`记录 ${data.id.slice(0, 8)}…：已创建，正在监听进度`);
       setShowArticleModal(false);
       setArticleModalStep("pick");
-      activeDraftJobIdRef.current = data.id;
-      await waitDraftJobEvents(data.id);
-      if (!draftCancelledRef.current) await finalizeDraftJob(data.id);
+      void fetchPodcastWorks();
+      router.push(`/works/${encodeURIComponent(data.id)}?returnTo=${encodeURIComponent("/notes")}`);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
       clearActiveGenerationJob("script_draft");
       setDraftBusy(false);
-      activeDraftJobIdRef.current = null;
     }
   }
 
@@ -4515,10 +4312,11 @@ export default function NotesPage() {
             </div>
 
           </div>
-          <section className="mt-6 rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft lg:mt-8">
-            <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/50 pb-3">
-              <div className="min-w-0 flex-1">
-                <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
+          <section className="mx-auto mt-6 w-full max-w-6xl rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft sm:px-4 lg:mt-8">
+            <div className="mb-2 flex flex-col gap-1 border-b border-line/80 pb-2 sm:flex-row sm:items-end sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">我的作品</h2>
+                <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">成品与进行中任务</p>
                 {notesWorkbenchCreationProgress ? (
                   <div
                     className={`mt-2 rounded-lg border px-2.5 py-1.5 text-xs ${
@@ -4540,37 +4338,122 @@ export default function NotesPage() {
                   </div>
                 ) : null}
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-ink hover:bg-fill"
-                  onClick={() => setWorksPanelExpanded((v) => !v)}
-                >
-                  {worksPanelExpanded ? "收起" : "展开"}
-                </button>
-                <a
-                  href="/works"
-                  className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-brand hover:bg-fill"
-                >
-                  查看全部
-                </a>
-              </div>
+              {(notesWorksView === "audio" || notesWorksView === "script") && !notesWorksLoading ? (
+                <p className="shrink-0 text-xs text-muted">
+                  已加载{" "}
+                  <span className="font-medium tabular-nums text-ink">
+                    {notesWorksView === "audio" ? notesWorksAudio.length : notesWorksScript.length}
+                  </span>{" "}
+                  件
+                </p>
+              ) : null}
             </div>
-            <div
-              className={`mt-4 overflow-y-auto overflow-x-hidden transition-[max-height] duration-200 ${
-                worksPanelExpanded ? "max-h-[min(92vh,1040px)]" : "max-h-[min(46vh,520px)]"
-              }`}
-            >
+
+            <div className="mb-2 flex flex-wrap items-center gap-1.5 gap-y-2">
+              <button
+                type="button"
+                className={chipClass(notesWorksView === "audio", "sm")}
+                onClick={() => setNotesWorksView("audio")}
+              >
+                音频
+              </button>
+              <button
+                type="button"
+                className={chipClass(notesWorksView === "script", "sm")}
+                onClick={() => setNotesWorksView("script")}
+              >
+                文稿
+              </button>
+              <button
+                type="button"
+                className={[chipClass(notesWorksView === "active", "sm"), "inline-flex items-center"].join(" ")}
+                onClick={() => setNotesWorksView("active")}
+              >
+                进行中
+                {notesActiveJobCount != null && notesActiveJobCount > 0 ? (
+                  <span className="ml-1 rounded-full bg-brand/15 px-1.5 py-px text-[10px] font-medium tabular-nums text-brand">
+                    {notesActiveJobCount}
+                  </span>
+                ) : null}
+              </button>
+              {notesWorksView === "audio" || notesWorksView === "script" ? (
+                <>
+                  <span className="hidden h-4 w-px bg-line sm:inline-block" aria-hidden />
+                  <input
+                    className="min-w-[8rem] flex-1 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-ink sm:max-w-[11rem]"
+                    placeholder="搜索标题…"
+                    value={notesWorksQuery}
+                    onChange={(e) => setNotesWorksQuery(e.target.value)}
+                    aria-label="搜索作品"
+                  />
+                  <button
+                    type="button"
+                    className={chipClass(notesWorksRecentOnly, "sm")}
+                    onClick={() => setNotesWorksRecentOnly((v) => !v)}
+                  >
+                    14 天内
+                  </button>
+                </>
+              ) : null}
+              <span className="min-w-[0.5rem] flex-1" aria-hidden />
+              <a
+                href="/works"
+                className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-brand hover:bg-fill"
+              >
+                查看全部
+              </a>
+            </div>
+
+            {notesWorksView === "active" ? <WorksActiveJobsPanel onActiveJobsChanged={onNotesActiveJobsChanged} /> : null}
+
+            {(notesWorksView === "audio" || notesWorksView === "script") && notesWorksError ? (
+              <p className="mb-2 text-sm text-danger-ink">{notesWorksError}</p>
+            ) : null}
+
+            {(notesWorksView === "audio" || notesWorksView === "script") && notesWorksLoading ? (
+              <p className="py-6 text-center text-sm text-muted">{t("common.loading")}</p>
+            ) : null}
+
+            {(notesWorksView === "audio" || notesWorksView === "script") && notesWorksEmptyAll && !notesWorksLoading ? (
+              <EmptyState
+                title={t("empty.worksFinished.title")}
+                description={t("empty.worksFinished.desc")}
+                action={
+                  <button
+                    type="button"
+                    className="text-sm text-brand underline"
+                    onClick={() => void fetchPodcastWorks()}
+                  >
+                    {t("common.refresh")}
+                  </button>
+                }
+              />
+            ) : null}
+
+            {notesWorksView === "audio" && !notesWorksEmptyAll ? (
               <PodcastWorksGallery
-                works={podcastWorks}
-                loading={podcastWorksLoading}
-                fetchError={podcastWorksError}
-                onDismissError={() => setPodcastWorksError("")}
-                onWorkDeleted={() => void fetchPodcastWorks()}
                 variant="all"
+                works={filteredNotesWorksAudio}
+                loading={notesWorksLoading}
+                fetchError={notesWorksError}
+                onDismissError={() => setNotesWorksError("")}
+                onWorkDeleted={() => void fetchPodcastWorks()}
+                enableBatchActions
                 workDetailReturnTo="/notes"
               />
-            </div>
+            ) : null}
+            {notesWorksView === "script" && !notesWorksEmptyAll ? (
+              <PodcastWorksGallery
+                variant="notes"
+                works={filteredNotesWorksScript}
+                loading={notesWorksLoading}
+                fetchError={notesWorksError}
+                onDismissError={() => setNotesWorksError("")}
+                onWorkDeleted={() => void fetchPodcastWorks()}
+                enableBatchActions
+                workDetailReturnTo="/notes"
+              />
+            ) : null}
           </section>
         </>
       )}

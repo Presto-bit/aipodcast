@@ -19,6 +19,8 @@ type Props = {
   showNotesSaveBusy: boolean;
   scriptResolvePending: boolean;
   hasOwner: boolean;
+  jobGenerating?: boolean;
+  generatingPlaceholder?: string;
 };
 
 export function WorkHubShownotesSection({
@@ -35,7 +37,9 @@ export function WorkHubShownotesSection({
   shareAiBusy,
   showNotesSaveBusy,
   scriptResolvePending,
-  hasOwner
+  hasOwner,
+  jobGenerating = false,
+  generatingPlaceholder = "生成中,请稍等..."
 }: Props) {
   const previewMarkdown = useMemo(
     () => reorderShowNotesGoldenQuotesAfterListen(showNotes),
@@ -43,9 +47,8 @@ export function WorkHubShownotesSection({
   );
 
   return (
-    <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
-      <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">Shownotes</h3>
-      <div className="mt-3 space-y-3">
+    <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4" aria-label="Shownotes">
+      <div className="space-y-3">
         <div className="flex gap-1 rounded-lg border border-line bg-fill/30 p-0.5">
           <button
             type="button"
@@ -76,7 +79,7 @@ export function WorkHubShownotesSection({
                 ? "bg-surface text-ink shadow-soft"
                 : "text-muted hover:bg-fill/60 hover:text-ink"
             }`}
-            disabled={busy || shareAiBusy || scriptResolvePending}
+            disabled={busy || shareAiBusy || scriptResolvePending || jobGenerating}
             onClick={() => {
               onNotesTab("ai");
               onOpenAiModal();
@@ -96,7 +99,7 @@ export function WorkHubShownotesSection({
             <button
               type="button"
               className="absolute right-2 top-2 z-10 rounded-md border border-line bg-surface/95 px-2.5 py-1 text-xs font-medium text-ink shadow-sm backdrop-blur-sm hover:bg-fill disabled:opacity-40"
-              disabled={busy || shareAiBusy || showNotesSaveBusy || !hasOwner}
+              disabled={busy || shareAiBusy || showNotesSaveBusy || !hasOwner || jobGenerating}
               title={hasOwner ? "保存到作品并更新分享页" : "请先登录"}
               onClick={() => void onSaveShowNotes()}
             >
@@ -107,17 +110,21 @@ export function WorkHubShownotesSection({
               rows={12}
               value={showNotes}
               onChange={(e) => onShowNotesChange(e.target.value)}
-              disabled={busy || shareAiBusy || showNotesSaveBusy}
+              disabled={busy || shareAiBusy || showNotesSaveBusy || jobGenerating}
               maxLength={20_000}
             />
           </div>
         ) : (
           <div className="max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/20 p-3">
-            <ShowNotesMarkdownPreview
-              markdown={previewMarkdown}
-              onSeekSeconds={onSeekSeconds}
-              className="!max-h-none overflow-visible border-0 bg-transparent p-0"
-            />
+            {jobGenerating && !previewMarkdown.trim() ? (
+              <p className="text-sm leading-relaxed text-muted">{generatingPlaceholder}</p>
+            ) : (
+              <ShowNotesMarkdownPreview
+                markdown={previewMarkdown}
+                onSeekSeconds={onSeekSeconds}
+                className="!max-h-none overflow-visible border-0 bg-transparent p-0"
+              />
+            )}
           </div>
         )}
         {hints.showNotesVeryShort ? (

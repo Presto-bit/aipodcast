@@ -43,6 +43,13 @@ type Props = {
   audioRegenActive: boolean;
   audioRegenProgress: number;
   audioRegenMessage: string;
+  /** 编排任务仍在 queued/running：分区占位与进度条 */
+  jobGenerating?: boolean;
+  jobGenPlaceholder?: string;
+  jobLiveLine?: string;
+  jobLiveProgressPct?: number | null;
+  jobFailedMessage?: string;
+  readonlyEmptyHint?: string;
   detailTab: WorkHubDetailTab;
   onDetailTabChange: (t: WorkHubDetailTab) => void;
   shownotesPanel: ReactNode;
@@ -72,6 +79,12 @@ export function WorkHubOverviewPanel({
   audioRegenActive,
   audioRegenProgress,
   audioRegenMessage,
+  jobGenerating = false,
+  jobGenPlaceholder = "生成中,请稍等...",
+  jobLiveLine,
+  jobLiveProgressPct,
+  jobFailedMessage,
+  readonlyEmptyHint,
   detailTab,
   onDetailTabChange,
   shownotesPanel
@@ -120,10 +133,37 @@ export function WorkHubOverviewPanel({
       </div>
     ) : null;
 
-  const summaryLine = episodeSummary.trim();
+  const jobLivePct =
+    typeof jobLiveProgressPct === "number" && Number.isFinite(jobLiveProgressPct)
+      ? Math.min(100, Math.max(0, jobLiveProgressPct))
+      : null;
+  const jobGenProgressEl =
+    jobGenerating && !audioRegenActive ? (
+      <div className="mb-3 rounded-xl border border-brand/25 bg-brand/10 px-3 py-2">
+        {jobLivePct != null ? (
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+            <div
+              className="h-full rounded-full bg-brand transition-[width] duration-300"
+              style={{ width: `${jobLivePct}%` }}
+            />
+          </div>
+        ) : null}
+        <p className={`text-[11px] text-muted ${jobLivePct != null ? "mt-1.5" : ""}`} role="status">
+          {jobLiveLine?.trim() || jobGenPlaceholder}
+        </p>
+      </div>
+    ) : null;
+
+  const summaryLine = episodeSummary.trim() || (jobGenerating ? jobGenPlaceholder : "");
 
   return (
     <div className="space-y-6">
+      {jobFailedMessage?.trim() ? (
+        <div className="rounded-xl border border-danger/35 bg-danger-soft/80 px-3 py-2 text-sm text-danger-ink" role="alert">
+          {jobFailedMessage.trim()}
+        </div>
+      ) : null}
+      {jobGenProgressEl}
       <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-5">
         <div className="relative h-[4.5rem] w-[4.5rem] shrink-0 overflow-hidden rounded-xl border border-line bg-fill/30 shadow-soft sm:h-[4.75rem] sm:w-[4.75rem]">
           {coverSrc ? (
@@ -177,52 +217,60 @@ export function WorkHubOverviewPanel({
           <h2 className="text-balance text-base font-semibold tracking-tight text-ink sm:text-lg">
             {episodeTitle.trim() || "未命名作品"}
           </h2>
-          {summaryLine ? (
-            <p className="text-[13px] leading-relaxed text-muted sm:text-sm">{summaryLine}</p>
-          ) : (
-            <p className="text-[13px] text-muted sm:text-sm">暂无简介</p>
-          )}
+          {!scriptDraft ? (
+            summaryLine ? (
+              <p className="text-[13px] leading-relaxed text-muted sm:text-sm">{summaryLine}</p>
+            ) : (
+              <p className="text-[13px] text-muted sm:text-sm">{jobGenerating ? jobGenPlaceholder : "暂无简介"}</p>
+            )
+          ) : null}
           <p className="text-[11px] leading-relaxed text-muted break-words sm:text-xs">{navMetaPipe.trim() || "—"}</p>
         </div>
       </div>
 
-      <div className="flex gap-1 rounded-xl border border-line bg-fill/35 p-1">
-        <button
-          type="button"
-          onClick={() => onDetailTabChange("edit")}
-          className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
-            detailTab === "edit"
-              ? "bg-surface text-ink shadow-soft"
-              : "text-muted hover:bg-fill/60 hover:text-ink"
-          }`}
-        >
-          编辑
-        </button>
-        <button
-          type="button"
-          onClick={() => onDetailTabChange("shownotes")}
-          className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
-            detailTab === "shownotes"
-              ? "bg-surface text-ink shadow-soft"
-              : "text-muted hover:bg-fill/60 hover:text-ink"
-          }`}
-        >
-          Shownotes
-        </button>
-      </div>
-
-      {audioBlocked && !scriptDraft ? (
-        <div className="rounded-2xl border border-warning/30 bg-warning-soft/80 px-4 py-4 text-sm text-warning-ink">
-          <p>暂无可播放音频，请确认任务已成功完成。</p>
+      {!scriptDraft ? (
+        <div className="flex gap-1 rounded-xl border border-line bg-fill/35 p-1">
+          <button
+            type="button"
+            onClick={() => onDetailTabChange("edit")}
+            className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+              detailTab === "edit"
+                ? "bg-surface text-ink shadow-soft"
+                : "text-muted hover:bg-fill/60 hover:text-ink"
+            }`}
+          >
+            编辑
+          </button>
+          <button
+            type="button"
+            onClick={() => onDetailTabChange("shownotes")}
+            className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+              detailTab === "shownotes"
+                ? "bg-surface text-ink shadow-soft"
+                : "text-muted hover:bg-fill/60 hover:text-ink"
+            }`}
+          >
+            Shownotes
+          </button>
         </div>
       ) : null}
 
-      {detailTab === "edit" ? (
+      {audioBlocked && !scriptDraft ? (
+        jobGenerating ? (
+          <div className="rounded-2xl border border-brand/25 bg-brand/10 px-4 py-4 text-sm text-brand">
+            <p>{jobLiveLine?.trim() || jobGenPlaceholder}</p>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-warning/30 bg-warning-soft/80 px-4 py-4 text-sm text-warning-ink">
+            <p>暂无可播放音频，请确认任务已成功完成。</p>
+          </div>
+        )
+      ) : null}
+
+      {scriptDraft || detailTab === "edit" ? (
         <>
           {scriptManuscriptPanel ? (
-            <p className="text-xs leading-relaxed text-muted">
-              纯文稿作品无播客音频，无法试听或走 RSS 发布；可在下方阅读正文
-            </p>
+            <p className="text-xs leading-relaxed text-muted">纯文稿作品无播客音频</p>
           ) : null}
 
           {scriptManuscriptPanel ? (
@@ -242,6 +290,7 @@ export function WorkHubOverviewPanel({
                   regenerateVoiceBusy={regenerateVoiceBusy}
                   onRegenerateVoice={onRegenerateVoice}
                   pureManuscriptOnly
+                  readonlyEmptyHint={readonlyEmptyHint}
                 />
               </div>
             </section>
@@ -282,6 +331,7 @@ export function WorkHubOverviewPanel({
                     scriptAutosave
                     requestDelete={scriptDeleteBump}
                     chapterEditorOpen={scriptChapterEditing}
+                    readonlyEmptyHint={readonlyEmptyHint}
                   />
                 </div>
               ) : null}
@@ -306,7 +356,7 @@ export function WorkHubOverviewPanel({
                 </ul>
               ) : (
                 <p className={`text-[11px] text-muted ${showManuscriptTools ? "mt-4" : "mt-2"}`}>
-                  暂无章节时间轴（可在「Shownotes」中编辑并插入章节）。
+                  {jobGenerating ? jobGenPlaceholder : "暂无章节时间轴（可在「Shownotes」中编辑并插入章节）。"}
                 </p>
               )}
             </section>

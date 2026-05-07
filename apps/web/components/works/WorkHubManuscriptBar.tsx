@@ -24,6 +24,8 @@ type Props = {
   scriptAutosave?: boolean;
   /** 递增时打开「清空口播稿」确认框（供外部工具栏触发删除） */
   requestDelete?: number;
+  /** 只读且无正文时替代「（无正文）」（如生成中占位） */
+  readonlyEmptyHint?: string;
   /**
    * 章节口播：`hideToolbar` + `scriptAutosave` 时为 false 则只读预览；true 时为编辑态（仅一处正文）。
    */
@@ -43,7 +45,8 @@ export function WorkHubManuscriptBar({
   hideToolbar = false,
   scriptAutosave = false,
   requestDelete = 0,
-  chapterEditorOpen
+  chapterEditorOpen,
+  readonlyEmptyHint
 }: Props) {
   const [draft, setDraft] = useState(manuscriptBody);
   const [busy, setBusy] = useState(false);
@@ -297,7 +300,7 @@ export function WorkHubManuscriptBar({
                 : "max-h-[min(40vh,18rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
             }
           >
-            {manuscriptBody.trim() ? manuscriptBody : "（无正文）"}
+            {manuscriptBody.trim() ? manuscriptBody : readonlyEmptyHint?.trim() || "（无正文）"}
           </pre>
         )}
       </div>

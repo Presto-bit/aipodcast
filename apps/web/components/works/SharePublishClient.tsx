@@ -17,7 +17,7 @@ import {
   truncateSummaryToAutoMax,
   type ShareFormFields
 } from "../../lib/sharePublishDefaults";
-import { getBearerAuthHeadersSync } from "../../lib/authHeaders";
+import { getBearerAuthHeadersSync, jobEventsSourceUrl } from "../../lib/authHeaders";
 import { readLocalStorageScoped, readSessionStorageScoped, writeLocalStorageScoped } from "../../lib/userScopedStorage";
 import {
   createJob,
@@ -33,6 +33,8 @@ import {
   type RssChannel
 } from "../../lib/api";
 import type { JobRecord } from "../../lib/types";
+import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
+import { presentJobProgressMessageForUser } from "../../lib/jobProgressUserText";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, PUBLISH_PLATFORMS } from "../../lib/publishPlatforms";
 import { PUBLISH_PLATFORM_ICON_URL } from "../../lib/publishPlatformAssets";
@@ -47,6 +49,7 @@ import { useWorkAudioPlayer, type WorkAudioToggleMeta } from "../../lib/workAudi
 import { WorkHubOverviewPanel, type WorkHubDetailTab } from "./WorkHubOverviewPanel";
 import { WorkHubShownotesSection } from "./WorkHubShownotesSection";
 import { RssChannelEditor } from "../rss/RssChannelEditor";
+import { downloadJobBundleZip, downloadJobManuscriptMarkdown } from "../../lib/workBundleDownload";
 
 const RSS_LAST_CHANNEL_STORAGE_KEY = "fym_rss_last_channel_id";
 
@@ -77,6 +80,16 @@ function IconShareExport({ className }: { className?: string }) {
       <path d="M12 3v12" strokeLinecap="round" />
       <path d="m8 7 4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M4 14v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconDownloadBundle({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M12 3v12" strokeLinecap="round" />
+      <path d="m8 11 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 21h16" strokeLinecap="round" />
     </svg>
   );
 }
@@ -116,6 +129,7 @@ function jobResultHasPlayableAudio(result: Record<string, unknown>): boolean {
 type FormSnapshot = ShareFormFields;
 
 const DRAFT_DEBOUNCE_MS = 600;
+const JOB_GEN_PLACEHOLDER = "生成中,请稍等...";
 
 type ShareGenContext = {
   payload: Record<string, unknown>;
@@ -223,6 +237,8 @@ export function SharePublishClient({
   const [showNotesSaveBusy, setShowNotesSaveBusy] = useState(false);
   /** 当前登录用户且有权访问时拉取到的任务；匿名仅有公开试听数据时为空 */
   const [ownerJobRecord, setOwnerJobRecord] = useState<JobRecord | null>(null);
+  const [jobLiveProgressMsg, setJobLiveProgressMsg] = useState("");
+  const [jobLiveProgressPct, setJobLiveProgressPct] = useState<number | null>(null);
   /** RSS 发布：服务端与账户/作品计费挂钩；复制上方分享链接不受限 */
   const [rssGate, setRssGate] = useState<
     "idle" | "loading" | "ok" | "blocked" | "err"
@@ -239,10 +255,13 @@ export function SharePublishClient({
   const [publishPlatformIconBroken, setPublishPlatformIconBroken] = useState<
     Partial<Record<PublishPlatformId, boolean>>
   >({});
+  const [workHubDownloadBusy, setWorkHubDownloadBusy] = useState(false);
 
   const shareGenContextRef = useRef<ShareGenContext | null>(null);
   /** 主人进入分享页后至多触发一次「persist 写入 result」的 AI 初稿（Strict Mode 取消时会复位）。 */
   const deferredShareAiOnceRef = useRef(false);
+  const ownerJobRecordRef = useRef<JobRecord | null>(null);
+  ownerJobRecordRef.current = ownerJobRecord;
 
   useEffect(() => {
     setShareOrigin(typeof window !== "undefined" ? window.location.origin : "");
@@ -355,6 +374,117 @@ export function SharePublishClient({
     [jobId]
   );
 
+  const mergeRunningJobSnapshot = useCallback(
+    async (row: JobRecord, canceledRef: { current: boolean }) => {
+      const rowRec = row as unknown as Record<string, unknown>;
+      const resultEarly = (rowRec.result || {}) as Record<string, unknown>;
+      const payload = (rowRec.payload || {}) as Record<string, unknown>;
+      const succeeded = row.status === "succeeded";
+
+      setJobType(String(row.job_type || ""));
+      setHasAudio(jobResultHasPlayableAudio(resultEarly));
+
+      let rawTitle = "";
+      try {
+        rawTitle = String(readSessionStorageScoped(`fym_share_display_title:${jobId}`) || "").trim();
+      } catch {
+        rawTitle = "";
+      }
+      rawTitle = rawTitle || String(resultEarly.title || "").trim();
+
+      const rawCh = resultEarly.audio_chapters;
+      const hasCh =
+        Array.isArray(rawCh) &&
+        rawCh.length > 0 &&
+        rawCh.every((x) => x && typeof x === "object");
+      const audioChaptersRaw = hasCh ? (rawCh as Record<string, unknown>[]) : undefined;
+      if (hasCh) {
+        setChapterOutline(
+          (rawCh as Record<string, unknown>[]).map((o) => ({
+            title: String(o.title || "章节"),
+            start_ms: Number(o.start_ms) || 0
+          }))
+        );
+      } else {
+        setChapterOutline(null);
+      }
+
+      const durRaw = resultEarly.audio_duration_sec;
+      const audioDurationSec =
+        typeof durRaw === "number" && Number.isFinite(durRaw)
+          ? durRaw
+          : typeof durRaw === "string" && String(durRaw).trim() !== ""
+            ? Number.parseFloat(String(durRaw))
+            : null;
+
+      const shortFrom = String(resultEarly.script_text || "").trim();
+      let fullScript = shortFrom;
+      if (succeeded && shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN) {
+        if (canceledRef.current) return;
+        setScriptResolvePending(true);
+        try {
+          fullScript = await resolveJobScriptBodyText(jobId, rowRec, getBearerAuthHeadersSync());
+        } catch {
+          /* ignore */
+        } finally {
+          if (!canceledRef.current) setScriptResolvePending(false);
+        }
+      } else if (!succeeded) {
+        fullScript = shortFrom || String(resultEarly.preview || resultEarly.script_preview || "").trim();
+      }
+
+      if (canceledRef.current) return;
+
+      shareGenContextRef.current = {
+        payload,
+        displayTitleHint: rawTitle,
+        titleFallbackRaw: rawTitle,
+        resultEarly
+      };
+
+      const derived = buildSharePublishCopyFromScriptAndPayload({
+        scriptRaw: fullScript,
+        payload,
+        result: resultEarly,
+        displayTitleHint: rawTitle,
+        audioChaptersRaw,
+        audioDurationSec: Number.isFinite(audioDurationSec as number) ? audioDurationSec : null,
+        fallbackTitle: sanitizeShareEpisodeTitle(rawTitle),
+        fallbackSummary: defaultSummaryFromJobResult(resultEarly)
+      });
+
+      if (succeeded) {
+        setEpisodeTitle((prev) => {
+          const nextEt = prev.trim() ? prev : derived.episodeTitle;
+          initialSnapshotRef.current = {
+            episodeTitle: nextEt,
+            summary: truncateSummaryToAutoMax(derived.summary),
+            showNotes: derived.showNotes
+          };
+          return nextEt;
+        });
+      } else {
+        setEpisodeTitle((prev) => (prev.trim() ? prev : derived.episodeTitle));
+      }
+      setSummary(derived.summary);
+      setShowNotes(derived.showNotes);
+      setManuscriptBody(String(fullScript || "").trim());
+
+      const coverFromResult = jobResultCoverUrl(resultEarly);
+      if (coverFromResult.trim()) setListenCoverUrl(coverFromResult.trim());
+
+      const durListen = resultEarly.audio_duration_sec;
+      let dVal: number | null = null;
+      if (typeof durListen === "number" && Number.isFinite(durListen) && durListen > 0) dVal = durListen;
+      else if (typeof durListen === "string" && String(durListen).trim()) {
+        const n = Number.parseFloat(String(durListen));
+        if (Number.isFinite(n) && n > 0) dVal = n;
+      }
+      if (dVal != null) setListenDurationSec(dVal);
+    },
+    [jobId]
+  );
+
   useEffect(() => {
     let canceled = false;
     deferredShareAiOnceRef.current = false;
@@ -369,6 +499,8 @@ export function SharePublishClient({
       setSharePublicAudioUrl("");
       setListenDurationSec(null);
       setPublishedHint("");
+      setJobLiveProgressMsg("");
+      setJobLiveProgressPct(null);
 
       if (layout === "standalone") {
         let pubStandalone: Awaited<ReturnType<typeof fetchPublicShareListen>> = null;
@@ -637,7 +769,172 @@ export function SharePublishClient({
     };
   }, [jobId, layout, applyJobToForm]);
 
+  useEffect(() => {
+    if (layout !== "work_hub" || !shareJobHydrated || !formReady) return;
+    const row0 = ownerJobRecordRef.current;
+    if (!row0 || (row0.status !== "queued" && row0.status !== "running")) return;
+
+    const canceledRef = { current: false };
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource(jobEventsSourceUrl(jobId, 0));
+      es.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data) as {
+            type?: string;
+            message?: string;
+            payload?: { progress?: number };
+          };
+          if (data.type === "terminal") return;
+          if (isJobEventLogOnlyForUi(data.type)) {
+            const pOnly = data.payload?.progress;
+            if (typeof pOnly === "number") setJobLiveProgressPct(Math.min(100, Math.max(0, pOnly)));
+            return;
+          }
+          const msg = String(data.message || "").trim();
+          if (msg) setJobLiveProgressMsg(presentJobProgressMessageForUser(msg));
+          const p = data.payload?.progress;
+          if (typeof p === "number") setJobLiveProgressPct(Math.min(100, Math.max(0, p)));
+        } catch {
+          /* ignore */
+        }
+      };
+      es.onerror = () => {
+        try {
+          es?.close();
+        } catch {
+          /* ignore */
+        }
+        es = null;
+      };
+    } catch {
+      es = null;
+    }
+
+    void (async () => {
+      while (!canceledRef.current) {
+        try {
+          const row = await getJob(jobId);
+          if (canceledRef.current) break;
+          setOwnerJobRecord(row);
+          const rp = row.progress;
+          if (typeof rp === "number" && Number.isFinite(rp)) {
+            setJobLiveProgressPct(Math.min(100, Math.max(0, rp)));
+          }
+          await mergeRunningJobSnapshot(row, canceledRef);
+          const st = row.status;
+          if (st === "succeeded") {
+            try {
+              const pubs = await listRssPublicationsByJobIds([jobId]);
+              if (!canceledRef.current) {
+                const list = pubs[jobId] || [];
+                setPublishedHint(list.length > 0 ? `已发布：${list.map((p) => p.channel_title).join("、")}` : "");
+              }
+            } catch {
+              /* ignore */
+            }
+            const rowRec = row as unknown as Record<string, unknown>;
+            const resultEarly = (rowRec.result || {}) as Record<string, unknown>;
+            const jtLower = String(row.job_type || "").trim().toLowerCase();
+            const autoS0 = String(resultEarly.auto_share_summary || "").trim();
+            const autoN0 = String(resultEarly.auto_share_show_notes || "").trim();
+            const hasAutoBoth0 = Boolean(autoS0 && autoN0);
+            if (
+              !deferredShareAiOnceRef.current &&
+              !hasAutoBoth0 &&
+              jtLower !== "script_draft" &&
+              jobResultHasPlayableAudio(resultEarly)
+            ) {
+              deferredShareAiOnceRef.current = true;
+              void (async () => {
+                try {
+                  if (canceledRef.current) {
+                    deferredShareAiOnceRef.current = false;
+                    return;
+                  }
+                  const out = await fetchJobShareAiCopy(jobId, { persist: true });
+                  if (canceledRef.current || !out.success) {
+                    deferredShareAiOnceRef.current = false;
+                    return;
+                  }
+                  const sum = String(out.summary ?? "").trim();
+                  const notes = String(out.show_notes ?? "").trim();
+                  if (!sum && !notes) {
+                    deferredShareAiOnceRef.current = false;
+                    return;
+                  }
+                  const snap = initialSnapshotRef.current;
+                  if (snap) {
+                    initialSnapshotRef.current = {
+                      episodeTitle: snap.episodeTitle,
+                      summary: truncateSummaryToAutoMax(sum || snap.summary),
+                      showNotes: notes || snap.showNotes
+                    };
+                  }
+                  if (sum) setSummary(truncateSummaryToAutoMax(sum));
+                  if (notes) setShowNotes(notes);
+                  try {
+                    const fresh = await getJob(jobId);
+                    if (!canceledRef.current && fresh) setOwnerJobRecord(fresh);
+                  } catch {
+                    /* ignore */
+                  }
+                } catch {
+                  deferredShareAiOnceRef.current = false;
+                }
+              })();
+            }
+            break;
+          }
+          if (st === "failed" || st === "cancelled") break;
+        } catch {
+          /* ignore */
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      try {
+        es?.close();
+      } catch {
+        /* ignore */
+      }
+      if (!canceledRef.current) {
+        setJobLiveProgressMsg("");
+        setJobLiveProgressPct(null);
+      }
+    })();
+
+    return () => {
+      canceledRef.current = true;
+      try {
+        es?.close();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [jobId, layout, shareJobHydrated, formReady, mergeRunningJobSnapshot]);
+
   const scriptDraft = jobType === "script_draft";
+  const onWorkHubDownloadBundle = useCallback(async () => {
+    const id = jobId.trim();
+    if (!id) return;
+    setWorkHubDownloadBusy(true);
+    const title = episodeTitle.trim() || jobTitle.trim() || id;
+    try {
+      if (scriptDraft) {
+        await downloadJobManuscriptMarkdown({ jobId: id, title });
+      } else {
+        await downloadJobBundleZip({
+          jobId: id,
+          title,
+          showNotesMarkdown: showNotes
+        });
+      }
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWorkHubDownloadBusy(false);
+    }
+  }, [jobId, episodeTitle, jobTitle, scriptDraft, showNotes]);
   const audioBlocked = scriptDraft || !hasAudio;
   /** 未 hydration 前 blocked 为 false，避免误显分享区；仅 hydration 后才允许复制链接与发布表单。 */
   const showShareAndPublish = shareJobHydrated && !audioBlocked;
@@ -717,8 +1014,30 @@ export function SharePublishClient({
 
   const canEditWorkScript = useMemo(() => {
     const jt = String(ownerJobRecord?.job_type || "").trim().toLowerCase();
-    return Boolean(ownerJobRecord && ["podcast", "podcast_generate", "script_draft"].includes(jt));
+    const st = ownerJobRecord?.status;
+    return Boolean(
+      ownerJobRecord &&
+        st === "succeeded" &&
+        ["podcast", "podcast_generate", "script_draft"].includes(jt)
+    );
   }, [ownerJobRecord]);
+
+  const jobGenerating = Boolean(
+    ownerJobRecord && (ownerJobRecord.status === "queued" || ownerJobRecord.status === "running")
+  );
+
+  const jobFailedMessage =
+    ownerJobRecord?.status === "failed" ? String(ownerJobRecord.error_message || "").trim() : "";
+
+  const jobGenBannerLine =
+    jobLiveProgressMsg.trim() ||
+    (jobGenerating ? (ownerJobRecord?.status === "queued" ? "排队中…" : "正在生成…") : "");
+
+  const jobLivePctMerged =
+    jobLiveProgressPct ??
+    (typeof ownerJobRecord?.progress === "number" && Number.isFinite(ownerJobRecord.progress)
+      ? ownerJobRecord.progress
+      : null);
 
   const showManuscriptTools = useMemo(
     () => layout === "work_hub" && Boolean(ownerJobRecord) && shareJobHydrated && !loadErr,
@@ -1315,7 +1634,12 @@ export function SharePublishClient({
   const mainMax = layout === "work_hub" ? "max-w-4xl" : "max-w-2xl";
   const otherPublishPlatforms = PUBLISH_PLATFORMS.filter((p) => !PINNED_PUBLISH_PLATFORM_SET.has(p.id));
   const showWorkHubShareEntry =
-    layout === "work_hub" && shareJobHydrated && !loadErr && formReady && Boolean(ownerJobRecord);
+    layout === "work_hub" &&
+    shareJobHydrated &&
+    !loadErr &&
+    formReady &&
+    Boolean(ownerJobRecord) &&
+    !scriptDraft;
 
   return (
     <main className={`mx-auto min-h-0 w-full ${mainMax} px-3 pb-12 pt-5 sm:px-4`}>
@@ -1343,15 +1667,31 @@ export function SharePublishClient({
           </h1>
         </div>
         {showWorkHubShareEntry ? (
-          <button
-            type="button"
-            onClick={() => setShareConfigModalOpen(true)}
-            className="mt-1 shrink-0 rounded-xl border border-line bg-fill/40 p-2.5 text-ink hover:bg-fill disabled:opacity-40"
-            aria-label="分享与发布"
-            title="分享与发布"
-          >
-            <IconShareExport className="h-5 w-5" />
-          </button>
+          <div className="mt-1 flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              disabled={workHubDownloadBusy}
+              onClick={() => void onWorkHubDownloadBundle()}
+              className="rounded-xl border border-line bg-fill/40 p-2.5 text-ink hover:bg-fill disabled:opacity-40"
+              aria-label={scriptDraft ? "下载文稿" : "下载作品包"}
+              title={
+                scriptDraft
+                  ? "下载文稿（Markdown）"
+                  : "下载文稿、封面、Shownotes 与音频（ZIP）"
+              }
+            >
+              <IconDownloadBundle className={`h-5 w-5 ${workHubDownloadBusy ? "opacity-60" : ""}`} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setShareConfigModalOpen(true)}
+              className="rounded-xl border border-line bg-fill/40 p-2.5 text-ink hover:bg-fill disabled:opacity-40"
+              aria-label="分享与发布"
+              title="分享与发布"
+            >
+              <IconShareExport className="h-5 w-5" />
+            </button>
+          </div>
         ) : null}
       </div>
 
@@ -1500,6 +1840,12 @@ export function SharePublishClient({
             audioRegenActive={audioRegenActive}
             audioRegenProgress={audioRegenProgress}
             audioRegenMessage={audioRegenMessage}
+            jobGenerating={jobGenerating}
+            jobGenPlaceholder={JOB_GEN_PLACEHOLDER}
+            jobLiveLine={jobGenBannerLine}
+            jobLiveProgressPct={jobLivePctMerged}
+            jobFailedMessage={jobFailedMessage}
+            readonlyEmptyHint={jobGenerating ? JOB_GEN_PLACEHOLDER : undefined}
             detailTab={detailTab}
             onDetailTabChange={setDetailTab}
             shownotesPanel={
@@ -1522,6 +1868,8 @@ export function SharePublishClient({
                 showNotesSaveBusy={showNotesSaveBusy}
                 scriptResolvePending={scriptResolvePending}
                 hasOwner={Boolean(ownerJobRecord)}
+                jobGenerating={jobGenerating}
+                generatingPlaceholder={JOB_GEN_PLACEHOLDER}
               />
             }
           />

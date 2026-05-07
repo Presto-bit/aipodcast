@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
   forwardRef,
@@ -106,6 +107,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   },
   ref
 ) {
+  const router = useRouter();
   const { user, phone, getAuthHeaders } = useAuth();
   const { t } = useI18n();
   const loggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
@@ -702,18 +704,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
       setActiveGenerationJob("tts", jobId);
       setActivePanel(null);
 
-      await waitJobEvents(jobId);
-      if (!cancelledRef.current) {
-        const ok = await finalizeJob(jobId);
-        if (ok && !cancelledRef.current) {
-          if (logSuccessHideTimerRef.current) clearTimeout(logSuccessHideTimerRef.current);
-          logSuccessHideTimerRef.current = setTimeout(() => {
-            setTaskPhase("");
-            setTaskProgressPct(0);
-            logSuccessHideTimerRef.current = null;
-          }, 5000);
-        }
-      }
+      router.push(`/works/${encodeURIComponent(jobId)}`);
     } catch (err) {
       applyTaskFromEvent(`错误: ${String(err)}`);
     } finally {

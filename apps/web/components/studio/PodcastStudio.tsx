@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
   forwardRef,
@@ -135,6 +136,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   },
   ref
 ) {
+  const router = useRouter();
   const { user, phone, getAuthHeaders } = useAuth();
   const { t } = useI18n();
   const loggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
@@ -993,18 +995,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       setActiveGenerationJob("podcast", jobId);
       setActivePanel(null);
 
-      await waitJobEvents(jobId);
-      if (!cancelledRef.current) {
-        const ok = await finalizeJob(jobId);
-        if (ok && !cancelledRef.current) {
-          if (logSuccessHideTimerRef.current) clearTimeout(logSuccessHideTimerRef.current);
-          logSuccessHideTimerRef.current = setTimeout(() => {
-            setTaskPhase("");
-            setTaskProgressPct(0);
-            logSuccessHideTimerRef.current = null;
-          }, 5000);
-        }
-      }
+      router.push(`/works/${encodeURIComponent(jobId)}`);
     } catch (err) {
       applyTaskFromEvent(`生成失败：${String(err)}`);
     } finally {
