@@ -38,11 +38,11 @@ import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, PUBLISH_PLATFORMS 
 import { resolveJobScriptBodyText, SCRIPT_TEXT_LIKELY_FULL_MIN_LEN } from "../../lib/jobScriptText";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { buildWorksSharePageUrl } from "../../lib/rssPublicBase";
-import { jobResultCoverUrl } from "../../lib/workCoverImage";
+import { jobResultCoverUrl, workCoverImageSrc } from "../../lib/workCoverImage";
 import { blobToDataUrlBase64 } from "../../lib/podcastCoverImage";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { formatUnifiedWorksNavMetaLineFromJobRecord } from "../../lib/worksNavMetaLine";
-import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
+import { useWorkAudioPlayer, type WorkAudioToggleMeta } from "../../lib/workAudioPlayer";
 import { WorkHubOverviewPanel } from "./WorkHubOverviewPanel";
 import { WorksShareLinkPreviewCard } from "./WorksShareLinkPreviewCard";
 import { RssChannelEditor } from "../rss/RssChannelEditor";
@@ -113,6 +113,14 @@ function formatSchedulePreview(value: string): string {
   }).format(d);
 }
 
+function formatListenClock(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "—";
+  const s = Math.floor(sec);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
 export function SharePublishClient({
   jobId,
   layout = "standalone",
@@ -129,7 +137,11 @@ export function SharePublishClient({
   const [episodeTitle, setEpisodeTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [showNotes, setShowNotes] = useState("");
-  const [notesTab, setNotesTab] = useState<"edit" | "preview">("preview");
+  const [notesTab, setNotesTab] = useState<"preview" | "edit" | "ai">("preview");
+  const [titleSummaryOpen, setTitleSummaryOpen] = useState(false);
+  const [listenCoverUrl, setListenCoverUrl] = useState("");
+  const [sharePublicAudioUrl, setSharePublicAudioUrl] = useState("");
+  const [listenDurationSec, setListenDurationSec] = useState<number | null>(null);
   const [hubTab, setHubTab] = useState<"overview" | "publish">(() =>
     layout === "work_hub" && initialHubTab === "publish" ? "publish" : "overview"
   );
@@ -206,6 +218,7 @@ export function SharePublishClient({
   const hints = computeSharePublishHints(episodeTitle, summary, showNotes);
 
   const persistDraft = useCallback(() => {
+    if (layout === "standalone") return;
     if (!formReady) return;
     const snap = initialSnapshotRef.current;
     const cur: ShareFormFields = {
@@ -217,7 +230,7 @@ export function SharePublishClient({
       return;
     }
     saveShareFormDraft(jobId, cur);
-  }, [formReady, jobId, episodeTitle, summary, showNotes]);
+  }, [formReady, jobId, episodeTitle, summary, showNotes, layout]);
 
   useEffect(() => {
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
@@ -228,6 +241,10 @@ export function SharePublishClient({
   }, [persistDraft]);
 
   useEffect(() => {
+    if (layout === "standalone") {
+      setSharePublishDirty(false);
+      return;
+    }
     if (!formReady) {
       setSharePublishDirty(false);
       return;
@@ -239,7 +256,7 @@ export function SharePublishClient({
     }
     const cur: ShareFormFields = { episodeTitle, summary, showNotes };
     setSharePublishDirty(shareFormFieldsDiffer(cur, snap));
-  }, [formReady, episodeTitle, summary, showNotes]);
+  }, [layout, formReady, episodeTitle, summary, showNotes]);
 
   const applyJobToForm = useCallback(
     (row: Record<string, unknown>, displayTitleFallback: string) => {
@@ -300,6 +317,64 @@ export function SharePublishClient({
       setManuscriptBody("");
       setScriptResolvePending(false);
       setOwnerJobRecord(null);
+      setListenCoverUrl("");
+      setSharePublicAudioUrl("");
+      setListenDurationSec(null);
+      setPublishedHint("");
+      setTitleSummaryOpen(false);
+
+      if (layout === "standalone") {
+        let pubStandalone: Awaited<ReturnType<typeof fetchPublicShareListen>> = null;
+        try {
+          pubStandalone = await fetchPublicShareListen(jobId);
+        } catch {
+          pubStandalone = null;
+        }
+        if (canceled) return;
+        if (!pubStandalone) {
+          setLoadErr("无法加载该作品或链接已失效。");
+          setShareJobHydrated(true);
+          return;
+        }
+        setListenCoverUrl(String(pubStandalone.cover_image || "").trim());
+        setSharePublicAudioUrl(String(pubStandalone.audio_url || "").trim());
+        const durS = pubStandalone.audio_duration_sec;
+        let dVal: number | null = null;
+        if (typeof durS === "number" && Number.isFinite(durS) && durS > 0) dVal = durS;
+        setListenDurationSec(dVal);
+
+        setManuscriptBody("");
+        setOwnerJobRecord(null);
+        setJobType(pubStandalone.job_type || "");
+        setJobTitle(pubStandalone.title);
+        setHasAudio(Boolean(pubStandalone.audio_url?.trim()));
+        const etS = pubStandalone.title.slice(0, 300);
+        setEpisodeTitle(etS);
+        const sumS = String(pubStandalone.episode_summary || pubStandalone.preview || "").trim();
+        setSummary(truncateSummaryToAutoMax(sumS));
+        const notesS = String(pubStandalone.show_notes || "").trim();
+        setShowNotes(notesS);
+        const chS = pubStandalone.audio_chapters;
+        if (Array.isArray(chS) && chS.length > 0) {
+          setChapterOutline(
+            chS.map((o) => ({
+              title: String(o.title || "章节"),
+              start_ms: Number(o.start_ms) || 0
+            }))
+          );
+        } else {
+          setChapterOutline(null);
+        }
+        initialSnapshotRef.current = {
+          episodeTitle: etS,
+          summary: truncateSummaryToAutoMax(sumS),
+          showNotes: notesS
+        };
+        shareGenContextRef.current = null;
+        setFormReady(true);
+        setShareJobHydrated(true);
+        return;
+      }
 
       let row: JobRecord | null = null;
       try {
@@ -472,13 +547,21 @@ export function SharePublishClient({
       } else if (pub) {
         setManuscriptBody("");
         setOwnerJobRecord(null);
+        setListenCoverUrl(String(pub.cover_image || "").trim());
+        setSharePublicAudioUrl(String(pub.audio_url || "").trim());
+        const durP = pub.audio_duration_sec;
+        let dPub: number | null = null;
+        if (typeof durP === "number" && Number.isFinite(durP) && durP > 0) dPub = durP;
+        setListenDurationSec(dPub);
+
         setJobType(pub.job_type || "");
         setJobTitle(pub.title);
         setHasAudio(Boolean(pub.audio_url?.trim()));
         const et = pub.title.slice(0, 300);
         setEpisodeTitle(et);
-        setSummary(truncateSummaryToAutoMax((pub.preview || "").trim()));
-        setShowNotes("");
+        const sumP = String(pub.episode_summary || pub.preview || "").trim();
+        setSummary(truncateSummaryToAutoMax(sumP));
+        setShowNotes(String(pub.show_notes || "").trim());
         const ch = pub.audio_chapters;
         if (Array.isArray(ch) && ch.length > 0) {
           setChapterOutline(
@@ -490,10 +573,11 @@ export function SharePublishClient({
         } else {
           setChapterOutline(null);
         }
+        const notesP = String(pub.show_notes || "").trim();
         initialSnapshotRef.current = {
           episodeTitle: et,
-          summary: truncateSummaryToAutoMax((pub.preview || "").trim()),
-          showNotes: ""
+          summary: truncateSummaryToAutoMax(sumP),
+          showNotes: notesP
         };
         shareGenContextRef.current = null;
         setFormReady(true);
@@ -504,7 +588,7 @@ export function SharePublishClient({
     return () => {
       canceled = true;
     };
-  }, [jobId, applyJobToForm]);
+  }, [jobId, layout, applyJobToForm]);
 
   const scriptDraft = jobType === "script_draft";
   const audioBlocked = scriptDraft || !hasAudio;
@@ -512,21 +596,28 @@ export function SharePublishClient({
   const showShareAndPublish = shareJobHydrated && !audioBlocked;
 
   const jobCoverUrl = useMemo(() => {
-    if (!ownerJobRecord) return "";
-    return jobResultCoverUrl(ownerJobRecord.result as Record<string, unknown>);
-  }, [ownerJobRecord]);
+    const fromOwner = ownerJobRecord
+      ? jobResultCoverUrl(ownerJobRecord.result as Record<string, unknown>)
+      : "";
+    return fromOwner.trim() || listenCoverUrl;
+  }, [listenCoverUrl, ownerJobRecord]);
 
   const audioDurationHintSec = useMemo(() => {
-    if (!ownerJobRecord) return null;
-    const r = ownerJobRecord.result as Record<string, unknown>;
-    const raw = r.audio_duration_sec;
-    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
-    if (typeof raw === "string" && String(raw).trim()) {
-      const n = Number.parseFloat(String(raw));
-      return Number.isFinite(n) && n > 0 ? n : null;
+    if (ownerJobRecord) {
+      const r = ownerJobRecord.result as Record<string, unknown>;
+      const raw = r.audio_duration_sec;
+      if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+      if (typeof raw === "string" && String(raw).trim()) {
+        const n = Number.parseFloat(String(raw));
+        return Number.isFinite(n) && n > 0 ? n : null;
+      }
+      return null;
+    }
+    if (listenDurationSec != null && Number.isFinite(listenDurationSec) && listenDurationSec > 0) {
+      return listenDurationSec;
     }
     return null;
-  }, [ownerJobRecord]);
+  }, [ownerJobRecord, listenDurationSec]);
 
   useEffect(() => {
     if (layout !== "work_hub") return;
@@ -538,7 +629,7 @@ export function SharePublishClient({
     setNotesTab("preview");
   }, [layout, jobId]);
 
-  const publishChromeVisible = layout === "standalone" || hubTab === "publish";
+  const publishChromeVisible = layout === "work_hub" && hubTab === "publish";
 
   const worksNavAuthorDisplay = useMemo(() => {
     const u = user as { display_name?: string; username?: string; phone?: string } | null | undefined;
@@ -868,6 +959,12 @@ export function SharePublishClient({
   }, [aiShownotesModalOpen]);
 
   useEffect(() => {
+    if (!aiShownotesModalOpen && notesTab === "ai") {
+      setNotesTab("preview");
+    }
+  }, [aiShownotesModalOpen, notesTab]);
+
+  useEffect(() => {
     if (!scheduleModalOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -914,14 +1011,20 @@ export function SharePublishClient({
         return;
       }
       const title = episodeTitle.trim() || jobTitle || jobId;
+      const direct = sharePublicAudioUrl.trim();
+      const meta: WorkAudioToggleMeta = {
+        displayTitle: title,
+        seekSeconds: sec,
+        ...(direct ? { directAudioUrl: direct } : {})
+      };
       if (workAudio.activeJobId === jobId && workAudio.loadingJobId !== jobId) {
         workAudio.seekForActiveJob(sec);
         void workAudio.resume();
         return;
       }
-      void workAudio.togglePlay(jobId, { displayTitle: title, seekSeconds: sec });
+      void workAudio.togglePlay(jobId, meta);
     },
-    [hasAudio, episodeTitle, jobTitle, jobId, workAudio]
+    [hasAudio, episodeTitle, jobTitle, jobId, workAudio, sharePublicAudioUrl]
   );
 
   function restoreDraft() {
@@ -1183,7 +1286,7 @@ export function SharePublishClient({
         </p>
       ) : null}
 
-      {sharePublishDirty ? (
+      {sharePublishDirty && layout !== "standalone" ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/35 bg-warning-soft/80 px-3 py-2 text-xs text-warning-ink">
           <span>本地草稿未保存</span>
           <div className="flex gap-2">
@@ -1194,6 +1297,91 @@ export function SharePublishClient({
               丢弃
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {layout === "standalone" && shareJobHydrated && !loadErr && formReady ? (
+        <div className="mb-8 space-y-6">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-stretch lg:gap-6">
+            <div className="relative mx-auto aspect-square w-full max-w-[min(100%,20rem)] shrink-0 overflow-hidden rounded-2xl border border-line bg-fill/30 shadow-soft lg:mx-0 lg:aspect-auto lg:h-[280px] lg:w-[280px] lg:max-w-[280px]">
+              {workCoverImageSrc(jobCoverUrl, undefined, jobId) ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={workCoverImageSrc(jobCoverUrl, undefined, jobId)}
+                  alt=""
+                  className="aspect-square w-full object-cover"
+                  referrerPolicy="no-referrer"
+                  loading="eager"
+                />
+              ) : (
+                <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-4 text-center lg:aspect-auto lg:h-[280px] lg:min-h-[280px]">
+                  <span className="text-3xl" aria-hidden>
+                    🎙️
+                  </span>
+                  <span className="text-xs text-muted">暂无封面</span>
+                </div>
+              )}
+              {!audioBlocked && hasAudio ? (
+                <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-2 sm:p-3">
+                  <button
+                    type="button"
+                    disabled={workAudio.loadingJobId === jobId}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void workAudio.togglePlay(jobId, {
+                        displayTitle: episodeTitle.trim() || jobTitle || jobId,
+                        directAudioUrl: sharePublicAudioUrl.trim() || undefined
+                      });
+                    }}
+                    className="pointer-events-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-ink/80 text-brand-foreground shadow-lg backdrop-blur-sm transition hover:bg-ink/90 disabled:opacity-50"
+                    aria-label={
+                      workAudio.activeJobId === jobId && workAudio.isPlaying ? "暂停" : "播放"
+                    }
+                    title={
+                      workAudio.activeJobId === jobId && workAudio.isPlaying
+                        ? "暂停"
+                        : audioDurationHintSec
+                          ? `播放（约 ${formatListenClock(audioDurationHintSec)}）`
+                          : "播放"
+                    }
+                  >
+                    {workAudio.loadingJobId === jobId ? (
+                      <span className="h-5 w-5 animate-pulse rounded-full bg-brand-foreground/70" aria-hidden />
+                    ) : workAudio.activeJobId === jobId && workAudio.isPlaying ? (
+                      <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                        <rect x="6" y="5" width="4" height="14" rx="1" />
+                        <rect x="14" y="5" width="4" height="14" rx="1" />
+                      </svg>
+                    ) : (
+                      <svg className="ml-0.5 h-6 w-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:h-[280px] lg:max-h-[280px] lg:overflow-hidden">
+              <h2 className="shrink-0 text-balance text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+                {episodeTitle.trim() || "未命名作品"}
+              </h2>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain lg:min-h-0">
+                <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted sm:text-[15px]">
+                  {summary.trim() || "暂无简介"}
+                </p>
+              </div>
+            </div>
+          </div>
+          <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
+            <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">Shownotes</h3>
+            <div className="mt-3 max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/15 p-3">
+              <ShowNotesMarkdownPreview
+                markdown={showNotes}
+                onSeekSeconds={seekFromNotes}
+                className="!max-h-none overflow-visible border-0 bg-transparent p-0"
+              />
+            </div>
+          </section>
         </div>
       ) : null}
 
@@ -1305,107 +1493,91 @@ export function SharePublishClient({
               </div>
             ) : (
               <div className="space-y-6">
-                <section className="space-y-3">
-                  <h3 className="text-sm font-medium text-ink">RSS 渠道</h3>
-                  {channelsLoading ? (
-                    <p className="text-sm text-muted">加载中…</p>
-                  ) : channels.length === 0 ? (
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="text-sm text-muted">暂无频道</span>
-                      <button
-                        type="button"
-                        className="text-sm font-medium text-brand underline decoration-brand/40 hover:decoration-brand"
-                        onClick={() => setRssSetupModalOpen(true)}
-                      >
-                        去配置
-                      </button>
+                <section className="space-y-0">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-2 rounded-xl border border-line bg-fill/30 px-3 py-2.5 text-left text-sm font-medium text-ink hover:bg-fill/50"
+                    aria-expanded={titleSummaryOpen}
+                    onClick={() => setTitleSummaryOpen((o) => !o)}
+                  >
+                    <span>标题与简介</span>
+                    <span className="shrink-0 text-xs text-muted">{titleSummaryOpen ? "收起" : "展开"}</span>
+                  </button>
+                  {titleSummaryOpen ? (
+                    <div className="mt-4 space-y-4">
+                      <label className="block text-sm text-muted">
+                        节目标题
+                        <input
+                          className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                          value={episodeTitle}
+                          onChange={(e) => setEpisodeTitle(e.target.value)}
+                          disabled={busy || shareAiBusy}
+                          maxLength={300}
+                          placeholder="RSS / 小宇宙单集标题"
+                        />
+                      </label>
+                      <div className="text-sm text-muted">
+                        <span>简介</span>
+                        <textarea
+                          className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                          rows={3}
+                          value={summary}
+                          onChange={(e) => setSummary(e.target.value.slice(0, AUTO_PROGRAM_SUMMARY_MAX))}
+                          disabled={busy || shareAiBusy}
+                          maxLength={AUTO_PROGRAM_SUMMARY_MAX}
+                          placeholder="RSS 列表用短摘要"
+                        />
+                        {hints.summaryLooksLikeDialogue ? (
+                          <p className="mt-1 text-[11px] text-warning-ink">简介含对白标记，列表展示可能不佳。</p>
+                        ) : null}
+                      </div>
                     </div>
-                  ) : (
-                    <label className="block text-sm text-muted">
-                      频道
-                      <select
-                        className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                        value={channelId}
-                        onChange={(e) => setChannelId(e.target.value)}
-                        disabled={busy || shareAiBusy}
-                      >
-                        <option value="">选择 RSS 频道</option>
-                        {channels.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
+                  ) : null}
                 </section>
 
                 <div className="border-t border-line pt-6">
-                  <section className="space-y-4">
-                    <h3 className="text-sm font-medium text-ink">标题与简介</h3>
-                    <label className="block text-sm text-muted">
-                      节目标题
-                      <input
-                        className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                        value={episodeTitle}
-                        onChange={(e) => setEpisodeTitle(e.target.value)}
-                        disabled={busy || shareAiBusy}
-                        maxLength={300}
-                        placeholder="RSS / 小宇宙单集标题"
-                      />
-                    </label>
-                    <div className="text-sm text-muted">
-                      <span>简介</span>
-                      <textarea
-                        className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                        rows={3}
-                        value={summary}
-                        onChange={(e) => setSummary(e.target.value.slice(0, AUTO_PROGRAM_SUMMARY_MAX))}
-                        disabled={busy || shareAiBusy}
-                        maxLength={AUTO_PROGRAM_SUMMARY_MAX}
-                        placeholder="RSS 列表用短摘要"
-                      />
-                      {hints.summaryLooksLikeDialogue ? (
-                        <p className="mt-1 text-[11px] text-warning-ink">简介含对白标记，列表展示可能不佳。</p>
-                      ) : null}
-                    </div>
-                  </section>
-                </div>
-
-                <div className="border-t border-line pt-6">
-                  <section className="space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="text-sm font-medium text-ink">Shownotes</h3>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          className="rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
-                          disabled={busy || shareAiBusy || scriptResolvePending}
-                          onClick={() => {
-                            setAiShownotesErr("");
-                            setAiShownotesPromptDraft("");
-                            setAiShownotesModalOpen(true);
-                          }}
-                        >
-                          AI优化
-                        </button>
-                        <div className="flex gap-1 rounded-lg border border-line bg-fill/30 p-0.5">
-                          <button
-                            type="button"
-                            className={`rounded-md px-2.5 py-1 text-xs ${notesTab === "preview" ? "bg-surface font-medium text-ink shadow-soft" : "text-muted"}`}
-                            onClick={() => setNotesTab("preview")}
-                          >
-                            预览
-                          </button>
-                          <button
-                            type="button"
-                            className={`rounded-md px-2.5 py-1 text-xs ${notesTab === "edit" ? "bg-surface font-medium text-ink shadow-soft" : "text-muted"}`}
-                            onClick={() => setNotesTab("edit")}
-                          >
-                            编辑
-                          </button>
-                        </div>
-                      </div>
+                  <section className="space-y-3">
+                    <h3 className="text-sm font-medium text-ink">Shownotes</h3>
+                    <div className="flex gap-1 rounded-lg border border-line bg-fill/30 p-0.5">
+                      <button
+                        type="button"
+                        className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                          notesTab === "preview"
+                            ? "bg-surface text-ink shadow-soft"
+                            : "text-muted hover:bg-fill/60 hover:text-ink"
+                        }`}
+                        onClick={() => setNotesTab("preview")}
+                      >
+                        预览
+                      </button>
+                      <button
+                        type="button"
+                        className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                          notesTab === "edit"
+                            ? "bg-surface text-ink shadow-soft"
+                            : "text-muted hover:bg-fill/60 hover:text-ink"
+                        }`}
+                        onClick={() => setNotesTab("edit")}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                          notesTab === "ai"
+                            ? "bg-surface text-ink shadow-soft"
+                            : "text-muted hover:bg-fill/60 hover:text-ink"
+                        }`}
+                        disabled={busy || shareAiBusy || scriptResolvePending}
+                        onClick={() => {
+                          setNotesTab("ai");
+                          setAiShownotesErr("");
+                          setAiShownotesPromptDraft("");
+                          setAiShownotesModalOpen(true);
+                        }}
+                      >
+                        AI优化
+                      </button>
                     </div>
                     {notesTab === "edit" ? (
                       <p className="text-[11px] text-muted/90">
@@ -1434,6 +1606,43 @@ export function SharePublishClient({
                     {hints.showNotesVeryShort ? (
                       <p className="text-[11px] text-warning-ink">Shownotes 偏短。</p>
                     ) : null}
+                  </section>
+                </div>
+
+                <div className="border-t border-line pt-6">
+                  <section className="space-y-3">
+                    <h3 className="text-sm font-medium text-ink">RSS 渠道</h3>
+                    {channelsLoading ? (
+                      <p className="text-sm text-muted">加载中…</p>
+                    ) : channels.length === 0 ? (
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-sm text-muted">暂无频道</span>
+                        <button
+                          type="button"
+                          className="text-sm font-medium text-brand underline decoration-brand/40 hover:decoration-brand"
+                          onClick={() => setRssSetupModalOpen(true)}
+                        >
+                          去配置
+                        </button>
+                      </div>
+                    ) : (
+                      <label className="block text-sm text-muted">
+                        频道
+                        <select
+                          className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                          value={channelId}
+                          onChange={(e) => setChannelId(e.target.value)}
+                          disabled={busy || shareAiBusy}
+                        >
+                          <option value="">选择 RSS 频道</option>
+                          {channels.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                   </section>
                 </div>
 

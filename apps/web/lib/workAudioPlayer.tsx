@@ -152,6 +152,8 @@ export type WorkAudioToggleMeta = {
   seekSeconds?: number;
   /** 全站官方播客模板：不要求当前用户为任务所有者 */
   usePodcastPublicTemplateListen?: boolean;
+  /** 匿名分享试听：公开接口返回的直链，不经 work-listen */
+  directAudioUrl?: string;
 };
 
 export type WorkAudioPlayerContextValue = {
@@ -376,7 +378,10 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   }, [dockVisible]);
 
   const ensureSrc = useCallback(
-    async (jobId: string, opts?: { usePodcastPublicTemplateListen?: boolean }): Promise<EnsureSrcOutcome> => {
+    async (
+      jobId: string,
+      opts?: { usePodcastPublicTemplateListen?: boolean; directAudioUrl?: string }
+    ): Promise<EnsureSrcOutcome> => {
       const fail = (reason: string, rid?: string): EnsureSrcOutcome => ({
         ok: false,
         reason,
@@ -384,6 +389,20 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       });
 
       if (srcCache.current[jobId]) return { ok: true, url: srcCache.current[jobId]! };
+      const directUrl = String(opts?.directAudioUrl || "").trim();
+      if (directUrl) {
+        const playable = await wrapRemoteAudioAsBlobIfNeeded(jobId, directUrl);
+        if (playable) {
+          srcCache.current[jobId] = playable;
+          return { ok: true, url: playable };
+        }
+        const mixedDirect = unusableInsecureHttpOnHttpsPage(directUrl);
+        return fail(
+          mixedDirect
+            ? "分享试听链接为 http 地址，在 HTTPS 页面无法播放（混合内容）。"
+            : "分享试听地址无法在浏览器中加载（可能被跨域拦截或内容非有效音频）。"
+        );
+      }
       if (opts?.usePodcastPublicTemplateListen) {
         const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/podcast-template-listen`, {
           cache: "no-store",
@@ -550,7 +569,8 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
       setDockExpanded(false);
       try {
         const ensured = await ensureSrc(jobId, {
-          usePodcastPublicTemplateListen: Boolean(meta.usePodcastPublicTemplateListen)
+          usePodcastPublicTemplateListen: Boolean(meta.usePodcastPublicTemplateListen),
+          directAudioUrl: meta.directAudioUrl?.trim()
         });
         if (!ensured.ok) {
           const rid = (ensured.requestId || "").trim();

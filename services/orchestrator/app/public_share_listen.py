@@ -147,6 +147,18 @@ def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
     if len(preview) > 500:
         preview = preview[:499] + "…"
 
+    list_summary = str(result.get("auto_share_summary") or "").strip()
+    if len(list_summary) > 120:
+        list_summary = list_summary[:119] + "…"
+
+    show_notes = str(result.get("auto_share_show_notes") or "").strip().replace("\r\n", "\n")
+    if len(show_notes) > 20_000:
+        show_notes = show_notes[:19_999] + "…"
+
+    cover_image = str(result.get("cover_image") or result.get("coverImage") or "").strip()
+    if len(cover_image) > 2000:
+        cover_image = cover_image[:1999] + "…"
+
     chapters = result.get("audio_chapters")
     safe_chapters: list[dict[str, Any]] = []
     if isinstance(chapters, list):
@@ -160,6 +172,8 @@ def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
                 }
             )
 
+    episode_summary = list_summary or (preview[:200] + ("…" if len(preview) > 200 else ""))
+
     return {
         "job_id": jid,
         "job_type": jt,
@@ -167,6 +181,9 @@ def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
         "audio_url": audio_url,
         "audio_duration_sec": dur,
         "preview": preview,
+        "episode_summary": episode_summary,
+        "show_notes": show_notes,
+        "cover_image": cover_image,
         "audio_chapters": safe_chapters,
     }
 

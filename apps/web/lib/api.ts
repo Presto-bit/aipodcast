@@ -129,6 +129,11 @@ export type PublicShareListenPayload = {
   audio_url: string;
   audio_duration_sec?: number | null;
   preview?: string;
+  /** 列表用短摘要（优先 auto_share_summary） */
+  episode_summary?: string;
+  /** RSS Shownotes 草稿（auto_share_show_notes） */
+  show_notes?: string;
+  cover_image?: string;
   audio_chapters?: Array<{ title: string; start_ms: number }>;
 };
 
