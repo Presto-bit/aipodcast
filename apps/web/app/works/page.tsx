@@ -322,7 +322,6 @@ export default function WorksPage() {
           onDismissError={() => setError("")}
           onWorkDeleted={() => void fetchWorks(false)}
           enableBatchActions
-          plainDownloadGate
         />
       ) : null}
       {worksView === "script" && !emptyAll ? (
@@ -334,7 +333,6 @@ export default function WorksPage() {
           onDismissError={() => setError("")}
           onWorkDeleted={() => void fetchWorks(false)}
           enableBatchActions
-          plainDownloadGate
         />
       ) : null}
 

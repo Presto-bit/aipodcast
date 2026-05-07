@@ -9,7 +9,6 @@ import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
 import { unusableInsecureHttpOnHttpsPage } from "../../lib/insecureHttpOnHttpsPage";
 import { useAuth } from "../../lib/auth";
-import { GatedSplitAction } from "../SubscriptionVipLink";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
 import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
 import { sanitizeShareEpisodeTitle } from "../../lib/sharePublishDefaults";
@@ -251,8 +250,6 @@ type Props = {
    * 用于嵌入窄栏且需与侧栏列表一致的展示。
    */
   compactCards?: boolean;
-  /** 为 true 时「我的作品」等：未许可时为带皇冠的锁定分栏（跳转订阅）；已许可时为普通下载按钮 */
-  plainDownloadGate?: boolean;
 };
 
 const NOTE_TITLE_UUID_RE =
@@ -349,8 +346,7 @@ export default function PodcastWorksGallery({
   sidebarMaxItems,
   pendingStudioWork = null,
   pendingStudioSubtitle = "",
-  compactCards = false,
-  plainDownloadGate = false
+  compactCards = false
 }: Props) {
   const { t } = useI18n();
   const router = useRouter();
@@ -691,57 +687,40 @@ export default function PodcastWorksGallery({
     ) => {
       const allowed = workDownloadAllowed(row);
       const busy = zipBusy === jobId;
-      if (plainDownloadGate) {
-        if (allowed) {
-          return (
-            <button
-              type="button"
-              className={unlockedClassName}
-              disabled={busy}
-              onClick={() => {
-                gatedExtras?.onLockedNavigate?.();
-                void onDownload(row);
-              }}
-            >
-              {label}
-            </button>
-          );
-        }
+      const menuItem = Boolean(gatedExtras?.onLockedNavigate);
+      if (allowed) {
         return (
-          <GatedSplitAction
-            locked
-            variant="default"
-            upgradeTitle={WORK_DOWNLOAD_GATE_TIP}
-            onClick={() => {}}
+          <button
+            type="button"
+            className={unlockedClassName}
             disabled={busy}
-            unlockedClassName={unlockedClassName}
-            lockedLinkClassName={gatedExtras?.lockedLinkClassName}
-            lockedLabelClassName={gatedExtras?.lockedLabelClassName}
-            onLockedNavigate={() => gatedExtras?.onLockedNavigate?.()}
+            role={menuItem ? "menuitem" : undefined}
+            onClick={() => {
+              gatedExtras?.onLockedNavigate?.();
+              void onDownload(row);
+            }}
           >
             {label}
-          </GatedSplitAction>
+          </button>
         );
       }
+      const deniedCls = [unlockedClassName, gatedExtras?.lockedLinkClassName, gatedExtras?.lockedLabelClassName]
+        .filter(Boolean)
+        .join(" ");
       return (
-        <GatedSplitAction
-          locked={!allowed}
-          variant="default"
-          upgradeTitle={WORK_DOWNLOAD_GATE_TIP}
-          onClick={() => {
-            gatedExtras?.onLockedNavigate?.();
-            void onDownload(row);
-          }}
-          disabled={busy}
-          unlockedClassName={unlockedClassName}
-          lockedLinkClassName={gatedExtras?.lockedLinkClassName}
-          lockedLabelClassName={gatedExtras?.lockedLabelClassName}
+        <button
+          type="button"
+          className={deniedCls}
+          disabled
+          role={menuItem ? "menuitem" : undefined}
+          title={WORK_DOWNLOAD_GATE_TIP}
+          aria-label={WORK_DOWNLOAD_GATE_TIP}
         >
           {label}
-        </GatedSplitAction>
+        </button>
       );
     },
-    [plainDownloadGate, onDownload, zipBusy]
+    [onDownload, zipBusy]
   );
 
   function downloadBusyLabel(workType: string | undefined): string {
@@ -1196,16 +1175,15 @@ export default function PodcastWorksGallery({
                   {batchBusy ? "正在批量下载…" : "批量下载"}
                 </button>
               ) : (
-                <GatedSplitAction
-                  locked
-                  variant="default"
-                  upgradeTitle={WORK_DOWNLOAD_GATE_TIP}
-                  onClick={() => {}}
-                  disabled={false}
-                  unlockedClassName="rounded-md border border-line bg-surface px-2.5 py-1 text-ink hover:bg-fill disabled:opacity-50"
+                <button
+                  type="button"
+                  className="rounded-md border border-line bg-surface px-2.5 py-1 text-ink opacity-50 cursor-not-allowed"
+                  disabled
+                  title={WORK_DOWNLOAD_GATE_TIP}
+                  aria-label={WORK_DOWNLOAD_GATE_TIP}
                 >
                   {batchBusy ? "正在批量下载…" : "批量下载"}
-                </GatedSplitAction>
+                </button>
               )}
               <button
                 type="button"
