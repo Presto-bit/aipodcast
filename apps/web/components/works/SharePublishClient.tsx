@@ -8,13 +8,11 @@ import {
   buildSharePublishCopyFromScriptAndPayload,
   clearShareFormDraft,
   computeSharePublishHints,
-  AUTO_PROGRAM_SUMMARY_MAX,
   defaultSummaryFromJobResult,
   extractEpisodeOverviewFromShowNotes,
   loadShareFormDraft,
   saveShareFormDraft,
   sanitizeShareEpisodeTitle,
-  SHARE_TITLE_SOFT_MAX,
   shareFormFieldsDiffer,
   truncateSummaryToAutoMax,
   type ShareFormFields
@@ -52,6 +50,7 @@ const RSS_LAST_CHANNEL_STORAGE_KEY = "fym_rss_last_channel_id";
 
 const AI_SHOWNOTES_SUGGEST_LINE_A = "时间戳数量限制在 10 个以内";
 const AI_SHOWNOTES_SUGGEST_LINE_B = "风格改为二次元解说口吻（轻松有梗、少用书面语）";
+const AI_SHOWNOTES_DEFAULT_PROMPT = `a）${AI_SHOWNOTES_SUGGEST_LINE_A}\nb）${AI_SHOWNOTES_SUGGEST_LINE_B}`;
 
 type Props = {
   jobId: string;
@@ -130,9 +129,7 @@ export function SharePublishClient({
   const [episodeTitle, setEpisodeTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [showNotes, setShowNotes] = useState("");
-  const [notesTab, setNotesTab] = useState<"edit" | "preview">(() =>
-    layout === "work_hub" ? "preview" : "edit"
-  );
+  const [notesTab, setNotesTab] = useState<"edit" | "preview">("preview");
   const [hubTab, setHubTab] = useState<"overview" | "publish">(() =>
     layout === "work_hub" && initialHubTab === "publish" ? "publish" : "overview"
   );
@@ -181,6 +178,7 @@ export function SharePublishClient({
   const [audioRegenMessage, setAudioRegenMessage] = useState("");
   const [regenerateVoiceBusy, setRegenerateVoiceBusy] = useState(false);
   const audioRegenAbortRef = useRef(false);
+  const aiShownotesPromptRef = useRef<HTMLTextAreaElement | null>(null);
 
   const shareGenContextRef = useRef<ShareGenContext | null>(null);
   /** 主人进入分享页后至多触发一次「persist 写入 result」的 AI 初稿（Strict Mode 取消时会复位）。 */
@@ -864,6 +862,17 @@ export function SharePublishClient({
   }, [rssSetupModalOpen, aiShownotesModalOpen]);
 
   useEffect(() => {
+    if (!aiShownotesModalOpen) return;
+    const t = window.setTimeout(() => {
+      const el = aiShownotesPromptRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [aiShownotesModalOpen]);
+
+  useEffect(() => {
     if (!scheduleModalOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -1135,14 +1144,9 @@ export function SharePublishClient({
         >
           {ownerJobRecord ? "← 返回我的作品" : "← 返回首页"}
         </Link>
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
-            {layout === "work_hub" ? "作品详情" : "发给朋友听"}
-          </h1>
-          {jobTitle ? (
-            <span className="max-w-[min(100%,14rem)] truncate text-xs text-muted sm:max-w-xs">{jobTitle}</span>
-          ) : null}
-        </div>
+        <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
+          {layout === "work_hub" ? "作品详情" : "发给朋友听"}
+        </h1>
       </div>
 
       {layout === "work_hub" && shareJobHydrated && !loadErr ? (
@@ -1247,6 +1251,7 @@ export function SharePublishClient({
             sharePageFullUrl={sharePageFullUrl}
             onCopy={() => void copySharePageLink()}
             copied={shareLinkCopied}
+            compact={layout === "work_hub"}
           />
         </div>
       ) : null}
@@ -1264,7 +1269,7 @@ export function SharePublishClient({
           <Link href="/create" className="text-brand underline">
             登录
           </Link>
-          后可编辑简介与 Shownotes、发布 RSS。
+          后可编辑 Shownotes、发布 RSS。
         </p>
       ) : null}
 
@@ -1341,80 +1346,43 @@ export function SharePublishClient({
                 </section>
 
                 <div className="border-t border-line pt-6">
-                  <section className="space-y-4">
-                    <h3 className="text-sm font-medium text-ink">标题与简介</h3>
-                    <label className="block text-sm text-muted">
-                      节目标题
-                      <input
-                        className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                        value={episodeTitle}
-                        onChange={(e) => setEpisodeTitle(e.target.value)}
-                        disabled={busy || shareAiBusy}
-                        maxLength={300}
-                        placeholder="RSS / 小宇宙单集标题"
-                      />
-                      <span className="mt-0.5 flex justify-end text-[11px] tabular-nums text-muted/80">
-                        <span className={hints.titleOverSoft ? "text-warning-ink" : ""}>{episodeTitle.length}</span>
-                        <span className="text-muted/60">/{SHARE_TITLE_SOFT_MAX}</span>
-                      </span>
-                    </label>
-                    <div className="text-sm text-muted">
-                      <span>简介</span>
-                      <textarea
-                        className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                        rows={3}
-                        value={summary}
-                        onChange={(e) => setSummary(e.target.value.slice(0, AUTO_PROGRAM_SUMMARY_MAX))}
-                        disabled={busy || shareAiBusy}
-                        maxLength={AUTO_PROGRAM_SUMMARY_MAX}
-                        placeholder="RSS 列表用短摘要"
-                      />
-                      <span className="mt-0.5 flex justify-end text-[11px] tabular-nums text-muted/80">
-                        <span className={summary.length >= AUTO_PROGRAM_SUMMARY_MAX ? "text-warning-ink" : ""}>
-                          {summary.length}
-                        </span>
-                        <span className="text-muted/60">/{AUTO_PROGRAM_SUMMARY_MAX}</span>
-                      </span>
-                      {hints.summaryLooksLikeDialogue ? (
-                        <p className="mt-1 text-[11px] text-warning-ink">简介含对白标记，列表展示可能不佳。</p>
-                      ) : null}
-                    </div>
-                  </section>
-                </div>
-
-                <div className="border-t border-line pt-6">
-                  <section className="space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="text-sm font-medium text-ink">Shownotes</h3>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          className="rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
-                          disabled={busy || shareAiBusy || scriptResolvePending}
-                          onClick={() => {
-                            setAiShownotesErr("");
-                            setAiShownotesModalOpen(true);
-                          }}
-                        >
-                          AI优化
-                        </button>
-                        <div className="flex gap-1 rounded-lg border border-line bg-fill/30 p-0.5">
-                          <button
-                            type="button"
-                            className={`rounded-md px-2.5 py-1 text-xs ${notesTab === "edit" ? "bg-surface font-medium text-ink shadow-soft" : "text-muted"}`}
-                            onClick={() => setNotesTab("edit")}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            className={`rounded-md px-2.5 py-1 text-xs ${notesTab === "preview" ? "bg-surface font-medium text-ink shadow-soft" : "text-muted"}`}
-                            onClick={() => setNotesTab("preview")}
-                          >
-                            预览
-                          </button>
-                        </div>
-                      </div>
+                  <section className="space-y-3">
+                    <h3 className="text-sm font-medium text-ink">Shownotes</h3>
+                    <div className="flex gap-1 rounded-xl border border-line bg-fill/35 p-1">
+                      <button
+                        type="button"
+                        className={`min-h-[2.35rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+                          notesTab === "preview"
+                            ? "bg-surface text-ink shadow-soft"
+                            : "text-muted hover:bg-fill/60 hover:text-ink"
+                        }`}
+                        onClick={() => setNotesTab("preview")}
+                      >
+                        预览
+                      </button>
+                      <button
+                        type="button"
+                        className={`min-h-[2.35rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+                          notesTab === "edit"
+                            ? "bg-surface text-ink shadow-soft"
+                            : "text-muted hover:bg-fill/60 hover:text-ink"
+                        }`}
+                        onClick={() => setNotesTab("edit")}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="min-h-[2.35rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium text-muted transition-colors hover:bg-fill/60 hover:text-ink disabled:opacity-40"
+                        disabled={busy || shareAiBusy || scriptResolvePending}
+                        onClick={() => {
+                          setAiShownotesErr("");
+                          setAiShownotesPromptDraft(AI_SHOWNOTES_DEFAULT_PROMPT);
+                          setAiShownotesModalOpen(true);
+                        }}
+                      >
+                        AI优化
+                      </button>
                     </div>
                     {notesTab === "edit" ? (
                       <p className="text-[11px] text-muted/90">
@@ -1638,32 +1606,20 @@ export function SharePublishClient({
                 <h2 id="ai-shownotes-modal-title" className="text-base font-semibold text-ink">
                   AI 优化 Shownotes
                 </h2>
-                <p className="mt-3 text-[11px] leading-relaxed text-muted/55">
-                  a）{AI_SHOWNOTES_SUGGEST_LINE_A}
-                  <br />
-                  b）{AI_SHOWNOTES_SUGGEST_LINE_B}
-                </p>
-                <label className="mt-3 block text-sm text-muted">
+                <label className="mt-4 block text-sm text-muted">
                   编辑要求
                   <textarea
-                    className="mt-1 min-h-[7rem] w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                    ref={aiShownotesPromptRef}
+                    className={`mt-1 min-h-[7rem] w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm leading-relaxed ${
+                      aiShownotesPromptDraft === AI_SHOWNOTES_DEFAULT_PROMPT ? "text-muted/55" : "text-ink"
+                    }`}
                     value={aiShownotesPromptDraft}
                     onChange={(e) => {
                       setAiShownotesPromptDraft(e.target.value);
                       setAiShownotesErr("");
                     }}
-                    placeholder="描述你希望如何调整 Shownotes（结构、语气、时间戳数量等）…"
                   />
                 </label>
-                <button
-                  type="button"
-                  className="mt-2 text-xs text-muted underline decoration-muted/50 hover:text-ink hover:decoration-ink/40"
-                  onClick={() =>
-                    setAiShownotesPromptDraft(`${AI_SHOWNOTES_SUGGEST_LINE_A}\n${AI_SHOWNOTES_SUGGEST_LINE_B}`)
-                  }
-                >
-                  填入上述建议
-                </button>
                 {aiShownotesErr ? <p className="mt-2 text-sm text-danger-ink">{aiShownotesErr}</p> : null}
                 <div className="mt-5 flex justify-end gap-2">
                   <button
