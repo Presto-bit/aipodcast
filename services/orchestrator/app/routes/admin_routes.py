@@ -1,8 +1,10 @@
 import os
 import secrets
 from datetime import date, datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 
 from ..schemas import (
     AdminCreateUserRequest,
@@ -19,6 +21,7 @@ from .. import auth_bridge
 from .. import models
 from ..legacy_bridge import get_tts_polish_default_requirements
 from ..plan_catalog import is_valid_wallet_topup_amount_cents
+from .jobs_routes import _work_item_dict_from_recent_row
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(verify_internal_signature)])
 
@@ -469,3 +472,44 @@ def admin_patch_job_podcast_template(job_id: str, request: Request, body: AdminP
         "job_id": str(job_id).strip(),
         "is_podcast_template": bool(body.enabled),
     }
+
+
+@router.get("/works")
+def admin_list_all_works_api(
+    request: Request,
+    limit: int = Query(default=80, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=10_000),
+):
+    """全站用户已成功成片列表（作品管理）。"""
+    _require_admin_phone(request)
+    rows = models.list_admin_succeeded_works(limit=limit, offset=offset, slim_result=True)
+    _proj_name_cache: dict[str, str] = {}
+
+    def project_name_for(pid_raw: str) -> str:
+        pid = (pid_raw or "").strip()
+        if not pid:
+            return ""
+        if pid in _proj_name_cache:
+            return _proj_name_cache[pid]
+        n = models.get_project_name(pid) or ""
+        _proj_name_cache[pid] = n
+        return n
+
+    flat: list[dict[str, Any]] = []
+    for row in rows:
+        work, _jt = _work_item_dict_from_recent_row(
+            row,
+            download_allowed=False,
+            project_name_for=project_name_for,
+        )
+        flat.append(work)
+    has_more = len(rows) >= limit
+    return jsonable_encoder(
+        {
+            "success": True,
+            "works": flat,
+            "has_more": has_more,
+            "offset": offset,
+            "limit": limit,
+        }
+    )

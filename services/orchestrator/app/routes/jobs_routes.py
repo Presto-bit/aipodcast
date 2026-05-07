@@ -311,6 +311,11 @@ def _work_item_dict_from_recent_row(
     }
     if is_podcast_public_template:
         work["isPodcastPublicTemplate"] = True
+    if "is_podcast_template" in row:
+        work["isPodcastPublicTemplate"] = bool(row.get("is_podcast_template"))
+    cl = str(row.get("creator_label") or "").strip()
+    if cl:
+        work["creatorLabel"] = cl
     if _program_name:
         work["workProgramName"] = _program_name[:200]
     work.update(_works_script_notes_extras(result, _payload_dict, job_type))

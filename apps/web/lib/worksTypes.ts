@@ -1,5 +1,7 @@
 export type WorkItem = {
   id?: string;
+  /** 管理后台全站作品列表：创建者展示名 */
+  creatorLabel?: string;
   /** 与 orchestrator projects.name 对应，用于区分入口（如笔记播客专用项目） */
   projectName?: string;
   title?: string;

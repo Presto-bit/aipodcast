@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "../../lib/auth";
 
-type AdminNavIcon = "users" | "models" | "usage" | "jobs" | "polish" | "matrix" | "pay" | "logs";
+type AdminNavIcon = "users" | "models" | "usage" | "jobs" | "works" | "polish" | "matrix" | "pay" | "logs";
 
 function navHrefActive(pathname: string, href: string): boolean {
   if (pathname === href) return true;
@@ -48,6 +48,20 @@ function NavIcon({ icon, active }: { icon: AdminNavIcon; active: boolean }) {
       <svg viewBox="0 0 24 24" aria-hidden="true" className={`h-4 w-4 ${colorClass}`}>
         <path
           d="M4 19h16M7 16v-3m5 3V8m5 8v-5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  if (icon === "works") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" className={`h-4 w-4 ${colorClass}`}>
+        <path
+          d="M12 3v18M8 8h8M8 16h8M5 6h2v12H5V6zm12 0h2v12h-2V6z"
           fill="none"
           stroke="currentColor"
           strokeWidth="1.8"
@@ -139,7 +153,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: "/admin/users", label: "用户管理", desc: "用户与角色", icon: "users" as const },
     { href: "/admin/models", label: "模型管理", desc: "模型与费用说明", icon: "models" as const },
     { href: "/admin/log-management", label: "日志管理", desc: "日志开关、TTL、采样与审计", icon: "logs" as const },
-    { href: "/admin/jobs", label: "创作记录", desc: "生成记录列表与详情", icon: "jobs" as const },
+    { href: "/admin/jobs", label: "创作记录", desc: "全站任务与操作", icon: "jobs" as const },
+    { href: "/admin/works", label: "作品管理", desc: "全站成片列表与试听", icon: "works" as const },
     { href: "/admin/tts-polish", label: "TTS 润色", desc: "口语润色条款（单/双人）", icon: "polish" as const },
   ];
 

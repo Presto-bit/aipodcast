@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../ui/Button";
 import EmptyState from "../ui/EmptyState";
 import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
-import { cancelJob, listJobs, purgeJob } from "../../lib/api";
+import { cancelJob, listJobs, purgeJob, retryJob } from "../../lib/api";
 import { jobsListLoadErrorPresentation } from "../../lib/jobsListErrors";
 import type { JobRecord, JobStatus } from "../../lib/types";
 import { useI18n } from "../../lib/I18nContext";
@@ -100,6 +100,8 @@ export default function JobsListView({ variant }: JobsListViewProps) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [purgingId, setPurgingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [purgeBusy, setPurgeBusy] = useState(false);
   const [copiedJobId, setCopiedJobId] = useState<string | null>(null);
@@ -164,6 +166,36 @@ export default function JobsListView({ variant }: JobsListViewProps) {
     }
   }
 
+  async function retryOne(id: string) {
+    setRetryingId(id);
+    setErr("");
+    try {
+      await retryJob(id);
+      await load();
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setRetryingId(null);
+    }
+  }
+
+  async function purgeOne(id: string) {
+    const ok = window.confirm(
+      `将永久删除任务 ${id.slice(0, 8)}… 及其存储，不可恢复。\n\n若任务仍在排队或运行，会先尝试停止再删除。确定？`
+    );
+    if (!ok) return;
+    setPurgingId(id);
+    setErr("");
+    try {
+      await purgeJob(id);
+      await load();
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setPurgingId(null);
+    }
+  }
+
   const pageJobIds = useMemo(() => jobs.map((j) => j.id), [jobs]);
   const allPageSelected =
     pageJobIds.length > 0 && pageJobIds.every((id) => selectedIds.includes(id));
@@ -225,7 +257,7 @@ export default function JobsListView({ variant }: JobsListViewProps) {
       {isAdmin ? (
         <>
           <h1 className="text-2xl font-semibold text-ink">创作记录</h1>
-          <p className="mt-2 text-sm text-muted">全站任务列表与状态。</p>
+          <p className="mt-2 text-sm text-muted">全站用户的生成任务；可暂停进行中任务、重新生成已结束任务，或永久删除任一条。</p>
         </>
       ) : (
         <div className="mb-6 text-center">
@@ -353,6 +385,12 @@ export default function JobsListView({ variant }: JobsListViewProps) {
             <tbody>
               {jobs.map((j) => {
                 const canStop = j.status === "queued" || j.status === "running";
+                const jt = String(j.job_type || "").toLowerCase();
+                const canAdminRetry =
+                  isAdmin &&
+                  j.status !== "queued" &&
+                  j.status !== "running" &&
+                  jt !== "podcast_short_video";
                 const peekKinds = succeededContentPeekKinds(j);
                 const peekHref = succeededContentPeekHref(j, isAdmin);
                 return (
@@ -418,11 +456,37 @@ export default function JobsListView({ variant }: JobsListViewProps) {
                             variant="danger"
                             className="!px-2 !py-0.5 !text-xs"
                             loading={stoppingId === j.id}
-                            busyLabel="停止中…"
-                            disabledReason={stoppingId === j.id ? "正在停止" : undefined}
+                            busyLabel="暂停中…"
+                            disabledReason={stoppingId === j.id ? "正在暂停" : undefined}
                             onClick={() => void stopJob(j.id)}
                           >
-                            停止
+                            {isAdmin ? "暂停" : "停止"}
+                          </Button>
+                        ) : null}
+                        {isAdmin && canAdminRetry ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="!px-2 !py-0.5 !text-xs"
+                            loading={retryingId === j.id}
+                            busyLabel="提交中…"
+                            disabledReason={retryingId === j.id ? "正在提交" : undefined}
+                            onClick={() => void retryOne(j.id)}
+                          >
+                            重新生成
+                          </Button>
+                        ) : null}
+                        {isAdmin ? (
+                          <Button
+                            type="button"
+                            variant="danger"
+                            className="!px-2 !py-0.5 !text-xs"
+                            loading={purgingId === j.id}
+                            busyLabel="删除中…"
+                            disabledReason={purgingId === j.id ? "正在删除" : undefined}
+                            onClick={() => void purgeOne(j.id)}
+                          >
+                            删除
                           </Button>
                         ) : null}
                       </div>

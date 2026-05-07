@@ -2216,6 +2216,94 @@ def list_recent_works(
             return [dict(x) for x in cur.fetchall()]
 
 
+def list_admin_succeeded_works(
+    limit: int = 80,
+    offset: int = 0,
+    *,
+    slim_result: bool = True,
+) -> list[dict[str, Any]]:
+    """
+    管理后台「作品管理」：全站已成功且未删除的成片（与 list_recent_works 相同过滤），
+    附创建者展示名与播客模板标记。
+    """
+    ensure_jobs_trash_schema()
+    lim = max(1, min(200, int(limit)))
+    off = max(0, min(10_000, int(offset)))
+    _creator_label_sql = (
+        "NULLIF(TRIM(COALESCE("
+        "NULLIF(TRIM(u.display_name), ''), "
+        "NULLIF(TRIM(u.phone), ''), "
+        "NULLIF(TRIM(u.email), ''))), '') AS creator_label"
+    )
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if slim_result:
+                cur.execute(
+                    f"""
+                    SELECT j.id, j.job_type, j.status,
+                      CASE
+                        WHEN j.result IS NULL OR jsonb_typeof(j.result) != 'object' THEN '{{}}'::jsonb
+                        ELSE jsonb_strip_nulls(
+                          jsonb_build_object(
+                            'preview', j.result->'preview',
+                            'script_preview', j.result->'script_preview',
+                            'title', j.result->'title',
+                            'audio_url', j.result->'audio_url',
+                            'script_url', j.result->'script_url',
+                            'audio_duration_sec', j.result->'audio_duration_sec',
+                            'cover_image', COALESCE(j.result->'cover_image', j.result->'coverImage'),
+                            'cover_object_key', j.result->'cover_object_key',
+                            'audio_object_key', j.result->'audio_object_key',
+                            'script_char_count', j.result->'script_char_count',
+                            'notes_source_notebook', j.result->'notes_source_notebook',
+                            'notes_source_note_count', j.result->'notes_source_note_count',
+                            'notes_source_titles', j.result->'notes_source_titles',
+                            'has_audio_hex', to_jsonb(
+                              (j.result ? 'audio_hex' AND COALESCE(LENGTH(j.result->>'audio_hex'), 0) > 0)
+                              OR (
+                                (j.result ? 'audio_object_key')
+                                AND LENGTH(TRIM(COALESCE(j.result->>'audio_object_key', ''))) > 0
+                              )
+                            )
+                          )
+                        )
+                      END AS result,
+                      j.payload, j.created_at, j.completed_at, j.project_id,
+                      p.name AS project_name,
+                      COALESCE(j.is_podcast_template, FALSE) AS is_podcast_template,
+                      {_creator_label_sql}
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
+                    WHERE j.status = 'succeeded'
+                      AND j.deleted_at IS NULL
+                      AND j.job_type NOT IN ('note_rag_index')
+                    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (lim, off),
+                )
+            else:
+                cur.execute(
+                    f"""
+                    SELECT j.id, j.job_type, j.status, j.result, j.payload, j.created_at, j.completed_at, j.project_id,
+                      p.name AS project_name,
+                      COALESCE(j.is_podcast_template, FALSE) AS is_podcast_template,
+                      {_creator_label_sql}
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
+                    WHERE j.status = 'succeeded'
+                      AND j.deleted_at IS NULL
+                      AND j.job_type NOT IN ('note_rag_index')
+                    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (lim, off),
+                )
+            return [dict(x) for x in cur.fetchall()]
+
+
 def list_podcast_template_works(
     limit: int = 40,
     offset: int = 0,

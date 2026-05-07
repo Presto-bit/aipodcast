@@ -1,12 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
 import { useTheme } from "../../../lib/ThemeContext";
-import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
 import ChangePasswordModal from "../../../components/ui/ChangePasswordModal";
 import InlineTextPrompt from "../../../components/ui/InlineTextPrompt";
 
@@ -15,12 +13,8 @@ export default function MeProfilePage() {
   const searchParams = useSearchParams();
   const { t, lang, setLang } = useI18n();
   const { theme, setTheme } = useTheme();
-  const { ready, authRequired, logout, user, login, refreshMe } = useAuth();
+  const { ready, authRequired, logout, user, refreshMe } = useAuth();
   const showLogout = isLoggedInAccountUser(user);
-  const [authPhone, setAuthPhone] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authError, setAuthError] = useState("");
   const [nicknamePromptOpen, setNicknamePromptOpen] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState("");
   const [nicknameBusy, setNicknameBusy] = useState(false);
@@ -93,20 +87,17 @@ export default function MeProfilePage() {
     }
   }, [nicknameDraft, refreshMe]);
 
-  async function submitLogin(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setAuthBusy(true);
-    setAuthError("");
-    try {
-      await login(authPhone.trim(), authPassword);
-      const target = consumePostAuthReturnTo(searchParams?.get("returnTo") ?? null);
-      if (target) router.replace(target);
-    } catch (err) {
-      setAuthError(String(err instanceof Error ? err.message : err));
-    } finally {
-      setAuthBusy(false);
-    }
-  }
+  const profileReturnPath = useMemo(() => {
+    const qs = searchParams?.toString() || "";
+    return `/me/profile${qs ? `?${qs}` : ""}`;
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!ready || !authRequired) return;
+    if (isLoggedInAccountUser(user)) return;
+    const loginUrl = `/login?returnTo=${encodeURIComponent(profileReturnPath)}`;
+    router.replace(loginUrl);
+  }, [ready, authRequired, user, router, profileReturnPath]);
 
   const applyPasswordChange = useCallback(async (currentPassword: string, newPassword: string) => {
     const res = await fetch("/api/auth/change-password", {
@@ -127,10 +118,9 @@ export default function MeProfilePage() {
     return <p className="py-12 text-center text-sm text-muted">正在加载…</p>;
   }
 
-  const returnToParam = searchParams.get("returnTo");
-  const registerHref = returnToParam
-    ? `/register?returnTo=${encodeURIComponent(returnToParam)}`
-    : "/register";
+  if (authRequired && !isLoggedInAccountUser(user)) {
+    return <p className="py-12 text-center text-sm text-muted">正在前往登录…</p>;
+  }
 
   const accountName =
     typeof user?.username === "string" && user.username.trim() ? user.username.trim() : "—";
@@ -243,7 +233,6 @@ export default function MeProfilePage() {
       </div>
 
       <div className="mt-6 border-t border-line pt-5">
-        {authRequired && showLogout && !user ? <p className="mt-2 text-sm text-muted">正在恢复登录状态…</p> : null}
         {showLogout && user ? (
           <div className="flex flex-col gap-3">
             <button
@@ -270,60 +259,14 @@ export default function MeProfilePage() {
             <button
               type="button"
               className="w-full rounded-lg border border-line bg-fill px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-canvas sm:w-auto sm:min-w-[8rem]"
-              onClick={() => void logout({ redirectTo: "/" })}
+              onClick={() =>
+                void logout({
+                  redirectTo: `/login?returnTo=${encodeURIComponent(profileReturnPath)}`
+                })
+              }
             >
               {t("footer.logout")}
             </button>
-          </div>
-        ) : null}
-        {authRequired && !showLogout ? (
-          <div className="mt-3 space-y-3">
-            <p className="text-sm text-muted">
-              在此登录以查看账号信息；新用户请{" "}
-              <Link href={registerHref} className="font-medium text-brand hover:underline">
-                前往注册页
-              </Link>
-              完成注册。
-            </p>
-            <form className="space-y-3" onSubmit={(e) => void submitLogin(e)}>
-              <input
-                className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
-                placeholder="手机号、邮箱或用户名"
-                value={authPhone}
-                onChange={(e) => setAuthPhone(e.target.value)}
-                required
-                autoComplete="username"
-                aria-label="账号"
-              />
-              <input
-                className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
-                type="password"
-                placeholder="密码"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                required
-                minLength={6}
-                autoComplete="current-password"
-                aria-label="密码"
-              />
-              {authError ? (
-                <p className="text-sm text-danger-ink" role="alert" aria-live="assertive">
-                  {authError}
-                </p>
-              ) : null}
-              <button
-                type="submit"
-                className="w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50 sm:w-auto sm:min-w-[10rem]"
-                disabled={authBusy}
-              >
-                {authBusy ? "正在提交…" : "登录"}
-              </button>
-              <p className="text-center text-xs">
-                <Link href="/forgot-password" className="text-brand underline underline-offset-2 hover:opacity-90">
-                  忘记密码
-                </Link>
-              </p>
-            </form>
           </div>
         ) : null}
       </div>
