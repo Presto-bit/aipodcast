@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import EmptyState from "../../../components/ui/EmptyState";
-import { useAuth } from "../../../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { shouldHideWorkFromUserGallery } from "../../../lib/worksTypes";
 
 type NoteRow = {
@@ -60,7 +60,8 @@ async function deletePurgeWork(workId: string, headers: Record<string, string>) 
 }
 
 export default function NotesTrashPage() {
-  const { getAuthHeaders } = useAuth();
+  const { getAuthHeaders, user } = useAuth();
+  const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const [notes, setNotes] = useState<NoteRow[]>([]);
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,6 +74,13 @@ export default function NotesTrashPage() {
     setLoading(true);
     setErr("");
     try {
+      if (!isLoggedIn) {
+        setNotes([]);
+        setWorks([]);
+        setSelectedNoteIds([]);
+        setSelectedWorkIds([]);
+        return;
+      }
       const authHdr = getAuthHeaders();
       const [notesRes, worksRes] = await Promise.all([
         fetch("/api/notes/trash?limit=80&offset=0", { cache: "no-store", headers: { ...authHdr } }),
@@ -103,7 +111,7 @@ export default function NotesTrashPage() {
     } finally {
       setLoading(false);
     }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, isLoggedIn]);
 
   useEffect(() => {
     void load();
