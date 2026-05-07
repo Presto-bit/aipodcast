@@ -33,6 +33,10 @@ function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
   return w.downloadAllowed === true;
 }
 
+function workIsSharedNotebookForeign(w: Pick<WorkItem, "sharedNotebookForeign">): boolean {
+  return w.sharedNotebookForeign === true;
+}
+
 /** 与编排器 downloadAllowed / 打包接口校验文案一致 */
 const WORK_DOWNLOAD_GATE_TIP = "下载需有过钱包充值记录，或当前钱包仍有余额";
 
@@ -748,15 +752,20 @@ export default function PodcastWorksGallery({
   }, [renameJobId, renameDraft, titlesKey]);
 
   const openRename = useCallback((jobId: string, current: string) => {
+    if (works.some((w) => String(w.id || "") === jobId && workIsSharedNotebookForeign(w))) return;
     setRenameJobId(jobId);
     setRenameDraft(current);
     setMenuOpenId(null);
     setDeleteConfirmId(null);
-  }, []);
+  }, [works]);
 
   const confirmDelete = useCallback(
     async (jobId: string) => {
       if (works.some((w) => String(w.id || "") === jobId && w.isPodcastPublicTemplate)) {
+        setDeleteConfirmId(null);
+        return;
+      }
+      if (works.some((w) => String(w.id || "") === jobId && workIsSharedNotebookForeign(w))) {
         setDeleteConfirmId(null);
         return;
       }
@@ -901,6 +910,7 @@ export default function PodcastWorksGallery({
 
   const requestDelete = useCallback((jobId: string) => {
     if (works.some((w) => String(w.id || "") === jobId && w.isPodcastPublicTemplate)) return;
+    if (works.some((w) => String(w.id || "") === jobId && workIsSharedNotebookForeign(w))) return;
     setDeleteConfirmId(jobId);
     setDeleteError(null);
     setMenuOpenId(null);
@@ -1236,6 +1246,7 @@ export default function PodcastWorksGallery({
             const isActive = activeJobId === id;
             const rowPlayMsg = (isActive && activePlayError) || playErrorById[id];
             const prog = isActive ? progress01 : 0;
+            const sharedNotebookForeign = workIsSharedNotebookForeign(w);
             const baseSec =
               typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0
                 ? w.audioDurationSec
@@ -1365,7 +1376,7 @@ export default function PodcastWorksGallery({
                           )
                         ) : null}
                       </div>
-                      {isMediaInFlight ? null : (
+                      {isMediaInFlight || sharedNotebookForeign ? null : (
                         <div className="relative shrink-0" ref={menuOpenId === id ? menuWrapRef : undefined}>
                           <button
                             type="button"
@@ -1544,22 +1555,26 @@ export default function PodcastWorksGallery({
                           href={`/works/${encodeURIComponent(id)}`}
                           className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
                         >
-                          修改文稿
+                          {sharedNotebookForeign ? "查看文稿" : "修改文稿"}
                         </Link>
-                        <button
-                          type="button"
-                          className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                          onClick={() => openRename(id, w.displayTitle)}
-                        >
-                          修改名称
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
-                          onClick={() => requestDelete(id)}
-                        >
-                          删除
-                        </button>
+                        {sharedNotebookForeign ? null : (
+                          <button
+                            type="button"
+                            className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+                            onClick={() => openRename(id, w.displayTitle)}
+                          >
+                            修改名称
+                          </button>
+                        )}
+                        {sharedNotebookForeign ? null : (
+                          <button
+                            type="button"
+                            className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
+                            onClick={() => requestDelete(id)}
+                          >
+                            删除
+                          </button>
+                        )}
                       </>
                     ) : (
                       <>
@@ -1588,23 +1603,27 @@ export default function PodcastWorksGallery({
                           "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
                           zipBusy === id ? downloadBusyLabel(w.type) : "下载"
                         )}
-                        <button
-                          type="button"
-                          className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                          onClick={() => void onReuseTemplate(id, templateReuseArgs)}
-                        >
-                          {reuseOrManuscriptLabel}
-                        </button>
-                        <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
+                        {sharedNotebookForeign ? null : (
                           <button
                             type="button"
-                            className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-fill"
-                            aria-label="更多"
-                            onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
+                            className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+                            onClick={() => void onReuseTemplate(id, templateReuseArgs)}
                           >
-                            <span className="text-base leading-none">⋯</span>
+                            {reuseOrManuscriptLabel}
                           </button>
-                        </div>
+                        )}
+                        {sharedNotebookForeign ? null : (
+                          <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
+                            <button
+                              type="button"
+                              className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-fill"
+                              aria-label="更多"
+                              onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
+                            >
+                              <span className="text-base leading-none">⋯</span>
+                            </button>
+                          </div>
+                        )}
                         {publications.length > 0 ? (
                           <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">
                             {publishedText}
@@ -1730,16 +1749,18 @@ export default function PodcastWorksGallery({
                           })
                         }
                       />
-                      <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
-                        <button
-                          type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-fill"
-                          aria-label="更多"
-                          onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
-                        >
-                          <span className="text-base leading-none">⋯</span>
-                        </button>
-                      </div>
+                      {sharedNotebookForeign ? null : (
+                        <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
+                          <button
+                            type="button"
+                            className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-fill"
+                            aria-label="更多"
+                            onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
+                          >
+                            <span className="text-base leading-none">⋯</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1777,22 +1798,26 @@ export default function PodcastWorksGallery({
                         href={`/works/${encodeURIComponent(id)}`}
                         className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
                       >
-                        修改文稿
+                        {sharedNotebookForeign ? "查看文稿" : "修改文稿"}
                       </Link>
-                      <button
-                        type="button"
-                        className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                        onClick={() => openRename(id, w.displayTitle)}
-                      >
-                        修改名称
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
-                        onClick={() => requestDelete(id)}
-                      >
-                        删除
-                      </button>
+                      {sharedNotebookForeign ? null : (
+                        <button
+                          type="button"
+                          className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+                          onClick={() => openRename(id, w.displayTitle)}
+                        >
+                          修改名称
+                        </button>
+                      )}
+                      {sharedNotebookForeign ? null : (
+                        <button
+                          type="button"
+                          className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
+                          onClick={() => requestDelete(id)}
+                        >
+                          删除
+                        </button>
+                      )}
                     </>
                   ) : (
                     <>
@@ -1821,13 +1846,15 @@ export default function PodcastWorksGallery({
                         "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
                         zipBusy === id ? downloadBusyLabel(w.type) : "下载"
                       )}
-                      <button
-                        type="button"
-                        className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                        onClick={() => void onReuseTemplate(id, templateReuseArgs)}
-                      >
-                        {reuseOrManuscriptLabel}
-                      </button>
+                      {sharedNotebookForeign ? null : (
+                        <button
+                          type="button"
+                          className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+                          onClick={() => void onReuseTemplate(id, templateReuseArgs)}
+                        >
+                          {reuseOrManuscriptLabel}
+                        </button>
+                      )}
                       {publications.length > 0 ? (
                         <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">
                           {publishedText}
@@ -1864,17 +1891,19 @@ export default function PodcastWorksGallery({
                         onLockedNavigate: () => setMenuOpenId(null)
                       }
                     )}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="block w-full px-3 py-2 text-left hover:bg-fill"
-                      onClick={() => {
-                        setMenuOpenId(null);
-                        openRename(m.id, m.w.displayTitle);
-                      }}
-                    >
-                      修改名称
-                    </button>
+                    {!workIsSharedNotebookForeign(m.w) ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left hover:bg-fill"
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          openRename(m.id, m.w.displayTitle);
+                        }}
+                      >
+                        修改名称
+                      </button>
+                    ) : null}
                     {!m.isScriptDraft ? (
                       <button
                         type="button"
@@ -1888,17 +1917,19 @@ export default function PodcastWorksGallery({
                         {m.publishActionText}
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
-                      onClick={() => {
-                        setMenuOpenId(null);
-                        requestDelete(m.id);
-                      }}
-                    >
-                      删除
-                    </button>
+                    {!workIsSharedNotebookForeign(m.w) ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          requestDelete(m.id);
+                        }}
+                      >
+                        删除
+                      </button>
+                    ) : null}
                   </div>
                 );
               })(),
@@ -1912,6 +1943,7 @@ export default function PodcastWorksGallery({
                 const pos = notesStudioMenuPos;
                 if (spec.layout === "toolbar") {
                   const { w, id, isScriptDraft } = spec;
+                  const shf = workIsSharedNotebookForeign(w);
                   return (
                     <div
                       ref={notesStudioMenuPortalRef}
@@ -1919,18 +1951,20 @@ export default function PodcastWorksGallery({
                       className="fixed z-[1210] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
                       style={{ top: pos.top, left: pos.left }}
                     >
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="block w-full px-3 py-2 text-left hover:bg-fill"
-                        onClick={() => {
-                          setMenuOpenId(null);
-                          openRename(id, w.displayTitle);
-                        }}
-                      >
-                        修改名称
-                      </button>
-                      {!isScriptDraft ? (
+                      {!shf ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="block w-full px-3 py-2 text-left hover:bg-fill"
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            openRename(id, w.displayTitle);
+                          }}
+                        >
+                          修改名称
+                        </button>
+                      ) : null}
+                      {!isScriptDraft && !shf ? (
                         <button
                           type="button"
                           role="menuitem"
@@ -1945,21 +1979,24 @@ export default function PodcastWorksGallery({
                           {coverUploadBusy === id ? "处理封面中…" : "上传封面（裁 1400²）"}
                         </button>
                       ) : null}
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
-                        onClick={() => {
-                          setMenuOpenId(null);
-                          requestDelete(id);
-                        }}
-                      >
-                        删除
-                      </button>
+                      {!shf ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            requestDelete(id);
+                          }}
+                        >
+                          删除
+                        </button>
+                      ) : null}
                     </div>
                   );
                 }
                 const { w, id, isScriptDraft, publishActionText } = spec;
+                const shf = workIsSharedNotebookForeign(w);
                 return (
                   <div
                     ref={notesStudioMenuPortalRef}
@@ -1979,18 +2016,20 @@ export default function PodcastWorksGallery({
                         onLockedNavigate: () => setMenuOpenId(null)
                       }
                     )}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="block w-full px-3 py-2 text-left hover:bg-fill"
-                      onClick={() => {
-                        setMenuOpenId(null);
-                        openRename(id, w.displayTitle);
-                      }}
-                    >
-                      修改名称
-                    </button>
-                    {!isScriptDraft ? (
+                    {!shf ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left hover:bg-fill"
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          openRename(id, w.displayTitle);
+                        }}
+                      >
+                        修改名称
+                      </button>
+                    ) : null}
+                    {!isScriptDraft && !shf ? (
                       <button
                         type="button"
                         role="menuitem"
@@ -2018,17 +2057,19 @@ export default function PodcastWorksGallery({
                         {publishActionText}
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
-                      onClick={() => {
-                        setMenuOpenId(null);
-                        requestDelete(id);
-                      }}
-                    >
-                      删除
-                    </button>
+                    {!shf ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          requestDelete(id);
+                        }}
+                      >
+                        删除
+                      </button>
+                    ) : null}
                   </div>
                 );
               })(),

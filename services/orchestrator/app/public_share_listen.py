@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
-from .models import get_job
+from .models import get_job, get_job_via_shared_notebook_visible_to_viewer
 from .object_store import (
     is_likely_internal_object_store_http_url,
     list_mp3_object_keys_under_prefix,
@@ -368,6 +368,8 @@ def resolve_owner_work_listen_storage_key(job_id: str, user_ref: str | None) -> 
     if not jid:
         return None
     row = get_job(jid, user_ref)
+    if not row and user_ref:
+        row = get_job_via_shared_notebook_visible_to_viewer(jid, user_ref)
     if not row or row.get("deleted_at"):
         return None
     if str(row.get("status") or "").strip().lower() != "succeeded":
@@ -391,6 +393,8 @@ def build_owner_work_listen_bundle(job_id: str, user_ref: str | None) -> dict[st
     if not jid:
         return None
     row = get_job(jid, user_ref)
+    if not row and user_ref:
+        row = get_job_via_shared_notebook_visible_to_viewer(jid, user_ref)
     if not row:
         return None
     if row.get("deleted_at"):

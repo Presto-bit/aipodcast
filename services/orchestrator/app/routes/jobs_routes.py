@@ -41,6 +41,7 @@ from ..models import (
     ensure_jobs_trash_schema,
     get_job,
     get_job_artifact,
+    get_job_via_shared_notebook_visible_to_viewer,
     get_project_name,
     get_shared_notebook_public_access,
     list_job_artifacts,
@@ -48,6 +49,7 @@ from ..models import (
     list_jobs,
     list_podcast_template_works,
     list_recent_works,
+    list_recent_works_for_public_shared_notebook,
     list_trashed_works,
     merge_job_result,
     purge_expired_trashed_works,
@@ -253,6 +255,7 @@ def _work_item_dict_from_recent_row(
     download_allowed: bool,
     project_name_for: Callable[[str], str],
     is_podcast_public_template: bool = False,
+    foreign_shared_notebook: bool = False,
 ) -> tuple[dict[str, Any], str]:
     """由 list_recent_works / 模板列表行构建前端 WorkItem；返回 (work, job_type)。"""
     raw_result = row.get("result")
@@ -319,6 +322,8 @@ def _work_item_dict_from_recent_row(
     if _program_name:
         work["workProgramName"] = _program_name[:200]
     work.update(_works_script_notes_extras(result, _payload_dict, job_type))
+    if foreign_shared_notebook:
+        work["sharedNotebookForeign"] = True
     return work, job_type
 
 
@@ -619,14 +624,47 @@ def create_job_api(req: JobCreateRequest, request: Request):
     return JSONResponse(jsonable_encoder(serialize_job(row)))
 
 
+def _works_recency_ts(row: dict[str, Any]) -> float:
+    for k in ("completed_at", "created_at"):
+        v = row.get(k)
+        if v is not None and hasattr(v, "timestamp"):
+            try:
+                return float(v.timestamp())
+            except Exception:
+                continue
+    return 0.0
+
+
 @router.get("/works")
 def list_works_api(
     request: Request,
     limit: int = Query(default=80, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=10_000),
+    shared_from_owner_user_id: str = Query(default=""),
+    shared_notes_notebook: str = Query(default=""),
 ):
     user_ref = _current_user_ref_or_401(request)
     rows = list_recent_works(limit=limit, offset=offset, user_ref=user_ref)
+    foreign_ids: set[str] = set()
+    so = (shared_from_owner_user_id or "").strip()
+    snb = (shared_notes_notebook or "").strip()
+    if so and snb:
+        extra = list_recent_works_for_public_shared_notebook(
+            owner_user_id=so,
+            notebook_name=snb,
+            limit=min(limit, 120),
+        )
+        seen_ids: set[str] = {str(r.get("id") or "") for r in rows if r.get("id") is not None}
+        for r in extra:
+            rid = str(r.get("id") or "").strip()
+            if not rid or rid in seen_ids:
+                continue
+            seen_ids.add(rid)
+            foreign_ids.add(rid)
+            rows.append(r)
+        rows.sort(key=_works_recency_ts, reverse=True)
+        rows = rows[:limit]
+
     buckets: dict[str, list[dict[str, Any]]] = {"notes": [], "ai": [], "tts": []}
     _proj_name_cache: dict[str, str] = {}
     download_allowed_bulk = user_download_allowed_for_succeeded_works(user_ref or "")
@@ -642,10 +680,13 @@ def list_works_api(
         return n
 
     for row in rows:
+        jid = str(row.get("id") or "").strip()
+        foreign = jid in foreign_ids
         work, job_type = _work_item_dict_from_recent_row(
             row,
-            download_allowed=download_allowed_bulk,
+            download_allowed=download_allowed_bulk and not foreign,
             project_name_for=project_name_for,
+            foreign_shared_notebook=foreign,
         )
         if job_type in ("text_to_speech", "tts"):
             buckets["tts"].append(work)
@@ -860,7 +901,10 @@ def list_jobs_api(
 
 @router.get("/jobs/{job_id}")
 def get_job_api(job_id: str, request: Request):
-    row = get_job(job_id, user_ref=_job_row_scope_ref(request))
+    scope = _job_row_scope_ref(request)
+    row = get_job(job_id, user_ref=scope)
+    if not row and scope:
+        row = get_job_via_shared_notebook_visible_to_viewer(job_id, scope)
     if not row:
         raise HTTPException(status_code=404, detail="job_not_found")
     out = serialize_job(row)

@@ -1793,10 +1793,52 @@ export default function NotesPage() {
     writeDraftSourceIdsForNotebook(nb, draftSelectedNoteIds, noteRefCap);
   }, [effectiveDraftNotebookKey, draftSelectedNoteIds, noteRefCap]);
 
+  /** 工作台「我的作品」标题下仅展示一条：播客队列优先于文章底稿 */
+  const notesWorkbenchCreationProgress = useMemo(() => {
+    const pText = (podcastGenMessage || "").trim();
+    const pBusy = podcastGenBusy;
+    const dText = (draftMessage || "").trim();
+    const dBusy = draftBusy;
+    const pActive = pBusy || Boolean(pText);
+    const dActive = dBusy || Boolean(dText);
+    if (pActive) {
+      return {
+        text: pBusy ? pText || "…" : pText,
+        busy: pBusy,
+        doneTone: !pBusy && pText.includes("完成"),
+        warnTone: !pBusy && !pText.includes("完成") && Boolean(pText),
+        billingPodcast: messageSuggestsBillingTopUpOrSubscription(podcastGenMessage),
+        billingDraft: false
+      };
+    }
+    if (dActive) {
+      return {
+        text: dText,
+        busy: dBusy,
+        doneTone: !dBusy,
+        warnTone: false,
+        billingPodcast: false,
+        billingDraft: messageSuggestsBillingTopUpOrSubscription(draftMessage)
+      };
+    }
+    return null;
+  }, [podcastGenBusy, podcastGenMessage, draftBusy, draftMessage]);
+
   const fetchPodcastWorks = useCallback(async () => {
     setPodcastWorksError("");
     try {
-      const res = await fetch("/api/works?limit=80&offset=0", { credentials: "same-origin", cache: "no-store", headers: { ...getAuthHeaders() } });
+      const params = new URLSearchParams({ limit: "80", offset: "0" });
+      const shareOwner = (sharedBrowse?.ownerUserId || "").trim();
+      const nb = (selectedNotebook || "").trim();
+      if (sharedBrowse && shareOwner && nb) {
+        params.set("shared_from_owner_user_id", shareOwner);
+        params.set("shared_notes_notebook", nb);
+      }
+      const res = await fetch(`/api/works?${params.toString()}`, {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { ...getAuthHeaders() }
+      });
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
         ai?: WorkItem[];
@@ -1817,7 +1859,7 @@ export default function NotesPage() {
     } finally {
       setPodcastWorksLoading(false);
     }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, sharedBrowse?.ownerUserId, selectedNotebook]);
 
   useEffect(() => {
     void fetchPodcastWorks();
@@ -3480,46 +3522,6 @@ export default function NotesPage() {
     >
       {error ? <p className="mb-4 text-sm text-danger-ink">{error}</p> : null}
 
-      {/* 在笔记本列表页无法看到右侧「我的作品」时，仍显示文章/底稿/播客生成日志（如页面恢复未完成 job） */}
-      {hubView && (draftMessage.trim() || podcastGenBusy || podcastGenMessage.trim()) ? (
-        <div className="mb-4 space-y-2">
-          {podcastGenBusy || podcastGenMessage.trim() ? (
-            <div
-              className={`rounded-xl border px-3 py-2 text-xs ${
-                podcastGenBusy
-                  ? "border-brand/25 bg-fill/90 text-brand"
-                  : podcastGenMessage.includes("完成")
-                    ? "border-success/35 bg-success-soft/80 text-success-ink"
-                    : "border-warning/35 bg-warning-soft/70 text-warning-ink"
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              <p className="leading-snug">{podcastGenMessage || "…"}</p>
-              {messageSuggestsBillingTopUpOrSubscription(podcastGenMessage) ? (
-                <BillingShortfallLinks className="mt-2 text-[11px] normal-case" />
-              ) : null}
-            </div>
-          ) : null}
-          {draftMessage ? (
-            <div
-              className={`rounded-xl border px-3 py-2 text-xs ${
-                draftBusy
-                  ? "border-brand/25 bg-fill/90 text-brand"
-                  : "border-success/35 bg-success-soft/80 text-success-ink"
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              <p className="leading-snug">{draftMessage}</p>
-              {messageSuggestsBillingTopUpOrSubscription(draftMessage) ? (
-                <BillingShortfallLinks className="mt-2 text-[11px] normal-case" />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
       {hubView ? (
         <>
           <div
@@ -4514,9 +4516,31 @@ export default function NotesPage() {
 
           </div>
           <section className="mt-6 rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft lg:mt-8">
-            <div className="flex items-center justify-between gap-2 border-b border-line/50 pb-3">
-              <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/50 pb-3">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
+                {notesWorkbenchCreationProgress ? (
+                  <div
+                    className={`mt-2 rounded-lg border px-2.5 py-1.5 text-xs ${
+                      notesWorkbenchCreationProgress.busy
+                        ? "border-brand/25 bg-fill/90 text-brand"
+                        : notesWorkbenchCreationProgress.doneTone
+                          ? "border-success/35 bg-success-soft/80 text-success-ink"
+                          : notesWorkbenchCreationProgress.warnTone
+                            ? "border-warning/35 bg-warning-soft/70 text-warning-ink"
+                            : "border-line/70 bg-fill/50 text-muted"
+                    }`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <p className="line-clamp-3 leading-snug">{notesWorkbenchCreationProgress.text}</p>
+                    {notesWorkbenchCreationProgress.billingPodcast || notesWorkbenchCreationProgress.billingDraft ? (
+                      <BillingShortfallLinks className="mt-1.5 text-[11px] normal-case" />
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
                 <button
                   type="button"
                   className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-ink hover:bg-fill"

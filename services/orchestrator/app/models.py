@@ -396,6 +396,92 @@ def get_job(job_id: str, user_ref: str | None = None) -> dict[str, Any] | None:
             return None
 
 
+def get_job_unscoped_for_viewer_acl(job_id: str) -> dict[str, Any] | None:
+    """
+    加载单条任务（不做按当前用户的行级归属过滤）。
+    仅允许在追加 ACL（如「公开分享笔记本关联作品」）后返回给调用方。
+    """
+    jid = (job_id or "").strip()
+    if not jid:
+        return None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT j.*,
+                  NULLIF(TRIM(COALESCE(
+                    NULLIF(TRIM(u.display_name), ''),
+                    NULLIF(TRIM(u.phone), ''),
+                    NULLIF(TRIM(u.email), ''))), '') AS creator_label,
+                  COALESCE(j.created_by, p.user_id)::text AS _effective_owner_user_id
+                FROM jobs j
+                LEFT JOIN projects p ON p.id = j.project_id
+                LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
+                WHERE j.id = %s::uuid
+                LIMIT 1
+                """,
+                (jid,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def _job_payload_notebook_name(payload_raw: Any) -> str:
+    if isinstance(payload_raw, dict):
+        pl = payload_raw
+    elif isinstance(payload_raw, str) and payload_raw.strip():
+        try:
+            o = json.loads(payload_raw)
+            pl = o if isinstance(o, dict) else {}
+        except json.JSONDecodeError:
+            pl = {}
+    else:
+        pl = {}
+    return str(pl.get("notes_notebook") or "").strip()
+
+
+def get_job_via_shared_notebook_visible_to_viewer(job_id: str, viewer_user_ref: str | None) -> dict[str, Any] | None:
+    """
+    当前用户非任务所有者，但该任务来源于他人「已公开」的笔记本时，允许只读查看（与 /works 合并列表一致）。
+    仅成功态；未完成或已删任务不返回。
+    """
+    vr = (viewer_user_ref or "").strip()
+    if not vr:
+        return None
+    row = get_job_unscoped_for_viewer_acl(job_id)
+    if not row or row.get("deleted_at"):
+        return None
+    if str(row.get("status") or "").strip().lower() != "succeeded":
+        return None
+    owner_uid = _normalize_uuid_str(str(row.pop("_effective_owner_user_id", "") or ""))
+    if not owner_uid:
+        return None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            viewer_uid = _resolve_user_uuid_or_none(cur, vr)
+    if viewer_uid and str(viewer_uid) == owner_uid:
+        return None
+    nb_payload = _job_payload_notebook_name(row.get("payload"))
+    res_raw = row.get("result")
+    if isinstance(res_raw, dict):
+        res = res_raw
+    elif isinstance(res_raw, str) and res_raw.strip():
+        try:
+            o = json.loads(res_raw)
+            res = o if isinstance(o, dict) else {}
+        except json.JSONDecodeError:
+            res = {}
+    else:
+        res = {}
+    nb_result = str(res.get("notes_source_notebook") or "").strip()
+    notebook = nb_payload or nb_result
+    if not notebook:
+        return None
+    if get_shared_notebook_public_access(owner_uid, notebook) is None:
+        return None
+    return row
+
+
 def list_job_events(job_id: str, after_id: int = 0) -> list[dict[str, Any]]:
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -587,7 +673,8 @@ def list_popular_public_notebooks(*, limit: int = 40, offset: int = 0) -> list[d
                        ub.cover_preset_id,
                        ub.cover_thumb_object_key,
                        popauto.id::text AS auto_cover_note_id,
-                       COALESCE(NULLIF(btrim(u.phone), ''), NULLIF(btrim(u.username), ''), NULLIF(btrim(u.email), ''), '') AS owner_label_raw
+                       NULLIF(btrim(u.display_name), '') AS owner_nickname_raw,
+                       COALESCE(NULLIF(btrim(u.phone), ''), NULLIF(btrim(u.username), ''), NULLIF(btrim(u.email), ''), '') AS owner_fallback_label_raw
                 FROM user_notebooks ub
                 JOIN users u ON u.id = ub.user_id
                 LEFT JOIN LATERAL (
@@ -644,7 +731,12 @@ def list_popular_public_notebooks(*, limit: int = 40, offset: int = 0) -> list[d
             rows = [dict(r) for r in cur.fetchall()]
     out: list[dict[str, Any]] = []
     for r in rows:
-        label = str(r.get("owner_label_raw") or "").strip()
+        nick = str(r.get("owner_nickname_raw") or "").strip()
+        fallback = str(r.get("owner_fallback_label_raw") or "").strip()
+        if nick:
+            label_for_public = _format_owner_nickname_for_public(nick)
+        else:
+            label_for_public = _mask_user_label_for_public(fallback)
         latest = r.get("latest_source_at")
         if latest is not None and hasattr(latest, "isoformat"):
             latest_iso = latest.isoformat()
@@ -658,7 +750,7 @@ def list_popular_public_notebooks(*, limit: int = 40, offset: int = 0) -> list[d
                 "notebook": str(r.get("notebook") or ""),
                 "publicAccess": str(r.get("public_access") or ""),
                 "viewCount": int(r.get("view_count") or 0),
-                "ownerDisplayName": _mask_user_label_for_public(label),
+                "ownerDisplayName": label_for_public,
                 "sourceCount": int(r.get("source_count") or 0),
                 "latestSourceAt": latest_iso,
                 "coverMode": cm,
@@ -668,6 +760,25 @@ def list_popular_public_notebooks(*, limit: int = 40, offset: int = 0) -> list[d
             }
         )
     return out
+
+
+def _format_owner_nickname_for_public(nickname: str) -> str:
+    """
+    热门笔记本等场景：用户设置了 display_name（昵称）时优先展示。
+    若昵称形态像邮箱或手机号，仍走脱敏，避免误把隐私字段当昵称展示。
+    """
+    s = (nickname or "").strip()
+    if not s:
+        return "用户"
+    if "@" in s:
+        return _mask_user_label_for_public(s)
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) >= 7:
+        return _mask_user_label_for_public(s)
+    max_len = 48
+    if len(s) > max_len:
+        return f"{s[: max_len - 1]}…"
+    return s
 
 
 def _mask_user_label_for_public(label: str) -> str:
@@ -2213,6 +2324,77 @@ def list_recent_works(
                     """,
                     (user_uuid, user_uuid, lim, off),
                 )
+            return [dict(x) for x in cur.fetchall()]
+
+
+def list_recent_works_for_public_shared_notebook(
+    *,
+    owner_user_id: str,
+    notebook_name: str,
+    limit: int = 80,
+) -> list[dict[str, Any]]:
+    """
+    他人已公开分享的笔记本：列出该笔记本下、笔记本所有者产生的成功作品（供访客在知识库侧栏合并展示）。
+    若笔记本未公开，返回空列表（调用方已鉴权为登录用户）。
+    """
+    ou = _normalize_uuid_str(owner_user_id)
+    nb = (notebook_name or "").strip()
+    if not ou or not nb:
+        return []
+    if get_shared_notebook_public_access(ou, nb) is None:
+        return []
+    lim = max(1, min(200, int(limit)))
+    ensure_jobs_trash_schema()
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                    SELECT j.id, j.job_type, j.status,
+                      CASE
+                        WHEN j.result IS NULL OR jsonb_typeof(j.result) != 'object' THEN '{}'::jsonb
+                        ELSE jsonb_strip_nulls(
+                          jsonb_build_object(
+                            'preview', j.result->'preview',
+                            'script_preview', j.result->'script_preview',
+                            'title', j.result->'title',
+                            'audio_url', j.result->'audio_url',
+                            'script_url', j.result->'script_url',
+                            'audio_duration_sec', j.result->'audio_duration_sec',
+                            'cover_image', COALESCE(j.result->'cover_image', j.result->'coverImage'),
+                            'cover_object_key', j.result->'cover_object_key',
+                            'audio_object_key', j.result->'audio_object_key',
+                            'script_char_count', j.result->'script_char_count',
+                            'notes_source_notebook', j.result->'notes_source_notebook',
+                            'notes_source_note_count', j.result->'notes_source_note_count',
+                            'notes_source_titles', j.result->'notes_source_titles',
+                            'has_audio_hex', to_jsonb(
+                              (j.result ? 'audio_hex' AND COALESCE(LENGTH(j.result->>'audio_hex'), 0) > 0)
+                              OR (
+                                (j.result ? 'audio_object_key')
+                                AND LENGTH(TRIM(COALESCE(j.result->>'audio_object_key', ''))) > 0
+                              )
+                            )
+                          )
+                        )
+                      END AS result,
+                      j.payload, j.created_at, j.completed_at, j.project_id,
+                      p.name AS project_name
+                    FROM jobs j
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    WHERE j.status = 'succeeded'
+                      AND j.deleted_at IS NULL
+                      AND j.job_type NOT IN ('note_rag_index')
+                      AND COALESCE(j.created_by, p.user_id) = %s::uuid
+                      AND (
+                           NULLIF(TRIM(j.payload::jsonb->>'notes_notebook'), '') = %s
+                        OR NULLIF(TRIM(j.result->>'notes_source_notebook'), '') = %s
+                      )
+                      AND COALESCE(j.payload::jsonb->>'notes_notebook_studio_detach', '') NOT IN ('true', '1', 't', 'True')
+                    ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
+                    LIMIT %s
+                    """,
+                (ou, nb, nb, lim),
+            )
             return [dict(x) for x in cur.fetchall()]
 
 

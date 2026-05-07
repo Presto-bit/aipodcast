@@ -32,6 +32,8 @@ export type WorkItem = {
   workProgramName?: string;
   /** 管理员标记的全站播客创作模板；复用/试听走专用接口 */
   isPodcastPublicTemplate?: boolean;
+  /** 来自他人「已公开分享」笔记本下的作品；当前用户仅可查看/试听，不可删改 */
+  sharedNotebookForeign?: boolean;
 };
 
 /** 编排器内部任务，不应出现在「我的作品」/首页最近成品等用户向列表（与 list_recent_works 过滤一致） */

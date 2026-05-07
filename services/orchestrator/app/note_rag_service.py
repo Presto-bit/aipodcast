@@ -2,6 +2,7 @@
 勾选范围内的向量检索 + 异步摘要分层（笔记入库后由 RQ 建索引）。
 
 - 索引：按 content_text 切块、EmbeddingProvider 嵌入，写入 note_rag_chunks；
+  单笔记块数上限：默认 NOTE_RAG_MAX_CHUNKS_MODE=dynamic、NOTE_RAG_MAX_CHUNKS_ABS=320（可按 env 覆盖）；
   inputs.note_rag_embedding_sig 记录 backend|dim|配置指纹，变更 env 后过期块检索时丢弃。
 - inputs.note_rag_index_error：最近一次索引失败原因（成功时清空）。
 - 摘要：异步 LLM 生成，写入 inputs.note_summary（标注为机器摘要）。
@@ -29,7 +30,52 @@ from .text_decode import safe_decode_bytes
 logger = logging.getLogger(__name__)
 
 NOTE_LAYERED_RAG = (os.getenv("NOTE_LAYERED_RAG", "1") or "").strip().lower() not in ("0", "false", "no")
-MAX_CHUNKS_PER_NOTE = max(16, min(256, int(os.getenv("NOTE_RAG_MAX_CHUNKS_PER_NOTE", "160") or "160")))
+
+
+def _note_rag_max_chunks_floor() -> int:
+    try:
+        return max(4, min(512, int(os.getenv("NOTE_RAG_MAX_CHUNKS_FLOOR", "16") or "16")))
+    except (TypeError, ValueError):
+        return 16
+
+
+def _note_rag_max_chunks_abs() -> int:
+    """入库向量块全局硬顶（防极端长文拖垮嵌入/DB）。"""
+    try:
+        return max(64, min(20_000, int(os.getenv("NOTE_RAG_MAX_CHUNKS_ABS", "320") or "320")))
+    except (TypeError, ValueError):
+        return 320
+
+
+def _note_rag_max_chunks_mode() -> str:
+    m = (os.getenv("NOTE_RAG_MAX_CHUNKS_MODE", "dynamic") or "dynamic").strip().lower()
+    return m if m in ("static", "dynamic") else "dynamic"
+
+
+def _note_rag_max_chunks_static_cap() -> int:
+    """static 模式：单笔记块数目标上限（仍不超过 NOTE_RAG_MAX_CHUNKS_ABS）。"""
+    raw = (os.getenv("NOTE_RAG_MAX_CHUNKS_PER_NOTE", "160") or "160").strip()
+    lo = _note_rag_max_chunks_floor()
+    hi = _note_rag_max_chunks_abs()
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        v = 160
+    return max(lo, min(hi, v))
+
+
+def effective_note_rag_chunk_cap(split_count: int) -> int:
+    """
+    索引时截取切块列表的长度上限。
+    - dynamic：min(ABS, 实际切块数)，短稿少块、长稿随正文增长直至 ABS。
+    - static：min(静态配置, ABS)，与历史默认一致。
+    """
+    if split_count <= 0:
+        return 0
+    abs_cap = _note_rag_max_chunks_abs()
+    if _note_rag_max_chunks_mode() == "dynamic":
+        return min(abs_cap, split_count)
+    return min(_note_rag_max_chunks_static_cap(), abs_cap)
 _SUMMARY_INPUT_CAP = 44_000
 _SUMMARY_OUTPUT_CHARS = 5000
 _RETRIEVAL_CACHE_L1_MAX = max(64, min(1024, int(os.getenv("NOTE_RAG_RETR_CACHE_L1_MAX", "256") or "256")))
@@ -407,7 +453,9 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     if prev == h and count_rag_chunks_for_notes([note_id]) > 0:
         return {"ok": True, "skipped": "unchanged", "chunks": count_rag_chunks_for_notes([note_id])}
 
-    chunks = split_text_into_chunks(body)[:MAX_CHUNKS_PER_NOTE]
+    chunks = split_text_into_chunks(body)
+    cap = effective_note_rag_chunk_cap(len(chunks))
+    chunks = chunks[:cap]
     if not chunks:
         _update_note_rag_index_error(note_id, "no_chunks")
         return {"ok": False, "error": "no_chunks"}
