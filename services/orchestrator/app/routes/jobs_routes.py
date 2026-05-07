@@ -82,6 +82,7 @@ from ..public_share_listen import (
     explain_owner_work_listen_miss,
     probe_episode_audio_object_key,
     resolve_owner_work_listen_storage_key,
+    resolve_public_share_listen_storage_key,
 )
 from ..share_publish_llm import (
     build_share_user_source_text,
@@ -883,6 +884,47 @@ def public_job_share_listen_api(job_id: str):
     return JSONResponse(jsonable_encoder({"success": True, **bundle}))
 
 
+@router.get("/public/jobs/{job_id}/share-work-audio")
+def public_share_work_audio_stream(job_id: str, request: Request):
+    """匿名分享页成片 MP3：同源 BFF 反代本接口，不经浏览器跨域拉预签名。"""
+    key = resolve_public_share_listen_storage_key(job_id)
+    if not key:
+        raise HTTPException(status_code=404, detail="share_work_audio_not_available")
+    try:
+        total = head_object_byte_length(key)
+    except Exception:
+        raise HTTPException(status_code=404, detail="share_work_audio_storage_unreadable")
+    if total <= 0:
+        raise HTTPException(status_code=404, detail="share_work_audio_empty")
+    rng = request.headers.get("range") or request.headers.get("Range")
+    parsed = _parse_http_bytes_range(rng, total)
+    common_h = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=60"}
+    if parsed is None:
+        return StreamingResponse(
+            iter_object_chunks(key),
+            media_type="audio/mpeg",
+            headers={**common_h, "Content-Length": str(total)},
+        )
+    start, end = parsed
+    if start >= total or end < start:
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{total}"},
+        )
+    end = min(end, total - 1)
+    length = end - start + 1
+    return StreamingResponse(
+        iter_object_byte_range(key, start, end),
+        status_code=206,
+        media_type="audio/mpeg",
+        headers={
+            **common_h,
+            "Content-Range": f"bytes {start}-{end}/{total}",
+            "Content-Length": str(length),
+        },
+    )
+
+
 def _delete_job_json(job_id: str, row_scope_ref: str | None) -> JSONResponse:
     row = get_job(job_id, user_ref=row_scope_ref)
     if not row:
@@ -1637,3 +1679,28 @@ def share_ai_copy_api(
             }
         )
     )
+
+
+_SHOW_NOTES_SAVE_MAX = 20_000
+
+
+@router.post("/jobs/{job_id}/share-show-notes")
+def share_show_notes_save_api(job_id: str, request: Request, body: dict[str, Any] | None = Body(default=None)):
+    """将当前 Shownotes 草稿写入 jobs.result.auto_share_show_notes（分享页手动保存）。"""
+    _ = _current_user_ref_or_401(request)
+    scope = _job_row_scope_ref(request)
+    row = get_job(job_id, user_ref=scope)
+    if not row:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    if str(row.get("status") or "").strip().lower() != "succeeded":
+        raise HTTPException(status_code=400, detail="job_not_succeeded")
+    opts = body if isinstance(body, dict) else {}
+    notes = str(opts.get("show_notes") or "").replace("\r\n", "\n")
+    if len(notes) > _SHOW_NOTES_SAVE_MAX:
+        raise HTTPException(status_code=400, detail="show_notes_too_long")
+    patch: dict[str, Any] = {"auto_share_show_notes": notes}
+    err = merge_job_result(job_id, scope, patch)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    append_job_event(job_id, "log", "已手动保存 Shownotes（分享页）", {})
+    return JSONResponse(jsonable_encoder({"success": True}))

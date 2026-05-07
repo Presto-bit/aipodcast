@@ -23,6 +23,7 @@ import { readLocalStorageScoped, readSessionStorageScoped, writeLocalStorageScop
 import {
   createJob,
   fetchJobShareAiCopy,
+  fetchPersistShareShowNotes,
   fetchPublicShareListen,
   fetchRssPublishEligibility,
   getJob,
@@ -44,13 +45,30 @@ import { useAuth, userAccountRef } from "../../lib/auth";
 import { formatUnifiedWorksNavMetaLineFromJobRecord } from "../../lib/worksNavMetaLine";
 import { useWorkAudioPlayer, type WorkAudioToggleMeta } from "../../lib/workAudioPlayer";
 import { WorkHubOverviewPanel } from "./WorkHubOverviewPanel";
-import { WorksShareLinkPreviewCard } from "./WorksShareLinkPreviewCard";
 import { RssChannelEditor } from "../rss/RssChannelEditor";
 
 const RSS_LAST_CHANNEL_STORAGE_KEY = "fym_rss_last_channel_id";
 
 const AI_SHOWNOTES_HINT_LINE_A = "时间戳数量限制在 10 个以内";
 const AI_SHOWNOTES_HINT_LINE_B = "风格改为二次元解说口吻（轻松有梗、少用书面语）";
+const AI_SHOWNOTES_PROMPT_PLACEHOLDER = `a）${AI_SHOWNOTES_HINT_LINE_A}\nb）${AI_SHOWNOTES_HINT_LINE_B}`;
+
+function IconShareClipboard({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" strokeLinejoin="round" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconShareCheck({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
+      <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 type Props = {
   jobId: string;
@@ -178,6 +196,7 @@ export function SharePublishClient({
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
   /** 大模型生成简介 / Show Notes（与发布 busy 分离） */
   const [shareAiBusy, setShareAiBusy] = useState(false);
+  const [showNotesSaveBusy, setShowNotesSaveBusy] = useState(false);
   /** 当前登录用户且有权访问时拉取到的任务；匿名仅有公开试听数据时为空 */
   const [ownerJobRecord, setOwnerJobRecord] = useState<JobRecord | null>(null);
   /** RSS 发布：服务端与账户/作品计费挂钩；复制上方分享链接不受限 */
@@ -211,7 +230,7 @@ export function SharePublishClient({
       setShareLinkCopied(true);
       window.setTimeout(() => setShareLinkCopied(false), 2200);
     } catch {
-      window.alert("复制失败，请长按选框内链接或检查浏览器权限。");
+      window.alert("复制失败，请检查浏览器剪贴板权限。");
     }
   }, [sharePageFullUrl]);
 
@@ -1097,11 +1116,8 @@ export function SharePublishClient({
 
   async function applyAiShownotesRefine() {
     if (!jobId.trim()) return;
-    const prompt = aiShownotesPromptDraft.trim();
-    if (!prompt) {
-      setAiShownotesErr("请填写编辑要求。");
-      return;
-    }
+    const promptRaw = aiShownotesPromptDraft.trim();
+    const userPrompt = promptRaw || AI_SHOWNOTES_PROMPT_PLACEHOLDER;
     setShareAiBusy(true);
     setAiShownotesErr("");
     setFormErr("");
@@ -1111,7 +1127,7 @@ export function SharePublishClient({
       const out = await fetchJobShareAiCopy(jobId, {
         persist,
         showNotesOnly: true,
-        userPrompt: prompt,
+        userPrompt,
         baselineShowNotes: showNotes
       });
       if (!out.success) {
@@ -1137,12 +1153,40 @@ export function SharePublishClient({
         clearShareFormDraft(jobId);
       }
       setAiShownotesModalOpen(false);
+      setNotesTab("preview");
       setFormOk("Shownotes 已更新。");
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e);
       setAiShownotesErr(msg || "AI 生成失败");
     } finally {
       setShareAiBusy(false);
+    }
+  }
+
+  async function saveShowNotesToServer() {
+    if (!jobId.trim() || !ownerJobRecord) return;
+    setShowNotesSaveBusy(true);
+    setFormErr("");
+    setFormOk("");
+    try {
+      await fetchPersistShareShowNotes(jobId, showNotes);
+      initialSnapshotRef.current = {
+        episodeTitle,
+        summary,
+        showNotes
+      };
+      try {
+        const fresh = await getJob(jobId);
+        if (fresh) setOwnerJobRecord(fresh);
+      } catch {
+        /* ignore */
+      }
+      clearShareFormDraft(jobId);
+      setFormOk("Shownotes 已保存。");
+    } catch (e) {
+      setFormErr(String(e instanceof Error ? e.message : e) || "保存失败");
+    } finally {
+      setShowNotesSaveBusy(false);
     }
   }
 
@@ -1425,20 +1469,6 @@ export function SharePublishClient({
         </div>
       ) : null}
 
-      {publishChromeVisible && showShareAndPublish && sharePageFullUrl ? (
-        <div className="mb-5">
-          <WorksShareLinkPreviewCard
-            coverUrl={jobCoverUrl}
-            episodeTitle={episodeTitle}
-            summary={summary}
-            sharePageFullUrl={sharePageFullUrl}
-            onCopy={() => void copySharePageLink()}
-            copied={shareLinkCopied}
-            compact={layout === "work_hub"}
-          />
-        </div>
-      ) : null}
-
       {publishChromeVisible && shareJobHydrated && audioBlocked ? (
         <p className="mb-4 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-sm text-warning-ink">
           {scriptDraft
@@ -1459,7 +1489,25 @@ export function SharePublishClient({
       {publishChromeVisible && showShareAndPublish && ownerJobRecord ? (
         <div className="mb-6 rounded-2xl border border-line bg-surface px-4 py-5 shadow-soft sm:px-6 sm:py-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
-            <h2 className="text-sm font-medium text-ink">发布到播客平台</h2>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <h2 className="text-sm font-medium text-ink">发布到播客平台</h2>
+              {showShareAndPublish && sharePageFullUrl ? (
+                <button
+                  type="button"
+                  disabled={busy || shareAiBusy}
+                  onClick={() => void copySharePageLink()}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
+                  title={shareLinkCopied ? "已复制" : "复制分享链接"}
+                >
+                  {shareLinkCopied ? (
+                    <IconShareCheck className="h-3.5 w-3.5 text-success-ink" />
+                  ) : (
+                    <IconShareClipboard className="h-3.5 w-3.5 text-muted" />
+                  )}
+                  {shareLinkCopied ? "已复制" : "复制链接"}
+                </button>
+              ) : null}
+            </div>
             <select
               className="max-w-[11rem] rounded-lg border border-line bg-fill/40 px-3 py-2 text-sm text-ink"
               value={publishPlatform}
@@ -1586,14 +1634,25 @@ export function SharePublishClient({
                       </p>
                     ) : null}
                     {notesTab === "edit" ? (
-                      <textarea
-                        className="w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 font-mono text-sm leading-relaxed text-ink"
-                        rows={12}
-                        value={showNotes}
-                        onChange={(e) => setShowNotes(e.target.value)}
-                        disabled={busy || shareAiBusy}
-                        maxLength={20_000}
-                      />
+                      <div className="relative">
+                        <button
+                          type="button"
+                          className="absolute right-2 top-2 z-10 rounded-md border border-line bg-surface/95 px-2.5 py-1 text-xs font-medium text-ink shadow-sm backdrop-blur-sm hover:bg-fill disabled:opacity-40"
+                          disabled={busy || shareAiBusy || showNotesSaveBusy || !ownerJobRecord}
+                          title={ownerJobRecord ? "保存到作品并更新分享页" : "请先登录"}
+                          onClick={() => void saveShowNotesToServer()}
+                        >
+                          {showNotesSaveBusy ? "保存中…" : "保存"}
+                        </button>
+                        <textarea
+                          className="w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 pr-[4.5rem] pt-10 font-mono text-sm leading-relaxed text-ink"
+                          rows={12}
+                          value={showNotes}
+                          onChange={(e) => setShowNotes(e.target.value)}
+                          disabled={busy || shareAiBusy || showNotesSaveBusy}
+                          maxLength={20_000}
+                        />
+                      </div>
                     ) : (
                       <div className="max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/20 p-3">
                         <ShowNotesMarkdownPreview
@@ -1838,18 +1897,13 @@ export function SharePublishClient({
                 <h2 id="ai-shownotes-modal-title" className="text-base font-semibold text-ink">
                   AI 优化 Shownotes
                 </h2>
-                <p className="mt-3 text-[11px] leading-relaxed text-muted/55">
-                  a）{AI_SHOWNOTES_HINT_LINE_A}
-                  <br />
-                  b）{AI_SHOWNOTES_HINT_LINE_B}
-                </p>
-                <label className="mt-3 block text-sm text-muted">
+                <label className="mt-4 block text-sm text-muted">
                   编辑要求
                   <textarea
                     ref={aiShownotesPromptRef}
-                    className="mt-1 min-h-[7rem] w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm leading-relaxed text-ink"
+                    className="mt-1 min-h-[7rem] w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm leading-relaxed text-ink placeholder:text-muted/60"
                     value={aiShownotesPromptDraft}
-                    placeholder="描述你希望如何调整 Shownotes…"
+                    placeholder={AI_SHOWNOTES_PROMPT_PLACEHOLDER}
                     onChange={(e) => {
                       setAiShownotesPromptDraft(e.target.value);
                       setAiShownotesErr("");

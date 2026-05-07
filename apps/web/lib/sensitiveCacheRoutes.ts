@@ -61,6 +61,7 @@ function isPublicApiPath(pathname: string): boolean {
 
   // 匿名可读的分享页数据（仍可能带鉴权 query，但不应用「无 Cookie」的共享页缓存替代登录态）
   if (/^\/api\/jobs\/[^/]+\/share-public(?:\/|$)/.test(pathname)) return true;
+  if (/^\/api\/jobs\/[^/]+\/share-work-audio(?:\/|$)/.test(pathname)) return true;
 
   return false;
 }

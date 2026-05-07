@@ -91,6 +91,26 @@ def _resolve_audio_object_key(result: dict[str, Any], row: dict[str, Any], *, al
     return (probe_episode_audio_object_key(row) or "").strip()
 
 
+def resolve_public_share_listen_storage_key(job_id: str) -> str | None:
+    """
+    与 build_public_share_listen_bundle 相同的任务可见性；返回桶内 MP3 object key，供匿名同源流式试听。
+    """
+    jid = (job_id or "").strip()
+    if not jid:
+        return None
+    row = get_job(jid, None)
+    if not row or row.get("deleted_at"):
+        return None
+    if str(row.get("status") or "").strip().lower() != "succeeded":
+        return None
+    jt = str(row.get("job_type") or "").strip().lower()
+    if jt not in _PUBLIC_JOB_TYPES:
+        return None
+    result = _coerce_result(row.get("result"))
+    key = (_resolve_audio_object_key(result, row, allow_storage_probe=True) or "").strip()
+    return key or None
+
+
 def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
     """
     仅成功、未删除、播客成片；返回可直链播放的音频 URL。
@@ -113,14 +133,12 @@ def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
     result = _coerce_result(row.get("result"))
     key = _resolve_audio_object_key(result, row, allow_storage_probe=True)
     legacy_url = str(result.get("audio_url") or "").strip()
-    audio_url = legacy_url
+    # 有桶 key 时走 Web 同源 /api/jobs/:id/share-work-audio，避免跨域预签名在 <audio> 下报「不支持的数据源」
+    audio_url = ""
     if key:
-        try:
-            fresh = presigned_get_url(key, expires_in=86400 * 7)
-            if fresh:
-                audio_url = str(fresh).strip()
-        except Exception:
-            logger.warning("public_share_listen presign failed job_id=%s", jid, exc_info=True)
+        audio_url = f"/api/jobs/{jid}/share-work-audio"
+    elif legacy_url and not is_likely_internal_object_store_http_url(legacy_url):
+        audio_url = legacy_url
     if not audio_url:
         return None
     if is_likely_internal_object_store_http_url(audio_url):

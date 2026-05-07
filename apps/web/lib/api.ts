@@ -199,6 +199,22 @@ export async function fetchJobShareAiCopy(
   }
 }
 
+/** 将编辑区 Shownotes 写入 jobs.result.auto_share_show_notes（刷新后仍生效） */
+export async function fetchPersistShareShowNotes(jobId: string, showNotes: string): Promise<void> {
+  const id = encodeURIComponent(String(jobId || "").trim());
+  const resp = await fetch(`/api/jobs/${id}/share-show-notes`, {
+    method: "POST",
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: authMerge({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ show_notes: showNotes })
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(formatOrchestratorErrorText(text) || text.trim() || `保存失败 ${resp.status}`);
+  }
+}
+
 export async function listJobs(params?: {
   limit?: number;
   offset?: number;
