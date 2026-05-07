@@ -94,6 +94,7 @@ export function WorkHubOverviewPanel({
 
   useEffect(() => {
     setScriptChapterEditing(false);
+    setScriptDeleteBump(0);
   }, [jobId]);
 
   const onCoverPlayClick = useCallback(() => {
@@ -135,7 +136,7 @@ export function WorkHubOverviewPanel({
         {jobLivePct != null ? (
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
             <div
-              className="h-full rounded-full bg-brand transition-[width] duration-300"
+              className="h-full rounded-full bg-brand transition-[width] duration-700 ease-out"
               style={{ width: `${jobLivePct}%` }}
             />
           </div>
@@ -266,9 +267,20 @@ export function WorkHubOverviewPanel({
           {scriptManuscriptPanel ? (
             <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
               {regenProgressEl}
-              <h3 className="border-b border-line/60 pb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                文稿
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">文稿</h3>
+                {showManuscriptTools ? (
+                  <WorkHubScriptActions
+                    manuscriptBody={manuscriptBody}
+                    scriptResolvePending={scriptResolvePending}
+                    canEditScript={canEditScript}
+                    showScriptEditToggle={false}
+                    regenerateVoiceSupported={false}
+                    regenerateVoiceBusy={false}
+                    onDeleteClick={() => setScriptDeleteBump((n) => n + 1)}
+                  />
+                ) : null}
+              </div>
               <div className="mt-3 min-w-0">
                 <WorkHubManuscriptBar
                   jobId={jobId}
@@ -280,6 +292,8 @@ export function WorkHubOverviewPanel({
                   regenerateVoiceBusy={regenerateVoiceBusy}
                   onRegenerateVoice={onRegenerateVoice}
                   pureManuscriptOnly
+                  hideToolbar
+                  requestDelete={scriptDeleteBump}
                   readonlyEmptyHint={readonlyEmptyHint}
                 />
               </div>

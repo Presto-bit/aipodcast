@@ -243,7 +243,7 @@ export function WorkHubManuscriptBar({
                 pureManuscriptOnly
                   ? "max-h-[min(110vh,56rem)] min-h-[24rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
                   : tallScriptArea
-                    ? "max-h-[min(92vh,56rem)] min-h-[min(52vh,28rem)] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
+                    ? "max-h-[min(92vh,56rem)] min-h-[min(52vh,28rem)] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-[15px] leading-relaxed text-ink sm:text-base"
                     : "max-h-[min(55vh,28rem)] min-h-[12rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
               }
               value={draft}
@@ -303,7 +303,7 @@ export function WorkHubManuscriptBar({
               pureManuscriptOnly
                 ? "max-h-[min(80vh,36rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
                 : tallScriptArea
-                  ? "min-h-[min(56vh,30rem)] max-h-[min(92vh,56rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
+                  ? "min-h-[min(56vh,30rem)] max-h-[min(92vh,56rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[15px] leading-relaxed text-ink sm:text-base"
                   : "max-h-[min(40vh,18rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
             }
           >

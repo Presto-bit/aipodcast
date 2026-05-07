@@ -176,6 +176,21 @@ function formatListenClock(sec: number): string {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
+/** 作品详情生成进度条：按任务类型给出粗略预估总时长（秒），避免依赖后端百分比来回跳动 */
+function defaultJobGenEstimateSec(jobType: string): number {
+  const j = String(jobType || "").toLowerCase();
+  if (j.includes("short_video")) return 420;
+  if (j === "script_draft") return 180;
+  return 540;
+}
+
+function formatEtaRoughCn(sec: number): string {
+  const s = Math.ceil(Math.max(0, sec));
+  if (s < 90) return `${s} 秒`;
+  const m = Math.max(1, Math.round(s / 60));
+  return `${m} 分钟`;
+}
+
 export function SharePublishClient({
   jobId,
   layout = "standalone",
@@ -237,7 +252,8 @@ export function SharePublishClient({
   /** 当前登录用户且有权访问时拉取到的任务；匿名仅有公开试听数据时为空 */
   const [ownerJobRecord, setOwnerJobRecord] = useState<JobRecord | null>(null);
   const [jobLiveProgressMsg, setJobLiveProgressMsg] = useState("");
-  const [jobLiveProgressPct, setJobLiveProgressPct] = useState<number | null>(null);
+  /** 每秒递增，驱动「已进行 / 预估剩余」类进度展示（不用服务端百分比，避免来回跳） */
+  const [jobGenTick, setJobGenTick] = useState(0);
   /** RSS 发布：服务端与账户/作品计费挂钩；复制上方分享链接不受限 */
   const [rssGate, setRssGate] = useState<
     "idle" | "loading" | "ok" | "blocked" | "err"
@@ -512,7 +528,7 @@ export function SharePublishClient({
       setListenDurationSec(null);
       setPublishedHint("");
       setJobLiveProgressMsg("");
-      setJobLiveProgressPct(null);
+      setJobGenTick(0);
 
       if (layout === "standalone") {
         let pubStandalone: Awaited<ReturnType<typeof fetchPublicShareListen>> = null;
@@ -796,14 +812,10 @@ export function SharePublishClient({
           };
           if (data.type === "terminal") return;
           if (isJobEventLogOnlyForUi(data.type)) {
-            const pOnly = data.payload?.progress;
-            if (typeof pOnly === "number") setJobLiveProgressPct(Math.min(100, Math.max(0, pOnly)));
             return;
           }
           const msg = String(data.message || "").trim();
           if (msg) setJobLiveProgressMsg(presentJobProgressMessageForUser(msg));
-          const p = data.payload?.progress;
-          if (typeof p === "number") setJobLiveProgressPct(Math.min(100, Math.max(0, p)));
         } catch {
           /* ignore */
         }
@@ -826,10 +838,6 @@ export function SharePublishClient({
           const row = await getJob(jobId);
           if (canceledRef.current) break;
           setOwnerJobRecord(row);
-          const rp = row.progress;
-          if (typeof rp === "number" && Number.isFinite(rp)) {
-            setJobLiveProgressPct(Math.min(100, Math.max(0, rp)));
-          }
           await mergeRunningJobSnapshot(row, canceledRef);
           const st = row.status;
           if (st === "succeeded") {
@@ -908,7 +916,6 @@ export function SharePublishClient({
       }
       if (!canceledRef.current) {
         setJobLiveProgressMsg("");
-        setJobLiveProgressPct(null);
       }
     })();
 
@@ -1045,18 +1052,53 @@ export function SharePublishClient({
     ownerJobRecord && (ownerJobRecord.status === "queued" || ownerJobRecord.status === "running")
   );
 
+  useEffect(() => {
+    const st = ownerJobRecord?.status;
+    if (st !== "queued" && st !== "running") return;
+    const id = window.setInterval(() => setJobGenTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [ownerJobRecord?.id, ownerJobRecord?.status]);
+
+  const jobGenEtaDisplay = useMemo(() => {
+    if (!ownerJobRecord) return null;
+    const st = ownerJobRecord.status;
+    if (st !== "queued" && st !== "running") return null;
+    void jobGenTick;
+    const estimateSec = defaultJobGenEstimateSec(ownerJobRecord.job_type);
+    const startedMs = ownerJobRecord.started_at ? Date.parse(ownerJobRecord.started_at) : NaN;
+    const createdMs = Date.parse(ownerJobRecord.created_at);
+    const t0 = Number.isFinite(startedMs)
+      ? startedMs
+      : Number.isFinite(createdMs)
+        ? createdMs
+        : Date.now();
+    const elapsedSec = Math.max(0, (Date.now() - t0) / 1000);
+    const queued = st === "queued";
+    const pct = queued
+      ? Math.min(12, (elapsedSec / 120) * 12)
+      : Math.min(94, (elapsedSec / estimateSec) * 100);
+    const remainingSec = Math.max(0, estimateSec - elapsedSec);
+    const mm = Math.floor(elapsedSec / 60);
+    const ss = Math.floor(elapsedSec % 60);
+    const elapsedLabel = `${mm}:${String(ss).padStart(2, "0")}`;
+    const caption = queued
+      ? `排队中 · 已等待 ${elapsedLabel} · 预估成片约 ${formatEtaRoughCn(estimateSec)}`
+      : `已进行 ${elapsedLabel} · 预估总时长约 ${formatEtaRoughCn(estimateSec)} · 剩余约 ${formatEtaRoughCn(remainingSec)}`;
+    return { pct, caption };
+  }, [ownerJobRecord, jobGenTick]);
+
   const jobFailedMessage =
     ownerJobRecord?.status === "failed" ? String(ownerJobRecord.error_message || "").trim() : "";
 
   const jobGenBannerLine =
-    jobLiveProgressMsg.trim() ||
-    (jobGenerating ? (ownerJobRecord?.status === "queued" ? "排队中…" : "正在生成…") : "");
+    jobGenerating && jobGenEtaDisplay
+      ? jobLiveProgressMsg.trim()
+        ? `${jobGenEtaDisplay.caption} · ${jobLiveProgressMsg.trim()}`
+        : jobGenEtaDisplay.caption
+      : jobLiveProgressMsg.trim() ||
+        (jobGenerating ? (ownerJobRecord?.status === "queued" ? "排队中…" : "正在生成…") : "");
 
-  const jobLivePctMerged =
-    jobLiveProgressPct ??
-    (typeof ownerJobRecord?.progress === "number" && Number.isFinite(ownerJobRecord.progress)
-      ? ownerJobRecord.progress
-      : null);
+  const jobLivePctMerged = jobGenerating && jobGenEtaDisplay ? jobGenEtaDisplay.pct : null;
 
   const showManuscriptTools = useMemo(
     () => layout === "work_hub" && Boolean(ownerJobRecord) && shareJobHydrated && !loadErr,
