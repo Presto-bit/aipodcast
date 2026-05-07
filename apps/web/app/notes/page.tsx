@@ -18,7 +18,6 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
     />
   )
 });
-const WorksActiveJobsPanel = dynamic(() => import("../../components/works/WorksActiveJobsPanel"));
 const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMarkdownPreview"), {
   loading: () => (
     <div
@@ -29,7 +28,7 @@ const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMar
   )
 });
 import { NotesAskAnswerDisplay } from "../../components/notes/NotesAskAnswerDisplay";
-import { createJob, listJobs } from "../../lib/api";
+import { createJob } from "../../lib/api";
 import {
   apiErrorMessage,
   formatNotesAskStreamError,
@@ -82,10 +81,6 @@ import {
 } from "../../lib/userScopedStorage";
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
-import { chipClass } from "../../components/studio/chipStyles";
-
-const NOTES_WORKS_ACTIVE_LIMIT = 80;
-
 type NotesAskStreamEvent =
   | { type: "chunk"; text: string; streamRole?: "reasoning" | "answer" }
   | { type: "done"; sources?: unknown; webSources?: unknown; traceId?: string | null }
@@ -1018,14 +1013,10 @@ export default function NotesPage() {
     setArtCharsInput(String(artChars));
   }, [artChars]);
 
-  const [notesWorksAudio, setNotesWorksAudio] = useState<WorkItem[]>([]);
-  const [notesWorksScript, setNotesWorksScript] = useState<WorkItem[]>([]);
-  const [notesWorksView, setNotesWorksView] = useState<"audio" | "script" | "active">("audio");
-  const [notesWorksQuery, setNotesWorksQuery] = useState("");
-  const [notesWorksRecentOnly, setNotesWorksRecentOnly] = useState(false);
-  const [notesWorksLoading, setNotesWorksLoading] = useState(true);
-  const [notesWorksError, setNotesWorksError] = useState("");
-  const [notesActiveJobCount, setNotesActiveJobCount] = useState<number | null>(null);
+  const [podcastWorks, setPodcastWorks] = useState<WorkItem[]>([]);
+  const [podcastWorksLoading, setPodcastWorksLoading] = useState(true);
+  const [podcastWorksError, setPodcastWorksError] = useState("");
+  const [worksPanelExpanded, setWorksPanelExpanded] = useState(false);
   const podcastRecoveryStartedRef = useRef(false);
   /** 来自 /notes?note=<id> 深链：解析笔记本并滚动到对应卡片 */
   const pendingFocusNoteIdRef = useRef<string | null>(null);
@@ -1821,37 +1812,9 @@ export default function NotesPage() {
     return null;
   }, [podcastGenBusy, podcastGenMessage, draftBusy, draftMessage]);
 
-  const refreshNotesActiveJobCount = useCallback(async () => {
-    if (!ready) {
-      setNotesActiveJobCount(null);
-      return;
-    }
-    if (!isLoggedIn) {
-      setNotesActiveJobCount(0);
-      return;
-    }
-    try {
-      const { jobs } = await listJobs({
-        limit: NOTES_WORKS_ACTIVE_LIMIT,
-        offset: 0,
-        status: "queued,running",
-        slim: true
-      });
-      setNotesActiveJobCount(jobs.length);
-    } catch {
-      setNotesActiveJobCount(null);
-    }
-  }, [ready, isLoggedIn]);
-
   const fetchPodcastWorks = useCallback(async () => {
-    setNotesWorksError("");
+    setPodcastWorksError("");
     try {
-      if (!isLoggedIn) {
-        setNotesWorksAudio([]);
-        setNotesWorksScript([]);
-        setNotesActiveJobCount(0);
-        return;
-      }
       const params = new URLSearchParams({ limit: "80", offset: "0" });
       const shareOwner = (sharedBrowse?.ownerUserId || "").trim();
       const nb = (selectedNotebook || "").trim();
@@ -1867,88 +1830,28 @@ export default function NotesPage() {
       const data = (await res.json().catch(() => ({}))) as {
         success?: boolean;
         ai?: WorkItem[];
-        tts?: WorkItem[];
         error?: string;
         detail?: string;
       };
       if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-
-      const notesOnly = (w: WorkItem) => {
+      const allWorks = Array.isArray(data.ai) ? data.ai : [];
+      const notesOnlyWorks = allWorks.filter((w) => {
         const project = String(w.projectName || "").trim();
         const notesNotebook = String(w.notesSourceNotebook || "").trim();
         return project === NOTES_PODCAST_PROJECT_NAME || !!notesNotebook;
-      };
-
-      const nextAi = Array.isArray(data.ai) ? data.ai : [];
-      const nextTts = Array.isArray(data.tts) ? data.tts : [];
-      const aiF = nextAi.filter(notesOnly);
-      const ttsF = nextTts.filter(notesOnly);
-      const aiPodcast = aiF.filter((w) => ["podcast_generate", "podcast"].includes(String(w.type || "")));
-      const audioMerged = [...aiPodcast, ...ttsF];
-      audioMerged.sort((a, b) => {
-        const ta = new Date(String(a.createdAt || 0)).getTime();
-        const tb = new Date(String(b.createdAt || 0)).getTime();
-        const na = Number.isFinite(ta) ? ta : 0;
-        const nb = Number.isFinite(tb) ? tb : 0;
-        return nb - na;
       });
-      const scriptDrafts = aiF.filter((w) => String(w.type || "") === "script_draft");
-      scriptDrafts.sort((a, b) => {
-        const ta = new Date(String(a.createdAt || 0)).getTime();
-        const tb = new Date(String(b.createdAt || 0)).getTime();
-        const na = Number.isFinite(ta) ? ta : 0;
-        const nb = Number.isFinite(tb) ? tb : 0;
-        return nb - na;
-      });
-      setNotesWorksAudio(audioMerged);
-      setNotesWorksScript(scriptDrafts);
-      await refreshNotesActiveJobCount();
+      setPodcastWorks(notesOnlyWorks);
     } catch (e) {
-      setNotesWorksError(String(e instanceof Error ? e.message : e));
-      setNotesWorksAudio([]);
-      setNotesWorksScript([]);
+      setPodcastWorksError(String(e instanceof Error ? e.message : e));
+      setPodcastWorks([]);
     } finally {
-      setNotesWorksLoading(false);
+      setPodcastWorksLoading(false);
     }
-  }, [getAuthHeaders, sharedBrowse?.ownerUserId, selectedNotebook, isLoggedIn, refreshNotesActiveJobCount]);
+  }, [getAuthHeaders, sharedBrowse?.ownerUserId, selectedNotebook]);
 
   useEffect(() => {
     void fetchPodcastWorks();
   }, [fetchPodcastWorks]);
-
-  useEffect(() => {
-    if (notesWorksView === "active") void refreshNotesActiveJobCount();
-  }, [notesWorksView, refreshNotesActiveJobCount]);
-
-  const notesWorksKeyword = notesWorksQuery.trim().toLowerCase();
-  const notesWorksRecentThresholdMs = useMemo(() => Date.now() - 1000 * 60 * 60 * 24 * 14, []);
-
-  const matchesNotesWorksFilter = useCallback(
-    (w: WorkItem): boolean => {
-      const title = String(w.title || w.id || "").toLowerCase();
-      if (notesWorksKeyword && !title.includes(notesWorksKeyword)) return false;
-      if (!notesWorksRecentOnly) return true;
-      const ts = new Date(String(w.createdAt || "")).getTime();
-      return Number.isFinite(ts) && ts >= notesWorksRecentThresholdMs;
-    },
-    [notesWorksKeyword, notesWorksRecentOnly, notesWorksRecentThresholdMs]
-  );
-
-  const filteredNotesWorksAudio = useMemo(
-    () => notesWorksAudio.filter(matchesNotesWorksFilter),
-    [notesWorksAudio, matchesNotesWorksFilter]
-  );
-  const filteredNotesWorksScript = useMemo(
-    () => notesWorksScript.filter(matchesNotesWorksFilter),
-    [notesWorksScript, matchesNotesWorksFilter]
-  );
-
-  const notesWorksEmptyAll = !notesWorksLoading && notesWorksAudio.length === 0 && notesWorksScript.length === 0;
-
-  const onNotesActiveJobsChanged = useCallback(() => {
-    void refreshNotesActiveJobCount();
-    void fetchPodcastWorks();
-  }, [refreshNotesActiveJobCount, fetchPodcastWorks]);
 
   const onPodcastJobCreated = useCallback(
     (jobId: string) => {
@@ -4313,10 +4216,9 @@ export default function NotesPage() {
 
           </div>
           <section className="mx-auto mt-6 w-full max-w-6xl rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft sm:px-4 lg:mt-8">
-            <div className="mb-2 flex flex-col gap-1 border-b border-line/80 pb-2 sm:flex-row sm:items-end sm:justify-between">
-              <div className="min-w-0">
-                <h2 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">我的作品</h2>
-                <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">成品与进行中任务</p>
+            <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/50 pb-3">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
                 {notesWorkbenchCreationProgress ? (
                   <div
                     className={`mt-2 rounded-lg border px-2.5 py-1.5 text-xs ${
@@ -4338,122 +4240,37 @@ export default function NotesPage() {
                   </div>
                 ) : null}
               </div>
-              {(notesWorksView === "audio" || notesWorksView === "script") && !notesWorksLoading ? (
-                <p className="shrink-0 text-xs text-muted">
-                  已加载{" "}
-                  <span className="font-medium tabular-nums text-ink">
-                    {notesWorksView === "audio" ? notesWorksAudio.length : notesWorksScript.length}
-                  </span>{" "}
-                  件
-                </p>
-              ) : null}
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-ink hover:bg-fill"
+                  onClick={() => setWorksPanelExpanded((v) => !v)}
+                >
+                  {worksPanelExpanded ? "收起" : "展开"}
+                </button>
+                <a
+                  href="/works"
+                  className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-brand hover:bg-fill"
+                >
+                  查看全部
+                </a>
+              </div>
             </div>
-
-            <div className="mb-2 flex flex-wrap items-center gap-1.5 gap-y-2">
-              <button
-                type="button"
-                className={chipClass(notesWorksView === "audio", "sm")}
-                onClick={() => setNotesWorksView("audio")}
-              >
-                音频
-              </button>
-              <button
-                type="button"
-                className={chipClass(notesWorksView === "script", "sm")}
-                onClick={() => setNotesWorksView("script")}
-              >
-                文稿
-              </button>
-              <button
-                type="button"
-                className={[chipClass(notesWorksView === "active", "sm"), "inline-flex items-center"].join(" ")}
-                onClick={() => setNotesWorksView("active")}
-              >
-                进行中
-                {notesActiveJobCount != null && notesActiveJobCount > 0 ? (
-                  <span className="ml-1 rounded-full bg-brand/15 px-1.5 py-px text-[10px] font-medium tabular-nums text-brand">
-                    {notesActiveJobCount}
-                  </span>
-                ) : null}
-              </button>
-              {notesWorksView === "audio" || notesWorksView === "script" ? (
-                <>
-                  <span className="hidden h-4 w-px bg-line sm:inline-block" aria-hidden />
-                  <input
-                    className="min-w-[8rem] flex-1 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-ink sm:max-w-[11rem]"
-                    placeholder="搜索标题…"
-                    value={notesWorksQuery}
-                    onChange={(e) => setNotesWorksQuery(e.target.value)}
-                    aria-label="搜索作品"
-                  />
-                  <button
-                    type="button"
-                    className={chipClass(notesWorksRecentOnly, "sm")}
-                    onClick={() => setNotesWorksRecentOnly((v) => !v)}
-                  >
-                    14 天内
-                  </button>
-                </>
-              ) : null}
-              <span className="min-w-[0.5rem] flex-1" aria-hidden />
-              <a
-                href="/works"
-                className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-brand hover:bg-fill"
-              >
-                查看全部
-              </a>
-            </div>
-
-            {notesWorksView === "active" ? <WorksActiveJobsPanel onActiveJobsChanged={onNotesActiveJobsChanged} /> : null}
-
-            {(notesWorksView === "audio" || notesWorksView === "script") && notesWorksError ? (
-              <p className="mb-2 text-sm text-danger-ink">{notesWorksError}</p>
-            ) : null}
-
-            {(notesWorksView === "audio" || notesWorksView === "script") && notesWorksLoading ? (
-              <p className="py-6 text-center text-sm text-muted">{t("common.loading")}</p>
-            ) : null}
-
-            {(notesWorksView === "audio" || notesWorksView === "script") && notesWorksEmptyAll && !notesWorksLoading ? (
-              <EmptyState
-                title={t("empty.worksFinished.title")}
-                description={t("empty.worksFinished.desc")}
-                action={
-                  <button
-                    type="button"
-                    className="text-sm text-brand underline"
-                    onClick={() => void fetchPodcastWorks()}
-                  >
-                    {t("common.refresh")}
-                  </button>
-                }
-              />
-            ) : null}
-
-            {notesWorksView === "audio" && !notesWorksEmptyAll ? (
+            <div
+              className={`mt-4 overflow-y-auto overflow-x-hidden transition-[max-height] duration-200 ${
+                worksPanelExpanded ? "max-h-[min(92vh,1040px)]" : "max-h-[min(46vh,520px)]"
+              }`}
+            >
               <PodcastWorksGallery
+                works={podcastWorks}
+                loading={podcastWorksLoading}
+                fetchError={podcastWorksError}
+                onDismissError={() => setPodcastWorksError("")}
+                onWorkDeleted={() => void fetchPodcastWorks()}
                 variant="all"
-                works={filteredNotesWorksAudio}
-                loading={notesWorksLoading}
-                fetchError={notesWorksError}
-                onDismissError={() => setNotesWorksError("")}
-                onWorkDeleted={() => void fetchPodcastWorks()}
-                enableBatchActions
                 workDetailReturnTo="/notes"
               />
-            ) : null}
-            {notesWorksView === "script" && !notesWorksEmptyAll ? (
-              <PodcastWorksGallery
-                variant="notes"
-                works={filteredNotesWorksScript}
-                loading={notesWorksLoading}
-                fetchError={notesWorksError}
-                onDismissError={() => setNotesWorksError("")}
-                onWorkDeleted={() => void fetchPodcastWorks()}
-                enableBatchActions
-                workDetailReturnTo="/notes"
-              />
-            ) : null}
+            </div>
           </section>
         </>
       )}

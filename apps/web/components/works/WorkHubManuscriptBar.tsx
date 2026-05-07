@@ -26,6 +26,8 @@ type Props = {
   requestDelete?: number;
   /** 只读且无正文时替代「（无正文）」（如生成中占位） */
   readonlyEmptyHint?: string;
+  /** 播客详情：拉高口播稿区域高度（与章节时间轴列表二选一展示时使用） */
+  tallScriptArea?: boolean;
   /**
    * 章节口播：`hideToolbar` + `scriptAutosave` 时为 false 则只读预览；true 时为编辑态（仅一处正文）。
    */
@@ -46,7 +48,8 @@ export function WorkHubManuscriptBar({
   scriptAutosave = false,
   requestDelete = 0,
   chapterEditorOpen,
-  readonlyEmptyHint
+  readonlyEmptyHint,
+  tallScriptArea = false
 }: Props) {
   const [draft, setDraft] = useState(manuscriptBody);
   const [busy, setBusy] = useState(false);
@@ -239,7 +242,9 @@ export function WorkHubManuscriptBar({
               className={
                 pureManuscriptOnly
                   ? "max-h-[min(110vh,56rem)] min-h-[24rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
-                  : "max-h-[min(55vh,28rem)] min-h-[12rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
+                  : tallScriptArea
+                    ? "max-h-[min(92vh,56rem)] min-h-[min(52vh,28rem)] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
+                    : "max-h-[min(55vh,28rem)] min-h-[12rem] w-full rounded-lg border border-line bg-fill/30 p-3 font-mono text-xs leading-relaxed text-ink"
               }
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -297,7 +302,9 @@ export function WorkHubManuscriptBar({
             className={
               pureManuscriptOnly
                 ? "max-h-[min(80vh,36rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
-                : "max-h-[min(40vh,18rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
+                : tallScriptArea
+                  ? "min-h-[min(56vh,30rem)] max-h-[min(92vh,56rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
+                  : "max-h-[min(40vh,18rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 font-mono text-[11px] leading-relaxed text-ink"
             }
           >
             {manuscriptBody.trim() ? manuscriptBody : readonlyEmptyHint?.trim() || "（无正文）"}

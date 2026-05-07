@@ -211,7 +211,6 @@ export function SharePublishClient({
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState("");
   const [formOk, setFormOk] = useState("");
-  const [chapterOutline, setChapterOutline] = useState<{ title: string; start_ms: number }[] | null>(null);
   const [hasAudio, setHasAudio] = useState(false);
   /** 首次拉取任务详情完成前，勿把「无音频」提示当成最终态（避免闪错觉与长文案误报）。 */
   const [shareJobHydrated, setShareJobHydrated] = useState(false);
@@ -345,22 +344,6 @@ export function SharePublishClient({
       const defaultEpisodeTitle = sanitizeShareEpisodeTitle(rawTitle, "").trim().slice(0, 300);
       const sum = defaultSummaryFromJobResult(result);
 
-      const rawCh = result.audio_chapters;
-      const hasCh =
-        Array.isArray(rawCh) &&
-        rawCh.length > 0 &&
-        rawCh.every((x) => x && typeof x === "object");
-      let outline: { title: string; start_ms: number }[] | null = null;
-      if (hasCh) {
-        outline = (rawCh as Record<string, unknown>[]).map((o) => ({
-          title: String(o.title || "章节"),
-          start_ms: Number(o.start_ms) || 0
-        }));
-        setChapterOutline(outline);
-      } else {
-        setChapterOutline(null);
-      }
-
       setEpisodeTitle(defaultEpisodeTitle);
       setSummary(truncateSummaryToAutoMax(sum));
       setShowNotes("正在生成 Shownotes…");
@@ -398,16 +381,6 @@ export function SharePublishClient({
         rawCh.length > 0 &&
         rawCh.every((x) => x && typeof x === "object");
       const audioChaptersRaw = hasCh ? (rawCh as Record<string, unknown>[]) : undefined;
-      if (hasCh) {
-        setChapterOutline(
-          (rawCh as Record<string, unknown>[]).map((o) => ({
-            title: String(o.title || "章节"),
-            start_ms: Number(o.start_ms) || 0
-          }))
-        );
-      } else {
-        setChapterOutline(null);
-      }
 
       const durRaw = resultEarly.audio_duration_sec;
       const audioDurationSec =
@@ -533,17 +506,6 @@ export function SharePublishClient({
         setSummary(truncateSummaryToAutoMax(sumS));
         const notesS = String(pubStandalone.show_notes || "").trim();
         setShowNotes(notesS);
-        const chS = pubStandalone.audio_chapters;
-        if (Array.isArray(chS) && chS.length > 0) {
-          setChapterOutline(
-            chS.map((o) => ({
-              title: String(o.title || "章节"),
-              start_ms: Number(o.start_ms) || 0
-            }))
-          );
-        } else {
-          setChapterOutline(null);
-        }
         initialSnapshotRef.current = {
           episodeTitle: etS,
           summary: truncateSummaryToAutoMax(sumS),
@@ -741,17 +703,6 @@ export function SharePublishClient({
         const sumP = String(pub.episode_summary || pub.preview || "").trim();
         setSummary(truncateSummaryToAutoMax(sumP));
         setShowNotes(String(pub.show_notes || "").trim());
-        const ch = pub.audio_chapters;
-        if (Array.isArray(ch) && ch.length > 0) {
-          setChapterOutline(
-            ch.map((o) => ({
-              title: String(o.title || "章节"),
-              start_ms: Number(o.start_ms) || 0
-            }))
-          );
-        } else {
-          setChapterOutline(null);
-        }
         const notesP = String(pub.show_notes || "").trim();
         initialSnapshotRef.current = {
           episodeTitle: et,
@@ -1823,8 +1774,6 @@ export function SharePublishClient({
             episodeSummary={summary}
             coverUrl={jobCoverUrl}
             navMetaPipe={navMetaPipe}
-            chapterOutline={chapterOutline}
-            onSeekSeconds={seekFromNotes}
             hasAudio={hasAudio}
             scriptDraft={scriptDraft}
             audioBlocked={audioBlocked}

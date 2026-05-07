@@ -26,8 +26,6 @@ type Props = {
   coverUrl: string;
   /** 与「我的作品」卡片 meta 一致，用 | 分隔 */
   navMetaPipe: string;
-  chapterOutline: { title: string; start_ms: number }[] | null;
-  onSeekSeconds: (sec: number) => void;
   hasAudio: boolean;
   scriptDraft: boolean;
   audioBlocked: boolean;
@@ -62,8 +60,6 @@ export function WorkHubOverviewPanel({
   episodeSummary,
   coverUrl,
   navMetaPipe,
-  chapterOutline,
-  onSeekSeconds,
   hasAudio,
   scriptDraft,
   audioBlocked,
@@ -112,11 +108,7 @@ export function WorkHubOverviewPanel({
       : null;
 
   const scriptManuscriptPanel = scriptDraft && showManuscriptTools;
-  const podcastChapterSection =
-    !scriptDraft &&
-    !audioBlocked &&
-    (showManuscriptTools || (chapterOutline && chapterOutline.length > 0));
-  const chapterSeekDisabled = !hasAudio || loadingThis;
+  const podcastChapterSection = !scriptDraft && !audioBlocked && showManuscriptTools;
 
   const regenProgressEl =
     audioRegenActive ? (
@@ -297,7 +289,7 @@ export function WorkHubOverviewPanel({
           ) : null}
 
           {podcastChapterSection ? (
-            <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
+            <section className="flex min-h-[min(72vh,40rem)] flex-col rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
               {regenProgressEl}
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">章节</h3>
@@ -317,7 +309,7 @@ export function WorkHubOverviewPanel({
                 ) : null}
               </div>
               {showManuscriptTools ? (
-                <div className="mt-3 min-w-0">
+                <div className="mt-3 min-w-0 flex-1">
                   <WorkHubManuscriptBar
                     jobId={jobId}
                     manuscriptBody={manuscriptBody}
@@ -332,33 +324,10 @@ export function WorkHubOverviewPanel({
                     requestDelete={scriptDeleteBump}
                     chapterEditorOpen={scriptChapterEditing}
                     readonlyEmptyHint={readonlyEmptyHint}
+                    tallScriptArea
                   />
                 </div>
               ) : null}
-              {chapterOutline && chapterOutline.length > 0 ? (
-                <ul className={`space-y-1.5 ${showManuscriptTools ? "mt-4" : "mt-2"}`}>
-                  {chapterOutline.map((c, i) => {
-                    const sec = Math.floor((c.start_ms || 0) / 1000);
-                    return (
-                      <li key={`${c.title}-${i}`}>
-                        <button
-                          type="button"
-                          disabled={chapterSeekDisabled}
-                          onClick={() => onSeekSeconds(sec)}
-                          className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-ink hover:bg-surface disabled:opacity-40"
-                        >
-                          <span className="min-w-0 truncate">{c.title || `章节 ${i + 1}`}</span>
-                          <span className="shrink-0 tabular-nums text-xs text-muted">{formatClock(sec)}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className={`text-[11px] text-muted ${showManuscriptTools ? "mt-4" : "mt-2"}`}>
-                  {jobGenerating ? jobGenPlaceholder : "暂无章节时间轴（可在「Shownotes」中编辑并插入章节）。"}
-                </p>
-              )}
             </section>
           ) : !scriptManuscriptPanel ? (
             regenProgressEl
