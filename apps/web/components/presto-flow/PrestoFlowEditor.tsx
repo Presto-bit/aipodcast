@@ -40,7 +40,7 @@ import {
 } from "../../lib/prestoFlowRoughCutLexicon";
 import {
   buildFlowUnits,
-  groupSpeakerSentenceLines,
+  groupSpeakerTurnLines,
   maxEndMsForLineContainingWordId,
   wordIdsBetweenInclusive
 } from "../../lib/prestoFlowTranscript";
@@ -443,7 +443,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     [project?.rough_cut_lexicon_exempt]
   );
 
-  const lines = useMemo(() => groupSpeakerSentenceLines(buildFlowUnits(words)), [words]);
+  const lines = useMemo(() => groupSpeakerTurnLines(buildFlowUnits(words)), [words]);
 
   const silenceCutRanges = useMemo(() => {
     const tl = project?.timeline_json;

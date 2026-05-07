@@ -56,7 +56,7 @@ import {
 } from "../../lib/appSidebarCollapse";
 import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
-import { useAuth } from "../../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import type { NotebookCoverMeta } from "../../lib/notebookCoverDisplay";
 import { notebookCoverImageUrl } from "../../lib/notebookCoverDisplay";
@@ -777,6 +777,7 @@ function FreshNoteSparkleIcon({ className }: { className?: string }) {
 export default function NotesPage() {
   const { t } = useI18n();
   const { user, phone, getAuthHeaders, ready } = useAuth();
+  const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   /** 与 AuthProvider 中 userScopedStorage 同步；用于在切换账号时重载对话缓存 */
   const storageAccountScope = useMemo(() => accountKeyFromUser(user), [user]);
   const skipNotesAskSaveRef = useRef(true);
@@ -1514,6 +1515,12 @@ export default function NotesPage() {
     if (sharedBrowse) return;
     if (notebooks.length === 0) {
       setSelectedNotebook("");
+      // 访客无笔记本时仍留在 hub 并默认「热门笔记本」，便于一进知识库就看到热门（避免 hubView=false 导致不拉 /api/notebooks/popular）
+      if (!isLoggedIn) {
+        setHubView(true);
+        setHubDiscoverTab("popular");
+        return;
+      }
       setHubView(false);
       return;
     }
@@ -1522,7 +1529,7 @@ export default function NotesPage() {
       setSelectedNotebook(notebooks[0] ?? "");
       setHubView(true);
     }
-  }, [notebooks, selectedNotebook, notebooksReady, sharedBrowse]);
+  }, [notebooks, selectedNotebook, notebooksReady, sharedBrowse, isLoggedIn]);
 
   useEffect(() => {
     if (!hubView || hubDiscoverTab === "mine") return;

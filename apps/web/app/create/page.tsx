@@ -226,13 +226,8 @@ export default function CreatePage() {
     }
   }, [getAuthHeaders]);
 
+  /** 访客也拉公开播客模板（编排器 / BFF 匿名可读时返回列表）；已登录同样走该接口 */
   useEffect(() => {
-    if (!isLoggedIn) {
-      setServerPodcastTemplates([]);
-      setTemplatesLoading(false);
-      setTemplatesErr("");
-      return;
-    }
     void refreshPodcastTemplates();
   }, [refreshPodcastTemplates, isLoggedIn]);
 

@@ -275,10 +275,10 @@ function clauseCommaEndsUnit(display: string): boolean {
 }
 
 /**
- * 稿面换行优先对齐火山 ASR 的 utterance 边界（normalize 写入的 utt_new）：
- * 说话人切换、新 utterance 首词、句末标点；辅以长停顿断行与适度逗顿换行以改善可读性。
+ * @param breakOnUtteranceStart true：在 ASR utterance 新条（utt_new）处也可换行（默认稿面，阅读节奏更细）。
+ *   false：同一说话人下不因 utt_new 拆行，仅在换说话人、长停顿、句末/版式兜底处换行（「说话人成段」）。
  */
-export function groupSpeakerSentenceLines(units: readonly FlowUnit[]): SpeakerLine[] {
+function groupSpeakerLines(units: readonly FlowUnit[], breakOnUtteranceStart: boolean): SpeakerLine[] {
   const lines: SpeakerLine[] = [];
   let cur: SpeakerLine | null = null;
   let curCharLen = 0;
@@ -295,7 +295,7 @@ export function groupSpeakerSentenceLines(units: readonly FlowUnit[]): SpeakerLi
     const sp = speakerOfUnit(u);
     if (cur && cur.speaker !== sp) {
       flush();
-    } else if (cur && utteranceStartsAtUnit(u)) {
+    } else if (breakOnUtteranceStart && cur && utteranceStartsAtUnit(u)) {
       flush();
     } else if (cur && cur.units.length > 0) {
       const lastU = cur.units[cur.units.length - 1]!;
@@ -321,4 +321,19 @@ export function groupSpeakerSentenceLines(units: readonly FlowUnit[]): SpeakerLi
   }
   flush();
   return lines;
+}
+
+/**
+ * 稿面换行优先对齐火山 ASR 的 utterance 边界（normalize 写入的 utt_new）：
+ * 说话人切换、新 utterance 首词、句末标点；辅以长停顿断行与适度逗顿换行以改善可读性。
+ */
+export function groupSpeakerSentenceLines(units: readonly FlowUnit[]): SpeakerLine[] {
+  return groupSpeakerLines(units, true);
+}
+
+/**
+ * 以「说话人连续发言」为一段：不因 utt_new 拆同一说话人；换说话人必换行，仍保留句末/长停顿/字符上限等可读性断行。
+ */
+export function groupSpeakerTurnLines(units: readonly FlowUnit[]): SpeakerLine[] {
+  return groupSpeakerLines(units, false);
 }
