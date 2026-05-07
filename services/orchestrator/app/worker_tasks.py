@@ -1549,6 +1549,7 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
                 raw_tr,
                 profile="auto",
                 speaker_hint=int(row.get("speaker_count") or 2),
+                channel_ids=channel_ids,
             )
         update_clip_transcribe_succeeded(project_id=pid, user_uuid=owner, raw=raw_tr, normalized=normalized)
         return {"status": "succeeded", "word_count": len(normalized.get("words") or [])}

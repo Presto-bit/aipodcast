@@ -47,12 +47,17 @@ import { MEDIA_QUEUE_STALL_HINT_MS } from "../../lib/mediaQueueStallHint";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
 import { ART_KIND_PRESETS, type ArtKindKey } from "../../lib/artKindPresets";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
-import { NOTES_NAV_HUB_EVENT, writeLastNotebookName } from "../../lib/notesLastNotebook";
+import {
+  NOTES_NAV_HUB_EVENT,
+  dispatchNotesMinimalMainNav,
+  writeLastNotebookName
+} from "../../lib/notesLastNotebook";
 import { readDraftSourceIdsForNotebook, writeDraftSourceIdsForNotebook } from "../../lib/notesDraftSourcesStorage";
 import {
   APP_SIDEBAR_COLLAPSED_KEY,
   APP_SIDEBAR_COLLAPSE_EVENT,
-  APP_SIDEBAR_TOGGLE_EVENT
+  APP_SIDEBAR_TOGGLE_EVENT,
+  requestAppSidebarCollapse
 } from "../../lib/appSidebarCollapse";
 import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
@@ -232,7 +237,7 @@ const NOTES_ASK_DEBUG_BODY_ENABLED = String(process.env.NEXT_PUBLIC_NOTES_ASK_DE
 /** 笔记「生成文章」目标字数（含小红书等体裁），与提交 payload 上下限一致 */
 const NOTES_ART_TARGET_CHARS_MIN = 200;
 const NOTES_ART_TARGET_CHARS_MAX = 50_000;
-const NOTES_ART_TARGET_CHARS_DEFAULT = 200;
+const NOTES_ART_TARGET_CHARS_DEFAULT = 2000;
 const SUPPORTED_NOTE_FILE_EXTS = [
   "txt",
   "md",
@@ -528,10 +533,9 @@ function HubMineNotebookCards({
         const coverImg = notebookCoverImageUrl(nb, cov, "mine");
         const hasCoverLayer = Boolean(coverImg);
         const shareRow = notebookSharingByName[nb];
-        const viewCount = typeof shareRow?.viewCount === "number" ? shareRow.viewCount : 0;
         const sourceN = meta?.sourceCount ?? 0;
         const shareLabel = shareRow?.isPublic ? "已分享" : "未分享";
-        const summaryLine = `${formatNotebookCardMonthDay(meta?.createdAt)}|来源:${sourceN}|浏览:${viewCount}|${shareLabel}`;
+        const summaryLine = `${formatNotebookCardMonthDay(meta?.createdAt)}|来源:${sourceN}|${shareLabel}`;
         return (
           <div key={nb} className="flex min-w-[188px] max-w-[240px] shrink-0 flex-col">
             <div
@@ -686,7 +690,7 @@ function HubPopularNotebookGrid({
             };
             const sourceN = typeof item.sourceCount === "number" ? item.sourceCount : 0;
             const accessLabel = item.publicAccess === "edit" ? "可创作" : "只读";
-            const summaryLine = `${formatNotebookCardMonthDay(item.latestSourceAt)}|来源:${sourceN}|浏览量:${item.viewCount}|${accessLabel}`;
+            const summaryLine = `${formatNotebookCardMonthDay(item.latestSourceAt)}|来源:${sourceN}|${accessLabel}`;
             return (
               <div
                 key={`${item.ownerUserId}:${item.notebook}`}
@@ -871,7 +875,6 @@ export default function NotesPage() {
   const [shareModalBusy, setShareModalBusy] = useState(false);
   const [shareModalError, setShareModalError] = useState("");
   const [shareCopyHint, setShareCopyHint] = useState("");
-  const shareViewedKeyRef = useRef("");
   const shareLinkHydratedRef = useRef(false);
   const buildNotebookShareUrl = useCallback((notebookName: string, ownerUserId: string, access: "read_only" | "edit") => {
     if (typeof window === "undefined") return "";
@@ -1581,6 +1584,14 @@ export default function NotesPage() {
     window.addEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
     return () => window.removeEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
   }, [dismissNotesBlockingOverlays]);
+
+  /** 进入具体笔记本工作台：主导航折叠并仅保留「返回」；回到笔记本列表时恢复完整主导航 */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const minimal = !hubView && Boolean(selectedNotebook.trim());
+    dispatchNotesMinimalMainNav(minimal);
+    if (minimal) requestAppSidebarCollapse();
+  }, [hubView, selectedNotebook]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3309,16 +3320,6 @@ export default function NotesPage() {
     setSharedBrowse({ ownerUserId: item.ownerUserId, access });
     setHubView(false);
     setError("");
-    const key = `${item.ownerUserId}:${item.notebook}`;
-    if (shareViewedKeyRef.current !== key) {
-      shareViewedKeyRef.current = key;
-      void fetch("/api/notebooks/view", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ ownerUserId: item.ownerUserId, notebook: item.notebook })
-      }).catch(() => {});
-    }
   }
 
   async function submitNotebookSharing() {
@@ -4833,13 +4834,6 @@ export default function NotesPage() {
                 </span>
               ) : null}
             </div>
-            <p className="mt-3 text-[11px] text-muted">
-              累计浏览{" "}
-              <span className="font-medium text-ink">
-                {notebookSharingByName[shareTargetNotebook]?.viewCount ?? 0}
-              </span>
-              （从热门列表进入时增加；同一登录账号 24 小时内对同一本重复打开仅计一次；本人打开不计）
-            </p>
             {shareModalError ? (
               <p className="mt-2 text-xs text-danger-ink" role="alert">
                 {shareModalError}
@@ -5132,7 +5126,7 @@ export default function NotesPage() {
                     disabled={draftBusy}
                     onClick={() => void submitArticleDraft()}
                   >
-                    {draftBusy ? "创建中…" : "生成节目底稿"}
+                    {draftBusy ? "创建中…" : "生成"}
                   </button>
                 </div>
               </>

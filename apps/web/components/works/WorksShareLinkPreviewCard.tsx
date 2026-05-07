@@ -44,9 +44,7 @@ export function WorksShareLinkPreviewCard({
   const coverSrc = workCoverImageSrc(coverUrl);
   return (
     <section className="rounded-2xl border border-line bg-fill/25 px-4 py-4">
-      <h3 className="text-sm font-medium text-ink">分享链接</h3>
-      <p className="mt-1 text-[11px] text-muted">打开链接即可试听，无需登录。</p>
-      <div className="relative mt-4 flex gap-3 rounded-xl border border-line bg-surface p-3 pr-12 shadow-soft">
+      <div className="relative flex gap-3 rounded-xl border border-line bg-surface p-3 pr-12 shadow-soft">
         <button
           type="button"
           disabled={disabled || !sharePageFullUrl}

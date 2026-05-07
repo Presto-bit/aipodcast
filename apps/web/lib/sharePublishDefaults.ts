@@ -666,6 +666,72 @@ function curateChapterMarkdownTimelineLines(lines: string[], maxItems: number): 
   return idxs.map((i) => bullets[i]!);
 }
 
+/** 与发布页默认 Shownotes 模板配套的题材归类（关键词打分，取最高） */
+export function inferPodcastContentCategory(scriptRaw: string, payloadText: string): string {
+  const text = `${String(scriptRaw || "")}\n${String(payloadText || "")}`
+    .replace(/\s+/g, " ")
+    .slice(0, 12000);
+  const weights: Array<{ cat: string; words: readonly string[] }> = [
+    { cat: "工具", words: ["工具", "软件", "App", "应用", "插件", "效率", "快捷键", "教程", "上手", "Workflow"] },
+    { cat: "社会", words: ["社会", "公共", "政策", "舆论", "阶层", "伦理", "性别", "城乡", "共识"] },
+    { cat: "商业", words: ["商业", "创业", "融资", "公司", "战略", "增长", "营收", "电商", "品牌", "市场"] },
+    { cat: "人文", words: ["人文", "历史", "哲学", "思想", "文学", "人性", "意义"] },
+    { cat: "科技", words: ["科技", "AI", "算法", "芯片", "互联网", "创新", "数字化", "模型", "数据"] },
+    { cat: "阅读", words: ["读书", "本书", "作者", "章节", "译本", "书单"] },
+    { cat: "影视娱乐", words: ["电影", "剧集", "综艺", "演员", "导演", "影评", "追剧"] },
+    { cat: "职场", words: ["职场", "简历", "面试", "同事", "老板", "升职", "裁员", "跳槽"] },
+    { cat: "自我成长", words: ["成长", "自律", "习惯", "认知", "心态", "复盘", "目标管理"] },
+    { cat: "体育运动", words: ["体育", "足球", "篮球", "跑步", "健身", "奥运", "训练", "比赛"] },
+    { cat: "治愈陪伴", words: ["治愈", "陪伴", "情绪", "晚安", "放松", "疗愈"] },
+    { cat: "医疗健康", words: ["健康", "医疗", "医院", "睡眠", "养生", "症状", "医保"] },
+    { cat: "饮食", words: ["美食", "食谱", "餐厅", "咖啡", "烘焙", "茶饮"] },
+    { cat: "趣味闲谈", words: ["闲聊", "扯淡", "段子", "八卦", "吐槽"] },
+    { cat: "艺术", words: ["艺术", "展览", "绘画", "音乐", "舞蹈", "剧场"] },
+    { cat: "生活方式", words: ["生活方式", "家居", "极简", "通勤", "旅行装备"] },
+    { cat: "故事奇谈", words: ["故事", "悬疑", "都市传说", "奇闻"] },
+    { cat: "城市探索", words: ["城市", "街区", "citywalk", "打卡", "胡同", "地标"] },
+    { cat: "动漫游戏", words: ["动漫", "二次元", "漫画", "番剧", "游戏", "手游", "Steam", "主机"] }
+  ];
+  let best = "趣味闲谈";
+  let bestScore = 0;
+  for (const { cat, words } of weights) {
+    let s = 0;
+    for (const w of words) {
+      if (text.includes(w)) s += 1;
+    }
+    if (s > bestScore) {
+      bestScore = s;
+      best = cat;
+    }
+  }
+  return best;
+}
+
+function categoryShownotesFlavorLine(cat: string): string {
+  const map: Record<string, string> = {
+    工具: "**内容取向：**工具与实践向——优先呈现步骤、场景与局限，少口号。",
+    社会: "**内容取向：**社会观察向——交代背景与多方视角，克制断言。",
+    商业: "**内容取向：**商业向——突出案例、机制与可迁移的判断框架。",
+    人文: "**内容取向：**人文向——容纳概念与引用，语气偏节制。",
+    科技: "**内容取向：**科技向——交代术语与含义，避免营销腔。",
+    阅读: "**内容取向：**读书向——对齐书目信息与观点脉络，便于对照收听。",
+    影视娱乐: "**内容取向：**影视娱乐向——保留作品信息与观感锚点，避免剧透堆砌。",
+    职场: "**内容取向：**职场向——动作化建议与情境边界更清晰。",
+    自我成长: "**内容取向：**自我成长向——把抽象道理落成可试的小动作。",
+    体育运动: "**内容取向：**体育运动向——数据与规则交代清楚，节奏紧凑。",
+    治愈陪伴: "**内容取向：**治愈陪伴向——语气柔和，信息密度适中。",
+    医疗健康: "**内容取向：**医疗健康向——强调科普边界，避免替代诊疗表述。",
+    饮食: "**内容取向：**饮食向——突出风味线索与场景感。",
+    趣味闲谈: "**内容取向：**趣味闲谈向——保留梗与节奏，结构仍可扫读。",
+    艺术: "**内容取向：**艺术向——补充语境与观看/聆听线索。",
+    生活方式: "**内容取向：**生活方式向——细节与选择理由并重。",
+    故事奇谈: "**内容取向：**故事奇谈向——冲突与转折靠前，保留悬念感。",
+    城市探索: "**内容取向：**城市探索向——路线与观察点更可跟随。",
+    动漫游戏: "**内容取向：**动漫游戏向——保留作品名与梗位，语气可更轻快。"
+  };
+  return map[cat] || `**内容取向：**「${cat}」向——用语与信息侧重已略贴合该类听众。`;
+}
+
 function buildProgramListenIntroLines(curated: string[]): string[] {
   if (curated.length === 0) return [];
   const titles = curated.map(extractTitleFromChapterMarkdownLine).filter(Boolean);
@@ -693,6 +759,8 @@ function buildStructuredShowNotesMarkdown(
 ): string {
   const theme = summaryLine.trim() || "（请补充本期主题）";
   const payloadText = String(payload.text || "");
+  const category = inferPodcastContentCategory(scriptRaw, payloadText);
+  const categoryLine = categoryShownotesFlavorLine(category);
   const coreThread = deriveCoreThreadBullets(scriptRaw, payloadText, summaryLine, 2);
   const takeaways = deriveKeyTakeawaysFromScript(scriptRaw, payloadText, summaryLine, 4);
   const quotes = deriveGoldenQuotesFromScript(scriptRaw, payloadText, 3);
@@ -700,11 +768,13 @@ function buildStructuredShowNotesMarkdown(
   const voiceLines = deriveVoicePersonaLinesFromPayload(payload);
 
   const rawTimeline = timelineLines.length ? timelineLines : ["- [0:00 开篇](t:0)"];
-  const curatedTimeline = curateChapterMarkdownTimelineLines(rawTimeline, 7);
+  const curatedTimeline = curateChapterMarkdownTimelineLines(rawTimeline, 10);
   const listenIntro = buildProgramListenIntroLines(curatedTimeline);
 
   const parts: string[] = [
     "## 本期在讲什么",
+    "",
+    categoryLine,
     "",
     ...(coreThread.length
       ? coreThread.map((t) => `- ${t}`)
@@ -723,7 +793,7 @@ function buildStructuredShowNotesMarkdown(
     ...listenIntro,
     ...curatedTimeline,
     "",
-    "## 关键观点 / 金句",
+    "## 金句",
     "",
     ...(quotes.length ? quotes.map((q) => `- ${q}`) : ["- （可提炼适合传播的短句）"]),
     "",

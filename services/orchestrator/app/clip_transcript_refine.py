@@ -169,6 +169,7 @@ def refine_transcript_two_stage(
         raw_transcript,
         profile="auto",
         speaker_hint=speaker_hint,
+        channel_ids=channel_ids,
     )
     words = normalized.get("words")
     if not isinstance(words, list) or not words:
@@ -213,6 +214,7 @@ def refine_transcript_two_stage(
                 raw_clip,
                 profile="interview" if diarization_enabled else "monologue",
                 speaker_hint=speaker_hint,
+                channel_ids=channel_ids,
             )
             clip_words = clip_norm.get("words")
             if not isinstance(clip_words, list) or len(clip_words) <= 1:

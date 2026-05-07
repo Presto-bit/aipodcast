@@ -20,7 +20,7 @@ import {
   type ShareFormFields
 } from "../../lib/sharePublishDefaults";
 import { getBearerAuthHeadersSync } from "../../lib/authHeaders";
-import { readSessionStorageScoped } from "../../lib/userScopedStorage";
+import { readLocalStorageScoped, readSessionStorageScoped, writeLocalStorageScoped } from "../../lib/userScopedStorage";
 import {
   createJob,
   fetchJobShareAiCopy,
@@ -35,12 +35,7 @@ import {
 } from "../../lib/api";
 import type { JobRecord } from "../../lib/types";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
-import {
-  DEFAULT_PUBLISH_PLATFORM_ID,
-  type PublishPlatformId,
-  PUBLISH_PLATFORMS,
-  getPublishPlatformMeta
-} from "../../lib/publishPlatforms";
+import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, PUBLISH_PLATFORMS } from "../../lib/publishPlatforms";
 import { resolveJobScriptBodyText, SCRIPT_TEXT_LIKELY_FULL_MIN_LEN } from "../../lib/jobScriptText";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { buildWorksSharePageUrl } from "../../lib/rssPublicBase";
@@ -51,6 +46,12 @@ import { formatUnifiedWorksNavMetaLineFromJobRecord } from "../../lib/worksNavMe
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { WorkHubOverviewPanel } from "./WorkHubOverviewPanel";
 import { WorksShareLinkPreviewCard } from "./WorksShareLinkPreviewCard";
+import { RssChannelEditor } from "../rss/RssChannelEditor";
+
+const RSS_LAST_CHANNEL_STORAGE_KEY = "fym_rss_last_channel_id";
+
+const AI_SHOWNOTES_SUGGEST_LINE_A = "时间戳数量限制在 10 个以内";
+const AI_SHOWNOTES_SUGGEST_LINE_B = "风格改为二次元解说口吻（轻松有梗、少用书面语）";
 
 type Props = {
   jobId: string;
@@ -152,7 +153,6 @@ export function SharePublishClient({
   const [jobType, setJobType] = useState("");
   /** 任务内 script_text 偏短时，先拉 script 工件（与 AI 优化按钮禁用态同步）。 */
   const [scriptResolvePending, setScriptResolvePending] = useState(false);
-  const [scriptBodyHint, setScriptBodyHint] = useState("");
 
   const [publishedHint, setPublishedHint] = useState("");
   const initialSnapshotRef = useRef<FormSnapshot | null>(null);
@@ -161,7 +161,10 @@ export function SharePublishClient({
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [formReady, setFormReady] = useState(false);
   const [publishPlatform, setPublishPlatform] = useState<PublishPlatformId>(DEFAULT_PUBLISH_PLATFORM_ID);
-  const [advancedPublishOpen, setAdvancedPublishOpen] = useState(() => layout === "work_hub");
+  const [rssSetupModalOpen, setRssSetupModalOpen] = useState(false);
+  const [aiShownotesModalOpen, setAiShownotesModalOpen] = useState(false);
+  const [aiShownotesPromptDraft, setAiShownotesPromptDraft] = useState("");
+  const [aiShownotesErr, setAiShownotesErr] = useState("");
   const [shareOrigin, setShareOrigin] = useState("");
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
   /** 大模型生成简介 / Show Notes（与发布 busy 分离） */
@@ -297,7 +300,6 @@ export function SharePublishClient({
       setShareJobHydrated(false);
       setFormReady(false);
       setManuscriptBody("");
-      setScriptBodyHint("");
       setScriptResolvePending(false);
       setOwnerJobRecord(null);
 
@@ -368,28 +370,12 @@ export function SharePublishClient({
           const needsArtifactPath = shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN;
           if (needsArtifactPath) {
             setScriptResolvePending(true);
-            setScriptBodyHint("正在加载正文…");
           }
           let fullScript = shortFrom;
           try {
             fullScript = await resolveJobScriptBodyText(jobId, rowRec, getBearerAuthHeadersSync());
-            if (!canceled) {
-              if (!fullScript.trim()) {
-                setScriptBodyHint("无完整口播稿，简介按任务摘要。");
-              } else if (!needsArtifactPath) {
-                setScriptBodyHint("简介与正文已关联口播稿。");
-              } else if (fullScript.length > shortFrom.length) {
-                setScriptBodyHint("已从存储补全文稿。");
-              } else if (fullScript.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN) {
-                setScriptBodyHint("正文较短。");
-              } else {
-                setScriptBodyHint("简介与正文已关联口播稿。");
-              }
-            }
           } catch {
-            if (!canceled) {
-              setScriptBodyHint("正文加载失败，请刷新。");
-            }
+            /* ignore */
           } finally {
             if (!canceled) setScriptResolvePending(false);
           }
@@ -831,7 +817,17 @@ export function SharePublishClient({
         if (canceled) return;
         setChannels(rows);
         if (rows.length > 0) {
-          setChannelId((id) => id || String(rows[0]!.id || ""));
+          setChannelId((prev) => {
+            if (prev && rows.some((c) => String(c.id) === prev)) return prev;
+            let last = "";
+            try {
+              last = String(readLocalStorageScoped(RSS_LAST_CHANNEL_STORAGE_KEY) || "").trim();
+            } catch {
+              last = "";
+            }
+            if (last && rows.some((c) => String(c.id) === last)) return last;
+            return String(rows[0]!.id || "");
+          });
         }
       } catch (e) {
         if (!canceled) setFormErr(String(e instanceof Error ? e.message : e));
@@ -843,6 +839,29 @@ export function SharePublishClient({
       canceled = true;
     };
   }, [rssGate, ownerJobRecord]);
+
+  useEffect(() => {
+    if (!channelId.trim()) return;
+    if (!channels.some((c) => String(c.id) === channelId)) return;
+    try {
+      writeLocalStorageScoped(RSS_LAST_CHANNEL_STORAGE_KEY, channelId);
+    } catch {
+      /* ignore */
+    }
+  }, [channelId, channels]);
+
+  useEffect(() => {
+    if (!rssSetupModalOpen && !aiShownotesModalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setRssSetupModalOpen(false);
+        setAiShownotesModalOpen(false);
+        setAiShownotesErr("");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [rssSetupModalOpen, aiShownotesModalOpen]);
 
   useEffect(() => {
     if (!scheduleModalOpen) return;
@@ -964,6 +983,57 @@ export function SharePublishClient({
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e);
       setFormErr(msg || "AI 生成失败");
+    } finally {
+      setShareAiBusy(false);
+    }
+  }
+
+  async function applyAiShownotesRefine() {
+    if (!jobId.trim()) return;
+    const prompt = aiShownotesPromptDraft.trim();
+    if (!prompt) {
+      setAiShownotesErr("请填写编辑要求。");
+      return;
+    }
+    setShareAiBusy(true);
+    setAiShownotesErr("");
+    setFormErr("");
+    setFormOk("");
+    const persist = true;
+    try {
+      const out = await fetchJobShareAiCopy(jobId, {
+        persist,
+        showNotesOnly: true,
+        userPrompt: prompt,
+        baselineShowNotes: showNotes
+      });
+      if (!out.success) {
+        throw new Error("服务端未返回成功状态");
+      }
+      const notes = String(out.show_notes ?? "").trim();
+      if (!notes) {
+        throw new Error("返回内容为空");
+      }
+      setShowNotes(notes);
+      initialSnapshotRef.current = {
+        episodeTitle,
+        summary,
+        showNotes: notes
+      };
+      if (persist) {
+        try {
+          const fresh = await getJob(jobId);
+          if (fresh) setOwnerJobRecord(fresh);
+        } catch {
+          /* ignore */
+        }
+        clearShareFormDraft(jobId);
+      }
+      setAiShownotesModalOpen(false);
+      setFormOk("Shownotes 已更新。");
+    } catch (e) {
+      const msg = String(e instanceof Error ? e.message : e);
+      setAiShownotesErr(msg || "AI 生成失败");
     } finally {
       setShareAiBusy(false);
     }
@@ -1199,256 +1269,241 @@ export function SharePublishClient({
       ) : null}
 
       {publishChromeVisible && showShareAndPublish && ownerJobRecord ? (
-        <div className="mb-4">
-          <button
-            type="button"
-            className="flex w-full items-center justify-between gap-2 rounded-xl border border-line bg-surface px-4 py-3 text-left text-sm font-medium text-ink hover:bg-fill"
-            aria-expanded={advancedPublishOpen}
-            onClick={() => setAdvancedPublishOpen((o) => !o)}
-          >
-            <span className="pr-2">发布到播客平台</span>
-            <span className="shrink-0 text-xs text-muted">{advancedPublishOpen ? "收起" : "展开"}</span>
-          </button>
-        </div>
-      ) : null}
-
-      {publishChromeVisible && showShareAndPublish && ownerJobRecord && advancedPublishOpen ? (
-        <>
-          <div className="mb-5">
-            <p className="mb-2 text-xs font-medium text-ink">发布平台</p>
-            <div className="flex flex-wrap gap-2">
-              {PUBLISH_PLATFORMS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  disabled={busy || shareAiBusy}
-                  onClick={() => setPublishPlatform(p.id)}
-                  className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
-                    publishPlatform === p.id
-                      ? "border-brand bg-brand/10 font-medium text-brand"
-                      : "border-line bg-surface text-muted hover:border-brand/40 hover:text-ink"
-                  } ${!p.available ? "opacity-80" : ""} disabled:opacity-50`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <p className="mt-2 text-[11px] text-muted/90">更多平台开发中。</p>
-          </div>
-
-      {publishPlatform !== "xiaoyuzhou" ? (
-        <div className="rounded-2xl border border-dashed border-line bg-fill/15 px-4 py-8 text-center shadow-soft sm:px-6">
-          <p className="mx-auto max-w-md text-sm text-muted">
-            {getPublishPlatformMeta(publishPlatform)?.comingSoonHint ?? "该平台发布配置规划中。"}
-          </p>
-          <button
-            type="button"
-            className="mt-4 text-sm font-medium text-brand underline decoration-brand/30 hover:decoration-brand"
-            onClick={() => setPublishPlatform("xiaoyuzhou")}
-          >
-            使用小宇宙发布
-          </button>
-        </div>
-      ) : rssGate === "idle" || rssGate === "loading" ? (
-        <div className="rounded-2xl border border-line bg-fill/20 px-4 py-10 text-center shadow-soft sm:px-6">
-          <p className="text-sm text-muted" role="status">
-            {rssGate === "idle" ? "校验发布条件…" : "校验中…"}
-          </p>
-        </div>
-      ) : rssGate === "blocked" || rssGate === "err" ? (
-        <div className="rounded-2xl border border-warning/35 bg-warning-soft/60 px-4 py-5 shadow-soft sm:px-6 sm:py-6">
-          <p className="text-sm font-medium text-warning-ink">暂无法使用 RSS 发布</p>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-warning-ink/95">{rssGateDetail.trim() || "请稍后再试或刷新页面。"}</p>
-          {rssGate === "blocked" ? <BillingShortfallLinks className="mt-4" /> : null}
-        </div>
-      ) : (
-      <div className="rounded-2xl border border-line bg-surface px-4 py-5 shadow-soft sm:px-6 sm:py-6">
-        <div className="space-y-6">
-          <section className="space-y-3">
-            <h2 className="text-sm font-medium text-ink">RSS 渠道</h2>
-            <label className="block text-sm text-muted">
-              频道
-              <select
-                className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                value={channelId}
-                onChange={(e) => setChannelId(e.target.value)}
-                disabled={channelsLoading || busy || shareAiBusy}
-              >
-                <option value="">{channelsLoading ? "加载中…" : "选择 RSS 频道"}</option>
-                {channels.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </section>
-
-          <div className="border-t border-line pt-6">
-            <section className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm font-medium text-ink">标题与简介</h2>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <button
-                    type="button"
-                    className="shrink-0 text-xs text-brand underline disabled:opacity-40"
-                    disabled={busy || shareAiBusy || scriptResolvePending}
-                    onClick={() => void applyShareAiCopyFromProvider()}
-                  >
-                    {shareAiBusy ? "生成中…" : "AI 优化简介与 Shownotes"}
-                  </button>
-                </div>
-              </div>
-              <label className="block text-sm text-muted">
-                节目标题
-                <input
-                  className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                  value={episodeTitle}
-                  onChange={(e) => setEpisodeTitle(e.target.value)}
-                  disabled={busy || shareAiBusy}
-                  maxLength={300}
-                  placeholder="RSS / 小宇宙单集标题"
-                />
-                <span className="mt-1 block text-[11px] text-muted/90">默认与作品列表名称一致，可改。</span>
-                <span className="mt-0.5 flex justify-end text-[11px] tabular-nums text-muted/80">
-                  <span className={hints.titleOverSoft ? "text-warning-ink" : ""}>{episodeTitle.length}</span>
-                  <span className="text-muted/60">/{SHARE_TITLE_SOFT_MAX}</span>
-                </span>
-              </label>
-              <div className="text-sm text-muted">
-                <span>简介</span>
-                {scriptBodyHint ? <p className="mt-1 text-[11px] text-muted/90">{scriptBodyHint}</p> : null}
-                <textarea
-                  className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                  rows={3}
-                  value={summary}
-                  onChange={(e) => setSummary(e.target.value.slice(0, AUTO_PROGRAM_SUMMARY_MAX))}
-                  disabled={busy || shareAiBusy}
-                  maxLength={AUTO_PROGRAM_SUMMARY_MAX}
-                  placeholder="RSS 列表用短摘要"
-                />
-                <span className="mt-0.5 flex justify-end text-[11px] tabular-nums text-muted/80">
-                  <span className={summary.length >= AUTO_PROGRAM_SUMMARY_MAX ? "text-warning-ink" : ""}>
-                    {summary.length}
-                  </span>
-                  <span className="text-muted/60">/{AUTO_PROGRAM_SUMMARY_MAX}</span>
-                </span>
-                {hints.summaryLooksLikeDialogue ? (
-                  <p className="mt-1 text-[11px] text-warning-ink">简介含对白标记，列表展示可能不佳。</p>
-                ) : null}
-              </div>
-            </section>
-          </div>
-
-          <div className="border-t border-line pt-6">
-            <section className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm font-medium text-ink">Shownotes</h2>
-                <div className="flex gap-1 rounded-lg border border-line bg-fill/30 p-0.5">
-                  <button
-                    type="button"
-                    className={`rounded-md px-2.5 py-1 text-xs ${notesTab === "edit" ? "bg-surface font-medium text-ink shadow-soft" : "text-muted"}`}
-                    onClick={() => setNotesTab("edit")}
-                  >
-                    编辑
-                  </button>
-                  <button
-                    type="button"
-                    className={`rounded-md px-2.5 py-1 text-xs ${notesTab === "preview" ? "bg-surface font-medium text-ink shadow-soft" : "text-muted"}`}
-                    onClick={() => setNotesTab("preview")}
-                  >
-                    预览
-                  </button>
-                </div>
-              </div>
-              {notesTab === "edit" ? (
-                <p className="text-[11px] text-muted/90">
-                  Markdown；跳转 <code className="rounded bg-fill px-1">[3:20 标题](t:200)</code>
-                  {hasAudio ? "，预览可点。" : "。"}
-                </p>
-              ) : null}
-              {notesTab === "edit" ? (
-                <textarea
-                  className="w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 font-mono text-sm leading-relaxed text-ink"
-                  rows={12}
-                  value={showNotes}
-                  onChange={(e) => setShowNotes(e.target.value)}
-                  disabled={busy || shareAiBusy}
-                  maxLength={20_000}
-                />
-              ) : (
-                <div className="max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/20 p-3">
-                  <ShowNotesMarkdownPreview
-                    markdown={showNotes}
-                    onSeekSeconds={seekFromNotes}
-                    className="!max-h-none overflow-visible border-0 bg-transparent p-0"
-                  />
-                </div>
-              )}
-              {hints.showNotesVeryShort ? (
-                <p className="text-[11px] text-warning-ink">Shownotes 偏短。</p>
-              ) : null}
-            </section>
-          </div>
-        </div>
-
-        {formErr ? <p className="mt-5 text-sm text-danger-ink">{formErr}</p> : null}
-        {formOk ? <p className="mt-5 text-sm text-success-ink">{formOk}</p> : null}
-
-        <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
-          <Link href="/works" className="text-sm text-muted hover:text-ink">
-            取消
-          </Link>
-          <div className="flex flex-wrap items-center justify-end gap-3 sm:gap-4">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={schedulePublish}
-                aria-label="定时发布"
-                disabled={busy || shareAiBusy || !showShareAndPublish}
-                onClick={() => {
-                  if (schedulePublish) {
-                    setSchedulePublish(false);
-                  } else {
-                    openScheduleModal();
-                  }
-                }}
-                className={`relative h-6 w-10 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
-                  schedulePublish ? "bg-brand" : "bg-line"
-                } disabled:opacity-50`}
-              >
-                <span
-                  className={`absolute top-0.5 left-0.5 block h-5 w-5 rounded-full bg-surface shadow transition-transform ${
-                    schedulePublish ? "translate-x-4" : "translate-x-0"
-                  }`}
-                />
-              </button>
-              <span className="text-sm text-muted">定时</span>
-              {schedulePublish && publishAt.trim() ? (
-                <button
-                  type="button"
-                  className="max-w-[10rem] truncate text-xs text-brand underline decoration-brand/40 hover:decoration-brand disabled:opacity-50"
-                  disabled={busy || shareAiBusy || !showShareAndPublish}
-                  onClick={() => openScheduleModal()}
-                >
-                  {formatSchedulePreview(publishAt)}
-                </button>
-              ) : null}
-            </div>
-            <button
-              type="button"
-              className="min-w-[7rem] rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50"
-              disabled={busy || shareAiBusy || !showShareAndPublish || publishPlatform !== "xiaoyuzhou"}
-              onClick={() => void submit()}
+        <div className="mb-6 rounded-2xl border border-line bg-surface px-4 py-5 shadow-soft sm:px-6 sm:py-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+            <h2 className="text-sm font-medium text-ink">发布到播客平台</h2>
+            <select
+              className="max-w-[11rem] rounded-lg border border-line bg-fill/40 px-3 py-2 text-sm text-ink"
+              value={publishPlatform}
+              onChange={(e) => setPublishPlatform(e.target.value as PublishPlatformId)}
+              disabled={busy || shareAiBusy}
             >
-              {busy ? (schedulePublish ? "定时发布中…" : "发布中…") : schedulePublish ? "定时发布" : "发布"}
-            </button>
+              {PUBLISH_PLATFORMS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="mt-5">
+            {publishPlatform !== "xiaoyuzhou" ? (
+              <div className="py-12 text-center text-sm text-muted">该平台暂未接入</div>
+            ) : rssGate === "idle" || rssGate === "loading" ? (
+              <div className="py-12 text-center">
+                <p className="text-sm text-muted" role="status">
+                  {rssGate === "idle" ? "校验发布条件…" : "校验中…"}
+                </p>
+              </div>
+            ) : rssGate === "blocked" || rssGate === "err" ? (
+              <div className="rounded-xl border border-warning/35 bg-warning-soft/60 px-4 py-5">
+                <p className="text-sm font-medium text-warning-ink">暂无法使用 RSS 发布</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-warning-ink/95">
+                  {rssGateDetail.trim() || "请稍后再试或刷新页面。"}
+                </p>
+                {rssGate === "blocked" ? <BillingShortfallLinks className="mt-4" /> : null}
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <section className="space-y-3">
+                  <h3 className="text-sm font-medium text-ink">RSS 渠道</h3>
+                  {channelsLoading ? (
+                    <p className="text-sm text-muted">加载中…</p>
+                  ) : channels.length === 0 ? (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-sm text-muted">暂无频道</span>
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-brand underline decoration-brand/40 hover:decoration-brand"
+                        onClick={() => setRssSetupModalOpen(true)}
+                      >
+                        去配置
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="block text-sm text-muted">
+                      频道
+                      <select
+                        className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                        value={channelId}
+                        onChange={(e) => setChannelId(e.target.value)}
+                        disabled={busy || shareAiBusy}
+                      >
+                        <option value="">选择 RSS 频道</option>
+                        {channels.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </section>
+
+                <div className="border-t border-line pt-6">
+                  <section className="space-y-4">
+                    <h3 className="text-sm font-medium text-ink">标题与简介</h3>
+                    <label className="block text-sm text-muted">
+                      节目标题
+                      <input
+                        className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                        value={episodeTitle}
+                        onChange={(e) => setEpisodeTitle(e.target.value)}
+                        disabled={busy || shareAiBusy}
+                        maxLength={300}
+                        placeholder="RSS / 小宇宙单集标题"
+                      />
+                      <span className="mt-0.5 flex justify-end text-[11px] tabular-nums text-muted/80">
+                        <span className={hints.titleOverSoft ? "text-warning-ink" : ""}>{episodeTitle.length}</span>
+                        <span className="text-muted/60">/{SHARE_TITLE_SOFT_MAX}</span>
+                      </span>
+                    </label>
+                    <div className="text-sm text-muted">
+                      <span>简介</span>
+                      <textarea
+                        className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                        rows={3}
+                        value={summary}
+                        onChange={(e) => setSummary(e.target.value.slice(0, AUTO_PROGRAM_SUMMARY_MAX))}
+                        disabled={busy || shareAiBusy}
+                        maxLength={AUTO_PROGRAM_SUMMARY_MAX}
+                        placeholder="RSS 列表用短摘要"
+                      />
+                      <span className="mt-0.5 flex justify-end text-[11px] tabular-nums text-muted/80">
+                        <span className={summary.length >= AUTO_PROGRAM_SUMMARY_MAX ? "text-warning-ink" : ""}>
+                          {summary.length}
+                        </span>
+                        <span className="text-muted/60">/{AUTO_PROGRAM_SUMMARY_MAX}</span>
+                      </span>
+                      {hints.summaryLooksLikeDialogue ? (
+                        <p className="mt-1 text-[11px] text-warning-ink">简介含对白标记，列表展示可能不佳。</p>
+                      ) : null}
+                    </div>
+                  </section>
+                </div>
+
+                <div className="border-t border-line pt-6">
+                  <section className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-medium text-ink">Shownotes</h3>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          className="rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
+                          disabled={busy || shareAiBusy || scriptResolvePending}
+                          onClick={() => {
+                            setAiShownotesErr("");
+                            setAiShownotesModalOpen(true);
+                          }}
+                        >
+                          AI优化
+                        </button>
+                        <div className="flex gap-1 rounded-lg border border-line bg-fill/30 p-0.5">
+                          <button
+                            type="button"
+                            className={`rounded-md px-2.5 py-1 text-xs ${notesTab === "edit" ? "bg-surface font-medium text-ink shadow-soft" : "text-muted"}`}
+                            onClick={() => setNotesTab("edit")}
+                          >
+                            编辑
+                          </button>
+                          <button
+                            type="button"
+                            className={`rounded-md px-2.5 py-1 text-xs ${notesTab === "preview" ? "bg-surface font-medium text-ink shadow-soft" : "text-muted"}`}
+                            onClick={() => setNotesTab("preview")}
+                          >
+                            预览
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    {notesTab === "edit" ? (
+                      <p className="text-[11px] text-muted/90">
+                        Markdown；跳转 <code className="rounded bg-fill px-1">[3:20 标题](t:200)</code>
+                        {hasAudio ? "，预览可点。" : "。"}
+                      </p>
+                    ) : null}
+                    {notesTab === "edit" ? (
+                      <textarea
+                        className="w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 font-mono text-sm leading-relaxed text-ink"
+                        rows={12}
+                        value={showNotes}
+                        onChange={(e) => setShowNotes(e.target.value)}
+                        disabled={busy || shareAiBusy}
+                        maxLength={20_000}
+                      />
+                    ) : (
+                      <div className="max-h-[min(70vh,28rem)] overflow-y-auto rounded-lg border border-line bg-fill/20 p-3">
+                        <ShowNotesMarkdownPreview
+                          markdown={showNotes}
+                          onSeekSeconds={seekFromNotes}
+                          className="!max-h-none overflow-visible border-0 bg-transparent p-0"
+                        />
+                      </div>
+                    )}
+                    {hints.showNotesVeryShort ? (
+                      <p className="text-[11px] text-warning-ink">Shownotes 偏短。</p>
+                    ) : null}
+                  </section>
+                </div>
+
+                {formErr ? <p className="mt-5 text-sm text-danger-ink">{formErr}</p> : null}
+                {formOk ? <p className="mt-5 text-sm text-success-ink">{formOk}</p> : null}
+
+                <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
+                  <Link href="/works" className="text-sm text-muted hover:text-ink">
+                    取消
+                  </Link>
+                  <div className="flex flex-wrap items-center justify-end gap-3 sm:gap-4">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={schedulePublish}
+                        aria-label="定时发布"
+                        disabled={busy || shareAiBusy || !showShareAndPublish}
+                        onClick={() => {
+                          if (schedulePublish) {
+                            setSchedulePublish(false);
+                          } else {
+                            openScheduleModal();
+                          }
+                        }}
+                        className={`relative h-6 w-10 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+                          schedulePublish ? "bg-brand" : "bg-line"
+                        } disabled:opacity-50`}
+                      >
+                        <span
+                          className={`absolute top-0.5 left-0.5 block h-5 w-5 rounded-full bg-surface shadow transition-transform ${
+                            schedulePublish ? "translate-x-4" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                      <span className="text-sm text-muted">定时</span>
+                      {schedulePublish && publishAt.trim() ? (
+                        <button
+                          type="button"
+                          className="max-w-[10rem] truncate text-xs text-brand underline decoration-brand/40 hover:decoration-brand disabled:opacity-50"
+                          disabled={busy || shareAiBusy || !showShareAndPublish}
+                          onClick={() => openScheduleModal()}
+                        >
+                          {formatSchedulePreview(publishAt)}
+                        </button>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      className="min-w-[7rem] rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50"
+                      disabled={busy || shareAiBusy || !showShareAndPublish || publishPlatform !== "xiaoyuzhou"}
+                      onClick={() => void submit()}
+                    >
+                      {busy ? (schedulePublish ? "定时发布中…" : "发布中…") : schedulePublish ? "定时发布" : "发布"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      </div>
-      )}
-        </>
       ) : null}
 
       {scheduleModalOpen && typeof document !== "undefined"
@@ -1501,6 +1556,133 @@ export function SharePublishClient({
                     onClick={() => confirmScheduleModal()}
                   >
                     确定
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {rssSetupModalOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+              role="presentation"
+            >
+              <button
+                type="button"
+                className="absolute inset-0 cursor-default"
+                aria-label="关闭"
+                onClick={() => setRssSetupModalOpen(false)}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="rss-setup-modal-title"
+                className="relative z-10 max-h-[min(90vh,40rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-card"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2 id="rss-setup-modal-title" className="text-base font-semibold text-ink">
+                  RSS 频道配置
+                </h2>
+                <div className="mt-4">
+                  <RssChannelEditor
+                    channel={null}
+                    isNew
+                    disabledGlobal={channelsLoading || busy || shareAiBusy}
+                    onSaved={(row) => {
+                      void (async () => {
+                        try {
+                          const rows = await listRssChannels();
+                          setChannels(rows);
+                          const id = String(row.id || "");
+                          if (id) setChannelId(id);
+                          setRssSetupModalOpen(false);
+                        } catch (e) {
+                          setFormErr(String(e instanceof Error ? e.message : e));
+                        }
+                      })();
+                    }}
+                    onCancelNew={() => setRssSetupModalOpen(false)}
+                  />
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {aiShownotesModalOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+              role="presentation"
+            >
+              <button
+                type="button"
+                className="absolute inset-0 cursor-default"
+                aria-label="关闭"
+                onClick={() => {
+                  setAiShownotesModalOpen(false);
+                  setAiShownotesErr("");
+                }}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="ai-shownotes-modal-title"
+                className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-surface p-5 shadow-card"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2 id="ai-shownotes-modal-title" className="text-base font-semibold text-ink">
+                  AI 优化 Shownotes
+                </h2>
+                <p className="mt-3 text-[11px] leading-relaxed text-muted/55">
+                  a）{AI_SHOWNOTES_SUGGEST_LINE_A}
+                  <br />
+                  b）{AI_SHOWNOTES_SUGGEST_LINE_B}
+                </p>
+                <label className="mt-3 block text-sm text-muted">
+                  编辑要求
+                  <textarea
+                    className="mt-1 min-h-[7rem] w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                    value={aiShownotesPromptDraft}
+                    onChange={(e) => {
+                      setAiShownotesPromptDraft(e.target.value);
+                      setAiShownotesErr("");
+                    }}
+                    placeholder="描述你希望如何调整 Shownotes（结构、语气、时间戳数量等）…"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="mt-2 text-xs text-muted underline decoration-muted/50 hover:text-ink hover:decoration-ink/40"
+                  onClick={() =>
+                    setAiShownotesPromptDraft(`${AI_SHOWNOTES_SUGGEST_LINE_A}\n${AI_SHOWNOTES_SUGGEST_LINE_B}`)
+                  }
+                >
+                  填入上述建议
+                </button>
+                {aiShownotesErr ? <p className="mt-2 text-sm text-danger-ink">{aiShownotesErr}</p> : null}
+                <div className="mt-5 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-line bg-fill/40 px-4 py-2 text-sm text-ink hover:bg-fill"
+                    onClick={() => {
+                      setAiShownotesModalOpen(false);
+                      setAiShownotesErr("");
+                    }}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50"
+                    disabled={shareAiBusy || scriptResolvePending}
+                    onClick={() => void applyAiShownotesRefine()}
+                  >
+                    {shareAiBusy ? "生成中…" : "生成"}
                   </button>
                 </div>
               </div>

@@ -147,10 +147,15 @@ export async function fetchPublicShareListen(jobId: string): Promise<PublicShare
   return data?.success && data.audio_url ? data : null;
 }
 
-/** 分享 / RSS：按服务端 TEXT_PROVIDER 生成简介与 Show Notes（Markdown） */
+/** 分享 / RSS：按服务端 TEXT_PROVIDER 生成简介与 Show Notes（Markdown）；或仅按提词重写 Shownotes */
 export async function fetchJobShareAiCopy(
   jobId: string,
-  opts?: { persist?: boolean }
+  opts?: {
+    persist?: boolean;
+    showNotesOnly?: boolean;
+    userPrompt?: string;
+    baselineShowNotes?: string;
+  }
 ): Promise<{
   success: boolean;
   summary?: string;
@@ -159,7 +164,12 @@ export async function fetchJobShareAiCopy(
   persisted?: boolean;
 }> {
   const id = encodeURIComponent(String(jobId || "").trim());
-  const body = JSON.stringify({ persist: Boolean(opts?.persist) });
+  const body = JSON.stringify({
+    persist: Boolean(opts?.persist),
+    show_notes_only: Boolean(opts?.showNotesOnly),
+    user_prompt: opts?.userPrompt ?? "",
+    baseline_show_notes: opts?.baselineShowNotes ?? ""
+  });
   const resp = await fetch(`/api/jobs/${id}/share-ai-copy`, {
     method: "POST",
     credentials: "same-origin",

@@ -187,6 +187,84 @@ def test_connector_token_avoids_cut_after_pause() -> None:
             os.environ["CLIP_ASR_BOUNDARY_SCORE_THRESHOLD"] = old_threshold
 
 
+def test_mono_dual_fallback_long_utterance_gap_alternates_speakers() -> None:
+    """单轨、ASR 未分说话人时，按 utterance 间长静音推断双人轮流。"""
+    raw = {
+        "audio_info": {"duration": 8000},
+        "result": {
+            "utterances": [
+                {
+                    "speaker_id": 0,
+                    "text": "你好。",
+                    "words": [
+                        {"start_time": 0, "end_time": 200, "text": "你"},
+                        {"start_time": 200, "end_time": 400, "text": "好"},
+                    ],
+                },
+                {
+                    "speaker_id": 0,
+                    "text": "收到。",
+                    "words": [
+                        {"start_time": 1200, "end_time": 1400, "text": "收"},
+                        {"start_time": 1400, "end_time": 1600, "text": "到"},
+                    ],
+                },
+            ]
+        },
+    }
+    norm = normalize_volc_flash_transcript(raw, speaker_hint=2, channel_ids=[0])
+    words = norm["words"]
+    assert words[0]["speaker"] == 0 and words[1]["speaker"] == 0
+    assert words[2]["speaker"] == 1 and words[3]["speaker"] == 1
+
+
+def test_mono_dual_fallback_short_gap_keeps_same_speaker() -> None:
+    raw = {
+        "audio_info": {"duration": 3000},
+        "result": {
+            "utterances": [
+                {
+                    "speaker_id": 0,
+                    "text": "第一",
+                    "words": [{"start_time": 0, "end_time": 200, "text": "第"}, {"start_time": 200, "end_time": 400, "text": "一"}],
+                },
+                {
+                    "speaker_id": 0,
+                    "text": "第二",
+                    "words": [{"start_time": 500, "end_time": 700, "text": "第"}, {"start_time": 700, "end_time": 900, "text": "二"}],
+                },
+            ]
+        },
+    }
+    norm = normalize_volc_flash_transcript(raw, speaker_hint=2, channel_ids=[0])
+    words = norm["words"]
+    assert all(w["speaker"] == 0 for w in words)
+
+
+def test_mono_dual_fallback_skipped_for_dual_channel_ids() -> None:
+    """双轨工程不启用本启发，避免覆盖声道维度的说话人逻辑。"""
+    raw = {
+        "audio_info": {"duration": 8000},
+        "result": {
+            "utterances": [
+                {
+                    "speaker_id": 0,
+                    "text": "A",
+                    "words": [{"start_time": 0, "end_time": 200, "text": "甲"}],
+                },
+                {
+                    "speaker_id": 0,
+                    "text": "B",
+                    "words": [{"start_time": 2000, "end_time": 2200, "text": "乙"}],
+                },
+            ]
+        },
+    }
+    norm = normalize_volc_flash_transcript(raw, speaker_hint=2, channel_ids=[0, 1])
+    words = norm["words"]
+    assert all(w["speaker"] == 0 for w in words)
+
+
 def test_quote_unclosed_blocks_cut() -> None:
     raw = {
         "audio_info": {"duration": 4500},

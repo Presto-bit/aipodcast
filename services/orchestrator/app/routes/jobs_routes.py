@@ -87,6 +87,7 @@ from ..share_publish_llm import (
     build_share_user_source_text,
     format_audio_chapters_hint,
     generate_share_rss_ai_copy,
+    refine_share_show_notes_with_prompt,
     resolve_script_body_for_share,
 )
 from ..social_viral_copy import generate_viral_social_copy
@@ -1553,6 +1554,9 @@ def share_ai_copy_api(
 
     opts = body if isinstance(body, dict) else {}
     persist = bool(opts.get("persist"))
+    notes_only = bool(opts.get("show_notes_only"))
+    user_prompt = str(opts.get("user_prompt") or "").strip()
+    baseline_show_notes = str(opts.get("baseline_show_notes") or "").strip()
 
     if persist and str(row.get("status") or "") != "succeeded":
         raise HTTPException(status_code=400, detail="job_not_succeeded")
@@ -1569,14 +1573,27 @@ def share_ai_copy_api(
     )[:300]
     chapter_hint = format_audio_chapters_hint(result)
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
+    if notes_only and not user_prompt:
+        raise HTTPException(status_code=400, detail="user_prompt_required")
+
     try:
-        pack = generate_share_rss_ai_copy(
-            script_raw=script,
-            user_source_text=user_source,
-            episode_title_hint=title_hint,
-            chapter_timeline_hint=chapter_hint,
-            api_key=api_key,
-        )
+        if notes_only:
+            pack = refine_share_show_notes_with_prompt(
+                script_raw=script,
+                user_source_text=user_source,
+                chapter_timeline_hint=chapter_hint,
+                baseline_show_notes=baseline_show_notes,
+                user_prompt=user_prompt,
+                api_key=api_key,
+            )
+        else:
+            pack = generate_share_rss_ai_copy(
+                script_raw=script,
+                user_source_text=user_source,
+                episode_title_hint=title_hint,
+                chapter_timeline_hint=chapter_hint,
+                api_key=api_key,
+            )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)[:200]) from exc
     except Exception as exc:
@@ -1585,9 +1602,10 @@ def share_ai_copy_api(
     summary_out = str(pack.get("summary") or "").strip()
     show_notes_out = str(pack.get("show_notes") or "").strip()
     persisted = False
-    if persist and (summary_out or show_notes_out):
+    persist_ok = (not notes_only and (summary_out or show_notes_out)) or (notes_only and bool(show_notes_out))
+    if persist and persist_ok:
         patch: dict[str, Any] = {}
-        if summary_out:
+        if summary_out and not notes_only:
             patch["auto_share_summary"] = summary_out
         if show_notes_out:
             patch["auto_share_show_notes"] = show_notes_out
@@ -1604,7 +1622,7 @@ def share_ai_copy_api(
         append_job_event(
             job_id,
             "log",
-            "已写入 RSS 简介与 Shownotes 初稿（分享页生成）",
+            "已按提词重写 Shownotes（分享页）" if notes_only else "已写入 RSS 简介与 Shownotes 初稿（分享页生成）",
             {"trace_id": pack.get("trace_id")},
         )
 

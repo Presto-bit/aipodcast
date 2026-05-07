@@ -335,15 +335,80 @@ def _profile_default_params(profile_name: str) -> tuple[int, float, int]:
     return 460, 0.86, 300
 
 
+def _apply_mono_dual_turn_fallback_from_utterance_gaps(
+    words: list[dict[str, Any]],
+    *,
+    speaker_hint: int | None,
+    channel_ids: list[int] | None,
+) -> None:
+    """
+    单轨双人访谈时，若 ASR 未区分说话人（全部同一 speaker），按相邻 utterance 之间的静音
+    长度推断是否换说话人：间隔大于阈值则切换 Host/Guest，否则视为同一人连续分句。
+    """
+    flag = (os.getenv("CLIP_ASR_MONO_DUAL_FALLBACK") or "1").strip().lower()
+    if flag in ("0", "false", "off", "no"):
+        return
+    if speaker_hint != 2:
+        return
+    ch = channel_ids if isinstance(channel_ids, list) else None
+    if ch is not None and len(ch) >= 2:
+        return
+    if not words:
+        return
+    raw_spk: set[int] = set()
+    for w in words:
+        try:
+            raw_spk.add(int(w.get("speaker", 0)))
+        except (TypeError, ValueError):
+            raw_spk.add(0)
+    if len(raw_spk) >= 2:
+        return
+    by_utt: dict[int, list[dict[str, Any]]] = {}
+    for w in words:
+        uix = w.get("_utt_idx")
+        if not isinstance(uix, int):
+            return
+        by_utt.setdefault(uix, []).append(w)
+    if len(by_utt) < 2:
+        return
+    try:
+        gap_thr = int(os.getenv("CLIP_ASR_MONO_DUAL_UTT_GAP_MS") or "400")
+    except (TypeError, ValueError):
+        gap_thr = 400
+    gap_thr = max(200, min(2000, gap_thr))
+
+    order = sorted(by_utt.keys())
+    utt_spk: dict[int, int] = {order[0]: 0}
+    for j in range(1, len(order)):
+        prev_k, cur_k = order[j - 1], order[j]
+        prev_ws = by_utt[prev_k]
+        cur_ws = by_utt[cur_k]
+        if not prev_ws or not cur_ws:
+            utt_spk[cur_k] = utt_spk[prev_k]
+            continue
+        gap_ms = max(0, int(cur_ws[0].get("s_ms", 0)) - int(prev_ws[-1].get("e_ms", 0)))
+        prev_assigned = utt_spk[prev_k]
+        utt_spk[cur_k] = (1 - prev_assigned) if gap_ms >= gap_thr else prev_assigned
+    for uix, ws in by_utt.items():
+        sp = utt_spk.get(uix, 0)
+        for w in ws:
+            w["speaker"] = sp
+
+
 def normalize_volc_flash_transcript(
     raw: dict[str, Any],
     *,
     profile: str | None = None,
     speaker_hint: int | None = None,
+    channel_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     """
     豆包录音文件识别 2.0（及火山极速版等）OpenSpeech 响应体 → 剪辑台词级结构。
     参考：https://www.volcengine.com/docs/6561/1631584
+
+    ``channel_ids``：单轨（长度 < 2）且 ``speaker_hint == 2``、ASR 未返回多说话人时，
+    可按 utterance 间静音做双人轮流推断；关闭：环境变量 ``CLIP_ASR_MONO_DUAL_FALLBACK=0``；
+    间隔阈值毫秒：``CLIP_ASR_MONO_DUAL_UTT_GAP_MS``（默认 400）。
     """
     words_out: list[dict[str, Any]] = []
     wi = 0
@@ -371,6 +436,7 @@ def normalize_volc_flash_transcript(
         _speaker_canonical_index(spk, speaker_order)
 
     utt_processed = 0
+    utt_serial = 0
     for ut in utterances:
         if not isinstance(ut, dict):
             continue
@@ -417,10 +483,12 @@ def normalize_volc_flash_transcript(
                     "punct": punct,
                     "utt_new": utt_new,
                     "conf": _word_confidence(w),
+                    "_utt_idx": utt_serial,
                 }
             )
         if len(words_out) > n_words_before:
             utt_processed += 1
+            utt_serial += 1
 
     profile_name = _resolve_profile(raw, profile=profile, speaker_hint=speaker_hint)
     def_min_pause, def_threshold, def_smooth = _profile_default_params(profile_name)
@@ -442,6 +510,12 @@ def normalize_volc_flash_transcript(
     threshold = max(0.45, min(1.6, threshold))
     _resegment_utt_new(words_out, min_pause_ms=min_pause_ms, threshold=threshold)
 
+    _apply_mono_dual_turn_fallback_from_utterance_gaps(
+        words_out,
+        speaker_hint=speaker_hint,
+        channel_ids=channel_ids,
+    )
+
     q = _quality_score(words_out, min_pause_ms=min_pause_ms)
     if q < 0.52:
         # 回退：保守断句，仅在停顿明显或句末标点时断
@@ -456,5 +530,6 @@ def normalize_volc_flash_transcript(
 
     for w in words_out:
         w.pop("conf", None)
+        w.pop("_utt_idx", None)
 
     return {"version": 1, "words": words_out, "duration_ms": duration_ms}

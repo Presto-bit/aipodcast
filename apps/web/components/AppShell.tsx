@@ -35,7 +35,7 @@ import { useI18n } from "../lib/I18nContext";
 import AnimatedPageShell from "./AnimatedPageShell";
 import BrandGlyph from "./brand/BrandGlyph";
 import { SiteBeianBar } from "./SiteBeianBar";
-import { dispatchNotesShowNotebookHub } from "../lib/notesLastNotebook";
+import { dispatchNotesShowNotebookHub, NOTES_MINIMAL_MAIN_NAV_EVENT } from "../lib/notesLastNotebook";
 import {
   NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
   NAV_SECTION_LABEL_CLASS,
@@ -129,6 +129,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
+  /** 知识库已进入笔记本工作台：侧栏仅显示「返回」 */
+  const [notesMinimalMainNav, setNotesMinimalMainNav] = useState(false);
   /**
    * 侧栏挂 body：用 useLayoutEffect 在首帧 paint 前 portal，避免与 #__next 同帧叠层竞争（极端环境下
    * 曾出现「只有个别侧栏项可点」的命中错乱）。
@@ -195,19 +197,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     [t]
   );
   const navSubscription = useMemo<NavItem[]>(
-    () =>
-      isAdmin
-        ? [
-            {
-              href: "/subscription",
-              label: t("nav.subscribe"),
-              short: "余",
-              Icon: IconSubscription,
-              activeMatch: (p) => pathMatchesRoot(p, "/subscription")
-            }
-          ]
-        : [],
-    [isAdmin, t]
+    () => [
+      {
+        href: "/subscription",
+        label: t("nav.subscribe"),
+        short: "余",
+        Icon: IconSubscription,
+        activeMatch: (p) => pathMatchesRoot(p, "/subscription")
+      }
+    ],
+    [t]
   );
 
   useEffect(() => {
@@ -224,6 +223,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
     return () => window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
   }, []);
+
+  useEffect(() => {
+    const onNotesMinimal = (ev: Event) => {
+      const ce = ev as CustomEvent<{ minimal?: boolean }>;
+      setNotesMinimalMainNav(Boolean(ce.detail?.minimal));
+    };
+    window.addEventListener(NOTES_MINIMAL_MAIN_NAV_EVENT, onNotesMinimal);
+    return () => window.removeEventListener(NOTES_MINIMAL_MAIN_NAV_EVENT, onNotesMinimal);
+  }, []);
+
+  useEffect(() => {
+    if (!isNotesPrimaryWorkbenchPath(path)) setNotesMinimalMainNav(false);
+  }, [path]);
 
   useEffect(() => {
     const onWindowError = (event: ErrorEvent) => {
@@ -276,11 +288,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       document.documentElement.style.removeProperty("--fym-app-sidebar-w");
       return;
     }
-    const px = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
+    const minimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
+    const px = minimalRail
+      ? SIDEBAR_WIDTH_COLLAPSED_PX
+      : collapsed
+        ? SIDEBAR_WIDTH_COLLAPSED_PX
+        : SIDEBAR_WIDTH_EXPANDED_PX;
     document.documentElement.style.setProperty("--fym-app-sidebar-w", `${px}px`);
     // 不在 cleanup 里 removeProperty：Strict Mode / 依赖重跑时会出现一帧变量缺失，
     // 全屏级 z-index 遮罩会短暂盖住侧栏；无壳场景由上面分支显式清除即可。
-  }, [collapsed, ready]);
+  }, [collapsed, ready, notesMinimalMainNav, path]);
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => {
@@ -361,7 +378,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const sidebarAside = (
+  const notesNavMinimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
+
+  const sidebarAside = notesNavMinimalRail ? (
+    <aside
+      data-fym-app-sidebar
+      className="fixed left-0 top-0 z-[100000] flex h-svh min-h-0 w-[72px] flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width] duration-200 ease-out motion-reduce:transition-none pointer-events-auto"
+      style={{
+        width: "var(--fym-app-sidebar-w, 72px)"
+      }}
+    >
+      <nav className="flex min-h-0 flex-1 flex-col p-2 pt-3" aria-label={t("nav.mainNavLabel")}>
+        <button
+          type="button"
+          className="w-full rounded-dawn-md px-1 py-2.5 text-center text-xs font-semibold leading-snug text-ink transition-colors hover:bg-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+          title="返回笔记本导航"
+          aria-label="返回笔记本导航"
+          onClick={() => dispatchNotesShowNotebookHub()}
+        >
+          返回
+        </button>
+      </nav>
+    </aside>
+  ) : (
     <aside
       data-fym-app-sidebar
       className="fixed left-0 top-0 z-[100000] flex h-svh min-h-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width] duration-200 ease-out motion-reduce:transition-none pointer-events-auto"

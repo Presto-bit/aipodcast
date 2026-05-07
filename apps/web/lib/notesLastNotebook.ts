@@ -42,3 +42,11 @@ export function dispatchNotesShowNotebookHub(): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NOTES_NAV_HUB_EVENT, { bubbles: false }));
 }
+
+/** 知识库已进入具体笔记本工作台：主导航仅保留「返回」等极简形态（由 AppShell 消费） */
+export const NOTES_MINIMAL_MAIN_NAV_EVENT = "fym:notes-minimal-main-nav";
+
+export function dispatchNotesMinimalMainNav(minimal: boolean): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(NOTES_MINIMAL_MAIN_NAV_EVENT, { detail: { minimal }, bubbles: false }));
+}

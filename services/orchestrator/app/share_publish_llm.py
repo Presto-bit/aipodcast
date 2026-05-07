@@ -534,7 +534,7 @@ _SYSTEM_ASSEMBLE_FROM_STRUCTURE = """你是中文播客编辑，根据编辑已�
 2. 键名固定为：summary（字符串）、show_notes（字符串）。
 3. 只使用用户提供的 JSON 中的 episode_hook、facts、topics 与章节时间线中的信息；不得编造未出现的人名、数字、书名或结论。
 4. summary：纯文本，无 Markdown、无列表符号；**单段至多 50 个中文字符（含标点）**，用于 RSS/列表摘要；须一句说清「这期具体讲什么、对谁有用」，禁止长段铺陈与堆叠从句。
-5. show_notes：Markdown；须含二级标题「## 本期概览」与「## 要点」；facts 较多时合并同类项写成 5～11 条听众可扫读的要点，勿逐字堆叠 JSON。若有节目导听时间线，须追加「## 节目导听」：先用 1～2 句 **加粗** 听法导语（本期主线、适合谁、建议从哪段进入），再列 **至多 8 条** `[分:秒 标题](t:秒数)` 关键锚点（秒须与时间线一致）；切段很多时只保留信息密度最高的若干条，**禁止**把全部段标题无重点地平铺成列表。可酌情增加主流播客常见小节（仅当有素材依据时）：「## 链接与参考」（素材或要点中的 URL/书名/工具）、「## 文稿与追更」（说明正文可在平台查看、RSS 订阅更新），勿写空话。
+5. show_notes：Markdown；须含二级标题「## 本期概览」与「## 要点」；facts 较多时合并同类项写成 5～11 条听众可扫读的要点，勿逐字堆叠 JSON。若有节目导听时间线，须追加「## 节目导听」：先用 1～2 句 **加粗** 听法导语（本期主线、适合谁、建议从哪段进入），再列 **至多 10 条** `[分:秒 标题](t:秒数)` 关键锚点（秒须与时间线一致）；切段很多时只保留信息密度最高的若干条，**禁止**把全部段标题无重点地平铺成列表。可酌情增加主流播客常见小节（仅当有素材依据时）：「## 链接与参考」（素材或要点中的 URL/书名/工具）、「## 文稿与追更」（说明正文可在平台查看、RSS 订阅更新），勿写空话。
 6. summary 与 show_notes 不可大段同句重复；禁止粘贴口播全文。
 7. 语言以简体中文为主。"""
 
@@ -765,7 +765,7 @@ _SYSTEM_FINAL = """你是中文播客编辑，负责为 RSS / 小宇宙写单集
 3. summary：纯文本，用于列表摘要 / itunes:summary。**至多 50 字（含标点）**；单句、有具体信息；不要 Markdown、不要多轮对白格式；须吸收「已提炼要点」中的具体信息，禁止空泛口号。
 4. show_notes：Markdown 正文，结构完全自由；须有信息增量（要点、结构、听音提示）；**禁止**把口播稿全文或大部粘贴进来；须与「已提炼要点」呼应，可改写扩写，不要逐条复制成纯列表。
 5. summary 与 show_notes 不可简单同义重复：summary 偏「这期值不值得听」，show_notes 偏「怎么听、讲什么框架」。
-6. 若含章节时间线，show_notes 须有「## 节目导听」：听法导语 + 精选时间锚（至多 8 条），忌流水账罗列。
+6. 若含章节时间线，show_notes 须有「## 节目导听」：听法导语 + 精选时间锚（至多 10 条），忌流水账罗列。
 7. 若合适，时间戳链接可使用 [分:秒 标题](t:秒数) 形式（秒为非负整数）。
 8. 语言以简体中文为主。"""
 
@@ -805,6 +805,86 @@ def _finalize_summary_show_notes(data: dict[str, Any], trace_id: str | None) -> 
     if len(show_notes) > SHOW_NOTES_MAX:
         show_notes = show_notes[: SHOW_NOTES_MAX - 1] + "…"
     return {"summary": summary, "show_notes": show_notes, "trace_id": trace_id}
+
+
+_SYSTEM_REFINE_SHOW_NOTES = """你是中文播客 Shownotes 编辑。只输出一个 JSON 对象，键名固定为 show_notes（字符串）。
+show_notes 为 Markdown；禁止粘贴完整口播稿全文；保留听众友好的小节（例如 ## 本期概览、## 要点、## 节目导听、## 金句 等，可按内容取舍）。
+若文稿含章节时间线，可在「## 节目导听」使用 [分:秒 标题](t:秒数) 形式的时间戳链接；总数须遵守用户在「编辑要求」中的上限（未写明则至多 10 条）。
+严格服从用户在「编辑要求」中的语气与风格约束。
+语言以简体中文为主。不要 markdown 代码块包裹 JSON；首字符必须是 { ，末字符必须是 } 。"""
+
+
+def refine_share_show_notes_with_prompt(
+    *,
+    script_raw: str,
+    user_source_text: str,
+    chapter_timeline_hint: str,
+    baseline_show_notes: str,
+    user_prompt: str,
+    api_key: str | None,
+) -> dict[str, Any]:
+    """按用户提词重写 Shownotes；不改动简介字段（返回 summary 为空串）。"""
+    condensed = condense_script_for_share_llm(script_raw)
+    material = (user_source_text or "").strip()
+    if len(material) > 6000:
+        material = material[:6000] + "…"
+    ch_full = (chapter_timeline_hint or "").strip()
+    ch_for_llm = _curate_chapter_timeline_for_llm(ch_full, max_items=14) if ch_full else ""
+
+    base = (baseline_show_notes or "").strip().replace("\r\n", "\n")
+    if len(base) > 18_000:
+        base = base[:18_000] + "…"
+    up = (user_prompt or "").strip()
+    if len(up) > 2500:
+        up = up[:2500] + "…"
+
+    user_body = (
+        "【口播稿摘录】\n"
+        + condensed[:12_000]
+        + "\n\n【素材摘要】\n"
+        + (material or "（无）")
+        + "\n\n【章节时间线参考】\n"
+        + (ch_for_llm or "（无）")
+        + "\n\n【当前 Shownotes（请在此基础上重写，勿逐段照搬）】\n"
+        + base
+        + "\n\n【编辑要求】\n"
+        + (up or "（无）")
+        + "\n"
+    )
+
+    messages = [
+        {"role": "system", "content": _SYSTEM_REFINE_SHOW_NOTES},
+        {"role": "user", "content": user_body[:24_000]},
+    ]
+    raw, trace_id = invoke_llm_chat_messages_with_minimax_fallback(
+        messages, temperature=0.38, api_key=api_key, timeout_sec=120
+    )
+    try:
+        data = _parse_json_object(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("share_rss refine json parse failed, retry once: %s", exc)
+        fix_user = (
+            "你上一次输出不是合法 JSON。请严格只输出一个 JSON 对象，键为 show_notes，"
+            "不要代码块，不要其它文字。\n\n" + user_body[:20_000]
+        )
+        raw2, tid2 = invoke_llm_chat_messages_with_minimax_fallback(
+            [
+                {"role": "system", "content": _SYSTEM_REFINE_SHOW_NOTES},
+                {"role": "user", "content": fix_user},
+            ],
+            temperature=0.28,
+            api_key=api_key,
+            timeout_sec=120,
+        )
+        data = _parse_json_object(raw2)
+        trace_id = tid2 or trace_id
+
+    show_notes = str(data.get("show_notes") or data.get("showNotes") or "").strip().replace("\r\n", "\n")
+    if not show_notes:
+        raise RuntimeError("ai_refine_empty_show_notes")
+    if len(show_notes) > SHOW_NOTES_MAX:
+        show_notes = show_notes[: SHOW_NOTES_MAX - 1] + "…"
+    return {"show_notes": show_notes, "summary": "", "trace_id": trace_id}
 
 
 def _legacy_share_rss_from_user_base(
