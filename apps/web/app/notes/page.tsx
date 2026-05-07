@@ -784,7 +784,7 @@ export default function NotesPage() {
   const skipNotesAskSaveRef = useRef(true);
   const notesAskMessagesSnapshotRef = useRef<NotesAskTurn[]>([]);
   /** 对话持久化分区：笔记本作用域 + 选中笔记 ID（排序拼接），避免删笔记后同标题新笔记继承旧会话 */
-  const prevNotesAskChatScopeRef = useRef<{ nb: string; idsKey: string; askSalt: string } | null>(null);
+  const prevNotesAskChatScopeRef = useRef<{ nb: string; askSalt: string } | null>(null);
   const noteRefCap = useMemo(() => maxNotesForReference(), []);
   const createdByPhone = useMemo(() => {
     const uid = typeof user?.user_id === "string" ? user.user_id.trim() : "";
@@ -926,10 +926,6 @@ export default function NotesPage() {
   );
 
   const [draftSelectedNoteIds, setDraftSelectedNoteIds] = useState<string[]>([]);
-  const draftNotesAskIdsKey = useMemo(
-    () => [...draftSelectedNoteIds].filter(Boolean).sort().join("|"),
-    [draftSelectedNoteIds]
-  );
   /** loadNotes 内校验「已删除的笔记 id」：避免 localStorage 里残留旧 id 导致仍加载旧对话 */
   const draftSelectedNoteIdsRef = useRef<string[]>([]);
   useEffect(() => {
@@ -1149,17 +1145,15 @@ export default function NotesPage() {
 
   useEffect(() => {
     const nb = effectiveDraftNotebookKey.trim();
-    const idsKey = draftNotesAskIdsKey;
     const prev = prevNotesAskChatScopeRef.current;
     const askSalt = notesAskChatScopeSalt;
-    if (prev && (prev.nb !== nb || prev.idsKey !== idsKey || prev.askSalt !== askSalt)) {
+    if (prev && (prev.nb !== nb || prev.askSalt !== askSalt)) {
       const snap = notesAskMessagesSnapshotRef.current;
       if (!snap.some((m) => m.streaming)) {
-        const prevIds = prev.idsKey ? prev.idsKey.split("|").filter(Boolean) : [];
-        if (prev.nb) saveNotesAskChat(prev.nb, prevIds, snap, prev.askSalt);
+        if (prev.nb) saveNotesAskChat(prev.nb, snap, prev.askSalt);
       }
     }
-    prevNotesAskChatScopeRef.current = { nb, idsKey, askSalt };
+    prevNotesAskChatScopeRef.current = { nb, askSalt };
 
     if (!nb) {
       notesAskClientLog("debug", "persist", "chat_cleared_no_notebook");
@@ -1167,10 +1161,9 @@ export default function NotesPage() {
       skipNotesAskSaveRef.current = true;
       return;
     }
-    const loaded = loadNotesAskChat(nb, draftSelectedNoteIds, askSalt);
+    const loaded = loadNotesAskChat(nb, askSalt);
     notesAskClientLog("info", "persist", "chat_scope_loaded", {
       nb,
-      idsKey,
       messageCount: loaded?.length ?? 0
     });
     setNotesAskMessages(
@@ -1185,13 +1178,7 @@ export default function NotesPage() {
         : []
     );
     skipNotesAskSaveRef.current = true;
-  }, [
-    effectiveDraftNotebookKey,
-    draftNotesAskIdsKey,
-    draftSelectedNoteIds,
-    notesAskChatScopeSalt,
-    storageAccountScope
-  ]);
+  }, [effectiveDraftNotebookKey, notesAskChatScopeSalt, storageAccountScope]);
 
   useEffect(() => {
     if (skipNotesAskSaveRef.current) {
@@ -1202,41 +1189,37 @@ export default function NotesPage() {
     if (!nb) return;
     if (notesAskMessages.some((m) => m.streaming)) return;
     const timer = window.setTimeout(() => {
-      saveNotesAskChat(nb, draftSelectedNoteIds, notesAskMessages, notesAskChatScopeSalt);
+      saveNotesAskChat(nb, notesAskMessages, notesAskChatScopeSalt);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [notesAskMessages, effectiveDraftNotebookKey, draftSelectedNoteIds, notesAskChatScopeSalt, storageAccountScope]);
+  }, [notesAskMessages, effectiveDraftNotebookKey, notesAskChatScopeSalt, storageAccountScope]);
 
   const notesAskUnloadRef = useRef({
     messages: [] as NotesAskTurn[],
     nb: "",
-    idsKey: "",
     askSalt: "0"
   });
   useEffect(() => {
     notesAskUnloadRef.current = {
       messages: notesAskMessages,
       nb: effectiveDraftNotebookKey.trim(),
-      idsKey: draftNotesAskIdsKey,
       askSalt: notesAskChatScopeSalt
     };
-  }, [notesAskMessages, effectiveDraftNotebookKey, draftNotesAskIdsKey, notesAskChatScopeSalt]);
+  }, [notesAskMessages, effectiveDraftNotebookKey, notesAskChatScopeSalt]);
 
   useEffect(() => {
     const onHide = () => {
-      const { messages, nb, idsKey, askSalt } = notesAskUnloadRef.current;
+      const { messages, nb, askSalt } = notesAskUnloadRef.current;
       if (!nb) return;
       if (messages.some((m) => m.streaming)) {
         notesAskClientLog("debug", "persist", "pagehide_skip_streaming");
         return;
       }
-      const ids = idsKey ? idsKey.split("|").filter(Boolean) : [];
       notesAskClientLog("debug", "persist", "pagehide_save", {
         nb,
-        idsKey,
         messageCount: messages.length
       });
-      saveNotesAskChat(nb, ids, messages, askSalt);
+      saveNotesAskChat(nb, messages, askSalt);
     };
     window.addEventListener("pagehide", onHide);
     return () => window.removeEventListener("pagehide", onHide);
@@ -4215,7 +4198,7 @@ export default function NotesPage() {
             </div>
 
           </div>
-          <section className="mx-auto mt-6 w-full max-w-6xl rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft sm:px-4 lg:mt-8">
+          <section className="mt-6 w-full min-w-0 rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft sm:p-4 lg:mt-8">
             <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/50 pb-3">
               <div className="min-w-0 flex-1">
                 <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>

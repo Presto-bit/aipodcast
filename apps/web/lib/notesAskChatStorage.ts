@@ -1,12 +1,16 @@
 /**
- * 知识库「向资料提问」对话持久化（账号 + 笔记本 + **选中笔记 ID 集合** + **笔记本代次盐**）。
- * - 按笔记 ID 分区：删除后新建同标题笔记（新 ID）不会继承旧对话。
- * - v3 起增加 askSalt（新建笔记本的 instanceId 或最早笔记 createdAt）：同名删除再建笔记本不会串会话。
+ * 知识库「向资料提问」对话持久化（账号 + 笔记本 + **笔记本代次盐**）。
+ * v4：同一笔记本下对话与左侧「勾选哪些资料」无关，避免换勾选就换一套会话。
+ * v3 及更早：曾按选中笔记 ID 分桶；首次进入 v4 时从同笔记本下最长的 v3 记录迁移一次。
  */
 
 import type { NotesAskSource } from "./notesAskCitation";
 import { normalizeNotesAskSources } from "./notesAskCitation";
-import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
+import {
+  getStorageAccountKey,
+  readLocalStorageScoped,
+  writeLocalStorageScoped
+} from "./userScopedStorage";
 
 export type SerializedNotesAskTurn = {
   id: string;
@@ -21,8 +25,9 @@ export type SerializedNotesAskTurn = {
 };
 
 const STORAGE_VERSION = 1;
-/** v2：纳入选中笔记 ID；v3：再纳入 askSalt（笔记本代次，避免同名重建串会话） */
-const KEY_SCHEMA = 3;
+/** v2：纳入选中笔记 ID；v3：再纳入 askSalt；v4：不再按勾选分桶 */
+const KEY_SCHEMA = 4;
+const V3_PREFIX = "fym_notes_ask_chat_v3:";
 const MAX_MESSAGES = 120;
 
 type StoredPayload = {
@@ -31,12 +36,10 @@ type StoredPayload = {
 };
 
 /** 逻辑键（再经 userScopedStorage 拼账号后缀） */
-export function notesAskChatBaseKey(notebookScoped: string, noteIds: string[], askSalt: string): string {
+export function notesAskChatBaseKey(notebookScoped: string, askSalt: string): string {
   const nb = notebookScoped.trim();
-  const sorted = [...noteIds].filter(Boolean).sort();
-  const scope = sorted.length ? sorted.join("|") : "_none_";
   const salt = (askSalt || "").trim() || "0";
-  return `fym_notes_ask_chat_v${KEY_SCHEMA}:${encodeURIComponent(nb)}:${encodeURIComponent(scope)}:${encodeURIComponent(salt)}`;
+  return `fym_notes_ask_chat_v${KEY_SCHEMA}:${encodeURIComponent(nb)}:${encodeURIComponent(salt)}`;
 }
 
 function parseStored(raw: string): SerializedNotesAskTurn[] | null {
@@ -47,6 +50,7 @@ function parseStored(raw: string): SerializedNotesAskTurn[] | null {
     if (v !== STORAGE_VERSION) return null;
     const messages = (parsed as StoredPayload).messages;
     if (!Array.isArray(messages)) return null;
+    if (messages.length === 0) return [];
     const out: SerializedNotesAskTurn[] = [];
     for (const m of messages) {
       if (!m || typeof m !== "object") continue;
@@ -79,38 +83,112 @@ function parseStored(raw: string): SerializedNotesAskTurn[] | null {
       });
       if (out.length >= MAX_MESSAGES) break;
     }
-    return out.length ? out : null;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+const SCOPE_SEP = "::u::";
+
+function storagePhysicalBaseKey(fullKey: string): string {
+  const idx = fullKey.indexOf(SCOPE_SEP);
+  return idx === -1 ? fullKey : fullKey.slice(0, idx);
+}
+
+function scopedKeySuffixForCurrentAccount(): string {
+  return `${SCOPE_SEP}${encodeURIComponent(getStorageAccountKey())}`;
+}
+
+/** 解析 v3 逻辑键中三段 URI 组件（笔记本 / scope / salt） */
+function parseV3LogicalBase(logicalBase: string): { nb: string; salt: string } | null {
+  if (!logicalBase.startsWith(V3_PREFIX)) return null;
+  const rest = logicalBase.slice(V3_PREFIX.length);
+  const parts = rest.split(":");
+  if (parts.length !== 3) return null;
+  try {
+    const nb = decodeURIComponent(parts[0]);
+    const salt = decodeURIComponent(parts[2]) || "0";
+    return { nb, salt };
   } catch {
     return null;
   }
 }
 
 /**
- * 加载某笔记本 + 当前选中笔记集合下的对话。
+ * 从 localStorage 中同笔记本、同 askSalt 的全部 v3 分桶里，挑出消息最多的一条写入 v4 并返回。
+ */
+function migrateBestV3ChatIntoV4(notebookScoped: string, askSalt: string): SerializedNotesAskTurn[] | null {
+  const nb = notebookScoped.trim();
+  const wantSalt = (askSalt || "").trim() || "0";
+  if (!nb || typeof window === "undefined") return null;
+
+  let best: SerializedNotesAskTurn[] | null = null;
+  let bestLen = 0;
+  const v3KeysToRemove: string[] = [];
+
+  const accountSuffix = scopedKeySuffixForCurrentAccount();
+
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const fullKey = window.localStorage.key(i);
+    if (!fullKey || !fullKey.startsWith(V3_PREFIX)) continue;
+    const isScoped = fullKey.includes(SCOPE_SEP);
+    if (isScoped && !fullKey.endsWith(accountSuffix)) continue;
+    const logical = isScoped ? storagePhysicalBaseKey(fullKey) : fullKey;
+    const parsed = parseV3LogicalBase(logical);
+    if (!parsed || parsed.nb !== nb || parsed.salt !== wantSalt) continue;
+
+    const raw = window.localStorage.getItem(fullKey);
+    if (!raw) continue;
+    const messages = parseStored(raw);
+    const len = messages?.length ?? 0;
+    if (len > bestLen) {
+      bestLen = len;
+      best = messages;
+    }
+    v3KeysToRemove.push(fullKey);
+  }
+
+  if (!best?.length) return null;
+
+  try {
+    const payload: StoredPayload = { v: STORAGE_VERSION, messages: best };
+    writeLocalStorageScoped(notesAskChatBaseKey(nb, wantSalt), JSON.stringify(payload));
+    for (const k of v3KeysToRemove) {
+      try {
+        window.localStorage.removeItem(k);
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    return best;
+  }
+  return best;
+}
+
+/**
+ * 加载某笔记本下的对话（与当前勾选资料无关）。
  * @param notebookScoped 与页面 `effectiveDraftNotebookKey` 一致（含 shared: 前缀时）
  * @param askSalt 笔记本代次（instanceId 或 createdAt），与 save 一致
  */
-export function loadNotesAskChat(
-  notebookScoped: string,
-  noteIds: string[],
-  askSalt: string
-): SerializedNotesAskTurn[] | null {
+export function loadNotesAskChat(notebookScoped: string, askSalt: string): SerializedNotesAskTurn[] | null {
   const nb = notebookScoped.trim();
   if (!nb) return null;
-  const bk = notesAskChatBaseKey(nb, noteIds, askSalt);
+  const bk = notesAskChatBaseKey(nb, askSalt);
   const raw = readLocalStorageScoped(bk);
-  if (!raw) return null;
-  return parseStored(raw);
+  const fromV4 = raw ? parseStored(raw) : null;
+  if (fromV4 !== null) return fromV4;
+  return migrateBestV3ChatIntoV4(nb, askSalt);
 }
 
 export function saveNotesAskChat(
   notebookScoped: string,
-  noteIds: string[],
   messages: SerializedNotesAskTurn[],
   askSalt: string
 ): void {
   try {
-    const bk = notesAskChatBaseKey(notebookScoped.trim(), noteIds, askSalt);
+    const bk = notesAskChatBaseKey(notebookScoped.trim(), askSalt);
     const trimmed = messages.slice(-MAX_MESSAGES).map((m) => {
       const base: SerializedNotesAskTurn = { id: m.id, role: m.role, content: m.content };
       if (m.role === "assistant" && m.sources?.length) {
