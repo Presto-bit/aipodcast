@@ -9,7 +9,6 @@ import { WalletUsageReference } from "../../components/subscription/WalletUsageR
 import type { WalletTopupPayload } from "../../components/subscription/types";
 import { parseSubscriptionErrorBody } from "../../lib/subscriptionError";
 import { appendRechargeDebug, newRechargeDebugRequestId, summarizePayUrl } from "../../lib/rechargeClientDebug";
-import { ADMIN_ROLE } from "../../lib/appShellLayout";
 
 type RechargeRecordRow = {
   serial_no?: string;
@@ -501,7 +500,6 @@ export default function SubscriptionPage() {
   }, [loadMe, refreshMe, user, reconcileAlipayWalletTopup]);
 
   const walletPayEnabled = isLoggedInAccountUser(user);
-  const isAdmin = String((user as { role?: string })?.role || "") === ADMIN_ROLE;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -983,16 +981,6 @@ export default function SubscriptionPage() {
   }
 
   const topupAmountParse = parseTopupAmountCents();
-
-  if (!isAdmin) {
-    return (
-      <main className="min-h-0 max-w-6xl">
-        <section className="mt-8 rounded-xl border border-line bg-surface/60 p-5 text-sm text-muted">
-          该页面仅管理员可见。
-        </section>
-      </main>
-    );
-  }
 
   return (
     <main className="min-h-0 max-w-6xl">
