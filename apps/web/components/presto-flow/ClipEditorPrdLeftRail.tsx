@@ -1,20 +1,12 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, FileAudio } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ClipAudioStagingEntry, ClipProjectRow } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";
 import { fetchClipProjectShareAiCopy } from "../../lib/api";
 import ClipStagingTracksBar from "./ClipStagingTracksBar";
 import PrestoFlowImportBar from "./PrestoFlowImportBar";
-
-function formatShortDuration(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms) || ms <= 0) return "—";
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${String(r).padStart(2, "0")}`;
-}
 
 type Tab = "materials" | "dictionary" | "shownotes";
 
@@ -41,7 +33,7 @@ type Props = {
   onTranscribe: () => void;
   allowMultiSegmentImport: boolean;
   approxSegmentDurationMs: number | null;
-  /** 主素材时长（毫秒），用于素材区展示 */
+  /** 当前已合并主素材时长（毫秒），与文件名一并展示在素材列表首行 */
   mainAudioDurationMs: number | null;
 };
 
@@ -85,7 +77,6 @@ export default function ClipEditorPrdLeftRail({
   }, [hotwordLines]);
 
   const [notesDraft, setNotesDraft] = useState("");
-  const [notesPromptDraft, setNotesPromptDraft] = useState("");
   const [notesGenBusy, setNotesGenBusy] = useState(false);
 
   useEffect(() => {
@@ -142,15 +133,7 @@ export default function ClipEditorPrdLeftRail({
     setNotesGenBusy(true);
     setErr("");
     try {
-      const promptT = notesPromptDraft.trim();
-      const data =
-        promptT.length > 0
-          ? await fetchClipProjectShareAiCopy(projectId, {
-              showNotesOnly: true,
-              userPrompt: promptT,
-              baselineShowNotes: notesDraft.trim()
-            })
-          : await fetchClipProjectShareAiCopy(projectId);
+      const data = await fetchClipProjectShareAiCopy(projectId);
       if (!data.success) {
         throw new Error("服务端未返回成功状态");
       }
@@ -164,7 +147,7 @@ export default function ClipEditorPrdLeftRail({
     } finally {
       setNotesGenBusy(false);
     }
-  }, [notesDraft, notesPromptDraft, project.transcription_status, projectId, setErr]);
+  }, [project.transcription_status, projectId, setErr]);
 
   const tabBtn = (id: Tab, label: string) => (
     <button
@@ -218,32 +201,21 @@ export default function ClipEditorPrdLeftRail({
         {tab === "materials" ? (
           <>
             <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                {hasServerAudio ? (
-                  <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-line bg-fill/30 px-2 py-1.5">
-                    <FileAudio className="h-4 w-4 shrink-0 text-muted" aria-hidden />
-                    <span className="truncate text-[10px] font-semibold text-ink">主素材</span>
-                    <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted">
-                      {formatShortDuration(mainAudioDurationMs)}
-                    </span>
-                  </div>
-                ) : null}
-                <PrestoFlowImportBar
-                  variant="icon"
-                  projectId={projectId}
-                  getAuthHeaders={getAuthHeaders}
-                  hasMainAudio={hasServerAudio}
-                  disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
-                  label={t("presto.flow.importAudio")}
-                  busyLabel={t("presto.flow.importBusy")}
-                  hint={t("presto.flow.importHint")}
-                  replaceWarn={t("presto.flow.importReplaceWarn")}
-                  onDone={() => void load()}
-                  onError={(msg) => setErr(msg)}
-                  allowMultiSegment={allowMultiSegmentImport}
-                />
-              </div>
-              {entries.length > 0 ? (
+              <PrestoFlowImportBar
+                variant="icon"
+                projectId={projectId}
+                getAuthHeaders={getAuthHeaders}
+                hasMainAudio={hasServerAudio}
+                disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
+                label={t("presto.flow.importAudio")}
+                busyLabel={t("presto.flow.importBusy")}
+                hint={t("presto.flow.importHint")}
+                replaceWarn={t("presto.flow.importReplaceWarn")}
+                onDone={() => void load()}
+                onError={(msg) => setErr(msg)}
+                allowMultiSegment={allowMultiSegmentImport}
+              />
+              {hasServerAudio || entries.length > 0 ? (
                 <ClipStagingTracksBar
                   projectId={projectId}
                   entries={entries}
@@ -253,11 +225,17 @@ export default function ClipEditorPrdLeftRail({
                   onError={(msg) => setErr(msg)}
                   visualVariant="prd"
                   approxDurationMsPerSegment={approxSegmentDurationMs}
+                  serverSource={
+                    hasServerAudio
+                      ? {
+                          filename: String(project.audio_filename || "").trim() || "素材音频",
+                          durationMs: mainAudioDurationMs
+                        }
+                      : null
+                  }
                 />
               ) : (
-                <p className="text-[10px] leading-snug text-muted">
-                  {hasServerAudio ? "已合并主音频；多段时请上传暂存素材。" : "请上传音频后开始转写。"}
-                </p>
+                <p className="text-[10px] leading-snug text-muted">请上传音频后开始转写。</p>
               )}
             </div>
             <div className="mt-auto border-t border-line pt-2">
@@ -285,8 +263,8 @@ export default function ClipEditorPrdLeftRail({
               value={dictDraft}
               onChange={(e) => setDictDraft(e.target.value)}
               disabled={dictBusy}
-              rows={6}
-              className="min-h-[5rem] flex-1 resize-y rounded-lg border border-line bg-surface px-2 py-1.5 text-[11px] text-ink placeholder:text-muted"
+              rows={3}
+              className="min-h-[2.5rem] flex-1 resize-y rounded-lg border border-line bg-surface px-2 py-1.5 text-[11px] text-ink placeholder:text-muted"
               placeholder={"示例词\n产品名"}
             />
             <button
@@ -302,17 +280,6 @@ export default function ClipEditorPrdLeftRail({
 
         {tab === "shownotes" ? (
           <div className="flex min-h-0 flex-1 flex-col gap-2">
-            <label className="block text-[10px] font-medium text-muted">
-              生成要求（可选）
-              <textarea
-                value={notesPromptDraft}
-                onChange={(e) => setNotesPromptDraft(e.target.value)}
-                disabled={notesGenBusy}
-                rows={3}
-                className="mt-1 w-full resize-y rounded-lg border border-line bg-surface px-2 py-1.5 text-[11px] text-ink placeholder:text-muted"
-                placeholder="留空则生成分享页同源初稿；填写则以上方正文为草稿并按此要求改写"
-              />
-            </label>
             <textarea
               value={notesDraft}
               onChange={(e) => setNotesDraft(e.target.value)}

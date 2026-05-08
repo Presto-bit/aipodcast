@@ -111,7 +111,6 @@ type Props = {
   toolbarFocus?: "verbal" | "pause" | null;
   /** PRD 横向底栏：仅渲染对应分区 */
   variant?: "default" | "verbalSheet" | "pauseSheet";
-  onClose?: () => void;
 };
 
 function iconBtnClass(disabled?: boolean) {
@@ -152,8 +151,7 @@ export default function ClipRoughCutPanel({
   onGenerateWordchainPreview,
   onExitWordchainPreview,
   toolbarFocus = null,
-  variant = "default",
-  onClose
+  variant = "default"
 }: Props) {
   const { t } = useI18n();
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -397,22 +395,9 @@ export default function ClipRoughCutPanel({
       : roughCutSuggestions;
 
     return (
-      <div className="flex max-h-[min(70vh,520px)] flex-col gap-3 overflow-y-auto p-3 text-ink">
-        <div className="flex items-center justify-between gap-2 border-b border-line pb-2">
-          <span className="text-xs font-semibold">识别口癖</span>
-          {onClose ? (
-            <button
-              type="button"
-              className="rounded-md border border-line px-2 py-1 text-[10px] text-muted hover:bg-fill"
-              onClick={onClose}
-            >
-              关闭
-            </button>
-          ) : null}
-        </div>
-
+      <div className="flex max-h-[min(52vh,22rem)] flex-col gap-2 overflow-y-auto p-2 text-ink">
         <div>
-          <span className={rowLabelCls}>识别结果</span>
+          <span className={rowLabelCls}>口癖</span>
           <div className="flex flex-wrap gap-1.5">
             {ticFiltered.map((row) => {
               const dismissId = `tic:${row.coreKey}`;
@@ -482,13 +467,13 @@ export default function ClipRoughCutPanel({
         </div>
 
         <div>
-          <span className={rowLabelCls}>查找口癖</span>
+          <span className={rowLabelCls}>过滤</span>
           <input
             type="search"
             value={prdVerbalFilter}
             onChange={(e) => setPrdVerbalFilter(e.target.value)}
-            placeholder="过滤上方词条…"
-            className="w-full max-w-md rounded-lg border border-line bg-surface px-2 py-1.5 text-[11px] text-ink"
+            placeholder="过滤…"
+            className="w-full rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-ink"
           />
         </div>
 
@@ -503,7 +488,7 @@ export default function ClipRoughCutPanel({
             }}
             rows={2}
             spellCheck={false}
-            className="w-full resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] leading-snug text-ink"
+            className="w-full resize-y rounded-md border border-line bg-surface px-2 py-1 font-mono text-[11px] leading-snug text-ink"
             placeholder={t("presto.flow.roughCut.exemptConfigPlaceholder")}
           />
           <button
@@ -516,11 +501,11 @@ export default function ClipRoughCutPanel({
           </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2">
+        <div className="flex flex-wrap items-center gap-2 border-t border-line/80 pt-2">
           <button
             type="button"
             disabled={!prdVerbalSelectedKey}
-            className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[11px] font-semibold shadow-soft hover:bg-fill disabled:opacity-40"
+            className="rounded-md border border-line bg-surface px-2.5 py-1 text-[11px] font-semibold shadow-sm hover:bg-fill disabled:opacity-40"
             onClick={() => {
               if (prdVerbalSelectedKey) applyVerbalDeleteForKey(prdVerbalSelectedKey);
             }}
@@ -530,7 +515,7 @@ export default function ClipRoughCutPanel({
           <button
             type="button"
             disabled={ticIds.length === 0}
-            className="rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-[11px] font-semibold text-brand hover:bg-brand/15 disabled:opacity-40"
+            className="rounded-md border border-brand/40 bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand hover:bg-brand/15 disabled:opacity-40"
             onClick={() => onMarkExcluded(ticIds)}
           >
             {t("presto.flow.roughCut.fillerCutAll")}
@@ -557,42 +542,22 @@ export default function ClipRoughCutPanel({
     };
 
     return (
-      <div className="flex max-h-[min(70vh,520px)] flex-col gap-3 overflow-y-auto p-3 text-ink">
-        <div className="flex items-center justify-between gap-2 border-b border-line pb-2">
-          <span className="text-xs font-semibold">识别停顿</span>
-          {onClose ? (
+      <div className="flex max-h-[min(52vh,22rem)] flex-col gap-2 overflow-y-auto p-2 text-ink">
+        <div className="flex flex-wrap items-center gap-2 text-[10px] text-ink">
+          <span className="font-mono text-muted">≥{longGapMs}ms</span>
+          <span className="text-muted">
+            {pauseEnabled ? "导出开" : "导出关"} · {longSilenceRows.length} 段
+          </span>
+          {onRefreshSilences ? (
             <button
               type="button"
-              className="rounded-md border border-line px-2 py-1 text-[10px] text-muted hover:bg-fill"
-              onClick={onClose}
+              disabled={silenceBusy}
+              className="rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] hover:bg-fill disabled:opacity-40"
+              onClick={() => void refreshSilencesClick()}
             >
-              关闭
+              {silenceBusy ? "…" : "刷新"}
             </button>
           ) : null}
-        </div>
-
-        <div>
-          <span className={rowLabelCls}>停顿时长</span>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink">
-            <span className="rounded-md border border-line bg-fill/40 px-2 py-1 font-mono">
-              阈值 ≥ {longGapMs} ms
-            </span>
-            <span className="text-muted">
-              {pauseEnabled ? t("presto.flow.roughCut.pauseSectionExportOn") : t("presto.flow.roughCut.pauseSectionExportOff")}
-              {" · "}
-              {t("presto.flow.roughCut.pauseSectionSilences").replace("{n}", String(longSilenceRows.length))}
-            </span>
-            {onRefreshSilences ? (
-              <button
-                type="button"
-                disabled={silenceBusy}
-                className="rounded-md border border-line bg-surface px-2 py-1 text-[10px] font-semibold hover:bg-fill disabled:opacity-40"
-                onClick={() => void refreshSilencesClick()}
-              >
-                {silenceBusy ? "…" : t("presto.flow.roughCut.pauseRefreshSilences")}
-              </button>
-            ) : null}
-          </div>
         </div>
 
         <div>
@@ -631,11 +596,11 @@ export default function ClipRoughCutPanel({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2">
+        <div className="flex flex-wrap items-center gap-2 border-t border-line/80 pt-2">
           <button
             type="button"
             disabled={!prdPauseSelectedSk || !onToggleSilenceCut}
-            className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[11px] font-semibold shadow-soft hover:bg-fill disabled:opacity-40"
+            className="rounded-md border border-line bg-surface px-2.5 py-1 text-[11px] font-semibold shadow-sm hover:bg-fill disabled:opacity-40"
             onClick={() => toggleSelectedSilence()}
           >
             删除
@@ -643,7 +608,7 @@ export default function ClipRoughCutPanel({
           <button
             type="button"
             disabled={!longSilenceRows.length || !onToggleSilenceCut}
-            className="rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-[11px] font-semibold text-brand hover:bg-brand/15 disabled:opacity-40"
+            className="rounded-md border border-brand/40 bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand hover:bg-brand/15 disabled:opacity-40"
             onClick={() => cutAllSilences()}
           >
             全部删除

@@ -35,12 +35,11 @@ export default function ClipEditorPrdTopBar({
       <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-2.5">
         <Link
           href="/"
-          className="flex shrink-0 items-center gap-2 rounded-lg pr-1 transition hover:bg-fill/80"
+          className="flex shrink-0 items-center rounded-lg p-0.5 transition hover:bg-fill/80"
           aria-label="Presto 首页"
           title="Presto 首页"
         >
           <BrandGlyph size={36} className="rounded-md" />
-          <span className="hidden text-sm font-semibold text-ink sm:inline">Presto</span>
         </Link>
         <span className="hidden shrink-0 text-sm font-medium text-muted sm:inline" aria-hidden>
           |
