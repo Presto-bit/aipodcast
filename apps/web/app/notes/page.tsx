@@ -4198,7 +4198,7 @@ export default function NotesPage() {
             </div>
 
           </div>
-          <section className="mx-auto mt-6 w-full min-w-0 max-w-6xl rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft sm:p-4 lg:mt-8">
+          <section className="mt-6 w-full min-w-0 rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft sm:p-4 lg:mt-8">
             <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/50 pb-3">
               <div className="min-w-0 flex-1">
                 <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
@@ -4239,20 +4239,22 @@ export default function NotesPage() {
                 </a>
               </div>
             </div>
-            <div
-              className={`mt-4 overflow-y-auto overflow-x-hidden transition-[max-height] duration-200 ${
-                worksPanelExpanded ? "max-h-[min(92vh,1040px)]" : "max-h-[min(46vh,520px)]"
-              }`}
-            >
-              <PodcastWorksGallery
-                works={podcastWorks}
-                loading={podcastWorksLoading}
-                fetchError={podcastWorksError}
-                onDismissError={() => setPodcastWorksError("")}
-                onWorkDeleted={() => void fetchPodcastWorks()}
-                variant="all"
-                workDetailReturnTo="/notes"
-              />
+            <div className="mx-auto mt-4 w-full min-w-0 max-w-6xl">
+              <div
+                className={`overflow-y-auto overflow-x-hidden transition-[max-height] duration-200 ${
+                  worksPanelExpanded ? "max-h-[min(92vh,1040px)]" : "max-h-[min(46vh,520px)]"
+                }`}
+              >
+                <PodcastWorksGallery
+                  works={podcastWorks}
+                  loading={podcastWorksLoading}
+                  fetchError={podcastWorksError}
+                  onDismissError={() => setPodcastWorksError("")}
+                  onWorkDeleted={() => void fetchPodcastWorks()}
+                  variant="all"
+                  workDetailReturnTo="/notes"
+                />
+              </div>
             </div>
           </section>
         </>
