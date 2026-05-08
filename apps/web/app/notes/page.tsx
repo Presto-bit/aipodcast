@@ -3517,6 +3517,7 @@ export default function NotesPage() {
             )}
           </div>
 
+          <div className="flex min-w-0 w-full flex-col gap-3">
           <div className="flex min-h-0 flex-col gap-3 lg:h-[min(100dvh-5.5rem,900px)] lg:max-h-[min(100dvh-5.5rem,900px)] lg:flex-row lg:items-stretch lg:gap-3 lg:overflow-hidden">
             <section
               className={`flex shrink-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 shadow-soft lg:min-h-0 lg:h-full ${
@@ -4198,7 +4199,7 @@ export default function NotesPage() {
             </div>
 
           </div>
-          <section className="mt-6 w-full min-w-0 rounded-3xl border border-line/70 bg-fill/15 p-3 shadow-soft sm:p-4 lg:mt-8">
+          <section className="w-full min-w-0 rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft">
             <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/50 pb-3">
               <div className="min-w-0 flex-1">
                 <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
@@ -4257,6 +4258,7 @@ export default function NotesPage() {
               </div>
             </div>
           </section>
+          </div>
         </>
       )}
 
