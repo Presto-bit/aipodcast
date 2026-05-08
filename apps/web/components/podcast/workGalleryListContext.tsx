@@ -53,6 +53,8 @@ export type WorkGalleryListContextValue = {
       onLockedNavigate?: () => void;
     }
   ) => ReactNode;
+  /** 与 jobOwnerUserId 比对，判断模板作品是否对当前用户锁定变更 */
+  viewerAccountRef: string;
 };
 
 const WorkGalleryListContext = createContext<WorkGalleryListContextValue | null>(null);

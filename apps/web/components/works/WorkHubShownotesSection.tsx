@@ -5,6 +5,8 @@ import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { reorderShowNotesGoldenQuotesAfterListen, type SharePublishHints } from "../../lib/sharePublishDefaults";
 
 type Props = {
+  /** 模板访客等：仅允许预览 */
+  viewerReadonly?: boolean;
   notesTab: "preview" | "edit" | "ai";
   onNotesTab: (t: "preview" | "edit" | "ai") => void;
   showNotes: string;
@@ -23,6 +25,7 @@ type Props = {
 };
 
 export function WorkHubShownotesSection({
+  viewerReadonly = false,
   notesTab,
   onNotesTab,
   showNotes,
@@ -44,6 +47,8 @@ export function WorkHubShownotesSection({
     [showNotes]
   );
 
+  const ro = viewerReadonly;
+
   return (
     <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4" aria-label="Shownotes">
       <div className="space-y-3">
@@ -61,23 +66,26 @@ export function WorkHubShownotesSection({
           </button>
           <button
             type="button"
-            className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+            className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-40 ${
               notesTab === "edit"
                 ? "bg-surface text-ink shadow-soft"
                 : "text-muted hover:bg-fill/60 hover:text-ink"
             }`}
+            disabled={ro}
+            title={ro ? "模板作品仅创建者可编辑 Shownotes" : undefined}
             onClick={() => onNotesTab("edit")}
           >
             编辑
           </button>
           <button
             type="button"
-            className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+            className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-40 ${
               notesTab === "ai"
                 ? "bg-surface text-ink shadow-soft"
                 : "text-muted hover:bg-fill/60 hover:text-ink"
             }`}
-            disabled={busy || shareAiBusy || scriptResolvePending || jobGenerating}
+            disabled={ro || busy || shareAiBusy || scriptResolvePending || jobGenerating}
+            title={ro ? "模板作品仅创建者可使用 AI 优化" : undefined}
             onClick={() => {
               onNotesTab("ai");
               onOpenAiModal();
@@ -97,8 +105,8 @@ export function WorkHubShownotesSection({
             <button
               type="button"
               className="absolute right-2 top-2 z-10 rounded-md border border-line bg-surface/95 px-2.5 py-1 text-xs font-medium text-ink shadow-sm backdrop-blur-sm hover:bg-fill disabled:opacity-40"
-              disabled={busy || shareAiBusy || showNotesSaveBusy || !hasOwner || jobGenerating}
-              title={hasOwner ? "保存到作品并更新分享页" : "请先登录"}
+              disabled={ro || busy || shareAiBusy || showNotesSaveBusy || !hasOwner || jobGenerating}
+              title={ro ? "模板作品仅创建者可保存" : hasOwner ? "保存到作品并更新分享页" : "请先登录"}
               onClick={() => void onSaveShowNotes()}
             >
               {showNotesSaveBusy ? "保存中…" : "保存"}
@@ -108,7 +116,7 @@ export function WorkHubShownotesSection({
               rows={12}
               value={showNotes}
               onChange={(e) => onShowNotesChange(e.target.value)}
-              disabled={busy || shareAiBusy || showNotesSaveBusy || jobGenerating}
+              disabled={ro || busy || shareAiBusy || showNotesSaveBusy || jobGenerating}
               maxLength={20_000}
             />
           </div>

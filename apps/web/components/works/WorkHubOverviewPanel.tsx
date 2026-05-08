@@ -48,6 +48,8 @@ type Props = {
   jobLiveProgressPct?: number | null;
   jobFailedMessage?: string;
   readonlyEmptyHint?: string;
+  /** 他人全站模板只读：禁用「编辑」分区切换 */
+  hubViewerReadonly?: boolean;
   detailTab: WorkHubDetailTab;
   onDetailTabChange: (t: WorkHubDetailTab) => void;
   shownotesPanel: ReactNode;
@@ -81,6 +83,7 @@ export function WorkHubOverviewPanel({
   jobLiveProgressPct,
   jobFailedMessage,
   readonlyEmptyHint,
+  hubViewerReadonly = false,
   detailTab,
   onDetailTabChange,
   shownotesPanel
@@ -223,8 +226,10 @@ export function WorkHubOverviewPanel({
         <div className="flex gap-1 rounded-xl border border-line bg-fill/35 p-1">
           <button
             type="button"
+            disabled={hubViewerReadonly}
             onClick={() => onDetailTabChange("edit")}
-            className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+            title={hubViewerReadonly ? "模板作品仅创建者可编辑章节与口播稿" : undefined}
+            className={`min-h-[2.5rem] flex-1 rounded-lg px-2 py-2 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-40 ${
               detailTab === "edit"
                 ? "bg-surface text-ink shadow-soft"
                 : "text-muted hover:bg-fill/60 hover:text-ink"

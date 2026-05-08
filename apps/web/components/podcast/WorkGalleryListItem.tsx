@@ -12,6 +12,8 @@ import {
   isPodcastManuscriptDraftTarget,
   NOTES_STUDIO_REF_TITLE_MAX_CHARS,
   truncateByGraphemes,
+  workGalleryRowMutationsLocked,
+  workIsPodcastTemplateNonOwner,
   workIsSharedNotebookForeign
 } from "./workGalleryListShared";
 import type { PodcastWorkRow } from "./workGalleryListShared";
@@ -148,7 +150,8 @@ export function WorkGalleryListItem({
     openRename,
     requestDelete,
     onReuseTemplate,
-    renderDownloadGated
+    renderDownloadGated,
+    viewerAccountRef
   } = useWorkGalleryListContext();
 
 const id = w.id!;
@@ -166,7 +169,9 @@ const showPendingLog =
 const isActive = activeJobId === id;
 const rowPlayMsg = (isActive && activePlayError) || playErrorById[id];
 const prog = isActive ? progress01 : 0;
-const sharedNotebookForeign = workIsSharedNotebookForeign(w);
+const foreignNotebook = workIsSharedNotebookForeign(w);
+const rowMutationsLocked = workGalleryRowMutationsLocked(w, viewerAccountRef);
+const tplNonOwner = workIsPodcastTemplateNonOwner(w, viewerAccountRef);
 const baseSec =
   typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0
     ? w.audioDurationSec
@@ -297,7 +302,7 @@ if (useNotesStyleCards && !(useCompactAllLayout && isScriptDraft)) {
               )
             ) : null}
           </div>
-          {isMediaInFlight || sharedNotebookForeign ? null : (
+          {isMediaInFlight || rowMutationsLocked ? null : (
             <div
               className="relative shrink-0"
               ref={(menuOpenId === id ? menuWrapRef : undefined) as Ref<HTMLDivElement> | undefined}
@@ -485,9 +490,9 @@ if (variant === "all") {
               href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
               className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
             >
-              {sharedNotebookForeign ? "查看文稿" : "修改文稿"}
+              {rowMutationsLocked ? "查看文稿" : "修改文稿"}
             </Link>
-            {sharedNotebookForeign ? null : (
+            {rowMutationsLocked ? null : (
               <button
                 type="button"
                 className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
@@ -496,7 +501,7 @@ if (variant === "all") {
                 修改名称
               </button>
             )}
-            {sharedNotebookForeign ? null : (
+            {rowMutationsLocked ? null : (
               <button
                 type="button"
                 className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
@@ -523,6 +528,8 @@ if (variant === "all") {
             <button
               type="button"
               className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
+              disabled={tplNonOwner}
+              title={tplNonOwner ? "模板作品仅创建者可分享发布" : undefined}
               onClick={() => goToSharePage(w)}
             >
               {publishActionText}
@@ -533,7 +540,7 @@ if (variant === "all") {
               "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
               zipBusy === id ? downloadBusyLabel(w.type) : "下载"
             )}
-            {sharedNotebookForeign ? null : (
+            {foreignNotebook ? null : (
               <button
                 type="button"
                 className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
@@ -542,7 +549,7 @@ if (variant === "all") {
                 {reuseOrManuscriptLabel}
               </button>
             )}
-            {sharedNotebookForeign ? null : (
+            {rowMutationsLocked ? null : (
               <div
                 className="relative"
                 ref={(menuOpenId === id ? menuWrapRef : undefined) as Ref<HTMLDivElement> | undefined}
@@ -688,7 +695,7 @@ return (
               })
             }
           />
-          {sharedNotebookForeign ? null : (
+          {rowMutationsLocked ? null : (
             <div
               className="relative"
               ref={(menuOpenId === id ? menuWrapRef : undefined) as Ref<HTMLDivElement> | undefined}
@@ -740,9 +747,9 @@ return (
             href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
             className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
           >
-            {sharedNotebookForeign ? "查看文稿" : "修改文稿"}
+            {rowMutationsLocked ? "查看文稿" : "修改文稿"}
           </Link>
-          {sharedNotebookForeign ? null : (
+          {rowMutationsLocked ? null : (
             <button
               type="button"
               className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
@@ -751,7 +758,7 @@ return (
               修改名称
             </button>
           )}
-          {sharedNotebookForeign ? null : (
+          {rowMutationsLocked ? null : (
             <button
               type="button"
               className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
@@ -777,7 +784,9 @@ return (
           </button>
           <button
             type="button"
-            className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:opacity-50"
+            className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
+            disabled={tplNonOwner}
+            title={tplNonOwner ? "模板作品仅创建者可分享发布" : undefined}
             onClick={() => goToSharePage(w)}
           >
             {publishActionText}
@@ -788,7 +797,7 @@ return (
             "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
             zipBusy === id ? downloadBusyLabel(w.type) : "下载"
           )}
-          {sharedNotebookForeign ? null : (
+          {foreignNotebook ? null : (
             <button
               type="button"
               className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"

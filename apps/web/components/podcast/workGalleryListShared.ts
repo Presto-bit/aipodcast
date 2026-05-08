@@ -3,6 +3,28 @@ import type { WorkItem } from "../../lib/worksTypes";
 export function workIsSharedNotebookForeign(w: Pick<WorkItem, "sharedNotebookForeign">): boolean {
   return w.sharedNotebookForeign === true;
 }
+
+/** 全站模板且当前用户非创建者（下载/分享等与模板相关的限制用） */
+export function workIsPodcastTemplateNonOwner(
+  w: Pick<WorkItem, "isPodcastPublicTemplate" | "jobOwnerUserId">,
+  viewerAccountRef: string
+): boolean {
+  if (!w.isPodcastPublicTemplate) return false;
+  const owner = String(w.jobOwnerUserId || "").trim().toLowerCase();
+  const viewer = String(viewerAccountRef || "").trim().toLowerCase();
+  if (!owner) return true;
+  if (!viewer) return true;
+  return viewer !== owner;
+}
+
+/** 他人笔记本只读，或全站模板且当前用户非创建者：列表区禁止改名/封面/删除等 */
+export function workGalleryRowMutationsLocked(
+  w: Pick<WorkItem, "sharedNotebookForeign" | "isPodcastPublicTemplate" | "jobOwnerUserId">,
+  viewerAccountRef: string
+): boolean {
+  if (workIsSharedNotebookForeign(w)) return true;
+  return workIsPodcastTemplateNonOwner(w, viewerAccountRef);
+}
 import { worksNavMetricPart, worksNavPrimaryKind } from "../../lib/worksNavMetaLine";
 
 export type PodcastWorkRow = WorkItem & { displayTitle: string };

@@ -42,6 +42,7 @@ from ..models import (
     ensure_jobs_trash_schema,
     get_job,
     get_job_artifact,
+    get_job_via_podcast_template_visible_to_viewer,
     get_job_via_shared_notebook_visible_to_viewer,
     get_project_name,
     get_shared_notebook_public_access,
@@ -320,6 +321,9 @@ def _work_item_dict_from_recent_row(
     cl = str(row.get("creator_label") or "").strip()
     if cl:
         work["creatorLabel"] = cl
+    ou = str(row.get("owner_user_id") or "").strip()
+    if ou:
+        work["jobOwnerUserId"] = ou
     if _program_name:
         work["workProgramName"] = _program_name[:200]
     work.update(_works_script_notes_extras(result, _payload_dict, job_type))
@@ -904,11 +908,17 @@ def list_jobs_api(
 def get_job_api(job_id: str, request: Request):
     scope = _job_row_scope_ref(request)
     row = get_job(job_id, user_ref=scope)
+    template_viewer_readonly = False
     if not row and scope:
         row = get_job_via_shared_notebook_visible_to_viewer(job_id, scope)
+    if not row and scope:
+        row = get_job_via_podcast_template_visible_to_viewer(job_id, scope)
+        template_viewer_readonly = bool(row)
     if not row:
         raise HTTPException(status_code=404, detail="job_not_found")
     out = serialize_job(row)
+    if template_viewer_readonly:
+        out["viewer_template_readonly"] = True
     _pid = str(row.get("project_id") or "").strip()
     if _pid:
         try:

@@ -31,6 +31,8 @@ export interface JobRecord {
   error_message: string | null;
   /** 成功播客成片是否被设为全站创作模板（仅管理员可改） */
   is_podcast_template?: boolean;
+  /** 当前用户以「他人模板只读」身份打开详情（服务端下发） */
+  viewer_template_readonly?: boolean;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;

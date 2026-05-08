@@ -482,6 +482,56 @@ def get_job_via_shared_notebook_visible_to_viewer(job_id: str, viewer_user_ref: 
     return row
 
 
+def get_job_via_podcast_template_visible_to_viewer(job_id: str, viewer_user_ref: str | None) -> dict[str, Any] | None:
+    """
+    全站播客模板：登录用户可只读查看他人模板成片详情（非创建者）。
+    清空 payload，避免泄露创建参数；创建者本人仍走常规 get_job。
+    """
+    vr = (viewer_user_ref or "").strip()
+    if not vr:
+        return None
+    jid = (job_id or "").strip()
+    if not jid:
+        return None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT j.*,
+                  NULLIF(TRIM(COALESCE(
+                    NULLIF(TRIM(u.display_name), ''),
+                    NULLIF(TRIM(u.phone), ''),
+                    NULLIF(TRIM(u.email), ''))), '') AS creator_label,
+                  COALESCE(j.created_by, p.user_id)::text AS _effective_owner_user_id
+                FROM jobs j
+                LEFT JOIN projects p ON p.id = j.project_id
+                LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
+                WHERE j.id = %s::uuid
+                LIMIT 1
+                """,
+                (jid,),
+            )
+            row_one = cur.fetchone()
+            if not row_one:
+                return None
+            row_d = dict(row_one)
+            viewer_uid = _resolve_user_uuid_or_none(cur, vr)
+    if row_d.get("deleted_at"):
+        return None
+    if str(row_d.get("status") or "").strip().lower() != "succeeded":
+        return None
+    if not bool(row_d.get("is_podcast_template")):
+        return None
+    jt = str(row_d.get("job_type") or "").strip().lower()
+    if jt not in ("podcast_generate", "podcast"):
+        return None
+    owner_uid = _normalize_uuid_str(str(row_d.pop("_effective_owner_user_id", "") or ""))
+    if not owner_uid or not viewer_uid or str(viewer_uid) == owner_uid:
+        return None
+    row_d["payload"] = {}
+    return row_d
+
+
 def list_job_events(job_id: str, after_id: int = 0) -> list[dict[str, Any]]:
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -2534,9 +2584,15 @@ def list_podcast_template_works(
                         )
                       END AS result,
                       j.payload, j.created_at, j.completed_at, j.project_id,
-                      p.name AS project_name
+                      p.name AS project_name,
+                      COALESCE(j.created_by, p.user_id)::text AS owner_user_id,
+                      NULLIF(TRIM(COALESCE(
+                        NULLIF(TRIM(u.display_name), ''),
+                        NULLIF(TRIM(u.phone), ''),
+                        NULLIF(TRIM(u.email), ''))), '') AS creator_label
                     FROM jobs j
                     LEFT JOIN projects p ON p.id = j.project_id
+                    LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
                     WHERE j.status = 'succeeded'
                       AND j.deleted_at IS NULL
                       AND COALESCE(j.is_podcast_template, FALSE) IS TRUE
@@ -2550,9 +2606,15 @@ def list_podcast_template_works(
                 cur.execute(
                     """
                     SELECT j.id, j.job_type, j.status, j.result, j.payload, j.created_at, j.completed_at, j.project_id,
-                      p.name AS project_name
+                      p.name AS project_name,
+                      COALESCE(j.created_by, p.user_id)::text AS owner_user_id,
+                      NULLIF(TRIM(COALESCE(
+                        NULLIF(TRIM(u.display_name), ''),
+                        NULLIF(TRIM(u.phone), ''),
+                        NULLIF(TRIM(u.email), ''))), '') AS creator_label
                     FROM jobs j
                     LEFT JOIN projects p ON p.id = j.project_id
+                    LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
                     WHERE j.status = 'succeeded'
                       AND j.deleted_at IS NULL
                       AND COALESCE(j.is_podcast_template, FALSE) IS TRUE

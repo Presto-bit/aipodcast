@@ -40,7 +40,7 @@ import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, PUBLISH_PLATFORMS 
 import { PUBLISH_PLATFORM_ICON_URL } from "../../lib/publishPlatformAssets";
 import { resolveJobScriptBodyText, SCRIPT_TEXT_LIKELY_FULL_MIN_LEN } from "../../lib/jobScriptText";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
-import { buildWorksSharePageUrl } from "../../lib/rssPublicBase";
+import { buildWorksSharePageUrl, rssFeedUrlForSlug } from "../../lib/rssPublicBase";
 import { jobResultCoverUrl, workCoverImageSrc } from "../../lib/workCoverImage";
 import { blobToDataUrlBase64 } from "../../lib/podcastCoverImage";
 import { useAuth, userAccountRef } from "../../lib/auth";
@@ -243,6 +243,7 @@ export function SharePublishClient({
   const [aiShownotesErr, setAiShownotesErr] = useState("");
   const [shareOrigin, setShareOrigin] = useState("");
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
+  const [rssLinkCopied, setRssLinkCopied] = useState(false);
   /** 大模型生成简介 / Show Notes（与发布 busy 分离） */
   const [shareAiBusy, setShareAiBusy] = useState(false);
   const [showNotesSaveBusy, setShowNotesSaveBusy] = useState(false);
@@ -297,6 +298,25 @@ export function SharePublishClient({
       window.alert("复制失败，请检查浏览器剪贴板权限。");
     }
   }, [sharePageFullUrl]);
+
+  const rssFeedCopyUrl = useMemo(() => {
+    const id = channelId.trim();
+    if (!id) return "";
+    const ch = channels.find((c) => String(c.id) === id);
+    const slug = String(ch?.feed_slug || "").trim();
+    return slug ? rssFeedUrlForSlug(slug) : "";
+  }, [channels, channelId]);
+
+  const copyRssFeedUrl = useCallback(async () => {
+    if (!rssFeedCopyUrl) return;
+    try {
+      await navigator.clipboard.writeText(rssFeedCopyUrl);
+      setRssLinkCopied(true);
+      window.setTimeout(() => setRssLinkCopied(false), 2200);
+    } catch {
+      window.alert("复制失败，请检查浏览器剪贴板权限。");
+    }
+  }, [rssFeedCopyUrl]);
 
   const hints = computeSharePublishHints(episodeTitle, summary, showNotes);
 
@@ -927,9 +947,26 @@ export function SharePublishClient({
   }, [jobId, layout, shareJobHydrated, formReady, mergeRunningJobSnapshot]);
 
   const scriptDraft = jobType === "script_draft";
+
+  const viewerTemplateReadonly = useMemo(() => {
+    const row = ownerJobRecord;
+    if (!row) return false;
+    if (row.viewer_template_readonly === true) return true;
+    if (!row.is_podcast_template) return false;
+    const owner = String(row.created_by || "").trim().toLowerCase();
+    const me = userAccountRef(user).trim().toLowerCase();
+    if (!me) return false;
+    if (!owner) return true;
+    return me !== owner;
+  }, [ownerJobRecord, user]);
+
   const onWorkHubDownloadBundle = useCallback(async () => {
     const id = jobId.trim();
     if (!id) return;
+    if (viewerTemplateReadonly) {
+      window.alert("模板作品仅创建者可下载。");
+      return;
+    }
     setWorkHubDownloadBusy(true);
     const title = episodeTitle.trim() || jobTitle.trim() || id;
     try {
@@ -947,7 +984,7 @@ export function SharePublishClient({
     } finally {
       setWorkHubDownloadBusy(false);
     }
-  }, [jobId, episodeTitle, jobTitle, scriptDraft, showNotes]);
+  }, [jobId, episodeTitle, jobTitle, scriptDraft, showNotes, viewerTemplateReadonly]);
   const audioBlocked = scriptDraft || !hasAudio;
   /** 未 hydration 前 blocked 为 false，避免误显分享区；仅 hydration 后才允许复制链接与发布表单。 */
   const showShareAndPublish = shareJobHydrated && !audioBlocked;
@@ -988,9 +1025,14 @@ export function SharePublishClient({
   }, [layout, jobId]);
 
   useEffect(() => {
+    if (!viewerTemplateReadonly) return;
+    setNotesTab("preview");
+  }, [viewerTemplateReadonly]);
+
+  useEffect(() => {
     if (layout !== "work_hub") return;
-    setDetailTab("edit");
-  }, [layout, jobId]);
+    setDetailTab(viewerTemplateReadonly ? "shownotes" : "edit");
+  }, [layout, jobId, viewerTemplateReadonly]);
 
   useEffect(() => {
     if (!morePlatformsOpen) return;
@@ -1042,9 +1084,10 @@ export function SharePublishClient({
     return Boolean(
       ownerJobRecord &&
         st === "succeeded" &&
-        ["podcast", "podcast_generate", "script_draft"].includes(jt)
+        ["podcast", "podcast_generate", "script_draft"].includes(jt) &&
+        !viewerTemplateReadonly
     );
-  }, [ownerJobRecord]);
+  }, [ownerJobRecord, viewerTemplateReadonly]);
 
   const jobGenerating = Boolean(
     ownerJobRecord && (ownerJobRecord.status === "queued" || ownerJobRecord.status === "running")
@@ -1104,14 +1147,14 @@ export function SharePublishClient({
   );
 
   const regenerateVoiceSupported = useMemo(() => {
-    if (!ownerJobRecord || scriptDraft || !hasAudio) return false;
+    if (!ownerJobRecord || scriptDraft || !hasAudio || viewerTemplateReadonly) return false;
     const jt = String(ownerJobRecord.job_type || "").trim().toLowerCase();
     return jt === "podcast" || jt === "podcast_generate";
-  }, [ownerJobRecord, scriptDraft, hasAudio]);
+  }, [ownerJobRecord, scriptDraft, hasAudio, viewerTemplateReadonly]);
 
   const startAudioResynth = useCallback(async () => {
     const row = ownerJobRecord;
-    if (!row || regenerateVoiceBusy || audioRegenActive) return;
+    if (!row || viewerTemplateReadonly || regenerateVoiceBusy || audioRegenActive) return;
     const script = manuscriptBody.trim();
     if (!script) {
       window.alert("请先填写或加载口播稿正文。");
@@ -1261,7 +1304,8 @@ export function SharePublishClient({
     jobId,
     user,
     phone,
-    router
+    router,
+    viewerTemplateReadonly
   ]);
 
   useEffect(() => {
@@ -1481,6 +1525,10 @@ export function SharePublishClient({
 
   async function applyShareAiCopyFromProvider(opts?: { persist?: boolean }) {
     if (!jobId.trim()) return;
+    if (viewerTemplateReadonly) {
+      setFormErr("模板作品仅创建者可使用 AI 编辑。");
+      return;
+    }
     setShareAiBusy(true);
     setFormErr("");
     setFormOk("");
@@ -1531,6 +1579,10 @@ export function SharePublishClient({
 
   async function applyAiShownotesRefine() {
     if (!jobId.trim()) return;
+    if (viewerTemplateReadonly) {
+      setAiShownotesErr("模板作品仅创建者可使用 AI 优化。");
+      return;
+    }
     const promptRaw = aiShownotesPromptDraft.trim();
     const userPrompt = promptRaw || AI_SHOWNOTES_PROMPT_PLACEHOLDER;
     setShareAiBusy(true);
@@ -1580,6 +1632,7 @@ export function SharePublishClient({
 
   async function saveShowNotesToServer() {
     if (!jobId.trim() || !ownerJobRecord) return;
+    if (viewerTemplateReadonly) return;
     setShowNotesSaveBusy(true);
     setFormErr("");
     setFormOk("");
@@ -1610,6 +1663,10 @@ export function SharePublishClient({
     setFormOk("");
     if (shareAiBusy) {
       setFormErr("AI 生成中，请稍候再发布。");
+      return;
+    }
+    if (viewerTemplateReadonly) {
+      setFormErr("模板作品仅创建者可发布。");
       return;
     }
     if (publishPlatform !== "xiaoyuzhou") {
@@ -1758,24 +1815,27 @@ export function SharePublishClient({
           <div className="mt-1 flex shrink-0 items-center gap-1.5">
             <button
               type="button"
-              disabled={workHubDownloadBusy}
+              disabled={viewerTemplateReadonly || workHubDownloadBusy}
               onClick={() => void onWorkHubDownloadBundle()}
               className="rounded-xl border border-line bg-fill/40 p-2.5 text-ink hover:bg-fill disabled:opacity-40"
               aria-label={scriptDraft ? "下载文稿" : "下载作品包"}
               title={
-                scriptDraft
-                  ? "下载文稿（TXT）"
-                  : "下载文稿、封面、Shownotes 与音频（ZIP）"
+                viewerTemplateReadonly
+                  ? "模板作品仅创建者可下载"
+                  : scriptDraft
+                    ? "下载文稿（TXT）"
+                    : "下载文稿、封面、Shownotes 与音频（ZIP）"
               }
             >
               <IconDownloadBundle className={`h-5 w-5 ${workHubDownloadBusy ? "opacity-60" : ""}`} />
             </button>
             <button
               type="button"
+              disabled={viewerTemplateReadonly}
               onClick={() => setShareConfigModalOpen(true)}
               className="rounded-xl border border-line bg-fill/40 p-2.5 text-ink hover:bg-fill disabled:opacity-40"
               aria-label="分享与发布"
-              title="分享与发布"
+              title={viewerTemplateReadonly ? "模板作品仅创建者可分享发布" : "分享与发布"}
             >
               <IconShareExport className="h-5 w-5" />
             </button>
@@ -1942,10 +2002,12 @@ export function SharePublishClient({
             jobLiveProgressPct={jobLivePctMerged}
             jobFailedMessage={jobFailedMessage}
             readonlyEmptyHint={jobGenerating ? JOB_GEN_PLACEHOLDER : undefined}
+            hubViewerReadonly={viewerTemplateReadonly}
             detailTab={detailTab}
             onDetailTabChange={setDetailTab}
             shownotesPanel={
               <WorkHubShownotesSection
+                viewerReadonly={viewerTemplateReadonly}
                 notesTab={notesTab}
                 onNotesTab={setNotesTab}
                 showNotes={showNotes}
@@ -2004,21 +2066,45 @@ export function SharePublishClient({
                     <h2 id="work-share-publish-modal-title" className="text-base font-semibold text-ink">
                       分享与发布
                     </h2>
-                    {sharePageFullUrl ? (
-                      <button
-                        type="button"
-                        disabled={busy || shareAiBusy}
-                        onClick={() => void copySharePageLink()}
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
-                        title={shareLinkCopied ? "已复制" : "复制分享链接"}
-                      >
-                        {shareLinkCopied ? (
-                          <IconShareCheck className="h-3.5 w-3.5 text-success-ink" />
-                        ) : (
-                          <IconShareClipboard className="h-3.5 w-3.5 text-muted" />
-                        )}
-                        {shareLinkCopied ? "已复制" : "复制链接"}
-                      </button>
+                    {sharePageFullUrl || rssFeedCopyUrl ? (
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                        {sharePageFullUrl ? (
+                          <button
+                            type="button"
+                            disabled={busy || shareAiBusy}
+                            onClick={() => void copySharePageLink()}
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
+                            title={shareLinkCopied ? "已复制" : "复制分享链接"}
+                          >
+                            {shareLinkCopied ? (
+                              <IconShareCheck className="h-3.5 w-3.5 text-success-ink" />
+                            ) : (
+                              <IconShareClipboard className="h-3.5 w-3.5 text-muted" />
+                            )}
+                            {shareLinkCopied ? "已复制" : "复制链接"}
+                          </button>
+                        ) : null}
+                        {rssFeedCopyUrl ? (
+                          <button
+                            type="button"
+                            disabled={busy || shareAiBusy}
+                            onClick={() => void copyRssFeedUrl()}
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
+                            title={
+                              rssLinkCopied
+                                ? "已复制"
+                                : "复制当前所选 RSS 频道的节目源地址（整档订阅链接，非单集分享页）"
+                            }
+                          >
+                            {rssLinkCopied ? (
+                              <IconShareCheck className="h-3.5 w-3.5 text-success-ink" />
+                            ) : (
+                              <IconShareClipboard className="h-3.5 w-3.5 text-muted" />
+                            )}
+                            {rssLinkCopied ? "已复制" : "复制RSS地址"}
+                          </button>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
 

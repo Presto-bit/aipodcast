@@ -8,7 +8,7 @@ import SmallConfirmModal from "../ui/SmallConfirmModal";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
 import { unusableInsecureHttpOnHttpsPage } from "../../lib/insecureHttpOnHttpsPage";
-import { useAuth } from "../../lib/auth";
+import { useAuth, userAccountRef } from "../../lib/auth";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
 import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
 import { sanitizeShareEpisodeTitle } from "../../lib/sharePublishDefaults";
@@ -32,7 +32,8 @@ import {
   humanNoteSourceLabel,
   isPodcastManuscriptDraftTarget,
   type PodcastWorkRow,
-  workIsSharedNotebookForeign
+  workGalleryRowMutationsLocked,
+  workIsPodcastTemplateNonOwner
 } from "./workGalleryListShared";
 
 function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
@@ -216,6 +217,11 @@ export default function PodcastWorksGallery({
   const { t } = useI18n();
   const router = useRouter();
   const { getAuthHeaders, user } = useAuth();
+  const viewerAccountRefStr = useMemo(() => userAccountRef(user), [user]);
+  const workDownloadExtraLocked = useCallback(
+    (row: PodcastWorkRow) => workIsPodcastTemplateNonOwner(row, viewerAccountRefStr),
+    [viewerAccountRefStr]
+  );
   const workAudio = useWorkAudioPlayer();
 
   const worksNavAuthorDisplay = useMemo(() => {
@@ -562,7 +568,7 @@ export default function PodcastWorksGallery({
         onLockedNavigate?: () => void;
       }
     ) => {
-      const allowed = workDownloadAllowed(row);
+      const allowed = workDownloadAllowed(row) && !workDownloadExtraLocked(row);
       const busy = zipBusy === jobId;
       const menuItem = Boolean(gatedExtras?.onLockedNavigate);
       if (allowed) {
@@ -590,14 +596,14 @@ export default function PodcastWorksGallery({
           className={deniedCls}
           disabled
           role={menuItem ? "menuitem" : undefined}
-          title={WORK_DOWNLOAD_GATE_TIP}
-          aria-label={WORK_DOWNLOAD_GATE_TIP}
+          title={workDownloadExtraLocked(row) ? "模板作品仅创建者可下载" : WORK_DOWNLOAD_GATE_TIP}
+          aria-label={workDownloadExtraLocked(row) ? "模板作品仅创建者可下载" : WORK_DOWNLOAD_GATE_TIP}
         >
           {label}
         </button>
       );
     },
-    [onDownload, zipBusy]
+    [onDownload, zipBusy, workDownloadExtraLocked]
   );
 
   function downloadBusyLabel(workType: string | undefined): string {
@@ -625,20 +631,16 @@ export default function PodcastWorksGallery({
   }, [renameJobId, renameDraft, titlesKey]);
 
   const openRename = useCallback((jobId: string, current: string) => {
-    if (works.some((w) => String(w.id || "") === jobId && workIsSharedNotebookForeign(w))) return;
+    if (works.some((w) => String(w.id || "") === jobId && workGalleryRowMutationsLocked(w, viewerAccountRefStr))) return;
     setRenameJobId(jobId);
     setRenameDraft(current);
     setMenuOpenId(null);
     setDeleteConfirmId(null);
-  }, [works]);
+  }, [works, viewerAccountRefStr]);
 
   const confirmDelete = useCallback(
     async (jobId: string) => {
-      if (works.some((w) => String(w.id || "") === jobId && w.isPodcastPublicTemplate)) {
-        setDeleteConfirmId(null);
-        return;
-      }
-      if (works.some((w) => String(w.id || "") === jobId && workIsSharedNotebookForeign(w))) {
+      if (works.some((w) => String(w.id || "") === jobId && workGalleryRowMutationsLocked(w, viewerAccountRefStr))) {
         setDeleteConfirmId(null);
         return;
       }
@@ -778,17 +780,16 @@ export default function PodcastWorksGallery({
         setDeleteBusyId(null);
       }
     },
-    [dismissIfJob, clearCachedAudioSrc, onWorkDeleted, titlesKey, hiddenKey, getAuthHeaders, works]
+    [dismissIfJob, clearCachedAudioSrc, onWorkDeleted, titlesKey, hiddenKey, getAuthHeaders, works, viewerAccountRefStr]
   );
 
   const requestDelete = useCallback((jobId: string) => {
-    if (works.some((w) => String(w.id || "") === jobId && w.isPodcastPublicTemplate)) return;
-    if (works.some((w) => String(w.id || "") === jobId && workIsSharedNotebookForeign(w))) return;
+    if (works.some((w) => String(w.id || "") === jobId && workGalleryRowMutationsLocked(w, viewerAccountRefStr))) return;
     setDeleteConfirmId(jobId);
     setDeleteError(null);
     setMenuOpenId(null);
     setRenameJobId(null);
-  }, [works]);
+  }, [works, viewerAccountRefStr]);
 
   const pendingDeleteTitle =
     deleteConfirmId != null ? items.find((x) => x.id === deleteConfirmId)?.displayTitle || deleteConfirmId : "";
@@ -802,6 +803,7 @@ export default function PodcastWorksGallery({
     (work: PodcastWorkRow) => {
       const id = String(work.id || "").trim();
       if (!id) return;
+      if (workIsPodcastTemplateNonOwner(work, viewerAccountRefStr)) return;
       setMenuOpenId(null);
       try {
         writeSessionStorageScoped(`fym_share_display_title:${id}`, work.displayTitle);
@@ -810,10 +812,13 @@ export default function PodcastWorksGallery({
       }
       router.push(buildWorkDetailHref(id, { returnTo: workDetailReturnTo, tabPublish: true }));
     },
-    [router, workDetailReturnTo]
+    [router, workDetailReturnTo, viewerAccountRefStr]
   );
 
   async function uploadCoverForJob(jobId: string, file: File) {
+    if (works.some((w) => String(w.id || "") === jobId && workGalleryRowMutationsLocked(w, viewerAccountRefStr))) {
+      return;
+    }
     if (file.size > 8 * 1024 * 1024) {
       window.alert("封面图片需不超过 8MB");
       return;
@@ -1007,7 +1012,8 @@ export default function PodcastWorksGallery({
       openRename,
       requestDelete,
       onReuseTemplate,
-      renderDownloadGated
+      renderDownloadGated,
+      viewerAccountRef: viewerAccountRefStr
     }),
     [
       variant,
@@ -1041,7 +1047,8 @@ export default function PodcastWorksGallery({
       commitRename,
       toggleSelect,
       onReuseTemplate,
-      togglePlay
+      togglePlay,
+      viewerAccountRefStr
     ]
   );
 
@@ -1236,7 +1243,7 @@ export default function PodcastWorksGallery({
                         onLockedNavigate: () => setMenuOpenId(null)
                       }
                     )}
-                    {!workIsSharedNotebookForeign(m.w) ? (
+                    {!workGalleryRowMutationsLocked(m.w, viewerAccountRefStr) ? (
                       <button
                         type="button"
                         role="menuitem"
@@ -1253,7 +1260,13 @@ export default function PodcastWorksGallery({
                       <button
                         type="button"
                         role="menuitem"
-                        className="block w-full px-3 py-2 text-left hover:bg-fill"
+                        className={`block w-full px-3 py-2 text-left hover:bg-fill disabled:pointer-events-none disabled:opacity-40`}
+                        disabled={workIsPodcastTemplateNonOwner(m.w, viewerAccountRefStr)}
+                        title={
+                          workIsPodcastTemplateNonOwner(m.w, viewerAccountRefStr)
+                            ? "模板作品仅创建者可分享发布"
+                            : undefined
+                        }
                         onClick={() => {
                           setMenuOpenId(null);
                           goToSharePage(m.w);
@@ -1262,7 +1275,7 @@ export default function PodcastWorksGallery({
                         {m.publishActionText}
                       </button>
                     ) : null}
-                    {!workIsSharedNotebookForeign(m.w) ? (
+                    {!workGalleryRowMutationsLocked(m.w, viewerAccountRefStr) ? (
                       <button
                         type="button"
                         role="menuitem"
@@ -1288,7 +1301,7 @@ export default function PodcastWorksGallery({
                 const pos = notesStudioMenuPos;
                 if (spec.layout === "toolbar") {
                   const { w, id, isScriptDraft } = spec;
-                  const shf = workIsSharedNotebookForeign(w);
+                  const rowLocked = workGalleryRowMutationsLocked(w, viewerAccountRefStr);
                   return (
                     <div
                       ref={notesStudioMenuPortalRef}
@@ -1296,7 +1309,7 @@ export default function PodcastWorksGallery({
                       className="fixed z-[1210] min-w-[9.5rem] max-h-[min(280px,calc(100vh-16px))] overflow-y-auto rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
                       style={{ top: pos.top, left: pos.left }}
                     >
-                      {!shf ? (
+                      {!rowLocked ? (
                         <button
                           type="button"
                           role="menuitem"
@@ -1309,7 +1322,7 @@ export default function PodcastWorksGallery({
                           修改名称
                         </button>
                       ) : null}
-                      {!isScriptDraft && !shf ? (
+                      {!isScriptDraft && !rowLocked ? (
                         <button
                           type="button"
                           role="menuitem"
@@ -1324,7 +1337,7 @@ export default function PodcastWorksGallery({
                           {coverUploadBusy === id ? "处理封面中…" : "上传封面（裁 1400²）"}
                         </button>
                       ) : null}
-                      {!shf ? (
+                      {!rowLocked ? (
                         <button
                           type="button"
                           role="menuitem"
@@ -1341,7 +1354,7 @@ export default function PodcastWorksGallery({
                   );
                 }
                 const { w, id, isScriptDraft, publishActionText } = spec;
-                const shf = workIsSharedNotebookForeign(w);
+                const rowLocked = workGalleryRowMutationsLocked(w, viewerAccountRefStr);
                 return (
                   <div
                     ref={notesStudioMenuPortalRef}
@@ -1361,7 +1374,7 @@ export default function PodcastWorksGallery({
                         onLockedNavigate: () => setMenuOpenId(null)
                       }
                     )}
-                    {!shf ? (
+                    {!rowLocked ? (
                       <button
                         type="button"
                         role="menuitem"
@@ -1374,7 +1387,7 @@ export default function PodcastWorksGallery({
                         修改名称
                       </button>
                     ) : null}
-                    {!isScriptDraft && !shf ? (
+                    {!isScriptDraft && !rowLocked ? (
                       <button
                         type="button"
                         role="menuitem"
@@ -1393,7 +1406,13 @@ export default function PodcastWorksGallery({
                       <button
                         type="button"
                         role="menuitem"
-                        className="block w-full px-3 py-2 text-left hover:bg-fill"
+                        className="block w-full px-3 py-2 text-left hover:bg-fill disabled:pointer-events-none disabled:opacity-40"
+                        disabled={workIsPodcastTemplateNonOwner(w, viewerAccountRefStr)}
+                        title={
+                          workIsPodcastTemplateNonOwner(w, viewerAccountRefStr)
+                            ? "模板作品仅创建者可分享发布"
+                            : undefined
+                        }
                         onClick={() => {
                           setMenuOpenId(null);
                           goToSharePage(w);
@@ -1402,7 +1421,7 @@ export default function PodcastWorksGallery({
                         {publishActionText}
                       </button>
                     ) : null}
-                    {!shf ? (
+                    {!rowLocked ? (
                       <button
                         type="button"
                         role="menuitem"
