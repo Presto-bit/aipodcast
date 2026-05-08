@@ -4240,7 +4240,7 @@ export default function NotesPage() {
                 </a>
               </div>
             </div>
-            <div className="mx-auto mt-4 w-full min-w-0 max-w-6xl">
+            <div className="mt-4 w-full min-w-0 max-w-6xl">
               <div
                 className={`overflow-y-auto overflow-x-hidden transition-[max-height] duration-200 ${
                   worksPanelExpanded ? "max-h-[min(92vh,1040px)]" : "max-h-[min(46vh,520px)]"
