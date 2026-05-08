@@ -152,6 +152,49 @@ export async function fetchPublicShareListen(jobId: string): Promise<PublicShare
   return data?.success && data.audio_url ? data : null;
 }
 
+/** 剪辑工程：与成片分享页同源管线生成 RSS Shownotes（generate_share_rss_ai_copy） */
+export async function fetchClipProjectShareAiCopy(
+  projectId: string,
+  opts?: {
+    showNotesOnly?: boolean;
+    userPrompt?: string;
+    baselineShowNotes?: string;
+  }
+): Promise<{
+  success: boolean;
+  summary?: string;
+  show_notes?: string;
+  trace_id?: string | null;
+}> {
+  const id = encodeURIComponent(String(projectId || "").trim());
+  const body = JSON.stringify({
+    show_notes_only: Boolean(opts?.showNotesOnly),
+    user_prompt: opts?.userPrompt ?? "",
+    baseline_show_notes: opts?.baselineShowNotes ?? ""
+  });
+  const resp = await fetch(`/api/clip/projects/${id}/share-ai-copy`, {
+    method: "POST",
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: authMerge({ "Content-Type": "application/json" }),
+    body
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(formatOrchestratorErrorText(text) || `AI 生成失败 ${resp.status}`);
+  }
+  try {
+    return JSON.parse(text) as {
+      success: boolean;
+      summary?: string;
+      show_notes?: string;
+      trace_id?: string | null;
+    };
+  } catch {
+    throw new Error(text.trim() || "AI 生成响应无效");
+  }
+}
+
 /** 分享 / RSS：按服务端 TEXT_PROVIDER 生成简介与 Show Notes（Markdown）；或仅按提词重写 Shownotes */
 export async function fetchJobShareAiCopy(
   jobId: string,

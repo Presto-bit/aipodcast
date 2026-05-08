@@ -30,6 +30,8 @@ type Props = {
   searchAllHitsSelected: boolean;
   allSearchHitsHighlighted: boolean;
   onDeleteAllSearchHits: () => void;
+  /** PRD 稿面工具条：单行搜索 + 上下处，不展开句列表 */
+  compactToolbar?: boolean;
 };
 
 export default function ClipScriptSearchPanel({
@@ -44,7 +46,8 @@ export default function ClipScriptSearchPanel({
   onSelectAllSearchHits,
   searchAllHitsSelected,
   allSearchHitsHighlighted,
-  onDeleteAllSearchHits
+  onDeleteAllSearchHits,
+  compactToolbar = false
 }: Props) {
   const { t } = useI18n();
   const [hitIndex, setHitIndex] = useState(0);
@@ -103,6 +106,52 @@ export default function ClipScriptSearchPanel({
     }
     return rows;
   }, [scriptSearch, searchIds, lines, wordToLineIndex]);
+
+  if (compactToolbar) {
+    return (
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        <label className="sr-only" htmlFor="clip-prd-script-search">
+          {t("presto.flow.scriptSearch.label")}
+        </label>
+        <input
+          id="clip-prd-script-search"
+          ref={scriptSearchInputRef as Ref<HTMLInputElement> | undefined}
+          type="search"
+          value={scriptSearch}
+          onChange={(e) => onScriptSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              jumpSearchHit(e.shiftKey ? -1 : 1);
+            }
+          }}
+          placeholder={t("presto.flow.scriptSearch.placeholder")}
+          className="min-w-[8rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-ink placeholder:text-muted"
+        />
+        <button
+          type="button"
+          disabled={searchIds.length === 0}
+          className="shrink-0 rounded border border-line bg-surface px-2 py-1 text-[10px] font-medium text-ink hover:bg-fill disabled:opacity-40"
+          onClick={() => jumpSearchHit(-1)}
+        >
+          {t("presto.flow.scriptSearch.prev")}
+        </button>
+        <button
+          type="button"
+          disabled={searchIds.length === 0}
+          className="shrink-0 rounded border border-line bg-surface px-2 py-1 text-[10px] font-medium text-ink hover:bg-fill disabled:opacity-40"
+          onClick={() => jumpSearchHit(1)}
+        >
+          {t("presto.flow.scriptSearch.next")}
+        </button>
+        {scriptSearch.trim() && searchIds.length > 0 ? (
+          <span className="shrink-0 font-mono text-[10px] text-muted">
+            {searchNavSafeIndex + 1}/{searchIds.length}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3 p-3">

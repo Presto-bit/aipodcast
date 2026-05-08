@@ -74,6 +74,11 @@ from ..object_store import (
 )
 from ..queue import ai_queue
 from ..security import verify_internal_signature
+from ..share_publish_llm import (
+    clip_transcript_words_to_script_raw,
+    generate_share_rss_ai_copy,
+    refine_share_show_notes_with_prompt,
+)
 from ..volcengine_seed_asr_client import volc_seed_auth_configured
 from ..worker_tasks import run_clip_audio_events_job, run_clip_export_job, run_clip_transcription_job
 
@@ -197,6 +202,33 @@ def _parse_single_byte_range(range_header: str | None, total: int) -> tuple[int,
     if start > end:
         return None
     return start, end
+
+
+def _clip_words_and_excluded_for_share(row: dict[str, Any]) -> tuple[list[dict[str, Any]], frozenset[str]]:
+    norm = row.get("transcript_normalized")
+    if isinstance(norm, str) and norm.strip():
+        try:
+            norm = json.loads(norm)
+        except Exception:
+            norm = {}
+    words: list[dict[str, Any]] = []
+    if isinstance(norm, dict):
+        wl = norm.get("words") or []
+        if isinstance(wl, list):
+            words = [w for w in wl if isinstance(w, dict)]
+    ex_raw = row.get("excluded_word_ids") or []
+    if isinstance(ex_raw, str) and ex_raw.strip():
+        try:
+            ex_raw = json.loads(ex_raw)
+        except Exception:
+            ex_raw = []
+    excluded: set[str] = set()
+    if isinstance(ex_raw, list):
+        for x in ex_raw:
+            s = str(x).strip()
+            if s:
+                excluded.add(s)
+    return words, frozenset(excluded)
 
 
 def _serialize_clip_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -372,6 +404,76 @@ def clip_get_project(project_id: str, request: Request):
     if not row:
         raise HTTPException(status_code=404, detail="工程不存在")
     return {"success": True, "project": _serialize_clip_row(row)}
+
+
+@router.post("/clip/projects/{project_id}/share-ai-copy")
+def clip_share_ai_copy(project_id: str, request: Request, body: dict[str, Any] | None = Body(default=None)):
+    """
+    与 POST /jobs/{job_id}/share-ai-copy 对齐：
+    - 默认：generate_share_rss_ai_copy；
+    - show_notes_only=true：refine_share_show_notes_with_prompt（须含 user_prompt）。
+    script_raw 均由当前工程转写词（剔除已删词）拼接。
+    """
+    opts = body if isinstance(body, dict) else {}
+    notes_only = bool(opts.get("show_notes_only"))
+    user_prompt = str(opts.get("user_prompt") or "").strip()
+    baseline_show_notes = str(opts.get("baseline_show_notes") or "").strip()
+
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    if str(row.get("transcription_status") or "").strip().lower() != "succeeded":
+        raise HTTPException(status_code=400, detail="transcription_not_succeeded")
+
+    words, excluded = _clip_words_and_excluded_for_share(row)
+    script_raw = clip_transcript_words_to_script_raw(words, excluded_ids=excluded)
+    if not script_raw.strip():
+        raise HTTPException(status_code=400, detail="no_script_for_ai_copy")
+
+    title_hint = str(row.get("title") or "").strip()[:300]
+    api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
+
+    if notes_only:
+        if not user_prompt:
+            raise HTTPException(status_code=400, detail="user_prompt_required")
+        try:
+            pack = refine_share_show_notes_with_prompt(
+                script_raw=script_raw,
+                user_source_text="",
+                chapter_timeline_hint="",
+                baseline_show_notes=baseline_show_notes,
+                user_prompt=user_prompt,
+                api_key=api_key,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)[:200]) from exc
+        except Exception as exc:
+            logger.warning("clip_share_ai_copy refine failed project_id=%s err=%s", project_id, exc, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+    else:
+        try:
+            pack = generate_share_rss_ai_copy(
+                script_raw=script_raw,
+                user_source_text="",
+                episode_title_hint=title_hint,
+                chapter_timeline_hint="",
+                api_key=api_key,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)[:200]) from exc
+        except Exception as exc:
+            logger.warning("clip_share_ai_copy failed project_id=%s err=%s", project_id, exc, exc_info=True)
+            raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+
+    summary_out = str(pack.get("summary") or "").strip()
+    show_notes_out = str(pack.get("show_notes") or "").strip()
+    return {
+        "success": True,
+        "summary": summary_out,
+        "show_notes": show_notes_out,
+        "trace_id": pack.get("trace_id"),
+    }
 
 
 @router.patch("/clip/projects/{project_id}")

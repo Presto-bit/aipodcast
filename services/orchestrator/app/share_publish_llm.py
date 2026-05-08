@@ -98,6 +98,61 @@ def resolve_script_body_for_share(job_id: str, row: dict[str, Any]) -> str:
     return from_result or str(result.get("preview") or result.get("script_preview") or "").strip()
 
 
+def clip_transcript_words_to_script_raw(
+    words: list[dict[str, Any]],
+    *,
+    excluded_ids: frozenset[str] | None = None,
+) -> str:
+    """
+    将剪辑工程 transcript_normalized.words 转为口播稿风格文本（Speaker n: …），
+    与成片侧 resolve_script_body_for_share 得到的 script 一并走 condense_script_for_share_llm /
+    generate_share_rss_ai_copy，保证 Shownotes 生成规则一致。
+    """
+    ex = excluded_ids or frozenset()
+    lines_out: list[str] = []
+    parts: list[str] = []
+    cur_spk: int | None = None
+
+    def emit_line(spk: int, tokens: list[str]) -> None:
+        t = "".join(tokens).strip()
+        if t:
+            lines_out.append(f"Speaker {spk + 1}: {t}")
+
+    for w in words:
+        if not isinstance(w, dict):
+            continue
+        wid = str(w.get("id") or "").strip()
+        if wid and wid in ex:
+            continue
+        try:
+            spk = int(w.get("speaker") or 0)
+        except (TypeError, ValueError):
+            spk = 0
+        tok = f"{w.get('text') or ''}{w.get('punct') or ''}"
+        utt_new = bool(w.get("utt_new"))
+
+        if cur_spk is None:
+            cur_spk = spk
+
+        if utt_new and parts:
+            emit_line(cur_spk, parts)
+            parts = []
+            cur_spk = spk
+        elif spk != cur_spk:
+            if parts:
+                emit_line(cur_spk, parts)
+                parts = []
+            cur_spk = spk
+
+        if tok:
+            parts.append(tok)
+
+    if parts and cur_spk is not None:
+        emit_line(cur_spk, parts)
+
+    return "\n".join(lines_out).strip()
+
+
 def condense_script_for_share_llm(raw: str, max_chars: int = 14_000) -> str:
     """去掉对白行首标记，压缩空白，截断以控制 token。"""
     lines_out: list[str] = []

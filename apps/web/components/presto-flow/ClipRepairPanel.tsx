@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { type ReactNode, useCallback, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { ClipProjectRow } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";
 
@@ -51,6 +51,8 @@ type Props = {
   onRefreshProject: () => Promise<void>;
   onProjectUpdated: (p: ClipProjectRow) => void;
   onError: (msg: string) => void;
+  /** 稿面工具条：展开对应修音分区 */
+  toolbarFocus?: "ambient" | "dual_balance" | "loudness" | null;
 };
 
 export default function ClipRepairPanel({
@@ -60,7 +62,8 @@ export default function ClipRepairPanel({
   transcriptionStatus,
   onRefreshProject,
   onProjectUpdated,
-  onError
+  onError,
+  toolbarFocus = null
 }: Props) {
   const { t } = useI18n();
   const [busyKind, setBusyKind] = useState<"" | "ambient" | "loudnorm" | "dual_balance">("");
@@ -68,6 +71,13 @@ export default function ClipRepairPanel({
   const [ambientOpen, setAmbientOpen] = useState(false);
   const [dualBalanceOpen, setDualBalanceOpen] = useState(false);
   const [loudnessOpen, setLoudnessOpen] = useState(false);
+
+  useEffect(() => {
+    if (!toolbarFocus) return;
+    setAmbientOpen(toolbarFocus === "ambient");
+    setDualBalanceOpen(toolbarFocus === "dual_balance");
+    setLoudnessOpen(toolbarFocus === "loudness");
+  }, [toolbarFocus]);
   const busy = busyKind !== "";
   const blocked = transcriptionStatus === "running" || transcriptionStatus === "queued";
   const noAudio = !project.has_audio && !project.audio_download_url;

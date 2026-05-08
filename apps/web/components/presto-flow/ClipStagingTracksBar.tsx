@@ -1,10 +1,18 @@
 "use client";
 
-import { GripVertical, Plus } from "lucide-react";
+import { AudioWaveform, GripVertical, Plus } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { ClipAudioStagingEntry } from "../../lib/clipTypes";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import { useI18n } from "../../lib/I18nContext";
+
+function formatShortDuration(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return "—";
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
 
 type Props = {
   projectId: string;
@@ -13,6 +21,10 @@ type Props = {
   disabled: boolean;
   onRefresh: () => void | Promise<void>;
   onError: (msg: string) => void;
+  /** PRD 素材列表：小图标 + 估算单段时长 */
+  visualVariant?: "default" | "prd";
+  /** 与顺序对齐的每段展示时长（毫秒），无则显示 — */
+  approxDurationMsPerSegment?: number | null;
 };
 
 export default function ClipStagingTracksBar({
@@ -21,7 +33,9 @@ export default function ClipStagingTracksBar({
   getAuthHeaders,
   disabled,
   onRefresh,
-  onError
+  onError,
+  visualVariant = "default",
+  approxDurationMsPerSegment = null
 }: Props) {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -107,9 +121,11 @@ export default function ClipStagingTracksBar({
 
   const byKey = new Map(entries.map((e) => [e.key, e] as const));
 
+  const prd = visualVariant === "prd";
+
   return (
-    <div className="mb-2 rounded-lg border border-line/80 bg-fill/25 px-2 py-1.5">
-      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+    <div className={prd ? "rounded-lg border border-line/80 bg-fill/25 px-2 py-1.5" : "mb-2 rounded-lg border border-line/80 bg-fill/25 px-2 py-1.5"}>
+      <div className={prd ? "mb-1 flex flex-wrap items-center justify-between gap-2" : "mb-1 flex flex-wrap items-center justify-between gap-2"}>
         <p className="text-[10px] font-semibold text-ink">{t("presto.flow.clipStaging.title")}</p>
         <div className="flex items-center gap-1">
           <input
@@ -133,8 +149,8 @@ export default function ClipStagingTracksBar({
           </button>
         </div>
       </div>
-      <p className="mb-1.5 text-[9px] leading-snug text-muted">{t("presto.flow.clipStaging.hint")}</p>
-      <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+      {!prd ? <p className="mb-1.5 text-[9px] leading-snug text-muted">{t("presto.flow.clipStaging.hint")}</p> : null}
+      <ul className={prd ? "flex max-h-52 flex-col gap-1 overflow-y-auto" : "flex max-h-40 flex-col gap-1 overflow-y-auto"}>
         {order.map((key, idx) => {
           const meta = byKey.get(key);
           const label = meta?.filename || key.slice(-24);
@@ -159,9 +175,19 @@ export default function ClipStagingTracksBar({
               <span className="shrink-0 cursor-grab text-muted active:cursor-grabbing" title={t("presto.flow.clipStaging.dragTip")}>
                 <GripVertical className="h-3.5 w-3.5" aria-hidden />
               </span>
+              {prd ? (
+                <span className="flex shrink-0 items-center text-muted" title="音频">
+                  <AudioWaveform className="h-3.5 w-3.5" aria-hidden />
+                </span>
+              ) : null}
               <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-ink" title={key}>
                 {idx + 1}. {label}
               </span>
+              {prd ? (
+                <span className="shrink-0 font-mono text-[9px] tabular-nums text-muted">
+                  {formatShortDuration(approxDurationMsPerSegment)}
+                </span>
+              ) : null}
             </li>
           );
         })}

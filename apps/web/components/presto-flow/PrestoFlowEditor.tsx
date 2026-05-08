@@ -57,6 +57,10 @@ import VirtualizedTranscript, { type VirtualizedTranscriptHandle } from "./Virtu
 import WaveformSegmentEditor from "./WaveformSegmentEditor";
 import { useLoginRequiredAction } from "../../lib/useLoginRequiredAction";
 import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
+import { clipEditorUsesPrdLayout } from "../../lib/clipEditorPrdUi";
+import ClipEditorPrdLeftRail from "./ClipEditorPrdLeftRail";
+import ClipEditorPrdScriptToolbar from "./ClipEditorPrdScriptToolbar";
+import ClipEditorPrdTopBar from "./ClipEditorPrdTopBar";
 
 function isDualChannels(ch: unknown): boolean {
   return Array.isArray(ch) && ch.length >= 2;
@@ -181,6 +185,7 @@ function reorderWordsBySegments(words: readonly ClipWord[], segments: readonly E
 }
 
 export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
+  const usePrdLayout = clipEditorUsesPrdLayout();
   const { t } = useI18n();
   const { user, getAuthHeaders } = useAuth();
   const loggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
@@ -870,6 +875,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setLlmPhase("idle");
     autoStructuredSuggestionRequestedRef.current = false;
   }, [projectId]);
+
+  useEffect(() => {
+    if (usePrdLayout) setTranscriptFullscreen(false);
+  }, [usePrdLayout]);
 
   useEffect(() => {
     setDismissedRoughKeys(readRoughDismissedSet(projectId));
@@ -2380,6 +2389,136 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           ? t("presto.flow.drawer.tabSearch")
           : "变更历史";
 
+  const showTranscriptFullscreen = !usePrdLayout && transcriptFullscreen;
+
+  const roughCutDockProps = {
+    projectId,
+    project,
+    words,
+    excluded,
+    onMarkExcluded: markManyExcluded,
+    onMarkRestored: markManyRestored,
+    onProjectPatch: setProject,
+    getAuthHeaders,
+    onRefreshProject: load,
+    onError: (msg: string) => setErr(msg),
+    exemptCores: roughCutExemptSet,
+    silenceSegments,
+    onJumpWord: jumpToWordInTranscript,
+    onSeekPreviewMs: seekPreviewMs,
+    onRefreshSilences: loadSilenceSegments,
+    silenceCutKeys: silenceCutKeySet,
+    onToggleSilenceCut: (startMs: number, endMs: number) => {
+      void toggleSilenceCut(startMs, endMs);
+    },
+    onSetSilenceCapMs: (startMs: number, endMs: number, capMs: number) => {
+      void setSilenceCapMs(startMs, endMs, capMs);
+    },
+    roughCutSuggestions: roughPanelSuggestions,
+    onExecuteSuggestion,
+    dismissedRoughKeys,
+    onToggleDismissRoughKey: toggleDismissRoughKey,
+    outlineExpandBusy: llmPhase === "expand",
+    onExpandOutline: (src: ClipOutlineSource) => {
+      void loadDeepseekExpandOutline(src);
+    },
+    hasServerAudio,
+    wordchainPreviewActive: wordchainPreviewOn,
+    wordchainPreviewBusy,
+    onGenerateWordchainPreview: () => {
+      void generateWordchainPreview();
+    },
+    onExitWordchainPreview: () => setWordchainPreviewOn(false)
+  };
+
+  const approxSegmentDurationMs =
+    durationMs != null && audioStagingEntries.length > 0
+      ? Math.round(durationMs / audioStagingEntries.length)
+      : null;
+
+  const prdHistoryPanel = (
+    <section className="p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <button
+          type="button"
+          className="rounded border border-line px-2 py-0.5 text-[10px] text-muted hover:bg-fill disabled:opacity-40"
+          disabled={editUndoStackRef.current.length === 0}
+          onClick={() => undoExcluded()}
+        >
+          撤销
+        </button>
+        <button
+          type="button"
+          className="rounded border border-line px-2 py-0.5 text-[10px] text-muted hover:bg-fill disabled:opacity-40"
+          disabled={editRedoStackRef.current.length === 0}
+          onClick={() => redoExcluded()}
+        >
+          重做
+        </button>
+      </div>
+      {historyActions.length === 0 ? (
+        <p className="text-[11px] text-muted">暂无变更历史</p>
+      ) : (
+        <ul className="flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto">
+          {historyActions.map((it) => (
+            <li
+              key={it.id}
+              className={[
+                "rounded-lg border px-2 py-1.5 text-[10px] transition",
+                selectedHistoryId === it.id
+                  ? "border-brand/50 bg-brand/5"
+                  : "border-line/80 bg-surface/70 hover:bg-fill/40"
+              ].join(" ")}
+            >
+              <div className="mb-1 flex items-center gap-2">
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  onClick={() => setSelectedHistoryId((prev) => (prev === it.id ? null : it.id))}
+                >
+                  <span className="shrink-0 font-mono text-muted">{formatHistoryTime(it.at)}</span>
+                  <span className="min-w-0 flex-1 truncate text-ink">{it.label}</span>
+                </button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={it.seekMs == null}
+                  className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill disabled:opacity-40"
+                  onClick={() => {
+                    if (it.seekMs == null) return;
+                    seekPreviewMs(it.seekMs);
+                  }}
+                >
+                  回看定位
+                </button>
+                {selectedHistoryId === it.id ? (
+                  <button
+                    type="button"
+                    className="rounded border border-brand/40 px-1.5 py-0.5 text-brand hover:bg-brand/10"
+                    onClick={() => void restoreHistoryAction(it.id)}
+                  >
+                    恢复这一步
+                  </button>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+
+  const repairDockProps = {
+    projectId,
+    project,
+    getAuthHeaders,
+    transcriptionStatus: project.transcription_status,
+    onRefreshProject: load,
+    onProjectUpdated: setProject,
+    onError: (msg: string) => setErr(msg)
+  };
+
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       {loginPromptNode}
@@ -2455,119 +2594,170 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <PrestoFlowHeader
-              backHref="/clip"
-              backLabel={t("clip.backToList")}
-              title={project.title || projectId}
-              titleOverride={
-                projectTitleEditing ? (
-                  <input
-                    autoFocus
-                    type="text"
-                    value={projectTitleDraft}
-                    onChange={(e) => setProjectTitleDraft(e.target.value)}
-                    disabled={projectTitleBusy}
-                    maxLength={200}
-                    className="min-w-[16rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink"
-                    onBlur={() => {
-                      if (!projectTitleBusy) setProjectTitleEditing(false);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void saveProjectTitle();
-                      } else if (e.key === "Escape") {
-                        e.preventDefault();
-                        setProjectTitleEditing(false);
-                      }
-                    }}
-                  />
-                ) : (
-                  <h1
-                    className="min-w-0 truncate text-sm font-semibold text-ink sm:text-base"
-                    onDoubleClick={() => {
-                      setProjectTitleDraft(project.title || projectId);
-                      setProjectTitleEditing(true);
-                    }}
-                    title="双击重命名"
-                  >
-                    {project.title || projectId}
-                  </h1>
-                )
-              }
-              engineLabel={engineLabel}
-              engineState={engineState}
-              beforeTranscribe={
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    {clipToolsOpen ? (
-                      <WaveformSegmentEditor
-                        compact
-                        zoomLevel={waveZoomLevel}
-                        onZoomChange={(next) => {
-                          setWaveZoomLevel(next);
-                          waveformRef.current?.setZoom(next);
-                        }}
-                        onSplit={() => splitAtCursor("split")}
-                        onSplitLeft={() => splitAtCursor("left")}
-                        onSplitRight={() => splitAtCursor("right")}
-                        onUndo={undoSegmentEdit}
-                        undoDisabled={segmentUndoStackRef.current.length === 0}
-                        disabled={segmentEditLocked}
-                      />
-                    ) : null}
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
-                        onClick={() => setClipToolsOpen((v) => !v)}
-                      >
-                        <Scissors className="h-3.5 w-3.5" aria-hidden />
-                        <span>音频剪辑</span>
-                        <span className="text-muted">{clipToolsOpen ? "收起" : "展开"}</span>
-                      </button>
-                    </div>
-                    <PrestoFlowImportBar
-                      variant="inline"
-                      projectId={projectId}
-                      getAuthHeaders={getAuthHeaders}
-                      hasMainAudio={hasServerAudio}
-                      disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
-                      label={t("presto.flow.importAudio")}
-                      busyLabel={t("presto.flow.importBusy")}
-                      hint={t("presto.flow.importHint")}
-                      replaceWarn={t("presto.flow.importReplaceWarn")}
-                      onDone={() => void load()}
-                      onError={(msg) => setErr(msg)}
-                      allowMultiSegment={
-                        project.transcription_status !== "succeeded" &&
-                        project.transcription_status !== "running" &&
-                        project.transcription_status !== "queued"
-                      }
+            {usePrdLayout ? (
+              <ClipEditorPrdTopBar
+                title={
+                  projectTitleEditing ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={projectTitleDraft}
+                      onChange={(e) => setProjectTitleDraft(e.target.value)}
+                      disabled={projectTitleBusy}
+                      maxLength={200}
+                      className="min-w-[16rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink"
+                      onBlur={() => {
+                        if (!projectTitleBusy) setProjectTitleEditing(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void saveProjectTitle();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setProjectTitleEditing(false);
+                        }
+                      }}
                     />
+                  ) : (
+                    <h1
+                      className="min-w-0 truncate text-sm font-semibold text-ink sm:text-base"
+                      onDoubleClick={() => {
+                        setProjectTitleDraft(project.title || projectId);
+                        setProjectTitleEditing(true);
+                      }}
+                      title="双击重命名"
+                    >
+                      {project.title || projectId}
+                    </h1>
+                  )
+                }
+                currentMs={playbackMs}
+                totalMs={durationMs}
+                exportDisabled={
+                  actionBusy ||
+                  project.transcription_status !== "succeeded" ||
+                  project.export_status === "running" ||
+                  project.export_status === "queued"
+                }
+                exportLabel={t("clip.editor.export")}
+                onExport={() => openExportGate()}
+              />
+            ) : (
+              <PrestoFlowHeader
+                backHref="/clip"
+                backLabel={t("clip.backToList")}
+                title={project.title || projectId}
+                titleOverride={
+                  projectTitleEditing ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={projectTitleDraft}
+                      onChange={(e) => setProjectTitleDraft(e.target.value)}
+                      disabled={projectTitleBusy}
+                      maxLength={200}
+                      className="min-w-[16rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink"
+                      onBlur={() => {
+                        if (!projectTitleBusy) setProjectTitleEditing(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void saveProjectTitle();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setProjectTitleEditing(false);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <h1
+                      className="min-w-0 truncate text-sm font-semibold text-ink sm:text-base"
+                      onDoubleClick={() => {
+                        setProjectTitleDraft(project.title || projectId);
+                        setProjectTitleEditing(true);
+                      }}
+                      title="双击重命名"
+                    >
+                      {project.title || projectId}
+                    </h1>
+                  )
+                }
+                engineLabel={engineLabel}
+                engineState={engineState}
+                beforeTranscribe={
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      {clipToolsOpen ? (
+                        <WaveformSegmentEditor
+                          compact
+                          zoomLevel={waveZoomLevel}
+                          onZoomChange={(next) => {
+                            setWaveZoomLevel(next);
+                            waveformRef.current?.setZoom(next);
+                          }}
+                          onSplit={() => splitAtCursor("split")}
+                          onSplitLeft={() => splitAtCursor("left")}
+                          onSplitRight={() => splitAtCursor("right")}
+                          onUndo={undoSegmentEdit}
+                          undoDisabled={segmentUndoStackRef.current.length === 0}
+                          disabled={segmentEditLocked}
+                        />
+                      ) : null}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-soft hover:bg-fill"
+                          onClick={() => setClipToolsOpen((v) => !v)}
+                        >
+                          <Scissors className="h-3.5 w-3.5" aria-hidden />
+                          <span>音频剪辑</span>
+                          <span className="text-muted">{clipToolsOpen ? "收起" : "展开"}</span>
+                        </button>
+                      </div>
+                      <PrestoFlowImportBar
+                        variant="inline"
+                        projectId={projectId}
+                        getAuthHeaders={getAuthHeaders}
+                        hasMainAudio={hasServerAudio}
+                        disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
+                        label={t("presto.flow.importAudio")}
+                        busyLabel={t("presto.flow.importBusy")}
+                        hint={t("presto.flow.importHint")}
+                        replaceWarn={t("presto.flow.importReplaceWarn")}
+                        onDone={() => void load()}
+                        onError={(msg) => setErr(msg)}
+                        allowMultiSegment={
+                          project.transcription_status !== "succeeded" &&
+                          project.transcription_status !== "running" &&
+                          project.transcription_status !== "queued"
+                        }
+                      />
+                    </div>
                   </div>
-                </div>
-              }
-              transcribeLabel={t("clip.editor.transcribeShort")}
-              exportLabel={t("clip.editor.export")}
-              transcribeDisabled={
-                actionBusy ||
-                insertingSegmentAudio ||
-                !hasServerAudio ||
-                project.transcription_status === "running" ||
-                project.transcription_status === "queued" ||
-                (project.transcription_status === "succeeded" && pendingInsertedSegments.length === 0)
-              }
-              exportDisabled={
-                actionBusy ||
-                project.transcription_status !== "succeeded" ||
-                project.export_status === "running" ||
-                project.export_status === "queued"
-              }
-              onTranscribe={() => void startTranscribe()}
-              onExport={() => openExportGate()}
-            />
-            {dualInterview ? (
+                }
+                transcribeLabel={t("clip.editor.transcribeShort")}
+                exportLabel={t("clip.editor.export")}
+                transcribeDisabled={
+                  actionBusy ||
+                  insertingSegmentAudio ||
+                  !hasServerAudio ||
+                  project.transcription_status === "running" ||
+                  project.transcription_status === "queued" ||
+                  (project.transcription_status === "succeeded" && pendingInsertedSegments.length === 0)
+                }
+                exportDisabled={
+                  actionBusy ||
+                  project.transcription_status !== "succeeded" ||
+                  project.export_status === "running" ||
+                  project.export_status === "queued"
+                }
+                onTranscribe={() => void startTranscribe()}
+                onExport={() => openExportGate()}
+              />
+            )}
+            {!usePrdLayout && dualInterview ? (
               <p className="border-b border-line bg-fill/30 px-4 py-1.5 text-[11px] text-muted">{t("presto.flow.interviewDual")}</p>
             ) : null}
             {err ? (
@@ -2580,7 +2770,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
             ) : null}
             {project.export_error ? <p className="px-4 text-sm text-danger-ink">{project.export_error}</p> : null}
 
-            {transcriptFullscreen ? (
+            {showTranscriptFullscreen ? (
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 {selectionToolbar.visible ? (
                   <div
@@ -2765,7 +2955,13 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 </section>
               </div>
             ) : (
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-0 lg:flex-row lg:items-stretch">
+              <div
+                className={
+                  usePrdLayout
+                    ? "flex min-h-0 min-w-0 flex-1 flex-row overflow-hidden"
+                    : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-0 lg:flex-row lg:items-stretch"
+                }
+              >
                 {selectionToolbar.visible ? (
                   <div
                     ref={selectionToolbarRef}
@@ -2785,21 +2981,84 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     </div>
                   </div>
                 ) : null}
-                <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:min-w-0 lg:flex-[1.28]">
+                {usePrdLayout ? (
+                  <ClipEditorPrdLeftRail
+                    projectId={projectId}
+                    project={project}
+                    setProject={setProject}
+                    getAuthHeaders={getAuthHeaders}
+                    audioStagingEntries={audioStagingEntries}
+                    load={load}
+                    setErr={setErr}
+                    hasServerAudio={hasServerAudio}
+                    loggedIn={loggedIn}
+                    actionBusy={actionBusy}
+                    transcriptionActive={transcriptionActive}
+                    exportActive={exportActive}
+                    pendingInsertedSegments={pendingInsertedSegments.length}
+                    transcribeDisabled={
+                      actionBusy ||
+                      insertingSegmentAudio ||
+                      !hasServerAudio ||
+                      project.transcription_status === "running" ||
+                      project.transcription_status === "queued" ||
+                      (project.transcription_status === "succeeded" && pendingInsertedSegments.length === 0)
+                    }
+                    transcribeLabel={t("clip.editor.transcribeShort")}
+                    onTranscribe={() => void startTranscribe()}
+                    allowMultiSegmentImport={
+                      project.transcription_status !== "succeeded" &&
+                      project.transcription_status !== "running" &&
+                      project.transcription_status !== "queued"
+                    }
+                    approxSegmentDurationMs={approxSegmentDurationMs}
+                  />
+                ) : null}
+                <div
+                  className={
+                    usePrdLayout
+                      ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                      : "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:min-w-0 lg:flex-[1.28]"
+                  }
+                >
+                  {usePrdLayout ? (
+                    <ClipEditorPrdScriptToolbar
+                      scriptSearch={scriptSearch}
+                      onScriptSearch={setScriptSearch}
+                      scriptSearchInputRef={scriptSearchInputRef}
+                      words={words}
+                      lines={lines}
+                      excluded={excluded}
+                      onNavigateSearchHit={navigateScriptSearchHit}
+                      activeSearchHighlightWordId={activeSearchHighlightWordId}
+                      onSelectAllSearchHits={selectAllScriptSearchHits}
+                      searchAllHitsSelected={searchAllHitsSelected}
+                      allSearchHitsHighlighted={allSearchHitsHighlighted}
+                      onDeleteAllSearchHits={deleteAllScriptSearchHits}
+                      verbalPanel={<ClipRoughCutPanel {...roughCutDockProps} toolbarFocus="verbal" />}
+                      pausePanel={<ClipRoughCutPanel {...roughCutDockProps} toolbarFocus="pause" />}
+                      historyPanel={prdHistoryPanel}
+                      repairAmbientPanel={<ClipRepairPanel {...repairDockProps} toolbarFocus="ambient" />}
+                      repairVoicePanel={<ClipRepairPanel {...repairDockProps} toolbarFocus="dual_balance" />}
+                      repairLoudnessPanel={<ClipRepairPanel {...repairDockProps} toolbarFocus="loudness" />}
+                    />
+                  ) : null}
                   <section
                     aria-label={t("presto.flow.region.script")}
                     className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-b border-line bg-surface/20"
                   >
                     <div className="shrink-0 border-b border-line bg-fill/15 px-2 py-2">
-                      <ClipStagingTracksBar
-                        projectId={projectId}
-                        entries={audioStagingEntries}
-                        getAuthHeaders={getAuthHeaders}
-                        disabled={actionBusy || transcriptionActive || exportActive}
-                        onRefresh={() => void load()}
-                        onError={(msg) => setErr(msg)}
-                      />
-                      {wordchainPreviewOn ? (
+                      {!usePrdLayout ? (
+                        <ClipStagingTracksBar
+                          projectId={projectId}
+                          entries={audioStagingEntries}
+                          getAuthHeaders={getAuthHeaders}
+                          disabled={actionBusy || transcriptionActive || exportActive}
+                          onRefresh={() => void load()}
+                          onError={(msg) => setErr(msg)}
+                        />
+                      ) : null}
+                      {!usePrdLayout && wordchainPreviewOn ? (
                         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand/25 bg-brand/10 px-2.5 py-1.5 text-[10px] text-ink">
                           <span className="min-w-0 flex-1 leading-snug">{t("presto.flow.roughCut.wordchainPreviewBanner")}</span>
                           <button
@@ -2814,21 +3073,23 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       <div className="mb-2 h-[69px] overflow-hidden rounded-lg border border-line bg-track/40">
                         {waveformAudioUrl ? (
                           <div className="group relative h-full w-full">
-                            <button
-                              type="button"
-                              className="absolute left-0 top-0 z-[3] h-full w-5 -translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
-                              aria-label="在开头插入音频"
-                              title="在开头插入音频"
-                              disabled={segmentEditLocked}
-                              onClick={() => {
-                                insertBoundaryIndexRef.current = 0;
-                                insertAudioInputRef.current?.click();
-                              }}
-                            >
-                              <span className="absolute left-1/2 top-1/2 inline-flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground">
-                                +
-                              </span>
-                            </button>
+                            {!usePrdLayout ? (
+                              <button
+                                type="button"
+                                className="absolute left-0 top-0 z-[3] h-full w-5 -translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
+                                aria-label="在开头插入音频"
+                                title="在开头插入音频"
+                                disabled={segmentEditLocked}
+                                onClick={() => {
+                                  insertBoundaryIndexRef.current = 0;
+                                  insertAudioInputRef.current?.click();
+                                }}
+                              >
+                                <span className="absolute left-1/2 top-1/2 inline-flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground">
+                                  +
+                                </span>
+                              </button>
+                            ) : null}
                             <ClipWaveformPanel
                               ref={waveformRef}
                               variant="panel"
@@ -2841,74 +3102,78 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                               zoomLevel={waveZoomLevel}
                               className="!border-0 !bg-transparent"
                             />
-                            <div className="pointer-events-none absolute inset-0 z-[2]">
-                              {timelineSegments.map(({ seg, idx, leftPct, widthPct }) => (
+                            {!usePrdLayout ? (
+                              <>
+                                <div className="pointer-events-none absolute inset-0 z-[2]">
+                                  {timelineSegments.map(({ seg, idx, leftPct, widthPct }) => (
+                                    <button
+                                      key={`seg-overlay-${seg.id}`}
+                                      type="button"
+                                      draggable={!segmentEditLocked}
+                                      onDragStart={() => setDragSegmentId(seg.id)}
+                                      onDragEnd={() => setDragSegmentId(null)}
+                                      onDragOver={(e) => e.preventDefault()}
+                                      onDrop={(e) => {
+                                        e.preventDefault();
+                                        if (!dragSegmentId) return;
+                                        reorderAudioSegment(dragSegmentId, idx);
+                                        setDragSegmentId(null);
+                                      }}
+                                      onClick={(e) => {
+                                        const el = e.currentTarget;
+                                        const rect = el.getBoundingClientRect();
+                                        const ratio = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0;
+                                        const clamped = Math.max(0, Math.min(1, ratio));
+                                        const seekMs = seg.startMs + (seg.endMs - seg.startMs) * clamped;
+                                        focusSegment(seg.id, seekMs);
+                                      }}
+                                      onDoubleClick={() => focusSegment(seg.id)}
+                                      className={[
+                                        "pointer-events-auto absolute top-[6px] h-[56px] rounded-md border transition",
+                                        selectedSegmentId === seg.id
+                                          ? "border-brand bg-brand/20 shadow-[0_0_0_1px_rgba(99,102,241,0.45)]"
+                                          : "border-line/70 bg-slate-300/10 hover:bg-slate-300/20",
+                                        dragSegmentId === seg.id ? "opacity-70" : ""
+                                      ].join(" ")}
+                                      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                                      title="单击选中定位；双击高亮该音频段；拖拽可重排"
+                                    />
+                                  ))}
+                                </div>
+                                {middleInsertBoundaries.map((b) => (
+                                  <button
+                                    key={`mid-insert-${b.index}`}
+                                    type="button"
+                                    className="absolute top-1/2 z-[4] h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-brand/60 bg-brand/95 text-[10px] leading-none text-brand-foreground shadow-soft opacity-0 transition group-hover:opacity-90 hover:opacity-100 focus-visible:opacity-100 pointer-events-none group-hover:pointer-events-auto focus-visible:pointer-events-auto disabled:pointer-events-none disabled:opacity-30"
+                                    style={{ left: `${b.leftPct}%` }}
+                                    aria-label={`在第 ${b.index} 处衔接插入音频`}
+                                    title={`在第 ${b.index} 处衔接插入音频`}
+                                    disabled={segmentEditLocked}
+                                    onClick={() => {
+                                      insertBoundaryIndexRef.current = b.index;
+                                      insertAudioInputRef.current?.click();
+                                    }}
+                                  >
+                                    +
+                                  </button>
+                                ))}
                                 <button
-                                  key={`seg-overlay-${seg.id}`}
                                   type="button"
-                                  draggable={!segmentEditLocked}
-                                  onDragStart={() => setDragSegmentId(seg.id)}
-                                  onDragEnd={() => setDragSegmentId(null)}
-                                  onDragOver={(e) => e.preventDefault()}
-                                  onDrop={(e) => {
-                                    e.preventDefault();
-                                    if (!dragSegmentId) return;
-                                    reorderAudioSegment(dragSegmentId, idx);
-                                    setDragSegmentId(null);
+                                  className="absolute right-0 top-0 z-[3] h-full w-5 translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
+                                  aria-label="在结尾插入音频"
+                                  title="在结尾插入音频"
+                                  disabled={segmentEditLocked}
+                                  onClick={() => {
+                                    insertBoundaryIndexRef.current = audioSegments.length;
+                                    insertAudioInputRef.current?.click();
                                   }}
-                                  onClick={(e) => {
-                                    const el = e.currentTarget;
-                                    const rect = el.getBoundingClientRect();
-                                    const ratio = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0;
-                                    const clamped = Math.max(0, Math.min(1, ratio));
-                                    const seekMs = seg.startMs + (seg.endMs - seg.startMs) * clamped;
-                                    focusSegment(seg.id, seekMs);
-                                  }}
-                                  onDoubleClick={() => focusSegment(seg.id)}
-                                  className={[
-                                    "pointer-events-auto absolute top-[6px] h-[56px] rounded-md border transition",
-                                    selectedSegmentId === seg.id
-                                      ? "border-brand bg-brand/20 shadow-[0_0_0_1px_rgba(99,102,241,0.45)]"
-                                      : "border-line/70 bg-slate-300/10 hover:bg-slate-300/20",
-                                    dragSegmentId === seg.id ? "opacity-70" : ""
-                                  ].join(" ")}
-                                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                                  title="单击选中定位；双击高亮该音频段；拖拽可重排"
-                                />
-                              ))}
-                            </div>
-                            {middleInsertBoundaries.map((b) => (
-                              <button
-                                key={`mid-insert-${b.index}`}
-                                type="button"
-                                className="absolute top-1/2 z-[4] h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-brand/60 bg-brand/95 text-[10px] leading-none text-brand-foreground shadow-soft opacity-0 transition group-hover:opacity-90 hover:opacity-100 focus-visible:opacity-100 pointer-events-none group-hover:pointer-events-auto focus-visible:pointer-events-auto disabled:pointer-events-none disabled:opacity-30"
-                                style={{ left: `${b.leftPct}%` }}
-                                aria-label={`在第 ${b.index} 处衔接插入音频`}
-                                title={`在第 ${b.index} 处衔接插入音频`}
-                                disabled={segmentEditLocked}
-                                onClick={() => {
-                                  insertBoundaryIndexRef.current = b.index;
-                                  insertAudioInputRef.current?.click();
-                                }}
-                              >
-                                +
-                              </button>
-                            ))}
-                            <button
-                              type="button"
-                              className="absolute right-0 top-0 z-[3] h-full w-5 translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
-                              aria-label="在结尾插入音频"
-                              title="在结尾插入音频"
-                              disabled={segmentEditLocked}
-                              onClick={() => {
-                                insertBoundaryIndexRef.current = audioSegments.length;
-                                insertAudioInputRef.current?.click();
-                              }}
-                            >
-                              <span className="absolute left-1/2 top-1/2 inline-flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground">
-                                +
-                              </span>
-                            </button>
+                                >
+                                  <span className="absolute left-1/2 top-1/2 inline-flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground">
+                                    +
+                                  </span>
+                                </button>
+                              </>
+                            ) : null}
                           </div>
                         ) : (
                           <div className="flex h-full items-center justify-center text-[10px] text-muted">—</div>
@@ -2949,88 +3214,96 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                               ) : null}
                             </div>
                           ) : null}
-                          <div className="mb-1 flex flex-wrap items-center justify-end gap-1 text-[10px]">
-                            <span className="text-muted">说话人</span>
-                            {[...new Set(lines.map((l) => l.speaker))].map((spk) => {
-                              const active = speakerFocusSet.size === 0 || speakerFocusSet.has(spk);
-                              const label = speakerNames[spk] || (spk === 0 ? t("presto.flow.speakerHost") : spk === 1 ? t("presto.flow.speakerGuest") : `S${spk + 1}`);
-                              return (
-                                <button
-                                  key={`spk-b-${spk}`}
-                                  type="button"
-                                  className={[
-                                    "rounded border px-1.5 py-0.5",
-                                    active ? "border-brand/50 text-brand" : "border-line text-muted hover:bg-fill"
-                                  ].join(" ")}
-                                  onClick={() =>
-                                    setSpeakerFocusSet((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(spk)) next.delete(spk);
-                                      else next.add(spk);
-                                      return next;
-                                    })
-                                  }
-                                >
-                                  {label}
-                                </button>
-                              );
-                            })}
-                            {speakerFocusSet.size > 0 ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className={[
-                                    "rounded border px-1.5 py-0.5",
-                                    onlySelectedSpeakers ? "border-brand/50 text-brand" : "border-line text-muted hover:bg-fill"
-                                  ].join(" ")}
-                                  onClick={() => setOnlySelectedSpeakers((v) => !v)}
-                                >
-                                  只看已选说话人
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
-                                  onClick={() => markManyExcluded(focusedSpeakerWordIds)}
-                                >
-                                  仅删当前说话人
-                                </button>
-                                <button
-                                  type="button"
-                                  className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
-                                  onClick={() => markManyRestored(focusedSpeakerExcludedIds)}
-                                >
-                                  仅恢复当前说话人
-                                </button>
-                              </>
-                            ) : null}
-                          </div>
+                          {!usePrdLayout ? (
+                            <div className="mb-1 flex flex-wrap items-center justify-end gap-1 text-[10px]">
+                              <span className="text-muted">说话人</span>
+                              {[...new Set(lines.map((l) => l.speaker))].map((spk) => {
+                                const active = speakerFocusSet.size === 0 || speakerFocusSet.has(spk);
+                                const label =
+                                  speakerNames[spk] ||
+                                  (spk === 0 ? t("presto.flow.speakerHost") : spk === 1 ? t("presto.flow.speakerGuest") : `S${spk + 1}`);
+                                return (
+                                  <button
+                                    key={`spk-b-${spk}`}
+                                    type="button"
+                                    className={[
+                                      "rounded border px-1.5 py-0.5",
+                                      active ? "border-brand/50 text-brand" : "border-line text-muted hover:bg-fill"
+                                    ].join(" ")}
+                                    onClick={() =>
+                                      setSpeakerFocusSet((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(spk)) next.delete(spk);
+                                        else next.add(spk);
+                                        return next;
+                                      })
+                                    }
+                                  >
+                                    {label}
+                                  </button>
+                                );
+                              })}
+                              {speakerFocusSet.size > 0 ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className={[
+                                      "rounded border px-1.5 py-0.5",
+                                      onlySelectedSpeakers ? "border-brand/50 text-brand" : "border-line text-muted hover:bg-fill"
+                                    ].join(" ")}
+                                    onClick={() => setOnlySelectedSpeakers((v) => !v)}
+                                  >
+                                    只看已选说话人
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
+                                    onClick={() => markManyExcluded(focusedSpeakerWordIds)}
+                                  >
+                                    仅删当前说话人
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill"
+                                    onClick={() => markManyRestored(focusedSpeakerExcludedIds)}
+                                  >
+                                    仅恢复当前说话人
+                                  </button>
+                                </>
+                              ) : null}
+                            </div>
+                          ) : null}
                           {deleteFeedback ? (
                             <p className="shrink-0 text-[10px] font-semibold text-brand">{deleteFeedback}</p>
                           ) : null}
                           {actionHint ? <p className="shrink-0 text-[10px] font-semibold text-emerald-600">{actionHint}</p> : null}
                         </div>
-                        <button
-                          type="button"
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:bg-fill hover:text-ink"
-                          aria-label="快捷键与交互说明"
-                          title="快捷键与交互说明"
-                          onClick={() => setShortcutHelpOpen(true)}
-                        >
-                          <CircleHelp className="h-4 w-4" aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:bg-fill hover:text-ink"
-                          aria-label={transcriptFullscreen ? t("presto.flow.exitFullscreen") : t("presto.flow.enterFullscreen")}
-                          title={transcriptFullscreen ? t("presto.flow.exitFullscreen") : t("presto.flow.enterFullscreen")}
-                          onClick={() => setTranscriptFullscreen(!transcriptFullscreen)}
-                        >
-                          {transcriptFullscreen ? (
-                            <Minimize2 className="h-4 w-4" aria-hidden />
-                          ) : (
-                            <Maximize2 className="h-4 w-4" aria-hidden />
-                          )}
-                        </button>
+                        {!usePrdLayout ? (
+                          <>
+                            <button
+                              type="button"
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:bg-fill hover:text-ink"
+                              aria-label="快捷键与交互说明"
+                              title="快捷键与交互说明"
+                              onClick={() => setShortcutHelpOpen(true)}
+                            >
+                              <CircleHelp className="h-4 w-4" aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-muted transition hover:bg-fill hover:text-ink"
+                              aria-label={transcriptFullscreen ? t("presto.flow.exitFullscreen") : t("presto.flow.enterFullscreen")}
+                              title={transcriptFullscreen ? t("presto.flow.exitFullscreen") : t("presto.flow.enterFullscreen")}
+                              onClick={() => setTranscriptFullscreen(!transcriptFullscreen)}
+                            >
+                              {transcriptFullscreen ? (
+                                <Minimize2 className="h-4 w-4" aria-hidden />
+                              ) : (
+                                <Maximize2 className="h-4 w-4" aria-hidden />
+                              )}
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                       {transcriptionActive && words.length === 0 ? (
                         <div className="mb-2 shrink-0 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-xs text-warning-ink">
@@ -3089,6 +3362,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     </div>
                   </section>
                 </div>
+                {!usePrdLayout ? (
                 <aside
                   className="flex min-h-0 w-auto shrink-0 border-l border-line bg-surface/95 text-ink lg:flex-none"
                   aria-label={t("presto.flow.sideDock")}
@@ -3305,6 +3579,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     </div>
                   ) : null}
                 </aside>
+                ) : null}
               </div>
             )}
           </div>

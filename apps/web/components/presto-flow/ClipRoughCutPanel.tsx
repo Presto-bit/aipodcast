@@ -107,6 +107,8 @@ type Props = {
   wordchainPreviewBusy?: boolean;
   onGenerateWordchainPreview?: () => void | Promise<void>;
   onExitWordchainPreview?: () => void;
+  /** 稿面工具条下拉：优先展开口癖区或停顿区 */
+  toolbarFocus?: "verbal" | "pause" | null;
 };
 
 function iconBtnClass(disabled?: boolean) {
@@ -145,7 +147,8 @@ export default function ClipRoughCutPanel({
   wordchainPreviewActive = false,
   wordchainPreviewBusy = false,
   onGenerateWordchainPreview,
-  onExitWordchainPreview
+  onExitWordchainPreview,
+  toolbarFocus = null
 }: Props) {
   const { t } = useI18n();
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -158,6 +161,17 @@ export default function ClipRoughCutPanel({
   const [pauseSectionOpen, setPauseSectionOpen] = useState(false);
   /** 口癖行 / 建议行：重复点击同一行时按转写顺序轮换跳转的词 */
   const verbalJumpCycleRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    if (!toolbarFocus) return;
+    if (toolbarFocus === "verbal") {
+      setVerbalAdjustOpen(true);
+      setPauseSectionOpen(false);
+    } else {
+      setPauseSectionOpen(true);
+      setVerbalAdjustOpen(false);
+    }
+  }, [toolbarFocus]);
 
   useEffect(() => {
     verbalJumpCycleRef.current = {};

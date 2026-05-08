@@ -50,12 +50,9 @@ import { WorkHubOverviewPanel, type WorkHubDetailTab } from "./WorkHubOverviewPa
 import { WorkHubShownotesSection } from "./WorkHubShownotesSection";
 import { RssChannelEditor } from "../rss/RssChannelEditor";
 import { downloadJobBundleZip, downloadJobManuscriptTxt } from "../../lib/workBundleDownload";
+import { SHARE_SHOWNOTES_REFINE_PROMPT_PLACEHOLDER as AI_SHOWNOTES_PROMPT_PLACEHOLDER } from "../../lib/shareShownotesAiPrompt";
 
 const RSS_LAST_CHANNEL_STORAGE_KEY = "fym_rss_last_channel_id";
-
-const AI_SHOWNOTES_HINT_LINE_A = "时间戳数量限制在 10 个以内";
-const AI_SHOWNOTES_HINT_LINE_B = "风格改为二次元解说口吻（轻松有梗、少用书面语）";
-const AI_SHOWNOTES_PROMPT_PLACEHOLDER = `a）${AI_SHOWNOTES_HINT_LINE_A}\nb）${AI_SHOWNOTES_HINT_LINE_B}`;
 
 function IconShareClipboard({ className }: { className?: string }) {
   return (
