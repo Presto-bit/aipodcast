@@ -1,14 +1,12 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, History } from "lucide-react";
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { ClipWord } from "../../lib/clipTypes";
 import type { SpeakerLine } from "../../lib/prestoFlowTranscript";
 import FloatingPopover from "../ui/FloatingPopover";
 import ClipRoughCutPanel from "./ClipRoughCutPanel";
 import ClipScriptSearchPanel from "./ClipScriptSearchPanel";
-
-export type PrdToolbarMenu = null | "history";
 
 type RoughSheetProps = ComponentProps<typeof ClipRoughCutPanel>;
 
@@ -34,10 +32,12 @@ type Props = {
   repairBusyKind: "" | "ambient" | "voice_clarity" | "loudnorm";
 };
 
-function repairBtnClass(selected: boolean) {
+function repairBtnClass(disabled: boolean) {
   return [
-    "shrink-0 rounded-lg border px-2 py-1 text-[11px] font-medium shadow-soft transition disabled:opacity-45",
-    selected ? "border-brand/60 bg-brand/15 text-brand" : "border-line bg-surface text-ink hover:bg-fill"
+    "shrink-0 rounded-lg border px-2 py-1 text-[11px] font-medium shadow-soft transition",
+    disabled
+      ? "cursor-not-allowed border-line bg-fill/45 text-muted opacity-55"
+      : "border-line bg-surface text-ink hover:bg-fill"
   ].join(" ");
 }
 
@@ -62,64 +62,38 @@ export default function ClipEditorPrdScriptToolbar({
   onRepairLoudnorm,
   repairBusyKind
 }: Props) {
-  const [open, setOpen] = useState<PrdToolbarMenu>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [prdSheet, setPrdSheet] = useState<null | "verbal" | "pause">(null);
-  const [repairPick, setRepairPick] = useState<null | "ambient" | "voice_clarity" | "loudnorm">(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const verbalBtnRef = useRef<HTMLButtonElement | null>(null);
   const pauseBtnRef = useRef<HTMLButtonElement | null>(null);
+  const historyBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    if (!open && !prdSheet) return;
+    if (!historyOpen && !prdSheet) return;
     const onDoc = (e: MouseEvent) => {
       const el = rootRef.current;
       if (!el || !(e.target instanceof Node)) return;
       if (e.target instanceof Element && e.target.closest("[data-floating-panel]")) return;
       if (!el.contains(e.target)) {
-        setOpen(null);
+        setHistoryOpen(false);
         setPrdSheet(null);
       }
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [open, prdSheet]);
-
-  const btn = (id: Exclude<PrdToolbarMenu, null>, label: string) => {
-    const active = open === id;
-    return (
-      <div className="relative shrink-0">
-        <button
-          type="button"
-          onClick={() => setOpen((p) => (p === id ? null : id))}
-          className={[
-            "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition",
-            active ? "border-brand/50 bg-brand/10 text-brand" : "border-line bg-surface text-ink hover:bg-fill"
-          ].join(" ")}
-        >
-          {label}
-          <ChevronDown className={["h-3 w-3 opacity-70 transition", active ? "rotate-180" : ""].join(" ")} aria-hidden />
-        </button>
-        {active ? (
-          <div className="absolute left-0 top-[calc(100%+4px)] z-[200] w-[min(22rem,calc(100vw-2rem)))] max-h-[min(70vh,28rem)] overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-soft">
-            {historyPanel}
-          </div>
-        ) : null}
-      </div>
-    );
-  };
+  }, [historyOpen, prdSheet]);
 
   const repairBusy = repairBusyKind !== "";
 
   const roughCutFloatingClass =
     "z-[12000] w-[min(36rem,calc(100vw-1.5rem))] overflow-y-auto overflow-x-hidden rounded-lg border border-line bg-surface p-0 shadow-lg";
 
+  const historyPopoverClass =
+    "z-[12000] w-[min(44rem,calc(100vw-1.25rem))] max-h-[min(72vh,32rem)] overflow-y-auto overflow-x-hidden rounded-xl border border-line bg-surface p-0 shadow-lg";
+
   const handleRepair = async (kind: "ambient" | "voice_clarity" | "loudnorm", run: () => void | Promise<void>) => {
     if (repairBusy) return;
-    if (repairPick === kind) {
-      setRepairPick(null);
-      return;
-    }
-    setRepairPick(kind);
     await run();
   };
 
@@ -146,7 +120,10 @@ export default function ClipEditorPrdScriptToolbar({
           <button
             ref={verbalBtnRef}
             type="button"
-            onClick={() => setPrdSheet((p) => (p === "verbal" ? null : "verbal"))}
+            onClick={() => {
+              setHistoryOpen(false);
+              setPrdSheet((p) => (p === "verbal" ? null : "verbal"));
+            }}
             className={[
               "rounded-lg border px-2 py-1 text-[11px] font-medium shadow-sm transition",
               prdSheet === "verbal" ? "border-brand/55 bg-brand/12 text-brand" : "border-line bg-surface text-ink hover:bg-fill"
@@ -170,7 +147,10 @@ export default function ClipEditorPrdScriptToolbar({
           <button
             ref={pauseBtnRef}
             type="button"
-            onClick={() => setPrdSheet((p) => (p === "pause" ? null : "pause"))}
+            onClick={() => {
+              setHistoryOpen(false);
+              setPrdSheet((p) => (p === "pause" ? null : "pause"));
+            }}
             className={[
               "rounded-lg border px-2 py-1 text-[11px] font-medium shadow-sm transition",
               prdSheet === "pause" ? "border-brand/55 bg-brand/12 text-brand" : "border-line bg-surface text-ink hover:bg-fill"
@@ -191,32 +171,60 @@ export default function ClipEditorPrdScriptToolbar({
           </FloatingPopover>
         </div>
         <div className="mx-0.5 h-4 w-px shrink-0 bg-line/80" aria-hidden />
-        {btn("history", "变更历史")}
+        <div className="relative shrink-0">
+          <button
+            ref={historyBtnRef}
+            type="button"
+            aria-label="变更历史"
+            title="变更历史"
+            onClick={() => {
+              setPrdSheet(null);
+              setHistoryOpen((o) => !o);
+            }}
+            className={[
+              "inline-flex h-8 w-8 items-center justify-center rounded-lg border text-[11px] font-medium transition",
+              historyOpen ? "border-brand/50 bg-brand/10 text-brand" : "border-line bg-surface text-ink hover:bg-fill"
+            ].join(" ")}
+          >
+            <History className="h-4 w-4" aria-hidden />
+          </button>
+          <FloatingPopover
+            open={historyOpen}
+            anchorEl={historyBtnRef.current}
+            isMobile={false}
+            mobileClassName=""
+            desktopClassName={historyPopoverClass}
+            ariaLabel="变更历史"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {historyPanel}
+          </FloatingPopover>
+        </div>
         <div className="mx-0.5 h-4 w-px shrink-0 bg-line/80" aria-hidden />
         <span className="shrink-0 text-[10px] text-muted">音频处理</span>
         <button
           type="button"
           disabled={repairBusy}
-          className={repairBtnClass(repairPick === "ambient")}
+          className={repairBtnClass(repairBusy)}
           onClick={() => void handleRepair("ambient", onRepairAmbient)}
         >
-          {repairBusyKind === "ambient" ? "…" : "降噪"}
+          降噪
         </button>
         <button
           type="button"
           disabled={repairBusy}
-          className={repairBtnClass(repairPick === "voice_clarity")}
+          className={repairBtnClass(repairBusy)}
           onClick={() => void handleRepair("voice_clarity", onRepairVoiceClarity)}
         >
-          {repairBusyKind === "voice_clarity" ? "…" : "人声美化"}
+          人声美化
         </button>
         <button
           type="button"
           disabled={repairBusy}
-          className={repairBtnClass(repairPick === "loudnorm")}
+          className={repairBtnClass(repairBusy)}
           onClick={() => void handleRepair("loudnorm", onRepairLoudnorm)}
         >
-          {repairBusyKind === "loudnorm" ? "…" : "响度统一"}
+          响度统一
         </button>
       </div>
     </div>

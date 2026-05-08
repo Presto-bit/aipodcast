@@ -183,9 +183,9 @@ export default function ClipRoughCutPanel({
   /** 口癖调整 / 缩短停顿：侧栏分区默认折叠 */
   const [verbalAdjustOpen, setVerbalAdjustOpen] = useState(false);
   const [pauseSectionOpen, setPauseSectionOpen] = useState(false);
-  /** 识别停顿弹层：最短停顿时长（毫秒）与输入框草稿 */
+  /** 识别停顿弹层：最短停顿时长（毫秒）与输入框草稿（秒） */
   const [pauseFilterMs, setPauseFilterMs] = useState(2500);
-  const [pauseMinMsDraft, setPauseMinMsDraft] = useState("2500");
+  const [pauseMinSecDraft, setPauseMinSecDraft] = useState("2.5");
   /** 口癖行 / 建议行：重复点击同一行时按转写顺序轮换跳转的词 */
   const verbalJumpCycleRef = useRef<Record<string, number>>({});
 
@@ -211,7 +211,8 @@ export default function ClipRoughCutPanel({
 
   useEffect(() => {
     setPauseFilterMs(longGapMs);
-    setPauseMinMsDraft(String(longGapMs));
+    const s = longGapMs / 1000;
+    setPauseMinSecDraft(Number.isInteger(s) ? String(s) : String(Math.round(s * 10) / 10));
   }, [longGapMs]);
 
   const longSilenceRows = useMemo(() => {
@@ -434,7 +435,7 @@ export default function ClipRoughCutPanel({
               );
             })}
             {!ticAggRows.length && !roughCutSuggestions.length ? (
-              <span className="text-[10px] text-muted">{t("presto.flow.roughCut.unifiedEmpty")}</span>
+              <span className="text-[10px] text-muted">{t("presto.flow.roughCut.verbalSheetEmpty")}</span>
             ) : null}
           </div>
         </div>
@@ -484,7 +485,9 @@ export default function ClipRoughCutPanel({
     };
 
     const applyPauseMinQuery = () => {
-      const n = Math.max(0, Math.floor(Number(pauseMinMsDraft.replace(/[^\d]/g, "")) || 0));
+      const raw = pauseMinSecDraft.replace(",", ".").trim();
+      const sec = Math.max(0, parseFloat(raw) || 0);
+      const n = Math.round(sec * 1000);
       setPauseFilterMs(n);
       const next = new Set<string>();
       for (const r of allSilenceGaps) {
@@ -496,20 +499,20 @@ export default function ClipRoughCutPanel({
     return (
       <div className="flex max-h-[min(52vh,22rem)] flex-col gap-2 overflow-y-auto p-2 text-ink">
         <div className="flex flex-wrap items-end gap-2">
-          <label className="flex min-w-[8rem] flex-1 flex-col gap-0.5 text-[10px] text-muted">
-            <span>最短停顿时长（ms）</span>
+          <label className="flex w-[5.25rem] shrink-0 flex-col gap-0.5 text-[10px] text-muted">
+            <span>最短停顿（s）</span>
             <input
               type="text"
-              inputMode="numeric"
-              value={pauseMinMsDraft}
-              onChange={(e) => setPauseMinMsDraft(e.target.value)}
+              inputMode="decimal"
+              value={pauseMinSecDraft}
+              onChange={(e) => setPauseMinSecDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
                   applyPauseMinQuery();
                 }
               }}
-              className="rounded-md border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink"
+              className="w-full rounded-md border border-line bg-surface px-1.5 py-1 font-mono text-[11px] text-ink"
             />
           </label>
           {onRefreshSilences ? (
@@ -523,10 +526,6 @@ export default function ClipRoughCutPanel({
             </button>
           ) : null}
         </div>
-        <p className="text-[9px] leading-snug text-muted">
-          回车：列出并选中时长 ≥ 输入值（ms）的停顿。导出压缩策略见侧栏「缩短停顿」（当前导出{pauseEnabled ? "开" : "关"}，参考阈值 {longGapMs}
-          ms）。
-        </p>
 
         <div>
           <span className={rowLabelCls}>长停顿</span>
@@ -561,7 +560,7 @@ export default function ClipRoughCutPanel({
               );
             })}
             {!visiblePauseRowsForSheet.length ? (
-              <span className="text-[10px] text-muted">{t("presto.flow.roughCut.pauseNoLongSilences")}</span>
+              <span className="text-[10px] text-muted">{t("presto.flow.roughCut.pauseSheetEmpty")}</span>
             ) : null}
           </div>
         </div>

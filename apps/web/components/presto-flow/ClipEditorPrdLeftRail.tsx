@@ -139,7 +139,8 @@ export default function ClipEditorPrdLeftRail({
     hasServerAudio && entries.length === 0
       ? {
           filename: String(project.audio_filename || "").trim() || "素材音频",
-          durationMs: mainAudioDurationMs
+          durationMs: mainAudioDurationMs,
+          playbackUrl: `/api/clip/projects/${encodeURIComponent(projectId)}/audio/file`
         }
       : null;
 

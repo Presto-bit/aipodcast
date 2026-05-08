@@ -310,6 +310,8 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
       "以下为检测到的长静音（≥ {ms} ms）。点击行可跳转稿面并试听静音结束附近；剪刀可启用/关闭导出侧「长静音→约 0.5s」策略；圆圈叉可隐藏本行（再点侧栏可恢复，或重新检测静音刷新列表）。",
     "presto.flow.roughCut.pauseRefreshSilences": "重新检测静音",
     "presto.flow.roughCut.pauseNoLongSilences": "当前阈值下无停顿，或尚未拉取静音数据。可调低「最短停顿时长」后回车再试，或点「刷新」。",
+    "presto.flow.roughCut.verbalSheetEmpty": "暂无口癖",
+    "presto.flow.roughCut.pauseSheetEmpty": "暂无",
     "presto.flow.roughCut.pausePreview": "试听",
     "presto.flow.roughCut.pauseAdvice":
       "操作建议：对过长且无信息量的停顿，可启用上方导出策略在成片侧压缩静音；需逐字精剪时仍在稿面删词。",
@@ -947,6 +949,8 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
       "Long silences detected (≥ {ms} ms). Click a row to jump in the transcript and preview near the end of the gap; scissors toggles export-side long-silence compression (~0.5s bridge); the dismiss control hides the row (show again from the sidebar or re-run detection to refresh).",
     "presto.flow.roughCut.pauseRefreshSilences": "Re-run silence detection",
     "presto.flow.roughCut.pauseNoLongSilences": "No pauses at this threshold, or silence data not loaded. Lower the minimum duration and press Enter, or tap Refresh.",
+    "presto.flow.roughCut.verbalSheetEmpty": "No fillers",
+    "presto.flow.roughCut.pauseSheetEmpty": "None",
     "presto.flow.roughCut.pausePreview": "Preview",
     "presto.flow.roughCut.pauseAdvice":
       "Tip: for dead air, enabling export shortening compresses gaps in the rendered MP3; for word-level edits, keep cutting on the transcript.",

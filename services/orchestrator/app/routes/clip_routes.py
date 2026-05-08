@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from .. import auth_bridge
@@ -140,6 +140,85 @@ def _source_segments_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(it, dict) and str(it.get("key") or "").strip():
             out.append(it)
     return out
+
+
+def _material_audio_keys_from_row(row: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for s in _source_segments_from_row(row):
+        k = str(s.get("key") or "").strip()
+        if k:
+            keys.add(k)
+    for s in _staging_entries_from_row(row):
+        k = str(s.get("key") or "").strip()
+        if k:
+            keys.add(k)
+    mk = str(row.get("audio_object_key") or "").strip()
+    if mk:
+        keys.add(mk)
+    return keys
+
+
+def _segment_filename_mime_for_key(row: dict[str, Any], object_key: str) -> tuple[str, str]:
+    for s in _source_segments_from_row(row) + _staging_entries_from_row(row):
+        if str(s.get("key") or "").strip() == object_key:
+            return (
+                str(s.get("filename") or "segment.mp3")[:500],
+                str(s.get("mime") or "application/octet-stream").strip()[:200],
+            )
+    return (
+        str(row.get("audio_filename") or "audio.mp3")[:500],
+        str(row.get("audio_mime") or "application/octet-stream").strip()[:200],
+    )
+
+
+def _clip_stream_audio_object(
+    request: Request,
+    *,
+    object_key: str,
+    filename_hint: str,
+    mime_raw: str,
+) -> StreamingResponse | Response:
+    media_type = _effective_audio_media_type(filename_hint, mime_raw)
+    try:
+        total = head_object_byte_length(object_key)
+    except Exception as exc:
+        logger.warning("clip audio head_object failed key_tail=%s err=%s", object_key[-48:], exc)
+        raise HTTPException(status_code=503, detail=f"读取音频元数据失败: {exc}") from exc
+    if total <= 0:
+        raise HTTPException(status_code=400, detail="音频长度为 0")
+
+    range_hdr = (request.headers.get("range") or request.headers.get("Range") or "").strip()
+    br = _parse_single_byte_range(range_hdr, total)
+    cache = "private, max-age=60"
+    if br:
+        start, end = br
+        if start >= total:
+            return Response(
+                status_code=416,
+                headers={"Content-Range": f"bytes */{total}"},
+            )
+        part_len = end - start + 1
+        return StreamingResponse(
+            iter_object_byte_range(object_key, start, end),
+            media_type=media_type,
+            status_code=206,
+            headers={
+                "Content-Length": str(part_len),
+                "Content-Range": f"bytes {start}-{end}/{total}",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": cache,
+            },
+        )
+
+    return StreamingResponse(
+        iter_object_chunks(object_key),
+        media_type=media_type,
+        headers={
+            "Content-Length": str(total),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": cache,
+        },
+    )
 
 
 def _material_segments_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -993,47 +1072,27 @@ def clip_get_project_audio_file(project_id: str, request: Request):
         raise HTTPException(status_code=404, detail="无音频")
     fn = str(row.get("audio_filename") or "")
     mime_raw = str(row.get("audio_mime") or "application/octet-stream").strip()[:200]
-    media_type = _effective_audio_media_type(fn, mime_raw)
-    try:
-        total = head_object_byte_length(key)
-    except Exception as exc:
-        logger.warning("clip audio head_object failed project_id=%s err=%s", project_id, exc)
-        raise HTTPException(status_code=503, detail=f"读取音频元数据失败: {exc}") from exc
-    if total <= 0:
-        raise HTTPException(status_code=400, detail="音频长度为 0")
+    return _clip_stream_audio_object(request, object_key=key, filename_hint=fn, mime_raw=mime_raw)
 
-    range_hdr = (request.headers.get("range") or request.headers.get("Range") or "").strip()
-    br = _parse_single_byte_range(range_hdr, total)
-    cache = "private, max-age=60"
-    if br:
-        start, end = br
-        if start >= total:
-            return Response(
-                status_code=416,
-                headers={"Content-Range": f"bytes */{total}"},
-            )
-        part_len = end - start + 1
-        return StreamingResponse(
-            iter_object_byte_range(key, start, end),
-            media_type=media_type,
-            status_code=206,
-            headers={
-                "Content-Length": str(part_len),
-                "Content-Range": f"bytes {start}-{end}/{total}",
-                "Accept-Ranges": "bytes",
-                "Cache-Control": cache,
-            },
-        )
 
-    return StreamingResponse(
-        iter_object_chunks(key),
-        media_type=media_type,
-        headers={
-            "Content-Length": str(total),
-            "Accept-Ranges": "bytes",
-            "Cache-Control": cache,
-        },
-    )
+@router.get("/clip/projects/{project_id}/audio/source-segment/file")
+def clip_get_source_segment_audio_file(
+    project_id: str,
+    request: Request,
+    object_key: str = Query("", description="分段素材 object_key，须属于当前工程"),
+):
+    """试听单段素材（与主音频同一鉴权与 Range 语义）。"""
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    qk = (object_key or "").strip()
+    if not qk:
+        raise HTTPException(status_code=400, detail="缺少 object_key")
+    if qk not in _material_audio_keys_from_row(row):
+        raise HTTPException(status_code=404, detail="无权访问该分段或 key 无效")
+    fn, mime_raw = _segment_filename_mime_for_key(row, qk)
+    return _clip_stream_audio_object(request, object_key=qk, filename_hint=fn, mime_raw=mime_raw)
 
 
 def _wordchain_preview_object_key(owner_seg: str, project_id: str) -> str:

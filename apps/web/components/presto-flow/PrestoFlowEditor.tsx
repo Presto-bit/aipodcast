@@ -2588,49 +2588,46 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       {historyActions.length === 0 ? (
         <p className="text-[11px] text-muted">暂无变更历史</p>
       ) : (
-        <ul className="flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto">
+        <ul className="flex max-h-[min(68vh,28rem)] flex-col gap-1 overflow-y-auto">
           {historyActions.map((it) => (
             <li
               key={it.id}
               className={[
-                "rounded-lg border px-2 py-1.5 text-[10px] transition",
+                "flex min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-[11px] transition",
                 selectedHistoryId === it.id
                   ? "border-brand/50 bg-brand/5"
                   : "border-line/80 bg-surface/70 hover:bg-fill/40"
               ].join(" ")}
             >
-              <div className="mb-1 flex items-center gap-2">
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate text-left text-ink"
+                title={it.label}
+                onClick={() => setSelectedHistoryId((prev) => (prev === it.id ? null : it.id))}
+              >
+                <span className="mr-2 shrink-0 font-mono tabular-nums text-muted">{formatHistoryTime(it.at)}</span>
+                <span>{it.label}</span>
+              </button>
+              <button
+                type="button"
+                disabled={it.seekMs == null}
+                className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-muted hover:bg-fill disabled:opacity-40"
+                onClick={() => {
+                  if (it.seekMs == null) return;
+                  seekPreviewMs(it.seekMs);
+                }}
+              >
+                定位
+              </button>
+              {selectedHistoryId === it.id ? (
                 <button
                   type="button"
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                  onClick={() => setSelectedHistoryId((prev) => (prev === it.id ? null : it.id))}
+                  className="shrink-0 rounded border border-brand/40 px-1.5 py-0.5 text-[10px] text-brand hover:bg-brand/10"
+                  onClick={() => void restoreHistoryAction(it.id)}
                 >
-                  <span className="shrink-0 font-mono text-muted">{formatHistoryTime(it.at)}</span>
-                  <span className="min-w-0 flex-1 truncate text-ink">{it.label}</span>
+                  恢复
                 </button>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={it.seekMs == null}
-                  className="rounded border border-line px-1.5 py-0.5 text-muted hover:bg-fill disabled:opacity-40"
-                  onClick={() => {
-                    if (it.seekMs == null) return;
-                    seekPreviewMs(it.seekMs);
-                  }}
-                >
-                  回看定位
-                </button>
-                {selectedHistoryId === it.id ? (
-                  <button
-                    type="button"
-                    className="rounded border border-brand/40 px-1.5 py-0.5 text-brand hover:bg-brand/10"
-                    onClick={() => void restoreHistoryAction(it.id)}
-                  >
-                    恢复这一步
-                  </button>
-                ) : null}
-              </div>
+              ) : null}
             </li>
           ))}
         </ul>

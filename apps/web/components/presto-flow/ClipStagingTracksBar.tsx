@@ -1,6 +1,6 @@
 "use client";
 
-import { GripVertical, Headphones, MoreHorizontal, Plus } from "lucide-react";
+import { GripVertical, Headphones, MoreHorizontal, Pause, Play, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
@@ -25,18 +25,25 @@ function estimateMsFromBytes(bytes?: number): number | null {
   return Math.round((bytes * 8 * 1000) / bps);
 }
 
-/** 列表展示名：优先服务端 filename，否则从 object key 路径解码 */
+function basenameDecoded(objectKey: string): string {
+  try {
+    const last = objectKey.split("/").pop() || objectKey;
+    return decodeURIComponent(last);
+  } catch {
+    return objectKey.slice(-96);
+  }
+}
+
+/** 列表展示名：优先服务端 filename；否则解析 basename（stage_<16hex>_原始文件名） */
 function labelForSegment(meta: ClipAudioStagingEntry | undefined, objectKey: string): string {
   const fn = meta?.filename?.trim();
   if (fn) return fn;
   try {
-    const last = objectKey.split("/").pop() || objectKey;
-    const decoded = decodeURIComponent(last);
-    const noExt = decoded.replace(/\.(mp3|wav|m4a|flac|aac|ogg|webm|mp4|mov)$/i, "");
-    const und = noExt.lastIndexOf("_");
-    const base = und >= 0 ? noExt.slice(und + 1) : noExt;
-    const out = base.trim();
-    if (out) return out;
+    const decoded = basenameDecoded(objectKey);
+    const noExt = decoded.replace(/\.(mp3|wav|m4a|flac|aac|ogg|webm|mp4|mov)$/i, "").trim();
+    const staged = /^stage_[a-f0-9]{16}_(.+)$/i.exec(noExt);
+    if (staged?.[1]?.trim()) return staged[1].trim();
+    if (noExt) return noExt;
     return decoded.trim() || "未命名";
   } catch {
     return objectKey.slice(-48).trim() || "未命名";
@@ -68,7 +75,7 @@ type Props = {
   /** 无单段 size 时用于整轨均分估算 */
   approxDurationMsPerSegment?: number | null;
   /** 无 entries、仅有合并源元数据时展示一行（旧数据）；有 entries 时不应再传 */
-  serverSource?: { filename: string; durationMs: number | null } | null;
+  serverSource?: { filename: string; durationMs: number | null; playbackUrl?: string } | null;
 };
 
 export default function ClipStagingTracksBar({
@@ -86,8 +93,10 @@ export default function ClipStagingTracksBar({
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragKey, setDragKey] = useState<string | null>(null);
+  const [playingHref, setPlayingHref] = useState<string | null>(null);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; top: number; right: number } | null>(null);
   const [renameOpen, setRenameOpen] = useState<{ key: string; current: string } | null>(null);
@@ -109,10 +118,45 @@ export default function ClipStagingTracksBar({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [menu]);
 
-  const order = useMemo(() => entries.map((e) => e.key), [entries]);
+  const serverOrder = useMemo(() => entries.map((e) => e.key), [entries]);
+  const serverOrderSigRef = useRef("");
+  const [pendingOrder, setPendingOrder] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    const sig = serverOrder.join("\0");
+    if (serverOrderSigRef.current !== sig) {
+      serverOrderSigRef.current = sig;
+      setPendingOrder(null);
+    }
+  }, [serverOrder]);
+
+  const order = pendingOrder ?? serverOrder;
+
+  useEffect(() => {
+    const a = previewAudioRef.current;
+    if (!a || !playingHref) {
+      if (a && !playingHref) {
+        a.pause();
+        a.removeAttribute("src");
+      }
+      return;
+    }
+    a.src = playingHref;
+    void a.play().catch(() => setPlayingHref(null));
+  }, [playingHref]);
+
+  const togglePreview = useCallback((href: string) => {
+    setPlayingHref((cur) => {
+      if (cur === href) {
+        previewAudioRef.current?.pause();
+        return null;
+      }
+      return href;
+    });
+  }, []);
 
   const postReorder = useCallback(
-    async (nextKeys: string[]) => {
+    async (nextKeys: string[]): Promise<boolean> => {
       setBusy(true);
       onError("");
       try {
@@ -132,8 +176,10 @@ export default function ClipStagingTracksBar({
         }
         if (data.project && onProjectPatch) onProjectPatch(data.project);
         else await onRefresh();
+        return true;
       } catch (e) {
         onError(String(e instanceof Error ? e.message : e));
+        return false;
       } finally {
         setBusy(false);
       }
@@ -263,7 +309,10 @@ export default function ClipStagingTracksBar({
       const insertAt = from < targetIndex ? targetIndex - 1 : targetIndex;
       next.splice(Math.max(0, insertAt), 0, dragKey);
       setDragKey(null);
-      void postReorder(next);
+      setPendingOrder(next);
+      void postReorder(next).then((ok) => {
+        if (!ok) setPendingOrder(null);
+      });
     },
     [dragKey, order, postReorder]
   );
@@ -331,8 +380,12 @@ export default function ClipStagingTracksBar({
         )
       : null;
 
+  const segmentPlaybackHref = (objectKey: string) =>
+    `/api/clip/projects/${encodeURIComponent(projectId)}/audio/source-segment/file?object_key=${encodeURIComponent(objectKey)}`;
+
   return (
     <div className={prd ? "min-w-0" : "mb-2 rounded-lg border border-line/80 bg-fill/25 px-2 py-1.5"}>
+      <audio ref={previewAudioRef} className="hidden" preload="none" onEnded={() => setPlayingHref(null)} />
       {!prd ? (
         <>
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
@@ -394,12 +447,29 @@ export default function ClipStagingTracksBar({
             <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted">
               {formatShortDuration(serverSource.durationMs)}
             </span>
+            {serverSource.playbackUrl ? (
+              <button
+                type="button"
+                disabled={disabled || busy}
+                title={playingHref === serverSource.playbackUrl ? "暂停" : "试听"}
+                aria-label={playingHref === serverSource.playbackUrl ? "暂停试听" : "试听素材"}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-ink hover:bg-fill disabled:opacity-40"
+                onClick={() => togglePreview(serverSource.playbackUrl!)}
+              >
+                {playingHref === serverSource.playbackUrl ? (
+                  <Pause className="h-3.5 w-3.5" aria-hidden />
+                ) : (
+                  <Play className="h-3.5 w-3.5" aria-hidden />
+                )}
+              </button>
+            ) : null}
           </li>
         ) : null}
         {order.map((key, idx) => {
           const meta = byKey.get(key);
           const label = labelForSegment(meta, key);
           const durMs = rowDuration(meta);
+          const playHref = segmentPlaybackHref(key);
           return (
             <li
               key={key}
@@ -441,6 +511,20 @@ export default function ClipStagingTracksBar({
                   <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted">
                     {formatShortDuration(durMs)}
                   </span>
+                  <button
+                    type="button"
+                    disabled={disabled || busy}
+                    title={playingHref === playHref ? "暂停" : "试听"}
+                    aria-label={playingHref === playHref ? "暂停试听" : "试听该段素材"}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line bg-surface text-ink hover:bg-fill disabled:opacity-40"
+                    onClick={() => togglePreview(playHref)}
+                  >
+                    {playingHref === playHref ? (
+                      <Pause className="h-3.5 w-3.5" aria-hidden />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                  </button>
                   <button
                     type="button"
                     data-staging-menu-trigger
