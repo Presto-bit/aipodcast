@@ -9,7 +9,7 @@ import { consumePostAuthReturnTo } from "../../lib/authReturnTo";
 export default function LoginView() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const returnTo = searchParams.get("returnTo");
+  const returnTo = searchParams?.get("returnTo") ?? null;
   const { ready, authRequired, user, login } = useAuth();
   const [authPhone, setAuthPhone] = useState("");
   const [authPassword, setAuthPassword] = useState("");

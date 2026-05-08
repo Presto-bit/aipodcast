@@ -446,9 +446,11 @@ export async function proxyBinaryFromOrchestrator(
     const buf = await upstream.arrayBuffer();
     const cd = upstream.headers.get("content-disposition");
     const ct = upstream.headers.get("content-type") || "application/octet-stream";
+    const cc = upstream.headers.get("cache-control");
     const headers = new Headers();
     headers.set("content-type", ct);
     if (cd) headers.set("content-disposition", cd);
+    if (cc?.trim()) headers.set("cache-control", cc.trim());
     if (outboundRid) headers.set("x-request-id", outboundRid);
     const outStatus =
       opts.forceBinarySuccessStatus !== undefined ? opts.forceBinarySuccessStatus : upstream.status;

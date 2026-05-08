@@ -23,18 +23,20 @@ import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShor
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
+import { WorkGalleryListProvider, type WorkGalleryListContextValue } from "./workGalleryListContext";
+import { WorkGalleryListItem } from "./WorkGalleryListItem";
+import { WorkGalleryVirtualGrid } from "./WorkGalleryVirtualGrid";
+import { useWorkGalleryGridColumnCount } from "./useWorkGalleryGridColumnCount";
+import { buildWorkDetailHref } from "./workGalleryNav";
 import {
-  formatWorkCreatedAtZh,
-  worksNavMetricPart,
-  worksNavPrimaryKind
-} from "../../lib/worksNavMetaLine";
+  humanNoteSourceLabel,
+  isPodcastManuscriptDraftTarget,
+  type PodcastWorkRow,
+  workIsSharedNotebookForeign
+} from "./workGalleryListShared";
 
 function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
   return w.downloadAllowed === true;
-}
-
-function workIsSharedNotebookForeign(w: Pick<WorkItem, "sharedNotebookForeign">): boolean {
-  return w.sharedNotebookForeign === true;
 }
 
 /** 与编排器 downloadAllowed / 打包接口校验文案一致 */
@@ -46,28 +48,6 @@ const TTS_TYPES = new Set(["text_to_speech", "tts"]);
 const NOTES_WORK_TYPES = new Set(["script_draft"]);
 /** 笔记本页：成片 + 文章出稿 */
 const NOTES_STUDIO_TYPES = new Set(["podcast_generate", "podcast", "script_draft"]);
-
-function isPodcastManuscriptDraftTarget(jobType: string): boolean {
-  const t = String(jobType || "").trim();
-  return t === "podcast_generate" || t === "podcast";
-}
-
-/** 与首页「全部作品」合并列表卡片 meta 完全一致：一级 | 作者 | 时长/字数 | 时间 */
-function formatUnifiedWorksNavMetaLine(
-  w: PodcastWorkRow,
-  isScriptDraft: boolean,
-  durationLine: string,
-  scriptCharCountDisplay: number | null,
-  createdZh: string,
-  authorDisplay: string
-): string {
-  const primaryK = worksNavPrimaryKind(w.type);
-  const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
-  return [primaryK, authorDisplay, metricP, createdZh]
-    .map((s) => String(s || "").trim())
-    .filter(Boolean)
-    .join(" | ");
-}
 
 type GalleryKeys = {
   hiddenKey: string;
@@ -158,79 +138,9 @@ function saveTitles(titlesKey: string, m: Record<string, string>) {
   }
 }
 
-function formatClock(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return "—";
-  const s = Math.floor(sec);
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${r.toString().padStart(2, "0")}`;
-}
-
 function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-function CircularPlayControl({
-  playing,
-  progress,
-  disabled,
-  onClick,
-  compact
-}: {
-  playing: boolean;
-  progress: number;
-  disabled?: boolean;
-  onClick: () => void;
-  /** 笔记本侧栏紧凑卡片用 */
-  compact?: boolean;
-}) {
-  const r = compact ? 32 : 41;
-  const c = 2 * Math.PI * r;
-  const p = Math.min(1, Math.max(0, progress));
-  const offset = c * (1 - p);
-  const wrap = compact ? "h-9 w-9" : "h-11 w-11";
-  const btn = compact ? "h-6 w-6" : "h-7 w-7";
-  const iconSm = compact ? "h-2 w-2" : "h-2.5 w-2.5";
-  const iconPlay = compact ? "h-2.5 w-2.5" : "h-3 w-3";
-  return (
-    <div className={`relative inline-flex ${wrap} shrink-0 items-center justify-center`}>
-      <svg className="pointer-events-none absolute inset-0 h-full w-full -rotate-90" viewBox="0 0 100 100" aria-hidden>
-        <circle cx="50" cy="50" r={r} fill="none" className="stroke-line" strokeWidth="3" />
-        <circle
-          cx="50"
-          cy="50"
-          r={r}
-          fill="none"
-          className="stroke-brand transition-[stroke-dashoffset]"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeDasharray={c}
-          strokeDashoffset={offset}
-        />
-      </svg>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onClick}
-        aria-label={playing ? "暂停" : "播放"}
-        className={`relative z-[1] flex ${btn} cursor-pointer items-center justify-center rounded-full bg-surface text-brand shadow-soft outline-none ring-offset-2 hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-wait disabled:opacity-60`}
-      >
-        {playing ? (
-          <svg className={iconSm} viewBox="0 0 24 24" fill="currentColor">
-            <rect x="6" y="5" width="4" height="14" rx="1" />
-            <rect x="14" y="5" width="4" height="14" rx="1" />
-          </svg>
-        ) : (
-          <svg className={`ml-px ${iconPlay}`} viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-        )}
-      </button>
-    </div>
-  );
-}
-
-type PodcastWorkRow = WorkItem & { displayTitle: string };
 
 type Props = {
   works: WorkItem[];
@@ -258,26 +168,6 @@ type Props = {
   workDetailReturnTo?: string;
 };
 
-function buildWorkDetailHref(jobId: string, opts?: { returnTo?: string; tabPublish?: boolean }) {
-  const q = new URLSearchParams();
-  if (opts?.returnTo) q.set("returnTo", opts.returnTo);
-  if (opts?.tabPublish) q.set("tab", "publish");
-  const s = q.toString();
-  return `/works/${encodeURIComponent(jobId)}${s ? `?${s}` : ""}`;
-}
-
-const NOTE_TITLE_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function humanNoteSourceLabel(raw: string): string {
-  const s = String(raw || "").trim();
-  if (!s || NOTE_TITLE_UUID_RE.test(s)) return "未命名笔记";
-  return s;
-}
-
-/**
- * 笔记本侧栏「我的作品」卡片简介：体裁 · 来源笔记名 · 时长或字数 · 生成时间
- */
 /** 笔记本侧栏 ⋯ 菜单：fixed 定位，避免 overflow/滚动裁切 */
 function computeNotesStudioMenuPosition(anchor: DOMRect): { top: number; left: number } {
   const MENU_PAD = 8;
@@ -303,46 +193,6 @@ function notesStudioReferencedWorkTitle(w: PodcastWorkRow): string {
   if (firstTitle) return firstTitle;
   if (nTotal > 0) return `已选 ${nTotal} 条笔记`;
   return "引用来源未记录";
-}
-
-/** 与作品导航列表一致展示更多标题字符（仍 line-clamp 防撑破侧栏） */
-const NOTES_STUDIO_REF_TITLE_MAX_CHARS = 48;
-
-function truncateByGraphemes(s: string, maxChars: number): string {
-  const t = String(s || "").trim();
-  if (maxChars < 1) return "";
-  const chars = Array.from(t);
-  if (chars.length <= maxChars) return t;
-  return chars.slice(0, maxChars).join("") + "…";
-}
-
-/** 悬停层完整一行（含《引用》），供摘要提示使用 */
-function formatNotesStudioCardSynopsis(
-  w: PodcastWorkRow,
-  isScriptDraft: boolean,
-  durationLine: string,
-  scriptCharCountDisplay: number | null,
-  createdShort: string
-): string {
-  const genre = isScriptDraft ? "文章" : "播客";
-  const rawTitles = Array.isArray(w.notesSourceTitles) ? w.notesSourceTitles : [];
-  const labeled = rawTitles.map((t) => humanNoteSourceLabel(String(t)));
-  const firstTitle = labeled.find((t) => t && t !== "未命名笔记") || labeled[0] || "";
-  const nTotal =
-    typeof w.notesSourceNoteCount === "number" && w.notesSourceNoteCount > 0 ? w.notesSourceNoteCount : rawTitles.length;
-  const sourcePart = firstTitle
-    ? `《${firstTitle}》`
-    : nTotal > 0
-      ? `已选 ${nTotal} 条笔记`
-      : "来源未记录";
-  const metric = isScriptDraft
-    ? scriptCharCountDisplay != null && scriptCharCountDisplay > 0
-      ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
-      : "—"
-    : durationLine !== "—"
-      ? `时长 ${durationLine}`
-      : "—";
-  return `${genre} · ${sourcePart} · ${metric} · ${createdShort}`;
 }
 
 const PODCAST_REUSE_TEMPLATE_KEY = "fym_reuse_template_podcast_v1";
@@ -489,19 +339,31 @@ export default function PodcastWorksGallery({
     return Math.max(0, items.length - cap);
   }, [items.length, variant, sidebarMaxItems]);
 
+  const gridColumnCount = useWorkGalleryGridColumnCount();
+  const [clientMounted, setClientMounted] = useState(false);
+  useEffect(() => setClientMounted(true), []);
+  const useGridVirtual = clientMounted && !useNotesStyleCards && visibleItems.length >= 12;
+  const eagerCoverFirstCount = useGridVirtual ? gridColumnCount : 4;
+  const useListCoverThumbs = !useNotesStyleCards;
+
   useEffect(() => {
-    const firstFour = visibleItems.slice(0, 4);
-    for (const w of firstFour) {
+    const firstN = visibleItems.slice(0, eagerCoverFirstCount);
+    for (const w of firstN) {
       const id = String(w.id || "").trim();
       if (!id || !String(w.coverImage || "").trim()) continue;
-      const src = workCoverImageSrc(w.coverImage, coverBustById[id], id);
+      const src = workCoverImageSrc(
+        w.coverImage,
+        coverBustById[id],
+        id,
+        useListCoverThumbs ? { listMaxWidth: 400 } : undefined
+      );
       if (!src || prewarmedCoverSrcRef.current.has(src)) continue;
       prewarmedCoverSrcRef.current.add(src);
       const img = new Image();
       img.decoding = "async";
       img.src = src;
     }
-  }, [visibleItems, coverBustById]);
+  }, [visibleItems, coverBustById, eagerCoverFirstCount, useListCoverThumbs]);
 
   useEffect(() => {
     const ids = items
@@ -948,7 +810,7 @@ export default function PodcastWorksGallery({
       }
       router.push(buildWorkDetailHref(id, { returnTo: workDetailReturnTo, tabPublish: true }));
     },
-    [router]
+    [router, workDetailReturnTo]
   );
 
   async function uploadCoverForJob(jobId: string, file: File) {
@@ -981,99 +843,102 @@ export default function PodcastWorksGallery({
     }
   }
 
-  async function onReuseTemplate(id: string, opts?: { publicTemplate?: boolean }) {
-    try {
-      const usePublicTpl = Boolean(opts?.publicTemplate);
-      const res = await fetch(
-        usePublicTpl
-          ? `/api/jobs/${encodeURIComponent(id)}/podcast-template-reuse`
-          : `/api/jobs/${encodeURIComponent(id)}`,
-        { cache: "no-store", headers: { ...getAuthHeaders() } }
-      );
-      const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) throw new Error("读取作品参数失败");
-      const jobType = String(row.job_type || "").trim();
-      if (jobType === "podcast_short_video") {
-        throw new Error("短视频功能已下线，请从播客成片或语音作品直接复用参数。");
-      }
-      const payload = (row.payload || {}) as Record<string, unknown>;
-      const result = (row.result || {}) as Record<string, unknown>;
+  const onReuseTemplate = useCallback(
+    async (id: string, opts?: { publicTemplate?: boolean }) => {
+      try {
+        const usePublicTpl = Boolean(opts?.publicTemplate);
+        const res = await fetch(
+          usePublicTpl
+            ? `/api/jobs/${encodeURIComponent(id)}/podcast-template-reuse`
+            : `/api/jobs/${encodeURIComponent(id)}`,
+          { cache: "no-store", headers: { ...getAuthHeaders() } }
+        );
+        const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!res.ok) throw new Error("读取作品参数失败");
+        const jobType = String(row.job_type || "").trim();
+        if (jobType === "podcast_short_video") {
+          throw new Error("短视频功能已下线，请从播客成片或语音作品直接复用参数。");
+        }
+        const payload = (row.payload || {}) as Record<string, unknown>;
+        const result = (row.result || {}) as Record<string, unknown>;
 
-      if (isPodcastManuscriptDraftTarget(jobType)) {
-        /** 正文在 result.script_text / script 工件；勿用 payload.text（多为原始素材）。 */
-        const text = (await resolveJobScriptBodyText(id, row, getAuthHeaders())).trim();
-        if (!text) {
-          window.alert("暂无文稿可复制");
+        if (isPodcastManuscriptDraftTarget(jobType)) {
+          /** 正文在 result.script_text / script 工件；勿用 payload.text（多为原始素材）。 */
+          const text = (await resolveJobScriptBodyText(id, row, getAuthHeaders())).trim();
+          if (!text) {
+            window.alert("暂无文稿可复制");
+            return;
+          }
+          const titleFromJob = String((row as { title?: unknown }).title || payload.title || "").trim();
+          const draftTitle = (sanitizeShareEpisodeTitle(titleFromJob, "") || titleFromJob || "播客文稿").slice(0, 200);
+          const newId = insertPodcastDraftAtTop({ title: draftTitle, text });
+          setDraftsNavigationFocusDraftId(newId);
+          router.push("/drafts");
           return;
         }
-        const titleFromJob = String((row as { title?: unknown }).title || payload.title || "").trim();
-        const draftTitle = (sanitizeShareEpisodeTitle(titleFromJob, "") || titleFromJob || "播客文稿").slice(0, 200);
-        const newId = insertPodcastDraftAtTop({ title: draftTitle, text });
-        setDraftsNavigationFocusDraftId(newId);
-        router.push("/drafts");
-        return;
-      }
 
-      if (jobType === "text_to_speech" || jobType === "tts") {
+        if (jobType === "text_to_speech" || jobType === "tts") {
+          writeSessionStorageScoped(
+            TTS_REUSE_TEMPLATE_KEY,
+            JSON.stringify({
+              text: String(payload.text || result.script_text || "").trim(),
+              tts_mode: String(payload.tts_mode || "single").trim(),
+              intro_text: String(payload.intro_text || "").trim(),
+              outro_text: String(payload.outro_text || "").trim(),
+              voice_id: String(payload.voice_id || "").trim(),
+              voice_id_1: String(payload.voice_id_1 || "").trim(),
+              voice_id_2: String(payload.voice_id_2 || "").trim()
+            })
+          );
+          router.push("/tts");
+          return;
+        }
+
+        if (jobType === "script_draft") {
+          writeSessionStorageScoped(
+            NOTES_REUSE_TEMPLATE_KEY,
+            JSON.stringify({
+              notes_notebook: String(payload.notes_notebook || "").trim(),
+              text: String(payload.text || "").trim(),
+              script_language: String(payload.script_language || "中文").trim(),
+              script_target_chars: Number(payload.script_target_chars || 2000)
+            })
+          );
+          router.push("/notes");
+          return;
+        }
+
         writeSessionStorageScoped(
-          TTS_REUSE_TEMPLATE_KEY,
+          PODCAST_REUSE_TEMPLATE_KEY,
           JSON.stringify({
             text: String(payload.text || result.script_text || "").trim(),
-            tts_mode: String(payload.tts_mode || "single").trim(),
-            intro_text: String(payload.intro_text || "").trim(),
-            outro_text: String(payload.outro_text || "").trim(),
-            voice_id: String(payload.voice_id || "").trim(),
-            voice_id_1: String(payload.voice_id_1 || "").trim(),
-            voice_id_2: String(payload.voice_id_2 || "").trim()
-          })
-        );
-        router.push("/tts");
-        return;
-      }
-
-      if (jobType === "script_draft") {
-        writeSessionStorageScoped(
-          NOTES_REUSE_TEMPLATE_KEY,
-          JSON.stringify({
-            notes_notebook: String(payload.notes_notebook || "").trim(),
-            text: String(payload.text || "").trim(),
+            script_target_chars: Number(payload.script_target_chars || 800),
             script_language: String(payload.script_language || "中文").trim(),
-            script_target_chars: Number(payload.script_target_chars || 2000)
+            output_mode: String(payload.output_mode || "dialogue").trim(),
+            reference_urls: String(payload.source_url || "").trim(),
+            intro_text: String(payload.intro_text || "").trim(),
+            outro_text: String(payload.outro_text || "").trim()
           })
         );
-        router.push("/notes");
-        return;
+        router.push("/podcast");
+      } catch (e) {
+        setPlayErrorById((prev) => ({
+          ...prev,
+          [id]: `操作失败：${e instanceof Error ? e.message : String(e)}`
+        }));
       }
+    },
+    [getAuthHeaders, router]
+  );
 
-      writeSessionStorageScoped(
-        PODCAST_REUSE_TEMPLATE_KEY,
-        JSON.stringify({
-          text: String(payload.text || result.script_text || "").trim(),
-          script_target_chars: Number(payload.script_target_chars || 800),
-          script_language: String(payload.script_language || "中文").trim(),
-          output_mode: String(payload.output_mode || "dialogue").trim(),
-          reference_urls: String(payload.source_url || "").trim(),
-          intro_text: String(payload.intro_text || "").trim(),
-          outro_text: String(payload.outro_text || "").trim()
-        })
-      );
-      router.push("/podcast");
-    } catch (e) {
-      setPlayErrorById((prev) => ({
-        ...prev,
-        [id]: `操作失败：${e instanceof Error ? e.message : String(e)}`
-      }));
-    }
-  }
-
-  function toggleSelect(id: string) {
+  const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }
+  }, []);
 
   async function batchDownloadSelected() {
     if (selectedRows.length === 0) return;
@@ -1105,7 +970,83 @@ export default function PodcastWorksGallery({
     }
   }
 
+  const listCtxValue = useMemo<WorkGalleryListContextValue>(
+    () => ({
+      variant,
+      useNotesStyleCards,
+      useCompactAllLayout,
+      enableBatchActions: Boolean(enableBatchActions),
+      batchMode,
+      selectedIds,
+      toggleSelect,
+      pendingStudioWork: pendingStudioWork ?? null,
+      pendingStudioSubtitle: pendingStudioSubtitle || "",
+      activeJobId,
+      isPlayingAudio,
+      activePlayError,
+      playErrorById,
+      progress01,
+      durationSec,
+      hydratedDurationSec,
+      publicationsByJobId,
+      menuOpenId,
+      setMenuOpenId,
+      menuWrapRef,
+      renameJobId,
+      renameDraft,
+      setRenameDraft,
+      commitRename,
+      setRenameJobId,
+      coverBustById,
+      audioLoadingId,
+      togglePlay,
+      worksNavAuthorDisplay,
+      workDetailReturnTo,
+      goToSharePage,
+      zipBusy,
+      openRename,
+      requestDelete,
+      onReuseTemplate,
+      renderDownloadGated
+    }),
+    [
+      variant,
+      useNotesStyleCards,
+      useCompactAllLayout,
+      enableBatchActions,
+      batchMode,
+      selectedIds,
+      pendingStudioWork,
+      pendingStudioSubtitle,
+      activeJobId,
+      isPlayingAudio,
+      activePlayError,
+      playErrorById,
+      progress01,
+      durationSec,
+      hydratedDurationSec,
+      publicationsByJobId,
+      menuOpenId,
+      renameJobId,
+      renameDraft,
+      coverBustById,
+      audioLoadingId,
+      worksNavAuthorDisplay,
+      workDetailReturnTo,
+      goToSharePage,
+      zipBusy,
+      openRename,
+      requestDelete,
+      renderDownloadGated,
+      commitRename,
+      toggleSelect,
+      onReuseTemplate,
+      togglePlay
+    ]
+  );
+
   return (
+    <WorkGalleryListProvider value={listCtxValue}>
     <div>
       <SmallConfirmModal
         open={deleteConfirmId != null}
@@ -1234,650 +1175,43 @@ export default function PodcastWorksGallery({
         </div>
       ) : (
         <>
-        <ul
-          className={
-            useNotesStyleCards
-              ? "grid w-full grid-cols-1 gap-2 overflow-visible"
-              : "grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-          }
-        >
-          {visibleItems.map((w, index) => {
-            const id = w.id!;
-            const eagerCover = index < 4;
-            const isPublicTpl = Boolean(w.isPodcastPublicTemplate);
-            const templateReuseArgs = isPublicTpl ? ({ publicTemplate: true } as const) : undefined;
-            const isScriptDraft = String(w.type || "") === "script_draft";
-            const jobStatus = String(w.status || "").trim();
-            const isMediaInFlight =
-              !isScriptDraft && (jobStatus === "queued" || jobStatus === "running");
-            const showPendingLog =
-              variant === "notes_studio" &&
-              pendingStudioWork?.id === id &&
-              Boolean(String(pendingStudioSubtitle || "").trim());
-            const isActive = activeJobId === id;
-            const rowPlayMsg = (isActive && activePlayError) || playErrorById[id];
-            const prog = isActive ? progress01 : 0;
-            const sharedNotebookForeign = workIsSharedNotebookForeign(w);
-            const baseSec =
-              typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0
-                ? w.audioDurationSec
-                : hydratedDurationSec[id];
-            const totalSecForLabel =
-              isActive && durationSec > 0 && Number.isFinite(durationSec)
-                ? durationSec
-                : baseSec !== undefined && Number.isFinite(baseSec)
-                  ? baseSec
-                  : undefined;
-            const durationLine = totalSecForLabel !== undefined ? formatClock(totalSecForLabel) : "—";
-            const durationCaption = isScriptDraft ? "文章出稿（无音频）" : `时长 ${durationLine}`;
-            const created = formatWorkCreatedAtZh(w.createdAt);
-            const createdShort = created;
-            const publications = publicationsByJobId[id] || [];
-            const publishedText =
-              publications.length > 0
-                ? `已在 ${publications.length} 处发布 · ${publications[0]?.channel_title || ""}`
-                : "";
-            const publishActionText = publications.length > 0 ? "已发过" : "分享";
-            const scriptCharCountDisplay =
-              typeof w.scriptCharCount === "number" &&
-              Number.isFinite(w.scriptCharCount) &&
-              w.scriptCharCount > 0
-                ? Math.round(w.scriptCharCount)
-                : null;
-            const reuseOrManuscriptLabel = isPodcastManuscriptDraftTarget(String(w.type || "")) ? "修改文稿" : "复用";
+        {useNotesStyleCards ? (
+          <ul className="grid w-full grid-cols-1 gap-2 overflow-visible">
+            {visibleItems.map((w, index) => (
+              <WorkGalleryListItem
+                key={String(w.id)}
+                w={w}
+                index={index}
+                outer="li"
+                eagerCoverFirstCount={eagerCoverFirstCount}
+                useListCoverThumb={useListCoverThumbs}
+              />
+            ))}
+          </ul>
+        ) : useGridVirtual ? (
+          <div className="w-full" role="list">
+            <WorkGalleryVirtualGrid
+              items={visibleItems}
+              columnCount={gridColumnCount}
+              variant={variant}
+              eagerCoverFirstCount={eagerCoverFirstCount}
+            />
+          </div>
+        ) : (
+          <ul className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {visibleItems.map((w, index) => (
+              <WorkGalleryListItem
+                key={String(w.id)}
+                w={w}
+                index={index}
+                outer="li"
+                eagerCoverFirstCount={eagerCoverFirstCount}
+                useListCoverThumb={useListCoverThumbs}
+              />
+            ))}
+          </ul>
+        )}
 
-            /** 笔记本侧栏「我的作品」或首页「全部作品」紧凑列表：无封面顶栏、标题 + 元数据 + 操作（文稿在紧凑模式下仍走下方大图卡片分支） */
-            if (useNotesStyleCards && !(useCompactAllLayout && isScriptDraft)) {
-              const headlineFull = String(w.displayTitle || "").trim() || id;
-              const headlineShown = truncateByGraphemes(headlineFull, NOTES_STUDIO_REF_TITLE_MAX_CHARS);
-              const metaLine = formatUnifiedWorksNavMetaLine(
-                w,
-                isScriptDraft,
-                durationLine,
-                scriptCharCountDisplay,
-                createdShort,
-                worksNavAuthorDisplay
-              );
-              const synopsisHoverFull = useCompactAllLayout
-                ? `${metaLine}\n\n${headlineFull}`
-                : `${metaLine}\n\n${formatNotesStudioCardSynopsis(
-                    w,
-                    isScriptDraft,
-                    durationLine,
-                    scriptCharCountDisplay,
-                    createdShort
-                  )}`;
-              return (
-                <li
-                  key={id}
-                  className="relative flex w-full min-w-0 max-w-full flex-col overflow-visible rounded-xl border border-line bg-surface shadow-soft"
-                >
-                  {enableBatchActions && batchMode ? (
-                    <label
-                      className="flex items-center gap-2 border-b border-line bg-fill/40 px-2 py-1 text-[10px] text-ink"
-                      htmlFor={`work-gallery-batch-${id}`}
-                    >
-                      <input
-                        id={`work-gallery-batch-${id}`}
-                        name="work_gallery_batch_item"
-                        type="checkbox"
-                        checked={selectedIds.has(id)}
-                        onChange={() => toggleSelect(id)}
-                      />
-                      选择
-                    </label>
-                  ) : null}
-                  <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
-                    <Link
-                      href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
-                      className="block min-w-0 rounded-md outline-none ring-brand/0 transition hover:bg-fill/45 focus-visible:ring-2 focus-visible:ring-brand"
-                      aria-label={`查看作品详情：${headlineFull}`}
-                    >
-                      {headlineFull !== headlineShown ? (
-                        <div className="group/reftitle relative min-h-0">
-                          <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
-                          <div
-                            role="tooltip"
-                            className="pointer-events-none invisible absolute bottom-full left-0 z-[70] mb-1 w-max max-w-[min(18rem,90vw)] rounded-md border border-line bg-surface px-2 py-1.5 text-left text-[10px] font-normal leading-snug text-ink opacity-0 shadow-card ring-1 ring-line/50 transition-opacity delay-[75ms] duration-100 group-hover/reftitle:visible group-hover/reftitle:opacity-100"
-                          >
-                            {headlineFull}
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
-                      )}
-                      <div className="group/synopsis relative mt-1 min-h-0">
-                        <p className="line-clamp-3 min-h-0 text-[9px] leading-snug text-muted">{metaLine}</p>
-                        <div
-                          role="tooltip"
-                          className="pointer-events-none invisible absolute bottom-full left-0 z-[70] mb-1 w-max max-w-[min(18rem,92vw)] whitespace-pre-wrap break-words rounded-md border border-line bg-surface px-2 py-1.5 text-left text-[9px] leading-snug text-ink opacity-0 shadow-card ring-1 ring-line/50 transition-opacity delay-[75ms] duration-100 group-hover/synopsis:visible group-hover/synopsis:opacity-100"
-                        >
-                          {synopsisHoverFull}
-                        </div>
-                      </div>
-                    </Link>
-                    {showPendingLog ? (
-                      <p
-                        className="line-clamp-5 min-h-0 text-center text-[9px] leading-snug text-brand"
-                        role="status"
-                        aria-live="polite"
-                      >
-                        {pendingStudioSubtitle.trim()}
-                      </p>
-                    ) : null}
-                    <div className="mt-0.5 flex items-center justify-between gap-1 border-t border-line/50 pt-1.5">
-                      <div className="flex min-w-0 flex-1 items-center gap-1">
-                        {!isScriptDraft ? (
-                          isMediaInFlight ? (
-                            <span className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border border-line/80 bg-fill/60 px-1.5 text-[9px] font-medium text-muted">
-                              {jobStatus === "queued" ? "排队" : "生成"}
-                            </span>
-                          ) : (
-                            <CircularPlayControl
-                              playing={isActive && isPlayingAudio}
-                              progress={prog}
-                              disabled={audioLoadingId === id}
-                              onClick={() =>
-                                void togglePlay(id, w.displayTitle, {
-                                  usePodcastPublicTemplateListen: isPublicTpl
-                                })
-                              }
-                              compact
-                            />
-                          )
-                        ) : null}
-                      </div>
-                      {isMediaInFlight || sharedNotebookForeign ? null : (
-                        <div className="relative shrink-0" ref={menuOpenId === id ? menuWrapRef : undefined}>
-                          <button
-                            type="button"
-                            className="flex h-6 w-6 items-center justify-center rounded-full text-muted hover:bg-fill"
-                            aria-label="更多"
-                            aria-expanded={menuOpenId === id}
-                            onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
-                          >
-                            <span className="text-sm leading-none">⋯</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {renameJobId === id ? (
-                    <div className="border-t border-line px-2 py-1.5">
-                      <InlineTextPrompt
-                        open
-                        title="作品名称"
-                        value={renameDraft}
-                        onChange={setRenameDraft}
-                        onSubmit={commitRename}
-                        onCancel={() => setRenameJobId(null)}
-                        placeholder="输入显示名称"
-                      />
-                    </div>
-                  ) : null}
-                  {rowPlayMsg ? (
-                    <p
-                      className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[8px] leading-snug text-danger-ink break-words whitespace-pre-wrap"
-                      role="status"
-                    >
-                      {rowPlayMsg}
-                    </p>
-                  ) : null}
-                </li>
-              );
-            }
-
-            if (variant === "all") {
-              const dayP = formatWorkCreatedAtZh(w.createdAt);
-              const navMetaLine = formatUnifiedWorksNavMetaLine(
-                w,
-                isScriptDraft,
-                durationLine,
-                scriptCharCountDisplay,
-                dayP,
-                worksNavAuthorDisplay
-              );
-              return (
-                <li
-                  key={id}
-                  className="relative flex w-full max-w-full flex-col overflow-visible rounded-xl border border-line bg-surface shadow-soft"
-                >
-                  {enableBatchActions && batchMode ? (
-                    <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-3 py-1.5 text-xs text-ink">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(id)}
-                        onChange={() => toggleSelect(id)}
-                      />
-                      选择此作品
-                    </label>
-                  ) : null}
-                  <Link
-                    href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
-                    className="relative block aspect-[4/3] w-full shrink-0 overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill outline-none ring-brand/0 transition hover:opacity-[0.97] focus-visible:ring-2 focus-visible:ring-brand"
-                    aria-label={`查看作品详情：${w.displayTitle}`}
-                  >
-                    {w.coverImage ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img
-                        src={workCoverImageSrc(w.coverImage, coverBustById[id], id)}
-                        alt=""
-                        className="relative z-[1] h-full w-full object-cover"
-                        referrerPolicy="no-referrer"
-                        loading={eagerCover ? "eager" : "lazy"}
-                        fetchPriority={eagerCover ? "high" : "auto"}
-                        decoding="async"
-                        onError={(e) => {
-                          const el = e.target as HTMLImageElement;
-                          const orig = String(w.coverImage || "").trim();
-                          if (orig && el.src.includes("/api/image-proxy") && !el.dataset.fallback) {
-                            el.dataset.fallback = "1";
-                            if (unusableInsecureHttpOnHttpsPage(orig)) {
-                              el.style.display = "none";
-                              return;
-                            }
-                            el.src = orig;
-                            return;
-                          }
-                          el.style.display = "none";
-                        }}
-                      />
-                    ) : (
-                      <div className="flex h-full min-h-[3rem] flex-col items-center justify-center gap-1 bg-gradient-to-br from-brand/[0.14] via-fill to-cta/[0.12] px-2 text-center">
-                        <span className="text-2xl leading-none opacity-90" aria-hidden>
-                          {isScriptDraft ? "📝" : "🎙️"}
-                        </span>
-                        <span className="text-[10px] font-medium leading-tight text-muted">
-                          {isScriptDraft ? "文稿作品" : "待生成或暂无封面"}
-                        </span>
-                      </div>
-                    )}
-                  </Link>
-                  {isScriptDraft ? (
-                    <div className="shrink-0 border-b border-line/70 px-3 py-2">
-                      <p className="line-clamp-2 text-sm font-semibold leading-snug text-ink" title={w.displayTitle}>
-                        {w.displayTitle}
-                      </p>
-                      <p
-                        className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted"
-                        title={
-                          `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, dayP)}\n\n${navMetaLine}`.trim()
-                        }
-                      >
-                        {navMetaLine}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="shrink-0 border-b border-line/70 px-3 py-2">
-                      <div className="flex items-start gap-2">
-                        <p className="min-w-0 flex-1 text-sm font-semibold leading-snug text-ink line-clamp-2" title={w.displayTitle}>
-                          {w.displayTitle}
-                        </p>
-                        <div className="shrink-0 pt-0.5">
-                          <CircularPlayControl
-                            playing={isActive && isPlayingAudio}
-                            progress={prog}
-                            disabled={audioLoadingId === id}
-                            onClick={() =>
-                              void togglePlay(id, w.displayTitle, {
-                                usePodcastPublicTemplateListen: isPublicTpl
-                              })
-                            }
-                            compact
-                          />
-                        </div>
-                      </div>
-                      <p className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted" title={navMetaLine}>
-                        {navMetaLine}
-                      </p>
-                    </div>
-                  )}
-                  {renameJobId === id ? (
-                    <div className="border-t border-line px-3 py-2">
-                      <InlineTextPrompt
-                        open
-                        title="作品名称"
-                        value={renameDraft}
-                        onChange={setRenameDraft}
-                        onSubmit={commitRename}
-                        onCancel={() => setRenameJobId(null)}
-                        placeholder="输入显示名称"
-                      />
-                    </div>
-                  ) : null}
-                  {rowPlayMsg ? (
-                    <p
-                      className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-snug text-danger-ink break-words whitespace-pre-wrap"
-                      role="status"
-                    >
-                      {rowPlayMsg}
-                    </p>
-                  ) : null}
-                  <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
-                    {isScriptDraft ? (
-                      <>
-                        {renderDownloadGated(
-                          w,
-                          id,
-                          "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
-                          zipBusy === id ? downloadBusyLabel(w.type) : "下载"
-                        )}
-                        <Link
-                          href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
-                          className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                        >
-                          {sharedNotebookForeign ? "查看文稿" : "修改文稿"}
-                        </Link>
-                        {sharedNotebookForeign ? null : (
-                          <button
-                            type="button"
-                            className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                            onClick={() => openRename(id, w.displayTitle)}
-                          >
-                            修改名称
-                          </button>
-                        )}
-                        {sharedNotebookForeign ? null : (
-                          <button
-                            type="button"
-                            className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
-                            onClick={() => requestDelete(id)}
-                          >
-                            删除
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
-                          disabled={audioLoadingId === id}
-                          onClick={() =>
-                            void togglePlay(id, w.displayTitle, {
-                              usePodcastPublicTemplateListen: isPublicTpl
-                            })
-                          }
-                        >
-                          {isActive && isPlayingAudio ? "暂停" : "播放"}
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
-                          onClick={() => goToSharePage(w)}
-                        >
-                          {publishActionText}
-                        </button>
-                        {renderDownloadGated(
-                          w,
-                          id,
-                          "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
-                          zipBusy === id ? downloadBusyLabel(w.type) : "下载"
-                        )}
-                        {sharedNotebookForeign ? null : (
-                          <button
-                            type="button"
-                            className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                            onClick={() => void onReuseTemplate(id, templateReuseArgs)}
-                          >
-                            {reuseOrManuscriptLabel}
-                          </button>
-                        )}
-                        {sharedNotebookForeign ? null : (
-                          <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
-                            <button
-                              type="button"
-                              className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-fill"
-                              aria-label="更多"
-                              onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
-                            >
-                              <span className="text-base leading-none">⋯</span>
-                            </button>
-                          </div>
-                        )}
-                        {publications.length > 0 ? (
-                          <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">
-                            {publishedText}
-                          </span>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
-                </li>
-              );
-            }
-
-            const navMetaLineCard = formatUnifiedWorksNavMetaLine(
-              w,
-              isScriptDraft,
-              durationLine,
-              scriptCharCountDisplay,
-              created,
-              worksNavAuthorDisplay
-            );
-            const scriptCardMetaTitle = isScriptDraft
-              ? `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, created)}\n\n${navMetaLineCard}`
-              : "";
-
-            return (
-              <li
-                key={id}
-                className="relative flex w-full max-w-full flex-col overflow-visible rounded-xl border border-line bg-surface shadow-soft"
-              >
-                {enableBatchActions && batchMode ? (
-                  <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-3 py-1.5 text-xs text-ink">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(id)}
-                      onChange={() => toggleSelect(id)}
-                    />
-                    选择此作品
-                  </label>
-                ) : null}
-                <Link
-                  href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
-                  className="relative block aspect-[4/3] w-full overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill outline-none ring-brand/0 transition hover:opacity-[0.97] focus-visible:ring-2 focus-visible:ring-brand"
-                  aria-label={`查看作品详情：${w.displayTitle}`}
-                >
-                  {w.coverImage ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={workCoverImageSrc(w.coverImage, coverBustById[id], id)}
-                      alt=""
-                      className="relative z-[1] h-full w-full object-cover"
-                      referrerPolicy="no-referrer"
-                      loading={eagerCover ? "eager" : "lazy"}
-                      fetchPriority={eagerCover ? "high" : "auto"}
-                      decoding="async"
-                      onError={(e) => {
-                        const el = e.target as HTMLImageElement;
-                        const orig = String(w.coverImage || "").trim();
-                        if (orig && el.src.includes("/api/image-proxy") && !el.dataset.fallback) {
-                          el.dataset.fallback = "1";
-                          if (unusableInsecureHttpOnHttpsPage(orig)) {
-                            el.style.display = "none";
-                            return;
-                          }
-                          el.src = orig;
-                          return;
-                        }
-                        el.style.display = "none";
-                      }}
-                    />
-                  ) : (
-                    <div className="flex h-full min-h-[3rem] flex-col items-center justify-center gap-1 bg-gradient-to-br from-brand/[0.14] via-fill to-cta/[0.12] px-2 text-center">
-                      <span className="text-2xl leading-none opacity-90" aria-hidden>
-                        {isScriptDraft ? "📝" : "🎙️"}
-                      </span>
-                      <span className="text-[10px] font-medium leading-tight text-muted">
-                        {isScriptDraft ? "文稿作品" : "待生成或暂无封面"}
-                      </span>
-                    </div>
-                  )}
-                </Link>
-
-                {isScriptDraft ? (
-                  <div className="shrink-0 border-t border-line/70 px-3 py-2">
-                    <p className="line-clamp-2 text-sm font-semibold leading-snug text-ink" title={w.displayTitle}>
-                      {w.displayTitle}
-                    </p>
-                    <p
-                      className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted"
-                      title={scriptCardMetaTitle.trim()}
-                    >
-                      {navMetaLineCard}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex min-h-[4.25rem] shrink-0 flex-row items-center gap-2 border-t border-line px-3 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold leading-tight text-ink" title={w.displayTitle}>
-                        {w.displayTitle}
-                      </p>
-                      <p className="mt-1 truncate text-xs text-muted" title={durationCaption}>
-                        {durationCaption}
-                      </p>
-                      {scriptCharCountDisplay !== null ? (
-                        <p
-                          className="mt-0.5 truncate text-[11px] tabular-nums text-muted"
-                          title={`正文约 ${scriptCharCountDisplay.toLocaleString()} 字`}
-                        >
-                          约 {scriptCharCountDisplay.toLocaleString()} 字
-                        </p>
-                      ) : null}
-                      <p className="mt-0.5 truncate text-[11px] text-muted" title={created}>
-                        {created}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-0">
-                      <CircularPlayControl
-                        playing={isActive && isPlayingAudio}
-                        progress={prog}
-                        disabled={audioLoadingId === id}
-                        onClick={() =>
-                          void togglePlay(id, w.displayTitle, {
-                            usePodcastPublicTemplateListen: isPublicTpl
-                          })
-                        }
-                      />
-                      {sharedNotebookForeign ? null : (
-                        <div className="relative" ref={menuOpenId === id ? menuWrapRef : undefined}>
-                          <button
-                            type="button"
-                            className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-fill"
-                            aria-label="更多"
-                            onClick={() => setMenuOpenId((x) => (x === id ? null : id))}
-                          >
-                            <span className="text-base leading-none">⋯</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {renameJobId === id ? (
-                  <div className="border-t border-line px-3 py-2">
-                    <InlineTextPrompt
-                      open
-                      title="作品名称"
-                      value={renameDraft}
-                      onChange={setRenameDraft}
-                      onSubmit={commitRename}
-                      onCancel={() => setRenameJobId(null)}
-                      placeholder="输入显示名称"
-                    />
-                  </div>
-                ) : null}
-                {rowPlayMsg ? (
-                  <p
-                    className="border-t border-danger/25 bg-danger-soft/90 px-2 py-0.5 text-[9px] leading-snug text-danger-ink break-words whitespace-pre-wrap"
-                    role="status"
-                  >
-                    {rowPlayMsg}
-                  </p>
-                ) : null}
-                <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
-                  {isScriptDraft ? (
-                    <>
-                      {renderDownloadGated(
-                        w,
-                        id,
-                        "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
-                        zipBusy === id ? downloadBusyLabel(w.type) : "下载"
-                      )}
-                      <Link
-                        href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
-                        className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                      >
-                        {sharedNotebookForeign ? "查看文稿" : "修改文稿"}
-                      </Link>
-                      {sharedNotebookForeign ? null : (
-                        <button
-                          type="button"
-                          className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                          onClick={() => openRename(id, w.displayTitle)}
-                        >
-                          修改名称
-                        </button>
-                      )}
-                      {sharedNotebookForeign ? null : (
-                        <button
-                          type="button"
-                          className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
-                          onClick={() => requestDelete(id)}
-                        >
-                          删除
-                        </button>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
-                        disabled={audioLoadingId === id}
-                        onClick={() =>
-                          void togglePlay(id, w.displayTitle, {
-                            usePodcastPublicTemplateListen: isPublicTpl
-                          })
-                        }
-                      >
-                        {isActive && isPlayingAudio ? "暂停" : "播放"}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:opacity-50"
-                        onClick={() => goToSharePage(w)}
-                      >
-                        {publishActionText}
-                      </button>
-                      {renderDownloadGated(
-                        w,
-                        id,
-                        "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
-                        zipBusy === id ? downloadBusyLabel(w.type) : "下载"
-                      )}
-                      {sharedNotebookForeign ? null : (
-                        <button
-                          type="button"
-                          className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                          onClick={() => void onReuseTemplate(id, templateReuseArgs)}
-                        >
-                          {reuseOrManuscriptLabel}
-                        </button>
-                      )}
-                      {publications.length > 0 ? (
-                        <span className="ml-auto rounded bg-success-soft px-1.5 py-0.5 text-[10px] text-success-ink">
-                          {publishedText}
-                        </span>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
         {useNotesStyleCards && notesStudioMenuPortalData && notesStudioMenuPos
           ? createPortal(
               (() => {
@@ -2101,5 +1435,6 @@ export default function PodcastWorksGallery({
         </>
       )}
     </div>
+    </WorkGalleryListProvider>
   );
 }

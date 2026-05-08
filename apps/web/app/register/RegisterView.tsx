@@ -10,7 +10,7 @@ import { isRegisterEmailFormatOk } from "../../lib/registerEmail";
 export default function RegisterView() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const returnTo = searchParams.get("returnTo");
+  const returnTo = searchParams?.get("returnTo") ?? null;
   const { ready, authRequired, user, registerSendCode, registerVerifyCode, registerComplete } = useAuth();
   const [regEmail, setRegEmail] = useState("");
   const [regUsername, setRegUsername] = useState("");

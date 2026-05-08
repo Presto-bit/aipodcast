@@ -1,5 +1,6 @@
 import base64
 import binascii
+import io
 import json
 import logging
 import os
@@ -1202,12 +1203,53 @@ def download_job_artifact_api(job_id: str, artifact_id: str, request: Request):
     )
 
 
+_JOB_COVER_CACHE_CONTROL = "private, max-age=604800, stale-while-revalidate=86400"
+
+
+def _resize_job_cover_to_max_edge(data: bytes, mime: str, max_edge_px: int) -> tuple[bytes, str]:
+    """列表缩略图：限制最长边，统一输出 JPEG 以减小体积。失败时返回原字节。"""
+    if max_edge_px < 64 or max_edge_px > 1200:
+        return data, mime
+    try:
+        from PIL import Image  # type: ignore[import-not-found]
+    except ImportError:
+        return data, mime
+    try:
+        im = Image.open(io.BytesIO(data))
+        try:
+            im.seek(0)
+        except EOFError:
+            return data, mime
+        im.load()
+        if im.mode in ("RGBA", "P"):
+            if im.mode == "P" and "transparency" in im.info:
+                im = im.convert("RGBA")
+            if im.mode == "RGBA":
+                bg = Image.new("RGB", im.size, (255, 255, 255))
+                bg.paste(im, mask=im.split()[3])
+                im = bg
+            else:
+                im = im.convert("RGB")
+        elif im.mode != "RGB":
+            im = im.convert("RGB")
+        im.thumbnail((max_edge_px, max_edge_px), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=82, optimize=True)
+        out = buf.getvalue()
+        if len(out) > len(data):
+            return data, mime
+        return out, "image/jpeg"
+    except Exception:
+        return data, mime
+
+
 @router.get("/jobs/{job_id}/cover")
 def download_job_cover_api(
     job_id: str,
     request: Request,
     signed: int = Query(default=0, ge=0, le=1),
     expires_in: int = Query(default=3600, ge=60, le=86400 * 7),
+    w: int = Query(default=0, ge=0, le=1200),
 ):
     row = get_job(job_id, user_ref=_job_row_scope_ref(request))
     if not row:
@@ -1236,10 +1278,13 @@ def download_job_cover_api(
         data = get_object_bytes(key)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"cover_fetch_failed:{exc}") from exc
+    out_data, out_mime = data, mime
+    if int(w) >= 64:
+        out_data, out_mime = _resize_job_cover_to_max_edge(data, mime, int(w))
     return Response(
-        content=data,
-        media_type=mime,
-        headers={"Cache-Control": "private, max-age=86400"},
+        content=out_data,
+        media_type=out_mime,
+        headers={"Cache-Control": _JOB_COVER_CACHE_CONTROL},
     )
 
 
