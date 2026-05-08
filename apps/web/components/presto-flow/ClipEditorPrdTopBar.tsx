@@ -32,17 +32,21 @@ export default function ClipEditorPrdTopBar({
   const total = totalMs ?? 0;
   return (
     <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/90 px-3 py-2 backdrop-blur-md sm:min-h-16 sm:gap-3 sm:px-4">
-      <Link
-        href="/"
-        className="flex shrink-0 items-center gap-2 rounded-lg pr-1 transition hover:bg-fill/80"
-        aria-label="Presto 首页"
-        title="Presto 首页"
-      >
-        <BrandGlyph size={36} className="rounded-md" />
-        <span className="hidden text-sm font-semibold text-ink sm:inline">Presto</span>
-      </Link>
-      <div className="h-6 w-px shrink-0 bg-line/80" aria-hidden />
-      <div className="flex min-w-0 flex-1 items-center gap-2">{title}</div>
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-2.5">
+        <Link
+          href="/"
+          className="flex shrink-0 items-center gap-2 rounded-lg pr-1 transition hover:bg-fill/80"
+          aria-label="Presto 首页"
+          title="Presto 首页"
+        >
+          <BrandGlyph size={36} className="rounded-md" />
+          <span className="hidden text-sm font-semibold text-ink sm:inline">Presto</span>
+        </Link>
+        <span className="hidden shrink-0 text-sm font-medium text-muted sm:inline" aria-hidden>
+          |
+        </span>
+        <div className="min-w-0 flex-1 truncate">{title}</div>
+      </div>
       <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto">
         <span className="font-mono text-[11px] tabular-nums text-muted sm:text-xs">
           {formatClock(currentMs)} / {formatClock(total)}

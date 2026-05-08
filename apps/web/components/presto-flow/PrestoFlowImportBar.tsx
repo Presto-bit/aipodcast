@@ -1,5 +1,6 @@
 "use client";
 
+import { Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import { useI18n } from "../../lib/I18nContext";
@@ -16,8 +17,8 @@ type Props = {
   onDone: () => void;
   onError: (msg: string) => void;
   hasMainAudio: boolean;
-  /** bar：独立条带；inline：顶栏内紧凑，仅按钮 + 简要 title */
-  variant?: "bar" | "inline";
+  /** bar：独立条带；inline：顶栏内紧凑；icon：仅上传图标按钮 */
+  variant?: "bar" | "inline" | "icon";
   /** false 时仅允许单文件上传，不走路由合并 */
   allowMultiSegment?: boolean;
 };
@@ -110,30 +111,55 @@ export default function PrestoFlowImportBar({
   }
 
   const hintText = disabled && disabledReason ? disabledReason : hint;
-  const labelEl = (
-    <label className="inline-flex cursor-pointer items-center gap-2">
-      <span
-        title={variant === "inline" ? hintText : undefined}
+  const labelEl =
+    variant === "icon" ? (
+      <label
         className={[
-          "rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium shadow-soft",
+          "inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-line bg-surface text-ink shadow-soft transition",
           disabled || busy ? "pointer-events-none opacity-50" : "hover:bg-fill"
         ].join(" ")}
+        title={hintText}
       >
-        {busy ? busyLabel : label}
-      </span>
-      <input
-        ref={inputRef}
-        type="file"
-        className="sr-only"
-        accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
-        multiple={allowMultiSegment}
-        disabled={disabled || busy}
-        onChange={(e) => void runImport(e.target.files)}
-      />
-    </label>
-  );
+        {busy ? (
+          <span className="text-[10px] font-semibold text-muted">…</span>
+        ) : (
+          <Upload className="h-4 w-4" aria-hidden />
+        )}
+        <span className="sr-only">{busy ? busyLabel : label}</span>
+        <input
+          ref={inputRef}
+          type="file"
+          className="sr-only"
+          accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
+          multiple={allowMultiSegment}
+          disabled={disabled || busy}
+          onChange={(e) => void runImport(e.target.files)}
+        />
+      </label>
+    ) : (
+      <label className="inline-flex cursor-pointer items-center gap-2">
+        <span
+          title={variant === "inline" ? hintText : undefined}
+          className={[
+            "rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium shadow-soft",
+            disabled || busy ? "pointer-events-none opacity-50" : "hover:bg-fill"
+          ].join(" ")}
+        >
+          {busy ? busyLabel : label}
+        </span>
+        <input
+          ref={inputRef}
+          type="file"
+          className="sr-only"
+          accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
+          multiple={allowMultiSegment}
+          disabled={disabled || busy}
+          onChange={(e) => void runImport(e.target.files)}
+        />
+      </label>
+    );
 
-  if (variant === "inline") {
+  if (variant === "inline" || variant === "icon") {
     return <div className="flex min-w-0 max-w-full items-center gap-2">{labelEl}</div>;
   }
 

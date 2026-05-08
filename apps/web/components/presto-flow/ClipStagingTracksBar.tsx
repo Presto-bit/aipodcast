@@ -1,6 +1,6 @@
 "use client";
 
-import { AudioWaveform, GripVertical, Plus } from "lucide-react";
+import { FileAudio, GripVertical, Plus } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { ClipAudioStagingEntry } from "../../lib/clipTypes";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
@@ -177,7 +177,7 @@ export default function ClipStagingTracksBar({
               </span>
               {prd ? (
                 <span className="flex shrink-0 items-center text-muted" title="音频">
-                  <AudioWaveform className="h-3.5 w-3.5" aria-hidden />
+                  <FileAudio className="h-3.5 w-3.5" aria-hidden />
                 </span>
               ) : null}
               <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-ink" title={key}>

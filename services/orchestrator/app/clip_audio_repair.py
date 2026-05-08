@@ -69,6 +69,40 @@ def _ambient_afilter_chain() -> str:
     return f"{core},{lim}"
 
 
+def repair_voice_clarity_to_mp3(inp: Path, out_mp3: Path) -> None:
+    """
+    仅做人声存在感增强（与降噪链中的 optional voice enhance 一致），不含 afftdn。
+    用于「人声清晰 / 人声美化」一键处理。
+    """
+    voice = _voice_enhance_afilter_segment()
+    if not voice:
+        voice = (
+            "equalizer=f=2600:width_type=o:width=1.1:g=1.3,"
+            "equalizer=f=140:width_type=o:width=1:g=-0.9,"
+            "acompressor=threshold=0.16:ratio=2.2:attack=18:release=220:makeup=1.05:knee=2.5:link=average:detection=rms"
+        )
+    filt = f"{voice},alimiter=limit=0.97:attack=5:release=50"
+    cmd = [
+        _ffmpeg_bin(),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(inp),
+        "-af",
+        filt,
+        "-c:a",
+        "libmp3lame",
+        "-q:a",
+        "3",
+        str(out_mp3),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=3600)
+    if not out_mp3.is_file() or out_mp3.stat().st_size < 32:
+        raise RuntimeError("人声清晰处理未生成有效音频")
+
+
 def repair_ambient_to_mp3(inp: Path, out_mp3: Path) -> None:
     filt = _ambient_afilter_chain()
     cmd = [

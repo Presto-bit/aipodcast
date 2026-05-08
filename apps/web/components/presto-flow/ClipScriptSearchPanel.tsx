@@ -109,7 +109,7 @@ export default function ClipScriptSearchPanel({
 
   if (compactToolbar) {
     return (
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
         <label className="sr-only" htmlFor="clip-prd-script-search">
           {t("presto.flow.scriptSearch.label")}
         </label>
@@ -126,7 +126,7 @@ export default function ClipScriptSearchPanel({
             }
           }}
           placeholder={t("presto.flow.scriptSearch.placeholder")}
-          className="min-w-[8rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-ink placeholder:text-muted"
+          className="h-8 w-[min(11rem,28vw)] shrink-0 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-ink placeholder:text-muted"
         />
         <button
           type="button"

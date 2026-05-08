@@ -27,6 +27,7 @@ from ..clip_audio_merge import (
 from ..clip_audio_repair import (
     repair_ambient_to_mp3,
     repair_dual_stereo_balance_to_mp3,
+    repair_voice_clarity_to_mp3,
     repair_loudnorm_to_mp3,
     sniff_suffix_from_filename,
 )
@@ -649,8 +650,8 @@ async def clip_repair_source_audio(project_id: str, request: Request, body: dict
         raise HTTPException(status_code=404, detail="工程不存在")
     b = body or {}
     kind = str(b.get("kind") or "").strip().lower()
-    if kind not in ("ambient", "loudnorm", "dual_balance"):
-        raise HTTPException(status_code=400, detail="kind 须为 ambient、loudnorm 或 dual_balance")
+    if kind not in ("ambient", "loudnorm", "dual_balance", "voice_clarity"):
+        raise HTTPException(status_code=400, detail="kind 须为 ambient、loudnorm、dual_balance 或 voice_clarity")
     t_st = str(row.get("transcription_status") or "").strip()
     if t_st in ("running", "queued"):
         raise HTTPException(status_code=409, detail="转写进行中，请稍后再试修音")
@@ -676,6 +677,8 @@ async def clip_repair_source_audio(project_id: str, request: Request, body: dict
             out_mp3 = td_path / "repaired.mp3"
             if kind == "ambient":
                 repair_ambient_to_mp3(src, out_mp3)
+            elif kind == "voice_clarity":
+                repair_voice_clarity_to_mp3(src, out_mp3)
             elif kind == "dual_balance":
                 repair_dual_stereo_balance_to_mp3(src, out_mp3)
             else:

@@ -199,6 +199,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [projectTitleBusy, setProjectTitleBusy] = useState(false);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [actionBusy, setActionBusy] = useState(false);
+  /** PRD 稿面工具条：一键修音进行中 */
+  const [prdRepairBusyKind, setPrdRepairBusyKind] = useState<"" | "ambient" | "voice_clarity" | "loudnorm">("");
   const [playbackMs, setPlaybackMs] = useState(0);
   const [focusedWordId, setFocusedWordId] = useState<string | null>(null);
   const [llmSugs, setLlmSugs] = useState<ClipEditSuggestion[]>([]);
@@ -2519,6 +2521,45 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     onError: (msg: string) => setErr(msg)
   };
 
+  const runClipPrdRepair = useCallback(
+    async (kind: "ambient" | "voice_clarity" | "loudnorm") => {
+      const tSt = project.transcription_status;
+      if (tSt === "running" || tSt === "queued") {
+        setErr("转写进行中，请稍后再试修音");
+        return;
+      }
+      if (!project.has_audio && !project.audio_download_url) {
+        setErr("无主素材音频");
+        return;
+      }
+      setPrdRepairBusyKind(kind);
+      setErr("");
+      try {
+        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/repair`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ kind })
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          project?: ClipProjectRow;
+          detail?: string;
+        };
+        if (!res.ok || data.success === false) {
+          throw new Error(data.detail || `修音失败 ${res.status}`);
+        }
+        if (data.project) setProject(data.project);
+        await load();
+      } catch (e) {
+        setErr(String(e instanceof Error ? e.message : e));
+      } finally {
+        setPrdRepairBusyKind("");
+      }
+    },
+    [getAuthHeaders, load, project.audio_download_url, project.has_audio, project.transcription_status, projectId]
+  );
+
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       {loginPromptNode}
@@ -3012,6 +3053,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       project.transcription_status !== "queued"
                     }
                     approxSegmentDurationMs={approxSegmentDurationMs}
+                    mainAudioDurationMs={durationMs ?? null}
                   />
                 ) : null}
                 <div
@@ -3021,32 +3063,53 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       : "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:min-w-0 lg:flex-[1.28]"
                   }
                 >
-                  {usePrdLayout ? (
-                    <ClipEditorPrdScriptToolbar
-                      scriptSearch={scriptSearch}
-                      onScriptSearch={setScriptSearch}
-                      scriptSearchInputRef={scriptSearchInputRef}
-                      words={words}
-                      lines={lines}
-                      excluded={excluded}
-                      onNavigateSearchHit={navigateScriptSearchHit}
-                      activeSearchHighlightWordId={activeSearchHighlightWordId}
-                      onSelectAllSearchHits={selectAllScriptSearchHits}
-                      searchAllHitsSelected={searchAllHitsSelected}
-                      allSearchHitsHighlighted={allSearchHitsHighlighted}
-                      onDeleteAllSearchHits={deleteAllScriptSearchHits}
-                      verbalPanel={<ClipRoughCutPanel {...roughCutDockProps} toolbarFocus="verbal" />}
-                      pausePanel={<ClipRoughCutPanel {...roughCutDockProps} toolbarFocus="pause" />}
-                      historyPanel={prdHistoryPanel}
-                      repairAmbientPanel={<ClipRepairPanel {...repairDockProps} toolbarFocus="ambient" />}
-                      repairVoicePanel={<ClipRepairPanel {...repairDockProps} toolbarFocus="dual_balance" />}
-                      repairLoudnessPanel={<ClipRepairPanel {...repairDockProps} toolbarFocus="loudness" />}
-                    />
-                  ) : null}
                   <section
                     aria-label={t("presto.flow.region.script")}
                     className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-b border-line bg-surface/20"
                   >
+                    {usePrdLayout ? (
+                      <ClipEditorPrdScriptToolbar
+                        scriptSearch={scriptSearch}
+                        onScriptSearch={setScriptSearch}
+                        scriptSearchInputRef={scriptSearchInputRef}
+                        words={words}
+                        lines={lines}
+                        excluded={excluded}
+                        onNavigateSearchHit={navigateScriptSearchHit}
+                        activeSearchHighlightWordId={activeSearchHighlightWordId}
+                        onSelectAllSearchHits={selectAllScriptSearchHits}
+                        searchAllHitsSelected={searchAllHitsSelected}
+                        allSearchHitsHighlighted={allSearchHitsHighlighted}
+                        onDeleteAllSearchHits={deleteAllScriptSearchHits}
+                        verbalSheetProps={{ ...roughCutDockProps }}
+                        pauseSheetProps={{ ...roughCutDockProps }}
+                        historyPanel={prdHistoryPanel}
+                        onRepairAmbient={() => void runClipPrdRepair("ambient")}
+                        onRepairVoiceClarity={() => void runClipPrdRepair("voice_clarity")}
+                        onRepairLoudnorm={() => void runClipPrdRepair("loudnorm")}
+                        repairBusyKind={prdRepairBusyKind}
+                      />
+                    ) : null}
+                    {usePrdLayout && waveformAudioUrl ? (
+                      <div
+                        className="pointer-events-none fixed bottom-0 left-[-12000px] z-[-1] h-[80px] w-[1200px] overflow-hidden opacity-0"
+                        aria-hidden
+                      >
+                        <ClipWaveformPanel
+                          ref={waveformRef}
+                          variant="panel"
+                          waveHeight={72}
+                          audioUrl={waveformAudioUrl}
+                          onTimeMs={handlePlaybackTimeMs}
+                          onLoadError={handleWaveformLoadError}
+                          playbackRate={playbackRate}
+                          snapSeekMs={snapSeekMs}
+                          zoomLevel={waveZoomLevel}
+                          className="!border-0 !bg-transparent"
+                        />
+                      </div>
+                    ) : null}
+                    {!usePrdLayout ? (
                     <div className="shrink-0 border-b border-line bg-fill/15 px-2 py-2">
                       {!usePrdLayout ? (
                         <ClipStagingTracksBar
@@ -3195,6 +3258,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         }}
                       />
                     </div>
+                    ) : null}
                     <div className="flex min-h-0 min-w-0 flex-1 flex-col px-2 pb-2 pt-2">
                       <div className="mb-2 flex shrink-0 items-start justify-between gap-2">
                         <div className="flex-1 text-right">
@@ -3360,6 +3424,25 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         />
                       </div>
                     </div>
+                    {usePrdLayout ? (
+                      <AudioConsole
+                        waveformRef={waveformRef}
+                        playbackRate={playbackRate}
+                        onPlaybackRateChange={setPlaybackRate}
+                        rateOptionLabels={[
+                          t("presto.flow.playbackRate1"),
+                          t("presto.flow.playbackRate125"),
+                          t("presto.flow.playbackRate150"),
+                          t("presto.flow.playbackRate200")
+                        ]}
+                        rateSelectAriaLabel={t("presto.flow.playbackRateAria")}
+                        durationMs={durationMs ?? 0}
+                        currentTimeMs={playbackMs}
+                        onSeekMs={(ms) => {
+                          waveformRef.current?.seekToMs(ms);
+                        }}
+                      />
+                    ) : null}
                   </section>
                 </div>
                 {!usePrdLayout ? (
@@ -3583,24 +3666,26 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               </div>
             )}
           </div>
-          <AudioConsole
-            dockEmbed
-            waveformRef={waveformRef}
-            playbackRate={playbackRate}
-            onPlaybackRateChange={setPlaybackRate}
-            rateOptionLabels={[
-              t("presto.flow.playbackRate1"),
-              t("presto.flow.playbackRate125"),
-              t("presto.flow.playbackRate150"),
-              t("presto.flow.playbackRate200")
-            ]}
-            rateSelectAriaLabel={t("presto.flow.playbackRateAria")}
-            durationMs={durationMs ?? 0}
-            currentTimeMs={playbackMs}
-            onSeekMs={(ms) => {
-              waveformRef.current?.seekToMs(ms);
-            }}
-          />
+          {!usePrdLayout ? (
+            <AudioConsole
+              dockEmbed
+              waveformRef={waveformRef}
+              playbackRate={playbackRate}
+              onPlaybackRateChange={setPlaybackRate}
+              rateOptionLabels={[
+                t("presto.flow.playbackRate1"),
+                t("presto.flow.playbackRate125"),
+                t("presto.flow.playbackRate150"),
+                t("presto.flow.playbackRate200")
+              ]}
+              rateSelectAriaLabel={t("presto.flow.playbackRateAria")}
+              durationMs={durationMs ?? 0}
+              currentTimeMs={playbackMs}
+              onSeekMs={(ms) => {
+                waveformRef.current?.seekToMs(ms);
+              }}
+            />
+          ) : null}
         </div>
       </div>
   );

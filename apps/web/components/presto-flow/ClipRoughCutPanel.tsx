@@ -109,6 +109,9 @@ type Props = {
   onExitWordchainPreview?: () => void;
   /** 稿面工具条下拉：优先展开口癖区或停顿区 */
   toolbarFocus?: "verbal" | "pause" | null;
+  /** PRD 横向底栏：仅渲染对应分区 */
+  variant?: "default" | "verbalSheet" | "pauseSheet";
+  onClose?: () => void;
 };
 
 function iconBtnClass(disabled?: boolean) {
@@ -148,7 +151,9 @@ export default function ClipRoughCutPanel({
   wordchainPreviewBusy = false,
   onGenerateWordchainPreview,
   onExitWordchainPreview,
-  toolbarFocus = null
+  toolbarFocus = null,
+  variant = "default",
+  onClose
 }: Props) {
   const { t } = useI18n();
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -347,6 +352,306 @@ export default function ClipRoughCutPanel({
     () => exemptDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length,
     [exemptDraft]
   );
+
+  const [prdVerbalFilter, setPrdVerbalFilter] = useState("");
+  const [prdVerbalSelectedKey, setPrdVerbalSelectedKey] = useState<string | null>(null);
+  const [prdPauseSelectedSk, setPrdPauseSelectedSk] = useState<string | null>(null);
+
+  const applyVerbalDeleteForKey = useCallback(
+    (key: string) => {
+      if (key.startsWith("tic:")) {
+        const core = key.slice(4);
+        const row = ticAggRows.find((r) => r.coreKey === core);
+        if (row?.activeIds.length) onMarkExcluded(row.activeIds);
+        return;
+      }
+      if (key.startsWith("sug:")) {
+        const sid = key.slice(4);
+        const s = roughCutSuggestions.find((x) => x.id === sid);
+        if (!s) return;
+        const ex = s.execute;
+        if (ex?.kind === "excludeWords") {
+          const active = ex.wordIds.filter((id) => !excluded.has(id));
+          if (active.length) onMarkExcluded(active);
+        } else if (ex?.kind === "keepStutterFirst") {
+          const toggleIds = ex.wordIds.slice(1);
+          const active = toggleIds.filter((id) => !excluded.has(id));
+          if (active.length) onExecuteSuggestion(s);
+          else if (toggleIds.some((id) => excluded.has(id))) onMarkRestored(toggleIds.filter((id) => excluded.has(id)));
+        }
+      }
+    },
+    [excluded, onExecuteSuggestion, onMarkExcluded, onMarkRestored, roughCutSuggestions, ticAggRows]
+  );
+
+  const rowLabelCls =
+    "mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted";
+
+  if (variant === "verbalSheet") {
+    const q = prdVerbalFilter.trim().toLowerCase();
+    const ticFiltered = q
+      ? ticAggRows.filter((row) => row.label.toLowerCase().includes(q))
+      : ticAggRows;
+    const sugFiltered = q
+      ? roughCutSuggestions.filter((s) => suggestionPrimaryLine(s, words).toLowerCase().includes(q))
+      : roughCutSuggestions;
+
+    return (
+      <div className="flex max-h-[min(70vh,520px)] flex-col gap-3 overflow-y-auto p-3 text-ink">
+        <div className="flex items-center justify-between gap-2 border-b border-line pb-2">
+          <span className="text-xs font-semibold">识别口癖</span>
+          {onClose ? (
+            <button
+              type="button"
+              className="rounded-md border border-line px-2 py-1 text-[10px] text-muted hover:bg-fill"
+              onClick={onClose}
+            >
+              关闭
+            </button>
+          ) : null}
+        </div>
+
+        <div>
+          <span className={rowLabelCls}>识别结果</span>
+          <div className="flex flex-wrap gap-1.5">
+            {ticFiltered.map((row) => {
+              const dismissId = `tic:${row.coreKey}`;
+              const orderedTicIds = orderWordIdsByTranscript([...row.activeIds, ...row.excludedIds], words);
+              const active = prdVerbalSelectedKey === dismissId;
+              return (
+                <button
+                  key={dismissId}
+                  type="button"
+                  disabled={orderedTicIds.length === 0 || !onJumpWord}
+                  className={[
+                    "max-w-[14rem] truncate rounded-full border px-2.5 py-1 text-[11px] font-medium transition",
+                    active ? "border-brand bg-brand/15 text-brand" : "border-line bg-surface hover:bg-fill"
+                  ].join(" ")}
+                  title={row.label}
+                  onClick={() => {
+                    setPrdVerbalSelectedKey(dismissId);
+                    jumpVerbalRow(dismissId, orderedTicIds);
+                  }}
+                >
+                  <span className="text-rose-700 dark:text-rose-200">{row.label}</span>
+                  <span className="ml-1 font-normal text-muted">×{row.activeIds.length}</span>
+                </button>
+              );
+            })}
+            {sugFiltered.map((s) => {
+              const ex = s.execute;
+              const orderedJumpIds =
+                ex?.kind === "excludeWords" || ex?.kind === "keepStutterFirst"
+                  ? orderWordIdsByTranscript(ex.wordIds, words)
+                  : s.wordId
+                    ? [s.wordId]
+                    : [];
+              const sk = `sug:${s.id}`;
+              const active = prdVerbalSelectedKey === sk;
+              const primary = suggestionPrimaryLine(s, words);
+              return (
+                <button
+                  key={sk}
+                  type="button"
+                  disabled={orderedJumpIds.length === 0 || !onJumpWord}
+                  className={[
+                    "max-w-[14rem] truncate rounded-full border px-2.5 py-1 text-[11px] font-medium transition",
+                    active ? "border-brand bg-brand/15 text-brand" : "border-line bg-surface hover:bg-fill"
+                  ].join(" ")}
+                  onClick={() => {
+                    setPrdVerbalSelectedKey(sk);
+                    jumpVerbalRow(`sug:${s.id}`, orderedJumpIds);
+                  }}
+                >
+                  <span
+                    className={[
+                      "mr-1 shrink-0 rounded px-1 py-px text-[9px] font-semibold",
+                      suggestionBadgeTone(s)
+                    ].join(" ")}
+                  >
+                    {suggestionBadge(s)}
+                  </span>
+                  <span>{primary}</span>
+                </button>
+              );
+            })}
+            {!ticFiltered.length && !sugFiltered.length ? (
+              <span className="text-[10px] text-muted">{t("presto.flow.roughCut.unifiedEmpty")}</span>
+            ) : null}
+          </div>
+        </div>
+
+        <div>
+          <span className={rowLabelCls}>查找口癖</span>
+          <input
+            type="search"
+            value={prdVerbalFilter}
+            onChange={(e) => setPrdVerbalFilter(e.target.value)}
+            placeholder="过滤上方词条…"
+            className="w-full max-w-md rounded-lg border border-line bg-surface px-2 py-1.5 text-[11px] text-ink"
+          />
+        </div>
+
+        <div>
+          <span className={rowLabelCls}>{t("presto.flow.roughCut.exemptConfigTitle")}</span>
+          <textarea
+            value={exemptDraft}
+            disabled={tablesBusy}
+            onChange={(e) => {
+              setTablesDirty(true);
+              setExemptDraft(e.target.value);
+            }}
+            rows={2}
+            spellCheck={false}
+            className="w-full resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] leading-snug text-ink"
+            placeholder={t("presto.flow.roughCut.exemptConfigPlaceholder")}
+          />
+          <button
+            type="button"
+            disabled={tablesBusy}
+            className="mt-1 rounded-lg border border-line bg-surface px-2 py-1 text-[10px] font-semibold shadow-soft hover:bg-fill disabled:opacity-40"
+            onClick={() => void saveExemptConfig()}
+          >
+            {tablesBusy ? "…" : t("presto.flow.roughCut.exemptConfigSave")}
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2">
+          <button
+            type="button"
+            disabled={!prdVerbalSelectedKey}
+            className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[11px] font-semibold shadow-soft hover:bg-fill disabled:opacity-40"
+            onClick={() => {
+              if (prdVerbalSelectedKey) applyVerbalDeleteForKey(prdVerbalSelectedKey);
+            }}
+          >
+            删除
+          </button>
+          <button
+            type="button"
+            disabled={ticIds.length === 0}
+            className="rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-[11px] font-semibold text-brand hover:bg-brand/15 disabled:opacity-40"
+            onClick={() => onMarkExcluded(ticIds)}
+          >
+            {t("presto.flow.roughCut.fillerCutAll")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (variant === "pauseSheet") {
+    const cutAllSilences = () => {
+      if (!onToggleSilenceCut) return;
+      for (const r of longSilenceRows) {
+        const sk = silenceRowKey(r.start, r.end);
+        if (!silenceCutKeys?.has(sk)) onToggleSilenceCut(r.start, r.end);
+      }
+    };
+
+    const toggleSelectedSilence = () => {
+      if (!prdPauseSelectedSk || !onToggleSilenceCut) return;
+      const row = longSilenceRows.find((r) => silenceRowKey(r.start, r.end) === prdPauseSelectedSk);
+      if (!row) return;
+      onToggleSilenceCut(row.start, row.end);
+    };
+
+    return (
+      <div className="flex max-h-[min(70vh,520px)] flex-col gap-3 overflow-y-auto p-3 text-ink">
+        <div className="flex items-center justify-between gap-2 border-b border-line pb-2">
+          <span className="text-xs font-semibold">识别停顿</span>
+          {onClose ? (
+            <button
+              type="button"
+              className="rounded-md border border-line px-2 py-1 text-[10px] text-muted hover:bg-fill"
+              onClick={onClose}
+            >
+              关闭
+            </button>
+          ) : null}
+        </div>
+
+        <div>
+          <span className={rowLabelCls}>停顿时长</span>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink">
+            <span className="rounded-md border border-line bg-fill/40 px-2 py-1 font-mono">
+              阈值 ≥ {longGapMs} ms
+            </span>
+            <span className="text-muted">
+              {pauseEnabled ? t("presto.flow.roughCut.pauseSectionExportOn") : t("presto.flow.roughCut.pauseSectionExportOff")}
+              {" · "}
+              {t("presto.flow.roughCut.pauseSectionSilences").replace("{n}", String(longSilenceRows.length))}
+            </span>
+            {onRefreshSilences ? (
+              <button
+                type="button"
+                disabled={silenceBusy}
+                className="rounded-md border border-line bg-surface px-2 py-1 text-[10px] font-semibold hover:bg-fill disabled:opacity-40"
+                onClick={() => void refreshSilencesClick()}
+              >
+                {silenceBusy ? "…" : t("presto.flow.roughCut.pauseRefreshSilences")}
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div>
+          <span className={rowLabelCls}>长停顿</span>
+          <div className="flex flex-wrap gap-1.5">
+            {longSilenceRows.map((r) => {
+              const sk = silenceRowKey(r.start, r.end);
+              const bridge = silenceBridgeLabel(words, r.start, r.end, excluded);
+              const jumpId = firstWordIdAtOrAfterMs(words, r.end, excluded);
+              const cut = Boolean(silenceCutKeys?.has(sk));
+              const active = prdPauseSelectedSk === sk;
+              return (
+                <button
+                  key={sk}
+                  type="button"
+                  disabled={(!jumpId || !onJumpWord) && !onSeekPreviewMs}
+                  className={[
+                    "max-w-[18rem] truncate rounded-full border px-2.5 py-1 text-left text-[10px] transition",
+                    active ? "border-brand bg-brand/15 text-brand" : "border-line bg-surface hover:bg-fill",
+                    cut ? "line-through opacity-80" : ""
+                  ].join(" ")}
+                  title={bridge}
+                  onClick={() => {
+                    setPrdPauseSelectedSk(sk);
+                    if (jumpId && onJumpWord) onJumpWord(jumpId);
+                    onSeekPreviewMs?.(r.end + 1);
+                  }}
+                >
+                  {formatMs(r.start)}–{formatMs(r.end)} · {(Math.round(r.dur / 100) / 10).toFixed(1)}s
+                </button>
+              );
+            })}
+            {!longSilenceRows.length ? (
+              <span className="text-[10px] text-muted">{t("presto.flow.roughCut.pauseNoLongSilences")}</span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2">
+          <button
+            type="button"
+            disabled={!prdPauseSelectedSk || !onToggleSilenceCut}
+            className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[11px] font-semibold shadow-soft hover:bg-fill disabled:opacity-40"
+            onClick={() => toggleSelectedSilence()}
+          >
+            删除
+          </button>
+          <button
+            type="button"
+            disabled={!longSilenceRows.length || !onToggleSilenceCut}
+            className="rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-[11px] font-semibold text-brand hover:bg-brand/15 disabled:opacity-40"
+            onClick={() => cutAllSilences()}
+          >
+            全部删除
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-1">
