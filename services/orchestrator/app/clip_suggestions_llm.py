@@ -315,10 +315,196 @@ def clip_llm_expand_from_row(row: dict[str, Any], words: list[dict[str, Any]], b
         return []
     items = [obj]
     cleaned = sanitize_llm_suggestion_items(items, valid_ids=valid_ids, words=words)
+    cleaned = light_review_verbal_suggestion_items(cleaned, words=words)
     for it in cleaned:
         it["parent_suggestion_id"] = parent_id
         it["phase"] = 2
     return cleaned[:1]
+
+
+def _word_id_first_index(words: list[dict[str, Any]]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for i, w in enumerate(words):
+        if not isinstance(w, dict):
+            continue
+        wid = str(w.get("id") or "").strip()
+        if wid and wid not in out:
+            out[wid] = i
+    return out
+
+
+def _snippet_transcript_around_ids(
+    words: list[dict[str, Any]],
+    id_to_idx: dict[str, int],
+    word_ids: list[str],
+    *,
+    pad: int = 6,
+    max_chars: int = 520,
+) -> str:
+    idxs = [id_to_idx[i] for i in word_ids if i in id_to_idx]
+    if not idxs:
+        return ""
+    lo = max(0, min(idxs) - pad)
+    hi = min(len(words) - 1, max(idxs) + pad)
+    parts: list[str] = []
+    for i in range(lo, hi + 1):
+        w = words[i]
+        if not isinstance(w, dict):
+            continue
+        parts.append(f"{w.get('text') or ''}{w.get('punct') or ''}")
+    return "".join(parts)[:max_chars]
+
+
+def _coerce_review_bool(v: Any) -> bool | None:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)) and int(v) in (0, 1):
+        return bool(int(v))
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "1", "yes", "y", "approve", "pass"):
+            return True
+        if s in ("false", "0", "no", "n", "reject", "deny"):
+            return False
+    return None
+
+
+def _parse_verbal_light_review_map(raw: str) -> dict[int, bool]:
+    """j -> approve (True=保留可执行建议)."""
+    t = (raw or "").strip()
+    arr: list[Any] | None = None
+    if t.startswith("["):
+        arr = _parse_llm_json_array(t)
+    if not isinstance(arr, list):
+        obj = _parse_first_json_object(raw)
+        if isinstance(obj, dict):
+            arr = obj.get("items")
+            if not isinstance(arr, list):
+                arr = obj.get("reviews")
+    if not isinstance(arr, list):
+        return {}
+    out: dict[int, bool] = {}
+    for row in arr:
+        if not isinstance(row, dict):
+            continue
+        try:
+            j = int(row.get("j"))
+        except (TypeError, ValueError):
+            continue
+        ap = _coerce_review_bool(row.get("approve"))
+        if ap is None:
+            ap = _coerce_review_bool(row.get("pass"))
+        if ap is None:
+            ap = _coerce_review_bool(row.get("keep"))
+        if ap is not None:
+            out[j] = ap
+    return out
+
+
+def _call_llm_verbal_light_review(*, user_json: str) -> dict[int, bool]:
+    system = (
+        "你是中文播客剪辑质检员。输入为若干条「待展示的口癖/赘词删除或叠字仅保留首词」候选，"
+        "每条含转写上下文 snippet（含目标词前后若干字）。"
+        "请判断每条是否为误报：合法词汇（如「天天」「刚刚」「常常」「看看」等 AABB/叠词）、"
+        "专有名词、承载信息的实词重复、或 ASR 分词导致的假「重复」，应判为误报。"
+        "只输出一个 JSON 对象，不要 Markdown。字段 items 为数组；每项必须含整数 j（与输入一致）与布尔 approve。"
+        "approve=true 表示该条建议确实成立、可给用户执行；approve=false 表示误报，应撤销可执行动作。"
+        "必须覆盖输入中的每一个 j，不要遗漏。"
+    )
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_json},
+    ]
+    raw, _tid = invoke_llm_chat_messages_with_minimax_fallback(messages, temperature=0.12, timeout_sec=75)
+    return _parse_verbal_light_review_map(str(raw or ""))
+
+
+def light_review_verbal_suggestion_items(
+    items: list[dict[str, Any]],
+    *,
+    words: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    对可执行建议（exclude_word_ids / keep_stutter_first）做一次轻量 LLM 复核，过滤误报后再返回。
+    解析失败或调用异常时原样返回（fail-open）。可用环境变量 CLIP_LLM_VERBAL_REVIEW=0 关闭。
+    """
+    if not items or not words:
+        return items
+    flag = str(os.getenv("CLIP_LLM_VERBAL_REVIEW") or "1").strip().lower()
+    if flag in ("0", "false", "no", "off"):
+        return items
+
+    id_to_idx = _word_id_first_index(words)
+    candidates: list[dict[str, Any]] = []
+    item_index_to_j: dict[int, int] = {}
+
+    for idx, it in enumerate(items):
+        if not isinstance(it, dict):
+            continue
+        action = str(it.get("action") or "none").strip().lower()
+        wids = it.get("word_ids") if isinstance(it.get("word_ids"), list) else []
+        raw_ids = [str(x).strip() for x in wids if str(x).strip()]
+        if action == "exclude_word_ids" and raw_ids:
+            j = len(candidates)
+            snippet = _snippet_transcript_around_ids(words, id_to_idx, raw_ids)
+            candidates.append(
+                {
+                    "j": j,
+                    "action": action,
+                    "title": str(it.get("title") or "").strip()[:80],
+                    "body": str(it.get("body") or "").strip()[:240],
+                    "snippet": snippet,
+                }
+            )
+            item_index_to_j[idx] = j
+        elif action == "keep_stutter_first" and len(raw_ids) >= 2:
+            j = len(candidates)
+            snippet = _snippet_transcript_around_ids(words, id_to_idx, raw_ids)
+            candidates.append(
+                {
+                    "j": j,
+                    "action": action,
+                    "title": str(it.get("title") or "").strip()[:80],
+                    "body": str(it.get("body") or "").strip()[:240],
+                    "snippet": snippet,
+                }
+            )
+            item_index_to_j[idx] = j
+
+    if not candidates:
+        return items
+
+    try:
+        user_json = json.dumps({"candidates": candidates}, ensure_ascii=False)
+    except Exception:
+        return items
+
+    try:
+        review_map = _call_llm_verbal_light_review(user_json=user_json)
+    except Exception as exc:
+        logger.warning("verbal light review llm failed: %s", exc)
+        return items
+
+    if not review_map:
+        logger.warning("verbal light review empty parse, keeping original items")
+        return items
+
+    demote_js = {j for j in range(len(candidates)) if review_map.get(j, True) is False}
+    if not demote_js:
+        return items
+
+    out: list[dict[str, Any]] = []
+    for idx, it in enumerate(items):
+        if not isinstance(it, dict):
+            continue
+        merged: dict[str, Any] = dict(it)
+        j = item_index_to_j.get(idx)
+        if j is not None and j in demote_js:
+            merged["action"] = "none"
+            merged["word_ids"] = []
+            logger.info("verbal light review demoted suggestion j=%s title=%s", j, merged.get("title"))
+        out.append(merged)
+    return out
 
 
 def _call_llm_structured(*, labeled_tsv: str, valid_count: int) -> str:
@@ -379,6 +565,7 @@ def clip_edit_suggestions_from_row(row: dict[str, Any], body: dict[str, Any] | N
     out = sanitize_llm_suggestion_items(items, valid_ids=valid_ids, words=words)
     for it in out:
         it.setdefault("phase", 2)
+    out = light_review_verbal_suggestion_items(out, words=words)
     return out
 
 

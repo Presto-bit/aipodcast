@@ -48,6 +48,94 @@ export type LlmSuggestionApiItem = {
   parent_suggestion_id?: string;
 };
 
+/** POST verbal-suggestion-review 请求体单项（与编排器 sanitize 后字段对齐） */
+export type VerbalReviewOrchestratorItem = {
+  action: "exclude_word_ids" | "keep_stutter_first";
+  title: string;
+  body: string;
+  word_ids: string[];
+};
+
+/** 从规则型 ClipEditSuggestion 抽出需口癖复核的条目（不含 startExport / 无 execute） */
+export function buildRuleVerbalReviewRequest(suggestions: readonly ClipEditSuggestion[]): {
+  items: VerbalReviewOrchestratorItem[];
+  indices: number[];
+} {
+  const items: VerbalReviewOrchestratorItem[] = [];
+  const indices: number[] = [];
+  suggestions.forEach((s, i) => {
+    const ex = s.execute;
+    if (!ex || ex.kind === "startExport") return;
+    if (ex.kind === "keepStutterFirst" && ex.wordIds.length >= 2) {
+      indices.push(i);
+      items.push({
+        action: "keep_stutter_first",
+        title: s.title,
+        body: s.body,
+        word_ids: [...ex.wordIds]
+      });
+      return;
+    }
+    if (ex.kind === "excludeWords" && ex.wordIds.length > 0) {
+      indices.push(i);
+      items.push({
+        action: "exclude_word_ids",
+        title: s.title,
+        body: s.body,
+        word_ids: [...ex.wordIds]
+      });
+    }
+  });
+  return { items, indices };
+}
+
+function pickWordIdsFromReviewItem(it: { word_ids?: unknown; wordIds?: unknown }): string[] {
+  const raw = it.word_ids ?? it.wordIds;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x) => String(x).trim()).filter(Boolean);
+}
+
+/** 将编排器 verbal-suggestion-review 的返回按 indices 合并回规则建议列表 */
+export function mergeRuleVerbalReviewResponse(
+  base: readonly ClipEditSuggestion[],
+  indices: readonly number[],
+  reviewed: readonly LlmSuggestionApiItem[] | readonly Record<string, unknown>[]
+): ClipEditSuggestion[] {
+  if (!indices.length || reviewed.length !== indices.length) {
+    return [...base];
+  }
+  const out: ClipEditSuggestion[] = base.map((s) => ({ ...s }));
+  for (let k = 0; k < indices.length; k++) {
+    const idx = indices[k]!;
+    const cur = out[idx];
+    if (!cur) continue;
+    const r = reviewed[k] as LlmSuggestionApiItem & { action?: string };
+    const action = String(r.action || "none").trim().toLowerCase();
+    const rawIds = pickWordIdsFromReviewItem(r);
+    if (action === "none" || rawIds.length === 0) {
+      const { execute: _ex, executeLabel: _el, ...rest } = cur;
+      out[idx] = { ...rest };
+      continue;
+    }
+    if (action === "exclude_word_ids") {
+      out[idx] = {
+        ...cur,
+        execute: { kind: "excludeWords", wordIds: rawIds },
+        executeLabel: cur.executeLabel
+      };
+      continue;
+    }
+    if (action === "keep_stutter_first" && rawIds.length >= 2) {
+      out[idx] = {
+        ...cur,
+        execute: { kind: "keepStutterFirst", wordIds: rawIds },
+        executeLabel: cur.executeLabel
+      };
+    }
+  }
+  return out;
+}
+
 function wordCore(w: ClipWord): string {
   return displayToken(w).replace(/[，,。.!！?？、；;:""''「」…]+$/u, "").trim();
 }

@@ -1188,6 +1188,54 @@ def clip_post_edit_suggestions(project_id: str, request: Request, body: dict[str
     return {"success": True, "items": items, "source": src}
 
 
+@router.post("/clip/projects/{project_id}/verbal-suggestion-review")
+def clip_post_verbal_suggestion_review(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    """对前端规则生成的可执行建议（exclude / keep_stutter_first）走与 edit-suggestions 相同的 LLM 轻量复核。"""
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    from ..clip_suggestions_llm import _words_from_normalized, light_review_verbal_suggestion_items
+
+    raw_items = (body or {}).get("items")
+    if not isinstance(raw_items, list):
+        raise HTTPException(status_code=400, detail="items 须为 JSON 数组")
+    words = _words_from_normalized(row.get("transcript_normalized"))
+
+    norm: list[dict[str, Any]] = []
+    for it in raw_items[:24]:
+        if not isinstance(it, dict):
+            continue
+        title = str(it.get("title") or "").strip()[:200]
+        body_t = str(it.get("body") or "").strip()[:800]
+        action = str(it.get("action") or "").strip().lower()
+        wid_raw = it.get("word_ids") if isinstance(it.get("word_ids"), list) else it.get("wordIds")
+        raw_ids: list[str] = []
+        if isinstance(wid_raw, list):
+            for x in wid_raw[:120]:
+                s = str(x).strip()
+                if s:
+                    raw_ids.append(s)
+        raw_ids = list(dict.fromkeys(raw_ids))
+        if action == "exclude_word_ids" and raw_ids:
+            norm.append({"title": title, "body": body_t, "action": "exclude_word_ids", "word_ids": raw_ids})
+        elif action == "keep_stutter_first" and len(raw_ids) >= 2:
+            norm.append({"title": title, "body": body_t, "action": "keep_stutter_first", "word_ids": raw_ids})
+
+    if not norm:
+        return {"success": True, "items": []}
+
+    if not words:
+        return {"success": True, "items": norm}
+
+    try:
+        reviewed = light_review_verbal_suggestion_items(norm, words=words)
+    except Exception as exc:
+        logger.warning("verbal-suggestion-review failed project_id=%s err=%s", project_id, exc)
+        raise HTTPException(status_code=503, detail=str(exc)[:500]) from exc
+    return {"success": True, "items": reviewed}
+
+
 @router.get("/clip/projects/{project_id}/silences")
 def clip_get_project_silences(project_id: str, request: Request):
     """ffmpeg silencedetect；结果缓存于 silence_analysis（随主音频 object_key 失效）。"""

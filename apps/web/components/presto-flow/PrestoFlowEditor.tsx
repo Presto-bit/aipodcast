@@ -25,8 +25,10 @@ import {
 } from "../../lib/prestoFlowPlayback";
 import {
   buildClipEditSuggestions,
+  buildRuleVerbalReviewRequest,
   dedupeRoughCutEditSuggestions,
   mapLlmApiItemsToSuggestions,
+  mergeRuleVerbalReviewResponse,
   type ClipEditSuggestion,
   type ClipOutlineSource,
   type LlmSuggestionApiItem
@@ -870,10 +872,62 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     return Math.max(0, Math.round(durationMs - excludedSpan));
   }, [words, excluded, durationMs]);
 
-  const editSuggestions = useMemo(
+  const builtRuleSuggestions = useMemo(
     () => buildClipEditSuggestions(words, excluded, noLexExempt),
     [words, excluded, noLexExempt]
   );
+  const [reviewedRuleSuggestions, setReviewedRuleSuggestions] = useState<ClipEditSuggestion[] | null>(null);
+
+  useEffect(() => {
+    setReviewedRuleSuggestions(null);
+  }, [projectId, words, excluded]);
+
+  useEffect(() => {
+    if (project?.transcription_status !== "succeeded") {
+      setReviewedRuleSuggestions(null);
+      return;
+    }
+    const { items, indices } = buildRuleVerbalReviewRequest(builtRuleSuggestions);
+    if (items.length === 0) {
+      setReviewedRuleSuggestions(builtRuleSuggestions);
+      return;
+    }
+    let cancelled = false;
+    const tid = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/clip/projects/${encodeURIComponent(projectId)}/verbal-suggestion-review`,
+            {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "content-type": "application/json", ...getAuthHeaders() },
+              body: JSON.stringify({ items })
+            }
+          );
+          const data = (await res.json().catch(() => ({}))) as {
+            success?: boolean;
+            items?: LlmSuggestionApiItem[];
+            detail?: string;
+          };
+          if (!res.ok || data.success === false || !Array.isArray(data.items) || data.items.length !== items.length) {
+            if (!cancelled) setReviewedRuleSuggestions(builtRuleSuggestions);
+            return;
+          }
+          const merged = mergeRuleVerbalReviewResponse(builtRuleSuggestions, indices, data.items);
+          if (!cancelled) setReviewedRuleSuggestions(merged);
+        } catch {
+          if (!cancelled) setReviewedRuleSuggestions(builtRuleSuggestions);
+        }
+      })();
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tid);
+    };
+  }, [builtRuleSuggestions, projectId, project?.transcription_status, getAuthHeaders]);
+
+  const editSuggestions = reviewedRuleSuggestions ?? builtRuleSuggestions;
   const displaySuggestions = useMemo(
     () => [...editSuggestions, ...llmSugs],
     [editSuggestions, llmSugs]
