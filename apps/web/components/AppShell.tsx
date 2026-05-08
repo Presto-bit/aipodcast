@@ -129,7 +129,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
-  /** 知识库已进入笔记本工作台：侧栏仅显示「返回」 */
+  /** 知识库已进入笔记本工作台：主导航收起，仅保留左侧浮动返回入口 */
   const [notesMinimalMainNav, setNotesMinimalMainNav] = useState(false);
   /**
    * 侧栏挂 body：用 useLayoutEffect 在首帧 paint 前 portal，避免与 #__next 同帧叠层竞争（极端环境下
@@ -290,7 +290,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
     const minimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
     const px = minimalRail
-      ? SIDEBAR_WIDTH_COLLAPSED_PX
+      ? 0
       : collapsed
         ? SIDEBAR_WIDTH_COLLAPSED_PX
         : SIDEBAR_WIDTH_EXPANDED_PX;
@@ -379,27 +379,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const notesNavMinimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
+  const notesBackHubLabel = t("nav.notesWorkbenchBackHub");
 
   const sidebarAside = notesNavMinimalRail ? (
-    <aside
-      data-fym-app-sidebar
-      className="fixed left-0 top-0 z-[100000] flex h-svh min-h-0 w-[72px] flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width] duration-200 ease-out motion-reduce:transition-none pointer-events-auto"
-      style={{
-        width: "var(--fym-app-sidebar-w, 72px)"
-      }}
+    <button
+      type="button"
+      data-fym-notes-workbench-back
+      className="pointer-events-auto fixed left-2 top-1/2 z-[100001] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-line/90 bg-surface/95 text-ink shadow-soft backdrop-blur-sm transition-colors hover:bg-fill motion-reduce:transition-none"
+      title={notesBackHubLabel}
+      aria-label={notesBackHubLabel}
+      onClick={() => dispatchNotesShowNotebookHub()}
     >
-      <nav className="flex min-h-0 flex-1 flex-col p-2 pt-3" aria-label={t("nav.mainNavLabel")}>
-        <button
-          type="button"
-          className="w-full rounded-dawn-md px-1 py-2.5 text-center text-xs font-semibold leading-snug text-ink transition-colors hover:bg-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
-          title="返回笔记本导航"
-          aria-label="返回笔记本导航"
-          onClick={() => dispatchNotesShowNotebookHub()}
-        >
-          返回
-        </button>
-      </nav>
-    </aside>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+      </svg>
+    </button>
   ) : (
     <aside
       data-fym-app-sidebar
