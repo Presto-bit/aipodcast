@@ -8,6 +8,7 @@ from xml.sax.saxutils import escape
 from .db import get_conn, get_cursor
 from .media_wallet import media_wallet_billing_enabled
 from .models import (
+    _resolve_user_uuid_from_ref,
     get_job,
     list_job_events,
     user_work_download_blocked_never_paid_free_only,
@@ -34,17 +35,6 @@ def _parse_publish_at(value: str | None) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
-
-
-def _resolve_user_uuid_from_phone(cur: Any, phone: str | None) -> str | None:
-    raw = (phone or "").strip()
-    if not raw:
-        return None
-    cur.execute("SELECT id FROM users WHERE phone = %s LIMIT 1", (raw,))
-    row = cur.fetchone()
-    if row and row.get("id") is not None:
-        return str(row["id"])
-    return None
 
 
 def ensure_rss_publish_schema() -> None:
@@ -97,7 +87,7 @@ def ensure_rss_publish_schema() -> None:
 def list_rss_channels(user_phone: str) -> list[dict[str, Any]]:
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            user_uuid = _resolve_user_uuid_from_phone(cur, user_phone)
+            user_uuid = _resolve_user_uuid_from_ref(cur, user_phone)
             if not user_uuid:
                 return []
             cur.execute(
@@ -118,7 +108,7 @@ def list_episode_publications(user_phone: str, job_ids: list[str]) -> dict[str, 
         return {}
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            user_uuid = _resolve_user_uuid_from_phone(cur, user_phone)
+            user_uuid = _resolve_user_uuid_from_ref(cur, user_phone)
             if not user_uuid:
                 return {}
             cur.execute(
@@ -163,7 +153,7 @@ def upsert_rss_channel(user_phone: str, payload: dict[str, Any]) -> dict[str, An
 
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            user_uuid = _resolve_user_uuid_from_phone(cur, user_phone)
+            user_uuid = _resolve_user_uuid_from_ref(cur, user_phone)
             if not user_uuid:
                 raise ValueError("user_not_found")
             if requested_id:
@@ -380,7 +370,7 @@ def publish_work_to_rss(
     existing: dict[str, Any] | None = None
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            user_uuid = _resolve_user_uuid_from_phone(cur, user_phone)
+            user_uuid = _resolve_user_uuid_from_ref(cur, user_phone)
             if not user_uuid:
                 raise ValueError("user_not_found")
             cur.execute(
