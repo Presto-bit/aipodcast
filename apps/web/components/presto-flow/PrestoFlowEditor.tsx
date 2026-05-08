@@ -847,12 +847,22 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     }
   }, []);
 
+  const estimatedDurationFromBytesMs = useMemo(() => {
+    const b = project?.audio_size_bytes;
+    if (typeof b !== "number" || !Number.isFinite(b) || b <= 0) return null;
+    return Math.round((b * 8 * 1000) / 128_000);
+  }, [project?.audio_size_bytes]);
+
   const durationMs = useMemo(() => {
     const d = project?.transcript_normalized?.duration_ms;
     if (typeof d === "number" && d > 0) return d;
-    if (!words.length) return null;
+    if (!words.length) {
+      const est = estimatedDurationFromBytesMs;
+      if (est != null && est > 0) return est;
+      return null;
+    }
     return Math.max(...words.map((w) => w.e_ms), 0);
-  }, [project, words]);
+  }, [project, words, estimatedDurationFromBytesMs]);
 
   const editSuggestions = useMemo(
     () => buildClipEditSuggestions(words, excluded, roughCutExemptSet),
@@ -3029,7 +3039,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                   <ClipEditorPrdLeftRail
                     projectId={projectId}
                     project={project}
-                    setProject={setProject}
                     getAuthHeaders={getAuthHeaders}
                     audioStagingEntries={audioStagingEntries}
                     load={load}

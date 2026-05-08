@@ -129,6 +129,8 @@ export type ClipProjectRow = {
   created_at?: string;
   updated_at?: string;
   audio_filename?: string | null;
+  /** 主素材字节数（编排器 SELECT * 时常见；用于无转写时粗估时长） */
+  audio_size_bytes?: number | null;
   transcription_error?: string | null;
   export_error?: string | null;
   transcript_normalized?: { version?: number; words?: ClipWord[]; duration_ms?: number } | null;

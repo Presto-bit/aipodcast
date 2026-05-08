@@ -39,14 +39,17 @@ from ..clip_store import (
     append_collaboration_note,
     append_retake_take_slot,
     append_studio_snapshot,
+    clear_clip_project_audio_material_completely,
     delete_clip_project,
     reorder_clip_audio_staging,
     get_clip_project,
     insert_clip_project,
     list_clip_projects,
     prune_clip_audio_segment_transcripts,
+    remove_clip_audio_source_segment_from_list,
     reorder_clip_audio_source_segments,
     reorder_clip_audio_staging,
+    rename_clip_audio_source_segment,
     replace_clip_source_audio_preserve_transcript,
     replace_retake_manifest,
     revert_clip_export_after_enqueue_failed,
@@ -941,6 +944,62 @@ async def clip_reorder_staged_audio(project_id: str, request: Request, body: dic
         raise HTTPException(status_code=400, detail="当前无可重排的分段")
     if not ok:
         raise HTTPException(status_code=400, detail="无法重排：与当前分段 key 集合不一致")
+    await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
+    _enqueue_transcribe_after_reorder_merge(project_id=project_id, uid=uid)
+    row_out = get_clip_project(project_id=project_id, user_uuid=uid)
+    return {"success": True, "project": _serialize_clip_row(row_out or {})}
+
+
+@router.post("/clip/projects/{project_id}/audio/source-segment/rename")
+def clip_rename_audio_source_segment(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    """仅更新某分段的展示文件名（object_key 不变）。"""
+    uid = _owner_uuid(request)
+    b = body or {}
+    key = str(b.get("object_key") or "").strip()
+    fn = str(b.get("filename") or "").strip()
+    if not key or not fn:
+        raise HTTPException(status_code=400, detail="object_key 与 filename 均不能为空")
+    ok = rename_clip_audio_source_segment(
+        project_id=project_id, user_uuid=uid, object_key=key, filename=fn[:500]
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail="未找到对应分段或无法更新")
+    row2 = get_clip_project(project_id=project_id, user_uuid=uid)
+    return {"success": True, "project": _serialize_clip_row(row2 or {})}
+
+
+@router.post("/clip/projects/{project_id}/audio/source-segment/remove")
+async def clip_remove_audio_source_segment(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    """删除一分段对象并更新列表；若仍有多段则自动再合并主音。"""
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    b = body or {}
+    key = str(b.get("object_key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="object_key 不能为空")
+    segs = _source_segments_from_row(row)
+    cur_keys = {str(s.get("key") or "").strip() for s in segs}
+    if key not in cur_keys:
+        raise HTTPException(status_code=404, detail="分段不存在")
+    old_main = str(row.get("audio_object_key") or "").strip() or None
+    if len(segs) <= 1:
+        delete_object_key(key)
+        if old_main:
+            delete_object_key(old_main)
+        clear_clip_project_audio_material_completely(project_id=project_id, user_uuid=uid)
+        row2 = get_clip_project(project_id=project_id, user_uuid=uid)
+        return {"success": True, "project": _serialize_clip_row(row2 or {})}
+    ok, new_list = remove_clip_audio_source_segment_from_list(project_id=project_id, user_uuid=uid, object_key=key)
+    if not ok:
+        raise HTTPException(status_code=500, detail="无法更新分段列表")
+    delete_object_key(key)
+    prune_clip_audio_segment_transcripts(
+        project_id=project_id,
+        user_uuid=uid,
+        keep_keys=[str(s.get("key") or "").strip() for s in new_list if str(s.get("key") or "").strip()],
+    )
     await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
     _enqueue_transcribe_after_reorder_merge(project_id=project_id, uid=uid)
     row_out = get_clip_project(project_id=project_id, user_uuid=uid)

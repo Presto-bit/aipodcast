@@ -1,8 +1,9 @@
 "use client";
 
-import { FileAudio, GripVertical, Plus } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { GripVertical, MoreHorizontal, Plus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipAudioStagingEntry } from "../../lib/clipTypes";
+import BrandGlyph from "../brand/BrandGlyph";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import { useI18n } from "../../lib/I18nContext";
 
@@ -14,6 +15,13 @@ function formatShortDuration(ms: number | null | undefined): string {
   return `${m}:${String(r).padStart(2, "0")}`;
 }
 
+/** 无 ffprobe 时用字节粗估时长（约 128kbps），仅作列表展示 */
+function estimateMsFromBytes(bytes?: number): number | null {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return null;
+  const bps = 128_000;
+  return Math.round((bytes * 8 * 1000) / bps);
+}
+
 type Props = {
   projectId: string;
   entries: readonly ClipAudioStagingEntry[];
@@ -21,11 +29,11 @@ type Props = {
   disabled: boolean;
   onRefresh: () => void | Promise<void>;
   onError: (msg: string) => void;
-  /** PRD 素材列表：小图标 + 估算单段时长 */
+  /** PRD 素材列表 */
   visualVariant?: "default" | "prd";
-  /** 与顺序对齐的每段展示时长（毫秒），无则显示 — */
+  /** 无单段 size 时用于整轨均分估算 */
   approxDurationMsPerSegment?: number | null;
-  /** 已合并/主线路上的当前素材（与暂存轨并列展示，无拖拽） */
+  /** 仅当无分段列表、仅有主音时展示（旧数据）；有 entries 时不应再传 */
   serverSource?: { filename: string; durationMs: number | null } | null;
 };
 
@@ -42,8 +50,21 @@ export default function ClipStagingTracksBar({
 }: Props) {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragKey, setDragKey] = useState<string | null>(null);
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [menuKey, setMenuKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!menuKey) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = menuRef.current;
+      if (el && !el.contains(e.target as Node)) setMenuKey(null);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuKey]);
 
   const order = useMemo(() => entries.map((e) => e.key), [entries]);
 
@@ -62,6 +83,69 @@ export default function ClipStagingTracksBar({
         if (!res.ok || data.success === false) {
           throw new Error(data.detail || `重排失败 ${res.status}`);
         }
+        await onRefresh();
+      } catch (e) {
+        onError(String(e instanceof Error ? e.message : e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [getAuthHeaders, onError, onRefresh, projectId]
+  );
+
+  const renameSegment = useCallback(
+    async (objectKey: string, currentName: string) => {
+      const next = window.prompt("重命名素材", currentName);
+      if (next == null) return;
+      const fn = next.trim();
+      if (!fn || fn === currentName) return;
+      setBusy(true);
+      onError("");
+      try {
+        const res = await fetch(
+          `/api/clip/projects/${encodeURIComponent(projectId)}/audio/source-segment/rename`,
+          {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json", ...getAuthHeaders() },
+            body: JSON.stringify({ object_key: objectKey, filename: fn })
+          }
+        );
+        const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+        if (!res.ok || data.success === false) {
+          throw new Error(data.detail || `重命名失败 ${res.status}`);
+        }
+        setMenuKey(null);
+        await onRefresh();
+      } catch (e) {
+        onError(String(e instanceof Error ? e.message : e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [getAuthHeaders, onError, onRefresh, projectId]
+  );
+
+  const removeSegment = useCallback(
+    async (objectKey: string) => {
+      if (!window.confirm("确定删除该段素材？删除后将重新合并主音频（若仍有多段）。")) return;
+      setBusy(true);
+      onError("");
+      try {
+        const res = await fetch(
+          `/api/clip/projects/${encodeURIComponent(projectId)}/audio/source-segment/remove`,
+          {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json", ...getAuthHeaders() },
+            body: JSON.stringify({ object_key: objectKey })
+          }
+        );
+        const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+        if (!res.ok || data.success === false) {
+          throw new Error(data.detail || `删除失败 ${res.status}`);
+        }
+        setMenuKey(null);
         await onRefresh();
       } catch (e) {
         onError(String(e instanceof Error ? e.message : e));
@@ -126,8 +210,17 @@ export default function ClipStagingTracksBar({
   const hasServer = Boolean(serverSource?.filename?.trim());
   if (entries.length === 0 && !hasServer) return null;
 
+  const rowDuration = (meta: ClipAudioStagingEntry | undefined) => {
+    const est = estimateMsFromBytes(meta?.size_bytes);
+    if (est != null && est > 0) return est;
+    return approxDurationMsPerSegment;
+  };
+
+  const prdRowClass =
+    "flex min-h-[2.75rem] min-w-0 items-center gap-2 rounded-lg border border-line/60 bg-surface/90 px-2 py-2 text-[11px] leading-snug";
+
   return (
-    <div className={prd ? "rounded-lg border border-line/80 bg-fill/25 px-2 py-1.5" : "mb-2 rounded-lg border border-line/80 bg-fill/25 px-2 py-1.5"}>
+    <div className={prd ? "rounded-lg border border-line/80 bg-fill/25 px-2 py-2" : "mb-2 rounded-lg border border-line/80 bg-fill/25 px-2 py-1.5"}>
       {!prd ? (
         <>
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
@@ -167,24 +260,34 @@ export default function ClipStagingTracksBar({
           onChange={(e) => void stageFiles(e.target.files)}
         />
       )}
-      <ul className={prd ? "flex max-h-52 flex-col gap-1 overflow-y-auto" : "flex max-h-40 flex-col gap-1 overflow-y-auto"}>
-        {prd && hasServer && serverSource ? (
-          <li className="flex min-h-0 items-center gap-1.5 rounded-md border border-line/60 bg-surface/80 px-1.5 py-1 text-[10px]">
-            <span className="w-3.5 shrink-0" aria-hidden />
-            <span className="flex shrink-0 items-center text-muted" title="音频">
-              <FileAudio className="h-3.5 w-3.5" aria-hidden />
-            </span>
-            <span className="min-w-0 flex-1 truncate text-[10px] text-ink" title={serverSource.filename}>
+      <ul
+        className={
+          prd
+            ? "flex max-h-[min(24rem,55vh)] flex-col gap-1.5 overflow-y-auto"
+            : "flex max-h-40 flex-col gap-1 overflow-y-auto"
+        }
+      >
+        {prd && hasServer && serverSource && entries.length === 0 ? (
+          <li className={prdRowClass}>
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 shrink-0 rounded border-line accent-brand"
+              disabled
+              aria-label="选择"
+            />
+            <BrandGlyph className="!rounded-md shadow-none" size={22} />
+            <span className="min-w-0 flex-1 truncate text-[11px] text-ink" title={serverSource.filename}>
               {serverSource.filename}
             </span>
-            <span className="shrink-0 font-mono text-[9px] tabular-nums text-muted">
+            <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted">
               {formatShortDuration(serverSource.durationMs)}
             </span>
           </li>
         ) : null}
         {order.map((key, idx) => {
           const meta = byKey.get(key);
-          const label = meta?.filename || key.slice(-24);
+          const label = (meta?.filename || key.slice(-24)).trim() || "未命名";
+          const durMs = rowDuration(meta);
           return (
             <li
               key={key}
@@ -199,26 +302,82 @@ export default function ClipStagingTracksBar({
                 onDropOnIndex(idx);
               }}
               className={[
-                "flex min-h-0 items-center gap-1.5 rounded-md border border-line/60 bg-surface/80 px-1.5 py-1 text-[10px]",
-                dragKey === key ? "opacity-70 ring-1 ring-brand/40" : ""
+                prdRowClass,
+                dragKey === key ? "opacity-80 ring-1 ring-brand/35" : "",
+                prd ? "" : "px-1.5 py-1 text-[10px]"
               ].join(" ")}
             >
-              <span className="shrink-0 cursor-grab text-muted active:cursor-grabbing" title={t("presto.flow.clipStaging.dragTip")}>
-                <GripVertical className="h-3.5 w-3.5" aria-hidden />
-              </span>
               {prd ? (
-                <span className="flex shrink-0 items-center text-muted" title="音频">
-                  <FileAudio className="h-3.5 w-3.5" aria-hidden />
-                </span>
-              ) : null}
-              <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-ink" title={key}>
-                {prd ? label : `${idx + 1}. ${label}`}
-              </span>
-              {prd ? (
-                <span className="shrink-0 font-mono text-[9px] tabular-nums text-muted">
-                  {formatShortDuration(approxDurationMsPerSegment)}
-                </span>
-              ) : null}
+                <>
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 shrink-0 rounded border-line accent-brand"
+                    checked={Boolean(checked[key])}
+                    onChange={() => setChecked((c) => ({ ...c, [key]: !c[key] }))}
+                    aria-label={`选择 ${label}`}
+                  />
+                  <span
+                    className="shrink-0 cursor-grab text-muted active:cursor-grabbing"
+                    title={t("presto.flow.clipStaging.dragTip")}
+                  >
+                    <GripVertical className="h-4 w-4" aria-hidden />
+                  </span>
+                  <BrandGlyph className="!rounded-md shadow-none" size={22} />
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-ink" title={label}>
+                    {label}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted">
+                    {formatShortDuration(durMs)}
+                  </span>
+                  <div className="relative shrink-0">
+                    <button
+                      type="button"
+                      disabled={disabled || busy}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted hover:bg-fill hover:text-ink disabled:opacity-40"
+                      aria-label="更多"
+                      title="更多"
+                      onClick={() => setMenuKey((k) => (k === key ? null : key))}
+                    >
+                      <MoreHorizontal className="h-4 w-4" aria-hidden />
+                    </button>
+                    {menuKey === key ? (
+                      <div
+                        ref={menuRef}
+                        className="absolute right-0 top-full z-20 mt-0.5 min-w-[7.5rem] rounded-md border border-line bg-surface py-1 text-[11px] shadow-lg"
+                      >
+                        <button
+                          type="button"
+                          className="block w-full px-3 py-1.5 text-left hover:bg-fill"
+                          onClick={() => {
+                            void renameSegment(key, label);
+                          }}
+                        >
+                          重命名…
+                        </button>
+                        <button
+                          type="button"
+                          className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-fill"
+                          onClick={() => void removeSegment(key)}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span
+                    className="shrink-0 cursor-grab text-muted active:cursor-grabbing"
+                    title={t("presto.flow.clipStaging.dragTip")}
+                  >
+                    <GripVertical className="h-3.5 w-3.5" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[9px] text-ink" title={key}>
+                    {`${idx + 1}. ${label}`}
+                  </span>
+                </>
+              )}
             </li>
           );
         })}

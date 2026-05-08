@@ -1,14 +1,14 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ClipAudioStagingEntry, ClipProjectRow } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";
 import { fetchClipProjectShareAiCopy } from "../../lib/api";
 import ClipStagingTracksBar from "./ClipStagingTracksBar";
 import PrestoFlowImportBar from "./PrestoFlowImportBar";
 
-type Tab = "materials" | "dictionary" | "shownotes";
+type Tab = "materials" | "shownotes";
 
 function shownotesStorageKey(projectId: string): string {
   return `clip-editor-prd-shownotes:${projectId}`;
@@ -17,7 +17,6 @@ function shownotesStorageKey(projectId: string): string {
 type Props = {
   projectId: string;
   project: ClipProjectRow;
-  setProject: (p: ClipProjectRow | ((prev: ClipProjectRow | null) => ClipProjectRow | null)) => void;
   getAuthHeaders: () => Record<string, string>;
   audioStagingEntries: readonly ClipAudioStagingEntry[];
   load: () => Promise<void>;
@@ -33,14 +32,13 @@ type Props = {
   onTranscribe: () => void;
   allowMultiSegmentImport: boolean;
   approxSegmentDurationMs: number | null;
-  /** 当前已合并主素材时长（毫秒），与文件名一并展示在素材列表首行 */
+  /** 当前已合并主素材时长（毫秒） */
   mainAudioDurationMs: number | null;
 };
 
 export default function ClipEditorPrdLeftRail({
   projectId,
   project,
-  setProject,
   getAuthHeaders,
   audioStagingEntries,
   load,
@@ -64,18 +62,6 @@ export default function ClipEditorPrdLeftRail({
 
   const entries = Array.isArray(audioStagingEntries) ? audioStagingEntries : [];
 
-  const hotwordLines = useMemo(() => {
-    const arr = Array.isArray(project.asr_corpus_hotwords) ? project.asr_corpus_hotwords : [];
-    return arr.map((x) => String(x).trim()).filter(Boolean);
-  }, [project.asr_corpus_hotwords]);
-
-  const [dictDraft, setDictDraft] = useState(() => hotwordLines.join("\n"));
-  const [dictBusy, setDictBusy] = useState(false);
-
-  useEffect(() => {
-    setDictDraft(hotwordLines.join("\n"));
-  }, [hotwordLines]);
-
   const [notesDraft, setNotesDraft] = useState("");
   const [notesGenBusy, setNotesGenBusy] = useState(false);
 
@@ -95,38 +81,6 @@ export default function ClipEditorPrdLeftRail({
       /* ignore */
     }
   }, [projectId, notesDraft]);
-
-  const saveDictionary = useCallback(async () => {
-    setDictBusy(true);
-    setErr("");
-    const lines = dictDraft
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .slice(0, 200);
-    try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ asr_corpus_hotwords: lines })
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        project?: ClipProjectRow;
-        detail?: string;
-      };
-      if (!res.ok || data.success === false) {
-        throw new Error(data.detail || `保存失败 ${res.status}`);
-      }
-      if (data.project) setProject(data.project);
-      await load();
-    } catch (e) {
-      setErr(String(e instanceof Error ? e.message : e));
-    } finally {
-      setDictBusy(false);
-    }
-  }, [dictDraft, getAuthHeaders, load, projectId, setErr, setProject]);
 
   const generateShownotes = useCallback(async () => {
     if (project.transcription_status !== "succeeded") return;
@@ -178,12 +132,20 @@ export default function ClipEditorPrdLeftRail({
     );
   }
 
+  /** 有分段列表时不再重复展示「主轨」行（避免与唯一分段重复两条） */
+  const serverSourceRow =
+    hasServerAudio && entries.length === 0
+      ? {
+          filename: String(project.audio_filename || "").trim() || "素材音频",
+          durationMs: mainAudioDurationMs
+        }
+      : null;
+
   return (
-    <aside className="flex w-[min(17.5rem,38vw)] shrink-0 flex-col border-r border-line bg-surface/95 text-ink">
+    <aside className="flex w-[min(22rem,44vw)] shrink-0 flex-col border-r border-line bg-surface/95 text-ink">
       <div className="flex items-center justify-between gap-1 border-b border-line px-2 py-1.5">
         <div className="flex flex-wrap gap-1">
           {tabBtn("materials", "素材")}
-          {tabBtn("dictionary", "词典")}
           {tabBtn("shownotes", "Shownotes")}
         </div>
         <button
@@ -201,20 +163,31 @@ export default function ClipEditorPrdLeftRail({
         {tab === "materials" ? (
           <>
             <div className="flex flex-col gap-2">
-              <PrestoFlowImportBar
-                variant="icon"
-                projectId={projectId}
-                getAuthHeaders={getAuthHeaders}
-                hasMainAudio={hasServerAudio}
-                disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
-                label={t("presto.flow.importAudio")}
-                busyLabel={t("presto.flow.importBusy")}
-                hint={t("presto.flow.importHint")}
-                replaceWarn={t("presto.flow.importReplaceWarn")}
-                onDone={() => void load()}
-                onError={(msg) => setErr(msg)}
-                allowMultiSegment={allowMultiSegmentImport}
-              />
+              <div className="flex flex-wrap items-stretch gap-2">
+                <PrestoFlowImportBar
+                  variant="icon"
+                  projectId={projectId}
+                  getAuthHeaders={getAuthHeaders}
+                  hasMainAudio={hasServerAudio}
+                  disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
+                  label={t("presto.flow.importAudio")}
+                  busyLabel={t("presto.flow.importBusy")}
+                  hint={t("presto.flow.importHint")}
+                  replaceWarn={t("presto.flow.importReplaceWarn")}
+                  onDone={() => void load()}
+                  onError={(msg) => setErr(msg)}
+                  allowMultiSegment={allowMultiSegmentImport}
+                />
+                <button
+                  type="button"
+                  disabled={transcribeDisabled}
+                  onClick={onTranscribe}
+                  title={transcribeLabel}
+                  className="min-h-[2.25rem] min-w-0 flex-1 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-brand-foreground shadow-soft hover:opacity-95 disabled:opacity-40"
+                >
+                  {transcribeLabel}
+                </button>
+              </div>
               {hasServerAudio || entries.length > 0 ? (
                 <ClipStagingTracksBar
                   projectId={projectId}
@@ -225,57 +198,16 @@ export default function ClipEditorPrdLeftRail({
                   onError={(msg) => setErr(msg)}
                   visualVariant="prd"
                   approxDurationMsPerSegment={approxSegmentDurationMs}
-                  serverSource={
-                    hasServerAudio
-                      ? {
-                          filename: String(project.audio_filename || "").trim() || "素材音频",
-                          durationMs: mainAudioDurationMs
-                        }
-                      : null
-                  }
+                  serverSource={serverSourceRow}
                 />
               ) : (
                 <p className="text-[10px] leading-snug text-muted">请上传音频后开始转写。</p>
               )}
-            </div>
-            <div className="mt-auto border-t border-line pt-2">
-              <button
-                type="button"
-                disabled={transcribeDisabled}
-                onClick={onTranscribe}
-                className="w-full rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-brand-foreground shadow-soft hover:opacity-95 disabled:opacity-40"
-              >
-                {transcribeLabel}
-              </button>
               {pendingInsertedSegments > 0 ? (
-                <p className="mt-1 text-[9px] text-muted">含 {pendingInsertedSegments} 段新素材待转写</p>
+                <p className="text-[9px] text-muted">含 {pendingInsertedSegments} 段新素材待转写</p>
               ) : null}
             </div>
           </>
-        ) : null}
-
-        {tab === "dictionary" ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-2">
-            <p className="text-[10px] leading-snug text-muted">
-              每行一词；用于后续转写提示。已转写段落不会因修改此处而自动变更。
-            </p>
-            <textarea
-              value={dictDraft}
-              onChange={(e) => setDictDraft(e.target.value)}
-              disabled={dictBusy}
-              rows={3}
-              className="min-h-[2.5rem] flex-1 resize-y rounded-lg border border-line bg-surface px-2 py-1.5 text-[11px] text-ink placeholder:text-muted"
-              placeholder={"示例词\n产品名"}
-            />
-            <button
-              type="button"
-              disabled={dictBusy || !loggedIn}
-              onClick={() => void saveDictionary()}
-              className="rounded-lg border border-line bg-surface px-3 py-2 text-[11px] font-semibold text-ink shadow-soft hover:bg-fill disabled:opacity-40"
-            >
-              {dictBusy ? "保存中…" : "保存词典"}
-            </button>
-          </div>
         ) : null}
 
         {tab === "shownotes" ? (
@@ -284,8 +216,8 @@ export default function ClipEditorPrdLeftRail({
               value={notesDraft}
               onChange={(e) => setNotesDraft(e.target.value)}
               disabled={notesGenBusy}
-              rows={14}
-              className="min-h-[10rem] flex-1 resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
+              rows={7}
+              className="min-h-[5rem] flex-1 resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
               placeholder="Shownotes 正文…"
             />
             <button

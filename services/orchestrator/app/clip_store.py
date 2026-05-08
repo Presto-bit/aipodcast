@@ -349,6 +349,219 @@ def prune_clip_audio_segment_transcripts(
             return True
 
 
+def set_clip_audio_source_segments(
+    *, project_id: str, user_uuid: str | None, segments: list[dict[str, Any]]
+) -> bool:
+    """写入 audio_source_segments 整表（须为带 key 的 dict 列表）。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    blob = json.dumps(segments, ensure_ascii=False)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_source_segments = %s::jsonb, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                    """,
+                    (blob, pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_source_segments = %s::jsonb, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                    """,
+                    (blob, pid),
+                )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
+def rename_clip_audio_source_segment(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    object_key: str,
+    filename: str,
+) -> bool:
+    """仅改某分段的展示文件名（不改对象键）。"""
+    row = get_clip_project(project_id=project_id, user_uuid=user_uuid)
+    if not row:
+        return False
+    want = str(object_key or "").strip()
+    if not want:
+        return False
+    st = row.get("audio_source_segments")
+    if isinstance(st, str):
+        try:
+            st = json.loads(st)
+        except Exception:
+            st = []
+    if not isinstance(st, list):
+        return False
+    new_list: list[dict[str, Any]] = []
+    hit = False
+    fn = (filename or "").strip()[:500] or "audio"
+    for it in st:
+        if not isinstance(it, dict):
+            continue
+        k = str(it.get("key") or "").strip()
+        if not k:
+            continue
+        d = dict(it)
+        if k == want:
+            d["filename"] = fn
+            hit = True
+        new_list.append(d)
+    if not hit:
+        return False
+    pid = _parse_uuid(project_id)
+    uid = _parse_uuid(user_uuid)
+    blob = json.dumps(new_list, ensure_ascii=False)
+    main_key = str(row.get("audio_object_key") or "").strip()
+    single = len(new_list) == 1 and main_key and new_list[0].get("key") == main_key
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                if single:
+                    cur.execute(
+                        """
+                        UPDATE clip_projects
+                        SET audio_source_segments = %s::jsonb,
+                            audio_filename = %s,
+                            updated_at = NOW()
+                        WHERE id = %s::uuid AND user_id = %s::uuid
+                        """,
+                        (blob, fn, pid, uid),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE clip_projects
+                        SET audio_source_segments = %s::jsonb, updated_at = NOW()
+                        WHERE id = %s::uuid AND user_id = %s::uuid
+                        """,
+                        (blob, pid, uid),
+                    )
+            else:
+                if single:
+                    cur.execute(
+                        """
+                        UPDATE clip_projects
+                        SET audio_source_segments = %s::jsonb,
+                            audio_filename = %s,
+                            updated_at = NOW()
+                        WHERE id = %s::uuid AND user_id IS NULL
+                        """,
+                        (blob, fn, pid),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE clip_projects
+                        SET audio_source_segments = %s::jsonb, updated_at = NOW()
+                        WHERE id = %s::uuid AND user_id IS NULL
+                        """,
+                        (blob, pid),
+                    )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
+def remove_clip_audio_source_segment_from_list(
+    *, project_id: str, user_uuid: str | None, object_key: str
+) -> tuple[bool, list[dict[str, Any]]]:
+    """
+    从 audio_source_segments 中移除一段并写回 DB。
+    返回 (是否找到并更新, 更新后的列表)。
+    """
+    row = get_clip_project(project_id=project_id, user_uuid=user_uuid)
+    if not row:
+        return False, []
+    want = str(object_key or "").strip()
+    if not want:
+        return False, []
+    st = row.get("audio_source_segments")
+    if isinstance(st, str):
+        try:
+            st = json.loads(st)
+        except Exception:
+            st = []
+    if not isinstance(st, list):
+        return False, []
+    new_list = [dict(x) for x in st if isinstance(x, dict) and str(x.get("key") or "").strip() != want]
+    if len(new_list) == len(st):
+        return False, []
+    ok = set_clip_audio_source_segments(project_id=project_id, user_uuid=user_uuid, segments=new_list)
+    return ok, new_list
+
+
+def clear_clip_project_audio_material_completely(*, project_id: str, user_uuid: str | None) -> bool:
+    """清空主音频与分段、转写与相关缓存（与「无素材」一致）。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_object_key = NULL, audio_filename = NULL, audio_mime = NULL, audio_size_bytes = NULL,
+                        audio_staging_keys = '[]'::jsonb,
+                        audio_source_segments = '[]'::jsonb,
+                        audio_segment_transcripts = '{}'::jsonb,
+                        transcription_status = 'idle', dashscope_task_id = NULL, transcription_error = NULL,
+                        transcript_raw_json = NULL, transcript_normalized = NULL,
+                        excluded_word_ids = '[]'::jsonb,
+                        silence_analysis = NULL,
+                        timeline_json = NULL,
+                        studio_snapshots = '[]'::jsonb,
+                        collaboration_notes = '[]'::jsonb,
+                        retake_manifest = '[]'::jsonb,
+                        qc_report = NULL,
+                        export_status = 'idle', export_object_key = NULL, export_error = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                    """,
+                    (pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_object_key = NULL, audio_filename = NULL, audio_mime = NULL, audio_size_bytes = NULL,
+                        audio_staging_keys = '[]'::jsonb,
+                        audio_source_segments = '[]'::jsonb,
+                        audio_segment_transcripts = '{}'::jsonb,
+                        transcription_status = 'idle', dashscope_task_id = NULL, transcription_error = NULL,
+                        transcript_raw_json = NULL, transcript_normalized = NULL,
+                        excluded_word_ids = '[]'::jsonb,
+                        silence_analysis = NULL,
+                        timeline_json = NULL,
+                        studio_snapshots = '[]'::jsonb,
+                        collaboration_notes = '[]'::jsonb,
+                        retake_manifest = '[]'::jsonb,
+                        qc_report = NULL,
+                        export_status = 'idle', export_object_key = NULL, export_error = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                    """,
+                    (pid,),
+                )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
 def replace_clip_source_audio_preserve_transcript(
     *,
     project_id: str,
