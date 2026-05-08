@@ -16,9 +16,10 @@ export function worksNavMetricPart(
   scriptCharCountDisplay: number | null
 ): string {
   if (isScriptDraft) {
+    // 文稿类不展示时长；仅有可靠字数时才展示字数。
     return scriptCharCountDisplay != null && scriptCharCountDisplay > 0
       ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
-      : "—";
+      : "";
   }
   return durationLine !== "—" ? `时长 ${durationLine}` : "—";
 }
@@ -75,13 +76,13 @@ function scriptCharCountFromJob(job: JobRecord): number | null {
 }
 
 /**
- * 与「我的作品」合并列表卡片 meta 完全一致：一级 | 作者 | 时长/字数 | 时间
+ * 与「我的作品」合并列表卡片 meta 完全一致：一级 | 作者 | 时长或字数 | 时间（文稿类不含时长）
  */
 export function formatUnifiedWorksNavMetaLineFromJobRecord(job: JobRecord, authorDisplay: string): string {
   const result = (job.result || {}) as Record<string, unknown>;
   const isScriptDraft = String(job.job_type || "") === "script_draft";
   const primaryK = worksNavPrimaryKind(job.job_type);
-  const durationLine = durationLineFromJobResult(result);
+  const durationLine = isScriptDraft ? "—" : durationLineFromJobResult(result);
   const scriptCharCountDisplay = scriptCharCountFromJob(job);
   const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
   const createdZh = formatWorkCreatedAtZh(job.completed_at || job.created_at);

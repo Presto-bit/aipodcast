@@ -335,7 +335,7 @@ function formatManuscriptPlainZip(parts: ManuscriptParts): string {
   return scriptDoc.trim() || scriptBody;
 }
 
-/** 文章类直链下载：默认 Markdown，含开场/正文/结尾时用二级标题分段。 */
+/** 文章类：含开场/正文/结尾时用 Markdown 二级标题分段（仅 ZIP 等仍可能用到）。 */
 function formatManuscriptMarkdown(parts: ManuscriptParts): string {
   const { introT, scriptBody, outroT } = parts;
   const blocks: string[] = [];
@@ -352,18 +352,21 @@ function formatManuscriptMarkdown(parts: ManuscriptParts): string {
 export type JobManuscriptDownloadOptions = Pick<JobBundleExportOptions, "jobId" | "title">;
 
 /**
- * 仅下载文稿为单个 `.md` 文件（不打 ZIP）。用于 script_draft / 文章类作品。
+ * 仅下载文稿为单个 `.txt` 文件（不打 ZIP）。用于 script_draft / 文章类作品；正文与 ZIP 内文稿同为纯文本分段格式。
  */
-export async function downloadJobManuscriptMarkdown(opts: JobManuscriptDownloadOptions): Promise<void> {
+export async function downloadJobManuscriptTxt(opts: JobManuscriptDownloadOptions): Promise<void> {
   const { parts } = await loadJobManuscriptParts(opts.jobId);
-  const md = formatManuscriptMarkdown(parts);
-  if (!md) {
+  const plain = formatManuscriptPlainZip(parts);
+  if (!plain) {
     throw new Error("文稿为空，无法下载");
   }
   const nameBase = sanitizeFolderName(opts.title);
-  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
-  triggerBlobDownload(blob, `${nameBase}.md`);
+  const blob = new Blob([plain], { type: "text/plain;charset=utf-8" });
+  triggerBlobDownload(blob, `${nameBase}.txt`);
 }
+
+/** @deprecated 请使用 downloadJobManuscriptTxt（现为 .txt 纯文本） */
+export const downloadJobManuscriptMarkdown = downloadJobManuscriptTxt;
 
 /**
  * 从任务结果拉取音频 / 文稿 / 封面，打 ZIP。

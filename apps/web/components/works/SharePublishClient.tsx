@@ -49,7 +49,7 @@ import { useWorkAudioPlayer, type WorkAudioToggleMeta } from "../../lib/workAudi
 import { WorkHubOverviewPanel, type WorkHubDetailTab } from "./WorkHubOverviewPanel";
 import { WorkHubShownotesSection } from "./WorkHubShownotesSection";
 import { RssChannelEditor } from "../rss/RssChannelEditor";
-import { downloadJobBundleZip, downloadJobManuscriptMarkdown } from "../../lib/workBundleDownload";
+import { downloadJobBundleZip, downloadJobManuscriptTxt } from "../../lib/workBundleDownload";
 
 const RSS_LAST_CHANNEL_STORAGE_KEY = "fym_rss_last_channel_id";
 
@@ -937,7 +937,7 @@ export function SharePublishClient({
     const title = episodeTitle.trim() || jobTitle.trim() || id;
     try {
       if (scriptDraft) {
-        await downloadJobManuscriptMarkdown({ jobId: id, title });
+        await downloadJobManuscriptTxt({ jobId: id, title });
       } else {
         await downloadJobBundleZip({
           jobId: id,
@@ -963,6 +963,7 @@ export function SharePublishClient({
   }, [listenCoverUrl, ownerJobRecord]);
 
   const audioDurationHintSec = useMemo(() => {
+    if (scriptDraft) return null;
     if (ownerJobRecord) {
       const r = ownerJobRecord.result as Record<string, unknown>;
       const raw = r.audio_duration_sec;
@@ -977,7 +978,7 @@ export function SharePublishClient({
       return listenDurationSec;
     }
     return null;
-  }, [ownerJobRecord, listenDurationSec]);
+  }, [scriptDraft, ownerJobRecord, listenDurationSec]);
 
   useEffect(() => {
     if (layout !== "work_hub") return;
@@ -1766,7 +1767,7 @@ export function SharePublishClient({
               aria-label={scriptDraft ? "下载文稿" : "下载作品包"}
               title={
                 scriptDraft
-                  ? "下载文稿（Markdown）"
+                  ? "下载文稿（TXT）"
                   : "下载文稿、封面、Shownotes 与音频（ZIP）"
               }
             >

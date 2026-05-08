@@ -68,9 +68,10 @@ export function formatNotesStudioCardSynopsis(
   const metric = isScriptDraft
     ? scriptCharCountDisplay != null && scriptCharCountDisplay > 0
       ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
-      : "—"
+      : ""
     : durationLine !== "—"
       ? `时长 ${durationLine}`
       : "—";
-  return `${genre} · ${sourcePart} · ${metric} · ${createdShort}`;
+  const segs = [genre, sourcePart, metric, createdShort].map((s) => String(s || "").trim()).filter(Boolean);
+  return segs.join(" · ");
 }

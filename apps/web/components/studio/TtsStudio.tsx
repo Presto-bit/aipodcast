@@ -40,6 +40,7 @@ import { readSpeakerDefaultVoiceKeys } from "../../lib/presetVoicesStorage";
 import { TTS_IMPORT_SCRIPT_KEY } from "../../lib/ttsImport";
 import { bgmSegmentPayloadFromState, type BgmUiMode } from "../../lib/bgmUpload";
 import { buildIntroOutroSnapshot, type IntroOutroSnapshotV1 } from "../../lib/introOutroSnapshot";
+import { DEFAULT_INTRO_LINE, DEFAULT_OUTRO_LINE } from "../../lib/introOutroDefaults";
 import { readLastIntroOutro, writeLastIntroOutro } from "../../lib/introOutroStorage";
 import type { WorkItem } from "../../lib/worksTypes";
 import FloatingPopover from "../ui/FloatingPopover";
@@ -133,8 +134,8 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     },
     [controlledText, onContentTextChange]
   );
-  const [introText, setIntroText] = useState("");
-  const [outroText, setOutroText] = useState("");
+  const [introText, setIntroText] = useState(DEFAULT_INTRO_LINE);
+  const [outroText, setOutroText] = useState(DEFAULT_OUTRO_LINE);
   const [introVoiceFollow, setIntroVoiceFollow] = useState(true);
   const [introVoiceKey, setIntroVoiceKey] = useState("mini");
   const [outroVoiceFollow, setOutroVoiceFollow] = useState(true);
@@ -400,8 +401,8 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
       if (txt) setText(txt);
       const mode = String(parsed.tts_mode || "single").trim();
       setTtsMode(mode === "dual" ? "dual" : "single");
-      setIntroText(String(parsed.intro_text || "").trim());
-      setOutroText(String(parsed.outro_text || "").trim());
+      setIntroText(String(parsed.intro_text || "").trim() || DEFAULT_INTRO_LINE);
+      setOutroText(String(parsed.outro_text || "").trim() || DEFAULT_OUTRO_LINE);
       removeSessionStorageScoped(TTS_REUSE_TEMPLATE_KEY);
     } catch {
       // ignore

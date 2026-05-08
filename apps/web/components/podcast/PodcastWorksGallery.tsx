@@ -12,7 +12,7 @@ import { useAuth } from "../../lib/auth";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
 import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
 import { sanitizeShareEpisodeTitle } from "../../lib/sharePublishDefaults";
-import { downloadJobBundleZip, downloadJobManuscriptMarkdown } from "../../lib/workBundleDownload";
+import { downloadJobBundleZip, downloadJobManuscriptTxt } from "../../lib/workBundleDownload";
 import { listRssPublicationsByJobIds, type RssPublication } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
 import { useI18n } from "../../lib/I18nContext";
@@ -535,7 +535,7 @@ export default function PodcastWorksGallery({
     const title = String(row.displayTitle || row.title || id).trim() || id;
     try {
       if (String(row.type || "") === "script_draft") {
-        await downloadJobManuscriptMarkdown({ jobId: id, title });
+        await downloadJobManuscriptTxt({ jobId: id, title });
       } else {
         await downloadJobBundleZip({ jobId: id, title });
       }
@@ -606,7 +606,7 @@ export default function PodcastWorksGallery({
 
   function downloadLabelForWorkType(type: string | undefined): string {
     const t = String(type || "");
-    if (t === "script_draft") return "下载 Markdown 文稿";
+    if (t === "script_draft") return "下载 TXT 文稿";
     return "下载（音频·文稿·配图）";
   }
 
@@ -952,7 +952,7 @@ export default function PodcastWorksGallery({
         const id = row.id;
         try {
           if (String(row.type || "") === "script_draft") {
-            await downloadJobManuscriptMarkdown({ jobId: id, title });
+            await downloadJobManuscriptTxt({ jobId: id, title });
           } else {
             await downloadJobBundleZip({ jobId: id, title });
           }

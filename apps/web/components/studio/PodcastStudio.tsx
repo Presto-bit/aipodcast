@@ -39,6 +39,7 @@ import BgmControlRow from "./BgmControlRow";
 import IntroOutroPresetBar from "./IntroOutroPresetBar";
 import { bgmSegmentPayloadFromState, type BgmUiMode } from "../../lib/bgmUpload";
 import { buildIntroOutroSnapshot, type IntroOutroSnapshotV1 } from "../../lib/introOutroSnapshot";
+import { DEFAULT_INTRO_LINE, DEFAULT_OUTRO_LINE } from "../../lib/introOutroDefaults";
 import { readLastIntroOutro, writeLastIntroOutro } from "../../lib/introOutroStorage";
 import { PODCAST_PRESET_VOICES } from "../../lib/podcastVoiceDefaults";
 import {
@@ -181,8 +182,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const [worksError, setWorksError] = useState("");
 
   const [speakerMode, setSpeakerMode] = useState<"single" | "dual">("dual");
-  const [introText, setIntroText] = useState("");
-  const [outroText, setOutroText] = useState("");
+  const [introText, setIntroText] = useState(DEFAULT_INTRO_LINE);
+  const [outroText, setOutroText] = useState(DEFAULT_OUTRO_LINE);
   const [introVoiceFollow, setIntroVoiceFollow] = useState(true);
   const [introVoiceKey, setIntroVoiceKey] = useState("mini");
   const [outroVoiceFollow, setOutroVoiceFollow] = useState(true);
@@ -297,8 +298,8 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       if (lang) setScriptLanguage(lang);
       const mode = String(parsed.output_mode || "").trim();
       setSpeakerMode(mode === "article" ? "single" : "dual");
-      setIntroText(String(parsed.intro_text || "").trim());
-      setOutroText(String(parsed.outro_text || "").trim());
+      setIntroText(String(parsed.intro_text || "").trim() || DEFAULT_INTRO_LINE);
+      setOutroText(String(parsed.outro_text || "").trim() || DEFAULT_OUTRO_LINE);
       removeSessionStorageScoped(PODCAST_REUSE_TEMPLATE_KEY);
     } catch {
       // ignore

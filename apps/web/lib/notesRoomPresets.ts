@@ -14,9 +14,8 @@ export const PODCAST_ROOM_PRESETS: Record<
   },
   deep_dive: {
     label: "深度讨论",
-    textPrefix:
-      "请进行一场深度的技术研讨。专注于文档中的原始数据和实验方法，减少寒暄和幽默，用专业严谨的口吻分析论点之间的逻辑关系，并对结论进行批判性思考。",
-    scriptStyle: "专业严谨、技术研讨、批判性分析",
+    textPrefix: "",
+    scriptStyle: "深度讨论、条理清晰",
     programName: "深度讨论"
   },
   critique: {

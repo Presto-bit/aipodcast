@@ -47,6 +47,7 @@ import { useI18n } from "../../lib/I18nContext";
 import { notesRoomFeaturesEnabled } from "../../lib/noteReferenceLimits";
 import { LockedToolbarChipPill } from "../SubscriptionVipLink";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
+import { DEFAULT_INTRO_LINE, DEFAULT_OUTRO_LINE } from "../../lib/introOutroDefaults";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
 import FloatingPopover from "../ui/FloatingPopover";
 import {
@@ -143,8 +144,8 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   }, [open]);
 
   const [speakerMode, setSpeakerMode] = useState<"single" | "dual">("dual");
-  const [introText, setIntroText] = useState("");
-  const [outroText, setOutroText] = useState("");
+  const [introText, setIntroText] = useState(DEFAULT_INTRO_LINE);
+  const [outroText, setOutroText] = useState(DEFAULT_OUTRO_LINE);
   const [introVoiceFollow, setIntroVoiceFollow] = useState(true);
   const [introVoiceKey, setIntroVoiceKey] = useState("mini");
   const [outroVoiceFollow, setOutroVoiceFollow] = useState(true);
