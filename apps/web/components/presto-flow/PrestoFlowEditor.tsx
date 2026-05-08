@@ -2355,6 +2355,46 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     return "";
   })();
 
+  const runClipPrdRepair = useCallback(
+    async (kind: "ambient" | "voice_clarity" | "loudnorm") => {
+      if (!project) return;
+      const tSt = project.transcription_status;
+      if (tSt === "running" || tSt === "queued") {
+        setErr("转写进行中，请稍后再试修音");
+        return;
+      }
+      if (!project.has_audio && !project.audio_download_url) {
+        setErr("无主素材音频");
+        return;
+      }
+      setPrdRepairBusyKind(kind);
+      setErr("");
+      try {
+        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/repair`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ kind })
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          project?: ClipProjectRow;
+          detail?: string;
+        };
+        if (!res.ok || data.success === false) {
+          throw new Error(data.detail || `修音失败 ${res.status}`);
+        }
+        if (data.project) setProject(data.project);
+        await load();
+      } catch (e) {
+        setErr(String(e instanceof Error ? e.message : e));
+      } finally {
+        setPrdRepairBusyKind("");
+      }
+    },
+    [getAuthHeaders, load, project, projectId]
+  );
+
   if (loading && !project) {
     return (
       <div className="flex h-[100dvh] max-h-[100dvh] items-center justify-center bg-canvas text-sm text-muted">
@@ -2520,45 +2560,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     onProjectUpdated: setProject,
     onError: (msg: string) => setErr(msg)
   };
-
-  const runClipPrdRepair = useCallback(
-    async (kind: "ambient" | "voice_clarity" | "loudnorm") => {
-      const tSt = project.transcription_status;
-      if (tSt === "running" || tSt === "queued") {
-        setErr("转写进行中，请稍后再试修音");
-        return;
-      }
-      if (!project.has_audio && !project.audio_download_url) {
-        setErr("无主素材音频");
-        return;
-      }
-      setPrdRepairBusyKind(kind);
-      setErr("");
-      try {
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/repair`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify({ kind })
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          success?: boolean;
-          project?: ClipProjectRow;
-          detail?: string;
-        };
-        if (!res.ok || data.success === false) {
-          throw new Error(data.detail || `修音失败 ${res.status}`);
-        }
-        if (data.project) setProject(data.project);
-        await load();
-      } catch (e) {
-        setErr(String(e instanceof Error ? e.message : e));
-      } finally {
-        setPrdRepairBusyKind("");
-      }
-    },
-    [getAuthHeaders, load, project.audio_download_url, project.has_audio, project.transcription_status, projectId]
-  );
 
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
