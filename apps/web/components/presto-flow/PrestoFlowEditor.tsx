@@ -2774,12 +2774,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         variant="inline"
                         projectId={projectId}
                         getAuthHeaders={getAuthHeaders}
-                        hasMainAudio={hasServerAudio}
                         disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
                         label={t("presto.flow.importAudio")}
                         busyLabel={t("presto.flow.importBusy")}
                         hint={t("presto.flow.importHint")}
-                        replaceWarn={t("presto.flow.importReplaceWarn")}
                         onDone={() => void load()}
                         onError={(msg) => setErr(msg)}
                         allowMultiSegment={

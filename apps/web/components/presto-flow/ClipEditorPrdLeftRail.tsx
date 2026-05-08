@@ -132,7 +132,7 @@ export default function ClipEditorPrdLeftRail({
     );
   }
 
-  /** 有分段列表时不再重复展示「主轨」行（避免与唯一分段重复两条） */
+  /** 尚无分段元数据、仅有合并源时：在列表中展示为一行（与「分段列表」同一套 UI，不单独强调主轨） */
   const serverSourceRow =
     hasServerAudio && entries.length === 0
       ? {
@@ -168,12 +168,10 @@ export default function ClipEditorPrdLeftRail({
                   variant="icon"
                   projectId={projectId}
                   getAuthHeaders={getAuthHeaders}
-                  hasMainAudio={hasServerAudio}
                   disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
                   label={t("presto.flow.importAudio")}
                   busyLabel={t("presto.flow.importBusy")}
                   hint={t("presto.flow.importHint")}
-                  replaceWarn={t("presto.flow.importReplaceWarn")}
                   onDone={() => void load()}
                   onError={(msg) => setErr(msg)}
                   allowMultiSegment={allowMultiSegmentImport}
@@ -216,8 +214,8 @@ export default function ClipEditorPrdLeftRail({
               value={notesDraft}
               onChange={(e) => setNotesDraft(e.target.value)}
               disabled={notesGenBusy}
-              rows={7}
-              className="min-h-[5rem] flex-1 resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
+              rows={3}
+              className="max-h-[4.5rem] min-h-[2.75rem] resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
               placeholder="Shownotes 正文…"
             />
             <button

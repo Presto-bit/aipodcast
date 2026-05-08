@@ -13,13 +13,11 @@ type Props = {
   label: string;
   busyLabel: string;
   hint: string;
-  replaceWarn: string;
   onDone: () => void;
   onError: (msg: string) => void;
-  hasMainAudio: boolean;
   /** bar：独立条带；inline：顶栏内紧凑；icon：仅上传图标按钮 */
   variant?: "bar" | "inline" | "icon";
-  /** false 时仅允许单文件上传，不走路由合并 */
+  /** false 时仅允许单文件上传；单文件与多文件均走分段暂存接口，由服务端合并 */
   allowMultiSegment?: boolean;
 };
 
@@ -31,10 +29,8 @@ export default function PrestoFlowImportBar({
   label,
   busyLabel,
   hint,
-  replaceWarn,
   onDone,
   onError,
-  hasMainAudio,
   variant = "bar",
   allowMultiSegment = true
 }: Props) {
@@ -49,22 +45,17 @@ export default function PrestoFlowImportBar({
       if (inputRef.current) inputRef.current.value = "";
       return;
     }
-    if (hasMainAudio && files.length > 0 && !window.confirm(replaceWarn)) {
-      if (inputRef.current) inputRef.current.value = "";
-      return;
-    }
     setBusy(true);
     onError("");
     try {
       const list = Array.from(files);
-      if (list.length === 1) {
-        const f = list[0]!;
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio`, {
+      for (const f of list) {
+        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
           method: "POST",
           credentials: "same-origin",
           headers: {
             "content-type": f.type || "application/octet-stream",
-            "x-clip-filename": encodeClipFilenameForHttpHeader(f.name, "upload.mp3"),
+            "x-clip-filename": encodeClipFilenameForHttpHeader(f.name, "segment.mp3"),
             ...getAuthHeaders()
           },
           body: f
@@ -72,23 +63,6 @@ export default function PrestoFlowImportBar({
         const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
         if (!res.ok || data.success === false) {
           throw new Error(data.detail || `上传失败 ${res.status}`);
-        }
-      } else if (allowMultiSegment) {
-        for (const f of list) {
-          const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
-            method: "POST",
-            credentials: "same-origin",
-            headers: {
-              "content-type": f.type || "application/octet-stream",
-              "x-clip-filename": encodeClipFilenameForHttpHeader(f.name, "segment.mp3"),
-              ...getAuthHeaders()
-            },
-            body: f
-          });
-          const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
-          if (!res.ok || data.success === false) {
-            throw new Error(data.detail || `上传分段失败 ${res.status}`);
-          }
         }
       }
       onDone();
