@@ -1390,7 +1390,14 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
     from pathlib import Path
 
     from .clip_audio_merge import ffprobe_audio_channels
+    from .clip_segment_transcript import (
+        list_missing_segment_keys,
+        parse_audio_source_segments,
+        parse_segment_transcript_cache,
+        stitch_cached_segment_transcripts,
+    )
     from .clip_store import (
+        clear_clip_audio_segment_transcripts,
         get_clip_project_by_id,
         try_claim_clip_transcription_queued,
         update_clip_project_meta,
@@ -1421,6 +1428,10 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
             return {"status": "skipped", "reason": "transcription_claim_failed"}
     elif t_st != "queued":
         return {"status": "skipped", "reason": "unexpected_transcription_status"}
+    if force_retranscribe:
+        clear_clip_audio_segment_transcripts(project_id=pid, user_uuid=owner)
+        row = get_clip_project_by_id(pid) or row
+
     audio_key = str(row.get("audio_object_key") or "").strip()
     if not audio_key:
         update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message="未上传音频")
@@ -1449,31 +1460,6 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
 
     max_inline_raw = int(os.getenv("CLIP_VOLC_SEED_MAX_INLINE_BYTES") or str(80 * 1024 * 1024))
     max_inline = max(1024 * 1024, min(200 * 1024 * 1024, max_inline_raw))
-    file_url = ""
-    submit_bytes: bytes | None = None
-    if len(audio_bytes) <= max_inline:
-        submit_bytes = audio_bytes
-        logger.info(
-            "clip transcribe volc_seed_inline_bytes project_id=%s bytes=%s max_inline=%s",
-            pid,
-            len(audio_bytes),
-            max_inline,
-        )
-    else:
-        exp = int(os.getenv("CLIP_AUDIO_PRESIGNED_EXPIRES_SEC") or os.getenv("FUNASR_PRESIGNED_EXPIRES_SEC") or "172800")
-        exp = max(300, min(604800, exp))
-        try:
-            file_url = presigned_get_url(audio_key, expires_in=exp)
-        except Exception as exc:
-            update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=f"生成访问 URL 失败: {exc}")
-            return {"status": "failed", "error": "presign"}
-        logger.warning(
-            "clip transcribe volc_seed_url_only project_id=%s bytes=%s exceeds CLIP_VOLC_SEED_MAX_INLINE_BYTES=%s; "
-            "豆包需能公网下载该预签名 URL（内网 MinIO 请调大阈值或配置 OBJECT_PRESIGN_ENDPOINT）",
-            pid,
-            len(audio_bytes),
-            max_inline,
-        )
 
     diar = bool(row.get("diarization_enabled", True))
     ch_raw = row.get("channel_ids")
@@ -1497,28 +1483,137 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
     if not channel_ids:
         channel_ids = [0]
 
+    hw_raw = row.get("asr_corpus_hotwords") or []
+    if isinstance(hw_raw, str):
+        try:
+            hw_raw = json.loads(hw_raw)
+        except Exception:
+            hw_raw = []
+    corpus_hw: list[str] = []
+    if isinstance(hw_raw, list):
+        for x in hw_raw:
+            s = str(x).strip()
+            if s:
+                corpus_hw.append(s)
+    sc_raw = row.get("asr_corpus_scene")
+    corpus_scene = str(sc_raw).strip() if isinstance(sc_raw, str) and str(sc_raw).strip() else None
+
+    segments = parse_audio_source_segments(row)
+
     try:
         import uuid as _uuid
 
         volc_tid = f"volc-seed-{_uuid.uuid4().hex[:20]}"
         update_clip_transcribe_queued(project_id=pid, user_uuid=owner, task_id=volc_tid)
         logger.info("clip transcribe volc_seed_start project_id=%s pseudo_task_id=%s", pid, volc_tid)
-        hw_raw = row.get("asr_corpus_hotwords") or []
-        if isinstance(hw_raw, str):
+
+        if segments:
+            cache = parse_segment_transcript_cache(row)
+            missing = list_missing_segment_keys(segments, cache)
+            miss_set = set(missing)
+            asr_calls = 0
+            for seg in segments:
+                sk = str(seg.get("key") or "").strip()
+                if not sk or sk not in miss_set:
+                    continue
+                try:
+                    seg_bytes = get_object_bytes(sk)
+                except Exception as exc:
+                    update_clip_transcribe_failed(
+                        project_id=pid, user_uuid=owner, message=f"读取分段音频失败 {sk}: {exc}"
+                    )
+                    return {"status": "failed", "error": "read_segment_audio"}
+                fn = str(seg.get("filename") or "segment.mp3").strip() or "segment.mp3"
+                mime_seg = str(seg.get("mime") or "audio/mpeg").strip() or "audio/mpeg"
+                file_url_seg = ""
+                submit_seg: bytes | None = None
+                if len(seg_bytes) <= max_inline:
+                    submit_seg = seg_bytes
+                else:
+                    exp = int(
+                        os.getenv("CLIP_AUDIO_PRESIGNED_EXPIRES_SEC")
+                        or os.getenv("FUNASR_PRESIGNED_EXPIRES_SEC")
+                        or "172800"
+                    )
+                    exp = max(300, min(604800, exp))
+                    try:
+                        file_url_seg = presigned_get_url(sk, expires_in=exp)
+                    except Exception as exc:
+                        update_clip_transcribe_failed(
+                            project_id=pid, user_uuid=owner, message=f"生成分段访问 URL 失败: {exc}"
+                        )
+                        return {"status": "failed", "error": "presign_segment"}
+                raw_seg = volc_seed_recognize_url_wait(
+                    file_url=file_url_seg,
+                    audio_bytes=submit_seg,
+                    diarization_enabled=diar,
+                    channel_ids=channel_ids,
+                    audio_filename=fn,
+                    audio_mime=mime_seg,
+                    corpus_hotwords=corpus_hw if corpus_hw else None,
+                    corpus_scene=corpus_scene,
+                )
+                norm_seg = normalize_volc_flash_transcript(
+                    raw_seg,
+                    profile="auto",
+                    speaker_hint=int(row.get("speaker_count") or 2),
+                    channel_ids=channel_ids,
+                )
+                cache[sk] = {"normalized": norm_seg}
+                asr_calls += 1
+                logger.info("clip transcribe segment_asr project_id=%s key=%s bytes=%s", pid, sk, len(seg_bytes))
+
+            merged = stitch_cached_segment_transcripts(segments, cache)
+            if merged is None:
+                update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message="分段转写拼接失败")
+                return {"status": "failed", "error": "segment_stitch_failed"}
+            raw_blob: dict[str, Any] = {
+                "mode": "segment_stitch",
+                "segment_keys": [str(s.get("key") or "").strip() for s in segments],
+                "asr_calls": asr_calls,
+            }
+            update_clip_transcribe_succeeded(
+                project_id=pid,
+                user_uuid=owner,
+                raw=raw_blob,
+                normalized=merged,
+                segment_transcripts=cache,
+            )
+            return {
+                "status": "succeeded",
+                "word_count": len(merged.get("words") or []),
+                "segment_asr_calls": asr_calls,
+            }
+
+        file_url = ""
+        submit_bytes: bytes | None = None
+        if len(audio_bytes) <= max_inline:
+            submit_bytes = audio_bytes
+            logger.info(
+                "clip transcribe volc_seed_inline_bytes project_id=%s bytes=%s max_inline=%s",
+                pid,
+                len(audio_bytes),
+                max_inline,
+            )
+        else:
+            exp = int(
+                os.getenv("CLIP_AUDIO_PRESIGNED_EXPIRES_SEC")
+                or os.getenv("FUNASR_PRESIGNED_EXPIRES_SEC")
+                or "172800"
+            )
+            exp = max(300, min(604800, exp))
             try:
-                hw_raw = json.loads(hw_raw)
-            except Exception:
-                hw_raw = []
-        corpus_hw: list[str] = []
-        if isinstance(hw_raw, list):
-            for x in hw_raw:
-                s = str(x).strip()
-                if s:
-                    corpus_hw.append(s)
-        sc_raw = row.get("asr_corpus_scene")
-        corpus_scene = (
-            str(sc_raw).strip() if isinstance(sc_raw, str) and str(sc_raw).strip() else None
-        )
+                file_url = presigned_get_url(audio_key, expires_in=exp)
+            except Exception as exc:
+                update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=f"生成访问 URL 失败: {exc}")
+                return {"status": "failed", "error": "presign"}
+            logger.warning(
+                "clip transcribe volc_seed_url_only project_id=%s bytes=%s exceeds CLIP_VOLC_SEED_MAX_INLINE_BYTES=%s; "
+                "豆包需能公网下载该预签名 URL（内网 MinIO 请调大阈值或配置 OBJECT_PRESIGN_ENDPOINT）",
+                pid,
+                len(audio_bytes),
+                max_inline,
+            )
 
         raw_tr = volc_seed_recognize_url_wait(
             file_url=file_url,
@@ -1551,7 +1646,13 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
                 speaker_hint=int(row.get("speaker_count") or 2),
                 channel_ids=channel_ids,
             )
-        update_clip_transcribe_succeeded(project_id=pid, user_uuid=owner, raw=raw_tr, normalized=normalized)
+        update_clip_transcribe_succeeded(
+            project_id=pid,
+            user_uuid=owner,
+            raw=raw_tr,
+            normalized=normalized,
+            segment_transcripts=None,
+        )
         return {"status": "succeeded", "word_count": len(normalized.get("words") or [])}
     except Exception as exc:
         msg = str(exc) or "transcribe_failed"

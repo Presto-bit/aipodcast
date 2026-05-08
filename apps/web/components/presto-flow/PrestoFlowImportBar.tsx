@@ -87,18 +87,8 @@ export default function PrestoFlowImportBar({
           });
           const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
           if (!res.ok || data.success === false) {
-            throw new Error(data.detail || `暂存失败 ${res.status}`);
+            throw new Error(data.detail || `上传分段失败 ${res.status}`);
           }
-        }
-        const mergeRes = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/merge`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json", ...getAuthHeaders() },
-          body: "{}"
-        });
-        const mergeData = (await mergeRes.json().catch(() => ({}))) as { success?: boolean; detail?: string };
-        if (!mergeRes.ok || mergeData.success === false) {
-          throw new Error(mergeData.detail || `合并失败 ${mergeRes.status}`);
         }
       }
       onDone();

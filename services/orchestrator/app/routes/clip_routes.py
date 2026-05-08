@@ -33,7 +33,8 @@ from ..clip_audio_repair import (
 )
 from ..clip_export import resolve_export_loudnorm_i_lufs
 from ..clip_store import (
-    append_clip_audio_staging,
+    append_clip_audio_source_segment,
+    prepend_current_main_as_source_segment_if_empty_sources,
     append_clip_suggestion_feedback,
     append_collaboration_note,
     append_retake_take_slot,
@@ -43,6 +44,9 @@ from ..clip_store import (
     get_clip_project,
     insert_clip_project,
     list_clip_projects,
+    prune_clip_audio_segment_transcripts,
+    reorder_clip_audio_source_segments,
+    reorder_clip_audio_staging,
     replace_clip_source_audio_preserve_transcript,
     replace_retake_manifest,
     revert_clip_export_after_enqueue_failed,
@@ -117,6 +121,148 @@ def _staging_entries_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(it, dict) and str(it.get("key") or "").strip():
             out.append(it)
     return out
+
+
+def _source_segments_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
+    st = row.get("audio_source_segments")
+    if isinstance(st, str):
+        try:
+            st = json.loads(st)
+        except Exception:
+            st = []
+    if not isinstance(st, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for it in st:
+        if isinstance(it, dict) and str(it.get("key") or "").strip():
+            out.append(it)
+    return out
+
+
+def _material_segments_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """合并顺序：持久化分段 + 兼容旧版仅暂存 staging。"""
+    src = _source_segments_from_row(row)
+    stg = _staging_entries_from_row(row)
+    if src and stg:
+        return [*src, *stg]
+    if src:
+        return src
+    return stg
+
+
+async def _clip_run_audio_merge_for_project(*, project_id: str, uid: str | None) -> dict[str, Any]:
+    """将当前 material 分段合并为单轨主音频；保留各段对象键于 audio_source_segments。"""
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    staging = _material_segments_from_row(row)
+    if not staging:
+        raise HTTPException(status_code=400, detail="暂无待合并的分段素材")
+    old_main = str(row.get("audio_object_key") or "").strip() or None
+    owner_seg = uid or "anon"
+    merged_key: str | None = None
+    merged_bytes: bytes = b""
+    meta: list[dict[str, Any]] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="fyv_clip_merge_") as td:
+            td_path = Path(td)
+            paths: list[Path] = []
+            for i, seg in enumerate(staging):
+                key = str(seg.get("key") or "").strip()
+                if not key:
+                    continue
+                raw = get_object_bytes(key)
+                ext = Path(str(seg.get("filename") or "seg.bin")).suffix or ".bin"
+                p = td_path / f"seg_{i:03d}{ext}"
+                p.write_bytes(raw)
+                paths.append(p)
+                meta.append(
+                    {
+                        "key": key,
+                        "filename": str(seg.get("filename") or ""),
+                        "mime": str(seg.get("mime") or ""),
+                        "size_bytes": int(seg.get("size_bytes") or len(raw)),
+                    }
+                )
+            if len(paths) < 1:
+                raise RuntimeError("分段数据无效")
+            validate_staging_segments_for_volc(segment_meta=meta, temp_paths=paths)
+            out_mp3 = td_path / "merged.mp3"
+            merge_audio_files_to_mp3(paths, out_mp3)
+            merged_bytes = out_mp3.read_bytes()
+        merged_key = f"clip/{owner_seg}/{project_id}/merged_{uuid.uuid4().hex[:12]}.mp3"
+        upload_bytes(merged_key, merged_bytes, "audio/mpeg")
+        ok = update_clip_project_audio(
+            project_id=project_id,
+            user_uuid=uid,
+            object_key=merged_key,
+            filename="merged.mp3",
+            mime="audio/mpeg",
+            size_bytes=len(merged_bytes),
+            source_segments=meta,
+            preserve_segment_transcript_cache=True,
+        )
+        if not ok:
+            delete_object_key(merged_key)
+            raise HTTPException(status_code=500, detail="合并后写入主音频失败")
+        try:
+            with tempfile.NamedTemporaryFile(prefix="fyv_clip_merge_probe_", suffix=".mp3", delete=True) as tf:
+                tf.write(merged_bytes)
+                tf.flush()
+                _apply_channel_ids_from_audio_file(project_id=project_id, user_uuid=uid, file_path=Path(tf.name))
+        except Exception:
+            logger.exception("clip merge ffprobe channel_detect failed project_id=%s", project_id)
+        seg_key_set = {str(m.get("key") or "").strip() for m in meta if str(m.get("key") or "").strip()}
+        if old_main and old_main != merged_key and old_main not in seg_key_set:
+            delete_object_key(old_main)
+        if ok:
+            prune_clip_audio_segment_transcripts(
+                project_id=project_id,
+                user_uuid=uid,
+                keep_keys=[str(m.get("key") or "").strip() for m in meta if str(m.get("key") or "").strip()],
+            )
+    except HTTPException:
+        if merged_key:
+            delete_object_key(merged_key)
+        raise
+    except Exception as exc:
+        if merged_key:
+            delete_object_key(merged_key)
+        logger.exception("clip merge staged audio failed project_id=%s", project_id)
+        raise HTTPException(status_code=400, detail=str(exc)[:800]) from exc
+    row2 = get_clip_project(project_id=project_id, user_uuid=uid)
+    return _serialize_clip_row(row2 or {})
+
+
+def _enqueue_transcribe_after_reorder_merge(*, project_id: str, uid: str | None) -> None:
+    """
+    拖动重排并再合并后：主轨转写被置为 idle；若有多段 audio_source_segments 且豆包可用，
+    自动入队转写任务（对已缓存分段仅拼接、不调 ASR），以便前端刷新后稿面顺序与音频一致。
+    """
+    if not volc_seed_auth_configured():
+        return
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row or not _source_segments_from_row(row):
+        return
+    t_st = str(row.get("transcription_status") or "").strip()
+    if t_st not in ("idle", "failed"):
+        return
+    prev = t_st
+    if not try_claim_clip_transcription_queued(project_id=project_id, user_uuid=uid):
+        return
+    try:
+        ai_queue.enqueue(
+            run_clip_transcription_job,
+            project_id,
+            force_retranscribe=False,
+            job_timeout="3h",
+        )
+        logger.info("clip reorder auto_transcribe_enqueued project_id=%s", project_id)
+    except Exception:
+        revert_clip_transcription_after_enqueue_failed(
+            project_id=project_id, user_uuid=uid, restore_status=prev
+        )
+        logger.exception("clip reorder auto_transcribe_enqueue_failed project_id=%s", project_id)
 
 
 def _current_user_ref_or_401(request: Request) -> str | None:
@@ -249,6 +395,7 @@ def _serialize_clip_row(row: dict[str, Any]) -> dict[str, Any]:
         "excluded_word_ids",
         "channel_ids",
         "audio_staging_keys",
+        "audio_source_segments",
         "suggestion_feedback",
         "silence_analysis",
         "timeline_json",
@@ -268,6 +415,16 @@ def _serialize_clip_row(row: dict[str, Any]) -> dict[str, Any]:
                 pass
     stg = d.get("audio_staging_keys")
     d["audio_staging_count"] = len(stg) if isinstance(stg, list) else 0
+    src_seg = d.get("audio_source_segments")
+    d["audio_source_segments_count"] = len(src_seg) if isinstance(src_seg, list) else 0
+    stc = d.get("audio_segment_transcripts")
+    if isinstance(stc, str) and stc.strip():
+        try:
+            stc = json.loads(stc)
+        except Exception:
+            stc = {}
+    d["segment_transcripts_cached_count"] = len(stc) if isinstance(stc, dict) else 0
+    d.pop("audio_segment_transcripts", None)
     d["clip_merge_limits"] = clip_merge_limits()
     d["clip_asr_provider"] = "volc_seed"
     d["has_audio"] = bool(str(d.get("audio_object_key") or "").strip())
@@ -715,7 +872,7 @@ async def clip_repair_source_audio(project_id: str, request: Request, body: dict
 
 @router.post("/clip/projects/{project_id}/audio/stage")
 async def clip_stage_audio_segment(project_id: str, request: Request):
-    """追加一段暂存素材（多段导入后由前端防抖触发 merge 合并）。"""
+    """追加一段分段素材并立即合并为主音频（无需前端再调 merge）。"""
     uid = _owner_uuid(request)
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
@@ -733,7 +890,17 @@ async def clip_stage_audio_segment(project_id: str, request: Request):
     owner_seg = uid or "anon"
     sk = f"clip/{owner_seg}/{project_id}/stage_{uuid.uuid4().hex[:16]}_{fn}"
     upload_bytes(sk, body, mime)
-    ok = append_clip_audio_staging(
+    main_key = str(row.get("audio_object_key") or "").strip()
+    if main_key and not _source_segments_from_row(row) and not _staging_entries_from_row(row):
+        prepend_current_main_as_source_segment_if_empty_sources(
+            project_id=project_id,
+            user_uuid=uid,
+            main_key=main_key,
+            filename=str(row.get("audio_filename") or "main.mp3")[:500],
+            mime=str(row.get("audio_mime") or "audio/mpeg")[:200],
+            size_bytes=int(row.get("audio_size_bytes") or 0),
+        )
+    ok = append_clip_audio_source_segment(
         project_id=project_id,
         user_uuid=uid,
         object_key=sk,
@@ -743,14 +910,18 @@ async def clip_stage_audio_segment(project_id: str, request: Request):
     )
     if not ok:
         delete_object_key(sk)
-        raise HTTPException(status_code=400, detail="无法追加暂存段（可能超过段数上限）")
-    row2 = get_clip_project(project_id=project_id, user_uuid=uid)
-    return {"success": True, "project": _serialize_clip_row(row2 or {})}
+        raise HTTPException(status_code=400, detail="无法追加分段（可能超过段数上限）")
+    try:
+        serialized = await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
+    except Exception:
+        logger.exception("clip stage auto-merge failed project_id=%s", project_id)
+        raise
+    return {"success": True, "project": serialized}
 
 
 @router.post("/clip/projects/{project_id}/audio/staging/reorder")
-def clip_reorder_staged_audio(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
-    """调整多段暂存的合并顺序；staging_keys 为对象 key 的全排列。"""
+async def clip_reorder_staged_audio(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    """调整分段合并顺序（audio_source_segments 或旧版 staging）；成功后自动重新合并主音频。"""
     uid = _owner_uuid(request)
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
@@ -762,86 +933,26 @@ def clip_reorder_staged_audio(project_id: str, request: Request, body: dict[str,
     ordered = [str(x).strip() for x in raw_keys if str(x).strip()]
     if not ordered:
         raise HTTPException(status_code=400, detail="staging_keys 无效")
-    ok = reorder_clip_audio_staging(project_id=project_id, user_uuid=uid, ordered_keys=ordered)
+    if _source_segments_from_row(row):
+        ok = reorder_clip_audio_source_segments(project_id=project_id, user_uuid=uid, ordered_keys=ordered)
+    elif _staging_entries_from_row(row):
+        ok = reorder_clip_audio_staging(project_id=project_id, user_uuid=uid, ordered_keys=ordered)
+    else:
+        raise HTTPException(status_code=400, detail="当前无可重排的分段")
     if not ok:
-        raise HTTPException(status_code=400, detail="无法重排：与当前暂存段不一致或工程无暂存")
-    row2 = get_clip_project(project_id=project_id, user_uuid=uid)
-    return {"success": True, "project": _serialize_clip_row(row2 or {})}
+        raise HTTPException(status_code=400, detail="无法重排：与当前分段 key 集合不一致")
+    await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
+    _enqueue_transcribe_after_reorder_merge(project_id=project_id, uid=uid)
+    row_out = get_clip_project(project_id=project_id, user_uuid=uid)
+    return {"success": True, "project": _serialize_clip_row(row_out or {})}
 
 
 @router.post("/clip/projects/{project_id}/audio/merge")
 async def clip_merge_staged_audio(project_id: str, request: Request):
-    """将暂存多段 ffmpeg 合并为单轨 MP3 并写入主音频字段（先合成再转写）。"""
+    """将当前分段 ffmpeg 合并为单轨 MP3；保留各段对象键（兼容旧客户端主动调用）。"""
     uid = _owner_uuid(request)
-    row = get_clip_project(project_id=project_id, user_uuid=uid)
-    if not row:
-        raise HTTPException(status_code=404, detail="工程不存在")
-    staging = _staging_entries_from_row(row)
-    if not staging:
-        raise HTTPException(status_code=400, detail="暂无多段暂存素材，请先上传多段或直接使用单文件上传")
-    old_main = str(row.get("audio_object_key") or "").strip() or None
-    owner_seg = uid or "anon"
-    merged_key: str | None = None
-    try:
-        with tempfile.TemporaryDirectory(prefix="fyv_clip_merge_") as td:
-            td_path = Path(td)
-            paths: list[Path] = []
-            meta: list[dict[str, Any]] = []
-            for i, seg in enumerate(staging):
-                key = str(seg.get("key") or "").strip()
-                if not key:
-                    continue
-                raw = get_object_bytes(key)
-                ext = Path(str(seg.get("filename") or "seg.bin")).suffix or ".bin"
-                p = td_path / f"seg_{i:03d}{ext}"
-                p.write_bytes(raw)
-                paths.append(p)
-                meta.append(
-                    {
-                        "key": key,
-                        "filename": str(seg.get("filename") or ""),
-                        "mime": str(seg.get("mime") or ""),
-                        "size_bytes": int(seg.get("size_bytes") or len(raw)),
-                    }
-                )
-            if len(paths) < 1:
-                raise RuntimeError("暂存数据无效")
-            validate_staging_segments_for_volc(segment_meta=meta, temp_paths=paths)
-            out_mp3 = td_path / "merged.mp3"
-            merge_audio_files_to_mp3(paths, out_mp3)
-            merged_bytes = out_mp3.read_bytes()
-        merged_key = f"clip/{owner_seg}/{project_id}/merged_{uuid.uuid4().hex[:12]}.mp3"
-        upload_bytes(merged_key, merged_bytes, "audio/mpeg")
-        ok = update_clip_project_audio(
-            project_id=project_id,
-            user_uuid=uid,
-            object_key=merged_key,
-            filename="merged.mp3",
-            mime="audio/mpeg",
-            size_bytes=len(merged_bytes),
-        )
-        if not ok:
-            delete_object_key(merged_key)
-            raise HTTPException(status_code=500, detail="合并后写入主音频失败")
-        try:
-            _apply_channel_ids_from_audio_file(project_id=project_id, user_uuid=uid, file_path=out_mp3)
-        except Exception:
-            logger.exception("clip merge ffprobe channel_detect failed project_id=%s", project_id)
-        for seg in staging:
-            k = str(seg.get("key") or "").strip()
-            if k:
-                delete_object_key(k)
-        if old_main and old_main != merged_key:
-            delete_object_key(old_main)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        if merged_key:
-            delete_object_key(merged_key)
-        logger.exception("clip merge staged audio failed project_id=%s", project_id)
-        raise HTTPException(status_code=400, detail=str(exc)[:800]) from exc
-    row2 = get_clip_project(project_id=project_id, user_uuid=uid)
-    return {"success": True, "project": _serialize_clip_row(row2 or {})}
+    serialized = await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
+    return {"success": True, "project": serialized}
 
 
 @router.get("/clip/projects/{project_id}/audio/file")
@@ -1356,7 +1467,7 @@ async def clip_start_transcribe(project_id: str, request: Request):
             status_code=400,
             detail="已转写成功；如需重新转写请先重新上传音频。",
         )
-    if _staging_entries_from_row(row):
+    if _staging_entries_from_row(row) and not _source_segments_from_row(row):
         raise HTTPException(
             status_code=400,
             detail="仍有多段暂存未合并，请等待自动合并完成或刷新后再转写。",

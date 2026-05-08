@@ -5,7 +5,7 @@ export type ClipMergeLimits = {
   max_duration_h: number;
 };
 
-/** 多段暂存（与编排器 audio_staging_keys 元素一致） */
+/** 多段素材条（与编排器 audio_source_segments / audio_staging_keys 元素一致） */
 export type ClipAudioStagingEntry = {
   key: string;
   filename: string;
@@ -119,6 +119,11 @@ export type ClipProjectRow = {
   has_audio?: boolean;
   audio_staging_count?: number;
   audio_staging_keys?: ClipAudioStagingEntry[];
+  /** 合并后主音仍对应的多段源（持久顺序）；优先于 audio_staging_keys 展示 */
+  audio_source_segments?: ClipAudioStagingEntry[];
+  audio_source_segments_count?: number;
+  /** 编排器侧已缓存的分段转写条数（仅计数，不返回原文） */
+  segment_transcripts_cached_count?: number;
   clip_merge_limits?: ClipMergeLimits;
   clip_asr_provider?: string;
   created_at?: string;

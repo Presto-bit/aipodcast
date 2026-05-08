@@ -955,9 +955,11 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       : masterAudioUrl;
 
   const audioStagingEntries = useMemo(() => {
+    const src = project?.audio_source_segments;
     const st = project?.audio_staging_keys;
+    if (Array.isArray(src) && src.length > 0) return src;
     return Array.isArray(st) ? st : [];
-  }, [project?.audio_staging_keys]);
+  }, [project?.audio_source_segments, project?.audio_staging_keys]);
 
   const generateWordchainPreview = useCallback(async () => {
     if (!ensureLoggedInForAction("词链试听", "presto.wordchain.preview")) return;
