@@ -1003,9 +1003,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   }, []);
 
   const snapSeekMs = useCallback((seekMs: number) => snapMsNearWordEdges(words, seekMs, 140), [words]);
+  const audioMergeBusy =
+    project?.audio_merge_status === "queued" || project?.audio_merge_status === "running";
   const segmentEditLocked =
     actionBusy ||
     insertingSegmentAudio ||
+    audioMergeBusy ||
     project?.transcription_status === "running" ||
     project?.transcription_status === "queued" ||
     project?.export_status === "running" ||
@@ -1416,15 +1419,19 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   useEffect(() => {
     const st = project?.transcription_status;
     const ex = project?.export_status;
-    if (st === "running" || st === "queued" || ex === "running" || ex === "queued") {
-      const busyPollMs = 5500;
+    const mergeSt = project?.audio_merge_status;
+    const mergeBusy = mergeSt === "running" || mergeSt === "queued";
+    const txBusy = st === "running" || st === "queued";
+    const exBusy = ex === "running" || ex === "queued";
+    if (txBusy || exBusy || mergeBusy) {
+      const busyPollMs = mergeBusy && !txBusy && !exBusy ? 2200 : 5500;
       const id = window.setInterval(() => {
         if (projectBusyPollVisibleRef.current) void load();
       }, busyPollMs);
       return () => window.clearInterval(id);
     }
     return undefined;
-  }, [load, project?.transcription_status, project?.export_status]);
+  }, [load, project?.transcription_status, project?.export_status, project?.audio_merge_status]);
 
   const persistExcludedNow = useCallback(
     async (next: Set<string>, opts?: { showSavingHint?: boolean }) => {
@@ -2781,6 +2788,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 sourceMaterialDurationMs={durationMs}
                 exportDisabled={
                   actionBusy ||
+                  audioMergeBusy ||
                   project.transcription_status !== "succeeded" ||
                   project.export_status === "running" ||
                   project.export_status === "queued"
@@ -2865,7 +2873,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         variant="inline"
                         projectId={projectId}
                         getAuthHeaders={getAuthHeaders}
-                        disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
+                        disabled={!loggedIn || actionBusy || transcriptionActive || exportActive || audioMergeBusy}
                         label={t("presto.flow.importAudio")}
                         busyLabel={t("presto.flow.importBusy")}
                         hint={t("presto.flow.importHint")}
@@ -2886,6 +2894,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 transcribeDisabled={
                   actionBusy ||
                   insertingSegmentAudio ||
+                  audioMergeBusy ||
                   !hasServerAudio ||
                   project.transcription_status === "running" ||
                   project.transcription_status === "queued" ||
@@ -2893,6 +2902,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 }
                 exportDisabled={
                   actionBusy ||
+                  audioMergeBusy ||
                   project.transcription_status !== "succeeded" ||
                   project.export_status === "running" ||
                   project.export_status === "queued"
@@ -2913,6 +2923,16 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               <p className="px-4 text-sm text-danger-ink">{project.transcription_error}</p>
             ) : null}
             {project.export_error ? <p className="px-4 text-sm text-danger-ink">{project.export_error}</p> : null}
+            {audioMergeBusy ? (
+              <p className="border-b border-line bg-fill/30 px-4 py-1.5 text-[11px] text-muted">
+                {project.audio_merge_status === "queued"
+                  ? t("clip.editor.audioMergeQueued")
+                  : t("clip.editor.audioMergeRunning")}
+              </p>
+            ) : null}
+            {project.audio_merge_status === "failed" && project.audio_merge_error ? (
+              <p className="px-4 text-sm text-danger-ink">{project.audio_merge_error}</p>
+            ) : null}
 
             {showTranscriptFullscreen ? (
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -3139,10 +3159,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     actionBusy={actionBusy}
                     transcriptionActive={transcriptionActive}
                     exportActive={exportActive}
+                    audioMergeBusy={audioMergeBusy}
                     pendingInsertedSegments={pendingInsertedSegments.length}
                     transcribeDisabled={
                       actionBusy ||
                       insertingSegmentAudio ||
+                      audioMergeBusy ||
                       !hasServerAudio ||
                       project.transcription_status === "running" ||
                       project.transcription_status === "queued" ||
@@ -3219,7 +3241,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           projectId={projectId}
                           entries={audioStagingEntries}
                           getAuthHeaders={getAuthHeaders}
-                          disabled={actionBusy || transcriptionActive || exportActive}
+                          disabled={actionBusy || transcriptionActive || exportActive || audioMergeBusy}
                           onRefresh={() => void load()}
                           onProjectPatch={setProject}
                           onError={(msg) => setErr(msg)}

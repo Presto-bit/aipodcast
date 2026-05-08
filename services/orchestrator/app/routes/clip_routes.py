@@ -18,12 +18,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from .. import auth_bridge
-from ..clip_audio_merge import (
-    clip_merge_limits,
-    ffprobe_audio_channels,
-    merge_audio_files_to_mp3,
-    validate_staging_segments_for_volc,
-)
+from ..clip_audio_merge import clip_merge_limits, ffprobe_audio_channels
+from ..clip_merge_scheduler import merge_immediate, schedule_merge_after_reorder
 from ..clip_audio_repair import (
     repair_ambient_to_mp3,
     repair_dual_stereo_balance_to_mp3,
@@ -233,84 +229,17 @@ def _material_segments_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def _clip_run_audio_merge_for_project(*, project_id: str, uid: str | None) -> dict[str, Any]:
-    """将当前 material 分段合并为单轨主音频；保留各段对象键于 audio_source_segments。"""
+    """上传/删段/手动 merge：即时合并主轨并返回最新工程。"""
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
         raise HTTPException(status_code=404, detail="工程不存在")
     staging = _material_segments_from_row(row)
     if not staging:
         raise HTTPException(status_code=400, detail="暂无待合并的分段素材")
-    old_main = str(row.get("audio_object_key") or "").strip() or None
-    owner_seg = uid or "anon"
-    merged_key: str | None = None
-    merged_bytes: bytes = b""
-    meta: list[dict[str, Any]] = []
     try:
-        with tempfile.TemporaryDirectory(prefix="fyv_clip_merge_") as td:
-            td_path = Path(td)
-            paths: list[Path] = []
-            for i, seg in enumerate(staging):
-                key = str(seg.get("key") or "").strip()
-                if not key:
-                    continue
-                raw = get_object_bytes(key)
-                ext = Path(str(seg.get("filename") or "seg.bin")).suffix or ".bin"
-                p = td_path / f"seg_{i:03d}{ext}"
-                p.write_bytes(raw)
-                paths.append(p)
-                meta.append(
-                    {
-                        "key": key,
-                        "filename": str(seg.get("filename") or ""),
-                        "mime": str(seg.get("mime") or ""),
-                        "size_bytes": int(seg.get("size_bytes") or len(raw)),
-                    }
-                )
-            if len(paths) < 1:
-                raise RuntimeError("分段数据无效")
-            validate_staging_segments_for_volc(segment_meta=meta, temp_paths=paths)
-            out_mp3 = td_path / "merged.mp3"
-            merge_audio_files_to_mp3(paths, out_mp3)
-            merged_bytes = out_mp3.read_bytes()
-        merged_key = f"clip/{owner_seg}/{project_id}/merged_{uuid.uuid4().hex[:12]}.mp3"
-        upload_bytes(merged_key, merged_bytes, "audio/mpeg")
-        ok = update_clip_project_audio(
-            project_id=project_id,
-            user_uuid=uid,
-            object_key=merged_key,
-            filename="merged.mp3",
-            mime="audio/mpeg",
-            size_bytes=len(merged_bytes),
-            source_segments=meta,
-            preserve_segment_transcript_cache=True,
-        )
-        if not ok:
-            delete_object_key(merged_key)
-            raise HTTPException(status_code=500, detail="合并后写入主音频失败")
-        try:
-            with tempfile.NamedTemporaryFile(prefix="fyv_clip_merge_probe_", suffix=".mp3", delete=True) as tf:
-                tf.write(merged_bytes)
-                tf.flush()
-                _apply_channel_ids_from_audio_file(project_id=project_id, user_uuid=uid, file_path=Path(tf.name))
-        except Exception:
-            logger.exception("clip merge ffprobe channel_detect failed project_id=%s", project_id)
-        seg_key_set = {str(m.get("key") or "").strip() for m in meta if str(m.get("key") or "").strip()}
-        if old_main and old_main != merged_key and old_main not in seg_key_set:
-            delete_object_key(old_main)
-        if ok:
-            prune_clip_audio_segment_transcripts(
-                project_id=project_id,
-                user_uuid=uid,
-                keep_keys=[str(m.get("key") or "").strip() for m in meta if str(m.get("key") or "").strip()],
-            )
-    except HTTPException:
-        if merged_key:
-            delete_object_key(merged_key)
-        raise
+        await merge_immediate(project_id, uid)
     except Exception as exc:
-        if merged_key:
-            delete_object_key(merged_key)
-        logger.exception("clip merge staged audio failed project_id=%s", project_id)
+        logger.exception("clip merge immediate failed project_id=%s", project_id)
         raise HTTPException(status_code=400, detail=str(exc)[:800]) from exc
     row2 = get_clip_project(project_id=project_id, user_uuid=uid)
     return _serialize_clip_row(row2 or {})
@@ -493,6 +422,8 @@ def _serialize_clip_row(row: dict[str, Any]) -> dict[str, Any]:
             d["export_download_url"] = None
     else:
         d["export_download_url"] = None
+    d.setdefault("audio_merge_status", "idle")
+    d.setdefault("audio_merge_error", None)
     return d
 
 
@@ -992,7 +923,7 @@ async def clip_reorder_staged_audio(project_id: str, request: Request, body: dic
         raise HTTPException(status_code=400, detail="当前无可重排的分段")
     if not ok:
         raise HTTPException(status_code=400, detail="无法重排：与当前分段 key 集合不一致")
-    await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
+    await schedule_merge_after_reorder(project_id, uid)
     row_out = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row_out or {})}
 
@@ -1054,7 +985,7 @@ async def clip_remove_audio_source_segment(project_id: str, request: Request, bo
 
 @router.post("/clip/projects/{project_id}/audio/merge")
 async def clip_merge_staged_audio(project_id: str, request: Request):
-    """将当前分段 ffmpeg 合并为单轨 MP3；保留各段对象键（兼容旧客户端主动调用）。"""
+    """将当前分段合并为单轨主音频（同源可走无损拼接；否则转 AAC/m4a）；保留各段对象键。"""
     uid = _owner_uuid(request)
     serialized = await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
     return {"success": True, "project": serialized}

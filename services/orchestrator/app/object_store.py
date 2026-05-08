@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import os
 
+from pathlib import Path
+
 import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
@@ -158,6 +160,35 @@ def get_object_bytes(object_key: str) -> bytes:
     s3 = _s3()
     obj = s3.get_object(Bucket=settings.object_bucket, Key=object_key)
     return obj["Body"].read()
+
+
+def download_object_to_path(object_key: str, dest_path: Path, *, chunk_size: int = 262_144) -> None:
+    """流式下载对象到本地文件，避免整段载入内存。"""
+    key = (object_key or "").strip()
+    if not key:
+        raise ValueError("object_key_empty")
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    with dest_path.open("wb") as f:
+        for chunk in iter_object_chunks(key, chunk_size=chunk_size):
+            f.write(chunk)
+
+
+def upload_file_path(object_key: str, path: Path, content_type: str = "application/octet-stream") -> str:
+    """从磁盘路径上传（multipart/stream，减轻峰值内存）。"""
+    key = (object_key or "").strip()
+    if not key:
+        raise ValueError("object_key_empty")
+    p = Path(path)
+    if not p.is_file():
+        raise ValueError("upload_file_not_found")
+    ct = (content_type or "application/octet-stream").strip()[:200]
+    _s3().upload_file(
+        str(p.resolve()),
+        settings.object_bucket,
+        key,
+        ExtraArgs={"ContentType": ct},
+    )
+    return key
 
 
 def iter_object_chunks(object_key: str, *, chunk_size: int = 262_144):

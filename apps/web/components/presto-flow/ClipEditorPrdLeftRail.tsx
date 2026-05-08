@@ -27,6 +27,7 @@ type Props = {
   actionBusy: boolean;
   transcriptionActive: boolean;
   exportActive: boolean;
+  audioMergeBusy: boolean;
   pendingInsertedSegments: number;
   transcribeDisabled: boolean;
   transcribeLabel: string;
@@ -50,6 +51,7 @@ export default function ClipEditorPrdLeftRail({
   actionBusy,
   transcriptionActive,
   exportActive,
+  audioMergeBusy,
   pendingInsertedSegments,
   transcribeDisabled,
   transcribeLabel,
@@ -171,7 +173,7 @@ export default function ClipEditorPrdLeftRail({
                   variant="icon"
                   projectId={projectId}
                   getAuthHeaders={getAuthHeaders}
-                  disabled={!loggedIn || actionBusy || transcriptionActive || exportActive}
+                  disabled={!loggedIn || actionBusy || transcriptionActive || exportActive || audioMergeBusy}
                   label={t("presto.flow.importAudio")}
                   busyLabel={t("presto.flow.importBusy")}
                   hint={t("presto.flow.importHint")}
@@ -195,7 +197,7 @@ export default function ClipEditorPrdLeftRail({
                   projectId={projectId}
                   entries={entries}
                   getAuthHeaders={getAuthHeaders}
-                  disabled={actionBusy || transcriptionActive || exportActive}
+                  disabled={actionBusy || transcriptionActive || exportActive || audioMergeBusy}
                   onRefresh={() => void load()}
                   onProjectPatch={onProjectPatch}
                   onError={(msg) => setErr(msg)}

@@ -125,6 +125,9 @@ export type ClipProjectRow = {
   /** 编排器侧已缓存的分段转写条数（仅计数，不返回原文） */
   segment_transcripts_cached_count?: number;
   clip_merge_limits?: ClipMergeLimits;
+  /** 多段合并主轨：idle | queued | running | failed（重排后为防抖异步合并） */
+  audio_merge_status?: string;
+  audio_merge_error?: string | null;
   clip_asr_provider?: string;
   created_at?: string;
   updated_at?: string;

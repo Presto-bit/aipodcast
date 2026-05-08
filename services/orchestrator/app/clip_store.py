@@ -73,6 +73,10 @@ def ensure_clip_studio_schema(*, strict: bool) -> None:
       ADD COLUMN IF NOT EXISTS audio_source_segments jsonb NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE clip_projects
       ADD COLUMN IF NOT EXISTS audio_segment_transcripts jsonb NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS audio_merge_status text NOT NULL DEFAULT 'idle';
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS audio_merge_error text;
     """
     try:
         with get_conn() as conn:
@@ -183,6 +187,47 @@ def get_clip_project(*, project_id: str, user_uuid: str | None) -> dict[str, Any
                 )
             row = cur.fetchone()
             return dict(row) if row else None
+
+
+def set_clip_audio_merge_state(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    status: str,
+    error: str | None = None,
+) -> bool:
+    """idle | queued | running | failed — 异步合并进度（仅编排器写入）。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    st = (status or "idle").strip().lower()
+    if st not in ("idle", "queued", "running", "failed"):
+        st = "idle"
+    err = (error or "").strip()[:2000] if error else None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_merge_status = %s, audio_merge_error = %s, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                    """,
+                    (st, err, pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_merge_status = %s, audio_merge_error = %s, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                    """,
+                    (st, err, pid),
+                )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
 
 
 def update_clip_project_audio(
