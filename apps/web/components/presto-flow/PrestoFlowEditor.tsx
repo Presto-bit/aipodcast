@@ -32,12 +32,7 @@ import {
   type LlmSuggestionApiItem
 } from "../../lib/prestoFlowAiSuggestions";
 import type { TranscriptWordSuggestionMarker } from "../../lib/prestoFlowTranscriptMarkers";
-import {
-  buildRoughCutExemptSet,
-  collectSubstringMatchWordIds,
-  collectVerbalTicWordIds,
-  verbalTicRowDismissId
-} from "../../lib/prestoFlowRoughCutLexicon";
+import { collectSubstringMatchWordIds, collectVerbalTicWordIds, verbalTicRowDismissId } from "../../lib/prestoFlowRoughCutLexicon";
 import {
   buildFlowUnits,
   groupSpeakerTurnLines,
@@ -61,6 +56,8 @@ import { clipEditorUsesPrdLayout } from "../../lib/clipEditorPrdUi";
 import ClipEditorPrdLeftRail from "./ClipEditorPrdLeftRail";
 import ClipEditorPrdScriptToolbar from "./ClipEditorPrdScriptToolbar";
 import ClipEditorPrdTopBar from "./ClipEditorPrdTopBar";
+import SmallConfirmModal from "../ui/SmallConfirmModal";
+import { createPortal } from "react-dom";
 
 function isDualChannels(ch: unknown): boolean {
   return Array.isArray(ch) && ch.length >= 2;
@@ -245,6 +242,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [speakerFocusSet, setSpeakerFocusSet] = useState<Set<number>>(() => new Set());
   const [onlySelectedSpeakers, setOnlySelectedSpeakers] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [transcribeConfirmOpen, setTranscribeConfirmOpen] = useState(false);
   const [actionHint, setActionHint] = useState<string>("");
   const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number; visible: boolean }>({
     x: 0,
@@ -445,10 +443,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const words = useMemo(() => reorderWordsBySegments(rawWords, audioSegments), [rawWords, audioSegments]);
   const rawWordById = useMemo(() => new Map(rawWords.map((w) => [w.id, w])), [rawWords]);
 
-  const roughCutExemptSet = useMemo(
-    () => buildRoughCutExemptSet(project?.rough_cut_lexicon_exempt),
-    [project?.rough_cut_lexicon_exempt]
-  );
+  /** 口癖侧栏不再维护豁免表：聚合与建议均不按豁免过滤 */
+  const noLexExempt = useMemo(() => new Set<string>() as ReadonlySet<string>, []);
 
   const lines = useMemo(() => groupSpeakerTurnLines(buildFlowUnits(words)), [words]);
 
@@ -715,20 +711,20 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   }, [scriptSearch, words, excluded]);
 
   const roughCutHighlightIds = useMemo(() => {
-    const ticRaw = collectVerbalTicWordIds(words, excluded, roughCutExemptSet);
+    const ticRaw = collectVerbalTicWordIds(words, excluded, noLexExempt);
     const tic =
       dismissedRoughKeys.size === 0
         ? ticRaw
         : ticRaw.filter((id) => {
             const w = words.find((x) => x.id === id);
             if (!w) return true;
-            const dk = verbalTicRowDismissId(w, roughCutExemptSet);
+            const dk = verbalTicRowDismissId(w, noLexExempt);
             return !dk || !dismissedRoughKeys.has(dk);
           });
     const q = scriptSearch.trim();
     if (!q) return new Set(tic);
     return new Set([...tic, ...searchHlWordIds]);
-  }, [words, excluded, roughCutExemptSet, scriptSearch, searchHlWordIds, dismissedRoughKeys]);
+  }, [words, excluded, noLexExempt, scriptSearch, searchHlWordIds, dismissedRoughKeys]);
 
   const transcriptSilenceCards = useMemo(() => {
     const segs = silenceSegments;
@@ -864,9 +860,19 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     return Math.max(...words.map((w) => w.e_ms), 0);
   }, [project, words, estimatedDurationFromBytesMs]);
 
+  /** PRD 顶栏：粗剪后有效时长 ≈ 原始素材总长减去已删词块跨度 */
+  const prdProcessedDurationMs = useMemo(() => {
+    if (durationMs == null || durationMs <= 0) return null;
+    let excludedSpan = 0;
+    for (const w of words) {
+      if (excluded.has(w.id)) excludedSpan += Math.max(0, w.e_ms - w.s_ms);
+    }
+    return Math.max(0, Math.round(durationMs - excludedSpan));
+  }, [words, excluded, durationMs]);
+
   const editSuggestions = useMemo(
-    () => buildClipEditSuggestions(words, excluded, roughCutExemptSet),
-    [words, excluded, roughCutExemptSet]
+    () => buildClipEditSuggestions(words, excluded, noLexExempt),
+    [words, excluded, noLexExempt]
   );
   const displaySuggestions = useMemo(
     () => [...editSuggestions, ...llmSugs],
@@ -1047,6 +1053,20 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       }
     },
     [words, scriptSearch, excluded, lines]
+  );
+
+  const selectWordsFromRoughSheet = useCallback(
+    (ids: readonly string[]) => {
+      if (!ids.length) return;
+      const uniq = [...new Set(ids)];
+      setMultiSelectIds(new Set(uniq));
+      const first = uniq[0]!;
+      setFocusedWordId(first);
+      transcriptRef.current?.scrollToWordId(first);
+      const w = words.find((x) => x.id === first);
+      if (w) waveformRef.current?.seekToMs(w.s_ms);
+    },
+    [words]
   );
 
   const navigateScriptSearchHit = useCallback(
@@ -2456,7 +2476,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     getAuthHeaders,
     onRefreshProject: load,
     onError: (msg: string) => setErr(msg),
-    exemptCores: roughCutExemptSet,
+    multiSelectIds,
+    onSelectWordIdsForSheet: selectWordsFromRoughSheet,
     silenceSegments,
     onJumpWord: jumpToWordInTranscript,
     onSeekPreviewMs: seekPreviewMs,
@@ -2610,41 +2631,60 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           })();
         }}
       />
-      {shortcutHelpOpen ? (
-        <div
-          className="fixed inset-0 z-[13000] flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setShortcutHelpOpen(false)}
-        >
-          <div
-            className="w-full max-w-lg rounded-xl border border-line bg-surface p-4 shadow-soft"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-ink">快捷键与交互说明</h3>
-              <button
-                type="button"
-                className="rounded border border-line px-2 py-0.5 text-xs text-muted hover:bg-fill"
-                onClick={() => setShortcutHelpOpen(false)}
-              >
-                关闭
-              </button>
-            </div>
-            <ul className="space-y-1 text-[12px] text-ink">
-              <li>`Space` 播放/暂停</li>
-              <li>`鼠标左键拖拽` 可直接框选词（无需先单击一个词）</li>
-              <li>`Shift + 点击 / Shift + ←/→` 连续扩选，`Ctrl/Cmd + 点击` 增量多选</li>
-              <li>`Delete/Backspace` 删除当前选区（或聚焦事件设为 Cut）</li>
-              <li>`Esc` 取消当前选区</li>
-              <li>`Ctrl/Cmd + A` 全选词块</li>
-              <li>`Ctrl/Cmd + ←/→` 按词移动焦点，`Home/End` 到稿首/稿尾</li>
-              <li>`Ctrl/Cmd + Z` 撤销，`Shift + Ctrl/Cmd + Z` 重做</li>
-              <li>`K / U / D` 事件卡片设为 Keep / Duck / Cut</li>
-              <li>`Ctrl/Cmd + F` 打开搜索，`Ctrl/Cmd + S` 立即保存删词</li>
-              <li>`?` 打开/关闭本面板</li>
-            </ul>
-          </div>
-        </div>
-      ) : null}
+      <SmallConfirmModal
+        open={transcribeConfirmOpen}
+        title={t("clip.editor.transcribeConfirmTitle")}
+        message={t("clip.editor.transcribeConfirmBody")}
+        confirmLabel={t("clip.editor.transcribeShort")}
+        cancelLabel={t("presto.flow.exportGate.cancel")}
+        onCancel={() => setTranscribeConfirmOpen(false)}
+        onConfirm={() => {
+          setTranscribeConfirmOpen(false);
+          void startTranscribe();
+        }}
+      />
+      {shortcutHelpOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fym-workspace-scrim z-[13000] flex items-center justify-center bg-black/35 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="shortcut-help-title"
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) setShortcutHelpOpen(false);
+              }}
+            >
+              <div className="fym-modal-card w-full max-w-lg p-5" onPointerDown={(e) => e.stopPropagation()}>
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 id="shortcut-help-title" className="text-sm font-semibold text-ink">
+                    快捷键与交互说明
+                  </h3>
+                  <button
+                    type="button"
+                    className="rounded border border-line px-2 py-0.5 text-xs text-muted hover:bg-fill"
+                    onClick={() => setShortcutHelpOpen(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
+                <ul className="max-h-[min(70vh,24rem)] space-y-1 overflow-y-auto text-[12px] text-ink">
+                  <li>`Space` 播放/暂停</li>
+                  <li>`鼠标左键拖拽` 可直接框选词（无需先单击一个词）</li>
+                  <li>`Shift + 点击 / Shift + ←/→` 连续扩选，`Ctrl/Cmd + 点击` 增量多选</li>
+                  <li>`Delete/Backspace` 删除当前选区（或聚焦事件设为 Cut）</li>
+                  <li>`Esc` 取消当前选区</li>
+                  <li>`Ctrl/Cmd + A` 全选词块</li>
+                  <li>`Ctrl/Cmd + ←/→` 按词移动焦点，`Home/End` 到稿首/稿尾</li>
+                  <li>`Ctrl/Cmd + Z` 撤销，`Shift + Ctrl/Cmd + Z` 重做</li>
+                  <li>`K / U / D` 事件卡片设为 Keep / Duck / Cut</li>
+                  <li>`Ctrl/Cmd + F` 打开搜索，`Ctrl/Cmd + S` 立即保存删词</li>
+                  <li>`?` 打开/关闭本面板</li>
+                </ul>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -2686,8 +2726,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     </h1>
                   )
                 }
-                currentMs={playbackMs}
-                totalMs={durationMs}
+                processedDurationMs={prdProcessedDurationMs}
+                sourceMaterialDurationMs={durationMs}
                 exportDisabled={
                   actionBusy ||
                   project.transcription_status !== "succeeded" ||
@@ -2779,6 +2819,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         busyLabel={t("presto.flow.importBusy")}
                         hint={t("presto.flow.importHint")}
                         onDone={() => void load()}
+                        onProjectPatch={setProject}
                         onError={(msg) => setErr(msg)}
                         allowMultiSegment={
                           project.transcription_status !== "succeeded" &&
@@ -2805,7 +2846,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                   project.export_status === "running" ||
                   project.export_status === "queued"
                 }
-                onTranscribe={() => void startTranscribe()}
+                onTranscribe={() => setTranscribeConfirmOpen(true)}
                 onExport={() => openExportGate()}
               />
             )}
@@ -3040,6 +3081,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     getAuthHeaders={getAuthHeaders}
                     audioStagingEntries={audioStagingEntries}
                     load={load}
+                    onProjectPatch={setProject}
                     setErr={setErr}
                     hasServerAudio={hasServerAudio}
                     loggedIn={loggedIn}
@@ -3056,7 +3098,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       (project.transcription_status === "succeeded" && pendingInsertedSegments.length === 0)
                     }
                     transcribeLabel={t("clip.editor.transcribeShort")}
-                    onTranscribe={() => void startTranscribe()}
+                    onTranscribe={() => setTranscribeConfirmOpen(true)}
                     allowMultiSegmentImport={
                       project.transcription_status !== "succeeded" &&
                       project.transcription_status !== "running" &&
@@ -3128,6 +3170,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           getAuthHeaders={getAuthHeaders}
                           disabled={actionBusy || transcriptionActive || exportActive}
                           onRefresh={() => void load()}
+                          onProjectPatch={setProject}
                           onError={(msg) => setErr(msg)}
                         />
                       ) : null}
@@ -3548,7 +3591,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             getAuthHeaders={getAuthHeaders}
                             onRefreshProject={load}
                             onError={(msg) => setErr(msg)}
-                            exemptCores={roughCutExemptSet}
+                            multiSelectIds={multiSelectIds}
+                            onSelectWordIdsForSheet={selectWordsFromRoughSheet}
                             silenceSegments={silenceSegments}
                             silenceCutKeys={silenceCutKeySet}
                             onJumpWord={jumpToWordInTranscript}

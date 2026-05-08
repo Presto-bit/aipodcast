@@ -237,37 +237,6 @@ async def _clip_run_audio_merge_for_project(*, project_id: str, uid: str | None)
     return _serialize_clip_row(row2 or {})
 
 
-def _enqueue_transcribe_after_reorder_merge(*, project_id: str, uid: str | None) -> None:
-    """
-    拖动重排并再合并后：主轨转写被置为 idle；若有多段 audio_source_segments 且豆包可用，
-    自动入队转写任务（对已缓存分段仅拼接、不调 ASR），以便前端刷新后稿面顺序与音频一致。
-    """
-    if not volc_seed_auth_configured():
-        return
-    row = get_clip_project(project_id=project_id, user_uuid=uid)
-    if not row or not _source_segments_from_row(row):
-        return
-    t_st = str(row.get("transcription_status") or "").strip()
-    if t_st not in ("idle", "failed"):
-        return
-    prev = t_st
-    if not try_claim_clip_transcription_queued(project_id=project_id, user_uuid=uid):
-        return
-    try:
-        ai_queue.enqueue(
-            run_clip_transcription_job,
-            project_id,
-            force_retranscribe=False,
-            job_timeout="3h",
-        )
-        logger.info("clip reorder auto_transcribe_enqueued project_id=%s", project_id)
-    except Exception:
-        revert_clip_transcription_after_enqueue_failed(
-            project_id=project_id, user_uuid=uid, restore_status=prev
-        )
-        logger.exception("clip reorder auto_transcribe_enqueue_failed project_id=%s", project_id)
-
-
 def _current_user_ref_or_401(request: Request) -> str | None:
     if not auth_bridge.is_auth_enabled():
         return None
@@ -945,7 +914,6 @@ async def clip_reorder_staged_audio(project_id: str, request: Request, body: dic
     if not ok:
         raise HTTPException(status_code=400, detail="无法重排：与当前分段 key 集合不一致")
     await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
-    _enqueue_transcribe_after_reorder_merge(project_id=project_id, uid=uid)
     row_out = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row_out or {})}
 
@@ -1001,7 +969,6 @@ async def clip_remove_audio_source_segment(project_id: str, request: Request, bo
         keep_keys=[str(s.get("key") or "").strip() for s in new_list if str(s.get("key") or "").strip()],
     )
     await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
-    _enqueue_transcribe_after_reorder_merge(project_id=project_id, uid=uid)
     row_out = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row_out or {})}
 

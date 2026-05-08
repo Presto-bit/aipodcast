@@ -2,6 +2,7 @@
 
 import { Upload } from "lucide-react";
 import { useRef, useState } from "react";
+import type { ClipProjectRow } from "../../lib/clipTypes";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import { useI18n } from "../../lib/I18nContext";
 
@@ -14,6 +15,8 @@ type Props = {
   busyLabel: string;
   hint: string;
   onDone: () => void;
+  /** 各次 stage 若返回 project，可合并进编辑器状态以减少全量 load */
+  onProjectPatch?: (project: ClipProjectRow) => void;
   onError: (msg: string) => void;
   /** bar：独立条带；inline：顶栏内紧凑；icon：仅上传图标按钮 */
   variant?: "bar" | "inline" | "icon";
@@ -30,6 +33,7 @@ export default function PrestoFlowImportBar({
   busyLabel,
   hint,
   onDone,
+  onProjectPatch,
   onError,
   variant = "bar",
   allowMultiSegment = true
@@ -49,6 +53,7 @@ export default function PrestoFlowImportBar({
     onError("");
     try {
       const list = Array.from(files);
+      let lastProject: ClipProjectRow | undefined;
       for (const f of list) {
         const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
           method: "POST",
@@ -60,12 +65,18 @@ export default function PrestoFlowImportBar({
           },
           body: f
         });
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          detail?: string;
+          project?: ClipProjectRow;
+        };
         if (!res.ok || data.success === false) {
           throw new Error(data.detail || `上传失败 ${res.status}`);
         }
+        if (data.project) lastProject = data.project;
       }
-      onDone();
+      if (lastProject && onProjectPatch) onProjectPatch(lastProject);
+      if (!lastProject || !onProjectPatch) onDone();
     } catch (e) {
       onError(String(e instanceof Error ? e.message : e));
     } finally {

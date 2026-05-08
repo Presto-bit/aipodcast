@@ -14,22 +14,28 @@ function formatClock(ms: number): string {
 
 type Props = {
   title: ReactNode;
-  currentMs: number;
-  totalMs: number | null;
+  /** 粗剪后：保留内容对应的有效时长（原始素材总长减去已删词块时长估算） */
+  processedDurationMs: number | null;
+  /** 素材区合并后的原始总时长（转写 duration 或按字节粗估） */
+  sourceMaterialDurationMs: number | null;
   exportDisabled: boolean;
   exportLabel: string;
   onExport: () => void;
 };
 
+function formatMaybeClock(ms: number | null): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  return formatClock(Math.round(ms));
+}
+
 export default function ClipEditorPrdTopBar({
   title,
-  currentMs,
-  totalMs,
+  processedDurationMs,
+  sourceMaterialDurationMs,
   exportDisabled,
   exportLabel,
   onExport
 }: Props) {
-  const total = totalMs ?? 0;
   return (
     <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/90 px-3 py-2 backdrop-blur-md sm:min-h-16 sm:gap-3 sm:px-4">
       <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-2.5">
@@ -47,8 +53,11 @@ export default function ClipEditorPrdTopBar({
         <div className="min-w-0 flex-1 truncate">{title}</div>
       </div>
       <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto">
-        <span className="font-mono text-[11px] tabular-nums text-muted sm:text-xs">
-          {formatClock(currentMs)} / {formatClock(total)}
+        <span
+          className="font-mono text-[11px] tabular-nums text-muted sm:text-xs"
+          title="粗剪后有效时长 / 上传合并的原始素材总时长（词块删除会从左侧估算扣减）"
+        >
+          {formatMaybeClock(processedDurationMs)} / {formatMaybeClock(sourceMaterialDurationMs)}
         </span>
         <button
           type="button"

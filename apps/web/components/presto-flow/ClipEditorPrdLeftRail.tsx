@@ -20,6 +20,7 @@ type Props = {
   getAuthHeaders: () => Record<string, string>;
   audioStagingEntries: readonly ClipAudioStagingEntry[];
   load: () => Promise<void>;
+  onProjectPatch?: (project: ClipProjectRow) => void;
   setErr: (msg: string) => void;
   hasServerAudio: boolean;
   loggedIn: boolean;
@@ -42,6 +43,7 @@ export default function ClipEditorPrdLeftRail({
   getAuthHeaders,
   audioStagingEntries,
   load,
+  onProjectPatch,
   setErr,
   hasServerAudio,
   loggedIn,
@@ -173,6 +175,7 @@ export default function ClipEditorPrdLeftRail({
                   busyLabel={t("presto.flow.importBusy")}
                   hint={t("presto.flow.importHint")}
                   onDone={() => void load()}
+                  onProjectPatch={onProjectPatch}
                   onError={(msg) => setErr(msg)}
                   allowMultiSegment={allowMultiSegmentImport}
                 />
@@ -193,6 +196,7 @@ export default function ClipEditorPrdLeftRail({
                   getAuthHeaders={getAuthHeaders}
                   disabled={actionBusy || transcriptionActive || exportActive}
                   onRefresh={() => void load()}
+                  onProjectPatch={onProjectPatch}
                   onError={(msg) => setErr(msg)}
                   visualVariant="prd"
                   approxDurationMsPerSegment={approxSegmentDurationMs}
@@ -202,7 +206,9 @@ export default function ClipEditorPrdLeftRail({
                 <p className="text-[10px] leading-snug text-muted">请上传音频后开始转写。</p>
               )}
               {pendingInsertedSegments > 0 ? (
-                <p className="text-[9px] text-muted">含 {pendingInsertedSegments} 段新素材待转写</p>
+                <p className="text-[9px] text-muted">
+                  含 {pendingInsertedSegments} 段新素材尚未转写；请点击「开始转写」后才会提交云端转写。
+                </p>
               ) : null}
             </div>
           </>

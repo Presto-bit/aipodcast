@@ -91,6 +91,9 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "clip.editor.advancedToggle": "转写高级选项（说话人、声道等）",
     "clip.editor.advancedHint": "一般保持默认即可；不确定时先不要改。",
     "clip.editor.transcribeShort": "开始转写",
+    "clip.editor.transcribeConfirmTitle": "开始转写？",
+    "clip.editor.transcribeConfirmBody":
+      "提交后将进入云端转写队列；仅在您确认后开始，调整素材顺序不会自动转写。确定要继续吗？",
     "clip.editor.undo": "撤销上一步剪辑",
     "clip.editor.redo": "重做",
     "clip.editor.cutLegend": "已剪掉",
@@ -306,7 +309,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.roughCut.pauseDetectIntro":
       "以下为检测到的长静音（≥ {ms} ms）。点击行可跳转稿面并试听静音结束附近；剪刀可启用/关闭导出侧「长静音→约 0.5s」策略；圆圈叉可隐藏本行（再点侧栏可恢复，或重新检测静音刷新列表）。",
     "presto.flow.roughCut.pauseRefreshSilences": "重新检测静音",
-    "presto.flow.roughCut.pauseNoLongSilences": "暂无达到阈值的长静音，或尚未拉取检测结果；确认已上传主音频后可点「重新检测静音」。",
+    "presto.flow.roughCut.pauseNoLongSilences": "当前阈值下无停顿，或尚未拉取静音数据。可调低「最短停顿时长」后回车再试，或点「刷新」。",
     "presto.flow.roughCut.pausePreview": "试听",
     "presto.flow.roughCut.pauseAdvice":
       "操作建议：对过长且无信息量的停顿，可启用上方导出策略在成片侧压缩静音；需逐字精剪时仍在稿面删词。",
@@ -314,7 +317,8 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.roughCut.badgeTic": "口癖",
     "presto.flow.roughCut.badgeStutter": "叠字",
     "presto.flow.roughCut.badgeRule": "规则",
-    "presto.flow.roughCut.badgeAi": "AI",
+    "presto.flow.roughCut.badgeAi": "建议删",
+    "presto.flow.roughCut.badgeAiDetail": "模型建议删除的词，需点「删除」或剪刀才会生效，不会自动删。",
     "presto.flow.roughCut.dsOutlineIconTip": "拉取意向性剪辑建议（大纲）",
     "presto.flow.roughCut.dsStructIconTip": "拉取词级结构化建议",
     "presto.flow.roughCut.iconLocateTip": "定位稿面并试听",
@@ -718,6 +722,9 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "clip.editor.advancedToggle": "Advanced transcription options (speakers, channels…)",
     "clip.editor.advancedHint": "Defaults work for most shows; change only if you know you need to.",
     "clip.editor.transcribeShort": "Start transcription",
+    "clip.editor.transcribeConfirmTitle": "Start transcription?",
+    "clip.editor.transcribeConfirmBody":
+      "This submits a cloud transcription job. It only runs after you confirm; reordering material alone will not transcribe. Continue?",
     "clip.editor.undo": "Undo last edit",
     "clip.editor.redo": "Redo",
     "clip.editor.cutLegend": "Cut",
@@ -939,7 +946,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.roughCut.pauseDetectIntro":
       "Long silences detected (≥ {ms} ms). Click a row to jump in the transcript and preview near the end of the gap; scissors toggles export-side long-silence compression (~0.5s bridge); the dismiss control hides the row (show again from the sidebar or re-run detection to refresh).",
     "presto.flow.roughCut.pauseRefreshSilences": "Re-run silence detection",
-    "presto.flow.roughCut.pauseNoLongSilences": "No silences above the threshold yet, or analysis not loaded — with master audio uploaded, tap re-run silence detection.",
+    "presto.flow.roughCut.pauseNoLongSilences": "No pauses at this threshold, or silence data not loaded. Lower the minimum duration and press Enter, or tap Refresh.",
     "presto.flow.roughCut.pausePreview": "Preview",
     "presto.flow.roughCut.pauseAdvice":
       "Tip: for dead air, enabling export shortening compresses gaps in the rendered MP3; for word-level edits, keep cutting on the transcript.",
@@ -947,7 +954,9 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.roughCut.badgeTic": "Filler",
     "presto.flow.roughCut.badgeStutter": "Stutter",
     "presto.flow.roughCut.badgeRule": "Rule",
-    "presto.flow.roughCut.badgeAi": "AI",
+    "presto.flow.roughCut.badgeAi": "Suggest cut",
+    "presto.flow.roughCut.badgeAiDetail":
+      "Model-suggested deletions; use Delete or the scissors control to apply — nothing is removed automatically.",
     "presto.flow.roughCut.dsOutlineIconTip": "Load outline-style clip suggestions",
     "presto.flow.roughCut.dsStructIconTip": "Load structured word-level suggestions",
     "presto.flow.roughCut.iconLocateTip": "Scroll transcript & preview audio",

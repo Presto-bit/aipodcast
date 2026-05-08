@@ -43,6 +43,27 @@ function silenceBridgeLabel(
   return `${p} · ${n}`;
 }
 
+function idsSetMatchSelection(ids: readonly string[], sel?: ReadonlySet<string>): boolean {
+  if (!sel || sel.size === 0) return false;
+  if (ids.length !== sel.size) return false;
+  return ids.every((id) => sel.has(id));
+}
+
+/** 静音检测原始间隔（ms），供「最短停顿时长」筛选 */
+function silenceGapsFromSegments(segments: readonly ClipSilenceSegment[] | null): { start: number; end: number; dur: number }[] {
+  if (!Array.isArray(segments) || !segments.length) return [];
+  const rows: { start: number; end: number; dur: number }[] = [];
+  for (const s of segments) {
+    const a = Number(s.start_ms);
+    const b = Number(s.end_ms);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) continue;
+    const dur = b - a;
+    if (dur < 80) continue;
+    rows.push({ start: a, end: b, dur });
+  }
+  return rows.sort((x, y) => y.dur - x.dur);
+}
+
 function firstWordIdAtOrAfterMs(
   words: readonly ClipWord[],
   ms: number,
@@ -85,8 +106,10 @@ type Props = {
   getAuthHeaders: () => Record<string, string>;
   onRefreshProject: () => Promise<void>;
   onError: (msg: string) => void;
-  exemptCores: ReadonlySet<string>;
   silenceSegments: readonly ClipSilenceSegment[] | null;
+  /** 与稿面框选一致：口癖/建议条点击时同步多选词 id */
+  multiSelectIds?: ReadonlySet<string>;
+  onSelectWordIdsForSheet?: (ids: readonly string[]) => void;
   onJumpWord?: (wordId: string, opts?: { lineEndAutopause?: boolean }) => void;
   onSeekPreviewMs?: (ms: number) => void;
   onRefreshSilences?: () => void | Promise<void>;
@@ -131,8 +154,9 @@ export default function ClipRoughCutPanel({
   getAuthHeaders,
   onRefreshProject,
   onError,
-  exemptCores,
   silenceSegments,
+  multiSelectIds,
+  onSelectWordIdsForSheet,
   onJumpWord,
   onSeekPreviewMs,
   onRefreshSilences,
@@ -155,13 +179,13 @@ export default function ClipRoughCutPanel({
 }: Props) {
   const { t } = useI18n();
   const [pauseBusy, setPauseBusy] = useState(false);
-  const [tablesBusy, setTablesBusy] = useState(false);
   const [silenceBusy, setSilenceBusy] = useState(false);
-  const [tablesDirty, setTablesDirty] = useState(false);
-  /** 口癖调整 / 豁免表 / 缩短停顿：侧栏分区默认折叠 */
+  /** 口癖调整 / 缩短停顿：侧栏分区默认折叠 */
   const [verbalAdjustOpen, setVerbalAdjustOpen] = useState(false);
-  const [exemptSectionOpen, setExemptSectionOpen] = useState(false);
   const [pauseSectionOpen, setPauseSectionOpen] = useState(false);
+  /** 识别停顿弹层：最短停顿时长（毫秒）与输入框草稿 */
+  const [pauseFilterMs, setPauseFilterMs] = useState(2500);
+  const [pauseMinMsDraft, setPauseMinMsDraft] = useState("2500");
   /** 口癖行 / 建议行：重复点击同一行时按转写顺序轮换跳转的词 */
   const verbalJumpCycleRef = useRef<Record<string, number>>({});
 
@@ -180,37 +204,15 @@ export default function ClipRoughCutPanel({
     verbalJumpCycleRef.current = {};
   }, [projectId]);
 
-  const serverLexLines = useMemo(() => {
-    const arr = Array.isArray(project.rough_cut_lexicon_exempt) ? project.rough_cut_lexicon_exempt : [];
-    return arr.map((x) => String(x).trim()).filter(Boolean);
-  }, [project.rough_cut_lexicon_exempt]);
-
-  const serverHotLines = useMemo(() => {
-    const arr = Array.isArray(project.asr_corpus_hotwords) ? project.asr_corpus_hotwords : [];
-    return arr.map((x) => String(x).trim()).filter(Boolean);
-  }, [project.asr_corpus_hotwords]);
-
-  const serverExemptConfigText = useMemo(() => {
-    const lines = new Set<string>();
-    for (const x of serverLexLines) lines.add(x);
-    for (const x of serverHotLines) lines.add(x);
-    return [...lines].join("\n");
-  }, [serverLexLines, serverHotLines]);
-
-  const [exemptDraft, setExemptDraft] = useState(serverExemptConfigText);
-
-  useEffect(() => {
-    setTablesDirty(false);
-  }, [projectId]);
-
-  useEffect(() => {
-    if (!tablesDirty) setExemptDraft(serverExemptConfigText);
-  }, [serverExemptConfigText, tablesDirty]);
-
   const pausePolicy = project.export_pause_policy;
   const pauseEnabled = Boolean(pausePolicy?.enabled);
   const transcriptionSucceeded = project.transcription_status === "succeeded";
   const longGapMs = pauseEnabled ? Math.max(500, Number(pausePolicy?.long_gap_ms) || 2000) : 2500;
+
+  useEffect(() => {
+    setPauseFilterMs(longGapMs);
+    setPauseMinMsDraft(String(longGapMs));
+  }, [longGapMs]);
 
   const longSilenceRows = useMemo(() => {
     const segs = silenceSegments;
@@ -227,30 +229,22 @@ export default function ClipRoughCutPanel({
   }, [silenceSegments, longGapMs]);
 
 
-  const ticIds = useMemo(
-    () => collectVerbalTicWordIds(words, excluded, exemptCores),
-    [words, excluded, exemptCores]
-  );
-  const ticAggRows = useMemo(
-    () => aggregateVerbalTicRows(words, excluded, exemptCores, 20),
-    [words, excluded, exemptCores]
-  );
+  const ticIds = useMemo(() => collectVerbalTicWordIds(words, excluded, undefined), [words, excluded]);
+  const ticAggRows = useMemo(() => aggregateVerbalTicRows(words, excluded, undefined, 20), [words, excluded]);
 
   const hasVerbalAdjust = ticAggRows.length > 0 || roughCutSuggestions.length > 0;
 
   const suggestionBadge = useCallback(
     (s: ClipEditSuggestion) => {
-      if (s.source === "llm") return t("presto.flow.roughCut.badgeAi");
       if (s.id.startsWith("stutter-")) return t("presto.flow.roughCut.badgeStutter");
-      return t("presto.flow.roughCut.badgeRule");
+      return t("presto.flow.roughCut.badgeTic");
     },
     [t]
   );
 
   const suggestionBadgeTone = useCallback((s: ClipEditSuggestion) => {
-    if (s.source === "llm") return "bg-brand/12 text-brand dark:text-brand";
     if (s.id.startsWith("stutter-")) return "bg-amber-500/15 text-amber-900 dark:text-amber-100";
-    return "bg-fill text-muted";
+    return "bg-rose-500/15 text-rose-800 dark:text-rose-100";
   }, []);
 
   const jumpVerbalRow = useCallback(
@@ -294,42 +288,6 @@ export default function ClipRoughCutPanel({
     [getAuthHeaders, onError, onProjectPatch, onRefreshProject, projectId]
   );
 
-  const saveExemptConfig = useCallback(async () => {
-    setTablesBusy(true);
-    onError("");
-    const lines = exemptDraft
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .slice(0, 200);
-    try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          rough_cut_lexicon_exempt: lines,
-          asr_corpus_hotwords: lines
-        })
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        project?: ClipProjectRow;
-        detail?: string;
-      };
-      if (!res.ok || data.success === false) {
-        throw new Error(data.detail || `保存失败 ${res.status}`);
-      }
-      if (data.project) onProjectPatch(data.project);
-      await onRefreshProject();
-      setTablesDirty(false);
-    } catch (e) {
-      onError(String(e instanceof Error ? e.message : e));
-    } finally {
-      setTablesBusy(false);
-    }
-  }, [exemptDraft, getAuthHeaders, onError, onProjectPatch, onRefreshProject, projectId]);
-
   const refreshSilencesClick = useCallback(async () => {
     if (!onRefreshSilences) return;
     setSilenceBusy(true);
@@ -346,14 +304,13 @@ export default function ClipRoughCutPanel({
   const hasAnyHint = hasVerbalAdjust || longSilenceRows.length > 0;
   const silenceCutCount = silenceCutKeys?.size ?? 0;
 
-  const exemptNonEmptyLineCount = useMemo(
-    () => exemptDraft.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length,
-    [exemptDraft]
+  const allSilenceGaps = useMemo(() => silenceGapsFromSegments(silenceSegments), [silenceSegments]);
+  const visiblePauseRowsForSheet = useMemo(
+    () => allSilenceGaps.filter((r) => r.dur >= pauseFilterMs),
+    [allSilenceGaps, pauseFilterMs]
   );
 
-  const [prdVerbalFilter, setPrdVerbalFilter] = useState("");
-  const [prdVerbalSelectedKey, setPrdVerbalSelectedKey] = useState<string | null>(null);
-  const [prdPauseSelectedSk, setPrdPauseSelectedSk] = useState<string | null>(null);
+  const [prdPauseSelectedKeys, setPrdPauseSelectedKeys] = useState<Set<string>>(() => new Set());
 
   const applyVerbalDeleteForKey = useCallback(
     (key: string) => {
@@ -386,35 +343,48 @@ export default function ClipRoughCutPanel({
     "mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted";
 
   if (variant === "verbalSheet") {
-    const q = prdVerbalFilter.trim().toLowerCase();
-    const ticFiltered = q
-      ? ticAggRows.filter((row) => row.label.toLowerCase().includes(q))
-      : ticAggRows;
-    const sugFiltered = q
-      ? roughCutSuggestions.filter((s) => suggestionPrimaryLine(s, words).toLowerCase().includes(q))
-      : roughCutSuggestions;
+    const chipBase =
+      "max-w-[14rem] truncate rounded border px-2 py-0.5 text-left text-[11px] font-medium transition outline-none";
+    const chipSelected = "z-[1] bg-zinc-200 text-ink ring-1 ring-zinc-300 dark:bg-zinc-700/65 dark:ring-zinc-500/60";
+    const chipIdle = "border-line bg-surface hover:bg-fill";
+
+    const findVerbalSheetKeyBySelection = (): string | null => {
+      if (!multiSelectIds?.size) return null;
+      for (const row of ticAggRows) {
+        if (row.activeIds.length && idsSetMatchSelection(row.activeIds, multiSelectIds)) return `tic:${row.coreKey}`;
+      }
+      for (const s of roughCutSuggestions) {
+        const ex = s.execute;
+        if (ex?.kind === "excludeWords") {
+          const active = ex.wordIds.filter((id) => !excluded.has(id));
+          if (active.length && idsSetMatchSelection(active, multiSelectIds)) return `sug:${s.id}`;
+        } else if (ex?.kind === "keepStutterFirst") {
+          const tail = ex.wordIds.slice(1).filter((id) => !excluded.has(id));
+          if (tail.length && idsSetMatchSelection(tail, multiSelectIds)) return `sug:${s.id}`;
+        }
+      }
+      return null;
+    };
+    const selectedVerbalSheetKey = findVerbalSheetKeyBySelection();
 
     return (
       <div className="flex max-h-[min(52vh,22rem)] flex-col gap-2 overflow-y-auto p-2 text-ink">
         <div>
           <span className={rowLabelCls}>口癖</span>
           <div className="flex flex-wrap gap-1.5">
-            {ticFiltered.map((row) => {
+            {ticAggRows.map((row) => {
               const dismissId = `tic:${row.coreKey}`;
               const orderedTicIds = orderWordIdsByTranscript([...row.activeIds, ...row.excludedIds], words);
-              const active = prdVerbalSelectedKey === dismissId;
+              const selected = idsSetMatchSelection(row.activeIds, multiSelectIds);
               return (
                 <button
                   key={dismissId}
                   type="button"
                   disabled={orderedTicIds.length === 0 || !onJumpWord}
-                  className={[
-                    "max-w-[14rem] truncate rounded-full border px-2.5 py-1 text-[11px] font-medium transition",
-                    active ? "border-brand bg-brand/15 text-brand" : "border-line bg-surface hover:bg-fill"
-                  ].join(" ")}
+                  className={[chipBase, selected ? chipSelected : chipIdle].join(" ")}
                   title={row.label}
                   onClick={() => {
-                    setPrdVerbalSelectedKey(dismissId);
+                    onSelectWordIdsForSheet?.(row.activeIds);
                     jumpVerbalRow(dismissId, orderedTicIds);
                   }}
                 >
@@ -423,7 +393,7 @@ export default function ClipRoughCutPanel({
                 </button>
               );
             })}
-            {sugFiltered.map((s) => {
+            {roughCutSuggestions.map((s) => {
               const ex = s.execute;
               const orderedJumpIds =
                 ex?.kind === "excludeWords" || ex?.kind === "keepStutterFirst"
@@ -432,19 +402,22 @@ export default function ClipRoughCutPanel({
                     ? [s.wordId]
                     : [];
               const sk = `sug:${s.id}`;
-              const active = prdVerbalSelectedKey === sk;
               const primary = suggestionPrimaryLine(s, words);
+              const selectIds =
+                ex?.kind === "excludeWords"
+                  ? ex.wordIds.filter((id) => !excluded.has(id))
+                  : ex?.kind === "keepStutterFirst"
+                    ? ex.wordIds.slice(1).filter((id) => !excluded.has(id))
+                    : orderedJumpIds;
+              const selected = selectIds.length ? idsSetMatchSelection(selectIds, multiSelectIds) : false;
               return (
                 <button
                   key={sk}
                   type="button"
                   disabled={orderedJumpIds.length === 0 || !onJumpWord}
-                  className={[
-                    "max-w-[14rem] truncate rounded-full border px-2.5 py-1 text-[11px] font-medium transition",
-                    active ? "border-brand bg-brand/15 text-brand" : "border-line bg-surface hover:bg-fill"
-                  ].join(" ")}
+                  className={[chipBase, selected ? chipSelected : chipIdle].join(" ")}
                   onClick={() => {
-                    setPrdVerbalSelectedKey(sk);
+                    if (selectIds.length) onSelectWordIdsForSheet?.(selectIds);
                     jumpVerbalRow(`sug:${s.id}`, orderedJumpIds);
                   }}
                 >
@@ -460,54 +433,19 @@ export default function ClipRoughCutPanel({
                 </button>
               );
             })}
-            {!ticFiltered.length && !sugFiltered.length ? (
+            {!ticAggRows.length && !roughCutSuggestions.length ? (
               <span className="text-[10px] text-muted">{t("presto.flow.roughCut.unifiedEmpty")}</span>
             ) : null}
           </div>
         </div>
 
-        <div>
-          <span className={rowLabelCls}>过滤</span>
-          <input
-            type="search"
-            value={prdVerbalFilter}
-            onChange={(e) => setPrdVerbalFilter(e.target.value)}
-            placeholder="过滤…"
-            className="w-full rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-ink"
-          />
-        </div>
-
-        <div>
-          <span className={rowLabelCls}>{t("presto.flow.roughCut.exemptConfigTitle")}</span>
-          <textarea
-            value={exemptDraft}
-            disabled={tablesBusy}
-            onChange={(e) => {
-              setTablesDirty(true);
-              setExemptDraft(e.target.value);
-            }}
-            rows={2}
-            spellCheck={false}
-            className="w-full resize-y rounded-md border border-line bg-surface px-2 py-1 font-mono text-[11px] leading-snug text-ink"
-            placeholder={t("presto.flow.roughCut.exemptConfigPlaceholder")}
-          />
-          <button
-            type="button"
-            disabled={tablesBusy}
-            className="mt-1 rounded-lg border border-line bg-surface px-2 py-1 text-[10px] font-semibold shadow-soft hover:bg-fill disabled:opacity-40"
-            onClick={() => void saveExemptConfig()}
-          >
-            {tablesBusy ? "…" : t("presto.flow.roughCut.exemptConfigSave")}
-          </button>
-        </div>
-
         <div className="flex flex-wrap items-center gap-2 border-t border-line/80 pt-2">
           <button
             type="button"
-            disabled={!prdVerbalSelectedKey}
+            disabled={!selectedVerbalSheetKey}
             className="rounded-md border border-line bg-surface px-2.5 py-1 text-[11px] font-semibold shadow-sm hover:bg-fill disabled:opacity-40"
             onClick={() => {
-              if (prdVerbalSelectedKey) applyVerbalDeleteForKey(prdVerbalSelectedKey);
+              if (selectedVerbalSheetKey) applyVerbalDeleteForKey(selectedVerbalSheetKey);
             }}
           >
             删除
@@ -526,62 +464,94 @@ export default function ClipRoughCutPanel({
   }
 
   if (variant === "pauseSheet") {
-    const cutAllSilences = () => {
+    const cutAllVisibleSilences = () => {
       if (!onToggleSilenceCut) return;
-      for (const r of longSilenceRows) {
+      const rows = prdPauseSelectedKeys.size
+        ? visiblePauseRowsForSheet.filter((r) => prdPauseSelectedKeys.has(silenceRowKey(r.start, r.end)))
+        : visiblePauseRowsForSheet;
+      for (const r of rows) {
         const sk = silenceRowKey(r.start, r.end);
         if (!silenceCutKeys?.has(sk)) onToggleSilenceCut(r.start, r.end);
       }
     };
 
-    const toggleSelectedSilence = () => {
-      if (!prdPauseSelectedSk || !onToggleSilenceCut) return;
-      const row = longSilenceRows.find((r) => silenceRowKey(r.start, r.end) === prdPauseSelectedSk);
-      if (!row) return;
-      onToggleSilenceCut(row.start, row.end);
+    const toggleSelectedSilences = () => {
+      if (!onToggleSilenceCut || prdPauseSelectedKeys.size === 0) return;
+      for (const sk of prdPauseSelectedKeys) {
+        const row = visiblePauseRowsForSheet.find((r) => silenceRowKey(r.start, r.end) === sk);
+        if (row) onToggleSilenceCut(row.start, row.end);
+      }
+    };
+
+    const applyPauseMinQuery = () => {
+      const n = Math.max(0, Math.floor(Number(pauseMinMsDraft.replace(/[^\d]/g, "")) || 0));
+      setPauseFilterMs(n);
+      const next = new Set<string>();
+      for (const r of allSilenceGaps) {
+        if (r.dur >= n) next.add(silenceRowKey(r.start, r.end));
+      }
+      setPrdPauseSelectedKeys(next);
     };
 
     return (
       <div className="flex max-h-[min(52vh,22rem)] flex-col gap-2 overflow-y-auto p-2 text-ink">
-        <div className="flex flex-wrap items-center gap-2 text-[10px] text-ink">
-          <span className="font-mono text-muted">≥{longGapMs}ms</span>
-          <span className="text-muted">
-            {pauseEnabled ? "导出开" : "导出关"} · {longSilenceRows.length} 段
-          </span>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex min-w-[8rem] flex-1 flex-col gap-0.5 text-[10px] text-muted">
+            <span>最短停顿时长（ms）</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={pauseMinMsDraft}
+              onChange={(e) => setPauseMinMsDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  applyPauseMinQuery();
+                }
+              }}
+              className="rounded-md border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink"
+            />
+          </label>
           {onRefreshSilences ? (
             <button
               type="button"
               disabled={silenceBusy}
-              className="rounded border border-line bg-surface px-1.5 py-0.5 text-[10px] hover:bg-fill disabled:opacity-40"
+              className="rounded-lg border border-line bg-surface px-2 py-1 text-[10px] font-semibold hover:bg-fill disabled:opacity-40"
               onClick={() => void refreshSilencesClick()}
             >
               {silenceBusy ? "…" : "刷新"}
             </button>
           ) : null}
         </div>
+        <p className="text-[9px] leading-snug text-muted">
+          回车：列出并选中时长 ≥ 输入值（ms）的停顿。导出压缩策略见侧栏「缩短停顿」（当前导出{pauseEnabled ? "开" : "关"}，参考阈值 {longGapMs}
+          ms）。
+        </p>
 
         <div>
           <span className={rowLabelCls}>长停顿</span>
           <div className="flex flex-wrap gap-1.5">
-            {longSilenceRows.map((r) => {
+            {visiblePauseRowsForSheet.map((r) => {
               const sk = silenceRowKey(r.start, r.end);
               const bridge = silenceBridgeLabel(words, r.start, r.end, excluded);
               const jumpId = firstWordIdAtOrAfterMs(words, r.end, excluded);
               const cut = Boolean(silenceCutKeys?.has(sk));
-              const active = prdPauseSelectedSk === sk;
+              const active = prdPauseSelectedKeys.has(sk);
               return (
                 <button
                   key={sk}
                   type="button"
                   disabled={(!jumpId || !onJumpWord) && !onSeekPreviewMs}
                   className={[
-                    "max-w-[18rem] truncate rounded-full border px-2.5 py-1 text-left text-[10px] transition",
-                    active ? "border-brand bg-brand/15 text-brand" : "border-line bg-surface hover:bg-fill",
+                    "max-w-[18rem] truncate rounded border px-2 py-0.5 text-left text-[10px] transition outline-none",
+                    active
+                      ? "z-[1] bg-zinc-200 text-ink ring-1 ring-zinc-300 dark:bg-zinc-700/65 dark:ring-zinc-500/60"
+                      : "border-line bg-surface hover:bg-fill",
                     cut ? "line-through opacity-80" : ""
                   ].join(" ")}
                   title={bridge}
                   onClick={() => {
-                    setPrdPauseSelectedSk(sk);
+                    setPrdPauseSelectedKeys(new Set([sk]));
                     if (jumpId && onJumpWord) onJumpWord(jumpId);
                     onSeekPreviewMs?.(r.end + 1);
                   }}
@@ -590,7 +560,7 @@ export default function ClipRoughCutPanel({
                 </button>
               );
             })}
-            {!longSilenceRows.length ? (
+            {!visiblePauseRowsForSheet.length ? (
               <span className="text-[10px] text-muted">{t("presto.flow.roughCut.pauseNoLongSilences")}</span>
             ) : null}
           </div>
@@ -599,17 +569,17 @@ export default function ClipRoughCutPanel({
         <div className="flex flex-wrap items-center gap-2 border-t border-line/80 pt-2">
           <button
             type="button"
-            disabled={!prdPauseSelectedSk || !onToggleSilenceCut}
+            disabled={!prdPauseSelectedKeys.size || !onToggleSilenceCut}
             className="rounded-md border border-line bg-surface px-2.5 py-1 text-[11px] font-semibold shadow-sm hover:bg-fill disabled:opacity-40"
-            onClick={() => toggleSelectedSilence()}
+            onClick={() => toggleSelectedSilences()}
           >
-            删除
+            删除选中
           </button>
           <button
             type="button"
-            disabled={!longSilenceRows.length || !onToggleSilenceCut}
+            disabled={!visiblePauseRowsForSheet.length || !onToggleSilenceCut}
             className="rounded-md border border-brand/40 bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand hover:bg-brand/15 disabled:opacity-40"
-            onClick={() => cutAllSilences()}
+            onClick={() => cutAllVisibleSilences()}
           >
             全部删除
           </button>
@@ -875,58 +845,6 @@ export default function ClipRoughCutPanel({
           </>
         )}
 
-      </section>
-
-      <section className="rounded-xl border border-line bg-fill/30 p-3">
-        <button
-          type="button"
-          className="flex w-full items-center gap-1 rounded-lg border border-line/60 bg-surface/50 px-2 py-1.5 text-left text-[11px] font-semibold text-ink transition hover:bg-fill"
-          aria-expanded={exemptSectionOpen}
-          onClick={() => setExemptSectionOpen((o) => !o)}
-        >
-          {exemptSectionOpen ? (
-            <ChevronUp className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
-          ) : (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
-          )}
-          <span>{t("presto.flow.roughCut.exemptConfigTitle")}</span>
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] font-normal text-muted">
-            {tablesDirty && !exemptSectionOpen ? (
-              <span className="text-amber-700 dark:text-amber-300">{t("presto.flow.roughCut.lexCorpusDirty")}</span>
-            ) : null}
-            <span>
-              {exemptNonEmptyLineCount}
-              {t("presto.flow.roughCut.exemptSectionCountSuffix")}
-            </span>
-          </span>
-        </button>
-        {exemptSectionOpen ? (
-          <div className="mt-2">
-            <textarea
-              value={exemptDraft}
-              disabled={tablesBusy}
-              onChange={(e) => {
-                setTablesDirty(true);
-                setExemptDraft(e.target.value);
-              }}
-              rows={5}
-              spellCheck={false}
-              className="mt-2 w-full resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] leading-snug text-ink placeholder:text-muted"
-              placeholder={t("presto.flow.roughCut.exemptConfigPlaceholder")}
-            />
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled={tablesBusy}
-                className="rounded-lg border border-line bg-surface px-2 py-1.5 text-[10px] font-semibold text-ink shadow-soft hover:bg-fill disabled:opacity-40"
-                onClick={() => void saveExemptConfig()}
-              >
-                {tablesBusy ? "…" : t("presto.flow.roughCut.exemptConfigSave")}
-              </button>
-              {tablesDirty ? <span className="text-[10px] text-muted">{t("presto.flow.roughCut.lexCorpusDirty")}</span> : null}
-            </div>
-          </div>
-        ) : null}
       </section>
 
       <section className="rounded-xl border border-line bg-fill/30 p-3">

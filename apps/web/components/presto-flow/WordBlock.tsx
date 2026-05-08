@@ -165,7 +165,9 @@ export default function WordBlock({
         !activePlayback && activeSelection ? "z-[1] bg-zinc-200 text-ink ring-1 ring-zinc-300 dark:bg-zinc-700/65 dark:ring-zinc-500/60" : "",
         !activePlayback && !activeSelection && activeFocus ? "bg-zinc-200 text-ink ring-1 ring-zinc-300 dark:bg-zinc-700/65 dark:ring-zinc-500/60" : "",
         focused && excluded ? "ring-1 ring-line" : "",
-        roughCutHighlight && !excluded ? "ring-2 ring-rose-500/55 ring-offset-1 ring-offset-canvas" : "",
+        roughCutHighlight && !excluded && !multiSelectActive
+          ? "ring-2 ring-rose-500/55 ring-offset-1 ring-offset-canvas"
+          : "",
         trimExtraClass || "",
         suggestionUnderline
       ]

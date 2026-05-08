@@ -4,9 +4,11 @@ import { GripVertical, Headphones, MoreHorizontal, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
-import type { ClipAudioStagingEntry } from "../../lib/clipTypes";
+import type { ClipAudioStagingEntry, ClipProjectRow } from "../../lib/clipTypes";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import { useI18n } from "../../lib/I18nContext";
+import SmallConfirmModal from "../ui/SmallConfirmModal";
+import SmallPromptModal from "../ui/SmallPromptModal";
 
 function formatShortDuration(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms <= 0) return "—";
@@ -58,6 +60,8 @@ type Props = {
   getAuthHeaders: () => Record<string, string>;
   disabled: boolean;
   onRefresh: () => void | Promise<void>;
+  /** 重排/重命名/删除等接口若返回 project，可只合并状态而避免全量 load */
+  onProjectPatch?: (project: ClipProjectRow) => void;
   onError: (msg: string) => void;
   /** PRD 素材列表 */
   visualVariant?: "default" | "prd";
@@ -73,6 +77,7 @@ export default function ClipStagingTracksBar({
   getAuthHeaders,
   disabled,
   onRefresh,
+  onProjectPatch,
   onError,
   visualVariant = "default",
   approxDurationMsPerSegment = null,
@@ -85,6 +90,11 @@ export default function ClipStagingTracksBar({
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; top: number; right: number } | null>(null);
+  const [renameOpen, setRenameOpen] = useState<{ key: string; current: string } | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [deleteKey, setDeleteKey] = useState<string | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
 
   useEffect(() => {
     if (!menu) return;
@@ -112,57 +122,66 @@ export default function ClipStagingTracksBar({
           headers: { "content-type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({ staging_keys: nextKeys })
         });
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          detail?: string;
+          project?: ClipProjectRow;
+        };
         if (!res.ok || data.success === false) {
           throw new Error(data.detail || `重排失败 ${res.status}`);
         }
-        await onRefresh();
+        if (data.project && onProjectPatch) onProjectPatch(data.project);
+        else await onRefresh();
       } catch (e) {
         onError(String(e instanceof Error ? e.message : e));
       } finally {
         setBusy(false);
       }
     },
-    [getAuthHeaders, onError, onRefresh, projectId]
+    [getAuthHeaders, onError, onProjectPatch, onRefresh, projectId]
   );
 
-  const renameSegment = useCallback(
-    async (objectKey: string, currentName: string) => {
-      const next = window.prompt("重命名素材", currentName);
-      if (next == null) return;
-      const fn = next.trim();
-      if (!fn || fn === currentName) return;
-      setBusy(true);
-      onError("");
-      try {
-        const res = await fetch(
-          `/api/clip/projects/${encodeURIComponent(projectId)}/audio/source-segment/rename`,
-          {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "content-type": "application/json", ...getAuthHeaders() },
-            body: JSON.stringify({ object_key: objectKey, filename: fn })
-          }
-        );
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
-        if (!res.ok || data.success === false) {
-          throw new Error(data.detail || `重命名失败 ${res.status}`);
+  const submitRename = useCallback(async () => {
+    if (!renameOpen) return;
+    const fn = renameDraft.trim();
+    if (!fn || fn === renameOpen.current) {
+      setRenameOpen(null);
+      return;
+    }
+    setRenameBusy(true);
+    onError("");
+    try {
+      const res = await fetch(
+        `/api/clip/projects/${encodeURIComponent(projectId)}/audio/source-segment/rename`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ object_key: renameOpen.key, filename: fn })
         }
-        setMenu(null);
-        await onRefresh();
-      } catch (e) {
-        onError(String(e instanceof Error ? e.message : e));
-      } finally {
-        setBusy(false);
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        detail?: string;
+        project?: ClipProjectRow;
+      };
+      if (!res.ok || data.success === false) {
+        throw new Error(data.detail || `重命名失败 ${res.status}`);
       }
-    },
-    [getAuthHeaders, onError, onRefresh, projectId]
-  );
+      setRenameOpen(null);
+      if (data.project && onProjectPatch) onProjectPatch(data.project);
+      else await onRefresh();
+    } catch (e) {
+      onError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setRenameBusy(false);
+    }
+  }, [getAuthHeaders, onError, onProjectPatch, onRefresh, projectId, renameDraft, renameOpen]);
 
-  const removeSegment = useCallback(
+  const runRemove = useCallback(
     async (objectKey: string) => {
-      if (!window.confirm("确定删除该段素材？删除后将重新合并主音频（若仍有多段）。")) return;
       setBusy(true);
+      setRemoveBusy(true);
       onError("");
       try {
         const res = await fetch(
@@ -174,19 +193,26 @@ export default function ClipStagingTracksBar({
             body: JSON.stringify({ object_key: objectKey })
           }
         );
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          detail?: string;
+          project?: ClipProjectRow;
+        };
         if (!res.ok || data.success === false) {
           throw new Error(data.detail || `删除失败 ${res.status}`);
         }
         setMenu(null);
-        await onRefresh();
+        setDeleteKey(null);
+        if (data.project && onProjectPatch) onProjectPatch(data.project);
+        else await onRefresh();
       } catch (e) {
         onError(String(e instanceof Error ? e.message : e));
       } finally {
         setBusy(false);
+        setRemoveBusy(false);
       }
     },
-    [getAuthHeaders, onError, onRefresh, projectId]
+    [getAuthHeaders, onError, onProjectPatch, onRefresh, projectId]
   );
 
   const stageFiles = useCallback(
@@ -206,12 +232,17 @@ export default function ClipStagingTracksBar({
             },
             body: f
           });
-          const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+          const data = (await res.json().catch(() => ({}))) as {
+            success?: boolean;
+            detail?: string;
+            project?: ClipProjectRow;
+          };
           if (!res.ok || data.success === false) {
             throw new Error(data.detail || `暂存失败 ${res.status}`);
           }
+          if (data.project && onProjectPatch) onProjectPatch(data.project);
         }
-        await onRefresh();
+        if (!onProjectPatch) await onRefresh();
       } catch (e) {
         onError(String(e instanceof Error ? e.message : e));
       } finally {
@@ -219,7 +250,7 @@ export default function ClipStagingTracksBar({
         if (inputRef.current) inputRef.current.value = "";
       }
     },
-    [busy, disabled, getAuthHeaders, onError, onRefresh, projectId]
+    [busy, disabled, getAuthHeaders, onError, onProjectPatch, onRefresh, projectId]
   );
 
   const onDropOnIndex = useCallback(
@@ -278,7 +309,8 @@ export default function ClipStagingTracksBar({
                 const meta = byKey.get(menu.key);
                 const lab = labelForSegment(meta, menu.key);
                 setMenu(null);
-                void renameSegment(menu.key, lab);
+                setRenameOpen({ key: menu.key, current: lab });
+                setRenameDraft(lab);
               }}
             >
               重命名…
@@ -289,7 +321,7 @@ export default function ClipStagingTracksBar({
               onClick={() => {
                 const k = menu.key;
                 setMenu(null);
-                void removeSegment(k);
+                setDeleteKey(k);
               }}
             >
               删除
@@ -439,6 +471,33 @@ export default function ClipStagingTracksBar({
         })}
       </ul>
       {menuPanel}
+      <SmallPromptModal
+        open={Boolean(renameOpen)}
+        title="重命名素材"
+        value={renameDraft}
+        onChange={setRenameDraft}
+        placeholder="文件名"
+        submitLabel="保存"
+        busy={renameBusy}
+        onSubmit={() => void submitRename()}
+        onCancel={() => {
+          if (!renameBusy) setRenameOpen(null);
+        }}
+      />
+      <SmallConfirmModal
+        open={Boolean(deleteKey)}
+        title="删除素材"
+        message="确定删除该段？若仍有多段素材，服务端会自动重新合并。"
+        danger
+        busy={removeBusy}
+        confirmLabel="删除"
+        onCancel={() => {
+          if (!removeBusy) setDeleteKey(null);
+        }}
+        onConfirm={() => {
+          if (deleteKey) void runRemove(deleteKey);
+        }}
+      />
     </div>
   );
 }
