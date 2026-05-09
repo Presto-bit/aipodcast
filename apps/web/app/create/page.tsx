@@ -35,7 +35,7 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
   )
 });
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
-import { apiErrorMessage } from "../../lib/apiError";
+import { apiErrorMessage, softenBareErrorLineForUi } from "../../lib/apiError";
 import { useI18n } from "../../lib/I18nContext";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../../lib/worksTypes";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
@@ -380,8 +380,10 @@ export default function CreatePage() {
         {mode && showProgress && act ? (
           <div className="border-t border-line bg-fill/60 px-4 py-3 sm:px-5">
             <p className="text-xs font-medium text-muted">状态</p>
-            <p className="mt-1 text-sm text-ink">{act.phase || (act.busy ? "处理中…" : "—")}</p>
-            {messageSuggestsBillingTopUpOrSubscription(act.phase || "") ? (
+            <p className="mt-1 text-sm text-ink">
+              {softenBareErrorLineForUi(act.phase || "") || (act.busy ? "处理中…" : "—")}
+            </p>
+            {messageSuggestsBillingTopUpOrSubscription(softenBareErrorLineForUi(act.phase || "")) ? (
               <BillingShortfallLinks className="mt-2" />
             ) : null}
             {act.busy || act.progressPct > 0 ? (
@@ -554,12 +556,12 @@ export default function CreatePage() {
         </div>
         {createWorksGalleryTab === "templates" && templatesErr.trim() ? (
           <p className="mb-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
-            模板列表加载失败：{templatesErr}
+            模板列表加载失败：{softenBareErrorLineForUi(templatesErr)}
           </p>
         ) : null}
         {createWorksGalleryTab === "recent" && worksErr.trim() ? (
           <p className="mb-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
-            「我的」列表加载失败：{worksErr}
+            「我的」列表加载失败：{softenBareErrorLineForUi(worksErr)}
           </p>
         ) : null}
         <PodcastWorksGallery
@@ -577,6 +579,30 @@ export default function CreatePage() {
           }}
           onWorkDeleted={() => void refreshWorks()}
           workDetailReturnTo="/create"
+          emptyStateFooter={
+            <div className="flex flex-wrap justify-center gap-x-4 gap-y-2">
+              {!isLoggedIn ? (
+                <Link
+                  href={`/login?returnTo=${encodeURIComponent("/create")}`}
+                  className="font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90"
+                >
+                  登录后保存与查看成片
+                </Link>
+              ) : (
+                <>
+                  <Link
+                    href="/notes"
+                    className="font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90"
+                  >
+                    去知识库添加资料
+                  </Link>
+                  <Link href="/help" className="font-medium text-muted underline underline-offset-2 hover:text-ink">
+                    使用帮助
+                  </Link>
+                </>
+              )}
+            </div>
+          }
         />
       </section>
     </main>

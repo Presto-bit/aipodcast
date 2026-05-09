@@ -8,6 +8,9 @@ export function messageLooksLikeWalletTopupHint(text: string): boolean {
   if (/请先充值/.test(s)) return true;
   if (/超出当前套餐与分钟包/.test(s) && /钱包余额/.test(s)) return true;
   if (/套餐内克隆次数已用完/.test(s) && /充值/.test(s)) return true;
+  if (/余额或套餐不足/.test(s)) return true;
+  if (/钱包余额/.test(s) && (/不足|请先/).test(s)) return true;
+  if (/预估.*分钟.*超出体验包/.test(s) && /充值/.test(s)) return true;
   return false;
 }
 
@@ -20,6 +23,7 @@ export function messageSuggestsBillingTopUpOrSubscription(text: string): boolean
   if (!s) return false;
   if (/超出当前套餐与分钟包/.test(s)) return true;
   if (/超出.*套餐.*分钟包/.test(s) && /钱包|余额|¥|￥/.test(s)) return true;
+  if (/订阅与订单/.test(s) && /余额|套餐|充值|钱包/.test(s)) return true;
   return false;
 }
 

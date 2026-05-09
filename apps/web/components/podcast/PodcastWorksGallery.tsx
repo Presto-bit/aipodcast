@@ -20,6 +20,7 @@ import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
 import { insertPodcastDraftAtTop, setDraftsNavigationFocusDraftId } from "../../lib/podcastDrafts";
 import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+import { softenBareErrorLineForUi } from "../../lib/apiError";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
@@ -167,6 +168,8 @@ type Props = {
   compactCards?: boolean;
   /** 进入作品详情时写入 `?returnTo=`，供返回上一级页面 */
   workDetailReturnTo?: string;
+  /** 无成片时在空状态文案下追加 CTA（如创作页引导去知识库） */
+  emptyStateFooter?: ReactNode;
 };
 
 /** 笔记本侧栏 ⋯ 菜单：fixed 定位，避免 overflow/滚动裁切 */
@@ -212,7 +215,8 @@ export default function PodcastWorksGallery({
   pendingStudioWork = null,
   pendingStudioSubtitle = "",
   compactCards = false,
-  workDetailReturnTo
+  workDetailReturnTo,
+  emptyStateFooter
 }: Props) {
   const { t } = useI18n();
   const router = useRouter();
@@ -1093,14 +1097,16 @@ export default function PodcastWorksGallery({
       {fetchError ? (
         <div className="mb-2 text-sm text-danger-ink">
           <p>
-            {fetchError}
+            {softenBareErrorLineForUi(fetchError)}
             {onDismissError ? (
               <button type="button" className="ml-2 underline" onClick={onDismissError}>
                 清除
               </button>
             ) : null}
           </p>
-          {messageSuggestsBillingTopUpOrSubscription(fetchError) ? <BillingShortfallLinks className="mt-2" /> : null}
+          {messageSuggestsBillingTopUpOrSubscription(softenBareErrorLineForUi(fetchError)) ? (
+            <BillingShortfallLinks className="mt-2" />
+          ) : null}
         </div>
       ) : null}
 
@@ -1167,7 +1173,10 @@ export default function PodcastWorksGallery({
       ) : null}
 
       {loading ? (
-        <div className="fym-empty-state py-10 text-center text-sm text-muted">{t("gallery.loading")}</div>
+        <div className="fym-empty-state py-10 text-center text-sm text-muted" aria-busy>
+          <p>{t("gallery.loading")}</p>
+          <div className="mx-auto mt-4 h-24 max-w-md animate-pulse rounded-xl border border-line/60 bg-fill/50" />
+        </div>
       ) : items.length === 0 ? (
         <div className="fym-empty-state py-14 text-center text-sm leading-relaxed text-muted">
           {variant === "tts"
@@ -1179,6 +1188,7 @@ export default function PodcastWorksGallery({
                 : variant === "all"
                   ? t("gallery.empty.all")
                   : t("gallery.empty.podcast")}
+          {emptyStateFooter ? <div className="mt-5 text-center">{emptyStateFooter}</div> : null}
         </div>
       ) : (
         <>

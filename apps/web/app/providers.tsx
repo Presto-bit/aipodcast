@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import DeployVersionSync from "../components/DeployVersionSync";
 import AppShell from "../components/AppShell";
+import FirstLoginCoach from "../components/onboarding/FirstLoginCoach";
 import { AuthProvider } from "../lib/auth";
 import { I18nProvider } from "../lib/I18nContext";
 import { ThemeProvider } from "../lib/ThemeContext";
@@ -80,6 +81,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           <AuthProvider>
             <WorkAudioPlayerProvider>
               <AppShell>{children}</AppShell>
+              <FirstLoginCoach />
             </WorkAudioPlayerProvider>
           </AuthProvider>
         </I18nProvider>

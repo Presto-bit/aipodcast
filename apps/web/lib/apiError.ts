@@ -55,6 +55,19 @@ export function apiErrorMessage(data: unknown, fallback: string): string {
   return fallback;
 }
 
+/** 将已序列成纯字符串的错误行做最后一道「人话」处理（列表/画廊等只拿到 string 的场景） */
+export function softenBareErrorLineForUi(message: string): string {
+  const t = (message || "").trim();
+  if (!t) return t;
+  if (t === "http_exception" || t === "internal_server_error") {
+    return KNOWN_ERROR_CODES[t] ?? "服务暂时不可用，请稍后重试。";
+  }
+  if (/^http_exception(\s|:|,|;)/i.test(t)) {
+    return KNOWN_ERROR_CODES.http_exception;
+  }
+  return message;
+}
+
 /** 知识库对话错误：编排器 SSE `error` 事件或 HTTP 失败时的附加字段 */
 export type NotesAskStreamErrorMeta = {
   code?: string;

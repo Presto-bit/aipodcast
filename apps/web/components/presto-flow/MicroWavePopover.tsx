@@ -34,8 +34,8 @@ export default function MicroWavePopover({ word, anchor, onClose, title, hint }:
     const seed = word.id.split("").reduce((a, ch) => a + ch.charCodeAt(0), 0);
     const brand =
       typeof window !== "undefined"
-        ? getComputedStyle(document.documentElement).getPropertyValue("--dawn-brand").trim() || "#6366f1"
-        : "#6366f1";
+        ? getComputedStyle(document.documentElement).getPropertyValue("--dawn-brand").trim() || "#5a5f94"
+        : "#5a5f94";
     for (let i = 0; i < bars; i++) {
       const pseudo = ((Math.sin(seed * 0.01 + i * 0.35) + 1) / 2) * h * 0.75 + 4;
       ctx.fillStyle = brand;

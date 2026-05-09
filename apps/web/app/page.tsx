@@ -12,6 +12,8 @@ import { useI18n } from "../lib/I18nContext";
 import { isRegisterEmailFormatOk } from "../lib/registerEmail";
 import { consumePostAuthReturnTo } from "../lib/authReturnTo";
 import NotebookShareDiagnosticsHomeBanner from "../components/notebook/NotebookShareDiagnosticsHomeBanner";
+import { SkeletonBlock, SkeletonLine } from "../components/ui/Skeleton";
+import { apiErrorMessage } from "../lib/apiError";
 
 const PodcastWorksGallery = dynamic(() => import("../components/podcast/PodcastWorksGallery"), {
   loading: () => (
@@ -109,7 +111,10 @@ export default function HomePage() {
       if (!worksResOk || worksData.success === false) {
         if (!silent) {
           setWorksFetchErr(
-            String(worksData.error || worksData.detail || `作品加载失败 ${worksPart?.status ?? overviewRes.status}`)
+            apiErrorMessage(
+              { error: worksData.error, detail: worksData.detail },
+              `作品加载失败（${worksPart?.status ?? overviewRes.status}）`
+            )
           );
         }
       }
@@ -289,9 +294,16 @@ export default function HomePage() {
 
   if (!ready) {
     return (
-      <main className="mx-auto min-h-screen max-w-3xl p-8">
+      <main className="mx-auto min-h-screen max-w-6xl px-4 py-8 sm:px-6">
         <NotebookShareDiagnosticsHomeBanner />
-        <p className="text-sm text-muted">正在加载…</p>
+        <SkeletonLine className="h-9 w-56" />
+        <SkeletonLine className="mt-4 h-4 w-full max-w-xl" />
+        <div className="mt-8 grid gap-4 lg:grid-cols-[1fr_280px]">
+          <SkeletonBlock className="h-48 rounded-xl" />
+          <SkeletonBlock className="h-40 rounded-xl" />
+        </div>
+        <SkeletonBlock className="mt-8 h-64 w-full rounded-xl" />
+        <p className="mt-6 text-center text-xs text-muted">正在加载首页…</p>
       </main>
     );
   }

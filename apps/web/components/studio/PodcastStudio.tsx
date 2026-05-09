@@ -19,6 +19,7 @@ import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
 import { presentJobProgressMessageForUser } from "../../lib/jobProgressUserText";
 import { MEDIA_QUEUE_STALL_HINT_MS } from "../../lib/mediaQueueStallHint";
 import { cancelJob, formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
+import { softenBareErrorLineForUi } from "../../lib/apiError";
 import { buildReferenceJobFields } from "../../lib/jobReferencePayload";
 import { rememberJobId } from "../../lib/jobRecent";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
@@ -958,15 +959,30 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
           payload,
           ...(createdByPhone ? { created_by: createdByPhone } : {})
         });
-        if (prev.summary && prev.allowed !== false) {
-          applyTaskFromEvent(prev.summary, 3);
-        }
         if (prev.allowed === false) {
-          applyTaskFromEvent(prev.detail || "余额或套餐不足，请前往订阅与订单处理");
+          applyTaskFromEvent(
+            softenBareErrorLineForUi(prev.detail || "余额或套餐不足，请前往订阅与订单处理")
+          );
           return;
         }
+        const wb = prev.wallet_balance_cents;
+        const textC = typeof prev.wallet_text_charge_cents_preview === "number" ? prev.wallet_text_charge_cents_preview : 0;
+        const audioC = typeof prev.wallet_charge_cents === "number" ? prev.wallet_charge_cents : 0;
+        const totalC =
+          typeof prev.wallet_total_charge_cents_preview === "number"
+            ? prev.wallet_total_charge_cents_preview
+            : textC + audioC;
+        if (typeof wb === "number" && typeof totalC === "number" && totalC > wb) {
+          applyTaskFromEvent(
+            `预估需从钱包支付约 ¥${(totalC / 100).toFixed(2)}，当前余额 ¥${(wb / 100).toFixed(2)} 不足。请先充值后再试。`
+          );
+          return;
+        }
+        if (prev.summary) {
+          applyTaskFromEvent(prev.summary, 3);
+        }
       } catch (pe) {
-        applyTaskFromEvent(String(pe instanceof Error ? pe.message : pe));
+        applyTaskFromEvent(softenBareErrorLineForUi(String(pe instanceof Error ? pe.message : pe)));
         return;
       }
       const createRes = await fetch("/api/jobs", {
@@ -1604,8 +1620,12 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
         {showTaskPanel ? (
           <div className="mb-4 rounded-2xl border border-brand/25 bg-fill/90 p-4 shadow-soft">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">进行中</h3>
-            <p className="mt-2 text-sm text-ink">{taskPhase || (busy ? "处理中…" : "—")}</p>
-            {messageSuggestsBillingTopUpOrSubscription(taskPhase) ? <BillingShortfallLinks className="mt-2" /> : null}
+            <p className="mt-2 text-sm text-ink">
+              {softenBareErrorLineForUi(taskPhase) || (busy ? "处理中…" : "—")}
+            </p>
+            {messageSuggestsBillingTopUpOrSubscription(softenBareErrorLineForUi(taskPhase)) ? (
+              <BillingShortfallLinks className="mt-2" />
+            ) : null}
             <div className="mt-3">
               <div className="h-2.5 w-full overflow-hidden rounded-full bg-track">
                 <div

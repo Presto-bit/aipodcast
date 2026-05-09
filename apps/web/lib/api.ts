@@ -48,6 +48,10 @@ export type MediaJobPreviewResult = {
   estimated_spoken_minutes?: number;
   wallet_charge_cents?: number;
   wallet_balance_cents?: number;
+  /** 编排器预览：脚本文本上界（分） */
+  wallet_text_charge_cents_preview?: number;
+  /** 语音 + 文本预估合计（分） */
+  wallet_total_charge_cents_preview?: number;
   tier?: string;
   job_type?: string;
 };

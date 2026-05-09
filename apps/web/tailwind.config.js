@@ -28,7 +28,7 @@ module.exports = {
         "dawn-xl": "var(--dawn-radius-xl)"
       },
       colors: {
-        /** 晨曦觉醒（Dawn）— 画布 / 表面 / 文本（随 html.light | html.dark 由 CSS 变量切换） */
+        /** Dawn：微暖纸感画布 + 低饱和语义色（随 html.light | html.dark 由 CSS 变量切换） */
         canvas: "var(--dawn-canvas)",
         surface: "var(--dawn-surface)",
         ink: "var(--dawn-ink)",
