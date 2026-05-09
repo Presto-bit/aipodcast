@@ -2,6 +2,7 @@
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import type { ClipAudioStagingEntry, ClipProjectRow } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";
 import { fetchClipProjectShareAiCopy } from "../../lib/api";
@@ -9,6 +10,7 @@ import ClipStagingTracksBar from "./ClipStagingTracksBar";
 import PrestoFlowImportBar from "./PrestoFlowImportBar";
 
 type Tab = "materials" | "shownotes";
+type ShownotesViewMode = "preview" | "edit";
 
 function shownotesStorageKey(projectId: string): string {
   return `clip-editor-prd-shownotes:${projectId}`;
@@ -76,13 +78,17 @@ export default function ClipEditorPrdLeftRail({
 
   const [notesDraft, setNotesDraft] = useState("");
   const [notesGenBusy, setNotesGenBusy] = useState(false);
+  const [shownotesViewMode, setShownotesViewMode] = useState<ShownotesViewMode>("edit");
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(shownotesStorageKey(projectId));
-      setNotesDraft(raw ?? "");
+      const next = raw ?? "";
+      setNotesDraft(next);
+      setShownotesViewMode(next.trim() ? "preview" : "edit");
     } catch {
       setNotesDraft("");
+      setShownotesViewMode("edit");
     }
   }, [projectId]);
 
@@ -108,6 +114,7 @@ export default function ClipEditorPrdLeftRail({
         throw new Error("返回的 Shownotes 为空");
       }
       setNotesDraft(notes);
+      setShownotesViewMode("preview");
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
@@ -234,26 +241,76 @@ export default function ClipEditorPrdLeftRail({
 
         {tab === "shownotes" ? (
           <div className="flex min-h-0 flex-1 flex-col gap-2">
-            <textarea
-              value={notesDraft}
-              onChange={(e) => setNotesDraft(e.target.value)}
-              disabled={notesGenBusy}
-              rows={12}
-              className="max-h-[18rem] min-h-[11rem] resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
-              placeholder="Shownotes 正文…"
-            />
-            <button
-              type="button"
-              disabled={
-                notesGenBusy ||
-                project.transcription_status !== "succeeded" ||
-                !loggedIn
-              }
-              onClick={() => void generateShownotes()}
-              className="rounded-lg border border-brand/40 bg-brand/10 px-3 py-2 text-[11px] font-semibold text-brand hover:bg-brand/15 disabled:opacity-40"
-            >
-              {notesGenBusy ? "生成中…" : "生成 Shownotes"}
-            </button>
+            {notesGenBusy ? (
+              <textarea
+                value={notesDraft}
+                readOnly
+                disabled
+                rows={18}
+                className="max-h-[27rem] min-h-[16.5rem] resize-y rounded-lg border border-line bg-fill/30 px-2 py-1.5 font-mono text-[11px] text-muted"
+                placeholder="Shownotes 正文…"
+              />
+            ) : notesDraft.trim() && shownotesViewMode === "preview" ? (
+              <div className="flex min-h-0 flex-1 flex-col gap-1">
+                <div
+                  role="article"
+                  aria-label="Shownotes 预览，双击可编辑"
+                  tabIndex={0}
+                  className={[
+                    "max-h-[27rem] min-h-[16.5rem] cursor-default select-text overflow-y-auto rounded-lg border border-line bg-surface px-2.5 py-2 text-[11px] text-ink leading-relaxed",
+                    "[&_a]:text-brand [&_a]:underline [&_h2]:mt-3 [&_h2]:text-[12px] [&_h2]:font-semibold [&_h2]:text-ink",
+                    "[&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4",
+                    "[&_p]:my-1 [&_code]:rounded [&_code]:bg-fill/80 [&_code]:px-0.5"
+                  ].join(" ")}
+                  onDoubleClick={() => setShownotesViewMode("edit")}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) setShownotesViewMode("edit");
+                  }}
+                >
+                  <ReactMarkdown>{notesDraft}</ReactMarkdown>
+                </div>
+                <p className="text-[9px] text-muted">双击预览区编辑；⌘/Ctrl+Enter 也可进入编辑。</p>
+                <button
+                  type="button"
+                  className="self-start rounded-md border border-line bg-fill/40 px-2 py-1 text-[10px] text-ink hover:bg-fill"
+                  onClick={() => setShownotesViewMode("edit")}
+                >
+                  编辑 Markdown
+                </button>
+              </div>
+            ) : (
+              <textarea
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                disabled={notesGenBusy}
+                rows={18}
+                className="max-h-[27rem] min-h-[16.5rem] resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
+                placeholder="Shownotes 正文…"
+              />
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {notesDraft.trim() && shownotesViewMode === "edit" ? (
+                <button
+                  type="button"
+                  className="rounded-md border border-line bg-fill/40 px-2 py-1 text-[10px] text-ink hover:bg-fill"
+                  onClick={() => setShownotesViewMode("preview")}
+                >
+                  返回预览
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={
+                  notesGenBusy ||
+                  project.transcription_status !== "succeeded" ||
+                  !loggedIn
+                }
+                onClick={() => void generateShownotes()}
+                className="rounded-lg border border-brand/40 bg-brand/10 px-3 py-2 text-[11px] font-semibold text-brand hover:bg-brand/15 disabled:opacity-40"
+              >
+                {notesGenBusy ? "生成中…" : "生成 Shownotes"}
+              </button>
+            </div>
           </div>
         ) : null}
       </div>

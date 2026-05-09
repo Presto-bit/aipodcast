@@ -252,6 +252,60 @@ def format_audio_chapters_hint(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_clip_words_chapter_timeline_hint(
+    words: list[dict[str, Any]],
+    excluded_ids: frozenset[str] | None = None,
+    *,
+    bucket_ms: int = 120_000,
+    max_bullets: int = 24,
+) -> str:
+    """
+    剪辑工程无 audio_chapters 时，由词级时间轴生成与 format_audio_chapters_hint 同形的 Markdown 列表，
+    供 generate_share_rss_ai_copy 写入「## 节目导听」时间锚（[分:秒 标题](t:秒数)）。
+    """
+    ex = excluded_ids or frozenset()
+    kept: list[tuple[int, int, str]] = []
+    for w in words:
+        if not isinstance(w, dict):
+            continue
+        wid = str(w.get("id") or "").strip()
+        if wid and wid in ex:
+            continue
+        try:
+            s = int(w.get("s_ms") or 0)
+            e = int(w.get("e_ms") or s)
+        except (TypeError, ValueError):
+            continue
+        tok = f"{w.get('text') or ''}{w.get('punct') or ''}".strip()
+        if not tok:
+            continue
+        kept.append((s, max(e, s), tok))
+    if not kept:
+        return ""
+    start_ms = kept[0][0]
+    end_ms = max(e for _, e, _ in kept)
+    if end_ms <= start_ms:
+        return ""
+    lines: list[str] = []
+    t = start_ms
+    while t < end_ms and len(lines) < max_bullets:
+        t_end = t + bucket_ms
+        chunk_parts: list[str] = []
+        for s, e, tok in kept:
+            if e <= t or s >= t_end:
+                continue
+            chunk_parts.append(tok)
+        raw_title = "".join(chunk_parts).strip()
+        title = (raw_title[:36] if raw_title else "段落").replace("]", "］").replace("[", "［").replace("\n", " ")
+        sec = max(0, t // 1000)
+        mm = sec // 60
+        ss = sec % 60
+        clock = f"{mm}:{ss:02d}"
+        lines.append(f"- [{clock} {title}](t:{sec})")
+        t = t_end
+    return "\n".join(lines)
+
+
 def _split_timeline_markdown_bullets(hint: str) -> list[str]:
     return [ln.strip() for ln in (hint or "").splitlines() if ln.strip().startswith("- ")]
 

@@ -88,6 +88,7 @@ from ..queue import ai_queue
 from ..security import verify_internal_signature
 from ..share_publish_llm import (
     clip_transcript_words_to_script_raw,
+    format_clip_words_chapter_timeline_hint,
     generate_share_rss_ai_copy,
     refine_share_show_notes_with_prompt,
 )
@@ -610,6 +611,7 @@ def clip_share_ai_copy(project_id: str, request: Request, body: dict[str, Any] |
         raise HTTPException(status_code=400, detail="no_script_for_ai_copy")
 
     title_hint = str(row.get("title") or "").strip()[:300]
+    chapter_hint = format_clip_words_chapter_timeline_hint(words, excluded)
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
 
     if notes_only:
@@ -619,7 +621,7 @@ def clip_share_ai_copy(project_id: str, request: Request, body: dict[str, Any] |
             pack = refine_share_show_notes_with_prompt(
                 script_raw=script_raw,
                 user_source_text="",
-                chapter_timeline_hint="",
+                chapter_timeline_hint=chapter_hint,
                 baseline_show_notes=baseline_show_notes,
                 user_prompt=user_prompt,
                 api_key=api_key,
@@ -635,7 +637,7 @@ def clip_share_ai_copy(project_id: str, request: Request, body: dict[str, Any] |
                 script_raw=script_raw,
                 user_source_text="",
                 episode_title_hint=title_hint,
-                chapter_timeline_hint="",
+                chapter_timeline_hint=chapter_hint,
                 api_key=api_key,
             )
         except RuntimeError as exc:
