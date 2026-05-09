@@ -6,7 +6,6 @@ import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { FaqAccordion } from "../../components/subscription/FaqAccordion";
 import FormSheetModal from "../../components/subscription/FormSheetModal";
 import { PricingHero } from "../../components/subscription/PricingHero";
-import { WalletUsageReference } from "../../components/subscription/WalletUsageReference";
 import type { WalletTopupPayload } from "../../components/subscription/types";
 import { parseSubscriptionErrorBody } from "../../lib/subscriptionError";
 import { appendRechargeDebug, newRechargeDebugRequestId, summarizePayUrl } from "../../lib/rechargeClientDebug";
@@ -1049,77 +1048,75 @@ export default function SubscriptionPage() {
         </p>
       ) : null}
 
-      <section
-        id="balance-billing"
-        className="mt-8 scroll-mt-24 rounded-xl border border-line bg-surface/60 p-5 shadow-sm"
-        aria-labelledby="balance-billing-title"
-      >
-        <div className="space-y-1">
+      <div className="mt-8">
+        <div className="mb-2 flex justify-end">
+          <Link
+            href="/subscription/pricing-reference"
+            className="text-sm font-medium text-brand underline underline-offset-2 hover:opacity-90"
+          >
+            产品定价
+          </Link>
+        </div>
+        <section
+          id="balance-billing"
+          className="scroll-mt-24 rounded-xl border border-line bg-surface/60 p-5 shadow-sm"
+          aria-labelledby="balance-billing-title"
+        >
           <h2 id="balance-billing-title" className="text-base font-semibold text-ink">
             我的余额
           </h2>
-          <p className="max-w-xl text-xs leading-relaxed text-muted">
-            下方为充值与消费流水。各功能单价与说明见{" "}
-            <Link
-              href="/subscription/pricing-reference"
-              className="font-medium text-brand underline underline-offset-2 hover:opacity-90"
-            >
-              定价参考
-            </Link>
-            ；充值弹窗内亦有简要扣费参考。
-          </p>
-        </div>
-        {walletPayEnabled ? (
-          <>
-            <p className="mt-3 text-2xl font-semibold tracking-tight text-ink">
-              {walletBalanceCents != null ? (
-                <span className="font-mono">{fmtMoneyYuan(walletBalanceCents)}</span>
-              ) : (
-                <span className="text-sm font-normal text-muted">加载中…</span>
-              )}
-            </p>
-            {(experienceVoiceTotal != null && experienceVoiceMin != null) ||
-            (experienceTextTotal != null && experienceTextChars != null) ? (
-              <p className="mt-2 text-xs text-ink">
-                <span className="font-medium text-muted">体验包（已用 / 总量）</span>
-                {experienceVoiceTotal != null && experienceVoiceMin != null ? (
-                  <span className="ml-2 font-mono">
-                    语音 {experienceVoiceUsedTotalLabel(experienceVoiceMin, experienceVoiceTotal)}
-                  </span>
-                ) : null}
-                {experienceTextTotal != null && experienceTextChars != null ? (
-                  <span className="ml-2 font-mono">
-                    文本 {experienceTextUsedTotalLabel(experienceTextChars, experienceTextTotal)}
-                  </span>
-                ) : null}
+          {walletPayEnabled ? (
+            <>
+              <p className="mt-3 text-2xl font-semibold tracking-tight text-ink">
+                {walletBalanceCents != null ? (
+                  <span className="font-mono">{fmtMoneyYuan(walletBalanceCents)}</span>
+                ) : (
+                  <span className="text-sm font-normal text-muted">加载中…</span>
+                )}
               </p>
-            ) : experienceVoiceMin != null || experienceTextChars != null ? (
-              <p className="mt-2 text-xs text-ink">
-                <span className="font-medium text-muted">体验包剩余</span>
-                {experienceVoiceMin != null ? (
-                  <span className="ml-2 font-mono">语音 {experienceVoiceMin.toFixed(2)} 分钟</span>
-                ) : null}
-                {experienceTextChars != null ? (
-                  <span className="ml-2 font-mono">文本 {experienceTextChars.toLocaleString()} 字</span>
-                ) : null}
-              </p>
-            ) : null}
-            {showWalletRechargeSection ? (
-              <div className="mt-4">
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90"
-                  onClick={() => setRechargeModalOpen(true)}
-                >
-                  充值
-                </button>
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <p className="mt-2 text-sm text-muted">请登录后查看余额、体验包余量与账单流水。</p>
-        )}
-      </section>
+              {(experienceVoiceTotal != null && experienceVoiceMin != null) ||
+              (experienceTextTotal != null && experienceTextChars != null) ? (
+                <p className="mt-2 text-xs text-ink">
+                  <span className="font-medium text-muted">体验包（已用 / 总量）</span>
+                  {experienceVoiceTotal != null && experienceVoiceMin != null ? (
+                    <span className="ml-2 font-mono">
+                      语音 {experienceVoiceUsedTotalLabel(experienceVoiceMin, experienceVoiceTotal)}
+                    </span>
+                  ) : null}
+                  {experienceTextTotal != null && experienceTextChars != null ? (
+                    <span className="ml-2 font-mono">
+                      文本 {experienceTextUsedTotalLabel(experienceTextChars, experienceTextTotal)}
+                    </span>
+                  ) : null}
+                </p>
+              ) : experienceVoiceMin != null || experienceTextChars != null ? (
+                <p className="mt-2 text-xs text-ink">
+                  <span className="font-medium text-muted">体验包剩余</span>
+                  {experienceVoiceMin != null ? (
+                    <span className="ml-2 font-mono">语音 {experienceVoiceMin.toFixed(2)} 分钟</span>
+                  ) : null}
+                  {experienceTextChars != null ? (
+                    <span className="ml-2 font-mono">文本 {experienceTextChars.toLocaleString()} 字</span>
+                  ) : null}
+                </p>
+              ) : null}
+              {showWalletRechargeSection ? (
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-lg bg-cta px-4 py-2 text-sm font-medium text-cta-foreground hover:bg-cta/90"
+                    onClick={() => setRechargeModalOpen(true)}
+                  >
+                    充值
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-2 text-sm text-muted">请登录后查看余额、体验包余量与账单流水。</p>
+          )}
+        </section>
+      </div>
 
       <section className="mt-10 space-y-10">
         <div>
@@ -1491,11 +1488,6 @@ export default function SubscriptionPage() {
               >
                 {walletPaying ? "处理中…" : allowMockWallet ? "确认支付（模拟成功）" : "确认支付并入账"}
               </button>
-            </div>
-          ) : null}
-          {alipayRechargeUiEnabled || showSimulatedWalletTopup ? (
-            <div className="mt-6 border-t border-line/80 pt-4">
-              <WalletUsageReference refData={mergedWalletTopup.usage_reference} />
             </div>
           ) : null}
           {subscriptionPlansDebugEnabled() && plansLoadDiag ? (
