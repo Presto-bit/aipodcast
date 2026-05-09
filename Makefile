@@ -153,13 +153,13 @@ worker-ai:
 	docker compose -f docker-compose.ai-native.yml logs -f --tail=200 ai-worker
 
 worker-media:
-	docker compose -f docker-compose.ai-native.yml logs -f --tail=200 media-worker
+	docker compose -f docker-compose.ai-native.yml logs -f --tail=200 media-worker-1 media-worker-2 media-worker-3
 
 worker-ai-simple:
 	RQ_WORKER_MODE=simple docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d ai-worker
 
 worker-media-simple:
-	RQ_WORKER_MODE=simple docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d media-worker
+	RQ_WORKER_MODE=simple docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d media-worker-1 media-worker-2 media-worker-3
 
 test-api-key-strip:
 	./.venv-ai-native/bin/python scripts/integration_test_api_key_strip.py

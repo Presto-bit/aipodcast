@@ -20,7 +20,13 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/1
 
-  media-worker:
+  media-worker-1:
+    environment:
+      REDIS_URL: redis://redis:6379/1
+  media-worker-2:
+    environment:
+      REDIS_URL: redis://redis:6379/1
+  media-worker-3:
     environment:
       REDIS_URL: redis://redis:6379/1
 
