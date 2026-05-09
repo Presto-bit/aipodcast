@@ -788,18 +788,22 @@ async def clip_upload_audio(project_id: str, request: Request):
     body = await request.body()
     if not body or len(body) > _CLIP_MAX_BYTES:
         raise HTTPException(status_code=400, detail=f"音频过大或为空（上限 {_CLIP_MAX_BYTES} 字节）")
-    fn = _clip_filename_from_header(request.headers.get("x-clip-filename"), "upload.mp3")
-    fn = _SAFE_NAME.sub("_", fn)[:240] or "upload.mp3"
+    fn_display = _clip_filename_from_header(request.headers.get("x-clip-filename"), "upload.mp3").strip()[:500]
+    if not fn_display:
+        fn_display = "upload.mp3"
+    base_name = Path(fn_display).name[:240] or "upload.mp3"
+    ext = Path(base_name).suffix[:12] or ".mp3"
+    safe_stem = _SAFE_NAME.sub("_", Path(base_name).stem).strip("._")[:120] or "upload"
     mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
-    mime = _effective_audio_media_type(fn, mime_raw)
+    mime = _effective_audio_media_type(fn_display, mime_raw)
     owner_seg = uid or "anon"
-    key = f"clip/{owner_seg}/{project_id}/source_{fn}"
+    key = f"clip/{owner_seg}/{project_id}/source_{uuid.uuid4().hex[:12]}_{safe_stem}{ext}"
     upload_bytes(key, body, mime)
     ok = update_clip_project_audio(
         project_id=project_id,
         user_uuid=uid,
         object_key=key,
-        filename=fn,
+        filename=fn_display,
         mime=mime,
         size_bytes=len(body),
     )
@@ -807,7 +811,7 @@ async def clip_upload_audio(project_id: str, request: Request):
         delete_object_key(key)
         raise HTTPException(status_code=500, detail="更新工程音频字段失败")
     try:
-        suf = Path(fn).suffix or ".bin"
+        suf = Path(fn_display).suffix or ".bin"
         with tempfile.NamedTemporaryFile(prefix="fyv_clip_probe_", suffix=suf, delete=True) as tf:
             tf.write(body)
             tf.flush()
@@ -898,7 +902,11 @@ async def clip_repair_source_audio(project_id: str, request: Request, body: dict
 
 @router.post("/clip/projects/{project_id}/audio/stage")
 async def clip_stage_audio_segment(project_id: str, request: Request):
-    """追加一段分段素材并立即合并为主音频（无需前端再调 merge）。"""
+    """追加一段分段素材（写对象存储 + DB）。
+
+    同步路径主要耗时：整包读入内存、对象存储上传、DB 更新；若工程已转写成功还会做稿面重拼
+    （``_clip_retime_transcript_after_segments_change``）。多文件可并行请求以缩短总等待。
+    """
     uid = _owner_uuid(request)
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
@@ -909,12 +917,15 @@ async def clip_stage_audio_segment(project_id: str, request: Request):
             status_code=400,
             detail=f"单段过大或为空（单段上限 {_CLIP_STAGE_MAX_BYTES // (1024 * 1024)}MB，且须符合录音识别产品总大小限制）",
         )
-    fn = _clip_filename_from_header(request.headers.get("x-clip-filename"), "segment.mp3")
-    fn = _SAFE_NAME.sub("_", fn)[:240] or "segment.mp3"
+    fn_display = _clip_filename_from_header(request.headers.get("x-clip-filename"), "segment.mp3").strip()[:500]
+    if not fn_display:
+        fn_display = "segment.mp3"
+    base_name = Path(fn_display).name[:240] or "segment.mp3"
+    safe_tail = _SAFE_NAME.sub("_", base_name).strip("._")[:120] or "segment"
     mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
-    mime = _effective_audio_media_type(fn, mime_raw)
+    mime = _effective_audio_media_type(fn_display, mime_raw)
     owner_seg = uid or "anon"
-    sk = f"clip/{owner_seg}/{project_id}/stage_{uuid.uuid4().hex[:16]}_{fn}"
+    sk = f"clip/{owner_seg}/{project_id}/stage_{uuid.uuid4().hex[:16]}_{safe_tail}"
     upload_bytes(sk, body, mime)
     main_key = str(row.get("audio_object_key") or "").strip()
     if main_key and not _source_segments_from_row(row) and not _staging_entries_from_row(row):
@@ -930,7 +941,7 @@ async def clip_stage_audio_segment(project_id: str, request: Request):
         project_id=project_id,
         user_uuid=uid,
         object_key=sk,
-        filename=fn,
+        filename=fn_display,
         mime=mime,
         size_bytes=len(body),
     )
@@ -1602,6 +1613,20 @@ async def clip_start_transcribe(project_id: str, request: Request):
     has_main = bool(str(row.get("audio_object_key") or "").strip())
     if not has_main and len(segs) < 1:
         raise HTTPException(status_code=400, detail="请先上传音频")
+    all_seg_k = {str(s.get("key") or "").strip() for s in segs if str(s.get("key") or "").strip()}
+    raw_only = payload.get("transcribe_segment_keys")
+    only_keys_param: list[str] | None = None
+    # 素材勾选仅用于「全量」转写提交；partial（如新插入段）不在此限制分段，避免与插入段补转写语义混用
+    if all_seg_k and not force_retranscribe:
+        if isinstance(raw_only, list):
+            if len(raw_only) == 0:
+                raise HTTPException(status_code=400, detail="请勾选至少一段素材进行转写")
+            only_keys_param = [str(x).strip() for x in raw_only if str(x).strip()]
+            if not only_keys_param:
+                raise HTTPException(status_code=400, detail="请勾选至少一段素材进行转写")
+            unk = [x for x in only_keys_param if x not in all_seg_k]
+            if unk:
+                raise HTTPException(status_code=400, detail="transcribe_segment_keys 含无效分段")
     if not volc_seed_auth_configured():
         raise HTTPException(
             status_code=503,
@@ -1626,6 +1651,7 @@ async def clip_start_transcribe(project_id: str, request: Request):
             run_clip_transcription_job,
             project_id,
             force_retranscribe=force_retranscribe,
+            only_segment_keys=only_keys_param,
             job_timeout="3h",
         )
         rq_id = getattr(rq_job, "id", None)

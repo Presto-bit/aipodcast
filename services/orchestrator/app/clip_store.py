@@ -315,6 +315,58 @@ def update_clip_project_audio(
             return n > 0
 
 
+def remove_clip_segment_transcript_cache_keys(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    keys: list[str],
+) -> bool:
+    """从 audio_segment_transcripts 中删除指定 object_key（用于仅重转勾选段）。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    drop = {str(k).strip() for k in keys if str(k).strip()}
+    if not drop:
+        return True
+    row = get_clip_project(project_id=project_id, user_uuid=user_uuid)
+    if not row:
+        return False
+    raw = row.get("audio_segment_transcripts")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    for k in drop:
+        raw.pop(k, None)
+    blob = json.dumps(raw, ensure_ascii=False)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_segment_transcripts = %s::jsonb, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                    """,
+                    (blob, pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_segment_transcripts = %s::jsonb, updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                    """,
+                    (blob, pid),
+                )
+            conn.commit()
+            return cur.rowcount > 0
+
+
 def clear_clip_audio_segment_transcripts(*, project_id: str, user_uuid: str | None) -> bool:
     """清空分段转写缓存（单文件替换或强制全量重转写时调用）。"""
     pid = _parse_uuid(project_id)

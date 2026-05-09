@@ -5,6 +5,7 @@ import { CircleHelp, Download, History, PanelRightClose, PanelRightOpen, Scissor
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -43,7 +44,11 @@ import {
 } from "../../lib/prestoFlowTranscript";
 import ClipWaveformPanel, { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
 import ClipVirtualAudioTransport from "../clip/ClipVirtualAudioTransport";
-import { buildVirtualAudioCues } from "../../lib/clipVirtualTimeline";
+import {
+  buildMaterialTimelineSlices,
+  buildVirtualAudioCues,
+  totalVirtualDurationMs
+} from "../../lib/clipVirtualTimeline";
 import AudioConsole from "./AudioConsole";
 import ClipStagingTracksBar from "./ClipStagingTracksBar";
 import ClipExportQcGateModal from "./ClipExportQcGateModal";
@@ -247,6 +252,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [onlySelectedSpeakers, setOnlySelectedSpeakers] = useState(false);
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
   const [transcribeConfirmOpen, setTranscribeConfirmOpen] = useState(false);
+  /** 多段素材时「开始转写」仅提交勾选的 object_key；顺序与列表一致 */
+  const [stagingTranscribeSelectedKeys, setStagingTranscribeSelectedKeys] = useState<string[]>([]);
   const [actionHint, setActionHint] = useState<string>("");
   const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number; visible: boolean }>({
     x: 0,
@@ -864,16 +871,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     return Math.max(...words.map((w) => w.e_ms), 0);
   }, [project, words, estimatedDurationFromBytesMs]);
 
-  /** PRD 顶栏：粗剪后有效时长 ≈ 原始素材总长减去已删词块跨度 */
-  const prdProcessedDurationMs = useMemo(() => {
-    if (durationMs == null || durationMs <= 0) return null;
-    let excludedSpan = 0;
-    for (const w of words) {
-      if (excluded.has(w.id)) excludedSpan += Math.max(0, w.e_ms - w.s_ms);
-    }
-    return Math.max(0, Math.round(durationMs - excludedSpan));
-  }, [words, excluded, durationMs]);
-
   const builtRuleSuggestions = useMemo(
     () => buildClipEditSuggestions(words, excluded, noLexExempt),
     [words, excluded, noLexExempt]
@@ -1023,6 +1020,22 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     return Array.isArray(st) ? st : [];
   }, [project?.audio_source_segments, project?.audio_staging_keys]);
 
+  const sourceMaterialKeys = useMemo(
+    () => audioStagingEntries.map((e) => String(e.key || "").trim()).filter(Boolean),
+    [audioStagingEntries]
+  );
+
+  useLayoutEffect(() => {
+    setStagingTranscribeSelectedKeys((prev) => {
+      const keySet = new Set(sourceMaterialKeys);
+      const kept = prev.filter((k) => keySet.has(k));
+      const added = sourceMaterialKeys.filter((k) => !kept.includes(k));
+      const next = [...kept, ...added];
+      if (next.length === prev.length && next.every((k, i) => k === prev[i])) return prev;
+      return next;
+    });
+  }, [sourceMaterialKeys]);
+
   const mergedObjectKey = useMemo(() => String(project?.audio_object_key ?? "").trim(), [project?.audio_object_key]);
 
   const virtualAudioCues = useMemo(
@@ -1037,6 +1050,26 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   );
 
   const useVirtualMultiSegmentPlayback = mergedObjectKey.length === 0 && audioStagingEntries.length > 1;
+
+  /** 播放器底部：按素材顺序与时长比例的总进度分段条（与虚拟多段轨对齐） */
+  const audioConsoleMaterialTimeline = useMemo(() => {
+    if (audioStagingEntries.length < 1) return null;
+    if (useVirtualMultiSegmentPlayback && virtualAudioCues.length > 0) {
+      return {
+        slices: virtualAudioCues.map((c) => ({ startMs: c.startGlobalMs, durationMs: c.durationMs })),
+        totalMs: totalVirtualDurationMs(virtualAudioCues)
+      };
+    }
+    const { slices, totalMs } = buildMaterialTimelineSlices(
+      audioStagingEntries,
+      words,
+      durationMs ?? 0
+    );
+    if (!slices.length || totalMs <= 0) return null;
+    return { slices, totalMs };
+  }, [audioStagingEntries, words, durationMs, useVirtualMultiSegmentPlayback, virtualAudioCues]);
+
+  const audioConsoleScrubDurationMs = Math.max(durationMs ?? 0, audioConsoleMaterialTimeline?.totalMs ?? 0);
 
   const singleSegmentFileUrl =
     mergedObjectKey.length === 0 && audioStagingEntries.length === 1
@@ -1272,7 +1305,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           credentials: "same-origin",
           headers: {
             "content-type": file.type || "application/octet-stream",
-            "x-clip-filename": encodeClipFilenameForHttpHeader(file.name, "segment.mp3"),
+            "x-clip-filename": encodeClipFilenameForHttpHeader(file.name || "segment.mp3", "segment.mp3"),
             ...getAuthHeaders()
           },
           body: file
@@ -2107,7 +2140,16 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setErr("");
     try {
       const pendingInserted = pendingInsertedSegments;
-      const payload =
+      const materialKeys = sourceMaterialKeys;
+      const chosen = stagingTranscribeSelectedKeys.filter((k) => materialKeys.includes(k));
+      /** 全量提交才带素材勾选；partial（新插入段）由服务端补全缺失转写，不受列表勾选影响 */
+      const fullTranscribeSubmit = pendingInserted.length === 0;
+      if (fullTranscribeSubmit && materialKeys.length > 0 && chosen.length === 0) {
+        setErr(t("clip.editor.transcribeSelectAtLeastOne"));
+        setActionBusy(false);
+        return;
+      }
+      const payload: Record<string, unknown> =
         pendingInserted.length > 0
           ? {
               mode: "partial",
@@ -2118,6 +2160,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               }))
             }
           : { mode: "full" };
+      if (fullTranscribeSubmit && materialKeys.length > 0) {
+        payload.transcribe_segment_keys = chosen;
+      }
       const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/transcribe`, {
         method: "POST",
         credentials: "same-origin",
@@ -2141,7 +2186,16 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     } finally {
       setActionBusy(false);
     }
-  }, [ensureLoggedInForAction, pendingInsertedSegments, projectId, getAuthHeaders, load]);
+  }, [
+    ensureLoggedInForAction,
+    pendingInsertedSegments,
+    projectId,
+    getAuthHeaders,
+    load,
+    sourceMaterialKeys,
+    stagingTranscribeSelectedKeys,
+    t
+  ]);
 
   const reorderAudioSegment = useCallback(
     (segmentId: string, targetIndex: number) => {
@@ -2813,8 +2867,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     </h1>
                   )
                 }
-                processedDurationMs={prdProcessedDurationMs}
-                sourceMaterialDurationMs={durationMs}
                 exportDisabled={
                   actionBusy ||
                   audioMergeBusy ||
@@ -3208,6 +3260,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     }
                     approxSegmentDurationMs={approxSegmentDurationMs}
                     mainAudioDurationMs={durationMs ?? null}
+                    stagingTranscribeSelectedKeys={stagingTranscribeSelectedKeys}
+                    onStagingTranscribeSelectedKeysChange={setStagingTranscribeSelectedKeys}
                   />
                 ) : null}
                 <div
@@ -3287,7 +3341,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           onRefresh={() => void load()}
                           onProjectPatch={setProject}
                           onError={(msg) => setErr(msg)}
+                          selectedTranscribeKeys={stagingTranscribeSelectedKeys}
+                          onSelectedTranscribeKeysChange={setStagingTranscribeSelectedKeys}
                         />
+                      ) : null}
+                      {!usePrdLayout && audioStagingEntries.length > 1 ? (
+                        <p className="mt-1.5 text-[9px] leading-snug text-muted">{t("clip.editor.transcribeMaterialCheckboxHint")}</p>
                       ) : null}
                       {!usePrdLayout && wordchainPreviewOn ? (
                         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand/25 bg-brand/10 px-2.5 py-1.5 text-[10px] text-ink">
@@ -3617,8 +3676,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           t("presto.flow.playbackRate200")
                         ]}
                         rateSelectAriaLabel={t("presto.flow.playbackRateAria")}
-                        durationMs={durationMs ?? 0}
+                        durationMs={audioConsoleScrubDurationMs}
                         currentTimeMs={playbackMs}
+                        materialTimeline={audioConsoleMaterialTimeline}
                         onSeekMs={(ms) => {
                           waveformRef.current?.seekToMs(ms);
                         }}
@@ -3861,8 +3921,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 t("presto.flow.playbackRate200")
               ]}
               rateSelectAriaLabel={t("presto.flow.playbackRateAria")}
-              durationMs={durationMs ?? 0}
+              durationMs={audioConsoleScrubDurationMs}
               currentTimeMs={playbackMs}
+              materialTimeline={audioConsoleMaterialTimeline}
               onSeekMs={(ms) => {
                 waveformRef.current?.seekToMs(ms);
               }}

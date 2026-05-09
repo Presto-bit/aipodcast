@@ -53,28 +53,30 @@ export default function PrestoFlowImportBar({
     onError("");
     try {
       const list = Array.from(files);
-      let lastProject: ClipProjectRow | undefined;
-      for (const f of list) {
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            "content-type": f.type || "application/octet-stream",
-            "x-clip-filename": encodeClipFilenameForHttpHeader(f.name, "segment.mp3"),
-            ...getAuthHeaders()
-          },
-          body: f
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          success?: boolean;
-          detail?: string;
-          project?: ClipProjectRow;
-        };
-        if (!res.ok || data.success === false) {
-          throw new Error(data.detail || `上传失败 ${res.status}`);
-        }
-        if (data.project) lastProject = data.project;
-      }
+      const results = await Promise.all(
+        list.map(async (f) => {
+          const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "content-type": f.type || "application/octet-stream",
+              "x-clip-filename": encodeClipFilenameForHttpHeader(f.name || "segment.mp3", "segment.mp3"),
+              ...getAuthHeaders()
+            },
+            body: f
+          });
+          const data = (await res.json().catch(() => ({}))) as {
+            success?: boolean;
+            detail?: string;
+            project?: ClipProjectRow;
+          };
+          if (!res.ok || data.success === false) {
+            throw new Error(data.detail || `上传失败 ${res.status}`);
+          }
+          return data.project;
+        })
+      );
+      const lastProject = results.filter(Boolean).pop() as ClipProjectRow | undefined;
       if (lastProject && onProjectPatch) onProjectPatch(lastProject);
       if (!lastProject || !onProjectPatch) onDone();
     } catch (e) {

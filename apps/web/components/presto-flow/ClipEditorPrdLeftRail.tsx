@@ -36,6 +36,8 @@ type Props = {
   approxSegmentDurationMs: number | null;
   /** 当前已合并主素材时长（毫秒） */
   mainAudioDurationMs: number | null;
+  stagingTranscribeSelectedKeys: string[];
+  onStagingTranscribeSelectedKeysChange: (keys: string[]) => void;
 };
 
 export default function ClipEditorPrdLeftRail({
@@ -58,7 +60,9 @@ export default function ClipEditorPrdLeftRail({
   onTranscribe,
   allowMultiSegmentImport,
   approxSegmentDurationMs,
-  mainAudioDurationMs
+  mainAudioDurationMs,
+  stagingTranscribeSelectedKeys,
+  onStagingTranscribeSelectedKeysChange
 }: Props) {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
@@ -204,10 +208,15 @@ export default function ClipEditorPrdLeftRail({
                   visualVariant="prd"
                   approxDurationMsPerSegment={approxSegmentDurationMs}
                   serverSource={serverSourceRow}
+                  selectedTranscribeKeys={stagingTranscribeSelectedKeys}
+                  onSelectedTranscribeKeysChange={onStagingTranscribeSelectedKeysChange}
                 />
               ) : (
                 <p className="text-[10px] leading-snug text-muted">请上传音频后开始转写。</p>
               )}
+              {entries.length > 1 ? (
+                <p className="text-[9px] leading-snug text-muted">{t("clip.editor.transcribeMaterialCheckboxHint")}</p>
+              ) : null}
               {pendingInsertedSegments > 0 ? (
                 <p className="text-[9px] text-muted">
                   含 {pendingInsertedSegments} 段新素材尚未转写；请点击「开始转写」后才会提交云端转写。
@@ -223,8 +232,8 @@ export default function ClipEditorPrdLeftRail({
               value={notesDraft}
               onChange={(e) => setNotesDraft(e.target.value)}
               disabled={notesGenBusy}
-              rows={3}
-              className="max-h-[4.5rem] min-h-[2.75rem] resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
+              rows={12}
+              className="max-h-[18rem] min-h-[11rem] resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
               placeholder="Shownotes 正文…"
             />
             <button

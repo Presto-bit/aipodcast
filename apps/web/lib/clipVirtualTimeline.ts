@@ -50,3 +50,40 @@ export function totalVirtualDurationMs(cues: readonly VirtualAudioCue[]): number
   const last = cues[cues.length - 1]!;
   return last.startGlobalMs + last.durationMs;
 }
+
+/** 素材顺序 + 各段时长（与虚拟拼接轨一致），用于总进度条上的分段色块 */
+export type MaterialTimelineSlice = {
+  startMs: number;
+  durationMs: number;
+};
+
+export function buildMaterialTimelineSlices(
+  entries: readonly { key?: string }[],
+  words: readonly ClipWord[],
+  fallbackTotalMs: number
+): { slices: MaterialTimelineSlice[]; totalMs: number } {
+  if (!entries.length) return { slices: [], totalMs: 0 };
+  const maxBySeg = new Map<string, number>();
+  for (const w of words) {
+    const rec = w as ClipWord & { seg_key?: string; e_seg_ms?: number };
+    const k = rec.seg_key?.trim();
+    if (!k) continue;
+    const e = typeof rec.e_seg_ms === "number" ? rec.e_seg_ms : rec.e_ms;
+    maxBySeg.set(k, Math.max(maxBySeg.get(k) ?? 0, e));
+  }
+  const fallbackSlice =
+    fallbackTotalMs > 0 && maxBySeg.size === 0
+      ? Math.max(30_000, Math.ceil(fallbackTotalMs / Math.max(1, entries.length)))
+      : 60_000;
+  let pos = 0;
+  const slices: MaterialTimelineSlice[] = [];
+  for (const ent of entries) {
+    const k = String(ent.key || "").trim();
+    if (!k) continue;
+    const durRaw = maxBySeg.get(k);
+    const durationMs = durRaw && durRaw > 0 ? durRaw : fallbackSlice;
+    slices.push({ startMs: pos, durationMs });
+    pos += durationMs;
+  }
+  return { slices, totalMs: pos };
+}

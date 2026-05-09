@@ -76,6 +76,9 @@ type Props = {
   approxDurationMsPerSegment?: number | null;
   /** 无 entries、仅有合并源元数据时展示一行（旧数据）；有 entries 时不应再传 */
   serverSource?: { filename: string; durationMs: number | null; playbackUrl?: string } | null;
+  /** 与 onSelectedTranscribeKeysChange 同时传入时：勾选状态由父组件控制（用于「只转勾选」） */
+  selectedTranscribeKeys?: string[] | null;
+  onSelectedTranscribeKeysChange?: (keys: string[]) => void;
 };
 
 export default function ClipStagingTracksBar({
@@ -88,7 +91,9 @@ export default function ClipStagingTracksBar({
   onError,
   visualVariant = "default",
   approxDurationMsPerSegment = null,
-  serverSource = null
+  serverSource = null,
+  selectedTranscribeKeys = null,
+  onSelectedTranscribeKeysChange
 }: Props) {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -97,7 +102,24 @@ export default function ClipStagingTracksBar({
   const [busy, setBusy] = useState(false);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [playingHref, setPlayingHref] = useState<string | null>(null);
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [checkedInternal, setCheckedInternal] = useState<Record<string, boolean>>({});
+  const controlledSelection = selectedTranscribeKeys != null && typeof onSelectedTranscribeKeysChange === "function";
+  const checked: Record<string, boolean> = controlledSelection
+    ? Object.fromEntries((selectedTranscribeKeys ?? []).map((k) => [k, true]))
+    : checkedInternal;
+  const setCheckedOne = useCallback(
+    (key: string, next: boolean) => {
+      if (controlledSelection) {
+        const cur = new Set(selectedTranscribeKeys ?? []);
+        if (next) cur.add(key);
+        else cur.delete(key);
+        onSelectedTranscribeKeysChange!(Array.from(cur));
+      } else {
+        setCheckedInternal((c) => ({ ...c, [key]: next }));
+      }
+    },
+    [controlledSelection, onSelectedTranscribeKeysChange, selectedTranscribeKeys]
+  );
   const [menu, setMenu] = useState<{ key: string; top: number; right: number } | null>(null);
   const [renameOpen, setRenameOpen] = useState<{ key: string; current: string } | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -131,6 +153,20 @@ export default function ClipStagingTracksBar({
   }, [serverOrder]);
 
   const order = pendingOrder ?? serverOrder;
+
+  useEffect(() => {
+    if (controlledSelection) return;
+    setCheckedInternal((prev) => {
+      const next: Record<string, boolean> = { ...prev };
+      for (const k of order) {
+        if (next[k] === undefined) next[k] = true;
+      }
+      for (const k of Object.keys(next)) {
+        if (!order.includes(k)) delete next[k];
+      }
+      return next;
+    });
+  }, [controlledSelection, order]);
 
   useEffect(() => {
     const a = previewAudioRef.current;
@@ -267,27 +303,32 @@ export default function ClipStagingTracksBar({
       setBusy(true);
       onError("");
       try {
-        for (const f of Array.from(files)) {
-          const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
-            method: "POST",
-            credentials: "same-origin",
-            headers: {
-              "content-type": f.type || "application/octet-stream",
-              "x-clip-filename": encodeClipFilenameForHttpHeader(f.name, "segment.mp3"),
-              ...getAuthHeaders()
-            },
-            body: f
-          });
-          const data = (await res.json().catch(() => ({}))) as {
-            success?: boolean;
-            detail?: string;
-            project?: ClipProjectRow;
-          };
-          if (!res.ok || data.success === false) {
-            throw new Error(data.detail || `暂存失败 ${res.status}`);
-          }
-          if (data.project && onProjectPatch) onProjectPatch(data.project);
-        }
+        const list = Array.from(files);
+        const results = await Promise.all(
+          list.map(async (f) => {
+            const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: {
+                "content-type": f.type || "application/octet-stream",
+                "x-clip-filename": encodeClipFilenameForHttpHeader(f.name || "segment.mp3", "segment.mp3"),
+                ...getAuthHeaders()
+              },
+              body: f
+            });
+            const data = (await res.json().catch(() => ({}))) as {
+              success?: boolean;
+              detail?: string;
+              project?: ClipProjectRow;
+            };
+            if (!res.ok || data.success === false) {
+              throw new Error(data.detail || `暂存失败 ${res.status}`);
+            }
+            return data.project;
+          })
+        );
+        const last = results.filter(Boolean).pop() as ClipProjectRow | undefined;
+        if (last && onProjectPatch) onProjectPatch(last);
         if (!onProjectPatch) await onRefresh();
       } catch (e) {
         onError(String(e instanceof Error ? e.message : e));
@@ -495,7 +536,7 @@ export default function ClipStagingTracksBar({
                     type="checkbox"
                     className="h-3.5 w-3.5 shrink-0 rounded border-line accent-brand"
                     checked={Boolean(checked[key])}
-                    onChange={() => setChecked((c) => ({ ...c, [key]: !c[key] }))}
+                    onChange={() => setCheckedOne(key, !checked[key])}
                     aria-label={`选择 ${label}`}
                   />
                   <span
@@ -539,6 +580,13 @@ export default function ClipStagingTracksBar({
                 </>
               ) : (
                 <>
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 shrink-0 rounded border-line accent-brand"
+                    checked={Boolean(checked[key])}
+                    onChange={() => setCheckedOne(key, !checked[key])}
+                    aria-label={`选择 ${label}`}
+                  />
                   <span
                     className="shrink-0 cursor-grab text-muted active:cursor-grabbing"
                     title={t("presto.flow.clipStaging.dragTip")}

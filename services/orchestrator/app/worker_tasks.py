@@ -1386,7 +1386,11 @@ def _clip_owner_uuid_str(uid: Any) -> str | None:
     return s or None
 
 
-def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False) -> dict[str, Any]:
+def run_clip_transcription_job(
+    project_id: str,
+    force_retranscribe: bool = False,
+    only_segment_keys: list[str] | None = None,
+) -> dict[str, Any]:
     from pathlib import Path
 
     from .clip_audio_merge import ffprobe_audio_channels
@@ -1400,6 +1404,7 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
     from .clip_store import (
         clear_clip_audio_segment_transcripts,
         get_clip_project_by_id,
+        remove_clip_segment_transcript_cache_keys,
         try_claim_clip_transcription_queued,
         update_clip_project_meta,
         update_clip_transcribe_failed,
@@ -1430,7 +1435,12 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
     elif t_st != "queued":
         return {"status": "skipped", "reason": "unexpected_transcription_status"}
     if force_retranscribe:
-        clear_clip_audio_segment_transcripts(project_id=pid, user_uuid=owner)
+        if only_segment_keys and parse_audio_source_segments(row):
+            remove_clip_segment_transcript_cache_keys(
+                project_id=pid, user_uuid=owner, keys=only_segment_keys
+            )
+        else:
+            clear_clip_audio_segment_transcripts(project_id=pid, user_uuid=owner)
         row = get_clip_project_by_id(pid) or row
 
     segments = parse_audio_source_segments(row)
@@ -1525,11 +1535,31 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
         if segments:
             cache = parse_segment_transcript_cache(row)
             missing = list_missing_segment_keys(segments, cache)
+            allow: set[str] | None = None
+            if only_segment_keys is not None:
+                allow = {str(x).strip() for x in only_segment_keys if str(x).strip()}
+                if not allow:
+                    update_clip_transcribe_failed(
+                        project_id=pid, user_uuid=owner, message="transcribe_segment_keys 不能为空"
+                    )
+                    return {"status": "failed", "error": "empty_transcribe_segment_keys"}
+                bad = [m for m in missing if m not in allow]
+                if bad:
+                    preview = ",".join(bad[:12])
+                    more = f"等{len(bad)}段" if len(bad) > 12 else ""
+                    update_clip_transcribe_failed(
+                        project_id=pid,
+                        user_uuid=owner,
+                        message=f"以下分段尚无转写且未勾选，请勾选后重试或取消勾选限制以全量转写：{preview}{more}",
+                    )
+                    return {"status": "failed", "error": "missing_segments_not_selected"}
             miss_set = set(missing)
             asr_calls = 0
             for seg in segments:
                 sk = str(seg.get("key") or "").strip()
                 if not sk or sk not in miss_set:
+                    continue
+                if allow is not None and sk not in allow:
                     continue
                 try:
                     seg_bytes = get_object_bytes(sk)

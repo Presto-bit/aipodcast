@@ -4,7 +4,9 @@ import type { RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Pause, Play, Volume2 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import ClipMaterialTimelineScrubber from "../clip/ClipMaterialTimelineScrubber";
 import { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
+import type { MaterialTimelineSlice } from "../../lib/clipVirtualTimeline";
 
 type Props = {
   waveformRef: RefObject<ClipWaveformHandle | null>;
@@ -27,6 +29,8 @@ type Props = {
   rateSelectAriaLabel?: string;
   durationMs?: number;
   currentTimeMs?: number;
+  /** 多段素材时在主进度条上方展示按段比例上色的总轨分段 */
+  materialTimeline?: { slices: readonly MaterialTimelineSlice[]; totalMs: number } | null;
   onSeekMs?: (ms: number) => void;
 };
 
@@ -56,6 +60,7 @@ export default function AudioConsole({
   rateSelectAriaLabel = "播放倍速",
   durationMs = 0,
   currentTimeMs = 0,
+  materialTimeline = null,
   onSeekMs
 }: Props) {
   const [playing, setPlaying] = useState(false);
@@ -174,7 +179,17 @@ export default function AudioConsole({
         {keyboardHint ? (
           <p className="text-center text-[10px] text-muted sm:text-left">{keyboardHint}</p>
         ) : null}
-        <div className="flex items-center gap-2 px-1">
+        <div className="flex flex-col gap-1.5 px-1">
+          {materialTimeline && materialTimeline.slices.length > 0 ? (
+            <ClipMaterialTimelineScrubber
+              className="w-full min-w-0"
+              slices={materialTimeline.slices}
+              totalMs={Math.max(1, materialTimeline.totalMs, durationMs || 0)}
+              currentTimeMs={currentTimeMs || 0}
+              onSeekMs={onSeekMs}
+            />
+          ) : null}
+          <div className="flex items-center gap-2">
           <button
             type="button"
             aria-label={playing ? "Pause" : "Play"}
@@ -249,6 +264,7 @@ export default function AudioConsole({
           ) : (
             <div className="mx-1 flex-1" />
           )}
+          </div>
         </div>
         <div className="hidden flex-wrap items-center justify-center gap-2 px-1 sm:justify-start">
           {onMagneticSnapChange && magneticSnapLabel ? (
