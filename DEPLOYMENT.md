@@ -70,7 +70,7 @@
      cd /opt/FYV
      bash release.sh
      ```  
-   - 脚本默认行为：`git fetch` + **`git pull --ff-only`**（与 `REMOTE`/`BRANCH` 一致）→ **`docker compose ... up -d --build`** → 检查编排器 `/health`、Web `3000`、以及 `orchestrator` / `web` / `ai-worker` / **`media-worker-1`～`media-worker-3`** 是否为 **running**。
+   - 脚本默认行为：`git fetch` + **`git pull --ff-only`**（与 `REMOTE`/`BRANCH` 一致）→ **`docker compose ... up -d --build`** → 检查编排器 `/health`、Web `3000`、以及 `orchestrator` / `web` / `ai-worker` / **`media-worker`**（Compose **`scale: 3`**，共 3 个容器）是否为 **running**。
 
 3. **常用环境变量（`release.sh`）**  
 
@@ -100,7 +100,7 @@
 - **宿主机端口**：`5432` / `6379` / `9000` / `9001` / **`9443`** / `8008` / `3000` 默认绑定 **`127.0.0.1`**，避免局域网或公网直连数据库、Redis、MinIO 与编排器；Nginx 反代 **`127.0.0.1:3000`** 即可对外提供 Web。**`9443`** 为 **`minio-https`**（Caddy）对 MinIO S3 API 的 **HTTPS** 出口，编排器默认 **`OBJECT_PRESIGN_ENDPOINT=https://127.0.0.1:9443`** 生成浏览器可加载的预签名链接；公网站点请在 `.env.ai-native` 改为 **`https://你的域名`** 并在主机反代到 MinIO。
 - **Postgres / MinIO 凭据**：容器内 `POSTGRES_*` 与 MinIO root 用户分别取自 `.env.ai-native` 的 **`DB_*`**、**`OBJECT_ACCESS_KEY` / `OBJECT_SECRET_KEY`**（与编排器连接配置一致）。**若数据卷已用旧密码初始化**，仅改 `.env` 不会自动改库内角色口令，须先在库内 `ALTER USER` 再改 env（见下节）。
 - **可靠性**：核心服务使用 **`restart: unless-stopped`**；编排器与 Web 配置了 **healthcheck**，`web` 与 Worker 在编排器健康后再依赖启动，减少「半启动」竞态。
-- **`release.sh`**：支持 **`GIT_PULL=0`** 跳过 `git fetch/pull`；发布末尾会检查 `orchestrator` / `web` / `ai-worker` / **`media-worker-1`～`media-worker-3`** 是否为 **running**。
+- **`release.sh`**：支持 **`GIT_PULL=0`** 跳过 `git fetch/pull`；发布末尾会检查 `orchestrator` / `web` / `ai-worker` / **`media-worker`**（默认 3 副本）是否为 **running**。
 
 ### 对象存储：公网 HTTPS 预签名（浏览器 / RSS / 外部回调）
 
@@ -144,7 +144,7 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 3. **让应用进程重新读 env**（任选其一）：
 
    ```bash
-   docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d --force-recreate orchestrator ai-worker media-worker-1 media-worker-2 media-worker-3 web
+   docker compose -f docker-compose.ai-native.yml --env-file .env.ai-native up -d --force-recreate orchestrator ai-worker media-worker web
    ```
 
    `postgres` 容器若仅 env 中的 `POSTGRES_PASSWORD` 与库内已同步，一般**不必**为换应用口令而重建；若你也改了 `POSTGRES_PASSWORD` 且希望与库一致，可在确认 `ALTER USER` 已成功后再 `up -d postgres`（注意：重建 postgres 容器**不会**单独抹掉数据卷，数据仍在 `pg_data`）。
@@ -284,9 +284,9 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 
 ## 媒体 Worker 与播客队列
 
-- **`podcast_generate` / `podcast`** 任务入 **Redis `media` 队列**，须由 **`media-worker-*` 容器**（镜像与入口均为 `workers/media-worker/worker.py`，与编排器**相同 `REDIS_URL`**）或编排器内嵌的 **RQ SimpleWorker** 消费。默认 Compose 起 **三个** 独立消费者（`media-worker-1`～`media-worker-3`），并行约 3 路播客成片；单机资源紧时可删去 `media-worker-3` 等服务定义。
-- **本机只跑 `scripts/dev-api.sh` / `make dev-api`（仅 uvicorn）**：在 **`FYV_PRODUCTION` 未开启**时，编排器默认 **`ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER` 视为开启**，在进程内启动内嵌 `media` 消费者，播客可出队。若本机 `.env` 设了 **`FYV_PRODUCTION=1`** 又未起独立 **`media-worker-*`**，请显式设 **`ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER=1`**，或改用 **`make dev`**。
-- **Docker Compose**：`orchestrator` 服务环境变量 **`ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER=0`**，由独立 **`media-worker-*`** 消费队列，避免双消费与 API 同进程争用 CPU。
+- **`podcast_generate` / `podcast`** 任务入 **Redis `media` 队列**，须由 **`media-worker`** 容器（镜像与入口为 `workers/media-worker/worker.py`，与编排器**相同 `REDIS_URL`**）或编排器内嵌的 **RQ SimpleWorker** 消费。`docker-compose.ai-native.yml` 对 **`media-worker` 设 `scale: 3`**（同一服务名、三副本），并行约 3 路播客成片；单机资源紧时把 **`scale` 改为 `2` 或 `1`**。
+- **本机只跑 `scripts/dev-api.sh` / `make dev-api`（仅 uvicorn）**：在 **`FYV_PRODUCTION` 未开启**时，编排器默认 **`ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER` 视为开启**，在进程内启动内嵌 `media` 消费者，播客可出队。若本机 `.env` 设了 **`FYV_PRODUCTION=1`** 又未起独立 **`media-worker`**，请显式设 **`ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER=1`**，或改用 **`make dev`**。
+- **Docker Compose**：`orchestrator` 服务环境变量 **`ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER=0`**，由独立 **`media-worker`**（多副本）消费队列，避免双消费与 API 同进程争用 CPU。
 - 全栈本机开发请用 **`make dev`**（默认起 `ai` + `media` worker）。**`SKIP_DEV_WORKERS=1 make dev`** 时依赖上述**内嵌**逻辑（非生产）或须自行起 worker。
 - **其它 `job_type`**（非播客）在媒体 Worker 内当前多为占位逻辑。生产若需禁止「假成功」，可设 **`MEDIA_WORKER_FAIL_ON_NON_PODCAST=1`**。
-- **排查**：**`GET /health`** 查看 `queues.media_pending`、`rq_workers.media`（应为 **3**，与 `media-worker-*` 容器数一致）、`embedded_media_rq_worker`；任务长期 `queued` 时检查 **`media-worker-*`** 与 Redis。
+- **排查**：**`GET /health`** 查看 `queues.media_pending`、`rq_workers.media`（应与 **`media-worker` 的 `scale`** 一致，默认 **3**）、`embedded_media_rq_worker`；任务长期 `queued` 时检查 **`media-worker`** 与 Redis。

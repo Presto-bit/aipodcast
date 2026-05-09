@@ -134,8 +134,8 @@ if [[ "$DOCKER_BUILD_NO_CACHE" == "1" ]]; then
   log "DOCKER_BUILD_NO_CACHE=1，构建不使用层缓存（耗时显著增加）"
 fi
 
-log "构建业务镜像（orchestrator / ai-worker / media-worker-1..3 / web）"
-"${compose[@]}" build "${build_flags[@]}" orchestrator ai-worker media-worker-1 media-worker-2 media-worker-3 web || die "docker compose build 失败"
+log "构建业务镜像（orchestrator / ai-worker / media-worker×3 / web）"
+"${compose[@]}" build "${build_flags[@]}" orchestrator ai-worker media-worker web || die "docker compose build 失败"
 
 log "启动容器"
 "${compose[@]}" up -d || die "docker compose up 失败"
@@ -186,7 +186,7 @@ else
 fi
 
 log "检查核心容器是否为 running"
-for svc in orchestrator web ai-worker media-worker-1 media-worker-2 media-worker-3; do
+for svc in orchestrator web ai-worker media-worker; do
   if [[ -z "$("${compose[@]}" ps -q --status running "$svc" 2>/dev/null || true)" ]]; then
     "${compose[@]}" ps -a >&2 || true
     die "容器 $svc 未处于 running，请查看: docker compose -f $COMPOSE_FILE --env-file $ENV_FILE logs $svc"

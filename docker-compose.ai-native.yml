@@ -4,7 +4,7 @@
 # 离线构建勿访问 registry-1.docker.io：先 load 基础镜像，再用 scripts/docker-compose-offline.sh 或 make up-offline（脚本默认 DOCKER_BUILDKIT=1，以启用 apt/pip 缓存 mount）。
 # 固定 amd64，与阿里云 ECS 一致；避免 Apple Silicon 默认打成 arm64 镜像后在服务器无法运行。
 #
-# media 队列：默认 3 个独立 RQ worker 容器（同一 REDIS_URL），约等于 4C8G 上并行 3 路播客成片；减并发可删 media-worker-3 等。
+# media 队列：单服务名 media-worker + scale: 3，兼容旧脚本 `docker compose build media-worker`，默认三副本并行消费（同一 REDIS_URL）；减并发改为 scale: 2 或 1。
 x-media-worker-def: &media_worker_def
   platform: linux/amd64
   image: aipodcast-media-worker:${AIPODCAST_IMAGE_TAG:-latest}
@@ -129,7 +129,7 @@ services:
       OBJECT_ENDPOINT: http://minio:9000
       # 默认走本栈 minio-https（宿主机 127.0.0.1:9443）；生产在 .env.ai-native 覆盖为 https://你的域名
       OBJECT_PRESIGN_ENDPOINT: ${OBJECT_PRESIGN_ENDPOINT:-https://127.0.0.1:9443}
-      # 独立 ai-worker / media-worker-1..3 已消费队列；编排器内关闭内嵌，避免双消费与 API 同进程抢 CPU
+      # 独立 ai-worker / media-worker（compose scale: 3）已消费队列；编排器内关闭内嵌，避免双消费与 API 同进程抢 CPU
       ORCHESTRATOR_EMBED_RQ_AI_WORKER: "0"
       ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER: "0"
       # 知识库问答：收紧 embedding 超时，避免单次请求被慢上游长时间拖住
@@ -197,12 +197,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  media-worker-1:
+  media-worker:
     <<: *media_worker_def
-  media-worker-2:
-    <<: *media_worker_def
-  media-worker-3:
-    <<: *media_worker_def
+    scale: 3
 
   web:
     platform: linux/amd64
