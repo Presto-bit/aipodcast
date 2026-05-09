@@ -25,7 +25,7 @@ def test_revert_transcription_invalid_restore_rejected() -> None:
         revert_clip_transcription_after_enqueue_failed(
             project_id="bad-id",
             user_uuid=None,
-            restore_status="queued",
+            restore_status="running",
         )
         is False
     )

@@ -1635,8 +1635,12 @@ async def clip_start_transcribe(project_id: str, request: Request):
                 "或同时设置 VOLCENGINE_SPEECH_APP_KEY 与 VOLCENGINE_SPEECH_ACCESS_KEY（旧控制台）"
             ),
         )
-    prev_t = t_st if t_st in ("idle", "failed") else "idle"
-    if not try_claim_clip_transcription_queued(project_id=project_id, user_uuid=uid):
+    prev_t = t_st if t_st in ("idle", "failed", "succeeded") else "idle"
+    if not try_claim_clip_transcription_queued(
+        project_id=project_id,
+        user_uuid=uid,
+        allow_retry_from_succeeded=force_retranscribe,
+    ):
         row2 = get_clip_project(project_id=project_id, user_uuid=uid) or {}
         t2 = str(row2.get("transcription_status") or "").strip()
         if t2 in ("running", "queued"):

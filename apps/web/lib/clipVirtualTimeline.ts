@@ -12,7 +12,9 @@ export function buildVirtualAudioCues(
   projectId: string,
   entries: readonly ClipAudioStagingEntry[],
   words: readonly ClipWord[],
-  fallbackDurationMs: number
+  fallbackDurationMs: number,
+  /** 无词级 seg 时间时优先使用（与素材库列表 estimate 一致），按 object_key */
+  perKeyFallbackMs?: Readonly<Record<string, number>> | null
 ): VirtualAudioCue[] {
   if (!entries.length) return [];
   const maxBySeg = new Map<string, number>();
@@ -33,7 +35,13 @@ export function buildVirtualAudioCues(
     const k = String(ent.key || "").trim();
     if (!k) continue;
     const durRaw = maxBySeg.get(k);
-    const durationMs = durRaw && durRaw > 0 ? durRaw : fallbackSlice;
+    const fromEst = perKeyFallbackMs?.[k];
+    const durationMs =
+      durRaw && durRaw > 0
+        ? durRaw
+        : typeof fromEst === "number" && fromEst > 0
+          ? fromEst
+          : fallbackSlice;
     cues.push({
       objectKey: k,
       url: `/api/clip/projects/${encodeURIComponent(projectId)}/audio/source-segment/file?object_key=${encodeURIComponent(k)}`,
@@ -60,7 +68,8 @@ export type MaterialTimelineSlice = {
 export function buildMaterialTimelineSlices(
   entries: readonly { key?: string }[],
   words: readonly ClipWord[],
-  fallbackTotalMs: number
+  fallbackTotalMs: number,
+  perKeyFallbackMs?: Readonly<Record<string, number>> | null
 ): { slices: MaterialTimelineSlice[]; totalMs: number } {
   if (!entries.length) return { slices: [], totalMs: 0 };
   const maxBySeg = new Map<string, number>();
@@ -81,7 +90,13 @@ export function buildMaterialTimelineSlices(
     const k = String(ent.key || "").trim();
     if (!k) continue;
     const durRaw = maxBySeg.get(k);
-    const durationMs = durRaw && durRaw > 0 ? durRaw : fallbackSlice;
+    const fromEst = perKeyFallbackMs?.[k];
+    const durationMs =
+      durRaw && durRaw > 0
+        ? durRaw
+        : typeof fromEst === "number" && fromEst > 0
+          ? fromEst
+          : fallbackSlice;
     slices.push({ startMs: pos, durationMs });
     pos += durationMs;
   }

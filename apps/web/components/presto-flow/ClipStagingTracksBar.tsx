@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { ClipAudioStagingEntry, ClipProjectRow } from "../../lib/clipTypes";
+import { estimateDurationMsFromBytes } from "../../lib/clipSegmentDurationEstimate";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import { useI18n } from "../../lib/I18nContext";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
@@ -16,13 +17,6 @@ function formatShortDuration(ms: number | null | undefined): string {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
-}
-
-/** 无 ffprobe 时用字节粗估时长（约 128kbps），仅作列表展示 */
-function estimateMsFromBytes(bytes?: number): number | null {
-  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return null;
-  const bps = 128_000;
-  return Math.round((bytes * 8 * 1000) / bps);
 }
 
 function basenameDecoded(objectKey: string): string {
@@ -375,7 +369,7 @@ export default function ClipStagingTracksBar({
   if (entries.length === 0 && !hasServer) return null;
 
   const rowDuration = (meta: ClipAudioStagingEntry | undefined) => {
-    const est = estimateMsFromBytes(meta?.size_bytes);
+    const est = estimateDurationMsFromBytes(meta?.size_bytes);
     if (est != null && est > 0) return est;
     return approxDurationMsPerSegment;
   };

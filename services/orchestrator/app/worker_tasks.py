@@ -1430,7 +1430,11 @@ def run_clip_transcription_job(
     if t_st == "running":
         return {"status": "skipped", "reason": "already_running"}
     if t_st in ("idle", "failed") or (force_retranscribe and t_st == "succeeded"):
-        if not try_claim_clip_transcription_queued(project_id=pid, user_uuid=owner):
+        if not try_claim_clip_transcription_queued(
+            project_id=pid,
+            user_uuid=owner,
+            allow_retry_from_succeeded=force_retranscribe,
+        ):
             return {"status": "skipped", "reason": "transcription_claim_failed"}
     elif t_st != "queued":
         return {"status": "skipped", "reason": "unexpected_transcription_status"}

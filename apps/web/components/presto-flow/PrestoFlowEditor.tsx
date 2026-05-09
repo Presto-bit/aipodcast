@@ -45,6 +45,10 @@ import {
 import ClipWaveformPanel, { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
 import ClipVirtualAudioTransport from "../clip/ClipVirtualAudioTransport";
 import {
+  perStagingEntryDurationMs,
+  sumStagingEntriesDurationMs
+} from "../../lib/clipSegmentDurationEstimate";
+import {
   buildMaterialTimelineSlices,
   buildVirtualAudioCues,
   totalVirtualDurationMs
@@ -1038,15 +1042,45 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const mergedObjectKey = useMemo(() => String(project?.audio_object_key ?? "").trim(), [project?.audio_object_key]);
 
+  /** 与素材列表一致：先按整稿时长均分，否则按各段 size_bytes 粗估再均分缺省段 */
+  const approxSegmentDurationMs = useMemo(() => {
+    if (audioStagingEntries.length === 0) return null;
+    if (durationMs != null && durationMs > 0) {
+      return Math.round(durationMs / audioStagingEntries.length);
+    }
+    const sumBytesOnly = sumStagingEntriesDurationMs(audioStagingEntries, null);
+    if (sumBytesOnly > 0) {
+      return Math.round(sumBytesOnly / audioStagingEntries.length);
+    }
+    return null;
+  }, [audioStagingEntries, durationMs]);
+
+  const stagingPerKeyFallbackMs = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const e of audioStagingEntries) {
+      const k = String(e.key || "").trim();
+      if (!k) continue;
+      const d = perStagingEntryDurationMs(e, approxSegmentDurationMs);
+      if (d > 0) m[k] = d;
+    }
+    return m;
+  }, [audioStagingEntries, approxSegmentDurationMs]);
+
+  const materialSummedDurationMs = useMemo(
+    () => sumStagingEntriesDurationMs(audioStagingEntries, approxSegmentDurationMs),
+    [audioStagingEntries, approxSegmentDurationMs]
+  );
+
   const virtualAudioCues = useMemo(
     () =>
       buildVirtualAudioCues(
         projectId,
         audioStagingEntries,
         words,
-        project?.transcript_normalized?.duration_ms ?? 0
+        project?.transcript_normalized?.duration_ms ?? 0,
+        stagingPerKeyFallbackMs
       ),
-    [projectId, audioStagingEntries, words, project?.transcript_normalized?.duration_ms]
+    [projectId, audioStagingEntries, words, project?.transcript_normalized?.duration_ms, stagingPerKeyFallbackMs]
   );
 
   const useVirtualMultiSegmentPlayback = mergedObjectKey.length === 0 && audioStagingEntries.length > 1;
@@ -1063,13 +1097,25 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     const { slices, totalMs } = buildMaterialTimelineSlices(
       audioStagingEntries,
       words,
-      durationMs ?? 0
+      durationMs ?? 0,
+      stagingPerKeyFallbackMs
     );
     if (!slices.length || totalMs <= 0) return null;
     return { slices, totalMs };
-  }, [audioStagingEntries, words, durationMs, useVirtualMultiSegmentPlayback, virtualAudioCues]);
+  }, [
+    audioStagingEntries,
+    words,
+    durationMs,
+    useVirtualMultiSegmentPlayback,
+    virtualAudioCues,
+    stagingPerKeyFallbackMs
+  ]);
 
-  const audioConsoleScrubDurationMs = Math.max(durationMs ?? 0, audioConsoleMaterialTimeline?.totalMs ?? 0);
+  const audioConsoleScrubDurationMs = Math.max(
+    durationMs ?? 0,
+    audioConsoleMaterialTimeline?.totalMs ?? 0,
+    materialSummedDurationMs
+  );
 
   const singleSegmentFileUrl =
     mergedObjectKey.length === 0 && audioStagingEntries.length === 1
@@ -2649,11 +2695,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     },
     onExitWordchainPreview: () => setWordchainPreviewOn(false)
   };
-
-  const approxSegmentDurationMs =
-    durationMs != null && audioStagingEntries.length > 0
-      ? Math.round(durationMs / audioStagingEntries.length)
-      : null;
 
   const prdHistoryPanel = (
     <section className="p-3">

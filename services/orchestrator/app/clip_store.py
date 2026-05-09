@@ -1201,14 +1201,23 @@ def reorder_clip_audio_staging(*, project_id: str, user_uuid: str | None, ordere
             return n > 0
 
 
-def try_claim_clip_transcription_queued(*, project_id: str, user_uuid: str | None) -> bool:
+def try_claim_clip_transcription_queued(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    allow_retry_from_succeeded: bool = False,
+) -> bool:
     """
-    将转写状态从 idle/failed 原子置为 queued（须已上传音频），防止重复入队。
+    将转写状态原子置为 queued（须已有主轨 object_key 或非空 audio_source_segments），防止重复入队。
+    allow_retry_from_succeeded：partial 补转写等场景允许从 succeeded 再次入队。
     """
     pid = _parse_uuid(project_id)
     if not pid:
         return False
     uid = _parse_uuid(user_uuid)
+    statuses = ["idle", "failed"]
+    if allow_retry_from_succeeded:
+        statuses = ["idle", "failed", "succeeded"]
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             if uid:
@@ -1218,10 +1227,13 @@ def try_claim_clip_transcription_queued(*, project_id: str, user_uuid: str | Non
                     SET transcription_status = 'queued', dashscope_task_id = NULL,
                         transcription_error = NULL, updated_at = NOW()
                     WHERE id = %s::uuid AND user_id = %s::uuid
-                      AND (audio_object_key IS NOT NULL AND btrim(audio_object_key) <> '')
-                      AND transcription_status IN ('idle', 'failed')
+                      AND (
+                        (audio_object_key IS NOT NULL AND btrim(audio_object_key) <> '')
+                        OR jsonb_array_length(COALESCE(audio_source_segments, '[]'::jsonb)) > 0
+                      )
+                      AND transcription_status = ANY(%s::text[])
                     """,
-                    (pid, uid),
+                    (pid, uid, statuses),
                 )
             else:
                 cur.execute(
@@ -1230,10 +1242,13 @@ def try_claim_clip_transcription_queued(*, project_id: str, user_uuid: str | Non
                     SET transcription_status = 'queued', dashscope_task_id = NULL,
                         transcription_error = NULL, updated_at = NOW()
                     WHERE id = %s::uuid AND user_id IS NULL
-                      AND (audio_object_key IS NOT NULL AND btrim(audio_object_key) <> '')
-                      AND transcription_status IN ('idle', 'failed')
+                      AND (
+                        (audio_object_key IS NOT NULL AND btrim(audio_object_key) <> '')
+                        OR jsonb_array_length(COALESCE(audio_source_segments, '[]'::jsonb)) > 0
+                      )
+                      AND transcription_status = ANY(%s::text[])
                     """,
-                    (pid,),
+                    (pid, statuses),
                 )
             n = cur.rowcount
             conn.commit()
@@ -1243,12 +1258,12 @@ def try_claim_clip_transcription_queued(*, project_id: str, user_uuid: str | Non
 def revert_clip_transcription_after_enqueue_failed(
     *, project_id: str, user_uuid: str | None, restore_status: str
 ) -> bool:
-    """入队失败时将 queued 恢复为 idle 或 failed（restore_status 须为 idle|failed）。"""
+    """入队失败时将 queued 恢复为 idle、failed 或 succeeded（restore_status 须为三者之一）。"""
     pid = _parse_uuid(project_id)
     if not pid:
         return False
     rs = (restore_status or "").strip().lower()
-    if rs not in ("idle", "failed"):
+    if rs not in ("idle", "failed", "succeeded"):
         return False
     uid = _parse_uuid(user_uuid)
     with get_conn() as conn:
