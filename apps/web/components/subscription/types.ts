@@ -10,6 +10,8 @@ export type SummaryQuota = {
 export type WalletUsageReference = {
   /** 成片播客：元/分钟（分钟包最优单价折算） */
   podcast_yuan_per_minute?: number;
+  /** 剪辑转写 ASR：元/分钟（按输入音频时长；与 ASR_WALLET_CENTS_PER_AUDIO_HOUR 一致） */
+  asr_yuan_per_minute?: number;
   /** 脚本/大纲成稿：元/万字 */
   text_yuan_per_10k_chars?: number;
   voice_clone_payg_cents?: number;

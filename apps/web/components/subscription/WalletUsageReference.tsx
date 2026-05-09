@@ -3,6 +3,9 @@ import type { WalletUsageReference as WalletUsageReferenceT } from "./types";
 /** 与 orchestrator `VOICE_CLONE_PAYG_CENTS` 一致，仅在前端缺字段时兜底展示 */
 const DEFAULT_VOICE_CLONE_PAYG_CENTS = 1290;
 
+/** 与 ASR_WALLET_CENTS_PER_AUDIO_HOUR=490 一致：490÷60÷100，保留三位小数 */
+const DEFAULT_ASR_YUAN_PER_MINUTE = 0.082;
+
 function fmtYuanFromCents(cents: number) {
   return `¥${(cents / 100).toFixed(2)}`;
 }
@@ -23,6 +26,9 @@ export function WalletUsageReference({ refData }: Props) {
   if (!refData || typeof refData !== "object") return null;
 
   const podcast = refData.podcast_yuan_per_minute;
+  const asrMinRaw = refData.asr_yuan_per_minute;
+  const asrMin =
+    typeof asrMinRaw === "number" && Number.isFinite(asrMinRaw) ? asrMinRaw : DEFAULT_ASR_YUAN_PER_MINUTE;
   const text10k = refData.text_yuan_per_10k_chars;
   const cloneCentsRaw = refData.voice_clone_payg_cents;
   const cloneCents =
@@ -50,11 +56,18 @@ export function WalletUsageReference({ refData }: Props) {
           )}
         </li>
         <li>
+          <span className="font-medium text-ink">剪辑转写（ASR）</span>
+          <span className="text-muted">：</span>
+          <span className="text-ink">
+            按输入音频时长，约 <span className="font-medium">¥{asrMin.toFixed(3)}</span> / 分钟（结算向上取整到分）
+          </span>
+        </li>
+        <li>
           <span className="font-medium text-ink">脚本文本</span>
           <span className="text-muted">：</span>
           {typeof text10k === "number" && Number.isFinite(text10k) ? (
             <span className="text-ink">
-              模型成稿按字数，约 <span className="font-medium">{fmtYuanTwoDecimals(text10k)}</span> / 万字（向上取整到分）
+              文本模型成稿按字数，约 <span className="font-medium">{fmtYuanTwoDecimals(text10k)}</span> / 万字（向上取整到分）
             </span>
           ) : (
             <span className="text-muted">—</span>

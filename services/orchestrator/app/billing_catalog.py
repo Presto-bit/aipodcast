@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .media_wallet import asr_wallet_yuan_per_minute_for_display
 from .subscription_manifest import (
     EXPERIENCE_NEW_USER_TEXT_CHARS,
     EXPERIENCE_NEW_USER_VOICE_MINUTES,
@@ -29,6 +30,7 @@ def _wallet_usage_reference() -> dict[str, Any]:
     """
     供前端充值区「扣费参考」：
     - 成片语音：manifest 分钟单价（元/分钟）；AI 润色不单列，含于该单价。
+    - 剪辑 ASR：按输入音频时长，元/分钟（与 media_wallet 当前每小时单价及 ASR_WALLET_CENTS_PER_AUDIO_HOUR 环境覆盖一致）。
     - 脚本文本：按成稿字符数，元/万字（由 TEXT_OUTPUT_CENTS_PER_10K_CHARS 换算）。
     - 克隆：manifest 按次价（分）。
     """
@@ -42,6 +44,7 @@ def _wallet_usage_reference() -> dict[str, Any]:
 
     return {
         "podcast_yuan_per_minute": podcast_yuan_per_minute,
+        "asr_yuan_per_minute": float(asr_wallet_yuan_per_minute_for_display()),
         "text_yuan_per_10k_chars": text_yuan_per_10k_chars,
         "voice_clone_payg_cents": int(VOICE_CLONE_PAYG_CENTS),
         "experience_voice_minutes_new_user": float(EXPERIENCE_NEW_USER_VOICE_MINUTES),

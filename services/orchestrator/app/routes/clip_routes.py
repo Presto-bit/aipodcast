@@ -74,7 +74,11 @@ from ..clip_loudness_qc import analyze_loudness_from_file
 from ..clip_timeline import build_timeline_v1_from_row
 from ..clip_timeline_audio import concat_ordered_source_segments_to_bytes
 from ..clip_asr_billing import estimate_clip_transcribe_billable_seconds
-from ..media_wallet import media_wallet_billing_enabled, wallet_cents_for_asr_audio_seconds
+from ..media_wallet import (
+    asr_wallet_yuan_per_minute_for_display,
+    media_wallet_billing_enabled,
+    wallet_cents_for_asr_audio_seconds,
+)
 from ..models import phone_for_job_created_by, resolved_user_uuid_string, wallet_balance_cents_for_phone
 from ..clip_silence_detect import detect_silence_segments_from_file
 from ..object_store import (
@@ -1662,11 +1666,12 @@ async def clip_start_transcribe(project_id: str, request: Request):
         if cents_need > 0:
             bal_tb = wallet_balance_cents_for_phone(phone_tb)
             if bal_tb < cents_need:
+                yuan_per_min = asr_wallet_yuan_per_minute_for_display()
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         f"余额不足：本次转写预计扣费约 ¥{cents_need / 100:.2f}"
-                        f"（音频合计约 {sec_est / 60:.1f} 分钟，¥4.9/小时），"
+                        f"（音频合计约 {sec_est / 60:.1f} 分钟，约 ¥{yuan_per_min:.3f}/分钟），"
                         f"当前余额 ¥{bal_tb / 100:.2f}，请先充值。"
                     ),
                 )

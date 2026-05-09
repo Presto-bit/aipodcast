@@ -33,6 +33,19 @@ type ConsumptionRecordRow = {
   result_zh?: string;
 };
 
+type WalletRecordsPagination = {
+  page?: number;
+  page_size?: number;
+  total?: number;
+};
+
+type LoadMeOverrides = {
+  filterSince?: string;
+  filterUntil?: string;
+  rechargePage?: number;
+  consumptionPage?: number;
+};
+
 type PlansPayload = {
   success?: boolean;
   wallet_topup?: WalletTopupPayload;
@@ -44,10 +57,15 @@ type PlansPayload = {
 /** 从支付宝同步回跳后用于短时拉余额，避免仅依赖 30s 轮询 */
 const WALLET_ALIPAY_PENDING_KEY = "subscription_alipay_wallet_pending";
 
+/** 与编排器 subscription/me 默认 page_size 一致 */
+const WALLET_RECORD_PAGE_SIZE = 10;
+
 type WalletAlipayPendingPayload = {
   startedAt: number;
   balanceBeforeCents: number | null;
-  /** 跳转支付前「充值记录」条数；用于首充或余额尚未加载时仍能检测入账 */
+  /** 跳转支付前服务端充值订单总数（分页后不可用当前页条数推断入账） */
+  rechargeTotalBefore?: number;
+  /** 旧版 payload：当前页条数；仅在无 rechargeTotalBefore 时作兜底 */
   rechargeCountBefore?: number;
   /** 商户订单号；异步通知缺失时用于服务端 alipay.trade.query 主动对账 */
   outTradeNo?: string;
@@ -164,6 +182,10 @@ export default function SubscriptionPage() {
   const [experienceVoiceTotal, setExperienceVoiceTotal] = useState<number | null>(null);
   const [experienceTextTotal, setExperienceTextTotal] = useState<number | null>(null);
   const [plansLoadDiag, setPlansLoadDiag] = useState<PlansLoadDiag | null>(null);
+  const [rechargePage, setRechargePage] = useState(1);
+  const [consumptionPage, setConsumptionPage] = useState(1);
+  const [rechargeTotal, setRechargeTotal] = useState(0);
+  const [consumptionTotal, setConsumptionTotal] = useState(0);
 
   /** 防止连续多次 loadPlans 返回顺序错乱，把旧响应写回 state */
   const plansFetchSeqRef = useRef(0);
@@ -196,6 +218,7 @@ export default function SubscriptionPage() {
       description: "",
       usage_reference: {
         podcast_yuan_per_minute: 0.25,
+        asr_yuan_per_minute: 0.082,
         text_yuan_per_10k_chars: 2,
         voice_clone_payg_cents: 1290,
         disclaimer_zh: "余额实际扣减以任务完成时执行为准。"
@@ -335,15 +358,22 @@ export default function SubscriptionPage() {
     }
   }, [getAuthHeaders]);
 
-  const loadMe = useCallback(async (filterSince?: string, filterUntil?: string) => {
+  const loadMe = useCallback(
+    async (overrides?: LoadMeOverrides) => {
     const rid = newRechargeDebugRequestId();
     try {
-      const sUse = filterSince !== undefined ? filterSince : consumptionSince;
-      const tUse = filterUntil !== undefined ? filterUntil : consumptionUntil;
+      const sUse = overrides?.filterSince !== undefined ? overrides.filterSince : consumptionSince;
+      const tUse = overrides?.filterUntil !== undefined ? overrides.filterUntil : consumptionUntil;
+      const rPage = overrides?.rechargePage ?? rechargePage;
+      const cPage = overrides?.consumptionPage ?? consumptionPage;
       const qs = new URLSearchParams();
       if (sUse.trim()) qs.set("consumption_since", sUse.trim());
       if (tUse.trim()) qs.set("consumption_until", tUse.trim());
-      const mePath = qs.toString() ? `/api/subscription/me?${qs.toString()}` : "/api/subscription/me";
+      qs.set("recharge_page", String(rPage));
+      qs.set("recharge_page_size", String(WALLET_RECORD_PAGE_SIZE));
+      qs.set("consumption_page", String(cPage));
+      qs.set("consumption_page_size", String(WALLET_RECORD_PAGE_SIZE));
+      const mePath = `/api/subscription/me?${qs.toString()}`;
       const mr = await fetch(mePath, {
         headers: { ...getAuthHeaders(), "x-request-id": rid },
         cache: "no-store"
@@ -352,6 +382,8 @@ export default function SubscriptionPage() {
         success?: boolean;
         recharge_records?: RechargeRecordRow[];
         consumption_records?: ConsumptionRecordRow[];
+        recharge_pagination?: WalletRecordsPagination;
+        consumption_pagination?: WalletRecordsPagination;
         consumption_filtered_wallet_total_cents?: number | null;
         wallet_balance_cents?: number;
         experience?: {
@@ -368,7 +400,11 @@ export default function SubscriptionPage() {
           http_ok: mr.ok,
           success: Boolean(md.success),
           wallet_balance_cents: typeof md.wallet_balance_cents === "number" ? md.wallet_balance_cents : null,
-          recharge_records_len: Array.isArray(md.recharge_records) ? md.recharge_records.length : null
+          recharge_records_len: Array.isArray(md.recharge_records) ? md.recharge_records.length : null,
+          recharge_total:
+            typeof md.recharge_pagination?.total === "number" ? md.recharge_pagination.total : null,
+          consumption_total:
+            typeof md.consumption_pagination?.total === "number" ? md.consumption_pagination.total : null
         },
         rid,
         user
@@ -376,6 +412,16 @@ export default function SubscriptionPage() {
       if (mr.ok && md.success) {
         setRechargeRecords(Array.isArray(md.recharge_records) ? md.recharge_records : []);
         setConsumptionRecords(Array.isArray(md.consumption_records) ? md.consumption_records : []);
+        const rp = md.recharge_pagination;
+        if (rp && typeof rp === "object") {
+          if (typeof rp.page === "number" && Number.isFinite(rp.page)) setRechargePage(rp.page);
+          if (typeof rp.total === "number" && Number.isFinite(rp.total)) setRechargeTotal(rp.total);
+        }
+        const cp = md.consumption_pagination;
+        if (cp && typeof cp === "object") {
+          if (typeof cp.page === "number" && Number.isFinite(cp.page)) setConsumptionPage(cp.page);
+          if (typeof cp.total === "number" && Number.isFinite(cp.total)) setConsumptionTotal(cp.total);
+        }
         if (typeof md.consumption_filtered_wallet_total_cents === "number") {
           setConsumptionFilteredTotalCents(md.consumption_filtered_wallet_total_cents);
         } else {
@@ -413,7 +459,9 @@ export default function SubscriptionPage() {
         user
       );
     }
-  }, [getAuthHeaders, consumptionSince, consumptionUntil, user]);
+  },
+    [getAuthHeaders, consumptionSince, consumptionUntil, rechargePage, consumptionPage, user]
+  );
 
   const loadMeRef = useRef(loadMe);
   loadMeRef.current = loadMe;
@@ -689,12 +737,15 @@ export default function SubscriptionPage() {
     } catch {
       return;
     }
+    const beforeTotal = typeof p.rechargeTotalBefore === "number" ? p.rechargeTotalBefore : null;
     const beforeCount = typeof p.rechargeCountBefore === "number" ? p.rechargeCountBefore : null;
     const balanceIncreased =
       typeof p.balanceBeforeCents === "number" &&
       typeof walletBalanceCents === "number" &&
       walletBalanceCents > p.balanceBeforeCents;
-    const recordsIncreased = beforeCount !== null && rechargeRecords.length > beforeCount;
+    const recordsIncreased =
+      (beforeTotal !== null && rechargeTotal > beforeTotal) ||
+      (beforeTotal === null && beforeCount !== null && rechargeRecords.length > beforeCount);
     if (balanceIncreased || recordsIncreased) {
       try {
         sessionStorage.removeItem(WALLET_ALIPAY_PENDING_KEY);
@@ -707,15 +758,17 @@ export default function SubscriptionPage() {
         {
           balance_before_cents: p.balanceBeforeCents,
           balance_after_cents: walletBalanceCents,
+          recharge_total_before: beforeTotal,
+          recharge_total_after: rechargeTotal,
           recharge_count_before: beforeCount,
           recharge_count_after: rechargeRecords.length,
-          via: balanceIncreased ? "balance" : "recharge_records"
+          via: balanceIncreased ? "balance" : beforeTotal !== null ? "recharge_total" : "recharge_records"
         },
         undefined,
         user
       );
     }
-  }, [walletPayEnabled, walletBalanceCents, rechargeRecords.length, user]);
+  }, [walletPayEnabled, walletBalanceCents, rechargeTotal, rechargeRecords.length, user]);
 
   useEffect(() => {
     if (!rechargeModalOpen || !walletPayEnabled) return;
@@ -854,7 +907,7 @@ export default function SubscriptionPage() {
       );
       setMsg("余额已入账");
       setWalletCheckout(null);
-      await loadMe();
+      await loadMe({ rechargePage: 1 });
       await refreshMe();
       setRechargeModalOpen(false);
     } catch (err) {
@@ -946,7 +999,7 @@ export default function SubscriptionPage() {
         const payload: WalletAlipayPendingPayload = {
           startedAt: Date.now(),
           balanceBeforeCents: typeof walletBalanceCents === "number" ? walletBalanceCents : null,
-          rechargeCountBefore: rechargeRecords.length,
+          rechargeTotalBefore: rechargeTotal,
           outTradeNo: String(data.out_trade_no || "").trim() || undefined
         };
         sessionStorage.setItem(WALLET_ALIPAY_PENDING_KEY, JSON.stringify(payload));
@@ -982,6 +1035,8 @@ export default function SubscriptionPage() {
   }
 
   const topupAmountParse = parseTopupAmountCents();
+  const rechargeTotalPages = Math.max(1, Math.ceil(rechargeTotal / WALLET_RECORD_PAGE_SIZE));
+  const consumptionTotalPages = Math.max(1, Math.ceil(consumptionTotal / WALLET_RECORD_PAGE_SIZE));
 
   return (
     <main className="min-h-0 max-w-6xl">
@@ -999,16 +1054,20 @@ export default function SubscriptionPage() {
         className="mt-8 scroll-mt-24 rounded-xl border border-line bg-surface/60 p-5 shadow-sm"
         aria-labelledby="balance-billing-title"
       >
-        <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="space-y-1">
           <h2 id="balance-billing-title" className="text-base font-semibold text-ink">
             我的余额
           </h2>
-          <Link
-            href="/subscription/pricing-reference"
-            className="shrink-0 text-sm font-medium text-brand underline underline-offset-2 hover:opacity-90"
-          >
-            定价参考
-          </Link>
+          <p className="max-w-xl text-xs leading-relaxed text-muted">
+            下方为充值与消费流水。各功能单价与说明见{" "}
+            <Link
+              href="/subscription/pricing-reference"
+              className="font-medium text-brand underline underline-offset-2 hover:opacity-90"
+            >
+              定价参考
+            </Link>
+            ；充值弹窗内亦有简要扣费参考。
+          </p>
         </div>
         {walletPayEnabled ? (
           <>
@@ -1109,6 +1168,40 @@ export default function SubscriptionPage() {
               </tbody>
             </table>
           </div>
+          {walletPayEnabled ? (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+              <span className="tabular-nums">
+                第 {rechargePage} / {rechargeTotalPages} 页，共 {rechargeTotal} 条
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={rechargePage <= 1}
+                  onClick={() => {
+                    const p = Math.max(1, rechargePage - 1);
+                    setRechargePage(p);
+                    void loadMe({ rechargePage: p });
+                  }}
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={rechargePage >= rechargeTotalPages}
+                  onClick={() => {
+                    const p = Math.min(rechargeTotalPages, rechargePage + 1);
+                    if (p === rechargePage) return;
+                    setRechargePage(p);
+                    void loadMe({ rechargePage: p });
+                  }}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div>
@@ -1161,7 +1254,10 @@ export default function SubscriptionPage() {
             <button
               type="button"
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
-              onClick={() => void loadMe()}
+              onClick={() => {
+                setConsumptionPage(1);
+                void loadMe({ consumptionPage: 1 });
+              }}
             >
               应用筛选
             </button>
@@ -1171,7 +1267,8 @@ export default function SubscriptionPage() {
               onClick={() => {
                 setConsumptionSince("");
                 setConsumptionUntil("");
-                void loadMe("", "");
+                setConsumptionPage(1);
+                void loadMe({ filterSince: "", filterUntil: "", consumptionPage: 1 });
               }}
             >
               清除
@@ -1222,6 +1319,40 @@ export default function SubscriptionPage() {
               </tbody>
             </table>
           </div>
+          {walletPayEnabled ? (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+              <span className="tabular-nums">
+                第 {consumptionPage} / {consumptionTotalPages} 页，共 {consumptionTotal} 条
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={consumptionPage <= 1}
+                  onClick={() => {
+                    const p = Math.max(1, consumptionPage - 1);
+                    setConsumptionPage(p);
+                    void loadMe({ consumptionPage: p });
+                  }}
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={consumptionPage >= consumptionTotalPages}
+                  onClick={() => {
+                    const p = Math.min(consumptionTotalPages, consumptionPage + 1);
+                    if (p === consumptionPage) return;
+                    setConsumptionPage(p);
+                    void loadMe({ consumptionPage: p });
+                  }}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </section>
 

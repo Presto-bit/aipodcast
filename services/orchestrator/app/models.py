@@ -7841,10 +7841,38 @@ def _wallet_recharge_status_label_zh(status: str | None) -> str:
     return "处理中"
 
 
-def list_wallet_recharge_rows_for_phone(phone: str, limit: int = 80) -> list[dict[str, Any]]:
+def count_wallet_recharge_rows_for_phone(phone: str) -> int:
+    """钱包充值订单总数（与 list_wallet_recharge_rows_for_phone 过滤一致）。"""
+    p = (phone or "").strip()
+    if not p:
+        return 0
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return 0
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::bigint AS n
+                    FROM payment_orders
+                    WHERE user_id = %s::uuid
+                      AND COALESCE(product_snapshot->>'kind', raw->>'kind', '') = 'wallet_topup'
+                    """,
+                    (uid,),
+                )
+                row = cur.fetchone() or {}
+                return int(row.get("n") or 0)
+    except Exception:
+        logger.exception("count_wallet_recharge_rows_for_phone failed")
+        return 0
+
+
+def list_wallet_recharge_rows_for_phone(phone: str, limit: int = 80, *, offset: int = 0) -> list[dict[str, Any]]:
     """钱包充值订单（product_snapshot.kind = wallet_topup）；仅按 user_id 查询。"""
     p = (phone or "").strip()
     lim = max(1, min(200, int(limit)))
+    off = max(0, int(offset))
     if not p:
         return []
     try:
@@ -7869,9 +7897,9 @@ def list_wallet_recharge_rows_for_phone(phone: str, limit: int = 80) -> list[dic
                     WHERE user_id = %s::uuid
                       AND COALESCE(product_snapshot->>'kind', raw->>'kind', '') = 'wallet_topup'
                     ORDER BY COALESCE(paid_at, created_at) DESC NULLS LAST, created_at DESC
-                    LIMIT %s
+                    LIMIT %s OFFSET %s
                     """,
-                    (uid, lim),
+                    (uid, lim, off),
                 )
                 out: list[dict[str, Any]] = []
                 for row in cur.fetchall() or []:
@@ -7953,16 +7981,61 @@ def sum_wallet_consumption_wallet_cents_succeeded_for_phone(
         return 0
 
 
+def count_wallet_consumption_rows_for_phone(
+    phone: str,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> int:
+    """消费流水总行数（与 list_wallet_consumption_rows_for_phone 过滤一致）。"""
+    p = (phone or "").strip()
+    if not p:
+        return 0
+    since_eff = since or datetime(1970, 1, 1, tzinfo=timezone.utc)
+    until_eff = until or datetime(2099, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return 0
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::bigint AS n
+                    FROM job_events je
+                    INNER JOIN jobs j ON j.id = je.job_id
+                    LEFT JOIN projects p ON p.id = j.project_id
+                    WHERE je.event_type = 'log'
+                      AND (
+                        (je.message LIKE '已按预估语音分钟结算体验包与/或钱包%%' OR je.message LIKE '已按实际语音时长结算体验包与/或钱包%%')
+                        OR je.message LIKE '已结算脚本文本费用%%'
+                        OR je.message = '已从钱包扣除单次克隆费用'
+                      )
+                      AND COALESCE(j.created_by, p.user_id) = %s::uuid
+                      AND je.created_at >= %s::timestamptz
+                      AND je.created_at <= %s::timestamptz
+                    """,
+                    (uid, since_eff, until_eff),
+                )
+                row = cur.fetchone() or {}
+                return int(row.get("n") or 0)
+    except Exception:
+        logger.exception("count_wallet_consumption_rows_for_phone failed")
+        return 0
+
+
 def list_wallet_consumption_rows_for_phone(
     phone: str,
     limit: int = 80,
     *,
+    offset: int = 0,
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """job_events 中的体验包/钱包结算流水（与 RSS 计费检测口径一致）。"""
     p = (phone or "").strip()
     lim = max(1, min(200, int(limit)))
+    off = max(0, int(offset))
     if not p:
         return []
     since_eff = since or datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -7999,9 +8072,9 @@ def list_wallet_consumption_rows_for_phone(
                       AND je.created_at >= %s::timestamptz
                       AND je.created_at <= %s::timestamptz
                     ORDER BY je.created_at DESC
-                    LIMIT %s
+                    LIMIT %s OFFSET %s
                     """,
-                    (uid, since_eff, until_eff, lim),
+                    (uid, since_eff, until_eff, lim, off),
                 )
                 rows = [dict(x) for x in cur.fetchall() or []]
     except Exception:

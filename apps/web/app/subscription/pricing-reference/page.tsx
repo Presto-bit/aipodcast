@@ -3,19 +3,19 @@ import { PricingHero } from "../../../components/subscription/PricingHero";
 
 const ROWS: { type: string; price: string; features: string }[] = [
   {
-    type: "文本模型",
-    price: "输出 1 元 / 万字",
-    features: "生成文章，播客文案，Shownotes 等需要文本模型输出的内容"
-  },
-  {
     type: "文本转语音 / TTS",
     price: "0.25 元 / 分钟",
     features: "生成播客"
   },
   {
     type: "语音识别 / ASR",
-    price: "4.9 元 / 小时",
-    features: "音频剪辑中的转写功能"
+    price: "约 0.082 元 / 分钟",
+    features: "音频剪辑中的转写功能（按输入音频时长计，结算向上取整到分）"
+  },
+  {
+    type: "文本模型",
+    price: "输出 1 元 / 万字",
+    features: "生成文章，播客文案，Shownotes 等需要文本模型输出的内容"
   },
   {
     type: "语音克隆",

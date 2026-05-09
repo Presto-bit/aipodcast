@@ -51,6 +51,12 @@ def _asr_wallet_cents_per_hour_resolved() -> int:
     return max(1, int(ASR_WALLET_CENTS_PER_AUDIO_HOUR))
 
 
+def asr_wallet_yuan_per_minute_for_display() -> float:
+    """与用户展示的「元/分钟」口径一致（由当前每小时单价换算，保留三位小数）。"""
+    rate = float(_asr_wallet_cents_per_hour_resolved())
+    return round(rate / 60.0 / 100.0, 3)
+
+
 def wallet_cents_for_asr_audio_seconds(audio_seconds: float) -> int:
     """剪辑转写：按音频秒数 linear 折算到每小时单价（分），至少 1 分（秒数 > 0）。"""
     try:

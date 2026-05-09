@@ -66,6 +66,24 @@ def _wallet_reconcile_pending_body(*, bal: int, last_apply_reason: str, pending_
 router = APIRouter(prefix="/api/v1/subscription", tags=["subscription"], dependencies=[Depends(verify_internal_signature)])
 
 
+def _wallet_table_page_params(request: Request, prefix: str) -> tuple[int, int, int]:
+    """解析充值/消费表格分页：{prefix}_page（默认 1）、{prefix}_page_size（默认 10，上限 50）。返回 (page, page_size, offset)。"""
+    raw_page = (request.query_params.get(f"{prefix}_page") or "1").strip()
+    raw_sz = (request.query_params.get(f"{prefix}_page_size") or "10").strip()
+    try:
+        page = int(raw_page)
+    except ValueError:
+        page = 1
+    try:
+        page_size = int(raw_sz)
+    except ValueError:
+        page_size = 10
+    page = max(1, page)
+    page_size = max(1, min(50, page_size))
+    offset = (page - 1) * page_size
+    return page, page_size, offset
+
+
 def _consumption_range_from_request(request: Request) -> tuple[datetime | None, datetime | None, bool]:
     """
     解析消费记录筛选：consumption_since / consumption_until（YYYY-MM-DD）。
@@ -127,6 +145,8 @@ def subscription_me_api(request: Request):
             },
             "recharge_records": [],
             "consumption_records": [],
+            "recharge_pagination": {"page": 1, "page_size": 10, "total": 0},
+            "consumption_pagination": {"page": 1, "page_size": 10, "total": 0},
         }
     sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
     if not sess:
@@ -136,11 +156,14 @@ def subscription_me_api(request: Request):
     for k in ("plan", "acct_tier", "billing_cycle"):
         info.pop(k, None)
     bal = models.wallet_balance_cents_for_phone(phone)
-    recharge = models.list_wallet_recharge_rows_for_phone(phone, 80)
+    rp, rsz, roff = _wallet_table_page_params(request, "recharge")
+    cp, csz, coff = _wallet_table_page_params(request, "consumption")
+    recharge_total = models.count_wallet_recharge_rows_for_phone(phone)
+    recharge = models.list_wallet_recharge_rows_for_phone(phone, rsz, offset=roff)
     since_f, until_f, consumption_sum_enabled = _consumption_range_from_request(request)
-    lim_cons = 200 if consumption_sum_enabled else 80
+    consumption_total = models.count_wallet_consumption_rows_for_phone(phone, since=since_f, until=until_f)
     consumption = models.list_wallet_consumption_rows_for_phone(
-        phone, lim_cons, since=since_f, until=until_f
+        phone, csz, offset=coff, since=since_f, until=until_f
     )
     consumption_filtered_wallet_total_cents: int | None = None
     if consumption_sum_enabled and since_f is not None and until_f is not None:
@@ -165,6 +188,8 @@ def subscription_me_api(request: Request):
         "experience": experience_body,
         "recharge_records": recharge,
         "consumption_records": consumption,
+        "recharge_pagination": {"page": rp, "page_size": rsz, "total": recharge_total},
+        "consumption_pagination": {"page": cp, "page_size": csz, "total": consumption_total},
         "consumption_filtered_wallet_total_cents": consumption_filtered_wallet_total_cents,
     }
 
