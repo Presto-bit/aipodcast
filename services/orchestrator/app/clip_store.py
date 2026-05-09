@@ -1388,6 +1388,83 @@ def update_clip_transcribe_failed(*, project_id: str, user_uuid: str | None, mes
             return n > 0
 
 
+def update_clip_transcript_normalized_only(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+    normalized: dict[str, Any],
+) -> bool:
+    """仅更新 transcript_normalized（重排后按分段缓存重拼稿面，不动转写状态）。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            sql = """
+                UPDATE clip_projects
+                SET transcript_normalized = %s::jsonb, updated_at = NOW()
+                WHERE id = %s::uuid
+                """
+            params: list[Any] = [json.dumps(normalized, ensure_ascii=False), pid]
+            if uid:
+                sql += " AND user_id = %s::uuid"
+                params.append(uid)
+            else:
+                sql += " AND user_id IS NULL"
+            cur.execute(sql, tuple(params))
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
+def clear_clip_merged_main_audio_when_using_segments(
+    *,
+    project_id: str,
+    user_uuid: str | None,
+) -> bool:
+    """
+    存在非空 audio_source_segments 时清空合并主轨字段（方案三：编辑期不保留整轨 object key）。
+    """
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_object_key = NULL,
+                        audio_filename = NULL,
+                        audio_mime = NULL,
+                        audio_size_bytes = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                      AND jsonb_array_length(COALESCE(audio_source_segments, '[]'::jsonb)) > 0
+                    """,
+                    (pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET audio_object_key = NULL,
+                        audio_filename = NULL,
+                        audio_mime = NULL,
+                        audio_size_bytes = NULL,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                      AND jsonb_array_length(COALESCE(audio_source_segments, '[]'::jsonb)) > 0
+                    """,
+                    (pid,),
+                )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
 def update_clip_project_meta(
     *,
     project_id: str,

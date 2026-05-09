@@ -19,7 +19,12 @@ from fastapi.responses import Response, StreamingResponse
 
 from .. import auth_bridge
 from ..clip_audio_merge import clip_merge_limits, ffprobe_audio_channels
-from ..clip_merge_scheduler import merge_immediate, schedule_merge_after_reorder
+from ..clip_merge_scheduler import merge_immediate
+from ..clip_segment_transcript import (
+    parse_audio_source_segments,
+    parse_segment_transcript_cache,
+    stitch_cached_segment_transcripts,
+)
 from ..clip_audio_repair import (
     repair_ambient_to_mp3,
     repair_dual_stereo_balance_to_mp3,
@@ -62,9 +67,12 @@ from ..clip_store import (
     update_clip_silence_analysis,
     update_clip_timeline_json,
     update_qc_report,
+    update_clip_transcript_normalized_only,
+    clear_clip_merged_main_audio_when_using_segments,
 )
 from ..clip_loudness_qc import analyze_loudness_from_file
 from ..clip_timeline import build_timeline_v1_from_row
+from ..clip_timeline_audio import concat_ordered_source_segments_to_bytes
 from ..models import resolved_user_uuid_string
 from ..clip_silence_detect import detect_silence_segments_from_file
 from ..object_store import (
@@ -226,6 +234,34 @@ def _material_segments_from_row(row: dict[str, Any]) -> list[dict[str, Any]]:
     if src:
         return src
     return stg
+
+
+def _clip_retime_transcript_after_segments_change(*, project_id: str, uid: str | None) -> None:
+    """
+    方案三：分段顺序/列表变化后，用 audio_segment_transcripts 缓存重拼 transcript_normalized；
+    并丢弃合并主轨 object key（编辑期以分段为真源）。
+    """
+    clear_clip_merged_main_audio_when_using_segments(project_id=project_id, user_uuid=uid)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        return
+    if str(row.get("transcription_status") or "").strip() != "succeeded":
+        return
+    segments = parse_audio_source_segments(row)
+    if len(segments) < 1:
+        return
+    cache = parse_segment_transcript_cache(row)
+    merged = stitch_cached_segment_transcripts(segments, cache)
+    if merged is None:
+        logger.info(
+            "clip retime_transcript_skip stitch incomplete project_id=%s segments=%s",
+            project_id,
+            len(segments),
+        )
+        return
+    update_clip_transcript_normalized_only(
+        project_id=project_id, user_uuid=uid, normalized=merged
+    )
 
 
 async def _clip_run_audio_merge_for_project(*, project_id: str, uid: str | None) -> dict[str, Any]:
@@ -407,7 +443,9 @@ def _serialize_clip_row(row: dict[str, Any]) -> dict[str, Any]:
     d.pop("audio_segment_transcripts", None)
     d["clip_merge_limits"] = clip_merge_limits()
     d["clip_asr_provider"] = "volc_seed"
-    d["has_audio"] = bool(str(d.get("audio_object_key") or "").strip())
+    src_seg = d.get("audio_source_segments")
+    n_src = len(src_seg) if isinstance(src_seg, list) else 0
+    d["has_audio"] = bool(str(d.get("audio_object_key") or "").strip()) or n_src > 0
     if d.get("audio_object_key"):
         try:
             d["audio_download_url"] = presigned_get_url(str(d["audio_object_key"]), expires_in=3600)
@@ -795,7 +833,13 @@ async def clip_repair_source_audio(project_id: str, request: Request, body: dict
     if t_st in ("running", "queued"):
         raise HTTPException(status_code=409, detail="转写进行中，请稍后再试修音")
     old_key = str(row.get("audio_object_key") or "").strip()
+    segs_rep = parse_audio_source_segments(row)
     if not old_key:
+        if segs_rep:
+            raise HTTPException(
+                status_code=400,
+                detail="多段未合并主轨时暂不支持修音；请先调用「合并主轨」接口或单段素材后再试。",
+            )
         raise HTTPException(status_code=400, detail="无主素材音频")
     owner_seg = uid or "anon"
     try:
@@ -893,17 +937,14 @@ async def clip_stage_audio_segment(project_id: str, request: Request):
     if not ok:
         delete_object_key(sk)
         raise HTTPException(status_code=400, detail="无法追加分段（可能超过段数上限）")
-    try:
-        serialized = await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
-    except Exception:
-        logger.exception("clip stage auto-merge failed project_id=%s", project_id)
-        raise
-    return {"success": True, "project": serialized}
+    _clip_retime_transcript_after_segments_change(project_id=project_id, uid=uid)
+    row2 = get_clip_project(project_id=project_id, user_uuid=uid)
+    return {"success": True, "project": _serialize_clip_row(row2 or {})}
 
 
 @router.post("/clip/projects/{project_id}/audio/staging/reorder")
 async def clip_reorder_staged_audio(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
-    """调整分段合并顺序（audio_source_segments 或旧版 staging）；成功后自动重新合并主音频。"""
+    """调整分段顺序（audio_source_segments：重拼稿面；旧版 staging：仍自动合并主轨）。"""
     uid = _owner_uuid(request)
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
@@ -923,7 +964,11 @@ async def clip_reorder_staged_audio(project_id: str, request: Request, body: dic
         raise HTTPException(status_code=400, detail="当前无可重排的分段")
     if not ok:
         raise HTTPException(status_code=400, detail="无法重排：与当前分段 key 集合不一致")
-    await schedule_merge_after_reorder(project_id, uid)
+    row_mid = get_clip_project(project_id=project_id, user_uuid=uid) or {}
+    if _source_segments_from_row(row_mid):
+        _clip_retime_transcript_after_segments_change(project_id=project_id, uid=uid)
+    else:
+        await merge_immediate(project_id, uid)
     row_out = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row_out or {})}
 
@@ -978,7 +1023,7 @@ async def clip_remove_audio_source_segment(project_id: str, request: Request, bo
         user_uuid=uid,
         keep_keys=[str(s.get("key") or "").strip() for s in new_list if str(s.get("key") or "").strip()],
     )
-    await _clip_run_audio_merge_for_project(project_id=project_id, uid=uid)
+    _clip_retime_transcript_after_segments_change(project_id=project_id, uid=uid)
     row_out = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row_out or {})}
 
@@ -1041,8 +1086,9 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
         raise HTTPException(status_code=404, detail="工程不存在")
     if str(row.get("transcription_status") or "").strip() != "succeeded":
         raise HTTPException(status_code=400, detail="转写未完成，无法生成试听")
+    segs_wc = parse_audio_source_segments(row)
     audio_key = str(row.get("audio_object_key") or "").strip()
-    if not audio_key:
+    if not audio_key and len(segs_wc) < 1:
         raise HTTPException(status_code=400, detail="无主素材音频")
     norm = row.get("transcript_normalized")
     if isinstance(norm, str):
@@ -1082,7 +1128,10 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
     tl_doc = row.get("timeline_json")
     silence_cuts = _silence_cut_ranges_from_timeline_doc(tl_doc)
     try:
-        raw = get_object_bytes(audio_key)
+        if segs_wc:
+            raw = concat_ordered_source_segments_to_bytes(segs_wc)
+        else:
+            raw = get_object_bytes(audio_key)
         out = export_clip_mp3_from_bytes(
             audio_bytes=raw,
             normalized=norm,
@@ -1234,7 +1283,9 @@ def clip_get_project_silences(project_id: str, request: Request):
     if not row:
         raise HTTPException(status_code=404, detail="工程不存在")
     key = str(row.get("audio_object_key") or "").strip()
-    if not key:
+    segs_sd = parse_audio_source_segments(row)
+    cache_key = key or "|".join(str(s.get("key") or "").strip() for s in segs_sd)
+    if not cache_key:
         raise HTTPException(status_code=400, detail="无音频")
     sa = row.get("silence_analysis")
     if isinstance(sa, str):
@@ -1242,17 +1293,23 @@ def clip_get_project_silences(project_id: str, request: Request):
             sa = json.loads(sa)
         except Exception:
             sa = None
-    if isinstance(sa, dict) and str(sa.get("object_key") or "").strip() == key:
+    if isinstance(sa, dict) and str(sa.get("object_key") or "").strip() == cache_key:
         segs = sa.get("segments")
         if isinstance(segs, list) and segs:
             return {"success": True, "segments": segs, "cached": True}
     try:
-        raw = get_object_bytes(key)
+        if key:
+            raw = get_object_bytes(key)
+            suf = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
+        elif segs_sd:
+            raw = concat_ordered_source_segments_to_bytes(segs_sd)
+            suf = ".m4a"
+        else:
+            raise HTTPException(status_code=400, detail="无音频")
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"读取音频失败: {exc}") from exc
     if not raw or len(raw) < 32:
         raise HTTPException(status_code=400, detail="音频数据无效")
-    suf = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
     try:
         with tempfile.NamedTemporaryFile(prefix="fyv_clip_sd_", suffix=suf, delete=True) as tf:
             tf.write(raw)
@@ -1261,7 +1318,7 @@ def clip_get_project_silences(project_id: str, request: Request):
     except Exception as exc:
         logger.warning("clip silence_detect failed project_id=%s err=%s", project_id, exc)
         raise HTTPException(status_code=503, detail=str(exc)[:500]) from exc
-    analysis = {"object_key": key, "segments": segs}
+    analysis = {"object_key": cache_key, "segments": segs}
     update_clip_silence_analysis(project_id=project_id, user_uuid=uid, analysis=analysis)
     return {"success": True, "segments": segs, "cached": False}
 
@@ -1434,15 +1491,20 @@ def clip_post_qc_analyze(project_id: str, request: Request):
     if not row:
         raise HTTPException(status_code=404, detail="工程不存在")
     key = str(row.get("audio_object_key") or "").strip()
-    if not key:
+    segs_qc = parse_audio_source_segments(row)
+    if not key and not segs_qc:
         raise HTTPException(status_code=400, detail="无音频")
     try:
-        raw = get_object_bytes(key)
+        if key:
+            raw = get_object_bytes(key)
+            suf = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
+        else:
+            raw = concat_ordered_source_segments_to_bytes(segs_qc)
+            suf = ".m4a"
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"读取音频失败: {exc}") from exc
     if not raw or len(raw) < 32:
         raise HTTPException(status_code=400, detail="音频数据无效")
-    suf = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
     loud: dict[str, Any] = {}
     try:
         with tempfile.NamedTemporaryFile(prefix="fyv_clip_qc_", suffix=suf, delete=True) as tf:
@@ -1496,7 +1558,7 @@ def clip_post_audio_events_analyze(project_id: str, request: Request):
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
         raise HTTPException(status_code=404, detail="工程不存在")
-    if not str(row.get("audio_object_key") or "").strip():
+    if not str(row.get("audio_object_key") or "").strip() and len(parse_audio_source_segments(row)) < 1:
         raise HTTPException(status_code=400, detail="无主素材音频")
     try:
         rq_job = ai_queue.enqueue(run_clip_audio_events_job, project_id, job_timeout="30m")
@@ -1536,8 +1598,10 @@ async def clip_start_transcribe(project_id: str, request: Request):
             status_code=400,
             detail="仍有多段暂存未合并，请等待自动合并完成或刷新后再转写。",
         )
-    if not str(row.get("audio_object_key") or "").strip():
-        raise HTTPException(status_code=400, detail="请先上传音频或完成多段合并")
+    segs = _source_segments_from_row(row)
+    has_main = bool(str(row.get("audio_object_key") or "").strip())
+    if not has_main and len(segs) < 1:
+        raise HTTPException(status_code=400, detail="请先上传音频")
     if not volc_seed_auth_configured():
         raise HTTPException(
             status_code=503,

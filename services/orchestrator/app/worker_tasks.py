@@ -1391,6 +1391,7 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
 
     from .clip_audio_merge import ffprobe_audio_channels
     from .clip_segment_transcript import (
+        annotate_words_with_main_segment_fields,
         list_missing_segment_keys,
         parse_audio_source_segments,
         parse_segment_transcript_cache,
@@ -1432,23 +1433,39 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
         clear_clip_audio_segment_transcripts(project_id=pid, user_uuid=owner)
         row = get_clip_project_by_id(pid) or row
 
+    segments = parse_audio_source_segments(row)
     audio_key = str(row.get("audio_object_key") or "").strip()
-    if not audio_key:
-        update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message="未上传音频")
-        return {"status": "failed", "error": "no_audio"}
+    audio_bytes: bytes | None = None
 
-    try:
-        audio_bytes = get_object_bytes(audio_key)
-    except Exception as exc:
-        update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=f"读取音频失败: {exc}")
-        return {"status": "failed", "error": "read_audio"}
+    if segments:
+        first_key = str(segments[0].get("key") or "").strip()
+        if not first_key:
+            update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message="分段 key 无效")
+            return {"status": "failed", "error": "no_audio"}
+        try:
+            probe_bytes = get_object_bytes(first_key)
+        except Exception as exc:
+            update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=f"读取首段音频失败: {exc}")
+            return {"status": "failed", "error": "read_audio"}
+        probe_suffix = Path(str(segments[0].get("filename") or "clip.bin")).suffix or ".bin"
+        probe_payload = probe_bytes
+    else:
+        if not audio_key:
+            update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message="未上传音频")
+            return {"status": "failed", "error": "no_audio"}
+        try:
+            audio_bytes = get_object_bytes(audio_key)
+        except Exception as exc:
+            update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=f"读取音频失败: {exc}")
+            return {"status": "failed", "error": "read_audio"}
+        probe_suffix = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
+        probe_payload = audio_bytes
 
     try:
         import tempfile
 
-        suf = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
-        with tempfile.NamedTemporaryFile(prefix="fyv_clip_tr_probe_", suffix=suf, delete=True) as tf:
-            tf.write(audio_bytes)
+        with tempfile.NamedTemporaryFile(prefix="fyv_clip_tr_probe_", suffix=probe_suffix, delete=True) as tf:
+            tf.write(probe_payload)
             tf.flush()
             nch = ffprobe_audio_channels(Path(tf.name))
             ch_auto = [0, 1] if nch >= 2 else [0]
@@ -1497,8 +1514,6 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
                 corpus_hw.append(s)
     sc_raw = row.get("asr_corpus_scene")
     corpus_scene = str(sc_raw).strip() if isinstance(sc_raw, str) and str(sc_raw).strip() else None
-
-    segments = parse_audio_source_segments(row)
 
     try:
         import uuid as _uuid
@@ -1646,6 +1661,9 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
                 speaker_hint=int(row.get("speaker_count") or 2),
                 channel_ids=channel_ids,
             )
+        normalized = annotate_words_with_main_segment_fields(
+            normalized, audio_object_key=audio_key
+        )
         update_clip_transcribe_succeeded(
             project_id=pid,
             user_uuid=owner,
@@ -1663,6 +1681,7 @@ def run_clip_transcription_job(project_id: str, force_retranscribe: bool = False
 
 def run_clip_export_job(project_id: str) -> dict[str, Any]:
     from .clip_export import export_clip_mp3_from_bytes, resolve_export_loudnorm_i_lufs
+    from .clip_segment_transcript import parse_audio_source_segments
     from .clip_store import (
         get_clip_project_by_id,
         try_claim_clip_export_queued,
@@ -1670,6 +1689,7 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
         update_clip_export_running,
         update_clip_export_succeeded,
     )
+    from .clip_timeline_audio import concat_ordered_source_segments_to_bytes
     from .object_store import get_object_bytes, upload_bytes
 
     pid = (project_id or "").strip()
@@ -1711,6 +1731,7 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
         return {"status": "skipped", "reason": "export_running_guard"}
 
     audio_key = str(row.get("audio_object_key") or "").strip()
+    source_segs = parse_audio_source_segments(row)
     try:
         merge_gap_ms = max(0, int(os.getenv("CLIP_EXPORT_MERGE_GAP_MS") or "120"))
     except (TypeError, ValueError):
@@ -1754,7 +1775,13 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
                         cap = 0
                     silence_cuts.append((s, e, max(0, min(10_000, cap))))
     try:
-        b = get_object_bytes(audio_key)
+        if source_segs:
+            b = concat_ordered_source_segments_to_bytes(source_segs)
+        elif audio_key:
+            b = get_object_bytes(audio_key)
+        else:
+            update_clip_export_failed(project_id=pid, user_uuid=owner, message="无主素材音频")
+            return {"status": "failed", "error": "no_audio"}
         out = export_clip_mp3_from_bytes(
             audio_bytes=b,
             normalized=norm,
@@ -1779,7 +1806,9 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
 
 def run_clip_audio_events_job(project_id: str) -> dict[str, Any]:
     from .clip_audio_events import detect_audio_events_from_file
+    from .clip_segment_transcript import parse_audio_source_segments
     from .clip_store import get_clip_project_by_id, update_clip_timeline_json
+    from .clip_timeline_audio import concat_ordered_source_segments_to_bytes
     from .object_store import get_object_bytes
 
     pid = (project_id or "").strip()
@@ -1788,8 +1817,7 @@ def run_clip_audio_events_job(project_id: str) -> dict[str, Any]:
         return {"status": "failed", "error": "project_not_found"}
     owner = _clip_owner_uuid_str(row.get("user_id"))
     audio_key = str(row.get("audio_object_key") or "").strip()
-    if not audio_key:
-        return {"status": "failed", "error": "no_audio"}
+    segs = parse_audio_source_segments(row)
 
     tl = row.get("timeline_json")
     if isinstance(tl, str):
@@ -1803,8 +1831,14 @@ def run_clip_audio_events_job(project_id: str) -> dict[str, Any]:
         from pathlib import Path
         import tempfile
 
-        raw = get_object_bytes(audio_key)
-        suffix = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
+        if audio_key:
+            raw = get_object_bytes(audio_key)
+            suffix = Path(str(row.get("audio_filename") or "clip.bin")).suffix or ".bin"
+        elif segs:
+            raw = concat_ordered_source_segments_to_bytes(segs)
+            suffix = ".m4a"
+        else:
+            return {"status": "failed", "error": "no_audio"}
         with tempfile.NamedTemporaryFile(prefix="fyv_aed_src_", suffix=suffix, delete=True) as tf:
             tf.write(raw)
             tf.flush()

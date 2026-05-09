@@ -117,6 +117,8 @@ export type ClipProjectRow = {
   /** 火山 ASR 场景/上下文（dialog_ctx），转写 submit 时传入 */
   asr_corpus_scene?: string | null;
   has_audio?: boolean;
+  /** 合并主轨 object key；方案三下多段时可为空 */
+  audio_object_key?: string | null;
   audio_staging_count?: number;
   audio_staging_keys?: ClipAudioStagingEntry[];
   /** 合并后主音仍对应的多段源（持久顺序）；优先于 audio_staging_keys 展示 */
@@ -156,6 +158,10 @@ export type ClipProjectRow = {
 
 export type ClipWord = {
   id: string;
+  /** 方案三：所属分段 object key；与 s_seg_ms 一起为段内真源 */
+  seg_key?: string;
+  s_seg_ms?: number;
+  e_seg_ms?: number;
   speaker: number;
   text: string;
   s_ms: number;

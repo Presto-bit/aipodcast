@@ -42,6 +42,8 @@ import {
   wordIdsBetweenInclusive
 } from "../../lib/prestoFlowTranscript";
 import ClipWaveformPanel, { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
+import ClipVirtualAudioTransport from "../clip/ClipVirtualAudioTransport";
+import { buildVirtualAudioCues } from "../../lib/clipVirtualTimeline";
 import AudioConsole from "./AudioConsole";
 import ClipStagingTracksBar from "./ClipStagingTracksBar";
 import ClipExportQcGateModal from "./ClipExportQcGateModal";
@@ -1014,25 +1016,52 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     project?.export_status === "running" ||
     project?.export_status === "queued";
 
-  /** 有主音频文件即可走同源 /audio/file；避免仅 has_audio 未回写时无法试听 */
-  const hasServerAudio =
-    Boolean(project?.has_audio) ||
-    Boolean(project?.audio_download_url) ||
-    Boolean(project?.audio_filename);
-  const masterAudioUrl = hasServerAudio
-    ? `/api/clip/projects/${encodeURIComponent(projectId)}/audio/file`
-    : undefined;
-  const waveformAudioUrl =
-    wordchainPreviewOn && hasServerAudio
-      ? `/api/clip/projects/${encodeURIComponent(projectId)}/audio/wordchain-preview?cb=${wordchainPreviewNonce}`
-      : masterAudioUrl;
-
   const audioStagingEntries = useMemo(() => {
     const src = project?.audio_source_segments;
     const st = project?.audio_staging_keys;
     if (Array.isArray(src) && src.length > 0) return src;
     return Array.isArray(st) ? st : [];
   }, [project?.audio_source_segments, project?.audio_staging_keys]);
+
+  const mergedObjectKey = useMemo(() => String(project?.audio_object_key ?? "").trim(), [project?.audio_object_key]);
+
+  const virtualAudioCues = useMemo(
+    () =>
+      buildVirtualAudioCues(
+        projectId,
+        audioStagingEntries,
+        words,
+        project?.transcript_normalized?.duration_ms ?? 0
+      ),
+    [projectId, audioStagingEntries, words, project?.transcript_normalized?.duration_ms]
+  );
+
+  const useVirtualMultiSegmentPlayback = mergedObjectKey.length === 0 && audioStagingEntries.length > 1;
+
+  const singleSegmentFileUrl =
+    mergedObjectKey.length === 0 && audioStagingEntries.length === 1
+      ? `/api/clip/projects/${encodeURIComponent(projectId)}/audio/source-segment/file?object_key=${encodeURIComponent(
+          String(audioStagingEntries[0]!.key || "")
+        )}`
+      : undefined;
+
+  /** 有合并主轨、或至少一段素材即可试听 */
+  const hasServerAudio =
+    mergedObjectKey.length > 0 ||
+    audioStagingEntries.length > 0 ||
+    Boolean(project?.has_audio) ||
+    Boolean(project?.audio_download_url) ||
+    Boolean(project?.audio_filename);
+
+  const masterAudioUrl =
+    mergedObjectKey.length > 0
+      ? `/api/clip/projects/${encodeURIComponent(projectId)}/audio/file`
+      : undefined;
+
+  const waveformAudioUrl =
+    wordchainPreviewOn && hasServerAudio
+      ? `/api/clip/projects/${encodeURIComponent(projectId)}/audio/wordchain-preview?cb=${wordchainPreviewNonce}`
+      : masterAudioUrl ?? singleSegmentFileUrl;
 
   const generateWordchainPreview = useCallback(async () => {
     if (!ensureLoggedInForAction("词链试听", "presto.wordchain.preview")) return;
@@ -3215,23 +3244,36 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         repairBusyKind={prdRepairBusyKind}
                       />
                     ) : null}
-                    {usePrdLayout && waveformAudioUrl ? (
+                    {usePrdLayout && (waveformAudioUrl || useVirtualMultiSegmentPlayback) ? (
                       <div
                         className="pointer-events-none fixed bottom-0 left-[-12000px] z-[-1] h-[80px] w-[1200px] overflow-hidden opacity-0"
                         aria-hidden
                       >
-                        <ClipWaveformPanel
-                          ref={waveformRef}
-                          variant="panel"
-                          waveHeight={72}
-                          audioUrl={waveformAudioUrl}
-                          onTimeMs={handlePlaybackTimeMs}
-                          onLoadError={handleWaveformLoadError}
-                          playbackRate={playbackRate}
-                          snapSeekMs={snapSeekMs}
-                          zoomLevel={waveZoomLevel}
-                          className="!border-0 !bg-transparent"
-                        />
+                        {useVirtualMultiSegmentPlayback && !wordchainPreviewOn ? (
+                          <ClipVirtualAudioTransport
+                            key={`v:${virtualAudioCues.map((c) => c.objectKey).join("|")}`}
+                            ref={waveformRef}
+                            cues={virtualAudioCues}
+                            onTimeMs={handlePlaybackTimeMs}
+                            onLoadError={handleWaveformLoadError}
+                            playbackRate={playbackRate}
+                            snapSeekMs={snapSeekMs}
+                            className="!border-0 !bg-transparent"
+                          />
+                        ) : waveformAudioUrl ? (
+                          <ClipWaveformPanel
+                            ref={waveformRef}
+                            variant="panel"
+                            waveHeight={72}
+                            audioUrl={waveformAudioUrl}
+                            onTimeMs={handlePlaybackTimeMs}
+                            onLoadError={handleWaveformLoadError}
+                            playbackRate={playbackRate}
+                            snapSeekMs={snapSeekMs}
+                            zoomLevel={waveZoomLevel}
+                            className="!border-0 !bg-transparent"
+                          />
+                        ) : null}
                       </div>
                     ) : null}
                     {!usePrdLayout ? (
@@ -3260,7 +3302,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         </div>
                       ) : null}
                       <div className="mb-2 h-[69px] overflow-hidden rounded-lg border border-line bg-track/40">
-                        {waveformAudioUrl ? (
+                        {waveformAudioUrl || useVirtualMultiSegmentPlayback ? (
                           <div className="group relative h-full w-full">
                             {!usePrdLayout ? (
                               <button
@@ -3279,18 +3321,31 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                                 </span>
                               </button>
                             ) : null}
-                            <ClipWaveformPanel
-                              ref={waveformRef}
-                              variant="panel"
-                              waveHeight={72}
-                              audioUrl={waveformAudioUrl}
-                              onTimeMs={handlePlaybackTimeMs}
-                              onLoadError={handleWaveformLoadError}
-                              playbackRate={playbackRate}
-                              snapSeekMs={snapSeekMs}
-                              zoomLevel={waveZoomLevel}
-                              className="!border-0 !bg-transparent"
-                            />
+                            {useVirtualMultiSegmentPlayback && !wordchainPreviewOn ? (
+                              <ClipVirtualAudioTransport
+                                key={`v:${virtualAudioCues.map((c) => c.objectKey).join("|")}`}
+                                ref={waveformRef}
+                                cues={virtualAudioCues}
+                                onTimeMs={handlePlaybackTimeMs}
+                                onLoadError={handleWaveformLoadError}
+                                playbackRate={playbackRate}
+                                snapSeekMs={snapSeekMs}
+                                className="!border-0 !bg-transparent"
+                              />
+                            ) : waveformAudioUrl ? (
+                              <ClipWaveformPanel
+                                ref={waveformRef}
+                                variant="panel"
+                                waveHeight={72}
+                                audioUrl={waveformAudioUrl}
+                                onTimeMs={handlePlaybackTimeMs}
+                                onLoadError={handleWaveformLoadError}
+                                playbackRate={playbackRate}
+                                snapSeekMs={snapSeekMs}
+                                zoomLevel={waveZoomLevel}
+                                className="!border-0 !bg-transparent"
+                              />
+                            ) : null}
                             {!usePrdLayout ? (
                               <>
                                 <div className="pointer-events-none absolute inset-0 z-[2]">

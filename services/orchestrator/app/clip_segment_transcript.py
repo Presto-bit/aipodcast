@@ -2,9 +2,59 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from typing import Any
+
+
+def stable_stitched_word_id(seg_key: str, inner_wid: str) -> str:
+    """
+    与分段顺序无关的稳定词 id（重排不重算 excluded_word_ids）。
+    格式 w{sha1(seg_key)[:12]}:{inner}
+    """
+    inner = (inner_wid or "").strip() or uuid.uuid4().hex[:12]
+    h = hashlib.sha1(seg_key.encode("utf-8")).hexdigest()[:12]
+    return f"w{h}:{inner}"[:200]
+
+
+def _canonical_inner_word_id_for_stitch(inner: str) -> str:
+    """去掉历史拼接前缀 s{段序}:，便于与 ASR 原始词 id 对齐。"""
+    w = (inner or "").strip()
+    if len(w) >= 3 and w[0] == "s" and w[1].isdigit() and ":" in w:
+        return w.split(":", 1)[-1].strip() or uuid.uuid4().hex[:10]
+    return w or uuid.uuid4().hex[:10]
+
+
+def annotate_words_with_main_segment_fields(
+    normalized: dict[str, Any],
+    *,
+    audio_object_key: str,
+) -> dict[str, Any]:
+    """单文件转写：为每个词写入 seg_key / 段内时间，与多段 stitch 结构一致。"""
+    k = (audio_object_key or "").strip()
+    if not k or not isinstance(normalized, dict):
+        return normalized
+    words = normalized.get("words")
+    if not isinstance(words, list):
+        return normalized
+    out: list[dict[str, Any]] = []
+    for w in words:
+        if not isinstance(w, dict):
+            continue
+        nw = dict(w)
+        try:
+            s0 = int(nw.get("s_ms") or 0)
+            e0 = int(nw.get("e_ms") or s0)
+        except (TypeError, ValueError):
+            s0, e0 = 0, 0
+        nw["seg_key"] = k
+        nw["s_seg_ms"] = s0
+        nw["e_seg_ms"] = e0
+        out.append(nw)
+    next_norm = dict(normalized)
+    next_norm["words"] = out
+    return next_norm
 
 
 def parse_audio_source_segments(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -107,9 +157,14 @@ def stitch_cached_segment_transcripts(
                 s0, e0 = 0, 0
             wid = str(w.get("id") or "").strip()
             nw = dict(w)
+            # 方案三：段内时间为真源；全局 ms 为派生（与虚拟整轨对齐）
+            nw["seg_key"] = k
+            nw["s_seg_ms"] = s0
+            nw["e_seg_ms"] = e0
             nw["s_ms"] = s0 + offset
             nw["e_ms"] = e0 + offset
-            nw["id"] = f"s{si}:{wid}" if wid else f"s{si}:{uuid.uuid4().hex[:10]}"
+            inner = _canonical_inner_word_id_for_stitch(wid)
+            nw["id"] = stable_stitched_word_id(k, inner)
             out_words.append(nw)
         offset += normalized_duration_ms(norm)
     return {"version": ver, "words": out_words, "duration_ms": offset}
