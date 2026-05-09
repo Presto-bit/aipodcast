@@ -6228,6 +6228,75 @@ def script_text_billing_refund(phone: str, meta: dict[str, Any]) -> None:
         experience_restore_text_chars(p, et)
 
 
+def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[str, Any]]:
+    """剪辑 ASR 成功后：按音频时长从钱包扣费（无体验包抵扣）。"""
+    from .media_wallet import media_wallet_billing_enabled, wallet_cents_for_asr_audio_seconds
+
+    base: dict[str, Any] = {"wallet_cents": 0, "billed_seconds": 0.0}
+    if not media_wallet_billing_enabled():
+        return True, dict(base)
+    p = (phone or "").strip()
+    try:
+        sec = float(audio_seconds or 0)
+    except (TypeError, ValueError):
+        sec = 0.0
+    if not p or sec <= 1e-9:
+        return True, dict(base)
+    cents = int(wallet_cents_for_asr_audio_seconds(sec))
+    if cents <= 0:
+        return True, {**base, "billed_seconds": float(sec)}
+    ensure_user_wallet_schema()
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return False, {**base, "reason": "no_user", "message": "未找到账户"}
+                cur.execute(
+                    """
+                    UPDATE user_wallet_balance
+                    SET balance_cents = balance_cents - %s,
+                        phone = %s,
+                        updated_at = NOW()
+                    WHERE user_id = %s::uuid AND balance_cents >= %s
+                    RETURNING balance_cents
+                    """,
+                    (cents, p, uid, cents),
+                )
+                rw = cur.fetchone()
+                if not rw:
+                    conn.rollback()
+                    return False, {
+                        **base,
+                        "wallet_cents": cents,
+                        "billed_seconds": float(sec),
+                        "reason": "insufficient_wallet",
+                        "message": (
+                            f"转写完成后结算失败：约需 ¥{cents / 100:.2f}（{sec:.1f}s 音频），"
+                            "余额不足，请充值后联系客服核对本次转写扣费。"
+                        ),
+                    }
+                bal_after = int(rw.get("balance_cents") or 0)
+                _insert_user_wallet_ledger(
+                    cur,
+                    user_id=str(uid),
+                    phone=p,
+                    delta_cents=-cents,
+                    balance_after_cents=bal_after,
+                    entry_type="clip_asr_billing",
+                    meta={"billed_seconds": float(sec), "wallet_cents": cents},
+                )
+                conn.commit()
+                return True, {
+                    "wallet_cents": cents,
+                    "billed_seconds": float(sec),
+                    "balance_cents_after": bal_after,
+                }
+    except Exception as exc:
+        logger.exception("asr_billing_try_debit failed")
+        return False, {**base, "reason": "error", "message": str(exc)[:300]}
+
+
 def media_billing_try_assert_cover_estimated_minutes(
     phone: str,
     tier: str | None,

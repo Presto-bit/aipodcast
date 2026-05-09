@@ -120,6 +120,9 @@ WALLET_TOPUP_SUGGESTED_YUAN: tuple[int, ...] = (30, 50, 100)
 
 VOICE_CLONE_PAYG_CENTS = 1290
 
+# 剪辑 ASR（钱包）：按输入音频时长 linear 折算到「元/小时」价；默认 ¥4.9 / 小时 → 490 分/小时。
+ASR_WALLET_CENTS_PER_AUDIO_HOUR = 490
+
 # 单次任务可选参考资料条数上限（产品口径，与前端知识库勾选一致）
 BILLING_MAX_NOTE_REFS = 100
 BILLING_LONG_FORM_SCRIPT_CHARS_CAP = 50_000

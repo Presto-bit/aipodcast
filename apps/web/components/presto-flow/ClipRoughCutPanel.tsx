@@ -190,8 +190,8 @@ export default function ClipRoughCutPanel({
   /** 识别停顿弹层：最短停顿时长（毫秒）与输入框草稿（秒） */
   const [pauseFilterMs, setPauseFilterMs] = useState(2500);
   const [pauseMinSecDraft, setPauseMinSecDraft] = useState("2.5");
-  /** 口癖行 / 建议行：重复点击同一行时按转写顺序轮换跳转的词 */
-  const verbalJumpCycleRef = useRef<Record<string, number>>({});
+  /** 口癖行 / 建议行：重复点击时轮换；存「上次跳转的词 id」而非下标，避免 orderedIds 重排后指错词 */
+  const verbalJumpLastWordIdRef = useRef<Record<string, string>>({});
 
   const verbalJumpResetKey = useMemo(() => {
     const head = words[0]?.id ?? "";
@@ -202,7 +202,7 @@ export default function ClipRoughCutPanel({
   }, [projectId, words, jumpOrderCues]);
 
   useEffect(() => {
-    verbalJumpCycleRef.current = {};
+    verbalJumpLastWordIdRef.current = {};
   }, [verbalJumpResetKey]);
 
   useEffect(() => {
@@ -263,10 +263,12 @@ export default function ClipRoughCutPanel({
   const jumpVerbalRow = useCallback(
     (cycleKey: string, orderedIds: readonly string[]) => {
       if (!onJumpWord || orderedIds.length === 0) return;
-      const cur = verbalJumpCycleRef.current[cycleKey] ?? -1;
-      const next = (cur + 1) % orderedIds.length;
-      verbalJumpCycleRef.current[cycleKey] = next;
-      onJumpWord(orderedIds[next]!, { lineEndAutopause: true });
+      const last = verbalJumpLastWordIdRef.current[cycleKey];
+      const prevIdx = last ? orderedIds.indexOf(last) : -1;
+      const next = (prevIdx + 1) % orderedIds.length;
+      const target = orderedIds[next]!;
+      verbalJumpLastWordIdRef.current[cycleKey] = target;
+      onJumpWord(target, { lineEndAutopause: true });
     },
     [onJumpWord]
   );

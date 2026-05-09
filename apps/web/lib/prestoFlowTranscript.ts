@@ -192,8 +192,10 @@ export function orderWordIdsByTranscript(
       const wa = byId.get(a);
       const wb = byId.get(b);
       if (!wa || !wb) return 0;
-      const ga = clipWordGlobalPlaybackMs(wa, virtualCues);
-      const gb = clipWordGlobalPlaybackMs(wb, virtualCues);
+      let ga = clipWordGlobalPlaybackMs(wa, virtualCues);
+      let gb = clipWordGlobalPlaybackMs(wb, virtualCues);
+      if (!Number.isFinite(ga)) ga = Number.isFinite(wa.s_ms) ? wa.s_ms : 0;
+      if (!Number.isFinite(gb)) gb = Number.isFinite(wb.s_ms) ? wb.s_ms : 0;
       if (ga !== gb) return ga - gb;
       return pos.get(a)! - pos.get(b)!;
     });

@@ -73,7 +73,9 @@ from ..clip_store import (
 from ..clip_loudness_qc import analyze_loudness_from_file
 from ..clip_timeline import build_timeline_v1_from_row
 from ..clip_timeline_audio import concat_ordered_source_segments_to_bytes
-from ..models import resolved_user_uuid_string
+from ..clip_asr_billing import estimate_clip_transcribe_billable_seconds
+from ..media_wallet import media_wallet_billing_enabled, wallet_cents_for_asr_audio_seconds
+from ..models import phone_for_job_created_by, resolved_user_uuid_string, wallet_balance_cents_for_phone
 from ..clip_silence_detect import detect_silence_segments_from_file
 from ..object_store import (
     delete_object_key,
@@ -1637,6 +1639,37 @@ async def clip_start_transcribe(project_id: str, request: Request):
                 "或同时设置 VOLCENGINE_SPEECH_APP_KEY 与 VOLCENGINE_SPEECH_ACCESS_KEY（旧控制台）"
             ),
         )
+    if media_wallet_billing_enabled():
+        phone_tb = (phone_for_job_created_by(uid) or "").strip()
+        if not phone_tb:
+            raise HTTPException(
+                status_code=400,
+                detail="账户未绑定手机号，无法按使用量结算转写费用，请完善账号后重试。",
+            )
+        try:
+            sec_est = estimate_clip_transcribe_billable_seconds(
+                row,
+                force_retranscribe=force_retranscribe,
+                only_segment_keys=only_keys_param,
+            )
+        except Exception as exc:
+            logger.warning("clip transcribe estimate_asr_seconds failed project_id=%s err=%s", project_id, exc)
+            raise HTTPException(
+                status_code=503,
+                detail=f"无法估算转写计费时长（请确认音频可读），请稍后重试：{exc}",
+            ) from exc
+        cents_need = wallet_cents_for_asr_audio_seconds(sec_est)
+        if cents_need > 0:
+            bal_tb = wallet_balance_cents_for_phone(phone_tb)
+            if bal_tb < cents_need:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"余额不足：本次转写预计扣费约 ¥{cents_need / 100:.2f}"
+                        f"（音频合计约 {sec_est / 60:.1f} 分钟，¥4.9/小时），"
+                        f"当前余额 ¥{bal_tb / 100:.2f}，请先充值。"
+                    ),
+                )
     prev_t = t_st if t_st in ("idle", "failed", "succeeded") else "idle"
     if not try_claim_clip_transcription_queued(
         project_id=project_id,

@@ -214,15 +214,23 @@ def generate_script_openai_compatible(
             else:
                 total_line = f"- 全文总目标约 {goal} 字；本段先完成约 {segment_target} 字（多轮续写拼接）。\n"
         article_zh = ""
+        dialogue_enhance = ""
         if output_mode == "article":
             ll = language.lower()
             if "中文" in language or ll in ("zh", "zh-cn", "简体", "简体中文"):
                 article_zh = (
                     "- 中文须通篇使用大陆规范简体中文，勿使用繁体字或与繁体混排。\n"
                     "- 正文禁止出现「续写」「第几段」「（接续）」等编排说明；勿复述提示用语。\n"
-                    "- 若材料含多个来源：须围绕统一主线或中心论点组织，将各来源对照、归纳或递进，避免「一书一节」互不衔接的堆砌。\n"
+                    "- 若材料含多个来源：须围绕统一主线或中心论点组织，将各来源对照、归纳或递进，避免「一书一节」互不衔接的堆砌；段与段之间用因果、转折或递进衔接，形成一条论证线。\n"
+                    "- 每个主要论点先用一两句短句钉住结论或关键事实，再展开论述。\n"
                     "- 禁止播客式结语（如「感谢收听」「感谢你的收听」「我们下次再见」）；中途分段禁止告别套话。\n"
                 )
+        elif output_mode == "dialogue":
+            dialogue_enhance = (
+                "- 【话轮】Speaker1 与 Speaker2 须功能互补（如一方推进、过渡与微型小结，另一方拆解、举例与界定），避免轮流复述同一信息层。\n"
+                "- 【口语与信息】语气词与自然重复服务于听感；每个小话题至少用一两句短句钉住核心定义、数字或结论，再口语化展开；关键句宜短、少一串从句。\n"
+                "- 【多源材料】须围绕一条贯穿主线的认知目标组织，可用极简口头路标做递进，禁止「一书一节」互不衔接的堆砌。\n"
+            )
         round_c = _constraints_for_round(material).strip()
         core_line = ""
         if output_mode == "article":
@@ -236,6 +244,7 @@ def generate_script_openai_compatible(
             f"- 风格：{style}\n"
             f"- 输出形式：{mode_hint}\n"
             f"{article_zh}"
+            f"{dialogue_enhance}"
             f"{total_line}"
             f"- 本段目标字数：约{segment_target}字（未达全文目标可再补段，勿重复已写内容）\n"
             f"- 额外约束：{round_c or '无'}{oral_extra}{cont}\n\n"

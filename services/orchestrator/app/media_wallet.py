@@ -13,6 +13,7 @@ from typing import Any
 
 from .entitlement_matrix import normalize_script_target_input
 from .subscription_manifest import (
+    ASR_WALLET_CENTS_PER_AUDIO_HOUR,
     MEDIA_WALLET_CENTS_PER_MINUTE,
     TEXT_OUTPUT_CENTS_PER_10K_CHARS,
     WALLET_REFERENCE_CHARS_PER_SPOKEN_MINUTE,
@@ -41,6 +42,25 @@ def wallet_cents_for_generated_text_chars(char_count: int) -> int:
         return 0
     rate = float(TEXT_OUTPUT_CENTS_PER_10K_CHARS)
     return max(1, int(math.ceil(n / 10_000.0 * rate)))
+
+
+def _asr_wallet_cents_per_hour_resolved() -> int:
+    raw = (os.getenv("ASR_WALLET_CENTS_PER_AUDIO_HOUR") or "").strip()
+    if raw.isdigit():
+        return max(1, int(raw))
+    return max(1, int(ASR_WALLET_CENTS_PER_AUDIO_HOUR))
+
+
+def wallet_cents_for_asr_audio_seconds(audio_seconds: float) -> int:
+    """剪辑转写：按音频秒数 linear 折算到每小时单价（分），至少 1 分（秒数 > 0）。"""
+    try:
+        sec = float(audio_seconds)
+    except (TypeError, ValueError):
+        return 0
+    if sec <= 1e-9:
+        return 0
+    rate = float(_asr_wallet_cents_per_hour_resolved())
+    return max(1, int(math.ceil(sec / 3600.0 * rate)))
 
 
 def _chars_per_minute() -> float:

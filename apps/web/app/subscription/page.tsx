@@ -999,9 +999,17 @@ export default function SubscriptionPage() {
         className="mt-8 scroll-mt-24 rounded-xl border border-line bg-surface/60 p-5 shadow-sm"
         aria-labelledby="balance-billing-title"
       >
-        <h2 id="balance-billing-title" className="text-base font-semibold text-ink">
-          我的余额
-        </h2>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <h2 id="balance-billing-title" className="text-base font-semibold text-ink">
+            我的余额
+          </h2>
+          <Link
+            href="/subscription/pricing-reference"
+            className="shrink-0 text-sm font-medium text-brand underline underline-offset-2 hover:opacity-90"
+          >
+            定价参考
+          </Link>
+        </div>
         {walletPayEnabled ? (
           <>
             <p className="mt-3 text-2xl font-semibold tracking-tight text-ink">

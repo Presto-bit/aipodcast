@@ -29,6 +29,7 @@ from .models import (
     add_artifact,
     append_cloned_voice_for_user_uuid,
     append_job_event,
+    asr_billing_try_debit,
     experience_restore_voice_minutes,
     finalize_job_terminal_unless_cancelled,
     get_job,
@@ -1414,6 +1415,7 @@ def run_clip_transcription_job(
     from .clip_transcript_refine import refine_transcript_two_stage
     from .clip_transcript_normalize import normalize_volc_flash_transcript
     from .object_store import get_object_bytes, presigned_get_url
+    from .clip_asr_billing import audio_bytes_billable_seconds
     from .volcengine_seed_asr_client import volc_seed_recognize_url_wait
 
     pid = (project_id or "").strip()
@@ -1559,6 +1561,7 @@ def run_clip_transcription_job(
                     return {"status": "failed", "error": "missing_segments_not_selected"}
             miss_set = set(missing)
             asr_calls = 0
+            billed_sec = 0.0
             for seg in segments:
                 sk = str(seg.get("key") or "").strip()
                 if not sk or sk not in miss_set:
@@ -1573,6 +1576,7 @@ def run_clip_transcription_job(
                     )
                     return {"status": "failed", "error": "read_segment_audio"}
                 fn = str(seg.get("filename") or "segment.mp3").strip() or "segment.mp3"
+                billed_sec += audio_bytes_billable_seconds(seg_bytes, filename_hint=fn)
                 mime_seg = str(seg.get("mime") or "audio/mpeg").strip() or "audio/mpeg"
                 file_url_seg = ""
                 submit_seg: bytes | None = None
@@ -1628,14 +1632,24 @@ def run_clip_transcription_job(
                 normalized=merged,
                 segment_transcripts=cache,
             )
+            ph_asr = (phone_for_job_created_by(owner) or "").strip()
+            ok_asr, meta_asr = asr_billing_try_debit(ph_asr, billed_sec)
+            if not ok_asr:
+                logger.error("clip_asr_settle_failed project_id=%s meta=%s", pid, meta_asr)
+            elif int(meta_asr.get("wallet_cents") or 0) > 0:
+                logger.info("clip_asr_settle_ok project_id=%s billed_seconds=%s cents=%s", pid, billed_sec, meta_asr.get("wallet_cents"))
             return {
                 "status": "succeeded",
                 "word_count": len(merged.get("words") or []),
                 "segment_asr_calls": asr_calls,
+                "asr_billed_seconds": billed_sec,
+                "asr_wallet_cents": int(meta_asr.get("wallet_cents") or 0),
             }
 
         file_url = ""
         submit_bytes: bytes | None = None
+        fn_main = str(row.get("audio_filename") or "").strip() or "clip.mp3"
+        billed_sec = audio_bytes_billable_seconds(audio_bytes, filename_hint=fn_main) if audio_bytes else 0.0
         if len(audio_bytes) <= max_inline:
             submit_bytes = audio_bytes
             logger.info(
@@ -1705,7 +1719,18 @@ def run_clip_transcription_job(
             normalized=normalized,
             segment_transcripts=None,
         )
-        return {"status": "succeeded", "word_count": len(normalized.get("words") or [])}
+        ph_asr = (phone_for_job_created_by(owner) or "").strip()
+        ok_asr, meta_asr = asr_billing_try_debit(ph_asr, billed_sec)
+        if not ok_asr:
+            logger.error("clip_asr_settle_failed project_id=%s meta=%s", pid, meta_asr)
+        elif int(meta_asr.get("wallet_cents") or 0) > 0:
+            logger.info("clip_asr_settle_ok project_id=%s billed_seconds=%s cents=%s", pid, billed_sec, meta_asr.get("wallet_cents"))
+        return {
+            "status": "succeeded",
+            "word_count": len(normalized.get("words") or []),
+            "asr_billed_seconds": billed_sec,
+            "asr_wallet_cents": int(meta_asr.get("wallet_cents") or 0),
+        }
     except Exception as exc:
         msg = str(exc) or "transcribe_failed"
         update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=msg)
