@@ -35,6 +35,7 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
   )
 });
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
+import { apiErrorMessage } from "../../lib/apiError";
 import { useI18n } from "../../lib/I18nContext";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../../lib/worksTypes";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
@@ -172,7 +173,9 @@ export default function CreatePage() {
         error?: string;
         detail?: string;
       };
-      if (!res.ok || data.success === false) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
+      if (!res.ok || data.success === false) {
+        throw new Error(apiErrorMessage(data, `加载失败（${res.status}）`));
+      }
       const merged = mergeUserFacingWorksByRecency(
         Array.isArray(data.ai) ? data.ai : [],
         Array.isArray(data.tts) ? data.tts : [],
@@ -215,7 +218,7 @@ export default function CreatePage() {
         detail?: string;
       };
       if (!res.ok || data.success === false) {
-        throw new Error(data.error || data.detail || `模板加载失败 ${res.status}`);
+        throw new Error(apiErrorMessage(data, `模板加载失败（${res.status}）`));
       }
       setServerPodcastTemplates(Array.isArray(data.templates) ? data.templates : []);
     } catch (e) {
@@ -226,10 +229,17 @@ export default function CreatePage() {
     }
   }, [getAuthHeaders]);
 
-  /** 访客也拉公开播客模板（编排器 / BFF 匿名可读时返回列表）；已登录同样走该接口 */
+  /** 播客模板需登录；访客不请求，避免 401 与无意义报错 */
   useEffect(() => {
+    if (!isLoggedIn) {
+      setServerPodcastTemplates([]);
+      setTemplatesErr("");
+      setTemplatesLoading(false);
+      setCreateWorksTabOverride(null);
+      return;
+    }
     void refreshPodcastTemplates();
-  }, [refreshPodcastTemplates, isLoggedIn]);
+  }, [isLoggedIn, refreshPodcastTemplates]);
 
   useEffect(() => {
     setCreateWorksTabOverride(null);
@@ -249,7 +259,8 @@ export default function CreatePage() {
   const createPageSubtitle = t("create.pageSubtitle").trim();
 
   const createWorksGalleryTab: CreateWorksTab =
-    createWorksTabOverride ?? (worksLoading ? "recent" : homeWorks.length > 0 ? "recent" : "templates");
+    createWorksTabOverride ??
+    (!isLoggedIn ? "recent" : worksLoading ? "recent" : homeWorks.length > 0 ? "recent" : "templates");
 
   const templateGalleryWorks = useMemo(() => [...serverPodcastTemplates], [serverPodcastTemplates]);
 
@@ -522,11 +533,14 @@ export default function CreatePage() {
                 type="button"
                 role="tab"
                 aria-selected={createWorksGalleryTab === "templates"}
+                disabled={!isLoggedIn}
+                title={!isLoggedIn ? "登录后可查看官方模板" : undefined}
                 className={[
                   "rounded-md px-2.5 py-1 transition sm:px-3",
                   createWorksGalleryTab === "templates"
                     ? "bg-surface text-ink shadow-sm ring-1 ring-line/60"
-                    : "text-muted hover:text-ink"
+                    : "text-muted hover:text-ink",
+                  !isLoggedIn ? "cursor-not-allowed opacity-50 hover:text-muted" : ""
                 ].join(" ")}
                 onClick={() => setCreateWorksTabOverride("templates")}
               >

@@ -39,13 +39,11 @@ import { dispatchNotesShowNotebookHub, NOTES_MINIMAL_MAIN_NAV_EVENT } from "../l
 import {
   NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
   NAV_SECTION_LABEL_CLASS,
-  ADMIN_ROLE,
   SIDEBAR_COLLAPSED_STORAGE,
   SIDEBAR_EXPANDED_STORAGE,
   SIDEBAR_WIDTH_COLLAPSED_PX,
   SIDEBAR_WIDTH_EXPANDED_PX
 } from "../lib/appShellLayout";
-import { isClipNavPublicForAllUsers } from "../lib/clipNavAccess";
 import {
   matchesNotesWorkbench,
   matchesProductStudio,
@@ -125,7 +123,7 @@ function NavIconBox({ active, children }: { active: boolean; children: ReactNode
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const path = pathname ?? "";
-  const { ready, user } = useAuth();
+  const { ready } = useAuth();
 
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
@@ -136,27 +134,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
    * 曾出现「只有个别侧栏项可点」的命中错乱）。
    */
   const [sidebarPortaled, setSidebarPortaled] = useState(false);
-  const isAdmin = String((user as { role?: string })?.role || "") === ADMIN_ROLE;
-  const clipNavPublic = isClipNavPublicForAllUsers();
-  const showClipNav = isAdmin || clipNavPublic;
-
   const navPrimary = useMemo<NavItem[]>(
     () => [{ href: "/", label: t("nav.home"), short: "首", Icon: IconHome }],
     [t]
   );
-  const navProducts = useMemo<NavItem[]>(() => {
-    const clipLinkTitle =
-      !clipNavPublic && showClipNav ? `${t("nav.clip")}（${t("nav.clipBadge")}）` : t("nav.clip");
-    const clipItem: NavItem = {
-      href: "/clip",
-      label:
-        !clipNavPublic && showClipNav ? `${t("nav.clip")}（${t("nav.clipBadge")}）` : t("nav.clip"),
-      short: t("nav.clipShort"),
-      linkTitle: clipLinkTitle,
-      Icon: IconClip,
-      activeMatch: (p) => pathMatchesRoot(p, "/clip")
-    };
-    const items: NavItem[] = [
+  const navProducts = useMemo<NavItem[]>(
+    () => [
       {
         href: "/notes",
         label: t("nav.notes"),
@@ -170,11 +153,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         short: t("nav.createShort"),
         Icon: IconCreate,
         activeMatch: (p) => matchesProductStudio(p)
+      },
+      {
+        href: "/clip",
+        label: t("nav.clip"),
+        short: t("nav.clipShort"),
+        Icon: IconClip,
+        activeMatch: (p) => pathMatchesRoot(p, "/clip")
       }
-    ];
-    if (showClipNav) items.push(clipItem);
-    return items;
-  }, [t, showClipNav, clipNavPublic]);
+    ],
+    [t]
+  );
   const navLibrary = useMemo<NavItem[]>(
     () => [
       { href: "/works", label: t("nav.works"), short: "作", Icon: IconGrid },
@@ -331,31 +320,45 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   /**
    * 侧栏主导航：
-   * - 仍在 /notes 主路径（hub 或笔记本内）时，「知识库」用 button 回到笔记本列表。
-   * - 同状态下其它入口：仅用原生 a[href] 整页离开。/notes 页体量大，preventDefault + router.push 曾出现
-   *   导航被挂起、随后在点击笔记本时与 openNotebook 竞态（先跳到上次点的路由）。
+   * - 「首页」始终用原生 <a href="/">，从登录页等场景可靠回到公开首页（避免软路由未切换主内容）。
+   * - 仍在 /notes 主路径时，「知识库」用 next/link + preventDefault 调 hub：保留 href 利于无障碍与右键新开，
+   *   且避免曾出现的 preventDefault + router.push 竞态。
+   * - 同状态下其它入口：仅用原生 a[href] 整页离开。
    * - 离开 /notes 主路径后：next/link 软路由。
-   * 叠层：z-[100000] + useLayoutEffect portal。
    */
   function renderSidebarNavItem(item: NavItem) {
     const active = linkActive(item);
     const label = collapsed && item.short ? item.short : item.label;
     const Ic = item.Icon;
     const tip = item.linkTitle ?? item.label;
+    if (item.href === "/") {
+      return (
+        <a key={item.href} href="/" className={navButtonClass(active, collapsed)} title={tip}>
+          <NavIconBox active={active}>
+            <Ic />
+          </NavIconBox>
+          {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
+        </a>
+      );
+    }
     if (item.href === "/notes" && isNotesPrimaryWorkbenchPath(path)) {
       return (
-        <button
-          type="button"
+        <Link
           key={item.href}
+          href="/notes"
+          prefetch={false}
           className={navButtonClass(active, collapsed)}
           title={tip}
-          onClick={() => dispatchNotesShowNotebookHub()}
+          onClick={(e) => {
+            e.preventDefault();
+            dispatchNotesShowNotebookHub();
+          }}
         >
           <NavIconBox active={active}>
             <Ic />
           </NavIconBox>
           {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
-        </button>
+        </Link>
       );
     }
     if (isNotesPrimaryWorkbenchPath(path)) {

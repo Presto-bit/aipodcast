@@ -603,8 +603,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   }
 
   async function runTts() {
-    if (!ensureLoggedInForAction("开始合成", "tts.generate")) return;
-    let body = text.trim();
+    const body = text.trim();
     if (!body && !introText.trim() && !outroText.trim()) {
       applyTaskFromEvent("请输入文本，或填写开场/结尾");
       return;
@@ -613,6 +612,15 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
       applyTaskFromEvent("正在加载音色列表，请稍后再试");
       return;
     }
+    if (ttsMode === "dual") {
+      const hasLine = /^\s*Speaker\s*[12]\s*[:：]/im.test(body);
+      if (!hasLine) {
+        applyTaskFromEvent("双人模式请使用 Speaker1: / Speaker2: 分行标注对白");
+        return;
+      }
+    }
+    if (!ensureLoggedInForAction("开始合成", "tts.generate")) return;
+
     cancelledRef.current = false;
     if (logSuccessHideTimerRef.current) {
       clearTimeout(logSuccessHideTimerRef.current);
@@ -622,14 +630,6 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     setBusy(true);
     setTaskProgressPct(0);
     try {
-      if (ttsMode === "dual") {
-        const hasLine = /^\s*Speaker\s*[12]\s*[:：]/im.test(body);
-        if (!hasLine) {
-          applyTaskFromEvent("双人模式请使用 Speaker1: / Speaker2: 分行标注对白");
-          return;
-        }
-      }
-
       applyTaskFromEvent("正在为你排队…", 2);
       const b1 = await bgmSegmentPayloadFromState(introBgm1Mode, introBgm1File, introBgm1StoredHex);
       const b2 = await bgmSegmentPayloadFromState(introBgm2Mode, introBgm2File, introBgm2StoredHex);

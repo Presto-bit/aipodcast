@@ -929,7 +929,6 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   }
 
   async function runPodcast() {
-    if (!ensureLoggedInForAction("开始生成", "podcast.generate")) return;
     const trimmed = text.trim();
     const hasLibraryMaterial =
       selectedNoteIds.length > 0;
@@ -937,6 +936,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       applyTaskFromEvent("请先输入内容，或在资料库勾选资料后再开始生成");
       return;
     }
+    if (!ensureLoggedInForAction("开始生成", "podcast.generate")) return;
     cancelledRef.current = false;
     if (logSuccessHideTimerRef.current) {
       clearTimeout(logSuccessHideTimerRef.current);

@@ -1,6 +1,9 @@
 /** BFF 等业务错误码 → 用户可读说明（避免只显示英文 code） */
 const KNOWN_ERROR_CODES: Record<string, string> = {
-  upstream_unreachable: "无法连接编排服务或网关在等待上游时超时，请确认编排器已启动、网络正常，或稍后重试。"
+  upstream_unreachable: "无法连接编排服务或网关在等待上游时超时，请确认编排器已启动、网络正常，或稍后重试。",
+  /** FastAPI/网关包装错误：无 detail 时不应把英文 code 直接给用户 */
+  http_exception: "服务暂时不可用，请稍后重试；若持续出现，请重新登录后再试。",
+  internal_server_error: "服务暂时不可用，请稍后重试。"
 };
 
 /** 知识库流式 / 非流式：常见英文 code → 中文说明 */
