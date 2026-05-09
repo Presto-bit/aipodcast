@@ -453,17 +453,18 @@ export function SharePublishClient({
 
       const shortFrom = String(resultEarly.script_text || "").trim();
       let fullScript = shortFrom;
-      if (succeeded && shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN) {
+      if (succeeded) {
         if (canceledRef.current) return;
-        setScriptResolvePending(true);
+        const showScriptSpinner = shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN;
+        if (showScriptSpinner) setScriptResolvePending(true);
         try {
           fullScript = await resolveJobScriptBodyText(jobId, rowRec, getBearerAuthHeadersSync());
         } catch {
           /* ignore */
         } finally {
-          if (!canceledRef.current) setScriptResolvePending(false);
+          if (!canceledRef.current && showScriptSpinner) setScriptResolvePending(false);
         }
-      } else if (!succeeded) {
+      } else {
         fullScript = shortFrom || String(resultEarly.preview || resultEarly.script_preview || "").trim();
       }
 

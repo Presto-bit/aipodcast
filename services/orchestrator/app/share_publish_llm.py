@@ -17,7 +17,6 @@ from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
 
 logger = logging.getLogger(__name__)
 
-SCRIPT_LIKELY_FULL_MIN_LEN = 280
 # RSS item.description / 列表摘要：与前端一致，极短
 RSS_SUMMARY_MAX_CHARS = 50
 SHOW_NOTES_MAX = 20_000
@@ -71,11 +70,22 @@ def _payload_dict(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def resolve_script_body_for_share(job_id: str, row: dict[str, Any]) -> str:
-    """与 Web 端一致：result.script_text 足够长则用之，否则拉 script 工件正文。"""
+    """与 Web 端一致：script_char_count 表明 result 已存全文则不再拉工件；否则拉 script 工件并与 result 比长度取更长。"""
     result = _result_dict(row)
     from_result = str(result.get("script_text") or "").strip()
-    if len(from_result) >= SCRIPT_LIKELY_FULL_MIN_LEN:
-        return from_result
+    preview = str(result.get("preview") or result.get("script_preview") or "").strip()
+    declared: int | None = None
+    raw_sc = result.get("script_char_count")
+    if raw_sc is not None:
+        try:
+            di = int(raw_sc)
+            if di > 0:
+                declared = di
+        except (TypeError, ValueError):
+            pass
+    if declared is not None and len(from_result) >= declared:
+        return from_result or preview
+
     jid = (job_id or "").strip()
     if jid:
         try:
@@ -88,14 +98,14 @@ def resolve_script_body_for_share(job_id: str, row: dict[str, Any]) -> str:
                 try:
                     data = get_object_bytes(key)
                     text = data.decode("utf-8", errors="replace").strip()
-                    if text:
+                    if len(text) > len(from_result):
                         return text
                 except Exception:
                     logger.warning("share_ai script artifact fetch failed job_id=%s", jid, exc_info=True)
                 break
         except Exception:
             logger.warning("share_ai list_job_artifacts failed job_id=%s", jid, exc_info=True)
-    return from_result or str(result.get("preview") or result.get("script_preview") or "").strip()
+    return from_result or preview
 
 
 def clip_transcript_words_to_script_raw(
