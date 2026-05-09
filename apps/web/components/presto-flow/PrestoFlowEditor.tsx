@@ -232,6 +232,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   /** 稿面仅高亮当前搜索命中子集（默认首处；下一个 / 全选 / 点句子后更新） */
   const [searchHlWordIds, setSearchHlWordIds] = useState<Set<string>>(() => new Set());
   const [playbackRate, setPlaybackRate] = useState(1);
+  /** 与波形 / 虚拟多段 audio 元素同步，供 AudioConsole 播放按钮图标 */
+  const [waveformPlaying, setWaveformPlaying] = useState(false);
   const [waveZoomLevel, setWaveZoomLevel] = useState(1);
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
   const [clipToolsOpen, setClipToolsOpen] = useState(false);
@@ -284,6 +286,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const waveformRef = useRef<ClipWaveformHandle | null>(null);
+  const waveformLoadErrDedupRef = useRef<{ msg: string; at: number }>({ msg: "", at: 0 });
   /** 与 focusedWordId 同步，供 playback 回调读取 */
   const focusedWordIdRef = useRef<string | null>(null);
   /** 稿面/侧栏程序化定位后的短时间窗内：不应用「跳过已剪掉词」seek，避免一跳即被挪到相邻保留词 */
@@ -1023,7 +1026,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   );
 
   const handleWaveformLoadError = useCallback((msg: string) => {
+    const now = Date.now();
+    const prev = waveformLoadErrDedupRef.current;
+    if (prev.msg === msg && now - prev.at < 2500) return;
+    waveformLoadErrDedupRef.current = { msg, at: now };
     setErr((p) => (p ? `${p}\n${msg}` : msg));
+  }, []);
+
+  const handleWaveformPlayState = useCallback((playing: boolean) => {
+    setWaveformPlaying(playing);
   }, []);
 
   const snapSeekMs = useCallback((seekMs: number) => snapMsNearWordEdges(words, seekMs, 140), [words]);
@@ -1190,6 +1201,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     wordchainPreviewOn && hasServerAudio
       ? `/api/clip/projects/${encodeURIComponent(projectId)}/audio/wordchain-preview?cb=${wordchainPreviewNonce}`
       : masterAudioUrl ?? singleSegmentFileUrl;
+
+  useEffect(() => {
+    setWaveformPlaying(false);
+  }, [waveformAudioUrl]);
 
   const generateWordchainPreview = useCallback(async () => {
     if (!ensureLoggedInForAction("词链试听", "presto.wordchain.preview")) return;
@@ -3400,6 +3415,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             cues={virtualAudioCues}
                             onTimeMs={handlePlaybackTimeMs}
                             onLoadError={handleWaveformLoadError}
+                            onPlayStateChange={handleWaveformPlayState}
                             playbackRate={playbackRate}
                             snapSeekMs={snapSeekMs}
                             className="!border-0 !bg-transparent"
@@ -3412,6 +3428,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             audioUrl={waveformAudioUrl}
                             onTimeMs={handlePlaybackTimeMs}
                             onLoadError={handleWaveformLoadError}
+                            onPlayStateChange={handleWaveformPlayState}
                             playbackRate={playbackRate}
                             snapSeekMs={snapSeekMs}
                             zoomLevel={waveZoomLevel}
@@ -3480,6 +3497,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                                 cues={virtualAudioCues}
                                 onTimeMs={handlePlaybackTimeMs}
                                 onLoadError={handleWaveformLoadError}
+                                onPlayStateChange={handleWaveformPlayState}
                                 playbackRate={playbackRate}
                                 snapSeekMs={snapSeekMs}
                                 className="!border-0 !bg-transparent"
@@ -3492,6 +3510,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                                 audioUrl={waveformAudioUrl}
                                 onTimeMs={handlePlaybackTimeMs}
                                 onLoadError={handleWaveformLoadError}
+                                onPlayStateChange={handleWaveformPlayState}
                                 playbackRate={playbackRate}
                                 snapSeekMs={snapSeekMs}
                                 zoomLevel={waveZoomLevel}
@@ -3760,6 +3779,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     {usePrdLayout ? (
                       <AudioConsole
                         waveformRef={waveformRef}
+                        playing={waveformPlaying}
                         playbackRate={playbackRate}
                         onPlaybackRateChange={setPlaybackRate}
                         rateOptionLabels={[
@@ -4005,6 +4025,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
             <AudioConsole
               dockEmbed
               waveformRef={waveformRef}
+              playing={waveformPlaying}
               playbackRate={playbackRate}
               onPlaybackRateChange={setPlaybackRate}
               rateOptionLabels={[

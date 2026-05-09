@@ -32,6 +32,8 @@ type Props = {
   /** 多段素材时在主进度条上方展示按段比例上色的总轨分段 */
   materialTimeline?: { slices: readonly MaterialTimelineSlice[]; totalMs: number } | null;
   onSeekMs?: (ms: number) => void;
+  /** 与 ClipWaveformPanel / ClipVirtualAudioTransport 的播放状态同步（由父组件传入） */
+  playing: boolean;
 };
 
 const DEFAULT_RATES = [1, 1.25, 1.5, 2] as const;
@@ -61,9 +63,9 @@ export default function AudioConsole({
   durationMs = 0,
   currentTimeMs = 0,
   materialTimeline = null,
-  onSeekMs
+  onSeekMs,
+  playing
 }: Props) {
-  const [playing, setPlaying] = useState(false);
   const [rateMenuOpen, setRateMenuOpen] = useState(false);
   const [volumeOpen, setVolumeOpen] = useState(false);
   const [volume, setVolume] = useState(1);

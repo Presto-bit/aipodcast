@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { ClipWaveformHandle } from "./ClipWaveformPanel";
 import type { VirtualAudioCue } from "../../lib/clipVirtualTimeline";
 import { totalVirtualDurationMs } from "../../lib/clipVirtualTimeline";
@@ -9,6 +9,7 @@ type Props = {
   cues: readonly VirtualAudioCue[];
   onTimeMs: (ms: number) => void;
   onLoadError?: (message: string) => void;
+  onPlayStateChange?: (playing: boolean) => void;
   playbackRate?: number;
   snapSeekMs?: (ms: number) => number;
   className?: string;
@@ -24,15 +25,21 @@ function findCueIndex(cues: readonly VirtualAudioCue[], globalMs: number): numbe
 }
 
 const ClipVirtualAudioTransport = forwardRef<ClipWaveformHandle, Props>(function ClipVirtualAudioTransport(
-  { cues, onTimeMs, onLoadError, playbackRate = 1, snapSeekMs, className },
+  { cues, onTimeMs, onLoadError, onPlayStateChange, playbackRate = 1, snapSeekMs, className },
   ref
 ) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const cueIdxRef = useRef(0);
   const loadedCueUrlRef = useRef<string>("");
+  const playTokenRef = useRef(0);
+  const onPlayStateRef = useRef(onPlayStateChange);
+  onPlayStateRef.current = onPlayStateChange;
   const [displayMs, setDisplayMs] = useState(0);
   const displayMsRef = useRef(0);
   const totalMs = totalVirtualDurationMs(cues);
+  /** 仅随分段 object_key 顺序变；避免 words 重算时长时反复清空 src 导致无法 play */
+  const cueLineupKey = useMemo(() => cues.map((c) => c.objectKey).join("|"), [cues]);
+  const mountCueAtGlobalRef = useRef<(ms: number, opts?: { play?: boolean }) => void>(() => {});
 
   useEffect(() => {
     displayMsRef.current = displayMs;
@@ -49,15 +56,48 @@ const ClipVirtualAudioTransport = forwardRef<ClipWaveformHandle, Props>(function
 
   const safePlay = useCallback(
     (el: HTMLAudioElement) => {
-      const fail = () => onLoadError?.("无法播放当前分段");
-      const run = () => {
-        void el.play().catch(fail);
+      const token = ++playTokenRef.current;
+      const fail = (err?: unknown) => {
+        if (token !== playTokenRef.current) return;
+        const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "";
+        if (name === "AbortError") return;
+        onLoadError?.("无法播放当前分段");
+      };
+      const tryPlay = () => {
+        if (token !== playTokenRef.current) return;
+        void el.play().catch((err) => {
+          const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "";
+          if (name === "NotAllowedError") {
+            const prevMuted = el.muted;
+            el.muted = true;
+            const onPlaying = () => {
+              el.muted = prevMuted;
+              el.removeEventListener("playing", onPlaying);
+            };
+            el.addEventListener("playing", onPlaying, { once: true });
+            void el.play().catch((e2) => {
+              el.removeEventListener("playing", onPlaying);
+              el.muted = prevMuted;
+              fail(e2);
+            });
+            return;
+          }
+          fail(err);
+        });
       };
       if (el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        run();
+        tryPlay();
       } else {
-        el.addEventListener("canplay", () => run(), { once: true });
-        el.addEventListener("error", () => fail(), { once: true });
+        const onCanPlay = () => {
+          el.removeEventListener("error", onErr);
+          tryPlay();
+        };
+        const onErr = () => {
+          el.removeEventListener("canplay", onCanPlay);
+          fail();
+        };
+        el.addEventListener("canplay", onCanPlay, { once: true });
+        el.addEventListener("error", onErr, { once: true });
       }
     },
     [onLoadError]
@@ -116,6 +156,7 @@ const ClipVirtualAudioTransport = forwardRef<ClipWaveformHandle, Props>(function
     },
     [cues, emitGlobal, onLoadError, playbackRate, safePlay, totalMs]
   );
+  mountCueAtGlobalRef.current = mountCueAtGlobal;
 
   useImperativeHandle(ref, () => ({
     seekToMs: (ms: number, snapOpts?: { snap?: boolean }) => {
@@ -156,11 +197,21 @@ const ClipVirtualAudioTransport = forwardRef<ClipWaveformHandle, Props>(function
 
   useEffect(() => {
     loadedCueUrlRef.current = "";
-  }, [cues]);
+    const id = requestAnimationFrame(() => {
+      mountCueAtGlobalRef.current(displayMsRef.current, { play: false });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [cueLineupKey]);
 
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return undefined;
+    const emitPlay = (v: boolean) => onPlayStateRef.current?.(v);
+    const onPlay = () => emitPlay(true);
+    const onPause = () => emitPlay(false);
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPause);
+    emitPlay(!el.paused);
     const onTime = () => {
       const cue = cues[cueIdxRef.current];
       if (!cue) return;
@@ -195,6 +246,8 @@ const ClipVirtualAudioTransport = forwardRef<ClipWaveformHandle, Props>(function
     el.addEventListener("timeupdate", onTime);
     el.addEventListener("ended", onEnded);
     return () => {
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
       el.removeEventListener("timeupdate", onTime);
       el.removeEventListener("ended", onEnded);
     };
