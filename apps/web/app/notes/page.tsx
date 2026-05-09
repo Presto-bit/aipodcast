@@ -2778,14 +2778,15 @@ export default function NotesPage() {
         }
       });
       rememberJobId(data.id);
+      setActiveGenerationJob("script_draft", data.id);
       setShowArticleModal(false);
       setArticleModalStep("pick");
       void fetchPodcastWorks();
       router.push(`/works/${encodeURIComponent(data.id)}?returnTo=${encodeURIComponent("/notes")}`);
     } catch (err) {
+      clearActiveGenerationJob("script_draft");
       setError(String(err instanceof Error ? err.message : err));
     } finally {
-      clearActiveGenerationJob("script_draft");
       setDraftBusy(false);
     }
   }
@@ -4780,8 +4781,8 @@ export default function NotesPage() {
                     </select>
                   </label>
                   <label className="block text-xs text-ink">
-                    目标字数（默认 {NOTES_ART_TARGET_CHARS_DEFAULT}，{NOTES_ART_TARGET_CHARS_MIN}–
-                    {NOTES_ART_TARGET_CHARS_MAX}；实际上限以套餐为准）
+                    目标长度（字符数，默认 {NOTES_ART_TARGET_CHARS_DEFAULT}，{NOTES_ART_TARGET_CHARS_MIN}–
+                    {NOTES_ART_TARGET_CHARS_MAX}；与作品页「约 N 字符」统计口径一致；实际上限以套餐为准）
                     <input
                       type="number"
                       min={NOTES_ART_TARGET_CHARS_MIN}
@@ -4818,6 +4819,9 @@ export default function NotesPage() {
                     placeholder="将依据所选笔记与上述提词生成文章。"
                   />
                 </label>
+                <p className="mt-2 text-[11px] leading-relaxed text-muted/90">
+                  提交后进入云端队列，高峰时可能排队数分钟；完成后会打开作品页并自动载入全文。请勿重复点击「生成」以免重复任务。
+                </p>
                 <div className="mt-4 flex justify-end gap-2">
                   <button
                     type="button"

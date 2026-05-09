@@ -16,9 +16,9 @@ export function worksNavMetricPart(
   scriptCharCountDisplay: number | null
 ): string {
   if (isScriptDraft) {
-    // 文稿类不展示时长；仅有可靠字数时才展示字数。
+    // 文稿类不展示时长；统计口径为字符数（与生成参数 script_target_chars 一致）。
     return scriptCharCountDisplay != null && scriptCharCountDisplay > 0
-      ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
+      ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字符`
       : "";
   }
   return durationLine !== "—" ? `时长 ${durationLine}` : "—";
@@ -75,15 +75,26 @@ function scriptCharCountFromJob(job: JobRecord): number | null {
   return null;
 }
 
+/** 与作品页正文一致：有已载入正文时优先用其长度，避免「约 N 字」与编辑区不一致。 */
+export function scriptCharCountForWorksNavDisplay(job: JobRecord, manuscriptBody?: string): number | null {
+  const live = String(manuscriptBody || "").trim();
+  if (live.length > 0) return live.length;
+  return scriptCharCountFromJob(job);
+}
+
 /**
  * 与「我的作品」合并列表卡片 meta 完全一致：一级 | 作者 | 时长或字数 | 时间（文稿类不含时长）
  */
-export function formatUnifiedWorksNavMetaLineFromJobRecord(job: JobRecord, authorDisplay: string): string {
+export function formatUnifiedWorksNavMetaLineFromJobRecord(
+  job: JobRecord,
+  authorDisplay: string,
+  opts?: { manuscriptBody?: string }
+): string {
   const result = (job.result || {}) as Record<string, unknown>;
   const isScriptDraft = String(job.job_type || "") === "script_draft";
   const primaryK = worksNavPrimaryKind(job.job_type);
   const durationLine = isScriptDraft ? "—" : durationLineFromJobResult(result);
-  const scriptCharCountDisplay = scriptCharCountFromJob(job);
+  const scriptCharCountDisplay = scriptCharCountForWorksNavDisplay(job, opts?.manuscriptBody);
   const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
   const createdZh = formatWorkCreatedAtZh(job.completed_at || job.created_at);
   return [primaryK, authorDisplay, metricP, createdZh]

@@ -1191,7 +1191,7 @@ def download_job_artifact_api(job_id: str, artifact_id: str, request: Request):
     if not get_job(job_id, user_ref=scope):
         raise HTTPException(status_code=404, detail="job_not_found")
     if not work_download_allowed(job_id, _work_download_billing_ref(request)):
-        raise HTTPException(status_code=403, detail="下载需有过钱包充值记录，或当前钱包仍有余额")
+        raise HTTPException(status_code=403, detail="无法下载：需有充值记录")
     art = get_job_artifact(job_id, artifact_id)
     if not art:
         raise HTTPException(status_code=404, detail="artifact_not_found")
@@ -1390,7 +1390,7 @@ def export_job_audio_mp3_api(
         if not row:
             raise HTTPException(status_code=404, detail="job_not_found")
         if not work_download_allowed(job_id, _work_download_billing_ref(request)):
-            raise HTTPException(status_code=403, detail="下载需有过钱包充值记录，或当前钱包仍有余额")
+            raise HTTPException(status_code=403, detail="无法下载：需有充值记录")
         result = _parse_job_result_dict(row.get("result"))
         hx = str(result.get("audio_hex") or "").strip()
         raw_mp3: bytes
@@ -1467,7 +1467,7 @@ def distribution_pack_api(
     if str(row.get("status") or "") != "succeeded":
         raise HTTPException(status_code=400, detail="job_not_succeeded")
     if not work_download_allowed(job_id, _work_download_billing_ref(request)):
-        raise HTTPException(status_code=403, detail="下载需有过钱包充值记录，或当前钱包仍有余额")
+        raise HTTPException(status_code=403, detail="无法下载：需有充值记录")
     result = _parse_job_result_dict(row.get("result"))
     pack: dict[str, Any] = {
         "job_id": job_id,

@@ -45,6 +45,12 @@ import { jobResultCoverUrl, workCoverImageSrc } from "../../lib/workCoverImage";
 import { blobToDataUrlBase64 } from "../../lib/podcastCoverImage";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { formatUnifiedWorksNavMetaLineFromJobRecord } from "../../lib/worksNavMetaLine";
+import {
+  isWorkDownloadRechargeGateError,
+  openSubscriptionWalletTopup,
+  WORK_DOWNLOAD_RECHARGE_GATE_USER_MESSAGE
+} from "../../lib/workDownloadRechargeGate";
+import SmallConfirmModal from "../ui/SmallConfirmModal";
 import { useWorkAudioPlayer, type WorkAudioToggleMeta } from "../../lib/workAudioPlayer";
 import { WorkHubOverviewPanel, type WorkHubDetailTab } from "./WorkHubOverviewPanel";
 import { WorkHubShownotesSection } from "./WorkHubShownotesSection";
@@ -127,6 +133,8 @@ type FormSnapshot = ShareFormFields;
 
 const DRAFT_DEBOUNCE_MS = 600;
 const JOB_GEN_PLACEHOLDER = "生成中,请稍等...";
+const JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER =
+  "文稿排队生成中，通常需数分钟，请勿关闭页面；完成后正文会自动载入。若长时间无进度，可刷新本页。";
 
 type ShareGenContext = {
   payload: Record<string, unknown>;
@@ -177,7 +185,7 @@ function formatListenClock(sec: number): string {
 function defaultJobGenEstimateSec(jobType: string): number {
   const j = String(jobType || "").toLowerCase();
   if (j.includes("short_video")) return 420;
-  if (j === "script_draft") return 180;
+  if (j === "script_draft") return 420;
   return 540;
 }
 
@@ -273,6 +281,7 @@ export function SharePublishClient({
     Partial<Record<PublishPlatformId, boolean>>
   >({});
   const [workHubDownloadBusy, setWorkHubDownloadBusy] = useState(false);
+  const [workDownloadRechargeModalOpen, setWorkDownloadRechargeModalOpen] = useState(false);
 
   const shareGenContextRef = useRef<ShareGenContext | null>(null);
   /** 主人进入分享页后至多触发一次「persist 写入 result」的 AI 初稿（Strict Mode 取消时会复位）。 */
@@ -981,7 +990,12 @@ export function SharePublishClient({
         });
       }
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isWorkDownloadRechargeGateError(msg)) {
+        setWorkDownloadRechargeModalOpen(true);
+      } else {
+        window.alert(msg);
+      }
     } finally {
       setWorkHubDownloadBusy(false);
     }
@@ -1076,8 +1090,10 @@ export function SharePublishClient({
 
   const navMetaPipe = useMemo(() => {
     if (!ownerJobRecord) return "";
-    return formatUnifiedWorksNavMetaLineFromJobRecord(ownerJobRecord, worksNavAuthorDisplay);
-  }, [ownerJobRecord, worksNavAuthorDisplay]);
+    return formatUnifiedWorksNavMetaLineFromJobRecord(ownerJobRecord, worksNavAuthorDisplay, {
+      manuscriptBody
+    });
+  }, [ownerJobRecord, worksNavAuthorDisplay, manuscriptBody]);
 
   const canEditWorkScript = useMemo(() => {
     const jt = String(ownerJobRecord?.job_type || "").trim().toLowerCase();
@@ -1998,11 +2014,11 @@ export function SharePublishClient({
             audioRegenProgress={audioRegenProgress}
             audioRegenMessage={audioRegenMessage}
             jobGenerating={jobGenerating}
-            jobGenPlaceholder={JOB_GEN_PLACEHOLDER}
+            jobGenPlaceholder={scriptDraft ? JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER : JOB_GEN_PLACEHOLDER}
             jobLiveLine={jobGenBannerLine}
             jobLiveProgressPct={jobLivePctMerged}
             jobFailedMessage={jobFailedMessage}
-            readonlyEmptyHint={jobGenerating ? JOB_GEN_PLACEHOLDER : undefined}
+            readonlyEmptyHint={jobGenerating ? (scriptDraft ? JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER : JOB_GEN_PLACEHOLDER) : undefined}
             hubViewerReadonly={viewerTemplateReadonly}
             detailTab={detailTab}
             onDetailTabChange={setDetailTab}
@@ -2505,6 +2521,18 @@ export function SharePublishClient({
           )
         : null}
 
+      <SmallConfirmModal
+        open={workDownloadRechargeModalOpen}
+        title="无法下载"
+        message={WORK_DOWNLOAD_RECHARGE_GATE_USER_MESSAGE}
+        cancelLabel="关闭"
+        confirmLabel="充值"
+        onCancel={() => setWorkDownloadRechargeModalOpen(false)}
+        onConfirm={() => {
+          setWorkDownloadRechargeModalOpen(false);
+          openSubscriptionWalletTopup();
+        }}
+      />
     </main>
   );
 }

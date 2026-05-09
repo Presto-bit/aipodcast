@@ -527,11 +527,11 @@ function deriveKeyTakeawaysFromScript(
   };
   for (const { raw } of scored) {
     const n = normalizeSummarySentence(raw);
-    if (n.length < 16) continue;
+    if (n.length < 14) continue;
     const pfx = n.replace(/\s+/g, "").slice(0, 28);
     if (sumPrefix.length >= 12 && (pfx === sumPrefix || pfx.startsWith(sumPrefix.slice(0, 16)))) continue;
     if (out.some((x) => tooSimilar(x, n))) continue;
-    out.push(truncateSmart(n, 72));
+    out.push(truncateSmart(n, 44));
     if (out.length >= maxItems) break;
   }
   return out.slice(0, maxItems);
@@ -588,8 +588,8 @@ function deriveGoldenQuotesFromScript(scriptRaw: string, userSourceText: string,
   const out: string[] = [];
   for (const { raw } of scored) {
     const n = normalizeSummarySentence(raw);
-    if (n.length < 12 || n.length > 88) continue;
-    const line = truncateSmart(n, 72);
+    if (n.length < 10 || n.length > 92) continue;
+    const line = truncateSmart(n, 58);
     if (out.some((o) => o.slice(0, 24) === line.slice(0, 24))) continue;
     out.push(line);
     if (out.length >= max) break;
@@ -762,8 +762,8 @@ function buildStructuredShowNotesMarkdown(
   const category = inferPodcastContentCategory(scriptRaw, payloadText);
   const categoryLine = categoryShownotesFlavorLine(category);
   const coreThread = deriveCoreThreadBullets(scriptRaw, payloadText, summaryLine, 2);
-  const takeaways = deriveKeyTakeawaysFromScript(scriptRaw, payloadText, summaryLine, 4);
-  const quotes = deriveGoldenQuotesFromScript(scriptRaw, payloadText, 3);
+  const takeaways = deriveKeyTakeawaysFromScript(scriptRaw, payloadText, summaryLine, 3);
+  const quotes = deriveGoldenQuotesFromScript(scriptRaw, payloadText, 6);
   const resources = deriveResourceBulletsFromPayload(payload, scriptRaw);
   const voiceLines = deriveVoicePersonaLinesFromPayload(payload);
 

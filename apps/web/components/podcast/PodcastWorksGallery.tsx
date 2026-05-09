@@ -13,6 +13,11 @@ import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
 import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
 import { sanitizeShareEpisodeTitle } from "../../lib/sharePublishDefaults";
 import { downloadJobBundleZip, downloadJobManuscriptTxt } from "../../lib/workBundleDownload";
+import {
+  isWorkDownloadRechargeGateError,
+  openSubscriptionWalletTopup,
+  WORK_DOWNLOAD_RECHARGE_GATE_USER_MESSAGE
+} from "../../lib/workDownloadRechargeGate";
 import { listRssPublicationsByJobIds, type RssPublication } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
 import { useI18n } from "../../lib/I18nContext";
@@ -41,8 +46,8 @@ function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
   return w.downloadAllowed === true;
 }
 
-/** 与编排器 downloadAllowed / 打包接口校验文案一致 */
-const WORK_DOWNLOAD_GATE_TIP = "下载需有过钱包充值记录，或当前钱包仍有余额";
+/** 与编排器 downloadAllowed / 未充值下载拦截提示一致（宜简短） */
+const WORK_DOWNLOAD_GATE_TIP = "需有充值记录方可下载";
 
 const PODCAST_TYPES = new Set(["podcast_generate", "podcast", "podcast_short_video"]);
 const TTS_TYPES = new Set(["text_to_speech", "tts"]);
@@ -301,6 +306,7 @@ export default function PodcastWorksGallery({
   const durationFetchRef = useRef<Set<string>>(new Set());
   const durationResolvedRef = useRef<Set<string>>(new Set());
   const [playErrorById, setPlayErrorById] = useState<Record<string, string>>({});
+  const [downloadRechargeModalOpen, setDownloadRechargeModalOpen] = useState(false);
 
   const items = useMemo((): PodcastWorkRow[] => {
     const list = works.filter((w) => {
@@ -551,10 +557,14 @@ export default function PodcastWorksGallery({
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      setPlayErrorById((prev) => ({
-        ...prev,
-        [id]: `下载失败：${message}（任务 ID：${id}）`
-      }));
+      if (isWorkDownloadRechargeGateError(message)) {
+        setDownloadRechargeModalOpen(true);
+      } else {
+        setPlayErrorById((prev) => ({
+          ...prev,
+          [id]: `下载失败：${message}（任务 ID：${id}）`
+        }));
+      }
     } finally {
       setZipBusy(null);
     }
@@ -967,10 +977,14 @@ export default function PodcastWorksGallery({
           }
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          setPlayErrorById((prev) => ({
-            ...prev,
-            [id]: `下载失败：${message}（任务 ID：${id}）`
-          }));
+          if (isWorkDownloadRechargeGateError(message)) {
+            setDownloadRechargeModalOpen(true);
+          } else {
+            setPlayErrorById((prev) => ({
+              ...prev,
+              [id]: `下载失败：${message}（任务 ID：${id}）`
+            }));
+          }
           break;
         }
       }
@@ -1059,6 +1073,18 @@ export default function PodcastWorksGallery({
   return (
     <WorkGalleryListProvider value={listCtxValue}>
     <div>
+      <SmallConfirmModal
+        open={downloadRechargeModalOpen}
+        title="无法下载"
+        message={WORK_DOWNLOAD_RECHARGE_GATE_USER_MESSAGE}
+        cancelLabel="关闭"
+        confirmLabel="充值"
+        onCancel={() => setDownloadRechargeModalOpen(false)}
+        onConfirm={() => {
+          setDownloadRechargeModalOpen(false);
+          openSubscriptionWalletTopup();
+        }}
+      />
       <SmallConfirmModal
         open={deleteConfirmId != null}
         title="删除作品"
