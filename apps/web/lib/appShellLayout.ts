@@ -11,6 +11,9 @@ export const SIDEBAR_WIDTH_EXPANDED_CLASS = "w-[232px]";
 export const SIDEBAR_WIDTH_COLLAPSED_PX = 72;
 export const SIDEBAR_WIDTH_EXPANDED_PX = 232;
 
+/** 与 Tailwind `max-lg`（小于 1024px）一致：窄屏下主导航改为抽屉，主区全宽 */
+export const APP_SHELL_MOBILE_MEDIA_QUERY = "(max-width: 1023px)";
+
 export const SIDEBAR_COLLAPSED_STORAGE = "1";
 export const SIDEBAR_EXPANDED_STORAGE = "0";
 

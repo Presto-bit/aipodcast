@@ -37,6 +37,7 @@ import BrandGlyph from "./brand/BrandGlyph";
 import { SiteBeianBar } from "./SiteBeianBar";
 import { dispatchNotesShowNotebookHub, NOTES_MINIMAL_MAIN_NAV_EVENT } from "../lib/notesLastNotebook";
 import {
+  APP_SHELL_MOBILE_MEDIA_QUERY,
   NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
   NAV_SECTION_LABEL_CLASS,
   SIDEBAR_COLLAPSED_STORAGE,
@@ -71,6 +72,21 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
       {collapsed ? <path d="M9 18l6-6-6-6" /> : <path d="M15 18l-6-6 6-6" />}
+    </svg>
+  );
+}
+
+function MobileMenuGlyph({ open }: { open: boolean }) {
+  if (open) {
+    return (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
+        <path strokeLinecap="round" d="M6 6l12 12M18 6L6 18" />
+      </svg>
+    );
+  }
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path strokeLinecap="round" d="M5 7h14M5 12h14M5 17h14" />
     </svg>
   );
 }
@@ -130,6 +146,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   /** 知识库已进入笔记本工作台：主导航收起，仅保留左侧浮动返回入口 */
   const [notesMinimalMainNav, setNotesMinimalMainNav] = useState(false);
+  /** 与 APP_SHELL_MOBILE_MEDIA_QUERY 一致（窄于 1024px）：侧栏改为抽屉，主区全宽 */
+  const [mobileLayout, setMobileLayout] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   /**
    * 侧栏挂 body：用 useLayoutEffect 在首帧 paint 前 portal，避免与 #__next 同帧叠层竞争（极端环境下
    * 曾出现「只有个别侧栏项可点」的命中错乱）。
@@ -227,6 +246,41 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (!isNotesPrimaryWorkbenchPath(path)) setNotesMinimalMainNav(false);
   }, [path]);
 
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia(APP_SHELL_MOBILE_MEDIA_QUERY);
+    const onChange = () => {
+      const m = mq.matches;
+      setMobileLayout(m);
+      if (!m) setMobileNavOpen(false);
+    };
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobileLayout || !mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileNavOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileLayout, mobileNavOpen]);
+
+  useEffect(() => {
+    if (!mobileLayout || !mobileNavOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [mobileLayout, mobileNavOpen]);
+
   useEffect(() => {
     const onWindowError = (event: ErrorEvent) => {
       reportFrontendGlobalError({
@@ -278,6 +332,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       document.documentElement.style.removeProperty("--fym-app-sidebar-w");
       return;
     }
+    if (mobileLayout) {
+      document.documentElement.style.setProperty("--fym-app-sidebar-w", "0px");
+      return;
+    }
     const minimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
     const px = minimalRail
       ? 0
@@ -287,7 +345,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     document.documentElement.style.setProperty("--fym-app-sidebar-w", `${px}px`);
     // 不在 cleanup 里 removeProperty：Strict Mode / 依赖重跑时会出现一帧变量缺失，
     // 全屏级 z-index 遮罩会短暂盖住侧栏；无壳场景由上面分支显式清除即可。
-  }, [collapsed, ready, notesMinimalMainNav, path]);
+  }, [collapsed, ready, notesMinimalMainNav, path, mobileLayout]);
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => {
@@ -401,12 +459,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const notesNavMinimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
   const notesBackHubLabel = t("nav.notesWorkbenchBackHub");
+  const useFullSidebar = !notesNavMinimalRail || (mobileLayout && mobileNavOpen);
+  const sidebarOffCanvas = mobileLayout && !mobileNavOpen && !notesNavMinimalRail;
+  const sidebarDrawerPx = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
 
-  const sidebarAside = notesNavMinimalRail ? (
+  const notesMinimalBackEl = (
     <button
       type="button"
       data-fym-notes-workbench-back
-      className="pointer-events-auto fixed left-2 top-1/2 z-[100001] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-line/90 bg-surface/95 text-ink shadow-soft backdrop-blur-sm transition-colors hover:bg-fill motion-reduce:transition-none"
+      className={[
+        "pointer-events-auto fixed top-1/2 z-[100001] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-line/90 bg-surface/95 text-ink shadow-soft backdrop-blur-sm transition-colors hover:bg-fill motion-reduce:transition-none",
+        mobileLayout ? "left-14" : "left-2"
+      ].join(" ")}
       title={notesBackHubLabel}
       aria-label={notesBackHubLabel}
       onClick={() => dispatchNotesShowNotebookHub()}
@@ -415,13 +479,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
       </svg>
     </button>
-  ) : (
+  );
+
+  const fullSidebarEl = (
     <aside
+      id="fym-app-sidebar-root"
       data-fym-app-sidebar
-      className="fixed left-0 top-0 z-[100000] flex h-svh min-h-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width] duration-200 ease-out motion-reduce:transition-none pointer-events-auto"
-      style={{
-        width: "var(--fym-app-sidebar-w, 232px)"
-      }}
+      aria-hidden={sidebarOffCanvas ? true : undefined}
+      className={[
+        "fixed left-0 top-0 z-[100000] flex h-svh min-h-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width,transform] duration-200 ease-out motion-reduce:transition-none",
+        sidebarOffCanvas ? "-translate-x-full pointer-events-none" : "translate-x-0 pointer-events-auto",
+        mobileLayout ? "shadow-card" : ""
+      ].join(" ")}
+      style={{ width: `${sidebarDrawerPx}px` }}
     >
       <div className={`flex shrink-0 items-start border-b border-line py-2 ${collapsed ? "justify-center px-2" : "gap-2 px-2.5"}`}>
         <BrandGlyph size={36} />
@@ -446,6 +516,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <nav
         className="mx-1.5 mt-1 flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-0.5 py-1 [scrollbar-gutter:stable]"
         aria-label={t("nav.mainNavLabel")}
+        onClick={(e) => {
+          if (!mobileLayout || !mobileNavOpen) return;
+          const el = e.target as HTMLElement;
+          if (el.closest("a, [href]")) setMobileNavOpen(false);
+        }}
       >
         {navPrimary.map(renderSidebarNavItem)}
         <NavSectionHeader collapsed={collapsed}>{t("nav.products")}</NavSectionHeader>
@@ -467,6 +542,37 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     </aside>
   );
 
+  const sidebarAside = useFullSidebar ? fullSidebarEl : notesMinimalBackEl;
+
+  const mobileNavBackdrop =
+    mobileLayout && mobileNavOpen ? (
+      <button
+        type="button"
+        className="fixed inset-0 z-[99990] bg-black/40 backdrop-blur-[1px]"
+        aria-label={t("nav.closeMenu")}
+        onClick={() => setMobileNavOpen(false)}
+      />
+    ) : null;
+
+  const mobileMenuFab =
+    mobileLayout && ready ? (
+      <button
+        type="button"
+        className="fixed left-0 top-0 z-[100002] flex h-12 min-h-[48px] w-12 min-w-[48px] items-center justify-center rounded-br-dawn-lg border-b border-r border-line/80 bg-surface/95 text-ink shadow-soft backdrop-blur-sm transition-colors hover:bg-fill motion-reduce:transition-none"
+        style={{
+          paddingTop: "max(0.25rem, env(safe-area-inset-top, 0px))",
+          paddingLeft: "max(0.25rem, env(safe-area-inset-left, 0px))"
+        }}
+        aria-expanded={mobileNavOpen}
+        aria-controls={useFullSidebar ? "fym-app-sidebar-root" : undefined}
+        title={mobileNavOpen ? t("nav.closeMenu") : t("nav.openMenu")}
+        aria-label={mobileNavOpen ? t("nav.closeMenu") : t("nav.openMenu")}
+        onClick={() => setMobileNavOpen((o) => !o)}
+      >
+        <MobileMenuGlyph open={mobileNavOpen} />
+      </button>
+    ) : null;
+
   return (
     <div className="relative min-h-screen bg-canvas text-ink">
       <a
@@ -479,12 +585,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         主导航挂 document.body：与页面内 portal 分离，避免 #__next 子树叠层盖住 fixed 侧栏。
         z-index 取 100000：高于常见弹层（如 z-[1200]），且避免 2^31-2 级数值在部分浏览器/合成层实现异常。
       */}
-      {sidebarPortaled ? createPortal(sidebarAside, document.body) : sidebarAside}
+      {sidebarPortaled
+        ? createPortal(
+            <>
+              {mobileNavBackdrop}
+              {mobileMenuFab}
+              {sidebarAside}
+            </>,
+            document.body
+          )
+        : sidebarAside}
 
       <div
         id="main-content"
         data-fym-app-main
-        className="flex min-h-screen min-w-0 flex-col"
+        className={[
+          "flex min-h-screen min-w-0 flex-col",
+          mobileLayout ? "pt-[max(3.5rem,calc(2.75rem+env(safe-area-inset-top,0px)))]" : ""
+        ].join(" ")}
         style={{ marginLeft: "var(--fym-app-sidebar-w, 232px)" }}
         tabIndex={-1}
       >

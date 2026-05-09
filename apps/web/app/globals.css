@@ -240,6 +240,19 @@ body {
   left: var(--fym-app-sidebar-w, 232px);
 }
 
+/* 窄屏侧栏为浮层抽屉，不占主区宽度，弹层遮罩应铺满视口 */
+@media (max-width: 1023px) {
+  .fym-workspace-scrim {
+    left: 0;
+  }
+}
+
+@media (max-width: 1023px) {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+}
+
 @media (prefers-reduced-transparency: reduce) {
   html.light .fym-surface-card,
   html:not(.dark) .fym-surface-card {

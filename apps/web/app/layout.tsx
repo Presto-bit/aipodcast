@@ -1,5 +1,16 @@
+import type { Viewport } from "next";
 import "./globals.css";
 import Providers from "./providers";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
+    { media: "(prefers-color-scheme: dark)", color: "#14141a" }
+  ]
+};
 
 export const dynamic = "force-dynamic";
 /** 禁止整页长期 Full Route Cache，与 middleware / next.config headers 一起约束 CDN。 */
