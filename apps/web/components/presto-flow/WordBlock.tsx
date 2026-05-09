@@ -19,6 +19,10 @@ import type { TranscriptWordSuggestionMarker } from "../../lib/prestoFlowTranscr
 
 const LONG_PRESS_MS = 480;
 
+/** 与稿面多选（鼠标拖选）一致的浅灰圆角底：口癖、搜索命中、规则/AI 建议、叠字组等统一用此样式 */
+export const TRANSCRIPT_WORD_SELECTION_CHIP =
+  "z-[1] bg-zinc-200 text-ink ring-1 ring-zinc-300 dark:bg-zinc-700/65 dark:ring-zinc-500/60";
+
 type Props = {
   word: ClipWord;
   excluded: boolean;
@@ -31,7 +35,7 @@ type Props = {
   multiSelectActive?: boolean;
   /** 口吃重复等：浏览器原生悬停说明 */
   trimHintTitle?: string;
-  /** 附加样式（如重复词下划线） */
+  /** 附加样式（如叠字组与框选一致的高亮底） */
   trimExtraClass?: string;
   /** 读屏：保留 / 已标记删除 */
   ariaKeepLabel: string;
@@ -98,16 +102,17 @@ export default function WordBlock({
 
   const display = `${word.text}${word.punct ?? ""}`.trim() || "\u00a0";
 
-  const suggestionUnderline =
-    suggestionMarker?.status === "pending"
-      ? "underline decoration-dashed decoration-amber-600/75 decoration-2 underline-offset-[3px]"
-      : suggestionMarker?.status === "applied"
-        ? "underline decoration-dashed decoration-emerald-600/60 decoration-2 underline-offset-[3px]"
-        : "";
-
   const activePlayback = playbackActive && !excluded;
   const activeSelection = multiSelectActive && !excluded;
   const activeFocus = focused && !excluded;
+  /** 口癖/搜索、待处理或已采纳建议：与多选框选同形，不用虚线下划线 */
+  const showAnnotationChip =
+    !excluded &&
+    !activePlayback &&
+    !multiSelectActive &&
+    (Boolean(roughCutHighlight) ||
+      suggestionMarker?.status === "pending" ||
+      suggestionMarker?.status === "applied");
 
   const longPressHandlers = {
     onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
@@ -162,14 +167,11 @@ export default function WordBlock({
           ? "opacity-[0.22] line-through decoration-danger/60 text-muted"
           : "text-ink",
         activePlayback ? "z-[2] bg-brand text-brand-foreground shadow-[0_0_14px_color-mix(in_srgb,var(--dawn-brand)_40%,transparent)]" : "",
-        !activePlayback && activeSelection ? "z-[1] bg-zinc-200 text-ink ring-1 ring-zinc-300 dark:bg-zinc-700/65 dark:ring-zinc-500/60" : "",
-        !activePlayback && !activeSelection && activeFocus ? "bg-zinc-200 text-ink ring-1 ring-zinc-300 dark:bg-zinc-700/65 dark:ring-zinc-500/60" : "",
+        !activePlayback && activeSelection ? TRANSCRIPT_WORD_SELECTION_CHIP : "",
+        !activePlayback && !activeSelection && activeFocus ? TRANSCRIPT_WORD_SELECTION_CHIP : "",
         focused && excluded ? "ring-1 ring-line" : "",
-        roughCutHighlight && !excluded && !multiSelectActive
-          ? "ring-2 ring-rose-500/55 ring-offset-1 ring-offset-canvas"
-          : "",
-        trimExtraClass || "",
-        suggestionUnderline
+        showAnnotationChip ? TRANSCRIPT_WORD_SELECTION_CHIP : "",
+        trimExtraClass && !activePlayback ? trimExtraClass : ""
       ]
         .filter(Boolean)
         .join(" ")}

@@ -4,7 +4,7 @@ import type { MouseEvent, PointerEvent } from "react";
 import type { ClipWord } from "../../lib/clipTypes";
 import { displayToken } from "../../lib/prestoFlowTranscript";
 import type { TranscriptWordSuggestionMarker } from "../../lib/prestoFlowTranscriptMarkers";
-import WordBlock from "./WordBlock";
+import WordBlock, { TRANSCRIPT_WORD_SELECTION_CHIP } from "./WordBlock";
 
 type Props = {
   words: ClipWord[];
@@ -51,7 +51,7 @@ export default function StutterGroup({
 
   return (
     <span
-      className="group/stutter inline-flex max-w-full flex-wrap items-baseline gap-x-0.5 gap-y-1 align-baseline rounded-md border border-dashed border-amber-600/35 bg-amber-500/[0.06] px-1 py-0.5"
+      className="group/stutter inline-flex max-w-full flex-wrap items-baseline gap-x-0.5 gap-y-1 align-baseline"
       title={groupHoverHint}
     >
       {words.map((w, idx) => (
@@ -63,11 +63,7 @@ export default function StutterGroup({
           focused={focusedWordId === w.id}
           multiSelectActive={multiSelectIds.has(w.id)}
           trimHintTitle={idx > 0 ? duplicateWordHint : undefined}
-          trimExtraClass={
-            idx > 0
-              ? "underline decoration-dashed decoration-amber-700/70 decoration-2 underline-offset-[3px]"
-              : ""
-          }
+          trimExtraClass={!excluded.has(w.id) ? TRANSCRIPT_WORD_SELECTION_CHIP : ""}
           ariaKeepLabel={ariaKeepLabel}
           ariaCutLabel={ariaCutLabel}
           onActivate={onActivate}
