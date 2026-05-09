@@ -48,6 +48,7 @@ const ClipVirtualAudioTransport = forwardRef<ClipWaveformHandle, Props>(function
   const emitGlobal = useCallback(
     (globalRounded: number) => {
       const g = Math.max(0, Math.min(totalMs || 0, globalRounded));
+      displayMsRef.current = g;
       setDisplayMs(g);
       onTimeMs(g);
     },
@@ -113,6 +114,8 @@ const ClipVirtualAudioTransport = forwardRef<ClipWaveformHandle, Props>(function
         emitGlobal(t);
         return;
       }
+      /** 与 emitGlobal 一致须同步更新：seek 后同一调用栈里 play() 会读此 ref，避免仍用旧全局时间 */
+      displayMsRef.current = t;
       const dur = Math.max(1, cue.durationMs);
       const localMs = Math.max(0, Math.min(dur - 1, t - cue.startGlobalMs));
       const localSec = localMs / 1000;
@@ -181,7 +184,7 @@ const ClipVirtualAudioTransport = forwardRef<ClipWaveformHandle, Props>(function
       if (!el || !cues.length) return;
       mountCueAtGlobal(displayMsRef.current, { play: true });
     },
-    getCurrentTimeMs: () => displayMs,
+    getCurrentTimeMs: () => displayMsRef.current,
     setPlaybackRate: (rate: number) => {
       const el = audioRef.current;
       if (!el) return;
