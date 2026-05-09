@@ -245,17 +245,8 @@ const SUPPORTED_NOTE_FILE_EXTS = [
   "html",
   "htm",
   "xhtml",
-  "png",
-  "jpg",
-  "jpeg",
-  "webp",
-  "gif",
-  "avif",
 ] as const;
-const SUPPORTED_NOTE_FILE_ACCEPT = [
-  ".txt,.md,.markdown,.pdf,.doc,.docx,.epub,.html,.htm,.xhtml,.png,.jpg,.jpeg,.webp,.gif,.avif",
-  "image/png,image/jpeg,image/webp,image/gif,image/avif",
-].join(",");
+const SUPPORTED_NOTE_FILE_ACCEPT = ".txt,.md,.markdown,.pdf,.doc,.docx,.epub,.html,.htm,.xhtml";
 
 function formatNotebookShareFailureMessage(raw: string, mode: "share" | "unshare"): string {
   const msg = String(raw || "").trim();
@@ -292,9 +283,7 @@ function formatNotebookShareFailureMessage(raw: string, mode: "share" | "unshare
 function isSupportedNoteFile(file: File): boolean {
   const name = (file.name || "").toLowerCase();
   const ext = name.includes(".") ? name.split(".").pop() || "" : "";
-  if (SUPPORTED_NOTE_FILE_EXTS.includes(ext as (typeof SUPPORTED_NOTE_FILE_EXTS)[number])) return true;
-  const mt = (file.type || "").toLowerCase();
-  return mt.startsWith("image/");
+  return SUPPORTED_NOTE_FILE_EXTS.includes(ext as (typeof SUPPORTED_NOTE_FILE_EXTS)[number]);
 }
 
 function simplifySourceText(text: string): string {
@@ -4347,7 +4336,6 @@ export default function NotesPage() {
                     </button>
                   </div>
                   <p className="mt-2 text-xs text-muted">文档：txt / md / markdown / pdf / doc / docx / epub / html / htm / xhtml</p>
-                  <p className="mt-1 text-xs text-muted">图片：png / jpg / jpeg / webp / gif / avif（会尝试 OCR 抽正文）</p>
                 </div>
               ) : null}
               <input

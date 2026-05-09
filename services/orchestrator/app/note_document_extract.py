@@ -7,7 +7,7 @@
 - HTML/HTM/XHTML：BeautifulSoup 去脚本样式与嵌入媒体后抽取可见文本。
 - EPUB：临时文件 + content_parser.parse_epub（避免重复实现 spine 逻辑）。
 - DOC：临时文件 + antiword / catdoc / soffice（与旧逻辑一致）。
-- 图片（png/jpg/jpeg/webp/gif/avif）：优先走可配置的视觉模型 OCR（Qwen VL）；未配置时仅存档。
+- 图片（png/jpg/jpeg/webp/gif/avif）：笔记上传入口已不再接收；若库内仍有历史附件，可走可配置视觉模型 OCR（Qwen VL），未配置时仅存档。
 """
 from __future__ import annotations
 
