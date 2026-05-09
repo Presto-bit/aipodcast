@@ -11,7 +11,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "nav.podcast": "做一期播客",
     "nav.tts": "文本转语音",
     "nav.voice": "音色管理",
-    "nav.clip": "音频剪辑",
+    "nav.clip": "音频剪辑（测试）",
     "nav.clipShort": "剪",
     "nav.clipBadge": "内测",
     "clip.access.deniedTitle": "暂无权限",
