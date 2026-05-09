@@ -98,7 +98,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
       "提交后将进入云端转写队列；仅在您确认后开始，调整素材顺序不会自动转写。确定要继续吗？",
     "clip.editor.transcribeSelectAtLeastOne": "请至少勾选一段要转写的素材。",
     "clip.editor.transcribeMaterialCheckboxHint":
-      "勾选仅在你点击「开始转写」且为全量提交时决定识别哪些暂存素材；试听、排序、合并、导出等均不受勾选影响。含新插入段的部分转写会按服务端规则补全缺失分段，不看列表勾选。",
+      "首次「开始转写」会对全部多段素材做识别以生成完整可拼接文稿，与是否勾选无关。试听、排序、导出等也不受勾选影响。勾选为后续「仅重转所选分段」类能力预留。",
     "clip.editor.undo": "撤销上一步剪辑",
     "clip.editor.redo": "重做",
     "clip.editor.cutLegend": "已剪掉",
@@ -736,7 +736,7 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
       "This submits a cloud transcription job. It only runs after you confirm; reordering material alone will not transcribe. Continue?",
     "clip.editor.transcribeSelectAtLeastOne": "Select at least one clip to transcribe.",
     "clip.editor.transcribeMaterialCheckboxHint":
-      "Checkboxes apply only when you start a full transcription submit (which staging clips to run ASR on). Preview, reorder, merge, and export ignore them. Partial jobs (e.g. newly inserted timeline audio) follow server rules to fill missing segments and do not use this list selection.",
+      "The first Start transcription run recognizes every staged segment so the script can stitch end-to-end—checkboxes do not limit it. Preview, reorder, and export also ignore them. Checkboxes are reserved for future selective re-transcribe flows.",
     "clip.editor.undo": "Undo last edit",
     "clip.editor.redo": "Redo",
     "clip.editor.cutLegend": "Cut",

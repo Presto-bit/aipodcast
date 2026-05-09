@@ -1616,8 +1616,8 @@ async def clip_start_transcribe(project_id: str, request: Request):
     all_seg_k = {str(s.get("key") or "").strip() for s in segs if str(s.get("key") or "").strip()}
     raw_only = payload.get("transcribe_segment_keys")
     only_keys_param: list[str] | None = None
-    # 素材勾选仅用于「全量」转写提交；partial（如新插入段）不在此限制分段，避免与插入段补转写语义混用
-    if all_seg_k and not force_retranscribe:
+    # 首次 full 须识别全部缺失分段才能 stitch；勾选限制 ASR 范围仅用于 partial（补转/重转勾选段）
+    if all_seg_k and force_retranscribe:
         if isinstance(raw_only, list):
             if len(raw_only) == 0:
                 raise HTTPException(status_code=400, detail="请勾选至少一段素材进行转写")

@@ -68,6 +68,10 @@ type Props = {
   visualVariant?: "default" | "prd";
   /** 无单段 size 时用于整轨均分估算 */
   approxDurationMsPerSegment?: number | null;
+  /** 转写后各分段 object_key → 稿面真实时长（seg_key），优先于字节粗估 */
+  durationMsBySegmentKey?: Readonly<Record<string, number>> | null;
+  /** 转写成功且某段无 seg_key 时长时，用整稿均分而不是 128kbps 粗估，使列表合计接近播放器 */
+  transcriptionSucceeded?: boolean;
   /** 无 entries、仅有合并源元数据时展示一行（旧数据）；有 entries 时不应再传 */
   serverSource?: { filename: string; durationMs: number | null; playbackUrl?: string } | null;
   /** 与 onSelectedTranscribeKeysChange 同时传入时：勾选状态由父组件控制（用于「只转勾选」） */
@@ -85,6 +89,8 @@ export default function ClipStagingTracksBar({
   onError,
   visualVariant = "default",
   approxDurationMsPerSegment = null,
+  durationMsBySegmentKey = null,
+  transcriptionSucceeded = false,
   serverSource = null,
   selectedTranscribeKeys = null,
   onSelectedTranscribeKeysChange
@@ -368,7 +374,12 @@ export default function ClipStagingTracksBar({
   const hasServer = Boolean(serverSource?.filename?.trim());
   if (entries.length === 0 && !hasServer) return null;
 
-  const rowDuration = (meta: ClipAudioStagingEntry | undefined) => {
+  const rowDuration = (meta: ClipAudioStagingEntry | undefined, objectKey: string) => {
+    const fromAsr = durationMsBySegmentKey?.[objectKey];
+    if (typeof fromAsr === "number" && fromAsr > 0) return Math.round(fromAsr);
+    if (transcriptionSucceeded && approxDurationMsPerSegment != null && approxDurationMsPerSegment > 0) {
+      return approxDurationMsPerSegment;
+    }
     const est = estimateDurationMsFromBytes(meta?.size_bytes);
     if (est != null && est > 0) return est;
     return approxDurationMsPerSegment;
@@ -503,7 +514,7 @@ export default function ClipStagingTracksBar({
         {order.map((key, idx) => {
           const meta = byKey.get(key);
           const label = labelForSegment(meta, key);
-          const durMs = rowDuration(meta);
+          const durMs = rowDuration(meta, key);
           const playHref = segmentPlaybackHref(key);
           return (
             <li

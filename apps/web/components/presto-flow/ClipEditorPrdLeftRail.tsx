@@ -38,6 +38,8 @@ type Props = {
   mainAudioDurationMs: number | null;
   stagingTranscribeSelectedKeys: string[];
   onStagingTranscribeSelectedKeysChange: (keys: string[]) => void;
+  segmentDurationMsByKey: Readonly<Record<string, number>>;
+  transcriptionSucceeded: boolean;
 };
 
 export default function ClipEditorPrdLeftRail({
@@ -62,7 +64,9 @@ export default function ClipEditorPrdLeftRail({
   approxSegmentDurationMs,
   mainAudioDurationMs,
   stagingTranscribeSelectedKeys,
-  onStagingTranscribeSelectedKeysChange
+  onStagingTranscribeSelectedKeysChange,
+  segmentDurationMsByKey,
+  transcriptionSucceeded
 }: Props) {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
@@ -207,6 +211,8 @@ export default function ClipEditorPrdLeftRail({
                   onError={(msg) => setErr(msg)}
                   visualVariant="prd"
                   approxDurationMsPerSegment={approxSegmentDurationMs}
+                  durationMsBySegmentKey={segmentDurationMsByKey}
+                  transcriptionSucceeded={transcriptionSucceeded}
                   serverSource={serverSourceRow}
                   selectedTranscribeKeys={stagingTranscribeSelectedKeys}
                   onSelectedTranscribeKeysChange={onStagingTranscribeSelectedKeysChange}

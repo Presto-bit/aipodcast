@@ -51,6 +51,7 @@ import {
 import {
   buildMaterialTimelineSlices,
   buildVirtualAudioCues,
+  maxSegDurationMsByKeyFromWords,
   totalVirtualDurationMs
 } from "../../lib/clipVirtualTimeline";
 import AudioConsole from "./AudioConsole";
@@ -283,6 +284,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const waveformRef = useRef<ClipWaveformHandle | null>(null);
+  /** 与 focusedWordId 同步，供 playback 回调读取 */
+  const focusedWordIdRef = useRef<string | null>(null);
+  /** 稿面/侧栏程序化定位后的短时间窗内：不应用「跳过已剪掉词」seek，避免一跳即被挪到相邻保留词 */
+  const playbackExcludedBypassUntilRef = useRef(0);
   const transcriptRef = useRef<VirtualizedTranscriptHandle | null>(null);
   const autoStructuredSuggestionRequestedRef = useRef(false);
   /** 稿面滚动容器，拖选时用 elementsFromPoint 限定在稿面内 */
@@ -314,6 +319,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   useEffect(() => {
     excludedRef.current = excluded;
   }, [excluded]);
+
+  useEffect(() => {
+    focusedWordIdRef.current = focusedWordId;
+  }, [focusedWordId]);
 
   useEffect(() => {
     return () => {
@@ -985,6 +994,18 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         waveformRef.current?.pause();
         sentenceAutopauseEndMsRef.current = null;
       }
+      const fid = focusedWordIdRef.current;
+      if (fid && excludedRef.current.has(fid) && words.length > 0) {
+        const fw = words.find((x) => x.id === fid);
+        if (fw && raw >= fw.s_ms && raw < fw.e_ms) {
+          setPlaybackMs(raw);
+          return;
+        }
+      }
+      if (typeof performance !== "undefined" && performance.now() < playbackExcludedBypassUntilRef.current) {
+        setPlaybackMs(raw);
+        return;
+      }
       if (words.length === 0 || excludedRef.current.size === 0) {
         setPlaybackMs(raw);
         return;
@@ -1042,6 +1063,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const mergedObjectKey = useMemo(() => String(project?.audio_object_key ?? "").trim(), [project?.audio_object_key]);
 
+  /** 转写稿面上各素材 object_key 对应分段时长（seg_key），用于素材列表与播放器对齐 */
+  const segmentDurationMsByKey = useMemo(() => maxSegDurationMsByKeyFromWords(words), [words]);
+
   /** 与素材列表一致：先按整稿时长均分，否则按各段 size_bytes 粗估再均分缺省段 */
   const approxSegmentDurationMs = useMemo(() => {
     if (audioStagingEntries.length === 0) return null;
@@ -1060,16 +1084,41 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     for (const e of audioStagingEntries) {
       const k = String(e.key || "").trim();
       if (!k) continue;
+      const dw = segmentDurationMsByKey[k];
+      if (typeof dw === "number" && dw > 0) {
+        m[k] = dw;
+        continue;
+      }
       const d = perStagingEntryDurationMs(e, approxSegmentDurationMs);
       if (d > 0) m[k] = d;
     }
     return m;
-  }, [audioStagingEntries, approxSegmentDurationMs]);
+  }, [audioStagingEntries, approxSegmentDurationMs, segmentDurationMsByKey]);
 
-  const materialSummedDurationMs = useMemo(
-    () => sumStagingEntriesDurationMs(audioStagingEntries, approxSegmentDurationMs),
-    [audioStagingEntries, approxSegmentDurationMs]
-  );
+  const materialSummedDurationMs = useMemo(() => {
+    const transcribedOk = project?.transcription_status === "succeeded";
+    let s = 0;
+    for (const e of audioStagingEntries) {
+      const k = String(e.key || "").trim();
+      if (!k) continue;
+      const dw = segmentDurationMsByKey[k];
+      if (typeof dw === "number" && dw > 0) {
+        s += dw;
+        continue;
+      }
+      if (transcribedOk && approxSegmentDurationMs != null && approxSegmentDurationMs > 0) {
+        s += approxSegmentDurationMs;
+        continue;
+      }
+      s += perStagingEntryDurationMs(e, approxSegmentDurationMs);
+    }
+    return s;
+  }, [
+    audioStagingEntries,
+    segmentDurationMsByKey,
+    project?.transcription_status,
+    approxSegmentDurationMs
+  ]);
 
   const virtualAudioCues = useMemo(
     () =>
@@ -1198,6 +1247,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const jumpToWordInTranscript = useCallback(
     (wid: string, opts?: { lineEndAutopause?: boolean }) => {
+      if (typeof performance !== "undefined") {
+        playbackExcludedBypassUntilRef.current = performance.now() + 900;
+      }
       if (scriptSearch.trim()) {
         const ids = collectSubstringMatchWordIds(words, scriptSearch, excluded);
         if (ids.includes(wid)) setSearchHlWordIds(new Set([wid]));
@@ -1206,7 +1258,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       transcriptRef.current?.scrollToWordId(wid);
       const w = words.find((x) => x.id === wid);
       if (w) {
-        waveformRef.current?.seekToMs(w.s_ms);
+        waveformRef.current?.seekToMs(w.s_ms, { snap: false });
         void waveformRef.current?.play();
       }
       if (opts?.lineEndAutopause && w && lines.length) {
@@ -1223,26 +1275,32 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const selectWordsFromRoughSheet = useCallback(
     (ids: readonly string[]) => {
       if (!ids.length) return;
+      if (typeof performance !== "undefined") {
+        playbackExcludedBypassUntilRef.current = performance.now() + 900;
+      }
       const uniq = [...new Set(ids)];
       setMultiSelectIds(new Set(uniq));
       const first = uniq[0]!;
       setFocusedWordId(first);
       transcriptRef.current?.scrollToWordId(first);
       const w = words.find((x) => x.id === first);
-      if (w) waveformRef.current?.seekToMs(w.s_ms);
+      if (w) waveformRef.current?.seekToMs(w.s_ms, { snap: false });
     },
     [words]
   );
 
   const navigateScriptSearchHit = useCallback(
     (wid: string) => {
+      if (typeof performance !== "undefined") {
+        playbackExcludedBypassUntilRef.current = performance.now() + 900;
+      }
       sentenceAutopauseEndMsRef.current = null;
       setSearchHlWordIds(new Set([wid]));
       setFocusedWordId(wid);
       transcriptRef.current?.scrollToWordId(wid);
       const w = words.find((x) => x.id === wid);
       if (w) {
-        waveformRef.current?.seekToMs(w.s_ms);
+        waveformRef.current?.seekToMs(w.s_ms, { snap: false });
         void waveformRef.current?.play();
       }
     },
@@ -1261,7 +1319,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const seekPreviewMs = useCallback((ms: number) => {
     sentenceAutopauseEndMsRef.current = null;
     if (!Number.isFinite(ms)) return;
-    waveformRef.current?.seekToMs(Math.round(ms));
+    if (typeof performance !== "undefined") {
+      playbackExcludedBypassUntilRef.current = performance.now() + 900;
+    }
+    waveformRef.current?.seekToMs(Math.round(ms), { snap: false });
     void waveformRef.current?.play();
   }, []);
 
@@ -2150,7 +2211,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       // 左键单击单词后，Delete/Backspace 也按“选区删除”处理（单词选区）。
       leftDragMultiSelectRef.current = true;
       sentenceAutopauseEndMsRef.current = null;
-      waveformRef.current?.seekToMs(w.s_ms);
+      if (typeof performance !== "undefined") {
+        playbackExcludedBypassUntilRef.current = performance.now() + 900;
+      }
+      waveformRef.current?.seekToMs(w.s_ms, { snap: false });
       void waveformRef.current?.play();
     },
     [focusedWordId, words]
@@ -2186,15 +2250,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setErr("");
     try {
       const pendingInserted = pendingInsertedSegments;
-      const materialKeys = sourceMaterialKeys;
-      const chosen = stagingTranscribeSelectedKeys.filter((k) => materialKeys.includes(k));
-      /** 全量提交才带素材勾选；partial（新插入段）由服务端补全缺失转写，不受列表勾选影响 */
-      const fullTranscribeSubmit = pendingInserted.length === 0;
-      if (fullTranscribeSubmit && materialKeys.length > 0 && chosen.length === 0) {
-        setErr(t("clip.editor.transcribeSelectAtLeastOne"));
-        setActionBusy(false);
-        return;
-      }
+      /** full / partial 均不传 transcribe_segment_keys：首次须识别全部缺失段才能拼稿；补转由服务端处理缺失分段。 */
       const payload: Record<string, unknown> =
         pendingInserted.length > 0
           ? {
@@ -2206,9 +2262,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               }))
             }
           : { mode: "full" };
-      if (fullTranscribeSubmit && materialKeys.length > 0) {
-        payload.transcribe_segment_keys = chosen;
-      }
       const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/transcribe`, {
         method: "POST",
         credentials: "same-origin",
@@ -2232,16 +2285,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     } finally {
       setActionBusy(false);
     }
-  }, [
-    ensureLoggedInForAction,
-    pendingInsertedSegments,
-    projectId,
-    getAuthHeaders,
-    load,
-    sourceMaterialKeys,
-    stagingTranscribeSelectedKeys,
-    t
-  ]);
+  }, [ensureLoggedInForAction, pendingInsertedSegments, projectId, getAuthHeaders, load]);
 
   const reorderAudioSegment = useCallback(
     (segmentId: string, targetIndex: number) => {
@@ -2272,7 +2316,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         typeof seekMsOverride === "number"
           ? Math.max(seg.startMs, Math.min(seg.endMs, Math.round(seekMsOverride)))
           : seg.startMs;
-      waveformRef.current?.seekToMs(seekMs);
+      if (typeof performance !== "undefined") {
+        playbackExcludedBypassUntilRef.current = performance.now() + 900;
+      }
+      waveformRef.current?.seekToMs(seekMs, { snap: false });
       const firstWordId = seg.wordIds.find((id) => rawWordById.has(id));
       if (firstWordId) setFocusedWordId(firstWordId);
     },
@@ -3303,6 +3350,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     mainAudioDurationMs={durationMs ?? null}
                     stagingTranscribeSelectedKeys={stagingTranscribeSelectedKeys}
                     onStagingTranscribeSelectedKeysChange={setStagingTranscribeSelectedKeys}
+                    segmentDurationMsByKey={segmentDurationMsByKey}
+                    transcriptionSucceeded={project.transcription_status === "succeeded"}
                   />
                 ) : null}
                 <div
@@ -3384,6 +3433,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           onError={(msg) => setErr(msg)}
                           selectedTranscribeKeys={stagingTranscribeSelectedKeys}
                           onSelectedTranscribeKeysChange={setStagingTranscribeSelectedKeys}
+                          approxDurationMsPerSegment={approxSegmentDurationMs}
+                          durationMsBySegmentKey={segmentDurationMsByKey}
+                          transcriptionSucceeded={project.transcription_status === "succeeded"}
                         />
                       ) : null}
                       {!usePrdLayout && audioStagingEntries.length > 1 ? (

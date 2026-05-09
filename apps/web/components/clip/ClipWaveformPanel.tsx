@@ -3,7 +3,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 
 export type ClipWaveformHandle = {
-  seekToMs: (ms: number) => void;
+  /** opts.snap=false：跳转定位时不做词边界磁吸（避免跳到相邻词） */
+  seekToMs: (ms: number, opts?: { snap?: boolean }) => void;
   playPause: () => void;
   pause: () => void;
   play: () => Promise<void>;
@@ -80,7 +81,7 @@ const ClipWaveformPanel = forwardRef<ClipWaveformHandle, Props>(function ClipWav
   snapSeekRef.current = snapSeekMs;
 
   useImperativeHandle(ref, () => ({
-    seekToMs: (ms: number) => {
+    seekToMs: (ms: number, _opts?: { snap?: boolean }) => {
       const ws = wsRef.current;
       if (!ws) return;
       const sec = Math.max(0, ms / 1000);

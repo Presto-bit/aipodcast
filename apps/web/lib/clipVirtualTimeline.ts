@@ -1,5 +1,18 @@
 import type { ClipAudioStagingEntry, ClipWord } from "./clipTypes";
 
+/** 词级 seg_key 对应素材分段内的最大结束毫秒（与 stitch / 虚拟轨一致），用于素材列表展示时长 */
+export function maxSegDurationMsByKeyFromWords(words: readonly ClipWord[]): Record<string, number> {
+  const maxBySeg = new Map<string, number>();
+  for (const w of words) {
+    const rec = w as ClipWord & { seg_key?: string; e_seg_ms?: number };
+    const k = rec.seg_key?.trim();
+    if (!k) continue;
+    const e = typeof rec.e_seg_ms === "number" ? rec.e_seg_ms : rec.e_ms;
+    maxBySeg.set(k, Math.max(maxBySeg.get(k) ?? 0, e));
+  }
+  return Object.fromEntries(maxBySeg);
+}
+
 export type VirtualAudioCue = {
   objectKey: string;
   url: string;
@@ -17,14 +30,7 @@ export function buildVirtualAudioCues(
   perKeyFallbackMs?: Readonly<Record<string, number>> | null
 ): VirtualAudioCue[] {
   if (!entries.length) return [];
-  const maxBySeg = new Map<string, number>();
-  for (const w of words) {
-    const rec = w as ClipWord & { seg_key?: string; e_seg_ms?: number };
-    const k = rec.seg_key?.trim();
-    if (!k) continue;
-    const e = typeof rec.e_seg_ms === "number" ? rec.e_seg_ms : rec.e_ms;
-    maxBySeg.set(k, Math.max(maxBySeg.get(k) ?? 0, e));
-  }
+  const maxBySeg = new Map<string, number>(Object.entries(maxSegDurationMsByKeyFromWords(words)));
   let pos = 0;
   const cues: VirtualAudioCue[] = [];
   const fallbackSlice =
@@ -72,14 +78,7 @@ export function buildMaterialTimelineSlices(
   perKeyFallbackMs?: Readonly<Record<string, number>> | null
 ): { slices: MaterialTimelineSlice[]; totalMs: number } {
   if (!entries.length) return { slices: [], totalMs: 0 };
-  const maxBySeg = new Map<string, number>();
-  for (const w of words) {
-    const rec = w as ClipWord & { seg_key?: string; e_seg_ms?: number };
-    const k = rec.seg_key?.trim();
-    if (!k) continue;
-    const e = typeof rec.e_seg_ms === "number" ? rec.e_seg_ms : rec.e_ms;
-    maxBySeg.set(k, Math.max(maxBySeg.get(k) ?? 0, e));
-  }
+  const maxBySeg = new Map<string, number>(Object.entries(maxSegDurationMsByKeyFromWords(words)));
   const fallbackSlice =
     fallbackTotalMs > 0 && maxBySeg.size === 0
       ? Math.max(30_000, Math.ceil(fallbackTotalMs / Math.max(1, entries.length)))
