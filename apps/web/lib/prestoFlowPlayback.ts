@@ -113,6 +113,34 @@ export function applyPlaybackPreRollBeforeNextKept(
   return Math.max(0, nextS - prerollMs);
 }
 
+/**
+ * 稿面单击/跳转定位后：播放回调应优先「待在焦点词」附近，避免 pre-roll 或跳过已剪逻辑把游标拽走。
+ * 若 raw 落在**另一块**已剪词内部则返回 false，以便仍按全局规则跳出该块。
+ */
+export function rawWithinFocusWordPlaybackHold(
+  words: readonly ClipWord[],
+  excluded: ReadonlySet<string>,
+  focusedId: string | null,
+  rawMs: number,
+  opts?: { leadMs?: number; tailPadMs?: number }
+): boolean {
+  if (!focusedId || words.length === 0) return false;
+  const fw = words.find((x) => x.id === focusedId);
+  if (!fw) return false;
+  const lead = opts?.leadMs ?? 72;
+  const tail = opts?.tailPadMs ?? 28;
+  const lo = fw.s_ms - lead;
+  const hi = fw.e_ms + tail;
+  const t = rawMs;
+  if (t < lo || t >= hi) return false;
+  for (const w of words) {
+    if (w.id === focusedId) continue;
+    if (!excluded.has(w.id)) continue;
+    if (t >= w.s_ms && t < w.e_ms) return false;
+  }
+  return true;
+}
+
 /** 将 seek 时间磁吸到最近的词边界（起止点），阈值内生效。 */
 export function snapMsNearWordEdges(
   words: readonly ClipWord[],

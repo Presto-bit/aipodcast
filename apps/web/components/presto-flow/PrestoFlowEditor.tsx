@@ -22,6 +22,7 @@ import {
   adjustPlaybackMsForExcluded,
   applyPlaybackPreRollBeforeNextKept,
   findPlaybackHighlightWordIndex,
+  rawWithinFocusWordPlaybackHold,
   snapMsNearWordEdges
 } from "../../lib/prestoFlowPlayback";
 import {
@@ -997,13 +998,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         waveformRef.current?.pause();
         sentenceAutopauseEndMsRef.current = null;
       }
-      const fid = focusedWordIdRef.current;
-      if (fid && excludedRef.current.has(fid) && words.length > 0) {
-        const fw = words.find((x) => x.id === fid);
-        if (fw && raw >= fw.s_ms && raw < fw.e_ms) {
-          setPlaybackMs(raw);
-          return;
-        }
+      if (rawWithinFocusWordPlaybackHold(words, excludedRef.current, focusedWordIdRef.current, raw)) {
+        setPlaybackMs(raw);
+        return;
       }
       if (typeof performance !== "undefined" && performance.now() < playbackExcludedBypassUntilRef.current) {
         setPlaybackMs(raw);
@@ -1262,8 +1259,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const jumpToWordInTranscript = useCallback(
     (wid: string, opts?: { lineEndAutopause?: boolean }) => {
+      focusedWordIdRef.current = wid;
       if (typeof performance !== "undefined") {
-        playbackExcludedBypassUntilRef.current = performance.now() + 900;
+        playbackExcludedBypassUntilRef.current = performance.now() + 1800;
       }
       if (scriptSearch.trim()) {
         const ids = collectSubstringMatchWordIds(words, scriptSearch, excluded);
@@ -1290,12 +1288,13 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const selectWordsFromRoughSheet = useCallback(
     (ids: readonly string[]) => {
       if (!ids.length) return;
-      if (typeof performance !== "undefined") {
-        playbackExcludedBypassUntilRef.current = performance.now() + 900;
-      }
       const uniq = [...new Set(ids)];
-      setMultiSelectIds(new Set(uniq));
       const first = uniq[0]!;
+      focusedWordIdRef.current = first;
+      if (typeof performance !== "undefined") {
+        playbackExcludedBypassUntilRef.current = performance.now() + 1800;
+      }
+      setMultiSelectIds(new Set(uniq));
       setFocusedWordId(first);
       transcriptRef.current?.scrollToWordId(first);
       const w = words.find((x) => x.id === first);
@@ -1306,8 +1305,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const navigateScriptSearchHit = useCallback(
     (wid: string) => {
+      focusedWordIdRef.current = wid;
       if (typeof performance !== "undefined") {
-        playbackExcludedBypassUntilRef.current = performance.now() + 900;
+        playbackExcludedBypassUntilRef.current = performance.now() + 1800;
       }
       sentenceAutopauseEndMsRef.current = null;
       setSearchHlWordIds(new Set([wid]));
@@ -1335,7 +1335,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     sentenceAutopauseEndMsRef.current = null;
     if (!Number.isFinite(ms)) return;
     if (typeof performance !== "undefined") {
-      playbackExcludedBypassUntilRef.current = performance.now() + 900;
+      playbackExcludedBypassUntilRef.current = performance.now() + 1800;
     }
     waveformRef.current?.seekToMs(Math.round(ms), { snap: false });
     void waveformRef.current?.play();
@@ -2202,6 +2202,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         const ids = wordIdsBetweenInclusive(words, anchor, w.id);
         setMultiSelectIds(new Set(ids.length ? ids : [w.id]));
         setFocusedWordId(w.id);
+        focusedWordIdRef.current = w.id;
         // 与「框选」保持同一语义：都视为范围选区
         leftDragMultiSelectRef.current = true;
         return;
@@ -2216,6 +2217,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         });
         rangeAnchorWordIdRef.current = w.id;
         setFocusedWordId(w.id);
+        focusedWordIdRef.current = w.id;
         // 与「框选」保持同一语义：都视为范围选区
         leftDragMultiSelectRef.current = true;
         return;
@@ -2223,11 +2225,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       rangeAnchorWordIdRef.current = w.id;
       setMultiSelectIds(new Set([w.id]));
       setFocusedWordId(w.id);
+      focusedWordIdRef.current = w.id;
       // 左键单击单词后，Delete/Backspace 也按“选区删除”处理（单词选区）。
       leftDragMultiSelectRef.current = true;
       sentenceAutopauseEndMsRef.current = null;
       if (typeof performance !== "undefined") {
-        playbackExcludedBypassUntilRef.current = performance.now() + 900;
+        playbackExcludedBypassUntilRef.current = performance.now() + 1800;
       }
       waveformRef.current?.seekToMs(w.s_ms, { snap: false });
       void waveformRef.current?.play();
@@ -2332,11 +2335,14 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           ? Math.max(seg.startMs, Math.min(seg.endMs, Math.round(seekMsOverride)))
           : seg.startMs;
       if (typeof performance !== "undefined") {
-        playbackExcludedBypassUntilRef.current = performance.now() + 900;
+        playbackExcludedBypassUntilRef.current = performance.now() + 1800;
       }
       waveformRef.current?.seekToMs(seekMs, { snap: false });
       const firstWordId = seg.wordIds.find((id) => rawWordById.has(id));
-      if (firstWordId) setFocusedWordId(firstWordId);
+      if (firstWordId) {
+        focusedWordIdRef.current = firstWordId;
+        setFocusedWordId(firstWordId);
+      }
     },
     [audioSegments, rawWordById]
   );
