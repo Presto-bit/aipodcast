@@ -716,8 +716,8 @@ def list_podcast_template_works_api(
     limit: int = Query(default=40, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=10_000),
 ):
-    """全站播客创作模板列表（需登录）；成片由管理员在任务详情中标记。"""
-    _current_user_ref_or_401(request)
+    """全站播客创作模板列表（公开可读）；成片由管理员在任务详情中标记。复用创作参数仍须登录。"""
+    _ = request
     rows = list_podcast_template_works(limit=limit, offset=offset)
     _proj_name_cache: dict[str, str] = {}
 
@@ -752,8 +752,8 @@ def list_podcast_template_works_api(
 
 @router.get("/jobs/{job_id}/podcast-template-listen")
 def podcast_template_listen_api(job_id: str, request: Request):
-    """模板成片试听元数据（需登录）；不含全文稿与 payload。"""
-    _current_user_ref_or_401(request)
+    """模板成片试听元数据（公开可读）；不含全文稿与 payload。"""
+    _ = request
     bundle = build_podcast_template_listen_bundle(job_id)
     if not bundle:
         raise HTTPException(status_code=404, detail="template_listen_not_available")

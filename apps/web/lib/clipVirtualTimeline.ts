@@ -65,6 +65,21 @@ export function totalVirtualDurationMs(cues: readonly VirtualAudioCue[]): number
   return last.startGlobalMs + last.durationMs;
 }
 
+/**
+ * 多段虚拟拼接轨：词的全局播放毫秒须按「当前素材顺序 + cue 起点 + 段内 s_seg_ms」计算，
+ * 不能直接用 s_ms（用户重排分段后 s_ms 可能与当前 cue 时间轴不一致）。
+ */
+export function clipWordGlobalPlaybackMs(w: ClipWord, cues: readonly VirtualAudioCue[] | null | undefined): number {
+  const k = String(w.seg_key || "").trim();
+  const sSeg = typeof w.s_seg_ms === "number" && Number.isFinite(w.s_seg_ms) ? w.s_seg_ms : null;
+  const list = cues && cues.length ? cues : null;
+  if (k && sSeg != null && list) {
+    const cue = list.find((c) => c.objectKey === k);
+    if (cue) return Math.max(0, Math.round(cue.startGlobalMs + sSeg));
+  }
+  return Math.max(0, Math.round(w.s_ms));
+}
+
 /** 素材顺序 + 各段时长（与虚拟拼接轨一致），用于总进度条上的分段色块 */
 export type MaterialTimelineSlice = {
   startMs: number;

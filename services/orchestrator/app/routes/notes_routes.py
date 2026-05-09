@@ -1768,7 +1768,8 @@ def list_popular_notebooks_api(
     limit: int = Query(default=40, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=10_000),
 ):
-    _current_user_ref_or_401(request)
+    """公开发现列表：未登录也可浏览（与 POST /notebooks/view 计数等写操作分离）。"""
+    _ = request
     items = list_popular_public_notebooks(limit=limit, offset=offset)
     has_more = len(items) >= limit
     return {"success": True, "items": items, "has_more": has_more, "offset": offset, "limit": limit}

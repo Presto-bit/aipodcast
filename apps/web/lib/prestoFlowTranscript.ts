@@ -1,4 +1,6 @@
 import type { ClipWord } from "./clipTypes";
+import type { VirtualAudioCue } from "./clipVirtualTimeline";
+import { clipWordGlobalPlaybackMs } from "./clipVirtualTimeline";
 
 /** 与 ASR 词块对齐的展示 token（含标点） */
 export function displayToken(w: ClipWord): string {
@@ -176,10 +178,25 @@ export function collectLineWordIds(line: SpeakerLine): string[] {
   return out;
 }
 
-/** 按转写顺序排列词 id（用于口癖行「下一次点击跳下一处」） */
-export function orderWordIdsByTranscript(ids: readonly string[], orderedWords: readonly ClipWord[]): string[] {
+/** 按时间轴排列词 id（用于口癖行「下一次点击跳下一处」）；多段虚拟轨时按 cue+段内时间排序。 */
+export function orderWordIdsByTranscript(
+  ids: readonly string[],
+  orderedWords: readonly ClipWord[],
+  virtualCues?: readonly VirtualAudioCue[] | null
+): string[] {
   const pos = new Map(orderedWords.map((w, i) => [w.id, i] as const));
-  return [...ids].filter((id) => pos.has(id)).sort((a, b) => (pos.get(a)! - pos.get(b)!));
+  const byId = new Map(orderedWords.map((w) => [w.id, w]));
+  return [...ids]
+    .filter((id) => pos.has(id))
+    .sort((a, b) => {
+      const wa = byId.get(a);
+      const wb = byId.get(b);
+      if (!wa || !wb) return 0;
+      const ga = clipWordGlobalPlaybackMs(wa, virtualCues);
+      const gb = clipWordGlobalPlaybackMs(wb, virtualCues);
+      if (ga !== gb) return ga - gb;
+      return pos.get(a)! - pos.get(b)!;
+    });
 }
 
 /** 词所在稿面行的最后一个词的结束时间（毫秒），用于试听播放到句末暂停 */

@@ -52,6 +52,7 @@ import {
 import {
   buildMaterialTimelineSlices,
   buildVirtualAudioCues,
+  clipWordGlobalPlaybackMs,
   maxSegDurationMsByKeyFromWords,
   totalVirtualDurationMs
 } from "../../lib/clipVirtualTimeline";
@@ -1142,6 +1143,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const useVirtualMultiSegmentPlayback = mergedObjectKey.length === 0 && audioStagingEntries.length > 1;
 
+  /** 多段虚拟拼接时：seek/口癖轮换排序用当前 cue 时间轴，避免与词上 s_ms 漂移不一致 */
+  const jumpPlaybackCuesForSeek = useMemo(
+    () => (useVirtualMultiSegmentPlayback && virtualAudioCues.length > 0 ? virtualAudioCues : null),
+    [useVirtualMultiSegmentPlayback, virtualAudioCues]
+  );
+
   /** 播放器底部：按素材顺序与时长比例的总进度分段条（与虚拟多段轨对齐） */
   const audioConsoleMaterialTimeline = useMemo(() => {
     if (audioStagingEntries.length < 1) return null;
@@ -1271,17 +1278,18 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       transcriptRef.current?.scrollToWordId(wid);
       const w = words.find((x) => x.id === wid);
       if (w) {
-        waveformRef.current?.seekToMs(w.s_ms, { snap: false });
+        const g = clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek);
+        waveformRef.current?.seekToMs(g, { snap: false });
       }
       if (opts?.lineEndAutopause && w && lines.length) {
         const end = maxEndMsForLineContainingWordId(lines, wid, words);
-        sentenceAutopauseEndMsRef.current =
-          end != null && end > w.s_ms + 40 ? end : null;
+        const g = clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek);
+        sentenceAutopauseEndMsRef.current = end != null && end > g + 40 ? end : null;
       } else {
         sentenceAutopauseEndMsRef.current = null;
       }
     },
-    [words, scriptSearch, excluded, lines]
+    [words, scriptSearch, excluded, lines, jumpPlaybackCuesForSeek]
   );
 
   const selectWordsFromRoughSheet = useCallback(
@@ -1297,9 +1305,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       setFocusedWordId(first);
       transcriptRef.current?.scrollToWordId(first);
       const w = words.find((x) => x.id === first);
-      if (w) waveformRef.current?.seekToMs(w.s_ms, { snap: false });
+      if (w) waveformRef.current?.seekToMs(clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek), { snap: false });
     },
-    [words]
+    [words, jumpPlaybackCuesForSeek]
   );
 
   const navigateScriptSearchHit = useCallback(
@@ -1314,11 +1322,11 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       transcriptRef.current?.scrollToWordId(wid);
       const w = words.find((x) => x.id === wid);
       if (w) {
-        waveformRef.current?.seekToMs(w.s_ms, { snap: false });
+        waveformRef.current?.seekToMs(clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek), { snap: false });
         void waveformRef.current?.play();
       }
     },
-    [words]
+    [words, jumpPlaybackCuesForSeek]
   );
 
   const selectAllScriptSearchHits = useCallback(() => {
@@ -2231,9 +2239,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       if (typeof performance !== "undefined") {
         playbackExcludedBypassUntilRef.current = performance.now() + 1800;
       }
-      waveformRef.current?.seekToMs(w.s_ms, { snap: false });
+      waveformRef.current?.seekToMs(clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek), { snap: false });
     },
-    [focusedWordId, words]
+    [focusedWordId, words, jumpPlaybackCuesForSeek]
   );
 
   const deleteSelectionFromToolbar = useCallback(() => {
@@ -2725,6 +2733,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     projectId,
     project,
     words,
+    jumpOrderCues: jumpPlaybackCuesForSeek,
     excluded,
     onMarkExcluded: markManyExcluded,
     onMarkRestored: markManyRestored,
@@ -3459,9 +3468,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           transcriptionSucceeded={project.transcription_status === "succeeded"}
                         />
                       ) : null}
-                      {!usePrdLayout && audioStagingEntries.length > 1 ? (
-                        <p className="mt-1.5 text-[9px] leading-snug text-muted">{t("clip.editor.transcribeMaterialCheckboxHint")}</p>
-                      ) : null}
                       {!usePrdLayout && wordchainPreviewOn ? (
                         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand/25 bg-brand/10 px-2.5 py-1.5 text-[10px] text-ink">
                           <span className="min-w-0 flex-1 leading-snug">{t("presto.flow.roughCut.wordchainPreviewBanner")}</span>
@@ -3884,40 +3890,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         </button>
                       </div>
                       <div className="min-h-0 flex-1 overflow-y-auto">
-                        {workbenchTab === "suggestions" ? (
-                          <ClipRoughCutPanel
-                            projectId={projectId}
-                            project={project}
-                            words={words}
-                            excluded={excluded}
-                            onMarkExcluded={markManyExcluded}
-                            onMarkRestored={markManyRestored}
-                            onProjectPatch={setProject}
-                            getAuthHeaders={getAuthHeaders}
-                            onRefreshProject={load}
-                            onError={(msg) => setErr(msg)}
-                            multiSelectIds={multiSelectIds}
-                            onSelectWordIdsForSheet={selectWordsFromRoughSheet}
-                            silenceSegments={silenceSegments}
-                            silenceCutKeys={silenceCutKeySet}
-                            onJumpWord={jumpToWordInTranscript}
-                            onSeekPreviewMs={seekPreviewMs}
-                            onRefreshSilences={loadSilenceSegments}
-                            onToggleSilenceCut={toggleSilenceCut}
-                            onSetSilenceCapMs={setSilenceCapMs}
-                            roughCutSuggestions={roughPanelSuggestions}
-                            onExecuteSuggestion={onExecuteSuggestion}
-                            dismissedRoughKeys={dismissedRoughKeys}
-                            onToggleDismissRoughKey={toggleDismissRoughKey}
-                            outlineExpandBusy={llmPhase === "expand"}
-                            onExpandOutline={(src) => void loadDeepseekExpandOutline(src)}
-                            hasServerAudio={hasServerAudio}
-                            wordchainPreviewActive={wordchainPreviewOn}
-                            wordchainPreviewBusy={wordchainPreviewBusy}
-                            onGenerateWordchainPreview={() => void generateWordchainPreview()}
-                            onExitWordchainPreview={() => setWordchainPreviewOn(false)}
-                          />
-                        ) : null}
+                        {workbenchTab === "suggestions" ? <ClipRoughCutPanel {...roughCutDockProps} /> : null}
                         {workbenchTab === "engine" ? (
                           <ClipRepairPanel
                             projectId={projectId}

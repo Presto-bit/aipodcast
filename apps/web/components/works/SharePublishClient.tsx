@@ -2446,7 +2446,7 @@ export function SharePublishClient({
                   AI 优化 Shownotes
                 </h2>
                 <label className="mt-4 block text-sm text-muted">
-                  编辑要求
+                  优化示例
                   <textarea
                     ref={aiShownotesPromptRef}
                     className="mt-1 min-h-[7rem] w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm leading-relaxed text-ink placeholder:text-muted/60"

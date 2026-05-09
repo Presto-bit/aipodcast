@@ -416,7 +416,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
         if (!res.ok || data.success === false) {
           const snip = apiErrorSnippet(data);
           return fail(
-            `模板试听不可用（HTTP ${res.status}${snip ? `：${snip}` : ""}）。请确认已登录且该内容可访问。`,
+            `模板试听不可用（HTTP ${res.status}${snip ? `：${snip}` : ""}）。请确认该内容可访问。`,
             tplRid
           );
         }

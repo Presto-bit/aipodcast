@@ -763,7 +763,7 @@ function buildStructuredShowNotesMarkdown(
   const categoryLine = categoryShownotesFlavorLine(category);
   const coreThread = deriveCoreThreadBullets(scriptRaw, payloadText, summaryLine, 2);
   const takeaways = deriveKeyTakeawaysFromScript(scriptRaw, payloadText, summaryLine, 3);
-  const quotes = deriveGoldenQuotesFromScript(scriptRaw, payloadText, 6);
+  const quotes = deriveGoldenQuotesFromScript(scriptRaw, payloadText, 3);
   const resources = deriveResourceBulletsFromPayload(payload, scriptRaw);
   const voiceLines = deriveVoicePersonaLinesFromPayload(payload);
 
@@ -958,7 +958,7 @@ export function serializeH2MarkdownSections(
 }
 
 /**
- * 预览用：保证「金句」紧跟在「节目导听」之后；若无「金句」节则在导听后插入占位。
+ * 预览用：保证 Markdown 中「## 节目导听」在「## 金句」之前，且「金句」紧跟在「节目导听」之后；若无「金句」节则在导听后插入占位。
  */
 export function reorderShowNotesGoldenQuotesAfterListen(markdown: string): string {
   const raw = String(markdown || "");

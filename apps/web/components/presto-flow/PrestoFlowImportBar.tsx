@@ -1,6 +1,6 @@
 "use client";
 
-import { Upload } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useRef, useState } from "react";
 import type { ClipProjectRow } from "../../lib/clipTypes";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
@@ -100,7 +100,7 @@ export default function PrestoFlowImportBar({
         {busy ? (
           <span className="text-[10px] font-semibold text-muted">…</span>
         ) : (
-          <Upload className="h-4 w-4" aria-hidden />
+          <Plus className="h-4 w-4" strokeWidth={2.25} aria-hidden />
         )}
         <span className="sr-only">{busy ? busyLabel : label}</span>
         <input

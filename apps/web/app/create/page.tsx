@@ -229,17 +229,10 @@ export default function CreatePage() {
     }
   }, [getAuthHeaders]);
 
-  /** 播客模板需登录；访客不请求，避免 401 与无意义报错 */
+  /** 全站播客模板列表公开可读；未登录也可拉取展示 */
   useEffect(() => {
-    if (!isLoggedIn) {
-      setServerPodcastTemplates([]);
-      setTemplatesErr("");
-      setTemplatesLoading(false);
-      setCreateWorksTabOverride(null);
-      return;
-    }
     void refreshPodcastTemplates();
-  }, [isLoggedIn, refreshPodcastTemplates]);
+  }, [refreshPodcastTemplates]);
 
   useEffect(() => {
     setCreateWorksTabOverride(null);
@@ -260,7 +253,13 @@ export default function CreatePage() {
 
   const createWorksGalleryTab: CreateWorksTab =
     createWorksTabOverride ??
-    (!isLoggedIn ? "recent" : worksLoading ? "recent" : homeWorks.length > 0 ? "recent" : "templates");
+    (!isLoggedIn
+      ? "templates"
+      : worksLoading
+        ? "recent"
+        : homeWorks.length > 0
+          ? "recent"
+          : "templates");
 
   const templateGalleryWorks = useMemo(() => [...serverPodcastTemplates], [serverPodcastTemplates]);
 
@@ -535,14 +534,11 @@ export default function CreatePage() {
                 type="button"
                 role="tab"
                 aria-selected={createWorksGalleryTab === "templates"}
-                disabled={!isLoggedIn}
-                title={!isLoggedIn ? "登录后可查看官方模板" : undefined}
                 className={[
                   "rounded-md px-2.5 py-1 transition sm:px-3",
                   createWorksGalleryTab === "templates"
                     ? "bg-surface text-ink shadow-sm ring-1 ring-line/60"
-                    : "text-muted hover:text-ink",
-                  !isLoggedIn ? "cursor-not-allowed opacity-50 hover:text-muted" : ""
+                    : "text-muted hover:text-ink"
                 ].join(" ")}
                 onClick={() => setCreateWorksTabOverride("templates")}
               >

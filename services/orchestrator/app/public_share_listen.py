@@ -208,7 +208,7 @@ def build_public_share_listen_bundle(job_id: str) -> dict[str, Any] | None:
 
 def build_podcast_template_listen_bundle(job_id: str) -> dict[str, Any] | None:
     """
-    已标记为全站创作模板的播客成片：登录用户可试听，不含 payload / 全文稿。
+    已标记为全站创作模板的播客成片：匿名可试听，不含 payload / 全文稿。
     """
     from .models import ensure_jobs_trash_schema
 

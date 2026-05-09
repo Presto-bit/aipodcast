@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipExportPausePolicy, ClipProjectRow, ClipSilenceSegment, ClipWord } from "../../lib/clipTypes";
+import type { VirtualAudioCue } from "../../lib/clipVirtualTimeline";
 import type { ClipEditSuggestion, ClipOutlineSource } from "../../lib/prestoFlowAiSuggestions";
 import { aggregateVerbalTicRows, collectVerbalTicWordIds } from "../../lib/prestoFlowRoughCutLexicon";
 import { displayToken, orderWordIdsByTranscript } from "../../lib/prestoFlowTranscript";
@@ -134,6 +135,8 @@ type Props = {
   toolbarFocus?: "verbal" | "pause" | null;
   /** PRD 横向底栏：仅渲染对应分区 */
   variant?: "default" | "verbalSheet" | "pauseSheet";
+  /** 多段虚拟轨：口癖跳转轮换顺序与全局 seek 对齐（与 PrestoFlowEditor.jumpPlaybackCuesForSeek 一致） */
+  jumpOrderCues?: readonly VirtualAudioCue[] | null;
 };
 
 function iconBtnClass(disabled?: boolean) {
@@ -175,7 +178,8 @@ export default function ClipRoughCutPanel({
   onGenerateWordchainPreview,
   onExitWordchainPreview,
   toolbarFocus = null,
-  variant = "default"
+  variant = "default",
+  jumpOrderCues = null
 }: Props) {
   const { t } = useI18n();
   const [pauseBusy, setPauseBusy] = useState(false);
@@ -189,6 +193,18 @@ export default function ClipRoughCutPanel({
   /** 口癖行 / 建议行：重复点击同一行时按转写顺序轮换跳转的词 */
   const verbalJumpCycleRef = useRef<Record<string, number>>({});
 
+  const verbalJumpResetKey = useMemo(() => {
+    const head = words[0]?.id ?? "";
+    const tail = words.length ? words[words.length - 1]!.id : "";
+    const cq =
+      jumpOrderCues?.map((c) => `${c.objectKey}@${c.startGlobalMs}:${c.durationMs}`).join("|") ?? "";
+    return `${projectId}:${words.length}:${head}:${tail}:${cq}`;
+  }, [projectId, words, jumpOrderCues]);
+
+  useEffect(() => {
+    verbalJumpCycleRef.current = {};
+  }, [verbalJumpResetKey]);
+
   useEffect(() => {
     if (!toolbarFocus) return;
     if (toolbarFocus === "verbal") {
@@ -199,10 +215,6 @@ export default function ClipRoughCutPanel({
       setVerbalAdjustOpen(false);
     }
   }, [toolbarFocus]);
-
-  useEffect(() => {
-    verbalJumpCycleRef.current = {};
-  }, [projectId]);
 
   const pausePolicy = project.export_pause_policy;
   const pauseEnabled = Boolean(pausePolicy?.enabled);
@@ -375,7 +387,7 @@ export default function ClipRoughCutPanel({
           <div className="flex flex-wrap gap-1.5">
             {ticAggRows.map((row) => {
               const dismissId = `tic:${row.coreKey}`;
-              const orderedTicIds = orderWordIdsByTranscript([...row.activeIds, ...row.excludedIds], words);
+              const orderedTicIds = orderWordIdsByTranscript([...row.activeIds, ...row.excludedIds], words, jumpOrderCues);
               const selected = idsSetMatchSelection(row.activeIds, multiSelectIds);
               return (
                 <button
@@ -398,7 +410,7 @@ export default function ClipRoughCutPanel({
               const ex = s.execute;
               const orderedJumpIds =
                 ex?.kind === "excludeWords" || ex?.kind === "keepStutterFirst"
-                  ? orderWordIdsByTranscript(ex.wordIds, words)
+                  ? orderWordIdsByTranscript(ex.wordIds, words, jumpOrderCues)
                   : s.wordId
                     ? [s.wordId]
                     : [];
@@ -621,7 +633,8 @@ export default function ClipRoughCutPanel({
                       const rowDismissed = dismissedRoughKeys.has(dismissId);
                       const orderedTicIds = orderWordIdsByTranscript(
                         [...row.activeIds, ...row.excludedIds],
-                        words
+                        words,
+                        jumpOrderCues
                       );
                       const total = row.activeIds.length + row.excludedIds.length;
                       const wordStruck = row.activeIds.length === 0 && row.excludedIds.length > 0;
@@ -710,7 +723,7 @@ export default function ClipRoughCutPanel({
                   const jumpId = s.wordId ?? (ex?.kind === "excludeWords" || ex?.kind === "keepStutterFirst" ? ex.wordIds[0] : undefined) ?? null;
                   const orderedJumpIds =
                     ex?.kind === "excludeWords" || ex?.kind === "keepStutterFirst"
-                      ? orderWordIdsByTranscript(ex.wordIds, words)
+                      ? orderWordIdsByTranscript(ex.wordIds, words, jumpOrderCues)
                       : jumpId
                         ? [jumpId]
                         : [];

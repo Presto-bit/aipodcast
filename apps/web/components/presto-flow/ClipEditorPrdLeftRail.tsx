@@ -227,9 +227,6 @@ export default function ClipEditorPrdLeftRail({
               ) : (
                 <p className="text-[10px] leading-snug text-muted">请上传音频后开始转写。</p>
               )}
-              {entries.length > 1 ? (
-                <p className="text-[9px] leading-snug text-muted">{t("clip.editor.transcribeMaterialCheckboxHint")}</p>
-              ) : null}
               {pendingInsertedSegments > 0 ? (
                 <p className="text-[9px] text-muted">
                   含 {pendingInsertedSegments} 段新素材尚未转写；请点击「开始转写」后才会提交云端转写。
@@ -247,7 +244,7 @@ export default function ClipEditorPrdLeftRail({
                 readOnly
                 disabled
                 rows={18}
-                className="max-h-[27rem] min-h-[16.5rem] resize-y rounded-lg border border-line bg-fill/30 px-2 py-1.5 font-mono text-[11px] text-muted"
+                className="max-h-[27rem] min-h-[16.5rem] resize-y rounded-lg border border-line bg-fill/30 px-2 py-1.5 font-mono text-sm leading-relaxed text-muted"
                 placeholder="Shownotes 正文…"
               />
             ) : notesDraft.trim() && shownotesViewMode === "preview" ? (
@@ -257,8 +254,8 @@ export default function ClipEditorPrdLeftRail({
                   aria-label="Shownotes 预览，双击可编辑"
                   tabIndex={0}
                   className={[
-                    "max-h-[27rem] min-h-[16.5rem] cursor-default select-text overflow-y-auto rounded-lg border border-line bg-surface px-2.5 py-2 text-[11px] text-ink leading-relaxed",
-                    "[&_a]:text-brand [&_a]:underline [&_h2]:mt-3 [&_h2]:text-[12px] [&_h2]:font-semibold [&_h2]:text-ink",
+                    "max-h-[27rem] min-h-[16.5rem] cursor-default select-text overflow-y-auto rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink leading-relaxed",
+                    "[&_a]:text-brand [&_a]:underline [&_h2]:mt-3 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-ink",
                     "[&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4",
                     "[&_p]:my-1 [&_code]:rounded [&_code]:bg-fill/80 [&_code]:px-0.5"
                   ].join(" ")}
@@ -284,7 +281,7 @@ export default function ClipEditorPrdLeftRail({
                 onChange={(e) => setNotesDraft(e.target.value)}
                 disabled={notesGenBusy}
                 rows={18}
-                className="max-h-[27rem] min-h-[16.5rem] resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-[11px] text-ink"
+                className="max-h-[27rem] min-h-[16.5rem] resize-y rounded-lg border border-line bg-surface px-2 py-1.5 font-mono text-sm leading-relaxed text-ink"
                 placeholder="Shownotes 正文…"
               />
             )}
