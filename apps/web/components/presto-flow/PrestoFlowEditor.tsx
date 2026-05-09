@@ -1272,7 +1272,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       const w = words.find((x) => x.id === wid);
       if (w) {
         waveformRef.current?.seekToMs(w.s_ms, { snap: false });
-        void waveformRef.current?.play();
       }
       if (opts?.lineEndAutopause && w && lines.length) {
         const end = maxEndMsForLineContainingWordId(lines, wid, words);
@@ -2233,7 +2232,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         playbackExcludedBypassUntilRef.current = performance.now() + 1800;
       }
       waveformRef.current?.seekToMs(w.s_ms, { snap: false });
-      void waveformRef.current?.play();
     },
     [focusedWordId, words]
   );
