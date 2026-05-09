@@ -1003,26 +1003,6 @@ export default function SubscriptionPage() {
           我的余额
         </h2>
         {walletPayEnabled ? (
-          <div className="mt-3 rounded-lg border border-line/80 bg-fill/35 px-3 py-2.5 text-xs leading-relaxed text-ink">
-            <p className="font-semibold text-muted">扣费顺序（摘要）</p>
-            <ul className="mt-1.5 list-disc space-y-1 pl-4 text-muted">
-              <li>
-                <span className="font-medium text-ink">语音成片</span>：先扣体验包「语音分钟」，超出部分再按口播时长从
-                <span className="font-medium text-ink">现金钱包</span>扣费（单价以创建任务时的预估为准）。
-              </li>
-              <li>
-                <span className="font-medium text-ink">脚本文本 / 大模型</span>：先扣体验包「文本字数」，超出部分再从钱包扣。
-              </li>
-              <li>
-                <span className="font-medium text-ink">现金钱包</span>：用于超出体验包后的按量计费；音色克隆等按次能力以任务提交时说明为准。
-              </li>
-              <li className="list-none pl-0 text-[11px] text-muted/90">
-                实扣金额以任务<strong className="text-ink/90">完成结算时</strong>为准，与页面上方参考价可能略有差异。
-              </li>
-            </ul>
-          </div>
-        ) : null}
-        {walletPayEnabled ? (
           <>
             <p className="mt-3 text-2xl font-semibold tracking-tight text-ink">
               {walletBalanceCents != null ? (
@@ -1066,25 +1046,6 @@ export default function SubscriptionPage() {
                 >
                   充值
                 </button>
-                <p className="mt-2 max-w-xl text-xs leading-relaxed text-muted">
-                  余额与下方账单会<strong className="font-medium text-ink/90">定时自动刷新</strong>
-                  （约每 30 秒），从支付宝返回本页或切回该标签页时也会拉取最新数据；异步入账通常数秒内可见。
-                </p>
-              </div>
-            ) : null}
-            {rechargeRecords.length > 0 ? (
-              <div className="mt-3 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2 text-xs text-ink">
-                <span className="font-medium text-muted">最近一笔充值</span>
-                <span className="ml-2 font-mono tabular-nums">{fmtMoneyYuan(rechargeRecords[0].amount_cents)}</span>
-                <span className="mx-1.5 text-muted">·</span>
-                <span className="text-muted">{fmtTimeUnix(rechargeRecords[0].recharged_at_unix)}</span>
-                <span className="mx-1.5 text-muted">·</span>
-                <span>{rechargeRecords[0].result_zh || "—"}</span>
-                {rechargeRecords[0].serial_no ? (
-                  <span className="mt-1 block font-mono text-[10px] text-muted" title={rechargeRecords[0].provider_order_id || ""}>
-                    流水 {rechargeRecords[0].serial_no}
-                  </span>
-                ) : null}
               </div>
             ) : null}
           </>
