@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import SmallConfirmModal from "../../../components/ui/SmallConfirmModal";
+import { apiErrorMessage } from "../../../lib/apiError";
 import { useAuth } from "../../../lib/auth";
 
 type AdminUser = {
@@ -81,7 +82,7 @@ export default function AdminUsersPage() {
   const loadUsers = useCallback(async () => {
     const res = await fetch("/api/admin/users", { headers: getAuthHeaders(), cache: "no-store" });
     const data = (await res.json().catch(() => ({}))) as { success?: boolean; users?: AdminUser[]; error?: string; detail?: string };
-    if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
+    if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, `加载失败 ${res.status}`));
     const list = data.users || [];
     setUsers(list);
   }, [getAuthHeaders]);
@@ -104,7 +105,7 @@ export default function AdminUsersPage() {
       }),
     });
     const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
-    if (!res.ok || !data.success) throw new Error(data.error || data.detail || `创建失败 ${res.status}`);
+    if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, `创建失败 ${res.status}`));
     setPhone("");
     setPassword("");
     await loadUsers();
@@ -119,7 +120,7 @@ export default function AdminUsersPage() {
       body: JSON.stringify({ phone: rowKey(u), role: next }),
     });
     const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
-    if (!res.ok || !data.success) throw new Error(data.error || data.detail || `设置失败 ${res.status}`);
+    if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, `设置失败 ${res.status}`));
     await loadUsers();
     setMsg("角色已更新");
   }
@@ -152,7 +153,7 @@ export default function AdminUsersPage() {
         wallet_balance_cents?: number;
       };
       if (!res.ok || !data.success) {
-        throw new Error(data.detail || data.error || `充值失败 ${res.status}`);
+        throw new Error(apiErrorMessage(data, `充值失败 ${res.status}`));
       }
       setCreditYuanByPhone((prev) => ({ ...prev, [phoneKey]: "" }));
       setMoreMenuKey(null);
@@ -194,7 +195,7 @@ export default function AdminUsersPage() {
         body: JSON.stringify({ phone: rowKey(restoreTarget) }),
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
-      if (!res.ok || !data.success) throw new Error(data.error || data.detail || `操作失败 ${res.status}`);
+      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, `操作失败 ${res.status}`));
       await loadUsers();
       setMsg("账号已恢复为正常，可重新登录");
       setRestoreTarget(null);
@@ -218,7 +219,7 @@ export default function AdminUsersPage() {
         body: JSON.stringify({ phone: rowKey(invalidateTarget) }),
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
-      if (!res.ok || !data.success) throw new Error(data.error || data.detail || `操作失败 ${res.status}`);
+      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, `操作失败 ${res.status}`));
       await loadUsers();
       setMsg("账号已设为失效，对方将无法登录");
       setInvalidateTarget(null);
@@ -242,7 +243,7 @@ export default function AdminUsersPage() {
         body: JSON.stringify({ phone: rowKey(deleteTarget) }),
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: string };
-      if (!res.ok || !data.success) throw new Error(data.error || data.detail || `删除失败 ${res.status}`);
+      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, `删除失败 ${res.status}`));
       await loadUsers();
       setMsg("已从系统中永久删除该用户账号");
       setDeleteTarget(null);
