@@ -929,6 +929,148 @@ def _pg_revive_user_with_credentials(
         conn.close()
 
 
+def _pg_revive_deleted_username_user(
+    *,
+    user_id: str,
+    username: str,
+    password_hash: str,
+    display_name: str,
+    role: str,
+    acct_tier: str,
+    billing_cycle: Optional[str],
+) -> bool:
+    """将 account_status=deleted 且以用户名标识的账号恢复为可用（手机号可为空）。"""
+    if not _pg_available():
+        return False
+    uid = (user_id or "").strip()
+    un = (username or "").strip()
+    if not uid or not un:
+        return False
+    _ensure_auth_tables_pg()
+    dn = (display_name or un).strip() or un
+    rl = _normalize_role(role)
+    pl = str(acct_tier or "free").strip().lower()
+    if pl not in VALID_PLANS:
+        pl = "free"
+    bc = (billing_cycle or "").strip().lower() if billing_cycle else None
+    if bc and bc not in VALID_BILLING:
+        bc = None
+    conn = psycopg2.connect(_pg_dsn())
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            UPDATE users
+            SET username = %s,
+                display_name = %s,
+                role = %s,
+                acct_tier = %s,
+                billing_cycle = %s,
+                account_status = 'active',
+                deleted_at = NULL,
+                updated_at = NOW()
+            WHERE id = %s::uuid AND account_status = 'deleted'
+            """,
+            (un, dn, rl, pl, bc, uid),
+        )
+        if int(cur.rowcount or 0) < 1:
+            return False
+        cur.execute(
+            """
+            INSERT INTO user_auth_accounts (user_id, password_hash, status, updated_at)
+            VALUES (%s::uuid, %s, 'active', NOW())
+            ON CONFLICT (user_id) DO UPDATE SET
+              password_hash = EXCLUDED.password_hash,
+              status = 'active',
+              updated_at = NOW()
+            """,
+            (uid, password_hash),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def _pg_insert_username_user_and_auth(
+    *,
+    username: str,
+    password_hash: str,
+    display_name: str | None,
+    role: str | None,
+    acct_tier: str | None,
+    billing_cycle: str | None,
+) -> tuple[bool, str | None]:
+    """新建仅有用户名（无手机号）的用户并写入密码。"""
+    if not _pg_available():
+        return False, "数据库不可用"
+    _ensure_auth_tables_pg()
+    un = (username or "").strip()
+    if not un:
+        return False, "用户名无效"
+    dn = (display_name or un).strip() or un
+    rl = _normalize_role(role)
+    pl = str(acct_tier or "free").strip().lower()
+    if pl not in VALID_PLANS:
+        pl = "free"
+    bc = (billing_cycle or "").strip().lower() if billing_cycle else None
+    if bc and bc not in VALID_BILLING:
+        bc = None
+    conn = psycopg2.connect(_pg_dsn())
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cur.execute(
+                """
+                INSERT INTO users (
+                  phone, phone_normalized, email, username,
+                  display_name, role, acct_tier, billing_cycle,
+                  account_status, updated_at
+                )
+                VALUES (NULL, NULL, NULL, %s, %s, %s, %s, %s, 'active', NOW())
+                RETURNING id
+                """,
+                (un, dn, rl, pl, bc),
+            )
+            row = cur.fetchone()
+        except PsycopgIntegrityError as exc:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return False, _pg_format_integrity_err_user_insert(exc)
+        uid = str(row["id"]) if row and row.get("id") is not None else ""
+        if not uid:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return False, "未能解析用户 id"
+        cur.execute(
+            """
+            INSERT INTO user_auth_accounts (user_id, password_hash, status, updated_at)
+            VALUES (%s::uuid, %s, 'active', NOW())
+            ON CONFLICT (user_id) DO UPDATE SET
+              password_hash = EXCLUDED.password_hash,
+              status = 'active',
+              updated_at = NOW()
+            """,
+            (uid, password_hash),
+        )
+        conn.commit()
+        return True, None
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False, str(exc)[:500]
+    finally:
+        conn.close()
+
+
 def _pg_hard_delete_user(*, phone: str = "", user_id: str = "") -> bool:
     """从 users 表物理删除一行；子表依赖 ON DELETE CASCADE / SET NULL。"""
     if not _pg_available():
@@ -2677,6 +2819,8 @@ def verify_password(user_ref: str, password: str) -> bool:
             return False
     users = _load_users()
     u = users.get(ref)
+    if (not u or not isinstance(u, dict)) and USERNAME_RE.match(ref) and not validate_phone(ref):
+        u = users.get(ref.lower())
     if not u or not isinstance(u, dict):
         return False
     st_json = str(u.get("account_status") or "active").strip().lower()
@@ -2695,8 +2839,8 @@ def login_user(login_id: str, password: str) -> Tuple[Optional[str], Optional[st
     if not lid:
         return None, "账号或密码错误"
     if not (_auth_pg_primary() and _pg_available()):
-        if not validate_phone(lid):
-            return None, "手机号或密码错误"
+        if not validate_phone(lid) and not USERNAME_RE.match(lid):
+            return None, "账号或密码错误"
         pg_row = None
     else:
         pg_row = _pg_fetch_auth_user_by_login_identifier(lid)
@@ -2737,6 +2881,8 @@ def login_user(login_id: str, password: str) -> Tuple[Optional[str], Optional[st
         return (token, None)
     if validate_phone(lid) and verify_password(lid, password):
         return create_session(user_id="", phone=lid, feature_unlocked=False), None
+    if USERNAME_RE.match(lid) and verify_password(lid, password):
+        return create_session(user_id="", username=lid.lower(), feature_unlocked=False), None
     return None, "账号或密码错误"
 
 
@@ -2949,6 +3095,8 @@ def user_info_for_principal(ref: str) -> Dict[str, Any]:
     if not u:
         users = _load_users()
         u = users.get(ref) or {}
+        if not u and USERNAME_RE.match(ref) and not validate_phone(ref):
+            u = users.get(ref.lower()) or {}
     uid = str(u.get("user_id") or "").strip()
     r = _normalize_role(u.get("role"))
     if is_admin_principal(ref) or (uid and is_admin_principal(uid)):
@@ -3270,16 +3418,23 @@ def list_users_admin_view() -> list[Dict[str, Any]]:
             return out
     users = _load_users()
     out = []
-    for phone, raw in users.items():
+    for key, raw in users.items():
         if not isinstance(raw, dict):
             continue
         st = str(raw.get("account_status") or "active").strip().lower()
         if st == "deleted":
             continue
         created_at = int(raw.get("created_at") or 0)
+        key_s = str(key)
+        is_ph = validate_phone(key_s)
+        phone_out = key_s if is_ph else str(raw.get("phone") or "").strip()
+        username_out = str(raw.get("username") or "").strip()
+        if not is_ph and not username_out:
+            username_out = key_s
         out.append(
             {
-                "phone": str(phone),
+                "phone": phone_out,
+                "username": username_out,
                 "role": _normalize_role(raw.get("role")),
                 "account_status": str(raw.get("account_status") or "active"),
                 "created_at": created_at,
@@ -3291,9 +3446,13 @@ def list_users_admin_view() -> list[Dict[str, Any]]:
 
 
 def admin_create_user(phone: str, password: str, role: str = "user", initial_tier: str = "free", billing_cycle: Optional[str] = None) -> Tuple[bool, Optional[str]]:
-    p = (phone or "").strip()
-    if not validate_phone(p):
-        return False, "请输入有效的中国大陆 11 位手机号"
+    """参数 phone 兼容历史命名：可为 11 位手机号或 3–32 位用户名（字母数字下划线）。"""
+    raw = (phone or "").strip()
+    as_phone = validate_phone(raw)
+    as_username = bool(USERNAME_RE.match(raw)) if not as_phone else False
+    if not as_phone and not as_username:
+        return False, "请输入有效的中国大陆 11 位手机号，或 3–32 位用户名（字母、数字、下划线）"
+    json_key = raw if as_phone else raw.lower()
     if len((password or "")) < 6:
         return False, "密码至少 6 位"
     r = _normalize_role(role)
@@ -3307,12 +3466,30 @@ def admin_create_user(phone: str, password: str, role: str = "user", initial_tie
     pw_hash = generate_password_hash(password)
     reused_deleted_pg = False
     if _auth_pg_primary() and _pg_available():
-        row = _pg_fetch_auth_user(p)
-        if isinstance(row, dict):
-            st = str(row.get("account_status") or "active").strip().lower()
-            if st == "deleted":
-                ok = _pg_revive_user_with_credentials(
-                    user_id=str(row.get("user_id") or ""),
+        if as_phone:
+            p = raw
+            row = _pg_fetch_auth_user(p)
+            if isinstance(row, dict):
+                st = str(row.get("account_status") or "active").strip().lower()
+                if st == "deleted":
+                    ok = _pg_revive_user_with_credentials(
+                        user_id=str(row.get("user_id") or ""),
+                        phone=p,
+                        password_hash=pw_hash,
+                        display_name=p,
+                        role=r,
+                        acct_tier=t,
+                        billing_cycle=(cycle if t != "free" else None),
+                    )
+                    if not ok:
+                        return False, "新增用户失败"
+                    reused_deleted_pg = True
+                elif st == "disabled":
+                    return False, "该手机号对应账号已禁用"
+                else:
+                    return False, "该手机号已存在"
+            else:
+                ok_pg, pg_err = _pg_upsert_user_and_auth(
                     phone=p,
                     password_hash=pw_hash,
                     display_name=p,
@@ -3320,37 +3497,56 @@ def admin_create_user(phone: str, password: str, role: str = "user", initial_tie
                     acct_tier=t,
                     billing_cycle=(cycle if t != "free" else None),
                 )
-                if not ok:
-                    return False, "新增用户失败"
-                reused_deleted_pg = True
-            elif st == "disabled":
-                return False, "该手机号对应账号已禁用"
-            else:
-                return False, "该手机号已存在"
+                if not ok_pg:
+                    return False, pg_err or "新增用户失败"
         else:
-            ok_pg, pg_err = _pg_upsert_user_and_auth(
-                phone=p,
-                password_hash=pw_hash,
-                display_name=p,
-                role=r,
-                acct_tier=t,
-                billing_cycle=(cycle if t != "free" else None),
-            )
-            if not ok_pg:
-                return False, pg_err or "新增用户失败"
+            un = raw
+            row = _pg_fetch_auth_user_by_login_identifier(un, exclude_deleted=False)
+            if isinstance(row, dict):
+                st = str(row.get("account_status") or "active").strip().lower()
+                if st == "deleted":
+                    ok = _pg_revive_deleted_username_user(
+                        user_id=str(row.get("user_id") or ""),
+                        username=un,
+                        password_hash=pw_hash,
+                        display_name=un,
+                        role=r,
+                        acct_tier=t,
+                        billing_cycle=(cycle if t != "free" else None),
+                    )
+                    if not ok:
+                        return False, "新增用户失败"
+                    reused_deleted_pg = True
+                elif st == "disabled":
+                    return False, "该用户名对应账号已禁用"
+                else:
+                    return False, "该用户名已存在"
+            else:
+                ok_pg, pg_err = _pg_insert_username_user_and_auth(
+                    username=un,
+                    password_hash=pw_hash,
+                    display_name=un,
+                    role=r,
+                    acct_tier=t,
+                    billing_cycle=(cycle if t != "free" else None),
+                )
+                if not ok_pg:
+                    return False, pg_err or "新增用户失败"
     if _auth_dual_write() or not _auth_pg_primary() or not _pg_available():
         users = _load_users()
-        if p in users and not reused_deleted_pg:
-            st0 = str(users[p].get("account_status") or "active").strip().lower()
+        if json_key in users and not reused_deleted_pg:
+            st0 = str(users[json_key].get("account_status") or "active").strip().lower()
             if st0 == "disabled":
-                return False, "该手机号对应账号已禁用"
-            return False, "该手机号已存在"
-        users[p] = {
+                return False, "该账号已禁用" if as_username else "该手机号对应账号已禁用"
+            return False, "该用户名已存在" if as_username else "该手机号已存在"
+        disp = raw
+        users[json_key] = {
             "password_hash": pw_hash,
             "acct_tier": t,
             "billing_cycle": cycle if t != "free" else None,
             "role": r,
-            "display_name": p,
+            "display_name": disp,
+            "username": raw if as_username else "",
             "created_at": int(_now()),
             "account_status": "active",
         }

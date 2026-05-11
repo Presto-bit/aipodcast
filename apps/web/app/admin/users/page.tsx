@@ -268,7 +268,7 @@ export default function AdminUsersPage() {
         <div className="mt-3 grid gap-2 md:grid-cols-6">
           <input
             className="rounded bg-canvas p-2 text-sm text-ink"
-            placeholder="手机号"
+            placeholder="手机号或用户名"
             name="fym-admin-new-user-phone"
             autoComplete="off"
             autoCorrect="off"

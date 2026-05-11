@@ -218,7 +218,11 @@ class SubscriptionWalletPayRequest(BaseModel):
 
 
 class AdminCreateUserRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=32)
+    phone: str = Field(
+        min_length=1,
+        max_length=32,
+        description="登录标识：大陆 11 位手机号，或 3–32 位用户名（字母、数字、下划线）",
+    )
     password: str = Field(min_length=6, max_length=120)
     role: str = Field(default="user", min_length=1, max_length=20)
     acct_tier: str = Field(

@@ -288,7 +288,10 @@ def admin_create_user(
 
             experience_seed_for_new_user_after_registration(phone)
         except Exception:
-            logger.exception("experience_seed admin_create_user failed phone=%s", phone[:4] if phone else "")
+            logger.exception(
+                "experience_seed admin_create_user failed principal=%s",
+                (phone or "")[:6] if phone else "",
+            )
     return ok, err
 
 

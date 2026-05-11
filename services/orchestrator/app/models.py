@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -19,6 +20,9 @@ from .subscription_manifest import (
 from .usage_billing import build_usage_event_meta
 
 logger = logging.getLogger(__name__)
+
+# 与 auth_service.USERNAME_RE 一致：体验包等按 principal 查 user_id 时支持用户名
+_USERNAME_PRINCIPAL_RE = re.compile(r"^[a-zA-Z0-9_]{3,32}$")
 
 _usage_events_user_id_schema_ready = False
 
@@ -4948,7 +4952,7 @@ def sync_user_display_name_to_pg(phone: str, display_name: str) -> None:
 
 
 def _ensure_user_id_for_phone_conn(conn, phone: str) -> str | None:
-    """解析 users.id：支持 UUID、手机号；必要时为合法手机号插入占位行。"""
+    """解析 users.id：支持 UUID、手机号、用户名；必要时为合法手机号插入占位行。"""
     p = (phone or "").strip()
     if not p:
         return None
@@ -4969,6 +4973,13 @@ def _ensure_user_id_for_phone_conn(conn, phone: str) -> str | None:
         row = cur.fetchone()
         if row and row.get("id") is not None:
             return str(row["id"])
+        if _USERNAME_PRINCIPAL_RE.match(p):
+            cur.execute(
+                "SELECT id FROM users WHERE lower(btrim(username)) = lower(btrim(%s)) LIMIT 1",
+                (p,),
+            )
+            row_u = cur.fetchone()
+            return str(row_u["id"]) if row_u and row_u.get("id") is not None else None
         if not p_norm or len(p_norm) < 11:
             return None
         try:
