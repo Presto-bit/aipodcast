@@ -13,7 +13,7 @@ import ipaddress
 import html as ihtml
 import unicodedata
 import xml.etree.ElementTree as ET
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup, Tag
 from typing import Dict, Any
@@ -79,18 +79,76 @@ def _normalize_visible_lines(text: str) -> str:
     return "\n".join(lines)
 
 
-def _score_decoded_html_text(text: str) -> tuple[int, int]:
+def _html_meta_charset_from_raw(raw: bytes) -> str | None:
+    """从 HTML 前缀解析 <meta charset=…> / http-equiv content-type，补充声明错误的场景。"""
+    if not raw:
+        return None
+    head = raw[:131072]
+    try:
+        probe = head.decode("ascii", errors="ignore")
+    except Exception:
+        probe = ""
+    if not probe:
+        try:
+            probe = head.decode("latin-1", errors="ignore")
+        except Exception:
+            return None
+    m = re.search(r"<meta[^>]+charset\s*=\s*[\"']?([a-zA-Z0-9._-]+)", probe, flags=re.I)
+    if m:
+        return m.group(1).strip()
+    m2 = re.search(
+        r'<meta[^>]+http-equiv\s*=\s*["\']?content-type["\']?[^>]+content\s*=\s*["\'][^"\']*charset\s*=\s*([a-zA-Z0-9._-]+)',
+        probe,
+        flags=re.I,
+    )
+    if m2:
+        return m2.group(1).strip()
+    return None
+
+
+def _codec_priority_for_html_fallback(codec_name: str) -> int:
+    """
+    在「替换符数量相同」时打破平局：避免 UTF-8 正文被误当成 GB 系列解码
+    （此前用「CJK 越多越好」会选中 gb18030/gbk 对 UTF-8 的误读）。
+    数值越小越优先。
+    """
+    c = (codec_name or "").strip().lower().replace("_", "-")
+    if c in ("gb18030", "gb2312", "gb-18030", "gb-2312"):
+        return 0
+    if c in ("gbk", "cp936"):
+        return 1
+    if c in ("big5", "big5hkscs", "cp950"):
+        return 4
+    if c in ("utf-8", "utf8"):
+        return 0
+    if c in ("iso-8859-1", "latin-1", "cp1252", "windows-1252"):
+        return 8
+    return 3
+
+
+def _score_decoded_html_text_v2(text: str, codec_name: str) -> tuple[int, int, int]:
+    """(替换符数, 编码优先级, 负向 CJK 上限) — 先少替换符，再偏好多字节中文 Web 常见编码。"""
     s = text or ""
     replacement = s.count("\ufffd")
-    cjk = len(re.findall(r"[\u4e00-\u9fff]", s))
-    return replacement, -cjk
+    cjk = min(len(re.findall(r"[\u4e00-\u9fff]", s)), 120)
+    pri = _codec_priority_for_html_fallback(codec_name)
+    return replacement, pri, -cjk
 
 
 def _decode_html_response(response: requests.Response) -> str:
     raw = response.content or b""
     if not raw:
         return ""
+    # 字节序列若本身是合法 UTF-8，只能按 UTF-8 解释（否则会误用 GB 系列读出「像中文的乱码」）。
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+
     candidates: list[str] = []
+    meta_enc = _html_meta_charset_from_raw(raw)
+    if meta_enc:
+        candidates.append(meta_enc)
     ct = str(response.headers.get("content-type") or "")
     m = re.search(r"charset=([A-Za-z0-9._-]+)", ct, flags=re.I)
     if m:
@@ -101,10 +159,10 @@ def _decode_html_response(response: requests.Response) -> str:
     req_enc = str(getattr(response, "encoding", "") or "").strip()
     if req_enc:
         candidates.append(req_enc)
-    candidates.extend(["utf-8", "gb18030", "gbk", "big5"])
+    candidates.extend(["gb18030", "gbk", "big5", "utf-8", "iso-8859-1", "cp1252"])
     seen: set[str] = set()
     best = ""
-    best_score = (10**9, 0)
+    best_score: tuple[int, int, int] = (10**9, 10**9, 0)
     for enc in candidates:
         e = enc.lower()
         if not e or e in seen:
@@ -114,11 +172,11 @@ def _decode_html_response(response: requests.Response) -> str:
             txt = raw.decode(e, errors="replace")
         except Exception:
             continue
-        score = _score_decoded_html_text(txt)
+        score = _score_decoded_html_text_v2(txt, e)
         if score < best_score:
             best = txt
             best_score = score
-            if score[0] == 0 and score[1] <= -40:
+            if score[0] == 0 and score[2] <= -40 and score[1] <= 1:
                 break
     if not best:
         best = raw.decode("utf-8", errors="replace")
@@ -412,6 +470,10 @@ def _quality_reason_codes(
         reasons.append("bot_verification")
     if _looks_like_douban_shell_page(host=host, title=title, content=body):
         reasons.append("dynamic_shell_page")
+    if _text_suspected_garbled(body):
+        reasons.append("garbled_text")
+    if _looks_like_feishu_lark_login_or_permission_wall(host=host, content=body):
+        reasons.append("feishu_lark_login_wall")
     # 去重保序
     out: list[str] = []
     seen: set[str] = set()
@@ -636,6 +698,65 @@ def _looks_like_douban_shell_page(*, host: str, title: str, content: str) -> boo
     return short_shell or letter_stack
 
 
+def _text_suspected_garbled(text: str) -> bool:
+    """Unicode 替换符过多或短文本中连续乱码，多为解压/编码错误残留。"""
+    s = text or ""
+    n = len(s)
+    if n == 0:
+        return False
+    repl = s.count("\ufffd")
+    if repl == 0:
+        return False
+    if repl / max(n, 1) >= 0.0008:
+        return True
+    if n < 800 and repl >= 2:
+        return True
+    return False
+
+
+def _looks_like_feishu_lark_login_or_permission_wall(*, host: str, content: str) -> bool:
+    """飞书 / Lark 未登录、无权限时常见壳层文案，入库价值低。"""
+    h = (host or "").strip().lower()
+    if not (
+        h == "feishu.cn"
+        or h.endswith(".feishu.cn")
+        or h == "larksuite.com"
+        or h.endswith(".larksuite.com")
+    ):
+        return False
+    c = (content or "").strip()
+    if not c:
+        return True
+    head = c[:3500]
+    strong = (
+        "无权限",
+        "无权查看",
+        "无权访问",
+        "申请访问",
+        "仅组织内成员可访问",
+        "此文档不存在",
+        "链接已失效",
+        "文档已删除",
+    )
+    if any(m in head for m in strong):
+        return True
+    weak_hits = sum(
+        1
+        for m in (
+            "登录飞书",
+            "请登录",
+            "使用飞书登录",
+            "扫码登录",
+            "Lark",
+            "飞书账号",
+        )
+        if m in head
+    )
+    # 命中多个弱提示且缺少长段落时，更像登录/营销壳层而非正文。
+    prose_like = ("。" in head and len(head) >= 200) or len(re.findall(r"[\u4e00-\u9fff]{12,}", head)) >= 3
+    return weak_hits >= 2 and not prose_like
+
+
 def _referer_for_url(url: str) -> str:
     try:
         p = urlparse(url)
@@ -749,6 +870,136 @@ def _fetch_rendered_html_with_playwright(url: str, timeout_sec: int) -> tuple[st
             browser.close()
 
 
+try:
+    from trafilatura import extract as _trafilatura_extract  # type: ignore
+except Exception:  # pragma: no cover
+    _trafilatura_extract = None
+
+
+def _max_url_pdf_bytes() -> int:
+    try:
+        return max(1_000_000, min(80_000_000, int(os.getenv("MAX_URL_PDF_BYTES", str(25 * 1024 * 1024)))))
+    except (TypeError, ValueError):
+        return 25 * 1024 * 1024
+
+
+def _is_pdf_magic(data: bytes) -> bool:
+    return bool(data) and len(data) >= 5 and data[:5] == b"%PDF-"
+
+
+def _response_looks_like_pdf(response: requests.Response, data: bytes) -> bool:
+    ct = (response.headers.get("Content-Type") or "").lower()
+    if "application/pdf" in ct:
+        return True
+    if ct.startswith("application/octet-stream") and _is_pdf_magic(data):
+        return True
+    return _is_pdf_magic(data)
+
+
+def _trafilatura_plain_text(html: str, page_url: str) -> str:
+    if not (html or "").strip() or not _trafilatura_extract:
+        return ""
+    try:
+        txt = _trafilatura_extract(
+            html,
+            url=page_url or "",
+            include_tables=True,
+            include_comments=False,
+            favor_recall=True,
+        )
+        return (txt or "").strip()
+    except Exception as exc:
+        logger.debug("trafilatura extract failed: %s", exc)
+        return ""
+
+
+def _title_guess_from_final_url(final_url: str) -> str:
+    try:
+        path = (urlparse(final_url).path or "").strip()
+        seg = path.rstrip("/").split("/")[-1]
+        if seg and len(seg) < 200:
+            return unquote(seg)[:180]
+    except Exception:
+        pass
+    return ""
+
+
+def _should_try_mobile_html_retry(*, best_score: float, content: str, host: str) -> bool:
+    if host.endswith("xiaohongshu.com"):
+        return False
+    if best_score >= 0.26:
+        return False
+    if len((content or "").strip()) >= 420:
+        return False
+    return (os.getenv("URL_PARSER_MOBILE_RETRY", "1") or "").strip().lower() not in ("0", "false", "no")
+
+
+def _html_url_extract_pipeline(
+    raw_html: str,
+    *,
+    page_url: str,
+    url_for_detect: str,
+    host: str,
+    logs: list[str],
+) -> dict[str, Any]:
+    """BeautifulSoup 多候选 + trafilatura 并行打分，返回抽取中间态。"""
+    soup = BeautifulSoup(raw_html, "html.parser")
+    meta_text = _extract_meta_content(soup)
+    page_title = _extract_page_title(soup)
+
+    soup_base = BeautifulSoup(raw_html, "html.parser")
+    _strip_script_style(soup_base)
+    _strip_chrome_layout(soup_base)
+    _strip_noise_by_attr(soup_base)
+    full_text = _dedupe_lines(_normalize_visible_lines(soup_base.get_text(separator="\n", strip=True)))
+    page_kind = _detect_page_kind(url_for_detect, soup_base, full_text)
+
+    candidate_root = _extract_candidate_root(soup_base)
+    main_like = _dedupe_lines(_normalize_visible_lines(candidate_root.get_text(separator="\n", strip=True)))
+    semantic_text = _extract_semantic_text(candidate_root)
+    merged_content_first = _dedupe_lines("\n".join(x for x in (semantic_text, main_like) if x.strip()))
+
+    candidates: list[tuple[str, str]] = [
+        ("semantic_main", merged_content_first),
+        ("main_selector", main_like),
+        ("full_page", full_text),
+    ]
+    if meta_text:
+        candidates.append(("meta_jsonld", _dedupe_lines(meta_text)))
+
+    traf_txt = _trafilatura_plain_text(raw_html, page_url)
+    if traf_txt:
+        candidates.append(("trafilatura", _dedupe_lines(_normalize_visible_lines(traf_txt))))
+        logs.append("trafilatura：已参与正文候选打分")
+
+    best_name = "full_page"
+    best_content = ""
+    best_score = -1.0
+    best_quality: dict[str, Any] = {}
+    for name, txt in candidates:
+        score, quality = _score_content_quality(txt, page_kind=page_kind)
+        if score > best_score or (
+            abs(score - best_score) <= 0.018 and len((txt or "").strip()) > len((best_content or "").strip()) + 40
+        ):
+            best_name = name
+            best_content = txt
+            best_score = score
+            best_quality = quality
+
+    return {
+        "meta_text": meta_text,
+        "page_title": page_title,
+        "page_kind": page_kind,
+        "content": best_content,
+        "best_name": best_name,
+        "best_score": best_score,
+        "best_quality": best_quality,
+        "candidate_root": candidate_root,
+        "soup_base": soup_base,
+        "full_text": full_text,
+    }
+
+
 class ContentParser:
     """内容解析器"""
 
@@ -787,7 +1038,9 @@ class ContentParser:
                 ),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Accept-Encoding": "gzip, deflate, br",
+                # 勿声明 br：环境未安装 brotli 时，部分 CDN（如飞书）仍返回 Content-Encoding: br，
+                # urllib3 无法解压，原始压缩字节被当作文本解码会产生整页乱码。
+                "Accept-Encoding": "gzip, deflate",
                 "Connection": "keep-alive",
                 "Upgrade-Insecure-Requests": "1",
                 "Sec-Fetch-Dest": "document",
@@ -804,48 +1057,137 @@ class ContentParser:
 
             response = session.get(url, timeout=TIMEOUTS["url_parsing"], allow_redirects=True)
             response.raise_for_status()
+            final_url = str(response.url or url).strip() or url
+            redirect_count = len(response.history or [])
+            raw_bytes = response.content or b""
+
+            # 整页 PDF（直链或 octet-stream）
+            if _response_looks_like_pdf(response, raw_bytes):
+                max_pdf = _max_url_pdf_bytes()
+                if len(raw_bytes) > max_pdf:
+                    hint = actionable_hint_for_failed_url(
+                        url,
+                        error_code="pdf_too_large",
+                        upstream_error=f"bytes>{max_pdf}",
+                    )
+                    logs.append(f"PDF 超过体积上限 {max_pdf} 字节")
+                    return {
+                        "success": False,
+                        "error": f"PDF 体积超过上限（约 {max_pdf // (1024 * 1024)}MB），请改本地上传或拆分文件",
+                        "hint": hint,
+                        "logs": logs,
+                        "source": "url",
+                        "error_code": "pdf_too_large",
+                    }
+                from app.note_document_extract import extract_pdf_from_bytes
+
+                pr = extract_pdf_from_bytes(raw_bytes)
+                if not pr.ok:
+                    err_code = "PARSE_SCANNED_PDF" if "扫描" in (pr.detail or "") else "pdf_url_empty"
+                    hint = actionable_hint_for_failed_url(
+                        final_url,
+                        error_code=err_code,
+                        upstream_error=pr.detail or "",
+                    )
+                    logs.append(f"PDF URL 解析失败：{pr.detail or pr.engine}")
+                    return {
+                        "success": False,
+                        "error": (pr.detail or "未能从 PDF 链接提取正文").strip(),
+                        "hint": hint,
+                        "logs": logs,
+                        "source": "url",
+                        "error_code": err_code,
+                    }
+                content_pdf = _clean_extracted_text(pr.text)
+                title_pdf = _title_guess_from_final_url(final_url)
+                fs, fq = _score_content_quality(content_pdf, page_kind="article")
+                logs.append(f"PDF URL 解析成功 engine={pr.engine} final_url={final_url} redirects={redirect_count}")
+                return {
+                    "success": True,
+                    "content": content_pdf,
+                    "title": title_pdf or _title_guess_from_final_url(final_url),
+                    "structured_blocks": [],
+                    "parse_meta": {
+                        "page_kind": "pdf_url",
+                        "strategy": "pdf_http_direct",
+                        "quality_score": round(fs, 3),
+                        "quality": fq,
+                        "reason_codes": [],
+                        "js_render_fallback": False,
+                        "list_links_count": 0,
+                        "xhs_script_extract_hit": False,
+                        "final_url": final_url,
+                        "redirect_count": redirect_count,
+                        "source_content_type": (response.headers.get("Content-Type") or "").strip()[:120],
+                    },
+                    "logs": logs,
+                    "source": "url",
+                    "url": final_url,
+                }
+
             raw_html = _clean_extracted_text(_decode_html_response(response))
 
-            logs.append(f"成功获取网页内容，状态码: {response.status_code}")
-
-            soup = BeautifulSoup(raw_html, "html.parser")
-            meta_text = _extract_meta_content(soup)
-            page_title = _extract_page_title(soup)
-            page_kind = "generic"
-
-            soup_base = BeautifulSoup(raw_html, "html.parser")
-            _strip_script_style(soup_base)
-            _strip_chrome_layout(soup_base)
-            _strip_noise_by_attr(soup_base)
-            full_text = _dedupe_lines(_normalize_visible_lines(soup_base.get_text(separator="\n", strip=True)))
-            page_kind = _detect_page_kind(url, soup_base, full_text)
-
-            candidate_root = _extract_candidate_root(soup_base)
-            main_like = _dedupe_lines(
-                _normalize_visible_lines(candidate_root.get_text(separator="\n", strip=True))
+            logs.append(
+                f"成功获取网页内容，状态码: {response.status_code}，final_url={final_url}，重定向次数={redirect_count}"
             )
-            semantic_text = _extract_semantic_text(candidate_root)
-            merged_content_first = _dedupe_lines("\n".join(x for x in (semantic_text, main_like) if x.strip()))
 
-            candidates: list[tuple[str, str]] = [
-                ("semantic_main", merged_content_first),
-                ("main_selector", main_like),
-                ("full_page", full_text),
-            ]
-            if meta_text:
-                candidates.append(("meta_jsonld", _dedupe_lines(meta_text)))
-            best_name = "full_page"
-            best_content = ""
-            best_score = -1.0
-            best_quality: dict[str, Any] = {}
-            for name, txt in candidates:
-                score, quality = _score_content_quality(txt, page_kind=page_kind)
-                if score > best_score:
-                    best_name = name
-                    best_content = txt
-                    best_score = score
-                    best_quality = quality
-            content = best_content
+            pipe = _html_url_extract_pipeline(
+                raw_html,
+                page_url=final_url,
+                url_for_detect=url,
+                host=host,
+                logs=logs,
+            )
+            meta_text = pipe["meta_text"]
+            page_title = pipe["page_title"]
+            page_kind = pipe["page_kind"]
+            content = pipe["content"]
+            best_name = pipe["best_name"]
+            best_score = pipe["best_score"]
+            best_quality = pipe["best_quality"]
+            candidate_root = pipe["candidate_root"]
+            soup_base = pipe["soup_base"]
+
+            mobile_retry_hit = False
+            if _should_try_mobile_html_retry(best_score=best_score, content=content, host=host):
+                try:
+                    headers_m = dict(headers)
+                    headers_m["User-Agent"] = (
+                        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+                        "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+                    )
+                    r2 = session.get(url, headers=headers_m, timeout=TIMEOUTS["url_parsing"], allow_redirects=True)
+                    r2.raise_for_status()
+                    raw_m = _clean_extracted_text(_decode_html_response(r2))
+                    final_m = str(r2.url or final_url).strip() or final_url
+                    pipe_m = _html_url_extract_pipeline(
+                        raw_m,
+                        page_url=final_m,
+                        url_for_detect=url,
+                        host=host,
+                        logs=logs,
+                    )
+                    better = pipe_m["best_score"] > best_score + 0.02 or (
+                        pipe_m["best_score"] >= best_score - 0.01
+                        and len((pipe_m["content"] or "").strip()) > len((content or "").strip()) + 120
+                    )
+                    if better:
+                        raw_html = raw_m
+                        meta_text = pipe_m["meta_text"]
+                        page_title = pipe_m["page_title"]
+                        page_kind = pipe_m["page_kind"]
+                        content = pipe_m["content"]
+                        best_name = pipe_m["best_name"]
+                        best_score = pipe_m["best_score"]
+                        best_quality = pipe_m["best_quality"]
+                        candidate_root = pipe_m["candidate_root"]
+                        soup_base = pipe_m["soup_base"]
+                        final_url = final_m
+                        mobile_retry_hit = True
+                        logs.append("移动 UA 重抓已采用（正文优于桌面抓取）")
+                except Exception as exc:
+                    logs.append(f"移动 UA 重试跳过：{str(exc)[:160]}")
+
             logs.append(f"网页类型识别: {page_kind}")
             logs.append(f"抽取策略: {best_name}（score={best_score:.2f}）")
             if _should_try_js_render(
@@ -923,12 +1265,48 @@ class ContentParser:
                         "error_code": "login_wall",
                     }
             # 动态站点常无可见正文，且低置信度时回退到 meta/JSON-LD。
-            if (best_score < 0.28 or len((content or "").strip()) < 80) and len(meta_text) >= 40:
-                content = f"{content}\n\n{meta_text}".strip() if content else meta_text
-                logs.append("触发低置信度回退：meta/JSON-LD")
-                logs.append("使用 meta/JSON-LD 兜底抽取")
+            content_stripped_early = (content or "").strip()
+            low_conf = best_score < 0.28 or len(content_stripped_early) < 80
+            if low_conf and len(meta_text) >= 40:
+                # 已从整页抽出大量导航/页脚时，再拼接 og:title/description 易把 SEO/站点名塞进笔记。
+                if len(content_stripped_early) <= 480 or best_score < 0.20:
+                    content = f"{content}\n\n{meta_text}".strip() if content else meta_text
+                    logs.append("触发低置信度回退：meta/JSON-LD")
+                    logs.append("使用 meta/JSON-LD 兜底抽取")
+                else:
+                    logs.append("低置信度但未拼接 meta：正文过长疑似壳层，避免叠加 SEO/导航噪音")
             content = _clean_extracted_text(content)
             page_title = _clean_extracted_text(page_title)
+            if _text_suspected_garbled(content):
+                hint = actionable_hint_for_failed_url(
+                    url,
+                    error_code="encoding_uncertain",
+                    upstream_error="unicode_replacement_glyphs",
+                )
+                logs.append("正文含大量 Unicode 替换符，疑似编码/传输异常")
+                return {
+                    "success": False,
+                    "error": "解析结果疑似乱码（含大量替换字符），已阻止入库",
+                    "hint": hint,
+                    "logs": logs,
+                    "source": "url",
+                    "error_code": "garbled_text",
+                }
+            if _looks_like_feishu_lark_login_or_permission_wall(host=host, content=content):
+                hint = actionable_hint_for_failed_url(
+                    url,
+                    error_code="login_wall",
+                    upstream_error="feishu_lark_permission_shell",
+                )
+                logs.append("飞书/Lark 页面为登录或无权限壳层，未解析到可入库正文")
+                return {
+                    "success": False,
+                    "error": "飞书/Lark 链接需登录或权限，当前仅获取到提示页内容",
+                    "hint": hint,
+                    "logs": logs,
+                    "source": "url",
+                    "error_code": "login_wall",
+                }
             if _looks_like_bot_verification_page(host=host, title=page_title, content=content):
                 hint = actionable_hint_for_failed_url(
                     url,
@@ -1003,10 +1381,13 @@ class ContentParser:
                     "js_render_fallback": best_name == "js_rendered_semantic",
                     "list_links_count": len(list_links) if page_kind == "list" else 0,
                     "xhs_script_extract_hit": xhs_script_extract_hit,
+                    "final_url": final_url,
+                    "redirect_count": redirect_count,
+                    "mobile_ua_retry": mobile_retry_hit,
                 },
                 "logs": logs,
                 "source": "url",
-                "url": url,
+                "url": final_url,
             }
 
         except requests.Timeout:

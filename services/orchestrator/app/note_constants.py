@@ -10,6 +10,8 @@ ALLOWED_NOTE_EXT = {
     "html",
     "htm",
     "xhtml",
+    "csv",
+    "xlsx",
 }
 MAX_NOTE_UPLOAD_BYTES = 15 * 1024 * 1024
 # 视频容器：正文无法可靠抽取，上传前即拒绝（与「除视频外可识别」一致）

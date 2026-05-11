@@ -1,6 +1,8 @@
 import base64
 import hashlib
+import io
 import json
+import zipfile
 import logging
 import os
 import re
@@ -18,6 +20,11 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ..config import settings
 from ..fyv_shared.content_parser import content_parser
+from ..note_user_hints import (
+    attach_hint_actions_to_upload_result,
+    format_import_url_http_detail,
+    hint_actions_for_code,
+)
 from ..url_fetch_hints import actionable_hint_for_failed_url
 from ..note_constants import (
     ALLOWED_NOTE_EXT,
@@ -284,6 +291,8 @@ def _mime_for_note_ext(ext: str) -> str:
         "html": "text/html; charset=utf-8",
         "htm": "text/html; charset=utf-8",
         "xhtml": "application/xhtml+xml; charset=utf-8",
+        "csv": "text/csv; charset=utf-8",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "png": "image/png",
         "jpg": "image/jpeg",
         "jpeg": "image/jpeg",
@@ -337,6 +346,24 @@ def _parse_error_code(parse_status: str, parse_detail: str, parse_engine: str) -
     return "PARSE_UNKNOWN"
 
 
+def _sniff_openxml_container_kind(data: bytes) -> str | None:
+    """区分 PK zip 容器：xlsx / docx / epub；无法识别时返回 None。"""
+    if not data.startswith(b"PK\x03\x04"):
+        return None
+    try:
+        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
+            names = set(zf.namelist())
+    except Exception:
+        return None
+    if "xl/workbook.xml" in names or any(n.startswith("xl/worksheets/") for n in names):
+        return "xlsx"
+    if "word/document.xml" in names:
+        return "docx"
+    if "META-INF/container.xml" in names and any(n.endswith(".opf") for n in names):
+        return "epub"
+    return None
+
+
 def _sniff_ext_from_bytes(data: bytes) -> str:
     b = data[:64]
     if b.startswith(b"%PDF-"):
@@ -377,11 +404,31 @@ def _validate_upload_ext_matches_bytes(ext: str, data: bytes) -> None:
         if e in ("txt", "md", "markdown", "html", "htm", "xhtml") and not _looks_like_text_payload(data):
             raise HTTPException(status_code=400, detail="FILE_TYPE_MISMATCH:文本扩展名与二进制内容不一致")
         return
-    # zip 容器类：docx/epub 共享签名，不做强拒绝。
+    # zip 容器类：docx/epub/xlsx 共享 PK 签名，按内部结构校验。
     if sniff == "zip_like":
-        if e not in ("docx", "epub"):
-            raise HTTPException(status_code=400, detail="FILE_TYPE_MISMATCH:压缩容器与扩展名不一致")
-        return
+        kind = _sniff_openxml_container_kind(data)
+        if e == "xlsx":
+            if kind != "xlsx":
+                raise HTTPException(
+                    status_code=400,
+                    detail="FILE_TYPE_MISMATCH:文件不是有效的 Excel 表格（.xlsx）",
+                )
+            return
+        if e == "docx":
+            if kind != "docx":
+                raise HTTPException(
+                    status_code=400,
+                    detail="FILE_TYPE_MISMATCH:文件不是有效的 Word 文档（.docx）",
+                )
+            return
+        if e == "epub":
+            if kind != "epub":
+                raise HTTPException(
+                    status_code=400,
+                    detail="FILE_TYPE_MISMATCH:文件不是有效的 EPUB",
+                )
+            return
+        raise HTTPException(status_code=400, detail="FILE_TYPE_MISMATCH:不支持的压缩容器格式")
     if sniff == "mp4_like" and e in VIDEO_NOTE_EXT:
         return
     allowed: dict[str, tuple[str, ...]] = {
@@ -421,6 +468,10 @@ def _parse_error_code_for_upload(ext: str, parse_result: NoteParseResult) -> str
         return "TEXT_DECODE_EMPTY"
     if e in ("html", "htm", "xhtml"):
         return "HTML_TEXT_EMPTY"
+    if e == "csv":
+        return "CSV_PARSE_ERROR" if st == "error" else ("PARSE_EMPTY" if st == "empty" else "PARSE_ENGINE_ERROR")
+    if e == "xlsx":
+        return "XLSX_PARSE_ERROR" if st == "error" else ("PARSE_EMPTY" if st == "empty" else "PARSE_ENGINE_ERROR")
     return "PARSE_EMPTY" if st == "empty" else "PARSE_ENGINE_ERROR"
 
 
@@ -459,9 +510,15 @@ def _url_parse_should_reject_low_quality(parse_meta: dict, content: str) -> tupl
         or "bot_verification" in reason_set
         or "dynamic_shell_page" in reason_set
         or "high_noise_ratio" in reason_set
+        or "garbled_text" in reason_set
+        or "feishu_lark_login_wall" in reason_set
         or body_len < 120
     ):
         return True, "quality_low_with_shell_signals"
+    if "garbled_text" in reason_set:
+        return True, "garbled_text"
+    if "feishu_lark_login_wall" in reason_set:
+        return True, "feishu_lark_shell"
     return False, ""
 
 
@@ -806,7 +863,7 @@ def _persist_note_upload(
             }
             if parse_empty:
                 out_dup["parseEmpty"] = True
-            return out_dup
+            return attach_hint_actions_to_upload_result(out_dup)
     note_id = f"note_{int(time.time())}_{uuid.uuid4().hex[:8]}"
     owner_uuid = resolved_user_uuid_string(user_ref)
     object_key = note_upload_object_key(note_id, ext, owner_uuid)
@@ -854,6 +911,9 @@ def _persist_note_upload(
         extra_meta["parseEncoding"] = str(parse_result.encoding)[:120]
     if parse_error_code:
         extra_meta["parseErrorCode"] = parse_error_code
+    rs = getattr(parse_result, "rag_segments", None)
+    if isinstance(rs, list) and rs:
+        extra_meta["ragChunkSegments"] = rs[:3000]
     extra_meta["contentSha256"] = content_sha256
     try:
         extra_meta["structuredBlocks"] = _build_structured_blocks_from_text(parsed)
@@ -919,7 +979,7 @@ def _persist_note_upload(
     }
     if parse_empty:
         out["parseEmpty"] = True
-    return out
+    return attach_hint_actions_to_upload_result(out)
 
 
 @router.get("/notes")
@@ -975,6 +1035,8 @@ def list_notes_api(
             created_at=str(r.get("created_at") or ""),
             rag_index_at=str(r.get("note_rag_index_at") or ""),
         )
+        parse_err_final = explicit_parse_error_code or str(cap.get("parseErrorCode") or "").strip()
+        parse_hint_actions = hint_actions_for_code(parse_err_final)
         notes.append(
             {
                 "noteId": note_uuid,
@@ -987,6 +1049,7 @@ def list_notes_api(
                 "inputType": it,
                 "sourceReady": bool(cap["sourceReady"]),
                 "sourceHint": str(cap["sourceHint"] or ""),
+                "parseHintActions": parse_hint_actions,
                 "ragChunkCount": rag_chunks,
                 "ragIndexError": (str(rag_err).strip() if rag_err else ""),
                 "ragIndexedAt": str(r.get("note_rag_index_at") or ""),
@@ -1565,7 +1628,10 @@ async def import_note_from_url_api(request: Request):
                 upstream_error=str(fetch.get("error") or "").strip() or None,
             )
             head = str(fetch.get("error") or "").strip() or "未能从网页提取正文"
-            raise HTTPException(status_code=400, detail=f"[{err_code}] {head}\n\n{hint}")
+            raise HTTPException(
+                status_code=400,
+                detail=format_import_url_http_detail(err_code=err_code, head=head, base_hint=hint, url=url),
+            )
         if len(content) > MAX_URL_IMPORT_CHARS:
             content = content[:MAX_URL_IMPORT_CHARS] + "\n\n（内容已截断）"
         host = (urlparse(url).netloc or "").strip().lower()
@@ -1582,7 +1648,12 @@ async def import_note_from_url_api(request: Request):
                 )
                 raise HTTPException(
                     status_code=400,
-                    detail=f"[URL_LOGIN_WALL] 小红书链接未命中正文抽取通道（仅获取到壳层页面）\n\n{hint}",
+                    detail=format_import_url_http_detail(
+                        err_code="URL_LOGIN_WALL",
+                        head="小红书链接未命中正文抽取通道（仅获取到壳层页面）",
+                        base_hint=hint,
+                        url=url,
+                    ),
                 )
         if host.endswith("xiaohongshu.com") and _looks_like_xiaohongshu_shell_text(content):
             hint = str(fetch.get("hint") or "").strip() or actionable_hint_for_failed_url(
@@ -1592,7 +1663,12 @@ async def import_note_from_url_api(request: Request):
             )
             raise HTTPException(
                 status_code=400,
-                detail=f"[URL_LOGIN_WALL] 小红书仅返回页面壳层文本，未解析到正文\n\n{hint}",
+                detail=format_import_url_http_detail(
+                    err_code="URL_LOGIN_WALL",
+                    head="小红书仅返回页面壳层文本，未解析到正文",
+                    base_hint=hint,
+                    url=url,
+                ),
             )
         parse_meta = fetch.get("parse_meta") if isinstance(fetch.get("parse_meta"), dict) else {}
         low_quality_reject, low_quality_code = _url_parse_should_reject_low_quality(parse_meta, content)
@@ -1606,7 +1682,12 @@ async def import_note_from_url_api(request: Request):
             reason_text = ",".join([str(x).strip() for x in reason_codes if str(x).strip()][:6]) or low_quality_code
             raise HTTPException(
                 status_code=400,
-                detail=f"[URL_PARSE_LOW_QUALITY] 网页正文质量不足，已阻止入库（{reason_text}）\n\n{hint}",
+                detail=format_import_url_http_detail(
+                    err_code="URL_PARSE_LOW_QUALITY",
+                    head=f"网页正文质量不足，已阻止入库（{reason_text}）",
+                    base_hint=hint,
+                    url=url,
+                ),
             )
         notebook = str(body_obj.get("notebook") or "").strip()
         if not notebook:

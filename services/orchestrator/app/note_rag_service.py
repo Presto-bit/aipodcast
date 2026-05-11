@@ -23,7 +23,14 @@ from .db import get_conn, get_cursor
 from .notes_ask_profile import notes_ask_profile_emit
 from .models import get_note_by_id
 from .queue import redis_conn
-from .rag_core import _cosine, _keyword_score, _norm_minmax, decompose_retrieval_queries, split_text_into_chunks
+from .rag_core import (
+    _cosine,
+    _keyword_score,
+    _norm_minmax,
+    decompose_retrieval_queries,
+    split_segments_into_chunks_with_meta,
+    split_text_into_chunks,
+)
 from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
 from .text_decode import safe_decode_bytes
 
@@ -247,9 +254,13 @@ def ensure_note_rag_schema() -> None:
                   chunk_index INT NOT NULL,
                   chunk_text TEXT NOT NULL,
                   embedding JSONB NOT NULL,
+                  chunk_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
                   PRIMARY KEY (input_id, chunk_index)
                 )
                 """
+            )
+            cur.execute(
+                "ALTER TABLE note_rag_chunks ADD COLUMN IF NOT EXISTS chunk_meta JSONB NOT NULL DEFAULT '{}'::jsonb"
             )
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_note_rag_chunks_input ON note_rag_chunks (input_id)"
@@ -307,6 +318,7 @@ def _load_chunk_rows_light(note_ids: list[str]) -> list[dict[str, Any]]:
             cur.execute(
                 """
                 SELECT n.input_id::text AS note_id, n.chunk_index, n.chunk_text,
+                       n.chunk_meta,
                        i.note_rag_embedding_sig AS note_sig,
                        i.metadata AS note_metadata,
                        i.deleted_at
@@ -435,6 +447,39 @@ def _clear_note_rag_meta_short_body(note_id: str) -> None:
     invalidate_retrieval_cache_for_notes([note_id])
 
 
+def _note_metadata_as_dict(row: dict[str, Any]) -> dict[str, Any]:
+    md = row.get("metadata") or {}
+    if isinstance(md, str):
+        try:
+            md = json.loads(md)
+        except Exception:
+            md = {}
+    return md if isinstance(md, dict) else {}
+
+
+def _chunks_and_metas_from_note(row: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    """优先使用入库时保存的 ragChunkSegments（含标题路径/表格元数据），否则整篇切段。"""
+    body = str(row.get("content_text") or "").strip()
+    md = _note_metadata_as_dict(row)
+    raw_segs = md.get("ragChunkSegments")
+    if isinstance(raw_segs, list) and raw_segs:
+        normalized: list[dict[str, Any]] = []
+        for item in raw_segs[:3000]:
+            if not isinstance(item, dict):
+                continue
+            t = str(item.get("text") or "").strip()
+            if not t:
+                continue
+            m = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+            normalized.append({"text": t, "meta": dict(m)})
+        if normalized:
+            pairs = split_segments_into_chunks_with_meta(normalized)
+            if pairs:
+                return [p[0] for p in pairs], [p[1] for p in pairs]
+    chunks = split_text_into_chunks(body)
+    return chunks, [{} for _ in chunks]
+
+
 def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None = None) -> dict[str, Any]:
     """
     切块 + 嵌入 + 摘要；幂等（正文 hash 未变则跳过）。
@@ -453,9 +498,12 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     if prev == h and count_rag_chunks_for_notes([note_id]) > 0:
         return {"ok": True, "skipped": "unchanged", "chunks": count_rag_chunks_for_notes([note_id])}
 
-    chunks = split_text_into_chunks(body)
+    chunks, chunk_metas = _chunks_and_metas_from_note(row)
     cap = effective_note_rag_chunk_cap(len(chunks))
     chunks = chunks[:cap]
+    chunk_metas = chunk_metas[:cap]
+    if len(chunk_metas) < len(chunks):
+        chunk_metas.extend({} for _ in range(len(chunks) - len(chunk_metas)))
     if not chunks:
         _update_note_rag_index_error(note_id, "no_chunks")
         return {"ok": False, "error": "no_chunks"}
@@ -482,13 +530,14 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     delete_rag_chunks_for_note(note_id)
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            for idx, (ch, emb) in enumerate(zip(chunks, embeddings)):
+            for idx, (ch, emb, cmeta) in enumerate(zip(chunks, embeddings, chunk_metas)):
+                meta_obj = dict(cmeta) if isinstance(cmeta, dict) else {}
                 cur.execute(
                     """
-                    INSERT INTO note_rag_chunks (input_id, chunk_index, chunk_text, embedding)
-                    VALUES (%s::uuid, %s, %s, %s::jsonb)
+                    INSERT INTO note_rag_chunks (input_id, chunk_index, chunk_text, embedding, chunk_meta)
+                    VALUES (%s::uuid, %s, %s, %s::jsonb, %s::jsonb)
                     """,
-                    (note_id, idx, ch, json.dumps(emb)),
+                    (note_id, idx, ch, json.dumps(emb), json.dumps(meta_obj)),
                 )
             conn.commit()
 
@@ -859,12 +908,22 @@ def retrieve_chunks_across_notes(
         ch = str(r.get("chunk_text") or "").strip()
         if not ch:
             continue
+        cm_raw = r.get("chunk_meta")
+        chunk_meta: dict[str, Any] = {}
+        if isinstance(cm_raw, dict):
+            chunk_meta = dict(cm_raw)
+        elif isinstance(cm_raw, str) and cm_raw.strip():
+            try:
+                chunk_meta = dict(json.loads(cm_raw))
+            except Exception:
+                chunk_meta = {}
         parsed.append(
             {
                 "note_id": r.get("note_id"),
                 "chunk_index": r.get("chunk_index"),
                 "chunk_text": ch,
                 "_ch": ch,
+                "chunk_meta": chunk_meta,
                 "note_sig": r.get("note_sig"),
             }
         )
@@ -1110,28 +1169,54 @@ def retrieve_chunks_across_notes(
             parts.append(piece)
             used += len(piece) + 2
             excerpt = ch if len(ch) <= 4000 else ch[:4000] + "…"
-            meta_out.append(
-                {
-                    "noteId": nid,
-                    "chunkIndex": str(idx),
-                    "score": f"{score:.4f}",
-                    "excerpt": excerpt,
-                }
-            )
+            cm = r.get("chunk_meta") if isinstance(r.get("chunk_meta"), dict) else {}
+            meta_row: dict[str, Any] = {
+                "noteId": nid,
+                "chunkIndex": str(idx),
+                "score": f"{score:.4f}",
+                "excerpt": excerpt,
+            }
+            hp = cm.get("heading_path")
+            if isinstance(hp, list) and hp:
+                meta_row["headingPath"] = [str(x) for x in hp if str(x).strip()]
+            if cm.get("page") is not None:
+                try:
+                    meta_row["page"] = int(cm["page"])
+                except (TypeError, ValueError):
+                    meta_row["page"] = cm.get("page")
+            bt = cm.get("block_type")
+            if bt:
+                meta_row["blockType"] = str(bt)
+            if cm.get("sheet"):
+                meta_row["sheet"] = str(cm["sheet"])
+            meta_out.append(meta_row)
         else:
             remain = budget - used - len(header) - 40
             if remain > 200:
                 tail = ch[:remain] + "\n【…块内截断…】"
                 parts.append(header + tail)
                 tail_ex = tail if len(tail) <= 4000 else tail[:4000] + "…"
-                meta_out.append(
-                    {
-                        "noteId": nid,
-                        "chunkIndex": str(idx),
-                        "score": f"{score:.4f}",
-                        "excerpt": tail_ex,
-                    }
-                )
+                cm2 = r.get("chunk_meta") if isinstance(r.get("chunk_meta"), dict) else {}
+                meta_tail: dict[str, Any] = {
+                    "noteId": nid,
+                    "chunkIndex": str(idx),
+                    "score": f"{score:.4f}",
+                    "excerpt": tail_ex,
+                }
+                hp2 = cm2.get("heading_path")
+                if isinstance(hp2, list) and hp2:
+                    meta_tail["headingPath"] = [str(x) for x in hp2 if str(x).strip()]
+                if cm2.get("page") is not None:
+                    try:
+                        meta_tail["page"] = int(cm2["page"])
+                    except (TypeError, ValueError):
+                        meta_tail["page"] = cm2.get("page")
+                bt2 = cm2.get("block_type")
+                if bt2:
+                    meta_tail["blockType"] = str(bt2)
+                if cm2.get("sheet"):
+                    meta_tail["sheet"] = str(cm2["sheet"])
+                meta_out.append(meta_tail)
             break
 
     notes_ask_profile_emit(

@@ -71,6 +71,33 @@ def split_text_into_chunks(
     return _split_plain_paragraphs(raw, mc, ov)
 
 
+def split_segments_into_chunks_with_meta(
+    segments: list[dict[str, Any]],
+    *,
+    max_chunk_chars: int | None = None,
+    overlap: int | None = None,
+) -> list[tuple[str, dict[str, Any]]]:
+    """
+    将结构化分段再切成向量块；每块继承该段的 meta（heading_path、表格类型等）。
+    """
+    out: list[tuple[str, dict[str, Any]]] = []
+    if not segments:
+        return out
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        text = str(seg.get("text") or "").strip()
+        raw_meta = seg.get("meta")
+        meta: dict[str, Any] = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+        if not text:
+            continue
+        for piece in split_text_into_chunks(text, max_chunk_chars=max_chunk_chars, overlap=overlap):
+            pt = (piece or "").strip()
+            if pt:
+                out.append((pt, meta))
+    return out
+
+
 def decompose_retrieval_queries(text: str, *, max_queries: int = 3) -> list[str]:
     """
     将主题/检索句拆成若干子查询，用于多向量 max-pool（跨句命中不同文档）。

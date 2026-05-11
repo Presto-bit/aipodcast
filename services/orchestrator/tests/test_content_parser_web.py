@@ -1,6 +1,11 @@
+import types
+
 from bs4 import BeautifulSoup
 
 from app.fyv_shared.content_parser import (
+    _decode_html_response,
+    _looks_like_feishu_lark_login_or_permission_wall,
+    _text_suspected_garbled,
     _extract_links_for_list_page,
     _detect_page_kind,
     _extract_semantic_text,
@@ -108,3 +113,54 @@ def test_validate_url_safety_allows_public():
     ok, code, _ = _validate_url_safety("https://example.com/post")
     assert ok is True
     assert code == ""
+
+
+def test_decode_html_response_prefers_charset_normalizer_when_header_wrong():
+    """声明为 UTF-8 但实际为 GB18030 的正文，应能还原中文而非乱码。"""
+    body = "<html><head></head><body>中文测试正文</body></html>".encode("gb18030")
+    resp = types.SimpleNamespace(
+        content=body,
+        headers={"content-type": "text/html; charset=utf-8"},
+        apparent_encoding="utf-8",
+        encoding="utf-8",
+    )
+    out = _decode_html_response(resp)
+    assert "中文测试正文" in out
+
+
+def test_text_suspected_garbled_detects_replacement_chars():
+    assert _text_suspected_garbled("正常") is False
+    assert _text_suspected_garbled("a\ufffdb\ufffd") is True
+
+
+def test_feishu_lark_permission_wall_strong_markers():
+    assert (
+        _looks_like_feishu_lark_login_or_permission_wall(
+            host="acme.feishu.cn",
+            content="您无权限查看此文档，请联系管理员申请访问。",
+        )
+        is True
+    )
+
+
+def test_feishu_lark_public_like_body_not_flagged():
+    long_zh = "这是一段可公开访问的飞书文档示例正文。" * 30
+    assert (
+        _looks_like_feishu_lark_login_or_permission_wall(
+            host="acme.feishu.cn",
+            content=long_zh + "\n页脚含登录飞书字样不应单独触发。",
+        )
+        is False
+    )
+
+
+def test_decode_html_response_utf8_chinese_with_misleading_apparent_encoding():
+    html = "<html><body>飞书链接导入</body></html>".encode("utf-8")
+    resp = types.SimpleNamespace(
+        content=html,
+        headers={"content-type": "text/html"},
+        apparent_encoding="ISO-8859-1",
+        encoding=None,
+    )
+    out = _decode_html_response(resp)
+    assert "飞书链接导入" in out

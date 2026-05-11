@@ -7,11 +7,13 @@
 - HTML/HTM/XHTML：BeautifulSoup 去脚本样式与嵌入媒体后抽取可见文本。
 - EPUB：临时文件 + content_parser.parse_epub（避免重复实现 spine 逻辑）。
 - DOC：临时文件 + antiword / catdoc / soffice（与旧逻辑一致）。
+- CSV / XLSX：表格线性化为 Markdown（含表头），大表按行列上限截断并注明。
 - 图片（png/jpg/jpeg/webp/gif/avif）：笔记上传入口已不再接收；若库内仍有历史附件，可走可配置视觉模型 OCR（Qwen VL），未配置时仅存档。
 """
 from __future__ import annotations
 
 import base64
+import csv
 import io
 import logging
 import os
@@ -26,6 +28,133 @@ from .providers.openai_compat_text import chat_completion_openai_compatible
 
 logger = logging.getLogger(__name__)
 
+# 表格导入上限（防极端宽表拖垮内存与向量）
+_MAX_CSV_ROWS = 50_000
+_MAX_CSV_FIELD = 12_000
+_MAX_XLSX_SHEETS = 15
+_MAX_XLSX_ROWS_PER_SHEET = 800
+_MAX_XLSX_COLS = 48
+
+
+def _md_cell(s: str) -> str:
+    t = (s or "").replace("\r\n", "\n").replace("\r", "\n").replace("|", "\\|").strip()
+    t = re.sub(r"\s+", " ", t)
+    return t[:800]
+
+
+def _csv_bytes_to_text(data: bytes) -> NoteParseResult:
+    if not data:
+        return NoteParseResult(text="", status="empty", engine="csv", detail="空文件")
+    text, enc = _decode_plain_bytes(data)
+    if not text.strip():
+        return NoteParseResult(text="", status="empty", engine="csv", detail="CSV 解码后无内容")
+    sample = text[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except Exception:
+        dialect = csv.excel
+    lines_out: list[str] = []
+    try:
+        reader = csv.reader(io.StringIO(text), dialect=dialect)
+        for i, row in enumerate(reader):
+            if i >= _MAX_CSV_ROWS:
+                lines_out.append(f"\n（CSV 已截断，仅保留前 {_MAX_CSV_ROWS} 行）")
+                break
+            cells = [_md_cell(c)[:_MAX_CSV_FIELD] for c in row]
+            if any(cells):
+                lines_out.append("| " + " | ".join(cells) + " |")
+    except Exception as exc:
+        return NoteParseResult(text="", status="error", engine="csv", detail=f"CSV 解析失败：{exc}"[:400])
+    if not lines_out:
+        return NoteParseResult(text="", status="empty", engine="csv", detail="CSV 无有效行")
+    header = lines_out[0]
+    sep_cells = ["---"] * max(1, header.count("|") - 1)
+    sep = "| " + " | ".join(sep_cells) + " |"
+    md = "\n".join([header, sep, *lines_out[1:]])
+    md = md.strip()
+    seg = [{"text": md, "meta": {"block_type": "csv", "heading_path": []}}]
+    return NoteParseResult(
+        text=md, status="ok", engine=f"csv:{enc or 'utf-8'}", detail=None, encoding=enc, rag_segments=seg
+    )
+
+
+def _xlsx_bytes_to_text(data: bytes) -> NoteParseResult:
+    if not data:
+        return NoteParseResult(text="", status="empty", engine="xlsx", detail="空文件")
+    try:
+        from openpyxl import load_workbook  # type: ignore
+    except Exception as exc:
+        return NoteParseResult(
+            text="",
+            status="error",
+            engine="xlsx",
+            detail=f"未安装 openpyxl：{exc}"[:200],
+        )
+    try:
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception as exc:
+        return NoteParseResult(
+            text="",
+            status="error",
+            engine="xlsx",
+            detail=f"无法打开 XLSX（可能已加密或损坏）：{exc}"[:400],
+        )
+    parts: list[str] = []
+    try:
+        sheet_names = wb.sheetnames[:_MAX_XLSX_SHEETS]
+        for sname in sheet_names:
+            ws = wb[sname]
+            parts.append(f"## 工作表: {_md_cell(sname)}")
+            rows_iter = ws.iter_rows(max_row=_MAX_XLSX_ROWS_PER_SHEET, max_col=_MAX_XLSX_COLS, values_only=True)
+            grid: list[list[str]] = []
+            for row in rows_iter:
+                cells = [_md_cell(str(c) if c is not None else "") for c in row]
+                if any(x.strip() for x in cells):
+                    grid.append(cells)
+            if not grid:
+                parts.append("（本工作表无有效单元格）")
+                continue
+            header = grid[0]
+            parts.append("| " + " | ".join(header) + " |")
+            parts.append("| " + " | ".join(["---"] * len(header)) + " |")
+            for r in grid[1:]:
+                if len(r) < len(header):
+                    r = r + [""] * (len(header) - len(r))
+                parts.append("| " + " | ".join(r[: len(header)]) + " |")
+            if getattr(ws, "max_row", 0) > _MAX_XLSX_ROWS_PER_SHEET:
+                parts.append(f"（本表已截断，仅保留前 {_MAX_XLSX_ROWS_PER_SHEET} 行）")
+            parts.append("")
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+    out = "\n".join(parts).strip()
+    if not out:
+        return NoteParseResult(text="", status="empty", engine="xlsx", detail="XLSX 未解析出单元格文本")
+    xlsx_segments: list[dict[str, Any]] = []
+    for part in re.split(r"(?m)^(?=## 工作表:\s)", out):
+        part = (part or "").strip()
+        if not part:
+            continue
+        m_sheet = re.match(r"## 工作表:\s*(.+?)(?:\n|$)", part)
+        sheet = (m_sheet.group(1).strip() if m_sheet else "") or ""
+        body = part[m_sheet.end() :].strip() if m_sheet else part
+        if body:
+            xlsx_segments.append(
+                {
+                    "text": body,
+                    "meta": {
+                        "block_type": "sheet",
+                        "sheet": sheet,
+                        "heading_path": [sheet] if sheet else [],
+                    },
+                }
+            )
+    if not xlsx_segments:
+        xlsx_segments = [{"text": out, "meta": {"block_type": "xlsx", "heading_path": []}}]
+    return NoteParseResult(text=out, status="ok", engine="xlsx-openpyxl", detail=None, rag_segments=xlsx_segments)
+
 
 @dataclass
 class NoteParseResult:
@@ -36,6 +165,8 @@ class NoteParseResult:
     engine: str
     detail: str | None = None
     encoding: str | None = None
+    # 结构化分段（可选）：用于 RAG chunk_meta（heading_path / 表格 / PDF 页码等）
+    rag_segments: list[dict[str, Any]] | None = None
 
     @property
     def ok(self) -> bool:
@@ -61,7 +192,23 @@ def _docx_python_docx(data: bytes) -> str:
         lines: list[str] = []
         for p in doc.paragraphs:
             t = (p.text or "").strip()
-            if t:
+            if not t:
+                continue
+            st_name = ""
+            try:
+                st_name = str((p.style.name if p.style else "") or "")
+            except Exception:
+                st_name = ""
+            if st_name.startswith("Heading"):
+                try:
+                    lev = int(st_name.replace("Heading", "").strip() or "2")
+                except Exception:
+                    lev = 2
+                lev = max(1, min(6, lev))
+                lines.append("#" * lev + " " + t)
+            elif "标题" in st_name and not st_name.startswith("Heading"):
+                lines.append("## " + t)
+            else:
                 lines.append(t)
         for table in doc.tables:
             for row in table.rows:
@@ -72,6 +219,175 @@ def _docx_python_docx(data: bytes) -> str:
     except Exception as exc:
         logger.debug("python-docx parse failed: %s", exc)
         return ""
+
+
+def _docx_rag_segments(data: bytes) -> list[dict[str, Any]]:
+    """按文档流顺序输出段落/表格块，带 heading_path。"""
+    try:
+        from docx import Document  # type: ignore
+        from docx.oxml.ns import qn  # type: ignore
+        from docx.table import Table  # type: ignore
+        from docx.text.paragraph import Paragraph  # type: ignore
+    except Exception:
+        return []
+
+    try:
+        doc = Document(io.BytesIO(data))
+    except Exception:
+        return []
+
+    heading_path: list[str] = []
+    buf: list[str] = []
+    segments: list[dict[str, Any]] = []
+
+    def flush_buf() -> None:
+        nonlocal buf
+        if not buf:
+            return
+        t = "\n".join(buf).strip()
+        buf = []
+        if t:
+            segments.append(
+                {"text": t, "meta": {"block_type": "paragraph", "heading_path": list(heading_path)}}
+            )
+
+    try:
+        for el in doc.element.body:
+            if el.tag == qn("w:p"):
+                p = Paragraph(el, doc)
+                t = (p.text or "").strip()
+                if not t:
+                    continue
+                st_name = ""
+                try:
+                    st_name = str((p.style.name if p.style else "") or "")
+                except Exception:
+                    pass
+                if st_name.startswith("Heading"):
+                    flush_buf()
+                    try:
+                        lev = int(st_name.replace("Heading", "").strip() or "2")
+                    except Exception:
+                        lev = 2
+                    lev = max(1, min(6, lev))
+                    heading_path = heading_path[: lev - 1] + [t]
+                elif "标题" in st_name and not st_name.startswith("Heading"):
+                    flush_buf()
+                    heading_path = heading_path[:1] + [t] if heading_path else [t]
+                else:
+                    buf.append(t)
+            elif el.tag == qn("w:tbl"):
+                flush_buf()
+                table = Table(el, doc)
+                rows_txt: list[str] = []
+                for row in table.rows:
+                    cells = [c.text.strip() for c in row.cells if (c.text or "").strip()]
+                    if cells:
+                        rows_txt.append("\t".join(cells))
+                if rows_txt:
+                    tbl = "\n".join(rows_txt)
+                    segments.append(
+                        {
+                            "text": tbl,
+                            "meta": {
+                                "block_type": "table",
+                                "heading_path": list(heading_path),
+                                "table_rows": len(rows_txt),
+                            },
+                        }
+                    )
+    except Exception as exc:
+        logger.debug("docx rag segments failed: %s", exc)
+        return []
+    flush_buf()
+    return segments
+
+
+def _html_rag_segments(raw_html: str) -> list[dict[str, Any]]:
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:
+        return []
+
+    soup = BeautifulSoup(raw_html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "template", "iframe", "object", "embed"]):
+        tag.decompose()
+
+    root = soup.body or soup
+    path: list[str] = []
+    segments: list[dict[str, Any]] = []
+    for el in root.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "table"], recursive=True):
+        if el.name != "table" and el.find_parent("table") is not None:
+            continue
+        if el.name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            try:
+                lev = int(el.name[1])
+            except Exception:
+                lev = 2
+            txt = el.get_text(" ", strip=True)
+            if txt:
+                path = path[: lev - 1] + [txt]
+            continue
+        if el.name == "p":
+            txt = el.get_text(" ", strip=True)
+            if len(txt) >= 4:
+                segments.append(
+                    {"text": txt, "meta": {"block_type": "paragraph", "heading_path": list(path)}}
+                )
+        elif el.name == "table":
+            rows_o: list[str] = []
+            for tr in el.find_all("tr"):
+                cols = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+                cols = [c for c in cols if c]
+                if cols:
+                    rows_o.append("| " + " | ".join(cols) + " |")
+            if rows_o:
+                segments.append(
+                    {
+                        "text": "\n".join(rows_o),
+                        "meta": {"block_type": "table", "heading_path": list(path), "table_rows": len(rows_o)},
+                    }
+                )
+    return segments
+
+
+def _pdf_rag_segments_by_page(data: bytes) -> list[dict[str, Any]]:
+    try:
+        import fitz  # type: ignore
+
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception:
+        return []
+    try:
+        out: list[dict[str, Any]] = []
+        for i in range(len(doc)):
+            t = (doc[i].get_text() or "").strip()
+            if t:
+                out.append({"text": t, "meta": {"block_type": "pdf_page", "page": i + 1, "heading_path": []}})
+        return out
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+
+def _pdf_pymupdf_chars_per_page(data: bytes) -> tuple[int, int]:
+    """(页数, 总字符数) — 用于扫描件启发式。"""
+    try:
+        import fitz  # type: ignore
+
+        doc = fitz.open(stream=data, filetype="pdf")
+        try:
+            n = len(doc)
+            ch = 0
+            for i in range(n):
+                ch += len((doc[i].get_text() or ""))
+            return n, ch
+        finally:
+            doc.close()
+    except Exception:
+        return 0, 0
 
 
 def _decode_plain_bytes(data: bytes) -> tuple[str, str | None]:
@@ -232,7 +548,14 @@ def _extract_html_from_bytes(data: bytes) -> NoteParseResult:
     lines = [ln.strip() for ln in text_out.split("\n") if ln.strip()]
     content = "\n".join(lines)
     if content.strip():
-        return NoteParseResult(text=content.strip(), status="ok", engine="html-bs4", detail=None)
+        segs = _html_rag_segments(raw)
+        return NoteParseResult(
+            text=content.strip(),
+            status="ok",
+            engine="html-bs4",
+            detail=None,
+            rag_segments=segs if segs else None,
+        )
     return NoteParseResult(
         text="",
         status="empty",
@@ -312,6 +635,7 @@ def _ocr_image_via_openai_compat(data: bytes, ext: str) -> NoteParseResult:
 
 
 def extract_pdf_from_bytes(data: bytes) -> NoteParseResult:
+    pages, pym_chars = _pdf_pymupdf_chars_per_page(data)
     text, ok = _pdf_pymupdf(data)
     engine = "pymupdf"
     if not ok or len((text or "").strip()) < 8:
@@ -324,13 +648,34 @@ def extract_pdf_from_bytes(data: bytes) -> NoteParseResult:
             text = t2
             engine = "pypdf2"
             ok = True
-    if (text or "").strip():
-        return NoteParseResult(text=text.strip(), status="ok", engine=engine, detail=None)
+
+    stripped = (text or "").strip()
+    scanned_detail = (
+        "扫描版 PDF 暂不支持：未检测到可用文字层。"
+        "请使用 OCR 或本地工具导出为可搜索 PDF / Word 后再上传。"
+    )
+
+    if pages >= 1:
+        low_layer = pym_chars < max(45, pages * 22)
+        if len(stripped) < 40 and low_layer:
+            return NoteParseResult(text="", status="empty", engine=engine, detail=scanned_detail)
+        if not stripped and low_layer:
+            return NoteParseResult(text="", status="empty", engine=engine, detail=scanned_detail)
+
+    if stripped:
+        segs = _pdf_rag_segments_by_page(data)
+        return NoteParseResult(
+            text=stripped,
+            status="ok",
+            engine=engine,
+            detail=None,
+            rag_segments=segs if segs else None,
+        )
     return NoteParseResult(
         text="",
         status="empty",
         engine=engine,
-        detail="无法提取文本（可能为扫描版 PDF 或加密）",
+        detail="无法提取文本（可能为加密 PDF 或扫描件）；加密文件请先解除密码。",
     )
 
 
@@ -356,11 +701,19 @@ def extract_text_from_bytes(data: bytes, ext: str) -> NoteParseResult:
     if e == "docx":
         text = _docx_python_docx(data)
         eng = "python-docx"
+        segs = _docx_rag_segments(data)
         if not text.strip():
             text = _docx_xml_fallback(data)
             eng = "docx-xml-fallback"
+            segs = []
         if text.strip():
-            return NoteParseResult(text=text, status="ok", engine=eng, detail=None)
+            return NoteParseResult(
+                text=text,
+                status="ok",
+                engine=eng,
+                detail=None,
+                rag_segments=segs if segs else None,
+            )
         return NoteParseResult(text="", status="empty", engine=eng, detail="DOCX 未解析出正文")
 
     if e == "pdf":
@@ -405,6 +758,12 @@ def extract_text_from_bytes(data: bytes, ext: str) -> NoteParseResult:
                 os.unlink(path)
             except OSError:
                 pass
+
+    if e == "csv":
+        return _csv_bytes_to_text(data)
+
+    if e == "xlsx":
+        return _xlsx_bytes_to_text(data)
 
     if e in ("html", "htm", "xhtml"):
         return _extract_html_from_bytes(data)

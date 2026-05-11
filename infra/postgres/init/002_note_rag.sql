@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS note_rag_chunks (
   chunk_index INT NOT NULL,
   chunk_text TEXT NOT NULL,
   embedding JSONB NOT NULL,
+  chunk_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
   PRIMARY KEY (input_id, chunk_index)
 );
 
