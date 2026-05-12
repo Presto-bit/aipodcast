@@ -266,7 +266,7 @@ export default function CreatePage() {
   return (
     <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-12 pt-3 sm:px-4 sm:pt-6">
       <div className="mx-auto w-full max-w-3xl">
-      <header className="mb-6 border-l-2 border-brand/35 pl-4 sm:mb-10 sm:pl-5">
+      <header className="mb-6 sm:mb-10">
         {createPageEyebrow ? (
           <p className="text-xs font-semibold uppercase tracking-wider text-muted">{createPageEyebrow}</p>
         ) : null}
@@ -284,13 +284,13 @@ export default function CreatePage() {
         ) : null}
       </header>
 
-      <section className="fym-surface-card fym-tech-cap overflow-visible">
+      <section className="fym-surface-card overflow-visible">
         <div className="p-4 sm:p-5">
           <label className="sr-only" htmlFor="create-draft">
             输入主题或正文
           </label>
           {/* 角标摘要仅叠在正文框内，模式条独立在下方，避免遮挡「创作播客 / 文本转语音」 */}
-          <div className="overflow-hidden rounded-xl border border-line bg-fill ring-brand/20 focus-within:ring-2">
+          <div className="overflow-hidden rounded-xl bg-fill ring-brand/20 focus-within:ring-2">
             <div className="relative">
               <textarea
                 id="create-draft"
@@ -312,7 +312,7 @@ export default function CreatePage() {
                 </div>
               ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-2 border-t border-line bg-surface/95 px-3 py-2.5 backdrop-blur-sm">
+            <div className="flex flex-wrap items-center gap-2 bg-surface/95 px-3 py-2.5 backdrop-blur-sm">
               {(
                 [
                   { id: "podcast" as const, title: t("create.card.podcast.title"), Icon: IconMic },
@@ -377,7 +377,7 @@ export default function CreatePage() {
         </div>
 
         {mode && showProgress && act ? (
-          <div className="border-t border-line bg-fill/60 px-4 py-3 sm:px-5">
+          <div className="bg-fill/60 px-4 py-3 sm:px-5">
             <p className="text-xs font-medium text-muted">状态</p>
             <p className="mt-1 text-sm text-ink">
               {softenBareErrorLineForUi(act.phase || "") || (act.busy ? "处理中…" : "—")}

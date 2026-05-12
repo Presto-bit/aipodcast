@@ -349,16 +349,24 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     if (outroVoiceFollow) setOutroVoiceKey(voiceKey1);
   }, [voiceKey1, outroVoiceFollow]);
 
+  /** 与创作页「AI 播客」共用 localStorage：首次挂载即恢复，避免打开弹层时闪默认再跳变 */
   useEffect(() => {
-    const last = readLastIntroOutro("notes_room");
+    const last = readLastIntroOutro("podcast");
     if (last) applyIntroOutroSnapshot(last);
     setIntroOutroHydrated(true);
   }, [applyIntroOutroSnapshot]);
 
+  /** 每次打开播客间时再从创作侧读一次，便于从创作页改完开场/结尾后回到知识库即生效 */
+  useEffect(() => {
+    if (!open) return;
+    const last = readLastIntroOutro("podcast");
+    if (last) applyIntroOutroSnapshot(last);
+  }, [open, applyIntroOutroSnapshot]);
+
   useEffect(() => {
     if (!introOutroHydrated) return;
     const timer = window.setTimeout(() => {
-      void buildIntroOutroSnapshotNow().then((snap) => writeLastIntroOutro("notes_room", snap));
+      void buildIntroOutroSnapshotNow().then((snap) => writeLastIntroOutro("podcast", snap));
     }, 700);
     return () => window.clearTimeout(timer);
   }, [introOutroHydrated, buildIntroOutroSnapshotNow]);
@@ -805,7 +813,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                               <>
                             <p className="mb-3 text-xs text-muted">开场 / 正文 / 结尾与背景音均可选。</p>
                             <IntroOutroPresetBar
-                              scope="notes_room"
+                              scope="podcast"
                               buildSnapshot={buildIntroOutroSnapshotNow}
                               onApplySnapshot={applyIntroOutroSnapshot}
                             />

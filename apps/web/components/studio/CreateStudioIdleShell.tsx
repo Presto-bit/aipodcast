@@ -5,7 +5,7 @@ import { chipClass } from "./chipStyles";
 /** 与嵌入 PodcastStudio 首行 chip + 生成按钮布局一致，仅占位、无交互逻辑 */
 export function CreatePodcastStudioIdleShell() {
   return (
-    <div className="relative border-t border-line pt-3">
+    <div className="relative pt-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap gap-2">
@@ -43,7 +43,7 @@ export function CreatePodcastStudioIdleShell() {
 /** 与嵌入 TtsStudio 首行 chip 布局一致 */
 export function CreateTtsStudioIdleShell() {
   return (
-    <div className="relative border-t border-line pt-3">
+    <div className="relative pt-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0 flex-1 space-y-2">
           <div className="flex flex-wrap gap-2">

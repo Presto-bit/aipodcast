@@ -858,6 +858,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
 
   const rootClass = embedded ? "min-w-0 flex-1" : "mx-auto min-h-0 w-full max-w-6xl px-3 pb-10 sm:px-4";
   const nestCard = !(embedded && blendOuterCard);
+  const hideToolbarTopRule = embedded && blendOuterCard;
   const shellClass = nestCard
     ? "relative overflow-visible rounded-2xl border border-line bg-surface shadow-soft"
     : "relative overflow-visible";
@@ -886,7 +887,17 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
             />
           ) : null}
 
-          <div className={controlledText === undefined ? "relative mt-4 border-t border-line pt-3" : "relative border-t border-line pt-3"}>
+          <div
+            className={
+              hideToolbarTopRule
+                ? controlledText === undefined
+                  ? "relative mt-4 pt-3"
+                  : "relative pt-3"
+                : controlledText === undefined
+                  ? "relative mt-4 border-t border-line pt-3"
+                  : "relative border-t border-line pt-3"
+            }
+          >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap gap-2">
