@@ -55,6 +55,10 @@ export type WorkGalleryListContextValue = {
   ) => ReactNode;
   /** 与 jobOwnerUserId 比对，判断模板作品是否对当前用户锁定变更 */
   viewerAccountRef: string;
+  /** 「我的作品 → 进行中」：底部用停止/删除替换下载/修改文稿 */
+  activeQueueCardActions: boolean;
+  stopBusyId: string | null;
+  requestStopActiveJob: (jobId: string) => void;
 };
 
 const WorkGalleryListContext = createContext<WorkGalleryListContextValue | null>(null);

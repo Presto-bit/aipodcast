@@ -36,6 +36,10 @@ export type WorkItem = {
   jobOwnerUserId?: string;
   /** 来自他人「已公开分享」笔记本下的作品；当前用户仅可查看/试听，不可删改 */
   sharedNotebookForeign?: boolean;
+  /** 「进行中」卡片：payload 摘要，成片前展示在说明区 */
+  activeJobSummary?: string;
+  /** 「进行中」卡片：服务端进度 0–100，用于封面区进度条 */
+  activeJobProgress?: number;
 };
 
 /** 编排器内部任务，不应出现在「我的作品」/首页最近成品等用户向列表（与 list_recent_works 过滤一致） */

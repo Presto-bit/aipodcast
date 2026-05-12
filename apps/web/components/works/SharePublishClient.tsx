@@ -117,7 +117,17 @@ function sanitizeWorkDetailReturnTo(raw: string | null | undefined, fallback: st
   const t = String(raw ?? "").trim();
   if (!t.startsWith("/") || t.startsWith("//")) return fallback;
   if (t.includes(":")) return fallback;
-  return t.split("?")[0].split("#")[0] || fallback;
+  const qIdx = t.indexOf("?");
+  const pathOnly = (qIdx >= 0 ? t.slice(0, qIdx) : t).split("#")[0] || "";
+  if (!pathOnly.startsWith("/") || pathOnly.startsWith("//")) return fallback;
+  if (pathOnly.includes(":")) return fallback;
+  if (qIdx < 0) return pathOnly || fallback;
+  const queryOnly = t.slice(qIdx + 1).split("#")[0] ?? "";
+  if (!queryOnly) return pathOnly || fallback;
+  if (queryOnly.length > 512) return pathOnly || fallback;
+  // 仅允许站内常见查询串（如 /works?tab=active），拒绝含协议或可疑字符
+  if (!/^[a-zA-Z0-9_.=&%-]+$/.test(queryOnly)) return pathOnly || fallback;
+  return `${pathOnly}?${queryOnly}`;
 }
 
 /** 成片可能只有对象存储 URL / key，不一定内联 audio_hex（大文件会省略 hex）。 */

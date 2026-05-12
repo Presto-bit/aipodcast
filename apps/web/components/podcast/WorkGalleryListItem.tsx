@@ -104,6 +104,15 @@ function downloadBusyLabel(workType: string | undefined): string {
   return String(workType || "") === "script_draft" ? "正在下载…" : "正在打包…";
 }
 
+function ActiveJobCoverProgressBar({ pct }: { pct: number }) {
+  const p = Math.max(0, Math.min(100, pct));
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-1.5 bg-black/25" aria-hidden>
+      <div className="h-full bg-brand transition-[width] duration-500" style={{ width: `${p}%` }} />
+    </div>
+  );
+}
+
 export function WorkGalleryListItem({
   w,
   index,
@@ -151,7 +160,10 @@ export function WorkGalleryListItem({
     requestDelete,
     onReuseTemplate,
     renderDownloadGated,
-    viewerAccountRef
+    viewerAccountRef,
+    activeQueueCardActions,
+    stopBusyId,
+    requestStopActiveJob
   } = useWorkGalleryListContext();
 
 const id = w.id!;
@@ -199,6 +211,13 @@ const scriptCharCountDisplay =
     ? Math.round(w.scriptCharCount)
     : null;
 const reuseOrManuscriptLabel = isPodcastManuscriptDraftTarget(String(w.type || "")) ? "修改文稿" : "复用";
+const inFlightQueue =
+  Boolean(activeQueueCardActions) && (jobStatus === "queued" || jobStatus === "running");
+const activeSummary = String(w.activeJobSummary || "").trim();
+const activeProg =
+  typeof w.activeJobProgress === "number" && Number.isFinite(w.activeJobProgress)
+    ? Math.max(0, Math.min(100, Math.round(w.activeJobProgress)))
+    : null;
 
 /** 笔记本侧栏「我的作品」或首页「全部作品」紧凑列表：无封面顶栏、标题 + 元数据 + 操作（文稿在紧凑模式下仍走下方大图卡片分支） */
 if (useNotesStyleCards && !(useCompactAllLayout && isScriptDraft)) {
@@ -212,9 +231,10 @@ if (useNotesStyleCards && !(useCompactAllLayout && isScriptDraft)) {
     createdShort,
     worksNavAuthorDisplay
   );
+  const metaLineShown = inFlightQueue && activeSummary ? activeSummary : metaLine;
   const synopsisHoverFull = useCompactAllLayout
-    ? `${metaLine}\n\n${headlineFull}`
-    : `${metaLine}\n\n${formatNotesStudioCardSynopsis(
+    ? `${metaLineShown}\n\n${headlineFull}`
+    : `${metaLineShown}\n\n${formatNotesStudioCardSynopsis(
         w,
         isScriptDraft,
         durationLine,
@@ -262,7 +282,7 @@ if (useNotesStyleCards && !(useCompactAllLayout && isScriptDraft)) {
             <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
           )}
           <div className="group/synopsis relative mt-1 min-h-0">
-            <p className="line-clamp-3 min-h-0 text-[9px] leading-snug text-muted">{metaLine}</p>
+            <p className="line-clamp-3 min-h-0 text-[9px] leading-snug text-muted">{metaLineShown}</p>
             <div
               role="tooltip"
               className="pointer-events-none invisible absolute bottom-full left-0 z-[70] mb-1 w-max max-w-[min(18rem,92vw)] whitespace-pre-wrap break-words rounded-md border border-line bg-surface px-2 py-1.5 text-left text-[9px] leading-snug text-ink opacity-0 shadow-card ring-1 ring-line/50 transition-opacity delay-[75ms] duration-100 group-hover/synopsis:visible group-hover/synopsis:opacity-100"
@@ -302,7 +322,7 @@ if (useNotesStyleCards && !(useCompactAllLayout && isScriptDraft)) {
               )
             ) : null}
           </div>
-          {isMediaInFlight || rowMutationsLocked ? null : (
+          {isMediaInFlight || rowMutationsLocked || inFlightQueue ? null : (
             <div
               className="relative shrink-0"
               ref={(menuOpenId === id ? menuWrapRef : undefined) as Ref<HTMLDivElement> | undefined}
@@ -355,6 +375,7 @@ if (variant === "all") {
     dayP,
     worksNavAuthorDisplay
   );
+  const navMetaLineShown = inFlightQueue && activeSummary ? activeSummary : navMetaLine;
   return (
     <Comp
       key={id}
@@ -412,10 +433,17 @@ if (variant === "all") {
               {isScriptDraft ? "📝" : "🎙️"}
             </span>
             <span className="text-[10px] font-medium leading-tight text-muted">
-              {isScriptDraft ? "文稿作品" : "待生成或暂无封面"}
+              {isScriptDraft
+                ? inFlightQueue
+                  ? "正文生成中…"
+                  : "文稿作品"
+                : inFlightQueue
+                  ? "音频生成中…"
+                  : "待生成或暂无封面"}
             </span>
           </div>
         )}
+        {inFlightQueue && activeProg != null ? <ActiveJobCoverProgressBar pct={activeProg} /> : null}
       </Link>
       {isScriptDraft ? (
         <div className="shrink-0 border-b border-line/70 px-3 py-2">
@@ -425,10 +453,10 @@ if (variant === "all") {
           <p
             className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted"
             title={
-              `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, dayP)}\n\n${navMetaLine}`.trim()
+              `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, dayP)}\n\n${navMetaLineShown}`.trim()
             }
           >
-            {navMetaLine}
+            {navMetaLineShown}
           </p>
         </div>
       ) : (
@@ -438,21 +466,27 @@ if (variant === "all") {
               {w.displayTitle}
             </p>
             <div className="shrink-0 pt-0.5">
-              <CircularPlayControl
-                playing={isActive && isPlayingAudio}
-                progress={prog}
-                disabled={audioLoadingId === id}
-                onClick={() =>
-                  void togglePlay(id, w.displayTitle, {
-                    usePodcastPublicTemplateListen: isPublicTpl
-                  })
-                }
-                compact
-              />
+              {isMediaInFlight ? (
+                <span className="inline-flex h-9 min-w-[2.25rem] items-center justify-center rounded-full border border-line/80 bg-fill/60 px-2 text-[10px] font-medium text-muted">
+                  {jobStatus === "queued" ? "排队" : "生成中"}
+                </span>
+              ) : (
+                <CircularPlayControl
+                  playing={isActive && isPlayingAudio}
+                  progress={prog}
+                  disabled={audioLoadingId === id}
+                  onClick={() =>
+                    void togglePlay(id, w.displayTitle, {
+                      usePodcastPublicTemplateListen: isPublicTpl
+                    })
+                  }
+                  compact
+                />
+              )}
             </div>
           </div>
-          <p className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted" title={navMetaLine}>
-            {navMetaLine}
+          <p className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted" title={navMetaLineShown}>
+            {navMetaLineShown}
           </p>
         </div>
       )}
@@ -480,18 +514,41 @@ if (variant === "all") {
       <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
         {isScriptDraft ? (
           <>
-            {renderDownloadGated(
-              w,
-              id,
-              "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
-              zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+            {inFlightQueue ? (
+              <button
+                type="button"
+                className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
+                disabled={stopBusyId === id}
+                onClick={() => void requestStopActiveJob(id)}
+              >
+                {stopBusyId === id ? "停止中…" : "停止"}
+              </button>
+            ) : (
+              renderDownloadGated(
+                w,
+                id,
+                "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
+                zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+              )
             )}
-            <Link
-              href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
-              className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-            >
-              {rowMutationsLocked ? "查看文稿" : "修改文稿"}
-            </Link>
+            {inFlightQueue ? (
+              rowMutationsLocked ? null : (
+                <button
+                  type="button"
+                  className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
+                  onClick={() => requestDelete(id)}
+                >
+                  删除
+                </button>
+              )
+            ) : (
+              <Link
+                href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
+                className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+              >
+                {rowMutationsLocked ? "查看文稿" : "修改文稿"}
+              </Link>
+            )}
             {rowMutationsLocked ? null : (
               <button
                 type="button"
@@ -501,7 +558,7 @@ if (variant === "all") {
                 修改名称
               </button>
             )}
-            {rowMutationsLocked ? null : (
+            {rowMutationsLocked || inFlightQueue ? null : (
               <button
                 type="button"
                 className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
@@ -516,14 +573,14 @@ if (variant === "all") {
             <button
               type="button"
               className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
-              disabled={audioLoadingId === id}
+              disabled={audioLoadingId === id || isMediaInFlight}
               onClick={() =>
                 void togglePlay(id, w.displayTitle, {
                   usePodcastPublicTemplateListen: isPublicTpl
                 })
               }
             >
-              {isActive && isPlayingAudio ? "暂停" : "播放"}
+              {isMediaInFlight ? "生成中…" : isActive && isPlayingAudio ? "暂停" : "播放"}
             </button>
             <button
               type="button"
@@ -534,13 +591,32 @@ if (variant === "all") {
             >
               {publishActionText}
             </button>
-            {renderDownloadGated(
-              w,
-              id,
-              "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
-              zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+            {inFlightQueue ? (
+              <button
+                type="button"
+                className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
+                disabled={stopBusyId === id}
+                onClick={() => void requestStopActiveJob(id)}
+              >
+                {stopBusyId === id ? "停止中…" : "停止"}
+              </button>
+            ) : (
+              renderDownloadGated(
+                w,
+                id,
+                "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
+                zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+              )
             )}
-            {foreignNotebook ? null : (
+            {foreignNotebook ? null : inFlightQueue ? (
+              <button
+                type="button"
+                className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
+                onClick={() => requestDelete(id)}
+              >
+                删除
+              </button>
+            ) : (
               <button
                 type="button"
                 className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
@@ -549,7 +625,7 @@ if (variant === "all") {
                 {reuseOrManuscriptLabel}
               </button>
             )}
-            {rowMutationsLocked ? null : (
+            {rowMutationsLocked || inFlightQueue ? null : (
               <div
                 className="relative"
                 ref={(menuOpenId === id ? menuWrapRef : undefined) as Ref<HTMLDivElement> | undefined}
@@ -584,8 +660,9 @@ const navMetaLineCard = formatUnifiedWorksNavMetaLine(
   created,
   worksNavAuthorDisplay
 );
+const navMetaLineCardShown = inFlightQueue && activeSummary ? activeSummary : navMetaLineCard;
 const scriptCardMetaTitle = isScriptDraft
-  ? `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, created)}\n\n${navMetaLineCard}`
+  ? `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, created)}\n\n${navMetaLineCardShown}`
   : "";
 
 return (
@@ -645,10 +722,17 @@ return (
             {isScriptDraft ? "📝" : "🎙️"}
           </span>
           <span className="text-[10px] font-medium leading-tight text-muted">
-            {isScriptDraft ? "文稿作品" : "待生成或暂无封面"}
+            {isScriptDraft
+              ? inFlightQueue
+                ? "正文生成中…"
+                : "文稿作品"
+              : inFlightQueue
+                ? "音频生成中…"
+                : "待生成或暂无封面"}
           </span>
         </div>
       )}
+      {inFlightQueue && activeProg != null ? <ActiveJobCoverProgressBar pct={activeProg} /> : null}
     </Link>
 
     {isScriptDraft ? (
@@ -660,7 +744,7 @@ return (
           className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted"
           title={scriptCardMetaTitle.trim()}
         >
-          {navMetaLineCard}
+          {navMetaLineCardShown}
         </p>
       </div>
     ) : (
@@ -685,17 +769,23 @@ return (
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-0">
-          <CircularPlayControl
-            playing={isActive && isPlayingAudio}
-            progress={prog}
-            disabled={audioLoadingId === id}
-            onClick={() =>
-              void togglePlay(id, w.displayTitle, {
-                usePodcastPublicTemplateListen: isPublicTpl
-              })
-            }
-          />
-          {rowMutationsLocked ? null : (
+          {isMediaInFlight ? (
+            <span className="inline-flex h-11 min-w-[2.75rem] items-center justify-center rounded-full border border-line/80 bg-fill/60 px-2 text-[10px] font-medium text-muted">
+              {jobStatus === "queued" ? "排队" : "生成中"}
+            </span>
+          ) : (
+            <CircularPlayControl
+              playing={isActive && isPlayingAudio}
+              progress={prog}
+              disabled={audioLoadingId === id}
+              onClick={() =>
+                void togglePlay(id, w.displayTitle, {
+                  usePodcastPublicTemplateListen: isPublicTpl
+                })
+              }
+            />
+          )}
+          {rowMutationsLocked || inFlightQueue ? null : (
             <div
               className="relative"
               ref={(menuOpenId === id ? menuWrapRef : undefined) as Ref<HTMLDivElement> | undefined}
@@ -737,18 +827,41 @@ return (
     <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
       {isScriptDraft ? (
         <>
-          {renderDownloadGated(
-            w,
-            id,
-            "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
-            zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+          {inFlightQueue ? (
+            <button
+              type="button"
+              className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
+              disabled={stopBusyId === id}
+              onClick={() => void requestStopActiveJob(id)}
+            >
+              {stopBusyId === id ? "停止中…" : "停止"}
+            </button>
+          ) : (
+            renderDownloadGated(
+              w,
+              id,
+              "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
+              zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+            )
           )}
-          <Link
-            href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
-            className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-          >
-            {rowMutationsLocked ? "查看文稿" : "修改文稿"}
-          </Link>
+          {inFlightQueue ? (
+            rowMutationsLocked ? null : (
+              <button
+                type="button"
+                className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
+                onClick={() => requestDelete(id)}
+              >
+                删除
+              </button>
+            )
+          ) : (
+            <Link
+              href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
+              className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+            >
+              {rowMutationsLocked ? "查看文稿" : "修改文稿"}
+            </Link>
+          )}
           {rowMutationsLocked ? null : (
             <button
               type="button"
@@ -758,7 +871,7 @@ return (
               修改名称
             </button>
           )}
-          {rowMutationsLocked ? null : (
+          {rowMutationsLocked || inFlightQueue ? null : (
             <button
               type="button"
               className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
@@ -773,14 +886,14 @@ return (
           <button
             type="button"
             className="rounded-md border border-line bg-surface px-2 py-1 font-medium text-ink hover:bg-fill disabled:opacity-50"
-            disabled={audioLoadingId === id}
+            disabled={audioLoadingId === id || isMediaInFlight}
             onClick={() =>
               void togglePlay(id, w.displayTitle, {
                 usePodcastPublicTemplateListen: isPublicTpl
               })
             }
           >
-            {isActive && isPlayingAudio ? "暂停" : "播放"}
+            {isMediaInFlight ? "生成中…" : isActive && isPlayingAudio ? "暂停" : "播放"}
           </button>
           <button
             type="button"
@@ -791,13 +904,32 @@ return (
           >
             {publishActionText}
           </button>
-          {renderDownloadGated(
-            w,
-            id,
-            "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
-            zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+          {inFlightQueue ? (
+            <button
+              type="button"
+              className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
+              disabled={stopBusyId === id}
+              onClick={() => void requestStopActiveJob(id)}
+            >
+              {stopBusyId === id ? "停止中…" : "停止"}
+            </button>
+          ) : (
+            renderDownloadGated(
+              w,
+              id,
+              "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40",
+              zipBusy === id ? downloadBusyLabel(w.type) : "下载"
+            )
           )}
-          {foreignNotebook ? null : (
+          {foreignNotebook ? null : inFlightQueue ? (
+            <button
+              type="button"
+              className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
+              onClick={() => requestDelete(id)}
+            >
+              删除
+            </button>
+          ) : (
             <button
               type="button"
               className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"

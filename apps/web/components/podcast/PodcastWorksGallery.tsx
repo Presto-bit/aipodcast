@@ -18,7 +18,7 @@ import {
   openSubscriptionWalletTopup,
   WORK_DOWNLOAD_RECHARGE_GATE_USER_MESSAGE
 } from "../../lib/workDownloadRechargeGate";
-import { listRssPublicationsByJobIds, type RssPublication } from "../../lib/api";
+import { listRssPublicationsByJobIds, type RssPublication, cancelJob } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
 import { useI18n } from "../../lib/I18nContext";
 import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
@@ -174,6 +174,8 @@ type Props = {
   workDetailReturnTo?: string;
   /** 无成片时在空状态文案下追加 CTA（如创作页引导去知识库） */
   emptyStateFooter?: ReactNode;
+  /** 「进行中」列表：卡片底部用停止/删除替换下载/修改文稿 */
+  activeQueueCardActions?: boolean;
 };
 
 /** 笔记本侧栏 ⋯ 菜单：fixed 定位，避免 overflow/滚动裁切 */
@@ -220,7 +222,8 @@ export default function PodcastWorksGallery({
   pendingStudioSubtitle = "",
   compactCards = false,
   workDetailReturnTo,
-  emptyStateFooter
+  emptyStateFooter,
+  activeQueueCardActions = false
 }: Props) {
   const { t } = useI18n();
   const router = useRouter();
@@ -266,6 +269,7 @@ export default function PodcastWorksGallery({
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [zipBusy, setZipBusy] = useState<string | null>(null);
+  const [stopBusyId, setStopBusyId] = useState<string | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
@@ -439,6 +443,11 @@ export default function PodcastWorksGallery({
     for (const w of items) {
       const id = w.id;
       if (!id) continue;
+      const st = String(w.status || "").trim();
+      if (st === "queued" || st === "running") {
+        durationResolvedRef.current.add(id);
+        continue;
+      }
       if (w.isPodcastPublicTemplate) {
         durationResolvedRef.current.add(id);
         continue;
@@ -570,6 +579,27 @@ export default function PodcastWorksGallery({
     }
   }, []);
 
+  const requestStopActiveJob = useCallback(
+    async (jobId: string) => {
+      setStopBusyId(jobId);
+      setPlayErrorById((prev) => {
+        const next = { ...prev };
+        delete next[jobId];
+        return next;
+      });
+      try {
+        await cancelJob(jobId);
+        onWorkDeleted?.();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setPlayErrorById((prev) => ({ ...prev, [jobId]: `停止失败：${msg}` }));
+      } finally {
+        setStopBusyId(null);
+      }
+    },
+    [onWorkDeleted]
+  );
+
   const renderDownloadGated = useCallback(
     (
       row: PodcastWorkRow,
@@ -660,6 +690,15 @@ export default function PodcastWorksGallery({
       }
       setDeleteBusyId(jobId);
       setDeleteError(null);
+      const row = works.find((w) => String(w.id || "") === jobId);
+      const jst = String(row?.status || "").trim();
+      if (jst === "queued" || jst === "running") {
+        try {
+          await cancelJob(jobId);
+        } catch {
+          /* 仍尝试 purge，与旧「进行中」面板先停后删一致 */
+        }
+      }
       try {
         const maxAttempts = 3;
         const retryDelayMs = [300, 900];
@@ -807,6 +846,14 @@ export default function PodcastWorksGallery({
 
   const pendingDeleteTitle =
     deleteConfirmId != null ? items.find((x) => x.id === deleteConfirmId)?.displayTitle || deleteConfirmId : "";
+  const pendingDeleteRow =
+    deleteConfirmId != null ? items.find((x) => String(x.id) === String(deleteConfirmId)) : undefined;
+  const deleteTargetInflight =
+    Boolean(pendingDeleteRow) &&
+    (String(pendingDeleteRow?.status || "") === "queued" || String(pendingDeleteRow?.status || "") === "running");
+  const deleteModalMessage = deleteTargetInflight
+    ? `确定删除「${pendingDeleteTitle}」吗？任务进行中，删除将停止并永久移除，不可恢复。`
+    : `确定删除「${pendingDeleteTitle}」吗？将从服务器彻底移除该作品，不可恢复；本机显示名称缓存会清除。`;
 
   const selectedCount = selectedIds.size;
   const selectedRows = items.filter((x) => x.id && selectedIds.has(x.id));
@@ -1031,7 +1078,10 @@ export default function PodcastWorksGallery({
       requestDelete,
       onReuseTemplate,
       renderDownloadGated,
-      viewerAccountRef: viewerAccountRefStr
+      viewerAccountRef: viewerAccountRefStr,
+      activeQueueCardActions,
+      stopBusyId,
+      requestStopActiveJob
     }),
     [
       variant,
@@ -1066,7 +1116,10 @@ export default function PodcastWorksGallery({
       toggleSelect,
       onReuseTemplate,
       togglePlay,
-      viewerAccountRefStr
+      viewerAccountRefStr,
+      activeQueueCardActions,
+      stopBusyId,
+      requestStopActiveJob
     ]
   );
 
@@ -1088,7 +1141,7 @@ export default function PodcastWorksGallery({
       <SmallConfirmModal
         open={deleteConfirmId != null}
         title="删除作品"
-        message={`确定删除「${pendingDeleteTitle}」吗？将从服务器彻底移除该作品，不可恢复；本机显示名称缓存会清除。`}
+        message={deleteModalMessage}
         confirmLabel="确认删除"
         cancelLabel="取消"
         danger
