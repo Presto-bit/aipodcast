@@ -1151,12 +1151,15 @@ export function SharePublishClient({
       ? Math.min(12, (elapsedSec / 120) * 12)
       : Math.min(94, (elapsedSec / estimateSec) * 100);
     const remainingSec = Math.max(0, estimateSec - elapsedSec);
+    const overdue = !queued && elapsedSec >= estimateSec;
     const mm = Math.floor(elapsedSec / 60);
     const ss = Math.floor(elapsedSec % 60);
     const elapsedLabel = `${mm}:${String(ss).padStart(2, "0")}`;
     const caption = queued
       ? `排队中 · 已等待 ${elapsedLabel} · 预估成片约 ${formatEtaRoughCn(estimateSec)}`
-      : `已进行 ${elapsedLabel} · 预估总时长约 ${formatEtaRoughCn(estimateSec)} · 剩余约 ${formatEtaRoughCn(remainingSec)}`;
+      : overdue
+        ? `已进行 ${elapsedLabel} · 常用参考时长约 ${formatEtaRoughCn(estimateSec)}（实际可能更长） · 已超过参考时长，仍在处理中`
+        : `已进行 ${elapsedLabel} · 预估总时长约 ${formatEtaRoughCn(estimateSec)} · 剩余约 ${formatEtaRoughCn(remainingSec)}`;
     return { pct, caption };
   }, [ownerJobRecord, jobGenTick]);
 
