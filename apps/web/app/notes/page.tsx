@@ -62,6 +62,7 @@ import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import type { NotebookCoverMeta } from "../../lib/notebookCoverDisplay";
 import { notebookCoverImageUrl } from "../../lib/notebookCoverDisplay";
+import { ALLOWED_NOTE_EXT, NOTE_FILE_INPUT_ACCEPT } from "../../lib/noteUploadConstants";
 import { maxNotesForReference, notesRefSelectionLimitMessage } from "../../lib/noteReferenceLimits";
 import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
@@ -234,20 +235,6 @@ const NOTES_ASK_DEBUG_BODY_ENABLED = String(process.env.NEXT_PUBLIC_NOTES_ASK_DE
 const NOTES_ART_TARGET_CHARS_MIN = 200;
 const NOTES_ART_TARGET_CHARS_MAX = 50_000;
 const NOTES_ART_TARGET_CHARS_DEFAULT = 2000;
-const SUPPORTED_NOTE_FILE_EXTS = [
-  "txt",
-  "md",
-  "markdown",
-  "pdf",
-  "doc",
-  "docx",
-  "epub",
-  "html",
-  "htm",
-  "xhtml",
-] as const;
-const SUPPORTED_NOTE_FILE_ACCEPT = ".txt,.md,.markdown,.pdf,.doc,.docx,.epub,.html,.htm,.xhtml";
-
 function formatNotebookShareFailureMessage(raw: string, mode: "share" | "unshare"): string {
   const msg = String(raw || "").trim();
   const prefix = mode === "unshare" ? "取消分享失败" : "分享失败";
@@ -283,7 +270,7 @@ function formatNotebookShareFailureMessage(raw: string, mode: "share" | "unshare
 function isSupportedNoteFile(file: File): boolean {
   const name = (file.name || "").toLowerCase();
   const ext = name.includes(".") ? name.split(".").pop() || "" : "";
-  return SUPPORTED_NOTE_FILE_EXTS.includes(ext as (typeof SUPPORTED_NOTE_FILE_EXTS)[number]);
+  return ALLOWED_NOTE_EXT.has(ext);
 }
 
 function simplifySourceText(text: string): string {
@@ -4341,7 +4328,7 @@ export default function NotesPage() {
               <input
                 ref={addNoteFileRef}
                 type="file"
-                accept={SUPPORTED_NOTE_FILE_ACCEPT}
+                accept={NOTE_FILE_INPUT_ACCEPT}
                 className="hidden"
                 onChange={(e) => {
                   void uploadFile(e.target.files?.[0] || null);

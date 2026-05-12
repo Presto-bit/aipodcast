@@ -16,6 +16,12 @@ export const ALLOWED_NOTE_EXT = new Set([
   "xlsx",
 ]);
 
+/** 与 `<input type="file" accept>` 一致，供笔记页、录音室等共用，避免与后端白名单漂移 */
+export const NOTE_FILE_INPUT_ACCEPT = [...ALLOWED_NOTE_EXT]
+  .sort()
+  .map((e) => `.${e}`)
+  .join(",");
+
 /** 视频类：与编排器 VIDEO_NOTE_EXT 一致，前端提前拦截 */
 export const VIDEO_NOTE_EXT = new Set([
   "mp4",
