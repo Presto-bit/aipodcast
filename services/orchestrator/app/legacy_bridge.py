@@ -137,8 +137,8 @@ def merge_script_continuation_material(
         )
     if om == "dialogue":
         cont_notes.append(
-            "若为播客对话：若上文末段已含道别/收场语（含「拜拜」「再见」「感谢收听」「下次见」等），"
-            "本段须直接进入新内容或深化讨论，严禁再次输出同类道别套话；全文仅末段保留一次完整道别。"
+            "若为播客对话：若上文末段已含道别/收场语（含「拜拜」「再见」「晚安」「好梦」「感谢收听」「下次见」等），"
+            "本段须直接进入新内容或深化讨论，严禁再次输出同类道别套话，也禁止「刚道晚安又突然续聊」式反转；全文仅末段保留一次完整道别。"
         )
     tail_note = (" " + " ".join(cont_notes)) if cont_notes else ""
     blocks.append(
@@ -152,7 +152,17 @@ def merge_script_continuation_material(
 
 def _tail_has_dialogue_farewell(accumulated: str, window: int = 360) -> bool:
     tail = (accumulated or "")[-window:] if len(accumulated or "") > window else (accumulated or "")
-    return bool(re.search(r"(拜拜|再见啦|下次再见|感谢收听|感谢你的收听)", tail))
+    return bool(
+        re.search(
+            r"(?:"
+            r"拜拜|再见啦|下次再见|感谢收听|感谢你的收听|"
+            r"晚安\s*[,，]\s*好梦|晚安\s*[,，]\s*美梦|"
+            r"晚安\s*[。！？…]|好梦\s*[。！？…]|"
+            r"早点休息|睡吧|该睡了|去睡啦"
+            r")",
+            tail,
+        )
+    )
 
 
 def _strip_speaker_prefix(line: str) -> str:
@@ -163,11 +173,16 @@ def _line_is_brief_farewell_only(line: str) -> bool:
     t = _strip_speaker_prefix(line)
     t = re.sub(r'^["「『]', "", t)
     t = re.sub(r'["」』]$', "", t).strip()
-    if not t or len(t) > 56:
+    if not t or len(t) > 96:
         return False
     return bool(
         re.match(
-            r"^(?:拜拜|再见|再见啦|那(?:先)?拜拜|回见|回头见|下次见|下次再见)(?:[。！？…~～!,\s]*)$",
+            r"^(?:"
+            r"拜拜|再见|再见啦|那(?:先)?拜拜|回见|回头见|下次见|下次再见|"
+            r"晚安(?:啦|哦|呀|啊|～|~)?(?:[,，]\s*(?:好梦|美梦))?"
+            r"|(?:好梦|美梦)(?:啦|哦)?(?:[,，]\s*晚安)?"
+            r"|早点休息(?:吧|了)?|睡吧|睡觉吧|该睡了"
+            r")(?:[。！？…~～!…,\s]*)$",
             t,
             flags=re.IGNORECASE,
         )

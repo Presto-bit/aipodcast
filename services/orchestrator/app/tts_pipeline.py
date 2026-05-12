@@ -134,6 +134,25 @@ _SPEAKER_MISSING_COLON = re.compile(
     r"^\s*Speaker\s*([12])\s+([^:：\s].*)$",
     re.I,
 )
+# 同一物理行内粘连多轮对白（模型偶发「Speaker2: …。Speaker1: …」不换行），须拆开否则 TTS 会把后一段算给前一位说话人。
+_INLINE_SPEAKER12_HEAD = re.compile(r"(?i)Speaker\s*([12])\s*[:：]+\s*")
+
+
+def _split_stripped_line_on_embedded_speaker12_tags(stripped: str) -> list[str]:
+    """若一行内出现多处 Speaker1:/Speaker2: 标记，拆成多行；否则返回单行列表。"""
+    s = (stripped or "").strip()
+    if not s:
+        return []
+    matches = list(_INLINE_SPEAKER12_HEAD.finditer(s))
+    if len(matches) <= 1:
+        return [s]
+    pieces: list[str] = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(s)
+        piece = s[m.start() : end].strip()
+        if piece:
+            pieces.append(piece)
+    return pieces if pieces else [s]
 
 
 def normalize_dialogue_speaker_lines(text: str) -> str:
@@ -153,31 +172,33 @@ def normalize_dialogue_speaker_lines(text: str) -> str:
         if not stripped:
             out.append("")
             continue
-        m_any = _any_num.match(stripped)
-        if m_any:
-            try:
-                nv = int(m_any.group(1))
-            except ValueError:
-                nv = 1
-            body = (m_any.group(2) or "").strip()
-            if nv <= 0:
-                nv = 1
-            elif nv > 2:
-                nv = 2 if nv % 2 == 1 else 1
-            sp = str(nv)
-            out.append(f"Speaker{sp}: {body}" if body else f"Speaker{sp}:")
-            continue
-        m = _SPEAKER_PREFIX_NORMALIZE.match(stripped)
-        if not m:
-            m = _SPEAKER_LOOSE_PREFIX_NORMALIZE.match(stripped)
-        if not m:
-            m = _SPEAKER_MISSING_COLON.match(stripped)
-        if m:
-            sp = m.group(1)
-            body = (m.group(2) or "").strip()
-            out.append(f"Speaker{sp}: {body}" if body else f"Speaker{sp}:")
-        else:
-            out.append(stripped)
+        for piece in _split_stripped_line_on_embedded_speaker12_tags(stripped):
+            sub = piece
+            m_any = _any_num.match(sub)
+            if m_any:
+                try:
+                    nv = int(m_any.group(1))
+                except ValueError:
+                    nv = 1
+                body = (m_any.group(2) or "").strip()
+                if nv <= 0:
+                    nv = 1
+                elif nv > 2:
+                    nv = 2 if nv % 2 == 1 else 1
+                sp = str(nv)
+                out.append(f"Speaker{sp}: {body}" if body else f"Speaker{sp}:")
+                continue
+            m = _SPEAKER_PREFIX_NORMALIZE.match(sub)
+            if not m:
+                m = _SPEAKER_LOOSE_PREFIX_NORMALIZE.match(sub)
+            if not m:
+                m = _SPEAKER_MISSING_COLON.match(sub)
+            if m:
+                sp = m.group(1)
+                body = (m.group(2) or "").strip()
+                out.append(f"Speaker{sp}: {body}" if body else f"Speaker{sp}:")
+            else:
+                out.append(sub)
     return "\n".join(out)
 
 

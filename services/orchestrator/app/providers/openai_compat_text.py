@@ -15,6 +15,7 @@ from ..legacy_bridge import (
     DIALOGUE_SPEAKER_RETRY_CONSTRAINTS,
     _article_continuation_progress_summary,
     _article_outline_first_enabled,
+    _join_script_continued,
     merge_script_continuation_material,
 )
 from ..script_reference_coverage import article_outline_min_chars_threshold
@@ -108,15 +109,6 @@ def _max_tokens_for_target_chars(target_chars: int, cap: int) -> int:
     except (TypeError, ValueError):
         est = 2048
     return max(256, min(cap, est))
-
-
-def _join_script_continued_local(accumulated: str, piece: str, output_mode: str) -> str:
-    a = accumulated.rstrip()
-    p = piece.lstrip()
-    if not p:
-        return accumulated
-    sep = "\n" if output_mode == "dialogue" else "\n\n"
-    return a + sep + p
 
 
 def generate_script_openai_compatible(
@@ -368,7 +360,7 @@ def generate_script_openai_compatible(
         if not full_script.strip():
             full_script = piece.strip()
         else:
-            full_script = _join_script_continued_local(full_script, piece, output_mode)
+            full_script = _join_script_continued(full_script, piece, output_mode)
 
         if on_script_delta:
             on_script_delta(full_script, piece)
