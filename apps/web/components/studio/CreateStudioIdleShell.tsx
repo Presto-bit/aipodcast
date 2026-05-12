@@ -19,7 +19,7 @@ export function CreatePodcastStudioIdleShell() {
               <span className={chipClass(false)}>人设风格 · 闲聊</span>
             </span>
             <span className="pointer-events-none inline-block align-top opacity-80">
-              <span className={chipClass(false)}>资料库 · 未选</span>
+              <span className={chipClass(false)}>上传文件</span>
             </span>
             <span className="pointer-events-none inline-block align-top opacity-80">
               <span className={chipClass(false)}>展开高级设置</span>

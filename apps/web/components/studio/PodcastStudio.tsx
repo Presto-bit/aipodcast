@@ -935,7 +935,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     const hasLibraryMaterial =
       selectedNoteIds.length > 0;
     if (!trimmed && !hasLibraryMaterial) {
-      applyTaskFromEvent("请先输入内容，或在资料库勾选资料后再开始生成");
+      applyTaskFromEvent("请先输入内容，或上传文件并勾选资料后再开始生成");
       return;
     }
     if (!ensureLoggedInForAction("开始生成", "podcast.generate")) return;
@@ -1044,9 +1044,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       : "未设";
   const creativeSummary = formatCreativeTemplateChip(creativeTemplateValue);
   const librarySummary =
-    selectedNoteIds.length > 0
-      ? `笔记${selectedNoteIds.length ? "1" : "0"}`
-      : "未选资料";
+    selectedNoteIds.length > 0 ? `笔记${selectedNoteIds.length ? "1" : "0"}` : "";
 
   useEffect(() => {
     const parts: string[] = [];
@@ -1268,13 +1266,13 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="library" className="relative inline-block align-top">
                     <button type="button" className={chipClass(activePanel === "library")} onClick={() => setActivePanel((p) => (p === "library" ? null : "library"))}>
-                      资料库 · {librarySummary}
+                      {librarySummary ? `上传文件 · ${librarySummary}` : "上传文件"}
                     </button>
                     {renderFloatingPanel(
                       "library",
                       panelClassAnchorMobile,
                       panelClassAnchor,
-                      "资料库",
+                      "上传文件",
                       <div className="flex flex-col gap-2">
                         <div className="flex flex-col rounded-lg border border-line bg-fill/70 p-2.5">
                           <p className="mb-1.5 text-xs font-medium text-ink">本地上传</p>
