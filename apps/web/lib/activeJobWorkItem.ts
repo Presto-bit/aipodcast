@@ -22,6 +22,7 @@ export function activeJobRecordToWorkItem(job: JobRecord): WorkItem {
     coverImage: cover || undefined,
     audioDurationSec: null,
     activeJobSummary: detail,
-    activeJobProgress: pct
+    activeJobProgress: pct,
+    activeJobStartedAt: job.started_at ?? null
   };
 }

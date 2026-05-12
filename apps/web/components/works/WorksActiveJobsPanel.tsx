@@ -26,7 +26,8 @@ const PodcastWorksGallery = dynamic(() => import("../podcast/PodcastWorksGallery
   )
 });
 
-const POLL_MS = 8000;
+/** 与作品详情轮询接近，便于合并 server progress 与列表展示一致 */
+const POLL_MS = 3000;
 const LIST_LIMIT = 40;
 const ACTIVE_RETURN = "/works?tab=active";
 

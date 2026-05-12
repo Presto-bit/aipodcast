@@ -46,6 +46,10 @@ import { blobToDataUrlBase64 } from "../../lib/podcastCoverImage";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { formatUnifiedWorksNavMetaLineFromJobRecord } from "../../lib/worksNavMetaLine";
 import {
+  computeWorkHubGeneratingBarPct,
+  defaultJobGenEstimateSec
+} from "../../lib/workGeneratingProgressBar";
+import {
   isWorkDownloadRechargeGateError,
   openSubscriptionWalletTopup,
   WORK_DOWNLOAD_RECHARGE_GATE_USER_MESSAGE
@@ -192,14 +196,6 @@ function formatListenClock(sec: number): string {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${r.toString().padStart(2, "0")}`;
-}
-
-/** 作品详情生成进度条：按任务类型给出粗略预估总时长（秒），避免依赖后端百分比来回跳动 */
-function defaultJobGenEstimateSec(jobType: string): number {
-  const j = String(jobType || "").toLowerCase();
-  if (j.includes("short_video")) return 420;
-  if (j === "script_draft") return 420;
-  return 540;
 }
 
 function formatEtaRoughCn(sec: number): string {
@@ -1175,7 +1171,23 @@ export function SharePublishClient({
       : jobLiveProgressMsg.trim() ||
         (jobGenerating ? (ownerJobRecord?.status === "queued" ? "排队中…" : "正在生成…") : "");
 
-  const jobLivePctMerged = jobGenerating && jobGenEtaDisplay ? jobGenEtaDisplay.pct : null;
+  const jobLivePctMerged = useMemo(() => {
+    if (!jobGenerating || !ownerJobRecord) return null;
+    void jobGenTick;
+    return computeWorkHubGeneratingBarPct(
+      {
+        status: ownerJobRecord.status,
+        jobType: ownerJobRecord.job_type,
+        createdAt: ownerJobRecord.created_at,
+        startedAt: ownerJobRecord.started_at,
+        serverProgress:
+          typeof ownerJobRecord.progress === "number" && Number.isFinite(ownerJobRecord.progress)
+            ? ownerJobRecord.progress
+            : undefined
+      },
+      Date.now()
+    );
+  }, [jobGenerating, ownerJobRecord, jobGenTick]);
 
   const showManuscriptTools = useMemo(
     () => layout === "work_hub" && Boolean(ownerJobRecord) && shareJobHydrated && !loadErr,

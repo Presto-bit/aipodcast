@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode, Ref } from "react";
+import { useEffect, useState, type ReactNode, type Ref } from "react";
 import { unusableInsecureHttpOnHttpsPage } from "../../lib/insecureHttpOnHttpsPage";
+import { computeWorkHubGeneratingBarPct } from "../../lib/workGeneratingProgressBar";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
 import { formatWorkCreatedAtZh } from "../../lib/worksNavMetaLine";
 import { buildWorkDetailHref } from "./workGalleryNav";
@@ -113,6 +114,28 @@ function ActiveJobCoverProgressBar({ pct }: { pct: number }) {
   );
 }
 
+function useSyncedGeneratingBarPct(w: PodcastWorkRow, inFlightQueue: boolean): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!inFlightQueue) return;
+    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [inFlightQueue, w.id, w.status, w.createdAt, w.type, w.activeJobStartedAt, w.activeJobProgress]);
+  void tick;
+  if (!inFlightQueue) return 0;
+  return computeWorkHubGeneratingBarPct(
+    {
+      status: String(w.status || ""),
+      jobType: String(w.type || ""),
+      createdAt: String(w.createdAt || ""),
+      startedAt: w.activeJobStartedAt ?? undefined,
+      serverProgress:
+        typeof w.activeJobProgress === "number" && Number.isFinite(w.activeJobProgress) ? w.activeJobProgress : undefined
+    },
+    Date.now()
+  );
+}
+
 export function WorkGalleryListItem({
   w,
   index,
@@ -214,10 +237,7 @@ const reuseOrManuscriptLabel = isPodcastManuscriptDraftTarget(String(w.type || "
 const inFlightQueue =
   Boolean(activeQueueCardActions) && (jobStatus === "queued" || jobStatus === "running");
 const activeSummary = String(w.activeJobSummary || "").trim();
-const activeProg =
-  typeof w.activeJobProgress === "number" && Number.isFinite(w.activeJobProgress)
-    ? Math.max(0, Math.min(100, Math.round(w.activeJobProgress)))
-    : null;
+const syncedGenBarPct = useSyncedGeneratingBarPct(w, inFlightQueue);
 
 /** 笔记本侧栏「我的作品」或首页「全部作品」紧凑列表：无封面顶栏、标题 + 元数据 + 操作（文稿在紧凑模式下仍走下方大图卡片分支） */
 if (useNotesStyleCards && !(useCompactAllLayout && isScriptDraft)) {
@@ -443,7 +463,7 @@ if (variant === "all") {
             </span>
           </div>
         )}
-        {inFlightQueue && activeProg != null ? <ActiveJobCoverProgressBar pct={activeProg} /> : null}
+        {inFlightQueue ? <ActiveJobCoverProgressBar pct={syncedGenBarPct} /> : null}
       </Link>
       {isScriptDraft ? (
         <div className="shrink-0 border-b border-line/70 px-3 py-2">
@@ -582,15 +602,17 @@ if (variant === "all") {
             >
               {isMediaInFlight ? "生成中…" : isActive && isPlayingAudio ? "暂停" : "播放"}
             </button>
-            <button
-              type="button"
-              className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
-              disabled={tplNonOwner}
-              title={tplNonOwner ? "模板作品仅创建者可分享发布" : undefined}
-              onClick={() => goToSharePage(w)}
-            >
-              {publishActionText}
-            </button>
+            {inFlightQueue ? null : (
+              <button
+                type="button"
+                className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
+                disabled={tplNonOwner}
+                title={tplNonOwner ? "模板作品仅创建者可分享发布" : undefined}
+                onClick={() => goToSharePage(w)}
+              >
+                {publishActionText}
+              </button>
+            )}
             {inFlightQueue ? (
               <button
                 type="button"
@@ -732,7 +754,7 @@ return (
           </span>
         </div>
       )}
-      {inFlightQueue && activeProg != null ? <ActiveJobCoverProgressBar pct={activeProg} /> : null}
+      {inFlightQueue ? <ActiveJobCoverProgressBar pct={syncedGenBarPct} /> : null}
     </Link>
 
     {isScriptDraft ? (
@@ -895,15 +917,17 @@ return (
           >
             {isMediaInFlight ? "生成中…" : isActive && isPlayingAudio ? "暂停" : "播放"}
           </button>
-          <button
-            type="button"
-            className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
-            disabled={tplNonOwner}
-            title={tplNonOwner ? "模板作品仅创建者可分享发布" : undefined}
-            onClick={() => goToSharePage(w)}
-          >
-            {publishActionText}
-          </button>
+          {inFlightQueue ? null : (
+            <button
+              type="button"
+              className="rounded-md border border-brand/45 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15 disabled:pointer-events-none disabled:opacity-40"
+              disabled={tplNonOwner}
+              title={tplNonOwner ? "模板作品仅创建者可分享发布" : undefined}
+              onClick={() => goToSharePage(w)}
+            >
+              {publishActionText}
+            </button>
+          )}
           {inFlightQueue ? (
             <button
               type="button"

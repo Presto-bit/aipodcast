@@ -40,6 +40,8 @@ export type WorkItem = {
   activeJobSummary?: string;
   /** 「进行中」卡片：服务端进度 0–100，用于封面区进度条 */
   activeJobProgress?: number;
+  /** 「进行中」与详情页进度条对齐：任务 started_at */
+  activeJobStartedAt?: string | null;
 };
 
 /** 编排器内部任务，不应出现在「我的作品」/首页最近成品等用户向列表（与 list_recent_works 过滤一致） */
