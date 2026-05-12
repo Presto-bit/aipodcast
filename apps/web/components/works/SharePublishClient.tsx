@@ -51,7 +51,6 @@ import {
   WORK_DOWNLOAD_RECHARGE_GATE_USER_MESSAGE
 } from "../../lib/workDownloadRechargeGate";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
-import { useAppNotice } from "../../lib/AppNoticeContext";
 import { useWorkAudioPlayer, type WorkAudioToggleMeta } from "../../lib/workAudioPlayer";
 import { WorkHubOverviewPanel, type WorkHubDetailTab } from "./WorkHubOverviewPanel";
 import { WorkHubShownotesSection } from "./WorkHubShownotesSection";
@@ -205,7 +204,6 @@ export function SharePublishClient({
 }: Props) {
   const router = useRouter();
   const { user, phone } = useAuth();
-  const { showError } = useAppNotice();
   const workAudio = useWorkAudioPlayer();
   const [loadErr, setLoadErr] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -233,6 +231,12 @@ export function SharePublishClient({
   const [busy, setBusy] = useState(false);
   const [formErr, setFormErr] = useState("");
   const [formOk, setFormOk] = useState("");
+  const showError = useCallback((m: string) => {
+    const msg = String(m || "").trim();
+    if (!msg) return;
+    setFormErr(msg);
+    if (typeof window !== "undefined") window.alert(msg);
+  }, []);
   const [hasAudio, setHasAudio] = useState(false);
   /** 首次拉取任务详情完成前，勿把「无音频」提示当成最终态（避免闪错觉与长文案误报）。 */
   const [shareJobHydrated, setShareJobHydrated] = useState(false);
