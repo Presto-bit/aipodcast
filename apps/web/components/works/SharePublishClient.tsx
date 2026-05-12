@@ -36,7 +36,7 @@ import type { JobRecord } from "../../lib/types";
 import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
 import { presentJobProgressMessageForUser } from "../../lib/jobProgressUserText";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
-import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, PUBLISH_PLATFORMS } from "../../lib/publishPlatforms";
+import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, type PublishPlatformMeta, PUBLISH_PLATFORMS } from "../../lib/publishPlatforms";
 import { PUBLISH_PLATFORM_ICON_URL } from "../../lib/publishPlatformAssets";
 import { resolveJobScriptBodyText, SCRIPT_TEXT_LIKELY_FULL_MIN_LEN } from "../../lib/jobScriptText";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
@@ -109,6 +109,9 @@ type Props = {
 
 const PINNED_PUBLISH_PLATFORM_IDS: PublishPlatformId[] = ["xiaoyuzhou", "ximalaya"];
 const PINNED_PUBLISH_PLATFORM_SET = new Set<PublishPlatformId>(PINNED_PUBLISH_PLATFORM_IDS);
+/** 「更多」下拉：仅展示这些占位平台 */
+const MORE_MENU_PUBLISH_PLATFORM_IDS: PublishPlatformId[] = ["apple_podcasts", "netease"];
+const MORE_MENU_PUBLISH_PLATFORM_SET = new Set<PublishPlatformId>(MORE_MENU_PUBLISH_PLATFORM_IDS);
 
 function sanitizeWorkDetailReturnTo(raw: string | null | undefined, fallback: string): string {
   const t = String(raw ?? "").trim();
@@ -1797,7 +1800,9 @@ export function SharePublishClient({
   }
 
   const mainMax = layout === "work_hub" ? "max-w-4xl" : "max-w-2xl";
-  const otherPublishPlatforms = PUBLISH_PLATFORMS.filter((p) => !PINNED_PUBLISH_PLATFORM_SET.has(p.id));
+  const otherPublishPlatforms = MORE_MENU_PUBLISH_PLATFORM_IDS.map((id) =>
+    PUBLISH_PLATFORMS.find((p) => p.id === id)
+  ).filter((p): p is PublishPlatformMeta => Boolean(p));
 
   useLayoutEffect(() => {
     if (!morePlatformsOpen) {
@@ -2123,14 +2128,14 @@ export function SharePublishClient({
                             disabled={busy || shareAiBusy}
                             onClick={() => void copySharePageLink()}
                             className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-fill/40 px-2.5 py-1.5 text-xs font-medium text-ink hover:bg-fill disabled:opacity-40"
-                            title={shareLinkCopied ? "已复制" : "复制分享链接"}
+                            title={shareLinkCopied ? "已复制" : "分享链接试听"}
                           >
                             {shareLinkCopied ? (
                               <IconShareCheck className="h-3.5 w-3.5 text-success-ink" />
                             ) : (
                               <IconShareClipboard className="h-3.5 w-3.5 text-muted" />
                             )}
-                            {shareLinkCopied ? "已复制" : "复制链接"}
+                            {shareLinkCopied ? "已复制" : "分享链接试听"}
                           </button>
                         ) : null}
                         {rssFeedCopyUrl ? (
@@ -2205,7 +2210,7 @@ export function SharePublishClient({
                         disabled={busy || shareAiBusy}
                         onClick={() => setMorePlatformsOpen((o) => !o)}
                         className={`rounded-xl border px-3 py-2 text-xs font-medium transition-colors disabled:opacity-40 ${
-                          !PINNED_PUBLISH_PLATFORM_SET.has(publishPlatform)
+                          MORE_MENU_PUBLISH_PLATFORM_SET.has(publishPlatform)
                             ? "border-brand bg-brand/15 text-brand"
                             : "border-line bg-fill/40 text-ink hover:bg-fill"
                         }`}

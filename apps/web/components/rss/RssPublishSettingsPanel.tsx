@@ -65,7 +65,7 @@ export function RssPublishSettingsPanel({ onChannelsUpdated, variant = "page" }:
     <section className={wrapClass}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-1.5">
-          <h2 className="text-sm font-semibold text-ink">RSS 发布设置（小宇宙接入）</h2>
+          <h2 className="text-sm font-semibold text-ink">RSS 发布设置</h2>
           <div className="group relative inline-flex">
             <button
               type="button"
@@ -116,6 +116,7 @@ export function RssPublishSettingsPanel({ onChannelsUpdated, variant = "page" }:
           <div className="mt-4 space-y-4">
             {showNew ? (
               <RssChannelEditor
+                key="__rss_new_draft__"
                 channel={null}
                 isNew
                 disabledGlobal={rssLoading}

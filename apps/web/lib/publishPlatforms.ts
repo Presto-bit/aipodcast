@@ -33,7 +33,7 @@ export const PUBLISH_PLATFORMS: readonly PublishPlatformMeta[] = [
   },
   {
     id: "apple_podcasts",
-    label: "Apple 播客",
+    label: "Apple播客",
     available: false,
     comingSoonHint: "通常由托管商写入 RSS 后自动分发；此处将补充连接指引。"
   },

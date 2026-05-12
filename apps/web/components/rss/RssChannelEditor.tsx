@@ -23,13 +23,23 @@ export function RssChannelEditor({ channel, isNew, disabledGlobal, onSaved, onCa
   const [copyHint, setCopyHint] = useState("");
 
   useEffect(() => {
+    if (isNew && !channel) {
+      setTitle("");
+      setDescription("");
+      setAuthor("");
+      setLanguage("zh-cn");
+      setImageUrl("");
+      setErr("");
+      setCopyHint("");
+      return;
+    }
     if (!channel) return;
     setTitle(channel.title ?? "");
     setDescription(channel.description ?? "");
     setAuthor(channel.author ?? "");
     setLanguage(channel.language ?? "zh-cn");
     setImageUrl(channel.image_url ?? "");
-  }, [channel]);
+  }, [channel, isNew]);
 
   const feedSlug = channel?.feed_slug?.trim() ?? "";
   const feedUrl = feedSlug ? rssFeedUrlForSlug(feedSlug) : "";
