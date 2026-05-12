@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { allowCreateHotTopicsPerIp, clientIpFromNextRequest } from "../../../../lib/authRouteRateLimit";
-import { buildHotTopicPodcastDraft, truncateTopicLabel, type HotTopicSourceId } from "../../../../lib/createHotTopicDraft";
+import { buildHotTopicDiscussableTopicsDraft, truncateTopicLabel, type HotTopicSourceId } from "../../../../lib/createHotTopicDraft";
 
 const UPSTREAM_TIMEOUT_MS = 10_000;
 const VISIBLE_COUNT = 6;
@@ -145,7 +145,7 @@ function shuffleInPlace<T>(arr: T[], rnd: () => number): void {
 
 /**
  * GET /api/create/hot-topics?seed=123
- * 聚合多源热点标题，生成播客选题提示（最多 6 条）。
+ * 聚合多源热点标题，为每条生成「可讨论话题」提示文案（最多 6 条），供创作框选题用。
  */
 export async function GET(req: NextRequest) {
   if (!allowCreateHotTopicsPerIp(clientIpFromNextRequest(req))) {
@@ -184,7 +184,7 @@ export async function GET(req: NextRequest) {
 
   const topics = picked.map((h) => ({
     label: truncateTopicLabel(h.title),
-    text: buildHotTopicPodcastDraft(h.title)
+    text: buildHotTopicDiscussableTopicsDraft(h.title)
   }));
 
   return NextResponse.json(

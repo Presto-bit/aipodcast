@@ -449,11 +449,14 @@ export default function CreatePage() {
           hidden={!hotTopicAssistantOpen}
           className="border-t border-line px-3 pb-3 pt-2 sm:px-4"
         >
-          <div className="mb-2 flex justify-end">
+          <div className="mb-2 flex items-start justify-between gap-2">
+            <p className="max-w-[min(100%,28rem)] text-[11px] leading-snug text-muted">
+              点击卡片填入「从该热点可聊的角度」选题备忘，再自行决定是否扩写成整期播客。
+            </p>
             <button
               type="button"
               disabled={hotTopicsLoading}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-line bg-fill/50 text-muted transition hover:border-brand/40 hover:bg-brand/10 hover:text-brand disabled:pointer-events-none disabled:opacity-40"
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line bg-fill/50 text-muted transition hover:border-brand/40 hover:bg-brand/10 hover:text-brand disabled:pointer-events-none disabled:opacity-40"
               title="换一批"
               aria-label="换一批"
               onClick={() => refreshHotTopics()}
