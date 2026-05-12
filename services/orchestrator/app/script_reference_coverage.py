@@ -48,9 +48,9 @@ def augment_script_options_for_multi_note_coverage(
     script_opts: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    在 script_constraints 末尾追加说明（≥2 条笔记时）。
-    - 文章（article）：强调「单主线整合」+ 覆盖全部资料，避免「一书一节」机械并列。
-    - 播客/对话：强调覆盖 + 统一话题主线，避免轮流各说各书。
+    在 script_constraints 末尾追加说明。
+    - ≥2 条笔记：多资料覆盖/整合（长文 vs 对话），避免「一书一节」机械并列。
+    - ≥1 条笔记：统一追加「少在正文报书名、溯源交给参考」类约束（知识库场景）。
     """
     if (os.getenv("SCRIPT_MULTI_NOTE_COVERAGE_DISABLE", "") or "").strip().lower() in (
         "1",
@@ -60,11 +60,19 @@ def augment_script_options_for_multi_note_coverage(
         return script_opts
 
     n = count_selected_notes(payload)
-    if n < 2:
-        return script_opts
+    cite_block = (
+        "\n\n【资料名与溯源】正文以讲清观点、事实与逻辑为主；少用「《××》指出」「这本书认为」「某资料写到」等把完整书名/资料标题当主语的高频句式，"
+        "避免通篇「这本书说…那本书又认为…」；材料与条目出处交给作品页的参考、脚注或角标，不要在正文里反复拼资料全名。"
+        "确需区分多方说法时，优先用「一种常见看法」「另一条线索」「有观点指出」等中性指代。"
+    )
 
     out = dict(script_opts)
     base = str(out.get("script_constraints") or "").strip()
+    if n < 2:
+        if n == 1:
+            out["script_constraints"] = (base + cite_block).strip()
+        return out
+
     is_article = _output_mode_article(payload, script_opts)
 
     if is_article:
@@ -84,7 +92,7 @@ def augment_script_options_for_multi_note_coverage(
             block = (
                 "\n\n【多资料整合写作】本次已勾选多条笔记作为参考。"
                 "须用**一个中心议题**串联不同材料，通过过渡句、小结与对照把各来源观点勾连成文，避免各段只讲一本书、段与段之间无逻辑关联。"
-                "同时须覆盖所选全部资料（可点名书名或序号），避免只展开少数几本；弱相关条目可简要说明其定位。"
+                "同时须覆盖所选全部资料（体现在论点、事实与交叉引用上即可，勿靠反复写完整书名来凑覆盖），避免只展开少数几本；弱相关条目可一笔带过其定位。"
                 f"\n【来源数量锁定】用户本次勾选笔记共 **{n}** 条；若正文写及资料条数或「N 本」，**N 须为 {n}**，勿与检索片段出现次数混淆。"
                 "体裁为书面长文，禁止播客式结语（如「感谢收听」「我们下次再见」）；非全文末段禁止告别套话。"
             )
@@ -93,16 +101,16 @@ def augment_script_options_for_multi_note_coverage(
             block = (
                 "\n\n【多资料覆盖】本次已勾选较多条资料（≥8）。"
                 "对话/独白须有**统一话题主线**，避免轮流介绍各书却无交锋、对比或收束；"
-                "须安排结构使各来源在正文中均有对应（可用过渡或点名），禁止只集中少数几本。"
+                "须安排结构使各来源在正文中均有对应（可用过渡或极简指代，避免通篇报完整书名），禁止只集中少数几本。"
                 "若某条与主题弱相关，可简要说明其定位，避免完全忽略。"
             )
         else:
             block = (
                 "\n\n【多资料覆盖】本次已勾选多条笔记作为参考。"
-                "成稿须覆盖所选全部资料：对每一条来源在整体叙事中至少有机出现一次（可点名书名或材料序号），"
+                "成稿须覆盖所选全部资料：对每一条来源在整体叙事中至少有机出现一次（用观点、事实或交叉论证体现即可，避免以完整书名当串联词反复出现），"
                 "避免只围绕少数几本展开；须保持话题连贯，避免各说各话。"
                 "若某条与主题弱相关，可简要说明其定位或一笔带过。"
             )
 
-    out["script_constraints"] = (base + block).strip()
+    out["script_constraints"] = (base + block + cite_block).strip()
     return out

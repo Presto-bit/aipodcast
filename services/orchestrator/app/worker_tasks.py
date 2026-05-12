@@ -525,9 +525,11 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
 
                     tts = run_extended_tts(pl, api_key=api_key, progress_hook=_tts_prog)
                     _fm = str(tts.get("tts_main_body") or source_text or "").strip()
+                    _svo = str(tts.get("synthesized_voice_id") or "").strip()
+                    _vout = _svo or voice_id
                     result = {
                         "audio_hex": tts.get("audio_hex"),
-                        "voice_id": voice_id,
+                        "voice_id": _vout,
                         "trace_id": tts.get("trace_id"),
                         "upstream_status_code": tts.get("upstream_status_code"),
                         "retries": int(tts.get("retries") or 0),
@@ -1141,6 +1143,18 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                 audio_hex = maybe_mix_podcast_bgm(raw_hex, payload)
                 if bool(payload.get("mix_bgm")) and audio_hex != raw_hex:
                     append_job_event(job_id, "log", "已尝试 BGM 混音", {"bgm_slot": str(payload.get("bgm_slot") or "bgm01")})
+                _gn = str(tts.get("tts_voice_gender_note") or "").strip()
+                if _gn:
+                    append_job_event(job_id, "log", "已按文稿性别倾向微调默认音色", {"note": _gn})
+                _sv = str(tts.get("synthesized_voice_id") or "").strip()
+                _s1 = str(tts.get("synthesized_voice_id_1") or "").strip()
+                _s2 = str(tts.get("synthesized_voice_id_2") or "").strip()
+                if _sv:
+                    voice_id = _sv
+                if _s1:
+                    voice_id_1 = _s1
+                if _s2:
+                    voice_id_2 = _s2
                 
                 script_after_tts = str(tts.get("tts_main_body") or "").strip() or script
                 upload_text(script_key, script_after_tts)

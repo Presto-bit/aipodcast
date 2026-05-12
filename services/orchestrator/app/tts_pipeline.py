@@ -550,6 +550,18 @@ def run_extended_tts(
     elif not voice_id:
         raise RuntimeError("未提供音色 voice_id")
 
+    from .tts_script_voice_match import adjust_minimax_default_voices_for_script
+
+    voice_id, voice_id_1, voice_id_2, gender_note = adjust_minimax_default_voices_for_script(
+        main_body=main_body or "",
+        tts_mode=tts_mode,
+        voice_id=voice_id,
+        voice_id_1=voice_id_1,
+        voice_id_2=voice_id_2,
+        def_mini=_def_mini,
+        def_max=_def_max,
+    )
+
     from pydub import AudioSegment  # type: ignore
 
     audio_parts: list[Any] = []
@@ -837,7 +849,12 @@ def run_extended_tts(
         "tts_mode": effective_tts_mode,
         "tts_mode_requested": tts_mode,
         "cover_image": cover_image,
+        "synthesized_voice_id": voice_id,
+        "synthesized_voice_id_1": voice_id_1,
+        "synthesized_voice_id_2": voice_id_2,
     }
+    if gender_note:
+        out["tts_voice_gender_note"] = gender_note
     if dialogue_segments_original is not None:
         out["dialogue_segments_original"] = dialogue_segments_original
     if dialogue_segments_merged is not None:
