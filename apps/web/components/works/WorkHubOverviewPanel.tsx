@@ -53,6 +53,10 @@ type Props = {
   detailTab: WorkHubDetailTab;
   onDetailTabChange: (t: WorkHubDetailTab) => void;
   shownotesPanel: ReactNode;
+  /** 播客成片：用户设置的开场白（优先展示合成润色后的 tts_intro_text） */
+  podcastIntroDisplay?: string;
+  /** 播客成片：用户设置的结束语 */
+  podcastOutroDisplay?: string;
 };
 
 export function WorkHubOverviewPanel({
@@ -86,7 +90,9 @@ export function WorkHubOverviewPanel({
   hubViewerReadonly = false,
   detailTab,
   onDetailTabChange,
-  shownotesPanel
+  shownotesPanel,
+  podcastIntroDisplay = "",
+  podcastOutroDisplay = ""
 }: Props) {
   const workAudio = useWorkAudioPlayer();
   const activeThis = workAudio.activeJobId === jobId;
@@ -111,8 +117,27 @@ export function WorkHubOverviewPanel({
       ? formatClock(durationSecHint)
       : null;
 
-  const scriptManuscriptPanel = scriptDraft && showManuscriptTools;
-  const podcastChapterSection = !scriptDraft && !audioBlocked && showManuscriptTools;
+  const introBlock =
+    podcastIntroDisplay.trim().length > 0 ? (
+      <div className="mb-3 rounded-xl border border-line/80 bg-fill/35 px-3 py-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wide text-muted">开场白</h4>
+        <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap [font-family:var(--dawn-font-sans)] text-[12px] leading-relaxed text-ink sm:text-[13px]">
+          {podcastIntroDisplay.trim()}
+        </pre>
+        <p className="mt-1 text-[10px] leading-snug text-muted">此段与口播正文分开合成，不在下方对话稿内。</p>
+      </div>
+    ) : null;
+
+  const outroBlock =
+    podcastOutroDisplay.trim().length > 0 ? (
+      <div className="mb-3 rounded-xl border border-line/80 bg-fill/35 px-3 py-2">
+        <h4 className="text-[10px] font-semibold uppercase tracking-wide text-muted">结束语</h4>
+        <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap [font-family:var(--dawn-font-sans)] text-[12px] leading-relaxed text-ink sm:text-[13px]">
+          {podcastOutroDisplay.trim()}
+        </pre>
+        <p className="mt-1 text-[10px] leading-snug text-muted">此段与口播正文分开合成，不在下方对话稿内。</p>
+      </div>
+    ) : null;
 
   const regenProgressEl =
     audioRegenActive ? (
@@ -308,6 +333,7 @@ export function WorkHubOverviewPanel({
           {podcastChapterSection ? (
             <section className="flex min-h-[min(72vh,40rem)] flex-col rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
               {regenProgressEl}
+              {introBlock}
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">章节</h3>
                 {showManuscriptTools ? (
@@ -345,9 +371,14 @@ export function WorkHubOverviewPanel({
                   />
                 </div>
               ) : null}
+              {outroBlock}
             </section>
           ) : !scriptManuscriptPanel ? (
-            regenProgressEl
+            <>
+              {introBlock}
+              {outroBlock}
+              {regenProgressEl}
+            </>
           ) : null}
         </>
       ) : (

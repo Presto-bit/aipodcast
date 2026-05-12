@@ -1,6 +1,9 @@
 /**
  * 开场语 / 结尾语默认口播：创作「AI 播客」、文本转语音、知识库「生成播客」等共用；
  * 无本地记忆、复用模板未带字段或字段为空时落回此文案。
+ * 文案取向：少报幕套话、先进小场景或具体问题，结尾先收束再轻量道别（软着陆）。
  */
-export const DEFAULT_INTRO_LINE = "欢迎收听本期节目。";
-export const DEFAULT_OUTRO_LINE = "感谢收听，我们下期再见。";
+export const DEFAULT_INTRO_LINE =
+  "先从一个具体场景聊起，不急着下结论。我们把背景对齐，再往下展开。";
+export const DEFAULT_OUTRO_LINE =
+  "今天先收在这里：记住刚才那句话里的关键点就够了。感谢陪伴，下次再聊。";

@@ -786,7 +786,7 @@ def _template_assemble_from_structure(merged: dict[str, Any], chapter_timeline_h
         summary = summary[: RSS_SUMMARY_MAX_CHARS - 1] + "…"
 
     lines = ["## 本期概览", ""]
-    lines.append(hook or (facts[0] if facts else "欢迎收听本期节目。"))
+    lines.append(hook or (facts[0] if facts else "本期从具体情境切入，逐步展开讨论。"))
     lines.extend(["", "## 要点", ""])
     for f in facts[:10]:
         lines.append(f"- {f}")

@@ -841,7 +841,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                                     rows={3}
                                     value={introText}
                                     onChange={(e) => setIntroText(e.target.value)}
-                                    placeholder="例如：欢迎收听本期节目（留空可跳过）"
+                                    placeholder="例如：先从一个具体场景聊起…（留空可跳过）"
                                   />
                                 </label>
                                 <div className="mt-3 space-y-2">
@@ -882,7 +882,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                                     rows={3}
                                     value={outroText}
                                     onChange={(e) => setOutroText(e.target.value)}
-                                    placeholder="例如：感谢收听，我们下期再见（留空可跳过）"
+                                    placeholder="例如：先收束观点，再轻量道别…（留空可跳过）"
                                   />
                                 </label>
                                 <div className="mt-3 space-y-2">

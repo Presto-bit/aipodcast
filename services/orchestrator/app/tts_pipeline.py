@@ -140,16 +140,32 @@ def normalize_dialogue_speaker_lines(text: str) -> str:
     """
     将双人稿中行首 Speaker 标记规范为 Speaker1: / Speaker2:（半角冒号），
     避免全角冒号、重复冒号、大小写混杂等导致解析失败或 TTS 误读标签。
+    模型偶发输出 Speaker3/Speaker4：映射回 1/2（奇数→2、偶数→1），保证仅两路音色。
     幂等：已规范行保持不变。
     """
     if not (text or "").strip():
         return text or ""
+    _any_num = re.compile(r"^\s*Speaker\s*(\d+)\s*[:：]+\s*(.*)$", re.I)
     out: list[str] = []
     for raw in (text or "").split("\n"):
         line = raw.rstrip("\r")
         stripped = line.strip()
         if not stripped:
             out.append("")
+            continue
+        m_any = _any_num.match(stripped)
+        if m_any:
+            try:
+                nv = int(m_any.group(1))
+            except ValueError:
+                nv = 1
+            body = (m_any.group(2) or "").strip()
+            if nv <= 0:
+                nv = 1
+            elif nv > 2:
+                nv = 2 if nv % 2 == 1 else 1
+            sp = str(nv)
+            out.append(f"Speaker{sp}: {body}" if body else f"Speaker{sp}:")
             continue
         m = _SPEAKER_PREFIX_NORMALIZE.match(stripped)
         if not m:
@@ -298,6 +314,8 @@ def _tts_segment_text_cleanup(text: str) -> str:
     # 正文中间残留的 Speaker1/Speaker2（字母数字下划线前不截断，避免误伤英文单词）
     t = re.sub(r"(?i)speaker\s*1(?=[^a-z0-9_.]|$)", "", t)
     t = re.sub(r"(?i)speaker\s*2(?=[^a-z0-9_.]|$)", "", t)
+    t = re.sub(r"(?i)speaker\s*(?:[3-9]\d*|\d{2,})\s*[:：]?\s*", "", t)
+    t = re.sub(r"(?i)speaker\s*(?:[3-9]\d*|\d{2,})(?=[^a-z0-9_.]|$)", "", t)
     t = re.sub(r"[ \t]{2,}", " ", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
     return t.strip()

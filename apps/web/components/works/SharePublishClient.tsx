@@ -1044,6 +1044,18 @@ export function SharePublishClient({
     return null;
   }, [scriptDraft, ownerJobRecord, listenDurationSec]);
 
+  const podcastOpenCloseDisplay = useMemo(() => {
+    const row = ownerJobRecord;
+    if (!row) return { intro: "", outro: "" };
+    const jt = String(row.job_type || "").trim().toLowerCase();
+    if (jt !== "podcast" && jt !== "podcast_generate") return { intro: "", outro: "" };
+    const res = (row.result || {}) as Record<string, unknown>;
+    const pay = (row.payload || {}) as Record<string, unknown>;
+    const intro = String(res.tts_intro_text || pay.intro_text || "").trim();
+    const outro = String(res.tts_outro_text || pay.outro_text || pay.ending_text || "").trim();
+    return { intro, outro };
+  }, [ownerJobRecord]);
+
   useEffect(() => {
     if (layout !== "work_hub") return;
     setShareConfigModalOpen(initialHubTab === "publish");
@@ -2084,6 +2096,8 @@ export function SharePublishClient({
             hubViewerReadonly={viewerTemplateReadonly}
             detailTab={detailTab}
             onDetailTabChange={setDetailTab}
+            podcastIntroDisplay={podcastOpenCloseDisplay.intro}
+            podcastOutroDisplay={podcastOpenCloseDisplay.outro}
             shownotesPanel={
               <WorkHubShownotesSection
                 viewerReadonly={viewerTemplateReadonly}
