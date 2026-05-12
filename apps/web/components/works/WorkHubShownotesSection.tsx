@@ -112,7 +112,7 @@ export function WorkHubShownotesSection({
               {showNotesSaveBusy ? "保存中…" : "保存"}
             </button>
             <textarea
-              className="w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 pr-[4.5rem] pt-10 font-mono text-sm leading-relaxed text-ink"
+              className="w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 pr-[4.5rem] pt-10 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm"
               rows={12}
               value={showNotes}
               onChange={(e) => onShowNotesChange(e.target.value)}
