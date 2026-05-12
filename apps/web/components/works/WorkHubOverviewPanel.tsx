@@ -106,6 +106,9 @@ export function WorkHubOverviewPanel({
     setScriptDeleteBump(0);
   }, [jobId]);
 
+  const scriptManuscriptPanel = scriptDraft && showManuscriptTools;
+  const podcastChapterSection = !scriptDraft && !audioBlocked && showManuscriptTools;
+
   const onCoverPlayClick = useCallback(() => {
     if (!hasAudio || audioBlocked) return;
     void workAudio.togglePlay(jobId, { displayTitle: displayTitleForDownload.trim() || episodeTitle.trim() || jobId });
