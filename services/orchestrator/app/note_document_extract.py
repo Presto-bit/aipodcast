@@ -7,7 +7,7 @@
 - HTML/HTM/XHTML：BeautifulSoup 去脚本样式与嵌入媒体后抽取可见文本。
 - EPUB：临时文件 + content_parser.parse_epub（避免重复实现 spine 逻辑）。
 - DOC：临时文件 + antiword / catdoc / soffice（与旧逻辑一致）。
-- CSV / XLSX：表格线性化为 Markdown（含表头），大表按行列上限截断并注明。
+- CSV / XLSX / XLS：表格线性化为 Markdown（含表头），大表按行列上限截断并注明；.xls 使用 xlrd。
 - 图片（png/jpg/jpeg/webp/gif/avif）：笔记上传入口已不再接收；若库内仍有历史附件，可走可配置视觉模型 OCR（Qwen VL），未配置时仅存档。
 """
 from __future__ import annotations
@@ -154,6 +154,93 @@ def _xlsx_bytes_to_text(data: bytes) -> NoteParseResult:
     if not xlsx_segments:
         xlsx_segments = [{"text": out, "meta": {"block_type": "xlsx", "heading_path": []}}]
     return NoteParseResult(text=out, status="ok", engine="xlsx-openpyxl", detail=None, rag_segments=xlsx_segments)
+
+
+def _xls_bytes_to_text(data: bytes) -> NoteParseResult:
+    """经典 Excel 97-2003（.xls），使用 xlrd 读表。"""
+    if not data:
+        return NoteParseResult(text="", status="empty", engine="xls", detail="空文件")
+    try:
+        import xlrd  # type: ignore
+    except Exception as exc:
+        return NoteParseResult(
+            text="",
+            status="error",
+            engine="xls",
+            detail=f"未安装 xlrd：{exc}"[:200],
+        )
+    try:
+        book = xlrd.open_workbook(file_contents=data, formatting_info=False)
+    except Exception as exc:
+        return NoteParseResult(
+            text="",
+            status="error",
+            engine="xls",
+            detail=f"无法打开 XLS（可能已损坏或非 Excel 表格）：{exc}"[:400],
+        )
+    parts: list[str] = []
+    try:
+        n_sheets = min(book.nsheets, _MAX_XLSX_SHEETS)
+        for si in range(n_sheets):
+            sh = book.sheet_by_index(si)
+            sname = str(sh.name or f"Sheet{si + 1}")
+            parts.append(f"## 工作表: {_md_cell(sname)}")
+            nrows = min(sh.nrows, _MAX_XLSX_ROWS_PER_SHEET)
+            ncols = min(sh.ncols, _MAX_XLSX_COLS) if sh.ncols else 0
+            grid: list[list[str]] = []
+            for ri in range(nrows):
+                row_cells: list[str] = []
+                for ci in range(ncols):
+                    try:
+                        val = sh.cell_value(ri, ci)
+                        row_cells.append(_md_cell(str(val) if val is not None else ""))
+                    except Exception:
+                        row_cells.append("")
+                if any(x.strip() for x in row_cells):
+                    grid.append(row_cells)
+            if not grid:
+                parts.append("（本工作表无有效单元格）")
+                continue
+            header = grid[0]
+            parts.append("| " + " | ".join(header) + " |")
+            parts.append("| " + " | ".join(["---"] * len(header)) + " |")
+            for r in grid[1:]:
+                if len(r) < len(header):
+                    r = r + [""] * (len(header) - len(r))
+                parts.append("| " + " | ".join(r[: len(header)]) + " |")
+            if sh.nrows > _MAX_XLSX_ROWS_PER_SHEET:
+                parts.append(f"（本表已截断，仅保留前 {_MAX_XLSX_ROWS_PER_SHEET} 行）")
+            parts.append("")
+    finally:
+        try:
+            book.release_resources()
+        except Exception:
+            pass
+    out = "\n".join(parts).strip()
+    if not out:
+        return NoteParseResult(text="", status="empty", engine="xls", detail="XLS 未解析出单元格文本")
+    xls_segments: list[dict[str, Any]] = []
+    for part in re.split(r"(?m)^(?=## 工作表:\s)", out):
+        part = (part or "").strip()
+        if not part:
+            continue
+        m_sheet = re.match(r"## 工作表:\s*(.+?)(?:\n|$)", part)
+        sheet = (m_sheet.group(1).strip() if m_sheet else "") or ""
+        body = part[m_sheet.end() :].strip() if m_sheet else part
+        if body:
+            xls_segments.append(
+                {
+                    "text": body,
+                    "meta": {
+                        "block_type": "sheet",
+                        "sheet": sheet,
+                        "heading_path": [sheet] if sheet else [],
+                    },
+                }
+            )
+    if not xls_segments:
+        xls_segments = [{"text": out, "meta": {"block_type": "xls", "heading_path": []}}]
+    return NoteParseResult(text=out, status="ok", engine="xls-xlrd", detail=None, rag_segments=xls_segments)
 
 
 @dataclass
@@ -764,6 +851,9 @@ def extract_text_from_bytes(data: bytes, ext: str) -> NoteParseResult:
 
     if e == "xlsx":
         return _xlsx_bytes_to_text(data)
+
+    if e == "xls":
+        return _xls_bytes_to_text(data)
 
     if e in ("html", "htm", "xhtml"):
         return _extract_html_from_bytes(data)

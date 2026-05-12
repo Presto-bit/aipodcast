@@ -293,6 +293,7 @@ def _mime_for_note_ext(ext: str) -> str:
         "xhtml": "application/xhtml+xml; charset=utf-8",
         "csv": "text/csv; charset=utf-8",
         "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xls": "application/vnd.ms-excel",
         "png": "image/png",
         "jpg": "image/jpeg",
         "jpeg": "image/jpeg",
@@ -368,6 +369,9 @@ def _sniff_ext_from_bytes(data: bytes) -> str:
     b = data[:64]
     if b.startswith(b"%PDF-"):
         return "pdf"
+    # OLE 复合文档：经典 .xls / .doc 等（仅凭魔数无法区分，由扩展名与解析器兜底）
+    if len(data) >= 8 and data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return "ole_compound"
     if b.startswith(b"PK\x03\x04"):
         return "zip_like"
     if len(b) >= 8 and b[:8] == b"\x89PNG\r\n\x1a\n":
@@ -404,6 +408,13 @@ def _validate_upload_ext_matches_bytes(ext: str, data: bytes) -> None:
         if e in ("txt", "md", "markdown", "html", "htm", "xhtml") and not _looks_like_text_payload(data):
             raise HTTPException(status_code=400, detail="FILE_TYPE_MISMATCH:文本扩展名与二进制内容不一致")
         return
+    if sniff == "ole_compound":
+        if e not in ("doc", "xls"):
+            raise HTTPException(
+                status_code=400,
+                detail="FILE_TYPE_MISMATCH:该二进制为 OLE 复合文档，扩展名仅支持 .doc 或 .xls",
+            )
+        return
     # zip 容器类：docx/epub/xlsx 共享 PK 签名，按内部结构校验。
     if sniff == "zip_like":
         kind = _sniff_openxml_container_kind(data)
@@ -414,6 +425,11 @@ def _validate_upload_ext_matches_bytes(ext: str, data: bytes) -> None:
                     detail="FILE_TYPE_MISMATCH:文件不是有效的 Excel 表格（.xlsx）",
                 )
             return
+        if e == "xls":
+            raise HTTPException(
+                status_code=400,
+                detail="FILE_TYPE_MISMATCH:文件实为 Office Open XML（多为 .xlsx），请改用 .xlsx 扩展名上传",
+            )
         if e == "docx":
             if kind != "docx":
                 raise HTTPException(
@@ -472,6 +488,8 @@ def _parse_error_code_for_upload(ext: str, parse_result: NoteParseResult) -> str
         return "CSV_PARSE_ERROR" if st == "error" else ("PARSE_EMPTY" if st == "empty" else "PARSE_ENGINE_ERROR")
     if e == "xlsx":
         return "XLSX_PARSE_ERROR" if st == "error" else ("PARSE_EMPTY" if st == "empty" else "PARSE_ENGINE_ERROR")
+    if e == "xls":
+        return "XLS_PARSE_ERROR" if st == "error" else ("PARSE_EMPTY" if st == "empty" else "PARSE_ENGINE_ERROR")
     return "PARSE_EMPTY" if st == "empty" else "PARSE_ENGINE_ERROR"
 
 

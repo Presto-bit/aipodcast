@@ -63,7 +63,7 @@ _CN_DOC_HOST_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "aliyundrive.com",
         (
             "阿里云盘分享页多为前端渲染与登录态，链接导入难以抽取正文。",
-            "请下载文件后在知识库本地上传（表格可用 xlsx/csv，文档可用 pdf/docx）。",
+            "请下载文件后在知识库本地上传（表格可用 xls/xlsx/csv，文档可用 pdf/docx）。",
         ),
     ),
     (

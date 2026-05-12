@@ -14,6 +14,7 @@ export const ALLOWED_NOTE_EXT = new Set([
   "xhtml",
   "csv",
   "xlsx",
+  "xls",
 ]);
 
 /** 与 `<input type="file" accept>` 一致，供笔记页、录音室等共用，避免与后端白名单漂移 */
@@ -68,7 +69,7 @@ export function validateNoteFileMeta(file: File): { ok: true } | { ok: false; er
     };
   }
   if (!ALLOWED_NOTE_EXT.has(ext)) {
-    return { ok: false, error: "不支持的文件格式（支持 txt、md、pdf、doc、docx、epub、html、csv、xlsx）" };
+    return { ok: false, error: "不支持的文件格式（支持 txt、md、pdf、doc、docx、epub、html、csv、xls、xlsx）" };
   }
   return { ok: true };
 }

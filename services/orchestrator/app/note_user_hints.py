@@ -60,6 +60,9 @@ _HINT_ACTIONS: dict[str, list[str]] = {
     "XLSX_PARSE_ERROR": [
         "确认表格未加密；可先另存为 CSV 或导出为 PDF 再上传。",
     ],
+    "XLS_PARSE_ERROR": [
+        "确认 .xls 未加密且为 Excel 保存；可先在本地另存为 .xlsx 或 CSV 再上传。",
+    ],
     "pdf_too_large": [
         "将 PDF 拆分为较小文件本地上传，或使用可搜索 PDF 导出后再试。",
     ],
