@@ -8,6 +8,7 @@ import InlineConfirmBar from "../../components/ui/InlineConfirmBar";
 import InlineTextPrompt from "../../components/ui/InlineTextPrompt";
 import SmallPromptModal from "../../components/ui/SmallPromptModal";
 import EmptyState from "../../components/ui/EmptyState";
+import UserErrorBanner from "../../components/ui/UserErrorBanner";
 const NotesPodcastRoomModal = dynamic(() => import("../../components/notes/NotesPodcastRoomModal"));
 const PodcastWorksGallery = dynamic(() => import("../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
@@ -3180,7 +3181,9 @@ export default function NotesPage() {
       }
       onPointerDown={onNotesMainPointerDown}
     >
-      {error ? <p className="mb-4 text-sm text-danger-ink">{error}</p> : null}
+      {error ? (
+        <UserErrorBanner className="mb-4" message={error} onDismiss={() => setError("")} />
+      ) : null}
 
       {hubView ? (
         <>
@@ -3817,9 +3820,12 @@ export default function NotesPage() {
 
               <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
                 {notesAskError ? (
-                  <div className="shrink-0 space-y-1 text-xs text-danger-ink" role="alert">
-                    <p className="whitespace-pre-wrap break-words">{notesAskError}</p>
-                  </div>
+                  <UserErrorBanner
+                    variant="dense"
+                    className="shrink-0"
+                    message={notesAskError}
+                    onDismiss={() => setNotesAskError("")}
+                  />
                 ) : null}
                 <div
                   ref={notesAskScrollRef}

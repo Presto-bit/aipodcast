@@ -6,9 +6,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/Button";
 import { jobEventsSourceUrl } from "../../lib/authHeaders";
 import { cancelJob, getJob, retryJob } from "../../lib/api";
-import { classifyErrorTone, errorPageCopy } from "../../lib/errorCopy";
-import { useI18n } from "../../lib/I18nContext";
 import { useAuth } from "../../lib/auth";
+import { useAppNotice } from "../../lib/AppNoticeContext";
+import UserErrorBanner from "../ui/UserErrorBanner";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { classifyJobError, failureCopy, failureRecoveryLink } from "../../lib/jobFailure";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
@@ -66,8 +66,8 @@ export type JobDetailClientProps = {
 
 export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps) {
   const router = useRouter();
-  const { t } = useI18n();
   const { getAuthHeaders } = useAuth();
+  const { showError, showInfo } = useAppNotice();
   const [job, setJob] = useState<JobRecord | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -282,7 +282,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       }
       if (!text && job?.result) text = extractPreviewText(job.result);
       if (!text) {
-        window.alert("暂无文稿；完成后请刷新重试。");
+        showError("暂无文稿；完成后请刷新重试。");
         return;
       }
       await navigator.clipboard.writeText(text);
@@ -290,21 +290,16 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       if (copyManuscriptHintTimerRef.current) clearTimeout(copyManuscriptHintTimerRef.current);
       copyManuscriptHintTimerRef.current = setTimeout(() => setCopyManuscriptHint(null), 2500);
     } catch (e) {
-      window.alert(String(e instanceof Error ? e.message : e));
+      showError(String(e instanceof Error ? e.message : e));
     } finally {
       setCopyManuscriptBusy(false);
     }
-  }, [jobId, streamingTail, job?.result, job?.job_type, job?.status, scriptArtifactId]);
+  }, [jobId, streamingTail, job?.result, job?.job_type, job?.status, scriptArtifactId, showError]);
 
   const stage = useMemo(() => deriveJobStage(job, events), [job, events]);
   const timelineEvents = useMemo(() => visibleJobEventsForUserTimeline(events), [events]);
   const previewText = useMemo(() => extractPreviewText(job?.result), [job?.result]);
   const audioArtifactId = useMemo(() => pickArtifactIdByKeyword(job?.artifacts, "audio"), [job?.artifacts]);
-  const loadErrCopy = useMemo(() => {
-    if (!loadErr) return null;
-    return errorPageCopy(classifyErrorTone(loadErr), t);
-  }, [loadErr, t]);
-
   const traceId =
     job?.result && typeof job.result.trace_id === "string" ? job.result.trace_id : null;
 
@@ -326,7 +321,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       await cancelJob(jobId);
       await load();
     } catch (e) {
-      window.alert(String(e instanceof Error ? e.message : e));
+      showError(String(e instanceof Error ? e.message : e));
     } finally {
       setBusy("");
     }
@@ -339,7 +334,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       const next = await retryJob(jobId);
       router.push(`${recordsListHref.replace(/\/$/, "")}/${next.id}`);
     } catch (e) {
-      window.alert(String(e instanceof Error ? e.message : e));
+      showError(String(e instanceof Error ? e.message : e));
     } finally {
       setBusy("");
     }
@@ -348,21 +343,21 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
   async function onCopyPreview() {
     const text = (previewText || streamingTail || "").trim();
     if (!text) {
-      window.alert("暂无摘要。");
+      showError("暂无摘要。");
       return;
     }
     try {
       await navigator.clipboard.writeText(text);
-      window.alert("已复制");
+      showInfo("已复制到剪贴板");
     } catch {
-      window.alert("复制失败");
+      showError("复制失败，请检查浏览器是否允许本站访问剪贴板。");
     }
   }
 
   function goPartialRedo() {
     const text = (previewText || streamingTail || "").trim();
     if (!text) {
-      window.alert("暂无文稿。");
+      showError("暂无文稿。");
       return;
     }
     try {
@@ -377,7 +372,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
       );
       router.push("/podcast");
     } catch {
-      window.alert("暂存失败，请重试。");
+      showError("暂存失败，请重试。");
     }
   }
 
@@ -401,12 +396,8 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
         </Link>
       </p>
 
-      {loadErrCopy ? (
-        <div className="mt-4 rounded-dawn-lg border border-danger/35 bg-danger-soft px-3 py-3 text-sm" role="alert">
-          <p className="font-medium text-danger">{loadErrCopy.headline}</p>
-          <p className="mt-1 text-xs text-muted">{loadErrCopy.sub}</p>
-          <p className="mt-2 break-words font-mono text-xs text-ink">{loadErr}</p>
-        </div>
+      {loadErr ? (
+        <UserErrorBanner className="mt-4" message={loadErr} onDismiss={() => setLoadErr("")} />
       ) : null}
 
       {job ? (

@@ -8,6 +8,7 @@ import FirstLoginCoach from "../components/onboarding/FirstLoginCoach";
 import { AuthProvider } from "../lib/auth";
 import { I18nProvider } from "../lib/I18nContext";
 import { ThemeProvider } from "../lib/ThemeContext";
+import { AppNoticeProvider } from "../lib/AppNoticeContext";
 import { WorkAudioPlayerProvider } from "../lib/workAudioPlayer";
 
 const CHUNK_RELOAD_GUARD_KEY = "fym_chunk_reload_guard_v1";
@@ -79,10 +80,12 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       <ThemeProvider>
         <I18nProvider>
           <AuthProvider>
-            <WorkAudioPlayerProvider>
-              <AppShell>{children}</AppShell>
-              <FirstLoginCoach />
-            </WorkAudioPlayerProvider>
+            <AppNoticeProvider>
+              <WorkAudioPlayerProvider>
+                <AppShell>{children}</AppShell>
+                <FirstLoginCoach />
+              </WorkAudioPlayerProvider>
+            </AppNoticeProvider>
           </AuthProvider>
         </I18nProvider>
       </ThemeProvider>

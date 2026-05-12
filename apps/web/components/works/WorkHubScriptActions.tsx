@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { useAppNotice } from "../../lib/AppNoticeContext";
 
 type Props = {
   manuscriptBody: string;
@@ -28,18 +29,19 @@ export function WorkHubScriptActions({
   onRegenerateVoice,
   onDeleteClick
 }: Props) {
+  const { showError } = useAppNotice();
   const copyAll = useCallback(async () => {
     const t = manuscriptBody.trim();
     if (!t) {
-      window.alert("暂无可复制的正文。");
+      showError("暂无可复制的正文。");
       return;
     }
     try {
       await navigator.clipboard.writeText(t);
     } catch {
-      window.alert("复制失败，请检查浏览器权限。");
+      showError("复制失败，请检查浏览器是否允许本站访问剪贴板。");
     }
-  }, [manuscriptBody]);
+  }, [manuscriptBody, showError]);
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-1.5">

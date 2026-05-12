@@ -16,6 +16,7 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
 import WorksActiveJobsPanel from "../../components/works/WorksActiveJobsPanel";
 import { chipClass } from "../../components/studio/chipStyles";
 import EmptyState from "../../components/ui/EmptyState";
+import UserErrorBanner from "../../components/ui/UserErrorBanner";
 import type { WorkItem } from "../../lib/worksTypes";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
@@ -292,7 +293,7 @@ export default function WorksPage() {
       {worksView === "active" ? <WorksActiveJobsPanel onActiveJobsChanged={onActiveJobsChanged} /> : null}
 
       {(worksView === "audio" || worksView === "script") && error ? (
-        <p className="mb-2 text-sm text-danger-ink">{error}</p>
+        <UserErrorBanner className="mb-2" message={error} onDismiss={() => setError("")} />
       ) : null}
 
       {(worksView === "audio" || worksView === "script") && loading ? (

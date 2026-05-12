@@ -24,9 +24,8 @@ import { useI18n } from "../../lib/I18nContext";
 import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
 import { insertPodcastDraftAtTop, setDraftsNavigationFocusDraftId } from "../../lib/podcastDrafts";
 import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
-import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
-import { softenBareErrorLineForUi } from "../../lib/apiError";
-import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
+import { useAppNotice } from "../../lib/AppNoticeContext";
+import UserErrorBanner from "../ui/UserErrorBanner";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
 import { WorkGalleryListProvider, type WorkGalleryListContextValue } from "./workGalleryListContext";
@@ -232,6 +231,7 @@ export default function PodcastWorksGallery({
     [viewerAccountRefStr]
   );
   const workAudio = useWorkAudioPlayer();
+  const { showError } = useAppNotice();
 
   const worksNavAuthorDisplay = useMemo(() => {
     const u = user as { display_name?: string; username?: string; phone?: string } | null | undefined;
@@ -834,7 +834,7 @@ export default function PodcastWorksGallery({
       return;
     }
     if (file.size > 8 * 1024 * 1024) {
-      window.alert("封面图片需不超过 8MB");
+      showError("封面图片需不超过 8MB");
       return;
     }
     setCoverUploadBusy(jobId);
@@ -855,7 +855,7 @@ export default function PodcastWorksGallery({
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
       setCoverBustById((prev) => ({ ...prev, [jobId]: Date.now() }));
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : "封面上传失败");
+      showError(e instanceof Error ? e.message : "封面上传失败");
     } finally {
       setCoverUploadBusy(null);
       coverUploadTargetIdRef.current = null;
@@ -885,7 +885,7 @@ export default function PodcastWorksGallery({
           /** 正文在 result.script_text / script 工件；勿用 payload.text（多为原始素材）。 */
           const text = (await resolveJobScriptBodyText(id, row, getAuthHeaders())).trim();
           if (!text) {
-            window.alert("暂无文稿可复制");
+            showError("暂无文稿可复制");
             return;
           }
           const titleFromJob = String((row as { title?: unknown }).title || payload.title || "").trim();
@@ -947,7 +947,7 @@ export default function PodcastWorksGallery({
         }));
       }
     },
-    [getAuthHeaders, router]
+    [getAuthHeaders, router, showError]
   );
 
   const toggleSelect = useCallback((id: string) => {
@@ -1121,19 +1121,7 @@ export default function PodcastWorksGallery({
       />
 
       {fetchError ? (
-        <div className="mb-2 text-sm text-danger-ink">
-          <p>
-            {softenBareErrorLineForUi(fetchError)}
-            {onDismissError ? (
-              <button type="button" className="ml-2 underline" onClick={onDismissError}>
-                清除
-              </button>
-            ) : null}
-          </p>
-          {messageSuggestsBillingTopUpOrSubscription(softenBareErrorLineForUi(fetchError)) ? (
-            <BillingShortfallLinks className="mt-2" />
-          ) : null}
-        </div>
+        <UserErrorBanner className="mb-2" message={fetchError} onDismiss={onDismissError} />
       ) : null}
 
       {enableBatchActions && items.length > 0 ? (

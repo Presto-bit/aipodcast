@@ -2,9 +2,8 @@
 
 import { useCallback, useRef, useState } from "react";
 import { rememberJobId } from "../../lib/jobRecent";
-import { messageLooksLikeWalletTopupHint } from "../../lib/billingShortfall";
 import { useAuth } from "../../lib/auth";
-import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
+import UserErrorBanner from "../ui/UserErrorBanner";
 
 /** 本地录音上传上限（与后端上限一致，避免长音频被拒） */
 const MAX_RECORD_BYTES = 20 * 1024 * 1024;
@@ -304,10 +303,7 @@ export default function VoiceClonePanel() {
       </div>
 
       {error ? (
-        <div className="mt-6 text-sm text-danger-ink">
-          <p>{error}</p>
-          {messageLooksLikeWalletTopupHint(error) ? <BillingShortfallLinks className="mt-2" /> : null}
-        </div>
+        <UserErrorBanner className="mt-6" message={error} onDismiss={() => setError("")} variant="dense" />
       ) : null}
 
       {result ? (

@@ -14,6 +14,7 @@ import {
   removeSessionStorageScoped,
   writeSessionStorageScoped
 } from "../../lib/userScopedStorage";
+import { useAppNotice } from "../../lib/AppNoticeContext";
 
 type Draft = PodcastDraft;
 
@@ -27,6 +28,7 @@ const card =
 const storageHint = "仅保存在本机浏览器，清数据或换设备会丢失。";
 
 export default function DraftsPage() {
+  const { showError } = useAppNotice();
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [titleInput, setTitleInput] = useState("");
@@ -124,7 +126,7 @@ export default function DraftsPage() {
   function importToTts() {
     const text = String(textInput || "").trim();
     if (!text) {
-      window.alert("草稿内容为空");
+      showError("草稿内容为空，请先输入正文再送到文本转语音。");
       return;
     }
     try {

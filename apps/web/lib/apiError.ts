@@ -27,6 +27,19 @@ const NOTES_ASK_CODE_MAP: Record<string, string> = {
   hints_failed: "导读暂时无法生成，请稍后重试。"
 };
 
+/** BFF + 知识库问答等：凡出现在 `error` 字段的 code 尽量映射为中文（避免裸 snake_case） */
+const API_ERROR_CODE_TO_USER: Record<string, string> = {
+  ...KNOWN_ERROR_CODES,
+  ...NOTES_ASK_CODE_MAP
+};
+
+function looksLikeOpaqueAsciiErrorCode(code: string): boolean {
+  const t = code.trim();
+  if (t.length < 2 || t.length > 96) return false;
+  if (/[^\x00-\x7F]/.test(t)) return false;
+  return /^[a-z][a-z0-9_]*$/i.test(t);
+}
+
 /** 解析 BFF / FastAPI 常见错误体：`error`、`detail` 字符串或校验错误数组 */
 export function apiErrorMessage(data: unknown, fallback: string): string {
   if (!data || typeof data !== "object") return fallback;
@@ -42,7 +55,11 @@ export function apiErrorMessage(data: unknown, fallback: string): string {
     if (code === "upstream_unreachable" && typeof o.detail === "string" && o.detail.trim()) {
       return o.detail.trim();
     }
-    return KNOWN_ERROR_CODES[code] ?? code;
+    const mapped = API_ERROR_CODE_TO_USER[code];
+    if (mapped) return mapped;
+    if (detail) return detail;
+    if (looksLikeOpaqueAsciiErrorCode(code)) return fallback;
+    return code;
   }
   if (typeof o.detail === "string" && o.detail.trim()) return o.detail.trim();
   if (Array.isArray(o.detail) && o.detail.length > 0) {

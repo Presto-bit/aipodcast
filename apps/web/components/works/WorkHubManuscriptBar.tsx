@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getBearerAuthHeadersSync } from "../../lib/authHeaders";
+import { useAppNotice } from "../../lib/AppNoticeContext";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 
 const SCRIPT_AUTOSAVE_MS = 750;
@@ -51,6 +52,7 @@ export function WorkHubManuscriptBar({
   readonlyEmptyHint,
   tallScriptArea = false
 }: Props) {
+  const { showError } = useAppNotice();
   const [draft, setDraft] = useState(manuscriptBody);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -183,15 +185,15 @@ export function WorkHubManuscriptBar({
   const copyAll = useCallback(async () => {
     const t = manuscriptBody.trim();
     if (!t) {
-      window.alert("暂无可复制的正文。");
+      showError("暂无可复制的正文。");
       return;
     }
     try {
       await navigator.clipboard.writeText(t);
     } catch {
-      window.alert("复制失败，请检查浏览器权限。");
+      showError("复制失败，请检查浏览器是否允许本站访问剪贴板。");
     }
-  }, [manuscriptBody]);
+  }, [manuscriptBody, showError]);
 
   return (
     <>

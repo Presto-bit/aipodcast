@@ -310,7 +310,16 @@ export default function JobsListView({ variant }: JobsListViewProps) {
             {errPresentation.headline}
           </p>
           <p className="mt-1 text-xs text-muted">{errPresentation.sub}</p>
-          <p className="mt-2 break-words font-mono text-xs opacity-90">{err}</p>
+          {err ? (
+            <details className="mt-2 text-xs">
+              <summary className="cursor-pointer select-none font-medium text-muted underline-offset-2 hover:text-ink hover:underline">
+                查看原始提示（联系支持时可附）
+              </summary>
+              <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface/80 p-2 font-mono text-[11px] leading-relaxed text-ink">
+                {err}
+              </pre>
+            </details>
+          ) : null}
           {messageSuggestsBillingTopUpOrSubscription(err) ? <BillingShortfallLinks className="mt-3" /> : null}
         </div>
       ) : null}
