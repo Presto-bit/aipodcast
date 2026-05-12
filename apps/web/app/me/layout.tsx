@@ -16,10 +16,7 @@ export default function MeLayout({ children }: { children: React.ReactNode }) {
   const isAdmin = String((user as { role?: string })?.role || "") === ADMIN_ROLE;
 
   const items = useMemo<MeSubNavItem[]>(() => {
-    const core: MeSubNavItem[] = [
-      { href: "/me/profile", labelKey: "me.navProfile" },
-      { href: "/me/general", labelKey: "me.navGeneral" }
-    ];
+    const core: MeSubNavItem[] = [{ href: "/me/profile", labelKey: "me.navProfile" }];
     if (!isAdmin) return core;
     return [...core, { href: "/admin/usage", labelKey: "nav.console", dividerBefore: true }];
   }, [isAdmin]);

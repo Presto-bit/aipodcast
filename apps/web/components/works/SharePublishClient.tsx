@@ -51,10 +51,11 @@ import {
   WORK_DOWNLOAD_RECHARGE_GATE_USER_MESSAGE
 } from "../../lib/workDownloadRechargeGate";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
+import { useAppNotice } from "../../lib/AppNoticeContext";
 import { useWorkAudioPlayer, type WorkAudioToggleMeta } from "../../lib/workAudioPlayer";
 import { WorkHubOverviewPanel, type WorkHubDetailTab } from "./WorkHubOverviewPanel";
 import { WorkHubShownotesSection } from "./WorkHubShownotesSection";
-import { RssChannelEditor } from "../rss/RssChannelEditor";
+import { RssPublishSettingsPanel } from "../rss/RssPublishSettingsPanel";
 import { downloadJobBundleZip, downloadJobManuscriptTxt } from "../../lib/workBundleDownload";
 import { SHARE_SHOWNOTES_REFINE_PROMPT_PLACEHOLDER as AI_SHOWNOTES_PROMPT_PLACEHOLDER } from "../../lib/shareShownotesAiPrompt";
 
@@ -204,6 +205,7 @@ export function SharePublishClient({
 }: Props) {
   const router = useRouter();
   const { user, phone } = useAuth();
+  const { showError } = useAppNotice();
   const workAudio = useWorkAudioPlayer();
   const [loadErr, setLoadErr] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -245,7 +247,7 @@ export function SharePublishClient({
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [formReady, setFormReady] = useState(false);
   const [publishPlatform, setPublishPlatform] = useState<PublishPlatformId>(DEFAULT_PUBLISH_PLATFORM_ID);
-  const [rssSetupModalOpen, setRssSetupModalOpen] = useState(false);
+  const [rssFullSettingsModalOpen, setRssFullSettingsModalOpen] = useState(false);
   const [aiShownotesModalOpen, setAiShownotesModalOpen] = useState(false);
   const [aiShownotesPromptDraft, setAiShownotesPromptDraft] = useState("");
   const [aiShownotesErr, setAiShownotesErr] = useState("");
@@ -304,9 +306,9 @@ export function SharePublishClient({
       setShareLinkCopied(true);
       window.setTimeout(() => setShareLinkCopied(false), 2200);
     } catch {
-      window.alert("复制失败，请检查浏览器剪贴板权限。");
+      showError("复制失败，请检查浏览器剪贴板权限。");
     }
-  }, [sharePageFullUrl]);
+  }, [sharePageFullUrl, showError]);
 
   const rssFeedCopyUrl = useMemo(() => {
     const id = channelId.trim();
@@ -323,9 +325,9 @@ export function SharePublishClient({
       setRssLinkCopied(true);
       window.setTimeout(() => setRssLinkCopied(false), 2200);
     } catch {
-      window.alert("复制失败，请检查浏览器剪贴板权限。");
+      showError("复制失败，请检查浏览器剪贴板权限。");
     }
-  }, [rssFeedCopyUrl]);
+  }, [rssFeedCopyUrl, showError]);
 
   const hints = computeSharePublishHints(episodeTitle, summary, showNotes);
 
@@ -974,7 +976,7 @@ export function SharePublishClient({
     const id = jobId.trim();
     if (!id) return;
     if (viewerTemplateReadonly) {
-      window.alert("模板作品仅创建者可下载。");
+      showError("模板作品仅创建者可下载。");
       return;
     }
     setWorkHubDownloadBusy(true);
@@ -994,12 +996,12 @@ export function SharePublishClient({
       if (isWorkDownloadRechargeGateError(msg)) {
         setWorkDownloadRechargeModalOpen(true);
       } else {
-        window.alert(msg);
+        showError(msg);
       }
     } finally {
       setWorkHubDownloadBusy(false);
     }
-  }, [jobId, episodeTitle, jobTitle, scriptDraft, showNotes, viewerTemplateReadonly]);
+  }, [jobId, episodeTitle, jobTitle, scriptDraft, showNotes, viewerTemplateReadonly, showError]);
   const audioBlocked = scriptDraft || !hasAudio;
   /** 未 hydration 前 blocked 为 false，避免误显分享区；仅 hydration 后才允许复制链接与发布表单。 */
   const showShareAndPublish = shareJobHydrated && !audioBlocked;
@@ -1174,7 +1176,7 @@ export function SharePublishClient({
     if (!row || viewerTemplateReadonly || regenerateVoiceBusy || audioRegenActive) return;
     const script = manuscriptBody.trim();
     if (!script) {
-      window.alert("请先填写或加载口播稿正文。");
+      showError("请先填写或加载口播稿正文。");
       return;
     }
     const jt = String(row.job_type || "").trim().toLowerCase();
@@ -1307,7 +1309,7 @@ export function SharePublishClient({
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setAudioRegenMessage(msg || "重新合成失败");
-      window.alert(msg || "重新合成失败");
+      showError(msg || "重新合成失败");
     } finally {
       setRegenerateVoiceBusy(false);
       setAudioRegenActive(false);
@@ -1322,7 +1324,8 @@ export function SharePublishClient({
     user,
     phone,
     router,
-    viewerTemplateReadonly
+    viewerTemplateReadonly,
+    showError
   ]);
 
   useEffect(() => {
@@ -1434,18 +1437,43 @@ export function SharePublishClient({
     }
   }, [channelId, channels]);
 
+  const refreshChannelsAfterRssSettingsSave = useCallback(() => {
+    if (rssGate !== "ok" || !ownerJobRecord) return;
+    void (async () => {
+      try {
+        const rows = await listRssChannels();
+        setChannels(rows);
+        if (rows.length > 0) {
+          setChannelId((prev) => {
+            if (prev && rows.some((c) => String(c.id) === prev)) return prev;
+            let last = "";
+            try {
+              last = String(readLocalStorageScoped(RSS_LAST_CHANNEL_STORAGE_KEY) || "").trim();
+            } catch {
+              last = "";
+            }
+            if (last && rows.some((c) => String(c.id) === last)) return last;
+            return String(rows[0]!.id || "");
+          });
+        }
+      } catch (e) {
+        setFormErr(String(e instanceof Error ? e.message : e));
+      }
+    })();
+  }, [rssGate, ownerJobRecord]);
+
   useEffect(() => {
-    if (!rssSetupModalOpen && !aiShownotesModalOpen) return;
+    if (!rssFullSettingsModalOpen && !aiShownotesModalOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setRssSetupModalOpen(false);
+        setRssFullSettingsModalOpen(false);
         setAiShownotesModalOpen(false);
         setAiShownotesErr("");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rssSetupModalOpen, aiShownotesModalOpen]);
+  }, [rssFullSettingsModalOpen, aiShownotesModalOpen]);
 
   useEffect(() => {
     if (!aiShownotesModalOpen) return;
@@ -1502,7 +1530,7 @@ export function SharePublishClient({
   const seekFromNotes = useCallback(
     (sec: number) => {
       if (!hasAudio) {
-        window.alert("无法跳转：无音频。");
+        showError("无法跳转：无音频。");
         return;
       }
       const title = episodeTitle.trim() || jobTitle || jobId;
@@ -1519,7 +1547,7 @@ export function SharePublishClient({
       }
       void workAudio.togglePlay(jobId, meta);
     },
-    [hasAudio, episodeTitle, jobTitle, jobId, workAudio, sharePublicAudioUrl]
+    [hasAudio, episodeTitle, jobTitle, jobId, workAudio, sharePublicAudioUrl, showError]
   );
 
   function restoreDraft() {
@@ -2211,38 +2239,39 @@ export function SharePublishClient({
             ) : (
               <div className="space-y-6">
                 <section className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-medium text-ink">RSS 渠道</h3>
-                    {channelsLoading ? (
-                      <p className="text-sm text-muted">加载中…</p>
-                    ) : channels.length === 0 ? (
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="text-sm text-muted">暂无频道</span>
-                        <button
-                          type="button"
-                          className="text-sm font-medium text-brand underline decoration-brand/40 hover:decoration-brand"
-                          onClick={() => setRssSetupModalOpen(true)}
-                        >
-                          去配置
-                        </button>
-                      </div>
-                    ) : (
-                      <label className="block text-sm text-muted">
-                        频道
-                        <select
-                          className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
-                          value={channelId}
-                          onChange={(e) => setChannelId(e.target.value)}
-                          disabled={busy || shareAiBusy}
-                        >
-                          <option value="">选择 RSS 频道</option>
-                          {channels.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.title}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-medium text-ink hover:bg-brand/15 disabled:opacity-50"
+                      disabled={busy || shareAiBusy}
+                      onClick={() => setRssFullSettingsModalOpen(true)}
+                    >
+                      创建
+                    </button>
+                  </div>
+                  {channelsLoading ? (
+                    <p className="text-sm text-muted">加载中…</p>
+                  ) : channels.length === 0 ? (
+                    <p className="text-sm text-muted">暂无频道，点击「创建」新增或管理 RSS 节目。</p>
+                  ) : (
+                    <label className="block text-sm text-muted">
+                      频道
+                      <select
+                        className="mt-1 w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm text-ink"
+                        value={channelId}
+                        onChange={(e) => setChannelId(e.target.value)}
+                        disabled={busy || shareAiBusy}
+                      >
+                        <option value="">选择 RSS 频道</option>
+                        {channels.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                 </section>
 
                 {formErr ? <p className="mt-5 text-sm text-danger-ink">{formErr}</p> : null}
@@ -2371,48 +2400,39 @@ export function SharePublishClient({
           )
         : null}
 
-      {rssSetupModalOpen && typeof document !== "undefined"
+      {rssFullSettingsModalOpen && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+              className="fym-workspace-scrim z-[1300] flex items-end justify-center bg-black/40 p-4 sm:items-center"
               role="presentation"
             >
               <button
                 type="button"
                 className="absolute inset-0 cursor-default"
                 aria-label="关闭"
-                onClick={() => setRssSetupModalOpen(false)}
+                onClick={() => setRssFullSettingsModalOpen(false)}
               />
               <div
                 role="dialog"
                 aria-modal="true"
-                aria-labelledby="rss-setup-modal-title"
-                className="relative z-10 max-h-[min(90vh,40rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-card"
+                aria-labelledby="rss-full-settings-modal-title"
+                className="relative z-10 max-h-[min(90vh,44rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6"
                 onClick={(e) => e.stopPropagation()}
               >
-                <h2 id="rss-setup-modal-title" className="text-base font-semibold text-ink">
-                  RSS 频道配置
-                </h2>
+                <div className="flex items-start justify-between gap-3 border-b border-line pb-4">
+                  <h2 id="rss-full-settings-modal-title" className="text-base font-semibold text-ink">
+                    RSS 发布设置
+                  </h2>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-lg border border-line bg-fill/40 px-3 py-1.5 text-xs font-medium text-muted hover:text-ink"
+                    onClick={() => setRssFullSettingsModalOpen(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
                 <div className="mt-4">
-                  <RssChannelEditor
-                    channel={null}
-                    isNew
-                    disabledGlobal={channelsLoading || busy || shareAiBusy}
-                    onSaved={(row) => {
-                      void (async () => {
-                        try {
-                          const rows = await listRssChannels();
-                          setChannels(rows);
-                          const id = String(row.id || "");
-                          if (id) setChannelId(id);
-                          setRssSetupModalOpen(false);
-                        } catch (e) {
-                          setFormErr(String(e instanceof Error ? e.message : e));
-                        }
-                      })();
-                    }}
-                    onCancelNew={() => setRssSetupModalOpen(false)}
-                  />
+                  <RssPublishSettingsPanel variant="embedded" onChannelsUpdated={refreshChannelsAfterRssSettingsSave} />
                 </div>
               </div>
             </div>,
