@@ -1,5 +1,5 @@
 /**
- * 知识库工作台「来源」勾选：按笔记本记住上次选中的资料 id（localStorage，账号隔离）。
+ * 知识库工作台「参考资料」勾选：按笔记本记住上次选中的资料 id（localStorage，账号隔离）。
  */
 import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
 

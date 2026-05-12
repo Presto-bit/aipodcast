@@ -420,7 +420,7 @@ export default function NoteMarkdownPreview({
               ))}
             </div>
           ) : null}
-          <p>来源标题：<span className="text-ink">{title || "未命名来源"}</span></p>
+          <p>参考资料标题：<span className="text-ink">{title || "未命名参考资料"}</span></p>
           <p>类型：<span className="text-ink">{sourceType || "未知"}</span></p>
           <p>上传时间：<span className="text-ink">{createdAt || "-"}</span></p>
           <p>字数：<span className="text-ink tabular-nums">{typeof wordCount === "number" ? wordCount.toLocaleString() : "-"}</span></p>
@@ -436,7 +436,7 @@ export default function NoteMarkdownPreview({
           </p>
           {sourceUrl ? (
             <p className="sm:col-span-2 lg:col-span-3 break-all">
-              来源链接：<a href={sourceUrl} target="_blank" rel="noreferrer" className="text-brand underline">{sourceUrl}</a>
+              参考资料链接：<a href={sourceUrl} target="_blank" rel="noreferrer" className="text-brand underline">{sourceUrl}</a>
             </p>
           ) : null}
           {nextAction ? (

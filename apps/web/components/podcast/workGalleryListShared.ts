@@ -86,7 +86,7 @@ export function formatNotesStudioCardSynopsis(
     ? `《${firstTitle}》`
     : nTotal > 0
       ? `已选 ${nTotal} 条笔记`
-      : "来源未记录";
+      : "参考资料未记录";
   const metric = isScriptDraft
     ? scriptCharCountDisplay != null && scriptCharCountDisplay > 0
       ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`

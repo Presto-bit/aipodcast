@@ -10,7 +10,7 @@ type Props = {
   text: string;
   /** 与编排器 done.sources 一致；有则 [n] 可点击并展示脚注。 */
   sources?: NotesAskSource[];
-  /** 联网检索来源，[w1] 外链与脚注 */
+  /** 联网检索条目，[w1] 外链与脚注 */
   webSources?: NotesAskWebSource[];
   className?: string;
   onOpenSourceFromCitation?: (payload: { noteId: string; index: string; excerpt?: string }) => void;
@@ -54,7 +54,7 @@ function SourceExcerptModal({
       >
         <div className="border-b border-line/80 px-4 py-3">
           <h2 id="notes-ask-source-modal-title" className="text-sm font-semibold text-ink">
-            来源 [{source.index}] {source.title}
+            参考资料 [{source.index}] {source.title}
           </h2>
           <p className="mt-1 font-mono text-[10px] text-muted">{source.noteId}</p>
         </div>
@@ -72,7 +72,7 @@ function SourceExcerptModal({
               ))}
             </ul>
           ) : (
-            <p className="text-muted">本条暂无向量检索摘录，请以正文角标对应资料中的来源全文为准。</p>
+            <p className="text-muted">本条暂无向量检索摘录，请以正文角标对应资料中的参考资料全文为准。</p>
           )}
         </div>
         <div className="border-t border-line/80 px-4 py-2.5 text-right">
@@ -155,7 +155,7 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className, on
       {sortedSources.length > 0 ? (
         <aside
           className="mt-1 border-t border-line/70 pt-3 text-xs text-ink"
-          aria-label="引用来源"
+          aria-label="引用参考资料"
         >
           <button
             type="button"
@@ -164,7 +164,7 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className, on
             aria-expanded={sourcesOpen}
             aria-controls="notes-ask-citation-footnotes"
           >
-            <span className="font-semibold">引用来源（资料库）</span>
+            <span className="font-semibold">引用参考资料（资料库）</span>
             <span className="shrink-0 text-[11px] font-medium text-muted">{sourcesOpen ? "收起" : "展开"}</span>
           </button>
           <div id="notes-ask-citation-footnotes" className="mt-2" hidden={!sourcesOpen}>
@@ -179,7 +179,7 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className, on
                   checked={onlyCitedSources}
                   onChange={(e) => setOnlyCitedSources(e.target.checked)}
                 />
-                仅显示正文已引用来源
+                仅显示正文已引用的参考资料
               </label>
             ) : null}
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
@@ -200,7 +200,7 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className, on
               ))}
             </ol>
             {onlyCitedSources && visibleSources.length === 0 ? (
-              <p className="mt-2 text-[11px] text-muted">正文暂无 [n] 引用角标，已自动隐藏来源列表。</p>
+              <p className="mt-2 text-[11px] text-muted">正文暂无 [n] 引用角标，已自动隐藏参考资料列表。</p>
             ) : null}
           </div>
         </aside>

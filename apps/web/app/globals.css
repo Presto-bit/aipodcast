@@ -343,7 +343,7 @@ html:not(.dark) .fym-table-shell {
   padding-block: var(--dawn-space-page-y);
 }
 
-/* 笔记本页内：三栏工作台左对齐，来源列贴近主导航；主导航折叠时主内容区变宽，布局自然左移 */
+/* 笔记本页内：三栏工作台左对齐，参考资料列贴近主导航；主导航折叠时主内容区变宽，布局自然左移 */
 @media (min-width: 1024px) {
   .fym-page-shell:has(main[data-notes-workbench]) {
     margin-inline: 0;

@@ -200,7 +200,7 @@ function notesStudioReferencedWorkTitle(w: PodcastWorkRow): string {
     typeof w.notesSourceNoteCount === "number" && w.notesSourceNoteCount > 0 ? w.notesSourceNoteCount : rawTitles.length;
   if (firstTitle) return firstTitle;
   if (nTotal > 0) return `已选 ${nTotal} 条笔记`;
-  return "引用来源未记录";
+  return "引用参考资料未记录";
 }
 
 const PODCAST_REUSE_TEMPLATE_KEY = "fym_reuse_template_podcast_v1";

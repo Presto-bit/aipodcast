@@ -1,6 +1,6 @@
 import type { JobRecord } from "./types";
 
-/** 「来源」弹层是否可打开（是否有可展示的结构化素材） */
+/** 「参考资料」弹层是否可打开（是否有可展示的结构化素材） */
 export function jobHasWorkSourceDetail(job: JobRecord | null): boolean {
   if (!job) return false;
   const payload = (job.payload || {}) as Record<string, unknown>;

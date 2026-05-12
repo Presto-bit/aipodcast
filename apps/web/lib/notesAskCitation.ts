@@ -16,7 +16,7 @@ export type NotesAskSource = {
   chunks?: NotesAskSourceChunk[];
 };
 
-/** 联网检索来源，与笔记角标 [n] 分离，使用 [w1] 等 */
+/** 联网检索条目，与笔记角标 [n] 分离，使用 [w1] 等 */
 export type NotesAskWebSource = {
   index: string;
   title: string;
@@ -110,7 +110,7 @@ export function linkifyWebCitationMarkers(text: string, webSources: NotesAskWebS
 
 export function citationTitleForIndex(sources: NotesAskSource[] | undefined, index: string): string {
   const s = sources?.find((x) => x.index === index);
-  if (!s) return `来源 ${index}`;
+  if (!s) return `参考资料 ${index}`;
   return `${s.title} · ${s.noteId.slice(0, 8)}…`;
 }
 

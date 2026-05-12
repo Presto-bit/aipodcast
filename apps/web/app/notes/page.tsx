@@ -226,7 +226,7 @@ const NOTEBOOK_STATS_PAGE = 500;
 
 /** 需要先打开笔记本时的统一提示 */
 const NOTES_NEED_NOTEBOOK = "请先进入笔记本";
-/** 未在左侧来源勾选资料时的统一提示（占位、无障碍、按钮与校验） */
+/** 未在左侧参考资料栏勾选资料时的统一提示（占位、无障碍、按钮与校验） */
 const NOTES_ASK_SOURCE_REQUIRED = "请先勾选左侧资料";
 
 /** 构建时注入；为 `1` 时在对话输入区上方展示与 POST 一致的 JSON 与 curl（勿对终端用户开启） */
@@ -360,7 +360,7 @@ const NOTEBOOK_ICONS = ["📘", "📙", "🗂️", "🧠", "🧪", "🪄", "🛰
 
 type NotebookMeta = {
   noteCount: number;
-  /** 与侧栏「来源」、热门笔记本 API 一致：该笔记本下资料笔记条数（非仅含链接的笔记） */
+  /** 与侧栏「参考资料」、热门笔记本 API 一致：该笔记本下资料笔记条数（非仅含链接的笔记） */
   sourceCount: number;
   createdAt: string;
   /** 新建笔记本时生成，参与本地对话存储键，避免同名删除再建串会话 */
@@ -386,7 +386,7 @@ type PopularNotebookItem = {
   publicAccess: string;
   viewCount: number;
   ownerDisplayName: string;
-  /** 笔记本内资料（笔记）条数，与「我的笔记本」卡片「来源」一致 */
+  /** 笔记本内资料（笔记）条数，与「我的笔记本」卡片「参考资料」一致 */
   sourceCount?: number;
   /** 最近一条笔记的创建时间（ISO） */
   latestSourceAt?: string;
@@ -508,7 +508,7 @@ function HubMineNotebookCards({
         const shareRow = notebookSharingByName[nb];
         const sourceN = meta?.sourceCount ?? 0;
         const shareLabel = shareRow?.isPublic ? "已分享" : "未分享";
-        const summaryLine = `${formatNotebookCardMonthDay(meta?.createdAt)}|来源:${sourceN}|${shareLabel}`;
+        const summaryLine = `${formatNotebookCardMonthDay(meta?.createdAt)}|参考资料:${sourceN}|${shareLabel}`;
         return (
           <div key={nb} className="flex min-w-[188px] max-w-[240px] shrink-0 flex-col">
             <div
@@ -641,7 +641,7 @@ function HubPopularNotebookGrid({
       {!popularLoading && popularItems.length === 0 ? (
         <EmptyState
           title="暂无热门分享"
-          description="在分享中勾选「在热门笔记本中展示」，并保证至少 1 条来源且近一年有更新；满足门槛后按质量分排序。"
+          description="在分享中勾选「在热门笔记本中展示」，并保证至少 1 条参考资料且近一年有更新；满足门槛后按质量分排序。"
           className="mt-4 border-dashed border-line bg-fill/40 py-8"
         />
       ) : null}
@@ -663,7 +663,7 @@ function HubPopularNotebookGrid({
             };
             const sourceN = typeof item.sourceCount === "number" ? item.sourceCount : 0;
             const accessLabel = item.publicAccess === "edit" ? "可创作" : "只读";
-            const summaryLine = `${formatNotebookCardMonthDay(item.latestSourceAt)}|来源:${sourceN}|${accessLabel}`;
+            const summaryLine = `${formatNotebookCardMonthDay(item.latestSourceAt)}|参考资料:${sourceN}|${accessLabel}`;
             return (
               <div
                 key={`${item.ownerUserId}:${item.notebook}`}
@@ -993,7 +993,7 @@ export default function NotesPage() {
   const podcastRecoveryStartedRef = useRef(false);
   /** 来自 /notes?note=<id> 深链：解析笔记本并滚动到对应卡片 */
   const pendingFocusNoteIdRef = useRef<string | null>(null);
-  /** 与「来源」持久化配合：仅在当前笔记本已做过一次恢复后再写入，避免切换瞬间用旧笔记本的勾选覆盖新键 */
+  /** 与「参考资料」勾选持久化配合：仅在当前笔记本已做过一次恢复后再写入，避免切换瞬间用旧笔记本的勾选覆盖新键 */
   const draftSourcesPersistNotebookRef = useRef<string>("");
   const draftRecoveryStartedRef = useRef(false);
 
@@ -2162,7 +2162,7 @@ export default function NotesPage() {
   function toggleDraftNote(noteId: string) {
     const hit = notesById.get(noteId);
     if (!hit || !isSourceUsable(hit)) {
-      setError("该来源当前不可用，暂不可勾选。");
+      setError("该参考资料当前不可用，暂不可勾选。");
       return;
     }
     setDraftSelectedNoteIds((prev) => {
@@ -3450,7 +3450,7 @@ export default function NotesPage() {
                   {selectedNotebook}
                 </p>
                 <p className="mt-0.5 text-[10px] text-muted">
-                  {sharedBrowse.access === "edit" ? "他人分享 · 可提问与基于来源生成" : "他人分享 · 仅可提问"}
+                  {sharedBrowse.access === "edit" ? "他人分享 · 可提问与基于参考资料生成" : "他人分享 · 仅可提问"}
                 </p>
               </div>
             ) : notebooks.length >= 1 ? (
@@ -3505,14 +3505,14 @@ export default function NotesPage() {
                   ? "w-full max-lg:min-h-0 lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
                   : "w-full p-4 lg:w-[18.75rem] lg:min-w-[18.75rem] lg:max-w-[21.25rem] xl:w-[22.5rem] xl:max-w-[22.5rem]"
               }`}
-              aria-label="来源"
+              aria-label="参考资料"
             >
               {sourcesPanelCollapsed ? (
                 <button
                   type="button"
                   className="flex w-full flex-1 flex-row items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-surface/60 lg:min-h-0 lg:flex-col lg:items-center lg:justify-start lg:gap-5 lg:px-1 lg:py-8"
-                  aria-label="向右展开来源"
-                  title="展开来源"
+                  aria-label="向右展开参考资料"
+                  title="展开参考资料"
                   onClick={() => setSourcesPanelCollapsed(false)}
                 >
                   <svg
@@ -3528,7 +3528,7 @@ export default function NotesPage() {
                     <rect x="3" y="4" width="18" height="16" rx="2" />
                     <path d="M9 4v16" />
                   </svg>
-                  <span className="text-sm font-semibold text-ink lg:text-xs lg:[writing-mode:vertical-rl]">来源</span>
+                  <span className="text-sm font-semibold text-ink lg:text-xs lg:[writing-mode:vertical-rl]">参考资料</span>
                   <svg
                     width="18"
                     height="18"
@@ -3564,12 +3564,12 @@ export default function NotesPage() {
                     </div>
                   ) : null}
                   <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-3">
-                    <h2 className="text-lg font-semibold tracking-tight text-ink">来源</h2>
+                    <h2 className="text-lg font-semibold tracking-tight text-ink">参考资料</h2>
                     <button
                       type="button"
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface/80 hover:text-ink"
                       aria-expanded
-                      aria-label="收起来源（向左折叠）"
+                      aria-label="收起参考资料（向左折叠）"
                       title="向左收起"
                       onClick={() => setSourcesPanelCollapsed(true)}
                     >
@@ -3605,7 +3605,7 @@ export default function NotesPage() {
                   }}
                 >
                   <span className="text-base leading-none text-brand">+</span>
-                  添加笔记
+                  添加资料
                 </button>
 
                   <div className="mt-3 min-h-0 max-h-[min(100dvh-12rem,520px)] flex-1 overflow-y-auto overflow-x-hidden pr-0.5 lg:max-h-none">
@@ -3651,7 +3651,7 @@ export default function NotesPage() {
                                 preReady ? "text-ink" : "text-muted"
                               }`}
                               onClick={() => void openPreview(n.noteId)}
-                              title="查看来源内容"
+                              title="查看参考资料内容"
                             >
                               <span className="inline-flex items-center gap-1 whitespace-nowrap">
                                 <span className="shrink-0 rounded bg-fill px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
@@ -3663,9 +3663,9 @@ export default function NotesPage() {
                             {n.parseState === "failed" || n.sourceReady === false ? (
                               <span
                                 className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-warning-soft text-warning-ink"
-                                title={n.sourceHint || "来源尚未可用"}
+                                title={n.sourceHint || "参考资料尚未可用"}
                               >
-                                来源待就绪
+                                参考资料待就绪
                               </span>
                             ) : null}
                             {n.citeState === "unavailable" ? (
@@ -3774,7 +3774,7 @@ export default function NotesPage() {
                   {!loading && notesSorted.length === 0 ? (
                     <EmptyState
                       title="这个笔记本里还没有笔记"
-                      description="「添加笔记」导入；勾选纳入资料。"
+                      description="「添加资料」导入；勾选纳入资料。"
                       className="mt-2 border-none bg-transparent py-8"
                     />
                   ) : null}
@@ -4261,7 +4261,7 @@ export default function NotesPage() {
           >
             <div className="flex items-center justify-between gap-2">
               <h2 id="add-note-title" className="text-base font-semibold text-ink">
-                添加笔记
+                添加资料
               </h2>
               <button
                 type="button"
@@ -4467,7 +4467,7 @@ export default function NotesPage() {
               笔记本：{shareTargetNotebook || "—"}
             </p>
             <p className="mt-3 text-[11px] leading-relaxed text-muted">
-              选择分享方式后点击「分享」生效。未登录访客可打开链接查看资料与来源内容；基于来源的创作需访客登录。已开启分享后可复制链接。
+              选择分享方式后点击「分享」生效。未登录访客可打开链接查看资料与参考资料内容；基于参考资料的创作需访客登录。已开启分享后可复制链接。
             </p>
             <fieldset className="mt-4 space-y-3 rounded-xl border border-line/80 p-3">
               <legend className="px-1 text-xs font-semibold text-ink">分享方式</legend>
@@ -4483,7 +4483,7 @@ export default function NotesPage() {
                 <span>
                   <span className="text-sm font-medium text-ink">只读</span>
                   <span className="mt-0.5 block text-[11px] leading-relaxed text-muted">
-                    访客可查看来源与来源内容、向资料提问；不可添加或修改笔记，不可基于来源生成播客或长文。
+                    访客可查看参考资料及其内容、向资料提问；不可添加或修改笔记，不可基于参考资料生成播客或长文。
                   </span>
                 </span>
               </label>
@@ -4499,7 +4499,7 @@ export default function NotesPage() {
                 <span>
                   <span className="text-sm font-medium text-ink">可创作</span>
                   <span className="mt-0.5 block text-[11px] leading-relaxed text-muted">
-                    在只读能力基础上，允许登录访客使用所选来源生成播客或文章（写入访客自己的作品，不改变你的笔记）。
+                    在只读能力基础上，允许登录访客使用所选参考资料生成播客或文章（写入访客自己的作品，不改变你的笔记）。
                   </span>
                 </span>
               </label>
@@ -4844,7 +4844,7 @@ export default function NotesPage() {
         >
           <div className="max-h-[min(92vh,820px)] w-full max-w-5xl overflow-hidden" onPointerDown={(e) => e.stopPropagation()}>
             <NoteMarkdownPreview
-              title={previewTitle || "来源内容"}
+              title={previewTitle || "参考资料内容"}
               filteredText={filteredPreview}
               structuredBlocks={previewStructuredBlocks}
               loading={previewLoading}
