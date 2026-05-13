@@ -64,10 +64,10 @@ export default function MarketingLandingPage() {
       <main className="relative z-[1] mx-auto max-w-6xl px-4 pb-20 sm:px-6 sm:pb-28">
         <div className="mx-auto max-w-3xl text-center">
           <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl md:text-[2.75rem] md:leading-tight">
-            把内容变成可发布播客
+            基于可信资料的多形态创作助手
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-pretty text-sm leading-relaxed text-muted sm:text-base">
-            从选题、脚本到多角色配音与剪辑导出，在同一工作台完成播客制作。适合创作者团队与个人频道。
+            以电子书、网页、文档等自有资料为根基，一键生成播客、Shownotes、博文等可分发内容；答案带来源引用，减轻幻觉顾虑，也减少跨平台排版与重复劳动。
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Link
@@ -90,17 +90,41 @@ export default function MarketingLandingPage() {
           ) : null}
         </div>
 
-        <section className="mx-auto mt-16 grid max-w-4xl gap-4 sm:mt-20 sm:grid-cols-3 sm:gap-5">
-          {[
-            { t: "多形态创作", d: "播客、口播剪辑与音色库协同，减少工具切换。" },
-            { t: "任务可追踪", d: "长任务后台运行，在「我的作品」查看进度与成片。" },
-            { t: "订阅透明", d: "套餐与用量说明见订阅页，按需使用。" }
-          ].map((card) => (
-            <div key={card.t} className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft">
-              <h2 className="text-sm font-semibold text-ink">{card.t}</h2>
-              <p className="mt-2 text-xs leading-relaxed text-muted sm:text-sm">{card.d}</p>
-            </div>
-          ))}
+        <section
+          className="mx-auto mt-16 max-w-5xl sm:mt-20"
+          aria-labelledby="marketing-features-heading"
+        >
+          <h2 id="marketing-features-heading" className="text-center text-lg font-semibold tracking-tight text-ink sm:text-xl">
+            核心能力
+          </h2>
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 sm:gap-5">
+            <article className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6">
+              <h3 className="text-base font-semibold text-ink">多源资料处理</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                上传电子书、文档、网页等常见资料，Presto 会提炼要点、串联不同主题，并<strong className="font-medium text-ink">仅依据你的资料</strong>
+                生成回答与延伸内容。
+              </p>
+            </article>
+            <article className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6">
+              <h3 className="text-base font-semibold text-ink">规避 AI 幻觉</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                可放心使用生成结果：关键结论会<strong className="font-medium text-ink">标注引用来源</strong>，便于核对出处，把「可解释」写进工作流。
+              </p>
+            </article>
+            <article className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6">
+              <h3 className="text-base font-semibold text-ink">多种输出格式</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                一键生成播客，Shownotes 等繁琐环节交给 Presto；同一批资料还可快速整理为
+                <strong className="font-medium text-ink">适合小红书等平台的博文</strong>，少在格式与平台规则上耗时间。
+              </p>
+            </article>
+            <article className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6">
+              <h3 className="text-base font-semibold text-ink">多角色与播客级成片</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                支持多角色配音与播客向编排，把「能写」推进到「能听、能发」的成品形态，减少在多套工具间导出、重剪的来回成本。
+              </p>
+            </article>
+          </div>
         </section>
       </main>
 
