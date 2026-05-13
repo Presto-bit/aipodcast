@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { consumePostAuthReturnTo } from "../../lib/authReturnTo";
+import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 
 export default function LoginView() {
   const router = useRouter();
@@ -24,7 +25,7 @@ export default function LoginView() {
     if (!ready || !authRequired) return;
     if (!isLoggedInAccountUser(user)) return;
     const target = consumePostAuthReturnTo(returnTo);
-    router.replace(target || "/");
+    router.replace(target || WORKBENCH_HOME_PATH);
   }, [ready, authRequired, user, router, returnTo]);
 
   async function submitLogin(e: React.FormEvent<HTMLFormElement>) {
@@ -35,7 +36,7 @@ export default function LoginView() {
       await login(authPhone.trim(), authPassword);
       const target = consumePostAuthReturnTo(returnTo);
       if (target) router.replace(target);
-      else router.replace("/");
+      else router.replace(WORKBENCH_HOME_PATH);
     } catch (err) {
       setAuthError(String(err instanceof Error ? err.message : err));
     } finally {

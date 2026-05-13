@@ -46,12 +46,14 @@ import {
   SIDEBAR_WIDTH_EXPANDED_PX
 } from "../lib/appShellLayout";
 import {
+  isMarketingShellLessPath,
   matchesNotesWorkbench,
   matchesProductStudio,
   normalizePathname,
   NOTES_TEMPLATES_PREFIX,
   NOTES_TRASH_PREFIX,
-  pathMatchesRoot
+  pathMatchesRoot,
+  WORKBENCH_HOME_PATH
 } from "../lib/navPaths";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../lib/userScopedStorage";
 import { reportFrontendGlobalError } from "../lib/frontendGlobalErrorClient";
@@ -155,7 +157,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
    */
   const [sidebarPortaled, setSidebarPortaled] = useState(false);
   const navPrimary = useMemo<NavItem[]>(
-    () => [{ href: "/", label: t("nav.home"), short: "首", Icon: IconHome }],
+    () => [{ href: WORKBENCH_HOME_PATH, label: t("nav.home"), short: "首", Icon: IconHome }],
     [t]
   );
   const navProducts = useMemo<NavItem[]>(
@@ -332,6 +334,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       document.documentElement.style.removeProperty("--fym-app-sidebar-w");
       return;
     }
+    if (isMarketingShellLessPath(path)) {
+      document.documentElement.style.setProperty("--fym-app-sidebar-w", "0px");
+      return;
+    }
     if (mobileLayout) {
       document.documentElement.style.setProperty("--fym-app-sidebar-w", "0px");
       return;
@@ -365,6 +371,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   if (!ready) {
+    if (isMarketingShellLessPath(path)) {
+      return (
+        <div className="relative min-h-screen bg-canvas text-ink">
+          <AnimatedPageShell>{children}</AnimatedPageShell>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen bg-canvas text-ink">
         <div className="flex min-h-screen">
@@ -389,14 +402,32 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
+  if (isMarketingShellLessPath(path)) {
+    return (
+      <div className="relative min-h-screen bg-canvas text-ink">
+        <a
+          href="#main-content"
+          className="absolute left-[-9999px] z-[300] focus:left-4 focus:top-4 focus:rounded-md focus:bg-brand focus:px-3 focus:py-2 focus:text-sm focus:text-brand-foreground focus:outline-none focus:ring-2 focus:ring-brand/30"
+        >
+          {t("nav.skipToContent")}
+        </a>
+        <div id="main-content" data-fym-app-main className="flex min-h-screen min-w-0 flex-col" tabIndex={-1}>
+          <AnimatedPageShell>{children}</AnimatedPageShell>
+        </div>
+      </div>
+    );
+  }
+
   function linkActive(item: NavItem): boolean {
     if (item.activeMatch) return item.activeMatch(path);
-    return path === item.href || (item.href !== "/" && path.startsWith(item.href + "/"));
+    return (
+      path === item.href || (item.href !== WORKBENCH_HOME_PATH && path.startsWith(item.href + "/"))
+    );
   }
 
   /**
    * 侧栏主导航：
-   * - 「首页」始终用原生 <a href="/">，从登录页等场景可靠回到公开首页（避免软路由未切换主内容）。
+   * - 「工作台首页」始终用原生 <a href="/home">，从登录页等场景可靠回到聚合页（避免软路由未切换主内容）。
    * - 仍在 /notes 主路径时，「知识库」用 next/link + preventDefault 调 hub：保留 href 利于无障碍与右键新开，
    *   且避免曾出现的 preventDefault + router.push 竞态。
    * - 同状态下其它入口：仅用原生 a[href] 整页离开。
@@ -407,9 +438,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const label = collapsed && item.short ? item.short : item.label;
     const Ic = item.Icon;
     const tip = item.linkTitle ?? item.label;
-    if (item.href === "/") {
+    if (item.href === WORKBENCH_HOME_PATH) {
       return (
-        <a key={item.href} href="/" className={navButtonClass(active, collapsed)} title={tip}>
+        <a key={item.href} href={WORKBENCH_HOME_PATH} className={navButtonClass(active, collapsed)} title={tip}>
           <NavIconBox active={active}>
             <Ic />
           </NavIconBox>
@@ -613,7 +644,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <p className="text-xs tracking-wide text-muted">{t("footer.pageBrandLine")}</p>
               <p className="mt-2 text-sm text-ink">{t("footer.tag2")}</p>
             </div>
-            {normalizePathname(path) === "/" ? (
+            {normalizePathname(path) === WORKBENCH_HOME_PATH ? (
               <div className="w-full border-t border-line/70 pt-4">
                 <SiteBeianBar />
               </div>

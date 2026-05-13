@@ -18,6 +18,7 @@ import {
   type ShareFormFields
 } from "../../lib/sharePublishDefaults";
 import { getBearerAuthHeadersSync, jobEventsSourceUrl } from "../../lib/authHeaders";
+import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import { readLocalStorageScoped, readSessionStorageScoped, writeLocalStorageScoped } from "../../lib/userScopedStorage";
 import {
   createJob,
@@ -1100,7 +1101,7 @@ export function SharePublishClient({
 
   const backNavTarget = sanitizeWorkDetailReturnTo(
     returnToProp,
-    ownerJobRecord ? "/works" : "/"
+    ownerJobRecord ? "/works" : WORKBENCH_HOME_PATH
   );
 
   const worksNavAuthorDisplay = useMemo(() => {

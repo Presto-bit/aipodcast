@@ -2,6 +2,9 @@
  * 主导航路径匹配与鉴权白名单（与 AppShell 一致，供复用）。
  */
 
+/** 工作台聚合首页（原根路径 `/`）；公开营销落地页仍为 `/`。 */
+export const WORKBENCH_HOME_PATH = "/home";
+
 export const NOTES_TEMPLATES_PREFIX = "/notes/templates";
 export const NOTES_TRASH_PREFIX = "/notes/trash";
 
@@ -18,13 +21,18 @@ export function pathMatchesRoot(pathname: string, base: string): boolean {
   return n === b || n.startsWith(`${b}/`);
 }
 
+/** 根路径为营销介绍页：无 AppShell 侧栏等工作台壳层 */
+export function isMarketingShellLessPath(pathname: string): boolean {
+  return normalizePathname(pathname) === "/";
+}
+
 /** 未登录时可停留的页面（与鉴权 redirect 白名单一致） */
 export function isAuthPublicPath(pathname: string): boolean {
   const n = normalizePathname(pathname);
   if (n === "/forgot-password" || n === "/reset-password" || n === "/verify-email") return true;
   if (n === "/help") return true;
   if (n.startsWith("/legal/")) return true;
-  if (n === "/" || n === "/me" || n === "/settings") return true;
+  if (n === "/" || n === WORKBENCH_HOME_PATH || n === "/me" || n === "/settings") return true;
   /** 套餐/余额页：允许未登录浏览价目与说明；充值等仍依赖登录态由页面内控制 */
   if (n === "/subscription" || n.startsWith("/subscription/")) return true;
   return pathname.startsWith("/me/") || pathname.startsWith("/settings/");

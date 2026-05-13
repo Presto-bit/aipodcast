@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { consumePostAuthReturnTo } from "../../lib/authReturnTo";
+import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import { isRegisterEmailFormatOk } from "../../lib/registerEmail";
 
 export default function RegisterView() {
@@ -30,7 +31,7 @@ export default function RegisterView() {
     if (!ready || !authRequired) return;
     if (!isLoggedInAccountUser(user)) return;
     const target = consumePostAuthReturnTo(returnTo);
-    router.replace(target || "/");
+    router.replace(target || WORKBENCH_HOME_PATH);
   }, [ready, authRequired, user, router, returnTo]);
 
   useEffect(() => {
@@ -95,7 +96,7 @@ export default function RegisterView() {
       await registerComplete({ registration_ticket, password: authPassword });
       const target = consumePostAuthReturnTo(returnTo);
       if (target) router.replace(target);
-      else router.replace("/");
+      else router.replace(WORKBENCH_HOME_PATH);
       setRegCodeSent(false);
       setRegOtp("");
       setRegDispatchHint("");

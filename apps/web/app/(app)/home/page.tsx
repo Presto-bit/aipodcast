@@ -4,18 +4,18 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconCreate, IconNotes, IconVoice, IconGrid } from "../components/NavIcons";
-import { SiteBeianBar } from "../components/SiteBeianBar";
-import { mergeUserFacingWorksByRecency, type WorkItem } from "../lib/worksTypes";
-import { isLoggedInAccountUser, useAuth, userAccountRef } from "../lib/auth";
-import { useI18n } from "../lib/I18nContext";
-import { isRegisterEmailFormatOk } from "../lib/registerEmail";
-import { consumePostAuthReturnTo } from "../lib/authReturnTo";
-import NotebookShareDiagnosticsHomeBanner from "../components/notebook/NotebookShareDiagnosticsHomeBanner";
-import { SkeletonBlock, SkeletonLine } from "../components/ui/Skeleton";
-import { apiErrorMessage } from "../lib/apiError";
+import { IconCreate, IconNotes, IconVoice, IconGrid } from "../../../components/NavIcons";
+import { SiteBeianBar } from "../../../components/SiteBeianBar";
+import { mergeUserFacingWorksByRecency, type WorkItem } from "../../../lib/worksTypes";
+import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../../lib/auth";
+import { useI18n } from "../../../lib/I18nContext";
+import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
+import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
+import NotebookShareDiagnosticsHomeBanner from "../../../components/notebook/NotebookShareDiagnosticsHomeBanner";
+import { SkeletonBlock, SkeletonLine } from "../../../components/ui/Skeleton";
+import { apiErrorMessage } from "../../../lib/apiError";
 
-const PodcastWorksGallery = dynamic(() => import("../components/podcast/PodcastWorksGallery"), {
+const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
     <div
       className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
@@ -663,7 +663,7 @@ export default function HomePage() {
             fetchError={worksFetchErr}
             onDismissError={() => setWorksFetchErr("")}
             onWorkDeleted={() => setWorksRefreshKey((k) => k + 1)}
-            workDetailReturnTo="/"
+            workDetailReturnTo="/home"
           />
         </div>
         {!worksLoading && homeWorks.length > HOME_WORKS_PREVIEW ? (

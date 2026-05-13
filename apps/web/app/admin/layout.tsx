@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "../../lib/auth";
+import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 
 type AdminNavIcon = "users" | "models" | "usage" | "jobs" | "works" | "polish" | "matrix" | "pay" | "logs";
 
@@ -160,7 +161,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     if (!ready) return;
-    if (!isAdmin) router.replace("/");
+    if (!isAdmin) router.replace(WORKBENCH_HOME_PATH);
   }, [ready, isAdmin, router]);
 
   if (!ready) {

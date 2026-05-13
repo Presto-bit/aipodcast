@@ -7,7 +7,8 @@
 
 /** 登录态或强个性化文档：前缀匹配（含自身路径，如 /notes 与 /notes/xxx） */
 const SENSITIVE_DOCUMENT_PREFIXES: readonly string[] = [
-  "/", // 首页壳子随登录态变化
+  "/", // 营销落地 / 工作台壳随 Cookie 变化
+  "/home", // 工作台聚合首页
   "/subscription",
   "/me",
   "/notes",

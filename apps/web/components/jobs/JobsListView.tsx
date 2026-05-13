@@ -10,6 +10,7 @@ import { jobsListLoadErrorPresentation } from "../../lib/jobsListErrors";
 import type { JobRecord, JobStatus } from "../../lib/types";
 import { useI18n } from "../../lib/I18nContext";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 
 const PAGE_SIZE = 40;
@@ -248,7 +249,7 @@ export default function JobsListView({ variant }: JobsListViewProps) {
     >
       {!isAdmin ? (
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <Link href="/" className="text-sm text-brand hover:text-brand/80">
+          <Link href={WORKBENCH_HOME_PATH} className="text-sm text-brand hover:text-brand/80">
             ← 首页
           </Link>
         </div>
