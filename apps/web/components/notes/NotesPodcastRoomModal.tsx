@@ -333,13 +333,11 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     return () => mq.removeEventListener("change", sync);
   }, []);
 
+  /** 体裁默认提词由父级在选择体裁时写入；此处仅在同体裁下重置创作模板，避免每次打开覆盖用户已改文案 */
   useEffect(() => {
     if (!open) return;
-    const preset = PODCAST_ROOM_PRESETS[presetKey];
-    const prefix = preset.textPrefix.trim();
-    setText(prefix ? `${prefix}\n\n` : "");
     setCreativeTemplateValue(DEFAULT_CREATIVE_TEMPLATE_VALUE);
-  }, [open, presetKey, setText]);
+  }, [open, presetKey]);
 
   useEffect(() => {
     if (introVoiceFollow) setIntroVoiceKey(voiceKey1);
@@ -646,6 +644,9 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
           <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
             {controlledPrompt === undefined || layout === "modal" ? (
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-3 md:p-5">
+                <p className="mb-2 text-xs leading-snug text-muted">
+                  AI 提词（可编辑）：以下为所选体裁默认文案，可整段改写或在其后补充要点。
+                </p>
                 <textarea
                   className="h-full min-h-[min(50dvh,480px)] w-full max-w-none resize-y rounded-xl border border-line bg-fill p-4 text-sm leading-relaxed text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
                   rows={14}

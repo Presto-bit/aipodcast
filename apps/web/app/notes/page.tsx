@@ -4645,6 +4645,13 @@ export default function NotesPage() {
                   type="button"
                   className="rounded-xl border border-line bg-fill/90 p-3 text-left transition-colors hover:border-brand/50 hover:bg-surface"
                   onClick={() => {
+                    const prefix = PODCAST_ROOM_PRESETS[k].textPrefix.trim();
+                    const defaultPrompt = prefix ? `${prefix}\n\n` : "";
+                    if (k !== podcastRoomPresetKey) {
+                      setNotesStudioPrompt(defaultPrompt);
+                    } else if (!notesStudioPrompt.trim()) {
+                      setNotesStudioPrompt(defaultPrompt);
+                    }
                     setPodcastRoomPresetKey(k);
                     setShowPodcastGenreModal(false);
                     setShowPodcastRoomModal(true);
@@ -4762,8 +4769,7 @@ export default function NotesPage() {
                     </select>
                   </label>
                   <label className="block text-xs text-ink">
-                    目标长度（字符数，默认 {NOTES_ART_TARGET_CHARS_DEFAULT}，{NOTES_ART_TARGET_CHARS_MIN}–
-                    {NOTES_ART_TARGET_CHARS_MAX}；与作品页「约 N 字符」统计口径一致；实际上限以套餐为准）
+                    目标字数
                     <input
                       type="number"
                       min={NOTES_ART_TARGET_CHARS_MIN}
@@ -4793,6 +4799,9 @@ export default function NotesPage() {
                 </label>
                 <label className="mt-3 block text-xs text-ink">
                   AI 提词（可编辑）
+                  <span className="mb-1 mt-0.5 block text-[10px] font-normal leading-snug text-muted">
+                    以下为所选体裁默认文案，可整段改写或在其后补充要点。
+                  </span>
                   <textarea
                     className={`mt-1 min-h-32 w-full ${inputCls}`}
                     value={artText}
