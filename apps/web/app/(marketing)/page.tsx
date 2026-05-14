@@ -3,8 +3,24 @@
 import Link from "next/link";
 import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import BrandGlyph from "../../components/brand/BrandGlyph";
+import MarketingHeroIllustration from "../../components/marketing/MarketingHeroIllustration";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
+
+const SCENARIO_CARDS = [
+  {
+    title: "知识博主",
+    body: "系列选题与口播脚本沉淀在一处，资料互相关联，便于做成连贯播客与专栏。"
+  },
+  {
+    title: "机构与团队",
+    body: "报告、官网与内部文档转为可分发内容，引用可追溯，方便统一口径与对外沟通。"
+  },
+  {
+    title: "独立创作者",
+    body: "少在工具链之间来回导出，从资料到 Shownotes、社媒博文与多角色播客尽量一条线完成。"
+  }
+] as const;
 
 export default function MarketingLandingPage() {
   const { ready, authRequired, user } = useAuth();
@@ -20,10 +36,10 @@ export default function MarketingLandingPage() {
         <Link
           href="/"
           className="flex items-center gap-2.5 rounded-lg p-1 transition hover:bg-fill/80"
-          aria-label="Presto"
+          aria-label="PrestoAI"
         >
           <BrandGlyph size={40} className="rounded-md shadow-soft" />
-          <span className="text-base font-semibold tracking-tight sm:text-lg">Presto</span>
+          <span className="text-base font-semibold tracking-tight sm:text-lg">PrestoAI</span>
         </Link>
         <nav className="flex flex-wrap items-center justify-end gap-2 sm:gap-3" aria-label="营销页导航">
           <Link
@@ -62,33 +78,69 @@ export default function MarketingLandingPage() {
       </header>
 
       <main className="relative z-[1] mx-auto max-w-6xl px-4 pb-20 sm:px-6 sm:pb-28">
-        <div className="mx-auto max-w-3xl text-center">
-          <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl md:text-[2.75rem] md:leading-tight">
-            基于可信资料的多形态创作助手
-          </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-pretty text-sm leading-relaxed text-muted sm:text-base">
-            以电子书、网页、文档等自有资料为根基，一键生成播客、Shownotes、博文等可分发内容；答案带来源引用，减轻幻觉顾虑，也减少跨平台排版与重复劳动。
-          </p>
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <Link
-              href="/create"
-              className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-cta px-5 py-2.5 text-sm font-semibold text-cta-foreground shadow-soft transition hover:bg-cta/90"
-            >
-              开始生成播客
-            </Link>
-            <Link
-              href={WORKBENCH_HOME_PATH}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-line bg-surface px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-fill"
-            >
-              工作台首页
-            </Link>
-          </div>
-          {!ready ? (
-            <p className="mt-6 text-xs text-muted" aria-live="polite">
-              正在加载账号状态…
+        <section className="mx-auto mt-2 grid max-w-6xl gap-10 lg:mt-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,440px)] lg:items-center lg:gap-12 xl:gap-16">
+          <div className="mx-auto max-w-3xl text-center lg:mx-0 lg:max-w-none lg:text-left">
+            <h1 className="text-balance font-semibold tracking-tight text-ink">
+              <span className="block text-lg font-medium leading-snug text-muted sm:text-xl md:text-2xl md:leading-snug">
+                基于可信资料
+              </span>
+              <span className="mt-1 block text-3xl leading-tight sm:mt-1.5 sm:text-4xl md:mt-2 md:text-[2.65rem] md:leading-[1.12]">
+                多形态创作助手
+              </span>
+            </h1>
+            <p className="mx-auto mt-4 max-w-2xl text-pretty text-sm leading-relaxed text-muted sm:text-base md:mt-5 md:max-w-3xl lg:mx-0 lg:max-w-3xl">
+              以电子书、网页、文档等自有资料为根基，一键生成播客、Shownotes、博文等可分发内容；答案带来源引用，减轻幻觉顾虑，也减少跨平台排版与重复劳动。
             </p>
-          ) : null}
-        </div>
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+              <Link
+                href="/create"
+                className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-cta px-5 py-2.5 text-sm font-semibold text-cta-foreground shadow-soft transition hover:bg-cta/90"
+              >
+                开始生成播客
+              </Link>
+              <Link
+                href={WORKBENCH_HOME_PATH}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-line bg-surface px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-fill"
+              >
+                工作台首页
+              </Link>
+            </div>
+            {!ready ? (
+              <p className="mt-6 text-xs text-muted lg:text-left" aria-live="polite">
+                正在加载账号状态…
+              </p>
+            ) : null}
+          </div>
+          <div className="mx-auto flex w-full max-w-[440px] justify-center lg:mx-0 lg:max-w-none lg:justify-end">
+            <MarketingHeroIllustration />
+          </div>
+        </section>
+
+        <section
+          className="mx-auto mt-16 max-w-5xl sm:mt-20 lg:mt-24"
+          aria-labelledby="marketing-scenarios-heading"
+        >
+          <h2
+            id="marketing-scenarios-heading"
+            className="text-center text-lg font-semibold tracking-tight text-ink sm:text-xl"
+          >
+            典型场景
+          </h2>
+          <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-muted md:max-w-3xl">
+            以下为常见用法示意，便于快速对号入座；具体能力以产品内为准。
+          </p>
+          <div className="mt-8 grid gap-4 sm:grid-cols-3 sm:gap-5">
+            {SCENARIO_CARDS.map((card) => (
+              <article
+                key={card.title}
+                className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6"
+              >
+                <h3 className="text-base font-semibold text-ink">{card.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted">{card.body}</p>
+              </article>
+            ))}
+          </div>
+        </section>
 
         <section
           className="mx-auto mt-16 max-w-5xl sm:mt-20"
@@ -101,21 +153,24 @@ export default function MarketingLandingPage() {
             <article className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6">
               <h3 className="text-base font-semibold text-ink">多源资料处理</h3>
               <p className="mt-2 text-sm leading-relaxed text-muted">
-                上传电子书、文档、网页等常见资料，Presto 会提炼要点、串联不同主题，并<strong className="font-medium text-ink">仅依据你的资料</strong>
+                上传电子书、文档、网页等常见资料，PrestoAI 会提炼要点、串联不同主题，并
+                <strong className="font-medium text-ink">仅依据你的资料</strong>
                 生成回答与延伸内容。
               </p>
             </article>
             <article className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6">
               <h3 className="text-base font-semibold text-ink">规避 AI 幻觉</h3>
               <p className="mt-2 text-sm leading-relaxed text-muted">
-                可放心使用生成结果：关键结论会<strong className="font-medium text-ink">标注引用来源</strong>，便于核对出处，把「可解释」写进工作流。
+                可放心使用生成结果：关键结论会<strong className="font-medium text-ink">标注引用来源</strong>
+                ，便于核对出处，把「可解释」写进工作流。
               </p>
             </article>
             <article className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6">
               <h3 className="text-base font-semibold text-ink">多种输出格式</h3>
               <p className="mt-2 text-sm leading-relaxed text-muted">
-                一键生成播客，Shownotes 等繁琐环节交给 Presto；同一批资料还可快速整理为
-                <strong className="font-medium text-ink">适合小红书等平台的博文</strong>，少在格式与平台规则上耗时间。
+                一键生成播客，Shownotes 等繁琐环节交给 PrestoAI；同一批资料还可快速整理为
+                <strong className="font-medium text-ink">适合小红书等平台的博文</strong>
+                ，少在格式与平台规则上耗时间。
               </p>
             </article>
             <article className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6">
@@ -130,7 +185,7 @@ export default function MarketingLandingPage() {
 
       <footer className="relative z-[1] border-t border-line bg-fill/40 px-4 py-8 sm:px-6" role="contentinfo">
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 text-center">
-          <p className="text-xs text-muted">Presto — 灵感不设限，创作即刻起</p>
+          <p className="text-xs text-muted">PrestoAI — 灵感不设限，创作即刻起</p>
           <SiteBeianBar />
         </div>
       </footer>
