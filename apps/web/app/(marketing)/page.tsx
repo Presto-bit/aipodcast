@@ -36,10 +36,10 @@ export default function MarketingLandingPage() {
         <Link
           href="/"
           className="flex items-center gap-2.5 rounded-lg p-1 transition hover:bg-fill/80"
-          aria-label="PrestoAI"
+          aria-label="访问官网首页"
         >
           <BrandGlyph size={40} className="rounded-md shadow-soft" />
-          <span className="text-base font-semibold tracking-tight sm:text-lg">PrestoAI</span>
+          <span className="text-base font-semibold tracking-tight sm:text-lg">灵感不设限，创作即刻起</span>
         </Link>
         <nav className="flex flex-wrap items-center justify-end gap-2 sm:gap-3" aria-label="营销页导航">
           <Link
@@ -89,7 +89,7 @@ export default function MarketingLandingPage() {
               </span>
             </h1>
             <p className="mx-auto mt-4 max-w-2xl text-pretty text-sm leading-relaxed text-muted sm:text-base md:mt-5 md:max-w-3xl lg:mx-0 lg:max-w-3xl">
-              以电子书、网页、文档等自有资料为根基，一键生成播客、Shownotes、博文等可分发内容；答案带来源引用，减轻幻觉顾虑，也减少跨平台排版与重复劳动。
+              以电子书、网页、文档等资料为根基，一键生成文章、播客、Shownotes 等可分发内容；答案带来源引用，减轻幻觉顾虑。
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
               <Link
@@ -183,10 +183,9 @@ export default function MarketingLandingPage() {
         </section>
       </main>
 
-      <footer className="relative z-[1] border-t border-line bg-fill/40 px-4 py-8 sm:px-6" role="contentinfo">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 text-center">
-          <p className="text-xs text-muted">PrestoAI — 灵感不设限，创作即刻起</p>
-          <SiteBeianBar />
+      <footer className="relative z-[1] border-t border-line bg-fill/40 px-4 py-6 sm:px-6" role="contentinfo">
+        <div className="mx-auto max-w-6xl">
+          <SiteBeianBar layout="inline" />
         </div>
       </footer>
     </div>

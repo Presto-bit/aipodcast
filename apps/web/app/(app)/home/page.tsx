@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconCreate, IconNotes, IconVoice, IconGrid } from "../../../components/NavIcons";
-import { SiteBeianBar } from "../../../components/SiteBeianBar";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../../../lib/worksTypes";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
@@ -468,9 +467,6 @@ export default function HomePage() {
           ) : null}
         </form>
         </main>
-        <div className="border-t border-line/70 py-4">
-          <SiteBeianBar />
-        </div>
       </div>
     );
   }

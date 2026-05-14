@@ -19,8 +19,8 @@ export default function ClipEditorPrdTopBar({ title, exportDisabled, exportLabel
         <Link
           href={WORKBENCH_HOME_PATH}
           className="flex shrink-0 items-center rounded-lg p-0.5 transition hover:bg-fill/80"
-          aria-label="Presto 首页"
-          title="Presto 首页"
+          aria-label="PrestoAI 首页"
+          title="PrestoAI 首页"
         >
           <BrandGlyph size={36} className="rounded-md" />
         </Link>

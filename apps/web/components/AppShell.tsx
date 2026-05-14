@@ -34,7 +34,6 @@ import {
 import { useI18n } from "../lib/I18nContext";
 import AnimatedPageShell from "./AnimatedPageShell";
 import BrandGlyph from "./brand/BrandGlyph";
-import { SiteBeianBar } from "./SiteBeianBar";
 import { dispatchNotesShowNotebookHub, NOTES_MINIMAL_MAIN_NAV_EVENT } from "../lib/notesLastNotebook";
 import {
   APP_SHELL_MOBILE_MEDIA_QUERY,
@@ -525,14 +524,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       style={{ width: `${sidebarDrawerPx}px` }}
     >
       <div className={`flex shrink-0 items-start border-b border-line py-2 ${collapsed ? "justify-center px-2" : "gap-2 px-2.5"}`}>
-        <BrandGlyph size={36} />
-        {!collapsed ? (
-          <div className="min-w-0 flex-1 pr-1">
-            <p className="text-[13px] font-bold leading-tight text-ink">{t("nav.brandTitle")}</p>
-            <p className="mt-0.5 text-[10px] italic leading-snug text-muted">{t("nav.brandTaglineEn")}</p>
-            <p className="mt-0.5 text-[10px] not-italic leading-snug text-muted">{t("nav.brandTaglineZh")}</p>
-          </div>
-        ) : null}
+        <Link
+          href="/"
+          prefetch={false}
+          className={[
+            "flex min-w-0 items-start gap-2 rounded-lg outline-offset-2 ring-offset-canvas transition-colors hover:bg-fill/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35",
+            collapsed ? "justify-center p-0.5" : "flex-1 pr-1"
+          ].join(" ")}
+          aria-label={t("nav.brandHomeLink")}
+        >
+          <BrandGlyph size={36} />
+          {!collapsed ? (
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-bold leading-tight text-ink">{t("nav.brandTitle")}</p>
+              <p className="mt-0.5 text-[10px] italic leading-snug text-muted">{t("nav.brandTaglineEn")}</p>
+            </div>
+          ) : null}
+        </Link>
         <button
           type="button"
           className="flex h-8 w-8 flex-shrink-0 items-center justify-center self-start rounded-lg text-muted hover:bg-fill hover:text-ink"
@@ -638,19 +646,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         tabIndex={-1}
       >
         <AnimatedPageShell>{children}</AnimatedPageShell>
-        <footer className="relative z-[405] mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">
-          <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">
-            <div className="text-center">
-              <p className="text-xs tracking-wide text-muted">{t("footer.pageBrandLine")}</p>
-              <p className="mt-2 text-sm text-ink">{t("footer.tag2")}</p>
-            </div>
-            {normalizePathname(path) === WORKBENCH_HOME_PATH ? (
-              <div className="w-full border-t border-line/70 pt-4">
-                <SiteBeianBar />
+        {normalizePathname(path) === WORKBENCH_HOME_PATH ? null : (
+          <footer className="relative z-[405] mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">
+            <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">
+              <div className="text-center">
+                <p className="text-xs tracking-wide text-muted">{t("footer.pageBrandLine")}</p>
+                <p className="mt-2 text-sm text-ink">{t("footer.tag2")}</p>
               </div>
-            ) : null}
-          </div>
-        </footer>
+            </div>
+          </footer>
+        )}
       </div>
     </div>
   );
