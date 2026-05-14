@@ -310,72 +310,6 @@ export default function CreatePage() {
       <div
         className={mode === "podcast" ? "mb-3 flex w-full flex-col gap-3 lg:mb-0 lg:flex-row lg:items-stretch" : ""}
       >
-        {mode === "podcast" ? (
-          <aside
-            className={[
-              "flex shrink-0 flex-col",
-              podcastToolsOpen ? "w-full lg:w-[11rem]" : "w-full lg:w-12"
-            ].join(" ")}
-            aria-label="播客工具"
-          >
-            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-fill/25">
-              <button
-                type="button"
-                className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition hover:bg-fill/50 sm:px-3 lg:min-h-0 lg:flex-shrink-0 lg:px-2 lg:py-2.5"
-                aria-expanded={podcastToolsOpen}
-                onClick={() => setPodcastToolsOpen((o) => !o)}
-              >
-                <span
-                  className={[
-                    "text-xs font-semibold text-ink",
-                    podcastToolsOpen ? "" : "lg:sr-only"
-                  ].join(" ")}
-                >
-                  播客工具
-                </span>
-                <ChevronDown
-                  className={`h-4 w-4 shrink-0 text-muted transition-transform duration-200 ${podcastToolsOpen ? "rotate-180" : ""}`}
-                  aria-hidden
-                />
-              </button>
-              {podcastToolsOpen ? (
-                <div className="border-t border-line px-2 pb-2.5 pt-2 sm:px-3 lg:flex-1 lg:overflow-y-auto">
-                  <nav className="flex flex-col gap-2" aria-label="播客工具链接">
-                    <Link
-                      href="/clip"
-                      className="inline-flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
-                    >
-                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-fill text-muted">
-                        <IconClip width={16} height={16} />
-                      </span>
-                      <span className="min-w-0">{t("create.quickLink.clip")}</span>
-                    </Link>
-                    <a
-                      href={shownotesMarketingUrl}
-                      className="inline-flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
-                    >
-                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-fill text-muted">
-                        <IconShownotes width={16} height={16} />
-                      </span>
-                      <span className="min-w-0">{t("create.quickLink.shownotes")}</span>
-                    </a>
-                    <Link
-                      href="/voice?tab=clone"
-                      className="inline-flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
-                    >
-                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-fill text-muted">
-                        <IconVoice width={16} height={16} />
-                      </span>
-                      <span className="min-w-0">音色克隆</span>
-                    </Link>
-                  </nav>
-                </div>
-              ) : (
-                <p className="sr-only">播客工具已收起，点击标题栏展开</p>
-              )}
-            </div>
-          </aside>
-        ) : null}
         <div className={mode === "podcast" ? "min-w-0 flex-1" : ""}>
             <section className="fym-surface-card overflow-visible">
         <div className="p-4 sm:p-5">
@@ -513,6 +447,72 @@ export default function CreatePage() {
         ) : null}
       </section>
         </div>
+        {mode === "podcast" ? (
+          <aside
+            className={[
+              "flex shrink-0 flex-col",
+              podcastToolsOpen ? "w-full lg:w-[11rem]" : "w-full lg:w-12"
+            ].join(" ")}
+            aria-label="播客工具"
+          >
+            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-fill/25">
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition hover:bg-fill/50 sm:px-3 lg:min-h-0 lg:flex-shrink-0 lg:px-2 lg:py-2.5"
+                aria-expanded={podcastToolsOpen}
+                onClick={() => setPodcastToolsOpen((o) => !o)}
+              >
+                <span
+                  className={[
+                    "text-xs font-semibold text-ink",
+                    podcastToolsOpen ? "" : "lg:sr-only"
+                  ].join(" ")}
+                >
+                  播客工具
+                </span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-muted transition-transform duration-200 ${podcastToolsOpen ? "rotate-180" : ""}`}
+                  aria-hidden
+                />
+              </button>
+              {podcastToolsOpen ? (
+                <div className="border-t border-line px-2 pb-2.5 pt-2 sm:px-3 lg:flex-1 lg:overflow-y-auto">
+                  <nav className="flex flex-col gap-2" aria-label="播客工具链接">
+                    <Link
+                      href="/clip"
+                      className="inline-flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
+                    >
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-fill text-muted">
+                        <IconClip width={16} height={16} />
+                      </span>
+                      <span className="min-w-0">{t("create.quickLink.clip")}</span>
+                    </Link>
+                    <a
+                      href={shownotesMarketingUrl}
+                      className="inline-flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
+                    >
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-fill text-muted">
+                        <IconShownotes width={16} height={16} />
+                      </span>
+                      <span className="min-w-0">{t("create.quickLink.shownotes")}</span>
+                    </a>
+                    <Link
+                      href="/voice?tab=clone"
+                      className="inline-flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
+                    >
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-fill text-muted">
+                        <IconVoice width={16} height={16} />
+                      </span>
+                      <span className="min-w-0">音色克隆</span>
+                    </Link>
+                  </nav>
+                </div>
+              ) : (
+                <p className="sr-only">播客工具已收起，点击标题栏展开</p>
+              )}
+            </div>
+          </aside>
+        ) : null}
       </div>
 
       <section className="mt-6 overflow-hidden rounded-xl border border-line bg-fill/25">
