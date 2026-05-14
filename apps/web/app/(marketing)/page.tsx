@@ -136,9 +136,6 @@ export default function MarketingLandingPage() {
           >
             典型场景
           </h2>
-          <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-muted md:max-w-3xl">
-            对应知识库、创作与成片归档等真实入口；具体以产品内为准。
-          </p>
           <div className="mt-8 grid gap-4 sm:grid-cols-3 sm:gap-5">
             {SCENARIO_CARDS.map((card) => (
               <article
