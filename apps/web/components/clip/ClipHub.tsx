@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../lib/auth";
 import { clipJobLabel } from "../../lib/clipJobLabels";
 import type { ClipProjectRow } from "../../lib/clipTypes";
+import { isShownotesOnlyClipProject } from "../../lib/shownotesClipProject";
 import { useI18n } from "../../lib/I18nContext";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 
@@ -57,9 +58,10 @@ export default function ClipHub() {
   const locale = lang === "en" ? "en-US" : "zh-CN";
 
   const filtered = useMemo(() => {
+    const clipOnly = items.filter((p) => !isShownotesOnlyClipProject(p));
     const s = q.trim().toLowerCase();
-    if (!s) return items;
-    return items.filter((p) => (p.title || p.id || "").toLowerCase().includes(s));
+    if (!s) return clipOnly;
+    return clipOnly.filter((p) => (p.title || p.id || "").toLowerCase().includes(s));
   }, [items, q]);
 
   const load = useCallback(async () => {

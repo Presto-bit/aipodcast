@@ -1,5 +1,12 @@
 import type { ClipProjectRow } from "./clipTypes";
 
+/** 通过「制作 Shownotes」流程创建的剪辑工程标题；与音频精剪工程区分，不进入 /clip 工程列表 */
+export const SHOWNOTES_ONLY_CLIP_PROJECT_TITLE = "Shownotes";
+
+export function isShownotesOnlyClipProject(p: Pick<ClipProjectRow, "title"> | null | undefined): boolean {
+  return String(p?.title || "").trim() === SHOWNOTES_ONLY_CLIP_PROJECT_TITLE;
+}
+
 export function clipProjectHasMaterial(p: ClipProjectRow | null): boolean {
   if (!p) return false;
   const merged = String(p.audio_object_key || "").trim();

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
 import type { ClipProjectRow } from "../../lib/clipTypes";
-import { clipProjectHasMaterial } from "../../lib/shownotesClipProject";
+import { clipProjectHasMaterial, isShownotesOnlyClipProject } from "../../lib/shownotesClipProject";
 
 export default function ShownotesMakeHubClient() {
   const { ready, user, getAuthHeaders } = useAuth();
@@ -54,7 +54,7 @@ export default function ShownotesMakeHubClient() {
     );
   }
 
-  const candidates = items.filter((p) => clipProjectHasMaterial(p));
+  const candidates = items.filter((p) => isShownotesOnlyClipProject(p) && clipProjectHasMaterial(p));
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 sm:py-10">

@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { Plus } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
+import { SHOWNOTES_ONLY_CLIP_PROJECT_TITLE } from "../../lib/shownotesClipProject";
 import ShownotesStudio from "./ShownotesStudio";
 
 export default function ShownotesLandingClient() {
@@ -16,13 +17,6 @@ export default function ShownotesLandingClient() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [uploadedFileLabel, setUploadedFileLabel] = useState("");
 
-  const resetSession = useCallback(() => {
-    setActiveProjectId(null);
-    setUploadedFileLabel("");
-    setErr("");
-    if (inputRef.current) inputRef.current.value = "";
-  }, []);
-
   async function createProjectAndStage(file: File) {
     setUploadBusy(true);
     setErr("");
@@ -32,7 +26,7 @@ export default function ShownotesLandingClient() {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ title: "Shownotes" })
+        body: JSON.stringify({ title: SHOWNOTES_ONLY_CLIP_PROJECT_TITLE })
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; project?: { id?: string }; detail?: string };
       if (!res.ok || data.success === false || !data.project?.id) {
@@ -87,7 +81,7 @@ export default function ShownotesLandingClient() {
     <main className="mx-auto max-w-6xl px-4 py-8 sm:py-10">
       <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">制作 Shownotes</h1>
       <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
-        上传播客或口播音频，点击「开始生成」进行语音转写；转写完成后可生成候选标题与正文 Shownotes，支持预览、双击编辑与 AI 优化。历史记录保存在本机浏览器。
+        上传播客或口播音频，点击「开始生成」进行语音转写；转写完成后可生成候选标题与正文 Shownotes，支持预览、双击编辑与 AI 优化。历史与编辑草稿保存在本机浏览器，离开或刷新页面后会自动恢复。
       </p>
       {err ? (
         <p className="mt-4 rounded-lg border border-danger/30 bg-danger-soft/40 px-3 py-2 text-sm text-danger-ink" role="alert">
@@ -122,21 +116,15 @@ export default function ShownotesLandingClient() {
           <ul className="mt-5 space-y-2 text-xs leading-relaxed text-muted">
             <li>支持 MP3、WAV、M4A 等常见格式；上传完成后请点击「开始生成」才会发起转写。</li>
             <li>转写与正文生成需联网调用模型，请保持页面打开直至完成。</li>
-            <li>右侧历史为本机保存，换设备或清理浏览器数据后将不可见。</li>
+            <li>右侧历史与未保存的正文草稿为本机保存；换设备或清理浏览器数据后将不可见。</li>
           </ul>
         </div>
       ) : null}
 
       {activeProjectId ? (
-        <section className="mt-10 border-t border-line pt-10" aria-label="Shownotes 工作区">
+        <section className="mt-10 border-t border-line/50 pt-8" aria-label="Shownotes 工作区">
           <h2 className="sr-only">Shownotes 工作区</h2>
-          <ShownotesStudio
-            key={activeProjectId}
-            projectId={activeProjectId}
-            embedOnLanding
-            fileLabel={uploadedFileLabel}
-            onRequestNewUpload={resetSession}
-          />
+          <ShownotesStudio key={activeProjectId} projectId={activeProjectId} embedOnLanding fileLabel={uploadedFileLabel} />
         </section>
       ) : null}
     </main>
