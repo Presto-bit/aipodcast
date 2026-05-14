@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Music2, Pause, Play, RotateCw, Save, Sparkles, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, Music2, Pause, Play, RotateCw, Save, Sparkles, Upload } from "lucide-react";
 import {
   fetchClipProjectShareAiCopy,
   fetchClipTitleSuggestions,
+  formatOrchestratorErrorText,
   persistClipProjectShowNotes
 } from "../../lib/api";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
@@ -51,17 +52,19 @@ function formatDuration(sec: number): string {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
+const HISTORY_PAGE_SIZE = 5;
+
 async function patchClipProjectTitle(projectId: string, title: string, getAuthHeaders: () => Record<string, string>) {
   const id = encodeURIComponent(projectId);
   const res = await fetch(`/api/clip/projects/${id}`, {
     method: "PATCH",
     credentials: "same-origin",
-    headers: { "content-type": "application/json", ...getAuthHeaders() },
+    headers: { ...getAuthHeaders(), "content-type": "application/json" },
     body: JSON.stringify({ title: title.slice(0, 200) })
   });
+  const t = await res.text();
   if (!res.ok) {
-    const t = await res.text();
-    throw new Error(t || `更新标题失败 ${res.status}`);
+    throw new Error(formatOrchestratorErrorText(t) || `更新标题失败 ${res.status}`);
   }
 }
 
@@ -103,6 +106,8 @@ export default function ShownotesStudio({
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [aiPromptDraft, setAiPromptDraft] = useState("");
   const [aiErr, setAiErr] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyPage, setHistoryPage] = useState(0);
 
   const draftFlushRef = useRef({ showNotes: "", titleOptions: [] as string[], selectedTitleIndex: 0 });
   draftFlushRef.current = { showNotes, titleOptions, selectedTitleIndex };
@@ -210,7 +215,13 @@ export default function ShownotesStudio({
 
   useEffect(() => {
     setHistory(loadShownotesStudioHistory(projectId));
+    setHistoryPage(0);
   }, [projectId]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
+    setHistoryPage((p) => Math.min(p, totalPages - 1));
+  }, [history.length]);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -291,7 +302,7 @@ export default function ShownotesStudio({
         if (!notes) throw new Error("返回的 Shownotes 为空");
         setShowNotes(notes);
         setNotesPreviewEdit(false);
-        await persistClipProjectShowNotes(projectId, notes);
+        await persistClipProjectShowNotes(projectId, String(notes ?? "").slice(0, 20_000));
         const snap = (titlesSnapshot ?? titleOptions).map((x) => String(x || "").trim()).filter(Boolean);
         const titlesSnap = snap.length ? snap : [""];
         const histIdx = titlesSnapshot != null ? 0 : selectedTitleIndex;
@@ -373,7 +384,7 @@ export default function ShownotesStudio({
     setSaveBusy(true);
     setLoadErr("");
     try {
-      await persistClipProjectShowNotes(projectId, showNotes);
+      await persistClipProjectShowNotes(projectId, String(showNotes ?? "").slice(0, 20_000));
       clearShownotesStudioDraft(projectId);
       const titlesSnap = titleOptions.length ? titleOptions : [""];
       const nextHist = appendShownotesStudioHistory(projectId, {
@@ -406,7 +417,7 @@ export default function ShownotesStudio({
       if (!notes) throw new Error("返回内容为空");
       setShowNotes(notes);
       setNotesPreviewEdit(false);
-      await persistClipProjectShowNotes(projectId, notes);
+      await persistClipProjectShowNotes(projectId, String(notes ?? "").slice(0, 20_000));
       clearShownotesStudioDraft(projectId);
       const titlesSnap = titleOptions.length ? titleOptions : [""];
       const nextHist = appendShownotesStudioHistory(projectId, {
@@ -435,6 +446,8 @@ export default function ShownotesStudio({
       setSelectedTitleIndex(idx);
       const t = titleOptions[idx]?.trim();
       if (!t) return;
+      const cur = String(project?.title || "").trim();
+      if (t === cur) return;
       try {
         await patchClipProjectTitle(projectId, t, getAuthHeaders);
         await load();
@@ -442,7 +455,7 @@ export default function ShownotesStudio({
         setLoadErr(String(e instanceof Error ? e.message : e));
       }
     },
-    [getAuthHeaders, load, projectId, titleOptions]
+    [getAuthHeaders, load, project, projectId, titleOptions]
   );
 
   const loadHistoryEntry = useCallback((row: ShownotesStudioHistoryItem) => {
@@ -499,6 +512,13 @@ export default function ShownotesStudio({
 
   const canOfferNewUpload = Boolean(project && (hasMaterial || transcribeOk));
 
+  const historyTotalPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
+  const historyPageSafe = Math.min(historyPage, historyTotalPages - 1);
+  const pagedHistory = history.slice(
+    historyPageSafe * HISTORY_PAGE_SIZE,
+    historyPageSafe * HISTORY_PAGE_SIZE + HISTORY_PAGE_SIZE
+  );
+
   const inner = (
     <div className="space-y-6">
       {!embedOnLanding ? (
@@ -533,76 +553,78 @@ export default function ShownotesStudio({
       ) : null}
 
       {hasMaterial && audioSrc ? (
-        <div className="flex flex-wrap items-center gap-2.5 py-1">
-          <input
-            ref={newAudioInputRef}
-            type="file"
-            className="sr-only"
-            accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
-            disabled={newAudioBusy}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void startNewAudioFromFile(f);
-            }}
-          />
-          <Music2 className="h-5 w-5 shrink-0 text-brand" aria-hidden />
-          <audio
-            ref={audioRef}
-            className="hidden"
-            src={audioSrc}
-            preload="metadata"
-            onLoadedMetadata={() => {
-              const d = audioRef.current?.duration;
-              setDurationSec(Number.isFinite(d) ? d || 0 : 0);
-            }}
-            onPlay={() => setPlaying(true)}
-            onPause={() => setPlaying(false)}
-            onEnded={() => setPlaying(false)}
-          />
-          <button
-            type="button"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-fill/80 text-ink hover:bg-fill"
-            aria-label={playing ? "暂停" : "播放"}
-            onClick={() => {
-              const el = audioRef.current;
-              if (!el) return;
-              if (playing) el.pause();
-              else void el.play().catch(() => {});
-            }}
-          >
-            {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 pl-0.5" />}
-          </button>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink" title={displayName}>
-            {displayName}
-          </span>
-          <span className="shrink-0 text-xs tabular-nums text-muted">{formatDuration(durationSec)}</span>
-          <button
-            type="button"
-            disabled={transcribeBusy || !hasMaterial || trRunning || mergeBusy || transcribeOk}
-            onClick={beginAsr}
-            className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground shadow-soft hover:opacity-95 disabled:opacity-50"
-            title={transcribeOk ? "转写已完成" : undefined}
-          >
-            {transcribeBusy || trRunning ? "转写中…" : transcribeOk ? "已转写" : "开始生成"}
-          </button>
-          {canOfferNewUpload ? (
+        <section aria-label="音频" className="border-b border-line/50 pb-6">
+          <div className="flex flex-wrap items-center gap-2.5 py-1">
+            <input
+              ref={newAudioInputRef}
+              type="file"
+              className="sr-only"
+              accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
+              disabled={newAudioBusy}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void startNewAudioFromFile(f);
+              }}
+            />
+            <Music2 className="h-5 w-5 shrink-0 text-brand" aria-hidden />
+            <audio
+              ref={audioRef}
+              className="hidden"
+              src={audioSrc}
+              preload="metadata"
+              onLoadedMetadata={() => {
+                const d = audioRef.current?.duration;
+                setDurationSec(Number.isFinite(d) ? d || 0 : 0);
+              }}
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+              onEnded={() => setPlaying(false)}
+            />
             <button
               type="button"
-              disabled={newAudioBusy || transcribeBusy || trRunning || mergeBusy || genBusy || shareAiBusy}
-              onClick={() => newAudioInputRef.current?.click()}
-              className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-brand hover:underline disabled:opacity-50"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-fill/80 text-ink hover:bg-fill"
+              aria-label={playing ? "暂停" : "播放"}
+              onClick={() => {
+                const el = audioRef.current;
+                if (!el) return;
+                if (playing) el.pause();
+                else void el.play().catch(() => {});
+              }}
             >
-              <Upload className="h-3.5 w-3.5" aria-hidden />
-              {newAudioBusy ? "处理中…" : "上传新音频"}
+              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 pl-0.5" />}
             </button>
-          ) : null}
-        </div>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink" title={displayName}>
+              {displayName}
+            </span>
+            <span className="shrink-0 text-xs tabular-nums text-muted">{formatDuration(durationSec)}</span>
+            <button
+              type="button"
+              disabled={transcribeBusy || !hasMaterial || trRunning || mergeBusy || transcribeOk}
+              onClick={beginAsr}
+              className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground shadow-soft hover:opacity-95 disabled:opacity-50"
+              title={transcribeOk ? "转写已完成" : undefined}
+            >
+              {transcribeBusy || trRunning ? "转写中…" : transcribeOk ? "已转写" : "开始生成"}
+            </button>
+            {canOfferNewUpload ? (
+              <button
+                type="button"
+                disabled={newAudioBusy || transcribeBusy || trRunning || mergeBusy || genBusy || shareAiBusy}
+                onClick={() => newAudioInputRef.current?.click()}
+                className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-brand hover:underline disabled:opacity-50"
+              >
+                <Upload className="h-3.5 w-3.5" aria-hidden />
+                {newAudioBusy ? "处理中…" : "上传新音频"}
+              </button>
+            ) : null}
+          </div>
+        </section>
       ) : null}
 
-      <div className="max-w-3xl space-y-8">
+      <div className="max-w-3xl space-y-0">
         {transcribeOk ? (
-          <div className="space-y-8">
-            <div>
+          <>
+            <section aria-label="标题" className="border-b border-line/50 py-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold text-ink">标题</h2>
                 <button
@@ -612,7 +634,7 @@ export default function ShownotesStudio({
                   className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-ink hover:bg-fill disabled:opacity-50"
                 >
                   <RotateCw className={`h-3.5 w-3.5 ${titleBusy ? "animate-spin" : ""}`} />
-                  刷新
+                  重新生成标题
                 </button>
               </div>
               <ul className="mt-3 space-y-1">
@@ -621,7 +643,7 @@ export default function ShownotesStudio({
                     <label className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-1.5 hover:bg-fill/40">
                       <input
                         type="radio"
-                        name="sn-title"
+                        name={`sn-title-${projectId}`}
                         className="mt-1"
                         checked={selectedTitleIndex === i}
                         onChange={() => void onPickTitle(i)}
@@ -632,12 +654,12 @@ export default function ShownotesStudio({
                   </li>
                 ))}
               </ul>
-            </div>
+            </section>
 
-            <div aria-label="Shownotes 正文">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold text-ink">Shownotes</h2>
-                <div className="flex flex-wrap items-center gap-2">
+            <section aria-label="Shownotes" className="border-b border-line/50 py-6">
+              <h2 className="mb-3 text-sm font-semibold text-ink">Shownotes</h2>
+              <div className="rounded-2xl border border-line/60 bg-fill/10 p-5 shadow-md sm:p-6">
+                <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
                   <button
                     type="button"
                     disabled={genBusy || shareAiBusy}
@@ -660,78 +682,117 @@ export default function ShownotesStudio({
                     {saveBusy ? "保存中…" : "保存"}
                   </button>
                 </div>
-              </div>
 
-              <div className="mt-3 space-y-2">
-                <p className="text-[11px] text-muted">双击预览区域进入编辑；支持 Markdown。</p>
-                {notesPreviewEdit ? (
-                  <textarea
-                    className="min-h-[16rem] w-full rounded-md bg-fill/30 px-3 py-2.5 text-sm leading-relaxed text-ink"
-                    value={showNotes}
-                    onChange={(e) => setShowNotes(e.target.value)}
-                    maxLength={20_000}
-                  />
-                ) : (
-                  <div
-                    className="max-h-[min(70vh,28rem)] cursor-text overflow-y-auto rounded-md bg-fill/15 p-3"
-                    onDoubleClick={() => setNotesPreviewEdit(true)}
-                  >
-                    <ShowNotesMarkdownPreview
-                      markdown={previewMarkdown}
-                      onSeekSeconds={onSeekSeconds}
-                      className="!max-h-none overflow-visible border-0 bg-transparent p-0"
+                <div className="space-y-2">
+                  <p className="text-[11px] text-muted">双击预览区域进入编辑；支持 Markdown。</p>
+                  {notesPreviewEdit ? (
+                    <textarea
+                      className="min-h-[16rem] w-full rounded-xl bg-fill/30 px-3 py-2.5 text-sm leading-relaxed text-ink"
+                      value={showNotes}
+                      onChange={(e) => setShowNotes(e.target.value)}
+                      maxLength={20_000}
                     />
-                  </div>
-                )}
-                {notesPreviewEdit ? (
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-brand hover:underline"
-                    onClick={() => setNotesPreviewEdit(false)}
-                  >
-                    完成编辑
-                  </button>
+                  ) : (
+                    <div
+                      className="max-h-[min(70vh,28rem)] cursor-text overflow-y-auto rounded-xl bg-fill/20 p-4"
+                      onDoubleClick={() => setNotesPreviewEdit(true)}
+                    >
+                      <ShowNotesMarkdownPreview
+                        markdown={previewMarkdown}
+                        onSeekSeconds={onSeekSeconds}
+                        className="!max-h-none overflow-visible border-0 bg-transparent p-0"
+                      />
+                    </div>
+                  )}
+                  {notesPreviewEdit ? (
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-brand hover:underline"
+                      onClick={() => setNotesPreviewEdit(false)}
+                    >
+                      完成编辑
+                    </button>
+                  ) : null}
+                </div>
+
+                {hints.showNotesVeryShort && showNotes.trim() ? (
+                  <p className="mt-3 text-[11px] text-warning-ink">Shownotes 偏短。</p>
                 ) : null}
               </div>
+            </section>
 
-              {hints.showNotesVeryShort && showNotes.trim() ? (
-                <p className="mt-2 text-[11px] text-warning-ink">Shownotes 偏短。</p>
-              ) : null}
-            </div>
-
-            <div>
-              <h3 className="text-xs font-semibold text-muted">历史记录</h3>
-              <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto">
-                {history.length === 0 ? (
-                  <li className="text-xs text-muted">暂无记录</li>
-                ) : (
-                  history.map((h) => (
-                    <li key={h.id}>
+            <section aria-label="历史记录" className="pt-2">
+              <button
+                type="button"
+                onClick={() => setHistoryOpen((o) => !o)}
+                className="flex w-full items-center justify-between gap-2 py-2 text-left text-sm font-semibold text-ink hover:text-brand"
+              >
+                <span>历史记录（{history.length} 条）</span>
+                {historyOpen ? <ChevronDown className="h-4 w-4 shrink-0 text-muted" aria-hidden /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted" aria-hidden />}
+              </button>
+              {historyOpen ? (
+                <div className="mt-1">
+                  <ul className="space-y-1">
+                    {history.length === 0 ? (
+                      <li className="text-xs text-muted">暂无记录</li>
+                    ) : (
+                      pagedHistory.map((h) => (
+                        <li key={h.id}>
+                          <button
+                            type="button"
+                            onClick={() => loadHistoryEntry(h)}
+                            className="w-full rounded-md px-2 py-2 text-left text-xs transition hover:bg-fill/40"
+                          >
+                            <span className="block font-medium text-ink line-clamp-2">
+                              {h.titles[h.selectedTitleIndex]?.trim() || "（无标题）"}
+                            </span>
+                            <span className="mt-0.5 block text-[10px] text-muted">
+                              {new Date(h.savedAt).toLocaleString("zh-CN", {
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit"
+                              })}
+                            </span>
+                          </button>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                  {history.length > HISTORY_PAGE_SIZE ? (
+                    <div className="mt-3 flex items-center justify-between text-xs text-muted">
                       <button
                         type="button"
-                        onClick={() => loadHistoryEntry(h)}
-                        className="w-full rounded-md px-2 py-2 text-left text-xs transition hover:bg-fill/40"
+                        disabled={historyPageSafe <= 0}
+                        onClick={() => setHistoryPage((p) => Math.max(0, p - 1))}
+                        className="font-medium text-brand hover:underline disabled:opacity-40 disabled:hover:no-underline"
                       >
-                        <span className="block font-medium text-ink line-clamp-2">
-                          {h.titles[h.selectedTitleIndex]?.trim() || "（无标题）"}
-                        </span>
-                        <span className="mt-0.5 block text-[10px] text-muted">
-                          {new Date(h.savedAt).toLocaleString("zh-CN", {
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit"
-                          })}
-                        </span>
+                        上一页
                       </button>
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
-          </div>
+                      <span className="tabular-nums">
+                        {historyPageSafe + 1} / {historyTotalPages}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={historyPageSafe >= historyTotalPages - 1}
+                        onClick={() =>
+                          setHistoryPage((p) => {
+                            const tp = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
+                            return Math.min(tp - 1, p + 1);
+                          })
+                        }
+                        className="font-medium text-brand hover:underline disabled:opacity-40 disabled:hover:no-underline"
+                      >
+                        下一页
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          </>
         ) : hasMaterial ? (
-          <p className="text-sm text-muted">转写完成后将显示标题候选与 Shownotes 编辑区。</p>
+          <p className="py-6 text-sm text-muted">转写完成后将显示标题候选与 Shownotes 编辑区。</p>
         ) : null}
       </div>
 

@@ -7,8 +7,6 @@ export function ShownotesBrandHeading({ className = "" }: { className?: string }
     <h1 className={headingClass}>
       <a
         href={root}
-        target="_blank"
-        rel="noopener noreferrer"
         className="text-brand no-underline transition-colors hover:text-brand/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-sm"
       >
         PrestoAI

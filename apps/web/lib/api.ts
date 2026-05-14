@@ -213,6 +213,7 @@ export async function persistClipProjectShowNotes(projectId: string, showNotes: 
   if (!res.ok) {
     throw new Error(formatOrchestratorErrorText(text) || `保存失败 ${res.status}`);
   }
+  if (!text.trim()) return;
   try {
     const data = JSON.parse(text) as { success?: boolean };
     if (data.success === false) {
@@ -220,8 +221,8 @@ export async function persistClipProjectShowNotes(projectId: string, showNotes: 
     }
   } catch (e) {
     if (e instanceof Error && e.message === "保存未成功") throw e;
-    if (!text.trim()) return;
-    throw new Error(text.trim());
+    /* 200 但非标准 JSON 时仍视为已写入，避免误报保存失败 */
+    return;
   }
 }
 

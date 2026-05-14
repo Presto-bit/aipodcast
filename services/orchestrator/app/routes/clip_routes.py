@@ -808,7 +808,7 @@ def clip_patch_project(project_id: str, request: Request, body: dict[str, Any] =
         if not ch_ids:
             raise HTTPException(status_code=400, detail="channel_ids 不能为空")
     spk: int | None = None
-    if "speaker_count" in b:
+    if "speaker_count" in b and b.get("speaker_count") is not None:
         try:
             spk = max(1, min(8, int(b.get("speaker_count"))))
         except (TypeError, ValueError):

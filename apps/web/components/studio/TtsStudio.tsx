@@ -56,7 +56,7 @@ import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
 
 type PanelId = "mode" | "voice" | "intro" | null;
 
-const MAIN_PLACEHOLDER = "正文；双人模式用 Speaker1: / Speaker2: 分行。";
+const MAIN_PLACEHOLDER = "双人模式说话人请用 Speaker1:/Speaker2: 开头并一个说话人一行";
 const TTS_REUSE_TEMPLATE_KEY = "fym_reuse_template_tts_v1";
 
 export type TtsStudioActivity = {
