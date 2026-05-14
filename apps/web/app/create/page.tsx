@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { IconMic, IconTts } from "../../components/NavIcons";
+import { IconClip, IconMic, IconShownotes, IconTts } from "../../components/NavIcons";
 import type { PodcastStudioActivity } from "../../components/studio/PodcastStudio";
 import type { TtsStudioActivity } from "../../components/studio/TtsStudio";
 
@@ -43,6 +43,7 @@ import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
 import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../components/studio/CreateStudioIdleShell";
+import { marketingSiteUrl } from "../../lib/marketingSiteUrl";
 
 type HotTopicAssistantItem = { label: string; text: string };
 
@@ -270,6 +271,14 @@ export default function CreatePage() {
 
   const templateGalleryWorks = useMemo(() => [...serverPodcastTemplates], [serverPodcastTemplates]);
 
+  const shownotesMarketingUrl = useMemo(() => {
+    const base = marketingSiteUrl().replace(/\/$/, "");
+    return `${base}/shownotes`;
+  }, []);
+
+  const createQuickLinkClass =
+    "inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm";
+
   return (
     <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-12 pt-3 sm:px-4 sm:pt-6">
       <div className="mx-auto w-full max-w-3xl">
@@ -296,7 +305,7 @@ export default function CreatePage() {
           <label className="sr-only" htmlFor="create-draft">
             输入主题或正文
           </label>
-          {/* 角标摘要仅叠在正文框内，模式条独立在下方，避免遮挡「创作播客 / 文本转语音」 */}
+          {/* 角标摘要仅叠在正文框内，模式条独立在下方，避免遮挡模式与快捷入口 */}
           <div className="overflow-hidden rounded-xl bg-fill ring-brand/20 focus-within:ring-2">
             <div className="relative">
               <textarea
@@ -344,6 +353,18 @@ export default function CreatePage() {
                   </button>
                 );
               })}
+              <Link href="/clip" className={createQuickLinkClass}>
+                <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                  <IconClip width={16} height={16} />
+                </span>
+                {t("create.quickLink.clip")}
+              </Link>
+              <a href={shownotesMarketingUrl} className={createQuickLinkClass}>
+                <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                  <IconShownotes width={16} height={16} />
+                </span>
+                {t("create.quickLink.shownotes")}
+              </a>
             </div>
           </div>
 
