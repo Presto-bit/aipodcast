@@ -213,16 +213,16 @@ export default function HomePage() {
         Icon: IconTts
       },
       {
+        href: "/shownotes",
+        title: "制作 Shownotes",
+        desc: "上传音频、转写后生成标题与 Shownotes 正文",
+        Icon: IconShownotes
+      },
+      {
         href: "/voice?tab=clone",
         title: "音色克隆",
         desc: "前往音色管理，使用音色克隆",
         Icon: IconVoice
-      },
-      {
-        href: "/shownotes",
-        title: "Shownotes 制作",
-        desc: "上传音频并生成与作品详情一致的 Shownotes",
-        Icon: IconShownotes
       }
     ],
     []

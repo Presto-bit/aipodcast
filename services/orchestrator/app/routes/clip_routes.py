@@ -96,6 +96,7 @@ from ..security import verify_internal_signature
 from ..share_publish_llm import (
     clip_transcript_words_to_script_raw,
     format_clip_words_chapter_timeline_hint,
+    generate_clip_episode_title_options,
     generate_share_rss_ai_copy,
     refine_share_show_notes_with_prompt,
 )
@@ -661,6 +662,39 @@ def clip_share_ai_copy(project_id: str, request: Request, body: dict[str, Any] |
         "show_notes": show_notes_out,
         "trace_id": pack.get("trace_id"),
     }
+
+
+@router.post("/clip/projects/{project_id}/title-suggestions")
+def clip_title_suggestions(project_id: str, request: Request):
+    """Shownotes 制作页：转写成功后，基于转写稿生成 3 条节目标题候选。"""
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    if str(row.get("transcription_status") or "").strip().lower() != "succeeded":
+        raise HTTPException(status_code=400, detail="transcription_not_succeeded")
+    words, excluded = _clip_words_and_excluded_for_share(row)
+    script_raw = clip_transcript_words_to_script_raw(words, excluded_ids=excluded)
+    if not script_raw.strip():
+        raise HTTPException(status_code=400, detail="no_script_for_ai_copy")
+    title_hint = str(row.get("title") or "").strip()[:300]
+    api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
+    try:
+        pack = generate_clip_episode_title_options(
+            script_raw=script_raw,
+            episode_title_hint=title_hint,
+            api_key=api_key,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)[:200]) from exc
+    except Exception as exc:
+        logger.warning("clip_title_suggestions failed project_id=%s err=%s", project_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+    titles = pack.get("titles")
+    if not isinstance(titles, list):
+        titles = []
+    out_titles = [str(x or "").strip()[:120] for x in titles if str(x or "").strip()][:3]
+    return {"success": True, "titles": out_titles, "trace_id": pack.get("trace_id")}
 
 
 @router.patch("/clip/projects/{project_id}")

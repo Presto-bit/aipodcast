@@ -1,0 +1,698 @@
+"use client";
+
+import Link from "next/link";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Music2, Pause, Play, RotateCw, Save, Sparkles } from "lucide-react";
+import {
+  fetchClipProjectShareAiCopy,
+  fetchClipTitleSuggestions,
+  persistClipProjectShowNotes
+} from "../../lib/api";
+import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
+import type { ClipProjectRow } from "../../lib/clipTypes";
+import { computeSharePublishHints, reorderShowNotesGoldenQuotesAfterListen } from "../../lib/sharePublishDefaults";
+import { SHARE_SHOWNOTES_REFINE_PROMPT_PLACEHOLDER } from "../../lib/shareShownotesAiPrompt";
+import { clipProjectHasMaterial, clipProjectMasterAudioSrc } from "../../lib/shownotesClipProject";
+import {
+  appendShownotesStudioHistory,
+  loadShownotesStudioHistory,
+  type ShownotesStudioHistoryItem
+} from "../../lib/shownotesStudioHistory";
+import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
+
+export type ShownotesStudioProps = {
+  projectId: string;
+  /** 落地页嵌入：外层已有标题时可收窄布局 */
+  embedOnLanding?: boolean;
+  /** 上传时原始文件名（用于一行展示） */
+  fileLabel?: string;
+  /** 落地页：重新开始上传 */
+  onRequestNewUpload?: () => void;
+};
+
+function formatDuration(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return "—";
+  const s = Math.floor(sec);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+async function patchClipProjectTitle(projectId: string, title: string, getAuthHeaders: () => Record<string, string>) {
+  const id = encodeURIComponent(projectId);
+  const res = await fetch(`/api/clip/projects/${id}`, {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify({ title: title.slice(0, 200) })
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(t || `更新标题失败 ${res.status}`);
+  }
+}
+
+export default function ShownotesStudio({
+  projectId,
+  embedOnLanding = false,
+  fileLabel = "",
+  onRequestNewUpload
+}: ShownotesStudioProps) {
+  const { ready, user, getAuthHeaders } = useAuth();
+  const isLoggedIn = isLoggedInAccountUser(user);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  /** 用户点击「开始生成 / 重新转写」后，转写成功时自动跑标题 + 正文生成 */
+  const pendingPipelineAfterAsrRef = useRef(false);
+  const postAsrPipelineLockRef = useRef(false);
+
+  const [project, setProject] = useState<ClipProjectRow | null>(null);
+  const [loadErr, setLoadErr] = useState("");
+  const [pipelineMsg, setPipelineMsg] = useState("");
+  const [playing, setPlaying] = useState(false);
+  const [durationSec, setDurationSec] = useState(0);
+
+  const [transcribeBusy, setTranscribeBusy] = useState(false);
+  const [titleBusy, setTitleBusy] = useState(false);
+  const [genBusy, setGenBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [shareAiBusy, setShareAiBusy] = useState(false);
+
+  const [titleOptions, setTitleOptions] = useState<string[]>([]);
+  const [selectedTitleIndex, setSelectedTitleIndex] = useState(0);
+
+  const [showNotes, setShowNotes] = useState("");
+  const [notesPreviewEdit, setNotesPreviewEdit] = useState(false);
+  const [notesSubTab, setNotesSubTab] = useState<"preview" | "ai">("preview");
+
+  const [history, setHistory] = useState<ShownotesStudioHistoryItem[]>([]);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiPromptDraft, setAiPromptDraft] = useState("");
+  const [aiErr, setAiErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoadErr("");
+    try {
+      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
+        credentials: "same-origin",
+        headers: { ...getAuthHeaders() }
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; project?: ClipProjectRow; detail?: string };
+      if (!res.ok || data.success === false || !data.project) {
+        throw new Error(data.detail || `加载失败 ${res.status}`);
+      }
+      setProject(data.project);
+    } catch (e) {
+      setLoadErr(String(e instanceof Error ? e.message : e));
+    }
+  }, [getAuthHeaders, projectId]);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    void load();
+  }, [isLoggedIn, load]);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let cancelled = false;
+    const tr = (project?.transcription_status || "").toLowerCase();
+    const mergeBusy =
+      project?.audio_merge_status === "queued" || project?.audio_merge_status === "running";
+    const active = mergeBusy || tr === "queued" || tr === "running";
+    if (!active) return;
+    const id = window.setInterval(() => {
+      if (!cancelled) void load();
+    }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [isLoggedIn, load, project?.audio_merge_status, project?.transcription_status]);
+
+  useEffect(() => {
+    const s = String(project?.shownotes_markdown || "").trim();
+    if (!s) return;
+    setShowNotes(s);
+    setNotesPreviewEdit(false);
+  }, [project?.shownotes_markdown]);
+
+  useEffect(() => {
+    setHistory(loadShownotesStudioHistory(projectId));
+  }, [projectId]);
+
+  const runTranscribe = useCallback(async () => {
+    setTranscribeBusy(true);
+    setPipelineMsg("正在提交语音转写…");
+    setLoadErr("");
+    try {
+      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/transcribe`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ mode: "full" })
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+      if (!res.ok || data.success === false) throw new Error(data.detail || `转写提交失败 ${res.status}`);
+      setPipelineMsg("转写进行中，请稍候…");
+      await load();
+    } catch (e) {
+      setLoadErr(String(e instanceof Error ? e.message : e));
+      setPipelineMsg("");
+    } finally {
+      setTranscribeBusy(false);
+    }
+  }, [getAuthHeaders, load, projectId]);
+
+  const runFetchTitles = useCallback(async (): Promise<string[]> => {
+    setTitleBusy(true);
+    setLoadErr("");
+    try {
+      const data = await fetchClipTitleSuggestions(projectId);
+      const titles = (data.titles || []).filter(Boolean);
+      const list = titles.slice(0, 3);
+      setTitleOptions(list);
+      setSelectedTitleIndex(0);
+      return list;
+    } catch (e) {
+      setLoadErr(String(e instanceof Error ? e.message : e));
+      return [];
+    } finally {
+      setTitleBusy(false);
+    }
+  }, [projectId]);
+
+  const runGenShownotes = useCallback(
+    async (titlesSnapshot?: string[]) => {
+      setGenBusy(true);
+      setPipelineMsg("正在根据转写稿生成 Shownotes…");
+      setLoadErr("");
+      try {
+        const data = await fetchClipProjectShareAiCopy(projectId);
+        if (!data.success) throw new Error("生成未成功");
+        const notes = String(data.show_notes ?? "").trim();
+        if (!notes) throw new Error("返回的 Shownotes 为空");
+        setShowNotes(notes);
+        setNotesPreviewEdit(false);
+        setNotesSubTab("preview");
+        await persistClipProjectShowNotes(projectId, notes);
+        const snap = (titlesSnapshot ?? titleOptions).map((x) => String(x || "").trim()).filter(Boolean);
+        const titlesSnap = snap.length ? snap : [""];
+        const histIdx = titlesSnapshot != null ? 0 : selectedTitleIndex;
+        const nextHist = appendShownotesStudioHistory(projectId, {
+          titles: titlesSnap,
+          selectedTitleIndex: histIdx,
+          showNotes: notes
+        });
+        setHistory(nextHist);
+        await load();
+        setPipelineMsg("");
+      } catch (e) {
+        setLoadErr(String(e instanceof Error ? e.message : e));
+        setPipelineMsg("");
+      } finally {
+        setGenBusy(false);
+      }
+    },
+    [load, projectId, selectedTitleIndex, titleOptions]
+  );
+
+  const runPostAsrPipeline = useCallback(async () => {
+    if (postAsrPipelineLockRef.current) return;
+    postAsrPipelineLockRef.current = true;
+    try {
+      const titles = await runFetchTitles();
+      await runGenShownotes(titles);
+    } finally {
+      postAsrPipelineLockRef.current = false;
+    }
+  }, [runFetchTitles, runGenShownotes]);
+
+  useEffect(() => {
+    if (project?.transcription_status !== "succeeded") return;
+    if (!pendingPipelineAfterAsrRef.current) return;
+    pendingPipelineAfterAsrRef.current = false;
+    void runPostAsrPipeline();
+  }, [project?.transcription_status, runPostAsrPipeline]);
+
+  const trLower = (project?.transcription_status || "").toLowerCase();
+  const transcribeOk = project?.transcription_status === "succeeded";
+  const mergeBusy =
+    project?.audio_merge_status === "queued" || project?.audio_merge_status === "running";
+  const trRunning = trLower === "queued" || trLower === "running";
+  const hasMaterial = clipProjectHasMaterial(project);
+
+  const displayName = useMemo(() => {
+    const f = fileLabel.trim();
+    if (f) return f;
+    const t = String(project?.title || "").trim();
+    if (t && t !== "Shownotes") return t;
+    return "已上传音频";
+  }, [fileLabel, project?.title]);
+
+  const audioSrc = useMemo(() => {
+    if (!project) return null;
+    return clipProjectMasterAudioSrc(projectId, project);
+  }, [project, projectId]);
+
+  const hints = useMemo(
+    () => computeSharePublishHints(project?.title || "播客", "", showNotes),
+    [project?.title, showNotes]
+  );
+
+  const previewMarkdown = useMemo(
+    () => reorderShowNotesGoldenQuotesAfterListen(showNotes),
+    [showNotes]
+  );
+
+  const onSeekSeconds = useCallback((sec: number) => {
+    const el = audioRef.current;
+    if (!el) return;
+    el.currentTime = Math.max(0, sec);
+    void el.play().catch(() => {});
+  }, []);
+
+  const onSaveShowNotes = useCallback(async () => {
+    setSaveBusy(true);
+    setLoadErr("");
+    try {
+      await persistClipProjectShowNotes(projectId, showNotes);
+      const titlesSnap = titleOptions.length ? titleOptions : [""];
+      const nextHist = appendShownotesStudioHistory(projectId, {
+        titles: titlesSnap,
+        selectedTitleIndex,
+        showNotes
+      });
+      setHistory(nextHist);
+      await load();
+    } catch (e) {
+      setLoadErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setSaveBusy(false);
+    }
+  }, [load, projectId, selectedTitleIndex, showNotes, titleOptions]);
+
+  const applyAiRefine = useCallback(async () => {
+    const raw = aiPromptDraft.trim();
+    const userPrompt = raw || SHARE_SHOWNOTES_REFINE_PROMPT_PLACEHOLDER;
+    setShareAiBusy(true);
+    setAiErr("");
+    try {
+      const data = await fetchClipProjectShareAiCopy(projectId, {
+        showNotesOnly: true,
+        userPrompt,
+        baselineShowNotes: showNotes
+      });
+      if (!data.success) throw new Error("AI 未返回成功");
+      const notes = String(data.show_notes ?? "").trim();
+      if (!notes) throw new Error("返回内容为空");
+      setShowNotes(notes);
+      setNotesPreviewEdit(false);
+      setNotesSubTab("preview");
+      setAiModalOpen(false);
+      setAiPromptDraft("");
+    } catch (e) {
+      setAiErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setShareAiBusy(false);
+    }
+  }, [aiPromptDraft, projectId, showNotes]);
+
+  const beginAsr = useCallback(() => {
+    pendingPipelineAfterAsrRef.current = true;
+    void runTranscribe();
+  }, [runTranscribe]);
+
+  const onPickTitle = useCallback(
+    async (idx: number) => {
+      setSelectedTitleIndex(idx);
+      const t = titleOptions[idx]?.trim();
+      if (!t) return;
+      try {
+        await patchClipProjectTitle(projectId, t, getAuthHeaders);
+        await load();
+      } catch (e) {
+        setLoadErr(String(e instanceof Error ? e.message : e));
+      }
+    },
+    [getAuthHeaders, load, projectId, titleOptions]
+  );
+
+  const loadHistoryEntry = useCallback((row: ShownotesStudioHistoryItem) => {
+    setShowNotes(row.showNotes);
+    setTitleOptions(row.titles.filter(Boolean).slice(0, 3));
+    setSelectedTitleIndex(Math.min(row.selectedTitleIndex, Math.max(0, row.titles.length - 1)));
+    setNotesPreviewEdit(false);
+    setNotesSubTab("preview");
+  }, []);
+
+  const inner = (
+    <div className="space-y-6">
+      {!embedOnLanding ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-ink">制作 Shownotes</h1>
+            <p className="mt-1 text-sm text-muted">{displayName}</p>
+          </div>
+          <Link href="/shownotes" className="text-sm font-medium text-brand hover:underline">
+            返回
+          </Link>
+        </div>
+      ) : null}
+
+      {loadErr ? (
+        <p className="rounded-lg border border-danger/30 bg-danger-soft/40 px-3 py-2 text-sm text-danger-ink">{loadErr}</p>
+      ) : null}
+      {pipelineMsg ? (
+        <p className="rounded-lg border border-line bg-fill/50 px-3 py-2 text-sm text-ink" role="status">
+          {pipelineMsg}
+        </p>
+      ) : null}
+
+      {mergeBusy ? <p className="text-sm text-muted">正在处理音频，请稍候…</p> : null}
+
+      {hasMaterial && audioSrc ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-fill/25 px-3 py-2.5">
+          <Music2 className="h-5 w-5 shrink-0 text-brand" aria-hidden />
+          <audio
+            ref={audioRef}
+            className="hidden"
+            src={audioSrc}
+            preload="metadata"
+            onLoadedMetadata={() => {
+              const d = audioRef.current?.duration;
+              setDurationSec(Number.isFinite(d) ? d || 0 : 0);
+            }}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onEnded={() => setPlaying(false)}
+          />
+          <button
+            type="button"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-ink hover:bg-fill"
+            aria-label={playing ? "暂停" : "播放"}
+            onClick={() => {
+              const el = audioRef.current;
+              if (!el) return;
+              if (playing) el.pause();
+              else void el.play().catch(() => {});
+            }}
+          >
+            {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 pl-0.5" />}
+          </button>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink" title={displayName}>
+            {displayName}
+          </span>
+          <span className="shrink-0 text-xs tabular-nums text-muted">{formatDuration(durationSec)}</span>
+          <button
+            type="button"
+            disabled={transcribeBusy || !hasMaterial || trRunning || mergeBusy || transcribeOk}
+            onClick={beginAsr}
+            className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground shadow-soft hover:opacity-95 disabled:opacity-50"
+            title={transcribeOk ? "转写已完成" : undefined}
+          >
+            {transcribeBusy || trRunning ? "转写中…" : transcribeOk ? "已转写" : "开始生成"}
+          </button>
+          {transcribeOk ? (
+            <button
+              type="button"
+              disabled={transcribeBusy || trRunning || !hasMaterial}
+              onClick={() => {
+                pendingPipelineAfterAsrRef.current = true;
+                void runTranscribe();
+              }}
+              className="shrink-0 text-xs font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+            >
+              重新转写
+            </button>
+          ) : null}
+        </div>
+      ) : !project ? (
+        <p className="text-sm text-muted">加载中…</p>
+      ) : null}
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="space-y-6">
+          {transcribeOk ? (
+            <section className="rounded-2xl border border-line bg-fill/15 p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-semibold text-ink">标题</h2>
+                <button
+                  type="button"
+                  disabled={titleBusy || genBusy}
+                  onClick={() => void runFetchTitles()}
+                  className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink hover:bg-fill disabled:opacity-50"
+                >
+                  <RotateCw className={`h-3.5 w-3.5 ${titleBusy ? "animate-spin" : ""}`} />
+                  刷新
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-muted">从转写稿生成 3 条候选，点选一条会写入本条任务标题。</p>
+              <ul className="mt-4 space-y-2">
+                {(titleOptions.length ? titleOptions : ["", "", ""]).slice(0, 3).map((t, i) => (
+                  <li key={i}>
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line/80 bg-surface/80 px-3 py-2.5 hover:bg-fill/50">
+                      <input
+                        type="radio"
+                        name="sn-title"
+                        className="mt-1"
+                        checked={selectedTitleIndex === i}
+                        onChange={() => void onPickTitle(i)}
+                        disabled={!t.trim()}
+                      />
+                      <span className="text-sm leading-snug text-ink">{t.trim() || (titleBusy ? "生成中…" : "—")}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {transcribeOk ? (
+            <section className="rounded-2xl border border-line bg-fill/15 p-4 sm:p-5" aria-label="Shownotes 正文">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-semibold text-ink">Shownotes</h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={genBusy || shareAiBusy}
+                    onClick={() => void runGenShownotes()}
+                    className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink hover:bg-fill disabled:opacity-50"
+                  >
+                    {genBusy ? "生成中…" : "重新生成正文"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saveBusy || genBusy}
+                    onClick={() => void onSaveShowNotes()}
+                    className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink hover:bg-fill disabled:opacity-50"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    {saveBusy ? "保存中…" : "保存"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 flex gap-1 rounded-lg border border-line bg-fill/30 p-0.5">
+                <button
+                  type="button"
+                  className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium ${
+                    notesSubTab === "preview" ? "bg-surface text-ink shadow-soft" : "text-muted hover:bg-fill/60"
+                  }`}
+                  onClick={() => {
+                    setNotesSubTab("preview");
+                    setAiModalOpen(false);
+                  }}
+                >
+                  预览
+                </button>
+                <button
+                  type="button"
+                  className={`min-h-[2rem] flex-1 rounded-md px-2 py-1.5 text-xs font-medium disabled:opacity-40 ${
+                    notesSubTab === "ai" ? "bg-surface text-ink shadow-soft" : "text-muted hover:bg-fill/60"
+                  }`}
+                  disabled={genBusy || shareAiBusy}
+                  onClick={() => {
+                    setNotesSubTab("ai");
+                    setAiErr("");
+                    setAiModalOpen(true);
+                  }}
+                >
+                  AI 优化
+                </button>
+              </div>
+
+              {notesSubTab === "preview" ? (
+                <div className="mt-3 space-y-2">
+                  <p className="text-[11px] text-muted">双击预览区域进入编辑；支持 Markdown。</p>
+                  {notesPreviewEdit ? (
+                    <textarea
+                      className="min-h-[16rem] w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm leading-relaxed text-ink"
+                      value={showNotes}
+                      onChange={(e) => setShowNotes(e.target.value)}
+                      maxLength={20_000}
+                    />
+                  ) : (
+                    <div
+                      className="max-h-[min(70vh,28rem)] cursor-text overflow-y-auto rounded-lg border border-line bg-fill/20 p-3"
+                      onDoubleClick={() => setNotesPreviewEdit(true)}
+                    >
+                      <ShowNotesMarkdownPreview
+                        markdown={previewMarkdown}
+                        onSeekSeconds={onSeekSeconds}
+                        className="!max-h-none overflow-visible border-0 bg-transparent p-0"
+                      />
+                    </div>
+                  )}
+                  {notesPreviewEdit ? (
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-brand hover:underline"
+                      onClick={() => setNotesPreviewEdit(false)}
+                    >
+                      完成编辑
+                    </button>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-muted">在弹窗中填写优化说明并生成。</p>
+              )}
+
+              {hints.showNotesVeryShort && showNotes.trim() ? (
+                <p className="mt-2 text-[11px] text-warning-ink">Shownotes 偏短。</p>
+              ) : null}
+            </section>
+          ) : hasMaterial ? (
+            <p className="text-sm text-muted">转写完成后将显示标题候选与 Shownotes 编辑区。</p>
+          ) : null}
+        </div>
+
+        <aside className="rounded-2xl border border-line bg-fill/10 p-3 lg:sticky lg:top-4 lg:self-start">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">历史记录</h3>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted">本地保存的生成结果，点击可恢复到编辑区。</p>
+          <ul className="mt-3 max-h-[50vh] space-y-2 overflow-y-auto lg:max-h-[calc(100vh-12rem)]">
+            {history.length === 0 ? (
+              <li className="text-xs text-muted">暂无记录</li>
+            ) : (
+              history.map((h) => (
+                <li key={h.id}>
+                  <button
+                    type="button"
+                    onClick={() => loadHistoryEntry(h)}
+                    className="w-full rounded-lg border border-line/70 bg-surface/80 px-2 py-2 text-left text-xs hover:bg-fill/60"
+                  >
+                    <span className="block font-medium text-ink line-clamp-2">
+                      {h.titles[h.selectedTitleIndex]?.trim() || "（无标题）"}
+                    </span>
+                    <span className="mt-0.5 block text-[10px] text-muted">
+                      {new Date(h.savedAt).toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+        </aside>
+      </div>
+
+      {embedOnLanding && onRequestNewUpload ? (
+        <button
+          type="button"
+          onClick={onRequestNewUpload}
+          className="text-xs font-medium text-muted underline-offset-2 hover:text-ink hover:underline"
+        >
+          上传新音频
+        </button>
+      ) : null}
+
+      {aiModalOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center" role="presentation">
+              <button
+                type="button"
+                className="absolute inset-0 cursor-default"
+                aria-label="关闭"
+                onClick={() => {
+                  setAiModalOpen(false);
+                  setNotesSubTab("preview");
+                  setAiErr("");
+                }}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="sn-studio-ai-title"
+                className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-surface p-5 shadow-card"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2 id="sn-studio-ai-title" className="inline-flex items-center gap-2 text-base font-semibold text-ink">
+                  <Sparkles className="h-4 w-4 text-brand" />
+                  AI 优化 Shownotes
+                </h2>
+                <label className="mt-4 block text-sm text-muted">
+                  优化说明
+                  <textarea
+                    className="mt-1 min-h-[7rem] w-full rounded-lg border border-line bg-fill/40 px-3 py-2.5 text-sm leading-relaxed text-ink placeholder:text-muted/60"
+                    value={aiPromptDraft}
+                    placeholder={SHARE_SHOWNOTES_REFINE_PROMPT_PLACEHOLDER}
+                    onChange={(e) => {
+                      setAiPromptDraft(e.target.value);
+                      setAiErr("");
+                    }}
+                  />
+                </label>
+                {aiErr ? <p className="mt-2 text-sm text-danger-ink">{aiErr}</p> : null}
+                <div className="mt-5 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-line bg-fill/40 px-4 py-2 text-sm text-ink hover:bg-fill"
+                    onClick={() => {
+                      setAiModalOpen(false);
+                      setNotesSubTab("preview");
+                      setAiErr("");
+                    }}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-95 disabled:opacity-50"
+                    disabled={shareAiBusy}
+                    onClick={() => void applyAiRefine()}
+                  >
+                    {shareAiBusy ? "生成中…" : "生成"}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
+  );
+
+  if (embedOnLanding) {
+    if (!isLoggedIn) return null;
+    return inner;
+  }
+
+  if (!ready) {
+    return (
+      <main className="mx-auto max-w-6xl px-4 py-10">
+        <p className="text-sm text-muted">加载中…</p>
+      </main>
+    );
+  }
+
+  if (!isLoggedIn) {
+    return (
+      <main className="mx-auto max-w-6xl px-4 py-10">
+        <p className="text-sm text-muted">请先登录。</p>
+        <Link href="/home" className="mt-4 inline-block text-sm font-medium text-brand hover:underline">
+          前往工作台
+        </Link>
+      </main>
+    );
+  }
+
+  return <main className="mx-auto max-w-6xl px-4 py-8 sm:py-10">{inner}</main>;
+}

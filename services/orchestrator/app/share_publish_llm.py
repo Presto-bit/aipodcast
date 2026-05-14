@@ -1212,3 +1212,58 @@ def try_attach_auto_share_rss_to_result(
         result["auto_share_ai_generated_at"] = _utc_iso_z()
     except Exception as exc:
         logger.warning("auto_share_rss_ai failed job_id=%s: %s", job_id, exc, exc_info=True)
+
+
+def generate_clip_episode_title_options(
+    *,
+    script_raw: str,
+    episode_title_hint: str,
+    api_key: str | None = None,
+) -> dict[str, Any]:
+    """
+    Shownotes 落地页：基于转写稿生成 3 条节目标题候选（JSON）。
+    """
+    condensed = condense_script_for_share_llm(script_raw)
+    body = (condensed or "").strip()[:12_000]
+    if not body:
+        raise RuntimeError("empty_source_for_title_options")
+    hint = (episode_title_hint or "").strip()[:240]
+    system = (
+        "你是中文播客编辑。根据用户提供的口播/对谈转写节选，产出 3 个不同的「单集节目标题」候选。"
+        "要求：每个 8～36 字；风格可略有差异（信息型 / 好奇型 / 情绪型）；不要书名号套整句；不要编号前缀；"
+        "不要输出与音频无关的主题。只输出 JSON，不要 Markdown 围栏。"
+    )
+    user = (
+        (f"【参考标题】{hint}\n\n" if hint else "")
+        + "【转写节选】\n"
+        + body
+        + "\n\n严格输出 JSON 对象，格式：{\"titles\":[\"\",\"\",\"\"]}。"
+        "titles 必须恰好 3 个非空字符串。"
+    )
+    raw, trace_id = invoke_llm_chat_messages_with_minimax_fallback(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        temperature=0.55,
+        api_key=api_key,
+        timeout_sec=90,
+    )
+    text = (raw or "").strip()
+    m = re.search(r"\{[\s\S]*\}", text)
+    if not m:
+        raise RuntimeError("title_options_json_not_found")
+    try:
+        obj = json.loads(m.group(0))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("title_options_json_invalid") from exc
+    titles_raw = obj.get("titles") if isinstance(obj, dict) else None
+    if not isinstance(titles_raw, list):
+        raise RuntimeError("title_options_missing_array")
+    out: list[str] = []
+    for x in titles_raw:
+        s = str(x or "").strip()
+        if s and s not in out:
+            out.append(s[:120])
+        if len(out) >= 3:
+            break
+    while len(out) < 3:
+        out.append(hint[:36] if hint else f"第 {len(out) + 1} 集")
+    return {"titles": out[:3], "trace_id": trace_id}

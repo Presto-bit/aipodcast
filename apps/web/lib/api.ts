@@ -225,6 +225,31 @@ export async function persistClipProjectShowNotes(projectId: string, showNotes: 
   }
 }
 
+/** Shownotes 制作页：基于转写稿生成 3 条节目标题候选 */
+export async function fetchClipTitleSuggestions(projectId: string): Promise<{
+  success: boolean;
+  titles?: string[];
+  trace_id?: string | null;
+}> {
+  const id = encodeURIComponent(String(projectId || "").trim());
+  const resp = await fetch(`/api/clip/projects/${id}/title-suggestions`, {
+    method: "POST",
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: authMerge({ "Content-Type": "application/json" }),
+    body: "{}"
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(formatOrchestratorErrorText(text) || `标题生成失败 ${resp.status}`);
+  }
+  try {
+    return JSON.parse(text) as { success: boolean; titles?: string[]; trace_id?: string | null };
+  } catch {
+    throw new Error(text.trim() || "标题响应无效");
+  }
+}
+
 /** 分享 / RSS：按服务端 TEXT_PROVIDER 生成简介与 Show Notes（Markdown）；或仅按提词重写 Shownotes */
 export async function fetchJobShareAiCopy(
   jobId: string,
