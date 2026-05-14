@@ -1,7 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import DeployVersionSync from "../components/DeployVersionSync";
 import AppShell from "../components/AppShell";
 import FirstLoginCoach from "../components/onboarding/FirstLoginCoach";
@@ -82,7 +82,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           <AuthProvider>
             <AppNoticeProvider>
               <WorkAudioPlayerProvider>
-                <AppShell>{children}</AppShell>
+                <Suspense fallback={null}>
+                  <AppShell>{children}</AppShell>
+                </Suspense>
                 <FirstLoginCoach />
               </WorkAudioPlayerProvider>
             </AppNoticeProvider>

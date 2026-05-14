@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
   useCallback,
@@ -10,8 +10,11 @@ import {
   useMemo,
   useRef,
   useState,
+  Fragment,
   type ComponentType,
-  type ReactNode
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction
 } from "react";
 import {
   IconClip,
@@ -138,6 +141,111 @@ function NavIconBox({ active, children }: { active: boolean; children: ReactNode
   );
 }
 
+function navCreateSubLinkClass(active: boolean): string {
+  return [
+    "group flex w-full items-center gap-2 rounded-dawn-md border-l-2 py-1.5 pl-1.5 pr-2 text-xs leading-snug text-inherit no-underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
+    active ? "border-brand/80 bg-fill text-ink" : "border-transparent text-muted hover:bg-fill hover:text-ink"
+  ].join(" ");
+}
+
+type CreateStudioNavExpandedProps = {
+  item: NavItem;
+  path: string;
+  createSubNavExpanded: boolean;
+  setCreateSubNavExpanded: Dispatch<SetStateAction<boolean>>;
+};
+
+function CreateStudioNavExpanded({
+  item,
+  path,
+  createSubNavExpanded,
+  setCreateSubNavExpanded
+}: CreateStudioNavExpandedProps) {
+  const { t } = useI18n();
+  const searchParams = useSearchParams();
+  const notesHard = isNotesPrimaryWorkbenchPath(path);
+  const tab = searchParams?.get("tab") ?? null;
+  const voiceCloneActive = pathMatchesRoot(path, "/voice") && tab === "clone";
+
+  const parentActive = matchesProductStudio(path);
+  const Ic = item.Icon;
+  const parentTip = item.linkTitle ?? item.label;
+
+  const parentInner = (
+    <>
+      <NavIconBox active={parentActive}>
+        <Ic />
+      </NavIconBox>
+      <span className="min-w-0 flex-1 truncate text-left leading-snug">{item.label}</span>
+    </>
+  );
+
+  const parentClass = [navButtonClass(parentActive, false), "min-w-0 flex-1 rounded-r-none border-r-0 pr-1"].join(" ");
+
+  const subs: { href: string; label: string; active: boolean }[] = [
+    { href: "/clip", label: t("create.quickLink.clip"), active: pathMatchesRoot(path, "/clip") },
+    { href: "/shownotes", label: t("create.quickLink.shownotes"), active: pathMatchesRoot(path, "/shownotes") },
+    { href: "/voice?tab=clone", label: t("create.quickLink.voiceClone"), active: voiceCloneActive }
+  ];
+
+  return (
+    <div className="flex w-full flex-col gap-0.5">
+      <div className="flex w-full min-w-0 items-stretch">
+        {notesHard ? (
+          <a href="/create" className={parentClass} title={parentTip}>
+            {parentInner}
+          </a>
+        ) : (
+          <Link href="/create" prefetch={false} className={parentClass} title={parentTip}>
+            {parentInner}
+          </Link>
+        )}
+        <button
+          type="button"
+          className="flex w-9 shrink-0 items-center justify-center self-stretch rounded-r-dawn-md border border-l border-line/60 text-muted transition hover:bg-fill hover:text-ink"
+          aria-expanded={createSubNavExpanded}
+          aria-controls="fym-create-studio-subnav"
+          aria-label={t("nav.createSubNavToggle")}
+          onClick={() => setCreateSubNavExpanded((v) => !v)}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden
+            className={`shrink-0 transition-transform duration-200 motion-reduce:transition-none ${createSubNavExpanded ? "rotate-180" : ""}`}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
+      </div>
+      {createSubNavExpanded ? (
+        <div
+          id="fym-create-studio-subnav"
+          role="group"
+          aria-label={t("nav.createSubNavGroup")}
+          className="ml-0.5 flex flex-col gap-0.5 border-l border-line/70 pl-2"
+        >
+          {subs.map((s) =>
+            notesHard ? (
+              <a key={s.href} href={s.href} className={navCreateSubLinkClass(s.active)} title={s.label}>
+                <span className="min-w-0 truncate">{s.label}</span>
+              </a>
+            ) : (
+              <Link key={s.href} href={s.href} prefetch={false} className={navCreateSubLinkClass(s.active)} title={s.label}>
+                <span className="min-w-0 truncate">{s.label}</span>
+              </Link>
+            )
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const path = pathname ?? "";
@@ -155,6 +263,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
    * 曾出现「只有个别侧栏项可点」的命中错乱）。
    */
   const [sidebarPortaled, setSidebarPortaled] = useState(false);
+  const [createSubNavExpanded, setCreateSubNavExpanded] = useState(true);
   const navPrimary = useMemo<NavItem[]>(
     () => [{ href: WORKBENCH_HOME_PATH, label: t("nav.home"), short: "首", Icon: IconHome }],
     [t]
@@ -263,6 +372,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setMobileNavOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (pathMatchesRoot(path, "/create")) setCreateSubNavExpanded(true);
+  }, [path]);
 
   useEffect(() => {
     if (!mobileLayout || !mobileNavOpen) return;
@@ -559,7 +672,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       >
         {navPrimary.map(renderSidebarNavItem)}
         <NavSectionHeader collapsed={collapsed}>{t("nav.products")}</NavSectionHeader>
-        {navProducts.map(renderSidebarNavItem)}
+        {navProducts.map((item) =>
+          item.href === "/create" ? (
+            <Fragment key={item.href}>
+              {collapsed ? (
+                renderSidebarNavItem(item)
+              ) : (
+                <CreateStudioNavExpanded
+                  item={item}
+                  path={path}
+                  createSubNavExpanded={createSubNavExpanded}
+                  setCreateSubNavExpanded={setCreateSubNavExpanded}
+                />
+              )}
+            </Fragment>
+          ) : (
+            renderSidebarNavItem(item)
+          )
+        )}
         <NavSectionHeader collapsed={collapsed}>{t("nav.library")}</NavSectionHeader>
         {navLibrary.map(renderSidebarNavItem)}
       </nav>
