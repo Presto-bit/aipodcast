@@ -9,16 +9,26 @@ import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 
 const SCENARIO_CARDS = [
   {
+    title: "播客创作者",
+    lines: [
+      "无稿想快写稿子：上传电子书、资料等，或直接给出你的观点。",
+      "有稿想快出节目：支持设置片头片尾与音色、超长音频；自动 Shownotes、金句，可按文字剪辑。",
+      "得到：更快拿到能发的成片和配套文案。"
+    ]
+  },
+  {
     title: "知识博主",
-    body: "系列选题与口播脚本沉淀在一处，资料互相关联，便于做成连贯播客与专栏。"
+    lines: [
+      "先勾选本轮资料为「唯一依据」，再按对标文风写深度稿，并一键改出小红书向短文案。",
+      "得到：有料、好读、少空写、少反复洗稿。"
+    ]
   },
   {
-    title: "机构与团队",
-    body: "报告、官网与内部文档转为可分发内容，引用可追溯，方便统一口径与对外沟通。"
-  },
-  {
-    title: "独立创作者",
-    body: "少在工具链之间来回导出，从资料到 Shownotes、社媒博文与多角色播客尽量一条线完成。"
+    title: "备考与研究",
+    lines: [
+      "厚 PDF / 讲义 / 论文堆在一起：集中提问、要提纲与考点，带引用核对后再记笔记。",
+      "得到：吃得快、记得牢、出处心里踏实。"
+    ]
   }
 ] as const;
 
@@ -35,10 +45,10 @@ export default function MarketingLandingPage() {
       <header className="relative z-[1] mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 pb-6 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6 sm:pb-8 sm:pt-8">
         <Link
           href="/"
-          className="flex items-center gap-2.5 rounded-lg p-1 transition hover:bg-fill/80"
+          className="flex items-center gap-3 rounded-lg p-1 transition hover:bg-fill/80 sm:gap-3.5"
           aria-label="访问官网首页"
         >
-          <BrandGlyph size={40} className="rounded-md shadow-soft" />
+          <BrandGlyph size={56} className="rounded-xl shadow-soft" />
           <span className="text-base font-semibold tracking-tight sm:text-lg">灵感不设限，创作即刻起</span>
         </Link>
         <nav className="flex flex-wrap items-center justify-end gap-2 sm:gap-3" aria-label="营销页导航">
@@ -111,7 +121,7 @@ export default function MarketingLandingPage() {
               </p>
             ) : null}
           </div>
-          <div className="mx-auto flex w-full max-w-[440px] justify-center lg:mx-0 lg:max-w-none lg:justify-end">
+          <div className="mx-auto flex w-full max-w-[480px] justify-center lg:mx-0 lg:max-w-none lg:justify-end">
             <MarketingHeroIllustration />
           </div>
         </section>
@@ -127,7 +137,7 @@ export default function MarketingLandingPage() {
             典型场景
           </h2>
           <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-muted md:max-w-3xl">
-            以下为常见用法示意，便于快速对号入座；具体能力以产品内为准。
+            对应知识库、创作与成片归档等真实入口；具体以产品内为准。
           </p>
           <div className="mt-8 grid gap-4 sm:grid-cols-3 sm:gap-5">
             {SCENARIO_CARDS.map((card) => (
@@ -136,7 +146,11 @@ export default function MarketingLandingPage() {
                 className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6"
               >
                 <h3 className="text-base font-semibold text-ink">{card.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-muted">{card.body}</p>
+                <div className="mt-2 space-y-2 text-sm leading-relaxed text-muted">
+                  {card.lines.map((line, i) => (
+                    <p key={i}>{line}</p>
+                  ))}
+                </div>
               </article>
             ))}
           </div>
