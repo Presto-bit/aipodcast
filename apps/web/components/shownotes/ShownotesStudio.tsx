@@ -108,6 +108,7 @@ export default function ShownotesStudio({
   draftFlushRef.current = { showNotes, titleOptions, selectedTitleIndex };
 
   const shownotesRestoreKeyRef = useRef<string>("");
+  const materialPollTicksRef = useRef(0);
 
   const load = useCallback(async () => {
     setLoadErr("");
@@ -147,6 +148,33 @@ export default function ShownotesStudio({
       window.clearInterval(id);
     };
   }, [isLoggedIn, load, project?.audio_merge_status, project?.transcription_status]);
+
+  useEffect(() => {
+    materialPollTicksRef.current = 0;
+  }, [projectId]);
+
+  /** stage 上传完成前首次 GET 可能仍无素材；在转写/合并未激活时也要轮询刷新 */
+  useEffect(() => {
+    if (!isLoggedIn || !project) return;
+    if (clipProjectHasMaterial(project)) {
+      materialPollTicksRef.current = 0;
+      return;
+    }
+    let cancelled = false;
+    const id = window.setInterval(() => {
+      if (cancelled) return;
+      materialPollTicksRef.current += 1;
+      if (materialPollTicksRef.current > 80) {
+        window.clearInterval(id);
+        return;
+      }
+      void load();
+    }, 1200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [isLoggedIn, load, project, projectId]);
 
   useEffect(() => {
     shownotesRestoreKeyRef.current = "";
