@@ -109,7 +109,8 @@ export default function ClipEditorPrdLeftRail({
       if (!data.success) {
         throw new Error("服务端未返回成功状态");
       }
-      const notes = String(data.show_notes ?? "").trim();
+      const notes =
+        String(data.show_notes ?? "").trim() || String(data.summary ?? "").trim();
       if (!notes) {
         throw new Error("返回的 Shownotes 为空");
       }

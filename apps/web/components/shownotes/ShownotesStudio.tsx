@@ -298,7 +298,8 @@ export default function ShownotesStudio({
       try {
         const data = await fetchClipProjectShareAiCopy(projectId);
         if (!data.success) throw new Error("生成未成功");
-        const notes = String(data.show_notes ?? "").trim();
+        const notes =
+          String(data.show_notes ?? "").trim() || String(data.summary ?? "").trim();
         if (!notes) throw new Error("返回的 Shownotes 为空");
         setShowNotes(notes);
         setNotesPreviewEdit(false);
@@ -413,7 +414,8 @@ export default function ShownotesStudio({
         baselineShowNotes: showNotes
       });
       if (!data.success) throw new Error("AI 未返回成功");
-      const notes = String(data.show_notes ?? "").trim();
+      const notes =
+        String(data.show_notes ?? "").trim() || String(data.summary ?? "").trim();
       if (!notes) throw new Error("返回内容为空");
       setShowNotes(notes);
       setNotesPreviewEdit(false);

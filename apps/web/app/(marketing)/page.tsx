@@ -100,7 +100,7 @@ export default function MarketingLandingPage() {
               </span>
             </h1>
             <p className="mx-auto mt-4 max-w-2xl text-pretty text-sm leading-relaxed text-muted sm:text-base md:mt-5 md:max-w-3xl lg:mx-0 lg:max-w-3xl">
-              以电子书、网页、文档等资料为根基，一键生成文章、播客、Shownotes 等可分发内容；答案带来源引用，减轻幻觉顾虑。
+              以电子书、网页、文档等资料为根基，一键生成文章、播客、Shownotes 等可分发内容；回答带来源引用，减轻幻觉顾虑。
             </p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
               <Link

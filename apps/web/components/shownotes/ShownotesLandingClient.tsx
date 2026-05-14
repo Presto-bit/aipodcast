@@ -87,7 +87,7 @@ export default function ShownotesLandingClient() {
       {err ? <p className="mt-4 text-sm text-danger-ink" role="alert">{err}</p> : null}
 
       {!activeProjectId ? (
-        <div className="mt-8 max-w-xl">
+        <div className="mt-8 w-full max-w-3xl">
           <input
             ref={inputRef}
             type="file"
@@ -111,7 +111,7 @@ export default function ShownotesLandingClient() {
             <span className="text-sm font-medium text-ink">{uploadBusy ? "创建任务并上传中…" : "点击上传音频"}</span>
           </button>
           <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted">
-            <li>支持 MP3、WAV、M4A 等常见格式；创建任务后会尽快进入工作台，大文件上传可能仍持续数秒。</li>
+            <li>支持 MP3、WAV、M4A 等常见格式；上传音频后可自动生成 Shownotes。</li>
             <li>请点击「开始生成」发起转写；转写与模型调用需保持页面打开。</li>
           </ul>
         </div>
