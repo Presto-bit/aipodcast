@@ -76,6 +76,8 @@ export function apiErrorMessage(data: unknown, fallback: string): string {
 export function softenBareErrorLineForUi(message: string): string {
   const t = (message || "").trim();
   if (!t) return t;
+  const htmlMsg = humanizeUpstreamHtmlErrorBody(t);
+  if (htmlMsg) return htmlMsg;
   if (t === "http_exception" || t === "internal_server_error") {
     return KNOWN_ERROR_CODES[t] ?? "服务暂时不可用，请稍后重试。";
   }
@@ -106,7 +108,7 @@ function mapTextProviderConfigHint(message: string): string | undefined {
 }
 
 /** CDN/Nginx/Tengine 等返回的整页 HTML 错误（避免把 DOCTYPE 当主文案重复刷屏） */
-function looksLikeUpstreamHtmlErrorPage(s: string): boolean {
+export function looksLikeUpstreamHtmlErrorPage(s: string): boolean {
   const t = (s || "").trim().toLowerCase();
   if (!t) return false;
   if (t.includes("<!doctype html") || t.includes("<!doctype ")) return true;
@@ -116,6 +118,19 @@ function looksLikeUpstreamHtmlErrorPage(s: string): boolean {
   if (t.includes("gateway time-out") && t.includes("tengine")) return true;
   if (t.includes("504 gateway") || t.includes("502 bad gateway")) return true;
   return false;
+}
+
+/** BFF/反代返回 HTML 错误页时，替换为简短中文（用于 `formatOrchestratorErrorText`、落地页 fetch 等） */
+export function humanizeUpstreamHtmlErrorBody(raw: string): string | null {
+  const t = (raw || "").trim();
+  if (!looksLikeUpstreamHtmlErrorPage(t)) return null;
+  if (/504|524|gateway\s*time-?out/i.test(t)) {
+    return "网关超时（504）：上游未及时响应，请稍后重试；若文件较大或链路繁忙，请稍候再试。";
+  }
+  if (/502|bad\s*gateway/i.test(t)) {
+    return "网关错误（502）：服务暂时不可用，请稍后重试。";
+  }
+  return "服务暂时不可用，请稍后重试。";
 }
 
 /**

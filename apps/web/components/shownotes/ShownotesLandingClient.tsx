@@ -5,6 +5,7 @@ import { Plus } from "lucide-react";
 import { useRef, useState } from "react";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
+import { formatOrchestratorErrorText } from "../../lib/api";
 import { SHOWNOTES_ONLY_CLIP_PROJECT_TITLE } from "../../lib/shownotesClipProject";
 import { ShownotesBrandHeading } from "./ShownotesBrandHeading";
 import ShownotesStudio from "./ShownotesStudio";
@@ -29,11 +30,21 @@ export default function ShownotesLandingClient() {
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ title: SHOWNOTES_ONLY_CLIP_PROJECT_TITLE })
       });
-      const data = (await res.json().catch(() => ({}))) as { success?: boolean; project?: { id?: string }; detail?: string };
-      if (!res.ok || data.success === false || !data.project?.id) {
-        throw new Error(data.detail || `创建任务失败 ${res.status}`);
+      const createText = await res.text();
+      let createData: { success?: boolean; project?: { id?: string }; detail?: string } = {};
+      try {
+        if (createText.trim().startsWith("{")) createData = JSON.parse(createText) as typeof createData;
+      } catch {
+        /* 非 JSON（如网关 HTML） */
       }
-      const projectId = String(data.project.id);
+      if (!res.ok || createData.success === false || !createData.project?.id) {
+        const detail =
+          typeof createData.detail === "string" && createData.detail.trim()
+            ? createData.detail.trim()
+            : formatOrchestratorErrorText(createText);
+        throw new Error(detail || `创建任务失败 ${res.status}`);
+      }
+      const projectId = String(createData.project.id);
       setActiveProjectId(projectId);
 
       const stage = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
@@ -46,9 +57,19 @@ export default function ShownotesLandingClient() {
         },
         body: file
       });
-      const stData = (await stage.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+      const stageText = await stage.text();
+      let stData: { success?: boolean; detail?: string } = {};
+      try {
+        if (stageText.trim().startsWith("{")) stData = JSON.parse(stageText) as typeof stData;
+      } catch {
+        /* 非 JSON */
+      }
       if (!stage.ok || stData.success === false) {
-        throw new Error(stData.detail || `上传失败 ${stage.status}`);
+        const detail =
+          typeof stData.detail === "string" && stData.detail.trim()
+            ? stData.detail.trim()
+            : formatOrchestratorErrorText(stageText);
+        throw new Error(detail || `上传失败 ${stage.status}`);
       }
     } catch (e) {
       setUploadedFileLabel("");

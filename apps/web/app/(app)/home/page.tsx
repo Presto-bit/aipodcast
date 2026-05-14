@@ -214,8 +214,8 @@ export default function HomePage() {
       },
       {
         href: "/shownotes",
-        title: "把你的音频自动生成 Shownotes",
-        desc: "上传音频、转写后生成标题与 Shownotes 正文",
+        title: "生成 Shownotes",
+        desc: "把你的音频自动生成 Shownotes",
         Icon: IconShownotes
       },
       {

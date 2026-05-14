@@ -522,7 +522,7 @@ export default function ShownotesStudio({
   );
 
   const inner = (
-    <div className="space-y-6">
+    <div className={embedOnLanding ? "max-w-3xl space-y-6" : "space-y-6"}>
       {!embedOnLanding ? (
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -623,7 +623,7 @@ export default function ShownotesStudio({
         </section>
       ) : null}
 
-      <div className="max-w-3xl space-y-0">
+      <div className={embedOnLanding ? "space-y-0" : "max-w-3xl space-y-0"}>
         {transcribeOk ? (
           <>
             <section aria-label="标题" className="border-b border-line/50 py-6">

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -93,7 +93,7 @@ export default function CreatePage() {
   const [serverPodcastTemplates, setServerPodcastTemplates] = useState<WorkItem[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesErr, setTemplatesErr] = useState("");
-  const [podcastToolsOpen, setPodcastToolsOpen] = useState(true);
+  const [podcastToolsOpen, setPodcastToolsOpen] = useState(false);
 
   useLayoutEffect(() => {
     if (isLoggedIn) return;
@@ -283,7 +283,7 @@ export default function CreatePage() {
 
   return (
     <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-12 pt-3 sm:px-4 sm:pt-6">
-      <div className={`mx-auto w-full ${mode === "podcast" ? "max-w-6xl" : "max-w-3xl"}`}>
+      <div className="mx-auto w-full max-w-3xl">
       <header className="mb-6 sm:mb-10">
         {createPageEyebrow ? (
           <p className="text-xs font-semibold uppercase tracking-wider text-muted">{createPageEyebrow}</p>
@@ -302,157 +302,125 @@ export default function CreatePage() {
         ) : null}
       </header>
 
+      {mode === "podcast" ? (
+        <div className="mx-auto mb-3 w-full max-w-3xl overflow-hidden rounded-xl border border-line bg-fill/25">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition hover:bg-fill/50 sm:px-4"
+            aria-expanded={podcastToolsOpen}
+            onClick={() => setPodcastToolsOpen((o) => !o)}
+          >
+            <span className="text-xs font-semibold text-ink">播客工具</span>
+            <ChevronDown
+              className={`h-4 w-4 shrink-0 text-muted transition-transform duration-200 ${podcastToolsOpen ? "rotate-180" : ""}`}
+              aria-hidden
+            />
+          </button>
+          {podcastToolsOpen ? (
+            <div className="border-t border-line px-3 pb-3 pt-2 sm:px-4">
+              <nav className="flex flex-wrap gap-2" aria-label="播客工具">
+                <Link
+                  href="/clip"
+                  className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                    <IconClip width={16} height={16} />
+                  </span>
+                  {t("create.quickLink.clip")}
+                </Link>
+                <a
+                  href={shownotesMarketingUrl}
+                  className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                    <IconShownotes width={16} height={16} />
+                  </span>
+                  {t("create.quickLink.shownotes")}
+                </a>
+                <Link
+                  href="/voice?tab=clone"
+                  className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
+                >
+                  <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                    <IconVoice width={16} height={16} />
+                  </span>
+                  音色克隆
+                </Link>
+              </nav>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <section className="fym-surface-card overflow-visible">
         <div className="p-4 sm:p-5">
           <label className="sr-only" htmlFor="create-draft">
             输入主题或正文
           </label>
-          <div
-            className={[
-              "gap-3",
-              mode === "podcast" ? "flex flex-col lg:flex-row lg:items-stretch" : "flex flex-col"
-            ].join(" ")}
-          >
-            <div className="min-w-0 flex-1">
-              {/* 角标摘要仅叠在正文框内，模式条独立在下方，避免遮挡模式与快捷入口 */}
-              <div className="overflow-hidden rounded-xl bg-fill ring-brand/20 focus-within:ring-2">
-                <div className="relative">
-                  <textarea
-                    id="create-draft"
-                    className={[
-                      "min-h-[min(22vh,140px)] w-full resize-y border-0 bg-transparent p-4 text-sm leading-relaxed text-ink placeholder:text-muted focus:outline-none focus:ring-0 md:min-h-[160px]",
-                      libraryPreview.trim() ? "pb-14 sm:pb-16" : "pb-4"
-                    ].join(" ")}
-                    placeholder={DRAFT_PLACEHOLDER}
-                    value={draftText}
-                    onChange={(e) => setDraftText(e.target.value)}
-                  />
-                  {libraryPreview.trim() ? (
-                    <div
-                      className="absolute bottom-2 left-2 right-2 z-[1] max-h-14 min-h-0 overflow-y-auto rounded-md border border-line/60 bg-surface/95 px-2 py-1.5 text-[10px] leading-snug text-muted shadow-sm backdrop-blur-sm sm:max-h-[4.5rem]"
-                      title={`已选资料 · ${libraryPreview}`}
-                    >
-                      <span className="text-muted">已选资料 · </span>
-                      <span className="break-words text-ink/85">{libraryPreview}</span>
-                    </div>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap items-center gap-2 bg-surface/95 px-3 py-2.5 backdrop-blur-sm">
-                  {(
-                    [
-                      { id: "podcast" as const, title: t("create.card.podcast.title"), Icon: IconMic },
-                      { id: "tts" as const, title: t("create.card.tts.title"), Icon: IconTts }
-                    ] as const
-                  ).map((row) => {
-                    const on = mode === row.id;
-                    return (
-                      <button
-                        key={row.id}
-                        type="button"
-                        onClick={() => setMode((m) => (m === row.id ? null : row.id))}
-                        className={[
-                          "inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition sm:text-sm",
-                          on ? "border-brand/50 bg-brand/10 text-brand" : "border-line bg-surface text-ink hover:border-brand/30 hover:bg-fill"
-                        ].join(" ")}
-                      >
-                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                          <row.Icon width={16} height={16} />
-                        </span>
-                        {row.title}
-                      </button>
-                    );
-                  })}
-                  {mode === "podcast" ? null : (
-                    <>
-                      <Link href="/clip" className={createQuickLinkClass}>
-                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                          <IconClip width={16} height={16} />
-                        </span>
-                        {t("create.quickLink.clip")}
-                      </Link>
-                      <a href={shownotesMarketingUrl} className={createQuickLinkClass}>
-                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                          <IconShownotes width={16} height={16} />
-                        </span>
-                        {t("create.quickLink.shownotes")}
-                      </a>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {mode === "podcast" ? (
-              <aside
+          <div className="overflow-hidden rounded-xl bg-fill ring-brand/20 focus-within:ring-2">
+            <div className="relative">
+              <textarea
+                id="create-draft"
                 className={[
-                  "flex shrink-0 flex-col border-line lg:border-l lg:pl-3",
-                  podcastToolsOpen ? "w-full lg:w-[13.5rem]" : "w-full lg:w-10"
+                  "min-h-[min(22vh,140px)] w-full resize-y border-0 bg-transparent p-4 text-sm leading-relaxed text-ink placeholder:text-muted focus:outline-none focus:ring-0 md:min-h-[160px]",
+                  libraryPreview.trim() ? "pb-14 sm:pb-16" : "pb-4"
                 ].join(" ")}
-                aria-label="播客工具"
-              >
-                {podcastToolsOpen ? (
-                  <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-line bg-fill/30 p-3 lg:rounded-l-none lg:border-l-0 lg:bg-transparent lg:p-0 lg:pl-1">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-muted">播客工具</span>
-                      <button
-                        type="button"
-                        className="rounded-md p-1 text-muted hover:bg-fill hover:text-ink"
-                        title="收起"
-                        aria-label="收起播客工具"
-                        onClick={() => setPodcastToolsOpen(false)}
-                      >
-                        <ChevronRight className="h-4 w-4" aria-hidden />
-                      </button>
-                    </div>
-                    <nav className="flex flex-col gap-2">
-                      <Link
-                        href="/clip"
-                        className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
-                      >
-                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                          <IconClip width={16} height={16} />
-                        </span>
-                        {t("create.quickLink.clip")}
-                      </Link>
-                      <a
-                        href={shownotesMarketingUrl}
-                        className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
-                      >
-                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                          <IconShownotes width={16} height={16} />
-                        </span>
-                        {t("create.quickLink.shownotes")}
-                      </a>
-                      <Link
-                        href="/voice?tab=clone"
-                        className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
-                      >
-                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                          <IconVoice width={16} height={16} />
-                        </span>
-                        音色克隆
-                      </Link>
-                    </nav>
-                  </div>
-                ) : (
-                  <div className="flex justify-end lg:h-full lg:flex-col lg:items-center lg:justify-start lg:pt-1">
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-2 text-xs font-medium text-muted shadow-sm hover:border-brand/30 hover:text-ink lg:flex-col lg:px-1 lg:py-3"
-                      title="展开播客工具"
-                      aria-expanded={false}
-                      onClick={() => setPodcastToolsOpen(true)}
-                    >
-                      <ChevronLeft className="h-4 w-4 shrink-0 lg:hidden" aria-hidden />
-                      <span className="max-w-[10rem] truncate sm:max-w-none lg:max-w-[2.5rem] lg:whitespace-normal lg:text-center lg:leading-snug">
-                        播客工具
-                      </span>
-                      <ChevronLeft className="hidden h-4 w-4 shrink-0 lg:block" aria-hidden />
-                    </button>
-                  </div>
-                )}
-              </aside>
-            ) : null}
+                placeholder={DRAFT_PLACEHOLDER}
+                value={draftText}
+                onChange={(e) => setDraftText(e.target.value)}
+              />
+              {libraryPreview.trim() ? (
+                <div
+                  className="absolute bottom-2 left-2 right-2 z-[1] max-h-14 min-h-0 overflow-y-auto rounded-md border border-line/60 bg-surface/95 px-2 py-1.5 text-[10px] leading-snug text-muted shadow-sm backdrop-blur-sm sm:max-h-[4.5rem]"
+                  title={`已选资料 · ${libraryPreview}`}
+                >
+                  <span className="text-muted">已选资料 · </span>
+                  <span className="break-words text-ink/85">{libraryPreview}</span>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 bg-surface/95 px-3 py-2.5 backdrop-blur-sm">
+              {(
+                [
+                  { id: "podcast" as const, title: t("create.card.podcast.title"), Icon: IconMic },
+                  { id: "tts" as const, title: t("create.card.tts.title"), Icon: IconTts }
+                ] as const
+              ).map((row) => {
+                const on = mode === row.id;
+                return (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => setMode((m) => (m === row.id ? null : row.id))}
+                    className={[
+                      "inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition sm:text-sm",
+                      on ? "border-brand/50 bg-brand/10 text-brand" : "border-line bg-surface text-ink hover:border-brand/30 hover:bg-fill"
+                    ].join(" ")}
+                  >
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                      <row.Icon width={16} height={16} />
+                    </span>
+                    {row.title}
+                  </button>
+                );
+              })}
+              {mode === "podcast" ? null : (
+                <>
+                  <Link href="/clip" className={createQuickLinkClass}>
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                      <IconClip width={16} height={16} />
+                    </span>
+                    {t("create.quickLink.clip")}
+                  </Link>
+                  <a href={shownotesMarketingUrl} className={createQuickLinkClass}>
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                      <IconShownotes width={16} height={16} />
+                    </span>
+                    {t("create.quickLink.shownotes")}
+                  </a>
+                </>
+              )}
+            </div>
           </div>
 
           {!mode ? null : (

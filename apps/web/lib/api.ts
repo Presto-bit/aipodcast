@@ -1,4 +1,5 @@
 import { getBearerAuthHeadersSync } from "./authHeaders";
+import { humanizeUpstreamHtmlErrorBody } from "./apiError";
 import { JobRecord, JobStatus } from "./types";
 
 function authMerge(headers?: Record<string, string>): Record<string, string> {
@@ -8,6 +9,8 @@ function authMerge(headers?: Record<string, string>): Record<string, string> {
 /** 同步解析编排器常见 JSON 错误体（FastAPI detail 字符串等） */
 export function formatOrchestratorErrorText(rawText: string): string {
   const trimmed = rawText.trim();
+  const htmlMsg = humanizeUpstreamHtmlErrorBody(trimmed);
+  if (htmlMsg) return htmlMsg;
   if (trimmed.startsWith("{")) {
     try {
       const j = JSON.parse(trimmed) as { detail?: unknown; error?: unknown; message?: unknown };
