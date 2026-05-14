@@ -38,6 +38,10 @@ export function saveShownotesStudioHistory(projectId: string, items: ShownotesSt
   }
 }
 
+export function clearShownotesStudioHistory(projectId: string): void {
+  saveShownotesStudioHistory(projectId, []);
+}
+
 export function clearShownotesStudioDraft(projectId: string): void {
   try {
     writeLocalStorageScoped(draftKey(projectId), "");

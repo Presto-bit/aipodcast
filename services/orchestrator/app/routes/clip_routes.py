@@ -790,9 +790,8 @@ def clip_patch_project(project_id: str, request: Request, body: dict[str, Any] =
             raise HTTPException(status_code=500, detail="无法更新响度目标")
     if "shownotes_markdown" in b:
         raw_md = b.get("shownotes_markdown")
-        if raw_md is not None and not isinstance(raw_md, str):
-            raise HTTPException(status_code=400, detail="shownotes_markdown 须为字符串")
-        md_s = str(raw_md or "")[:20_000]
+        # 兼容 JSON 数字/布尔等类型，避免前端偶发非 string 导致 400
+        md_s = ("" if raw_md is None else str(raw_md))[:20_000]
         if not update_clip_shownotes_markdown(project_id=project_id, user_uuid=uid, markdown=md_s):
             raise HTTPException(status_code=500, detail="无法保存 Shownotes")
     ch_ids: list[int] | None = None

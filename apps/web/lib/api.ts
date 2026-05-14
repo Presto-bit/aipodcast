@@ -207,7 +207,7 @@ export async function persistClipProjectShowNotes(projectId: string, showNotes: 
     credentials: "same-origin",
     cache: "no-store",
     headers: authMerge({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ shownotes_markdown: showNotes })
+    body: JSON.stringify({ shownotes_markdown: String(showNotes ?? "") })
   });
   const text = await res.text();
   if (!res.ok) {
