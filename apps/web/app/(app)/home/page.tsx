@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconCreate, IconNotes, IconVoice, IconGrid } from "../../../components/NavIcons";
+import { IconClip, IconShownotes, IconTts, IconVoice, IconGrid } from "../../../components/NavIcons";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../../../lib/worksTypes";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
@@ -199,34 +199,33 @@ export default function HomePage() {
   }, [regA11ySuccess]);
 
   const quickEntryCards = useMemo(
-    () =>
-      [
-        {
-          href: "/notes",
-          title: t("home.quickCards.step1.title"),
-          desc: t("home.quickCards.step1.desc"),
-          Icon: IconNotes
-        },
-        {
-          href: "/create",
-          title: t("home.quickCards.step2.title"),
-          desc: t("home.quickCards.step2.desc"),
-          Icon: IconCreate
-        },
-        {
-          href: "/works",
-          title: t("home.quickCards.step3.title"),
-          desc: t("home.quickCards.step3.desc"),
-          Icon: IconGrid
-        },
-        {
-          href: "/voice?tab=clone",
-          title: t("nav.voice"),
-          desc: t("home.entryVoice.desc"),
-          Icon: IconVoice
-        }
-      ],
-    [t]
+    () => [
+      {
+        href: "/clip",
+        title: "音频剪辑",
+        desc: "多轨素材、转写与精剪导出",
+        Icon: IconClip
+      },
+      {
+        href: "/create?mode=tts",
+        title: "文本转语音",
+        desc: "在创作页使用文本转语音合成",
+        Icon: IconTts
+      },
+      {
+        href: "/voice?tab=clone",
+        title: "音色克隆",
+        desc: "前往音色管理，使用音色克隆",
+        Icon: IconVoice
+      },
+      {
+        href: "/shownotes",
+        title: "Shownotes 制作",
+        desc: "上传音频并生成与作品详情一致的 Shownotes",
+        Icon: IconShownotes
+      }
+    ],
+    []
   );
 
   async function sendRegisterCode() {
@@ -500,9 +499,6 @@ export default function HomePage() {
             {isReturningVisitor ? (
               <>
                 <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">欢迎回来</h1>
-                <p className="mt-3 text-sm leading-relaxed text-muted">
-                  查看成品与进行中任务，或开始新稿。长任务无需驻留本页，进度请在「我的作品 → 进行中」查看。
-                </p>
                 <div className="mt-5 flex flex-wrap items-center gap-2 sm:gap-3">
                   <Link
                     href="/works"
@@ -606,7 +602,7 @@ export default function HomePage() {
 
       <section className="fym-surface-card p-5 sm:p-8" aria-labelledby="home-feature-entry-heading">
         <h2 id="home-feature-entry-heading" className="text-base font-semibold tracking-tight text-ink">
-          {t("home.quickCards.sectionTitle")}
+          功能入口
         </h2>
         <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {quickEntryCards.map((c) => (

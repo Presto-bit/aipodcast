@@ -154,6 +154,8 @@ export type ClipProjectRow = {
   diarization_enabled?: boolean;
   speaker_count?: number;
   channel_ids?: number[];
+  /** 与作品详情同源：RSS Shownotes Markdown（PATCH 持久化） */
+  shownotes_markdown?: string | null;
 };
 
 export type ClipWord = {

@@ -77,6 +77,8 @@ def ensure_clip_studio_schema(*, strict: bool) -> None:
       ADD COLUMN IF NOT EXISTS audio_merge_status text NOT NULL DEFAULT 'idle';
     ALTER TABLE clip_projects
       ADD COLUMN IF NOT EXISTS audio_merge_error text;
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS shownotes_markdown TEXT;
     """
     try:
         with get_conn() as conn:
@@ -1526,6 +1528,40 @@ def clear_clip_merged_main_audio_when_using_segments(
                       AND jsonb_array_length(COALESCE(audio_source_segments, '[]'::jsonb)) > 0
                     """,
                     (pid,),
+                )
+            n = cur.rowcount
+            conn.commit()
+            return n > 0
+
+
+def update_clip_shownotes_markdown(*, project_id: str, user_uuid: str | None, markdown: str) -> bool:
+    """首页 / Shownotes 工作台：持久化 Markdown（与作品详情 Shownotes 同源编辑上限）。"""
+    pid = _parse_uuid(project_id)
+    if not pid:
+        return False
+    uid = _parse_uuid(user_uuid)
+    md = (markdown or "")[:20_000]
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            if uid:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET shownotes_markdown = %s,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id = %s::uuid
+                    """,
+                    (md, pid, uid),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE clip_projects
+                    SET shownotes_markdown = %s,
+                        updated_at = NOW()
+                    WHERE id = %s::uuid AND user_id IS NULL
+                    """,
+                    (md, pid),
                 )
             n = cur.rowcount
             conn.commit()

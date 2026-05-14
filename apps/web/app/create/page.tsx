@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { IconMic, IconTts } from "../../components/NavIcons";
 import type { PodcastStudioActivity } from "../../components/studio/PodcastStudio";
@@ -55,12 +56,18 @@ const DRAFT_PLACEHOLDER = "输入主题或正文";
 
 export default function CreatePage() {
   const { t } = useI18n();
+  const searchParams = useSearchParams();
   const { user, getAuthHeaders } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
 
   const [draftText, setDraftText] = useState("");
   const [libraryPreview, setLibraryPreview] = useState("");
   const [mode, setMode] = useState<CreateMode | null>("podcast");
+
+  useLayoutEffect(() => {
+    const m = (searchParams?.get("mode") || "").trim().toLowerCase();
+    if (m === "tts") setMode("tts");
+  }, [searchParams]);
   /**
    * 访客首屏先渲染轻量工具条壳，再在浏览器空闲时挂载真实 Studio，兼顾「看得见工具条」与进页轻量。
    */

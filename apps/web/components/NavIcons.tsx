@@ -167,6 +167,16 @@ export function IconSearch(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Shownotes：列表行 + 播放三角（与纯笔记区分） */
+export function IconShownotes(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={STROKE} aria-hidden {...props}>
+      <path d="M7 7h10M7 12h7M7 17h10" strokeLinecap="round" />
+      <path d="M17 10v4l3-2-3-2z" strokeLinejoin="round" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** 文稿剪辑：胶片孔 + 斜向剪口（与麦克风 / TTS 区分） */
 export function IconClip(props: SVGProps<SVGSVGElement>) {
   return (

@@ -64,6 +64,7 @@ from ..clip_store import (
     update_clip_project_audio,
     update_clip_project_meta,
     update_clip_repair_loudness_i_lufs,
+    update_clip_shownotes_markdown,
     update_clip_silence_analysis,
     update_clip_timeline_json,
     update_qc_report,
@@ -753,6 +754,13 @@ def clip_patch_project(project_id: str, request: Request, body: dict[str, Any] =
             ok_l = update_clip_repair_loudness_i_lufs(project_id=project_id, user_uuid=uid, i_lufs=v)
         if not ok_l:
             raise HTTPException(status_code=500, detail="无法更新响度目标")
+    if "shownotes_markdown" in b:
+        raw_md = b.get("shownotes_markdown")
+        if raw_md is not None and not isinstance(raw_md, str):
+            raise HTTPException(status_code=400, detail="shownotes_markdown 须为字符串")
+        md_s = str(raw_md or "")[:20_000]
+        if not update_clip_shownotes_markdown(project_id=project_id, user_uuid=uid, markdown=md_s):
+            raise HTTPException(status_code=500, detail="无法保存 Shownotes")
     ch_ids: list[int] | None = None
     if "channel_ids" in b:
         ch = b.get("channel_ids")

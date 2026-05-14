@@ -199,6 +199,32 @@ export async function fetchClipProjectShareAiCopy(
   }
 }
 
+/** 将 Shownotes Markdown 写入剪辑工程（PATCH shownotes_markdown） */
+export async function persistClipProjectShowNotes(projectId: string, showNotes: string): Promise<void> {
+  const id = encodeURIComponent(String(projectId || "").trim());
+  const res = await fetch(`/api/clip/projects/${id}`, {
+    method: "PATCH",
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: authMerge({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ shownotes_markdown: showNotes })
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(formatOrchestratorErrorText(text) || `保存失败 ${res.status}`);
+  }
+  try {
+    const data = JSON.parse(text) as { success?: boolean };
+    if (data.success === false) {
+      throw new Error("保存未成功");
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message === "保存未成功") throw e;
+    if (!text.trim()) return;
+    throw new Error(text.trim());
+  }
+}
+
 /** 分享 / RSS：按服务端 TEXT_PROVIDER 生成简介与 Show Notes（Markdown）；或仅按提词重写 Shownotes */
 export async function fetchJobShareAiCopy(
   jobId: string,
