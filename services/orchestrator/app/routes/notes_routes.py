@@ -35,6 +35,7 @@ from ..note_constants import (
 )
 from ..models import (
     NOTES_PODCAST_STUDIO_PROJECT,
+    count_distinct_notebooks_for_user,
     create_file_note,
     create_job,
     create_notebook_only,
@@ -1099,6 +1100,14 @@ def list_notes_api(
         "sharedAccess": shared_mode,
         "sharedFromOwnerUserId": owner_uuid,
     }
+
+
+@router.get("/notes/metrics")
+def notes_metrics_api(request: Request):
+    """首页工作台：当前用户下非空笔记本名去重数量。"""
+    user_ref = _current_user_ref_or_401(request)
+    n = count_distinct_notebooks_for_user(user_ref=user_ref)
+    return {"success": True, "notebookCount": n}
 
 
 @router.get("/notes/trash")

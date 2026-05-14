@@ -33,6 +33,7 @@ from ..media_wallet import (
     preview_wallet_cents_for_text_enqueue,
 )
 from ..models import (
+    aggregate_succeeded_works_metrics,
     append_job_event,
     cancel_job_if_runnable,
     count_notes_in_notebook_for_owner,
@@ -707,6 +708,19 @@ def list_works_api(
         "has_more": has_more,
         "limit": limit,
         "offset": offset,
+    }
+
+
+@router.get("/works/metrics")
+def list_works_metrics_api(request: Request):
+    """首页工作台：成功作品总数与音频时长、文稿字数聚合（全量作品，非分页列表子集）。"""
+    user_ref = _current_user_ref_or_401(request)
+    m = aggregate_succeeded_works_metrics(user_ref=user_ref)
+    return {
+        "success": True,
+        "worksCount": int(m.get("works_count") or 0),
+        "audioDurationSecSum": float(m.get("audio_duration_sec_sum") or 0),
+        "scriptCharCountSum": int(m.get("script_char_count_sum") or 0),
     }
 
 

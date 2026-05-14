@@ -2381,6 +2381,112 @@ def list_recent_works(
             return [dict(x) for x in cur.fetchall()]
 
 
+def aggregate_succeeded_works_metrics(*, user_ref: str | None = None) -> dict[str, Any]:
+    """
+    与 list_recent_works 相同用户过滤与 job 排除条件下，统计成功作品总数，
+    以及 result / payload 中可聚合的音频时长（秒）与稿件字数（字符）。
+    """
+    ensure_jobs_trash_schema()
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            cur.execute(
+                """
+                WITH base AS (
+                  SELECT
+                    COALESCE(j.result, '{}'::jsonb) AS r,
+                    COALESCE(j.payload, '{}'::jsonb) AS pl,
+                    j.job_type AS jt
+                  FROM jobs j
+                  LEFT JOIN projects p ON p.id = j.project_id
+                  WHERE j.status = 'succeeded'
+                    AND j.deleted_at IS NULL
+                    AND j.job_type NOT IN ('note_rag_index')
+                    AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
+                )
+                SELECT
+                  COUNT(*)::bigint AS works_count,
+                  COALESCE(
+                    SUM(
+                      CASE
+                        WHEN jsonb_typeof(r->'audio_duration_sec') = 'number'
+                          AND (r->'audio_duration_sec')::text::double precision > 0
+                          AND (r->'audio_duration_sec')::text::double precision < 864000
+                          THEN (r->'audio_duration_sec')::text::double precision
+                        WHEN r ? 'audio_duration_sec'
+                          AND NULLIF(TRIM(r->>'audio_duration_sec'), '') IS NOT NULL
+                          AND TRIM(r->>'audio_duration_sec') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+                          AND (TRIM(r->>'audio_duration_sec'))::double precision > 0
+                          AND (TRIM(r->>'audio_duration_sec'))::double precision < 864000
+                          THEN (TRIM(r->>'audio_duration_sec'))::double precision
+                        ELSE 0::double precision
+                      END
+                    ),
+                    0
+                  )::double precision AS audio_duration_sec_sum,
+                  COALESCE(
+                    SUM(
+                      CASE
+                        WHEN jsonb_typeof(r->'script_char_count') = 'number'
+                          AND TRIM((r->'script_char_count')::text) ~ '^-?[0-9]+$'
+                          AND ((r->'script_char_count')::text)::bigint > 0
+                          THEN ((r->'script_char_count')::text)::bigint
+                        WHEN r ? 'script_char_count'
+                          AND NULLIF(TRIM(r->>'script_char_count'), '') ~ '^[0-9]+$'
+                          AND (NULLIF(TRIM(r->>'script_char_count'), ''))::bigint > 0
+                          THEN (NULLIF(TRIM(r->>'script_char_count'), ''))::bigint
+                        WHEN jsonb_typeof(r->'script_text') = 'string'
+                          AND LENGTH(TRIM(r->>'script_text')) > 0
+                          THEN LENGTH(TRIM(r->>'script_text'))::bigint
+                        WHEN jt IN ('text_to_speech', 'tts')
+                          AND LENGTH(TRIM(COALESCE(pl->>'text', ''))) > 0
+                          THEN LENGTH(TRIM(COALESCE(pl->>'text', '')))::bigint
+                        ELSE 0::bigint
+                      END
+                    ),
+                    0
+                  )::bigint AS script_char_count_sum
+                FROM base
+                """,
+                (user_uuid, user_uuid),
+            )
+            row = cur.fetchone()
+            d = dict(row) if row else {}
+            return {
+                "works_count": int(d.get("works_count") or 0),
+                "audio_duration_sec_sum": float(d.get("audio_duration_sec_sum") or 0),
+                "script_char_count_sum": int(d.get("script_char_count_sum") or 0),
+            }
+
+
+def count_distinct_notebooks_for_user(*, user_ref: str | None = None) -> int:
+    """当前用户下、未删除笔记所属的非空笔记本名去重数量。"""
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return 0
+            cur.execute(
+                """
+                SELECT COUNT(*)::bigint AS c
+                FROM (
+                  SELECT DISTINCT BTRIM(COALESCE(i.metadata->>'notebook', '')) AS nb
+                  FROM inputs i
+                  JOIN projects p ON p.id = i.project_id
+                  WHERE i.input_type IN ('note_text', 'note_file')
+                    AND i.deleted_at IS NULL
+                    AND p.user_id = %s::uuid
+                ) t
+                WHERE t.nb <> ''
+                """,
+                (user_uuid,),
+            )
+            r = cur.fetchone()
+            if not r or r.get("c") is None:
+                return 0
+            return int(r["c"])
+
+
 def list_recent_works_for_public_shared_notebook(
     *,
     owner_user_id: str,

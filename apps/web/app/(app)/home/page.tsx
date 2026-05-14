@@ -61,7 +61,9 @@ export default function HomePage() {
     latestJobId: "",
     latestJobStatus: "—",
     worksCount: 0,
-    notesCount: 0,
+    notebookCount: 0,
+    audioDurationSecSum: 0,
+    scriptCharCountSum: 0,
     activeJobsCount: 0
   });
   const [homeWorks, setHomeWorks] = useState<WorkItem[]>([]);
@@ -89,7 +91,8 @@ export default function HomePage() {
         jobsLimit1?: { ok: boolean; status: number; data: unknown };
         jobsActive?: { ok: boolean; status: number; data: unknown };
         works?: { ok: boolean; status: number; data: unknown };
-        notes?: { ok: boolean; status: number; data: unknown };
+        worksMetrics?: { ok: boolean; status: number; data: unknown };
+        notesMetrics?: { ok: boolean; status: number; data: unknown };
       };
       const jobsData = (pack.jobsLimit1?.data ?? {}) as { jobs?: Array<{ id?: string; status?: string }> };
       const activeJobsData = (pack.jobsActive?.data ?? {}) as {
@@ -105,7 +108,15 @@ export default function HomePage() {
         error?: string;
         detail?: string;
       };
-      const notesData = (pack.notes?.data ?? {}) as { notes?: unknown[] };
+      const wm = (pack.worksMetrics?.data ?? {}) as {
+        success?: boolean;
+        worksCount?: number;
+        audioDurationSecSum?: number;
+        scriptCharCountSum?: number;
+      };
+      const nm = (pack.notesMetrics?.data ?? {}) as { success?: boolean; notebookCount?: number };
+      const worksMetricsOk = Boolean(pack.worksMetrics?.ok) && wm.success !== false;
+      const notesMetricsOk = Boolean(pack.notesMetrics?.ok) && nm.success !== false;
       const worksResOk = worksPart?.ok ?? false;
       if (!worksResOk || worksData.success === false) {
         if (!silent) {
@@ -132,8 +143,10 @@ export default function HomePage() {
       setOverview((prev) => ({
         latestJobId: String(latest?.id || "").trim(),
         latestJobStatus: String(latest?.status || "—"),
-        worksCount: merged.length,
-        notesCount: Array.isArray(notesData.notes) ? notesData.notes.length : 0,
+        worksCount: worksMetricsOk ? Number(wm.worksCount ?? merged.length) : merged.length,
+        notebookCount: notesMetricsOk ? Number(nm.notebookCount ?? 0) : 0,
+        audioDurationSecSum: worksMetricsOk ? Number(wm.audioDurationSecSum ?? 0) : 0,
+        scriptCharCountSum: worksMetricsOk ? Number(wm.scriptCharCountSum ?? 0) : 0,
         activeJobsCount: activeJobsCount != null ? activeJobsCount : prev.activeJobsCount
       }));
     } catch {
@@ -150,7 +163,9 @@ export default function HomePage() {
         latestJobId: "",
         latestJobStatus: "—",
         worksCount: 0,
-        notesCount: 0,
+        notebookCount: 0,
+        audioDurationSecSum: 0,
+        scriptCharCountSum: 0,
         activeJobsCount: 0
       });
       setWorksLoading(false);
@@ -473,7 +488,6 @@ export default function HomePage() {
 
   const isReturningVisitor = overview.worksCount > 0 || overview.activeJobsCount > 0;
 
-  const recentJobHref = overview.latestJobId ? `/jobs/${overview.latestJobId}` : "/jobs";
   const statLinkClass =
     "group block rounded-xl border border-transparent p-2 -m-1 transition-colors hover:border-line/80 hover:bg-fill/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40";
 
@@ -566,26 +580,25 @@ export default function HomePage() {
             role="group"
             aria-label="工作台概览"
           >
-            <Link href={recentJobHref} className={statLinkClass}>
-              <div className="text-xs font-medium text-muted group-hover:text-ink">最近任务</div>
-              <div
-                className="mt-0.5 truncate font-medium tabular-nums text-ink"
-                title={overview.latestJobId || undefined}
-              >
-                {overview.latestJobId ? `${overview.latestJobId.slice(0, 8)}…` : "—"}
-              </div>
-            </Link>
-            <Link href={recentJobHref} className={statLinkClass}>
-              <div className="text-xs font-medium text-muted group-hover:text-ink">状态</div>
-              <div className="mt-0.5 font-medium text-ink">{overview.latestJobStatus}</div>
-            </Link>
             <Link href="/works" className={statLinkClass}>
-              <div className="text-xs font-medium text-muted group-hover:text-ink">成品件数</div>
+              <div className="text-xs font-medium text-muted group-hover:text-ink">作品数量</div>
               <div className="mt-0.5 font-medium tabular-nums text-ink">{overview.worksCount}</div>
             </Link>
             <Link href="/notes" className={statLinkClass}>
-              <div className="text-xs font-medium text-muted group-hover:text-ink">笔记篇数</div>
-              <div className="mt-0.5 font-medium tabular-nums text-ink">{overview.notesCount}</div>
+              <div className="text-xs font-medium text-muted group-hover:text-ink">笔记本数量</div>
+              <div className="mt-0.5 font-medium tabular-nums text-ink">{overview.notebookCount}</div>
+            </Link>
+            <Link href="/works" className={statLinkClass}>
+              <div className="text-xs font-medium text-muted group-hover:text-ink">创作时长</div>
+              <div className="mt-0.5 font-medium tabular-nums text-ink">
+                {(overview.audioDurationSecSum / 60).toFixed(1)} 分
+              </div>
+            </Link>
+            <Link href="/works" className={statLinkClass}>
+              <div className="text-xs font-medium text-muted group-hover:text-ink">编写字数</div>
+              <div className="mt-0.5 font-medium tabular-nums text-ink">
+                {(overview.scriptCharCountSum / 10_000).toFixed(1)} 万字
+              </div>
             </Link>
           </div>
         </div>
