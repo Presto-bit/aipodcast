@@ -523,27 +523,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       ].join(" ")}
       style={{ width: `${sidebarDrawerPx}px` }}
     >
-      <div className={`flex shrink-0 items-start border-b border-line py-2 ${collapsed ? "justify-center px-2" : "gap-2 px-2.5"}`}>
+      <div
+        className={`flex w-full shrink-0 items-center border-b border-line py-2 ${collapsed ? "justify-center px-2" : "justify-between gap-2 px-2.5"}`}
+      >
         <Link
           href="/"
           prefetch={false}
           className={[
-            "flex min-w-0 items-start gap-2 rounded-lg outline-offset-2 ring-offset-canvas transition-colors hover:bg-fill/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35",
-            collapsed ? "justify-center p-0.5" : "flex-1 pr-1"
+            "flex shrink-0 items-center rounded-lg p-0.5 outline-offset-2 ring-offset-canvas transition-colors hover:bg-fill/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35",
+            collapsed ? "justify-center" : ""
           ].join(" ")}
           aria-label={t("nav.brandHomeLink")}
         >
           <BrandGlyph size={36} />
-          {!collapsed ? (
-            <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-bold leading-tight text-ink">{t("nav.brandTitle")}</p>
-              <p className="mt-0.5 text-[10px] italic leading-snug text-muted">{t("nav.brandTaglineEn")}</p>
-            </div>
-          ) : null}
         </Link>
         <button
           type="button"
-          className="flex h-8 w-8 flex-shrink-0 items-center justify-center self-start rounded-lg text-muted hover:bg-fill hover:text-ink"
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
           onClick={toggleCollapsed}
           title={collapsed ? t("nav.expand") : t("nav.collapse")}
           aria-label={collapsed ? t("nav.expand") : t("nav.collapse")}
