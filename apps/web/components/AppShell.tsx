@@ -167,20 +167,21 @@ function CreateStudioNavExpanded({
   const tab = searchParams?.get("tab") ?? null;
   const voiceCloneActive = pathMatchesRoot(path, "/voice") && tab === "clone";
 
-  const parentActive = matchesProductStudio(path);
+  /** 策略 A：仅「创作工作室」路由（/create、/podcast、/tts）父行高亮；在 /clip、/shownotes、/voice 等仅子项高亮。 */
+  const parentRouteActive = Boolean(item.activeMatch?.(path));
   const Ic = item.Icon;
   const parentTip = item.linkTitle ?? item.label;
 
   const parentInner = (
     <>
-      <NavIconBox active={parentActive}>
+      <NavIconBox active={parentRouteActive}>
         <Ic />
       </NavIconBox>
       <span className="min-w-0 flex-1 truncate text-left leading-snug">{item.label}</span>
     </>
   );
 
-  const parentClass = [navButtonClass(parentActive, false), "min-w-0 flex-1 rounded-r-none border-r-0 pr-1"].join(" ");
+  const parentClass = [navButtonClass(parentRouteActive, false), "min-w-0 flex-1 rounded-r-none border-r-0 pr-1"].join(" ");
 
   const subs: { href: string; label: string; active: boolean }[] = [
     { href: "/clip", label: t("create.quickLink.clip"), active: pathMatchesRoot(path, "/clip") },
@@ -231,11 +232,24 @@ function CreateStudioNavExpanded({
         >
           {subs.map((s) =>
             notesHard ? (
-              <a key={s.href} href={s.href} className={navCreateSubLinkClass(s.active)} title={s.label}>
+              <a
+                key={s.href}
+                href={s.href}
+                className={navCreateSubLinkClass(s.active)}
+                title={s.label}
+                aria-current={s.active ? "page" : undefined}
+              >
                 <span className="min-w-0 truncate">{s.label}</span>
               </a>
             ) : (
-              <Link key={s.href} href={s.href} prefetch={false} className={navCreateSubLinkClass(s.active)} title={s.label}>
+              <Link
+                key={s.href}
+                href={s.href}
+                prefetch={false}
+                className={navCreateSubLinkClass(s.active)}
+                title={s.label}
+                aria-current={s.active ? "page" : undefined}
+              >
                 <span className="min-w-0 truncate">{s.label}</span>
               </Link>
             )
