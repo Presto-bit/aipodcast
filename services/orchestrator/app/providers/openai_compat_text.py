@@ -397,6 +397,7 @@ def chat_completion_openai_compatible(
     model: str,
     temperature: float = 0.65,
     timeout_sec: int = 120,
+    max_tokens: int | None = None,
 ) -> str:
     """OpenAI 兼容 Chat Completions，不做播客提示词包装（供运营文案等使用）。"""
     base = api_base.rstrip("/")
@@ -405,11 +406,13 @@ def chat_completion_openai_compatible(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "temperature": float(temperature),
     }
+    if max_tokens is not None:
+        payload["max_tokens"] = int(max_tokens)
     resp = _http_post_json(url, headers, payload, timeout_sec=timeout_sec)
     content = _content_from_response(resp)
     if not content:
@@ -463,6 +466,7 @@ def iter_chat_completion_openai_compatible_stream(
     temperature: float = 0.65,
     timeout_sec: int = 120,
     content_only: bool = False,
+    max_tokens: int | None = None,
 ) -> Iterator[str]:
     """OpenAI 兼容 Chat Completions 流式输出，逐段产出 delta 文本。"""
     base = api_base.rstrip("/")
@@ -471,12 +475,14 @@ def iter_chat_completion_openai_compatible_stream(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "temperature": float(temperature),
         "stream": True,
     }
+    if max_tokens is not None:
+        payload["max_tokens"] = int(max_tokens)
     resp = requests.post(
         url,
         headers=headers,
@@ -521,6 +527,7 @@ def iter_chat_completion_openai_compatible_stream_segments(
     model: str,
     temperature: float = 0.65,
     timeout_sec: int = 120,
+    max_tokens: int | None = None,
 ) -> Iterator[tuple[StreamSegmentRole, str]]:
     """OpenAI 兼容流式：逐段产出 (reasoning|answer, 文本)，供笔记问答等区分展示。"""
     base = api_base.rstrip("/")
@@ -529,12 +536,14 @@ def iter_chat_completion_openai_compatible_stream_segments(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "temperature": float(temperature),
         "stream": True,
     }
+    if max_tokens is not None:
+        payload["max_tokens"] = int(max_tokens)
     resp = requests.post(
         url,
         headers=headers,

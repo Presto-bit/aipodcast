@@ -71,6 +71,7 @@ def invoke_llm_chat_messages_with_minimax_fallback(
     temperature: float = 0.45,
     api_key: str | None = None,
     timeout_sec: int = 120,
+    max_tokens: int | None = None,
 ) -> tuple[str, str | None]:
     """
     中文长文 / 摘要 / 按材料问答等：TEXT_PROVIDER=deepseek|qwen 时先走 OpenAI 兼容，失败再 MiniMax。
@@ -110,6 +111,7 @@ def invoke_llm_chat_messages_with_minimax_fallback(
             model=model,
             temperature=float(temperature),
             timeout_sec=int(timeout_sec),
+            max_tokens=max_tokens,
         )
         return str(out or "").strip(), None
 
@@ -129,6 +131,7 @@ def invoke_llm_chat_messages_stream_iter(
     temperature: float = 0.45,
     api_key: str | None = None,
     timeout_sec: int = 120,
+    max_tokens: int | None = None,
 ) -> Iterator[str]:
     """
     与 invoke_llm_chat_messages_with_minimax_fallback 相同路由策略，但以流式逐段产出文本。
@@ -175,6 +178,7 @@ def invoke_llm_chat_messages_stream_iter(
             temperature=float(temperature),
             timeout_sec=int(timeout_sec),
             content_only=True,
+            max_tokens=max_tokens,
         )
 
     try:
@@ -201,6 +205,7 @@ def invoke_llm_chat_messages_stream_segments_iter(
     temperature: float = 0.45,
     api_key: str | None = None,
     timeout_sec: int = 120,
+    max_tokens: int | None = None,
 ) -> Iterator[Tuple[StreamSegmentRole, str]]:
     """
     与 invoke_llm_chat_messages_stream_iter 相同路由与回退策略，但 OpenAI 兼容流按 delta 拆成
@@ -248,6 +253,7 @@ def invoke_llm_chat_messages_stream_segments_iter(
             model=model,
             temperature=float(temperature),
             timeout_sec=int(timeout_sec),
+            max_tokens=max_tokens,
         )
 
     try:

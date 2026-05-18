@@ -1268,9 +1268,10 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
 
 @router.post("/notes/ask/stream")
 def notes_ask_stream_api(body: NotesAskRequest, request: Request):
-    """基于已选笔记的问答：SSE，`data:` JSON 行，事件 type 为 chunk | done | error。
+    """基于已选笔记的问答：SSE，`data:` JSON 行，事件 type 为 chunk | done | followups | error。
 
     chunk 可选字段 ``streamRole``：``reasoning``（推理过程，仅流式展示）| ``answer``（正式回答，默认缺省视为 answer）。
+    followups：``followUpQuestions`` 为 0～1 条答后关联问句（点击填入输入框，不自动发送）。
     上下文构建（向量检索等）在首个 SSE 字节之后进行，避免客户端长时间卡在「未收到响应头」；
     校验类错误改为流内 error 事件（仍先返回 200 + event-stream）。"""
     user_ref = _current_user_ref_or_401(request)

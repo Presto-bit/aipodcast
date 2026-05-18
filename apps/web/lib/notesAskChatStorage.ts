@@ -20,7 +20,7 @@ export type SerializedNotesAskTurn = {
   sources?: NotesAskSource[];
   /** 知识库引导气泡：可点击填入输入框的建议问句 */
   hintSuggestions?: string[];
-  /** 单轮回答结束后，编排器返回的「接着问」建议（至多 2 条） */
+  /** 单轮回答结束后，编排器返回的「接着问」建议（至多 1 条） */
   followUpQuestions?: string[];
 };
 
@@ -72,7 +72,7 @@ function parseStored(raw: string): SerializedNotesAskTurn[] | null {
       const followUpQuestions = fqArr
         .map((x) => String(x || "").trim())
         .filter(Boolean)
-        .slice(0, 2);
+        .slice(0, 1);
       out.push({
         id,
         role,

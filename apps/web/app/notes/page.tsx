@@ -92,7 +92,9 @@ type NotesAskStreamEvent =
       traceId?: string | null;
       /** 流式结束后合并角标的全文（与 chunk 拼接结果一致或更精简） */
       answer?: string;
+      followUpQuestions?: unknown;
     }
+  | { type: "followups"; followUpQuestions?: unknown }
   | { type: "info"; message: string; code?: string; requestId?: string }
   | {
       type: "error";
@@ -117,7 +119,15 @@ type NotesAskTurn = {
   webSources?: NotesAskWebSource[];
   /** 引导气泡：可点击填入下方输入框 */
   hintSuggestions?: string[];
+  /** 答后关联问句（至多 1 条，点击填入输入框） */
+  followUpQuestions?: string[];
 };
+
+function normalizeNotesAskFollowUpQuestions(raw: unknown): string[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  const q = arr.map((x) => String(x || "").trim()).find(Boolean);
+  return q ? [q] : [];
+}
 
 function notesAskClientRequestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -1157,7 +1167,8 @@ export default function NotesPage() {
             .map((m) => ({
               ...m,
               streaming: false as boolean | undefined,
-              hintSuggestions: m.hintSuggestions?.length ? [...m.hintSuggestions] : undefined
+              hintSuggestions: m.hintSuggestions?.length ? [...m.hintSuggestions] : undefined,
+              followUpQuestions: m.followUpQuestions?.length ? [...m.followUpQuestions] : undefined
             }))
         : []
     );
@@ -2490,12 +2501,14 @@ export default function NotesPage() {
                 sawDone = true;
                 const doneSources = normalizeNotesAskSources(ev.sources);
                 const doneAnswer = typeof ev.answer === "string" ? ev.answer.trim() : "";
+                const doneFollowUps = normalizeNotesAskFollowUpQuestions(ev.followUpQuestions);
                 notesAskClientLog("info", "stream", "done_event", {
                   requestId: streamRid,
                   chunkCount,
                   chunkChars,
                   doneMs: Math.round(nowMs() - streamT0),
-                  answerReplaced: Boolean(doneAnswer)
+                  answerReplaced: Boolean(doneAnswer),
+                  followUp: doneFollowUps[0] || undefined
                 });
                 setNotesAskMessages((prev) => {
                   const next = [...prev];
@@ -2506,7 +2519,25 @@ export default function NotesPage() {
                     streaming: false,
                     streamingReasoning: undefined,
                     ...(doneAnswer ? { content: doneAnswer } : {}),
-                    ...(doneSources?.length ? { sources: doneSources } : {})
+                    ...(doneSources?.length ? { sources: doneSources } : {}),
+                    ...(doneFollowUps.length ? { followUpQuestions: doneFollowUps } : {})
+                  };
+                  return next;
+                });
+              } else if (ev.type === "followups") {
+                const followUps = normalizeNotesAskFollowUpQuestions(ev.followUpQuestions);
+                if (!followUps.length) continue;
+                notesAskClientLog("info", "stream", "followups_event", {
+                  requestId: streamRid,
+                  followUp: followUps[0]
+                });
+                setNotesAskMessages((prev) => {
+                  const next = [...prev];
+                  const idx = next.findIndex((m) => m.id === assistantId);
+                  if (idx < 0) return prev;
+                  next[idx] = {
+                    ...next[idx]!,
+                    followUpQuestions: followUps
                   };
                   return next;
                 });
@@ -3949,6 +3980,24 @@ export default function NotesPage() {
                                         </button>
                                       ))}
                                     </div>
+                                  </div>
+                                ) : null}
+                                {!m.streaming &&
+                                (m.followUpQuestions?.length ?? 0) > 0 &&
+                                !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) ? (
+                                  <div className="mt-2.5 flex flex-col gap-1.5">
+                                    <p className="text-[11px] font-medium text-muted">相关提问</p>
+                                    <button
+                                      type="button"
+                                      className="max-w-full rounded-lg border border-brand/35 bg-brand/[0.06] px-2.5 py-1.5 text-left text-[11px] leading-snug text-ink transition hover:bg-brand/10"
+                                      title={m.followUpQuestions![0]}
+                                      onClick={() => {
+                                        setNotesAskQuestion(m.followUpQuestions![0]!);
+                                        window.setTimeout(() => notesAskTextareaRef.current?.focus(), 0);
+                                      }}
+                                    >
+                                      {m.followUpQuestions![0]}
+                                    </button>
                                   </div>
                                 ) : null}
                                 {!m.streaming &&

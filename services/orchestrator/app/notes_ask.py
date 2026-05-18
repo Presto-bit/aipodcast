@@ -10,8 +10,23 @@ from collections import defaultdict
 from typing import Any, Iterator
 
 from .models import get_note_by_id
-from .note_rag_service import NOTE_LAYERED_RAG, build_layered_notes_context
+from .note_rag_service import NOTE_LAYERED_RAG, build_layered_notes_context, build_notes_source_manifest
 from .notes_ask_citations import collapse_citation_markers
+from .notes_ask_style import (
+    build_notes_ask_system_prompt,
+    build_notes_ask_user_preamble,
+    build_planner_messages,
+    followup_min_answer_chars,
+    followups_enabled,
+    format_planner_block,
+    merge_adjacent_chunks_enabled,
+    notes_ask_max_output_tokens,
+    notes_ask_temperature,
+    parse_followup_json,
+    parse_planner_json,
+    resolve_retrieval_top_k,
+    two_phase_planner_enabled,
+)
 from .rag_core import _keyword_score, split_text_into_chunks
 from .notes_ask_profile import notes_ask_profile_emit
 from .provider_router import (
@@ -29,14 +44,6 @@ _MAX_PER_NOTE = 16_000
 _ASK_HISTORY_MAX_TURNS = 8
 _ASK_CONTEXT_CACHE_TTL_SEC = 30.0
 _ASK_CONTEXT_CACHE: dict[str, tuple[float, str, list[dict[str, Any]]]] = {}
-
-
-def _notes_ask_top_k() -> int:
-    """向量检索 top_k 上限与默认；可用环境变量 NOTES_ASK_TOP_K 覆盖（24–160）。默认 56 平衡时延与召回。"""
-    try:
-        return max(24, min(160, int(os.getenv("NOTES_ASK_TOP_K", "56") or "56")))
-    except (TypeError, ValueError):
-        return 56
 
 
 def _notes_ask_reasoning_stream_cap_chars() -> int:
@@ -77,44 +84,6 @@ def _notes_ask_sanitize_visible_text(s: str) -> str:
     t = _LEAK_PATTERNS.sub("", t)
     return t
 
-
-_SYSTEM = (
-    "你是资料助手。用户提供了若干条笔记摘录（可能已截断）。请仅用这些材料回答问题；"
-    "若材料不足以回答，请明确说明「材料中未提及」或「摘录中看不到」，不要编造事实。\n"
-    "回答使用中文；正文使用 GitHub 风格 Markdown，便于扫读。\n"
-    "【开篇：可执行的答案形态】\n"
-    "若不止一两句话：开头 1～3 句须先给出读者能直接用的「形态」——结论、判断边界、最小可执行一步，或明确「材料能支持到哪一步」。"
-    "「怎么做」类优先首段给出可执行结论或第一步；「是什么」类首段先定义或划清范围；"
-    "「对比/选型」类首段先给一句选用标准或权衡；「是否/判断」类首段先表态（是/否/视条件）。"
-    "可用 **加粗** 标出最关键一句。依据、列举与摘录佐证放在其后，且应服务上文结论，避免「材料里有什么就列什么」。\n"
-    "【结构：随问题类型，避免千篇一律】\n"
-    "较长回答再用 ## 或 ### 分节；小节标题尽量用问题里的动作或对象命名（如「操作步骤」「适用边界」），少用泛泛的「概述」「总结」。"
-    "流程/操作：先结论（含路径或注意）→ 有序列表，每步可附一句目的；并列要点用无序列表；需要多列对比时用表格。"
-    "避免大段「首先…其次…再者…」推演，改用标题与列表直接呈现结论与依据。\n"
-    "定义/概念：一句话定义 → 关键属性要点 → 必要时一句与易混项的区分。\n"
-    "因果：主因或结论先行 → 简短机制或链条 → 材料中的限制条件。\n"
-    "对比/选型：一句比较标准 → 表格或分栏 → 材料范围内的选用结论。\n"
-    "不要输出模型内心独白式推理过程。\n"
-    "【溯源：按论点块标注，勿逐句标注】\n"
-    "角标只用 [1]、[2]…，与【来源清单】/摘录中的资料序号一致，勿发明新编号。"
-    "界面脚注区会展示与 [n] 对应的标题与摘录；正文以叙述为主，用角标承担溯源，"
-    "**不要**在句首堆「根据《……》」「某某笔记指出」「来源[n] 记载」或反复写资料全名。\n"
-    "**禁止**把书名/文章名嵌进归因句式（如「《××》提出…」「这本书认为…」）；"
-    "摘录里即使有完整书名也不要在正文复述，应直接写观点，在**论点块收束处**用 [n]。\n"
-    "引用粒度是「论点块」，不是「句子」：一个可核对的事实主张或一段连贯论述 = 至多 **1 组**角标（[1] 或 [1][2]）。"
-    "同一论点、同一段落、同一列表块若同源，**只在块末标一次**；中间句、列表各项**不要**重复 [n]。"
-    "换论点、换证据、换来源时才换新角标；一句内确需两个依据才并列 [1][2]。"
-    "密度：全文每约 **120～150 汉字** 至多 1 组角标；有序/无序列表 ≥3 条且同源时，仅在**列表块末**标一次。"
-    "开篇结论句若后文同段会标依据，首句可**不标**；过渡句、复述、常识铺垫**不标**。\n"
-    "仅在确实依据某一来源时标注，不要为凑序号在无依据句上插标。"
-    "列表项开头尽量用动作或判断词；加粗只用于结论关键词；勿复述 chunk、score、向量、noteId 等调试用语。\n"
-    "核对依据时：每个论点块**至多一处**可选「」短引文（约一句、≤40 字、与摘录字面一致），"
-    "放在该块收束处，**短引文后再写角标**；无合适短句可只写角标，勿强行造引文。\n"
-    "勿复述「### 来源 [i]」、块序号等技术标签；文末**不要**再写「## 参考与来源」重复清单。\n"
-    "若模型将推理与正文分列，仅把面向用户的结论写在正文。\n"
-    "多来源：勾选 ≥2 条且材料可支持时，**整篇回答**尽量出现至少 2 个不同 [n]（按论点分摊，非逐句分摊）；"
-    "若只能依据 1 条，请说明其余来源摘录中未找到可支持该问题的片段，**不要**为凑覆盖乱插 [2]。"
-)
 
 def _enrich_sources_with_chunks(sources: list[dict[str, Any]], retr_meta: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """将向量检索块按 noteId 归并到各来源，供前端展示摘录弹窗。"""
@@ -344,6 +313,39 @@ def _notes_ask_context_cache_set(key: str, context: str, sources: list[dict[str,
             _ASK_CONTEXT_CACHE.pop(k, None)
 
 
+def _run_notes_ask_planner(
+    *,
+    notebook: str,
+    note_ids: list[str],
+    question: str,
+    user_ref: str | None,
+    project_owner_user_uuid: str | None = None,
+    api_key: str | None = None,
+) -> dict[str, Any] | None:
+    """层 B：可选 Planner（仅来源清单，无正文检索）。"""
+    if not two_phase_planner_enabled():
+        return None
+    try:
+        manifest, _sources = build_notes_source_manifest(
+            notebook=notebook,
+            note_ids=note_ids,
+            user_ref=user_ref,
+            project_owner_user_uuid=project_owner_user_uuid,
+        )
+        plan_messages = build_planner_messages(manifest_block=manifest, question=question)
+        raw, _tid = invoke_llm_chat_messages_with_minimax_fallback(
+            plan_messages,
+            temperature=0.25,
+            api_key=api_key,
+            timeout_sec=45,
+            max_tokens=640,
+        )
+        return parse_planner_json(raw)
+    except Exception as exc:
+        logger.warning("notes_ask_planner_failed: %s", exc)
+        return None
+
+
 def _build_history_block(chat_history: list[dict[str, str]] | None) -> str:
     rows = chat_history or []
     if not rows:
@@ -389,6 +391,16 @@ def _prepare_notes_ask_messages(
             project_owner_user_uuid=project_owner_user_uuid,
         )
 
+    plan = _run_notes_ask_planner(
+        notebook=notebook,
+        note_ids=note_ids,
+        question=q,
+        user_ref=user_ref,
+        project_owner_user_uuid=project_owner_user_uuid,
+    )
+    plan_type = str((plan or {}).get("answerType") or "").strip() or None
+    top_k, answer_type = resolve_retrieval_top_k(q, plan_type)
+
     _t_ctx = time.perf_counter()
     context, sources = build_notes_qa_context(
         notebook=notebook,
@@ -396,26 +408,29 @@ def _prepare_notes_ask_messages(
         user_ref=user_ref,
         question=q,
         project_owner_user_uuid=project_owner_user_uuid,
+        top_k=top_k,
     )
     notes_ask_profile_emit(
         "prepare_build_context_ms",
         (time.perf_counter() - _t_ctx) * 1000.0,
         context_chars=len(context or ""),
         sources_n=len(sources),
+        top_k=top_k,
+        answer_type=answer_type,
     )
     if not context.strip():
         raise ValueError("empty_context")
 
     history_block = _build_history_block(chat_history)
-    user_block = (
-        "资料摘录如下（角标 [n] 与【来源清单】序号一致；按**论点块**在块末标注，勿逐句标注；"
-        "勿用「这本书/该笔记认为」式归因；每个论点块至多一处「」短引文 + 角标）：\n\n"
-        f"{context}\n\n---\n\n"
-        + (history_block + "\n\n---\n\n" if history_block else "")
-        + f"问题：{q}"
-    )
+    body_parts: list[str] = [build_notes_ask_user_preamble() + context]
+    if history_block:
+        body_parts.append(history_block)
+    if plan:
+        body_parts.append(format_planner_block(plan))
+    body_parts.append(f"问题：{q}")
+    user_block = "\n\n---\n\n".join(body_parts)
     messages = [
-        {"role": "system", "content": _SYSTEM},
+        {"role": "system", "content": build_notes_ask_system_prompt(answer_type)},
         {"role": "user", "content": user_block},
     ]
     return messages, sources
@@ -504,7 +519,7 @@ def iter_notes_answer_events(
     project_owner_user_uuid: str | None = None,
     request_id: str | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """SSE 事件：chunk / done / error。
+    """SSE 事件：chunk / done / followups / error。
 
     若调用方已通过 `_prepare_notes_ask_messages` 得到 messages/sources，可传入
     `prepared_messages_sources`，避免与校验阶段重复执行向量检索（此前流式接口会构建两遍上下文）。
@@ -551,12 +566,15 @@ def iter_notes_answer_events(
             reasoning_emitted = reasoning_cap
             return out
 
+        llm_temp = notes_ask_temperature()
+        llm_max_tokens = notes_ask_max_output_tokens()
         try:
             for role, piece in invoke_llm_chat_messages_stream_segments_iter(
                 messages,
-                temperature=0.45,
+                temperature=llm_temp,
                 api_key=api_key,
                 timeout_sec=120,
+                max_tokens=llm_max_tokens,
             ):
                 vis = _notes_ask_sanitize_visible_text(piece)
                 if not vis:
@@ -593,9 +611,10 @@ def iter_notes_answer_events(
                 )
                 for piece in invoke_llm_chat_messages_stream_iter(
                     messages,
-                    temperature=0.45,
+                    temperature=llm_temp,
                     api_key=api_key,
                     timeout_sec=120,
+                    max_tokens=llm_max_tokens,
                 ):
                     vis = _notes_ask_sanitize_visible_text(piece)
                     if not vis:
@@ -635,6 +654,21 @@ def iter_notes_answer_events(
         sources = filter_sources_by_citations(full, sources, include_all_sources=include_all_sources)
         done_ev: dict[str, Any] = {"type": "done", "sources": sources, "answer": full, "traceId": None}
         yield done_ev
+        try:
+            followup = generate_notes_ask_followup(
+                question=question,
+                answer=full,
+                chat_history=chat_history,
+                api_key=api_key,
+            )
+            if followup:
+                yield {"type": "followups", "followUpQuestions": [followup]}
+        except Exception as fu_exc:
+            logger.warning(
+                "notes_ask_followup_failed request_id=%s: %s",
+                rid,
+                fu_exc,
+            )
     except Exception as exc:
         logger.warning(
             "notes_ask_stream_failed request_id=%s: %s",
@@ -696,6 +730,7 @@ def build_notes_qa_context(
     user_ref: str | None,
     question: str | None = None,
     project_owner_user_uuid: str | None = None,
+    top_k: int | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """
     优先：异步摘要 + 勾选范围内向量检索；若无索引块则回退 legacy 前缀截断。
@@ -713,6 +748,8 @@ def build_notes_qa_context(
     if cached is not None:
         return cached
 
+    if top_k is None:
+        top_k, _at = resolve_retrieval_top_k(q)
     if NOTE_LAYERED_RAG and q:
         layered, sources, meta = build_layered_notes_context(
             notebook=notebook,
@@ -721,8 +758,9 @@ def build_notes_qa_context(
             user_ref=user_ref,
             summary_budget=14_000,
             retrieval_budget=36_000,
-            top_k=_notes_ask_top_k(),
+            top_k=top_k,
             project_owner_user_uuid=project_owner_user_uuid,
+            merge_adjacent_chunks=merge_adjacent_chunks_enabled(),
         )
         if layered:
             rcm = meta.get("retrieval_chunks_meta")
@@ -830,6 +868,56 @@ def generate_notes_ask_hints(
     return {"summary": summary, "suggestions": suggestions}
 
 
+_FOLLOWUPS_SYSTEM = (
+    "你是资料问答助手。根据本轮用户问题与助手回答，生成 1 条用户可继续向资料助手追问的中文问句。"
+    "仅输出 JSON 对象，不要 markdown 围栏、不要 JSON 外文字。\n"
+    '结构：{"followUpQuestion":"…"} 。\n'
+    "要求：问句须能从用户已勾选资料中找到回答依据；不超过 48 字；"
+    "应深化、补充边界、对比或应用上一步结论，勿重复用户原问题或回答的标题式复述；"
+    '若无法提出有意义的延展，输出 {"followUpQuestion":""}。'
+)
+
+
+def generate_notes_ask_followup(
+    *,
+    question: str,
+    answer: str,
+    chat_history: list[dict[str, str]] | None = None,
+    api_key: str | None = None,
+) -> str:
+    """答后单条关联问句；失败或不可延展时返回空字符串。"""
+    if not followups_enabled():
+        return ""
+    q = (question or "").strip()
+    a = (answer or "").strip()
+    if not q or len(a) < followup_min_answer_chars():
+        return ""
+    history_block = _build_history_block(chat_history)
+    user_parts = [
+        f"用户问题：{q[:800]}",
+        f"助手回答：{a[:2400]}",
+    ]
+    if history_block:
+        user_parts.append(history_block[:900])
+    user_parts.append("请输出 JSON。")
+    messages = [
+        {"role": "system", "content": _FOLLOWUPS_SYSTEM},
+        {"role": "user", "content": "\n\n".join(user_parts)},
+    ]
+    try:
+        raw, _trace = invoke_llm_chat_messages_with_minimax_fallback(
+            messages,
+            temperature=0.35,
+            api_key=api_key,
+            timeout_sec=45,
+            max_tokens=160,
+        )
+    except Exception as exc:
+        logger.warning("notes_ask_followup_llm_failed: %s", exc)
+        return ""
+    return parse_followup_json(raw)
+
+
 def answer_notes_question(
     *,
     notebook: str,
@@ -854,9 +942,10 @@ def answer_notes_question(
     try:
         answer, trace_id = invoke_llm_chat_messages_with_minimax_fallback(
             messages,
-            temperature=0.45,
+            temperature=notes_ask_temperature(),
             api_key=api_key,
             timeout_sec=120,
+            max_tokens=notes_ask_max_output_tokens(),
         )
     except Exception as exc:
         logger.warning("notes_ask_llm_failed: %s", exc)
@@ -870,4 +959,12 @@ def answer_notes_question(
         "sources": filter_sources_by_citations(ans, sources, include_all_sources=include_all_sources),
         "traceId": trace_id,
     }
+    followup = generate_notes_ask_followup(
+        question=question,
+        answer=ans,
+        chat_history=chat_history,
+        api_key=api_key,
+    )
+    if followup:
+        out["followUpQuestions"] = [followup]
     return out

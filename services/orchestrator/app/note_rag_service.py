@@ -21,6 +21,7 @@ from typing import Any
 
 from .db import get_conn, get_cursor
 from .notes_ask_profile import notes_ask_profile_emit
+from .notes_ask_style import merge_adjacent_retrieval_picks
 from .models import get_note_by_id
 from .queue import redis_conn
 from .rag_core import (
@@ -109,7 +110,14 @@ def _cache_now() -> float:
     return time.time()
 
 
-def _cache_payload_key(note_ids: list[str], query: str, max_chars: int, top_k: int) -> str:
+def _cache_payload_key(
+    note_ids: list[str],
+    query: str,
+    max_chars: int,
+    top_k: int,
+    *,
+    merge_adjacent: bool = False,
+) -> str:
     qn = " ".join((query or "").strip().lower().split())[:800]
     payload = {
         "v": _RETRIEVAL_CACHE_VERSION,
@@ -117,6 +125,7 @@ def _cache_payload_key(note_ids: list[str], query: str, max_chars: int, top_k: i
         "query": qn,
         "max_chars": int(max_chars),
         "top_k": int(top_k),
+        "merge_adjacent": bool(merge_adjacent),
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
@@ -156,8 +165,15 @@ def _notes_version_fingerprint(note_ids: list[str]) -> str:
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def _retrieval_cache_key(note_ids: list[str], query: str, max_chars: int, top_k: int) -> str:
-    pv = _cache_payload_key(note_ids, query, max_chars, top_k)
+def _retrieval_cache_key(
+    note_ids: list[str],
+    query: str,
+    max_chars: int,
+    top_k: int,
+    *,
+    merge_adjacent: bool = False,
+) -> str:
+    pv = _cache_payload_key(note_ids, query, max_chars, top_k, merge_adjacent=merge_adjacent)
     vv = _notes_version_fingerprint(note_ids)
     return f"{_RETRIEVAL_CACHE_PREFIX}:{_RETRIEVAL_CACHE_VERSION}:{vv}:{pv}"
 
@@ -872,6 +888,7 @@ def retrieve_chunks_across_notes(
     max_chars: int,
     top_k: int = 32,
     notes_ask_fast_path: bool = False,
+    merge_adjacent_chunks: bool = False,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """对已索引块：先轻量读块文本 → 关键词粗排 → 仅对候选批量取向量 → 多子查询向量 max-pool → 重排 → Top-K。
 
@@ -879,7 +896,9 @@ def retrieve_chunks_across_notes(
     `notes_ask_fast_path`：知识库向资料提问专用，默认单查询嵌入、较小 rerank 池、仅用本地 hybrid 重排（跳过 Cohere HTTP）。
     """
     _t_total = time.perf_counter()
-    cache_key = _retrieval_cache_key(note_ids, query, max_chars, top_k)
+    cache_key = _retrieval_cache_key(
+        note_ids, query, max_chars, top_k, merge_adjacent=merge_adjacent_chunks
+    )
     hit_l1 = _l1_get(cache_key)
     if hit_l1 is not None:
         context, meta, obs = hit_l1
@@ -1117,6 +1136,8 @@ def retrieve_chunks_across_notes(
             mmr_applied = True
     scored_for_pick = head_rr + tail
     picked = _pick_top_k_note_fairness(scored_for_pick, top_k, note_ids)
+    if merge_adjacent_chunks:
+        picked = merge_adjacent_retrieval_picks(picked)
     notes_ask_profile_emit(
         "rag_retrieve_score_rerank_pick_ms",
         (time.perf_counter() - _t_score) * 1000.0,
@@ -1145,6 +1166,7 @@ def retrieve_chunks_across_notes(
         "rerank_mode": rerank_mode,
         "mmr_applied": mmr_applied,
         "top_k": top_k,
+        "merge_adjacent_chunks": merge_adjacent_chunks,
     }
     try:
         logger.info("note_rag_retrieve %s", json.dumps(obs, ensure_ascii=False)[:1600])
@@ -1158,6 +1180,7 @@ def retrieve_chunks_across_notes(
     for score, r in picked:
         nid = str(r.get("note_id") or "")
         idx = int(r.get("chunk_index") or 0)
+        idx_end = int(r.get("_chunk_index_end") or idx)
         ch = str(r.get("chunk_text") or "").strip()
         if not ch:
             continue
@@ -1170,9 +1193,10 @@ def retrieve_chunks_across_notes(
             used += len(piece) + 2
             excerpt = ch if len(ch) <= 4000 else ch[:4000] + "…"
             cm = r.get("chunk_meta") if isinstance(r.get("chunk_meta"), dict) else {}
+            idx_label = str(idx) if idx_end == idx else f"{idx}-{idx_end}"
             meta_row: dict[str, Any] = {
                 "noteId": nid,
-                "chunkIndex": str(idx),
+                "chunkIndex": idx_label,
                 "score": f"{score:.4f}",
                 "excerpt": excerpt,
             }
@@ -1267,6 +1291,39 @@ def build_summaries_section(
     )
 
 
+def build_notes_source_manifest(
+    *,
+    notebook: str,
+    note_ids: list[str],
+    user_ref: str | None,
+    project_owner_user_uuid: str | None = None,
+) -> tuple[str, list[dict[str, str]]]:
+    """仅构建【来源清单】与 sources 元数据（供 Planner 等轻量阶段使用）。"""
+    nb = notebook.strip()
+    if not nb:
+        raise ValueError("notebook_required")
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw_id in note_ids:
+        nid = str(raw_id or "").strip()
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        ordered.append(nid)
+    if not ordered:
+        raise ValueError("note_ids_required")
+    sources: list[dict[str, str]] = []
+    for i, nid in enumerate(ordered, start=1):
+        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
+        if not row:
+            raise ValueError("note_not_found")
+        if _metadata_notebook(row) != nb:
+            raise ValueError("note_notebook_mismatch")
+        sources.append({"index": str(i), "noteId": nid, "title": _metadata_title(row, nid)})
+    manifest = _layered_source_manifest_block(ordered, user_ref, project_owner_user_uuid)
+    return manifest, sources
+
+
 def build_layered_notes_context(
     *,
     notebook: str,
@@ -1277,6 +1334,7 @@ def build_layered_notes_context(
     retrieval_budget: int,
     top_k: int = 36,
     project_owner_user_uuid: str | None = None,
+    merge_adjacent_chunks: bool = False,
 ) -> tuple[str | None, list[dict[str, str]], dict[str, Any]]:
     """
     若勾选范围内无任何索引块，返回 (None, [], meta) 表示应回退旧逻辑。
@@ -1356,6 +1414,7 @@ def build_layered_notes_context(
         max_chars=retrieval_budget,
         top_k=top_k,
         notes_ask_fast_path=_ask_fast,
+        merge_adjacent_chunks=merge_adjacent_chunks,
     )
     notes_ask_profile_emit(
         "layered_retrieve_ms",
@@ -1363,6 +1422,8 @@ def build_layered_notes_context(
         retrieval_chunks=len(retr_meta),
     )
     meta["retrieval_chunks"] = len(retr_meta)
+    meta["top_k"] = top_k
+    meta["merge_adjacent_chunks"] = merge_adjacent_chunks
     meta["retrieve_obs"] = retrieve_obs
     meta["retrieval_chunks_meta"] = retr_meta
 
