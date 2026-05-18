@@ -13,6 +13,7 @@ import {
   Fragment,
   type ComponentType,
   type Dispatch,
+  type MouseEvent,
   type ReactNode,
   type SetStateAction
 } from "react";
@@ -143,7 +144,7 @@ function NavIconBox({ active, children }: { active: boolean; children: ReactNode
 
 function navCreateSubLinkClass(active: boolean): string {
   return [
-    "group flex w-full items-center gap-2 rounded-dawn-md border-l-2 py-1.5 pl-1.5 pr-2 text-xs leading-snug text-inherit no-underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
+    "group flex w-full items-center rounded-dawn-md border-l-2 py-1.5 pl-1.5 pr-2 text-left text-xs leading-snug text-inherit no-underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
     active ? "border-brand/80 bg-fill text-ink" : "border-transparent text-muted hover:bg-fill hover:text-ink"
   ].join(" ");
 }
@@ -181,7 +182,16 @@ function CreateStudioNavExpanded({
     </>
   );
 
-  const parentClass = [navButtonClass(parentRouteActive, false), "min-w-0 flex-1 rounded-r-none border-r-0 pr-1"].join(" ");
+  const parentClass = navButtonClass(parentRouteActive, false);
+
+  const onParentClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (createSubNavExpanded) {
+      e.preventDefault();
+      setCreateSubNavExpanded(false);
+    } else {
+      setCreateSubNavExpanded(true);
+    }
+  };
 
   const subs: { href: string; label: string; active: boolean }[] = [
     { href: "/clip", label: t("create.quickLink.clip"), active: pathMatchesRoot(path, "/clip") },
@@ -191,44 +201,36 @@ function CreateStudioNavExpanded({
 
   return (
     <div className="flex w-full flex-col gap-0.5">
-      <div className="flex w-full min-w-0 items-stretch">
-        {notesHard ? (
-          <a href="/create" className={parentClass} title={parentTip}>
-            {parentInner}
-          </a>
-        ) : (
-          <Link href="/create" prefetch={false} className={parentClass} title={parentTip}>
-            {parentInner}
-          </Link>
-        )}
-        <button
-          type="button"
-          className="flex w-9 shrink-0 items-center justify-center self-stretch rounded-r-dawn-md border border-l border-line/60 text-muted transition hover:bg-fill hover:text-ink"
+      {notesHard ? (
+        <a
+          href="/create"
+          className={parentClass}
+          title={parentTip}
           aria-expanded={createSubNavExpanded}
           aria-controls="fym-create-studio-subnav"
-          aria-label={t("nav.createSubNavToggle")}
-          onClick={() => setCreateSubNavExpanded((v) => !v)}
+          onClick={onParentClick}
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            aria-hidden
-            className={`shrink-0 transition-transform duration-200 motion-reduce:transition-none ${createSubNavExpanded ? "rotate-180" : ""}`}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
-          </svg>
-        </button>
-      </div>
+          {parentInner}
+        </a>
+      ) : (
+        <Link
+          href="/create"
+          prefetch={false}
+          className={parentClass}
+          title={parentTip}
+          aria-expanded={createSubNavExpanded}
+          aria-controls="fym-create-studio-subnav"
+          onClick={onParentClick}
+        >
+          {parentInner}
+        </Link>
+      )}
       {createSubNavExpanded ? (
         <div
           id="fym-create-studio-subnav"
           role="group"
           aria-label={t("nav.createSubNavGroup")}
-          className="ml-0.5 flex flex-col gap-0.5 border-l border-line/70 pl-2"
+          className="ml-10 flex flex-col gap-0.5"
         >
           {subs.map((s) =>
             notesHard ? (
