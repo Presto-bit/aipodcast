@@ -192,9 +192,10 @@ export default function NotesAskAnswerMarkdownBody({
                   title={title}
                   {...rest}
                     onClick={(e) => {
+                      e.preventDefault();
                       onCitationClick?.(idx);
-                    (rest as { onClick?: MouseEventHandler<HTMLAnchorElement> }).onClick?.(e);
-                  }}
+                      (rest as { onClick?: MouseEventHandler<HTMLAnchorElement> }).onClick?.(e);
+                    }}
                 >
                   {children}
                 </a>

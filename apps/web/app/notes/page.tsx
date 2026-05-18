@@ -3955,9 +3955,6 @@ export default function NotesPage() {
                                   text={m.content}
                                   sources={m.sources}
                                   webSources={m.webSources}
-                                  onOpenSourceFromCitation={(p) => {
-                                    void openPreview(p.noteId, { highlightText: p.excerpt });
-                                  }}
                                 />
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&

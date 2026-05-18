@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { NotesAskSource, NotesAskWebSource } from "../../lib/notesAskCitation";
 import { extractCitedSourceIndexes } from "../../lib/notesAskCitation";
@@ -13,7 +13,6 @@ type Props = {
   /** 联网检索条目，[w1] 外链与脚注 */
   webSources?: NotesAskWebSource[];
   className?: string;
-  onOpenSourceFromCitation?: (payload: { noteId: string; index: string; excerpt?: string }) => void;
 };
 
 export { normalizeNotesAskAnswerForDisplay } from "../../lib/notesAskAnswerNormalize";
@@ -93,7 +92,7 @@ function SourceExcerptModal({
 /**
  * 对话回答区：GFM Markdown + 段落/列表/代码块等排版；可选将 [n] 等标为指向脚注的内链。
  */
-export function NotesAskAnswerDisplay({ text, sources, webSources, className, onOpenSourceFromCitation }: Props) {
+export function NotesAskAnswerDisplay({ text, sources, webSources, className }: Props) {
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [webSourcesOpen, setWebSourcesOpen] = useState(false);
@@ -118,18 +117,6 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className, on
     });
   }, [webSources]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const expandIfCitationHash = () => {
-      const h = window.location.hash || "";
-      if (/^#cite-w\d/i.test(h)) setWebSourcesOpen(true);
-      else if (/^#cite-/.test(h)) setSourcesOpen(true);
-    };
-    expandIfCitationHash();
-    window.addEventListener("hashchange", expandIfCitationHash);
-    return () => window.removeEventListener("hashchange", expandIfCitationHash);
-  }, []);
-
   const wrap = className?.trim() ? className : "";
 
   return (
@@ -139,17 +126,9 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className, on
         sources={sources}
         webSources={webSources}
         onCitationClick={(index) => {
-          setSourcesOpen(true);
           const src = sortedSources.find((s) => s.index === index);
-          if (src?.noteId) {
-            onOpenSourceFromCitation?.({
-              noteId: src.noteId,
-              index,
-              excerpt: src.chunks?.[0]?.excerpt
-            });
-          }
+          if (src) setModalSource(src);
         }}
-        onWebCitationClick={() => setWebSourcesOpen(true)}
       />
 
       {sortedSources.length > 0 ? (
@@ -164,12 +143,16 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className, on
             aria-expanded={sourcesOpen}
             aria-controls="notes-ask-citation-footnotes"
           >
-            <span className="font-semibold">引用参考资料（资料库）</span>
+            <span className="font-semibold">
+              引用参考资料（资料库）
+              <span className="ml-1.5 font-normal text-muted">· {visibleSources.length} 条</span>
+            </span>
             <span className="shrink-0 text-[11px] font-medium text-muted">{sourcesOpen ? "收起" : "展开"}</span>
           </button>
-          <div id="notes-ask-citation-footnotes" className="mt-2" hidden={!sourcesOpen}>
+          {sourcesOpen ? (
+          <div id="notes-ask-citation-footnotes" className="mt-2">
             <p className="text-[11px] text-muted">
-              点击正文中的 [n] 可跳转到下方对应脚注；关键处若出现「」短引文，可与下方摘录对照。有检索摘录时点击「查看摘录」可在弹窗中阅读块原文。与网页摘要冲突时以资料库为准。
+              点击正文中的 [n] 可查看对应检索摘录（弹窗）；关键处若出现「」短引文，可与下方脚注对照。与网页摘要冲突时以资料库为准。
             </p>
             {citedSourceIndexes.size > 0 ? (
               <label className="mt-2 inline-flex items-center gap-2 text-[11px] text-muted">
@@ -203,6 +186,7 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className, on
               <p className="mt-2 text-[11px] text-muted">正文暂无 [n] 引用角标，已自动隐藏参考资料列表。</p>
             ) : null}
           </div>
+          ) : null}
         </aside>
       ) : null}
 
@@ -221,26 +205,28 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className, on
             <span className="font-semibold">网页参考（联网检索）</span>
             <span className="shrink-0 text-[11px] font-medium text-muted">{webSourcesOpen ? "收起" : "展开"}</span>
           </button>
-          <div id="notes-ask-web-footnotes" className="mt-2" hidden={!webSourcesOpen}>
-            <p className="text-[11px] text-muted">
-              正文中的 [w1] 等为互联网摘要角标，仅供参考；与资料库冲突时以资料库为准。点击标题在新标签页打开。
-            </p>
-            <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
-              {sortedWebSources.map((s) => (
-                <li key={s.index} id={`cite-${s.index}`} className="scroll-mt-20">
-                  <a
-                    href={s.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-brand underline break-all"
-                  >
-                    [{s.index}] {s.title}
-                  </a>
-                  {s.snippet ? <p className="mt-1 text-[11px] leading-snug text-muted">{s.snippet}</p> : null}
-                </li>
-              ))}
-            </ol>
-          </div>
+          {webSourcesOpen ? (
+            <div id="notes-ask-web-footnotes" className="mt-2">
+              <p className="text-[11px] text-muted">
+                正文中的 [w1] 等为互联网摘要角标，仅供参考；与资料库冲突时以资料库为准。点击标题在新标签页打开。
+              </p>
+              <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
+                {sortedWebSources.map((s) => (
+                  <li key={s.index} id={`cite-${s.index}`} className="scroll-mt-20">
+                    <a
+                      href={s.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-brand underline break-all"
+                    >
+                      [{s.index}] {s.title}
+                    </a>
+                    {s.snippet ? <p className="mt-1 text-[11px] leading-snug text-muted">{s.snippet}</p> : null}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
         </aside>
       ) : null}
 
