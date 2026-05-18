@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 /**
  * 营销首屏装饰：无远程大图。叙事为「多源资料 → PrestoAI 分析对话 → 多形态输出」。
@@ -25,32 +25,103 @@ function InputSourceCard({
   );
 }
 
+/** 资料卡 → 笔记本 → 输出卡：每条路径独立弧线 + 箭头，对齐参考图流向 */
 function FlowArrows({ className = "" }: { className?: string }) {
+  const uid = useId().replace(/:/g, "");
+  const markerId = `hero-flow-arrow-${uid}`;
+
+  const inputPaths = [
+    "M 25 10 C 31 10, 35 40, 37 46",
+    "M 25 26 C 31 26, 35 44, 37 48",
+    "M 25 42 C 31 42, 35 48, 37 50",
+    "M 25 58 C 31 58, 35 52, 37 52",
+    "M 25 74 C 31 74, 35 54, 37 54"
+  ];
+
+  const outputPaths = [
+    "M 63 46 C 67 36, 72 24, 76 24",
+    "M 63 50 C 69 50, 72 50, 76 50",
+    "M 63 54 C 67 64, 72 76, 76 76"
+  ];
+
+  const strokeProps = {
+    stroke: "currentColor",
+    strokeWidth: 1,
+    strokeLinecap: "round" as const,
+    fill: "none",
+    vectorEffect: "non-scaling-stroke" as const,
+    markerEnd: `url(#${markerId})`
+  };
+
   return (
     <svg
-      className={`pointer-events-none text-line/50 ${className}`}
-      viewBox="0 0 120 160"
+      className={`pointer-events-none text-line/60 ${className}`}
+      viewBox="0 0 100 88"
       fill="none"
       preserveAspectRatio="none"
       aria-hidden
     >
+      <defs>
+        <marker
+          id={markerId}
+          markerWidth="5"
+          markerHeight="5"
+          refX="4"
+          refY="2.5"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M0,0 L5,2.5 L0,5 Z" fill="currentColor" fillOpacity="0.7" />
+        </marker>
+      </defs>
+
+      {/* 笔记本内部：分析 → 输出 */}
       <path
-        d="M8 24 Q52 40 52 78 M52 78 Q52 116 8 132"
+        d="M 37 50 L 63 50"
         stroke="currentColor"
-        strokeWidth="1.25"
+        strokeWidth="0.85"
         strokeLinecap="round"
+        strokeDasharray="2.5 2"
+        opacity="0.35"
         vectorEffect="non-scaling-stroke"
       />
-      <path
-        d="M112 24 Q68 40 68 78 M68 78 Q68 116 112 132"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-        vectorEffect="non-scaling-stroke"
-      />
-      <polygon points="52,82 48,76 56,76" fill="currentColor" opacity="0.55" />
-      <polygon points="68,82 64,76 72,76" fill="currentColor" opacity="0.55" />
+
+      {inputPaths.map((d, i) => (
+        <path key={`in-${i}`} d={d} {...strokeProps} opacity={0.72} />
+      ))}
+      {outputPaths.map((d, i) => (
+        <path key={`out-${i}`} d={d} {...strokeProps} opacity={0.72} />
+      ))}
     </svg>
+  );
+}
+
+function LaptopFrame({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex w-full max-w-full flex-col items-center">
+      {/* 屏幕盖：银灰边框 + 摄像头 */}
+      <div className="w-full rounded-t-[0.55rem] border-2 border-b-0 border-slate-400/90 bg-gradient-to-b from-slate-300 via-slate-300 to-slate-400/95 p-[3px] pb-1 shadow-[0_6px_14px_-6px_rgba(15,23,42,0.35)] dark:border-slate-500 dark:from-slate-700 dark:via-slate-700 dark:to-slate-800">
+        <div className="flex h-1.5 shrink-0 items-center justify-center rounded-t-[0.2rem] bg-slate-400/55 dark:bg-slate-600/80">
+          <span className="h-[3px] w-[3px] rounded-full bg-slate-600/70 ring-1 ring-slate-500/30 dark:bg-slate-400/60" />
+        </div>
+        <div className="overflow-hidden rounded-[0.2rem] border border-slate-500/25 bg-surface shadow-inner dark:border-slate-600/40">
+          {children}
+        </div>
+      </div>
+
+      {/* 转轴 */}
+      <div className="z-[1] -mt-px h-[2px] w-[84%] rounded-full bg-gradient-to-r from-transparent via-slate-500/70 to-transparent" />
+
+      {/* 键盘底座：略宽于屏幕 */}
+      <div className="relative z-0 -mt-px w-[106%] max-w-[calc(100%+0.35rem)] rounded-b-[0.65rem] border-2 border-t border-slate-400/90 bg-gradient-to-b from-slate-300/98 to-slate-400/90 px-1.5 pb-1 pt-1 shadow-[0_8px_16px_-8px_rgba(15,23,42,0.4)] dark:border-slate-500 dark:from-slate-700 dark:to-slate-800">
+        <div className="mx-auto grid h-[5px] max-w-[94%] grid-cols-10 gap-px rounded-[2px] bg-slate-500/12 p-px dark:bg-slate-900/25">
+          {Array.from({ length: 10 }, (_, i) => (
+            <span key={i} className="rounded-[1px] bg-slate-500/28 dark:bg-slate-400/15" />
+          ))}
+        </div>
+        <div className="mx-auto mt-0.5 h-[3px] w-[26%] rounded-[2px] bg-slate-500/18 dark:bg-slate-400/12" />
+      </div>
+    </div>
   );
 }
 
@@ -83,7 +154,7 @@ export default function MarketingHeroIllustration() {
     >
       <div className="relative flex min-h-0 flex-1 flex-col px-2 pb-2 pt-2 sm:px-2.5 sm:pb-2.5 sm:pt-2.5">
         <div className="relative grid min-h-0 flex-1 grid-cols-[minmax(0,0.82fr)_minmax(0,1.35fr)_minmax(0,0.82fr)] items-center gap-1 sm:gap-1.5">
-          <FlowArrows className="absolute inset-0 z-0 h-full w-full opacity-70" />
+          <FlowArrows className="absolute inset-[2%_0] z-0 h-[96%] w-full" />
           {/* 左侧：资料源 */}
           <ul className="relative z-[1] flex flex-col items-center justify-center gap-1">
             <InputSourceCard label="PDF" tagClass="border-t-danger/90">
@@ -139,10 +210,9 @@ export default function MarketingHeroIllustration() {
             </InputSourceCard>
           </ul>
 
-          {/* 中间：笔记本 + 对话 */}
+          {/* 中间：笔记本电脑 + PrestoAI 屏幕 */}
           <div className="relative z-[1] flex min-h-0 w-full flex-col items-center justify-center">
-            <div className="w-full rounded-lg border-2 border-slate-400/80 bg-gradient-to-b from-slate-200/90 to-slate-300/80 p-0.5 shadow-md dark:border-slate-600 dark:from-slate-800/90 dark:to-slate-900/80">
-              <div className="overflow-hidden rounded-md border border-line/60 bg-surface shadow-inner">
+            <LaptopFrame>
                 <div className="flex items-center gap-1 border-b border-line/70 bg-fill/60 px-1.5 py-0.5">
                   <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-brand text-[6px] font-extrabold leading-none text-white">
                     P
@@ -175,10 +245,7 @@ export default function MarketingHeroIllustration() {
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
-            <div className="mx-auto mt-px h-1 w-[52%] rounded-b-sm bg-slate-400/75 dark:bg-slate-600" />
-            <div className="mx-auto mt-0.5 h-1 w-[68%] rounded-sm bg-slate-400/55 dark:bg-slate-600/80" />
+            </LaptopFrame>
           </div>
 
           {/* 右侧：输出形态 */}
