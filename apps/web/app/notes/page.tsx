@@ -3852,8 +3852,8 @@ export default function NotesPage() {
               role="region"
               aria-label="对话"
             >
-              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-3">
-                <h2 className="text-lg font-semibold tracking-tight text-ink">对话</h2>
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-2">
+                <h2 className="text-sm font-semibold tracking-tight text-ink">对话</h2>
                 <span className="text-muted opacity-60" aria-hidden>
                   ⋮
                 </span>
@@ -3868,13 +3868,11 @@ export default function NotesPage() {
                     onDismiss={() => setNotesAskError("")}
                   />
                 ) : null}
+                {notesAskMessages.length > 0 ? (
                 <div
                   ref={notesAskScrollRef}
                   className="h-[min(50vh,420px)] max-h-[min(50vh,420px)] min-h-[200px] w-full min-w-0 shrink-0 overflow-y-auto rounded-xl border border-line/80 bg-surface/80 p-3.5"
                 >
-                  {notesAskMessages.length === 0 ? (
-                    <p className="text-xs text-muted">勾选左侧资料后即可提问</p>
-                  ) : (
                     <div className="flex flex-col gap-3">
                       {notesAskMessages.map((m) => (
                         <div
@@ -4068,8 +4066,8 @@ export default function NotesPage() {
                         </div>
                       ))}
                     </div>
-                  )}
                 </div>
+                ) : null}
                 <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch">
                   <button
                     type="button"
@@ -4116,7 +4114,7 @@ export default function NotesPage() {
                   >
                   <textarea
                     ref={notesAskTextareaRef}
-                    className="max-h-32 min-h-[2.5rem] flex-1 resize-none border-0 bg-transparent text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
+                    className="max-h-24 min-h-[1.875rem] flex-1 resize-none border-0 bg-transparent text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
                     placeholder={
                       draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "输入问题…"
                     }
