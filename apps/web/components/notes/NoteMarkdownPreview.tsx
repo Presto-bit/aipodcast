@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { estimateWordCount } from "@/lib/noteWordCount";
+import { estimateWordCount } from "../../lib/noteWordCount";
 
 const NoteMarkdownDoc = dynamic(() => import("./NoteMarkdownDoc"), {
   ssr: false,
