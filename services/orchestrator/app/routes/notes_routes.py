@@ -1436,13 +1436,22 @@ def preview_note_text_api(
     )
     preprocess_stage, next_action = _derive_preprocess_stage(md, cap)
     content_text = str(row.get("content_text") or "")
-    word_count = _estimate_word_count(content_text)
+    word_count = _estimate_word_count(text)
     structured_blocks = _coerce_structured_blocks(md.get("structuredBlocks"))
     if not structured_blocks:
         structured_blocks = _build_structured_blocks_from_text(content_text)
     source_type = "网页" if str(row.get("source_url") or "").strip() else (
         "文件" if str(row.get("input_type") or "") == "note_file" else "文本"
     )
+    rag_chunks_total = int(md.get("ragChunksTotal") or 0)
+    rag_chunks_indexed = int(md.get("ragChunksIndexed") or rag_n)
+    rag_index_truncated = bool(md.get("ragIndexTruncated"))
+    if not rag_chunks_total and rag_n > 0:
+        rag_chunks_total = rag_n
+        rag_chunks_indexed = rag_n
+    rag_index_coverage_pct = int(md.get("ragIndexCoveragePct") or (100 if not rag_index_truncated else 0))
+    if rag_index_coverage_pct <= 0 and rag_n > 0 and not rag_index_truncated:
+        rag_index_coverage_pct = 100
     return {
         "success": True,
         "noteId": note_id,
@@ -1451,6 +1460,12 @@ def preview_note_text_api(
         "truncated": truncated,
         "ext": ext,
         "ragChunkCount": rag_n,
+        "ragChunksTotal": rag_chunks_total,
+        "ragChunksIndexed": rag_chunks_indexed,
+        "ragIndexTruncated": rag_index_truncated,
+        "ragIndexStrategy": str(md.get("ragIndexStrategy") or "").strip(),
+        "ragIndexCoveragePct": rag_index_coverage_pct,
+        "summarySourceChars": int(md.get("summarySourceChars") or 0),
         "ragIndexError": str(row.get("note_rag_index_error") or "").strip(),
         "ragIndexedAt": str(row.get("note_rag_index_at") or ""),
         "parseStatus": p_st,

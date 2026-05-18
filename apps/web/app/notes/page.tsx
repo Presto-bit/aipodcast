@@ -203,6 +203,12 @@ type PreviewResp = {
   truncated?: boolean;
   error?: string;
   ragChunkCount?: number;
+  ragChunksTotal?: number;
+  ragChunksIndexed?: number;
+  ragIndexTruncated?: boolean;
+  ragIndexStrategy?: string;
+  ragIndexCoveragePct?: number;
+  summarySourceChars?: number;
   ragIndexError?: string;
   ragIndexedAt?: string;
   parseStatus?: string;
@@ -339,6 +345,49 @@ function dedupeStatusLine(raw: string): string {
     out.push(part);
   }
   return out.join(" · ");
+}
+
+/** 预览弹窗：上传时间展示到秒 */
+function formatPreviewDateTime(value?: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "—";
+  const ts = Date.parse(raw);
+  if (Number.isNaN(ts)) return raw;
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function mapPreprocessStageLabel(stage: string): string {
+  const s = String(stage || "").trim();
+  if (!s) return "—";
+  if (s === "可问答") return "成功";
+  if (s.includes("失败") || s.includes("错误")) return "失败";
+  return "进行中";
+}
+
+function mapParseStateLabel(state: string): string {
+  const s = String(state || "").trim().toLowerCase();
+  if (s === "success") return "成功";
+  if (s === "failed" || s === "error" || s === "empty") return "失败";
+  if (s === "partial") return "进行中";
+  return s ? "进行中" : "—";
+}
+
+function mapCiteStateLabel(state: string): string {
+  const s = String(state || "").trim().toLowerCase();
+  if (s === "ready") return "成功";
+  if (s === "limited") return "进行中";
+  if (s === "unavailable") return "失败";
+  return s ? "进行中" : "—";
+}
+
+function mapRetrieveStateLabel(state: string): string {
+  const s = String(state || "").trim().toLowerCase();
+  if (s === "indexed") return "成功";
+  if (s === "failed" || s === "not_ready") return "失败";
+  if (s === "indexing") return "进行中";
+  return s ? "进行中" : "—";
 }
 
 const NOTEBOOK_CARD_THEMES = [
@@ -824,8 +873,9 @@ export default function NotesPage() {
   const [previewSourceUrl, setPreviewSourceUrl] = useState("");
   const [previewCreatedAt, setPreviewCreatedAt] = useState("");
   const [previewWordCount, setPreviewWordCount] = useState<number>(0);
-  const [previewStage, setPreviewStage] = useState("");
-  const [previewNextAction, setPreviewNextAction] = useState("");
+  const [previewRagIndexTruncated, setPreviewRagIndexTruncated] = useState(false);
+  const [previewRagIndexCoveragePct, setPreviewRagIndexCoveragePct] = useState(0);
+  const [previewRagIndexStrategy, setPreviewRagIndexStrategy] = useState("");
   const [previewSimplified, setPreviewSimplified] = useState(false);
   const [previewHighlightHint, setPreviewHighlightHint] = useState("");
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
@@ -2847,8 +2897,9 @@ export default function NotesPage() {
     setPreviewSourceUrl("");
     setPreviewCreatedAt("");
     setPreviewWordCount(0);
-    setPreviewStage("");
-    setPreviewNextAction("");
+    setPreviewRagIndexTruncated(false);
+    setPreviewRagIndexCoveragePct(0);
+    setPreviewRagIndexStrategy("");
     setPreviewSimplified(false);
     setPreviewHighlightHint("");
     try {
@@ -2871,16 +2922,21 @@ export default function NotesPage() {
       setPreviewTruncated(!!data.truncated);
       setPreviewSourceType(String(data.sourceType || ""));
       setPreviewSourceUrl(String(data.sourceUrl || ""));
-      setPreviewCreatedAt(String(data.createdAt || ""));
+      setPreviewCreatedAt(formatPreviewDateTime(data.createdAt));
       setPreviewWordCount(Number(data.wordCount || 0));
-      setPreviewStage(String(data.preprocessStage || ""));
-      setPreviewNextAction(String(data.nextAction || ""));
+      setPreviewRagIndexTruncated(!!data.ragIndexTruncated);
+      setPreviewRagIndexCoveragePct(Number(data.ragIndexCoveragePct || 0));
+      setPreviewRagIndexStrategy(String(data.ragIndexStrategy || ""));
       const statusParts: string[] = [];
       const capabilityParts: string[] = [];
-      if (data.preprocessStage) capabilityParts.push(`预处理:${data.preprocessStage}`);
-      if (data.parseState) capabilityParts.push(`解析:${data.parseState}`);
-      if (data.citeState) capabilityParts.push(`引用:${data.citeState}`);
-      if (data.retrieveState) capabilityParts.push(`检索:${data.retrieveState}`);
+      if (data.preprocessStage) {
+        capabilityParts.push(`预处理:${mapPreprocessStageLabel(String(data.preprocessStage))}`);
+      }
+      if (data.parseState) capabilityParts.push(`解析:${mapParseStateLabel(String(data.parseState))}`);
+      if (data.citeState) capabilityParts.push(`引用:${mapCiteStateLabel(String(data.citeState))}`);
+      if (data.retrieveState) {
+        capabilityParts.push(`检索:${mapRetrieveStateLabel(String(data.retrieveState))}`);
+      }
       if (capabilityParts.length > 0) {
         statusParts.push(capabilityParts.join(" | "));
       }
@@ -4917,9 +4973,10 @@ export default function NotesPage() {
               statusLine={previewStatusLine}
               sourceType={previewSourceType}
               createdAt={previewCreatedAt}
-              preprocessStage={previewStage}
-              nextAction={previewNextAction}
               wordCount={previewWordCount}
+              ragIndexTruncated={previewRagIndexTruncated}
+              ragIndexCoveragePct={previewRagIndexCoveragePct}
+              ragIndexStrategy={previewRagIndexStrategy}
               sourceUrl={previewSourceUrl}
               canReindex={previewCanReindex}
               reindexBusy={previewReindexBusy}

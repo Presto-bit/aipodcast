@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { estimateWordCount } from "@/lib/noteWordCount";
 
 const NoteMarkdownDoc = dynamic(() => import("./NoteMarkdownDoc"), {
   ssr: false,
@@ -17,9 +18,10 @@ type Props = {
   statusLine?: string;
   sourceType?: string;
   createdAt?: string;
-  preprocessStage?: string;
-  nextAction?: string;
   wordCount?: number;
+  ragIndexTruncated?: boolean;
+  ragIndexCoveragePct?: number;
+  ragIndexStrategy?: string;
   sourceUrl?: string;
   canReindex?: boolean;
   reindexBusy?: boolean;
@@ -68,6 +70,7 @@ function statusPillClass(text: string): string {
     return "border-warning/45 bg-warning-soft text-warning-ink";
   }
   const isSuccess =
+    s.includes("成功") ||
     s.includes("success") ||
     s.includes("ready") ||
     s.includes("indexed") ||
@@ -88,9 +91,10 @@ export default function NoteMarkdownPreview({
   statusLine,
   sourceType,
   createdAt,
-  preprocessStage,
-  nextAction,
   wordCount,
+  ragIndexTruncated,
+  ragIndexCoveragePct,
+  ragIndexStrategy,
   sourceUrl,
   canReindex,
   reindexBusy,
@@ -264,11 +268,13 @@ export default function NoteMarkdownPreview({
   }, [filteredText, structuredBlocks]);
   const canLoadMore = blocks.length > visibleBlocks;
   const renderBlocks = useMemo(() => blocks.slice(0, visibleBlocks), [blocks, visibleBlocks]);
-  const remainingChars = useMemo(() => {
-    const total = blocks.reduce((n, b) => n + (b.markdown || "").length, 0);
-    const shown = renderBlocks.reduce((n, b) => n + (b.markdown || "").length, 0);
-    return Math.max(0, total - shown);
-  }, [blocks, renderBlocks]);
+  const previewWordCount = useMemo(() => estimateWordCount(filteredText), [filteredText]);
+  const displayWordCount =
+    typeof wordCount === "number" && wordCount > 0 ? wordCount : previewWordCount;
+  const remainingWords = useMemo(() => {
+    const hidden = blocks.slice(visibleBlocks);
+    return estimateWordCount(hidden.map((b) => b.markdown || "").join("\n\n"));
+  }, [blocks, visibleBlocks]);
   const statusPills = useMemo(() => {
     const raw = String(statusLine || "").trim();
     if (!raw) return [] as string[];
@@ -423,7 +429,14 @@ export default function NoteMarkdownPreview({
           <p>参考资料标题：<span className="text-ink">{title || "未命名参考资料"}</span></p>
           <p>类型：<span className="text-ink">{sourceType || "未知"}</span></p>
           <p>上传时间：<span className="text-ink">{createdAt || "-"}</span></p>
-          <p>字数：<span className="text-ink tabular-nums">{typeof wordCount === "number" ? wordCount.toLocaleString() : "-"}</span></p>
+          <p>字数：<span className="text-ink tabular-nums">{displayWordCount > 0 ? displayWordCount.toLocaleString() : "-"}</span></p>
+          {ragIndexTruncated && (ragIndexCoveragePct ?? 0) > 0 ? (
+            <p className="sm:col-span-2 lg:col-span-3 text-[11px] leading-relaxed text-warning-ink">
+              全文已保存。向资料提问时的检索与机器摘要约覆盖全文的 {ragIndexCoveragePct}%
+              {ragIndexStrategy === "head_tail" ? "（前段与尾段）" : "（前段）"}
+              ；中间未索引部分难以引用。可将资料拆成多份或联系管理员调高索引上限。
+            </p>
+          ) : null}
           <p>
             视图：
             <button
@@ -437,11 +450,6 @@ export default function NoteMarkdownPreview({
           {sourceUrl ? (
             <p className="sm:col-span-2 lg:col-span-3 break-all">
               参考资料链接：<a href={sourceUrl} target="_blank" rel="noreferrer" className="text-brand underline">{sourceUrl}</a>
-            </p>
-          ) : null}
-          {nextAction ? (
-            <p className="sm:col-span-2 lg:col-span-3">
-              下一步：<span className="text-ink">{nextAction}</span>
             </p>
           ) : null}
           {canReindex ? (
@@ -539,7 +547,7 @@ export default function NoteMarkdownPreview({
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink hover:bg-fill"
               onClick={() => setVisibleBlocks((n) => Math.min(n + 12, blocks.length))}
             >
-              加载更多（剩余约 {remainingChars.toLocaleString()} 字）
+              加载更多（剩余约 {remainingWords.toLocaleString()} 字）
             </button>
           </div>
         ) : null}

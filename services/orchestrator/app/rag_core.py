@@ -367,3 +367,102 @@ def apply_hybrid_vector_rag(
         f"out_chars={len(out)} rag_cap={rag_cap}"
     )
     return out, log_msg
+
+
+def note_rag_index_strategy() -> str:
+    s = (os.getenv("NOTE_RAG_INDEX_STRATEGY", "head") or "head").strip().lower()
+    return s if s in ("head", "head_tail") else "head"
+
+
+def note_rag_index_tail_ratio() -> float:
+    try:
+        return max(0.05, min(0.45, float(os.getenv("NOTE_RAG_INDEX_TAIL_RATIO", "0.22") or "0.22")))
+    except (TypeError, ValueError):
+        return 0.22
+
+
+def select_chunks_for_index(
+    chunks: list[str],
+    chunk_metas: list[dict[str, Any]],
+    abs_cap: int,
+) -> tuple[list[str], list[dict[str, Any]], dict[str, Any]]:
+    """按策略从全量切块中选取入库块（head / head_tail）。"""
+    n = len(chunks)
+    cap = max(0, min(abs_cap, n))
+    strategy = note_rag_index_strategy()
+    total_chars = sum(len(c) for c in chunks)
+    if n <= cap:
+        indexed_chars = total_chars
+        return (
+            chunks,
+            chunk_metas[:n] if chunk_metas else [{} for _ in chunks],
+            {
+                "ragChunksTotal": n,
+                "ragChunksIndexed": n,
+                "ragIndexTruncated": False,
+                "ragIndexStrategy": strategy,
+                "ragTotalChars": total_chars,
+                "ragIndexedChars": indexed_chars,
+                "ragIndexCoveragePct": 100 if total_chars else 100,
+            },
+        )
+
+    if strategy == "head_tail" and cap >= 2:
+        tail_n = max(1, min(cap - 1, int(round(cap * note_rag_index_tail_ratio()))))
+        head_n = cap - tail_n
+        indices: list[int] = []
+        seen: set[int] = set()
+        for i in list(range(head_n)) + list(range(n - tail_n, n)):
+            if i in seen:
+                continue
+            seen.add(i)
+            indices.append(i)
+        sel_chunks = [chunks[i] for i in indices]
+        sel_metas = [
+            dict(chunk_metas[i]) if i < len(chunk_metas) and isinstance(chunk_metas[i], dict) else {}
+            for i in indices
+        ]
+    else:
+        sel_chunks = chunks[:cap]
+        sel_metas = chunk_metas[:cap] if chunk_metas else [{} for _ in range(cap)]
+        if len(sel_metas) < len(sel_chunks):
+            sel_metas.extend({} for _ in range(len(sel_chunks) - len(sel_metas)))
+
+    indexed_chars = sum(len(c) for c in sel_chunks)
+    pct = min(100, round(100.0 * indexed_chars / total_chars)) if total_chars else 100
+    return (
+        sel_chunks,
+        sel_metas,
+        {
+            "ragChunksTotal": n,
+            "ragChunksIndexed": len(sel_chunks),
+            "ragIndexTruncated": True,
+            "ragIndexStrategy": strategy,
+            "ragTotalChars": total_chars,
+            "ragIndexedChars": indexed_chars,
+            "ragIndexCoveragePct": pct,
+        },
+    )
+
+
+def join_chunks_for_summary(chunks: list[str], *, max_chars: int | None = None) -> str:
+    """拼接已入选索引块，供机器摘要。"""
+    try:
+        default_cap = max(8000, min(120_000, int(os.getenv("NOTE_RAG_SUMMARY_INPUT_CAP", "44000") or "44000")))
+    except (TypeError, ValueError):
+        default_cap = 44_000
+    cap = max_chars if max_chars is not None else default_cap
+    parts: list[str] = []
+    used = 0
+    for ch in chunks:
+        piece = (ch or "").strip()
+        if not piece:
+            continue
+        extra = len(piece) + (2 if parts else 0)
+        if used + extra > cap:
+            if not parts:
+                parts.append(piece[:cap])
+            break
+        parts.append(piece)
+        used += extra
+    return "\n\n".join(parts)

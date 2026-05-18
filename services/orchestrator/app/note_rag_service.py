@@ -3,6 +3,7 @@
 
 - 索引：按 content_text 切块、EmbeddingProvider 嵌入，写入 note_rag_chunks；
   单笔记块数上限：默认 NOTE_RAG_MAX_CHUNKS_MODE=dynamic、NOTE_RAG_MAX_CHUNKS_ABS=512（可按 env 覆盖）；
+  入库策略 NOTE_RAG_INDEX_STRATEGY=head|head_tail；机器摘要仅基于已入库块（可 Map-Reduce）。
   inputs.note_rag_embedding_sig 记录 backend|dim|配置指纹，变更 env 后过期块检索时丢弃。
 - inputs.note_rag_index_error：最近一次索引失败原因（成功时清空）。
 - 摘要：异步 LLM 生成，写入 inputs.note_summary（标注为机器摘要）。
@@ -29,6 +30,9 @@ from .rag_core import (
     _keyword_score,
     _norm_minmax,
     decompose_retrieval_queries,
+    join_chunks_for_summary,
+    note_rag_index_strategy,
+    select_chunks_for_index,
     split_segments_into_chunks_with_meta,
     split_text_into_chunks,
 )
@@ -84,8 +88,32 @@ def effective_note_rag_chunk_cap(split_count: int) -> int:
     if _note_rag_max_chunks_mode() == "dynamic":
         return min(abs_cap, split_count)
     return min(_note_rag_max_chunks_static_cap(), abs_cap)
-_SUMMARY_INPUT_CAP = 44_000
+
+
+def _summary_input_cap() -> int:
+    try:
+        return max(8000, min(120_000, int(os.getenv("NOTE_RAG_SUMMARY_INPUT_CAP", "44000") or "44000")))
+    except (TypeError, ValueError):
+        return 44_000
+
+
+def _summary_map_reduce_enabled() -> bool:
+    return (os.getenv("NOTE_RAG_SUMMARY_MAP_REDUCE", "1") or "").strip().lower() not in ("0", "false", "no")
+
+
+_SUMMARY_INPUT_CAP = 44_000  # 默认；运行时用 _summary_input_cap()
 _SUMMARY_OUTPUT_CHARS = 5000
+_SUMMARY_PARTIAL_SYSTEM = (
+    "你是编辑助手。下面是一篇资料的连续片段。请用中文写一段简短分段摘要（约 200～400 字）："
+    "本段主要话题与要点；不要编造片段中没有的内容。"
+)
+_SUMMARY_MERGE_SYSTEM = (
+    "你是编辑助手。下面是同一篇资料多个分段摘要。请合并为一份结构化总摘要："
+    "主要观点、章节/话题脉络、关键术语；不要编造分段摘要中没有的内容。"
+    "控制在约 800～1200 汉字以内，可用简短条目。"
+    "摘要仅供快速浏览，事实与细节以原文为准。"
+)
+
 _RETRIEVAL_CACHE_L1_MAX = max(64, min(1024, int(os.getenv("NOTE_RAG_RETR_CACHE_L1_MAX", "256") or "256")))
 _RETRIEVAL_CACHE_L1_TTL_SEC = max(5, min(600, int(os.getenv("NOTE_RAG_RETR_CACHE_L1_TTL_SEC", "45") or "45")))
 _RETRIEVAL_CACHE_L2_TTL_SEC = max(10, min(3600, int(os.getenv("NOTE_RAG_RETR_CACHE_L2_TTL_SEC", "180") or "180")))
@@ -284,17 +312,60 @@ def ensure_note_rag_schema() -> None:
             conn.commit()
 
 
-def _invoke_llm_summary(user_text: str, api_key: str | None) -> str:
+def _invoke_llm_summary(user_text: str, api_key: str | None, *, system: str | None = None) -> str:
+    cap = _summary_input_cap()
     text, _tid = invoke_llm_chat_messages_with_minimax_fallback(
         [
-            {"role": "system", "content": _SUMMARY_SYSTEM},
-            {"role": "user", "content": user_text[:_SUMMARY_INPUT_CAP]},
+            {"role": "system", "content": system or _SUMMARY_SYSTEM},
+            {"role": "user", "content": user_text[:cap]},
         ],
         temperature=0.35,
         api_key=api_key,
         timeout_sec=120,
     )
     return text
+
+
+def _invoke_llm_summary_from_indexed_chunks(chunks: list[str], api_key: str | None) -> tuple[str, int]:
+    """
+    机器摘要仅基于已入选索引的块（与向量库一致）。
+    超长时分段摘要再合并（Map-Reduce）。
+    """
+    source = join_chunks_for_summary(chunks)
+    source_chars = len(source)
+    if not source.strip():
+        return "", 0
+    cap = _summary_input_cap()
+    if len(source) <= cap or not _summary_map_reduce_enabled():
+        return _invoke_llm_summary(source, api_key), source_chars
+
+    group_max = max(4000, int(cap * 0.85))
+    partials: list[str] = []
+    batch: list[str] = []
+    batch_len = 0
+    for ch in chunks:
+        piece = (ch or "").strip()
+        if not piece:
+            continue
+        extra = len(piece) + (2 if batch else 0)
+        if batch and batch_len + extra > group_max:
+            part = _invoke_llm_summary("\n\n".join(batch), api_key, system=_SUMMARY_PARTIAL_SYSTEM).strip()
+            if part:
+                partials.append(part)
+            batch = []
+            batch_len = 0
+        batch.append(piece)
+        batch_len += extra
+    if batch:
+        part = _invoke_llm_summary("\n\n".join(batch), api_key, system=_SUMMARY_PARTIAL_SYSTEM).strip()
+        if part:
+            partials.append(part)
+    if not partials:
+        return _invoke_llm_summary(source[:cap], api_key), source_chars
+    merged_in = "以下是资料各段的阶段性摘要，请合并为一份结构化总摘要：\n\n" + "\n\n---\n\n".join(partials)
+    if len(merged_in) > cap:
+        merged_in = merged_in[:cap]
+    return _invoke_llm_summary(merged_in, api_key, system=_SUMMARY_MERGE_SYSTEM), source_chars
 
 
 def delete_rag_chunks_for_note(note_id: str) -> None:
@@ -392,11 +463,32 @@ def _load_embeddings_by_pairs(pairs: list[tuple[str, int]]) -> dict[tuple[str, i
     return out
 
 
+def _merge_note_rag_index_metadata(note_id: str, stats: dict[str, Any]) -> None:
+    if not stats:
+        return
+    payload = {k: v for k, v in stats.items() if v is not None}
+    if not payload:
+        return
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                UPDATE inputs
+                SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                WHERE id = %s::uuid
+                """,
+                (json.dumps(payload, ensure_ascii=False), note_id),
+            )
+            conn.commit()
+
+
 def _update_note_rag_after_success(
     note_id: str,
     summary: str | None,
     body_hash: str,
     embedding_sig: str,
+    *,
+    index_metadata: dict[str, Any] | None = None,
 ) -> None:
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -411,6 +503,8 @@ def _update_note_rag_after_success(
                 (summary, body_hash, embedding_sig, note_id),
             )
             conn.commit()
+    if index_metadata:
+        _merge_note_rag_index_metadata(note_id, index_metadata)
 
 
 def _update_note_rag_index_error(note_id: str, error: str) -> None:
@@ -460,6 +554,19 @@ def _clear_note_rag_meta_short_body(note_id: str) -> None:
                 ("", note_id),
             )
             conn.commit()
+    _merge_note_rag_index_metadata(
+        note_id,
+        {
+            "ragChunksTotal": 0,
+            "ragChunksIndexed": 0,
+            "ragIndexTruncated": False,
+            "ragIndexStrategy": note_rag_index_strategy(),
+            "ragTotalChars": 0,
+            "ragIndexedChars": 0,
+            "ragIndexCoveragePct": 0,
+            "summarySourceChars": 0,
+        },
+    )
     invalidate_retrieval_cache_for_notes([note_id])
 
 
@@ -514,10 +621,9 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     if prev == h and count_rag_chunks_for_notes([note_id]) > 0:
         return {"ok": True, "skipped": "unchanged", "chunks": count_rag_chunks_for_notes([note_id])}
 
-    chunks, chunk_metas = _chunks_and_metas_from_note(row)
-    cap = effective_note_rag_chunk_cap(len(chunks))
-    chunks = chunks[:cap]
-    chunk_metas = chunk_metas[:cap]
+    chunks_all, chunk_metas_all = _chunks_and_metas_from_note(row)
+    abs_cap = effective_note_rag_chunk_cap(len(chunks_all))
+    chunks, chunk_metas, index_stats = select_chunks_for_index(chunks_all, chunk_metas_all, abs_cap)
     if len(chunk_metas) < len(chunks):
         chunk_metas.extend({} for _ in range(len(chunks) - len(chunk_metas)))
     if not chunks:
@@ -564,18 +670,32 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
         sig = ""
 
     summary_text = ""
+    summary_source_chars = 0
     try:
-        summary_text = _invoke_llm_summary(body, api_key=api_key)[:_SUMMARY_OUTPUT_CHARS]
+        summary_text, summary_source_chars = _invoke_llm_summary_from_indexed_chunks(chunks, api_key=api_key)
+        summary_text = (summary_text or "")[:_SUMMARY_OUTPUT_CHARS]
     except Exception as exc:
         logger.warning("note_rag summary failed note_id=%s: %s", note_id, exc)
         summary_text = ""
 
-    _update_note_rag_after_success(note_id, summary_text or None, h, sig or "")
+    index_metadata = {**index_stats, "summarySourceChars": summary_source_chars}
+    _update_note_rag_after_success(
+        note_id,
+        summary_text or None,
+        h,
+        sig or "",
+        index_metadata=index_metadata,
+    )
     invalidate_retrieval_cache_for_notes([note_id])
     return {
         "ok": True,
         "chunks": len(chunks),
+        "chunks_total": int(index_stats.get("ragChunksTotal") or len(chunks_all)),
+        "index_truncated": bool(index_stats.get("ragIndexTruncated")),
+        "index_strategy": str(index_stats.get("ragIndexStrategy") or ""),
+        "index_coverage_pct": int(index_stats.get("ragIndexCoveragePct") or 100),
         "summary_chars": len(summary_text),
+        "summary_source_chars": summary_source_chars,
         "embedding_backend": emb_backend,
         "embedding_sig": sig[:120] if sig else "",
     }
