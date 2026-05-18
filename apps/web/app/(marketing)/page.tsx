@@ -122,7 +122,7 @@ export default function MarketingLandingPage() {
               </p>
             ) : null}
           </div>
-          <div className="mx-auto flex w-full max-w-[520px] justify-center lg:mx-0 lg:max-w-none lg:justify-end">
+          <div className="mx-auto flex w-full max-w-[480px] justify-center lg:mx-0 lg:max-w-none lg:justify-end">
             <MarketingHeroIllustration />
           </div>
         </section>
