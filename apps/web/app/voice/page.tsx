@@ -10,16 +10,17 @@ import { useI18n } from "../../lib/I18nContext";
 type VoiceTab = "my" | "clone" | "persona";
 
 function tabFromSearch(q: string | null): VoiceTab {
-  if (q === "clone") return "clone";
+  if (q === "my") return "my";
   if (q === "persona") return "persona";
-  return "my";
+  if (q === "clone") return "clone";
+  return "clone";
 }
 
 export default function VoiceManagementPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { t } = useI18n();
-  const [tab, setTab] = useState<VoiceTab>("my");
+  const [tab, setTab] = useState<VoiceTab>("clone");
 
   useEffect(() => {
     setTab(tabFromSearch(searchParams?.get("tab") ?? null));
@@ -28,8 +29,7 @@ export default function VoiceManagementPage() {
   const setTabAndUrl = useCallback(
     (next: VoiceTab) => {
       setTab(next);
-      const qs =
-        next === "my" ? "" : next === "clone" ? "?tab=clone" : "?tab=persona";
+      const qs = next === "clone" ? "" : next === "my" ? "?tab=my" : "?tab=persona";
       router.replace(`/voice${qs}`, { scroll: false });
     },
     [router]
@@ -48,14 +48,6 @@ export default function VoiceManagementPage() {
           className="flex shrink-0 flex-row gap-2 overflow-x-auto rounded-2xl border border-line bg-surface p-2 shadow-soft"
           aria-label={t("voice.page.subNavAria")}
         >
-          <button type="button" className={navBtn(tab === "my")} onClick={() => setTabAndUrl("my")}>
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-90" aria-hidden>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M4 4h7v7H4V4zM13 4h7v7h-7V4zM4 13h7v7H4v-7zM13 13h7v7h-7v-7z" strokeLinejoin="round" />
-              </svg>
-            </span>
-            <span className="whitespace-nowrap">{t("voice.page.navLibrary")}</span>
-          </button>
           <button type="button" className={navBtn(tab === "clone")} onClick={() => setTabAndUrl("clone")}>
             <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-90" aria-hidden>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -64,6 +56,14 @@ export default function VoiceManagementPage() {
               </svg>
             </span>
             <span className="whitespace-nowrap">{t("voice.page.navClone")}</span>
+          </button>
+          <button type="button" className={navBtn(tab === "my")} onClick={() => setTabAndUrl("my")}>
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-90" aria-hidden>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 4h7v7H4V4zM13 4h7v7h-7V4zM4 13h7v7H4v-7zM13 13h7v7h-7v-7z" strokeLinejoin="round" />
+              </svg>
+            </span>
+            <span className="whitespace-nowrap">{t("voice.page.navLibrary")}</span>
           </button>
           <button type="button" className={navBtn(tab === "persona")} onClick={() => setTabAndUrl("persona")}>
             <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-90" aria-hidden>

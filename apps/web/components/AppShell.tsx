@@ -18,7 +18,6 @@ import {
   type SetStateAction
 } from "react";
 import {
-  IconClip,
   IconCreate,
   IconDraft,
   IconGrid,
@@ -26,8 +25,7 @@ import {
   IconNotes,
   IconSubscription,
   IconUser,
-  IconTrash,
-  IconVoice
+  IconTrash
 } from "./NavIcons";
 import { useAuth } from "../lib/auth";
 import {
@@ -166,7 +164,8 @@ function CreateStudioNavExpanded({
   const searchParams = useSearchParams();
   const notesHard = isNotesPrimaryWorkbenchPath(path);
   const tab = searchParams?.get("tab") ?? null;
-  const voiceCloneActive = pathMatchesRoot(path, "/voice") && tab === "clone";
+  const voiceManageActive =
+    pathMatchesRoot(path, "/voice") && (tab === null || tab === "clone");
 
   /** 策略 A：仅「创作工作室」路由（/create、/podcast、/tts）父行高亮；在 /clip、/shownotes、/voice 等仅子项高亮。 */
   const parentRouteActive = Boolean(item.activeMatch?.(path));
@@ -196,7 +195,7 @@ function CreateStudioNavExpanded({
   const subs: { href: string; label: string; active: boolean }[] = [
     { href: "/clip", label: t("create.quickLink.clip"), active: pathMatchesRoot(path, "/clip") },
     { href: "/shownotes", label: t("create.quickLink.shownotes"), active: pathMatchesRoot(path, "/shownotes") },
-    { href: "/voice?tab=clone", label: t("create.quickLink.voiceClone"), active: voiceCloneActive }
+    { href: "/voice", label: t("create.quickLink.voiceClone"), active: voiceManageActive }
   ];
 
   return (
@@ -299,13 +298,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         short: t("nav.createShort"),
         Icon: IconCreate,
         activeMatch: (p) => matchesProductStudio(p)
-      },
-      {
-        href: "/clip",
-        label: t("nav.clip"),
-        short: t("nav.clipShort"),
-        Icon: IconClip,
-        activeMatch: (p) => pathMatchesRoot(p, "/clip")
       }
     ],
     [t]
@@ -313,13 +305,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const navLibrary = useMemo<NavItem[]>(
     () => [
       { href: "/works", label: t("nav.works"), short: "作", Icon: IconGrid },
-      {
-        href: "/voice",
-        label: t("nav.voice"),
-        short: "音",
-        Icon: IconVoice,
-        activeMatch: (p) => pathMatchesRoot(p, "/voice")
-      },
       {
         href: "/drafts",
         label: t("nav.drafts"),
