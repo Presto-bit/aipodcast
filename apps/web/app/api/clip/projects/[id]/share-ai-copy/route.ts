@@ -3,6 +3,8 @@ import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../../
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+/** 与编排器 LLM 生成对齐，避免平台默认短超时导致浏览器侧 Failed to fetch */
+export const maxDuration = 300;
 
 type Ctx = { params: Promise<{ id: string }> };
 

@@ -8,7 +8,6 @@ import { ChevronDown, ChevronRight, Music2, Pause, Play, RotateCw, Save, Sparkle
 import {
   fetchClipProjectShareAiCopy,
   fetchClipTitleSuggestions,
-  formatOrchestratorErrorText,
   persistClipProjectShowNotes
 } from "../../lib/api";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
@@ -54,20 +53,6 @@ function formatDuration(sec: number): string {
 
 const HISTORY_PAGE_SIZE = 5;
 
-async function patchClipProjectTitle(projectId: string, title: string, getAuthHeaders: () => Record<string, string>) {
-  const id = encodeURIComponent(projectId);
-  const res = await fetch(`/api/clip/projects/${id}`, {
-    method: "PATCH",
-    credentials: "same-origin",
-    headers: { ...getAuthHeaders(), "content-type": "application/json" },
-    body: JSON.stringify({ title: title.slice(0, 200) })
-  });
-  const t = await res.text();
-  if (!res.ok) {
-    throw new Error(formatOrchestratorErrorText(t) || `更新标题失败 ${res.status}`);
-  }
-}
-
 export default function ShownotesStudio({
   projectId,
   embedOnLanding = false,
@@ -97,7 +82,6 @@ export default function ShownotesStudio({
   const [newAudioBusy, setNewAudioBusy] = useState(false);
 
   const [titleOptions, setTitleOptions] = useState<string[]>([]);
-  const [selectedTitleIndex, setSelectedTitleIndex] = useState(0);
 
   const [showNotes, setShowNotes] = useState("");
   const [notesPreviewEdit, setNotesPreviewEdit] = useState(false);
@@ -109,8 +93,8 @@ export default function ShownotesStudio({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyPage, setHistoryPage] = useState(0);
 
-  const draftFlushRef = useRef({ showNotes: "", titleOptions: [] as string[], selectedTitleIndex: 0 });
-  draftFlushRef.current = { showNotes, titleOptions, selectedTitleIndex };
+  const draftFlushRef = useRef({ showNotes: "", titleOptions: [] as string[] });
+  draftFlushRef.current = { showNotes, titleOptions };
 
   const shownotesRestoreKeyRef = useRef<string>("");
   const materialPollTicksRef = useRef(0);
@@ -201,7 +185,6 @@ export default function ShownotesStudio({
         setShowNotes(draft.showNotes);
         if (draft.titles.length > 0) {
           setTitleOptions(draft.titles.slice(0, 3));
-          setSelectedTitleIndex(Math.min(draft.selectedTitleIndex, Math.max(0, draft.titles.length - 1)));
         }
         setNotesPreviewEdit(false);
         return;
@@ -225,16 +208,16 @@ export default function ShownotesStudio({
 
   useEffect(() => {
     const t = window.setTimeout(() => {
-      const { showNotes: sn, titleOptions: to, selectedTitleIndex: si } = draftFlushRef.current;
-      saveShownotesStudioDraft(projectId, { showNotes: sn, titles: to, selectedTitleIndex: si });
+      const { showNotes: sn, titleOptions: to } = draftFlushRef.current;
+      saveShownotesStudioDraft(projectId, { showNotes: sn, titles: to, selectedTitleIndex: 0 });
     }, 500);
     return () => window.clearTimeout(t);
-  }, [projectId, showNotes, titleOptions, selectedTitleIndex]);
+  }, [projectId, showNotes, titleOptions]);
 
   useEffect(() => {
     const flush = () => {
-      const { showNotes: sn, titleOptions: to, selectedTitleIndex: si } = draftFlushRef.current;
-      saveShownotesStudioDraft(projectId, { showNotes: sn, titles: to, selectedTitleIndex: si });
+      const { showNotes: sn, titleOptions: to } = draftFlushRef.current;
+      saveShownotesStudioDraft(projectId, { showNotes: sn, titles: to, selectedTitleIndex: 0 });
     };
     const onVis = () => {
       if (document.visibilityState === "hidden") flush();
@@ -280,7 +263,6 @@ export default function ShownotesStudio({
       const titles = (data.titles || []).filter(Boolean);
       const list = titles.slice(0, 3);
       setTitleOptions(list);
-      setSelectedTitleIndex(0);
       return list;
     } catch (e) {
       setLoadErr(String(e instanceof Error ? e.message : e));
@@ -306,10 +288,9 @@ export default function ShownotesStudio({
         await persistClipProjectShowNotes(projectId, String(notes ?? "").slice(0, 20_000));
         const snap = (titlesSnapshot ?? titleOptions).map((x) => String(x || "").trim()).filter(Boolean);
         const titlesSnap = snap.length ? snap : [""];
-        const histIdx = titlesSnapshot != null ? 0 : selectedTitleIndex;
         const nextHist = appendShownotesStudioHistory(projectId, {
           titles: titlesSnap,
-          selectedTitleIndex: histIdx,
+          selectedTitleIndex: 0,
           showNotes: notes
         });
         setHistory(nextHist);
@@ -323,7 +304,7 @@ export default function ShownotesStudio({
         setGenBusy(false);
       }
     },
-    [load, projectId, selectedTitleIndex, titleOptions]
+    [load, projectId, titleOptions]
   );
 
   const runPostAsrPipeline = useCallback(async () => {
@@ -390,7 +371,7 @@ export default function ShownotesStudio({
       const titlesSnap = titleOptions.length ? titleOptions : [""];
       const nextHist = appendShownotesStudioHistory(projectId, {
         titles: titlesSnap,
-        selectedTitleIndex,
+        selectedTitleIndex: 0,
         showNotes
       });
       setHistory(nextHist);
@@ -400,7 +381,7 @@ export default function ShownotesStudio({
     } finally {
       setSaveBusy(false);
     }
-  }, [load, projectId, selectedTitleIndex, showNotes, titleOptions]);
+  }, [load, projectId, showNotes, titleOptions]);
 
   const applyAiRefine = useCallback(async () => {
     const raw = aiPromptDraft.trim();
@@ -424,7 +405,7 @@ export default function ShownotesStudio({
       const titlesSnap = titleOptions.length ? titleOptions : [""];
       const nextHist = appendShownotesStudioHistory(projectId, {
         titles: titlesSnap,
-        selectedTitleIndex,
+        selectedTitleIndex: 0,
         showNotes: notes
       });
       setHistory(nextHist);
@@ -436,34 +417,16 @@ export default function ShownotesStudio({
     } finally {
       setShareAiBusy(false);
     }
-  }, [aiPromptDraft, load, projectId, selectedTitleIndex, showNotes, titleOptions]);
+  }, [aiPromptDraft, load, projectId, showNotes, titleOptions]);
 
   const beginAsr = useCallback(() => {
     pendingPipelineAfterAsrRef.current = true;
     void runTranscribe();
   }, [runTranscribe]);
 
-  const onPickTitle = useCallback(
-    async (idx: number) => {
-      setSelectedTitleIndex(idx);
-      const t = titleOptions[idx]?.trim();
-      if (!t) return;
-      const cur = String(project?.title || "").trim();
-      if (t === cur) return;
-      try {
-        await patchClipProjectTitle(projectId, t, getAuthHeaders);
-        await load();
-      } catch (e) {
-        setLoadErr(String(e instanceof Error ? e.message : e));
-      }
-    },
-    [getAuthHeaders, load, project, projectId, titleOptions]
-  );
-
   const loadHistoryEntry = useCallback((row: ShownotesStudioHistoryItem) => {
     setShowNotes(row.showNotes);
     setTitleOptions(row.titles.filter(Boolean).slice(0, 3));
-    setSelectedTitleIndex(Math.min(row.selectedTitleIndex, Math.max(0, row.titles.length - 1)));
     setNotesPreviewEdit(false);
   }, []);
 
@@ -639,23 +602,13 @@ export default function ShownotesStudio({
                   重新生成标题
                 </button>
               </div>
-              <ul className="mt-3 space-y-1">
+              <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-snug text-ink">
                 {(titleOptions.length ? titleOptions : ["", "", ""]).slice(0, 3).map((t, i) => (
-                  <li key={i}>
-                    <label className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-1.5 hover:bg-fill/40">
-                      <input
-                        type="radio"
-                        name={`sn-title-${projectId}`}
-                        className="mt-1"
-                        checked={selectedTitleIndex === i}
-                        onChange={() => void onPickTitle(i)}
-                        disabled={!t.trim()}
-                      />
-                      <span className="text-sm leading-snug text-ink">{t.trim() || (titleBusy ? "生成中…" : "—")}</span>
-                    </label>
+                  <li key={i} className="pl-1 marker:text-muted">
+                    {t.trim() || (titleBusy ? "生成中…" : "—")}
                   </li>
                 ))}
-              </ul>
+              </ol>
             </section>
 
             <section aria-label="Shownotes" className="border-b border-line/50 py-6">
