@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { NotesAskSource, NotesAskWebSource } from "../../lib/notesAskCitation";
 import { extractCitedSourceIndexes } from "../../lib/notesAskCitation";
