@@ -11,6 +11,7 @@ from typing import Any, Iterator
 
 from .models import get_note_by_id
 from .note_rag_service import NOTE_LAYERED_RAG, build_layered_notes_context
+from .notes_ask_citations import collapse_citation_markers
 from .rag_core import _keyword_score, split_text_into_chunks
 from .notes_ask_profile import notes_ask_profile_emit
 from .provider_router import (
@@ -66,7 +67,6 @@ _LEAK_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-
 def _notes_ask_sanitize_visible_text(s: str) -> str:
     """去掉推理标签、系统检索标记等不应展示给用户的片段。"""
     if not s:
@@ -95,29 +95,25 @@ _SYSTEM = (
     "因果：主因或结论先行 → 简短机制或链条 → 材料中的限制条件。\n"
     "对比/选型：一句比较标准 → 表格或分栏 → 材料范围内的选用结论。\n"
     "不要输出模型内心独白式推理过程。\n"
-    "【溯源与行文：少打断、仍可核对】\n"
-    "角标只用 [1]、[2]…，与摘录或【来源清单】中的资料序号一致，勿发明新编号。"
-    "界面会以脚注/侧栏展示与 [n] 对应的资料标题与摘录，即「参考与来源」；"
-    "正文以叙述为主，**不要**在句首或句中高频使用「根据《……》」「某某笔记指出」「来源[n] 记载」等前缀式点名，"
-    "也**不要**在正文反复写出完整资料标题或笔记全名，用角标 [n] 承担溯源即可。\n"
-    "**禁止**把摘录或清单里出现的书名、文章名、节目名等嵌进归因句式，例如「《Hold Me Tight》提出…」「《××》认为…」「××一书中写到…」「这本书说好的实践是…」「那本传记里提到…」；"
-    "摘录里即使有完整书名，也**不要**在回答里复述该书名号当来源前缀，应直接写观点与事实，仅在句末或段末用 [n]。"
-    "对比：避免「《Hold Me Tight》提出，伴侣争吵时应…… [1]」；宜写「伴侣争吵时可以…… [1]」（必要时在该句旁加「」短引文后再写 [1]）。\n"
-    "同一论点、同一段落若依据同一来源，**共用同一角标**，并优先把 [n] 放在该段**段末或该论点收束句**之后，"
-    "避免句句紧跟角标；换论点或换证据时再换角标；一句内确需两个依据时才并列 [1][2]，并仍避免句首堆来源名。"
-    "仅在确实依据某一来源时标注，不要标注未在回答中实际用到的序号。"
-    "列表项开头尽量用动作或判断词（便于垂直扫读）；加粗只用于结论句中的关键词，勿整段加粗。"
-    "也不要在正文中复述「检索片段」、chunk、score、向量、noteId 等系统或调试用语。\n"
-    "为便于核对摘录依据：在事实性结论、数字、日期、专有名词或易歧义表述处，"
-    "尽量在该句附近给出**很短的一句原话佐证**，用中文直角引号「」括起，须与摘录字面一致（可仅用省略号表示截断）；"
-    "长度以约一句、一般不超过 40 字为宜，避免大段照抄；**短引文后再写角标 [n]**。"
-    "若摘录中无合适短句、或概括性结论难以逐字对应，可仅用角标 [n] 而不强行造引文。\n"
-    "若需指代摘录中的小节，只用**极简主题词**（寥寥数语，切忌写成完整标题）即可；"
-    "勿复述「### 来源 [i]」、块序号、「摘要 [i]」等技术标签或整段标题行。\n"
-    "文末**不要**再写「## 参考与来源」并逐条抄写与【来源清单】重复的标题表，以免与界面脚注重复。\n"
-    "若模型接口将推理与正文分列返回，仅将面向用户的结论写在正文部分，勿在正文中重复粘贴完整推理过程。\n"
-    "若问题与多条笔记均相关，请尽量在回答中分别引用不同序号，避免只依赖少数几条而忽略其他相关摘录。"
-    "当勾选来源数 >= 2 且材料可支持时，优先至少引用 2 个不同来源；若只能依据 1 个来源作答，请明确说明其余来源中未检索到可支持该问题的片段。"
+    "【溯源：按论点块标注，勿逐句标注】\n"
+    "角标只用 [1]、[2]…，与【来源清单】/摘录中的资料序号一致，勿发明新编号。"
+    "界面脚注区会展示与 [n] 对应的标题与摘录；正文以叙述为主，用角标承担溯源，"
+    "**不要**在句首堆「根据《……》」「某某笔记指出」「来源[n] 记载」或反复写资料全名。\n"
+    "**禁止**把书名/文章名嵌进归因句式（如「《××》提出…」「这本书认为…」）；"
+    "摘录里即使有完整书名也不要在正文复述，应直接写观点，在**论点块收束处**用 [n]。\n"
+    "引用粒度是「论点块」，不是「句子」：一个可核对的事实主张或一段连贯论述 = 至多 **1 组**角标（[1] 或 [1][2]）。"
+    "同一论点、同一段落、同一列表块若同源，**只在块末标一次**；中间句、列表各项**不要**重复 [n]。"
+    "换论点、换证据、换来源时才换新角标；一句内确需两个依据才并列 [1][2]。"
+    "密度：全文每约 **120～150 汉字** 至多 1 组角标；有序/无序列表 ≥3 条且同源时，仅在**列表块末**标一次。"
+    "开篇结论句若后文同段会标依据，首句可**不标**；过渡句、复述、常识铺垫**不标**。\n"
+    "仅在确实依据某一来源时标注，不要为凑序号在无依据句上插标。"
+    "列表项开头尽量用动作或判断词；加粗只用于结论关键词；勿复述 chunk、score、向量、noteId 等调试用语。\n"
+    "核对依据时：每个论点块**至多一处**可选「」短引文（约一句、≤40 字、与摘录字面一致），"
+    "放在该块收束处，**短引文后再写角标**；无合适短句可只写角标，勿强行造引文。\n"
+    "勿复述「### 来源 [i]」、块序号等技术标签；文末**不要**再写「## 参考与来源」重复清单。\n"
+    "若模型将推理与正文分列，仅把面向用户的结论写在正文。\n"
+    "多来源：勾选 ≥2 条且材料可支持时，**整篇回答**尽量出现至少 2 个不同 [n]（按论点分摊，非逐句分摊）；"
+    "若只能依据 1 条，请说明其余来源摘录中未找到可支持该问题的片段，**不要**为凑覆盖乱插 [2]。"
 )
 
 def _enrich_sources_with_chunks(sources: list[dict[str, Any]], retr_meta: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -145,6 +141,24 @@ def _enrich_sources_with_chunks(sources: list[dict[str, Any]], retr_meta: list[d
             merged["chunks"] = by_note[nid]
         out.append(merged)
     return out
+
+
+def _notes_ask_citation_collapse_enabled() -> bool:
+    return (os.getenv("NOTES_ASK_CITATION_COLLAPSE", "1") or "").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+
+
+def finalize_notes_ask_answer(answer: str) -> str:
+    """清洗可见文本并按论点块合并冗余角标。"""
+    t = _notes_ask_sanitize_visible_text(answer or "").strip()
+    if not t:
+        return ""
+    if _notes_ask_citation_collapse_enabled():
+        t = collapse_citation_markers(t)
+    return t
 
 
 def filter_sources_by_citations(
@@ -394,8 +408,8 @@ def _prepare_notes_ask_messages(
 
     history_block = _build_history_block(chat_history)
     user_block = (
-        "资料摘录如下（角标 [n] 须与【来源清单】/摘录中的资料序号一致；正文少写资料全名，避免「这本书/该笔记认为」式归因，用 [n] 与界面脚注核对；"
-        "关键处尽量用「」短引文后再标 [n]）：\n\n"
+        "资料摘录如下（角标 [n] 与【来源清单】序号一致；按**论点块**在块末标注，勿逐句标注；"
+        "勿用「这本书/该笔记认为」式归因；每个论点块至多一处「」短引文 + 角标）：\n\n"
         f"{context}\n\n---\n\n"
         + (history_block + "\n\n---\n\n" if history_block else "")
         + f"问题：{q}"
@@ -615,11 +629,11 @@ def iter_notes_answer_events(
             llm_total_ms,
             len("".join(acc_answer)),
         )
-        full = _notes_ask_sanitize_visible_text("".join(acc_answer)).strip()
+        full = finalize_notes_ask_answer("".join(acc_answer))
         if not full:
             raise RuntimeError("empty_answer")
         sources = filter_sources_by_citations(full, sources, include_all_sources=include_all_sources)
-        done_ev: dict[str, Any] = {"type": "done", "sources": sources, "traceId": None}
+        done_ev: dict[str, Any] = {"type": "done", "sources": sources, "answer": full, "traceId": None}
         yield done_ev
     except Exception as exc:
         logger.warning(
@@ -850,7 +864,7 @@ def answer_notes_question(
     if not (answer or "").strip():
         raise RuntimeError("empty_answer")
 
-    ans = _notes_ask_sanitize_visible_text(answer.strip())
+    ans = finalize_notes_ask_answer(answer)
     out: dict[str, Any] = {
         "answer": ans,
         "sources": filter_sources_by_citations(ans, sources, include_all_sources=include_all_sources),

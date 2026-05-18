@@ -2,7 +2,7 @@
 勾选范围内的向量检索 + 异步摘要分层（笔记入库后由 RQ 建索引）。
 
 - 索引：按 content_text 切块、EmbeddingProvider 嵌入，写入 note_rag_chunks；
-  单笔记块数上限：默认 NOTE_RAG_MAX_CHUNKS_MODE=dynamic、NOTE_RAG_MAX_CHUNKS_ABS=320（可按 env 覆盖）；
+  单笔记块数上限：默认 NOTE_RAG_MAX_CHUNKS_MODE=dynamic、NOTE_RAG_MAX_CHUNKS_ABS=512（可按 env 覆盖）；
   inputs.note_rag_embedding_sig 记录 backend|dim|配置指纹，变更 env 后过期块检索时丢弃。
 - inputs.note_rag_index_error：最近一次索引失败原因（成功时清空）。
 - 摘要：异步 LLM 生成，写入 inputs.note_summary（标注为机器摘要）。
@@ -49,9 +49,9 @@ def _note_rag_max_chunks_floor() -> int:
 def _note_rag_max_chunks_abs() -> int:
     """入库向量块全局硬顶（防极端长文拖垮嵌入/DB）。"""
     try:
-        return max(64, min(20_000, int(os.getenv("NOTE_RAG_MAX_CHUNKS_ABS", "320") or "320")))
+        return max(64, min(20_000, int(os.getenv("NOTE_RAG_MAX_CHUNKS_ABS", "512") or "512")))
     except (TypeError, ValueError):
-        return 320
+        return 512
 
 
 def _note_rag_max_chunks_mode() -> str:
@@ -61,13 +61,13 @@ def _note_rag_max_chunks_mode() -> str:
 
 def _note_rag_max_chunks_static_cap() -> int:
     """static 模式：单笔记块数目标上限（仍不超过 NOTE_RAG_MAX_CHUNKS_ABS）。"""
-    raw = (os.getenv("NOTE_RAG_MAX_CHUNKS_PER_NOTE", "160") or "160").strip()
+    raw = (os.getenv("NOTE_RAG_MAX_CHUNKS_PER_NOTE", "256") or "256").strip()
     lo = _note_rag_max_chunks_floor()
     hi = _note_rag_max_chunks_abs()
     try:
         v = int(raw)
     except (TypeError, ValueError):
-        v = 160
+        v = 256
     return max(lo, min(hi, v))
 
 
@@ -606,7 +606,7 @@ def _chunk_allowed_for_embedding(
 
 def _note_rag_vector_candidate_cap() -> int:
     """向量精排前候选块硬上限，防止勾选过多笔记时 CPU/内存尖峰。"""
-    return max(200, min(8000, int(os.getenv("NOTE_RAG_VECTOR_CANDIDATE_CAP", "2500") or "2500")))
+    return max(200, min(8000, int(os.getenv("NOTE_RAG_VECTOR_CANDIDATE_CAP", "4000") or "4000")))
 
 
 def _note_rag_keyword_prefilter_cap(note_count: int, top_k: int) -> int:
@@ -614,7 +614,7 @@ def _note_rag_keyword_prefilter_cap(note_count: int, top_k: int) -> int:
     mult = max(8, min(80, int(os.getenv("NOTE_RAG_KEYWORD_PREFILTER_MULT", "24") or "24")))
     floor = max(64, min(800, int(os.getenv("NOTE_RAG_KEYWORD_PREFILTER_FLOOR", "200") or "200")))
     cap = max(floor, top_k * mult, note_count * 24)
-    max_cap = max(200, min(4000, int(os.getenv("NOTE_RAG_KEYWORD_PREFILTER_MAX", "1400") or "1400")))
+    max_cap = max(200, min(4000, int(os.getenv("NOTE_RAG_KEYWORD_PREFILTER_MAX", "2000") or "2000")))
     return min(max_cap, cap)
 
 

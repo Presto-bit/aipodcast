@@ -85,7 +85,14 @@ import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
 type NotesAskStreamEvent =
   | { type: "chunk"; text: string; streamRole?: "reasoning" | "answer" }
-  | { type: "done"; sources?: unknown; webSources?: unknown; traceId?: string | null }
+  | {
+      type: "done";
+      sources?: unknown;
+      webSources?: unknown;
+      traceId?: string | null;
+      /** 流式结束后合并角标的全文（与 chunk 拼接结果一致或更精简） */
+      answer?: string;
+    }
   | { type: "info"; message: string; code?: string; requestId?: string }
   | {
       type: "error";
@@ -2482,11 +2489,13 @@ export default function NotesPage() {
                 flushChunksNow();
                 sawDone = true;
                 const doneSources = normalizeNotesAskSources(ev.sources);
+                const doneAnswer = typeof ev.answer === "string" ? ev.answer.trim() : "";
                 notesAskClientLog("info", "stream", "done_event", {
                   requestId: streamRid,
                   chunkCount,
                   chunkChars,
-                  doneMs: Math.round(nowMs() - streamT0)
+                  doneMs: Math.round(nowMs() - streamT0),
+                  answerReplaced: Boolean(doneAnswer)
                 });
                 setNotesAskMessages((prev) => {
                   const next = [...prev];
@@ -2496,6 +2505,7 @@ export default function NotesPage() {
                     ...next[idx]!,
                     streaming: false,
                     streamingReasoning: undefined,
+                    ...(doneAnswer ? { content: doneAnswer } : {}),
                     ...(doneSources?.length ? { sources: doneSources } : {})
                   };
                   return next;
