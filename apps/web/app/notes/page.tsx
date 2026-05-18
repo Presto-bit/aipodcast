@@ -3868,11 +3868,13 @@ export default function NotesPage() {
                     onDismiss={() => setNotesAskError("")}
                   />
                 ) : null}
-                {notesAskMessages.length > 0 ? (
                 <div
                   ref={notesAskScrollRef}
                   className="h-[min(50vh,420px)] max-h-[min(50vh,420px)] min-h-[200px] w-full min-w-0 shrink-0 overflow-y-auto rounded-xl border border-line/80 bg-surface/80 p-3.5"
                 >
+                  {notesAskMessages.length === 0 ? (
+                    <p className="text-xs text-muted">勾选左侧资料后即可提问</p>
+                  ) : (
                     <div className="flex flex-col gap-3">
                       {notesAskMessages.map((m) => (
                         <div
@@ -4066,8 +4068,8 @@ export default function NotesPage() {
                         </div>
                       ))}
                     </div>
+                  )}
                 </div>
-                ) : null}
                 <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch">
                   <button
                     type="button"
