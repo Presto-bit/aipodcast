@@ -99,6 +99,8 @@ type NotesAskStreamEvent =
       routedChapters?: unknown;
       coverageHint?: string;
       activeChapters?: unknown;
+      activeShards?: unknown;
+      lowConfidence?: boolean;
     }
   | { type: "followups"; followUpQuestions?: unknown }
   | { type: "info"; message: string; code?: string; requestId?: string }
