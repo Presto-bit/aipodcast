@@ -842,6 +842,9 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             "retries": retries,
             "nonfatal_errors": attempt_errors,
         }
+        from .usage_billing import apply_reference_billing_to_result
+
+        apply_reference_billing_to_result(result, ref_meta)
         _enrich_result_script_notes_meta(result, payload if isinstance(payload, dict) else {}, script)
         if _payload_wants_generate_cover(payload, job_type) and api_key:
             _pn = str(payload.get("program_name") or "").strip()
@@ -963,6 +966,7 @@ def run_media_job(job_id: str) -> dict[str, Any]:
 
         if job_type in ("podcast_generate", "podcast"):
             podcast_text_bill_meta: dict[str, Any] = {}
+            ref_meta_podcast: dict[str, Any] = {}
             resynth_only = bool(payload.get("resynth_audio_only"))
             forced_script = str(payload.get("resynth_script_text") or "").strip()
             if resynth_only and forced_script:
@@ -999,13 +1003,13 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                     18.0,
                 )
                 try:
-                    source_text, ref_meta = merge_reference_for_script(
+                    source_text, ref_meta_podcast = merge_reference_for_script(
                         payload, source_text, source_url, api_key, max_note_refs=note_ref_cap, user_ref=created_by
                     )
                 finally:
                     stop_ref.set()
                     thr_ref.join(timeout=2)
-                append_job_event(job_id, "log", "参考材料汇总", ref_meta)
+                append_job_event(job_id, "log", "参考材料汇总", ref_meta_podcast)
                 if not source_text.strip():
                     source_text = "请生成一段 AI Native 播客稿件。"
 
@@ -1160,6 +1164,8 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                 upload_text(script_key, script_after_tts)
                 
                 primary_voice = voice_id if output_mode == "article" else voice_id_1
+                from .usage_billing import apply_reference_billing_to_result
+
                 result = {
                     "preview": script_after_tts[:240],
                     "script_preview": script_after_tts[:240],
@@ -1247,6 +1253,7 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                                     "成片补生成封面未成功",
                                     {"detail": cerr2[:500]},
                                 )
+                apply_reference_billing_to_result(result, ref_meta_podcast)
                 _enrich_result_script_notes_meta(result, payload if isinstance(payload, dict) else {}, script_after_tts)
                 _attach_result_audio_duration_sec(result)
                 _hx_ep = str(result.get("audio_hex") or "").strip()

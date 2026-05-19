@@ -3234,6 +3234,10 @@ def _admin_usage_events_summary_rows(
                  0::numeric
                ) AS image_cost_cny,
                COALESCE(
+                 SUM(NULLIF(TRIM(meta->>'embedding_cost_cny'), '')::numeric),
+                 0::numeric
+               ) AS embedding_cost_cny,
+               COALESCE(
                  SUM(NULLIF(TRIM(meta->>'cost_total_cny'), '')::numeric),
                  0::numeric
                ) AS cost_total_cny
@@ -3272,6 +3276,10 @@ def _admin_usage_events_summary_rows_days(cur, days: int) -> list[dict[str, Any]
                  0::numeric
                ) AS image_cost_cny,
                COALESCE(
+                 SUM(NULLIF(TRIM(meta->>'embedding_cost_cny'), '')::numeric),
+                 0::numeric
+               ) AS embedding_cost_cny,
+               COALESCE(
                  SUM(NULLIF(TRIM(meta->>'cost_total_cny'), '')::numeric),
                  0::numeric
                ) AS cost_total_cny
@@ -3306,6 +3314,7 @@ def _admin_jobs_terminal_summary_rows(
                0::numeric AS llm_cost_cny,
                0::numeric AS tts_cost_cny,
                0::numeric AS image_cost_cny,
+               0::numeric AS embedding_cost_cny,
                0::numeric AS cost_total_cny
         FROM jobs
         WHERE status IN ('succeeded', 'failed', 'cancelled')
@@ -3334,6 +3343,7 @@ def _admin_jobs_terminal_summary_rows_days(cur, days: int) -> list[dict[str, Any
                0::numeric AS llm_cost_cny,
                0::numeric AS tts_cost_cny,
                0::numeric AS image_cost_cny,
+               0::numeric AS embedding_cost_cny,
                0::numeric AS cost_total_cny
         FROM jobs
         WHERE status IN ('succeeded', 'failed', 'cancelled')
@@ -3469,6 +3479,7 @@ def admin_usage_dashboard(
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'llm_cost_cny'), '')::numeric), 0::numeric) AS llm_cost_cny,
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'tts_cost_cny'), '')::numeric), 0::numeric) AS tts_cost_cny,
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'image_cost_cny'), '')::numeric), 0::numeric) AS image_cost_cny,
+                  COALESCE(SUM(NULLIF(TRIM(ue.meta->>'embedding_cost_cny'), '')::numeric), 0::numeric) AS embedding_cost_cny,
                   COALESCE(SUM(NULLIF(TRIM(ue.meta->>'cost_total_cny'), '')::numeric), 0::numeric) AS cost_total_cny
                 FROM usage_events ue
                 WHERE ue.metric = 'job_terminal'
@@ -3493,6 +3504,7 @@ def admin_usage_dashboard(
                 "llm_cost_cny": _safe_float(row.get("llm_cost_cny")),
                 "tts_cost_cny": _safe_float(row.get("tts_cost_cny")),
                 "image_cost_cny": _safe_float(row.get("image_cost_cny")),
+                "embedding_cost_cny": _safe_float(row.get("embedding_cost_cny")),
                 "cost_total_cny": _safe_float(row.get("cost_total_cny")),
             }
 
@@ -3852,13 +3864,21 @@ def admin_revenue_expense_board(
                   WHERE ue.metric = 'job_terminal'
                     AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
                     AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
+                  UNION ALL
+                  SELECT 'embedding'::text,
+                         COALESCE(NULLIF(TRIM(ue.meta->>'embedding_model_pricing'), ''), '(embedding)') AS model_label,
+                         COALESCE(NULLIF(TRIM(ue.meta->>'embedding_cost_cny'), '')::numeric, 0)
+                  FROM usage_events ue
+                  WHERE ue.metric = 'job_terminal'
+                    AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date >= %s
+                    AND (ue.created_at AT TIME ZONE 'Asia/Shanghai')::date <= %s
                 ) x
                 GROUP BY bucket, model_label
                 HAVING SUM(cost_cny) > 0
                 ORDER BY cost_cny DESC, bucket, model_label
                 LIMIT 300
                 """,
-                (df, dt, df, dt, df, dt),
+                (df, dt, df, dt, df, dt, df, dt),
             )
             out["by_model_expense"] = [
                 {
@@ -3981,9 +4001,11 @@ def admin_revenue_expense_board(
                        COALESCE(NULLIF(TRIM(ue.meta->>'llm_cost_cny'), '')::numeric, 0)::numeric AS llm_cny,
                        COALESCE(NULLIF(TRIM(ue.meta->>'tts_cost_cny'), '')::numeric, 0)::numeric AS tts_cny,
                        COALESCE(NULLIF(TRIM(ue.meta->>'image_cost_cny'), '')::numeric, 0)::numeric AS image_cny,
+                       COALESCE(NULLIF(TRIM(ue.meta->>'embedding_cost_cny'), '')::numeric, 0)::numeric AS embedding_cny,
                        NULLIF(TRIM(ue.meta->>'text_model_pricing'), '') AS text_model,
                        NULLIF(TRIM(ue.meta->>'tts_model_pricing'), '') AS tts_model,
-                       NULLIF(TRIM(ue.meta->>'image_model_hint'), '') AS image_model
+                       NULLIF(TRIM(ue.meta->>'image_model_hint'), '') AS image_model,
+                       NULLIF(TRIM(ue.meta->>'embedding_model_pricing'), '') AS embedding_model
                 FROM usage_events ue
                 LEFT JOIN users u ON u.id = ue.user_id
                 WHERE ue.metric = 'job_terminal'
@@ -4011,9 +4033,11 @@ def admin_revenue_expense_board(
                         "llm_cny": _safe_float(rd.get("llm_cny")),
                         "tts_cny": _safe_float(rd.get("tts_cny")),
                         "image_cny": _safe_float(rd.get("image_cny")),
+                        "embedding_cny": _safe_float(rd.get("embedding_cny")),
                         "text_model": rd.get("text_model"),
                         "tts_model": rd.get("tts_model"),
                         "image_model": rd.get("image_model"),
+                        "embedding_model": rd.get("embedding_model"),
                     }
                 )
 

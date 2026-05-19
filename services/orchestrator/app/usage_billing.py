@@ -14,6 +14,8 @@
   ``deepseek-v4-pro`` 未命中 12、输出 24；``deepseek-chat`` / ``deepseek-reasoner`` 仍兼容且映射至 Flash 档位。
   ``estimate_llm_cost_cny`` 无缓存命中信息，输入按**未命中**计价（偏保守）。
 - **豆包语音转写**：``DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR``（元/小时音频）。
+- **Embedding**（如 MiniMax ``embo-01``，元/百万 tokens）：``EMBEDDING_REFERENCE_CNY_PER_MTOK``（默认 0.5）。
+  仅 ``api`` 后端计费；``local`` / ``hash`` 不计入。用户钱包扣费口径不变。
 
 链接：MiniMax https://platform.minimaxi.com/docs/guides/pricing-paygo
 DeepSeek https://api-docs.deepseek.com/zh-cn/quick_start/pricing
@@ -58,6 +60,9 @@ DEEPSEEK_V4_PRO_OUTPUT_CNY_PER_MTOK = 24.0
 DEEPSEEK_CHAT_INPUT_CACHE_HIT_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_INPUT_CACHE_HIT_CNY_PER_MTOK
 DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_INPUT_CACHE_MISS_CNY_PER_MTOK
 DEEPSEEK_CHAT_OUTPUT_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MTOK
+
+# Embedding（如 embo-01）：元 / 百万 tokens；看板参考价，实际以控制台账单为准
+EMBEDDING_REFERENCE_CNY_PER_MTOK = 0.5
 
 
 def _parse_jsonish(val: Any) -> dict[str, Any]:
@@ -213,6 +218,109 @@ def _llm_unit_prices_cny_per_mtok() -> tuple[str, str, float, float]:
     return (prov, mid, float(pi), float(po))
 
 
+def estimate_embedding_cost_cny(*, input_chars: int, backend: str | None = None) -> float:
+    """按输入字符估算 embedding 参考成本（元）；hash/local 后端为 0。"""
+    bk = (backend or "api").strip().lower()
+    if bk in ("hash", "local", "unknown"):
+        return 0.0
+    if input_chars <= 0:
+        return 0.0
+    tok = estimate_tokens_from_chars_zh_heuristic(int(input_chars))
+    return round((tok / 1_000_000.0) * EMBEDDING_REFERENCE_CNY_PER_MTOK, 6)
+
+
+def _embedding_backend_billable(backend: str | None) -> bool:
+    bk = (backend or "api").strip().lower()
+    return bk not in ("hash", "local", "unknown", "")
+
+
+def _embedding_chars_from_reference_meta(ref_meta: dict[str, Any]) -> tuple[int, str]:
+    """从 merge_reference_for_script 的 meta 汇总 embedding 输入字符（避免分层字段重复累加）。"""
+    try:
+        chars = max(0, int(ref_meta.get("embedding_input_chars") or 0))
+    except (TypeError, ValueError):
+        chars = 0
+    backend = str(ref_meta.get("embedding_backend") or ref_meta.get("rag_embedding_backend") or "").strip()
+    if chars > 0:
+        return chars, backend
+    layered = ref_meta.get("notes_layered_rag_meta")
+    if isinstance(layered, dict):
+        try:
+            chars = max(0, int(layered.get("embedding_input_chars") or 0))
+        except (TypeError, ValueError):
+            chars = 0
+        if not backend:
+            backend = str(layered.get("embedding_backend") or "").strip()
+        if chars <= 0:
+            obs = layered.get("retrieve_obs")
+            if isinstance(obs, dict):
+                try:
+                    chars = max(0, int(obs.get("embedding_input_chars") or 0))
+                except (TypeError, ValueError):
+                    chars = 0
+                if not backend:
+                    backend = str(obs.get("embedding_backend") or "").strip()
+    return chars, backend
+
+
+def apply_reference_billing_to_result(result: dict[str, Any], ref_meta: dict[str, Any]) -> None:
+    """将参考材料阶段的 embedding 计量写入 job result，供终态 usage_events 估算。"""
+    if not isinstance(result, dict) or not isinstance(ref_meta, dict):
+        return
+    chars, backend = _embedding_chars_from_reference_meta(ref_meta)
+    if chars <= 0:
+        return
+    prev = 0
+    try:
+        prev = max(0, int(result.get("embedding_input_chars") or 0))
+    except (TypeError, ValueError):
+        prev = 0
+    result["embedding_input_chars"] = prev + chars
+    if backend and not str(result.get("embedding_backend") or "").strip():
+        result["embedding_backend"] = backend
+
+
+def _embedding_billing_from_job(
+    payload: dict[str, Any], result: dict[str, Any], job_type: str
+) -> tuple[int, str]:
+    """返回 (input_chars, backend)。"""
+    chars = 0
+    backend = ""
+    try:
+        chars = max(0, int(result.get("embedding_input_chars") or 0))
+    except (TypeError, ValueError):
+        chars = 0
+    backend = str(result.get("embedding_backend") or "").strip()
+
+    jt = (job_type or "").strip()
+    if chars > 0:
+        return chars, backend or "api"
+
+    if jt == "note_rag_index":
+        try:
+            n_chunks = max(0, int(result.get("chunks") or 0))
+        except (TypeError, ValueError):
+            n_chunks = 0
+        if n_chunks > 0:
+            # 无精确计量时的保守近似（单块约 1200 字，实际上限 8000）
+            chars = n_chunks * 1200
+            backend = str(result.get("embedding_backend") or "api").strip() or "api"
+        return chars, backend
+
+    mode = str(payload.get("reference_rag_mode") or "truncate").strip().lower()
+    merged_est = _payload_source_char_est(payload)
+    sn = payload.get("selected_note_ids")
+    if isinstance(sn, list) and sn:
+        merged_est += min(8000, len(sn) * 400)
+
+    if mode == "hybrid" and merged_est >= 12_000:
+        q_extra = min(8000, len(str(payload.get("text") or "").strip()))
+        chars = int(merged_est * 1.05) + q_extra
+        backend = str(payload.get("rag_embedding_backend") or "api").strip() or "api"
+
+    return chars, backend
+
+
 def estimate_llm_cost_cny(*, prompt_chars: int, completion_chars: int) -> float:
     inp_t = estimate_tokens_from_chars_zh_heuristic(prompt_chars)
     out_t = estimate_tokens_from_chars_zh_heuristic(completion_chars)
@@ -283,6 +391,9 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
     llm = 0.0
     tts = 0.0
     img = 0.0
+    emb = 0.0
+
+    emb_model = str(os.getenv("RAG_EMBEDDING_MODEL") or "embo-01").strip()
 
     want_cover = _want_generate_cover_for_billing(payload, jt)
 
@@ -331,13 +442,18 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
         if want_cover and result.get("cover_image"):
             img += IMAGE_01_UNIT_CNY
 
-    total = round(llm + tts + img, 6)
+    emb_chars, emb_backend = _embedding_billing_from_job(payload, result, jt)
+    if emb_chars > 0 and _embedding_backend_billable(emb_backend):
+        emb = estimate_embedding_cost_cny(input_chars=emb_chars, backend=emb_backend)
+
+    total = round(llm + tts + img + emb, 6)
     return {
         "status": status,
         "job_type": jt,
         "llm_cost_cny": float(llm),
         "tts_cost_cny": float(tts),
         "image_cost_cny": float(img),
+        "embedding_cost_cny": float(emb),
         "cost_total_cny": float(total),
         "llm_billing_provider": llm_prov,
         "text_model_pricing": text_model,
@@ -345,6 +461,10 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
         "llm_output_cny_per_mtok": float(llm_po),
         "tts_model_pricing": tts_model,
         "image_model_hint": image_model if img > 0 else "",
+        "embedding_model_pricing": emb_model if emb > 0 else "",
+        "embedding_input_chars": int(emb_chars) if emb_chars > 0 else 0,
+        "embedding_backend": emb_backend if emb > 0 else "",
+        "embedding_cny_per_mtok": float(EMBEDDING_REFERENCE_CNY_PER_MTOK) if emb > 0 else 0.0,
         "pricing_ref": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
         "pricing_ref_deepseek": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
     }

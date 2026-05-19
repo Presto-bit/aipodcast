@@ -6,7 +6,7 @@
  * 定价参考：https://platform.minimaxi.com/docs/guides/pricing-paygo
  */
 
-export type UsageCostField = "llm" | "tts" | "image" | "fixed" | "none";
+export type UsageCostField = "llm" | "tts" | "image" | "embedding" | "fixed" | "none";
 
 export type AdminModelRow = {
   id: string;
@@ -75,6 +75,22 @@ export const ADMIN_MODEL_CATALOG: AdminModelRow[] = [
     details: [
       "通常按次收费，且可能受参考音频时长与质量影响。",
       "建议限制低质量样本重试次数，减少无效调用。"
+    ]
+  },
+  {
+    id: "minimax-embedding",
+    name: "向量嵌入（RAG / 笔记索引）",
+    category: "嵌入模型",
+    usage: "笔记向量索引、长参考材料混合检索、分层笔记检索查询向量等；由 RAG_EMBEDDING_* 配置。",
+    billing:
+      "看板参考价约 0.5 元/百万 tokens（如 embo-01）；仅 api 后端计入 embedding_cost_cny，hash/local 为 0。用户钱包扣费口径不变。",
+    estimatedUnitCostCny: 0.001,
+    costField: "embedding",
+    features: ["note_rag_index", "参考材料 hybrid RAG", "勾选笔记向量检索"],
+    jobTypes: ["note_rag_index", "podcast_generate", "podcast", "script_draft", "note_podcast_script"],
+    details: [
+      "索引任务按切块累计输入字符；播客/脚本任务在参考材料阶段计入查询与混合检索嵌入。",
+      "实际以 MiniMax 控制台账单为准。"
     ]
   },
   {

@@ -19,7 +19,7 @@ type TopUserRow = {
 };
 type Overview = {
   total_events?: number; succeeded_events?: number; failed_events?: number; success_rate?: number; active_users?: number;
-  distinct_jobs?: number; llm_cost_cny?: number; tts_cost_cny?: number; image_cost_cny?: number; cost_total_cny?: number;
+  distinct_jobs?: number; llm_cost_cny?: number; tts_cost_cny?: number; image_cost_cny?: number; embedding_cost_cny?: number; cost_total_cny?: number;
   login_count?: number; login_users?: number; active_sessions?: number; session_users?: number;
 };
 type UserRow = {
@@ -83,9 +83,11 @@ type LedgerExpenseDetail = {
   llm_cny?: number;
   tts_cny?: number;
   image_cny?: number;
+  embedding_cny?: number;
   text_model?: string | null;
   tts_model?: string | null;
   image_model?: string | null;
+  embedding_model?: string | null;
 };
 type LedgerRevenueDetail = {
   ledger_id?: number;
@@ -519,6 +521,7 @@ export default function AdminUsagePage(): JSX.Element {
                   <th className="px-3 py-2">LLM</th>
                   <th className="px-3 py-2">TTS</th>
                   <th className="px-3 py-2">图</th>
+                  <th className="px-3 py-2">Embed</th>
                   <th className="px-3 py-2">文本模型</th>
                   <th className="px-3 py-2">TTS 模型</th>
                 </tr>
@@ -526,7 +529,7 @@ export default function AdminUsagePage(): JSX.Element {
               <tbody>
                 {ledgerExpenseDetails.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="px-3 py-6 text-center text-muted">
+                    <td colSpan={13} className="px-3 py-6 text-center text-muted">
                       暂无
                     </td>
                   </tr>
@@ -547,6 +550,7 @@ export default function AdminUsagePage(): JSX.Element {
                       <td className="px-3 py-2">{money(r.llm_cny)}</td>
                       <td className="px-3 py-2">{money(r.tts_cny)}</td>
                       <td className="px-3 py-2">{money(r.image_cny)}</td>
+                      <td className="px-3 py-2">{money(r.embedding_cny)}</td>
                       <td className="max-w-[100px] truncate px-3 py-2 text-[10px] font-mono" title={r.text_model || ""}>
                         {r.text_model || "—"}
                       </td>
@@ -619,7 +623,9 @@ export default function AdminUsagePage(): JSX.Element {
             <MetricCard title="总成本" value={money(overview.cost_total_cny)} />
             <MetricCard title="LLM 成本" value={money(overview.llm_cost_cny)} />
             <MetricCard title="TTS 成本" value={money(overview.tts_cost_cny)} />
-            <MetricCard title="图像成本" value={money(overview.image_cost_cny)} hint={`在线会话 ${num(overview.active_sessions)} / 在线用户 ${num(overview.session_users)}`} />
+            <MetricCard title="图像成本" value={money(overview.image_cost_cny)} />
+            <MetricCard title="Embedding 成本" value={money(overview.embedding_cost_cny)} hint="参考价 0.5 元/百万 tokens（api 后端）" />
+            <MetricCard title="在线会话" value={num(overview.active_sessions)} hint={`在线用户 ${num(overview.session_users)}`} />
           </div>
           <div className="mt-6 grid gap-6 lg:grid-cols-2">
             <div className="overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">功能使用</div><table className="min-w-[560px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">功能</th><th className="px-3 py-2">调用</th><th className="px-3 py-2">成功</th><th className="px-3 py-2">用户数</th><th className="px-3 py-2">成本</th></tr></thead><tbody>{jobRows.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : jobRows.map((r, i) => <tr key={`${r.job_type || "unknown"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2 font-mono text-xs">{r.job_type || "unknown"}</td><td className="px-3 py-2">{num(r.events)}</td><td className="px-3 py-2">{num(r.succeeded)}</td><td className="px-3 py-2">{num(r.users)}</td><td className="px-3 py-2">{money(r.cost_total_cny)}</td></tr>)}</tbody></table></div>

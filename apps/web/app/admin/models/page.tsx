@@ -31,6 +31,7 @@ type UsageRow = {
   llm_cost_cny?: number | string;
   tts_cost_cny?: number | string;
   image_cost_cny?: number | string;
+  embedding_cost_cny?: number | string;
   cost_total_cny?: number | string;
 };
 
@@ -108,6 +109,7 @@ export default function AdminModelsPage() {
       return breakdown.reduce((s, x) => {
         if (field === "llm") return s + num(x.llm_cost_cny);
         if (field === "tts") return s + num(x.tts_cost_cny);
+        if (field === "embedding") return s + num(x.embedding_cost_cny);
         return s + num(x.image_cost_cny);
       }, 0);
     };
