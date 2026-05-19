@@ -29,6 +29,10 @@ const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMar
   )
 });
 import { NotesAskAnswerDisplay } from "../../components/notes/NotesAskAnswerDisplay";
+import {
+  buildNotesAskAnswerBody,
+  isDismissedNotesAskSupplement
+} from "../../lib/notesAskAnswerNormalize";
 import { createJob } from "../../lib/api";
 import {
   apiErrorMessage,
@@ -2554,7 +2558,9 @@ export default function NotesPage() {
           next[idx] = {
             ...cur,
             ...(batchA ? { content: (cur.content || "") + batchA } : {}),
-            ...(batchS ? { supplementContent: (cur.supplementContent || "") + batchS } : {}),
+            ...(batchS && !isDismissedNotesAskSupplement((cur.supplementContent || "") + batchS)
+              ? { supplementContent: (cur.supplementContent || "") + batchS }
+              : {}),
             streaming: true
           };
           return next;
@@ -2653,8 +2659,11 @@ export default function NotesPage() {
                 sawDone = true;
                 const doneSources = normalizeNotesAskSources(ev.sources);
                 const doneAnswer = typeof ev.answer === "string" ? ev.answer.trim() : "";
-                const doneSupplement =
+                const doneSupplementRaw =
                   typeof ev.supplementAnswer === "string" ? ev.supplementAnswer.trim() : "";
+                const doneSupplement = isDismissedNotesAskSupplement(doneSupplementRaw)
+                  ? ""
+                  : doneSupplementRaw;
                 const doneFollowUps = normalizeNotesAskFollowUpQuestions(ev.followUpQuestions);
                 notesAskClientLog("info", "stream", "done_event", {
                   requestId: streamRid,
@@ -4228,25 +4237,31 @@ export default function NotesPage() {
                             )
                             ) : (
                               <div className="w-full min-w-0 max-w-full px-0 py-1 text-sm leading-relaxed text-ink">
-                            {m.streaming &&
-                            !(m.content || "").trim() &&
-                            !(m.supplementContent || "").trim() ? (
+                            {(() => {
+                              const askBody = buildNotesAskAnswerBody(
+                                m.content,
+                                m.supplementContent
+                              );
+                              return m.streaming && !askBody.trim() ? (
                               <p className="text-muted">思考中…</p>
                             ) : (
                               <div className="min-w-0">
-                                {(m.content || "").trim() || !m.streaming ? (
-                                  <NotesAskAnswerDisplay
-                                    text={m.content}
-                                    sources={m.sources}
-                                    webSources={m.webSources}
-                                    onOpenSourceInPreview={openPreviewFromAskSource}
-                                  />
-                                ) : null}
-                                {(m.supplementContent || "").trim() ? (
-                                  <aside className="mt-3 rounded-lg border border-dashed border-line/80 bg-fill/25 px-2.5 py-2">
-                                    <NotesAskAnswerDisplay text={m.supplementContent || ""} />
-                                  </aside>
-                                ) : null}
+                                <NotesAskAnswerDisplay
+                                  text={askBody}
+                                  sources={m.sources}
+                                  webSources={m.webSources}
+                                  followUpQuestion={
+                                    !m.streaming ? m.followUpQuestions?.[0] : undefined
+                                  }
+                                  onFollowUpClick={(q) => {
+                                    setNotesAskQuestion(q);
+                                    window.setTimeout(
+                                      () => notesAskTextareaRef.current?.focus(),
+                                      0
+                                    );
+                                  }}
+                                  onOpenSourceInPreview={openPreviewFromAskSource}
+                                />
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
                                 (m.hintSuggestions?.length ?? 0) > 0 ? (
@@ -4271,25 +4286,7 @@ export default function NotesPage() {
                                   </div>
                                 ) : null}
                                 {!m.streaming &&
-                                (m.followUpQuestions?.length ?? 0) > 0 &&
-                                !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) ? (
-                                  <div className="mt-2.5 flex flex-col gap-1.5">
-                                    <p className="text-[11px] font-medium text-muted">相关提问</p>
-                                    <button
-                                      type="button"
-                                      className="max-w-full rounded-lg border border-brand/35 bg-brand/[0.06] px-2.5 py-1.5 text-left text-[11px] leading-snug text-ink transition hover:bg-brand/10"
-                                      title={m.followUpQuestions![0]}
-                                      onClick={() => {
-                                        setNotesAskQuestion(m.followUpQuestions![0]!);
-                                        window.setTimeout(() => notesAskTextareaRef.current?.focus(), 0);
-                                      }}
-                                    >
-                                      {m.followUpQuestions![0]}
-                                    </button>
-                                  </div>
-                                ) : null}
-                                {!m.streaming &&
-                                (m.content || "").trim() &&
+                                askBody.trim() &&
                                 !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) ? (
                                   <div className="mt-3 flex flex-wrap items-center gap-0.5 border-t border-line/40 pt-2">
                                     <button
@@ -4297,7 +4294,7 @@ export default function NotesPage() {
                                       className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
                                       title="复制"
                                       aria-label="复制"
-                                      onClick={() => void copyNotesAskAnswer(m.content)}
+                                      onClick={() => void copyNotesAskAnswer(askBody)}
                                     >
                                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
                                         <path
@@ -4317,7 +4314,7 @@ export default function NotesPage() {
                                       className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
                                       title="分享"
                                       aria-label="分享"
-                                      onClick={() => void shareNotesAskAnswer(m.content)}
+                                      onClick={() => void shareNotesAskAnswer(askBody)}
                                     >
                                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
                                         <circle cx="18" cy="5" r="2.5" stroke="currentColor" strokeWidth="1.5" />
@@ -4337,7 +4334,7 @@ export default function NotesPage() {
                                       title="新增为笔记"
                                       aria-label="新增为笔记"
                                       disabled={Boolean(sharedBrowse) || notesAskNoteBusyId === m.id}
-                                      onClick={() => void saveAskAnswerAsNote(m.content, m.id)}
+                                      onClick={() => void saveAskAnswerAsNote(askBody, m.id)}
                                     >
                                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
                                         <path
@@ -4353,9 +4350,10 @@ export default function NotesPage() {
                                   </div>
                                 ) : null}
                               </div>
-                            )}
+                            );
+                          })()}
                               </div>
-                            )}
+                            )
                         </div>
                       ))}
                     </div>

@@ -11,6 +11,9 @@ type Props = {
   sources?: NotesAskSource[];
   /** 联网检索条目，[w1] 外链与脚注 */
   webSources?: NotesAskWebSource[];
+  /** 答后关联问句（至多 1 条），与正文同区展示、无独立卡片 */
+  followUpQuestion?: string;
+  onFollowUpClick?: (question: string) => void;
   /** 在资料预览中高亮定位（charStart/charEnd 来自检索块） */
   onOpenSourceInPreview?: (source: NotesAskSource, chunk?: { charStart?: number; charEnd?: number; excerpt?: string }) => void;
   className?: string;
@@ -149,6 +152,8 @@ export function NotesAskAnswerDisplay({
   text,
   sources,
   webSources,
+  followUpQuestion,
+  onFollowUpClick,
   onOpenSourceInPreview,
   className
 }: Props) {
@@ -188,6 +193,24 @@ export function NotesAskAnswerDisplay({
           setModalSource(src);
         }}
       />
+
+      {followUpQuestion?.trim() ? (
+        <p className="mt-4 text-[14px] leading-relaxed text-ink">
+          <span className="text-muted">相关提问：</span>
+          {onFollowUpClick ? (
+            <button
+              type="button"
+              className="ml-1 inline text-left font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90"
+              title={followUpQuestion.trim()}
+              onClick={() => onFollowUpClick(followUpQuestion.trim())}
+            >
+              {followUpQuestion.trim()}
+            </button>
+          ) : (
+            <span className="ml-1 text-ink">{followUpQuestion.trim()}</span>
+          )}
+        </p>
+      ) : null}
 
       {sortedWebSources.length > 0 ? (
         <aside

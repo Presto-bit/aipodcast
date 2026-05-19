@@ -805,7 +805,6 @@ def iter_notes_answer_events(
         supplement_text = ""
         from .notes_ask_supplement import (
             iter_supplement_answer_chunks,
-            sanitize_supplement_answer,
             should_run_supplement_stage,
         )
 
@@ -815,8 +814,6 @@ def iter_notes_answer_events(
             qa_plan=qa_plan,
             shared_read_only=shared_ro,
         ):
-            yield {"type": "phase", "phase": "supplement_start"}
-            acc_sup: list[str] = []
             sup_focus = str(qa_plan.get("supplementFocus") or "").strip()
             for piece in iter_supplement_answer_chunks(
                 question=question,
@@ -825,14 +822,17 @@ def iter_notes_answer_events(
                 supplement_focus=sup_focus,
                 api_key=api_key,
             ):
-                acc_sup.append(piece)
+                supplement_text = piece.strip()
+                if not supplement_text:
+                    continue
+                yield {"type": "phase", "phase": "supplement_start"}
                 yield {
                     "type": "chunk",
-                    "text": piece,
+                    "text": supplement_text,
                     "streamRole": "answer",
                     "section": "supplement",
                 }
-            supplement_text = sanitize_supplement_answer("".join(acc_sup))
+                break
 
         grounding = str(qa_plan.get("grounding") or "rag_excerpt")
         if supplement_text:

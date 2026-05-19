@@ -43,9 +43,14 @@ _MATERIAL_GAP_RE = re.compile(
     r"未在.{0,10}资料|不足以|未覆盖|未找到.{0,8}相关",
     re.I,
 )
+_NO_SUPPLEMENT_MARK = "[[NO_SUPPLEMENT]]"
 _SKIP_SUPPLEMENT_RE = re.compile(
-    r"资料已足够|无需补充|不必补充",
+    r"资料已足够|无需补充|不必补充|不需要补充|无须补充|已足够回答",
     re.I,
+)
+_SUPPLEMENT_HEADING_RE = re.compile(
+    r"^#+\s*补充说明[^\n]*\n+",
+    re.MULTILINE,
 )
 _CITATION_IN_SUPPLEMENT_RE = re.compile(r"\[\s*\d+\s*\]")
 
@@ -133,7 +138,7 @@ def build_supplement_messages(
         "1. 以二级标题开头：## 补充说明（非资料原文，仅供参考）\n"
         "2. 禁止使用 [1][2] 等角标；不要写「该书指出」式归因；\n"
         "3. 不要重复资料段已有内容；简洁有条理；\n"
-        "4. 若资料段已完整回答问题，只输出一句：资料已足够回答，无需补充。\n"
+        "4. 若资料段已完整回答问题，只输出精确标记 [[NO_SUPPLEMENT]]，不要输出任何其它文字。\n"
         "5. 使用中文 Markdown。"
     )
     user = (
@@ -148,12 +153,32 @@ def build_supplement_messages(
     ]
 
 
-def sanitize_supplement_answer(raw: str) -> str:
+def is_discard_supplement_text(raw: str) -> bool:
+    """是否属于「无需向用户展示补充段」的模型输出（含旧版自然语言拒答）。"""
     t = _sanitize_visible_text(raw or "").strip()
     if not t:
+        return True
+    if _NO_SUPPLEMENT_MARK.replace(" ", "") in t.replace(" ", ""):
+        return True
+    body = _SUPPLEMENT_HEADING_RE.sub("", t).strip()
+    if not body:
+        return True
+    if _SKIP_SUPPLEMENT_RE.search(body) and len(body) < 220:
+        return True
+    # 仅有标题 + 一句拒答
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+    if len(lines) <= 2 and _SKIP_SUPPLEMENT_RE.search(body):
+        return True
+    return False
+
+
+def sanitize_supplement_answer(raw: str) -> str:
+    if is_discard_supplement_text(raw):
         return ""
+    t = _sanitize_visible_text(raw or "").strip()
+    t = t.replace(_NO_SUPPLEMENT_MARK, "").strip()
     t = _CITATION_IN_SUPPLEMENT_RE.sub("", t)
-    if _SKIP_SUPPLEMENT_RE.search(t) and len(t) < 120:
+    if not t:
         return ""
     if not t.lstrip().startswith("##"):
         t = "## 补充说明（非资料原文，仅供参考）\n\n" + t
@@ -168,6 +193,7 @@ def iter_supplement_answer_chunks(
     supplement_focus: str = "",
     api_key: str | None = None,
 ) -> Iterator[str]:
+    """流式生成；若判定为无需补充则全程不 yield。"""
     messages = build_supplement_messages(
         question=question,
         corpus_answer=corpus_answer,
@@ -175,6 +201,7 @@ def iter_supplement_answer_chunks(
         supplement_focus=supplement_focus,
     )
     temp = max(0.2, min(0.5, notes_ask_temperature() - 0.15))
+    acc: list[str] = []
     for piece in invoke_llm_chat_messages_stream_iter(
         messages,
         temperature=temp,
@@ -183,8 +210,16 @@ def iter_supplement_answer_chunks(
         max_tokens=notes_ask_supplement_max_tokens(),
     ):
         vis = _sanitize_visible_text(piece)
-        if vis:
-            yield vis
+        if not vis:
+            continue
+        acc.append(vis)
+        if is_discard_supplement_text("".join(acc)):
+            return
+    final = sanitize_supplement_answer("".join(acc))
+    if not final:
+        return
+    # 仅向 SSE 推送已消毒后的正文，避免「无需补充」类文案闪现
+    yield final
 
 
 def generate_supplement_answer(

@@ -1,5 +1,6 @@
 from app.notes_ask_supplement import (
     answer_signals_material_gap,
+    is_discard_supplement_text,
     sanitize_supplement_answer,
     should_run_supplement_stage,
 )
@@ -40,6 +41,13 @@ def test_material_gap_signal():
 
 def test_sanitize_skips_no_supplement():
     assert sanitize_supplement_answer("资料已足够回答，无需补充。") == ""
+
+
+def test_discard_marker_and_heading_skip():
+    assert is_discard_supplement_text("[[NO_SUPPLEMENT]]")
+    assert is_discard_supplement_text(
+        "## 补充说明（非资料原文，仅供参考）\n\n资料已足够回答，无需补充。"
+    )
 
 
 def test_sanitize_adds_heading():
