@@ -43,7 +43,18 @@ from .note_shards import (
     shard_filter_for_query,
     shard_route_min_score,
 )
+from .note_long_doc import (
+    is_long_doc,
+    is_very_long_doc,
+    proactive_on_demand_enabled,
+)
 from .note_rag_profile import query_suggests_table
+from .notes_ask_style import (
+    classify_answer_type,
+    divide_budgets_per_note,
+    per_note_retrieval_top_k,
+    resolve_qa_retrieval_budgets,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,17 +191,57 @@ def _multi_shard_notes(note_ids: list[str]) -> bool:
     return any(len(list_shards(nid)) > 1 for nid in note_ids)
 
 
-def _detect_corpus_mode(note_ids: list[str], question: str) -> str:
-    """single | multi_compare | multi_synthesize"""
-    q = (question or "").strip()
-    if len(note_ids) < 2:
-        return "single"
-    if COMPARE_QUERY_RE.search(q):
-        return "multi_compare"
-    synth_keys = ("综述", "总结", "概括", "整体", "全书", "所有资料", "对比分析")
-    if any(k in q for k in synth_keys):
-        return "multi_synthesize"
-    return "multi_synthesize" if len(note_ids) >= 2 else "single"
+from .note_corpus import detect_corpus_mode as _detect_corpus_mode
+
+
+def _build_multi_note_digest_prefix(
+    notebook: str,
+    ordered_note_ids: list[str],
+    *,
+    user_ref: str | None,
+) -> str:
+    if len(ordered_note_ids) < 2 or not (notebook or "").strip():
+        return ""
+    try:
+        from .note_notebook_digest import get_notebook_digest
+
+        dj = get_notebook_digest(notebook.strip(), user_ref=user_ref)
+    except Exception:
+        return ""
+    if not dj:
+        return ""
+    summary = str(dj.get("summary") or "").strip()
+    if not summary:
+        return ""
+    return f"## 笔记本级综述（多资料关系）\n\n{summary}\n\n---\n\n"
+
+
+def _wrap_multi_compare_context(layered: str, planner_plan: dict[str, Any] | None) -> str:
+    lines = [
+        "## 多资料对比",
+        "请用表格或分栏组织：各列/行对应一条资料（与 [n] 一致）；同一单元格内事实只标一个 [n]，勿混淆不同资料。",
+    ]
+    if planner_plan:
+        axis = str(planner_plan.get("compareAxis") or "").strip()
+        if axis:
+            lines.append(f"比较维度：{axis}")
+        for ps in planner_plan.get("perSourceFocus") or []:
+            if not isinstance(ps, dict):
+                continue
+            idx = str(ps.get("index") or "").strip()
+            focus = str(ps.get("focus") or "").strip()
+            if idx and focus:
+                lines.append(f"- 资料 [{idx}]：{focus}")
+    lines.append("")
+    return "\n".join(lines) + "\n\n---\n\n" + layered
+
+
+def _prepend_multi_note_prefix(ctx: str, prefix: str) -> str:
+    if not prefix or not ctx:
+        return ctx
+    if prefix.strip() in ctx[: min(len(ctx), 800)]:
+        return ctx
+    return prefix + ctx
 
 
 def _low_confidence_threshold() -> float:
@@ -198,6 +249,28 @@ def _low_confidence_threshold() -> float:
         return float(os.getenv("NOTES_ASK_LOW_CONFIDENCE_SCORE", "0.12") or "0.12")
     except (TypeError, ValueError):
         return 0.12
+
+
+def _proactive_embed_routed_shards(
+    *,
+    routed_shards: list[dict[str, Any]],
+    user_ref: str | None,
+    api_key: str | None = None,
+) -> None:
+    """长文默认：对路由到的片先做 on-demand 嵌入，再走向量检索。"""
+    if not proactive_on_demand_enabled() or not routed_shards:
+        return
+    by_note: dict[str, list[str]] = {}
+    for r in routed_shards:
+        nid = str(r.get("noteId") or "").strip()
+        sid = str(r.get("shardId") or "").strip()
+        if nid and sid:
+            by_note.setdefault(nid, []).append(sid)
+    for nid, sids in by_note.items():
+        try:
+            embed_shards_on_demand(nid, list(dict.fromkeys(sids)), user_ref=user_ref, api_key=api_key)
+        except Exception as exc:
+            logger.warning("proactive shard on_demand note_id=%s: %s", nid, exc)
 
 
 def assess_retrieval_confidence(
@@ -246,7 +319,7 @@ def resolve_notes_ask_plan(
     qa_mode = "rag"
     grounding = "rag_excerpt"
 
-    corpus_mode = _detect_corpus_mode(ordered, question)
+    corpus_mode = _detect_corpus_mode(ordered, question, total_chars=total)
     allowed = ("single", "multi_compare", "multi_synthesize", "per_note")
     if corpus_mode not in allowed:
         corpus_mode = "single"
@@ -303,13 +376,16 @@ def resolve_notes_ask_plan(
 
     if mode_env == "auto":
         shard_direct_ok = False
+        shard_bar = shard_route_min_score()
+        if is_very_long_doc(total):
+            shard_bar *= 0.85
         if len(ordered) == 1 and routed_shards and multi_shard:
             sh0 = routed_shards[0]
             shards = list_shards(ordered[0])
             sh = next((s for s in shards if str(s.get("shard_id")) == str(sh0.get("shardId"))), None)
             if sh:
                 sh_len = int(sh.get("char_end") or 0) - int(sh.get("char_start") or 0)
-                if sh_len > 0 and sh_len <= shard_direct_read_max_chars() and best_shard >= shard_route_min_score():
+                if sh_len > 0 and sh_len <= shard_direct_read_max_chars() and best_shard >= shard_bar:
                     shard_direct_ok = True
         if shard_direct_ok:
             qa_mode = "shard_direct"
@@ -325,7 +401,9 @@ def resolve_notes_ask_plan(
         ):
             qa_mode = "chapter_deep"
             grounding = "chapter_deep"
-        elif multi_shard and routed_shards and best_shard >= shard_route_min_score():
+        elif multi_shard and routed_shards and (
+            best_shard >= shard_bar or (is_long_doc(total) and len(ordered) == 1)
+        ):
             qa_mode = "shard_deep"
             grounding = "shard_deep"
         elif routed_chapters and best_chapter >= chapter_route_min_score():
@@ -521,6 +599,7 @@ def build_notes_qa_context_with_plan(
     top_k: int | None = None,
     chat_history: list[dict[str, str]] | None = None,
     plan: dict[str, Any] | None = None,
+    planner_plan: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """带分片/章路由的上下文构建；失败时降级 RAG / legacy。"""
     q = (question or "").strip()
@@ -538,6 +617,19 @@ def build_notes_qa_context_with_plan(
     qa_mode = str(plan.get("qaMode") or "rag")
     rows: dict[str, dict[str, Any]] = plan.get("rowsByNoteId") or {}
     corpus_mode = str(plan.get("corpusMode") or "single")
+    total_chars = int(plan.get("totalChars") or 0)
+    answer_type = classify_answer_type(q)
+    budgets = resolve_qa_retrieval_budgets(
+        answer_type,
+        total_chars=total_chars,
+        corpus_mode=corpus_mode,
+    )
+    routed_for_embed = plan.get("routedShards") or []
+    if is_long_doc(total_chars) and routed_for_embed:
+        _proactive_embed_routed_shards(
+            routed_shards=routed_for_embed if isinstance(routed_for_embed, list) else [],
+            user_ref=user_ref,
+        )
     meta: dict[str, Any] = {
         "qaMode": qa_mode,
         "grounding": plan.get("grounding"),
@@ -552,6 +644,9 @@ def build_notes_qa_context_with_plan(
         row = rows.get(nid) or get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
         if row:
             sources.append({"index": str(i), "noteId": nid, "title": _metadata_title(row, nid)})
+
+    digest_prefix = _build_multi_note_digest_prefix(notebook, ordered, user_ref=user_ref)
+    per_note_budgets = divide_budgets_per_note(budgets, len(ordered)) if corpus_mode == "per_note" else budgets
 
     if qa_mode == "shard_direct" and len(ordered) == 1:
         routed_sd = plan.get("routedShards") or []
@@ -601,7 +696,7 @@ def build_notes_qa_context_with_plan(
             routed=routed,
             rows=rows,
             question=q,
-            retrieval_budget=28_000,
+            retrieval_budget=budgets["retrieval_budget"],
             user_ref=user_ref,
             api_key=None,
             chapter_routed=ch_routed
@@ -628,9 +723,9 @@ def build_notes_qa_context_with_plan(
                     note_ids=ordered,
                     query=q,
                     user_ref=user_ref,
-                    summary_budget=8_000,
-                    retrieval_budget=12_000,
-                    top_k=min(20, top_k or 24),
+                    summary_budget=max(6_000, budgets["summary_budget"] // 2),
+                    retrieval_budget=max(8_000, budgets["retrieval_budget"] // 2),
+                    top_k=min(28, top_k or 24),
                     project_owner_user_uuid=project_owner_user_uuid,
                     shard_filter=sh_filter,
                     chapter_filter=ch_filter,
@@ -654,7 +749,7 @@ def build_notes_qa_context_with_plan(
             routed=routed,
             rows=rows,
             question=q,
-            retrieval_budget=28_000,
+            retrieval_budget=budgets["retrieval_budget"],
             user_ref=user_ref,
             api_key=None,
             shard_filter=sh_filter,
@@ -673,9 +768,9 @@ def build_notes_qa_context_with_plan(
                     note_ids=ordered,
                     query=q,
                     user_ref=user_ref,
-                    summary_budget=8_000,
-                    retrieval_budget=12_000,
-                    top_k=min(20, top_k or 24),
+                    summary_budget=max(6_000, budgets["summary_budget"] // 2),
+                    retrieval_budget=max(8_000, budgets["retrieval_budget"] // 2),
+                    top_k=min(28, top_k or 24),
                     project_owner_user_uuid=project_owner_user_uuid,
                     chapter_filter=ch_filter,
                     shard_filter=sh_filter,
@@ -695,6 +790,7 @@ def build_notes_qa_context_with_plan(
     if qa_mode == "rag" and corpus_mode == "per_note" and len(ordered) >= 2 and NOTE_LAYERED_RAG and q:
         blocks: list[str] = []
         combined_meta: dict[str, Any] = {"qaMode": qa_mode, "corpusMode": "per_note", "perNote": True}
+        note_top_k = per_note_retrieval_top_k(top_k, len(ordered))
         for i, nid in enumerate(ordered, start=1):
             row = rows.get(nid) or {}
             title = _metadata_title(row, nid)
@@ -703,9 +799,9 @@ def build_notes_qa_context_with_plan(
                 note_ids=[nid],
                 query=q,
                 user_ref=user_ref,
-                summary_budget=6_000,
-                retrieval_budget=14_000,
-                top_k=min(24, (top_k or 36) // 2),
+                summary_budget=per_note_budgets["summary_budget"],
+                retrieval_budget=per_note_budgets["retrieval_budget"],
+                top_k=note_top_k,
                 project_owner_user_uuid=project_owner_user_uuid,
             )
             if layered:
@@ -714,7 +810,10 @@ def build_notes_qa_context_with_plan(
                 if isinstance(retr, list):
                     sources = _enrich_sources_with_chunks(sources, retr)
         if blocks:
-            ctx = "## 逐篇检索（请勿混淆不同资料）\n\n---\n\n".join(blocks)
+            ctx = _prepend_multi_note_prefix(
+                "## 逐篇检索（各资料独立检索；请勿混淆不同资料的事实与 [n]）\n\n---\n\n" + "\n\n---\n\n".join(blocks),
+                digest_prefix,
+            )
             combined_meta["lowConfidence"] = assess_retrieval_confidence(
                 note_ids=ordered,
                 rows_by_id=rows,
@@ -724,7 +823,13 @@ def build_notes_qa_context_with_plan(
             return ctx, sources, combined_meta
 
     if qa_mode == "rag" and NOTE_LAYERED_RAG and q:
-        sh_filter = shard_filter_for_query(ordered, q) if _multi_shard_notes(ordered) else None
+        sh_filter = None
+        if is_long_doc(total_chars) and routed_for_embed:
+            sh_filter = _shard_filter_from_routed(
+                routed_for_embed if isinstance(routed_for_embed, list) else []
+            )
+        elif _multi_shard_notes(ordered):
+            sh_filter = shard_filter_for_query(ordered, q)
         if corpus_mode == "multi_compare" and len(ordered) >= 2:
             meta["corpusMode"] = corpus_mode
         layered, sources, lmeta = build_layered_notes_context(
@@ -732,8 +837,8 @@ def build_notes_qa_context_with_plan(
             note_ids=ordered,
             query=q,
             user_ref=user_ref,
-            summary_budget=14_000,
-            retrieval_budget=36_000,
+            summary_budget=budgets["summary_budget"],
+            retrieval_budget=budgets["retrieval_budget"],
             top_k=top_k or 36,
             project_owner_user_uuid=project_owner_user_uuid,
             shard_filter=sh_filter,
@@ -749,9 +854,8 @@ def build_notes_qa_context_with_plan(
                 retr_meta=retr_m if isinstance(retr_m, list) else None,
             )
             if corpus_mode == "multi_compare":
-                layered = (
-                    "## 多资料对比（请分列来源，勿混淆不同资料的事实）\n\n---\n\n" + layered
-                )
+                layered = _wrap_multi_compare_context(layered, planner_plan)
+            layered = _prepend_multi_note_prefix(layered, digest_prefix)
             return layered, sources, meta
 
     from .notes_ask import legacy_build_notes_qa_context

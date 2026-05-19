@@ -91,18 +91,20 @@ def _note_rag_max_chunks_static_cap() -> int:
     return max(lo, min(hi, v))
 
 
-def effective_note_rag_chunk_cap(split_count: int) -> int:
+def effective_note_rag_chunk_cap(split_count: int, body_chars: int = 0) -> int:
     """
     索引时截取切块列表的长度上限。
-    - dynamic：min(ABS, 实际切块数)，短稿少块、长稿随正文增长直至 ABS。
-    - static：min(静态配置, ABS)，与历史默认一致。
+    - dynamic：min(篇幅伸缩后的 ABS, 实际切块数)。
+    - static：min(静态配置, 篇幅伸缩后的 ABS)。
     """
     if split_count <= 0:
         return 0
-    abs_cap = _note_rag_max_chunks_abs()
+    from .note_long_doc import note_rag_abs_cap_for_body
+
+    abs_cap = note_rag_abs_cap_for_body(body_chars) if body_chars > 0 else _note_rag_max_chunks_abs()
     if _note_rag_max_chunks_mode() == "dynamic":
         return min(abs_cap, split_count)
-    return min(_note_rag_max_chunks_static_cap(), abs_cap)
+    return min(_note_rag_max_chunks_static_cap(), abs_cap, split_count)
 
 
 def _summary_input_cap() -> int:
@@ -1229,7 +1231,7 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     chunk_metas_all = assign_shard_ids_to_chunks(chunks_all, chunk_metas_all, shard_spans)
     if chapter_spans:
         persist_chapters(note_id, chapter_spans)
-    abs_cap = effective_note_rag_chunk_cap(len(chunks_all))
+    abs_cap = effective_note_rag_chunk_cap(len(chunks_all), len(body))
     chunks, chunk_metas, index_stats = select_chunks_for_index(chunks_all, chunk_metas_all, abs_cap)
     if len(chunk_metas) < len(chunks):
         chunk_metas.extend({} for _ in range(len(chunks) - len(chunk_metas)))
@@ -1604,6 +1606,94 @@ def _pick_top_k_note_fairness(
     return picked[:k]
 
 
+def _enforce_per_note_pick_quotas(
+    pool: list[tuple[float, dict[str, Any]]],
+    picked: list[tuple[float, dict[str, Any]]],
+    top_k: int,
+    ordered_note_ids: list[str],
+) -> list[tuple[float, dict[str, Any]]]:
+    """
+    多篇资料：每篇至少 min 块进入最终 top_k；单篇不超过 max_share 比例。
+    """
+    if len(ordered_note_ids) <= 1 or not pool:
+        return picked
+    try:
+        min_per = max(0, min(8, int(os.getenv("NOTE_RAG_PER_NOTE_TOPK_MIN", "1") or "1")))
+    except (TypeError, ValueError):
+        min_per = 1
+    try:
+        max_share = max(0.15, min(1.0, float(os.getenv("NOTE_RAG_PER_NOTE_TOPK_MAX_SHARE", "0.45") or "0.45")))
+    except (TypeError, ValueError):
+        max_share = 0.45
+    k = max(1, min(top_k, len(pool)))
+    max_per = max(min_per, int(k * max_share + 0.999))
+
+    order: list[str] = []
+    seen: set[str] = set()
+    for raw in ordered_note_ids:
+        nid = str(raw or "").strip()
+        if nid and nid not in seen:
+            order.append(nid)
+            seen.add(nid)
+
+    by_note_pool: dict[str, list[tuple[float, dict[str, Any]]]] = defaultdict(list)
+    for sim, row in pool:
+        nid = str(row.get("note_id") or "").strip()
+        if nid:
+            by_note_pool[nid].append((sim, row))
+    for nid in by_note_pool:
+        by_note_pool[nid].sort(key=lambda x: -x[0])
+
+    out: list[tuple[float, dict[str, Any]]] = []
+    seen_chunk: set[tuple[str, int]] = set()
+    counts: dict[str, int] = defaultdict(int)
+
+    for sim, row in picked:
+        ident = _chunk_identity(row)
+        if ident in seen_chunk:
+            continue
+        nid = ident[0]
+        if counts[nid] >= max_per:
+            continue
+        seen_chunk.add(ident)
+        out.append((sim, row))
+        counts[nid] += 1
+
+    for nid in order:
+        need = min_per - counts.get(nid, 0)
+        if need <= 0:
+            continue
+        for sim, row in by_note_pool.get(nid, []):
+            if need <= 0:
+                break
+            ident = _chunk_identity(row)
+            if ident in seen_chunk:
+                continue
+            if len(out) >= k:
+                break
+            seen_chunk.add(ident)
+            out.append((sim, row))
+            counts[nid] += 1
+            need -= 1
+
+    if len(out) < k:
+        for sim, row in sorted(pool, key=lambda x: -x[0]):
+            if len(out) >= k:
+                break
+            ident = _chunk_identity(row)
+            if ident in seen_chunk:
+                continue
+            nid = ident[0]
+            if counts[nid] >= max_per:
+                continue
+            seen_chunk.add(ident)
+            out.append((sim, row))
+            counts[nid] += 1
+
+    out.sort(key=lambda x: -x[0])
+    return out[:k]
+
+
 def _note_source_index_map(note_ids: list[str]) -> dict[str, str]:
     """与 build_layered_notes_context 中 sources 序号一致：第 1 条笔记为「1」。"""
     out: dict[str, str] = {}
@@ -1939,6 +2029,8 @@ def retrieve_chunks_across_notes(
             mmr_applied = True
     scored_for_pick = head_rr + tail
     picked = _pick_top_k_note_fairness(scored_for_pick, top_k, note_ids)
+    if len(note_ids) > 1 and _note_rag_fairness_enabled():
+        picked = _enforce_per_note_pick_quotas(scored_for_pick, picked, top_k, note_ids)
     if merge_adjacent_chunks:
         picked = merge_adjacent_retrieval_picks(picked)
     if table_q:

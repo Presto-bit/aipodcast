@@ -43,6 +43,7 @@ VIDEO_NOTE_EXT = frozenset(
 NOTEBOOK_COVER_MAX_BYTES = 2 * 1024 * 1024
 ALLOWED_NOTEBOOK_COVER_IMAGE_EXT = frozenset({"png", "jpg", "jpeg", "webp", "gif", "avif"})
 NOTEBOOK_COVER_PRESET_IDS = frozenset({"mist", "dawn", "slate", "forest"})
+# 历史常量：URL 导入已不再截断正文；保留供兼容引用
 MAX_URL_IMPORT_CHARS = 500_000
-# 超过该字数建议分卷/分章导入（方案 C 导入向导）
+# 超过该字数视为超长文（上传提示 / 索引与问答策略）
 LONG_DOC_IMPORT_WARN_CHARS = 500_000

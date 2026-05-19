@@ -31,7 +31,6 @@ from ..note_constants import (
     VIDEO_NOTE_EXT,
     LONG_DOC_IMPORT_WARN_CHARS,
     MAX_NOTE_UPLOAD_BYTES,
-    MAX_URL_IMPORT_CHARS,
     NOTE_PREVIEW_TEXT_MAX,
 )
 from ..note_chapters import note_coverage_stats
@@ -1717,8 +1716,6 @@ async def import_note_from_url_api(request: Request):
                 status_code=400,
                 detail=format_import_url_http_detail(err_code=err_code, head=head, base_hint=hint, url=url),
             )
-        if len(content) > MAX_URL_IMPORT_CHARS:
-            content = content[:MAX_URL_IMPORT_CHARS] + "\n\n（内容已截断）"
         host = (urlparse(url).netloc or "").strip().lower()
         if host.startswith("www."):
             host = host[4:]

@@ -353,6 +353,39 @@ def _notes_ask_context_cache_set(key: str, context: str, sources: list[dict[str,
             _ASK_CONTEXT_CACHE.pop(k, None)
 
 
+def _notes_ask_total_chars(
+    note_ids: list[str],
+    *,
+    user_ref: str | None,
+    project_owner_user_uuid: str | None = None,
+) -> int:
+    total = 0
+    for nid in note_ids:
+        nid = str(nid or "").strip()
+        if not nid:
+            continue
+        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
+        if row:
+            total += len(str(row.get("content_text") or ""))
+    return total
+
+
+def _should_run_notes_ask_planner(total_chars: int, note_count: int = 1) -> bool:
+    if two_phase_planner_enabled():
+        return True
+    from .note_long_doc import is_long_doc, two_phase_for_long_doc_enabled
+
+    if two_phase_for_long_doc_enabled() and is_long_doc(total_chars):
+        return True
+    if note_count >= 2 and (os.getenv("NOTES_ASK_TWO_PHASE_MULTI", "1") or "").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    ):
+        return True
+    return False
+
+
 def _run_notes_ask_planner(
     *,
     notebook: str,
@@ -361,9 +394,11 @@ def _run_notes_ask_planner(
     user_ref: str | None,
     project_owner_user_uuid: str | None = None,
     api_key: str | None = None,
+    total_chars: int = 0,
 ) -> dict[str, Any] | None:
-    """层 B：可选 Planner（仅来源清单，无正文检索）。"""
-    if not two_phase_planner_enabled():
+    """层 B：可选 Planner（来源清单 + 长文片单；无正文检索）。"""
+    note_count = len([str(x).strip() for x in note_ids if str(x).strip()])
+    if not _should_run_notes_ask_planner(total_chars, note_count):
         return None
     try:
         manifest, _sources = build_notes_source_manifest(
@@ -372,6 +407,20 @@ def _run_notes_ask_planner(
             user_ref=user_ref,
             project_owner_user_uuid=project_owner_user_uuid,
         )
+        from .note_long_doc import is_long_doc
+        from .note_notebook_digest import get_notebook_digest
+        from .note_shards import build_shard_planner_manifest
+
+        if note_count >= 2:
+            dj = get_notebook_digest(notebook, user_ref=user_ref)
+            if dj and str(dj.get("summary") or "").strip():
+                manifest = (
+                    f"{manifest}\n\n---\n\n【笔记本综述】\n{str(dj.get('summary') or '').strip()[:2400]}"
+                )
+        if is_long_doc(total_chars):
+            shard_block = build_shard_planner_manifest(note_ids)
+            if shard_block:
+                manifest = f"{manifest}\n\n---\n\n{shard_block}"
         plan_messages = build_planner_messages(manifest_block=manifest, question=question)
         raw, _tid = invoke_llm_chat_messages_with_minimax_fallback(
             plan_messages,
@@ -436,15 +485,26 @@ def _prepare_notes_ask_messages(
         project_owner_user_uuid=project_owner_user_uuid,
     )
 
+    total_chars = _notes_ask_total_chars(
+        note_ids,
+        user_ref=user_ref,
+        project_owner_user_uuid=project_owner_user_uuid,
+    )
     plan = _run_notes_ask_planner(
         notebook=notebook,
         note_ids=note_ids,
         question=q,
         user_ref=user_ref,
         project_owner_user_uuid=project_owner_user_uuid,
+        total_chars=total_chars,
     )
     plan_type = str((plan or {}).get("answerType") or "").strip() or None
-    top_k, answer_type = resolve_retrieval_top_k(q, plan_type)
+    top_k, answer_type = resolve_retrieval_top_k(
+        q,
+        plan_type,
+        total_chars=total_chars,
+        note_count=len([str(x).strip() for x in note_ids if str(x).strip()]),
+    )
 
     qa_plan = resolve_notes_ask_plan(
         notebook=notebook,
@@ -464,6 +524,7 @@ def _prepare_notes_ask_messages(
         top_k=top_k,
         chat_history=chat_history,
         plan=qa_plan,
+        planner_plan=plan,
     )
     notes_ask_profile_emit(
         "prepare_build_context_ms",

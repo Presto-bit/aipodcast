@@ -44,8 +44,10 @@ _PLANNER_SYSTEM = (
     "输出一个 JSON 对象，不要 markdown 围栏、不要 JSON 外文字。\n"
     '结构：{"answerType":"yesno|concept|howto|compare|survey|general",'
     '"thesis":"1～2 句拟写开篇结论（须可在后续摘录中核对）",'
+    '"compareAxis":"对比题时填写比较维度（如价格/适用场景），非对比可留空",'
+    '"perSourceFocus":[{"index":"1","focus":"该资料在本问中应贡献什么"}],'
     '"sections":[{"title":"小节标题","focus":"该节应回答什么"}]}\n'
-    "sections 2～4 项；短问可 1～2 项。answerType 与问题形态一致即可。"
+    "sections 2～4 项；多资料时 perSourceFocus 与来源序号 [n] 对齐；answerType 与问题形态一致。"
 )
 
 
@@ -127,16 +129,87 @@ def classify_answer_type(question: str) -> str:
     return "general"
 
 
-def resolve_retrieval_top_k(question: str, answer_type: str | None = None) -> tuple[int, str]:
+def resolve_retrieval_top_k(
+    question: str,
+    answer_type: str | None = None,
+    *,
+    total_chars: int = 0,
+    note_count: int = 1,
+) -> tuple[int, str]:
     """返回 (top_k, answer_type)。"""
     at = (answer_type or "").strip().lower()
     if at not in _TOP_K_BY_TYPE:
         at = classify_answer_type(question)
     cap = _top_k_cap()
     if not dynamic_top_k_enabled():
-        return cap, at
-    base = _TOP_K_BY_TYPE.get(at, _TOP_K_BY_TYPE["general"])
-    return max(16, min(cap, base)), at
+        top_k = cap
+    else:
+        base = _TOP_K_BY_TYPE.get(at, _TOP_K_BY_TYPE["general"])
+        top_k = max(16, min(cap, base))
+    if total_chars > 0:
+        from .note_long_doc import is_long_doc, is_very_long_doc
+
+        if is_very_long_doc(total_chars):
+            top_k = min(cap, max(top_k, int(top_k * 1.2)))
+        elif is_long_doc(total_chars):
+            top_k = min(cap, max(top_k, int(top_k * 1.08)))
+    if note_count >= 2:
+        bump = min(24, 4 * (max(2, note_count) - 1))
+        top_k = min(cap, top_k + bump)
+    return top_k, at
+
+
+def resolve_qa_retrieval_budgets(
+    answer_type: str,
+    *,
+    total_chars: int = 0,
+    corpus_mode: str = "single",
+) -> dict[str, int]:
+    """按题型与篇幅返回摘要/检索字符预算（供 build_layered_notes_context）。"""
+    at = answer_type if answer_type in _TOP_K_BY_TYPE else "general"
+    summary = 14_000
+    retrieval = 36_000
+    if at == "survey":
+        summary, retrieval = 18_000, 44_000
+    elif at == "compare":
+        summary, retrieval = 12_000, 40_000
+    elif at == "howto":
+        summary, retrieval = 10_000, 32_000
+    elif at == "yesno":
+        summary, retrieval = 8_000, 22_000
+    elif at == "concept":
+        summary, retrieval = 10_000, 28_000
+    if corpus_mode == "per_note":
+        summary = max(6_000, summary // 2)
+        retrieval = max(12_000, retrieval // 2)
+    if corpus_mode == "multi_compare":
+        summary = int(summary * 1.05)
+        retrieval = int(retrieval * 1.1)
+    if total_chars > 0:
+        from .note_long_doc import is_long_doc, is_very_long_doc
+
+        if is_very_long_doc(total_chars):
+            summary = int(summary * 1.15)
+            retrieval = int(retrieval * 1.2)
+        elif is_long_doc(total_chars):
+            summary = int(summary * 1.08)
+            retrieval = int(retrieval * 1.1)
+    return {"summary_budget": summary, "retrieval_budget": retrieval}
+
+
+def divide_budgets_per_note(budgets: dict[str, int], note_count: int) -> dict[str, int]:
+    """逐篇检索时按资料条数均分预算，避免 N 篇叠加爆 token。"""
+    n = max(1, int(note_count or 1))
+    return {
+        "summary_budget": max(4_000, int(budgets.get("summary_budget") or 14_000) // n),
+        "retrieval_budget": max(8_000, int(budgets.get("retrieval_budget") or 36_000) // n),
+    }
+
+
+def per_note_retrieval_top_k(top_k: int | None, note_count: int) -> int:
+    n = max(1, int(note_count or 1))
+    base = top_k or 36
+    return max(12, min(32, base // n))
 
 
 def build_notes_ask_system_prompt(answer_type: str) -> str:
@@ -201,9 +274,26 @@ def parse_planner_json(raw: str) -> dict[str, Any] | None:
             focus = str(item.get("focus") or "").strip()[:200]
             if title or focus:
                 sections.append({"title": title or "要点", "focus": focus})
-    if not thesis and not sections:
+    compare_axis = str(data.get("compareAxis") or data.get("compare_axis") or "").strip()[:120]
+    per_src_raw = data.get("perSourceFocus") or data.get("per_source_focus")
+    per_source_focus: list[dict[str, str]] = []
+    if isinstance(per_src_raw, list):
+        for item in per_src_raw[:12]:
+            if not isinstance(item, dict):
+                continue
+            idx = str(item.get("index") or item.get("sourceIndex") or "").strip()[:8]
+            focus = str(item.get("focus") or "").strip()[:200]
+            if idx or focus:
+                per_source_focus.append({"index": idx, "focus": focus})
+    if not thesis and not sections and not compare_axis and not per_source_focus:
         return None
-    return {"answerType": at, "thesis": thesis, "sections": sections}
+    return {
+        "answerType": at,
+        "thesis": thesis,
+        "sections": sections,
+        "compareAxis": compare_axis,
+        "perSourceFocus": per_source_focus,
+    }
 
 
 def merge_adjacent_retrieval_picks(
@@ -275,6 +365,16 @@ def format_planner_block(plan: dict[str, Any]) -> str:
     ]
     if thesis:
         lines.append(f"开篇方向：{thesis}")
+    compare_axis = str(plan.get("compareAxis") or "").strip()
+    if compare_axis:
+        lines.append(f"比较维度：{compare_axis}")
+    for ps in plan.get("perSourceFocus") or []:
+        if not isinstance(ps, dict):
+            continue
+        idx = str(ps.get("index") or "").strip()
+        focus = str(ps.get("focus") or "").strip()
+        if idx and focus:
+            lines.append(f"资料 [{idx}] 侧重：{focus}")
     for i, sec in enumerate(plan.get("sections") or [], start=1):
         if not isinstance(sec, dict):
             continue

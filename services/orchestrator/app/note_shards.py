@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .db import get_conn, get_cursor
-from .note_chapters import ChapterSpan, detect_chapters
+from .note_chapters import ChapterSpan, _CHAPTER_CN_RE, _CHAPTER_HEADING_RE, detect_chapters
 from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
 
 logger = logging.getLogger(__name__)
@@ -117,7 +117,48 @@ def _align_break(text: str, pos: int) -> int:
     return pos
 
 
-def _fixed_window_shards(body: str, target: int, max_shards: int) -> list[ShardSpan]:
+def _infer_span_title(
+    body: str,
+    start: int,
+    end: int,
+    segments: list[dict[str, Any]] | None,
+    fallback: str,
+) -> str:
+    chunk = (body or "")[max(0, start) : min(len(body or ""), end, start + 5000)]
+    for m in _CHAPTER_HEADING_RE.finditer(chunk):
+        t = (m.group(2) or "").strip()
+        if t:
+            return t[:200]
+    for m in _CHAPTER_CN_RE.finditer(chunk):
+        line_start = chunk.rfind("\n", 0, m.start()) + 1
+        line_end = chunk.find("\n", m.start())
+        if line_end < 0:
+            line_end = len(chunk)
+        t = chunk[line_start:line_end].strip()
+        if t:
+            return t[:200]
+    if segments:
+        offset = 0
+        for seg in segments:
+            t = str(seg.get("text") or "")
+            seg_end = offset + len(t)
+            if seg_end > start and offset < end:
+                meta = seg.get("meta") if isinstance(seg.get("meta"), dict) else {}
+                hp = meta.get("heading_path") if isinstance(meta.get("heading_path"), list) else []
+                if hp:
+                    title = " / ".join(str(x).strip() for x in hp if str(x).strip())[:200]
+                    if title:
+                        return title
+            offset = seg_end
+    return fallback
+
+
+def _fixed_window_shards(
+    body: str,
+    target: int,
+    max_shards: int,
+    segments: list[dict[str, Any]] | None = None,
+) -> list[ShardSpan]:
     text = body
     n = len(text)
     if n <= target:
@@ -131,7 +172,8 @@ def _fixed_window_shards(body: str, target: int, max_shards: int) -> list[ShardS
             end = _align_break(text, end)
             if end <= pos:
                 end = min(n, pos + target)
-        title = f"第 {idx + 1} 部分" if idx > 0 or end < n else "第 1 部分"
+        fallback = f"第 {idx + 1} 部分" if idx > 0 or end < n else "第 1 部分"
+        title = _infer_span_title(text, pos, end, segments, fallback)
         spans.append(ShardSpan(f"s{idx}", title, pos, end, "fixed_window", idx))
         pos = end
         idx += 1
@@ -203,7 +245,7 @@ def detect_shards(body: str, *, segments: list[dict[str, Any]] | None = None) ->
         if len(shards) <= max_n:
             return shards
 
-    return _fixed_window_shards(text, target, max_n)
+    return _fixed_window_shards(text, target, max_n, segments=segments)
 
 
 def persist_shards(note_id: str, shards: list[ShardSpan]) -> None:
@@ -482,6 +524,28 @@ def _shard_scores_from_query(query: str, shards: list[dict[str, Any]]) -> list[t
     return scored
 
 
+def build_shard_planner_manifest(note_ids: list[str]) -> str:
+    """供两阶段 Planner：列出各资料内部分片标题（无正文）。"""
+    lines = ["【内部分片清单】（规划时优先选与问题相关的片；勿编造未列出的片名）"]
+    any_shards = False
+    for nid in note_ids:
+        nid = str(nid or "").strip()
+        if not nid:
+            continue
+        shards = list_shards(nid)
+        if len(shards) <= 1:
+            continue
+        any_shards = True
+        lines.append(f"- 资料 {nid[:8]}…（{len(shards)} 片）")
+        for s in shards[:48]:
+            sid = str(s.get("shard_id") or "")
+            title = str(s.get("title") or sid).strip() or sid
+            lines.append(f"  · {sid}: {title}")
+    if not any_shards:
+        return ""
+    return "\n".join(lines)
+
+
 def route_shards_for_notes(
     *,
     note_ids: list[str],
@@ -506,7 +570,12 @@ def route_shards_for_notes(
                 }
             )
             continue
-        for score, sh in _shard_scores_from_query(query, shards)[: max(1, limit)]:
+        scored = _shard_scores_from_query(query, shards)
+        if not scored and len(shards) >= 2:
+            scored = [(0.38, shards[0]), (0.36, shards[-1])]
+        elif not scored:
+            scored = [(0.4, shards[0])]
+        for score, sh in scored[: max(1, limit)]:
             routed.append(
                 {
                     "noteId": nid,
