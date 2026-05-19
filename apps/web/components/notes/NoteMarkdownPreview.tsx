@@ -53,6 +53,44 @@ type RenderBlock = {
   synthetic?: boolean;
 };
 
+function normalizeSearchAnchor(s: string): string {
+  return String(s || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** 从全文 UTF-16 区间取可在预览 DOM 中搜索的定位锚文本 */
+function pickRangeAnchor(fullText: string, start: number, end: number): string {
+  const len = fullText.length;
+  if (len <= 0 || end <= start) return "";
+  const s = Math.max(0, Math.min(start, len));
+  const e = Math.max(s + 1, Math.min(end, len));
+  let anchor = normalizeSearchAnchor(fullText.slice(s, e));
+  if (anchor.length >= 16) return anchor.slice(0, 160);
+  const pad = normalizeSearchAnchor(fullText.slice(Math.max(0, s - 24), Math.min(len, e + 120)));
+  return pad.slice(0, 160);
+}
+
+function findBlockIndexForAnchor(blocks: RenderBlock[], anchor: string): number {
+  const a = normalizeSearchAnchor(anchor);
+  if (a.length < 8) return -1;
+  for (let len = Math.min(100, a.length); len >= 12; len -= 4) {
+    const probe = a.slice(0, len);
+    for (let i = 0; i < blocks.length; i++) {
+      if (normalizeSearchAnchor(blocks[i].markdown).includes(probe)) return i;
+    }
+  }
+  return -1;
+}
+
+function anchorToFlexiblePattern(anchor: string): string {
+  const compact = normalizeSearchAnchor(anchor).slice(0, 120);
+  if (!compact) return "";
+  return compact
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\s+/g, "\\s+");
+}
+
 function statusPillClass(text: string): string {
   const s = String(text || "").toLowerCase();
   const isFail =
@@ -117,11 +155,17 @@ export default function NoteMarkdownPreview({
 }: Props) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const citationExpandAllRef = useRef(false);
   const [matchCount, setMatchCount] = useState(0);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const [visibleBlocks, setVisibleBlocks] = useState(20);
   const headingPrefix = useId().replace(/:/g, "");
-  const highlightTerm = (keyword || highlightHint || "").trim();
+  const rangeAnchor = useMemo(() => {
+    if (!charHighlightRange || charHighlightRange.end <= charHighlightRange.start) return "";
+    return pickRangeAnchor(filteredText, charHighlightRange.start, charHighlightRange.end);
+  }, [filteredText, charHighlightRange?.start, charHighlightRange?.end]);
+  /** 引用跳转优先用全文区间锚文本，其次关键字 */
+  const highlightTerm = (rangeAnchor || keyword || "").trim();
   const blocks = useMemo<RenderBlock[]>(() => {
     const normalizeFromStored = (items: NonNullable<Props["structuredBlocks"]>): RenderBlock[] => {
       const out: RenderBlock[] = [];
@@ -307,6 +351,18 @@ export default function NoteMarkdownPreview({
   }, [filteredText, simplified]);
 
   useEffect(() => {
+    citationExpandAllRef.current = false;
+  }, [charHighlightRange?.start, charHighlightRange?.end, filteredText]);
+
+  useEffect(() => {
+    const anchor = rangeAnchor || normalizeSearchAnchor(keyword);
+    if (anchor.length < 8) return;
+    const idx = findBlockIndexForAnchor(blocks, anchor);
+    if (idx < 0) return;
+    setVisibleBlocks((n) => Math.max(n, Math.min(blocks.length, idx + 3)));
+  }, [blocks, rangeAnchor, keyword]);
+
+  useEffect(() => {
     if (!canLoadMore) return;
     const sentinel = loadMoreRef.current;
     const root = contentRef.current;
@@ -344,9 +400,9 @@ export default function NoteMarkdownPreview({
       return;
     }
 
-    const escaped = highlightTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (!escaped) return;
-    const re = new RegExp(escaped, "gi");
+    const pattern = rangeAnchor ? anchorToFlexiblePattern(rangeAnchor) : highlightTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!pattern) return;
+    const re = new RegExp(pattern, rangeAnchor ? "i" : "gi");
     let firstMark: HTMLElement | undefined;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const textNodes: Text[] = [];
@@ -372,7 +428,9 @@ export default function NoteMarkdownPreview({
         if (start > last) frag.appendChild(document.createTextNode(txt.slice(last, start)));
         const mark = document.createElement("mark");
         mark.setAttribute("data-note-highlight", "1");
-        mark.className = "rounded bg-warning/35 px-[1px] text-ink";
+        mark.className = rangeAnchor
+          ? "rounded bg-brand/25 px-[1px] text-ink ring-1 ring-brand/40"
+          : "rounded bg-warning/35 px-[1px] text-ink";
         mark.textContent = txt.slice(start, end);
         if (!firstMark) firstMark = mark;
         frag.appendChild(mark);
@@ -387,6 +445,14 @@ export default function NoteMarkdownPreview({
     if (marks.length > 0) {
       setActiveMatchIndex(0);
       marks[0]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (
+      rangeAnchor &&
+      renderBlocks.length < blocks.length &&
+      !citationExpandAllRef.current
+    ) {
+      citationExpandAllRef.current = true;
+      setVisibleBlocks(blocks.length);
+      setActiveMatchIndex(0);
     } else {
       setActiveMatchIndex(0);
     }
@@ -394,62 +460,7 @@ export default function NoteMarkdownPreview({
     return () => {
       unwrap();
     };
-  }, [renderBlocks, highlightTerm]);
-
-  useEffect(() => {
-    const root = contentRef.current;
-    const rng = charHighlightRange;
-    if (!root || !rng || rng.end <= rng.start) return;
-    const markId = "note-char-range-anchor";
-    const prev = root.querySelector(`#${markId}`);
-    prev?.remove();
-
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let cursor = 0;
-    let startNode: Text | null = null;
-    let startOff = 0;
-    let endNode: Text | null = null;
-    let endOff = 0;
-
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text;
-      const parentEl = node.parentElement;
-      if (!parentEl) continue;
-      const tag = parentEl.tagName;
-      if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") continue;
-      const len = (node.nodeValue || "").length;
-      const nodeStart = cursor;
-      const nodeEnd = cursor + len;
-      if (!startNode && rng.start < nodeEnd) {
-        startNode = node;
-        startOff = Math.max(0, rng.start - nodeStart);
-      }
-      if (!endNode && rng.end <= nodeEnd) {
-        endNode = node;
-        endOff = Math.max(0, rng.end - nodeStart);
-        break;
-      }
-      cursor = nodeEnd;
-    }
-
-    if (!startNode || !endNode) return;
-    try {
-      const range = document.createRange();
-      range.setStart(startNode, startOff);
-      range.setEnd(endNode, endOff);
-      const mark = document.createElement("mark");
-      mark.id = markId;
-      mark.setAttribute("data-note-highlight", "1");
-      mark.className = "rounded bg-brand/25 px-[1px] text-ink ring-1 ring-brand/40";
-      range.surroundContents(mark);
-      mark.scrollIntoView({ behavior: "smooth", block: "center" });
-    } catch {
-      /* 跨节点复杂 DOM 时回退为关键词高亮 */
-    }
-    return () => {
-      root.querySelector(`#${markId}`)?.remove();
-    };
-  }, [renderBlocks, charHighlightRange?.start, charHighlightRange?.end]);
+  }, [renderBlocks, highlightTerm, rangeAnchor, blocks.length]);
 
   function jumpToMatch(offset: number) {
     const root = contentRef.current;

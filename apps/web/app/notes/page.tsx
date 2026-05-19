@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type { ChangeEvent, Dispatch, PointerEvent, SetStateAction } from "react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import InlineConfirmBar from "../../components/ui/InlineConfirmBar";
 import InlineTextPrompt from "../../components/ui/InlineTextPrompt";
 import SmallPromptModal from "../../components/ui/SmallPromptModal";
@@ -505,6 +505,8 @@ const POPULAR_PAGE_SIZE = 18;
 const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
 /** 历史「导读」助手气泡 id 前缀；加载会话时剔除，避免旧数据占位 */
 const NOTES_ASK_HINTS_BOOT_PREFIX = "__hints_boot__";
+/** 流式推理区 DOM 字符上限，避免超长推理拖慢排版 */
+const NOTES_ASK_STREAM_REASONING_DISPLAY_MAX = 12_000;
 
 /** 无上传封面时，用稳定哈希为每个笔记本分配主题色与图标（热门列表等） */
 function stableNotebookVisualFromKey(key: string): NotebookVisual {
@@ -2531,17 +2533,21 @@ export default function NotesPage() {
       let chunkPendingAnswer = "";
       let chunkPendingReasoning = "";
       let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null;
-      const STREAM_FLUSH_MS_VISIBLE = 32;
-      const STREAM_FLUSH_CHARS_VISIBLE = 200;
-      const STREAM_FLUSH_CHARS_HIDDEN = 72;
+      const STREAM_FLUSH_MS_VISIBLE = 16;
+      const STREAM_FLUSH_CHARS_VISIBLE = 120;
+      const STREAM_FLUSH_CHARS_REASONING = 40;
+      const STREAM_FLUSH_CHARS_HIDDEN = 48;
       /** 后台短 timer 不可靠，仅作「少量尾字」兜底 */
       const STREAM_FLUSH_MS_HIDDEN_FALLBACK = 480;
 
       const streamTabHidden = () =>
         typeof document !== "undefined" && document.visibilityState === "hidden";
 
-      const streamFlushCharThreshold = () =>
-        streamTabHidden() ? STREAM_FLUSH_CHARS_HIDDEN : STREAM_FLUSH_CHARS_VISIBLE;
+      const streamFlushCharThreshold = () => {
+        if (streamTabHidden()) return STREAM_FLUSH_CHARS_HIDDEN;
+        if (chunkPendingReasoning && !chunkPendingAnswer) return STREAM_FLUSH_CHARS_REASONING;
+        return STREAM_FLUSH_CHARS_VISIBLE;
+      };
 
       const applyPendingChunks = () => {
         const batchA = chunkPendingAnswer;
@@ -2549,6 +2555,7 @@ export default function NotesPage() {
         chunkPendingAnswer = "";
         chunkPendingReasoning = "";
         if (!batchA && !batchR) return;
+        startTransition(() => {
         setNotesAskMessages((prev) => {
           const next = [...prev];
           const idx = next.findIndex((m) => m.id === assistantId);
@@ -2561,6 +2568,7 @@ export default function NotesPage() {
             streaming: true
           };
           return next;
+        });
         });
       };
       const clearChunkFlushTimer = () => {
@@ -2640,8 +2648,18 @@ export default function NotesPage() {
                 chunkCount += 1;
                 chunkChars += chunkText.length;
                 if (streamRole === "reasoning") {
+                  const hadReasoning = chunkPendingReasoning.length > 0;
                   chunkPendingReasoning += chunkText;
+                  if (!hadReasoning && !chunkPendingAnswer) {
+                    clearChunkFlushTimer();
+                    applyPendingChunks();
+                    continue;
+                  }
                 } else {
+                  if (chunkPendingReasoning) {
+                    clearChunkFlushTimer();
+                    applyPendingChunks();
+                  }
                   chunkPendingAnswer += chunkText;
                 }
                 const pendingTotal = chunkPendingAnswer.length + chunkPendingReasoning.length;
@@ -3102,19 +3120,19 @@ export default function NotesPage() {
         const start = Math.max(0, Math.min(cs, fullText.length));
         const end = Math.max(start + 1, Math.min(ce, fullText.length));
         setPreviewCharRange({ start, end });
-        const snippet = fullText.slice(start, Math.min(end, start + 120)).trim();
-        if (snippet.length >= 4) {
-          setPreviewKw(snippet.slice(0, 48));
-        }
+        setPreviewKw("");
+        const snippet = fullText.slice(start, Math.min(end, start + 160)).trim();
         setPreviewHighlightHint(
-          `原文定位 · 字符 ${start.toLocaleString()}–${end.toLocaleString()}`
+          snippet.length >= 4
+            ? snippet.slice(0, 100)
+            : `原文定位 · 字符 ${start.toLocaleString()}–${end.toLocaleString()}`
         );
       } else {
+        setPreviewCharRange(null);
         const hi = String(opts.highlightText || "").trim();
         if (hi) {
-          const kw = hi.slice(0, 24);
-          if (kw) setPreviewKw(kw);
-          setPreviewHighlightHint(hi.slice(0, 80));
+          setPreviewKw(hi.slice(0, 80));
+          setPreviewHighlightHint(hi.slice(0, 100));
         }
       }
     } catch (err) {
@@ -3267,7 +3285,7 @@ export default function NotesPage() {
       opts.charStart = chunk.charStart;
       opts.charEnd = chunk.charEnd;
     } else if (chunk?.excerpt?.trim()) {
-      opts.highlightText = chunk.excerpt.trim().slice(0, 120);
+      opts.highlightText = chunk.excerpt.trim().slice(0, 200);
     }
     void openPreview(source.noteId, opts);
   }
@@ -4236,22 +4254,28 @@ export default function NotesPage() {
                             {m.streaming &&
                               !(m.content || "").trim() &&
                               !(m.streamingReasoning || "").trim() ? (
-                              <p className="text-muted">思考中…</p>
+                              <p className="text-muted">{notesAskStreamInfo || "思考中…"}</p>
                             ) : (
                               <div className="min-w-0">
                                 {m.streaming && (m.streamingReasoning || "").trim() ? (
                                   <div className="mb-2 rounded-lg border border-line/60 bg-fill/35 px-2.5 py-2">
                                     <p className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink/75">
-                                      {m.streamingReasoning}
+                                      {(() => {
+                                        const raw = m.streamingReasoning || "";
+                                        if (raw.length <= NOTES_ASK_STREAM_REASONING_DISPLAY_MAX) return raw;
+                                        return `…（推理较长，仅显示最近 ${Math.round(NOTES_ASK_STREAM_REASONING_DISPLAY_MAX / 1000)}k 字）\n${raw.slice(-NOTES_ASK_STREAM_REASONING_DISPLAY_MAX)}`;
+                                      })()}
                                     </p>
                                   </div>
                                 ) : null}
+                                {!m.streaming || (m.content || "").trim() ? (
                                 <NotesAskAnswerDisplay
                                   text={m.content}
                                   sources={m.sources}
                                   webSources={m.webSources}
                                   onOpenSourceInPreview={openPreviewFromAskSource}
                                 />
+                                ) : null}
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
                                 (m.hintSuggestions?.length ?? 0) > 0 ? (
