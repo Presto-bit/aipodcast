@@ -91,7 +91,23 @@ function SourceExcerptModal({
               ))}
             </ul>
           ) : (
-            <p className="text-muted">本条暂无向量检索摘录，请以正文角标对应资料中的参考资料全文为准。</p>
+            <div className="space-y-3">
+              <p className="text-muted">
+                本轮回答未附带该资料的检索摘录，可在资料预览中查看全文；正文 [n] 角标仍对应该条资料。
+              </p>
+              {onOpenInPreview ? (
+                <button
+                  type="button"
+                  className="rounded-md border border-brand/40 bg-brand/5 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/10"
+                  onClick={() => {
+                    onOpenInPreview(source);
+                    onClose();
+                  }}
+                >
+                  打开资料预览
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
         <div className="border-t border-line/80 flex justify-end gap-2 px-4 py-2.5">
@@ -163,7 +179,13 @@ export function NotesAskAnswerDisplay({
         webSources={webSources}
         onCitationClick={(index) => {
           const src = sortedSources.find((s) => s.index === index);
-          if (src) setModalSource(src);
+          if (!src) return;
+          const hasChunks = Boolean(src.chunks?.some((c) => (c.excerpt || "").trim()));
+          if (!hasChunks && onOpenSourceInPreview) {
+            onOpenSourceInPreview(src);
+            return;
+          }
+          setModalSource(src);
         }}
       />
 

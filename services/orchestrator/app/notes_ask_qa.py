@@ -86,13 +86,21 @@ def _enrich_sources_with_chunks(
         nid = str(item.get("noteId") or "").strip()
         if not nid:
             continue
-        by_note.setdefault(nid, []).append(
-            {
-                "chunkIndex": str(item.get("chunkIndex") or ""),
-                "score": str(item.get("score") or ""),
-                "excerpt": str(item.get("excerpt") or "").strip(),
-            }
-        )
+        ex = str(item.get("excerpt") or "").strip()
+        chunk_row: dict[str, Any] = {
+            "chunkIndex": str(item.get("chunkIndex") or ""),
+            "score": str(item.get("score") or ""),
+            "excerpt": ex,
+        }
+        try:
+            cs = int(item.get("charStart"))
+            ce = int(item.get("charEnd"))
+            if ce > cs >= 0:
+                chunk_row["charStart"] = cs
+                chunk_row["charEnd"] = ce
+        except (TypeError, ValueError):
+            pass
+        by_note.setdefault(nid, []).append(chunk_row)
     out: list[dict[str, Any]] = []
     for s in sources:
         merged = dict(s)
@@ -847,6 +855,8 @@ def build_notes_qa_context_with_plan(
             meta.update(lmeta)
             obs = lmeta.get("retrieve_obs") if isinstance(lmeta.get("retrieve_obs"), dict) else {}
             retr_m = lmeta.get("retrieval_chunks_meta")
+            if isinstance(retr_m, list) and retr_m:
+                sources = _enrich_sources_with_chunks(sources, retr_m)
             meta["lowConfidence"] = assess_retrieval_confidence(
                 note_ids=ordered,
                 rows_by_id=rows,

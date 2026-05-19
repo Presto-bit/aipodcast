@@ -4369,7 +4369,7 @@ export default function NotesPage() {
                 <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch">
                   <button
                     type="button"
-                    disabled={sharedBrowse?.access === "read_only" || draftSelectedNoteIds.length === 0}
+                    disabled={sharedBrowse?.access === "read_only"}
                     onClick={() => openPodcastFlow()}
                     className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-brand/35 bg-gradient-to-br from-brand/15 to-brand/[0.06] px-3 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98] enabled:active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[10.125rem]"
                   >
