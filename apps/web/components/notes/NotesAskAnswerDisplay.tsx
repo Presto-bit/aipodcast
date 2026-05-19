@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import type { NotesAskSource, NotesAskWebSource } from "../../lib/notesAskCitation";
+import {
+  sourceHasCitableChunks,
+  type NotesAskSource,
+  type NotesAskWebSource
+} from "../../lib/notesAskCitation";
 import NotesAskAnswerMarkdownBody from "./NotesAskAnswerMarkdownBody";
 
 type Props = {
@@ -59,9 +63,9 @@ function SourceExcerptModal({
       >
         <div className="border-b border-line/80 px-4 py-3">
           <h2 id="notes-ask-source-modal-title" className="text-sm font-semibold text-ink">
-            参考资料 [{source.index}] {source.title}
+            引用摘录 [{source.index}] {source.title}
           </h2>
-          <p className="mt-1 font-mono text-[10px] text-muted">{source.noteId}</p>
+          <p className="mt-1 text-[11px] text-muted">以下为回答所依据的检索片段，非全书预览</p>
         </div>
         <div className="max-h-[min(60vh,440px)] overflow-y-auto px-4 py-3 text-[13px] leading-relaxed text-ink">
           {source.chunks && source.chunks.length > 0 ? (
@@ -87,7 +91,7 @@ function SourceExcerptModal({
                         onClose();
                       }}
                     >
-                      在原文中定位
+                      查看引用上下文
                     </button>
                   ) : null}
                 </li>
@@ -96,30 +100,19 @@ function SourceExcerptModal({
           ) : (
             <div className="space-y-3">
               <p className="text-muted">
-                本轮回答未附带该资料的检索摘录，可在资料预览中查看全文；正文 [n] 角标仍对应该条资料。
+                本轮回答未附带该资料的检索摘录。正文 [{source.index}] 仍标记该条资料，但无法展示引用片段。
               </p>
-              {onOpenInPreview ? (
-                <button
-                  type="button"
-                  className="rounded-md border border-brand/40 bg-brand/5 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/10"
-                  onClick={() => {
-                    onOpenInPreview(source);
-                    onClose();
-                  }}
-                >
-                  打开资料预览
-                </button>
-              ) : null}
             </div>
           )}
         </div>
-        <div className="border-t border-line/80 flex justify-end gap-2 px-4 py-2.5">
-          {onOpenInPreview && source ? (
+        <div className="flex justify-end gap-2 border-t border-line/80 px-4 py-2.5">
+          {onOpenInPreview && source && sourceHasCitableChunks(source) ? (
             <button
               type="button"
               className="rounded-md border border-brand/40 bg-brand/5 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/10"
               onClick={() => {
-                const c0 = source.chunks?.[0];
+                const c0 =
+                  source.chunks?.find((c) => (c.excerpt || "").trim()) || source.chunks?.[0];
                 onOpenInPreview(source, {
                   charStart: c0?.charStart,
                   charEnd: c0?.charEnd,
@@ -128,7 +121,19 @@ function SourceExcerptModal({
                 onClose();
               }}
             >
-              打开资料预览
+              查看引用上下文
+            </button>
+          ) : null}
+          {onOpenInPreview && source ? (
+            <button
+              type="button"
+              className="rounded-md border border-line/60 bg-surface px-3 py-1.5 text-xs font-medium text-muted hover:bg-fill hover:text-ink"
+              onClick={() => {
+                onOpenInPreview(source);
+                onClose();
+              }}
+            >
+              查看全书原文
             </button>
           ) : null}
           <button
@@ -185,29 +190,24 @@ export function NotesAskAnswerDisplay({
         onCitationClick={(index) => {
           const src = sortedSources.find((s) => s.index === index);
           if (!src) return;
-          const hasChunks = Boolean(src.chunks?.some((c) => (c.excerpt || "").trim()));
-          if (!hasChunks && onOpenSourceInPreview) {
-            onOpenSourceInPreview(src);
-            return;
-          }
           setModalSource(src);
         }}
       />
 
       {followUpQuestion?.trim() ? (
-        <p className="mt-4 text-[14px] leading-relaxed text-ink">
-          <span className="text-muted">相关提问：</span>
+        <p className="mt-4 min-w-0 text-[14px] leading-[1.65] text-ink">
+          <span>相关提问：</span>
           {onFollowUpClick ? (
             <button
               type="button"
-              className="ml-1 inline text-left font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90"
+              className="ml-1 inline text-left font-[inherit] text-[length:inherit] leading-[inherit] text-ink decoration-none underline-offset-0 hover:text-ink/80"
               title={followUpQuestion.trim()}
               onClick={() => onFollowUpClick(followUpQuestion.trim())}
             >
               {followUpQuestion.trim()}
             </button>
           ) : (
-            <span className="ml-1 text-ink">{followUpQuestion.trim()}</span>
+            <span className="ml-1">{followUpQuestion.trim()}</span>
           )}
         </p>
       ) : null}

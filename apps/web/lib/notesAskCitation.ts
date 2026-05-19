@@ -72,6 +72,18 @@ export function normalizeNotesAskWebSources(raw: unknown): NotesAskWebSource[] |
   return out.length ? out : undefined;
 }
 
+/** 是否带有可展示的引用块（摘录或原文区间） */
+export function sourceHasCitableChunks(source: NotesAskSource | null | undefined): boolean {
+  if (!source?.chunks?.length) return false;
+  return source.chunks.some(
+    (c) =>
+      Boolean((c.excerpt || "").trim()) ||
+      (typeof c.charStart === "number" &&
+        typeof c.charEnd === "number" &&
+        c.charEnd > c.charStart)
+  );
+}
+
 export function normalizeNotesAskSources(raw: unknown): NotesAskSource[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const out: NotesAskSource[] = [];

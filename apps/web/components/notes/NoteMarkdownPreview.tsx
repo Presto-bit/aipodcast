@@ -42,6 +42,8 @@ type Props = {
   highlightHint?: string;
   /** 全文 UTF-16 字符区间高亮（与 preview_text 正文一致） */
   charHighlightRange?: { start: number; end: number } | null;
+  /** 问答角标引用视图：隐藏全书元数据，仅展示摘录/上下文 */
+  citationView?: boolean;
   onClose?: () => void;
 };
 
@@ -151,6 +153,7 @@ export default function NoteMarkdownPreview({
   simplified,
   highlightHint,
   charHighlightRange,
+  citationView = false,
   onClose
 }: Props) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -486,6 +489,11 @@ export default function NoteMarkdownPreview({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
+        {citationView ? (
+          <p className="mb-3 rounded-lg border border-line/70 bg-fill/30 px-3 py-2 text-[11px] leading-relaxed text-muted">
+            以下为问答引用内容（摘录或附近上下文），不是整本资料预览。需要全书请从资料列表打开。
+          </p>
+        ) : (
         <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-line/70 bg-fill/30 p-3 text-xs text-muted sm:grid-cols-2 lg:grid-cols-3">
           <p className="sm:col-span-2 lg:col-span-3 text-[11px] font-medium text-muted">基本信息</p>
           {statusPills.length > 0 ? (
@@ -549,9 +557,10 @@ export default function NoteMarkdownPreview({
             </p>
           ) : null}
         </div>
+        )}
         <input
           className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
-          placeholder="关键字过滤行"
+          placeholder={citationView ? "在引用内容中搜索" : "关键字过滤行"}
           value={keyword}
           onChange={(e) => onKeywordChange(e.target.value)}
           aria-label="关键字过滤"

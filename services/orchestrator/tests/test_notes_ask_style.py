@@ -1,5 +1,6 @@
 """知识库问答三层改造：题型、动态 top_k、合并块。"""
 from app.notes_ask_style import (
+    build_notes_ask_system_prompt,
     classify_answer_type,
     merge_adjacent_chunks_enabled,
     merge_adjacent_retrieval_picks,
@@ -18,6 +19,14 @@ def test_classify_compare():
 
 def test_classify_survey():
     assert classify_answer_type("请全面梳理这套架构") == "survey"
+    assert classify_answer_type("介绍下内容") == "survey"
+
+
+def test_system_prompt_includes_readability_rules():
+    prompt = build_notes_ask_system_prompt("survey")
+    assert "可读性" in prompt
+    assert "加粗" in prompt
+    assert "列表" in prompt
 
 
 def test_dynamic_top_k_howto_smaller_than_cap(monkeypatch):

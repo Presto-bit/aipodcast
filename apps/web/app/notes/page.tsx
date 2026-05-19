@@ -928,6 +928,8 @@ export default function NotesPage() {
   const [previewSimplified, setPreviewSimplified] = useState(false);
   const [previewHighlightHint, setPreviewHighlightHint] = useState("");
   const [previewCharRange, setPreviewCharRange] = useState<{ start: number; end: number } | null>(null);
+  /** 从问答角标打开：仅展示引用摘录/上下文，非全书预览 */
+  const [previewCitationView, setPreviewCitationView] = useState(false);
   const [previewStudioBusy, setPreviewStudioBusy] = useState(false);
   const [previewStudioResult, setPreviewStudioResult] = useState<{
     task: string;
@@ -3026,11 +3028,20 @@ export default function NotesPage() {
 
   async function openPreview(
     noteId: string,
-    opts: { highlightText?: string; charStart?: number; charEnd?: number } = {}
+    opts: {
+      highlightText?: string;
+      charStart?: number;
+      charEnd?: number;
+      citationView?: boolean;
+      excerptText?: string;
+      previewTitle?: string;
+    } = {}
   ) {
+    const citationView = Boolean(opts.citationView);
     setPreviewOpen(true);
     setPreviewLoading(true);
     setPreviewNoteId(noteId);
+    setPreviewCitationView(citationView);
     setPreviewTitle("");
     setPreviewText("");
     setPreviewStructuredBlocks([]);
@@ -3050,6 +3061,16 @@ export default function NotesPage() {
     setPreviewHighlightHint("");
     setPreviewCharRange(null);
     setPreviewStudioResult(null);
+
+    const excerptOnly = citationView && Boolean(opts.excerptText?.trim());
+    if (excerptOnly) {
+      setPreviewTitle(opts.previewTitle || "引用摘录");
+      setPreviewText(String(opts.excerptText || "").trim());
+      setPreviewStatusLine("引用摘录（非全书预览）");
+      setPreviewLoading(false);
+      return;
+    }
+
     try {
       const pv = new URLSearchParams();
       if (sharedBrowse?.ownerUserId) pv.set("sharedFromOwnerUserId", sharedBrowse.ownerUserId);
@@ -3122,6 +3143,7 @@ export default function NotesPage() {
       const fullText = data.text || "";
       const cs = opts.charStart;
       const ce = opts.charEnd;
+      const contextPad = citationView ? 600 : 0;
       if (
         typeof cs === "number" &&
         typeof ce === "number" &&
@@ -3130,20 +3152,45 @@ export default function NotesPage() {
       ) {
         const start = Math.max(0, Math.min(cs, fullText.length));
         const end = Math.max(start + 1, Math.min(ce, fullText.length));
-        setPreviewCharRange({ start, end });
-        setPreviewKw("");
-        const snippet = fullText.slice(start, Math.min(end, start + 160)).trim();
-        setPreviewHighlightHint(
-          snippet.length >= 4
-            ? snippet.slice(0, 100)
-            : `原文定位 · 字符 ${start.toLocaleString()}–${end.toLocaleString()}`
-        );
+        if (citationView) {
+          const sliceStart = Math.max(0, start - contextPad);
+          const sliceEnd = Math.min(fullText.length, end + contextPad);
+          const slice = fullText.slice(sliceStart, sliceEnd);
+          setPreviewText(slice);
+          setPreviewStructuredBlocks([]);
+          setPreviewTitle(opts.previewTitle || data.title || "引用上下文");
+          setPreviewCharRange({ start: start - sliceStart, end: end - sliceStart });
+          setPreviewKw("");
+          setPreviewStatusLine("引用上下文（已截取附近原文，非全书）");
+          const snippet = fullText.slice(start, Math.min(end, start + 160)).trim();
+          setPreviewHighlightHint(
+            snippet.length >= 4
+              ? snippet.slice(0, 100)
+              : `原文定位 · 字符 ${start.toLocaleString()}–${end.toLocaleString()}`
+          );
+        } else {
+          setPreviewCharRange({ start, end });
+          setPreviewKw("");
+          const snippet = fullText.slice(start, Math.min(end, start + 160)).trim();
+          setPreviewHighlightHint(
+            snippet.length >= 4
+              ? snippet.slice(0, 100)
+              : `原文定位 · 字符 ${start.toLocaleString()}–${end.toLocaleString()}`
+          );
+        }
       } else {
         setPreviewCharRange(null);
         const hi = String(opts.highlightText || "").trim();
         if (hi) {
-          setPreviewKw(hi.slice(0, 80));
-          setPreviewHighlightHint(hi.slice(0, 100));
+          if (citationView) {
+            setPreviewText(hi);
+            setPreviewStructuredBlocks([]);
+            setPreviewTitle(opts.previewTitle || data.title || "引用摘录");
+            setPreviewStatusLine("引用摘录（非全书预览）");
+          } else {
+            setPreviewKw(hi.slice(0, 80));
+            setPreviewHighlightHint(hi.slice(0, 100));
+          }
         }
       }
     } catch (err) {
@@ -3287,18 +3334,33 @@ export default function NotesPage() {
     source: NotesAskSource,
     chunk?: { charStart?: number; charEnd?: number; excerpt?: string }
   ) {
-    const opts: { highlightText?: string; charStart?: number; charEnd?: number } = {};
+    const title = `引用 · [${source.index}] ${source.title}`;
+    if (!chunk) {
+      void openPreview(source.noteId, { previewTitle: source.title });
+      return;
+    }
+    const excerpt = chunk.excerpt?.trim();
+    if (excerpt) {
+      void openPreview(source.noteId, {
+        citationView: true,
+        excerptText: excerpt,
+        previewTitle: title
+      });
+      return;
+    }
     if (
-      typeof chunk?.charStart === "number" &&
-      typeof chunk?.charEnd === "number" &&
+      typeof chunk.charStart === "number" &&
+      typeof chunk.charEnd === "number" &&
       chunk.charEnd > chunk.charStart
     ) {
-      opts.charStart = chunk.charStart;
-      opts.charEnd = chunk.charEnd;
-    } else if (chunk?.excerpt?.trim()) {
-      opts.highlightText = chunk.excerpt.trim().slice(0, 200);
+      void openPreview(source.noteId, {
+        citationView: true,
+        charStart: chunk.charStart,
+        charEnd: chunk.charEnd,
+        previewTitle: title
+      });
+      return;
     }
-    void openPreview(source.noteId, opts);
   }
 
   async function runPreviewStudio(task: "outline" | "quiz" | "timeline") {
@@ -5277,6 +5339,7 @@ export default function NotesPage() {
               onToggleSimplified={setPreviewSimplified}
               highlightHint={previewHighlightHint}
               charHighlightRange={previewCharRange}
+              citationView={previewCitationView}
               onClose={() => setPreviewOpen(false)}
             />
           </div>

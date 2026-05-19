@@ -97,7 +97,7 @@ export default function NotesAskAnswerMarkdownBody({
     return null;
   }
   return (
-    <article className="notes-ask-answer-md min-w-0 text-[14px] leading-[1.65] text-ink">
+    <article className="notes-ask-answer-md mx-auto min-w-0 max-w-[42rem] text-[15px] leading-[1.72] text-ink">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -105,12 +105,12 @@ export default function NotesAskAnswerMarkdownBody({
             <h1 className="mb-2 mt-0 scroll-mt-20 text-[17px] font-semibold tracking-tight text-ink">{children}</h1>
           ),
           h2: ({ children }) => (
-            <h2 className="mb-2 mt-7 scroll-mt-20 border-b border-line/60 pb-1.5 text-[15px] font-semibold text-ink first:mt-0">
+            <h2 className="mb-2.5 mt-8 scroll-mt-20 border-b border-line/60 pb-2 text-[16px] font-semibold tracking-tight text-ink first:mt-0">
               {children}
             </h2>
           ),
           h3: ({ children }) => (
-            <h3 className="mb-1.5 mt-5 scroll-mt-20 text-sm font-semibold text-ink first:mt-0">{children}</h3>
+            <h3 className="mb-2 mt-6 scroll-mt-20 text-[15px] font-semibold text-ink first:mt-0">{children}</h3>
           ),
           h4: ({ children }) => (
             <h4 className="mb-1.5 mt-4 scroll-mt-20 text-sm font-semibold text-ink/95 first:mt-0">{children}</h4>
@@ -121,16 +121,20 @@ export default function NotesAskAnswerMarkdownBody({
           h6: ({ children }) => (
             <h6 className="mb-1 mt-3 text-[13px] font-medium text-muted first:mt-0">{children}</h6>
           ),
-          p: ({ children }) => <p className="mb-3 min-w-0 whitespace-pre-wrap last:mb-0">{children}</p>,
+          p: ({ children }) => <p className="mb-4 min-w-0 whitespace-pre-wrap last:mb-0">{children}</p>,
           ul: ({ children }) => (
-            <ul className="mb-3 list-outside list-disc space-y-1 pl-[1.2em] marker:text-muted last:mb-0">{children}</ul>
+            <ul className="mb-4 list-outside list-disc space-y-2 pl-[1.35em] marker:text-muted/90 last:mb-0">
+              {children}
+            </ul>
           ),
           ol: ({ children }) => (
-            <ol className="mb-3 list-outside list-decimal space-y-1 pl-[1.35em] marker:text-muted last:mb-0">
+            <ol className="mb-4 list-outside list-decimal space-y-2 pl-[1.5em] marker:text-muted/90 last:mb-0">
               {children}
             </ol>
           ),
-          li: ({ children }) => <li className="pl-0.5 [&>p]:mb-2 [&>p]:last:mb-0">{children}</li>,
+          li: ({ children }) => (
+            <li className="pl-0.5 leading-[1.68] [&>p]:mb-2 [&>p]:last:mb-0">{children}</li>
+          ),
           blockquote: ({ children }) => (
             <blockquote className="mb-3 rounded-r-lg border-l-[3px] border-brand/40 bg-brand/[0.07] py-2 pl-3 pr-2 text-[13.5px] leading-relaxed text-ink/92 last:mb-0">
               {children}
