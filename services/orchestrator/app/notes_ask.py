@@ -11,6 +11,7 @@ from typing import Any, Iterator
 
 from .models import get_note_by_id
 from .note_rag_service import NOTE_LAYERED_RAG, build_layered_notes_context, build_notes_source_manifest
+from .notes_ask_qa import build_notes_qa_context_with_plan, resolve_notes_ask_plan
 from .notes_ask_citations import collapse_citation_markers
 from .notes_ask_style import (
     build_notes_ask_system_prompt,
@@ -374,7 +375,7 @@ def _prepare_notes_ask_messages(
     chat_history: list[dict[str, str]] | None = None,
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
-) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
     q = (question or "").strip()
     if not q:
         raise ValueError("question_required")
@@ -401,14 +402,24 @@ def _prepare_notes_ask_messages(
     plan_type = str((plan or {}).get("answerType") or "").strip() or None
     top_k, answer_type = resolve_retrieval_top_k(q, plan_type)
 
-    _t_ctx = time.perf_counter()
-    context, sources = build_notes_qa_context(
+    qa_plan = resolve_notes_ask_plan(
         notebook=notebook,
         note_ids=note_ids,
-        user_ref=user_ref,
         question=q,
+        user_ref=user_ref,
+        chat_history=chat_history,
+        project_owner_user_uuid=project_owner_user_uuid,
+    )
+    _t_ctx = time.perf_counter()
+    context, sources, qa_meta = build_notes_qa_context_with_plan(
+        notebook=notebook,
+        note_ids=note_ids,
+        question=q,
+        user_ref=user_ref,
         project_owner_user_uuid=project_owner_user_uuid,
         top_k=top_k,
+        chat_history=chat_history,
+        plan=qa_plan,
     )
     notes_ask_profile_emit(
         "prepare_build_context_ms",
@@ -417,12 +428,17 @@ def _prepare_notes_ask_messages(
         sources_n=len(sources),
         top_k=top_k,
         answer_type=answer_type,
+        qa_mode=str(qa_meta.get("qaMode") or ""),
     )
     if not context.strip():
         raise ValueError("empty_context")
 
     history_block = _build_history_block(chat_history)
-    body_parts: list[str] = [build_notes_ask_user_preamble() + context]
+    preamble = build_notes_ask_user_preamble()
+    hint = str(qa_plan.get("coverageHint") or "").strip()
+    if hint:
+        preamble += f"\n\n【覆盖率与本轮模式】{hint}（qaMode={qa_plan.get('qaMode')}）"
+    body_parts: list[str] = [preamble + context]
     if history_block:
         body_parts.append(history_block)
     if plan:
@@ -433,7 +449,8 @@ def _prepare_notes_ask_messages(
         {"role": "system", "content": build_notes_ask_system_prompt(answer_type)},
         {"role": "user", "content": user_block},
     ]
-    return messages, sources
+    qa_plan = {**qa_plan, **qa_meta}
+    return messages, sources, qa_plan
 
 
 _NOTES_ASK_VALUE_ERROR_MESSAGES: dict[str, str] = {
@@ -515,7 +532,9 @@ def iter_notes_answer_events(
     chat_history: list[dict[str, str]] | None = None,
     include_all_sources: bool | None = None,
     require_preprocess_ready: bool | None = None,
-    prepared_messages_sources: tuple[list[dict[str, str]], list[dict[str, Any]]] | None = None,
+    prepared_messages_sources: (
+        tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]] | None
+    ) = None,
     project_owner_user_uuid: str | None = None,
     request_id: str | None = None,
 ) -> Iterator[dict[str, Any]]:
@@ -525,10 +544,11 @@ def iter_notes_answer_events(
     `prepared_messages_sources`，避免与校验阶段重复执行向量检索（此前流式接口会构建两遍上下文）。
     `request_id` 用于 error 事件与日志关联（通常取 X-Request-ID）。
     """
+    qa_plan: dict[str, Any] = {}
     if prepared_messages_sources is not None:
-        messages, sources = prepared_messages_sources
+        messages, sources, qa_plan = prepared_messages_sources
     else:
-        messages, sources = _prepare_notes_ask_messages(
+        messages, sources, qa_plan = _prepare_notes_ask_messages(
             notebook=notebook,
             note_ids=note_ids,
             question=question,
@@ -652,7 +672,17 @@ def iter_notes_answer_events(
         if not full:
             raise RuntimeError("empty_answer")
         sources = filter_sources_by_citations(full, sources, include_all_sources=include_all_sources)
-        done_ev: dict[str, Any] = {"type": "done", "sources": sources, "answer": full, "traceId": None}
+        done_ev: dict[str, Any] = {
+            "type": "done",
+            "sources": sources,
+            "answer": full,
+            "traceId": None,
+            "qaMode": qa_plan.get("qaMode"),
+            "grounding": qa_plan.get("grounding"),
+            "routedChapters": qa_plan.get("routedChapters") or [],
+            "coverageHint": qa_plan.get("coverageHint") or "",
+            "activeChapters": qa_plan.get("routedChapters") or [],
+        }
         yield done_ev
         try:
             followup = generate_notes_ask_followup(
@@ -930,7 +960,7 @@ def answer_notes_question(
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
 ) -> dict[str, Any]:
-    messages, sources = _prepare_notes_ask_messages(
+    messages, sources, qa_plan = _prepare_notes_ask_messages(
         notebook=notebook,
         note_ids=note_ids,
         question=question,
@@ -958,6 +988,11 @@ def answer_notes_question(
         "answer": ans,
         "sources": filter_sources_by_citations(ans, sources, include_all_sources=include_all_sources),
         "traceId": trace_id,
+        "qaMode": qa_plan.get("qaMode"),
+        "grounding": qa_plan.get("grounding"),
+        "routedChapters": qa_plan.get("routedChapters") or [],
+        "coverageHint": qa_plan.get("coverageHint") or "",
+        "activeChapters": qa_plan.get("routedChapters") or [],
     }
     followup = generate_notes_ask_followup(
         question=question,

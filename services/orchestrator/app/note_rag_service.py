@@ -25,6 +25,12 @@ from .notes_ask_profile import notes_ask_profile_emit
 from .notes_ask_style import merge_adjacent_retrieval_picks
 from .models import get_note_by_id
 from .queue import redis_conn
+from .note_chapters import (
+    assign_chapter_ids_to_chunks,
+    build_chapter_and_book_summaries,
+    detect_chapters,
+    persist_chapters,
+)
 from .rag_core import (
     _cosine,
     _keyword_score,
@@ -138,6 +144,16 @@ def _cache_now() -> float:
     return time.time()
 
 
+def _chapter_filter_cache_token(chapter_filter: dict[str, set[str]] | None) -> str:
+    if not chapter_filter:
+        return ""
+    pairs: list[str] = []
+    for nid in sorted(chapter_filter.keys()):
+        cids = sorted(chapter_filter[nid])
+        pairs.append(f"{nid}:" + ",".join(cids))
+    return "|".join(pairs)
+
+
 def _cache_payload_key(
     note_ids: list[str],
     query: str,
@@ -145,6 +161,7 @@ def _cache_payload_key(
     top_k: int,
     *,
     merge_adjacent: bool = False,
+    chapter_filter: dict[str, set[str]] | None = None,
 ) -> str:
     qn = " ".join((query or "").strip().lower().split())[:800]
     payload = {
@@ -154,6 +171,7 @@ def _cache_payload_key(
         "max_chars": int(max_chars),
         "top_k": int(top_k),
         "merge_adjacent": bool(merge_adjacent),
+        "chapter_filter": _chapter_filter_cache_token(chapter_filter),
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
@@ -200,8 +218,16 @@ def _retrieval_cache_key(
     top_k: int,
     *,
     merge_adjacent: bool = False,
+    chapter_filter: dict[str, set[str]] | None = None,
 ) -> str:
-    pv = _cache_payload_key(note_ids, query, max_chars, top_k, merge_adjacent=merge_adjacent)
+    pv = _cache_payload_key(
+        note_ids,
+        query,
+        max_chars,
+        top_k,
+        merge_adjacent=merge_adjacent,
+        chapter_filter=chapter_filter,
+    )
     vv = _notes_version_fingerprint(note_ids)
     return f"{_RETRIEVAL_CACHE_PREFIX}:{_RETRIEVAL_CACHE_VERSION}:{vv}:{pv}"
 
@@ -374,6 +400,175 @@ def delete_rag_chunks_for_note(note_id: str) -> None:
             cur.execute("DELETE FROM note_rag_chunks WHERE input_id = %s::uuid", (note_id,))
             conn.commit()
     invalidate_retrieval_cache_for_notes([note_id])
+
+
+def _on_demand_chapter_embed_enabled() -> bool:
+    return (os.getenv("NOTE_RAG_ON_DEMAND_CHAPTER_EMBED", "1") or "").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+
+
+def _on_demand_min_chunks() -> int:
+    try:
+        return max(1, min(32, int(os.getenv("NOTE_RAG_ON_DEMAND_MIN_CHUNKS", "2") or "2")))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _count_indexed_chunks_by_chapter(note_id: str) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT chunk_meta FROM note_rag_chunks
+                WHERE input_id = %s::uuid
+                """,
+                (note_id,),
+            )
+            for row in cur.fetchall():
+                cm = row.get("chunk_meta")
+                if isinstance(cm, str):
+                    try:
+                        cm = json.loads(cm)
+                    except Exception:
+                        cm = {}
+                if not isinstance(cm, dict):
+                    continue
+                cid = str(cm.get("chapter_id") or "c0").strip() or "c0"
+                counts[cid] += 1
+    return dict(counts)
+
+
+def _max_chunk_index_for_note(note_id: str) -> int:
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                "SELECT COALESCE(MAX(chunk_index), -1) AS m FROM note_rag_chunks WHERE input_id = %s::uuid",
+                (note_id,),
+            )
+            row = cur.fetchone()
+            return int(row["m"] if row and row.get("m") is not None else -1)
+
+
+def delete_rag_chunks_for_chapters(note_id: str, chapter_ids: list[str]) -> int:
+    cids = [str(c).strip() for c in chapter_ids if str(c).strip()]
+    if not cids:
+        return 0
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                DELETE FROM note_rag_chunks
+                WHERE input_id = %s::uuid
+                  AND COALESCE(chunk_meta->>'chapter_id', 'c0') = ANY(%s::text[])
+                """,
+                (note_id, cids),
+            )
+            deleted = int(cur.rowcount or 0)
+            conn.commit()
+    invalidate_retrieval_cache_for_notes([note_id])
+    return deleted
+
+
+def embed_chapters_on_demand(
+    note_id: str,
+    chapter_ids: list[str],
+    *,
+    user_ref: str | None,
+    api_key: str | None = None,
+) -> dict[str, Any]:
+    """路由到某章但向量块不足时，仅对该章正文切块嵌入并追加入库。"""
+    from .note_chapters import chapter_body_slice, list_chapters
+
+    if not _on_demand_chapter_embed_enabled():
+        return {"ok": False, "skipped": "disabled"}
+    nid = str(note_id or "").strip()
+    want = [str(c).strip() for c in chapter_ids if str(c).strip()]
+    if not nid or not want:
+        return {"ok": False, "skipped": "empty"}
+
+    row = get_note_by_id(nid, user_ref=user_ref)
+    if not row:
+        return {"ok": False, "error": "note_not_found"}
+    body = str(row.get("content_text") or "").strip()
+    if not body:
+        return {"ok": False, "skipped": "empty_body"}
+
+    by_ch = _count_indexed_chunks_by_chapter(nid)
+    need = [c for c in want if by_ch.get(c, 0) < _on_demand_min_chunks()]
+    if not need:
+        return {"ok": True, "skipped": "sufficient", "chunks_added": 0}
+
+    chapters = {str(c.get("chapter_id")): c for c in list_chapters(nid)}
+    texts: list[str] = []
+    metas: list[dict[str, Any]] = []
+    for cid in need:
+        ch = chapters.get(cid)
+        if not ch:
+            continue
+        slice_text = chapter_body_slice(body, ch, max_chars=48_000)
+        if not slice_text.strip():
+            continue
+        for piece in split_text_into_chunks(slice_text):
+            if not piece.strip():
+                continue
+            texts.append(piece)
+            metas.append({"chapter_id": cid, "onDemand": True})
+
+    if not texts:
+        return {"ok": False, "skipped": "no_chunks_built"}
+
+    delete_rag_chunks_for_chapters(nid, need)
+
+    ep = None
+    try:
+        from app.fyv_shared.embedding_provider import EmbeddingProvider
+
+        ep = EmbeddingProvider()
+        embeddings: list[list[float]] = []
+        batch = 32
+        for i in range(0, len(texts), batch):
+            embeddings.extend(ep.embed_texts([t[:8000] for t in texts[i : i + batch]]))
+    except Exception as exc:
+        logger.warning("on_demand embed failed note_id=%s: %s", nid, exc)
+        return {"ok": False, "error": str(exc)[:200]}
+
+    if len(embeddings) != len(texts):
+        return {"ok": False, "error": "embed_count_mismatch"}
+
+    start_idx = _max_chunk_index_for_note(nid) + 1
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            for off, (ch, emb, meta) in enumerate(zip(texts, embeddings, metas)):
+                cur.execute(
+                    """
+                    INSERT INTO note_rag_chunks (input_id, chunk_index, chunk_text, embedding, chunk_meta)
+                    VALUES (%s::uuid, %s, %s, %s::jsonb, %s::jsonb)
+                    """,
+                    (nid, start_idx + off, ch, json.dumps(emb), json.dumps(meta)),
+                )
+            conn.commit()
+
+    sig = ""
+    if ep and embeddings:
+        try:
+            sig = ep.embedding_signature(len(embeddings[0]))
+        except Exception:
+            sig = ""
+    if sig:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                cur.execute(
+                    "UPDATE inputs SET note_rag_embedding_sig = %s WHERE id = %s::uuid",
+                    (sig, nid),
+                )
+                conn.commit()
+
+    invalidate_retrieval_cache_for_notes([nid])
+    return {"ok": True, "chunks_added": len(texts), "chapters": need}
 
 
 def count_rag_chunks_for_notes(note_ids: list[str]) -> int:
@@ -622,6 +817,13 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
         return {"ok": True, "skipped": "unchanged", "chunks": count_rag_chunks_for_notes([note_id])}
 
     chunks_all, chunk_metas_all = _chunks_and_metas_from_note(row)
+    md_for_seg = _note_metadata_as_dict(row)
+    raw_segs = md_for_seg.get("ragChunkSegments")
+    seg_list = raw_segs if isinstance(raw_segs, list) else None
+    chapter_spans = detect_chapters(body, segments=seg_list)
+    chunk_metas_all = assign_chapter_ids_to_chunks(chunks_all, chunk_metas_all, chapter_spans)
+    if chapter_spans:
+        persist_chapters(note_id, chapter_spans)
     abs_cap = effective_note_rag_chunk_cap(len(chunks_all))
     chunks, chunk_metas, index_stats = select_chunks_for_index(chunks_all, chunk_metas_all, abs_cap)
     if len(chunk_metas) < len(chunks):
@@ -631,6 +833,7 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
         return {"ok": False, "error": "no_chunks"}
 
     emb_backend = "unknown"
+    embedding_input_chars = 0
     try:
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
@@ -639,7 +842,10 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
         embeddings: list[list[float]] = []
         batch = 32
         for i in range(0, len(chunks), batch):
-            embeddings.extend(ep.embed_texts([c[:8000] for c in chunks[i : i + batch]]))
+            batch_texts = [c[:8000] for c in chunks[i : i + batch]]
+            if emb_backend == "api":
+                embedding_input_chars += sum(len(t) for t in batch_texts)
+            embeddings.extend(ep.embed_texts(batch_texts))
     except Exception as exc:
         logger.warning("note_rag embed failed note_id=%s: %s", note_id, exc)
         _update_note_rag_index_error(note_id, f"embed_failed:{exc}")
@@ -671,14 +877,34 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
 
     summary_text = ""
     summary_source_chars = 0
+    chapter_tree_meta: dict[str, Any] = {}
     try:
-        summary_text, summary_source_chars = _invoke_llm_summary_from_indexed_chunks(chunks, api_key=api_key)
-        summary_text = (summary_text or "")[:_SUMMARY_OUTPUT_CHARS]
+        if chapter_spans:
+            chapter_tree_meta = build_chapter_and_book_summaries(
+                note_id, body, chapter_spans, api_key=api_key
+            )
+            l0 = str(chapter_tree_meta.get("bookSummaryL0") or "").strip()
+            if l0:
+                summary_text = l0[:_SUMMARY_OUTPUT_CHARS]
+                summary_source_chars = len(l0)
+        if not summary_text:
+            summary_text, summary_source_chars = _invoke_llm_summary_from_indexed_chunks(
+                chunks, api_key=api_key
+            )
+            summary_text = (summary_text or "")[:_SUMMARY_OUTPUT_CHARS]
     except Exception as exc:
         logger.warning("note_rag summary failed note_id=%s: %s", note_id, exc)
         summary_text = ""
 
-    index_metadata = {**index_stats, "summarySourceChars": summary_source_chars}
+    index_metadata = {
+        **index_stats,
+        "summarySourceChars": summary_source_chars,
+        "chapterStructureSource": chapter_tree_meta.get("structureSource")
+        or (chapter_spans[0].source if chapter_spans else ""),
+        "chaptersTotal": int(chapter_tree_meta.get("chaptersTotal") or len(chapter_spans)),
+        "chaptersWithSummary": int(chapter_tree_meta.get("chaptersWithSummary") or 0),
+        "bookSummaryL0": chapter_tree_meta.get("bookSummaryL0") or "",
+    }
     _update_note_rag_after_success(
         note_id,
         summary_text or None,
@@ -697,6 +923,7 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
         "summary_chars": len(summary_text),
         "summary_source_chars": summary_source_chars,
         "embedding_backend": emb_backend,
+        "embedding_input_chars": int(embedding_input_chars),
         "embedding_sig": sig[:120] if sig else "",
     }
 
@@ -1009,6 +1236,9 @@ def retrieve_chunks_across_notes(
     top_k: int = 32,
     notes_ask_fast_path: bool = False,
     merge_adjacent_chunks: bool = False,
+    chapter_filter: dict[str, set[str]] | None = None,
+    user_ref: str | None = None,
+    api_key: str | None = None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """对已索引块：先轻量读块文本 → 关键词粗排 → 仅对候选批量取向量 → 多子查询向量 max-pool → 重排 → Top-K。
 
@@ -1016,8 +1246,20 @@ def retrieve_chunks_across_notes(
     `notes_ask_fast_path`：知识库向资料提问专用，默认单查询嵌入、较小 rerank 池、仅用本地 hybrid 重排（跳过 Cohere HTTP）。
     """
     _t_total = time.perf_counter()
+    if chapter_filter and _on_demand_chapter_embed_enabled():
+        for nid, cids in chapter_filter.items():
+            try:
+                embed_chapters_on_demand(nid, list(cids), user_ref=user_ref, api_key=api_key)
+            except Exception as exc:
+                logger.warning("on_demand chapter embed skipped note_id=%s: %s", nid, exc)
+
     cache_key = _retrieval_cache_key(
-        note_ids, query, max_chars, top_k, merge_adjacent=merge_adjacent_chunks
+        note_ids,
+        query,
+        max_chars,
+        top_k,
+        merge_adjacent=merge_adjacent_chunks,
+        chapter_filter=chapter_filter,
     )
     hit_l1 = _l1_get(cache_key)
     if hit_l1 is not None:
@@ -1056,6 +1298,13 @@ def retrieve_chunks_across_notes(
                 chunk_meta = dict(json.loads(cm_raw))
             except Exception:
                 chunk_meta = {}
+        nid = str(r.get("note_id") or "").strip()
+        if chapter_filter:
+            allowed = chapter_filter.get(nid)
+            if allowed is not None:
+                cid = str(chunk_meta.get("chapter_id") or "")
+                if cid and cid not in allowed:
+                    continue
         parsed.append(
             {
                 "note_id": r.get("note_id"),
@@ -1083,6 +1332,7 @@ def retrieve_chunks_across_notes(
         parsed_n=len(parsed),
     )
     _t_embed = time.perf_counter()
+    query_embed_chars = 0
     try:
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
@@ -1103,11 +1353,13 @@ def retrieve_chunks_across_notes(
             uniq.append(t)
         if not uniq:
             uniq = [q]
-        qvs = ep.embed_texts([x[:8000] for x in uniq])
+        q_inputs = [x[:8000] for x in uniq]
+        qvs = ep.embed_texts(q_inputs)
         if not qvs:
             raise RuntimeError("empty query embeddings")
         current_sig = ep.embedding_signature(len(qvs[0]))
         emb_backend = ep.active_backend()
+        query_embed_chars = sum(len(t) for t in q_inputs) if emb_backend == "api" else 0
     except Exception as exc:
         logger.warning("retrieve query embed failed: %s", exc)
         notes_ask_profile_emit(
@@ -1271,6 +1523,7 @@ def retrieve_chunks_across_notes(
         "cache_hit": "none",
         "notes_ask_fast_path": notes_ask_fast_path,
         "embedding_backend": emb_backend,
+        "embedding_input_chars": int(query_embed_chars),
         "multi_query_embedded": len(uniq),
         "keyword_pref_cap": pref_cap,
         "vec_cap": vec_cap,
@@ -1455,6 +1708,7 @@ def build_layered_notes_context(
     top_k: int = 36,
     project_owner_user_uuid: str | None = None,
     merge_adjacent_chunks: bool = False,
+    chapter_filter: dict[str, set[str]] | None = None,
 ) -> tuple[str | None, list[dict[str, str]], dict[str, Any]]:
     """
     若勾选范围内无任何索引块，返回 (None, [], meta) 表示应回退旧逻辑。
@@ -1535,6 +1789,8 @@ def build_layered_notes_context(
         top_k=top_k,
         notes_ask_fast_path=_ask_fast,
         merge_adjacent_chunks=merge_adjacent_chunks,
+        chapter_filter=chapter_filter,
+        user_ref=user_ref,
     )
     notes_ask_profile_emit(
         "layered_retrieve_ms",
@@ -1545,6 +1801,14 @@ def build_layered_notes_context(
     meta["top_k"] = top_k
     meta["merge_adjacent_chunks"] = merge_adjacent_chunks
     meta["retrieve_obs"] = retrieve_obs
+    if isinstance(retrieve_obs, dict):
+        try:
+            emb_q = max(0, int(retrieve_obs.get("embedding_input_chars") or 0))
+        except (TypeError, ValueError):
+            emb_q = 0
+        if emb_q > 0:
+            meta["embedding_input_chars"] = emb_q
+            meta["embedding_backend"] = str(retrieve_obs.get("embedding_backend") or "")
     meta["retrieval_chunks_meta"] = retr_meta
 
     blocks: list[str] = []
@@ -1601,6 +1865,7 @@ def build_layered_reference_block(
     retrieval_budget: int,
     top_k: int = 40,
     project_owner_user_uuid: str | None = None,
+    chapter_filter: dict[str, set[str]] | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     """供 merge_reference_for_script：无 notebook 校验，仅按 note id 列表。"""
     meta: dict[str, Any] = {"layered_ref": True}
@@ -1623,8 +1888,12 @@ def build_layered_reference_block(
         query=query_hint,
         max_chars=retrieval_budget,
         top_k=top_k,
+        chapter_filter=chapter_filter,
+        user_ref=user_ref,
     )
     meta["retrieve_obs"] = retrieve_obs
+    if chapter_filter:
+        meta["chapter_filter"] = {k: sorted(v) for k, v in chapter_filter.items()}
     blocks: list[str] = [_layered_source_manifest_block(ordered, user_ref, project_owner_user_uuid)]
     if sum_part:
         blocks.append(sum_part)

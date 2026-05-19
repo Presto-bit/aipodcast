@@ -44,3 +44,5 @@ NOTEBOOK_COVER_MAX_BYTES = 2 * 1024 * 1024
 ALLOWED_NOTEBOOK_COVER_IMAGE_EXT = frozenset({"png", "jpg", "jpeg", "webp", "gif", "avif"})
 NOTEBOOK_COVER_PRESET_IDS = frozenset({"mist", "dawn", "slate", "forest"})
 MAX_URL_IMPORT_CHARS = 500_000
+# 超过该字数建议分卷/分章导入（方案 C 导入向导）
+LONG_DOC_IMPORT_WARN_CHARS = 500_000

@@ -283,15 +283,16 @@ def apply_hybrid_vector_rag(
     merged_content: str,
     payload: dict[str, Any],
     api_key: str | None,
-) -> tuple[str, str | None]:
+) -> tuple[str, str | None, int]:
     """
     混合向量 RAG：对合并正文切块，关键词 + embedding 余弦混合打分，按分取块直至 rag_max_chars。
     向量由 EmbeddingProvider 提供（RAG_EMBEDDING_* / 本地 / hash），不依赖 MINIMAX_API_KEY。
+    返回 (压缩后正文, 日志, embedding 输入字符数，供成本看板)。
     """
     rag_cap = _payload_rag_cap(payload)
     chunks = split_text_into_chunks(merged_content)
     if not chunks:
-        return merged_content[:rag_cap], "no_chunks_after_split"
+        return merged_content[:rag_cap], "no_chunks_after_split", 0
 
     topic_text = str(payload.get("text") or merged_content[:2000])[:2000]
     query = build_retrieval_query(
@@ -310,26 +311,35 @@ def apply_hybrid_vector_rag(
 
     vec_raw: list[float] | None = None
     emb_log = ""
+    emb_input_chars = 0
+    emb_backend = "hash"
     try:
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
         ep = EmbeddingProvider()
-        if ep.active_backend() == "hash":
+        emb_backend = ep.active_backend()
+        if emb_backend == "hash":
             logger.warning("hybrid RAG: embedding backend=hash，检索质量可能较差，建议配置 RAG_EMBEDDING_* 或本地模型")
         # 单批限制避免超大文档爆内存
         batch_size = 32
-        qv = ep.embed_texts([query[:8000]])[0]
+        q_slice = query[:8000]
+        qv = ep.embed_texts([q_slice])[0]
+        if emb_backend == "api":
+            emb_input_chars += len(q_slice)
         vec_raw = []
         for i in range(0, len(chunks), batch_size):
             batch = [c[:8000] for c in chunks[i : i + batch_size]]
             vecs = ep.embed_texts(batch)
+            if emb_backend == "api":
+                emb_input_chars += sum(len(b) for b in batch)
             for v in vecs:
                 vec_raw.append(_cosine(qv, v))
-        emb_log = f"emb_backend={ep.active_backend()}"
+        emb_log = f"emb_backend={emb_backend}"
     except Exception as exc:
         logger.warning("hybrid embedding failed, keyword-only: %s", exc)
         emb_log = f"emb_error={exc!s}"[:300]
         vec_raw = [0.0] * len(chunks)
+        emb_input_chars = 0
 
     w_v = float(os.getenv("RAG_HYBRID_VECTOR_WEIGHT", "0.55"))
     w_k = float(os.getenv("RAG_HYBRID_KEYWORD_WEIGHT", "0.45"))
@@ -364,14 +374,21 @@ def apply_hybrid_vector_rag(
 
     log_msg = (
         f"chunks={len(chunks)} {emb_log} w_k={w_k:.2f} w_v={w_v:.2f} "
-        f"out_chars={len(out)} rag_cap={rag_cap}"
+        f"out_chars={len(out)} rag_cap={rag_cap} emb_in_chars={emb_input_chars}"
     )
-    return out, log_msg
+    return out, log_msg, int(emb_input_chars)
 
 
 def note_rag_index_strategy() -> str:
-    s = (os.getenv("NOTE_RAG_INDEX_STRATEGY", "head") or "head").strip().lower()
-    return s if s in ("head", "head_tail") else "head"
+    s = (os.getenv("NOTE_RAG_INDEX_STRATEGY", "per_chapter") or "per_chapter").strip().lower()
+    return s if s in ("head", "head_tail", "per_chapter") else "per_chapter"
+
+
+def _per_chapter_min_chunks() -> int:
+    try:
+        return max(1, min(16, int(os.getenv("NOTE_RAG_PER_CHAPTER_MIN_CHUNKS", "2") or "2")))
+    except (TypeError, ValueError):
+        return 2
 
 
 def note_rag_index_tail_ratio() -> float:
@@ -381,12 +398,61 @@ def note_rag_index_tail_ratio() -> float:
         return 0.22
 
 
+def _select_chunks_per_chapter(
+    chunks: list[str],
+    chunk_metas: list[dict[str, Any]],
+    cap: int,
+) -> tuple[list[int], dict[str, Any]]:
+    """每章至少若干块，再按章均匀分配剩余额度。"""
+    by_ch: dict[str, list[int]] = {}
+    for i, m in enumerate(chunk_metas):
+        cid = str((m or {}).get("chapter_id") or "c0")
+        by_ch.setdefault(cid, []).append(i)
+    if not by_ch:
+        return list(range(min(cap, len(chunks)))), {"chaptersInIndex": 0}
+
+    min_per = _per_chapter_min_chunks()
+    selected: list[int] = []
+    seen: set[int] = set()
+    chapter_ids = sorted(by_ch.keys(), key=lambda c: min(by_ch[c]) if by_ch[c] else 0)
+
+    for cid in chapter_ids:
+        for idx in by_ch[cid][:min_per]:
+            if idx not in seen and len(selected) < cap:
+                seen.add(idx)
+                selected.append(idx)
+
+    remaining = cap - len(selected)
+    if remaining > 0:
+        per_extra = max(1, remaining // max(1, len(chapter_ids)))
+        for cid in chapter_ids:
+            for idx in by_ch[cid]:
+                if len(selected) >= cap:
+                    break
+                if idx in seen:
+                    continue
+                if sum(1 for s in selected if s in by_ch[cid]) >= min_per + per_extra:
+                    continue
+                seen.add(idx)
+                selected.append(idx)
+        for cid in chapter_ids:
+            for idx in by_ch[cid]:
+                if len(selected) >= cap:
+                    break
+                if idx not in seen:
+                    seen.add(idx)
+                    selected.append(idx)
+
+    selected.sort()
+    return selected, {"chaptersInIndex": len(chapter_ids)}
+
+
 def select_chunks_for_index(
     chunks: list[str],
     chunk_metas: list[dict[str, Any]],
     abs_cap: int,
 ) -> tuple[list[str], list[dict[str, Any]], dict[str, Any]]:
-    """按策略从全量切块中选取入库块（head / head_tail）。"""
+    """按策略从全量切块中选取入库块（per_chapter / head / head_tail）。"""
     n = len(chunks)
     cap = max(0, min(abs_cap, n))
     strategy = note_rag_index_strategy()
@@ -404,6 +470,30 @@ def select_chunks_for_index(
                 "ragTotalChars": total_chars,
                 "ragIndexedChars": indexed_chars,
                 "ragIndexCoveragePct": 100 if total_chars else 100,
+            },
+        )
+
+    if strategy == "per_chapter":
+        indices, ch_stats = _select_chunks_per_chapter(chunks, chunk_metas, cap)
+        sel_chunks = [chunks[i] for i in indices]
+        sel_metas = [
+            dict(chunk_metas[i]) if i < len(chunk_metas) and isinstance(chunk_metas[i], dict) else {}
+            for i in indices
+        ]
+        indexed_chars = sum(len(c) for c in sel_chunks)
+        pct = min(100, round(100.0 * indexed_chars / total_chars)) if total_chars else 100
+        return (
+            sel_chunks,
+            sel_metas,
+            {
+                "ragChunksTotal": n,
+                "ragChunksIndexed": len(sel_chunks),
+                "ragIndexTruncated": len(sel_chunks) < n,
+                "ragIndexStrategy": strategy,
+                "ragTotalChars": total_chars,
+                "ragIndexedChars": indexed_chars,
+                "ragIndexCoveragePct": pct,
+                **ch_stats,
             },
         )
 

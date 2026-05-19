@@ -93,6 +93,11 @@ type NotesAskStreamEvent =
       /** 流式结束后合并角标的全文（与 chunk 拼接结果一致或更精简） */
       answer?: string;
       followUpQuestions?: unknown;
+      qaMode?: string;
+      grounding?: string;
+      routedChapters?: unknown;
+      coverageHint?: string;
+      activeChapters?: unknown;
     }
   | { type: "followups"; followUpQuestions?: unknown }
   | { type: "info"; message: string; code?: string; requestId?: string }
@@ -121,6 +126,9 @@ type NotesAskTurn = {
   hintSuggestions?: string[];
   /** 答后关联问句（至多 1 条，点击填入输入框） */
   followUpQuestions?: string[];
+  activeChapters?: Array<{ noteId: string; chapterId: string; title?: string }>;
+  coverageHint?: string;
+  qaMode?: string;
 };
 
 function normalizeNotesAskFollowUpQuestions(raw: unknown): string[] {
@@ -208,6 +216,13 @@ type PreviewResp = {
   ragIndexTruncated?: boolean;
   ragIndexStrategy?: string;
   ragIndexCoveragePct?: number;
+  totalChars?: number;
+  chaptersTotal?: number;
+  chaptersWithSummary?: number;
+  chapterSummaryCoveragePct?: number;
+  chaptersDeepReady?: number;
+  bookSummaryL0Chars?: number;
+  chapterStructureSource?: string;
   summarySourceChars?: number;
   ragIndexError?: string;
   ragIndexedAt?: string;
@@ -2213,6 +2228,10 @@ export default function NotesPage() {
       if (!res.ok) throw new Error(res.error);
       const data = res.data;
       if (data.success === false) throw new Error(apiErrorMessage(data, "上传失败"));
+      const longDoc = data as { longDocImport?: { message?: string } };
+      if (longDoc.longDocImport?.message) {
+        setError(longDoc.longDocImport.message);
+      }
       const newId = data.note?.noteId;
       if (newId) markNoteAsFresh(newId);
       setShowAddNoteModal(false);
@@ -2298,7 +2317,17 @@ export default function NotesPage() {
     const chatHistory = notesAskMessages
       .filter((m) => !m.streaming && !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX))
       .slice(-8)
-      .map((m) => ({ role: m.role, content: (m.content || "").trim() }))
+      .map((m) => {
+        const row: {
+          role: string;
+          content: string;
+          activeChapters?: NotesAskTurn["activeChapters"];
+        } = { role: m.role, content: (m.content || "").trim() };
+        if (m.role === "assistant" && m.activeChapters?.length) {
+          row.activeChapters = m.activeChapters;
+        }
+        return row;
+      })
       .filter((m) => m.content);
     setNotesAskError("");
     if (notesAskStreamInfoTimerRef.current) {
@@ -2560,6 +2589,8 @@ export default function NotesPage() {
                   answerReplaced: Boolean(doneAnswer),
                   followUp: doneFollowUps[0] || undefined
                 });
+                const activeChapters = Array.isArray(ev.activeChapters) ? ev.activeChapters : undefined;
+                const coverageHint = typeof ev.coverageHint === "string" ? ev.coverageHint.trim() : "";
                 setNotesAskMessages((prev) => {
                   const next = [...prev];
                   const idx = next.findIndex((m) => m.id === assistantId);
@@ -2570,7 +2601,10 @@ export default function NotesPage() {
                     streamingReasoning: undefined,
                     ...(doneAnswer ? { content: doneAnswer } : {}),
                     ...(doneSources?.length ? { sources: doneSources } : {}),
-                    ...(doneFollowUps.length ? { followUpQuestions: doneFollowUps } : {})
+                    ...(doneFollowUps.length ? { followUpQuestions: doneFollowUps } : {}),
+                    ...(activeChapters?.length ? { activeChapters } : {}),
+                    ...(coverageHint ? { coverageHint } : {}),
+                    ...(ev.qaMode ? { qaMode: String(ev.qaMode) } : {})
                   };
                   return next;
                 });
@@ -2954,6 +2988,19 @@ export default function NotesPage() {
         statusParts.push(
           `向量块 ${data.ragChunkCount} 条${data.ragIndexedAt ? ` · ${data.ragIndexedAt}` : ""}`
         );
+      }
+      if (typeof data.totalChars === "number" && data.totalChars > 0) {
+        const cov = Number(data.ragIndexCoveragePct || 0);
+        const chTot = Number(data.chaptersTotal || 0);
+        const chSum = Number(data.chaptersWithSummary || 0);
+        let covLine = `全文约 ${data.totalChars.toLocaleString()} 字 · 向量索引约 ${cov}%`;
+        if (chTot > 0) {
+          covLine += ` · 章摘要 ${chSum}/${chTot}`;
+        }
+        if (data.ragIndexTruncated) {
+          covLine += "（未全文入库，中间章节请指明章名提问）";
+        }
+        statusParts.unshift(covLine);
       }
       const retrieveFailed = String(data.retrieveState || "") === "failed";
       const hasIndexError = String(data.ragIndexError || "").trim().length > 0;

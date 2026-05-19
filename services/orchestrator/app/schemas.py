@@ -140,7 +140,7 @@ class NotesAskRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("shared_from_owner_user_id", "sharedFromOwnerUserId"),
     )
-    chat_history: list[dict[str, str]] = Field(
+    chat_history: list[dict[str, Any]] = Field(
         default_factory=list,
         validation_alias=AliasChoices("chat_history", "chatHistory"),
     )
@@ -172,8 +172,8 @@ class NotesAskRequest(BaseModel):
 
     @field_validator("chat_history")
     @classmethod
-    def _normalize_chat_history(cls, v: list[dict[str, str]]) -> list[dict[str, str]]:
-        out: list[dict[str, str]] = []
+    def _normalize_chat_history(cls, v: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         if not isinstance(v, list):
             return out
         for row in v[-8:]:
@@ -185,7 +185,26 @@ class NotesAskRequest(BaseModel):
             content = str(row.get("content") or "").strip()
             if not content:
                 continue
-            out.append({"role": role, "content": content[:1200]})
+            item: dict[str, Any] = {"role": role, "content": content[:1200]}
+            ac = row.get("activeChapters") or row.get("active_chapters")
+            if role == "assistant" and isinstance(ac, list) and ac:
+                cleaned = []
+                for c in ac:
+                    if not isinstance(c, dict):
+                        continue
+                    nid = str(c.get("noteId") or c.get("note_id") or "").strip()
+                    cid = str(c.get("chapterId") or c.get("chapter_id") or "").strip()
+                    if nid and cid:
+                        cleaned.append(
+                            {
+                                "noteId": nid,
+                                "chapterId": cid,
+                                "title": str(c.get("title") or "")[:200],
+                            }
+                        )
+                if cleaned:
+                    item["activeChapters"] = cleaned[:6]
+            out.append(item)
         return out
 
 

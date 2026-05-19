@@ -29,10 +29,12 @@ from ..url_fetch_hints import actionable_hint_for_failed_url
 from ..note_constants import (
     ALLOWED_NOTE_EXT,
     VIDEO_NOTE_EXT,
+    LONG_DOC_IMPORT_WARN_CHARS,
     MAX_NOTE_UPLOAD_BYTES,
     MAX_URL_IMPORT_CHARS,
     NOTE_PREVIEW_TEXT_MAX,
 )
+from ..note_chapters import note_coverage_stats
 from ..models import (
     NOTES_PODCAST_STUDIO_PROJECT,
     count_distinct_notebooks_for_user,
@@ -998,6 +1000,17 @@ def _persist_note_upload(
     }
     if parse_empty:
         out["parseEmpty"] = True
+    if len(parsed) >= LONG_DOC_IMPORT_WARN_CHARS:
+        out["longDocImport"] = {
+            "warn": True,
+            "textChars": len(parsed),
+            "threshold": LONG_DOC_IMPORT_WARN_CHARS,
+            "message": (
+                f"本文约 {len(parsed):,} 字，超过建议单条上限（{LONG_DOC_IMPORT_WARN_CHARS:,} 字）。"
+                "建议按卷/章拆成多条资料导入，以便章节路由与向量索引覆盖中间段落；"
+                "若仍单条保存，问答将依赖章节摘要与部分向量块，未索引段落可能无法检索。"
+            ),
+        }
     return attach_hint_actions_to_upload_result(out)
 
 
@@ -1452,6 +1465,7 @@ def preview_note_text_api(
     rag_index_coverage_pct = int(md.get("ragIndexCoveragePct") or (100 if not rag_index_truncated else 0))
     if rag_index_coverage_pct <= 0 and rag_n > 0 and not rag_index_truncated:
         rag_index_coverage_pct = 100
+    coverage = note_coverage_stats(note_id, row)
     return {
         "success": True,
         "noteId": note_id,
@@ -1465,6 +1479,13 @@ def preview_note_text_api(
         "ragIndexTruncated": rag_index_truncated,
         "ragIndexStrategy": str(md.get("ragIndexStrategy") or "").strip(),
         "ragIndexCoveragePct": rag_index_coverage_pct,
+        "totalChars": coverage.get("totalChars"),
+        "chaptersTotal": coverage.get("chaptersTotal"),
+        "chaptersWithSummary": coverage.get("chaptersWithSummary"),
+        "chapterSummaryCoveragePct": coverage.get("chapterSummaryCoveragePct"),
+        "chaptersDeepReady": coverage.get("chaptersDeepReady"),
+        "bookSummaryL0Chars": coverage.get("bookSummaryL0Chars"),
+        "chapterStructureSource": coverage.get("structureSource"),
         "summarySourceChars": int(md.get("summarySourceChars") or 0),
         "ragIndexError": str(row.get("note_rag_index_error") or "").strip(),
         "ragIndexedAt": str(row.get("note_rag_index_at") or ""),
