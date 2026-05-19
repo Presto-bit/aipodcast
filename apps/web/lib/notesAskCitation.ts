@@ -8,6 +8,7 @@ export type NotesAskSourceChunk = {
   excerpt?: string;
   charStart?: number;
   charEnd?: number;
+  page?: number;
 };
 
 export type NotesAskSource = {
@@ -43,7 +44,8 @@ function normalizeChunks(raw: unknown): NotesAskSourceChunk[] | undefined {
       ...(score ? { score } : {}),
       ...(excerpt ? { excerpt } : {}),
       ...(typeof cs === "number" ? { charStart: cs } : {}),
-      ...(typeof ce === "number" ? { charEnd: ce } : {})
+      ...(typeof ce === "number" ? { charEnd: ce } : {}),
+      ...(typeof o.page === "number" ? { page: o.page } : {})
     });
   }
   return out.length ? out : undefined;

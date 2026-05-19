@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import psycopg2
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -75,6 +75,7 @@ from ..queue import ai_queue
 from ..worker_tasks import run_ai_job
 from ..storage_paths import note_upload_object_key
 from ..note_document_extract import NoteParseResult, extract_text_from_bytes
+from ..note_parse_quality import page_breaks_from_segments
 from ..object_store import delete_object_key, get_object_bytes, upload_bytes
 from ..notes_ask import (
     _prepare_notes_ask_messages,
@@ -932,12 +933,19 @@ def _persist_note_upload(
         extra_meta["parseEncoding"] = str(parse_result.encoding)[:120]
     if parse_error_code:
         extra_meta["parseErrorCode"] = parse_error_code
-    rs = getattr(parse_result, "rag_segments", None)
-    if isinstance(rs, list) and rs:
-        extra_meta["ragChunkSegments"] = rs[:3000]
     extra_meta["contentSha256"] = content_sha256
+    from ..note_parse_quality import merge_upload_parse_metadata
+
+    merge_upload_parse_metadata(
+        extra_meta,
+        parse_result,
+        content_text=parsed,
+        ext=ext,
+        parse_error_code=parse_error_code or "",
+    )
     try:
-        extra_meta["structuredBlocks"] = _build_structured_blocks_from_text(parsed)
+        if "structuredBlocks" not in extra_meta:
+            extra_meta["structuredBlocks"] = _build_structured_blocks_from_text(parsed)
         extra_meta.update(_build_preprocess_fields(parsed))
     except UnicodeDecodeError as exc:
         _raise_upload_unicode_error("build_preprocess_metadata", exc)
@@ -1100,6 +1108,8 @@ def list_notes_api(
                 "preprocessEntities": md.get("preprocessEntities")
                 if isinstance(md.get("preprocessEntities"), list)
                 else [],
+                "parseGate": str(md.get("parseGate") or ""),
+                "parseQuality": md.get("parseQuality") if isinstance(md.get("parseQuality"), dict) else {},
             }
         )
     has_more = len(rows) >= limit
@@ -1259,6 +1269,8 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
             include_all_sources=body.include_all_sources,
             require_preprocess_ready=body.require_preprocess_ready,
             project_owner_user_uuid=project_owner,
+            corpus_mode=body.corpus_mode,
+            grounding_mode=body.grounding_mode,
         )
     except ValueError as e:
         msg = str(e)
@@ -1271,6 +1283,7 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
             "too_many_notes",
             "note_notebook_mismatch",
             "preprocess_not_ready",
+            "parse_gate_blocked",
         ):
             raise HTTPException(status_code=400, detail=msg) from e
         raise HTTPException(status_code=400, detail=msg) from e
@@ -1323,6 +1336,8 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 chat_history=body.chat_history,
                 require_preprocess_ready=body.require_preprocess_ready,
                 project_owner_user_uuid=project_owner,
+                corpus_mode=body.corpus_mode,
+                grounding_mode=body.grounding_mode,
             )
             _notes_startup_logger.info(
                 "notes_ask_stage stage=context_ready request_id=%s elapsed_ms=%.1f context_ms=%.1f",
@@ -1352,6 +1367,8 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             chat_history=body.chat_history,
             include_all_sources=body.include_all_sources,
             require_preprocess_ready=body.require_preprocess_ready,
+            corpus_mode=body.corpus_mode,
+            grounding_mode=body.grounding_mode,
             prepared_messages_sources=prepared,
             project_owner_user_uuid=project_owner,
             request_id=rid,
@@ -1514,6 +1531,11 @@ def preview_note_text_api(
         "createdAt": str(row.get("created_at") or ""),
         "wordCount": word_count,
         "structuredBlocks": structured_blocks,
+        "parseGate": str(md.get("parseGate") or ""),
+        "parseQuality": md.get("parseQuality") if isinstance(md.get("parseQuality"), dict) else {},
+        "pageBreaks": page_breaks_from_segments(
+            md.get("ragChunkSegments") if isinstance(md.get("ragChunkSegments"), list) else []
+        ),
     }
 
 
@@ -1914,7 +1936,7 @@ def note_index_progress_api(note_id: str, request: Request):
 
 
 @router.post("/notes/{note_id}/studio/{task}")
-def note_studio_api(note_id: str, task: str, request: Request):
+def note_studio_api(note_id: str, task: str, request: Request, body: dict[str, Any] | None = None):
     user_ref = _current_user_ref_or_401(request)
     row = get_note_by_id(note_id, user_ref=user_ref)
     if not row:
@@ -1922,11 +1944,111 @@ def note_studio_api(note_id: str, task: str, request: Request):
     from ..note_studio import run_note_studio
 
     api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
-    out = run_note_studio(note_id, task, user_ref=user_ref, api_key=api_key)
+    body_obj = body if isinstance(body, dict) else {}
+    shard_ids = body_obj.get("shardIds") or body_obj.get("shard_ids")
+    if isinstance(shard_ids, list):
+        shard_ids = [str(x) for x in shard_ids if str(x).strip()]
+    else:
+        shard_ids = None
+    out = run_note_studio(
+        note_id, task, user_ref=user_ref, api_key=api_key, shard_ids=shard_ids
+    )
     if not out.get("ok"):
         code = 400 if out.get("error") in ("no_summaries", "invalid_task") else 500
         raise HTTPException(status_code=code, detail=str(out.get("error") or "studio_failed"))
     return {"success": True, "noteId": note_id, **out}
+
+
+@router.get("/notes/{note_id}/studio/artifacts")
+def note_studio_artifacts_api(note_id: str, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    row = get_note_by_id(note_id, user_ref=user_ref)
+    if not row:
+        raise HTTPException(status_code=404, detail="note_not_found")
+    from ..note_studio import list_studio_artifacts
+
+    arts = list_studio_artifacts(note_id, user_ref=user_ref)
+    return {"success": True, "noteId": note_id, "artifacts": arts}
+
+
+@router.post("/notebooks/{notebook}/studio/{task}")
+def notebook_studio_api(notebook: str, task: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    user_ref = _current_user_ref_or_401(request)
+    from ..note_studio import run_notebook_studio
+
+    note_ids = body.get("note_ids") or body.get("noteIds") or []
+    if not isinstance(note_ids, list) or not note_ids:
+        raise HTTPException(status_code=400, detail="note_ids_required")
+    api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
+    out = run_notebook_studio(
+        notebook, [str(x) for x in note_ids], task, user_ref=user_ref, api_key=api_key
+    )
+    if not out.get("ok"):
+        raise HTTPException(status_code=400, detail=str(out.get("error") or "studio_failed"))
+    return {"success": True, **out}
+
+
+@router.get("/notebooks/{notebook}/digest")
+def notebook_digest_get_api(notebook: str, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    from ..note_notebook_digest import get_notebook_digest
+
+    digest = get_notebook_digest(notebook, user_ref=user_ref)
+    return {"success": True, "notebook": notebook, "digest": digest}
+
+
+@router.post("/notebooks/{notebook}/digest/refresh")
+def notebook_digest_refresh_api(notebook: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    user_ref = _current_user_ref_or_401(request)
+    from ..note_notebook_digest import list_notebook_note_ids, refresh_notebook_digest
+
+    note_ids = body.get("note_ids") or body.get("noteIds")
+    if not isinstance(note_ids, list) or not note_ids:
+        note_ids = list_notebook_note_ids(notebook, user_ref=user_ref)
+    api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
+    out = refresh_notebook_digest(notebook, note_ids, user_ref=user_ref, api_key=api_key)
+    if not out.get("ok"):
+        raise HTTPException(status_code=400, detail=str(out.get("error") or "digest_failed"))
+    return {"success": True, **out}
+
+
+@router.post("/notebooks/{notebook}/audio_overview")
+def notebook_audio_overview_api(notebook: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    user_ref = _current_user_ref_or_401(request)
+    from ..note_audio_overview import build_audio_overview_context, target_minutes_default
+
+    note_ids = body.get("note_ids") or body.get("noteIds") or []
+    if not isinstance(note_ids, list) or not note_ids:
+        raise HTTPException(status_code=400, detail="note_ids_required")
+    nids = [str(x).strip() for x in note_ids if str(x).strip()]
+    focus = str(body.get("focus") or "").strip()
+    mins = body.get("target_minutes") or body.get("targetMinutes") or target_minutes_default()
+    try:
+        mins = int(mins)
+    except (TypeError, ValueError):
+        mins = target_minutes_default()
+    ctx, meta = build_audio_overview_context(nids, user_ref=user_ref, focus=focus)
+    if not ctx:
+        raise HTTPException(status_code=400, detail=str(meta.get("error") or "no_summaries"))
+    pid = ensure_default_project(NOTES_PODCAST_STUDIO_PROJECT, created_by=user_ref)
+    payload: dict[str, Any] = {
+        "text": focus or f"请根据以下资料摘要，生成约 {mins} 分钟的播客式音频概览（双人对话，脉络清晰）。",
+        "reference_mode": "audio_overview",
+        "audio_overview_context": ctx,
+        "notes_notebook": notebook.strip(),
+        "selected_note_ids": nids,
+        "script_target_chars": mins * 650,
+        "script_style": "播客解说，节奏适中",
+        "script_language": str(body.get("language") or "中文"),
+        "program_name": str(body.get("program_name") or "资料音频概览"),
+        "speaker1_persona": "主持人",
+        "speaker2_persona": "评论员",
+        "use_rag": False,
+        "notes_reference_full_text": True,
+    }
+    job_id = create_job(pid, "script_draft", "ai", payload, created_by=user_ref)
+    ai_queue.enqueue(run_ai_job, job_id, job_timeout=3600)
+    return {"success": True, "jobId": job_id, "notebook": notebook, "meta": meta}
 
 
 @router.get("/notebooks")

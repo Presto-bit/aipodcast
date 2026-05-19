@@ -109,6 +109,14 @@ def _enrich_sources_with_chunks(sources: list[dict[str, Any]], retr_meta: list[d
                 chunk_row["charEnd"] = ce
         except (TypeError, ValueError):
             pass
+        try:
+            chunk_row["page"] = int(item.get("page"))
+        except (TypeError, ValueError):
+            if item.get("page") is not None:
+                chunk_row["page"] = item.get("page")
+        hp = item.get("headingPath")
+        if isinstance(hp, list) and hp:
+            chunk_row["headingPath"] = hp
         by_note[nid].append(chunk_row)
     out: list[dict[str, Any]] = []
     for s in sources:
@@ -204,6 +212,38 @@ def _notes_ask_require_preprocess_ready_default() -> bool:
         "1",
         "true",
         "yes",
+        "on",
+    )
+
+
+def _assert_parse_gate_for_notes(
+    *,
+    note_ids: list[str],
+    user_ref: str | None,
+    project_owner_user_uuid: str | None = None,
+) -> None:
+    ordered = _ordered_note_ids(note_ids)
+    blocked: list[str] = []
+    for nid in ordered:
+        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
+        if not row:
+            continue
+        md = row.get("metadata") or {}
+        if isinstance(md, str):
+            try:
+                md = json.loads(md) if md.strip() else {}
+            except Exception:
+                md = {}
+        if str((md if isinstance(md, dict) else {}).get("parseGate") or "") == "blocked":
+            blocked.append(_metadata_title(row, nid))
+    if blocked:
+        raise ValueError("parse_gate_blocked")
+
+
+def _grounding_strict_default() -> bool:
+    return (os.getenv("NOTES_ASK_GROUNDING_STRICT_DEFAULT", "0") or "0").strip().lower() in (
+        "1",
+        "true",
         "on",
     )
 
@@ -382,6 +422,8 @@ def _prepare_notes_ask_messages(
     chat_history: list[dict[str, str]] | None = None,
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
+    corpus_mode: str | None = None,
+    grounding_mode: str | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
     q = (question or "").strip()
     if not q:
@@ -398,6 +440,11 @@ def _prepare_notes_ask_messages(
             user_ref=user_ref,
             project_owner_user_uuid=project_owner_user_uuid,
         )
+    _assert_parse_gate_for_notes(
+        note_ids=note_ids,
+        user_ref=user_ref,
+        project_owner_user_uuid=project_owner_user_uuid,
+    )
 
     plan = _run_notes_ask_planner(
         notebook=notebook,
@@ -409,6 +456,9 @@ def _prepare_notes_ask_messages(
     plan_type = str((plan or {}).get("answerType") or "").strip() or None
     top_k, answer_type = resolve_retrieval_top_k(q, plan_type)
 
+    gm = (grounding_mode or "").strip().lower()
+    if not gm and _grounding_strict_default():
+        gm = "strict"
     qa_plan = resolve_notes_ask_plan(
         notebook=notebook,
         note_ids=note_ids,
@@ -416,7 +466,9 @@ def _prepare_notes_ask_messages(
         user_ref=user_ref,
         chat_history=chat_history,
         project_owner_user_uuid=project_owner_user_uuid,
+        corpus_mode=corpus_mode,
     )
+    qa_plan["groundingMode"] = gm or "balanced"
     _t_ctx = time.perf_counter()
     context, sources, qa_meta = build_notes_qa_context_with_plan(
         notebook=notebook,
@@ -450,6 +502,11 @@ def _prepare_notes_ask_messages(
             "\n\n【置信度】检索分数偏低或向量覆盖率不足：若材料未明确记载，"
             "须直接说明「无法从已索引内容确认」，勿编造。"
         )
+    if gm == "strict":
+        preamble += (
+            "\n\n【严谨引用】仅可陈述摘录中明确出现的事实；无依据则回答「资料未覆盖此问题」。"
+            "禁止推测、外推或补充常识。"
+        )
     body_parts: list[str] = [preamble + context]
     if history_block:
         body_parts.append(history_block)
@@ -461,7 +518,9 @@ def _prepare_notes_ask_messages(
         {"role": "system", "content": build_notes_ask_system_prompt(answer_type)},
         {"role": "user", "content": user_block},
     ]
-    qa_plan = {**qa_plan, **qa_meta}
+    qa_plan = {**qa_plan, **qa_meta, "groundingMode": gm or "balanced"}
+    if gm == "strict":
+        qa_plan["temperatureOverride"] = 0.35
     return messages, sources, qa_plan
 
 
@@ -474,6 +533,7 @@ _NOTES_ASK_VALUE_ERROR_MESSAGES: dict[str, str] = {
     "too_many_notes": "勾选的资料条数超过上限，请减少勾选后再试。",
     "note_notebook_mismatch": "勾选资料与当前笔记本不一致，请刷新后重选。",
     "preprocess_not_ready": "已开启严格准入：请等待所选资料完成预处理（摘要/标签/实体）后再提问。",
+    "parse_gate_blocked": "所选资料解析未通过（如扫描版 PDF），请重传可搜索文本或 txt/md 后再提问。",
 }
 
 
@@ -544,6 +604,8 @@ def iter_notes_answer_events(
     chat_history: list[dict[str, str]] | None = None,
     include_all_sources: bool | None = None,
     require_preprocess_ready: bool | None = None,
+    corpus_mode: str | None = None,
+    grounding_mode: str | None = None,
     prepared_messages_sources: (
         tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]] | None
     ) = None,
@@ -568,6 +630,8 @@ def iter_notes_answer_events(
             chat_history=chat_history,
             require_preprocess_ready=require_preprocess_ready,
             project_owner_user_uuid=project_owner_user_uuid,
+            corpus_mode=corpus_mode,
+            grounding_mode=grounding_mode,
         )
     acc_answer: list[str] = []
     try:
@@ -599,43 +663,61 @@ def iter_notes_answer_events(
             return out
 
         llm_temp = notes_ask_temperature()
-        llm_max_tokens = notes_ask_max_output_tokens()
         try:
-            for role, piece in invoke_llm_chat_messages_stream_segments_iter(
-                messages,
-                temperature=llm_temp,
-                api_key=api_key,
-                timeout_sec=120,
-                max_tokens=llm_max_tokens,
-            ):
-                vis = _notes_ask_sanitize_visible_text(piece)
-                if not vis:
-                    continue
-                is_reasoning = str(role or "").strip().lower() == "reasoning"
-                if is_reasoning:
-                    clipped = _clip_reasoning(vis)
-                    if not clipped:
+            ov = qa_plan.get("temperatureOverride")
+            if ov is not None:
+                llm_temp = float(ov)
+        except (TypeError, ValueError):
+            pass
+        llm_max_tokens = notes_ask_max_output_tokens()
+        skip_llm = False
+        if qa_plan.get("lowConfidence") and str(qa_plan.get("groundingMode") or "") == "strict":
+            short = (
+                "根据当前已索引资料，检索置信度较低，无法可靠回答该问题。"
+                "建议缩小提问范围、指定章节/表格，或等待索引完成后再试。"
+            )
+            yield {"type": "chunk", "text": short, "streamRole": "answer"}
+            acc_answer.append(short)
+            skip_llm = True
+        try:
+            if not skip_llm:
+                for role, piece in invoke_llm_chat_messages_stream_segments_iter(
+                    messages,
+                    temperature=llm_temp,
+                    api_key=api_key,
+                    timeout_sec=120,
+                    max_tokens=llm_max_tokens,
+                ):
+                    vis = _notes_ask_sanitize_visible_text(piece)
+                    if not vis:
                         continue
-                    ev_out: dict[str, Any] = {"type": "chunk", "text": clipped, "streamRole": "reasoning"}
-                else:
-                    acc_answer.append(vis)
-                    ev_out = {"type": "chunk", "text": vis, "streamRole": "answer"}
-                if not saw_visible:
-                    ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
-                    notes_ask_profile_emit(
-                        "stream_llm_ttft_ms",
-                        ttft_ms,
-                    )
-                    logger.info(
-                        "notes_ask_stage stage=llm_first_token request_id=%s elapsed_ms=%.1f",
-                        rid,
-                        ttft_ms,
-                    )
-                    saw_visible = True
-                yield ev_out
-                stream_chunks_out += 1
+                    is_reasoning = str(role or "").strip().lower() == "reasoning"
+                    if is_reasoning:
+                        clipped = _clip_reasoning(vis)
+                        if not clipped:
+                            continue
+                        ev_out: dict[str, Any] = {"type": "chunk", "text": clipped, "streamRole": "reasoning"}
+                    else:
+                        acc_answer.append(vis)
+                        ev_out = {"type": "chunk", "text": vis, "streamRole": "answer"}
+                    if not saw_visible:
+                        ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
+                        notes_ask_profile_emit(
+                            "stream_llm_ttft_ms",
+                            ttft_ms,
+                        )
+                        logger.info(
+                            "notes_ask_stage stage=llm_first_token request_id=%s elapsed_ms=%.1f",
+                            rid,
+                            ttft_ms,
+                        )
+                        saw_visible = True
+                    yield ev_out
+                    stream_chunks_out += 1
         except Exception as seg_exc:
-            if stream_chunks_out == 0:
+            if skip_llm:
+                seg_exc = None  # noqa: F841
+            if stream_chunks_out == 0 and not skip_llm:
                 logger.warning(
                     "notes_ask_stream_segments_failed_no_output request_id=%s fallback_plain_stream: %s",
                     rid,
@@ -691,6 +773,9 @@ def iter_notes_answer_events(
             "traceId": None,
             "qaMode": qa_plan.get("qaMode"),
             "grounding": qa_plan.get("grounding"),
+            "corpusMode": qa_plan.get("corpusMode"),
+            "groundingMode": qa_plan.get("groundingMode"),
+            "lowConfidence": bool(qa_plan.get("lowConfidence")),
             "routedChapters": qa_plan.get("routedChapters") or [],
             "routedShards": qa_plan.get("routedShards") or [],
             "coverageHint": qa_plan.get("coverageHint") or "",
@@ -973,6 +1058,8 @@ def answer_notes_question(
     include_all_sources: bool | None = None,
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
+    corpus_mode: str | None = None,
+    grounding_mode: str | None = None,
 ) -> dict[str, Any]:
     messages, sources, qa_plan = _prepare_notes_ask_messages(
         notebook=notebook,
@@ -982,11 +1069,20 @@ def answer_notes_question(
         chat_history=chat_history,
         require_preprocess_ready=require_preprocess_ready,
         project_owner_user_uuid=project_owner_user_uuid,
+        corpus_mode=corpus_mode,
+        grounding_mode=grounding_mode,
     )
+    temp = notes_ask_temperature()
+    try:
+        ov = qa_plan.get("temperatureOverride")
+        if ov is not None:
+            temp = float(ov)
+    except (TypeError, ValueError):
+        pass
     try:
         answer, trace_id = invoke_llm_chat_messages_with_minimax_fallback(
             messages,
-            temperature=notes_ask_temperature(),
+            temperature=temp,
             api_key=api_key,
             timeout_sec=120,
             max_tokens=notes_ask_max_output_tokens(),

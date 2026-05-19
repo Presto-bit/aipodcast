@@ -308,6 +308,31 @@ def _docx_python_docx(data: bytes) -> str:
         return ""
 
 
+def _rows_to_markdown_table(rows_txt: list[str]) -> str:
+    """将 TSV/制表符行转为 Markdown 表，便于 rag_core 按行切块。"""
+    grid: list[list[str]] = []
+    for line in rows_txt:
+        cells = [c.strip() for c in line.split("\t") if c is not None]
+        if not cells:
+            cells = [line.strip()]
+        if any(cells):
+            grid.append([c.replace("|", "\\|") for c in cells])
+    if not grid:
+        return ""
+    ncol = max(len(r) for r in grid)
+    norm = [r + [""] * (ncol - len(r)) for r in grid]
+    header = norm[0]
+    sep = ["---"] * ncol
+    body = norm[1:] if len(norm) > 1 else []
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(sep) + " |",
+    ]
+    for r in body:
+        lines.append("| " + " | ".join(r) + " |")
+    return "\n".join(lines)
+
+
 def _docx_rag_segments(data: bytes) -> list[dict[str, Any]]:
     """按文档流顺序输出段落/表格块，带 heading_path。"""
     try:
@@ -372,7 +397,9 @@ def _docx_rag_segments(data: bytes) -> list[dict[str, Any]]:
                     if cells:
                         rows_txt.append("\t".join(cells))
                 if rows_txt:
-                    tbl = "\n".join(rows_txt)
+                    tbl = _rows_to_markdown_table(rows_txt)
+                    if not tbl:
+                        tbl = "\n".join(rows_txt)
                     segments.append(
                         {
                             "text": tbl,

@@ -191,6 +191,18 @@ def merge_reference_for_script(
     """
     note_cap = max_note_refs if max_note_refs is not None and max_note_refs > 0 else 24
 
+    ref_mode = str(payload.get("reference_mode") or "").strip().lower()
+    if ref_mode == "audio_overview":
+        ao_ctx = str(payload.get("audio_overview_context") or "").strip()
+        if ao_ctx:
+            meta_pre: dict[str, Any] = {
+                "notes_loaded": len(payload.get("selected_note_ids") or []),
+                "reference_mode": "audio_overview",
+                "rag_compressed": False,
+            }
+            _finalize_rag_pipeline_meta(meta_pre)
+            return ao_ctx, meta_pre
+
     raw_cap_early = payload.get("rag_max_chars")
     try:
         rag_cap_early = int(raw_cap_early) if raw_cap_early is not None else 20_000

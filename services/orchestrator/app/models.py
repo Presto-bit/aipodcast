@@ -630,6 +630,9 @@ def ensure_notebooks_schema() -> None:
                     "ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS listed_in_discover BOOLEAN NOT NULL DEFAULT FALSE"
                 )
                 cur.execute(
+                    "ALTER TABLE user_notebooks ADD COLUMN IF NOT EXISTS digest_json JSONB NOT NULL DEFAULT '{}'::jsonb"
+                )
+                cur.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_user_notebooks_discover_views
                     ON user_notebooks (listed_in_discover, view_count DESC)

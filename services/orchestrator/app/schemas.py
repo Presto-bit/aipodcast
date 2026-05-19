@@ -152,6 +152,14 @@ class NotesAskRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("require_preprocess_ready", "requirePreprocessReady"),
     )
+    corpus_mode: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("corpus_mode", "corpusMode"),
+    )
+    grounding_mode: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("grounding_mode", "groundingMode"),
+    )
 
     @field_validator("note_ids")
     @classmethod

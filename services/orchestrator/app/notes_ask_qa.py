@@ -229,6 +229,7 @@ def resolve_notes_ask_plan(
     user_ref: str | None,
     chat_history: list[dict[str, str]] | None = None,
     project_owner_user_uuid: str | None = None,
+    corpus_mode: str | None = None,
 ) -> dict[str, Any]:
     """决定 qa_mode、路由片/章、grounding、覆盖率提示。"""
     ordered = _ordered_note_ids(note_ids)
@@ -245,7 +246,10 @@ def resolve_notes_ask_plan(
     qa_mode = "rag"
     grounding = "rag_excerpt"
 
-    corpus_mode = _detect_corpus_mode(ordered, question)
+    corpus_mode = (corpus_mode or "").strip().lower() or _detect_corpus_mode(ordered, question)
+    allowed = ("single", "multi_compare", "multi_synthesize", "per_note")
+    if corpus_mode not in allowed:
+        corpus_mode = _detect_corpus_mode(ordered, question)
 
     if mode_env in ("rag", "chapter_deep", "shard_deep", "shard_direct", "long_context_direct"):
         qa_mode = mode_env
@@ -669,6 +673,37 @@ def build_notes_qa_context_with_plan(
             if isinstance(retr_meta, list) and retr_meta:
                 sources = _enrich_sources_with_chunks(sources, retr_meta)
             return ch_block, sources, meta
+
+    if qa_mode == "rag" and corpus_mode == "per_note" and len(ordered) >= 2 and NOTE_LAYERED_RAG and q:
+        blocks: list[str] = []
+        combined_meta: dict[str, Any] = {"qaMode": qa_mode, "corpusMode": "per_note", "perNote": True}
+        for i, nid in enumerate(ordered, start=1):
+            row = rows.get(nid) or {}
+            title = _metadata_title(row, nid)
+            layered, src_part, lmeta = build_layered_notes_context(
+                notebook=notebook,
+                note_ids=[nid],
+                query=q,
+                user_ref=user_ref,
+                summary_budget=6_000,
+                retrieval_budget=14_000,
+                top_k=min(24, (top_k or 36) // 2),
+                project_owner_user_uuid=project_owner_user_uuid,
+            )
+            if layered:
+                blocks.append(f"## 资料 {i}：{title}\n\n{layered}")
+                retr = lmeta.get("retrieval_chunks_meta")
+                if isinstance(retr, list):
+                    sources = _enrich_sources_with_chunks(sources, retr)
+        if blocks:
+            ctx = "## 逐篇检索（请勿混淆不同资料）\n\n---\n\n".join(blocks)
+            combined_meta["lowConfidence"] = assess_retrieval_confidence(
+                note_ids=ordered,
+                rows_by_id=rows,
+                retrieve_obs={},
+                retr_meta=None,
+            )
+            return ctx, sources, combined_meta
 
     if qa_mode == "rag" and NOTE_LAYERED_RAG and q:
         sh_filter = shard_filter_for_query(ordered, q) if _multi_shard_notes(ordered) else None

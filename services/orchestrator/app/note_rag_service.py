@@ -31,6 +31,7 @@ from .note_chapters import (
     persist_chapters,
 )
 from .note_chunk_offsets import attach_char_offsets_to_chunks
+from .note_parse_quality import parse_gate_block_index_enabled
 from .note_rag_profile import query_suggests_table, rag_chunk_params_for_note
 from .note_shards import (
     assign_shard_ids_to_chunks,
@@ -1130,6 +1131,51 @@ def _index_note_incremental_append(
     return {"ok": True, "incremental": True, "chunks_added": len(texts), "shards": affected_ids}
 
 
+def _table_force_recall_enabled() -> bool:
+    return (os.getenv("NOTES_ASK_TABLE_FORCE_RECALL", "1") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "off",
+    )
+
+
+def _apply_table_force_recall(
+    picked: list[tuple[float, dict[str, Any]]],
+    scored: list[tuple[float, dict[str, Any]]],
+    *,
+    top_k: int,
+) -> list[tuple[float, dict[str, Any]]]:
+    if not _table_force_recall_enabled():
+        return picked
+    def _is_table(row: dict[str, Any]) -> bool:
+        cm = row.get("chunk_meta") if isinstance(row.get("chunk_meta"), dict) else {}
+        return str(cm.get("block_type") or "") == "table"
+
+    if any(_is_table(r) for _, r in picked):
+        return picked
+    extras: list[tuple[float, dict[str, Any]]] = []
+    for sc, r in scored:
+        if _is_table(r):
+            extras.append((sc, r))
+        if len(extras) >= 2:
+            break
+    if not extras:
+        return picked
+    seen = {(str(r.get("note_id")), int(r.get("chunk_index") or 0)) for _, r in picked}
+    merged: list[tuple[float, dict[str, Any]]] = []
+    for sc, r in extras:
+        key = (str(r.get("note_id")), int(r.get("chunk_index") or 0))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append((sc, r))
+    rest = [(sc, r) for sc, r in picked if (str(r.get("note_id")), int(r.get("chunk_index") or 0)) not in {
+        (str(x.get("note_id")), int(x.get("chunk_index") or 0)) for _, x in merged
+    }]
+    out = merged + rest
+    return out[: max(1, top_k)]
+
+
 def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None = None) -> dict[str, Any]:
     """
     切块 + 嵌入 + 摘要；幂等（正文 hash 未变则跳过）。
@@ -1137,6 +1183,21 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     row = get_note_by_id(note_id, user_ref=user_ref)
     if not row:
         return {"ok": False, "error": "note_not_found"}
+    md_gate = _note_metadata_as_dict(row)
+    parse_gate = str(md_gate.get("parseGate") or "ready").strip()
+    if parse_gate_block_index_enabled() and parse_gate == "blocked":
+        err = "parse_gate_blocked"
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                cur.execute(
+                    """
+                    UPDATE inputs SET note_rag_index_error = %s
+                    WHERE id = %s::uuid
+                    """,
+                    (err, note_id),
+                )
+                conn.commit()
+        return {"ok": False, "error": err, "parseGate": parse_gate}
     body = str(row.get("content_text") or "").strip()
     if len(body) < 80:
         delete_rag_chunks_for_note(note_id)
@@ -1880,6 +1941,8 @@ def retrieve_chunks_across_notes(
     picked = _pick_top_k_note_fairness(scored_for_pick, top_k, note_ids)
     if merge_adjacent_chunks:
         picked = merge_adjacent_retrieval_picks(picked)
+    if table_q:
+        picked = _apply_table_force_recall(picked, scored, top_k=top_k)
     notes_ask_profile_emit(
         "rag_retrieve_score_rerank_pick_ms",
         (time.perf_counter() - _t_score) * 1000.0,

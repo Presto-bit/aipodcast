@@ -29,6 +29,7 @@ const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMar
   )
 });
 import { NotesAskAnswerDisplay } from "../../components/notes/NotesAskAnswerDisplay";
+import { NotesStudioPanel } from "../../components/notes/NotesStudioPanel";
 import { createJob } from "../../lib/api";
 import {
   apiErrorMessage,
@@ -130,6 +131,7 @@ type NotesAskTurn = {
   activeShards?: Array<{ noteId: string; shardId: string; title?: string }>;
   coverageHint?: string;
   qaMode?: string;
+  lowConfidence?: boolean;
 };
 
 function normalizeNotesAskFollowUpQuestions(raw: unknown): string[] {
@@ -158,9 +160,11 @@ function noteExtLabel(ext: string | undefined): string {
 
 function isSourceUsable(note: {
   parseState?: string;
+  parseGate?: string;
   sourceReady?: boolean;
   citeState?: string;
 }): boolean {
+  if ((note.parseGate || "") === "blocked") return false;
   if ((note.parseState || "") === "failed") return false;
   if (note.sourceReady === false) return false;
   if ((note.citeState || "") === "unavailable") return false;
@@ -194,6 +198,7 @@ type NoteItem = {
   preprocessSummary?: string;
   preprocessTags?: string[];
   preprocessEntities?: string[];
+  parseGate?: string;
 };
 
 type NotesResp = {
@@ -1005,6 +1010,28 @@ export default function NotesPage() {
   }, [draftSelectedNoteIds]);
 
   useEffect(() => {
+    const nb = selectedNotebook.trim();
+    if (!nb || hubView) {
+      setNotebookDigestSummary("");
+      return;
+    }
+    void (async () => {
+      try {
+        const res = await fetch(`/api/notebooks/${encodeURIComponent(nb)}/digest`, {
+          credentials: "same-origin",
+          cache: "no-store"
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          digest?: { summary?: string };
+        };
+        setNotebookDigestSummary(String(data.digest?.summary || "").trim());
+      } catch {
+        setNotebookDigestSummary("");
+      }
+    })();
+  }, [selectedNotebook, hubView]);
+
+  useEffect(() => {
     setDraftSelectedNoteIds((prev) => (prev.length > noteRefCap ? prev.slice(0, noteRefCap) : prev));
   }, [noteRefCap]);
   const [draftBusy, setDraftBusy] = useState(false);
@@ -1035,6 +1062,12 @@ export default function NotesPage() {
   /** 右侧资料区底部输入：带入播客/文章，不在此自动扩写全文 */
   const [notesStudioPrompt, setNotesStudioPrompt] = useState("");
   const [notesAskQuestion, setNotesAskQuestion] = useState("");
+  const [notesAskCorpusMode, setNotesAskCorpusMode] = useState<
+    "auto" | "multi_synthesize" | "multi_compare" | "per_note"
+  >("auto");
+  const [notesAskGroundingStrict, setNotesAskGroundingStrict] = useState(false);
+  const [notebookDigestSummary, setNotebookDigestSummary] = useState("");
+  const [audioOverviewBusy, setAudioOverviewBusy] = useState(false);
   const [notesAskMessages, setNotesAskMessages] = useState<NotesAskTurn[]>([]);
   const [notesAskBusy, setNotesAskBusy] = useState(false);
   /** 本页有效、默认关，不跨路由持久化（离开笔记页即丢失） */
@@ -2310,6 +2343,30 @@ export default function NotesPage() {
     [selectableNoteIdsOnPage, noteRefCap]
   );
 
+  async function runAudioOverview() {
+    const nb = selectedNotebook.trim();
+    if (!nb || draftSelectedNoteIds.length === 0) return;
+    setAudioOverviewBusy(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(nb)}/audio_overview`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ noteIds: draftSelectedNoteIds })
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; jobId?: string; detail?: unknown };
+      if (!res.ok || !data.success || !data.jobId) {
+        throw new Error(apiErrorMessage(data, "音频概览创建失败"));
+      }
+      setDraftMessage(`音频概览任务已创建：${data.jobId.slice(0, 8)}… 请在创作页查看进度`);
+    } catch (err) {
+      setError(String(err instanceof Error ? err.message : err));
+    } finally {
+      setAudioOverviewBusy(false);
+    }
+  }
+
   async function submitNotesAsk() {
     const nb = selectedNotebook.trim();
     if (!nb) {
@@ -2391,6 +2448,8 @@ export default function NotesPage() {
           note_ids: draftSelectedNoteIds,
           question: q,
           chatHistory,
+          corpusMode: notesAskCorpusMode === "auto" ? undefined : notesAskCorpusMode,
+          groundingMode: notesAskGroundingStrict ? "strict" : undefined,
           ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {})
         })
       });
@@ -2609,6 +2668,7 @@ export default function NotesPage() {
                 const activeChapters = Array.isArray(ev.activeChapters) ? ev.activeChapters : undefined;
                 const activeShards = Array.isArray(ev.activeShards) ? ev.activeShards : undefined;
                 const coverageHint = typeof ev.coverageHint === "string" ? ev.coverageHint.trim() : "";
+                const lowConf = Boolean(ev.lowConfidence);
                 setNotesAskMessages((prev) => {
                   const next = [...prev];
                   const idx = next.findIndex((m) => m.id === assistantId);
@@ -2623,7 +2683,8 @@ export default function NotesPage() {
                     ...(activeChapters?.length ? { activeChapters } : {}),
                     ...(activeShards?.length ? { activeShards } : {}),
                     ...(coverageHint ? { coverageHint } : {}),
-                    ...(ev.qaMode ? { qaMode: String(ev.qaMode) } : {})
+                    ...(ev.qaMode ? { qaMode: String(ev.qaMode) } : {}),
+                    ...(lowConf ? { lowConfidence: true } : {})
                   };
                   return next;
                 });
@@ -4164,6 +4225,7 @@ export default function NotesPage() {
                                   sources={m.sources}
                                   webSources={m.webSources}
                                   onOpenSourceInPreview={openPreviewFromAskSource}
+                                  lowConfidence={m.lowConfidence}
                                 />
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
@@ -4296,6 +4358,23 @@ export default function NotesPage() {
                   </button>
                   <button
                     type="button"
+                    disabled={
+                      sharedBrowse?.access === "read_only" ||
+                      audioOverviewBusy ||
+                      draftSelectedNoteIds.length === 0
+                    }
+                    onClick={() => void runAudioOverview()}
+                    className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-line bg-fill px-3 py-2 text-left shadow-soft transition hover:bg-surface disabled:opacity-45 sm:w-auto sm:min-w-[10.125rem]"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-fill text-[1.125rem]" aria-hidden>
+                      🔊
+                    </span>
+                    <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">
+                      {audioOverviewBusy ? "音频概览…" : "音频概览"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
                     disabled={sharedBrowse?.access === "read_only"}
                     onClick={() => openArticleFlow()}
                     className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-success/35 bg-gradient-to-br from-success-soft/90 to-success/[0.08] px-3 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[10.125rem]"
@@ -4318,6 +4397,43 @@ export default function NotesPage() {
                       {notesAskStreamInfo}
                     </p>
                   ) : null}
+                  {notebookDigestSummary ? (
+                    <p className="rounded-lg border border-line/70 bg-fill/40 px-2.5 py-1.5 text-[11px] leading-snug text-muted">
+                      笔记本综述：{notebookDigestSummary}
+                    </p>
+                  ) : null}
+                  {!hubView && selectedNotebook.trim() && draftSelectedNoteIds.length > 0 ? (
+                    <NotesStudioPanel
+                      notebook={selectedNotebook.trim()}
+                      noteIds={draftSelectedNoteIds}
+                      className="rounded-lg border border-line/60 bg-fill/20 p-2"
+                    />
+                  ) : null}
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <label className="text-muted">问答模式</label>
+                    <select
+                      className="rounded border border-line bg-surface px-2 py-0.5 text-ink"
+                      value={notesAskCorpusMode}
+                      onChange={(e) =>
+                        setNotesAskCorpusMode(
+                          e.target.value as "auto" | "multi_synthesize" | "multi_compare" | "per_note"
+                        )
+                      }
+                    >
+                      <option value="auto">自动</option>
+                      <option value="multi_synthesize">综合</option>
+                      <option value="multi_compare">对比</option>
+                      <option value="per_note">逐篇</option>
+                    </select>
+                    <label className="ml-2 inline-flex items-center gap-1 text-ink">
+                      <input
+                        type="checkbox"
+                        checked={notesAskGroundingStrict}
+                        onChange={(e) => setNotesAskGroundingStrict(e.target.checked)}
+                      />
+                      严谨引用
+                    </label>
+                  </div>
                   <div
                     className={`flex shrink-0 items-end gap-2 rounded-2xl border border-line/90 px-3 py-2 shadow-soft ring-1 ring-line/60 ${
                       draftSelectedNoteIds.length === 0 ? "bg-fill/50" : "bg-surface"
@@ -5117,44 +5233,9 @@ export default function NotesPage() {
           }}
         >
           <div className="flex max-h-[min(92vh,820px)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card" onPointerDown={(e) => e.stopPropagation()}>
-            <div className="flex flex-wrap items-center gap-2 border-b border-line/70 px-3 py-2">
-              <span className="text-[11px] font-medium text-muted">资料 Studio</span>
-              {(["outline", "quiz", "timeline"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  disabled={previewStudioBusy || previewLoading}
-                  className="rounded-md border border-line bg-fill px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-surface disabled:opacity-50"
-                  onClick={() => void runPreviewStudio(t)}
-                >
-                  {t === "outline" ? "大纲" : t === "quiz" ? "测验" : "时间线"}
-                </button>
-              ))}
-              {previewStudioBusy ? <span className="text-[11px] text-muted">生成中…</span> : null}
+            <div className="border-b border-line/70 px-3 py-2">
+              <NotesStudioPanel noteId={previewNoteId} />
             </div>
-            {previewStudioResult ? (
-              <div className="max-h-48 overflow-y-auto border-b border-line/70 bg-fill/30 px-3 py-2 text-[12px] leading-relaxed text-ink">
-                <p className="mb-1 text-[11px] font-medium text-muted">
-                  {previewStudioResult.task === "outline"
-                    ? "章节大纲"
-                    : previewStudioResult.task === "quiz"
-                      ? "测验题"
-                      : "时间线"}
-                </p>
-                {previewStudioResult.timeline && previewStudioResult.timeline.length > 0 ? (
-                  <ul className="list-disc space-y-1 pl-4">
-                    {previewStudioResult.timeline.map((row, i) => (
-                      <li key={`${row.date}-${i}`}>
-                        <span className="font-medium">{row.date || "—"}</span> {row.event}
-                        {row.partTitle ? <span className="text-muted">（{row.partTitle}）</span> : null}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <pre className="whitespace-pre-wrap font-sans">{previewStudioResult.markdown || ""}</pre>
-                )}
-              </div>
-            ) : null}
             <NoteMarkdownPreview
               title={previewTitle || "参考资料内容"}
               filteredText={filteredPreview}
