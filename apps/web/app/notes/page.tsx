@@ -2280,10 +2280,6 @@ export default function NotesPage() {
       if (!res.ok) throw new Error(res.error);
       const data = res.data;
       if (data.success === false) throw new Error(apiErrorMessage(data, "上传失败"));
-      const longDoc = data as { longDocImport?: { message?: string } };
-      if (longDoc.longDocImport?.message) {
-        setError(longDoc.longDocImport.message);
-      }
       const newId = data.note?.noteId;
       if (newId) markNoteAsFresh(newId);
       setShowAddNoteModal(false);
