@@ -863,6 +863,8 @@ def build_notes_qa_context_with_plan(
                 retrieve_obs=obs,
                 retr_meta=retr_m if isinstance(retr_m, list) else None,
             )
+            if isinstance(retr_m, list) and retr_m:
+                meta["retrievalChunksMeta"] = retr_m
             if corpus_mode == "multi_compare":
                 layered = _wrap_multi_compare_context(layered, planner_plan)
             layered = _prepend_multi_note_prefix(layered, digest_prefix)

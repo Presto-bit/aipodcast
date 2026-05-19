@@ -560,6 +560,19 @@ def _prepare_notes_ask_messages(
         {"role": "user", "content": user_block},
     ]
     qa_plan = {**qa_plan, **qa_meta}
+    if plan:
+        cov = str(plan.get("coverage") or "").strip().lower()
+        if cov in ("full", "partial", "none"):
+            qa_plan["plannerCoverage"] = cov
+        if plan.get("needsSupplement") is True or str(plan.get("needsSupplement") or "").lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            qa_plan["plannerNeedsSupplement"] = True
+        focus = str(plan.get("supplementFocus") or plan.get("supplement_focus") or "").strip()
+        if focus:
+            qa_plan["supplementFocus"] = focus[:400]
     return messages, sources, qa_plan
 
 
@@ -718,7 +731,12 @@ def iter_notes_answer_events(
                         ev_out: dict[str, Any] = {"type": "chunk", "text": clipped, "streamRole": "reasoning"}
                     else:
                         acc_answer.append(vis)
-                        ev_out = {"type": "chunk", "text": vis, "streamRole": "answer"}
+                        ev_out = {
+                            "type": "chunk",
+                            "text": vis,
+                            "streamRole": "answer",
+                            "section": "corpus",
+                        }
                     if not saw_visible:
                         ttft_ms = (time.perf_counter() - _t_llm) * 1000.0
                         notes_ask_profile_emit(
@@ -763,7 +781,7 @@ def iter_notes_answer_events(
                         )
                         saw_visible = True
                     acc_answer.append(vis)
-                    yield {"type": "chunk", "text": vis}
+                    yield {"type": "chunk", "text": vis, "streamRole": "answer", "section": "corpus"}
                     stream_chunks_out += 1
             else:
                 raise seg_exc
@@ -783,20 +801,59 @@ def iter_notes_answer_events(
         if not full:
             raise RuntimeError("empty_answer")
         sources = filter_sources_by_citations(full, sources, include_all_sources=include_all_sources)
+
+        supplement_text = ""
+        from .notes_ask_supplement import (
+            iter_supplement_answer_chunks,
+            sanitize_supplement_answer,
+            should_run_supplement_stage,
+        )
+
+        shared_ro = bool((project_owner_user_uuid or "").strip())
+        if should_run_supplement_stage(
+            corpus_answer=full,
+            qa_plan=qa_plan,
+            shared_read_only=shared_ro,
+        ):
+            yield {"type": "phase", "phase": "supplement_start"}
+            acc_sup: list[str] = []
+            sup_focus = str(qa_plan.get("supplementFocus") or "").strip()
+            for piece in iter_supplement_answer_chunks(
+                question=question,
+                corpus_answer=full,
+                sources=sources,
+                supplement_focus=sup_focus,
+                api_key=api_key,
+            ):
+                acc_sup.append(piece)
+                yield {
+                    "type": "chunk",
+                    "text": piece,
+                    "streamRole": "answer",
+                    "section": "supplement",
+                }
+            supplement_text = sanitize_supplement_answer("".join(acc_sup))
+
+        grounding = str(qa_plan.get("grounding") or "rag_excerpt")
+        if supplement_text:
+            grounding = "corpus_first"
         done_ev: dict[str, Any] = {
             "type": "done",
             "sources": sources,
             "answer": full,
             "traceId": None,
             "qaMode": qa_plan.get("qaMode"),
-            "grounding": qa_plan.get("grounding"),
+            "grounding": grounding,
             "lowConfidence": bool(qa_plan.get("lowConfidence")),
             "routedChapters": qa_plan.get("routedChapters") or [],
             "routedShards": qa_plan.get("routedShards") or [],
             "coverageHint": qa_plan.get("coverageHint") or "",
             "activeChapters": qa_plan.get("routedChapters") or [],
             "activeShards": qa_plan.get("routedShards") or [],
+            "supplementUsed": bool(supplement_text),
         }
+        if supplement_text:
+            done_ev["supplementAnswer"] = supplement_text
         yield done_ev
         try:
             followup = generate_notes_ask_followup(
@@ -1098,18 +1155,40 @@ def answer_notes_question(
         raise RuntimeError("empty_answer")
 
     ans = finalize_notes_ask_answer(answer)
+    filtered = filter_sources_by_citations(ans, sources, include_all_sources=include_all_sources)
+    from .notes_ask_supplement import generate_supplement_answer, should_run_supplement_stage
+
+    supplement_text = ""
+    if should_run_supplement_stage(
+        corpus_answer=ans,
+        qa_plan=qa_plan,
+        shared_read_only=bool((project_owner_user_uuid or "").strip()),
+    ):
+        supplement_text = generate_supplement_answer(
+            question=question,
+            corpus_answer=ans,
+            sources=filtered,
+            supplement_focus=str(qa_plan.get("supplementFocus") or "").strip(),
+            api_key=api_key,
+        )
+    grounding = str(qa_plan.get("grounding") or "rag_excerpt")
+    if supplement_text:
+        grounding = "corpus_first"
     out: dict[str, Any] = {
         "answer": ans,
-        "sources": filter_sources_by_citations(ans, sources, include_all_sources=include_all_sources),
+        "sources": filtered,
         "traceId": trace_id,
         "qaMode": qa_plan.get("qaMode"),
-        "grounding": qa_plan.get("grounding"),
+        "grounding": grounding,
         "routedChapters": qa_plan.get("routedChapters") or [],
         "routedShards": qa_plan.get("routedShards") or [],
         "coverageHint": qa_plan.get("coverageHint") or "",
         "activeChapters": qa_plan.get("routedChapters") or [],
         "activeShards": qa_plan.get("routedShards") or [],
+        "supplementUsed": bool(supplement_text),
     }
+    if supplement_text:
+        out["supplementAnswer"] = supplement_text
     followup = generate_notes_ask_followup(
         question=question,
         answer=ans,

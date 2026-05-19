@@ -44,6 +44,9 @@ _PLANNER_SYSTEM = (
     "你是资料问答规划器。根据用户问题与【来源清单】（仅标题，无正文），"
     "输出一个 JSON 对象，不要 markdown 围栏、不要 JSON 外文字。\n"
     '结构：{"answerType":"yesno|concept|howto|compare|survey|general",'
+    '"coverage":"full|partial|none（资料对问题的覆盖程度）",'
+    '"needsSupplement":true或false（资料明显不足、需通识补充时为true）,'
+    '"supplementFocus":"需补充解释的重点（可留空）",'
     '"thesis":"1～2 句拟写开篇结论（须可在后续摘录中核对）",'
     '"compareAxis":"对比题时填写比较维度（如价格/适用场景），非对比可留空",'
     '"perSourceFocus":[{"index":"1","focus":"该资料在本问中应贡献什么"}],'
@@ -286,15 +289,40 @@ def parse_planner_json(raw: str) -> dict[str, Any] | None:
             focus = str(item.get("focus") or "").strip()[:200]
             if idx or focus:
                 per_source_focus.append({"index": idx, "focus": focus})
-    if not thesis and not sections and not compare_axis and not per_source_focus:
+    coverage = str(data.get("coverage") or "").strip().lower()
+    if coverage not in ("full", "partial", "none"):
+        coverage = ""
+    needs_sup = data.get("needsSupplement")
+    if needs_sup is None:
+        needs_sup = data.get("needs_supplement")
+    supplement_focus = str(data.get("supplementFocus") or data.get("supplement_focus") or "").strip()[:400]
+    if (
+        not thesis
+        and not sections
+        and not compare_axis
+        and not per_source_focus
+        and not coverage
+        and needs_sup is None
+    ):
         return None
-    return {
+    out: dict[str, Any] = {
         "answerType": at,
         "thesis": thesis,
         "sections": sections,
         "compareAxis": compare_axis,
         "perSourceFocus": per_source_focus,
     }
+    if coverage:
+        out["coverage"] = coverage
+    if needs_sup is not None:
+        out["needsSupplement"] = bool(needs_sup) if isinstance(needs_sup, bool) else str(needs_sup).lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+    if supplement_focus:
+        out["supplementFocus"] = supplement_focus
+    return out
 
 
 def merge_adjacent_retrieval_picks(

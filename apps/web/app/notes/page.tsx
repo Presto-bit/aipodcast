@@ -90,7 +90,12 @@ import {
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
 type NotesAskStreamEvent =
-  | { type: "chunk"; text: string; streamRole?: "reasoning" | "answer" }
+  | {
+      type: "chunk";
+      text: string;
+      streamRole?: "reasoning" | "answer";
+      section?: "corpus" | "supplement";
+    }
   | {
       type: "done";
       sources?: unknown;
@@ -98,6 +103,8 @@ type NotesAskStreamEvent =
       traceId?: string | null;
       /** 流式结束后合并角标的全文（与 chunk 拼接结果一致或更精简） */
       answer?: string;
+      supplementAnswer?: string;
+      supplementUsed?: boolean;
       followUpQuestions?: unknown;
       qaMode?: string;
       grounding?: string;
@@ -107,6 +114,7 @@ type NotesAskStreamEvent =
       activeShards?: unknown;
       lowConfidence?: boolean;
     }
+  | { type: "phase"; phase?: string }
   | { type: "followups"; followUpQuestions?: unknown }
   | { type: "info"; message: string; code?: string; requestId?: string }
   | {
@@ -123,6 +131,8 @@ type NotesAskTurn = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** 阶段 2 通识补充（非资料原文，无角标） */
+  supplementContent?: string;
   streaming?: boolean;
   /** 流式阶段暂存模型推理文本；完成或中断后不写入持久化 */
   streamingReasoning?: string;
@@ -505,8 +515,6 @@ const POPULAR_PAGE_SIZE = 18;
 const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
 /** 历史「导读」助手气泡 id 前缀；加载会话时剔除，避免旧数据占位 */
 const NOTES_ASK_HINTS_BOOT_PREFIX = "__hints_boot__";
-/** 流式推理区 DOM 字符上限，避免超长推理拖慢排版 */
-const NOTES_ASK_STREAM_REASONING_DISPLAY_MAX = 12_000;
 
 /** 无上传封面时，用稳定哈希为每个笔记本分配主题色与图标（热门列表等） */
 function stableNotebookVisualFromKey(key: string): NotebookVisual {
@@ -1078,9 +1086,6 @@ export default function NotesPage() {
   const [audioOverviewBusy, setAudioOverviewBusy] = useState(false);
   const [notesAskMessages, setNotesAskMessages] = useState<NotesAskTurn[]>([]);
   const [notesAskBusy, setNotesAskBusy] = useState(false);
-  /** 本页有效、默认关，不跨路由持久化（离开笔记页即丢失） */
-  const [notesAskStreamInfo, setNotesAskStreamInfo] = useState("");
-  const notesAskStreamInfoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notesAskError, setNotesAskError] = useState("");
   const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
   const notesAskTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1203,12 +1208,6 @@ export default function NotesPage() {
   useEffect(() => {
     notesAskMessagesSnapshotRef.current = notesAskMessages;
   }, [notesAskMessages]);
-
-  useEffect(() => {
-    return () => {
-      if (notesAskStreamInfoTimerRef.current) clearTimeout(notesAskStreamInfoTimerRef.current);
-    };
-  }, []);
 
   const notesAskDebugPack = useMemo(() => {
     const nb = selectedNotebook.trim();
@@ -2408,11 +2407,6 @@ export default function NotesPage() {
       })
       .filter((m) => m.content);
     setNotesAskError("");
-    if (notesAskStreamInfoTimerRef.current) {
-      clearTimeout(notesAskStreamInfoTimerRef.current);
-      notesAskStreamInfoTimerRef.current = null;
-    }
-    setNotesAskStreamInfo("");
     setNotesAskBusy(true);
     setNotesAskMessages((prev) => [
       ...prev,
@@ -2531,11 +2525,10 @@ export default function NotesPage() {
        * - 后台：timer 常被夹到 ~1s，故降低字符阈值并加长 fallback timer，仍依赖 visibility 立即 flush。
        */
       let chunkPendingAnswer = "";
-      let chunkPendingReasoning = "";
+      let chunkPendingSupplement = "";
       let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null;
       const STREAM_FLUSH_MS_VISIBLE = 16;
       const STREAM_FLUSH_CHARS_VISIBLE = 120;
-      const STREAM_FLUSH_CHARS_REASONING = 40;
       const STREAM_FLUSH_CHARS_HIDDEN = 48;
       /** 后台短 timer 不可靠，仅作「少量尾字」兜底 */
       const STREAM_FLUSH_MS_HIDDEN_FALLBACK = 480;
@@ -2543,18 +2536,15 @@ export default function NotesPage() {
       const streamTabHidden = () =>
         typeof document !== "undefined" && document.visibilityState === "hidden";
 
-      const streamFlushCharThreshold = () => {
-        if (streamTabHidden()) return STREAM_FLUSH_CHARS_HIDDEN;
-        if (chunkPendingReasoning && !chunkPendingAnswer) return STREAM_FLUSH_CHARS_REASONING;
-        return STREAM_FLUSH_CHARS_VISIBLE;
-      };
+      const streamFlushCharThreshold = () =>
+        streamTabHidden() ? STREAM_FLUSH_CHARS_HIDDEN : STREAM_FLUSH_CHARS_VISIBLE;
 
       const applyPendingChunks = () => {
         const batchA = chunkPendingAnswer;
-        const batchR = chunkPendingReasoning;
+        const batchS = chunkPendingSupplement;
         chunkPendingAnswer = "";
-        chunkPendingReasoning = "";
-        if (!batchA && !batchR) return;
+        chunkPendingSupplement = "";
+        if (!batchA && !batchS) return;
         startTransition(() => {
         setNotesAskMessages((prev) => {
           const next = [...prev];
@@ -2564,7 +2554,7 @@ export default function NotesPage() {
           next[idx] = {
             ...cur,
             ...(batchA ? { content: (cur.content || "") + batchA } : {}),
-            ...(batchR ? { streamingReasoning: (cur.streamingReasoning || "") + batchR } : {}),
+            ...(batchS ? { supplementContent: (cur.supplementContent || "") + batchS } : {}),
             streaming: true
           };
           return next;
@@ -2622,21 +2612,17 @@ export default function NotesPage() {
                 continue;
               }
               if (ev.type === "info") {
-                const msg = String((ev as { message?: string }).message ?? "").trim();
-                if (msg) {
-                  setNotesAskStreamInfo(msg);
-                  if (notesAskStreamInfoTimerRef.current) clearTimeout(notesAskStreamInfoTimerRef.current);
-                  notesAskStreamInfoTimerRef.current = setTimeout(() => {
-                    setNotesAskStreamInfo("");
-                    notesAskStreamInfoTimerRef.current = null;
-                  }, 14000);
-                }
+                continue;
+              } else if (ev.type === "phase") {
+                continue;
               } else if (ev.type === "chunk") {
                 const chunkText = String(ev.text ?? "");
                 if (!chunkText) continue;
                 const rawRole = (ev as { streamRole?: string }).streamRole;
                 const streamRole =
                   rawRole === "reasoning" || rawRole === "answer" ? rawRole : "answer";
+                const section =
+                  (ev as { section?: string }).section === "supplement" ? "supplement" : "corpus";
                 if (firstChunkAt == null) {
                   firstChunkAt = nowMs();
                   notesAskClientLog("info", "stream", "first_chunk", {
@@ -2648,21 +2634,14 @@ export default function NotesPage() {
                 chunkCount += 1;
                 chunkChars += chunkText.length;
                 if (streamRole === "reasoning") {
-                  const hadReasoning = chunkPendingReasoning.length > 0;
-                  chunkPendingReasoning += chunkText;
-                  if (!hadReasoning && !chunkPendingAnswer) {
-                    clearChunkFlushTimer();
-                    applyPendingChunks();
-                    continue;
-                  }
+                  continue;
+                }
+                if (section === "supplement") {
+                  chunkPendingSupplement += chunkText;
                 } else {
-                  if (chunkPendingReasoning) {
-                    clearChunkFlushTimer();
-                    applyPendingChunks();
-                  }
                   chunkPendingAnswer += chunkText;
                 }
-                const pendingTotal = chunkPendingAnswer.length + chunkPendingReasoning.length;
+                const pendingTotal = chunkPendingAnswer.length + chunkPendingSupplement.length;
                 if (pendingTotal >= streamFlushCharThreshold()) {
                   clearChunkFlushTimer();
                   applyPendingChunks();
@@ -2674,6 +2653,8 @@ export default function NotesPage() {
                 sawDone = true;
                 const doneSources = normalizeNotesAskSources(ev.sources);
                 const doneAnswer = typeof ev.answer === "string" ? ev.answer.trim() : "";
+                const doneSupplement =
+                  typeof ev.supplementAnswer === "string" ? ev.supplementAnswer.trim() : "";
                 const doneFollowUps = normalizeNotesAskFollowUpQuestions(ev.followUpQuestions);
                 notesAskClientLog("info", "stream", "done_event", {
                   requestId: streamRid,
@@ -2696,6 +2677,7 @@ export default function NotesPage() {
                     streaming: false,
                     streamingReasoning: undefined,
                     ...(doneAnswer ? { content: doneAnswer } : {}),
+                    ...(doneSupplement ? { supplementContent: doneSupplement } : {}),
                     ...(doneSources?.length ? { sources: doneSources } : {}),
                     ...(doneFollowUps.length ? { followUpQuestions: doneFollowUps } : {}),
                     ...(activeChapters?.length ? { activeChapters } : {}),
@@ -2794,11 +2776,6 @@ export default function NotesPage() {
         requestOutcome = "aborted";
         notesAskClientLog("info", "stream", "user_aborted", { requestId: streamRid });
         setNotesAskError("");
-        setNotesAskStreamInfo("");
-        if (notesAskStreamInfoTimerRef.current) {
-          clearTimeout(notesAskStreamInfoTimerRef.current);
-          notesAskStreamInfoTimerRef.current = null;
-        }
         setNotesAskMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId && m.streaming
@@ -4252,29 +4229,23 @@ export default function NotesPage() {
                             ) : (
                               <div className="w-full min-w-0 max-w-full px-0 py-1 text-sm leading-relaxed text-ink">
                             {m.streaming &&
-                              !(m.content || "").trim() &&
-                              !(m.streamingReasoning || "").trim() ? (
-                              <p className="text-muted">{notesAskStreamInfo || "思考中…"}</p>
+                            !(m.content || "").trim() &&
+                            !(m.supplementContent || "").trim() ? (
+                              <p className="text-muted">思考中…</p>
                             ) : (
                               <div className="min-w-0">
-                                {m.streaming && (m.streamingReasoning || "").trim() ? (
-                                  <div className="mb-2 rounded-lg border border-line/60 bg-fill/35 px-2.5 py-2">
-                                    <p className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink/75">
-                                      {(() => {
-                                        const raw = m.streamingReasoning || "";
-                                        if (raw.length <= NOTES_ASK_STREAM_REASONING_DISPLAY_MAX) return raw;
-                                        return `…（推理较长，仅显示最近 ${Math.round(NOTES_ASK_STREAM_REASONING_DISPLAY_MAX / 1000)}k 字）\n${raw.slice(-NOTES_ASK_STREAM_REASONING_DISPLAY_MAX)}`;
-                                      })()}
-                                    </p>
-                                  </div>
+                                {(m.content || "").trim() || !m.streaming ? (
+                                  <NotesAskAnswerDisplay
+                                    text={m.content}
+                                    sources={m.sources}
+                                    webSources={m.webSources}
+                                    onOpenSourceInPreview={openPreviewFromAskSource}
+                                  />
                                 ) : null}
-                                {!m.streaming || (m.content || "").trim() ? (
-                                <NotesAskAnswerDisplay
-                                  text={m.content}
-                                  sources={m.sources}
-                                  webSources={m.webSources}
-                                  onOpenSourceInPreview={openPreviewFromAskSource}
-                                />
+                                {(m.supplementContent || "").trim() ? (
+                                  <aside className="mt-3 rounded-lg border border-dashed border-line/80 bg-fill/25 px-2.5 py-2">
+                                    <NotesAskAnswerDisplay text={m.supplementContent || ""} />
+                                  </aside>
                                 ) : null}
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
@@ -4423,14 +4394,6 @@ export default function NotesPage() {
                   </button>
                 </div>
                 <div className="flex min-w-0 shrink-0 flex-col gap-2">
-                  {notesAskStreamInfo ? (
-                    <p
-                      role="status"
-                      className="rounded-lg border border-amber-500/35 bg-amber-500/[0.08] px-2.5 py-1.5 text-[11px] leading-snug text-amber-950 dark:text-amber-100"
-                    >
-                      {notesAskStreamInfo}
-                    </p>
-                  ) : null}
                   {notebookDigestSummary ? (
                     <p className="rounded-lg border border-line/70 bg-fill/40 px-2.5 py-1.5 text-[11px] leading-snug text-muted">
                       笔记本综述：{notebookDigestSummary}

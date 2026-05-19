@@ -1315,10 +1315,6 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
         len((body.question or "").strip()),
     )
 
-    def _sse_info(message: str) -> str:
-        ev: dict[str, Any] = {"type": "info", "message": message, "requestId": rid}
-        return f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-
     def gen():
         # SSE 注释行：尽快向客户端/代理刷出首包，避免把整段 RAG 耗时算进「等响应头」
         yield ": stream-open\n\n"
@@ -1327,7 +1323,6 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             rid,
             (time.perf_counter() - req_t0) * 1000.0,
         )
-        yield _sse_info("正在检索与整理相关资料…")
         try:
             prep_t0 = time.perf_counter()
             prepared = _prepare_notes_ask_messages(
@@ -1345,7 +1340,6 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 (time.perf_counter() - req_t0) * 1000.0,
                 (time.perf_counter() - prep_t0) * 1000.0,
             )
-            yield _sse_info("正在生成回答…")
         except ValueError as e:
             msg = str(e)
             _notes_startup_logger.warning(
