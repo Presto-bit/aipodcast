@@ -14,7 +14,6 @@ type Props = {
   webSources?: NotesAskWebSource[];
   /** 在资料预览中高亮定位（charStart/charEnd 来自检索块） */
   onOpenSourceInPreview?: (source: NotesAskSource, chunk?: { charStart?: number; charEnd?: number; excerpt?: string }) => void;
-  lowConfidence?: boolean;
   className?: string;
 };
 
@@ -136,7 +135,6 @@ export function NotesAskAnswerDisplay({
   sources,
   webSources,
   onOpenSourceInPreview,
-  lowConfidence,
   className
 }: Props) {
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
@@ -167,11 +165,6 @@ export function NotesAskAnswerDisplay({
 
   return (
     <div className={`notes-ask-answer flex min-w-0 flex-col gap-3 text-ink ${wrap}`}>
-      {lowConfidence ? (
-        <p className="rounded-lg border border-warning/40 bg-warning-soft px-2.5 py-1.5 text-[11px] text-warning-ink">
-          本条含低置信度补充说明：分隔线以下可能含非资料引用内容，请与原文核对；缩小提问范围或指明章节可提高摘录命中率。
-        </p>
-      ) : null}
       <NotesAskAnswerMarkdownBody
         text={text}
         sources={sources}

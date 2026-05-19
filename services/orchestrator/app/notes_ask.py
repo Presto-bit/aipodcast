@@ -240,21 +240,6 @@ def _assert_parse_gate_for_notes(
         raise ValueError("parse_gate_blocked")
 
 
-LOW_CONFIDENCE_USER_NOTICE = (
-    "⚠️ **检索置信度较低**：当前摘录难以可靠支撑本题。"
-    "下列回答中含模型补充说明，**不是**对勾选资料的引用，请勿当作原文依据。"
-    "建议缩小提问范围、指明章节，或待索引完成后再问。\n\n---\n\n"
-)
-
-
-def _low_confidence_supplement_preamble() -> str:
-    return (
-        "\n\n【低置信度补充作答】上方摘录不足以仅凭资料可靠回答。"
-        "请仍给出简要有帮助的说明，但正文第一句须明确写出「以下非资料引用内容」。"
-        "勿使用 [n] 等引用角标，勿编造摘录中不存在的事实；可说明不确定之处。"
-    )
-
-
 def _assert_preprocess_ready_for_notes(
     *,
     notebook: str,
@@ -429,7 +414,6 @@ def _prepare_notes_ask_messages(
     chat_history: list[dict[str, str]] | None = None,
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
-    corpus_mode: str | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
     q = (question or "").strip()
     if not q:
@@ -469,7 +453,6 @@ def _prepare_notes_ask_messages(
         user_ref=user_ref,
         chat_history=chat_history,
         project_owner_user_uuid=project_owner_user_uuid,
-        corpus_mode=corpus_mode,
     )
     _t_ctx = time.perf_counter()
     context, sources, qa_meta = build_notes_qa_context_with_plan(
@@ -499,9 +482,11 @@ def _prepare_notes_ask_messages(
     hint = str(qa_plan.get("coverageHint") or "").strip()
     if hint:
         preamble += f"\n\n【覆盖率与本轮模式】{hint}（qaMode={qa_plan.get('qaMode')}）"
-    low_confidence = bool(qa_meta.get("lowConfidence") or qa_plan.get("lowConfidence"))
-    if low_confidence:
-        preamble += _low_confidence_supplement_preamble()
+    if qa_meta.get("lowConfidence") or qa_plan.get("lowConfidence"):
+        preamble += (
+            "\n\n【置信度】检索分数偏低或向量覆盖率不足：若材料未明确记载，"
+            "须直接说明「无法从已索引内容确认」，勿编造。"
+        )
     body_parts: list[str] = [preamble + context]
     if history_block:
         body_parts.append(history_block)
@@ -513,7 +498,7 @@ def _prepare_notes_ask_messages(
         {"role": "system", "content": build_notes_ask_system_prompt(answer_type)},
         {"role": "user", "content": user_block},
     ]
-    qa_plan = {**qa_plan, **qa_meta, "lowConfidence": low_confidence}
+    qa_plan = {**qa_plan, **qa_meta}
     return messages, sources, qa_plan
 
 
@@ -597,7 +582,6 @@ def iter_notes_answer_events(
     chat_history: list[dict[str, str]] | None = None,
     include_all_sources: bool | None = None,
     require_preprocess_ready: bool | None = None,
-    corpus_mode: str | None = None,
     prepared_messages_sources: (
         tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]] | None
     ) = None,
@@ -622,7 +606,6 @@ def iter_notes_answer_events(
             chat_history=chat_history,
             require_preprocess_ready=require_preprocess_ready,
             project_owner_user_uuid=project_owner_user_uuid,
-            corpus_mode=corpus_mode,
         )
     acc_answer: list[str] = []
     try:
@@ -655,10 +638,6 @@ def iter_notes_answer_events(
 
         llm_temp = notes_ask_temperature()
         llm_max_tokens = notes_ask_max_output_tokens()
-        low_confidence = bool(qa_plan.get("lowConfidence"))
-        if low_confidence:
-            yield {"type": "chunk", "text": LOW_CONFIDENCE_USER_NOTICE, "streamRole": "answer"}
-            acc_answer.append(LOW_CONFIDENCE_USER_NOTICE)
         try:
             for role, piece in invoke_llm_chat_messages_stream_segments_iter(
                     messages,
@@ -750,9 +729,7 @@ def iter_notes_answer_events(
             "traceId": None,
             "qaMode": qa_plan.get("qaMode"),
             "grounding": qa_plan.get("grounding"),
-            "corpusMode": qa_plan.get("corpusMode"),
             "lowConfidence": bool(qa_plan.get("lowConfidence")),
-            "supplementalAnswer": bool(qa_plan.get("lowConfidence")),
             "routedChapters": qa_plan.get("routedChapters") or [],
             "routedShards": qa_plan.get("routedShards") or [],
             "coverageHint": qa_plan.get("coverageHint") or "",
@@ -1035,7 +1012,6 @@ def answer_notes_question(
     include_all_sources: bool | None = None,
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
-    corpus_mode: str | None = None,
 ) -> dict[str, Any]:
     messages, sources, qa_plan = _prepare_notes_ask_messages(
         notebook=notebook,
@@ -1045,7 +1021,6 @@ def answer_notes_question(
         chat_history=chat_history,
         require_preprocess_ready=require_preprocess_ready,
         project_owner_user_uuid=project_owner_user_uuid,
-        corpus_mode=corpus_mode,
     )
     try:
         answer, trace_id = invoke_llm_chat_messages_with_minimax_fallback(
@@ -1062,12 +1037,8 @@ def answer_notes_question(
         raise RuntimeError("empty_answer")
 
     ans = finalize_notes_ask_answer(answer)
-    if qa_plan.get("lowConfidence"):
-        ans = LOW_CONFIDENCE_USER_NOTICE + ans
     out: dict[str, Any] = {
         "answer": ans,
-        "lowConfidence": bool(qa_plan.get("lowConfidence")),
-        "supplementalAnswer": bool(qa_plan.get("lowConfidence")),
         "sources": filter_sources_by_citations(ans, sources, include_all_sources=include_all_sources),
         "traceId": trace_id,
         "qaMode": qa_plan.get("qaMode"),

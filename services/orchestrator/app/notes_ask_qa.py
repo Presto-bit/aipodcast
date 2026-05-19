@@ -230,7 +230,6 @@ def resolve_notes_ask_plan(
     user_ref: str | None,
     chat_history: list[dict[str, str]] | None = None,
     project_owner_user_uuid: str | None = None,
-    corpus_mode: str | None = None,
 ) -> dict[str, Any]:
     """决定 qa_mode、路由片/章、grounding、覆盖率提示。"""
     ordered = _ordered_note_ids(note_ids)
@@ -247,10 +246,10 @@ def resolve_notes_ask_plan(
     qa_mode = "rag"
     grounding = "rag_excerpt"
 
-    corpus_mode = (corpus_mode or "").strip().lower() or _detect_corpus_mode(ordered, question)
+    corpus_mode = _detect_corpus_mode(ordered, question)
     allowed = ("single", "multi_compare", "multi_synthesize", "per_note")
     if corpus_mode not in allowed:
-        corpus_mode = _detect_corpus_mode(ordered, question)
+        corpus_mode = "single"
 
     if mode_env in ("rag", "chapter_deep", "shard_deep", "shard_direct", "long_context_direct"):
         qa_mode = mode_env

@@ -106,7 +106,6 @@ type NotesAskStreamEvent =
       activeChapters?: unknown;
       activeShards?: unknown;
       lowConfidence?: boolean;
-  supplementalAnswer?: boolean;
     }
   | { type: "followups"; followUpQuestions?: unknown }
   | { type: "info"; message: string; code?: string; requestId?: string }
@@ -140,7 +139,6 @@ type NotesAskTurn = {
   coverageHint?: string;
   qaMode?: string;
   lowConfidence?: boolean;
-  supplementalAnswer?: boolean;
 };
 
 function normalizeNotesAskFollowUpQuestions(raw: unknown): string[] {
@@ -2675,7 +2673,6 @@ export default function NotesPage() {
                 const activeShards = Array.isArray(ev.activeShards) ? ev.activeShards : undefined;
                 const coverageHint = typeof ev.coverageHint === "string" ? ev.coverageHint.trim() : "";
                 const lowConf = Boolean(ev.lowConfidence);
-                const supplemental = Boolean(ev.supplementalAnswer ?? ev.lowConfidence);
                 setNotesAskMessages((prev) => {
                   const next = [...prev];
                   const idx = next.findIndex((m) => m.id === assistantId);
@@ -2691,7 +2688,7 @@ export default function NotesPage() {
                     ...(activeShards?.length ? { activeShards } : {}),
                     ...(coverageHint ? { coverageHint } : {}),
                     ...(ev.qaMode ? { qaMode: String(ev.qaMode) } : {}),
-                    ...(lowConf ? { lowConfidence: true, supplementalAnswer: supplemental } : {})
+                    ...(lowConf ? { lowConfidence: true } : {})
                   };
                   return next;
                 });
@@ -4258,7 +4255,6 @@ export default function NotesPage() {
                                   sources={m.sources}
                                   webSources={m.webSources}
                                   onOpenSourceInPreview={openPreviewFromAskSource}
-                                  lowConfidence={m.lowConfidence}
                                 />
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
