@@ -244,7 +244,7 @@ def merge_reference_for_script(
         capped_raw = note_ids[:note_cap]
         capped_nids = [str(n).strip() for n in capped_raw if isinstance(n, str) and str(n).strip()]
 
-        from .note_chapters import chapter_filter_for_query
+        from .note_shards import shard_filter_for_query
         from .note_rag_service import NOTE_LAYERED_RAG, build_layered_reference_block, count_rag_chunks_for_notes
         from .rag_core import build_retrieval_query
 
@@ -266,7 +266,7 @@ def merge_reference_for_script(
                 str(payload.get("script_constraints") or ""),
             ) or (topic_text[:1200] if topic_text else "资料要点")
             sb, rb, tk = _layered_reference_budgets(len(capped_nids), rag_cap_early)
-            ch_filter = chapter_filter_for_query(capped_nids, qh, limit=3)
+            sh_filter = shard_filter_for_query(capped_nids, qh)
             lb, lmeta = build_layered_reference_block(
                 note_ids=capped_nids,
                 query_hint=qh,
@@ -275,7 +275,7 @@ def merge_reference_for_script(
                 retrieval_budget=rb,
                 top_k=tk,
                 project_owner_user_uuid=project_owner_uuid,
-                chapter_filter=ch_filter or None,
+                shard_filter=sh_filter or None,
             )
             meta["notes_layered_rag_meta"] = lmeta
             try:

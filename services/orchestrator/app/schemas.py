@@ -204,6 +204,24 @@ class NotesAskRequest(BaseModel):
                         )
                 if cleaned:
                     item["activeChapters"] = cleaned[:6]
+            ash = row.get("activeShards") or row.get("active_shards")
+            if role == "assistant" and isinstance(ash, list) and ash:
+                sh_cleaned = []
+                for c in ash:
+                    if not isinstance(c, dict):
+                        continue
+                    nid = str(c.get("noteId") or c.get("note_id") or "").strip()
+                    sid = str(c.get("shardId") or c.get("shard_id") or "").strip()
+                    if nid and sid:
+                        sh_cleaned.append(
+                            {
+                                "noteId": nid,
+                                "shardId": sid,
+                                "title": str(c.get("title") or "")[:200],
+                            }
+                        )
+                if sh_cleaned:
+                    item["activeShards"] = sh_cleaned[:6]
             out.append(item)
         return out
 

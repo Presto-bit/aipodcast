@@ -27,9 +27,15 @@ from .models import get_note_by_id
 from .queue import redis_conn
 from .note_chapters import (
     assign_chapter_ids_to_chunks,
-    build_chapter_and_book_summaries,
     detect_chapters,
     persist_chapters,
+)
+from .note_shards import (
+    assign_shard_ids_to_chunks,
+    build_shard_and_book_summaries,
+    detect_shards,
+    persist_shards,
+    sync_shard_chunk_counts,
 )
 from .rag_core import (
     _cosine,
@@ -123,7 +129,7 @@ _SUMMARY_MERGE_SYSTEM = (
 _RETRIEVAL_CACHE_L1_MAX = max(64, min(1024, int(os.getenv("NOTE_RAG_RETR_CACHE_L1_MAX", "256") or "256")))
 _RETRIEVAL_CACHE_L1_TTL_SEC = max(5, min(600, int(os.getenv("NOTE_RAG_RETR_CACHE_L1_TTL_SEC", "45") or "45")))
 _RETRIEVAL_CACHE_L2_TTL_SEC = max(10, min(3600, int(os.getenv("NOTE_RAG_RETR_CACHE_L2_TTL_SEC", "180") or "180")))
-_RETRIEVAL_CACHE_VERSION = (os.getenv("NOTE_RAG_RETR_CACHE_VERSION") or "v3").strip() or "v3"
+_RETRIEVAL_CACHE_VERSION = (os.getenv("NOTE_RAG_RETR_CACHE_VERSION") or "v5").strip() or "v5"
 _RETRIEVAL_CACHE_PREFIX = "note_rag:retrieval"
 _RETRIEVAL_CACHE_NOTE_KEYS_PREFIX = "note_rag:note_keys"
 _RETRIEVAL_CACHE_L1: dict[str, tuple[float, tuple[str, list[dict[str, Any]], dict[str, Any]]]] = {}
@@ -144,14 +150,22 @@ def _cache_now() -> float:
     return time.time()
 
 
-def _chapter_filter_cache_token(chapter_filter: dict[str, set[str]] | None) -> str:
-    if not chapter_filter:
+def _filter_cache_token(filters: dict[str, set[str]] | None) -> str:
+    if not filters:
         return ""
     pairs: list[str] = []
-    for nid in sorted(chapter_filter.keys()):
-        cids = sorted(chapter_filter[nid])
-        pairs.append(f"{nid}:" + ",".join(cids))
+    for nid in sorted(filters.keys()):
+        ids = sorted(filters[nid])
+        pairs.append(f"{nid}:" + ",".join(ids))
     return "|".join(pairs)
+
+
+def _chapter_filter_cache_token(chapter_filter: dict[str, set[str]] | None) -> str:
+    return _filter_cache_token(chapter_filter)
+
+
+def _shard_filter_cache_token(shard_filter: dict[str, set[str]] | None) -> str:
+    return _filter_cache_token(shard_filter)
 
 
 def _cache_payload_key(
@@ -162,6 +176,7 @@ def _cache_payload_key(
     *,
     merge_adjacent: bool = False,
     chapter_filter: dict[str, set[str]] | None = None,
+    shard_filter: dict[str, set[str]] | None = None,
 ) -> str:
     qn = " ".join((query or "").strip().lower().split())[:800]
     payload = {
@@ -172,6 +187,7 @@ def _cache_payload_key(
         "top_k": int(top_k),
         "merge_adjacent": bool(merge_adjacent),
         "chapter_filter": _chapter_filter_cache_token(chapter_filter),
+        "shard_filter": _shard_filter_cache_token(shard_filter),
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
@@ -219,6 +235,7 @@ def _retrieval_cache_key(
     *,
     merge_adjacent: bool = False,
     chapter_filter: dict[str, set[str]] | None = None,
+    shard_filter: dict[str, set[str]] | None = None,
 ) -> str:
     pv = _cache_payload_key(
         note_ids,
@@ -227,6 +244,7 @@ def _retrieval_cache_key(
         top_k,
         merge_adjacent=merge_adjacent,
         chapter_filter=chapter_filter,
+        shard_filter=shard_filter,
     )
     vv = _notes_version_fingerprint(note_ids)
     return f"{_RETRIEVAL_CACHE_PREFIX}:{_RETRIEVAL_CACHE_VERSION}:{vv}:{pv}"
@@ -310,6 +328,9 @@ def invalidate_retrieval_cache_for_notes(note_ids: list[str]) -> None:
 
 
 def ensure_note_rag_schema() -> None:
+    from .note_shards import ensure_note_shards_schema
+
+    ensure_note_shards_schema()
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute("ALTER TABLE inputs ADD COLUMN IF NOT EXISTS note_summary TEXT")
@@ -394,6 +415,53 @@ def _invoke_llm_summary_from_indexed_chunks(chunks: list[str], api_key: str | No
     return _invoke_llm_summary(merged_in, api_key, system=_SUMMARY_MERGE_SYSTEM), source_chars
 
 
+def summarize_body_map_reduce(
+    body_text: str,
+    api_key: str | None,
+    *,
+    partial_system: str | None = None,
+) -> tuple[str, int]:
+    """对任意正文切块后 Map-Reduce 摘要（供分片 L1 等）。"""
+    chunks = split_text_into_chunks((body_text or "").strip())
+    if not chunks:
+        return "", 0
+    source = join_chunks_for_summary(chunks)
+    source_chars = len(source)
+    cap = _summary_input_cap()
+    if len(source) <= cap or not _summary_map_reduce_enabled():
+        sys = partial_system or _SUMMARY_SYSTEM
+        return _invoke_llm_summary(source, api_key, system=sys), source_chars
+
+    group_max = max(4000, int(cap * 0.85))
+    partials: list[str] = []
+    batch: list[str] = []
+    batch_len = 0
+    p_sys = partial_system or _SUMMARY_PARTIAL_SYSTEM
+    for ch in chunks:
+        piece = (ch or "").strip()
+        if not piece:
+            continue
+        extra = len(piece) + (2 if batch else 0)
+        if batch and batch_len + extra > group_max:
+            part = _invoke_llm_summary("\n\n".join(batch), api_key, system=p_sys).strip()
+            if part:
+                partials.append(part)
+            batch = []
+            batch_len = 0
+        batch.append(piece)
+        batch_len += extra
+    if batch:
+        part = _invoke_llm_summary("\n\n".join(batch), api_key, system=p_sys).strip()
+        if part:
+            partials.append(part)
+    if not partials:
+        return _invoke_llm_summary(source[:cap], api_key), source_chars
+    merged_in = "以下是资料各段的阶段性摘要，请合并：\n\n" + "\n\n---\n\n".join(partials)
+    if len(merged_in) > cap:
+        merged_in = merged_in[:cap]
+    return _invoke_llm_summary(merged_in, api_key, system=_SUMMARY_MERGE_SYSTEM), source_chars
+
+
 def delete_rag_chunks_for_note(note_id: str) -> None:
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -404,6 +472,14 @@ def delete_rag_chunks_for_note(note_id: str) -> None:
 
 def _on_demand_chapter_embed_enabled() -> bool:
     return (os.getenv("NOTE_RAG_ON_DEMAND_CHAPTER_EMBED", "1") or "").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+
+
+def _on_demand_shard_embed_enabled() -> bool:
+    return (os.getenv("NOTE_RAG_ON_DEMAND_SHARD_EMBED", "1") or "").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -442,6 +518,31 @@ def _count_indexed_chunks_by_chapter(note_id: str) -> dict[str, int]:
     return dict(counts)
 
 
+def _count_indexed_chunks_by_shard(note_id: str) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT chunk_meta FROM note_rag_chunks
+                WHERE input_id = %s::uuid
+                """,
+                (note_id,),
+            )
+            for row in cur.fetchall():
+                cm = row.get("chunk_meta")
+                if isinstance(cm, str):
+                    try:
+                        cm = json.loads(cm)
+                    except Exception:
+                        cm = {}
+                if not isinstance(cm, dict):
+                    continue
+                sid = str(cm.get("shard_id") or "s0").strip() or "s0"
+                counts[sid] += 1
+    return dict(counts)
+
+
 def _max_chunk_index_for_note(note_id: str) -> int:
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -466,6 +567,26 @@ def delete_rag_chunks_for_chapters(note_id: str, chapter_ids: list[str]) -> int:
                   AND COALESCE(chunk_meta->>'chapter_id', 'c0') = ANY(%s::text[])
                 """,
                 (note_id, cids),
+            )
+            deleted = int(cur.rowcount or 0)
+            conn.commit()
+    invalidate_retrieval_cache_for_notes([note_id])
+    return deleted
+
+
+def delete_rag_chunks_for_shards(note_id: str, shard_ids: list[str]) -> int:
+    sids = [str(s).strip() for s in shard_ids if str(s).strip()]
+    if not sids:
+        return 0
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                DELETE FROM note_rag_chunks
+                WHERE input_id = %s::uuid
+                  AND COALESCE(chunk_meta->>'shard_id', 's0') = ANY(%s::text[])
+                """,
+                (note_id, sids),
             )
             deleted = int(cur.rowcount or 0)
             conn.commit()
@@ -569,6 +690,89 @@ def embed_chapters_on_demand(
 
     invalidate_retrieval_cache_for_notes([nid])
     return {"ok": True, "chunks_added": len(texts), "chapters": need}
+
+
+def embed_shards_on_demand(
+    note_id: str,
+    shard_ids: list[str],
+    *,
+    user_ref: str | None,
+    api_key: str | None = None,
+) -> dict[str, Any]:
+    """路由到某片但向量块不足时，仅对该片正文切块嵌入并追加入库。"""
+    from .note_shards import list_shards, shard_body_slice
+
+    if not _on_demand_shard_embed_enabled():
+        return {"ok": False, "skipped": "disabled"}
+    nid = str(note_id or "").strip()
+    want = [str(s).strip() for s in shard_ids if str(s).strip()]
+    if not nid or not want:
+        return {"ok": False, "skipped": "empty"}
+
+    row = get_note_by_id(nid, user_ref=user_ref)
+    if not row:
+        return {"ok": False, "error": "note_not_found"}
+    body = str(row.get("content_text") or "").strip()
+    if not body:
+        return {"ok": False, "skipped": "empty_body"}
+
+    by_sh = _count_indexed_chunks_by_shard(nid)
+    need = [s for s in want if by_sh.get(s, 0) < _on_demand_min_chunks()]
+    if not need:
+        return {"ok": True, "skipped": "sufficient", "chunks_added": 0}
+
+    shards = {str(s.get("shard_id")): s for s in list_shards(nid)}
+    texts: list[str] = []
+    metas: list[dict[str, Any]] = []
+    for sid in need:
+        sh = shards.get(sid)
+        if not sh:
+            continue
+        slice_text = shard_body_slice(body, sh, max_chars=48_000)
+        if not slice_text.strip():
+            continue
+        for piece in split_text_into_chunks(slice_text):
+            if not piece.strip():
+                continue
+            texts.append(piece)
+            metas.append({"shard_id": sid, "onDemand": True})
+
+    if not texts:
+        return {"ok": False, "skipped": "no_chunks_built"}
+
+    delete_rag_chunks_for_shards(nid, need)
+
+    try:
+        from app.fyv_shared.embedding_provider import EmbeddingProvider
+
+        ep = EmbeddingProvider()
+        embeddings: list[list[float]] = []
+        batch = 32
+        for i in range(0, len(texts), batch):
+            embeddings.extend(ep.embed_texts([t[:8000] for t in texts[i : i + batch]]))
+    except Exception as exc:
+        logger.warning("on_demand shard embed failed note_id=%s: %s", nid, exc)
+        return {"ok": False, "error": str(exc)[:200]}
+
+    if len(embeddings) != len(texts):
+        return {"ok": False, "error": "embed_count_mismatch"}
+
+    start_idx = _max_chunk_index_for_note(nid) + 1
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            for off, (ch, emb, meta) in enumerate(zip(texts, embeddings, metas)):
+                cur.execute(
+                    """
+                    INSERT INTO note_rag_chunks (input_id, chunk_index, chunk_text, embedding, chunk_meta)
+                    VALUES (%s::uuid, %s, %s, %s::jsonb, %s::jsonb)
+                    """,
+                    (nid, start_idx + off, ch, json.dumps(emb), json.dumps(meta)),
+                )
+            conn.commit()
+
+    sync_shard_chunk_counts(nid)
+    invalidate_retrieval_cache_for_notes([nid])
+    return {"ok": True, "chunks_added": len(texts), "shards": need}
 
 
 def count_rag_chunks_for_notes(note_ids: list[str]) -> int:
@@ -820,8 +1024,12 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     md_for_seg = _note_metadata_as_dict(row)
     raw_segs = md_for_seg.get("ragChunkSegments")
     seg_list = raw_segs if isinstance(raw_segs, list) else None
+    shard_spans = detect_shards(body, segments=seg_list)
+    if shard_spans:
+        persist_shards(note_id, shard_spans)
     chapter_spans = detect_chapters(body, segments=seg_list)
     chunk_metas_all = assign_chapter_ids_to_chunks(chunks_all, chunk_metas_all, chapter_spans)
+    chunk_metas_all = assign_shard_ids_to_chunks(chunks_all, chunk_metas_all, shard_spans)
     if chapter_spans:
         persist_chapters(note_id, chapter_spans)
     abs_cap = effective_note_rag_chunk_cap(len(chunks_all))
@@ -875,15 +1083,17 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     except Exception:
         sig = ""
 
+    sync_shard_chunk_counts(note_id)
+
     summary_text = ""
     summary_source_chars = 0
-    chapter_tree_meta: dict[str, Any] = {}
+    shard_tree_meta: dict[str, Any] = {}
     try:
-        if chapter_spans:
-            chapter_tree_meta = build_chapter_and_book_summaries(
-                note_id, body, chapter_spans, api_key=api_key
+        if shard_spans:
+            shard_tree_meta = build_shard_and_book_summaries(
+                note_id, body, shard_spans, api_key=api_key
             )
-            l0 = str(chapter_tree_meta.get("bookSummaryL0") or "").strip()
+            l0 = str(shard_tree_meta.get("bookSummaryL0") or "").strip()
             if l0:
                 summary_text = l0[:_SUMMARY_OUTPUT_CHARS]
                 summary_source_chars = len(l0)
@@ -899,11 +1109,14 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     index_metadata = {
         **index_stats,
         "summarySourceChars": summary_source_chars,
-        "chapterStructureSource": chapter_tree_meta.get("structureSource")
-        or (chapter_spans[0].source if chapter_spans else ""),
-        "chaptersTotal": int(chapter_tree_meta.get("chaptersTotal") or len(chapter_spans)),
-        "chaptersWithSummary": int(chapter_tree_meta.get("chaptersWithSummary") or 0),
-        "bookSummaryL0": chapter_tree_meta.get("bookSummaryL0") or "",
+        "shardStructureSource": shard_tree_meta.get("shardStructureSource")
+        or (shard_spans[0].source if shard_spans else ""),
+        "shardsTotal": int(shard_tree_meta.get("shardsTotal") or len(shard_spans)),
+        "shardsWithSummary": int(shard_tree_meta.get("shardsWithSummary") or 0),
+        "chapterStructureSource": chapter_spans[0].source if chapter_spans else "",
+        "chaptersTotal": len(chapter_spans),
+        "chaptersWithSummary": 0,
+        "bookSummaryL0": shard_tree_meta.get("bookSummaryL0") or "",
     }
     _update_note_rag_after_success(
         note_id,
@@ -1237,6 +1450,7 @@ def retrieve_chunks_across_notes(
     notes_ask_fast_path: bool = False,
     merge_adjacent_chunks: bool = False,
     chapter_filter: dict[str, set[str]] | None = None,
+    shard_filter: dict[str, set[str]] | None = None,
     user_ref: str | None = None,
     api_key: str | None = None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
@@ -1246,6 +1460,12 @@ def retrieve_chunks_across_notes(
     `notes_ask_fast_path`：知识库向资料提问专用，默认单查询嵌入、较小 rerank 池、仅用本地 hybrid 重排（跳过 Cohere HTTP）。
     """
     _t_total = time.perf_counter()
+    if shard_filter and _on_demand_shard_embed_enabled():
+        for nid, sids in shard_filter.items():
+            try:
+                embed_shards_on_demand(nid, list(sids), user_ref=user_ref, api_key=api_key)
+            except Exception as exc:
+                logger.warning("on_demand shard embed skipped note_id=%s: %s", nid, exc)
     if chapter_filter and _on_demand_chapter_embed_enabled():
         for nid, cids in chapter_filter.items():
             try:
@@ -1260,6 +1480,7 @@ def retrieve_chunks_across_notes(
         top_k,
         merge_adjacent=merge_adjacent_chunks,
         chapter_filter=chapter_filter,
+        shard_filter=shard_filter,
     )
     hit_l1 = _l1_get(cache_key)
     if hit_l1 is not None:
@@ -1299,6 +1520,12 @@ def retrieve_chunks_across_notes(
             except Exception:
                 chunk_meta = {}
         nid = str(r.get("note_id") or "").strip()
+        if shard_filter:
+            allowed_sh = shard_filter.get(nid)
+            if allowed_sh is not None:
+                sid = str(chunk_meta.get("shard_id") or "")
+                if sid and sid not in allowed_sh:
+                    continue
         if chapter_filter:
             allowed = chapter_filter.get(nid)
             if allowed is not None:
@@ -1709,6 +1936,7 @@ def build_layered_notes_context(
     project_owner_user_uuid: str | None = None,
     merge_adjacent_chunks: bool = False,
     chapter_filter: dict[str, set[str]] | None = None,
+    shard_filter: dict[str, set[str]] | None = None,
 ) -> tuple[str | None, list[dict[str, str]], dict[str, Any]]:
     """
     若勾选范围内无任何索引块，返回 (None, [], meta) 表示应回退旧逻辑。
@@ -1790,6 +2018,7 @@ def build_layered_notes_context(
         notes_ask_fast_path=_ask_fast,
         merge_adjacent_chunks=merge_adjacent_chunks,
         chapter_filter=chapter_filter,
+        shard_filter=shard_filter,
         user_ref=user_ref,
     )
     notes_ask_profile_emit(
@@ -1866,6 +2095,7 @@ def build_layered_reference_block(
     top_k: int = 40,
     project_owner_user_uuid: str | None = None,
     chapter_filter: dict[str, set[str]] | None = None,
+    shard_filter: dict[str, set[str]] | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     """供 merge_reference_for_script：无 notebook 校验，仅按 note id 列表。"""
     meta: dict[str, Any] = {"layered_ref": True}
@@ -1889,11 +2119,14 @@ def build_layered_reference_block(
         max_chars=retrieval_budget,
         top_k=top_k,
         chapter_filter=chapter_filter,
+        shard_filter=shard_filter,
         user_ref=user_ref,
     )
     meta["retrieve_obs"] = retrieve_obs
     if chapter_filter:
         meta["chapter_filter"] = {k: sorted(v) for k, v in chapter_filter.items()}
+    if shard_filter:
+        meta["shard_filter"] = {k: sorted(v) for k, v in shard_filter.items()}
     blocks: list[str] = [_layered_source_manifest_block(ordered, user_ref, project_owner_user_uuid)]
     if sum_part:
         blocks.append(sum_part)

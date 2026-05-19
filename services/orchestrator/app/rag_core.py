@@ -380,8 +380,17 @@ def apply_hybrid_vector_rag(
 
 
 def note_rag_index_strategy() -> str:
-    s = (os.getenv("NOTE_RAG_INDEX_STRATEGY", "per_chapter") or "per_chapter").strip().lower()
-    return s if s in ("head", "head_tail", "per_chapter") else "per_chapter"
+    s = (os.getenv("NOTE_RAG_INDEX_STRATEGY", "per_shard") or "per_shard").strip().lower()
+    if s in ("head", "head_tail", "per_chapter", "per_shard"):
+        return s
+    return "per_shard"
+
+
+def _per_shard_min_chunks() -> int:
+    try:
+        return max(1, min(32, int(os.getenv("NOTE_RAG_PER_SHARD_MIN_CHUNKS", "8") or "8")))
+    except (TypeError, ValueError):
+        return 8
 
 
 def _per_chapter_min_chunks() -> int:
@@ -447,12 +456,60 @@ def _select_chunks_per_chapter(
     return selected, {"chaptersInIndex": len(chapter_ids)}
 
 
+def _select_chunks_per_shard(
+    chunks: list[str],
+    chunk_metas: list[dict[str, Any]],
+    cap: int,
+) -> tuple[list[int], dict[str, Any]]:
+    by_sid: dict[str, list[int]] = {}
+    for i, m in enumerate(chunk_metas):
+        sid = str((m or {}).get("shard_id") or "s0")
+        by_sid.setdefault(sid, []).append(i)
+    if not by_sid:
+        return list(range(min(cap, len(chunks)))), {"shardsInIndex": 0}
+
+    min_per = _per_shard_min_chunks()
+    selected: list[int] = []
+    seen: set[int] = set()
+    shard_ids = sorted(by_sid.keys(), key=lambda s: min(by_sid[s]) if by_sid[s] else 0)
+
+    for sid in shard_ids:
+        for idx in by_sid[sid][:min_per]:
+            if idx not in seen and len(selected) < cap:
+                seen.add(idx)
+                selected.append(idx)
+
+    remaining = cap - len(selected)
+    if remaining > 0:
+        per_extra = max(1, remaining // max(1, len(shard_ids)))
+        for sid in shard_ids:
+            for idx in by_sid[sid]:
+                if len(selected) >= cap:
+                    break
+                if idx in seen:
+                    continue
+                if sum(1 for s in selected if s in by_sid[sid]) >= min_per + per_extra:
+                    continue
+                seen.add(idx)
+                selected.append(idx)
+        for sid in shard_ids:
+            for idx in by_sid[sid]:
+                if len(selected) >= cap:
+                    break
+                if idx not in seen:
+                    seen.add(idx)
+                    selected.append(idx)
+
+    selected.sort()
+    return selected, {"shardsInIndex": len(shard_ids)}
+
+
 def select_chunks_for_index(
     chunks: list[str],
     chunk_metas: list[dict[str, Any]],
     abs_cap: int,
 ) -> tuple[list[str], list[dict[str, Any]], dict[str, Any]]:
-    """按策略从全量切块中选取入库块（per_chapter / head / head_tail）。"""
+    """按策略从全量切块中选取入库块（per_shard / per_chapter / head / head_tail）。"""
     n = len(chunks)
     cap = max(0, min(abs_cap, n))
     strategy = note_rag_index_strategy()
@@ -470,6 +527,30 @@ def select_chunks_for_index(
                 "ragTotalChars": total_chars,
                 "ragIndexedChars": indexed_chars,
                 "ragIndexCoveragePct": 100 if total_chars else 100,
+            },
+        )
+
+    if strategy == "per_shard":
+        indices, sh_stats = _select_chunks_per_shard(chunks, chunk_metas, cap)
+        sel_chunks = [chunks[i] for i in indices]
+        sel_metas = [
+            dict(chunk_metas[i]) if i < len(chunk_metas) and isinstance(chunk_metas[i], dict) else {}
+            for i in indices
+        ]
+        indexed_chars = sum(len(c) for c in sel_chunks)
+        pct = min(100, round(100.0 * indexed_chars / total_chars)) if total_chars else 100
+        return (
+            sel_chunks,
+            sel_metas,
+            {
+                "ragChunksTotal": n,
+                "ragChunksIndexed": len(sel_chunks),
+                "ragIndexTruncated": len(sel_chunks) < n,
+                "ragIndexStrategy": strategy,
+                "ragTotalChars": total_chars,
+                "ragIndexedChars": indexed_chars,
+                "ragIndexCoveragePct": pct,
+                **sh_stats,
             },
         )
 

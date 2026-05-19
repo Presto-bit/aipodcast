@@ -1007,8 +1007,8 @@ def _persist_note_upload(
             "threshold": LONG_DOC_IMPORT_WARN_CHARS,
             "message": (
                 f"本文约 {len(parsed):,} 字，超过建议单条上限（{LONG_DOC_IMPORT_WARN_CHARS:,} 字）。"
-                "建议按卷/章拆成多条资料导入，以便章节路由与向量索引覆盖中间段落；"
-                "若仍单条保存，问答将依赖章节摘要与部分向量块，未索引段落可能无法检索。"
+                "保存后系统将自动在后台分片索引与摘要，您仍只需管理这一条资料；"
+                "问答时请尽量指明「第几部分」或章节名，未索引段落可能无法检索。"
             ),
         }
     return attach_hint_actions_to_upload_result(out)
@@ -1480,6 +1480,11 @@ def preview_note_text_api(
         "ragIndexStrategy": str(md.get("ragIndexStrategy") or "").strip(),
         "ragIndexCoveragePct": rag_index_coverage_pct,
         "totalChars": coverage.get("totalChars"),
+        "shardsTotal": coverage.get("shardsTotal"),
+        "shardsReady": coverage.get("shardsReady"),
+        "shardsWithSummary": coverage.get("shardsWithSummary"),
+        "shardSummaryCoveragePct": coverage.get("shardSummaryCoveragePct"),
+        "shardStructureSource": coverage.get("shardStructureSource"),
         "chaptersTotal": coverage.get("chaptersTotal"),
         "chaptersWithSummary": coverage.get("chaptersWithSummary"),
         "chapterSummaryCoveragePct": coverage.get("chapterSummaryCoveragePct"),

@@ -127,6 +127,7 @@ type NotesAskTurn = {
   /** 答后关联问句（至多 1 条，点击填入输入框） */
   followUpQuestions?: string[];
   activeChapters?: Array<{ noteId: string; chapterId: string; title?: string }>;
+  activeShards?: Array<{ noteId: string; shardId: string; title?: string }>;
   coverageHint?: string;
   qaMode?: string;
 };
@@ -217,6 +218,11 @@ type PreviewResp = {
   ragIndexStrategy?: string;
   ragIndexCoveragePct?: number;
   totalChars?: number;
+  shardsTotal?: number;
+  shardsReady?: number;
+  shardsWithSummary?: number;
+  shardSummaryCoveragePct?: number;
+  shardStructureSource?: string;
   chaptersTotal?: number;
   chaptersWithSummary?: number;
   chapterSummaryCoveragePct?: number;
@@ -2322,9 +2328,13 @@ export default function NotesPage() {
           role: string;
           content: string;
           activeChapters?: NotesAskTurn["activeChapters"];
+          activeShards?: NotesAskTurn["activeShards"];
         } = { role: m.role, content: (m.content || "").trim() };
         if (m.role === "assistant" && m.activeChapters?.length) {
           row.activeChapters = m.activeChapters;
+        }
+        if (m.role === "assistant" && m.activeShards?.length) {
+          row.activeShards = m.activeShards;
         }
         return row;
       })
@@ -2590,6 +2600,7 @@ export default function NotesPage() {
                   followUp: doneFollowUps[0] || undefined
                 });
                 const activeChapters = Array.isArray(ev.activeChapters) ? ev.activeChapters : undefined;
+                const activeShards = Array.isArray(ev.activeShards) ? ev.activeShards : undefined;
                 const coverageHint = typeof ev.coverageHint === "string" ? ev.coverageHint.trim() : "";
                 setNotesAskMessages((prev) => {
                   const next = [...prev];
@@ -2603,6 +2614,7 @@ export default function NotesPage() {
                     ...(doneSources?.length ? { sources: doneSources } : {}),
                     ...(doneFollowUps.length ? { followUpQuestions: doneFollowUps } : {}),
                     ...(activeChapters?.length ? { activeChapters } : {}),
+                    ...(activeShards?.length ? { activeShards } : {}),
                     ...(coverageHint ? { coverageHint } : {}),
                     ...(ev.qaMode ? { qaMode: String(ev.qaMode) } : {})
                   };
@@ -2991,14 +3003,18 @@ export default function NotesPage() {
       }
       if (typeof data.totalChars === "number" && data.totalChars > 0) {
         const cov = Number(data.ragIndexCoveragePct || 0);
+        const shTot = Number(data.shardsTotal || 0);
+        const shSum = Number(data.shardsWithSummary || 0);
         const chTot = Number(data.chaptersTotal || 0);
         const chSum = Number(data.chaptersWithSummary || 0);
         let covLine = `全文约 ${data.totalChars.toLocaleString()} 字 · 向量索引约 ${cov}%`;
-        if (chTot > 0) {
+        if (shTot > 1) {
+          covLine += ` · 处理进度 ${shSum}/${shTot} 片`;
+        } else if (chTot > 0) {
           covLine += ` · 章摘要 ${chSum}/${chTot}`;
         }
         if (data.ragIndexTruncated) {
-          covLine += "（未全文入库，中间章节请指明章名提问）";
+          covLine += "（未全文入库，请指明部分或章节名提问）";
         }
         statusParts.unshift(covLine);
       }

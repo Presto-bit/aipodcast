@@ -680,8 +680,10 @@ def iter_notes_answer_events(
             "qaMode": qa_plan.get("qaMode"),
             "grounding": qa_plan.get("grounding"),
             "routedChapters": qa_plan.get("routedChapters") or [],
+            "routedShards": qa_plan.get("routedShards") or [],
             "coverageHint": qa_plan.get("coverageHint") or "",
             "activeChapters": qa_plan.get("routedChapters") or [],
+            "activeShards": qa_plan.get("routedShards") or [],
         }
         yield done_ev
         try:
@@ -991,8 +993,10 @@ def answer_notes_question(
         "qaMode": qa_plan.get("qaMode"),
         "grounding": qa_plan.get("grounding"),
         "routedChapters": qa_plan.get("routedChapters") or [],
+        "routedShards": qa_plan.get("routedShards") or [],
         "coverageHint": qa_plan.get("coverageHint") or "",
         "activeChapters": qa_plan.get("routedChapters") or [],
+        "activeShards": qa_plan.get("routedShards") or [],
     }
     followup = generate_notes_ask_followup(
         question=question,

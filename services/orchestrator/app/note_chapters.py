@@ -322,8 +322,9 @@ def build_chapter_and_book_summaries(
 
 
 def note_coverage_stats(note_id: str, row: dict[str, Any] | None = None) -> dict[str, Any]:
-    """三指标：全文字数、向量覆盖率、章摘要覆盖率。"""
+    """全文字数、向量覆盖率、分片/章处理进度。"""
     from .note_rag_service import count_rag_chunks_for_notes  # 延迟导入，避免与 note_rag_service 循环
+    from .note_shards import note_shard_coverage_stats
 
     md: dict[str, Any] = {}
     if row:
@@ -351,6 +352,7 @@ def note_coverage_stats(note_id: str, row: dict[str, Any] | None = None) -> dict
         for c in chapters
         if (int(c.get("char_end") or 0) - int(c.get("char_start") or 0)) <= deep_max
     )
+    shard_st = note_shard_coverage_stats(note_id, row)
     return {
         "totalChars": body_len,
         "ragIndexCoveragePct": pct,
@@ -363,6 +365,7 @@ def note_coverage_stats(note_id: str, row: dict[str, Any] | None = None) -> dict
         "chaptersDeepReady": deep_ready,
         "bookSummaryL0Chars": len(str(md.get("bookSummaryL0") or "")),
         "structureSource": str(md.get("chapterStructureSource") or ""),
+        **shard_st,
     }
 
 
@@ -538,17 +541,27 @@ def coverage_hint_for_qa(
     rows_by_id: dict[str, dict[str, Any]],
     routed: list[dict[str, Any]],
     qa_mode: str,
+    routed_shards: list[dict[str, Any]] | None = None,
 ) -> str:
     parts: list[str] = []
     for nid in note_ids:
         row = rows_by_id.get(nid) or {}
         st = note_coverage_stats(nid, row)
-        parts.append(
+        line = (
             f"资料 {nid[:8]}…：全文约 {st['totalChars']:,} 字，"
-            f"向量索引约 {st['ragIndexCoveragePct']}%，"
-            f"章摘要 {st['chaptersWithSummary']}/{st['chaptersTotal']}。"
+            f"向量索引约 {st['ragIndexCoveragePct']}%"
         )
-    if qa_mode == "chapter_deep" and routed:
+        sh_tot = int(st.get("shardsTotal") or 0)
+        if sh_tot > 1:
+            line += f"，处理进度 {st.get('shardsWithSummary', 0)}/{sh_tot} 片"
+        elif int(st.get("chaptersTotal") or 0) > 0:
+            line += f"，章摘要 {st['chaptersWithSummary']}/{st['chaptersTotal']}"
+        line += "。"
+        parts.append(line)
+    if qa_mode == "shard_deep" and routed_shards:
+        titles = "、".join(f"「{r.get('title', '')}」" for r in routed_shards[:3])
+        parts.append(f"本轮精读部分：{titles}。")
+    elif qa_mode == "chapter_deep" and routed:
         titles = "、".join(f"「{r.get('title', '')}」" for r in routed[:3])
         parts.append(f"本轮精读章节：{titles}。")
     elif qa_mode == "long_context_direct":
