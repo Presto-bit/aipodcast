@@ -2157,6 +2157,21 @@ async def upload_notebook_cover_api(notebook_name: str, request: Request):
     return {"success": True, "name": notebook_name.strip()}
 
 
+@router.delete("/notebooks/{notebook_name:path}")
+@router.post("/notebooks/{notebook_name:path}/delete")
+def delete_notebook_api(notebook_name: str, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    ok, err, notes_purged, jobs_trashed = delete_notebook_db(notebook_name.strip(), user_ref=user_ref)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
+    return {
+        "success": True,
+        "name": notebook_name.strip(),
+        "deletedCount": notes_purged,
+        "trashedJobsCount": jobs_trashed,
+    }
+
+
 @router.patch("/notebooks/{notebook_name:path}")
 @router.post("/notebooks/{notebook_name:path}")
 def patch_notebook_api(notebook_name: str, body: NotebookPatchRequest, request: Request):
@@ -2181,21 +2196,6 @@ def patch_notebook_api(notebook_name: str, body: NotebookPatchRequest, request: 
         out["old"] = notebook_name.strip()
         out["new"] = nb0
     return out
-
-
-@router.delete("/notebooks/{notebook_name:path}")
-@router.post("/notebooks/{notebook_name:path}/delete")
-def delete_notebook_api(notebook_name: str, request: Request):
-    user_ref = _current_user_ref_or_401(request)
-    ok, err, notes_purged, jobs_trashed = delete_notebook_db(notebook_name.strip(), user_ref=user_ref)
-    if not ok:
-        raise HTTPException(status_code=400, detail=err)
-    return {
-        "success": True,
-        "name": notebook_name.strip(),
-        "deletedCount": notes_purged,
-        "trashedJobsCount": jobs_trashed,
-    }
 
 
 def ensure_notebooks_schema_startup(*, strict: bool = False) -> None:
