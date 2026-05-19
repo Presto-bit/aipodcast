@@ -6,6 +6,8 @@ export type NotesAskSourceChunk = {
   chunkIndex: string;
   score?: string;
   excerpt?: string;
+  charStart?: number;
+  charEnd?: number;
 };
 
 export type NotesAskSource = {
@@ -34,10 +36,14 @@ function normalizeChunks(raw: unknown): NotesAskSourceChunk[] | undefined {
     const excerpt = String(o.excerpt ?? "").trim();
     const score = o.score != null ? String(o.score).trim() : "";
     if (!chunkIndex && !excerpt) continue;
+    const cs = o.charStart ?? o.char_start;
+    const ce = o.charEnd ?? o.char_end;
     out.push({
       chunkIndex: chunkIndex || "—",
       ...(score ? { score } : {}),
-      ...(excerpt ? { excerpt } : {})
+      ...(excerpt ? { excerpt } : {}),
+      ...(typeof cs === "number" ? { charStart: cs } : {}),
+      ...(typeof ce === "number" ? { charEnd: ce } : {})
     });
   }
   return out.length ? out : undefined;

@@ -899,6 +899,13 @@ export default function NotesPage() {
   const [previewRagIndexStrategy, setPreviewRagIndexStrategy] = useState("");
   const [previewSimplified, setPreviewSimplified] = useState(false);
   const [previewHighlightHint, setPreviewHighlightHint] = useState("");
+  const [previewCharRange, setPreviewCharRange] = useState<{ start: number; end: number } | null>(null);
+  const [previewStudioBusy, setPreviewStudioBusy] = useState(false);
+  const [previewStudioResult, setPreviewStudioResult] = useState<{
+    task: string;
+    markdown?: string;
+    timeline?: Array<{ date?: string; event?: string; partTitle?: string }>;
+  } | null>(null);
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
   const [renameNoteTitle, setRenameNoteTitle] = useState("");
   const [importUrl, setImportUrl] = useState("");
@@ -2927,7 +2934,10 @@ export default function NotesPage() {
     }
   }
 
-  async function openPreview(noteId: string, opts: { highlightText?: string } = {}) {
+  async function openPreview(
+    noteId: string,
+    opts: { highlightText?: string; charStart?: number; charEnd?: number } = {}
+  ) {
     setPreviewOpen(true);
     setPreviewLoading(true);
     setPreviewNoteId(noteId);
@@ -2948,6 +2958,8 @@ export default function NotesPage() {
     setPreviewRagIndexStrategy("");
     setPreviewSimplified(false);
     setPreviewHighlightHint("");
+    setPreviewCharRange(null);
+    setPreviewStudioResult(null);
     try {
       const pv = new URLSearchParams();
       if (sharedBrowse?.ownerUserId) pv.set("sharedFromOwnerUserId", sharedBrowse.ownerUserId);
@@ -3022,11 +3034,32 @@ export default function NotesPage() {
       const hasIndexError = String(data.ragIndexError || "").trim().length > 0;
       setPreviewCanReindex(retrieveFailed || hasIndexError);
       setPreviewStatusLine(dedupeStatusLine(statusParts.join(" · ")));
-      const hi = String(opts.highlightText || "").trim();
-      if (hi) {
-        const kw = hi.slice(0, 24);
-        if (kw) setPreviewKw(kw);
-        setPreviewHighlightHint(hi.slice(0, 80));
+      const fullText = data.text || "";
+      const cs = opts.charStart;
+      const ce = opts.charEnd;
+      if (
+        typeof cs === "number" &&
+        typeof ce === "number" &&
+        ce > cs &&
+        fullText.length > 0
+      ) {
+        const start = Math.max(0, Math.min(cs, fullText.length));
+        const end = Math.max(start + 1, Math.min(ce, fullText.length));
+        setPreviewCharRange({ start, end });
+        const snippet = fullText.slice(start, Math.min(end, start + 120)).trim();
+        if (snippet.length >= 4) {
+          setPreviewKw(snippet.slice(0, 48));
+        }
+        setPreviewHighlightHint(
+          `原文定位 · 字符 ${start.toLocaleString()}–${end.toLocaleString()}`
+        );
+      } else {
+        const hi = String(opts.highlightText || "").trim();
+        if (hi) {
+          const kw = hi.slice(0, 24);
+          if (kw) setPreviewKw(kw);
+          setPreviewHighlightHint(hi.slice(0, 80));
+        }
       }
     } catch (err) {
       setPreviewText(String(err instanceof Error ? err.message : err));
@@ -3160,10 +3193,66 @@ export default function NotesPage() {
   const filteredPreview = useMemo(() => {
     const base = previewSimplified ? simplifySourceText(previewText) : previewText;
     const kw = previewKw.trim();
-    if (!kw) return base;
+    if (!kw || previewCharRange) return base;
     const lines = base.split("\n");
     return lines.filter((l) => l.includes(kw)).join("\n");
-  }, [previewText, previewKw, previewSimplified]);
+  }, [previewText, previewKw, previewSimplified, previewCharRange]);
+
+  function openPreviewFromAskSource(
+    source: NotesAskSource,
+    chunk?: { charStart?: number; charEnd?: number; excerpt?: string }
+  ) {
+    const opts: { highlightText?: string; charStart?: number; charEnd?: number } = {};
+    if (
+      typeof chunk?.charStart === "number" &&
+      typeof chunk?.charEnd === "number" &&
+      chunk.charEnd > chunk.charStart
+    ) {
+      opts.charStart = chunk.charStart;
+      opts.charEnd = chunk.charEnd;
+    } else if (chunk?.excerpt?.trim()) {
+      opts.highlightText = chunk.excerpt.trim().slice(0, 120);
+    }
+    void openPreview(source.noteId, opts);
+  }
+
+  async function runPreviewStudio(task: "outline" | "quiz" | "timeline") {
+    if (!previewNoteId || previewStudioBusy) return;
+    setPreviewStudioBusy(true);
+    setPreviewStudioResult(null);
+    try {
+      const pv = new URLSearchParams();
+      if (sharedBrowse?.ownerUserId) pv.set("sharedFromOwnerUserId", sharedBrowse.ownerUserId);
+      const qs = pv.toString();
+      const res = await fetch(
+        `/api/notes/${encodeURIComponent(previewNoteId)}/studio/${task}${qs ? `?${qs}` : ""}`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json", ...getAuthHeaders() }
+        }
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        markdown?: string;
+        timeline?: Array<{ date?: string; event?: string; partTitle?: string }>;
+        detail?: unknown;
+      };
+      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "Studio 生成失败"));
+      setPreviewStudioResult({
+        task,
+        markdown: data.markdown,
+        timeline: Array.isArray(data.timeline) ? data.timeline : undefined
+      });
+    } catch (err) {
+      setPreviewStudioResult({
+        task,
+        markdown: String(err instanceof Error ? err.message : err)
+      });
+    } finally {
+      setPreviewStudioBusy(false);
+    }
+  }
 
   function openNotebook(name: string) {
     setNotebookCardMenu(null);
@@ -4074,6 +4163,7 @@ export default function NotesPage() {
                                   text={m.content}
                                   sources={m.sources}
                                   webSources={m.webSources}
+                                  onOpenSourceInPreview={openPreviewFromAskSource}
                                 />
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
@@ -5026,7 +5116,45 @@ export default function NotesPage() {
             if (e.target === e.currentTarget) setPreviewOpen(false);
           }}
         >
-          <div className="max-h-[min(92vh,820px)] w-full max-w-5xl overflow-hidden" onPointerDown={(e) => e.stopPropagation()}>
+          <div className="flex max-h-[min(92vh,820px)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="flex flex-wrap items-center gap-2 border-b border-line/70 px-3 py-2">
+              <span className="text-[11px] font-medium text-muted">资料 Studio</span>
+              {(["outline", "quiz", "timeline"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  disabled={previewStudioBusy || previewLoading}
+                  className="rounded-md border border-line bg-fill px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-surface disabled:opacity-50"
+                  onClick={() => void runPreviewStudio(t)}
+                >
+                  {t === "outline" ? "大纲" : t === "quiz" ? "测验" : "时间线"}
+                </button>
+              ))}
+              {previewStudioBusy ? <span className="text-[11px] text-muted">生成中…</span> : null}
+            </div>
+            {previewStudioResult ? (
+              <div className="max-h-48 overflow-y-auto border-b border-line/70 bg-fill/30 px-3 py-2 text-[12px] leading-relaxed text-ink">
+                <p className="mb-1 text-[11px] font-medium text-muted">
+                  {previewStudioResult.task === "outline"
+                    ? "章节大纲"
+                    : previewStudioResult.task === "quiz"
+                      ? "测验题"
+                      : "时间线"}
+                </p>
+                {previewStudioResult.timeline && previewStudioResult.timeline.length > 0 ? (
+                  <ul className="list-disc space-y-1 pl-4">
+                    {previewStudioResult.timeline.map((row, i) => (
+                      <li key={`${row.date}-${i}`}>
+                        <span className="font-medium">{row.date || "—"}</span> {row.event}
+                        {row.partTitle ? <span className="text-muted">（{row.partTitle}）</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <pre className="whitespace-pre-wrap font-sans">{previewStudioResult.markdown || ""}</pre>
+                )}
+              </div>
+            ) : null}
             <NoteMarkdownPreview
               title={previewTitle || "参考资料内容"}
               filteredText={filteredPreview}
@@ -5049,6 +5177,7 @@ export default function NotesPage() {
               simplified={previewSimplified}
               onToggleSimplified={setPreviewSimplified}
               highlightHint={previewHighlightHint}
+              charHighlightRange={previewCharRange}
               onClose={() => setPreviewOpen(false)}
             />
           </div>

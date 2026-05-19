@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
 
@@ -354,6 +355,52 @@ def update_shard_index_status(
             conn.commit()
 
 
+def _shard_index_parallelism() -> int:
+    try:
+        return max(1, min(8, int(os.getenv("NOTE_RAG_SHARD_INDEX_PARALLEL", "3") or "3")))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _summarize_one_shard(
+    note_id: str,
+    body: str,
+    shard: ShardSpan,
+    *,
+    api_key: str | None,
+) -> tuple[str, bool]:
+    update_shard_index_status(note_id, shard.shard_id, status="indexing", error=None)
+    excerpt = shard_body_slice(body, shard.__dict__, max_chars=48_000)
+    summary = _summarize_shard_slice(excerpt, api_key) if excerpt else ""
+    ok = bool(summary)
+    update_shard_index_status(
+        note_id,
+        shard.shard_id,
+        status="ready" if ok else "failed",
+        error=None if ok else "summary_empty",
+        summary=summary,
+    )
+    return shard.shard_id, ok
+
+
+def shard_index_progress(note_id: str) -> dict[str, Any]:
+    """供 API：片级索引进度。"""
+    shards = list_shards(note_id)
+    total = len(shards)
+    ready = sum(1 for s in shards if str(s.get("index_status") or "") == "ready")
+    with_sum = sum(1 for s in shards if str(s.get("summary_text") or "").strip())
+    indexing = sum(1 for s in shards if str(s.get("index_status") or "") == "indexing")
+    failed = sum(1 for s in shards if str(s.get("index_status") or "") == "failed")
+    return {
+        "shardsTotal": total,
+        "shardsReady": ready,
+        "shardsWithSummary": with_sum,
+        "shardsIndexing": indexing,
+        "shardsFailed": failed,
+        "percent": min(100, round(100.0 * ready / total)) if total else 0,
+    }
+
+
 def build_shard_and_book_summaries(
     note_id: str,
     body: str,
@@ -362,22 +409,25 @@ def build_shard_and_book_summaries(
     api_key: str | None = None,
     only_shard_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """每片 Map-Reduce 摘要 + 全书 L0；可续跑仅补指定片。"""
+    """每片 Map-Reduce 摘要 + 全书 L0；并行片摘要。"""
     ensure_note_shards_schema()
     want = {str(x) for x in only_shard_ids} if only_shard_ids else None
-    for s in shards:
-        if want is not None and s.shard_id not in want:
-            continue
-        update_shard_index_status(note_id, s.shard_id, status="indexing", error=None)
-        excerpt = shard_body_slice(body, s.__dict__, max_chars=48_000)
-        summary = _summarize_shard_slice(excerpt, api_key) if excerpt else ""
-        update_shard_index_status(
-            note_id,
-            s.shard_id,
-            status="ready" if summary else "failed",
-            error=None if summary else "summary_empty",
-            summary=summary,
-        )
+    todo = [s for s in shards if want is None or s.shard_id in want]
+    workers = min(_shard_index_parallelism(), max(1, len(todo)))
+    if len(todo) <= 1 or workers <= 1:
+        for s in todo:
+            _summarize_one_shard(note_id, body, s, api_key=api_key)
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="shard-sum") as pool:
+            futs = [
+                pool.submit(_summarize_one_shard, note_id, body, s, api_key=api_key)
+                for s in todo
+            ]
+            for fut in as_completed(futs):
+                try:
+                    fut.result()
+                except Exception as exc:
+                    logger.warning("parallel shard summary failed: %s", exc)
 
     all_shards = list_shards(note_id)
     with_summary = sum(1 for x in all_shards if str(x.get("summary_text") or "").strip())
@@ -479,6 +529,13 @@ def shard_deep_max_chars() -> int:
         return max(8_000, min(200_000, int(os.getenv("NOTES_ASK_SHARD_DEEP_MAX_CHARS", "48000") or "48000")))
     except (TypeError, ValueError):
         return 48_000
+
+
+def shard_direct_read_max_chars() -> int:
+    try:
+        return max(10_000, min(200_000, int(os.getenv("NOTES_ASK_SHARD_DIRECT_READ_MAX_CHARS", "120000") or "120000")))
+    except (TypeError, ValueError):
+        return 120_000
 
 
 def notes_ask_top_shards() -> int:

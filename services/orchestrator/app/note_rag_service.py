@@ -30,6 +30,8 @@ from .note_chapters import (
     detect_chapters,
     persist_chapters,
 )
+from .note_chunk_offsets import attach_char_offsets_to_chunks
+from .note_rag_profile import query_suggests_table, rag_chunk_params_for_note
 from .note_shards import (
     assign_shard_ids_to_chunks,
     build_shard_and_book_summaries,
@@ -982,9 +984,12 @@ def _note_metadata_as_dict(row: dict[str, Any]) -> dict[str, Any]:
 def _chunks_and_metas_from_note(row: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
     """优先使用入库时保存的 ragChunkSegments（含标题路径/表格元数据），否则整篇切段。"""
     body = str(row.get("content_text") or "").strip()
+    profile = rag_chunk_params_for_note(row)
+    mc = profile.get("max_chunk_chars")
+    ov = profile.get("overlap")
     md = _note_metadata_as_dict(row)
     raw_segs = md.get("ragChunkSegments")
-    if isinstance(raw_segs, list) and raw_segs:
+    if profile.get("prefer_segments") and isinstance(raw_segs, list) and raw_segs:
         normalized: list[dict[str, Any]] = []
         for item in raw_segs[:3000]:
             if not isinstance(item, dict):
@@ -995,11 +1000,134 @@ def _chunks_and_metas_from_note(row: dict[str, Any]) -> tuple[list[str], list[di
             m = item.get("meta") if isinstance(item.get("meta"), dict) else {}
             normalized.append({"text": t, "meta": dict(m)})
         if normalized:
-            pairs = split_segments_into_chunks_with_meta(normalized)
+            pairs = split_segments_into_chunks_with_meta(
+                normalized, max_chunk_chars=mc, overlap=ov
+            )
             if pairs:
-                return [p[0] for p in pairs], [p[1] for p in pairs]
-    chunks = split_text_into_chunks(body)
-    return chunks, [{} for _ in chunks]
+                chunks = [p[0] for p in pairs]
+                metas = [p[1] for p in pairs]
+                return chunks, attach_char_offsets_to_chunks(body, chunks, metas)
+    chunks = split_text_into_chunks(body, max_chunk_chars=mc, overlap=ov)
+    metas = [{} for _ in chunks]
+    return chunks, attach_char_offsets_to_chunks(body, chunks, metas)
+
+
+def _incremental_append_info(row: dict[str, Any], body: str) -> tuple[bool, int]:
+    """正文仅在尾部追加时返回 (True, 原长度)。"""
+    md = _note_metadata_as_dict(row)
+    try:
+        prev_len = int(md.get("lastIndexedContentLen") or 0)
+    except (TypeError, ValueError):
+        prev_len = 0
+    if prev_len <= 0 or len(body) <= prev_len:
+        return False, 0
+    prefix_hash = str(md.get("lastIndexedPrefixHash") or "").strip()
+    if not prefix_hash:
+        return False, 0
+    if _body_sha256(body[:prev_len]) != prefix_hash:
+        return False, 0
+    return True, prev_len
+
+
+def _index_note_incremental_append(
+    note_id: str,
+    row: dict[str, Any],
+    body: str,
+    prev_len: int,
+    *,
+    user_ref: str | None,
+    api_key: str | None,
+) -> dict[str, Any] | None:
+    """连载追加：仅重索引尾部涉及的片。"""
+    md_for_seg = _note_metadata_as_dict(row)
+    seg_list = md_for_seg.get("ragChunkSegments")
+    seg_list = seg_list if isinstance(seg_list, list) else None
+    shard_spans = detect_shards(body, segments=seg_list)
+    if not shard_spans:
+        return None
+    persist_shards(note_id, shard_spans)
+    affected = [s for s in shard_spans if s.char_end > prev_len]
+    if not affected:
+        return {"ok": True, "skipped": "incremental_no_affected_shards"}
+
+    from .note_shards import shard_body_slice
+
+    affected_ids = [s.shard_id for s in affected]
+    delete_rag_chunks_for_shards(note_id, affected_ids)
+
+    texts: list[str] = []
+    metas: list[dict[str, Any]] = []
+    profile = rag_chunk_params_for_note(row)
+    for s in affected:
+        if s.char_start >= prev_len:
+            excerpt = body[s.char_start : s.char_end]
+        elif s.char_end > prev_len:
+            excerpt = body[prev_len : s.char_end]
+        else:
+            excerpt = shard_body_slice(body, s.__dict__)
+        if not excerpt.strip():
+            continue
+        for piece in split_text_into_chunks(
+            excerpt,
+            max_chunk_chars=profile.get("max_chunk_chars"),
+            overlap=profile.get("overlap"),
+        ):
+            if piece.strip():
+                texts.append(piece)
+                metas.append({"shard_id": s.shard_id, "incremental": True})
+
+    if not texts:
+        build_shard_and_book_summaries(
+            note_id, body, shard_spans, api_key=api_key, only_shard_ids=affected_ids
+        )
+        sync_shard_chunk_counts(note_id)
+        return {"ok": True, "incremental": True, "chunks_added": 0}
+
+    try:
+        from app.fyv_shared.embedding_provider import EmbeddingProvider
+
+        ep = EmbeddingProvider()
+        embeddings: list[list[float]] = []
+        for i in range(0, len(texts), 32):
+            embeddings.extend(ep.embed_texts([t[:8000] for t in texts[i : i + 32]]))
+    except Exception as exc:
+        return {"ok": False, "error": f"embed_failed:{exc}"[:200]}
+
+    if len(embeddings) != len(texts):
+        return {"ok": False, "error": "embed_count_mismatch"}
+
+    start_idx = _max_chunk_index_for_note(note_id) + 1
+    metas = attach_char_offsets_to_chunks(body, texts, metas)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            for off, (ch, emb, meta) in enumerate(zip(texts, embeddings, metas)):
+                cur.execute(
+                    """
+                    INSERT INTO note_rag_chunks (input_id, chunk_index, chunk_text, embedding, chunk_meta)
+                    VALUES (%s::uuid, %s, %s, %s::jsonb, %s::jsonb)
+                    """,
+                    (note_id, start_idx + off, ch, json.dumps(emb), json.dumps(meta)),
+                )
+            conn.commit()
+
+    build_shard_and_book_summaries(
+        note_id, body, shard_spans, api_key=api_key, only_shard_ids=affected_ids
+    )
+    sync_shard_chunk_counts(note_id)
+    invalidate_retrieval_cache_for_notes([note_id])
+    h = _body_sha256(body)
+    _update_note_rag_after_success(
+        note_id,
+        str(_note_metadata_as_dict(row).get("bookSummaryL0") or row.get("note_summary") or ""),
+        h,
+        str(row.get("note_rag_embedding_sig") or ""),
+        index_metadata={
+            "lastIndexedContentLen": len(body),
+            "lastIndexedPrefixHash": h,
+            "incrementalAppend": True,
+        },
+    )
+    return {"ok": True, "incremental": True, "chunks_added": len(texts), "shards": affected_ids}
 
 
 def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None = None) -> dict[str, Any]:
@@ -1019,6 +1147,14 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
     prev = str(row.get("note_rag_body_hash") or "").strip()
     if prev == h and count_rag_chunks_for_notes([note_id]) > 0:
         return {"ok": True, "skipped": "unchanged", "chunks": count_rag_chunks_for_notes([note_id])}
+
+    is_append, prev_len = _incremental_append_info(row, body)
+    if is_append and prev_len > 0:
+        inc_out = _index_note_incremental_append(
+            note_id, row, body, prev_len, user_ref=user_ref, api_key=api_key
+        )
+        if inc_out is not None:
+            return inc_out
 
     chunks_all, chunk_metas_all = _chunks_and_metas_from_note(row)
     md_for_seg = _note_metadata_as_dict(row)
@@ -1117,6 +1253,8 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
         "chaptersTotal": len(chapter_spans),
         "chaptersWithSummary": 0,
         "bookSummaryL0": shard_tree_meta.get("bookSummaryL0") or "",
+        "lastIndexedContentLen": len(body),
+        "lastIndexedPrefixHash": h,
     }
     _update_note_rag_after_success(
         note_id,
@@ -1683,11 +1821,16 @@ def retrieve_chunks_across_notes(
         wv, wk = wv / w_sum, wk / w_sum
     coarse = [wv * nv[i] + wk * nk[i] for i in range(len(parsed))]
     scored: list[tuple[float, dict[str, Any]]] = []
+    table_q = query_suggests_table(q)
     for sim, cscore, p in zip(sims, coarse, parsed):
         row = {k: v for k, v in p.items() if not str(k).startswith("_")}
         row["_vector_score"] = float(sim)
-        row["_coarse_score"] = float(cscore)
-        scored.append((float(cscore), row))
+        adj = float(cscore)
+        cm = p.get("chunk_meta") if isinstance(p.get("chunk_meta"), dict) else {}
+        if table_q and str(cm.get("block_type") or "") == "table":
+            adj *= 1.18
+        row["_coarse_score"] = adj
+        scored.append((adj, row))
 
     scored.sort(key=lambda x: -x[0])
     try:
@@ -1813,6 +1956,17 @@ def retrieve_chunks_across_notes(
                 meta_row["blockType"] = str(bt)
             if cm.get("sheet"):
                 meta_row["sheet"] = str(cm["sheet"])
+            try:
+                cs = int(cm.get("char_start"))
+                ce = int(cm.get("char_end"))
+                if ce > cs >= 0:
+                    meta_row["charStart"] = cs
+                    meta_row["charEnd"] = ce
+            except (TypeError, ValueError):
+                pass
+            sid = str(cm.get("shard_id") or "")
+            if sid:
+                meta_row["shardId"] = sid
             meta_out.append(meta_row)
         else:
             remain = budget - used - len(header) - 40
@@ -1840,6 +1994,14 @@ def retrieve_chunks_across_notes(
                     meta_tail["blockType"] = str(bt2)
                 if cm2.get("sheet"):
                     meta_tail["sheet"] = str(cm2["sheet"])
+                try:
+                    cs2 = int(cm2.get("char_start"))
+                    ce2 = int(cm2.get("char_end"))
+                    if ce2 > cs2 >= 0:
+                        meta_tail["charStart"] = cs2
+                        meta_tail["charEnd"] = ce2
+                except (TypeError, ValueError):
+                    pass
                 meta_out.append(meta_tail)
             break
 

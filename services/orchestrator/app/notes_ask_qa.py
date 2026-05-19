@@ -18,6 +18,7 @@ from .note_chapters import (
     chapter_route_min_score,
     coverage_hint_for_qa,
     cross_chapter_enabled,
+    note_coverage_stats,
     direct_read_max_chars,
     list_chapters,
     route_chapters_for_compare,
@@ -37,9 +38,11 @@ from .note_shards import (
     route_shards_for_notes,
     shard_body_slice,
     shard_deep_max_chars,
+    shard_direct_read_max_chars,
     shard_filter_for_query,
     shard_route_min_score,
 )
+from .note_rag_profile import query_suggests_table
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +179,48 @@ def _multi_shard_notes(note_ids: list[str]) -> bool:
     return any(len(list_shards(nid)) > 1 for nid in note_ids)
 
 
+def _detect_corpus_mode(note_ids: list[str], question: str) -> str:
+    """single | multi_compare | multi_synthesize"""
+    q = (question or "").strip()
+    if len(note_ids) < 2:
+        return "single"
+    if COMPARE_QUERY_RE.search(q):
+        return "multi_compare"
+    synth_keys = ("综述", "总结", "概括", "整体", "全书", "所有资料", "对比分析")
+    if any(k in q for k in synth_keys):
+        return "multi_synthesize"
+    return "multi_synthesize" if len(note_ids) >= 2 else "single"
+
+
+def _low_confidence_threshold() -> float:
+    try:
+        return float(os.getenv("NOTES_ASK_LOW_CONFIDENCE_SCORE", "0.12") or "0.12")
+    except (TypeError, ValueError):
+        return 0.12
+
+
+def assess_retrieval_confidence(
+    *,
+    note_ids: list[str],
+    rows_by_id: dict[str, dict[str, Any]],
+    retrieve_obs: dict[str, Any] | None,
+    retr_meta: list[dict[str, Any]] | None,
+) -> bool:
+    """True 表示置信度低，应提示「材料未覆盖」。"""
+    for nid in note_ids:
+        st = note_coverage_stats(nid, rows_by_id.get(nid))
+        if st.get("ragIndexCoveragePct", 100) < 35:
+            return True
+    if retr_meta:
+        try:
+            scores = [float(x.get("score") or 0) for x in retr_meta if x.get("score")]
+            if scores and max(scores) < _low_confidence_threshold():
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
 def resolve_notes_ask_plan(
     *,
     notebook: str,
@@ -200,7 +245,9 @@ def resolve_notes_ask_plan(
     qa_mode = "rag"
     grounding = "rag_excerpt"
 
-    if mode_env in ("rag", "chapter_deep", "shard_deep", "long_context_direct"):
+    corpus_mode = _detect_corpus_mode(ordered, question)
+
+    if mode_env in ("rag", "chapter_deep", "shard_deep", "shard_direct", "long_context_direct"):
         qa_mode = mode_env
     elif len(ordered) == 1 and total > 0 and total <= direct_read_max_chars():
         qa_mode = "long_context_direct"
@@ -251,7 +298,19 @@ def resolve_notes_ask_plan(
     multi_shard = _multi_shard_notes(ordered)
 
     if mode_env == "auto":
-        if multi_shard and routed_shards and best_shard >= shard_route_min_score():
+        shard_direct_ok = False
+        if len(ordered) == 1 and routed_shards and multi_shard:
+            sh0 = routed_shards[0]
+            shards = list_shards(ordered[0])
+            sh = next((s for s in shards if str(s.get("shard_id")) == str(sh0.get("shardId"))), None)
+            if sh:
+                sh_len = int(sh.get("char_end") or 0) - int(sh.get("char_start") or 0)
+                if sh_len > 0 and sh_len <= shard_direct_read_max_chars() and best_shard >= shard_route_min_score():
+                    shard_direct_ok = True
+        if shard_direct_ok:
+            qa_mode = "shard_direct"
+            grounding = "shard_direct"
+        elif multi_shard and routed_shards and best_shard >= shard_route_min_score():
             qa_mode = "shard_deep"
             grounding = "shard_deep"
         elif routed_chapters and best_chapter >= chapter_route_min_score():
@@ -271,6 +330,7 @@ def resolve_notes_ask_plan(
     return {
         "qaMode": qa_mode,
         "grounding": grounding,
+        "corpusMode": corpus_mode,
         "routedShards": routed_shards,
         "routedChapters": routed_chapters,
         "coverageHint": hint,
@@ -462,9 +522,11 @@ def build_notes_qa_context_with_plan(
 
     qa_mode = str(plan.get("qaMode") or "rag")
     rows: dict[str, dict[str, Any]] = plan.get("rowsByNoteId") or {}
+    corpus_mode = str(plan.get("corpusMode") or "single")
     meta: dict[str, Any] = {
         "qaMode": qa_mode,
         "grounding": plan.get("grounding"),
+        "corpusMode": corpus_mode,
         "routedShards": plan.get("routedShards") or [],
         "routedChapters": plan.get("routedChapters") or [],
         "coverageHint": plan.get("coverageHint") or "",
@@ -475,6 +537,33 @@ def build_notes_qa_context_with_plan(
         row = rows.get(nid) or get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
         if row:
             sources.append({"index": str(i), "noteId": nid, "title": _metadata_title(row, nid)})
+
+    if qa_mode == "shard_direct" and len(ordered) == 1:
+        routed_sd = plan.get("routedShards") or []
+        if not routed_sd:
+            qa_mode = "shard_deep"
+            meta["qaMode"] = qa_mode
+        else:
+            nid = ordered[0]
+            row = rows.get(nid) or {}
+            body = str(row.get("content_text") or "")
+            shards = list_shards(nid)
+            sh = next(
+                (s for s in shards if str(s.get("shard_id")) == str(routed_sd[0].get("shardId"))),
+                None,
+            )
+            if sh and body:
+                title = str(sh.get("title") or "")
+                slice_text = shard_body_slice(body, sh, max_chars=shard_direct_read_max_chars())
+                md = _metadata_dict(row)
+                l0 = str(md.get("bookSummaryL0") or row.get("note_summary") or "").strip()
+                blocks = []
+                if l0:
+                    blocks.append(f"## 全书概览\n\n{l0}")
+                blocks.append(f"## {title}（本片直读）\n\n{slice_text}")
+                meta["layered"] = True
+                meta["qaMode"] = qa_mode
+                return "\n\n---\n\n".join(blocks), sources, meta
 
     if qa_mode == "long_context_direct" and len(ordered) == 1:
         nid = ordered[0]
@@ -583,6 +672,8 @@ def build_notes_qa_context_with_plan(
 
     if qa_mode == "rag" and NOTE_LAYERED_RAG and q:
         sh_filter = shard_filter_for_query(ordered, q) if _multi_shard_notes(ordered) else None
+        if corpus_mode == "multi_compare" and len(ordered) >= 2:
+            meta["corpusMode"] = corpus_mode
         layered, sources, lmeta = build_layered_notes_context(
             notebook=notebook,
             note_ids=ordered,
@@ -596,6 +687,18 @@ def build_notes_qa_context_with_plan(
         )
         if layered:
             meta.update(lmeta)
+            obs = lmeta.get("retrieve_obs") if isinstance(lmeta.get("retrieve_obs"), dict) else {}
+            retr_m = lmeta.get("retrieval_chunks_meta")
+            meta["lowConfidence"] = assess_retrieval_confidence(
+                note_ids=ordered,
+                rows_by_id=rows,
+                retrieve_obs=obs,
+                retr_meta=retr_m if isinstance(retr_m, list) else None,
+            )
+            if corpus_mode == "multi_compare":
+                layered = (
+                    "## 多资料对比（请分列来源，勿混淆不同资料的事实）\n\n---\n\n" + layered
+                )
             return layered, sources, meta
 
     from .notes_ask import legacy_build_notes_qa_context

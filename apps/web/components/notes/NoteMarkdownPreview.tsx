@@ -37,6 +37,8 @@ type Props = {
   onToggleSimplified: (enabled: boolean) => void;
   simplified: boolean;
   highlightHint?: string;
+  /** 全文 UTF-16 字符区间高亮（与 preview_text 正文一致） */
+  charHighlightRange?: { start: number; end: number } | null;
   onClose?: () => void;
 };
 
@@ -105,6 +107,7 @@ export default function NoteMarkdownPreview({
   onToggleSimplified,
   simplified,
   highlightHint,
+  charHighlightRange,
   onClose
 }: Props) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -387,6 +390,61 @@ export default function NoteMarkdownPreview({
       unwrap();
     };
   }, [renderBlocks, highlightTerm]);
+
+  useEffect(() => {
+    const root = contentRef.current;
+    const rng = charHighlightRange;
+    if (!root || !rng || rng.end <= rng.start) return;
+    const markId = "note-char-range-anchor";
+    const prev = root.querySelector(`#${markId}`);
+    prev?.remove();
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let cursor = 0;
+    let startNode: Text | null = null;
+    let startOff = 0;
+    let endNode: Text | null = null;
+    let endOff = 0;
+
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      const parentEl = node.parentElement;
+      if (!parentEl) continue;
+      const tag = parentEl.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") continue;
+      const len = (node.nodeValue || "").length;
+      const nodeStart = cursor;
+      const nodeEnd = cursor + len;
+      if (!startNode && rng.start < nodeEnd) {
+        startNode = node;
+        startOff = Math.max(0, rng.start - nodeStart);
+      }
+      if (!endNode && rng.end <= nodeEnd) {
+        endNode = node;
+        endOff = Math.max(0, rng.end - nodeStart);
+        break;
+      }
+      cursor = nodeEnd;
+    }
+
+    if (!startNode || !endNode) return;
+    try {
+      const range = document.createRange();
+      range.setStart(startNode, startOff);
+      range.setEnd(endNode, endOff);
+      const mark = document.createElement("mark");
+      mark.id = markId;
+      mark.setAttribute("data-note-highlight", "1");
+      mark.className = "rounded bg-brand/25 px-[1px] text-ink ring-1 ring-brand/40";
+      range.surroundContents(mark);
+      mark.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch {
+      /* 跨节点复杂 DOM 时回退为关键词高亮 */
+    }
+    return () => {
+      root.querySelector(`#${markId}`)?.remove();
+    };
+  }, [renderBlocks, charHighlightRange?.start, charHighlightRange?.end]);
 
   function jumpToMatch(offset: number) {
     const root = contentRef.current;

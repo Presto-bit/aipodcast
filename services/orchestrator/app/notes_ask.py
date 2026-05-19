@@ -96,13 +96,20 @@ def _enrich_sources_with_chunks(sources: list[dict[str, Any]], retr_meta: list[d
         if not nid:
             continue
         ex = str(item.get("excerpt") or "").strip()
-        by_note[nid].append(
-            {
-                "chunkIndex": str(item.get("chunkIndex") or ""),
-                "score": str(item.get("score") or ""),
-                "excerpt": ex,
-            }
-        )
+        chunk_row: dict[str, Any] = {
+            "chunkIndex": str(item.get("chunkIndex") or ""),
+            "score": str(item.get("score") or ""),
+            "excerpt": ex,
+        }
+        try:
+            cs = int(item.get("charStart"))
+            ce = int(item.get("charEnd"))
+            if ce > cs >= 0:
+                chunk_row["charStart"] = cs
+                chunk_row["charEnd"] = ce
+        except (TypeError, ValueError):
+            pass
+        by_note[nid].append(chunk_row)
     out: list[dict[str, Any]] = []
     for s in sources:
         nid = str(s.get("noteId") or "").strip()
@@ -438,6 +445,11 @@ def _prepare_notes_ask_messages(
     hint = str(qa_plan.get("coverageHint") or "").strip()
     if hint:
         preamble += f"\n\n【覆盖率与本轮模式】{hint}（qaMode={qa_plan.get('qaMode')}）"
+    if qa_meta.get("lowConfidence") or qa_plan.get("lowConfidence"):
+        preamble += (
+            "\n\n【置信度】检索分数偏低或向量覆盖率不足：若材料未明确记载，"
+            "须直接说明「无法从已索引内容确认」，勿编造。"
+        )
     body_parts: list[str] = [preamble + context]
     if history_block:
         body_parts.append(history_block)

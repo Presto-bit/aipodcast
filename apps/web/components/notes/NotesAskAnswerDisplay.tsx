@@ -12,6 +12,8 @@ type Props = {
   sources?: NotesAskSource[];
   /** 联网检索条目，[w1] 外链与脚注 */
   webSources?: NotesAskWebSource[];
+  /** 在资料预览中高亮定位（charStart/charEnd 来自检索块） */
+  onOpenSourceInPreview?: (source: NotesAskSource, chunk?: { charStart?: number; charEnd?: number; excerpt?: string }) => void;
   className?: string;
 };
 
@@ -20,11 +22,13 @@ export { normalizeNotesAskAnswerForDisplay } from "../../lib/notesAskAnswerNorma
 function SourceExcerptModal({
   source,
   open,
-  onClose
+  onClose,
+  onOpenInPreview
 }: {
   source: NotesAskSource | null;
   open: boolean;
   onClose: () => void;
+  onOpenInPreview?: (source: NotesAskSource, chunk?: { charStart?: number; charEnd?: number; excerpt?: string }) => void;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -67,6 +71,23 @@ function SourceExcerptModal({
                     {c.score ? <span className="ml-2">score {c.score}</span> : null}
                   </p>
                   <p className="mt-1.5 whitespace-pre-wrap text-ink">{c.excerpt || "（无摘录）"}</p>
+                  {onOpenInPreview &&
+                  (typeof c.charStart === "number" || (c.excerpt && c.excerpt.length > 0)) ? (
+                    <button
+                      type="button"
+                      className="mt-2 rounded border border-brand/40 bg-brand/5 px-2 py-1 text-[11px] font-medium text-brand hover:bg-brand/10"
+                      onClick={() => {
+                        onOpenInPreview(source, {
+                          charStart: c.charStart,
+                          charEnd: c.charEnd,
+                          excerpt: c.excerpt
+                        });
+                        onClose();
+                      }}
+                    >
+                      在原文中定位
+                    </button>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -74,7 +95,24 @@ function SourceExcerptModal({
             <p className="text-muted">本条暂无向量检索摘录，请以正文角标对应资料中的参考资料全文为准。</p>
           )}
         </div>
-        <div className="border-t border-line/80 px-4 py-2.5 text-right">
+        <div className="border-t border-line/80 flex justify-end gap-2 px-4 py-2.5">
+          {onOpenInPreview && source ? (
+            <button
+              type="button"
+              className="rounded-md border border-brand/40 bg-brand/5 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/10"
+              onClick={() => {
+                const c0 = source.chunks?.[0];
+                onOpenInPreview(source, {
+                  charStart: c0?.charStart,
+                  charEnd: c0?.charEnd,
+                  excerpt: c0?.excerpt
+                });
+                onClose();
+              }}
+            >
+              打开资料预览
+            </button>
+          ) : null}
           <button
             type="button"
             className="rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
@@ -92,7 +130,13 @@ function SourceExcerptModal({
 /**
  * 对话回答区：GFM Markdown + 段落/列表/代码块等排版；可选将 [n] 等标为指向脚注的内链。
  */
-export function NotesAskAnswerDisplay({ text, sources, webSources, className }: Props) {
+export function NotesAskAnswerDisplay({
+  text,
+  sources,
+  webSources,
+  onOpenSourceInPreview,
+  className
+}: Props) {
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [webSourcesOpen, setWebSourcesOpen] = useState(false);
@@ -230,7 +274,12 @@ export function NotesAskAnswerDisplay({ text, sources, webSources, className }: 
         </aside>
       ) : null}
 
-      <SourceExcerptModal source={modalSource} open={modalSource != null} onClose={() => setModalSource(null)} />
+      <SourceExcerptModal
+        source={modalSource}
+        open={modalSource != null}
+        onClose={() => setModalSource(null)}
+        onOpenInPreview={onOpenSourceInPreview}
+      />
     </div>
   );
 }

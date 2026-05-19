@@ -71,6 +71,45 @@ def split_text_into_chunks(
     return _split_plain_paragraphs(raw, mc, ov)
 
 
+def _is_table_block(meta: dict[str, Any], text: str) -> bool:
+    bt = str(meta.get("block_type") or "").lower()
+    if bt in ("table", "table_row"):
+        return True
+    t = (text or "").strip()
+    return t.startswith("|") and "|" in t[1:]
+
+
+def _is_list_block(meta: dict[str, Any], text: str) -> bool:
+    bt = str(meta.get("block_type") or "").lower()
+    if bt in ("list", "list_item"):
+        return True
+    return bool(re.match(r"^(\- |\* |\d+\.\s+)", (text or "").strip()))
+
+
+def _split_table_text(text: str, *, max_chunk_chars: int) -> list[str]:
+    """表格按行切分，避免在行中间截断。"""
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    if not lines:
+        return []
+    if sum(len(ln) + 1 for ln in lines) <= max_chunk_chars * 2:
+        return ["\n".join(lines)]
+    pieces: list[str] = []
+    batch: list[str] = []
+    used = 0
+    for ln in lines:
+        extra = len(ln) + (1 if batch else 0)
+        if batch and used + extra > max_chunk_chars:
+            pieces.append("\n".join(batch))
+            batch = [ln]
+            used = len(ln)
+        else:
+            batch.append(ln)
+            used += extra
+    if batch:
+        pieces.append("\n".join(batch))
+    return pieces
+
+
 def split_segments_into_chunks_with_meta(
     segments: list[dict[str, Any]],
     *,
@@ -78,23 +117,79 @@ def split_segments_into_chunks_with_meta(
     overlap: int | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     """
-    将结构化分段再切成向量块；每块继承该段的 meta（heading_path、表格类型等）。
+    将结构化分段再切成向量块；表格尽量整表/按行、列表按项合并，继承 meta。
     """
     out: list[tuple[str, dict[str, Any]]] = []
     if not segments:
         return out
-    for seg in segments:
+    mc = max(400, int(max_chunk_chars or int(os.getenv("RAG_CHUNK_CHARS", str(_DEFAULT_CHUNK)))))
+    ov = max(0, min(mc // 4, int(overlap or int(os.getenv("RAG_CHUNK_OVERLAP", str(_DEFAULT_OVERLAP))))))
+
+    i = 0
+    while i < len(segments):
+        seg = segments[i]
         if not isinstance(seg, dict):
+            i += 1
             continue
         text = str(seg.get("text") or "").strip()
         raw_meta = seg.get("meta")
         meta: dict[str, Any] = dict(raw_meta) if isinstance(raw_meta, dict) else {}
         if not text:
+            i += 1
             continue
-        for piece in split_text_into_chunks(text, max_chunk_chars=max_chunk_chars, overlap=overlap):
+
+        if _is_table_block(meta, text):
+            table_id = str(meta.get("table_id") or f"t{i}")
+            j = i + 1
+            merged_lines = [text]
+            while j < len(segments):
+                nxt = segments[j]
+                if not isinstance(nxt, dict):
+                    break
+                nt = str(nxt.get("text") or "").strip()
+                nm = nxt.get("meta") if isinstance(nxt.get("meta"), dict) else {}
+                if not _is_table_block(nm, nt):
+                    break
+                merged_lines.append(nt)
+                j += 1
+            blob = "\n".join(merged_lines)
+            for piece in _split_table_text(blob, max_chunk_chars=mc):
+                pt = piece.strip()
+                if pt:
+                    m = {**meta, "block_type": "table", "table_id": table_id}
+                    out.append((pt, m))
+            i = j
+            continue
+
+        if _is_list_block(meta, text):
+            items: list[str] = [text]
+            j = i + 1
+            while j < len(segments):
+                nxt = segments[j]
+                if not isinstance(nxt, dict):
+                    break
+                nt = str(nxt.get("text") or "").strip()
+                nm = nxt.get("meta") if isinstance(nxt.get("meta"), dict) else {}
+                if not _is_list_block(nm, nt):
+                    break
+                items.append(nt)
+                j += 1
+            blob = "\n".join(items)
+            if len(blob) <= mc:
+                out.append((blob, {**meta, "block_type": "list"}))
+            else:
+                for piece in split_text_into_chunks(blob, max_chunk_chars=mc, overlap=ov):
+                    pt = (piece or "").strip()
+                    if pt:
+                        out.append((pt, {**meta, "block_type": "list"}))
+            i = j
+            continue
+
+        for piece in split_text_into_chunks(text, max_chunk_chars=mc, overlap=ov):
             pt = (piece or "").strip()
             if pt:
                 out.append((pt, meta))
+        i += 1
     return out
 
 

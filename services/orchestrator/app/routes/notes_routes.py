@@ -1900,6 +1900,35 @@ def reindex_note_api(note_id: str, request: Request):
     return {"success": True, "noteId": note_id, "status": "reindex_queued"}
 
 
+@router.get("/notes/{note_id}/index_progress")
+def note_index_progress_api(note_id: str, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    row = get_note_by_id(note_id, user_ref=user_ref)
+    if not row:
+        raise HTTPException(status_code=404, detail="note_not_found")
+    from ..note_shards import shard_index_progress
+
+    prog = shard_index_progress(note_id)
+    cov = note_coverage_stats(note_id, row)
+    return {"success": True, "noteId": note_id, **prog, **cov}
+
+
+@router.post("/notes/{note_id}/studio/{task}")
+def note_studio_api(note_id: str, task: str, request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    row = get_note_by_id(note_id, user_ref=user_ref)
+    if not row:
+        raise HTTPException(status_code=404, detail="note_not_found")
+    from ..note_studio import run_note_studio
+
+    api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
+    out = run_note_studio(note_id, task, user_ref=user_ref, api_key=api_key)
+    if not out.get("ok"):
+        code = 400 if out.get("error") in ("no_summaries", "invalid_task") else 500
+        raise HTTPException(status_code=code, detail=str(out.get("error") or "studio_failed"))
+    return {"success": True, "noteId": note_id, **out}
+
+
 @router.get("/notebooks")
 def list_notebooks_api(request: Request):
     user_ref = _current_user_ref_or_401(request)
