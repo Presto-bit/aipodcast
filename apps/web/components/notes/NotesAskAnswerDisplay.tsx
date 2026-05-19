@@ -3,12 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { NotesAskSource, NotesAskWebSource } from "../../lib/notesAskCitation";
-import { extractCitedSourceIndexes } from "../../lib/notesAskCitation";
 import NotesAskAnswerMarkdownBody from "./NotesAskAnswerMarkdownBody";
 
 type Props = {
   text: string;
-  /** 与编排器 done.sources 一致；有则 [n] 可点击并展示脚注。 */
+  /** 与编排器 done.sources 一致；有则正文 [n] 可点击查看摘录。 */
   sources?: NotesAskSource[];
   /** 联网检索条目，[w1] 外链与脚注 */
   webSources?: NotesAskWebSource[];
@@ -128,7 +127,7 @@ function SourceExcerptModal({
 }
 
 /**
- * 对话回答区：GFM Markdown + 段落/列表/代码块等排版；可选将 [n] 等标为指向脚注的内链。
+ * 对话回答区：GFM Markdown + 段落/列表/代码块等排版；可选将 [n] 标为可点击查看摘录的内链。
  */
 export function NotesAskAnswerDisplay({
   text,
@@ -138,19 +137,12 @@ export function NotesAskAnswerDisplay({
   className
 }: Props) {
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [webSourcesOpen, setWebSourcesOpen] = useState(false);
-  const [onlyCitedSources, setOnlyCitedSources] = useState(false);
 
   const sortedSources = useMemo(() => {
     if (!sources?.length) return [];
     return [...sources].sort((a, b) => Number(a.index) - Number(b.index));
   }, [sources]);
-  const citedSourceIndexes = useMemo(() => extractCitedSourceIndexes(text), [text]);
-  const visibleSources = useMemo(() => {
-    if (!onlyCitedSources) return sortedSources;
-    return sortedSources.filter((s) => citedSourceIndexes.has(s.index));
-  }, [sortedSources, citedSourceIndexes, onlyCitedSources]);
 
   const sortedWebSources = useMemo(() => {
     if (!webSources?.length) return [];
@@ -174,65 +166,6 @@ export function NotesAskAnswerDisplay({
           if (src) setModalSource(src);
         }}
       />
-
-      {sortedSources.length > 0 ? (
-        <aside
-          className="mt-1 border-t border-line/70 pt-3 text-xs text-ink"
-          aria-label="引用参考资料"
-        >
-          <button
-            type="button"
-            className="flex w-full items-center justify-between gap-2 rounded-lg py-0.5 text-left text-ink hover:bg-fill/50"
-            onClick={() => setSourcesOpen((o) => !o)}
-            aria-expanded={sourcesOpen}
-            aria-controls="notes-ask-citation-footnotes"
-          >
-            <span className="font-semibold">
-              引用参考资料（资料库）
-              <span className="ml-1.5 font-normal text-muted">· {visibleSources.length} 条</span>
-            </span>
-            <span className="shrink-0 text-[11px] font-medium text-muted">{sourcesOpen ? "收起" : "展开"}</span>
-          </button>
-          {sourcesOpen ? (
-          <div id="notes-ask-citation-footnotes" className="mt-2">
-            <p className="text-[11px] text-muted">
-              点击正文中的 [n] 可查看对应检索摘录（弹窗）；关键处若出现「」短引文，可与下方脚注对照。与网页摘要冲突时以资料库为准。
-            </p>
-            {citedSourceIndexes.size > 0 ? (
-              <label className="mt-2 inline-flex items-center gap-2 text-[11px] text-muted">
-                <input
-                  type="checkbox"
-                  className="h-3.5 w-3.5 rounded border-line"
-                  checked={onlyCitedSources}
-                  onChange={(e) => setOnlyCitedSources(e.target.checked)}
-                />
-                仅显示正文已引用的参考资料
-              </label>
-            ) : null}
-            <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-snug">
-              {visibleSources.map((s) => (
-                <li key={`${s.noteId}-${s.index}`} id={`cite-${s.index}`} className="scroll-mt-20">
-                  <span className="font-medium text-ink">{s.title}</span>
-                  <span className="ml-1.5 font-mono text-[10px] text-muted" title={s.noteId}>
-                    {s.noteId.slice(0, 8)}…
-                  </span>
-                  <button
-                    type="button"
-                    className="ml-2 rounded border border-line/90 bg-fill/60 px-1.5 py-px text-[11px] font-medium text-ink hover:bg-fill"
-                    onClick={() => setModalSource(s)}
-                  >
-                    查看摘录
-                  </button>
-                </li>
-              ))}
-            </ol>
-            {onlyCitedSources && visibleSources.length === 0 ? (
-              <p className="mt-2 text-[11px] text-muted">正文暂无 [n] 引用角标，已自动隐藏参考资料列表。</p>
-            ) : null}
-          </div>
-          ) : null}
-        </aside>
-      ) : null}
 
       {sortedWebSources.length > 0 ? (
         <aside
