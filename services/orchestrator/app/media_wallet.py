@@ -150,6 +150,28 @@ def estimate_spoken_minutes_podcast_enqueue(payload: dict[str, Any]) -> float:
     return max(0.05, float(total_chars) / cpm)
 
 
+def preview_wallet_cents_for_asr_transcribe(phone: str, audio_seconds: float) -> int:
+    """不修改数据库：剪辑转写入队前，超出体验包转写分钟后的预估钱包扣费（分）。"""
+    if not media_wallet_billing_enabled():
+        return 0
+    p = (phone or "").strip()
+    try:
+        sec = float(audio_seconds or 0)
+    except (TypeError, ValueError):
+        sec = 0.0
+    if not p or sec <= 1e-9:
+        return 0
+    from . import models
+
+    billed_min = sec / 60.0
+    ex_m = float(models.experience_asr_minutes_for_phone(p) or 0.0)
+    wallet_min = max(0.0, billed_min - ex_m)
+    rest_sec = wallet_min * 60.0
+    if rest_sec <= 1e-9:
+        return 0
+    return int(wallet_cents_for_asr_audio_seconds(rest_sec))
+
+
 def preview_wallet_cents_for_media_job(phone: str, tier: str | None, est_minutes: float) -> int:
     """不修改数据库：超出体验包语音分钟后，预估钱包扣费（分）；tier 已废弃保留参数。"""
     _ = tier

@@ -12,6 +12,7 @@ from psycopg2.errors import DeadlockDetected
 
 from .db import get_conn, get_cursor
 from .subscription_manifest import (
+    EXPERIENCE_NEW_USER_ASR_MINUTES,
     EXPERIENCE_NEW_USER_TEXT_CHARS,
     EXPERIENCE_NEW_USER_VOICE_MINUTES,
     MONTHLY_MINUTES_PRODUCT_BY_TIER,
@@ -6119,10 +6120,18 @@ def ensure_user_experience_balance_schema() -> None:
                   user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                   phone TEXT NOT NULL DEFAULT '',
                   voice_minutes_remaining NUMERIC(14,4) NOT NULL DEFAULT 0 CHECK (voice_minutes_remaining >= 0),
+                  asr_minutes_remaining NUMERIC(14,4) NOT NULL DEFAULT 0 CHECK (asr_minutes_remaining >= 0),
                   text_chars_remaining BIGINT NOT NULL DEFAULT 0 CHECK (text_chars_remaining >= 0),
                   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE user_experience_balance
+                ADD COLUMN IF NOT EXISTS asr_minutes_remaining NUMERIC(14,4) NOT NULL DEFAULT 0
+                CHECK (asr_minutes_remaining >= 0)
                 """
             )
             conn.commit()
@@ -6170,6 +6179,27 @@ def experience_text_chars_for_phone(phone: str) -> int:
         return 0
 
 
+def experience_asr_minutes_for_phone(phone: str) -> float:
+    p = (phone or "").strip()
+    if not p:
+        return 0.0
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return 0.0
+                cur.execute(
+                    "SELECT asr_minutes_remaining FROM user_experience_balance WHERE user_id = %s::uuid LIMIT 1",
+                    (uid,),
+                )
+                row = cur.fetchone()
+                return float(row.get("asr_minutes_remaining") or 0) if row else 0.0
+    except Exception:
+        return 0.0
+
+
 def experience_pack_row_exists_for_phone(phone: str) -> bool:
     """是否已有体验包余额行（注册赠送写入后即为 True；用于与「从未开通」区分）。"""
     p = (phone or "").strip()
@@ -6208,11 +6238,19 @@ def experience_seed_for_new_user_after_registration(principal: str) -> None:
                 ph = str(prow.get("phone") or pr).strip()
                 cur.execute(
                     """
-                    INSERT INTO user_experience_balance (user_id, phone, voice_minutes_remaining, text_chars_remaining)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO user_experience_balance (
+                      user_id, phone, voice_minutes_remaining, asr_minutes_remaining, text_chars_remaining
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (user_id) DO NOTHING
                     """,
-                    (uid, ph, Decimal(str(EXPERIENCE_NEW_USER_VOICE_MINUTES)), int(EXPERIENCE_NEW_USER_TEXT_CHARS)),
+                    (
+                        uid,
+                        ph,
+                        Decimal(str(EXPERIENCE_NEW_USER_VOICE_MINUTES)),
+                        Decimal(str(EXPERIENCE_NEW_USER_ASR_MINUTES)),
+                        int(EXPERIENCE_NEW_USER_TEXT_CHARS),
+                    ),
                 )
             conn.commit()
     except Exception:
@@ -6275,6 +6313,35 @@ def experience_restore_text_chars(phone: str, chars: int) -> None:
             conn.commit()
     except Exception:
         logger.exception("experience_restore_text_chars failed phone=%s", p[:4] if p else "")
+
+
+def experience_restore_asr_minutes(phone: str, minutes: float) -> None:
+    amt = float(minutes or 0)
+    if amt <= 1e-12:
+        return
+    p = (phone or "").strip()
+    if not p:
+        return
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                uid = _ensure_user_id_for_phone_conn(conn, p)
+                if not uid:
+                    return
+                cur.execute(
+                    """
+                    UPDATE user_experience_balance
+                    SET asr_minutes_remaining = asr_minutes_remaining + %s,
+                        phone = %s,
+                        updated_at = NOW()
+                    WHERE user_id = %s::uuid
+                    """,
+                    (Decimal(str(round(amt, 6))), p, uid),
+                )
+            conn.commit()
+    except Exception:
+        logger.exception("experience_restore_asr_minutes failed phone=%s", p[:4] if p else "")
 
 
 def script_text_billing_try_debit(phone: str, char_count: int) -> tuple[bool, dict[str, Any]]:
@@ -6373,10 +6440,14 @@ def script_text_billing_refund(phone: str, meta: dict[str, Any]) -> None:
 
 
 def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[str, Any]]:
-    """剪辑 ASR 成功后：按音频时长从钱包扣费（无体验包抵扣）。"""
+    """剪辑 ASR 成功后：先扣体验包转写分钟，再按超出部分从钱包扣费。"""
     from .media_wallet import media_wallet_billing_enabled, wallet_cents_for_asr_audio_seconds
 
-    base: dict[str, Any] = {"wallet_cents": 0, "billed_seconds": 0.0}
+    base: dict[str, Any] = {
+        "wallet_cents": 0,
+        "billed_seconds": 0.0,
+        "experience_asr_minutes_consumed": 0.0,
+    }
     if not media_wallet_billing_enabled():
         return True, dict(base)
     p = (phone or "").strip()
@@ -6386,9 +6457,8 @@ def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[
         sec = 0.0
     if not p or sec <= 1e-9:
         return True, dict(base)
-    cents = int(wallet_cents_for_asr_audio_seconds(sec))
-    if cents <= 0:
-        return True, {**base, "billed_seconds": float(sec)}
+    billed_min = sec / 60.0
+    ensure_user_experience_balance_schema()
     ensure_user_wallet_schema()
     try:
         with get_conn() as conn:
@@ -6398,44 +6468,75 @@ def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[
                     return False, {**base, "reason": "no_user", "message": "未找到账户"}
                 cur.execute(
                     """
-                    UPDATE user_wallet_balance
-                    SET balance_cents = balance_cents - %s,
-                        phone = %s,
-                        updated_at = NOW()
-                    WHERE user_id = %s::uuid AND balance_cents >= %s
-                    RETURNING balance_cents
+                    SELECT asr_minutes_remaining
+                    FROM user_experience_balance
+                    WHERE user_id = %s::uuid
+                    FOR UPDATE
                     """,
-                    (cents, p, uid, cents),
+                    (uid,),
                 )
-                rw = cur.fetchone()
-                if not rw:
-                    conn.rollback()
-                    return False, {
-                        **base,
-                        "wallet_cents": cents,
-                        "billed_seconds": float(sec),
-                        "reason": "insufficient_wallet",
-                        "message": (
-                            f"转写完成后结算失败：约需 ¥{cents / 100:.2f}（{sec:.1f}s 音频），"
-                            "余额不足，请充值后联系客服核对本次转写扣费。"
-                        ),
-                    }
-                bal_after = int(rw.get("balance_cents") or 0)
-                _insert_user_wallet_ledger(
-                    cur,
-                    user_id=str(uid),
-                    phone=p,
-                    delta_cents=-cents,
-                    balance_after_cents=bal_after,
-                    entry_type="clip_asr_billing",
-                    meta={"billed_seconds": float(sec), "wallet_cents": cents},
-                )
-                conn.commit()
-                return True, {
-                    "wallet_cents": cents,
+                row = cur.fetchone()
+                ex_asr = float(row.get("asr_minutes_remaining") or 0) if row else 0.0
+                take_ex = min(billed_min, max(0.0, ex_asr))
+                wallet_min = max(0.0, billed_min - take_ex)
+                rest_sec = wallet_min * 60.0
+                cents = int(wallet_cents_for_asr_audio_seconds(rest_sec)) if rest_sec > 1e-9 else 0
+                new_asr = max(0.0, ex_asr - take_ex)
+                if row:
+                    cur.execute(
+                        """
+                        UPDATE user_experience_balance
+                        SET asr_minutes_remaining = %s, phone = %s, updated_at = NOW()
+                        WHERE user_id = %s::uuid
+                        """,
+                        (Decimal(str(round(new_asr, 6))), p, uid),
+                    )
+                meta: dict[str, Any] = {
+                    **base,
                     "billed_seconds": float(sec),
-                    "balance_cents_after": bal_after,
+                    "experience_asr_minutes_consumed": float(take_ex),
+                    "wallet_cents": cents,
                 }
+                if cents > 0:
+                    cur.execute(
+                        """
+                        UPDATE user_wallet_balance
+                        SET balance_cents = balance_cents - %s,
+                            phone = %s,
+                            updated_at = NOW()
+                        WHERE user_id = %s::uuid AND balance_cents >= %s
+                        RETURNING balance_cents
+                        """,
+                        (cents, p, uid, cents),
+                    )
+                    rw = cur.fetchone()
+                    if not rw:
+                        conn.rollback()
+                        return False, {
+                            **meta,
+                            "reason": "insufficient_wallet",
+                            "message": (
+                                f"转写超出体验包约 {wallet_min:.2f} 分钟，需从钱包扣约 ¥{cents / 100:.2f}，"
+                                "余额不足，请充值后联系客服核对本次转写扣费。"
+                            ),
+                        }
+                    bal_after = int(rw.get("balance_cents") or 0)
+                    _insert_user_wallet_ledger(
+                        cur,
+                        user_id=str(uid),
+                        phone=p,
+                        delta_cents=-cents,
+                        balance_after_cents=bal_after,
+                        entry_type="clip_asr_billing",
+                        meta={
+                            "billed_seconds": float(sec),
+                            "wallet_cents": cents,
+                            "experience_asr_minutes_consumed": float(take_ex),
+                        },
+                    )
+                    meta["balance_cents_after"] = bal_after
+                conn.commit()
+                return True, meta
     except Exception as exc:
         logger.exception("asr_billing_try_debit failed")
         return False, {**base, "reason": "error", "message": str(exc)[:300]}

@@ -16,7 +16,11 @@ from ..security import verify_internal_signature
 from .. import auth_bridge
 from .. import models
 from ..plan_catalog import build_subscription_plans_response, is_valid_wallet_topup_amount_cents
-from ..subscription_manifest import EXPERIENCE_NEW_USER_TEXT_CHARS, EXPERIENCE_NEW_USER_VOICE_MINUTES
+from ..subscription_manifest import (
+    EXPERIENCE_NEW_USER_ASR_MINUTES,
+    EXPERIENCE_NEW_USER_TEXT_CHARS,
+    EXPERIENCE_NEW_USER_VOICE_MINUTES,
+)
 from ..alipay_page_pay import (
     AlipayPagePayConfig,
     alipay_total_amount_yuan_to_cents,
@@ -139,8 +143,10 @@ def subscription_me_api(request: Request):
             "wallet_balance_cents": 0,
             "experience": {
                 "voice_minutes_remaining": 0.0,
+                "asr_minutes_remaining": 0.0,
                 "text_chars_remaining": 0,
                 "voice_minutes_total": None,
+                "asr_minutes_total": None,
                 "text_chars_total": None,
             },
             "recharge_records": [],
@@ -173,13 +179,16 @@ def subscription_me_api(request: Request):
     has_experience_pack = models.experience_pack_row_exists_for_phone(phone)
     experience_body = {
         "voice_minutes_remaining": round(float(models.experience_voice_minutes_for_phone(phone) or 0), 4),
+        "asr_minutes_remaining": round(float(models.experience_asr_minutes_for_phone(phone) or 0), 4),
         "text_chars_remaining": int(models.experience_text_chars_for_phone(phone) or 0),
     }
     if has_experience_pack:
         experience_body["voice_minutes_total"] = float(EXPERIENCE_NEW_USER_VOICE_MINUTES)
+        experience_body["asr_minutes_total"] = float(EXPERIENCE_NEW_USER_ASR_MINUTES)
         experience_body["text_chars_total"] = int(EXPERIENCE_NEW_USER_TEXT_CHARS)
     else:
         experience_body["voice_minutes_total"] = None
+        experience_body["asr_minutes_total"] = None
         experience_body["text_chars_total"] = None
     return {
         "success": True,

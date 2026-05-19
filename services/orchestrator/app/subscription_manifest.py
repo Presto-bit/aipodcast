@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-SUBSCRIPTION_MANIFEST_VERSION = "1.3.3"
+SUBSCRIPTION_MANIFEST_VERSION = "1.3.4"
 
 # ---------------------------------------------------------------------------
 # 档位
@@ -131,4 +131,5 @@ PRODUCT_ENTITLEMENTS_TIER = "max"
 
 # 新注册用户一次性体验包（仅注册成功时写入；老用户无行则视为 0）
 EXPERIENCE_NEW_USER_VOICE_MINUTES = 20.0
+EXPERIENCE_NEW_USER_ASR_MINUTES = 20.0
 EXPERIENCE_NEW_USER_TEXT_CHARS = 10_000

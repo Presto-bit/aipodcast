@@ -78,7 +78,7 @@ from ..clip_asr_billing import estimate_clip_transcribe_billable_seconds
 from ..media_wallet import (
     asr_wallet_yuan_per_minute_for_display,
     media_wallet_billing_enabled,
-    wallet_cents_for_asr_audio_seconds,
+    preview_wallet_cents_for_asr_transcribe,
 )
 from ..models import phone_for_job_created_by, resolved_user_uuid_string, wallet_balance_cents_for_phone
 from ..clip_silence_detect import detect_silence_segments_from_file
@@ -1703,7 +1703,7 @@ async def clip_start_transcribe(project_id: str, request: Request):
                 status_code=503,
                 detail=f"无法估算转写计费时长（请确认音频可读），请稍后重试：{exc}",
             ) from exc
-        cents_need = wallet_cents_for_asr_audio_seconds(sec_est)
+        cents_need = preview_wallet_cents_for_asr_transcribe(phone_tb, sec_est)
         if cents_need > 0:
             bal_tb = wallet_balance_cents_for_phone(phone_tb)
             if bal_tb < cents_need:

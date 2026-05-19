@@ -9,7 +9,7 @@ const FAQ_ITEMS: { q: string; a: ReactNode }[] = [
   },
   {
     q: "体验包和余额有什么区别？",
-    a: "新用户注册会获赠一次性体验包（语音分钟与文本字数）。用尽后，创作任务按公示单价从账户余额扣费；余额需自行充值。"
+    a: "新用户注册会获赠一次性体验包（语音分钟、音频转写分钟与文本字数）。用尽后，创作任务按公示单价从账户余额扣费；余额需自行充值。"
   },
   {
     q: "扣费顺序是怎样的？",
@@ -21,6 +21,9 @@ const FAQ_ITEMS: { q: string; a: ReactNode }[] = [
         </li>
         <li>
           <span className="font-medium text-ink">脚本文本 / 大模型</span>：先扣体验包「文本字数」，超出部分再从钱包扣。
+        </li>
+        <li>
+          <span className="font-medium text-ink">剪辑转写（ASR）</span>：先扣体验包「转写分钟」，超出部分再按输入音频时长从钱包扣。
         </li>
         <li>
           <span className="font-medium text-ink">现金钱包</span>：用于超出体验包后的按量计费；音色克隆等按次能力以任务提交时说明为准。

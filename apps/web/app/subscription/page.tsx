@@ -176,9 +176,11 @@ export default function SubscriptionPage() {
   const [plansLoadError, setPlansLoadError] = useState("");
   const [walletBalanceCents, setWalletBalanceCents] = useState<number | null>(null);
   const [experienceVoiceMin, setExperienceVoiceMin] = useState<number | null>(null);
+  const [experienceAsrMin, setExperienceAsrMin] = useState<number | null>(null);
   const [experienceTextChars, setExperienceTextChars] = useState<number | null>(null);
   const [rechargeModalOpen, setRechargeModalOpen] = useState(false);
   const [experienceVoiceTotal, setExperienceVoiceTotal] = useState<number | null>(null);
+  const [experienceAsrTotal, setExperienceAsrTotal] = useState<number | null>(null);
   const [experienceTextTotal, setExperienceTextTotal] = useState<number | null>(null);
   const [plansLoadDiag, setPlansLoadDiag] = useState<PlansLoadDiag | null>(null);
   const [rechargePage, setRechargePage] = useState(1);
@@ -387,8 +389,10 @@ export default function SubscriptionPage() {
         wallet_balance_cents?: number;
         experience?: {
           voice_minutes_remaining?: number;
+          asr_minutes_remaining?: number;
           text_chars_remaining?: number;
           voice_minutes_total?: number | null;
+          asr_minutes_total?: number | null;
           text_chars_total?: number | null;
         };
       };
@@ -432,14 +436,19 @@ export default function SubscriptionPage() {
         if (ex && typeof ex === "object") {
           if (typeof ex.voice_minutes_remaining === "number") setExperienceVoiceMin(ex.voice_minutes_remaining);
           else setExperienceVoiceMin(null);
+          if (typeof ex.asr_minutes_remaining === "number") setExperienceAsrMin(ex.asr_minutes_remaining);
+          else setExperienceAsrMin(null);
           if (typeof ex.text_chars_remaining === "number") setExperienceTextChars(ex.text_chars_remaining);
           else setExperienceTextChars(null);
           setExperienceVoiceTotal(typeof ex.voice_minutes_total === "number" ? ex.voice_minutes_total : null);
+          setExperienceAsrTotal(typeof ex.asr_minutes_total === "number" ? ex.asr_minutes_total : null);
           setExperienceTextTotal(typeof ex.text_chars_total === "number" ? ex.text_chars_total : null);
         } else {
           setExperienceVoiceMin(null);
+          setExperienceAsrMin(null);
           setExperienceTextChars(null);
           setExperienceVoiceTotal(null);
+          setExperienceAsrTotal(null);
           setExperienceTextTotal(null);
         }
       } else {
@@ -1075,6 +1084,7 @@ export default function SubscriptionPage() {
                 )}
               </p>
               {(experienceVoiceTotal != null && experienceVoiceMin != null) ||
+              (experienceAsrTotal != null && experienceAsrMin != null) ||
               (experienceTextTotal != null && experienceTextChars != null) ? (
                 <p className="mt-2 text-xs text-ink">
                   <span className="font-medium text-muted">体验包（已用 / 总量）</span>
@@ -1083,17 +1093,25 @@ export default function SubscriptionPage() {
                       语音 {experienceVoiceUsedTotalLabel(experienceVoiceMin, experienceVoiceTotal)}
                     </span>
                   ) : null}
+                  {experienceAsrTotal != null && experienceAsrMin != null ? (
+                    <span className="ml-2 font-mono">
+                      转写 {experienceVoiceUsedTotalLabel(experienceAsrMin, experienceAsrTotal)}
+                    </span>
+                  ) : null}
                   {experienceTextTotal != null && experienceTextChars != null ? (
                     <span className="ml-2 font-mono">
                       文本 {experienceTextUsedTotalLabel(experienceTextChars, experienceTextTotal)}
                     </span>
                   ) : null}
                 </p>
-              ) : experienceVoiceMin != null || experienceTextChars != null ? (
+              ) : experienceVoiceMin != null || experienceAsrMin != null || experienceTextChars != null ? (
                 <p className="mt-2 text-xs text-ink">
                   <span className="font-medium text-muted">体验包剩余</span>
                   {experienceVoiceMin != null ? (
                     <span className="ml-2 font-mono">语音 {experienceVoiceMin.toFixed(2)} 分钟</span>
+                  ) : null}
+                  {experienceAsrMin != null ? (
+                    <span className="ml-2 font-mono">转写 {experienceAsrMin.toFixed(2)} 分钟</span>
                   ) : null}
                   {experienceTextChars != null ? (
                     <span className="ml-2 font-mono">文本 {experienceTextChars.toLocaleString()} 字</span>

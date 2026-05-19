@@ -62,7 +62,7 @@ export default function PricingReferencePage() {
         </table>
       </section>
       <p className="mt-4 text-xs leading-relaxed text-muted">
-        体验包（新用户赠送的语音分钟与文本字数）用尽后，将按上表从账户余额扣费。充值与流水请在「余额与账单」页查看。
+        体验包（新用户赠送的语音分钟、音频转写分钟与文本字数）用尽后，将按上表从账户余额扣费。充值与流水请在「余额与账单」页查看。
       </p>
     </main>
   );

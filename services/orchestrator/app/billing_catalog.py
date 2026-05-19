@@ -11,6 +11,7 @@ from typing import Any
 
 from .media_wallet import asr_wallet_yuan_per_minute_for_display
 from .subscription_manifest import (
+    EXPERIENCE_NEW_USER_ASR_MINUTES,
     EXPERIENCE_NEW_USER_TEXT_CHARS,
     EXPERIENCE_NEW_USER_VOICE_MINUTES,
     PAYG_100_CENTS,
@@ -48,8 +49,9 @@ def _wallet_usage_reference() -> dict[str, Any]:
         "text_yuan_per_10k_chars": text_yuan_per_10k_chars,
         "voice_clone_payg_cents": int(VOICE_CLONE_PAYG_CENTS),
         "experience_voice_minutes_new_user": float(EXPERIENCE_NEW_USER_VOICE_MINUTES),
+        "experience_asr_minutes_new_user": float(EXPERIENCE_NEW_USER_ASR_MINUTES),
         "experience_text_chars_new_user": int(EXPERIENCE_NEW_USER_TEXT_CHARS),
-        "disclaimer_zh": "新注册用户获赠一次性体验包（语音分钟与文本字数）；用尽后按上表从余额扣费。",
+        "disclaimer_zh": "新注册用户获赠一次性体验包（语音分钟、音频转写分钟与文本字数）；用尽后按上表从余额扣费。",
     }
 
 

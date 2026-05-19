@@ -17,6 +17,8 @@ export type WalletUsageReference = {
   voice_clone_payg_cents?: number;
   /** 新用户语音体验包总量（分钟），与编排器 manifest 一致 */
   experience_voice_minutes_new_user?: number;
+  /** 新用户音频转写体验包总量（分钟） */
+  experience_asr_minutes_new_user?: number;
   /** 新用户文本体验包总量（字） */
   experience_text_chars_new_user?: number;
   disclaimer_zh?: string;
