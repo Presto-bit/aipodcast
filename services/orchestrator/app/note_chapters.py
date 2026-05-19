@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .db import get_conn, get_cursor
+from .notes_ask_routing import normalize_route_query, score_title_against_query
 from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
 
 logger = logging.getLogger(__name__)
@@ -401,32 +402,28 @@ def chapter_route_min_score() -> float:
 
 
 def _chapter_scores_from_query(query: str, chapters: list[dict[str, Any]]) -> list[tuple[float, dict[str, Any]]]:
-    q = (query or "").strip().lower()
+    q_raw = (query or "").strip()
+    q = normalize_route_query(q_raw).lower()
     if not q or not chapters:
         return []
     scored: list[tuple[float, dict[str, Any]]] = []
-    rel = relative_chapter_intent(query)
+    rel = relative_chapter_intent(q_raw)
     if rel == "last":
         scored.append((0.95, chapters[-1]))
     elif rel == "first":
         scored.append((0.95, chapters[0]))
-    m = _CHAPTER_QUERY_RE.search(query or "")
+    m = _CHAPTER_QUERY_RE.search(q_raw)
     q_num = m.group(1) if m else ""
     for ch in chapters:
         title = str(ch.get("title") or "")
-        tl = title.lower()
         score = 0.0
         if q_num and q_num in title:
             score += 0.85
-        if tl and tl in q:
-            score += 0.7
-        for token in re.findall(r"[\u4e00-\u9fff]{2,8}", q):
-            if token in title:
-                score += 0.25
-        summary = str(ch.get("summary_text") or "").lower()
-        if summary:
-            hits = sum(1 for t in re.findall(r"[\u4e00-\u9fff]{2,}", q) if t in summary)
-            score += min(0.5, hits * 0.12)
+        score += score_title_against_query(
+            title,
+            q_raw,
+            summary=str(ch.get("summary_text") or ""),
+        )
         if score > 0:
             scored.append((score, ch))
     scored.sort(key=lambda x: -x[0])

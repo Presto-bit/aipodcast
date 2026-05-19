@@ -48,6 +48,7 @@ from .note_long_doc import (
     is_very_long_doc,
     proactive_on_demand_enabled,
 )
+from .notes_ask_routing import should_keep_history_route_pin
 from .note_rag_profile import query_suggests_table
 from .notes_ask_style import (
     classify_answer_type,
@@ -338,11 +339,15 @@ def resolve_notes_ask_plan(
         qa_mode = "long_context_direct"
         grounding = "long_context"
 
-    routed_shards = route_shards_for_notes(
+    fresh_routed_shards = route_shards_for_notes(
         note_ids=ordered, query=question, limit=notes_ask_top_shards()
     )
     follow_shards = _active_shards_from_history(chat_history)
-    if follow_shards and not _SHARD_QUERY_PART_RE.search(question or ""):
+    if (
+        follow_shards
+        and not _SHARD_QUERY_PART_RE.search(question or "")
+        and should_keep_history_route_pin(question, follow_shards, fresh_routed_shards)
+    ):
         routed_shards = [
             {
                 "noteId": c["noteId"],
@@ -352,8 +357,10 @@ def resolve_notes_ask_plan(
             }
             for c in follow_shards
         ]
+    else:
+        routed_shards = fresh_routed_shards
 
-    routed_chapters = route_chapters_for_notes(
+    fresh_routed_chapters = route_chapters_for_notes(
         note_ids=ordered, query=question, bodies_by_note=bodies, limit=3
     )
     cross_chapter = False
@@ -364,10 +371,16 @@ def resolve_notes_ask_plan(
     ):
         cmp_routed = route_chapters_for_compare(ordered[0], question, limit=2)
         if len(cmp_routed) >= 2:
-            routed_chapters = cmp_routed
+            fresh_routed_chapters = cmp_routed
             cross_chapter = True
+    routed_chapters = fresh_routed_chapters
     follow_chapters = _active_chapters_from_history(chat_history)
-    if follow_chapters and not re.search(_CHAPTER_QUERY_RE, question or ""):
+    if (
+        follow_chapters
+        and not cross_chapter
+        and not re.search(_CHAPTER_QUERY_RE, question or "")
+        and should_keep_history_route_pin(question, follow_chapters, fresh_routed_chapters)
+    ):
         routed_chapters = [
             {
                 "noteId": c["noteId"],

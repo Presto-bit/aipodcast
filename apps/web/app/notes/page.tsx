@@ -947,6 +947,7 @@ export default function NotesPage() {
   const [deleteNotebookTarget, setDeleteNotebookTarget] = useState<string | null>(null);
   const [noteMenuOpenId, setNoteMenuOpenId] = useState<string | null>(null);
   const [notebookCardMenu, setNotebookCardMenu] = useState<string | null>(null);
+  const [notesAskOverflowMenuOpen, setNotesAskOverflowMenuOpen] = useState(false);
   const [hubDiscoverTab, setHubDiscoverTab] = useState<NotesHubDiscoverTab>("all");
   const [hubAllMineExpanded, setHubAllMineExpanded] = useState(false);
   const [hubAllMineHasOverflow, setHubAllMineHasOverflow] = useState(false);
@@ -1000,15 +1001,16 @@ export default function NotesPage() {
 
   /** 仅用 Escape：不在 document 上监听 pointerdown，避免与侧栏导航同一事件管线冲突。 */
   useEffect(() => {
-    if (!notebookCardMenu && !noteMenuOpenId) return;
+    if (!notebookCardMenu && !noteMenuOpenId && !notesAskOverflowMenuOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       setNotebookCardMenu(null);
       setNoteMenuOpenId(null);
+      setNotesAskOverflowMenuOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [notebookCardMenu, noteMenuOpenId]);
+  }, [notebookCardMenu, noteMenuOpenId, notesAskOverflowMenuOpen]);
 
   /** 仅在主内容 <main> 上冒泡关闭溢出菜单；点击侧栏时事件不会进入 main，故不会触发 setState。 */
   const onNotesMainPointerDown = useCallback(
@@ -1021,8 +1023,11 @@ export default function NotesPage() {
       if (noteMenuOpenId && !t.closest("[data-note-overflow-menu]")) {
         setNoteMenuOpenId(null);
       }
+      if (notesAskOverflowMenuOpen && !t.closest("[data-notes-ask-overflow-menu]")) {
+        setNotesAskOverflowMenuOpen(false);
+      }
     },
-    [notebookCardMenu, noteMenuOpenId]
+    [notebookCardMenu, noteMenuOpenId, notesAskOverflowMenuOpen]
   );
 
   const [draftSelectedNoteIds, setDraftSelectedNoteIds] = useState<string[]>([]);
@@ -1182,6 +1187,25 @@ export default function NotesPage() {
     });
     window.setTimeout(() => notesAskTextareaRef.current?.focus(), 0);
   }, []);
+
+  const clearNotesAskConversation = useCallback(() => {
+    setNotesAskOverflowMenuOpen(false);
+    if (
+      notesAskMessages.length > 0 &&
+      !window.confirm("确定清除当前笔记本下的全部对话？清除后无法恢复。")
+    ) {
+      return;
+    }
+    notesAskStreamAbortRef.current?.abort();
+    setNotesAskBusy(false);
+    setNotesAskError("");
+    setNotesAskMessages([]);
+    const nb = effectiveDraftNotebookKey.trim();
+    if (nb) {
+      saveNotesAskChat(nb, [], notesAskChatScopeSalt);
+      skipNotesAskSaveRef.current = true;
+    }
+  }, [notesAskMessages.length, effectiveDraftNotebookKey, notesAskChatScopeSalt]);
 
   const markNoteAsFresh = useCallback((noteId: string) => {
     const id = noteId.trim();
@@ -1659,6 +1683,7 @@ export default function NotesPage() {
     if (!hubView) return;
     setNotebookCardMenu(null);
     setNoteMenuOpenId(null);
+    setNotesAskOverflowMenuOpen(false);
   }, [hubView]);
 
   useEffect(() => {
@@ -4152,9 +4177,36 @@ export default function NotesPage() {
               aria-label="对话"
             >
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-2">
-                <h2 className="text-sm font-semibold tracking-tight text-ink">对话</h2>
-                <span className="text-muted opacity-60" aria-hidden>
-                  ⋮
+                <h2 className="text-sm font-semibold leading-none tracking-tight text-ink">对话</h2>
+                <span className="relative flex shrink-0" data-notes-ask-overflow-menu>
+                  <button
+                    type="button"
+                    className="inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-1.5 text-lg leading-none text-muted transition hover:bg-fill hover:text-ink"
+                    aria-label="对话更多"
+                    aria-expanded={notesAskOverflowMenuOpen}
+                    aria-haspopup="menu"
+                    onClick={() => setNotesAskOverflowMenuOpen((open) => !open)}
+                  >
+                    ⋯
+                  </button>
+                  {notesAskOverflowMenuOpen ? (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full z-30 mt-0.5 min-w-[7.5rem] rounded-lg border border-line bg-surface py-1 text-xs shadow-card"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="block w-full px-3 py-2 text-left text-ink hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                        disabled={
+                          notesAskMessages.length === 0 && !notesAskMessages.some((m) => m.streaming)
+                        }
+                        onClick={() => clearNotesAskConversation()}
+                      >
+                        清除对话
+                      </button>
+                    </div>
+                  ) : null}
                 </span>
               </div>
 
@@ -4353,7 +4405,7 @@ export default function NotesPage() {
                             );
                           })()}
                               </div>
-                            )
+                            )}
                         </div>
                       ))}
                     </div>

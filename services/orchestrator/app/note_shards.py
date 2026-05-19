@@ -13,6 +13,7 @@ from typing import Any
 
 from .db import get_conn, get_cursor
 from .note_chapters import ChapterSpan, _CHAPTER_CN_RE, _CHAPTER_HEADING_RE, detect_chapters
+from .notes_ask_routing import normalize_route_query, score_title_against_query
 from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
 
 logger = logging.getLogger(__name__)
@@ -493,7 +494,8 @@ def build_shard_and_book_summaries(
 
 
 def _shard_scores_from_query(query: str, shards: list[dict[str, Any]]) -> list[tuple[float, dict[str, Any]]]:
-    q = (query or "").strip().lower()
+    q_raw = (query or "").strip()
+    q = normalize_route_query(q_raw).lower()
     if not q or not shards:
         return []
     scored: list[tuple[float, dict[str, Any]]] = []
@@ -501,23 +503,18 @@ def _shard_scores_from_query(query: str, shards: list[dict[str, Any]]) -> list[t
         scored.append((0.92, shards[-1]))
     if re.search(r"开头|开篇|首", q) and len(shards) > 1:
         scored.append((0.92, shards[0]))
-    m = _SHARD_QUERY_PART_RE.search(query or "")
+    m = _SHARD_QUERY_PART_RE.search(q_raw)
     part_num = (m.group(1) or m.group(2) or m.group(3) or "") if m else ""
     for sh in shards:
         title = str(sh.get("title") or "")
-        tl = title.lower()
         score = 0.0
         if part_num and part_num in title:
             score += 0.9
-        if tl and tl in q:
-            score += 0.65
-        for token in re.findall(r"[\u4e00-\u9fff]{2,8}", q):
-            if token in title:
-                score += 0.2
-        summary = str(sh.get("summary_text") or "").lower()
-        if summary:
-            hits = sum(1 for t in re.findall(r"[\u4e00-\u9fff]{2,}", q) if t in summary)
-            score += min(0.45, hits * 0.1)
+        score += score_title_against_query(
+            title,
+            q_raw,
+            summary=str(sh.get("summary_text") or ""),
+        )
         if score > 0:
             scored.append((score, sh))
     scored.sort(key=lambda x: -x[0])
