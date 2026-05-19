@@ -97,7 +97,7 @@ export default function NotesAskAnswerMarkdownBody({
     return null;
   }
   return (
-    <article className="notes-ask-answer-md mx-auto min-w-0 max-w-[42rem] text-[15px] leading-[1.72] text-ink">
+    <article className="notes-ask-answer-md min-w-0 w-full max-w-[42rem] text-left text-[15px] leading-[1.72] text-ink">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
