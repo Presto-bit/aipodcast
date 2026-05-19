@@ -13,6 +13,8 @@ import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
 import NotebookShareDiagnosticsHomeBanner from "../../../components/notebook/NotebookShareDiagnosticsHomeBanner";
 import { SkeletonBlock, SkeletonLine } from "../../../components/ui/Skeleton";
 import { apiErrorMessage } from "../../../lib/apiError";
+import { countUserVisibleActiveJobs } from "../../../lib/activeJobsVisible";
+import type { JobRecord } from "../../../lib/types";
 
 const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
@@ -25,17 +27,6 @@ const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/Po
 });
 
 const HOME_WORKS_PREVIEW = 10;
-
-function countQueuedOrRunningJobs(jobs: unknown[] | undefined): number {
-  if (!Array.isArray(jobs)) return 0;
-  let n = 0;
-  for (const row of jobs) {
-    if (!row || typeof row !== "object") continue;
-    const st = String((row as { status?: unknown }).status || "").trim();
-    if (st === "queued" || st === "running") n += 1;
-  }
-  return n;
-}
 
 export default function HomePage() {
   const router = useRouter();
@@ -135,7 +126,9 @@ export default function HomePage() {
       const merged = mergeUserFacingWorksByRecency(ai, tts, notesWorks);
       const activeJobsOk =
         Boolean(pack.jobsActive?.ok) && activeJobsData.success !== false && Array.isArray(activeJobsData.jobs);
-      const activeJobsCount = activeJobsOk ? countQueuedOrRunningJobs(activeJobsData.jobs) : null;
+      const activeJobsCount = activeJobsOk
+        ? countUserVisibleActiveJobs(activeJobsData.jobs as JobRecord[])
+        : null;
 
       if (seq !== homeOverviewReqSeq.current) return;
 

@@ -1270,7 +1270,6 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
             require_preprocess_ready=body.require_preprocess_ready,
             project_owner_user_uuid=project_owner,
             corpus_mode=body.corpus_mode,
-            grounding_mode=body.grounding_mode,
         )
     except ValueError as e:
         msg = str(e)
@@ -1337,7 +1336,6 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 require_preprocess_ready=body.require_preprocess_ready,
                 project_owner_user_uuid=project_owner,
                 corpus_mode=body.corpus_mode,
-                grounding_mode=body.grounding_mode,
             )
             _notes_startup_logger.info(
                 "notes_ask_stage stage=context_ready request_id=%s elapsed_ms=%.1f context_ms=%.1f",
@@ -1368,7 +1366,6 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             include_all_sources=body.include_all_sources,
             require_preprocess_ready=body.require_preprocess_ready,
             corpus_mode=body.corpus_mode,
-            grounding_mode=body.grounding_mode,
             prepared_messages_sources=prepared,
             project_owner_user_uuid=project_owner,
             request_id=rid,

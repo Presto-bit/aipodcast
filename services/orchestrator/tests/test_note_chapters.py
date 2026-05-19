@@ -1,9 +1,11 @@
 from app.note_chapters import (
     COMPARE_QUERY_RE,
+    _chapter_scores_from_query,
     assign_chapter_ids_to_chunks,
     chapter_filter_for_query,
     cross_chapter_enabled,
     detect_chapters,
+    relative_chapter_intent,
     route_chapters_for_compare,
 )
 
@@ -41,3 +43,19 @@ def test_chapter_filter_for_query_empty_ids():
 def test_cross_chapter_enabled_default(monkeypatch):
     monkeypatch.delenv("NOTES_ASK_CROSS_CHAPTER", raising=False)
     assert cross_chapter_enabled() is True
+
+
+def test_relative_chapter_intent_last():
+    assert relative_chapter_intent("请总结最后章节的核心观点") == "last"
+    assert relative_chapter_intent("第一章讲了什么") is None
+
+
+def test_chapter_scores_last_chapter():
+    chapters = [
+        {"chapter_id": "c0", "title": "第1章 开端", "summary_text": ""},
+        {"chapter_id": "c1", "title": "第2章 结局", "summary_text": ""},
+    ]
+    scored = _chapter_scores_from_query("最后章节讲了什么", chapters)
+    assert scored
+    assert scored[0][1]["chapter_id"] == "c1"
+    assert scored[0][0] >= 0.9

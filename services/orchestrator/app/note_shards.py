@@ -455,6 +455,10 @@ def _shard_scores_from_query(query: str, shards: list[dict[str, Any]]) -> list[t
     if not q or not shards:
         return []
     scored: list[tuple[float, dict[str, Any]]] = []
+    if re.search(r"最后|末尾|结尾|终章|末", q) and len(shards) > 1:
+        scored.append((0.92, shards[-1]))
+    if re.search(r"开头|开篇|首", q) and len(shards) > 1:
+        scored.append((0.92, shards[0]))
     m = _SHARD_QUERY_PART_RE.search(query or "")
     part_num = (m.group(1) or m.group(2) or m.group(3) or "") if m else ""
     for sh in shards:

@@ -240,11 +240,18 @@ def _assert_parse_gate_for_notes(
         raise ValueError("parse_gate_blocked")
 
 
-def _grounding_strict_default() -> bool:
-    return (os.getenv("NOTES_ASK_GROUNDING_STRICT_DEFAULT", "0") or "0").strip().lower() in (
-        "1",
-        "true",
-        "on",
+LOW_CONFIDENCE_USER_NOTICE = (
+    "⚠️ **检索置信度较低**：当前摘录难以可靠支撑本题。"
+    "下列回答中含模型补充说明，**不是**对勾选资料的引用，请勿当作原文依据。"
+    "建议缩小提问范围、指明章节，或待索引完成后再问。\n\n---\n\n"
+)
+
+
+def _low_confidence_supplement_preamble() -> str:
+    return (
+        "\n\n【低置信度补充作答】上方摘录不足以仅凭资料可靠回答。"
+        "请仍给出简要有帮助的说明，但正文第一句须明确写出「以下非资料引用内容」。"
+        "勿使用 [n] 等引用角标，勿编造摘录中不存在的事实；可说明不确定之处。"
     )
 
 
@@ -423,7 +430,6 @@ def _prepare_notes_ask_messages(
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
     corpus_mode: str | None = None,
-    grounding_mode: str | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
     q = (question or "").strip()
     if not q:
@@ -456,9 +462,6 @@ def _prepare_notes_ask_messages(
     plan_type = str((plan or {}).get("answerType") or "").strip() or None
     top_k, answer_type = resolve_retrieval_top_k(q, plan_type)
 
-    gm = (grounding_mode or "").strip().lower()
-    if not gm and _grounding_strict_default():
-        gm = "strict"
     qa_plan = resolve_notes_ask_plan(
         notebook=notebook,
         note_ids=note_ids,
@@ -468,7 +471,6 @@ def _prepare_notes_ask_messages(
         project_owner_user_uuid=project_owner_user_uuid,
         corpus_mode=corpus_mode,
     )
-    qa_plan["groundingMode"] = gm or "balanced"
     _t_ctx = time.perf_counter()
     context, sources, qa_meta = build_notes_qa_context_with_plan(
         notebook=notebook,
@@ -497,16 +499,9 @@ def _prepare_notes_ask_messages(
     hint = str(qa_plan.get("coverageHint") or "").strip()
     if hint:
         preamble += f"\n\n【覆盖率与本轮模式】{hint}（qaMode={qa_plan.get('qaMode')}）"
-    if qa_meta.get("lowConfidence") or qa_plan.get("lowConfidence"):
-        preamble += (
-            "\n\n【置信度】检索分数偏低或向量覆盖率不足：若材料未明确记载，"
-            "须直接说明「无法从已索引内容确认」，勿编造。"
-        )
-    if gm == "strict":
-        preamble += (
-            "\n\n【严谨引用】仅可陈述摘录中明确出现的事实；无依据则回答「资料未覆盖此问题」。"
-            "禁止推测、外推或补充常识。"
-        )
+    low_confidence = bool(qa_meta.get("lowConfidence") or qa_plan.get("lowConfidence"))
+    if low_confidence:
+        preamble += _low_confidence_supplement_preamble()
     body_parts: list[str] = [preamble + context]
     if history_block:
         body_parts.append(history_block)
@@ -518,9 +513,7 @@ def _prepare_notes_ask_messages(
         {"role": "system", "content": build_notes_ask_system_prompt(answer_type)},
         {"role": "user", "content": user_block},
     ]
-    qa_plan = {**qa_plan, **qa_meta, "groundingMode": gm or "balanced"}
-    if gm == "strict":
-        qa_plan["temperatureOverride"] = 0.35
+    qa_plan = {**qa_plan, **qa_meta, "lowConfidence": low_confidence}
     return messages, sources, qa_plan
 
 
@@ -605,7 +598,6 @@ def iter_notes_answer_events(
     include_all_sources: bool | None = None,
     require_preprocess_ready: bool | None = None,
     corpus_mode: str | None = None,
-    grounding_mode: str | None = None,
     prepared_messages_sources: (
         tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]] | None
     ) = None,
@@ -631,7 +623,6 @@ def iter_notes_answer_events(
             require_preprocess_ready=require_preprocess_ready,
             project_owner_user_uuid=project_owner_user_uuid,
             corpus_mode=corpus_mode,
-            grounding_mode=grounding_mode,
         )
     acc_answer: list[str] = []
     try:
@@ -663,25 +654,13 @@ def iter_notes_answer_events(
             return out
 
         llm_temp = notes_ask_temperature()
-        try:
-            ov = qa_plan.get("temperatureOverride")
-            if ov is not None:
-                llm_temp = float(ov)
-        except (TypeError, ValueError):
-            pass
         llm_max_tokens = notes_ask_max_output_tokens()
-        skip_llm = False
-        if qa_plan.get("lowConfidence") and str(qa_plan.get("groundingMode") or "") == "strict":
-            short = (
-                "根据当前已索引资料，检索置信度较低，无法可靠回答该问题。"
-                "建议缩小提问范围、指定章节/表格，或等待索引完成后再试。"
-            )
-            yield {"type": "chunk", "text": short, "streamRole": "answer"}
-            acc_answer.append(short)
-            skip_llm = True
+        low_confidence = bool(qa_plan.get("lowConfidence"))
+        if low_confidence:
+            yield {"type": "chunk", "text": LOW_CONFIDENCE_USER_NOTICE, "streamRole": "answer"}
+            acc_answer.append(LOW_CONFIDENCE_USER_NOTICE)
         try:
-            if not skip_llm:
-                for role, piece in invoke_llm_chat_messages_stream_segments_iter(
+            for role, piece in invoke_llm_chat_messages_stream_segments_iter(
                     messages,
                     temperature=llm_temp,
                     api_key=api_key,
@@ -715,9 +694,7 @@ def iter_notes_answer_events(
                     yield ev_out
                     stream_chunks_out += 1
         except Exception as seg_exc:
-            if skip_llm:
-                seg_exc = None  # noqa: F841
-            if stream_chunks_out == 0 and not skip_llm:
+            if stream_chunks_out == 0:
                 logger.warning(
                     "notes_ask_stream_segments_failed_no_output request_id=%s fallback_plain_stream: %s",
                     rid,
@@ -774,8 +751,8 @@ def iter_notes_answer_events(
             "qaMode": qa_plan.get("qaMode"),
             "grounding": qa_plan.get("grounding"),
             "corpusMode": qa_plan.get("corpusMode"),
-            "groundingMode": qa_plan.get("groundingMode"),
             "lowConfidence": bool(qa_plan.get("lowConfidence")),
+            "supplementalAnswer": bool(qa_plan.get("lowConfidence")),
             "routedChapters": qa_plan.get("routedChapters") or [],
             "routedShards": qa_plan.get("routedShards") or [],
             "coverageHint": qa_plan.get("coverageHint") or "",
@@ -1059,7 +1036,6 @@ def answer_notes_question(
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
     corpus_mode: str | None = None,
-    grounding_mode: str | None = None,
 ) -> dict[str, Any]:
     messages, sources, qa_plan = _prepare_notes_ask_messages(
         notebook=notebook,
@@ -1070,19 +1046,11 @@ def answer_notes_question(
         require_preprocess_ready=require_preprocess_ready,
         project_owner_user_uuid=project_owner_user_uuid,
         corpus_mode=corpus_mode,
-        grounding_mode=grounding_mode,
     )
-    temp = notes_ask_temperature()
-    try:
-        ov = qa_plan.get("temperatureOverride")
-        if ov is not None:
-            temp = float(ov)
-    except (TypeError, ValueError):
-        pass
     try:
         answer, trace_id = invoke_llm_chat_messages_with_minimax_fallback(
             messages,
-            temperature=temp,
+            temperature=notes_ask_temperature(),
             api_key=api_key,
             timeout_sec=120,
             max_tokens=notes_ask_max_output_tokens(),
@@ -1094,8 +1062,12 @@ def answer_notes_question(
         raise RuntimeError("empty_answer")
 
     ans = finalize_notes_ask_answer(answer)
+    if qa_plan.get("lowConfidence"):
+        ans = LOW_CONFIDENCE_USER_NOTICE + ans
     out: dict[str, Any] = {
         "answer": ans,
+        "lowConfidence": bool(qa_plan.get("lowConfidence")),
+        "supplementalAnswer": bool(qa_plan.get("lowConfidence")),
         "sources": filter_sources_by_citations(ans, sources, include_all_sources=include_all_sources),
         "traceId": trace_id,
         "qaMode": qa_plan.get("qaMode"),

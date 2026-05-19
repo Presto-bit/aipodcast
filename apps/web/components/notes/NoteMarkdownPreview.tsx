@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { estimateWordCount } from "../../lib/noteWordCount";
+import { shouldShowVectorTruncationWarning } from "../../lib/noteCoverageCopy";
 
 const NoteMarkdownDoc = dynamic(() => import("./NoteMarkdownDoc"), {
   ssr: false,
@@ -22,6 +23,8 @@ type Props = {
   ragIndexTruncated?: boolean;
   ragIndexCoveragePct?: number;
   ragIndexStrategy?: string;
+  shardsTotal?: number;
+  shardsWithSummary?: number;
   sourceUrl?: string;
   canReindex?: boolean;
   reindexBusy?: boolean;
@@ -97,6 +100,8 @@ export default function NoteMarkdownPreview({
   ragIndexTruncated,
   ragIndexCoveragePct,
   ragIndexStrategy,
+  shardsTotal,
+  shardsWithSummary,
   sourceUrl,
   canReindex,
   reindexBusy,
@@ -488,11 +493,21 @@ export default function NoteMarkdownPreview({
           <p>类型：<span className="text-ink">{sourceType || "未知"}</span></p>
           <p>上传时间：<span className="text-ink">{createdAt || "-"}</span></p>
           <p>字数：<span className="text-ink tabular-nums">{displayWordCount > 0 ? displayWordCount.toLocaleString() : "-"}</span></p>
-          {ragIndexTruncated && (ragIndexCoveragePct ?? 0) > 0 ? (
+          {shouldShowVectorTruncationWarning({
+            ragIndexTruncated,
+            ragIndexCoveragePct,
+            shardsTotal,
+            shardsWithSummary
+          }) ? (
             <p className="sm:col-span-2 lg:col-span-3 text-[11px] leading-relaxed text-warning-ink">
-              全文已保存。向资料提问时的检索与机器摘要约覆盖全文的 {ragIndexCoveragePct}%
-              {ragIndexStrategy === "head_tail" ? "（前段与尾段）" : "（前段）"}
-              ；中间未索引部分难以引用。可将资料拆成多份或联系管理员调高索引上限。
+              全文已保存。向量检索块约覆盖全文的 {ragIndexCoveragePct}%
+              {ragIndexStrategy === "head_tail" ? "（前段与尾段抽样）" : "（前段抽样）"}
+              ，用于相似度召回；若片摘要尚未齐，中间段落可能难引用。片摘要完成后问答主要走片路由，不限于该比例。
+            </p>
+          ) : shardsTotal && shardsTotal > 1 && (shardsWithSummary ?? 0) >= shardsTotal ? (
+            <p className="sm:col-span-2 lg:col-span-3 text-[11px] leading-relaxed text-muted">
+              全文已保存。片摘要 {shardsWithSummary}/{shardsTotal} 已完成，问答可走片路由与精读；向量块约 {ragIndexCoveragePct}%
+              为检索抽样，不代表资料未处理完。
             </p>
           ) : null}
           <p>

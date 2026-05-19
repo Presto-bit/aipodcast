@@ -169,7 +169,7 @@ export function NotesAskAnswerDisplay({
     <div className={`notes-ask-answer flex min-w-0 flex-col gap-3 text-ink ${wrap}`}>
       {lowConfidence ? (
         <p className="rounded-lg border border-warning/40 bg-warning-soft px-2.5 py-1.5 text-[11px] text-warning-ink">
-          检索置信度偏低，请与原文核对；可开启「严谨引用」或缩小提问范围。
+          本条含低置信度补充说明：分隔线以下可能含非资料引用内容，请与原文核对；缩小提问范围或指明章节可提高摘录命中率。
         </p>
       ) : null}
       <NotesAskAnswerMarkdownBody

@@ -21,6 +21,7 @@ import type { WorkItem } from "../../lib/worksTypes";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import { listJobs } from "../../lib/api";
+import { countUserVisibleActiveJobs } from "../../lib/activeJobsVisible";
 
 const WORKS_LIMIT = 60;
 
@@ -66,7 +67,7 @@ export default function WorksPage() {
         status: "queued,running",
         slim: true
       });
-      setActiveJobCount(jobs.length);
+      setActiveJobCount(countUserVisibleActiveJobs(jobs));
     } catch {
       setActiveJobCount(null);
     }
@@ -120,7 +121,9 @@ export default function WorksPage() {
           const t = typeof data.total === "number" ? data.total : nextAi.length + nextTts.length;
           setOffset(t);
           setHasMore(Boolean(data.has_more));
-          setActiveJobCount(Array.isArray(jobsPack.jobs) ? jobsPack.jobs.length : null);
+          setActiveJobCount(
+            Array.isArray(jobsPack.jobs) ? countUserVisibleActiveJobs(jobsPack.jobs) : null
+          );
         } else {
           const res = await fetch(`/api/works?limit=${WORKS_LIMIT}&offset=${o}`, {
             cache: "no-store",

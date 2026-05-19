@@ -568,11 +568,18 @@ def _select_chunks_per_shard(
     seen: set[int] = set()
     shard_ids = sorted(by_sid.keys(), key=lambda s: min(by_sid[s]) if by_sid[s] else 0)
 
+    tail_per = max(1, min_per // 2)
     for sid in shard_ids:
-        for idx in by_sid[sid][:min_per]:
+        indices = by_sid[sid]
+        for idx in indices[:min_per]:
             if idx not in seen and len(selected) < cap:
                 seen.add(idx)
                 selected.append(idx)
+        if len(indices) > min_per:
+            for idx in indices[-tail_per:]:
+                if idx not in seen and len(selected) < cap:
+                    seen.add(idx)
+                    selected.append(idx)
 
     remaining = cap - len(selected)
     if remaining > 0:

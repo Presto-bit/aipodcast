@@ -23,6 +23,16 @@ _CHAPTER_CN_RE = re.compile(
 _CHAPTER_QUERY_RE = re.compile(
     r"第\s*([0-9０-９]+|[一二三四五六七八九十百千万零两]+)\s*[章节回部卷篇]"
 )
+def relative_chapter_intent(query: str) -> str | None:
+    """解析「最后章 / 开篇」等相对指代（不含「第 N 章」数字指代）。"""
+    q = (query or "").strip()
+    if not q:
+        return None
+    if re.search(r"最后|末尾|结尾|末章|终章", q):
+        return "last"
+    if re.search(r"开头(?:一)?[章节回部卷篇]|开篇|首章", q):
+        return "first"
+    return None
 
 _L1_SUMMARY_SYSTEM = (
     "你是编辑助手。下面是资料某一章/节的正文摘录（可能截断）。"
@@ -395,6 +405,11 @@ def _chapter_scores_from_query(query: str, chapters: list[dict[str, Any]]) -> li
     if not q or not chapters:
         return []
     scored: list[tuple[float, dict[str, Any]]] = []
+    rel = relative_chapter_intent(query)
+    if rel == "last":
+        scored.append((0.95, chapters[-1]))
+    elif rel == "first":
+        scored.append((0.95, chapters[0]))
     m = _CHAPTER_QUERY_RE.search(query or "")
     q_num = m.group(1) if m else ""
     for ch in chapters:
@@ -547,15 +562,24 @@ def coverage_hint_for_qa(
     for nid in note_ids:
         row = rows_by_id.get(nid) or {}
         st = note_coverage_stats(nid, row)
-        line = (
-            f"资料 {nid[:8]}…：全文约 {st['totalChars']:,} 字，"
-            f"向量索引约 {st['ragIndexCoveragePct']}%"
-        )
         sh_tot = int(st.get("shardsTotal") or 0)
-        if sh_tot > 1:
-            line += f"，处理进度 {st.get('shardsWithSummary', 0)}/{sh_tot} 片"
-        elif int(st.get("chaptersTotal") or 0) > 0:
-            line += f"，章摘要 {st['chaptersWithSummary']}/{st['chaptersTotal']}"
+        sh_sum = int(st.get("shardsWithSummary") or 0)
+        vec_pct = int(st.get("ragIndexCoveragePct") or 0)
+        if sh_tot > 1 and sh_sum >= sh_tot:
+            line = (
+                f"资料 {nid[:8]}…：全文约 {st['totalChars']:,} 字，"
+                f"片摘要 {sh_sum}/{sh_tot} 已完成（问答可走片路由/精读）。"
+                f"向量块为检索抽样约 {vec_pct}% 正文，属设计如此，非摘要未完成。"
+            )
+        else:
+            line = (
+                f"资料 {nid[:8]}…：全文约 {st['totalChars']:,} 字，"
+                f"向量检索抽样约 {vec_pct}% 正文"
+            )
+            if sh_tot > 1:
+                line += f"，片摘要 {sh_sum}/{sh_tot}"
+            elif int(st.get("chaptersTotal") or 0) > 0:
+                line += f"，章摘要 {st['chaptersWithSummary']}/{st['chaptersTotal']}"
         line += "。"
         parts.append(line)
     if qa_mode == "shard_deep" and routed_shards:

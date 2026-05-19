@@ -13,6 +13,7 @@ from .models import get_note_by_id
 from .note_chapters import (
     COMPARE_QUERY_RE,
     _CHAPTER_QUERY_RE,
+    relative_chapter_intent,
     chapter_body_slice,
     chapter_deep_max_chars,
     chapter_route_min_score,
@@ -314,6 +315,17 @@ def resolve_notes_ask_plan(
         if shard_direct_ok:
             qa_mode = "shard_direct"
             grounding = "shard_direct"
+        elif (
+            routed_chapters
+            and best_chapter >= chapter_route_min_score()
+            and (
+                bool(re.search(_CHAPTER_QUERY_RE, question or ""))
+                or relative_chapter_intent(question) is not None
+                or best_chapter >= best_shard
+            )
+        ):
+            qa_mode = "chapter_deep"
+            grounding = "chapter_deep"
         elif multi_shard and routed_shards and best_shard >= shard_route_min_score():
             qa_mode = "shard_deep"
             grounding = "shard_deep"
@@ -593,7 +605,14 @@ def build_notes_qa_context_with_plan(
             retrieval_budget=28_000,
             user_ref=user_ref,
             api_key=None,
-            chapter_routed=ch_routed if re.search(_CHAPTER_QUERY_RE, q) else None,
+            chapter_routed=ch_routed
+            if ch_routed
+            and (
+                re.search(_CHAPTER_QUERY_RE, q)
+                or relative_chapter_intent(q) is not None
+                or float((ch_routed[0] or {}).get("score") or 0) >= chapter_route_min_score()
+            )
+            else None,
         )
         if not sh_block:
             logger.info("shard_deep empty, degrade to layered RAG")
