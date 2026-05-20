@@ -1,4 +1,7 @@
-.PHONY: up up-offline build-offline build-offline-bases package-offline-bundle save-full-stack-tar down logs web orchestrator worker-ai worker-media worker-ai-simple worker-media-simple install-deps test-api-key-strip test-fallback-tag dev-infra dev-api dev-web dev-start complete-dev dev-worker-ai dev-worker-media dev-worker-ai-watch dev-worker-media-watch dev dev-apps dev-install ci e2e-install e2e e2e-up e2e-down cleanup-outputs migrate-json-to-pg migrate-sessions-to-redis migrate-db retention-maintenance check-data-consistency
+.PHONY: up up-offline build-offline build-offline-bases package-offline-bundle save-full-stack-tar down logs web orchestrator worker-ai worker-media worker-ai-simple worker-media-simple install-deps test-api-key-strip test-fallback-tag dev-infra dev-api dev-web dev-start complete-dev dev-worker-ai dev-worker-media dev-worker-ai-watch dev-worker-media-watch dev dev-apps dev-install ci e2e-install e2e e2e-up e2e-down cleanup-outputs migrate-json-to-pg migrate-sessions-to-redis migrate-db retention-maintenance check-data-consistency check-config check-config-docker
+
+# 本机优先 .venv-ai-native；ECS 等无 venv 时回退 python3（migrate-db 等同理）
+PY_RUN = $(shell if [ -x .venv-ai-native/bin/python ]; then echo ./.venv-ai-native/bin/python; elif command -v python3 >/dev/null 2>&1; then echo python3; else echo python3; fi)
 
 ci:
 	@test -d apps/web/node_modules || (echo "请先: make dev-install"; exit 1)
@@ -212,11 +215,15 @@ migrate-sessions-to-redis:
 
 # SQL migration 主入口（按 infra/postgres/init 文件名顺序执行；已应用记录见 schema_migrations）
 migrate-db:
-	./.venv-ai-native/bin/python scripts/apply_sql_migrations.py
+	$(PY_RUN) scripts/apply_sql_migrations.py
 
-# 部署前配置自检（FYV_PRODUCTION=1 时校验预签名与内嵌 Worker）
+# 部署前配置自检（FYV_PRODUCTION=1 时校验预签名与内嵌 Worker）；本机需 venv 或已 pip 安装编排器依赖
 check-config:
-	./.venv-ai-native/bin/python scripts/check_config.py
+	$(PY_RUN) scripts/check_config.py
+
+# ECS/生产：在 orchestrator 容器内校验（读取 compose 已注入的环境变量，无需宿主机 venv）
+check-config-docker:
+	docker compose -f docker-compose.ai-native.yml exec -T orchestrator python -c "from app.startup_security import assert_production_security_or_exit; assert_production_security_or_exit(); print('[check_config] OK')"
 
 # 数据保留与归档维护（默认 dry-run）
 # 用法：make retention-maintenance DRY_RUN=0

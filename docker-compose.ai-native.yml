@@ -79,9 +79,10 @@ services:
     command: server /data --console-address ":9001"
     env_file:
       - .env.ai-native
+    # 内嵌 MinIO 根账号须 3～20 字符；勿把超长 OBJECT_ACCESS_KEY 直接映射为 MINIO_ROOT_USER（会导致进程退出/一直 unhealthy）
     environment:
-      MINIO_ROOT_USER: ${OBJECT_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${OBJECT_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
