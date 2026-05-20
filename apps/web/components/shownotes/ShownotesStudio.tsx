@@ -1,17 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Music2, Pause, Play, RotateCw, Save, Sparkles, Upload } from "lucide-react";
+import { FileText, Music2, Pause, Play, RotateCw, Save, Sparkles } from "lucide-react";
 import {
   fetchClipProjectShareAiCopy,
   fetchClipTitleSuggestions,
   persistClipProjectShowNotes
 } from "../../lib/api";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
-import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import { clipProjectTranscriptPlainText } from "../../lib/clipTranscriptPlainText";
 import type { ClipProjectRow } from "../../lib/clipTypes";
 import { computeSharePublishHints, reorderShowNotesGoldenQuotesAfterListen } from "../../lib/sharePublishDefaults";
@@ -20,11 +18,9 @@ import {
   clearShownotesPendingPipeline,
   clipProjectHasMaterial,
   clipProjectMasterAudioSrc,
-  CLIP_PROJECT_KIND_SHOWNOTES,
   hasShownotesPendingPipeline,
   markShownotesPendingPipeline,
-  shownotesProjectDisplayTitle,
-  titleFromUploadedAudioFile
+  shownotesProjectDisplayTitle
 } from "../../lib/shownotesClipProject";
 import {
   clearShownotesStudioDraft,
@@ -40,8 +36,6 @@ export type ShownotesStudioProps = {
   embedOnLanding?: boolean;
   /** 上传时原始文件名（用于一行展示） */
   fileLabel?: string;
-  /** 嵌入落地页时：新建工程并上传完成后由外层切换 projectId */
-  onReplaceProject?: (projectId: string, fileLabel: string) => void;
 };
 
 function formatDuration(sec: number): string {
@@ -55,14 +49,11 @@ function formatDuration(sec: number): string {
 export default function ShownotesStudio({
   projectId,
   embedOnLanding = false,
-  fileLabel = "",
-  onReplaceProject
+  fileLabel = ""
 }: ShownotesStudioProps) {
-  const router = useRouter();
   const { ready, user, getAuthHeaders } = useAuth();
   const isLoggedIn = isLoggedInAccountUser(user);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const newAudioInputRef = useRef<HTMLInputElement | null>(null);
   /** 用户点击「开始生成」后，转写成功时自动跑标题 + 正文生成 */
   const pendingPipelineAfterAsrRef = useRef(false);
   const postAsrPipelineLockRef = useRef(false);
@@ -78,8 +69,6 @@ export default function ShownotesStudio({
   const [genBusy, setGenBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [shareAiBusy, setShareAiBusy] = useState(false);
-  const [newAudioBusy, setNewAudioBusy] = useState(false);
-
   const [titleOptions, setTitleOptions] = useState<string[]>([]);
 
   const [showNotes, setShowNotes] = useState("");
@@ -420,57 +409,6 @@ export default function ShownotesStudio({
     void runTranscribe();
   }, [projectId, runTranscribe]);
 
-  const startNewAudioFromFile = useCallback(
-    async (file: File) => {
-      setNewAudioBusy(true);
-      setLoadErr("");
-      try {
-        clearShownotesStudioDraft(projectId);
-        clearShownotesPendingPipeline(projectId);
-        pendingPipelineAfterAsrRef.current = false;
-        const res = await fetch("/api/clip/projects", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify({
-            title: titleFromUploadedAudioFile(file),
-            project_kind: CLIP_PROJECT_KIND_SHOWNOTES
-          })
-        });
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; project?: { id?: string }; detail?: string };
-        if (!res.ok || data.success === false || !data.project?.id) {
-          throw new Error(data.detail || `创建任务失败 ${res.status}`);
-        }
-        const newId = String(data.project.id);
-        const stage = await fetch(`/api/clip/projects/${encodeURIComponent(newId)}/audio/stage`, {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            "content-type": file.type || "application/octet-stream",
-            "x-clip-filename": encodeClipFilenameForHttpHeader(file.name || "audio.mp3", "segment.mp3"),
-            ...getAuthHeaders()
-          },
-          body: file
-        });
-        const stData = (await stage.json().catch(() => ({}))) as { success?: boolean; detail?: string };
-        if (!stage.ok || stData.success === false) {
-          throw new Error(stData.detail || `上传失败 ${stage.status}`);
-        }
-        const label = file.name || "audio";
-        if (embedOnLanding && onReplaceProject) onReplaceProject(newId, label);
-        else router.replace(`/shownotes/make/${encodeURIComponent(newId)}`);
-      } catch (e) {
-        setLoadErr(String(e instanceof Error ? e.message : e));
-      } finally {
-        setNewAudioBusy(false);
-        if (newAudioInputRef.current) newAudioInputRef.current.value = "";
-      }
-    },
-    [embedOnLanding, getAuthHeaders, onReplaceProject, projectId, router]
-  );
-
-  const canOfferNewUpload = Boolean(project && (hasMaterial || transcribeOk));
-
   const inner = (
     <div className={embedOnLanding ? "max-w-3xl space-y-6" : "space-y-6"}>
       {!embedOnLanding ? (
@@ -507,17 +445,6 @@ export default function ShownotesStudio({
       {hasMaterial && audioSrc ? (
         <section aria-label="音频" className="border-b border-line/50 pb-6">
           <div className="flex flex-wrap items-center gap-2.5 py-1">
-            <input
-              ref={newAudioInputRef}
-              type="file"
-              className="sr-only"
-              accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac,.webm"
-              disabled={newAudioBusy}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void startNewAudioFromFile(f);
-              }}
-            />
             <Music2 className="h-5 w-5 shrink-0 text-brand" aria-hidden />
             <audio
               ref={audioRef}
@@ -558,17 +485,6 @@ export default function ShownotesStudio({
             >
               {transcribeBusy || trRunning ? "转写中…" : transcribeOk ? "已转写" : "开始生成"}
             </button>
-            {canOfferNewUpload ? (
-              <button
-                type="button"
-                disabled={newAudioBusy || transcribeBusy || trRunning || mergeBusy || genBusy || shareAiBusy}
-                onClick={() => newAudioInputRef.current?.click()}
-                className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-brand hover:underline disabled:opacity-50"
-              >
-                <Upload className="h-3.5 w-3.5" aria-hidden />
-                {newAudioBusy ? "处理中…" : "上传新音频"}
-              </button>
-            ) : null}
           </div>
         </section>
       ) : null}

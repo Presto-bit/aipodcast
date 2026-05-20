@@ -182,11 +182,6 @@ export default function ShownotesLandingClient() {
             projectId={activeProjectId}
             embedOnLanding
             fileLabel={uploadedFileLabel}
-            onReplaceProject={(id, label) => {
-              setActiveProjectId(id);
-              setUploadedFileLabel(label);
-              setListRefreshKey((k) => k + 1);
-            }}
           />
         </section>
       ) : null}
