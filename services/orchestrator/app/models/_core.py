@@ -7839,3 +7839,22 @@ def reset_tts_polish_prompts() -> None:
     ensure_app_settings_schema()
     app_setting_delete(APP_SETTING_TTS_POLISH_DUAL)
     app_setting_delete(APP_SETTING_TTS_POLISH_SINGLE)
+
+
+# schema 依赖本模块已定义的符号；业务路径内调用的 ensure_* 在 schema 中实现，延后导入避免 NameError。
+from .schema import (  # noqa: E402
+    ensure_alipay_page_checkout_schema,
+    ensure_app_settings_schema,
+    ensure_jobs_trash_schema,
+    ensure_payment_reconciliation_queue_schema,
+    ensure_payment_refunds_schema,
+    ensure_payment_webhook_deliveries_schema,
+    ensure_saved_voices_schema,
+    ensure_subscription_current_state_schema,
+    ensure_subscription_events_schema,
+    ensure_usage_events_user_id_schema,
+    ensure_user_experience_balance_schema,
+    ensure_user_payg_minute_grants_schema,
+    ensure_user_wallet_schema,
+    ensure_users_profile_columns,
+)
