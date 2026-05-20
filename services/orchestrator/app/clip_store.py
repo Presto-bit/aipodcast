@@ -79,6 +79,11 @@ def ensure_clip_studio_schema(*, strict: bool) -> None:
       ADD COLUMN IF NOT EXISTS audio_merge_error text;
     ALTER TABLE clip_projects
       ADD COLUMN IF NOT EXISTS shownotes_markdown TEXT;
+    ALTER TABLE clip_projects
+      ADD COLUMN IF NOT EXISTS project_kind TEXT NOT NULL DEFAULT 'clip';
+    UPDATE clip_projects
+    SET project_kind = 'shownotes'
+    WHERE project_kind = 'clip' AND trim(title) = 'Shownotes';
     """
     try:
         with get_conn() as conn:
@@ -100,53 +105,78 @@ def _parse_uuid(s: str | None) -> str | None:
         return None
 
 
-def insert_clip_project(*, user_uuid: str | None, title: str) -> str:
+def insert_clip_project(*, user_uuid: str | None, title: str, project_kind: str = "clip") -> str:
     tid = (title or "").strip() or "未命名剪辑"
+    kind = (project_kind or "clip").strip().lower() or "clip"
+    if kind not in ("clip", "shownotes"):
+        kind = "clip"
     uid = _parse_uuid(user_uuid)
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
                 """
-                INSERT INTO clip_projects (user_id, title)
-                VALUES (%s, %s)
+                INSERT INTO clip_projects (user_id, title, project_kind)
+                VALUES (%s, %s, %s)
                 RETURNING id
                 """,
-                (uid, tid),
+                (uid, tid, kind),
             )
             row = cur.fetchone()
             conn.commit()
             return str(row["id"])
 
 
-def list_clip_projects(*, user_uuid: str | None, limit: int = 50) -> list[dict[str, Any]]:
+def list_clip_projects(
+    *,
+    user_uuid: str | None,
+    limit: int = 50,
+    offset: int = 0,
+    project_kind: str | None = None,
+    sort: str = "updated",
+) -> list[dict[str, Any]]:
     uid = _parse_uuid(user_uuid)
     lim = max(1, min(200, int(limit)))
+    off = max(0, int(offset))
+    kind = (project_kind or "").strip().lower() or None
+    if kind and kind not in ("clip", "shownotes"):
+        kind = None
+    order_sql = (
+        "ORDER BY created_at DESC NULLS LAST, updated_at DESC"
+        if (sort or "").strip().lower() == "created"
+        else "ORDER BY updated_at DESC NULLS LAST, created_at DESC"
+    )
+    kind_clause = "AND project_kind = %s" if kind else ""
     with get_conn() as conn:
         with get_cursor(conn) as cur:
+            base_select = f"""
+                    SELECT id, title, project_kind, transcription_status, export_status,
+                           created_at, updated_at, audio_filename,
+                           audio_object_key IS NOT NULL AS has_audio,
+                           (
+                             audio_object_key IS NOT NULL
+                             OR jsonb_array_length(COALESCE(audio_source_segments, '[]'::jsonb)) > 0
+                             OR jsonb_array_length(COALESCE(audio_staging_keys, '[]'::jsonb)) > 0
+                           ) AS has_material
+                    FROM clip_projects
+                    WHERE {{user_clause}}
+                    {kind_clause}
+                    {order_sql}
+                    LIMIT %s OFFSET %s
+                    """
             if uid:
-                cur.execute(
-                    """
-                    SELECT id, title, transcription_status, export_status, created_at, updated_at,
-                           audio_object_key IS NOT NULL AS has_audio
-                    FROM clip_projects
-                    WHERE user_id = %s::uuid
-                    ORDER BY updated_at DESC NULLS LAST, created_at DESC
-                    LIMIT %s
-                    """,
-                    (uid, lim),
-                )
+                user_clause = "user_id = %s::uuid"
+                params: list[Any] = [uid]
+                if kind:
+                    params.append(kind)
+                params.extend([lim, off])
+                cur.execute(base_select.format(user_clause=user_clause), tuple(params))
             else:
-                cur.execute(
-                    """
-                    SELECT id, title, transcription_status, export_status, created_at, updated_at,
-                           audio_object_key IS NOT NULL AS has_audio
-                    FROM clip_projects
-                    WHERE user_id IS NULL
-                    ORDER BY updated_at DESC NULLS LAST, created_at DESC
-                    LIMIT %s
-                    """,
-                    (lim,),
-                )
+                user_clause = "user_id IS NULL"
+                params = []
+                if kind:
+                    params.append(kind)
+                params.extend([lim, off])
+                cur.execute(base_select.format(user_clause=user_clause), tuple(params))
             return [dict(r) for r in cur.fetchall()]
 
 

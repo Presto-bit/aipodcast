@@ -18,8 +18,9 @@ import { SHARE_SHOWNOTES_REFINE_PROMPT_PLACEHOLDER } from "../../lib/shareShowno
 import {
   clipProjectHasMaterial,
   clipProjectMasterAudioSrc,
-  isShownotesOnlyClipProject,
-  SHOWNOTES_ONLY_CLIP_PROJECT_TITLE
+  CLIP_PROJECT_KIND_SHOWNOTES,
+  shownotesProjectDisplayTitle,
+  titleFromUploadedAudioFile
 } from "../../lib/shownotesClipProject";
 import {
   appendShownotesStudioHistory,
@@ -335,10 +336,9 @@ export default function ShownotesStudio({
   const displayName = useMemo(() => {
     const f = fileLabel.trim();
     if (f) return f;
-    const t = String(project?.title || "").trim();
-    if (t && !isShownotesOnlyClipProject({ title: t })) return t;
+    if (project) return shownotesProjectDisplayTitle(project);
     return "已上传音频";
-  }, [fileLabel, project?.title]);
+  }, [fileLabel, project]);
 
   const audioSrc = useMemo(() => {
     if (!project) return null;
@@ -441,7 +441,10 @@ export default function ShownotesStudio({
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify({ title: SHOWNOTES_ONLY_CLIP_PROJECT_TITLE })
+          body: JSON.stringify({
+            title: titleFromUploadedAudioFile(file),
+            project_kind: CLIP_PROJECT_KIND_SHOWNOTES
+          })
         });
         const data = (await res.json().catch(() => ({}))) as { success?: boolean; project?: { id?: string }; detail?: string };
         if (!res.ok || data.success === false || !data.project?.id) {

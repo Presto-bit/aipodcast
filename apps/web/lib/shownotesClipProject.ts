@@ -1,14 +1,41 @@
 import type { ClipProjectRow } from "./clipTypes";
 
-/** 通过「制作 Shownotes」流程创建的剪辑工程标题；与音频精剪工程区分，不进入 /clip 工程列表 */
+/** @deprecated 旧版 Shownotes 工程占位标题；新工程用 project_kind=shownotes + 音频文件名 */
 export const SHOWNOTES_ONLY_CLIP_PROJECT_TITLE = "Shownotes";
 
-export function isShownotesOnlyClipProject(p: Pick<ClipProjectRow, "title"> | null | undefined): boolean {
-  return String(p?.title || "").trim() === SHOWNOTES_ONLY_CLIP_PROJECT_TITLE;
+export const CLIP_PROJECT_KIND_SHOWNOTES = "shownotes";
+export const CLIP_PROJECT_KIND_CLIP = "clip";
+
+export function isShownotesOnlyClipProject(
+  p: Pick<ClipProjectRow, "title" | "project_kind"> | null | undefined
+): boolean {
+  if (!p) return false;
+  const kind = String(p.project_kind || "").trim().toLowerCase();
+  if (kind === CLIP_PROJECT_KIND_SHOWNOTES) return true;
+  return String(p.title || "").trim() === SHOWNOTES_ONLY_CLIP_PROJECT_TITLE;
+}
+
+/** 列表展示名：优先工程标题（上传时的音频名），旧占位标题「Shownotes」回退到 audio_filename */
+export function shownotesProjectDisplayTitle(p: ClipProjectRow | null | undefined): string {
+  if (!p) return "未命名工程";
+  const title = String(p.title || "").trim();
+  if (title && title !== SHOWNOTES_ONLY_CLIP_PROJECT_TITLE) return title;
+  const fn = String(p.audio_filename || "").trim();
+  if (fn) return fn;
+  const src = Array.isArray(p.audio_source_segments) ? p.audio_source_segments : [];
+  const first = src[0]?.filename;
+  if (first) return String(first).trim();
+  return title || "未命名工程";
+}
+
+export function titleFromUploadedAudioFile(file: File): string {
+  const name = (file.name || "").trim() || "audio";
+  return name.slice(0, 200);
 }
 
 export function clipProjectHasMaterial(p: ClipProjectRow | null): boolean {
   if (!p) return false;
+  if (p.has_material === true) return true;
   const merged = String(p.audio_object_key || "").trim();
   if (merged.length > 0) return true;
   const src = Array.isArray(p.audio_source_segments) ? p.audio_source_segments : [];

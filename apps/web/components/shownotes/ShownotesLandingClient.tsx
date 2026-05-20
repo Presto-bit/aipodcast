@@ -6,8 +6,12 @@ import { useRef, useState } from "react";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import { formatOrchestratorErrorText } from "../../lib/api";
-import { SHOWNOTES_ONLY_CLIP_PROJECT_TITLE } from "../../lib/shownotesClipProject";
+import {
+  CLIP_PROJECT_KIND_SHOWNOTES,
+  titleFromUploadedAudioFile
+} from "../../lib/shownotesClipProject";
 import { ShownotesBrandHeading } from "./ShownotesBrandHeading";
+import ShownotesMyProjectsList from "./ShownotesMyProjectsList";
 import ShownotesStudio from "./ShownotesStudio";
 
 export default function ShownotesLandingClient() {
@@ -18,17 +22,25 @@ export default function ShownotesLandingClient() {
   const [err, setErr] = useState("");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [uploadedFileLabel, setUploadedFileLabel] = useState("");
+  const [listRefreshKey, setListRefreshKey] = useState(0);
+
+  function openProject(projectId: string, fileLabel: string) {
+    setErr("");
+    setActiveProjectId(projectId);
+    setUploadedFileLabel(fileLabel);
+  }
 
   async function createProjectAndStage(file: File) {
     setErr("");
-    setUploadedFileLabel(file.name || "audio");
+    const label = titleFromUploadedAudioFile(file);
+    setUploadedFileLabel(label);
     setUploadBusy(true);
     try {
       const res = await fetch("/api/clip/projects", {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ title: SHOWNOTES_ONLY_CLIP_PROJECT_TITLE })
+        body: JSON.stringify({ title: label, project_kind: CLIP_PROJECT_KIND_SHOWNOTES })
       });
       const createText = await res.text();
       let createData: { success?: boolean; project?: { id?: string }; detail?: string } = {};
@@ -71,6 +83,7 @@ export default function ShownotesLandingClient() {
             : formatOrchestratorErrorText(stageText);
         throw new Error(detail || `上传失败 ${stage.status}`);
       }
+      setListRefreshKey((k) => k + 1);
     } catch (e) {
       setUploadedFileLabel("");
       setActiveProjectId(null);
@@ -129,17 +142,34 @@ export default function ShownotesLandingClient() {
             <span className="flex h-14 w-14 items-center justify-center rounded-full bg-fill/60 text-brand">
               <Plus className="h-7 w-7" strokeWidth={2} aria-hidden />
             </span>
-            <span className="text-sm font-medium text-ink">{uploadBusy ? "创建任务并上传中…" : "点击上传音频"}</span>
+            <span className="text-sm font-medium text-ink">{uploadBusy ? "创建工程并上传中…" : "点击上传音频"}</span>
           </button>
           <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted">
-            <li>支持 MP3、WAV、M4A 等常见格式；上传音频后可自动生成 Shownotes。</li>
+            <li>支持 MP3、WAV、M4A 等常见格式；上传后将自动保存为 Shownotes 工程。</li>
             <li>请点击「开始生成」发起转写；转写与模型调用需保持页面打开。</li>
           </ul>
+          <ShownotesMyProjectsList
+            refreshKey={listRefreshKey}
+            onOpenProject={(id, label) => openProject(id, label)}
+          />
         </div>
       ) : null}
 
       {activeProjectId ? (
         <section className="mt-8" aria-label="Shownotes 工作区">
+          <div className="mb-4">
+            <button
+              type="button"
+              className="text-sm font-medium text-brand hover:underline"
+              onClick={() => {
+                setActiveProjectId(null);
+                setUploadedFileLabel("");
+                setListRefreshKey((k) => k + 1);
+              }}
+            >
+              返回上传与工程列表
+            </button>
+          </div>
           <h2 className="sr-only">Shownotes 工作区</h2>
           <ShownotesStudio
             key={activeProjectId}
@@ -149,6 +179,7 @@ export default function ShownotesLandingClient() {
             onReplaceProject={(id, label) => {
               setActiveProjectId(id);
               setUploadedFileLabel(label);
+              setListRefreshKey((k) => k + 1);
             }}
           />
         </section>

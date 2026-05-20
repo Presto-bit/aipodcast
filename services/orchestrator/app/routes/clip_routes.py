@@ -572,15 +572,31 @@ def clip_create_project(request: Request, body: dict[str, Any] = Body(default_fa
                 detail="当前登录未关联到用户库 UUID，无法创建剪辑工程。请重新登录或联系管理员同步账户。",
             )
     title = str((body or {}).get("title") or "未命名剪辑").strip() or "未命名剪辑"
-    pid = insert_clip_project(user_uuid=uid, title=title[:200])
+    raw_kind = str((body or {}).get("project_kind") or (body or {}).get("kind") or "clip").strip().lower()
+    project_kind = raw_kind if raw_kind in ("clip", "shownotes") else "clip"
+    pid = insert_clip_project(user_uuid=uid, title=title[:200], project_kind=project_kind)
     row = get_clip_project(project_id=pid, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row or {})}
 
 
 @router.get("/clip/projects")
-def clip_list_projects(request: Request, limit: int = 50):
+def clip_list_projects(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    project_kind: str | None = None,
+    kind: str | None = None,
+    sort: str = "updated",
+):
     uid = _owner_uuid(request)
-    rows = list_clip_projects(user_uuid=uid, limit=limit)
+    pk = (project_kind or kind or "").strip() or None
+    rows = list_clip_projects(
+        user_uuid=uid,
+        limit=limit,
+        offset=offset,
+        project_kind=pk,
+        sort=sort,
+    )
     return {"success": True, "projects": [_serialize_clip_row(dict(r)) for r in rows]}
 
 

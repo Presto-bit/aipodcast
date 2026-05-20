@@ -4,7 +4,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
 import type { ClipProjectRow } from "../../lib/clipTypes";
-import { clipProjectHasMaterial, isShownotesOnlyClipProject } from "../../lib/shownotesClipProject";
+import {
+  clipProjectHasMaterial,
+  isShownotesOnlyClipProject,
+  shownotesProjectDisplayTitle
+} from "../../lib/shownotesClipProject";
 
 export default function ShownotesMakeHubClient() {
   const { ready, user, getAuthHeaders } = useAuth();
@@ -16,7 +20,8 @@ export default function ShownotesMakeHubClient() {
   const load = useCallback(async () => {
     setErr("");
     try {
-      const res = await fetch("/api/clip/projects?limit=80", { credentials: "same-origin", headers: { ...getAuthHeaders() } });
+      const q = new URLSearchParams({ limit: "80", project_kind: "shownotes", sort: "created" });
+      const res = await fetch(`/api/clip/projects?${q}`, { credentials: "same-origin", headers: { ...getAuthHeaders() } });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; projects?: ClipProjectRow[]; detail?: string };
       if (!res.ok || data.success === false) throw new Error(data.detail || `加载失败 ${res.status}`);
       setItems(Array.isArray(data.projects) ? data.projects : []);
@@ -86,7 +91,7 @@ export default function ShownotesMakeHubClient() {
                 href={`/shownotes/make/${encodeURIComponent(p.id)}`}
                 className="flex items-center justify-between rounded-xl border border-line/80 bg-fill/25 px-4 py-3 text-sm transition hover:border-brand/35 hover:bg-fill/45"
               >
-                <span className="min-w-0 truncate font-medium text-ink">{p.title || "未命名工程"}</span>
+                <span className="min-w-0 truncate font-medium text-ink">{shownotesProjectDisplayTitle(p)}</span>
                 <span className="ml-3 shrink-0 text-xs text-muted">{p.transcription_status || "—"}</span>
               </Link>
             </li>

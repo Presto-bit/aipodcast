@@ -105,6 +105,9 @@ export type ClipExportPausePolicy = {
 export type ClipProjectRow = {
   id: string;
   title: string;
+  /** clip | shownotes；Shownotes 工作台工程与精剪工程区分 */
+  project_kind?: string;
+  has_material?: boolean;
   transcription_status: string;
   export_status: string;
   export_pause_policy?: ClipExportPausePolicy | null;
