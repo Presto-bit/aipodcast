@@ -87,9 +87,9 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
-    # 使用 127.0.0.1；若极旧镜像无 curl，请换较新 minio/minio 或固定带 curl 的 RELEASE 标签
+    # MinIO RELEASE.2023-11+ 镜像无 curl，须用内置 mc（见 minio/minio#18371）
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 5s
       retries: 30

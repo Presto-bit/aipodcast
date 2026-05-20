@@ -108,6 +108,7 @@
 - **`minio-https` 服务**：仓库自带 **Caddy** 将 **`https://127.0.0.1:9443`** 反代到 **`minio:9000`**（`tls internal` 自签证书，本机调试用）。编排器环境变量默认 **`OBJECT_PRESIGN_ENDPOINT=${OBJECT_PRESIGN_ENDPOINT:-https://127.0.0.1:9443}`**，与预签名 URL Host 一致即可根治本机 **HTTPS 页播放混合内容**。
 - **`OBJECT_PRESIGN_ENDPOINT`**：仅影响 **`generate_presigned_url` 生成的链接 Host**；**公网生产**须改为 **`https://你的反代域名`**（证书与 DNS 指向反代，反代再转发到 MinIO 9000 API），否则远端用户浏览器无法访问 `127.0.0.1:9443`。
 - 生产 **`FYV_PRODUCTION=1`** 且未配置公网预签名时，编排器启动会 **记录 WARNING**；任务详情 JSON 中误存的 **`http://minio:9000/...` 类 `audio_url` / 封面** 在 API 序列化时会被 **置空**，避免前端混合内容，客户端应依赖 **`audio_object_key` + `/work-listen`** 或重新跑任务生成合法外链。
+- **`fyv-minio-1` unhealthy**：新版 MinIO 镜像**不含 curl**，Compose 已改用 **`mc ready local`** 做 healthcheck。若仍失败，执行 **`docker logs fyv-minio-1 --tail 80`**：常见为**磁盘满**（`XMinioStorageFull`），须 `df -h` 并清理 `minio_data` 或扩容后再 `docker compose up -d`。
 
 ### Docker：`web` 构建拉取 Node 基础镜像失败（metadata / content size of zero）
 
