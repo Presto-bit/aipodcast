@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Music2, Pause, Play, RotateCw, Save, Sparkles, Upload } from "lucide-react";
+import { FileText, Music2, Pause, Play, RotateCw, Save, Sparkles, Upload } from "lucide-react";
 import {
   fetchClipProjectShareAiCopy,
   fetchClipTitleSuggestions,
@@ -12,6 +12,7 @@ import {
 } from "../../lib/api";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
+import { clipProjectTranscriptPlainText } from "../../lib/clipTranscriptPlainText";
 import type { ClipProjectRow } from "../../lib/clipTypes";
 import { computeSharePublishHints, reorderShowNotesGoldenQuotesAfterListen } from "../../lib/sharePublishDefaults";
 import { SHARE_SHOWNOTES_REFINE_PROMPT_PLACEHOLDER } from "../../lib/shareShownotesAiPrompt";
@@ -23,13 +24,9 @@ import {
   titleFromUploadedAudioFile
 } from "../../lib/shownotesClipProject";
 import {
-  appendShownotesStudioHistory,
   clearShownotesStudioDraft,
-  clearShownotesStudioHistory,
   loadShownotesStudioDraft,
-  loadShownotesStudioHistory,
-  saveShownotesStudioDraft,
-  type ShownotesStudioHistoryItem
+  saveShownotesStudioDraft
 } from "../../lib/shownotesStudioHistory";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { ShownotesBrandHeading } from "./ShownotesBrandHeading";
@@ -51,8 +48,6 @@ function formatDuration(sec: number): string {
   const r = s % 60;
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
-
-const HISTORY_PAGE_SIZE = 5;
 
 export default function ShownotesStudio({
   projectId,
@@ -87,12 +82,10 @@ export default function ShownotesStudio({
   const [showNotes, setShowNotes] = useState("");
   const [notesPreviewEdit, setNotesPreviewEdit] = useState(false);
 
-  const [history, setHistory] = useState<ShownotesStudioHistoryItem[]>([]);
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [aiPromptDraft, setAiPromptDraft] = useState("");
   const [aiErr, setAiErr] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyPage, setHistoryPage] = useState(0);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
 
   const draftFlushRef = useRef({ showNotes: "", titleOptions: [] as string[] });
   draftFlushRef.current = { showNotes, titleOptions };
@@ -198,16 +191,6 @@ export default function ShownotesStudio({
   }, [project, projectId]);
 
   useEffect(() => {
-    setHistory(loadShownotesStudioHistory(projectId));
-    setHistoryPage(0);
-  }, [projectId]);
-
-  useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
-    setHistoryPage((p) => Math.min(p, totalPages - 1));
-  }, [history.length]);
-
-  useEffect(() => {
     const t = window.setTimeout(() => {
       const { showNotes: sn, titleOptions: to } = draftFlushRef.current;
       saveShownotesStudioDraft(projectId, { showNotes: sn, titles: to, selectedTitleIndex: 0 });
@@ -287,14 +270,6 @@ export default function ShownotesStudio({
         setShowNotes(notes);
         setNotesPreviewEdit(false);
         await persistClipProjectShowNotes(projectId, String(notes ?? "").slice(0, 20_000));
-        const snap = (titlesSnapshot ?? titleOptions).map((x) => String(x || "").trim()).filter(Boolean);
-        const titlesSnap = snap.length ? snap : [""];
-        const nextHist = appendShownotesStudioHistory(projectId, {
-          titles: titlesSnap,
-          selectedTitleIndex: 0,
-          showNotes: notes
-        });
-        setHistory(nextHist);
         clearShownotesStudioDraft(projectId);
         await load();
         setPipelineMsg("");
@@ -355,6 +330,12 @@ export default function ShownotesStudio({
     [showNotes]
   );
 
+  const transcriptPlainText = useMemo(() => clipProjectTranscriptPlainText(project), [project]);
+
+  useEffect(() => {
+    setTranscriptOpen(false);
+  }, [projectId]);
+
   const onSeekSeconds = useCallback((sec: number) => {
     const el = audioRef.current;
     if (!el) return;
@@ -368,13 +349,6 @@ export default function ShownotesStudio({
     try {
       await persistClipProjectShowNotes(projectId, String(showNotes ?? "").slice(0, 20_000));
       clearShownotesStudioDraft(projectId);
-      const titlesSnap = titleOptions.length ? titleOptions : [""];
-      const nextHist = appendShownotesStudioHistory(projectId, {
-        titles: titlesSnap,
-        selectedTitleIndex: 0,
-        showNotes
-      });
-      setHistory(nextHist);
       await load();
     } catch (e) {
       setLoadErr(String(e instanceof Error ? e.message : e));
@@ -402,13 +376,6 @@ export default function ShownotesStudio({
       setNotesPreviewEdit(false);
       await persistClipProjectShowNotes(projectId, String(notes ?? "").slice(0, 20_000));
       clearShownotesStudioDraft(projectId);
-      const titlesSnap = titleOptions.length ? titleOptions : [""];
-      const nextHist = appendShownotesStudioHistory(projectId, {
-        titles: titlesSnap,
-        selectedTitleIndex: 0,
-        showNotes: notes
-      });
-      setHistory(nextHist);
       await load();
       setAiModalOpen(false);
       setAiPromptDraft("");
@@ -424,19 +391,12 @@ export default function ShownotesStudio({
     void runTranscribe();
   }, [runTranscribe]);
 
-  const loadHistoryEntry = useCallback((row: ShownotesStudioHistoryItem) => {
-    setShowNotes(row.showNotes);
-    setTitleOptions(row.titles.filter(Boolean).slice(0, 3));
-    setNotesPreviewEdit(false);
-  }, []);
-
   const startNewAudioFromFile = useCallback(
     async (file: File) => {
       setNewAudioBusy(true);
       setLoadErr("");
       try {
         clearShownotesStudioDraft(projectId);
-        clearShownotesStudioHistory(projectId);
         const res = await fetch("/api/clip/projects", {
           method: "POST",
           credentials: "same-origin",
@@ -479,13 +439,6 @@ export default function ShownotesStudio({
   );
 
   const canOfferNewUpload = Boolean(project && (hasMaterial || transcribeOk));
-
-  const historyTotalPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
-  const historyPageSafe = Math.min(historyPage, historyTotalPages - 1);
-  const pagedHistory = history.slice(
-    historyPageSafe * HISTORY_PAGE_SIZE,
-    historyPageSafe * HISTORY_PAGE_SIZE + HISTORY_PAGE_SIZE
-  );
 
   const inner = (
     <div className={embedOnLanding ? "max-w-3xl space-y-6" : "space-y-6"}>
@@ -639,7 +592,34 @@ export default function ShownotesStudio({
                     <Save className="h-3.5 w-3.5" />
                     {saveBusy ? "保存中…" : "保存"}
                   </button>
+                  <button
+                    type="button"
+                    disabled={!transcriptPlainText}
+                    title={transcriptPlainText ? "查看转写原文" : "转写完成后可查看原文"}
+                    aria-label="查看原文"
+                    aria-pressed={transcriptOpen}
+                    onClick={() => setTranscriptOpen((o) => !o)}
+                    className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition hover:bg-fill disabled:opacity-50 ${
+                      transcriptOpen ? "bg-fill text-brand" : "text-ink"
+                    }`}
+                  >
+                    <FileText className="h-3.5 w-3.5" aria-hidden />
+                    查看原文
+                  </button>
                 </div>
+
+                {transcriptOpen ? (
+                  <div
+                    className="mb-3 max-h-[min(50vh,20rem)] overflow-y-auto rounded-xl border border-line/60 bg-fill/25 p-4"
+                    aria-label="转写原文"
+                  >
+                    {transcriptPlainText ? (
+                      <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink">{transcriptPlainText}</pre>
+                    ) : (
+                      <p className="text-sm text-muted">暂无转写文稿。</p>
+                    )}
+                  </div>
+                ) : null}
 
                 <div className="space-y-2">
                   <p className="text-[11px] text-muted">双击预览区域进入编辑；支持 Markdown。</p>
@@ -677,76 +657,6 @@ export default function ShownotesStudio({
                   <p className="mt-3 text-[11px] text-warning-ink">Shownotes 偏短。</p>
                 ) : null}
               </div>
-            </section>
-
-            <section aria-label="历史记录" className="pt-2">
-              <button
-                type="button"
-                onClick={() => setHistoryOpen((o) => !o)}
-                className="flex w-full items-center justify-between gap-2 py-2 text-left text-sm font-semibold text-ink hover:text-brand"
-              >
-                <span>历史记录（{history.length} 条）</span>
-                {historyOpen ? <ChevronDown className="h-4 w-4 shrink-0 text-muted" aria-hidden /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted" aria-hidden />}
-              </button>
-              {historyOpen ? (
-                <div className="mt-1">
-                  <ul className="space-y-1">
-                    {history.length === 0 ? (
-                      <li className="text-xs text-muted">暂无记录</li>
-                    ) : (
-                      pagedHistory.map((h) => (
-                        <li key={h.id}>
-                          <button
-                            type="button"
-                            onClick={() => loadHistoryEntry(h)}
-                            className="w-full rounded-md px-2 py-2 text-left text-xs transition hover:bg-fill/40"
-                          >
-                            <span className="block font-medium text-ink line-clamp-2">
-                              {h.titles[h.selectedTitleIndex]?.trim() || "（无标题）"}
-                            </span>
-                            <span className="mt-0.5 block text-[10px] text-muted">
-                              {new Date(h.savedAt).toLocaleString("zh-CN", {
-                                month: "short",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit"
-                              })}
-                            </span>
-                          </button>
-                        </li>
-                      ))
-                    )}
-                  </ul>
-                  {history.length > HISTORY_PAGE_SIZE ? (
-                    <div className="mt-3 flex items-center justify-between text-xs text-muted">
-                      <button
-                        type="button"
-                        disabled={historyPageSafe <= 0}
-                        onClick={() => setHistoryPage((p) => Math.max(0, p - 1))}
-                        className="font-medium text-brand hover:underline disabled:opacity-40 disabled:hover:no-underline"
-                      >
-                        上一页
-                      </button>
-                      <span className="tabular-nums">
-                        {historyPageSafe + 1} / {historyTotalPages}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={historyPageSafe >= historyTotalPages - 1}
-                        onClick={() =>
-                          setHistoryPage((p) => {
-                            const tp = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
-                            return Math.min(tp - 1, p + 1);
-                          })
-                        }
-                        className="font-medium text-brand hover:underline disabled:opacity-40 disabled:hover:no-underline"
-                      >
-                        下一页
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
             </section>
           </>
         ) : hasMaterial ? (
