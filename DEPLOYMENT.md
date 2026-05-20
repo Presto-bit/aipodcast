@@ -156,7 +156,7 @@ Docker 官方镜像在**数据目录已存在**时**不会**根据新的 `POSTGR
 ## 数据库迁移
 
 - 首次部署或升级编排器后，请确保 PostgreSQL 已执行 `infra/postgres/init/` 下 SQL（Compose 首次建库会自动挂载；**已有库**需手动执行增量脚本）。
-- `002_usage_events.sql`：任务终态用量事件与后台「用量汇总」依赖此表；未执行时用量写入会静默跳过、汇总为空。
+- `00202_usage_events.sql`：任务终态用量事件与后台「用量汇总」依赖此表；未执行时用量写入会静默跳过、汇总为空。
 - 若需将 JSON 用户镜像到 PG（便于审计/关联），可在配置好 `DB_*` 后执行：`python3 scripts/sync_users_to_pg.py`（支持 `--dry-run`）。
 
 ### 生产：启动期 Schema 严格模式

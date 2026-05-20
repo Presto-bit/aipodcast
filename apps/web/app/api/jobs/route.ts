@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { allowJobCreate, rateLimitedResponse } from "../../../lib/aiRouteRateLimit";
 import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../lib/bff";
 
 export async function GET(req: NextRequest) {
@@ -12,6 +13,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  if (!(await allowJobCreate(req))) {
+    return rateLimitedResponse();
+  }
   const raw = await req.text();
   return proxyJsonFromOrchestrator("/api/v1/jobs", {
     method: "POST",

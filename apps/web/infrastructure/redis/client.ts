@@ -1,6 +1,8 @@
 type RedisLike = {
   get: (key: string) => Promise<string | null>;
   set: (key: string, value: string) => Promise<unknown>;
+  incr: (key: string) => Promise<number>;
+  expire: (key: string, seconds: number) => Promise<unknown>;
   lpush: (key: string, value: string) => Promise<unknown>;
   ltrim: (key: string, start: number, stop: number) => Promise<unknown>;
   lrange: (key: string, start: number, stop: number) => Promise<string[]>;

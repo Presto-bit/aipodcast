@@ -75,7 +75,7 @@ services:
 
   minio:
     platform: linux/amd64
-    image: ${MINIO_IMAGE:-minio/minio:latest}
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2024-11-07T00-52-20Z}
     command: server /data --console-address ":9001"
     env_file:
       - .env.ai-native

@@ -62,45 +62,33 @@ import { WorkHubShownotesSection } from "./WorkHubShownotesSection";
 import { RssPublishSettingsPanel } from "../rss/RssPublishSettingsPanel";
 import { downloadJobBundleZip, downloadJobManuscriptTxt } from "../../lib/workBundleDownload";
 import { SHARE_SHOWNOTES_REFINE_PROMPT_PLACEHOLDER as AI_SHOWNOTES_PROMPT_PLACEHOLDER } from "../../lib/shareShownotesAiPrompt";
-
-const RSS_LAST_CHANNEL_STORAGE_KEY = "fym_rss_last_channel_id";
-
-function IconShareClipboard({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" strokeLinejoin="round" />
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function IconShareCheck({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
-      <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function IconShareExport({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <path d="M12 3v12" strokeLinecap="round" />
-      <path d="m8 7 4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4 14v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function IconDownloadBundle({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-      <path d="M12 3v12" strokeLinecap="round" />
-      <path d="m8 11 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4 21h16" strokeLinecap="round" />
-    </svg>
-  );
-}
+import {
+  DRAFT_DEBOUNCE_MS,
+  JOB_GEN_PLACEHOLDER,
+  JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER,
+  MORE_MENU_PUBLISH_PLATFORM_IDS,
+  MORE_MENU_PUBLISH_PLATFORM_SET,
+  PINNED_PUBLISH_PLATFORM_IDS,
+  PINNED_PUBLISH_PLATFORM_SET,
+  RSS_LAST_CHANNEL_STORAGE_KEY
+} from "./share-publish/sharePublishClientConstants";
+import {
+  defaultScheduleDatetimeLocal,
+  formatEtaRoughCn,
+  formatListenClock,
+  formatSchedulePreview,
+  jobResultHasPlayableAudio,
+  sanitizeWorkDetailReturnTo,
+  toDatetimeLocalValue,
+  type FormSnapshot,
+  type ShareGenContext
+} from "./share-publish/sharePublishClientUtils";
+import {
+  IconDownloadBundle,
+  IconShareCheck,
+  IconShareClipboard,
+  IconShareExport
+} from "./share-publish/SharePublishIcons";
 
 type Props = {
   jobId: string;
@@ -111,100 +99,6 @@ type Props = {
   /** 站内返回路径（查询参数 `returnTo`）；无效时回退为 /works 或首页 */
   returnTo?: string | null;
 };
-
-const PINNED_PUBLISH_PLATFORM_IDS: PublishPlatformId[] = ["xiaoyuzhou", "ximalaya"];
-const PINNED_PUBLISH_PLATFORM_SET = new Set<PublishPlatformId>(PINNED_PUBLISH_PLATFORM_IDS);
-/** 「更多」下拉：仅展示这些占位平台 */
-const MORE_MENU_PUBLISH_PLATFORM_IDS: PublishPlatformId[] = ["apple_podcasts", "netease"];
-const MORE_MENU_PUBLISH_PLATFORM_SET = new Set<PublishPlatformId>(MORE_MENU_PUBLISH_PLATFORM_IDS);
-
-function sanitizeWorkDetailReturnTo(raw: string | null | undefined, fallback: string): string {
-  const t = String(raw ?? "").trim();
-  if (!t.startsWith("/") || t.startsWith("//")) return fallback;
-  if (t.includes(":")) return fallback;
-  const qIdx = t.indexOf("?");
-  const pathOnly = (qIdx >= 0 ? t.slice(0, qIdx) : t).split("#")[0] || "";
-  if (!pathOnly.startsWith("/") || pathOnly.startsWith("//")) return fallback;
-  if (pathOnly.includes(":")) return fallback;
-  if (qIdx < 0) return pathOnly || fallback;
-  const queryOnly = t.slice(qIdx + 1).split("#")[0] ?? "";
-  if (!queryOnly) return pathOnly || fallback;
-  if (queryOnly.length > 512) return pathOnly || fallback;
-  // 仅允许站内常见查询串（如 /works?tab=active），拒绝含协议或可疑字符
-  if (!/^[a-zA-Z0-9_.=&%-]+$/.test(queryOnly)) return pathOnly || fallback;
-  return `${pathOnly}?${queryOnly}`;
-}
-
-/** 成片可能只有对象存储 URL / key，不一定内联 audio_hex（大文件会省略 hex）。 */
-function jobResultHasPlayableAudio(result: Record<string, unknown>): boolean {
-  const hex = String(result.audio_hex || "").trim();
-  const url = String(result.audio_url || "").trim();
-  const key = String(result.audio_object_key || "").trim();
-  const durRaw = result.audio_duration_sec;
-  let dur = 0;
-  if (typeof durRaw === "number" && Number.isFinite(durRaw)) dur = durRaw;
-  else if (typeof durRaw === "string" && durRaw.trim()) dur = Number.parseFloat(durRaw);
-  return Boolean(hex || url || key || (Number.isFinite(dur) && dur > 0.4));
-}
-
-type FormSnapshot = ShareFormFields;
-
-const DRAFT_DEBOUNCE_MS = 600;
-const JOB_GEN_PLACEHOLDER = "生成中,请稍等...";
-const JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER =
-  "文稿排队生成中，通常需数分钟，请勿关闭页面；完成后正文会自动载入。若长时间无进度，可刷新本页。";
-
-type ShareGenContext = {
-  payload: Record<string, unknown>;
-  displayTitleHint: string;
-  titleFallbackRaw: string;
-  resultEarly: Record<string, unknown>;
-};
-
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-/** `datetime-local` value in local timezone (YYYY-MM-DDTHH:mm). */
-function toDatetimeLocalValue(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
-/** 首次打开弹窗且无已选时间时：本地时区的「下一整点」（例如 15:37 → 16:00）。 */
-function defaultScheduleDatetimeLocal(): string {
-  const d = new Date();
-  d.setMilliseconds(0);
-  d.setSeconds(0, 0);
-  d.setMinutes(0, 0);
-  d.setHours(d.getHours() + 1);
-  return toDatetimeLocalValue(d);
-}
-
-function formatSchedulePreview(value: string): string {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(d);
-}
-
-function formatListenClock(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return "—";
-  const s = Math.floor(sec);
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${r.toString().padStart(2, "0")}`;
-}
-
-function formatEtaRoughCn(sec: number): string {
-  const s = Math.ceil(Math.max(0, sec));
-  if (s < 90) return `${s} 秒`;
-  const m = Math.max(1, Math.round(s / 60));
-  return `${m} 分钟`;
-}
 
 export function SharePublishClient({
   jobId,

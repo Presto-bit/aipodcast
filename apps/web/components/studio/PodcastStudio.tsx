@@ -76,24 +76,16 @@ import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
 import {
   CREATIVE_CHIP_HOVER_HINT
 } from "../../lib/studioHoverHints";
+import {
+  LISTENHUB_CREATIVE_HINTS,
+  MAIN_TEXT_PLACEHOLDER,
+  PARTIAL_REDO_KEY,
+  PODCAST_PREFS_KEY,
+  PODCAST_REUSE_TEMPLATE_KEY,
+  type PartialRedoMeta
+} from "./podcastStudioConstants";
 
 type PanelId = "mode" | "lang" | "voice" | "duration" | "intro" | "creative" | "library" | null;
-
-const LISTENHUB_CREATIVE_HINTS = [
-  "将你最感兴趣的一本书或一篇文章，做成一期深度闲聊播客。",
-  "把最近一周的科技新闻，整理成一期「划重点」对话节目。",
-  "用轻松语气讲解一个职业或技能入门，面向完全外行听众。"
-] as const;
-
-const MAIN_TEXT_PLACEHOLDER = "主题或素材正文";
-const PODCAST_PREFS_KEY = "fym_podcast_user_prefs_v1";
-const PARTIAL_REDO_KEY = "fym_podcast_partial_redo_v1";
-const PODCAST_REUSE_TEMPLATE_KEY = "fym_reuse_template_podcast_v1";
-type PartialRedoMeta = {
-  sourceJobId?: string;
-  scopeLabel: string;
-  prompt: string;
-};
 
 export type PodcastStudioActivity = {
   busy: boolean;

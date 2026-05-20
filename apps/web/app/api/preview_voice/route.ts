@@ -1,7 +1,11 @@
 import { NextRequest } from "next/server";
+import { allowPreviewVoice, rateLimitedResponse } from "../../../lib/aiRouteRateLimit";
 import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../lib/bff";
 
 export async function POST(req: NextRequest) {
+  if (!(await allowPreviewVoice(req))) {
+    return rateLimitedResponse();
+  }
   const raw = await req.text();
   return proxyJsonFromOrchestrator("/api/v1/preview_voice", {
     method: "POST",

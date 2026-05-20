@@ -15,6 +15,12 @@ def test_production_ok_with_email_switches_off(monkeypatch):
     monkeypatch.setenv("FYV_AUTH_EMAIL_LOG_TOKEN", "0")
     monkeypatch.setenv("FYV_AUTH_EMAIL_AUTOVERIFY", "0")
     monkeypatch.delenv("PAYMENT_WEBHOOK_ALLOW_UNSIGNED", raising=False)
+    monkeypatch.setattr("app.startup_security.settings.embed_rq_media_worker", False)
+    monkeypatch.setattr("app.startup_security.settings.embed_rq_ai_worker", False)
+    monkeypatch.setattr(
+        "app.startup_security.settings.object_presign_endpoint",
+        "https://objects.example.com",
+    )
     assert_production_security_or_exit()
 
 
@@ -42,3 +48,28 @@ def test_non_production_allows_log_token(monkeypatch):
     monkeypatch.delenv("FYV_PRODUCTION", raising=False)
     monkeypatch.setenv("FYV_AUTH_EMAIL_LOG_TOKEN", "1")
     assert_production_security_or_exit()
+
+
+def test_production_rejects_embedded_rq(monkeypatch):
+    monkeypatch.setenv("FYV_PRODUCTION", "1")
+    monkeypatch.setenv("INTERNAL_SIGNING_SECRET", _strong_secret())
+    monkeypatch.setattr("app.startup_security.settings.embed_rq_media_worker", True)
+    monkeypatch.setattr("app.startup_security.settings.embed_rq_ai_worker", False)
+    monkeypatch.setattr(
+        "app.startup_security.settings.object_presign_endpoint",
+        "https://objects.example.com",
+    )
+    with pytest.raises(SystemExit) as exc:
+        assert_production_security_or_exit()
+    assert exc.value.code == 1
+
+
+def test_production_rejects_missing_presign_endpoint(monkeypatch):
+    monkeypatch.setenv("FYV_PRODUCTION", "1")
+    monkeypatch.setenv("INTERNAL_SIGNING_SECRET", _strong_secret())
+    monkeypatch.setattr("app.startup_security.settings.embed_rq_media_worker", False)
+    monkeypatch.setattr("app.startup_security.settings.embed_rq_ai_worker", False)
+    monkeypatch.setattr("app.startup_security.settings.object_presign_endpoint", "")
+    with pytest.raises(SystemExit) as exc:
+        assert_production_security_or_exit()
+    assert exc.value.code == 1

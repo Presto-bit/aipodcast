@@ -210,9 +210,13 @@ migrate-sessions-to-redis:
 	  ./.venv-ai-native/bin/python scripts/migrate_sessions_to_redis.py --dry-run; \
 	fi
 
-# SQL migration 主入口（按 infra/postgres/init 文件名顺序执行）
+# SQL migration 主入口（按 infra/postgres/init 文件名顺序执行；已应用记录见 schema_migrations）
 migrate-db:
 	./.venv-ai-native/bin/python scripts/apply_sql_migrations.py
+
+# 部署前配置自检（FYV_PRODUCTION=1 时校验预签名与内嵌 Worker）
+check-config:
+	./.venv-ai-native/bin/python scripts/check_config.py
 
 # 数据保留与归档维护（默认 dry-run）
 # 用法：make retention-maintenance DRY_RUN=0
