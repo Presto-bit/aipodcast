@@ -1,4 +1,5 @@
-import type { ClipEditSuggestion, ClipWord } from "../../lib/clipTypes";
+import type { ClipWord } from "../../lib/clipTypes";
+import type { ClipEditSuggestion } from "../../lib/prestoFlowAiSuggestions";
 
 export function isDualChannels(ch: unknown): boolean {
   return Array.isArray(ch) && ch.length >= 2;
