@@ -109,8 +109,14 @@ export default function HomePage() {
       const worksMetricsOk = Boolean(pack.worksMetrics?.ok) && wm.success !== false;
       const notesMetricsOk = Boolean(pack.notesMetrics?.ok) && nm.success !== false;
       const worksResOk = worksPart?.ok ?? false;
-      if (!worksResOk || worksData.success === false) {
-        if (!silent) {
+      const latest = Array.isArray(jobsData.jobs) && jobsData.jobs.length > 0 ? jobsData.jobs[0] : null;
+      const ai = Array.isArray(worksData.ai) ? worksData.ai : [];
+      const tts = Array.isArray(worksData.tts) ? worksData.tts : [];
+      const notesWorks = Array.isArray(worksData.notes) ? worksData.notes : [];
+      const merged = mergeUserFacingWorksByRecency(ai, tts, notesWorks);
+      const worksOkForList = worksResOk && worksData.success !== false;
+      if (!worksOkForList) {
+        if (!silent && merged.length === 0) {
           setWorksFetchErr(
             apiErrorMessage(
               { error: worksData.error, detail: worksData.detail },
@@ -118,12 +124,9 @@ export default function HomePage() {
             )
           );
         }
+      } else if (!silent) {
+        setWorksFetchErr("");
       }
-      const latest = Array.isArray(jobsData.jobs) && jobsData.jobs.length > 0 ? jobsData.jobs[0] : null;
-      const ai = Array.isArray(worksData.ai) ? worksData.ai : [];
-      const tts = Array.isArray(worksData.tts) ? worksData.tts : [];
-      const notesWorks = Array.isArray(worksData.notes) ? worksData.notes : [];
-      const merged = mergeUserFacingWorksByRecency(ai, tts, notesWorks);
       const activeJobsOk =
         Boolean(pack.jobsActive?.ok) && activeJobsData.success !== false && Array.isArray(activeJobsData.jobs);
       const activeJobsCount = activeJobsOk
@@ -174,7 +177,7 @@ export default function HomePage() {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void refreshHomeOverview({ silent: true });
     };
-    const id = window.setInterval(tick, 20_000);
+    const id = window.setInterval(tick, 60_000);
     const onVis = () => {
       if (document.visibilityState === "visible") void refreshHomeOverview({ silent: true });
     };

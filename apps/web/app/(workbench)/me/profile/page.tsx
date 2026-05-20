@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
-import { useI18n } from "../../../lib/I18nContext";
-import { useTheme } from "../../../lib/ThemeContext";
-import ChangePasswordModal from "../../../components/ui/ChangePasswordModal";
-import InlineTextPrompt from "../../../components/ui/InlineTextPrompt";
+import { isLoggedInAccountUser, useAuth } from "../../../../lib/auth";
+import { useI18n } from "../../../../lib/I18nContext";
+import { useTheme } from "../../../../lib/ThemeContext";
+import ChangePasswordModal from "../../../../components/ui/ChangePasswordModal";
+import InlineTextPrompt from "../../../../components/ui/InlineTextPrompt";
 
 export default function MeProfilePage() {
   const router = useRouter();

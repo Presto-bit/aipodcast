@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { useI18n } from "../../lib/I18nContext";
+import { useI18n } from "../../../lib/I18nContext";
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (

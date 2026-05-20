@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { useAuth } from "../../lib/auth";
-import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
+import { useAuth } from "../../../lib/auth";
+import { WORKBENCH_HOME_PATH } from "../../../lib/navPaths";
 
 type AdminNavIcon = "users" | "models" | "usage" | "jobs" | "works" | "polish" | "matrix" | "pay" | "logs";
 

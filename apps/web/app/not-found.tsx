@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useI18n } from "../lib/I18nContext";
+import { I18nProvider, useI18n } from "../lib/I18nContext";
 
-export default function NotFound() {
+function NotFoundInner() {
   const { t } = useI18n();
 
   return (
@@ -20,5 +20,14 @@ export default function NotFound() {
         </Link>
       </div>
     </div>
+  );
+}
+
+/** 根级 404 不经过 (marketing)/(workbench) layout，须自带 I18n */
+export default function NotFound() {
+  return (
+    <I18nProvider>
+      <NotFoundInner />
+    </I18nProvider>
   );
 }

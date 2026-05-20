@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PricingHero } from "../../../components/subscription/PricingHero";
+import { PricingHero } from "../../../../components/subscription/PricingHero";
 
 const ROWS: { type: string; price: string; features: string }[] = [
   {

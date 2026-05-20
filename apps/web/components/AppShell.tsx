@@ -35,6 +35,7 @@ import {
 } from "../lib/appSidebarCollapse";
 import { useI18n } from "../lib/I18nContext";
 import AnimatedPageShell from "./AnimatedPageShell";
+import WorkAudioShell from "./WorkAudioShell";
 import BrandGlyph from "./brand/BrandGlyph";
 import { dispatchNotesShowNotebookHub, NOTES_MINIMAL_MAIN_NAV_EVENT } from "../lib/notesLastNotebook";
 import {
@@ -483,13 +484,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const shellChildren = isMarketingShellLessPath(path) ? (
+    <AnimatedPageShell>{children}</AnimatedPageShell>
+  ) : (
+    <WorkAudioShell>
+      <AnimatedPageShell>{children}</AnimatedPageShell>
+    </WorkAudioShell>
+  );
+
   if (!ready) {
     if (isMarketingShellLessPath(path)) {
-      return (
-        <div className="relative min-h-screen bg-canvas text-ink">
-          <AnimatedPageShell>{children}</AnimatedPageShell>
-        </div>
-      );
+      return <div className="relative min-h-screen bg-canvas text-ink">{shellChildren}</div>;
     }
     return (
       <div className="min-h-screen bg-canvas text-ink">
@@ -525,7 +530,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {t("nav.skipToContent")}
         </a>
         <div id="main-content" data-fym-app-main className="flex min-h-screen min-w-0 flex-col" tabIndex={-1}>
-          <AnimatedPageShell>{children}</AnimatedPageShell>
+          {shellChildren}
         </div>
       </div>
     );
@@ -772,7 +777,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         style={{ marginLeft: "var(--fym-app-sidebar-w, 232px)" }}
         tabIndex={-1}
       >
-        <AnimatedPageShell>{children}</AnimatedPageShell>
+        {shellChildren}
         {normalizePathname(path) === WORKBENCH_HOME_PATH ? null : (
           <footer className="relative z-[405] mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">
             <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">

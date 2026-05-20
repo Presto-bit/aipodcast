@@ -6,10 +6,10 @@ import DeployVersionSync from "../components/DeployVersionSync";
 import AppShell from "../components/AppShell";
 import FirstLoginCoach from "../components/onboarding/FirstLoginCoach";
 import { AuthProvider } from "../lib/auth";
+import type { InitialAuthSession } from "../lib/authSession";
 import { I18nProvider } from "../lib/I18nContext";
 import { ThemeProvider } from "../lib/ThemeContext";
 import { AppNoticeProvider } from "../lib/AppNoticeContext";
-import { WorkAudioPlayerProvider } from "../lib/workAudioPlayer";
 
 const CHUNK_RELOAD_GUARD_KEY = "fym_chunk_reload_guard_v1";
 
@@ -23,7 +23,13 @@ function isChunkLoadFailureMessage(msg: unknown): boolean {
   );
 }
 
-export default function Providers({ children }: { children: React.ReactNode }) {
+export default function Providers({
+  children,
+  initialSession
+}: {
+  children: React.ReactNode;
+  initialSession?: InitialAuthSession;
+}) {
   const [client] = useState(
     () =>
       new QueryClient({
@@ -79,14 +85,12 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       <DeployVersionSync />
       <ThemeProvider>
         <I18nProvider>
-          <AuthProvider>
+          <AuthProvider initialSession={initialSession}>
             <AppNoticeProvider>
-              <WorkAudioPlayerProvider>
-                <Suspense fallback={null}>
-                  <AppShell>{children}</AppShell>
-                </Suspense>
-                <FirstLoginCoach />
-              </WorkAudioPlayerProvider>
+              <Suspense fallback={null}>
+                <AppShell>{children}</AppShell>
+              </Suspense>
+              <FirstLoginCoach />
             </AppNoticeProvider>
           </AuthProvider>
         </I18nProvider>

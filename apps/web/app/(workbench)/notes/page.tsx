@@ -4,13 +4,13 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type { ChangeEvent, Dispatch, PointerEvent, SetStateAction } from "react";
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import InlineConfirmBar from "../../components/ui/InlineConfirmBar";
-import InlineTextPrompt from "../../components/ui/InlineTextPrompt";
-import SmallPromptModal from "../../components/ui/SmallPromptModal";
-import EmptyState from "../../components/ui/EmptyState";
-import UserErrorBanner from "../../components/ui/UserErrorBanner";
-const NotesPodcastRoomModal = dynamic(() => import("../../components/notes/NotesPodcastRoomModal"));
-const PodcastWorksGallery = dynamic(() => import("../../components/podcast/PodcastWorksGallery"), {
+import InlineConfirmBar from "../../../components/ui/InlineConfirmBar";
+import InlineTextPrompt from "../../../components/ui/InlineTextPrompt";
+import SmallPromptModal from "../../../components/ui/SmallPromptModal";
+import EmptyState from "../../../components/ui/EmptyState";
+import UserErrorBanner from "../../../components/ui/UserErrorBanner";
+const NotesPodcastRoomModal = dynamic(() => import("../../../components/notes/NotesPodcastRoomModal"));
+const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
     <div
       className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
@@ -19,7 +19,7 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
     />
   )
 });
-const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMarkdownPreview"), {
+const NoteMarkdownPreview = dynamic(() => import("../../../components/notes/NoteMarkdownPreview"), {
   loading: () => (
     <div
       className="flex min-h-[200px] items-center justify-center rounded-2xl border border-line/50 bg-fill/40 text-sm text-muted"
@@ -28,71 +28,71 @@ const NoteMarkdownPreview = dynamic(() => import("../../components/notes/NoteMar
     />
   )
 });
-import { NotesAskAnswerDisplay } from "../../components/notes/NotesAskAnswerDisplay";
+import { NotesAskAnswerDisplay } from "../../../components/notes/NotesAskAnswerDisplay";
 import {
   buildNotesAskAnswerBody,
   isDismissedNotesAskSupplement
-} from "../../lib/notesAskAnswerNormalize";
-import { createJob } from "../../lib/api";
+} from "../../../lib/notesAskAnswerNormalize";
+import { createJob } from "../../../lib/api";
 import {
   apiErrorMessage,
   formatNotesAskStreamError,
   type NotesAskStreamErrorMeta
-} from "../../lib/apiError";
+} from "../../../lib/apiError";
 import {
   notesAskBffUrl,
   notesAskFetchCredentials,
   notesAskResolveRequestUrl
-} from "../../lib/notesAskBffOrigin";
-import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
-import { rememberJobId } from "../../lib/jobRecent";
-import { buildReferenceJobFields, type ReferenceRagMode } from "../../lib/jobReferencePayload";
-import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
+} from "../../../lib/notesAskBffOrigin";
+import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../../lib/activeJobSession";
+import { rememberJobId } from "../../../lib/jobRecent";
+import { buildReferenceJobFields, type ReferenceRagMode } from "../../../lib/jobReferencePayload";
+import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../../lib/notesRoomPresets";
 import {
   ART_KIND_PRESETS,
   studioResponseToArtText,
   studioTaskForArtKind,
   type ArtKindKey
-} from "../../lib/artKindPresets";
-import { buildNoteCoverageLine } from "../../lib/noteCoverageCopy";
-import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
+} from "../../../lib/artKindPresets";
+import { buildNoteCoverageLine } from "../../../lib/noteCoverageCopy";
+import { NOTES_PODCAST_PROJECT_NAME } from "../../../lib/notesProject";
 import {
   NOTES_NAV_HUB_EVENT,
   dispatchNotesMinimalMainNav,
   writeLastNotebookName
-} from "../../lib/notesLastNotebook";
-import { readDraftSourceIdsForNotebook, writeDraftSourceIdsForNotebook } from "../../lib/notesDraftSourcesStorage";
+} from "../../../lib/notesLastNotebook";
+import { readDraftSourceIdsForNotebook, writeDraftSourceIdsForNotebook } from "../../../lib/notesDraftSourcesStorage";
 import {
   APP_SIDEBAR_COLLAPSED_KEY,
   APP_SIDEBAR_COLLAPSE_EVENT,
   APP_SIDEBAR_TOGGLE_EVENT,
   requestAppSidebarCollapse
-} from "../../lib/appSidebarCollapse";
-import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
-import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
-import { useI18n } from "../../lib/I18nContext";
-import type { NotebookCoverMeta } from "../../lib/notebookCoverDisplay";
-import { notebookCoverImageUrl } from "../../lib/notebookCoverDisplay";
-import { ALLOWED_NOTE_EXT, NOTE_FILE_INPUT_ACCEPT } from "../../lib/noteUploadConstants";
-import { maxNotesForReference, notesRefSelectionLimitMessage } from "../../lib/noteReferenceLimits";
-import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
-import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+} from "../../../lib/appSidebarCollapse";
+import { SIDEBAR_COLLAPSED_STORAGE } from "../../../lib/appShellLayout";
+import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
+import { useI18n } from "../../../lib/I18nContext";
+import type { NotebookCoverMeta } from "../../../lib/notebookCoverDisplay";
+import { notebookCoverImageUrl } from "../../../lib/notebookCoverDisplay";
+import { ALLOWED_NOTE_EXT, NOTE_FILE_INPUT_ACCEPT } from "../../../lib/noteUploadConstants";
+import { maxNotesForReference, notesRefSelectionLimitMessage } from "../../../lib/noteReferenceLimits";
+import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../../lib/billingShortfall";
 import {
   normalizeNotesAskSources,
   type NotesAskSource,
   type NotesAskWebSource
-} from "../../lib/notesAskCitation";
-import { loadNotesAskChat, saveNotesAskChat } from "../../lib/notesAskChatStorage";
-import { notesAskClientLog } from "../../lib/notesAskClientLog";
+} from "../../../lib/notesAskCitation";
+import { loadNotesAskChat, saveNotesAskChat } from "../../../lib/notesAskChatStorage";
+import { notesAskClientLog } from "../../../lib/notesAskClientLog";
 import {
   accountKeyFromUser,
   readLocalStorageScoped,
   readSessionStorageScoped,
   removeSessionStorageScoped,
   writeLocalStorageScoped
-} from "../../lib/userScopedStorage";
-import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
-import type { WorkItem } from "../../lib/worksTypes";
+} from "../../../lib/userScopedStorage";
+import { uploadNoteFileWithProgress } from "../../../lib/uploadNoteFile";
+import type { WorkItem } from "../../../lib/worksTypes";
 type NotesAskStreamEvent =
   | {
       type: "chunk";
@@ -292,7 +292,7 @@ const inputCls =
 
 const LANG_OPTIONS_ART = ["中文", "English", "日本語"] as const;
 const NOTE_PAGE = 30;
-const NOTEBOOK_STATS_PAGE = 500;
+const NOTEBOOK_STATS_PAGE = 200;
 
 /** 需要先打开笔记本时的统一提示 */
 const NOTES_NEED_NOTEBOOK = "请先进入笔记本";
@@ -1139,7 +1139,7 @@ export default function NotesPage() {
   }, [artChars]);
 
   const [podcastWorks, setPodcastWorks] = useState<WorkItem[]>([]);
-  const [podcastWorksLoading, setPodcastWorksLoading] = useState(true);
+  const [podcastWorksLoading, setPodcastWorksLoading] = useState(false);
   const [podcastWorksError, setPodcastWorksError] = useState("");
   const [worksPanelExpanded, setWorksPanelExpanded] = useState(false);
   const podcastRecoveryStartedRef = useRef(false);
@@ -1804,7 +1804,13 @@ export default function NotesPage() {
 
   useEffect(() => {
     void loadNotebooks();
-    void loadNotebookMeta();
+    const runMeta = () => void loadNotebookMeta();
+    if (typeof requestIdleCallback !== "undefined") {
+      const id = requestIdleCallback(runMeta, { timeout: 2500 });
+      return () => cancelIdleCallback(id);
+    }
+    const t = window.setTimeout(runMeta, 150);
+    return () => window.clearTimeout(t);
   }, [loadNotebookMeta, loadNotebooks]);
 
   useEffect(() => {
@@ -1977,8 +1983,14 @@ export default function NotesPage() {
   }, [getAuthHeaders, sharedBrowse?.ownerUserId, selectedNotebook]);
 
   useEffect(() => {
+    if (hubView || !selectedNotebook.trim()) {
+      setPodcastWorks([]);
+      setPodcastWorksLoading(false);
+      return;
+    }
+    setPodcastWorksLoading(true);
     void fetchPodcastWorks();
-  }, [fetchPodcastWorks]);
+  }, [fetchPodcastWorks, hubView, selectedNotebook]);
 
   const onPodcastJobCreated = useCallback(
     (jobId: string) => {

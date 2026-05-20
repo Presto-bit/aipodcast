@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "../../lib/auth";
+import { useAuth } from "../../../lib/auth";
 
 type NoteHit = { id: string; title?: string; notebook?: string; snippet?: string; created_at?: string };
 type JobHit = { id: string; job_type?: string; status?: string; snippet?: string; created_at?: string };

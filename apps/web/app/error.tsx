@@ -2,9 +2,9 @@
 
 import { useEffect, useMemo } from "react";
 import { classifyErrorTone, errorPageCopy } from "../lib/errorCopy";
-import { useI18n } from "../lib/I18nContext";
+import { I18nProvider, useI18n } from "../lib/I18nContext";
 
-export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+function ErrorInner({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   const { t } = useI18n();
 
   useEffect(() => {
@@ -42,5 +42,13 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
         </button>
       </div>
     </div>
+  );
+}
+
+export default function Error(props: { error: Error & { digest?: string }; reset: () => void }) {
+  return (
+    <I18nProvider>
+      <ErrorInner {...props} />
+    </I18nProvider>
   );
 }

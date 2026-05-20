@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import SmallConfirmModal from "../../../components/ui/SmallConfirmModal";
-import { apiErrorMessage } from "../../../lib/apiError";
-import { useAuth } from "../../../lib/auth";
+import SmallConfirmModal from "../../../../components/ui/SmallConfirmModal";
+import { apiErrorMessage } from "../../../../lib/apiError";
+import { useAuth } from "../../../../lib/auth";
 
 type AdminUser = {
   user_id?: string;

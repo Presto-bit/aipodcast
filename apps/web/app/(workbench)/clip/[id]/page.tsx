@@ -1,8 +1,8 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import ClipAccessGate from "../../../components/clip/ClipAccessGate";
-import PrestoFlowEditor from "../../../components/presto-flow/PrestoFlowEditor";
+import ClipAccessGate from "../../../../components/clip/ClipAccessGate";
+import PrestoFlowEditor from "../../../../components/presto-flow/PrestoFlowEditor";
 
 export default function ClipProjectPage() {
   const params = useParams();

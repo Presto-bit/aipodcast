@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-const PodcastWorksGallery = dynamic(() => import("../../components/podcast/PodcastWorksGallery"), {
+const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
     <div
       className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
@@ -13,15 +13,15 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
     />
   )
 });
-import WorksActiveJobsPanel from "../../components/works/WorksActiveJobsPanel";
-import { chipClass } from "../../components/studio/chipStyles";
-import EmptyState from "../../components/ui/EmptyState";
-import UserErrorBanner from "../../components/ui/UserErrorBanner";
-import type { WorkItem } from "../../lib/worksTypes";
-import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
-import { useI18n } from "../../lib/I18nContext";
-import { listJobs } from "../../lib/api";
-import { countUserVisibleActiveJobs } from "../../lib/activeJobsVisible";
+import WorksActiveJobsPanel from "../../../components/works/WorksActiveJobsPanel";
+import { chipClass } from "../../../components/studio/chipStyles";
+import EmptyState from "../../../components/ui/EmptyState";
+import UserErrorBanner from "../../../components/ui/UserErrorBanner";
+import type { WorkItem } from "../../../lib/worksTypes";
+import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
+import { useI18n } from "../../../lib/I18nContext";
+import { listJobs } from "../../../lib/api";
+import { countUserVisibleActiveJobs } from "../../../lib/activeJobsVisible";
 
 const WORKS_LIMIT = 60;
 

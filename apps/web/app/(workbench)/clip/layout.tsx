@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { requestAppSidebarCollapse } from "../../lib/appSidebarCollapse";
+import { requestAppSidebarCollapse } from "../../../lib/appSidebarCollapse";
 
 /**
  * 进入剪辑列表/工程后默认收起主导航，把横向空间留给稿面与音频区。

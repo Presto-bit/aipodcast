@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useSearchParams } from "next/navigation";
-import { SharePublishClient } from "../../../components/works/SharePublishClient";
+import { SharePublishClient } from "../../../../components/works/SharePublishClient";
 
 export default function WorkDetailPage() {
   const params = useParams();

@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { Fragment, useMemo } from "react";
 import { usePathname } from "next/navigation";
-import { ADMIN_ROLE } from "../../lib/appShellLayout";
-import { useAuth } from "../../lib/auth";
-import { useI18n } from "../../lib/I18nContext";
+import { ADMIN_ROLE } from "../../../lib/appShellLayout";
+import { useAuth } from "../../../lib/auth";
+import { useI18n } from "../../../lib/I18nContext";
 
 type MeSubNavItem = { href: string; labelKey: string; dividerBefore?: boolean };
 

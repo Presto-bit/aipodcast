@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isStaticDocumentPath } from "./lib/documentCachePolicy";
 import { sensitiveApiPath, sensitiveDocumentPath } from "./lib/sensitiveCacheRoutes";
 
 /** 进程内限流：多副本 / Serverless 横向扩展时无法全局共享，滥用面可被多 IP 稀释；生产建议在网关或 Redis 侧叠加配额。 */
@@ -14,8 +15,11 @@ const RATE_LIMIT_EXEMPT_POST_PATHS = new Set([
   "/api/notes/import_url"
 ]);
 
-/** 页面与 RSC：禁止浏览器与遵守源站的 CDN 长期缓存 HTML（与 layout force-dynamic 叠加） */
+/** 敏感工作台文档：禁止 CDN/浏览器长期缓存 HTML */
 const CACHE_PAGE = "private, no-cache, no-store, max-age=0, must-revalidate";
+/** 营销/公开文档：允许 CDN 按 ISR 缓存（layout 不读取 Cookie） */
+const CACHE_PAGE_STATIC =
+  "public, max-age=0, s-maxage=3600, stale-while-revalidate=86400";
 /** BFF / API：不进入共享边缘长期缓存 */
 const CACHE_API = "no-store, max-age=0, must-revalidate";
 /** 浏览器私有短缓存：仅用于匿名/弱个性化只读 GET，减轻重复请求（`private` 不供 CDN 共享） */
@@ -119,8 +123,9 @@ export function middleware(req: NextRequest) {
   }
 
   if (!pathname.startsWith("/api/")) {
-    const res = withCacheHeaders(NextResponse.next(), CACHE_PAGE);
-    if (sensitiveDocumentPath(pathname)) {
+    const staticDoc = isStaticDocumentPath(pathname);
+    const res = withCacheHeaders(NextResponse.next(), staticDoc ? CACHE_PAGE_STATIC : CACHE_PAGE);
+    if (!staticDoc && sensitiveDocumentPath(pathname)) {
       applySensitiveSharedCacheVary(res, "page");
     }
     return res;

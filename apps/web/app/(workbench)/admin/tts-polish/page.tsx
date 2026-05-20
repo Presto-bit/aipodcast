@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useAuth } from "../../../lib/auth";
+import { useAuth } from "../../../../lib/auth";
 
 type PromptsPayload = {
   success?: boolean;

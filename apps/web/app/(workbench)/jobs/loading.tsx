@@ -1,4 +1,4 @@
-import { SkeletonBlock, SkeletonLine } from "../../components/ui/Skeleton";
+import { SkeletonBlock, SkeletonLine } from "../../../components/ui/Skeleton";
 
 export default function JobsLoading() {
   return (

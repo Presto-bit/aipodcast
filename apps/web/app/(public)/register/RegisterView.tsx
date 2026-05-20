@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
-import { consumePostAuthReturnTo } from "../../lib/authReturnTo";
-import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
-import { isRegisterEmailFormatOk } from "../../lib/registerEmail";
+import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
+import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
+import { WORKBENCH_HOME_PATH } from "../../../lib/navPaths";
+import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 
 export default function RegisterView() {
   const router = useRouter();

@@ -2,10 +2,10 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import VoiceClonePanel from "../../components/voice/VoiceClonePanel";
-import MyVoicesPanel from "../../components/voice/MyVoicesPanel";
-import UserTemplatesPanel from "../../components/voice/UserTemplatesPanel";
-import { useI18n } from "../../lib/I18nContext";
+import VoiceClonePanel from "../../../components/voice/VoiceClonePanel";
+import MyVoicesPanel from "../../../components/voice/MyVoicesPanel";
+import UserTemplatesPanel from "../../../components/voice/UserTemplatesPanel";
+import { useI18n } from "../../../lib/I18nContext";
 
 type VoiceTab = "my" | "clone" | "persona";
 

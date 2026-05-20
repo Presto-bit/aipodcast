@@ -4,11 +4,11 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { IconClip, IconMic, IconShownotes, IconTts } from "../../components/NavIcons";
-import type { PodcastStudioActivity } from "../../components/studio/PodcastStudio";
-import type { TtsStudioActivity } from "../../components/studio/TtsStudio";
+import { IconClip, IconMic, IconShownotes, IconTts } from "../../../components/NavIcons";
+import type { PodcastStudioActivity } from "../../../components/studio/PodcastStudio";
+import type { TtsStudioActivity } from "../../../components/studio/TtsStudio";
 
-const PodcastStudio = dynamic(() => import("../../components/studio/PodcastStudio"), {
+const PodcastStudio = dynamic(() => import("../../../components/studio/PodcastStudio"), {
   loading: () => (
     <div
       className="min-h-[200px] rounded-xl border border-line/50 bg-fill/40"
@@ -17,7 +17,7 @@ const PodcastStudio = dynamic(() => import("../../components/studio/PodcastStudi
     />
   )
 });
-const TtsStudio = dynamic(() => import("../../components/studio/TtsStudio"), {
+const TtsStudio = dynamic(() => import("../../../components/studio/TtsStudio"), {
   loading: () => (
     <div
       className="min-h-[180px] rounded-xl border border-line/50 bg-fill/40"
@@ -26,7 +26,7 @@ const TtsStudio = dynamic(() => import("../../components/studio/TtsStudio"), {
     />
   )
 });
-const PodcastWorksGallery = dynamic(() => import("../../components/podcast/PodcastWorksGallery"), {
+const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
     <div
       className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
@@ -35,15 +35,15 @@ const PodcastWorksGallery = dynamic(() => import("../../components/podcast/Podca
     />
   )
 });
-import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
-import { apiErrorMessage, softenBareErrorLineForUi } from "../../lib/apiError";
-import { useI18n } from "../../lib/I18nContext";
-import { mergeUserFacingWorksByRecency, type WorkItem } from "../../lib/worksTypes";
-import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
-import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
-import { BillingShortfallLinks } from "../../components/subscription/BillingShortfallLinks";
-import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../components/studio/CreateStudioIdleShell";
-import { marketingSiteUrl } from "../../lib/marketingSiteUrl";
+import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
+import { apiErrorMessage, softenBareErrorLineForUi } from "../../../lib/apiError";
+import { useI18n } from "../../../lib/I18nContext";
+import { mergeUserFacingWorksByRecency, type WorkItem } from "../../../lib/worksTypes";
+import { NOTES_PODCAST_PROJECT_NAME } from "../../../lib/notesProject";
+import { messageSuggestsBillingTopUpOrSubscription } from "../../../lib/billingShortfall";
+import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
+import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../../components/studio/CreateStudioIdleShell";
+import { marketingSiteUrl } from "../../../lib/marketingSiteUrl";
 
 type HotTopicAssistantItem = { label: string; text: string };
 

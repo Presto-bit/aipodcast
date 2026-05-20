@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { pullCloudPreferences, setCloudPrefsSyncEnabled } from "./cloudPreferences";
+import type { InitialAuthSession } from "./authSession";
 import { accountKeyFromUser, setStorageAccountSync } from "./userScopedStorage";
 
 const AUTH_TOKEN_KEY = "fym_auth_token";
@@ -128,7 +129,7 @@ async function fetchAuthMe(signal?: AbortSignal): Promise<Response> {
     fetch("/api/auth/me", {
       credentials: "same-origin",
       cache: "no-store",
-      signal
+      signal: signal ?? AbortSignal.timeout(10_000)
     });
   const backoffMs = [0, 120];
   let res: Response | null = null;
@@ -147,13 +148,58 @@ async function fetchAuthMe(signal?: AbortSignal): Promise<Response> {
   return res ?? new Response(null, { status: 401 });
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+function accountHintFromUser(user: AuthUser | null | undefined): string {
+  if (!user) return "";
+  return (
+    (typeof user.username === "string" && user.username) ||
+    (typeof user.phone === "string" && user.phone) ||
+    (typeof user.email === "string" && user.email) ||
+    ""
+  );
+}
+
+function bootFromInitialSession(initial?: InitialAuthSession): {
+  authRequired: boolean | null;
+  user: AuthUser | null;
+  sessionResolved: boolean;
+  phone: string;
+  skipClientBootstrap: boolean;
+  revalidateInBackground: boolean;
+} {
+  if (!initial?.hydrateFromServer) {
+    return {
+      authRequired: null,
+      user: null,
+      sessionResolved: false,
+      phone: "",
+      skipClientBootstrap: false,
+      revalidateInBackground: false
+    };
+  }
+  const u = (initial.user ?? null) as AuthUser | null;
+  return {
+    authRequired: initial.authRequired,
+    user: u,
+    sessionResolved: initial.sessionResolved,
+    phone: accountHintFromUser(u),
+    skipClientBootstrap: true,
+    revalidateInBackground: Boolean(initial.revalidateInBackground)
+  };
+}
+
+export function AuthProvider({
+  children,
+  initialSession
+}: {
+  children: React.ReactNode;
+  initialSession?: InitialAuthSession;
+}) {
   const router = useRouter();
-  const [authRequired, setAuthRequired] = useState<boolean | null>(null);
-  const [phone, setPhone] = useState("");
-  const [user, setUser] = useState<AuthUser | null>(null);
-  /** 开启鉴权时，在首次 /api/auth/me（带 Cookie）返回后设为 true */
-  const [sessionResolved, setSessionResolved] = useState(false);
+  const boot = useMemo(() => bootFromInitialSession(initialSession), [initialSession]);
+  const [authRequired, setAuthRequired] = useState<boolean | null>(boot.authRequired);
+  const [phone, setPhone] = useState(boot.phone);
+  const [user, setUser] = useState<AuthUser | null>(boot.user);
+  const [sessionResolved, setSessionResolved] = useState(boot.sessionResolved);
 
   const storageAccountKey = useMemo(() => accountKeyFromUser(user), [user]);
 
@@ -162,90 +208,100 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [storageAccountKey]);
 
   useLayoutEffect(() => {
+    if (boot.phone) return;
     const ph = getStorageItem(AUTH_PHONE_KEY).trim();
-    setPhone(ph);
-  }, []);
+    if (ph) setPhone(ph);
+  }, [boot.phone]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const ac = new AbortController();
-    const tid = setTimeout(() => ac.abort(), 10_000);
-    (async () => {
-      try {
-        const res = await fetch("/api/auth/config", { cache: "no-store", signal: ac.signal });
-        const data = (await res.json().catch(() => ({}))) as { auth_required?: boolean };
-        if (cancelled) return;
-        if (typeof data.auth_required === "boolean") {
-          setAuthRequired(data.auth_required);
-          return;
-        }
-        // 503 等错误体常无 auth_required；Boolean(undefined) 会误判为「未开鉴权」
-        if (!res.ok) {
-          setAuthRequired(true);
-          return;
-        }
+  const applyClientSessionPayload = useCallback(
+    (res: Response, data: { auth_required?: boolean; success?: boolean; user?: AuthUser }) => {
+      const ar = data.auth_required;
+      if (typeof ar === "boolean") {
+        setAuthRequired(ar);
+      } else if (!res.ok) {
+        setAuthRequired(true);
+      } else {
         setAuthRequired(false);
-      } catch {
-        // 网络/中断：勿假定访客模式，否则个人页会误显示「未开启登录」
-        if (!cancelled) setAuthRequired(true);
-      } finally {
-        clearTimeout(tid);
       }
-    })();
-    return () => {
-      cancelled = true;
-      clearTimeout(tid);
-      ac.abort();
-    };
-  }, []);
+
+      if (ar === false) {
+        setUser({ phone: "local", display_name: "访客" });
+        clearLegacyToken();
+        return;
+      }
+
+      if (res.ok && data.success && data.user) {
+        setUser(data.user);
+        const hint = accountHintFromUser(data.user);
+        if (hint) {
+          setPhone(hint);
+          persistPhone(hint);
+        }
+        clearLegacyToken();
+        return;
+      }
+      if (res.status === 401 || res.status === 403) {
+        setUser(null);
+        clearLegacyToken();
+        return;
+      }
+      setUser((prev) => {
+        if (prev && (prev.phone || prev.display_name)) return prev;
+        const ph = getStorageItem(AUTH_PHONE_KEY).trim();
+        return { phone: ph || "用户" };
+      });
+    },
+    []
+  );
 
   useEffect(() => {
-    if (authRequired === null) return;
-
-    if (authRequired === false) {
-      setUser({ phone: "local", display_name: "访客" });
-      setSessionResolved(true);
-      return;
+    if (boot.skipClientBootstrap) {
+      if (!boot.revalidateInBackground) return;
+      let cancelled = false;
+      void (async () => {
+        try {
+          const res = await fetch("/api/auth/session", {
+            cache: "no-store",
+            credentials: "same-origin",
+            signal: AbortSignal.timeout(12_000)
+          });
+          const data = (await res.json().catch(() => ({}))) as {
+            auth_required?: boolean;
+            success?: boolean;
+            user?: AuthUser;
+          };
+          if (cancelled) return;
+          applyClientSessionPayload(res, data);
+        } catch {
+          // 静态壳后台刷新失败不挡首屏
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
 
     let cancelled = false;
-    const meAc = new AbortController();
+    const ac = new AbortController();
+    const tid = setTimeout(() => ac.abort(), 12_000);
     setSessionResolved(false);
-    (async () => {
+    void (async () => {
       try {
-        const res = await fetchAuthMe(meAc.signal);
+        const res = await fetch("/api/auth/session", {
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: ac.signal
+        });
         const data = (await res.json().catch(() => ({}))) as {
+          auth_required?: boolean;
           success?: boolean;
           user?: AuthUser;
-          error?: string;
         };
         if (cancelled) return;
-        if (res.ok && data.success && data.user) {
-          setUser(data.user);
-          const hint =
-            (typeof data.user.username === "string" && data.user.username) ||
-            (typeof data.user.phone === "string" && data.user.phone) ||
-            (typeof data.user.email === "string" && data.user.email) ||
-            "";
-          if (hint) {
-            setPhone(hint);
-            persistPhone(hint);
-          }
-          clearLegacyToken();
-          return;
-        }
-        if (res.status === 401 || res.status === 403) {
-          setUser(null);
-          clearLegacyToken();
-          return;
-        }
-        setUser((prev) => {
-          if (prev && (prev.phone || prev.display_name)) return prev;
-          const ph = getStorageItem(AUTH_PHONE_KEY).trim();
-          return { phone: ph || "用户" };
-        });
+        applyClientSessionPayload(res, data);
       } catch {
         if (!cancelled) {
+          setAuthRequired(true);
           setUser((prev) => {
             if (prev && (prev.phone || prev.display_name)) return prev;
             const ph = getStorageItem(AUTH_PHONE_KEY).trim();
@@ -254,13 +310,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } finally {
         if (!cancelled) setSessionResolved(true);
+        clearTimeout(tid);
       }
     })();
     return () => {
       cancelled = true;
-      meAc.abort();
+      clearTimeout(tid);
+      ac.abort();
     };
-  }, [authRequired]);
+  }, [applyClientSessionPayload, boot.revalidateInBackground, boot.skipClientBootstrap]);
 
   useEffect(() => {
     if (authRequired === null) return;

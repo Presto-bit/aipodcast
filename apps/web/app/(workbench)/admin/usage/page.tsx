@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useAuth } from "../../../lib/auth";
+import { useAuth } from "../../../../lib/auth";
 
 type TabKey = "overview" | "ledger" | "orders" | "users" | "works" | "alerts";
 type JobTypeRow = { job_type?: string; events?: number; succeeded?: number; users?: number; cost_total_cny?: number };

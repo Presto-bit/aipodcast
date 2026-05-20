@@ -10,6 +10,12 @@ export const SESSION_COOKIE_NAME = "fym_session";
 /** 编排器可能因 SMTP / PG 慢查询 / 冷启动较慢；显式使用该常量的 BFF 与默认 fetch 超时共用 */
 export const ORCHESTRATOR_TIMEOUT_SLOW_UPSTREAM_MS = 120_000;
 
+/** 鉴权与会话类 GET 的上游等待上限（避免首屏门闩被 120s 默认超时拖住） */
+export const ORCHESTRATOR_TIMEOUT_AUTH_MS = 10_000;
+
+/** 首页概览并行子请求的单段超时 */
+export const ORCHESTRATOR_TIMEOUT_HOME_OVERVIEW_PART_MS = 35_000;
+
 /** 未传 `timeoutMs` 时的 BFF→编排器等待上限；可由环境变量覆盖（毫秒，1000～600000） */
 function defaultFetchOrchestratorTimeoutMs(): number {
   const raw = (process.env.ORCHESTRATOR_FETCH_DEFAULT_TIMEOUT_MS || "").trim();
@@ -576,14 +582,17 @@ export type OrchestratorJsonPart = {
 export async function orchestratorGetJsonPart(
   path: string,
   headers: Record<string, string>,
-  requestId: string
+  requestId: string,
+  opts?: { timeoutMs?: number; retryGetOnce?: boolean }
 ): Promise<OrchestratorJsonPart> {
   try {
     const upstream = await fetchOrchestrator(path, {
       method: "GET",
       payload: "{}",
       headers,
-      requestId
+      requestId,
+      timeoutMs: opts?.timeoutMs,
+      retryGetOnce: opts?.retryGetOnce
     });
     const text = await upstream.text();
     let data: unknown = {};

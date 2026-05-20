@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
-import { consumePostAuthReturnTo } from "../../lib/authReturnTo";
-import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
+import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
+import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
+import { WORKBENCH_HOME_PATH } from "../../../lib/navPaths";
 
 export default function LoginView() {
   const router = useRouter();

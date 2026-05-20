@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAuth } from "../../../lib/auth";
+import { useAuth } from "../../../../lib/auth";
 
 type LogSwitchConfig = {
   scope: string;

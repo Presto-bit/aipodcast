@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import EmptyState from "../../../components/ui/EmptyState";
-import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
-import { shouldHideWorkFromUserGallery } from "../../../lib/worksTypes";
+import EmptyState from "../../../../components/ui/EmptyState";
+import { isLoggedInAccountUser, useAuth } from "../../../../lib/auth";
+import { shouldHideWorkFromUserGallery } from "../../../../lib/worksTypes";
 
 type NoteRow = {
   noteId: string;

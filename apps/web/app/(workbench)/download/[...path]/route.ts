@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { proxyLegacy } from "../../../lib/legacyProxy";
+import { proxyLegacy } from "../../../../lib/legacyProxy";
 
 type Params = { params: { path: string[] } };
 
