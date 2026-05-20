@@ -146,7 +146,7 @@ export default function ShownotesLandingClient() {
           </button>
           <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted">
             <li>支持 MP3、WAV、M4A 等常见格式；上传后将自动保存为 Shownotes 工程。</li>
-            <li>请点击「开始生成」发起转写；转写与模型调用需保持页面打开。</li>
+            <li>请点击「开始生成」发起转写；提交后在后台进行，刷新或稍后再回来即可查看进度。</li>
           </ul>
           <ShownotesMyProjectsList
             refreshKey={listRefreshKey}

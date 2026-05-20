@@ -17,9 +17,12 @@ import type { ClipProjectRow } from "../../lib/clipTypes";
 import { computeSharePublishHints, reorderShowNotesGoldenQuotesAfterListen } from "../../lib/sharePublishDefaults";
 import { SHARE_SHOWNOTES_REFINE_PROMPT_PLACEHOLDER } from "../../lib/shareShownotesAiPrompt";
 import {
+  clearShownotesPendingPipeline,
   clipProjectHasMaterial,
   clipProjectMasterAudioSrc,
   CLIP_PROJECT_KIND_SHOWNOTES,
+  hasShownotesPendingPipeline,
+  markShownotesPendingPipeline,
   shownotesProjectDisplayTitle,
   titleFromUploadedAudioFile
 } from "../../lib/shownotesClipProject";
@@ -133,6 +136,28 @@ export default function ShownotesStudio({
   }, [isLoggedIn, load, project?.audio_merge_status, project?.transcription_status]);
 
   useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [load]);
+
+  useEffect(() => {
+    if (!project) return;
+    const tr = (project.transcription_status || "").toLowerCase();
+    if (tr === "queued" || tr === "running") {
+      setPipelineMsg("转写进行中，请稍候…");
+      return;
+    }
+    if (tr === "failed") {
+      clearShownotesPendingPipeline(projectId);
+      pendingPipelineAfterAsrRef.current = false;
+    }
+    setPipelineMsg((msg) => (msg === "转写进行中，请稍候…" ? "" : msg));
+  }, [project, projectId]);
+
+  useEffect(() => {
     materialPollTicksRef.current = 0;
   }, [projectId]);
 
@@ -229,6 +254,7 @@ export default function ShownotesStudio({
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
       if (!res.ok || data.success === false) throw new Error(data.detail || `转写提交失败 ${res.status}`);
+      markShownotesPendingPipeline(projectId);
       setPipelineMsg("转写进行中，请稍候…");
       await load();
     } catch (e) {
@@ -273,6 +299,7 @@ export default function ShownotesStudio({
         clearShownotesStudioDraft(projectId);
         await load();
         setPipelineMsg("");
+        clearShownotesPendingPipeline(projectId);
       } catch (e) {
         setLoadErr(String(e instanceof Error ? e.message : e));
         setPipelineMsg("");
@@ -280,7 +307,7 @@ export default function ShownotesStudio({
         setGenBusy(false);
       }
     },
-    [load, projectId, titleOptions]
+    [load, projectId]
   );
 
   const runPostAsrPipeline = useCallback(async () => {
@@ -296,10 +323,11 @@ export default function ShownotesStudio({
 
   useEffect(() => {
     if (project?.transcription_status !== "succeeded") return;
-    if (!pendingPipelineAfterAsrRef.current) return;
+    const pending = pendingPipelineAfterAsrRef.current || hasShownotesPendingPipeline(projectId);
+    if (!pending) return;
     pendingPipelineAfterAsrRef.current = false;
     void runPostAsrPipeline();
-  }, [project?.transcription_status, runPostAsrPipeline]);
+  }, [project?.transcription_status, projectId, runPostAsrPipeline]);
 
   const trLower = (project?.transcription_status || "").toLowerCase();
   const transcribeOk = project?.transcription_status === "succeeded";
@@ -388,8 +416,9 @@ export default function ShownotesStudio({
 
   const beginAsr = useCallback(() => {
     pendingPipelineAfterAsrRef.current = true;
+    markShownotesPendingPipeline(projectId);
     void runTranscribe();
-  }, [runTranscribe]);
+  }, [projectId, runTranscribe]);
 
   const startNewAudioFromFile = useCallback(
     async (file: File) => {
@@ -397,6 +426,8 @@ export default function ShownotesStudio({
       setLoadErr("");
       try {
         clearShownotesStudioDraft(projectId);
+        clearShownotesPendingPipeline(projectId);
+        pendingPipelineAfterAsrRef.current = false;
         const res = await fetch("/api/clip/projects", {
           method: "POST",
           credentials: "same-origin",

@@ -3,12 +3,16 @@ import type { ClipWord } from "./clipTypes";
 /** 与编排器 clip_transcript_words_to_script_raw 对齐，用于 Shownotes「查看原文」 */
 export function clipTranscriptWordsToPlainText(
   words: readonly ClipWord[],
-  excludedIds?: ReadonlySet<string> | readonly string[]
+  excludedIds?: Set<string> | readonly string[]
 ): string {
   const ex =
     excludedIds instanceof Set
       ? excludedIds
-      : new Set((excludedIds || []).map((x) => String(x).trim()).filter(Boolean));
+      : new Set(
+          (Array.isArray(excludedIds) ? excludedIds : [])
+            .map((x) => String(x).trim())
+            .filter(Boolean)
+        );
   const lines: string[] = [];
   let parts: string[] = [];
   let curSpk: number | null = null;

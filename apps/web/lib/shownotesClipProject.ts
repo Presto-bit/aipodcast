@@ -33,6 +33,35 @@ export function titleFromUploadedAudioFile(file: File): string {
   return name.slice(0, 200);
 }
 
+function pendingPipelineStorageKey(projectId: string): string {
+  return `fym-shownotes-pending-pipeline-${encodeURIComponent(projectId)}`;
+}
+
+/** 用户已点击「开始生成」：刷新/切页后仍应在转写完成后自动跑标题与 Shownotes */
+export function markShownotesPendingPipeline(projectId: string): void {
+  try {
+    sessionStorage.setItem(pendingPipelineStorageKey(projectId), "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearShownotesPendingPipeline(projectId: string): void {
+  try {
+    sessionStorage.removeItem(pendingPipelineStorageKey(projectId));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function hasShownotesPendingPipeline(projectId: string): boolean {
+  try {
+    return sessionStorage.getItem(pendingPipelineStorageKey(projectId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function clipProjectHasMaterial(p: ClipProjectRow | null): boolean {
   if (!p) return false;
   if (p.has_material === true) return true;
