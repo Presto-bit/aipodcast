@@ -151,6 +151,12 @@ export default function ShownotesLandingClient() {
           <ShownotesMyProjectsList
             refreshKey={listRefreshKey}
             onOpenProject={(id, label) => openProject(id, label)}
+            onProjectDeleted={(id) => {
+              if (activeProjectId === id) {
+                setActiveProjectId(null);
+                setUploadedFileLabel("");
+              }
+            }}
           />
         </div>
       ) : null}
