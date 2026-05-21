@@ -305,6 +305,14 @@ body {
   pointer-events: none;
 }
 
+/** 营销标题等：品牌渐变字（与 --dawn-brand-gradient 一致） */
+.fym-brand-gradient-text {
+  background-image: var(--dawn-brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 html.light .fym-surface-card,
 html:not(.dark) .fym-surface-card {
   background: var(--dawn-glass-surface);
