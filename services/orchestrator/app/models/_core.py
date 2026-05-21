@@ -363,7 +363,7 @@ def get_job(job_id: str, user_ref: str | None = None) -> dict[str, Any] | None:
             if user_uuid:
                 cur.execute("SELECT 1 FROM jobs WHERE id = %s", (job_id,))
                 if cur.fetchone():
-                    from .security_audit import log_idor_denied
+                    from ..security_audit import log_idor_denied
 
                     log_idor_denied("job", str(job_id), user_ref)
             return None
@@ -923,7 +923,7 @@ def list_user_notebook_sharing_meta(user_ref: str | None) -> dict[str, dict[str,
 
 
 def _delete_notebook_cover_object_keys(keys: list[str]) -> None:
-    from .object_store import delete_object_key
+    from ..object_store import delete_object_key
 
     for k in keys:
         s = str(k or "").strip()
@@ -1008,7 +1008,7 @@ def patch_notebook_cover_db(
     cover_mode: str,
     cover_preset_id: str | None = None,
 ) -> tuple[bool, str]:
-    from .note_constants import NOTEBOOK_COVER_PRESET_IDS
+    from ..note_constants import NOTEBOOK_COVER_PRESET_IDS
 
     nb = (notebook_name or "").strip()
     if not nb:
@@ -1080,9 +1080,9 @@ def patch_notebook_cover_db(
 def upload_notebook_cover_db(
     user_ref: str | None, notebook_name: str, data: bytes, content_type: str | None
 ) -> tuple[bool, str]:
-    from .note_constants import ALLOWED_NOTEBOOK_COVER_IMAGE_EXT, NOTEBOOK_COVER_MAX_BYTES
-    from .object_store import upload_bytes
-    from .storage_paths import notebook_cover_object_keys
+    from ..note_constants import ALLOWED_NOTEBOOK_COVER_IMAGE_EXT, NOTEBOOK_COVER_MAX_BYTES
+    from ..object_store import upload_bytes
+    from ..storage_paths import notebook_cover_object_keys
 
     nb = (notebook_name or "").strip()
     if not nb:
@@ -1156,7 +1156,7 @@ def read_notebook_cover_bytes_owner(
     v = (variant or "thumb").strip().lower()
     if v not in ("thumb", "full"):
         v = "thumb"
-    from .object_store import get_object_bytes
+    from ..object_store import get_object_bytes
 
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -1200,7 +1200,7 @@ def read_notebook_cover_bytes_public(
     v = (variant or "thumb").strip().lower()
     if v not in ("thumb", "full"):
         v = "thumb"
-    from .object_store import get_object_bytes
+    from ..object_store import get_object_bytes
 
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -1553,7 +1553,7 @@ def delete_notebook_db(name: str, user_ref: str | None = None) -> tuple[bool, st
     jobs_n = trash_jobs_for_notes_notebook(n, user_ref=user_ref)
     notes_n, file_keys = purge_inputs_in_notebook_hard(n, user_ref=user_ref)
 
-    from .object_store import delete_object_key
+    from ..object_store import delete_object_key
 
     for k in file_keys:
         try:
@@ -1794,7 +1794,7 @@ def get_note_by_id(
                     (note_id,),
                 )
                 if cur.fetchone():
-                    from .security_audit import log_idor_denied
+                    from ..security_audit import log_idor_denied
 
                     log_idor_denied("note", str(note_id), user_ref)
             return None
@@ -1914,7 +1914,7 @@ def purge_note_hard(note_id: str, user_ref: str | None = None) -> bool:
         return False
     key = str(row.get("file_object_key") or "").strip()
     if key:
-        from .object_store import delete_object_key
+        from ..object_store import delete_object_key
 
         try:
             delete_object_key(key)
@@ -1983,7 +1983,7 @@ def delete_job_and_storage(job_id: str) -> tuple[bool, str]:
         if isinstance(v, str) and v.strip() and not v.strip().lower().startswith("http"):
             keys.add(v.strip())
 
-    from .object_store import delete_object_key
+    from ..object_store import delete_object_key
 
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -5777,7 +5777,7 @@ def experience_restore_asr_minutes(phone: str, minutes: float) -> None:
 
 def script_text_billing_try_debit(phone: str, char_count: int) -> tuple[bool, dict[str, Any]]:
     """成稿文本：先扣体验包字数，再按超出部分从钱包扣费。"""
-    from .media_wallet import media_wallet_billing_enabled, wallet_cents_for_generated_text_chars
+    from ..media_wallet import media_wallet_billing_enabled, wallet_cents_for_generated_text_chars
 
     base: dict[str, Any] = {"wallet_cents": 0, "experience_text_chars_consumed": 0}
     if not media_wallet_billing_enabled():
@@ -5872,7 +5872,7 @@ def script_text_billing_refund(phone: str, meta: dict[str, Any]) -> None:
 
 def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[str, Any]]:
     """剪辑 ASR 成功后：先扣体验包转写分钟，再按超出部分从钱包扣费。"""
-    from .media_wallet import media_wallet_billing_enabled, wallet_cents_for_asr_audio_seconds
+    from ..media_wallet import media_wallet_billing_enabled, wallet_cents_for_asr_audio_seconds
 
     base: dict[str, Any] = {
         "wallet_cents": 0,
@@ -5985,7 +5985,7 @@ def media_billing_try_assert_cover_estimated_minutes(
     tier / period_days 保留兼容，不参与计算。
     """
     _ = tier, period_days
-    from . import media_wallet as _mw
+    from .. import media_wallet as _mw
 
     base: dict[str, Any] = {"estimated_minutes": float(est_minutes)}
     if not _mw.media_wallet_billing_enabled():
@@ -6030,7 +6030,7 @@ def _media_billing_try_debit_voice_billed_minutes(
     billed_minutes 通常为成片实际口播分钟；兼容旧调用传入预估分钟。
     """
     _ = tier, period_days
-    from . import media_wallet as _mw
+    from .. import media_wallet as _mw
 
     base_meta: dict[str, Any] = {
         "payg_restores": [],
