@@ -45,12 +45,3 @@ export function IconFeaturePodcast(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-
-export function IconTrustGift(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={STROKE} aria-hidden {...props}>
-      <path d="M12 8v13M12 8H7.5a2.5 2.5 0 0 1 0-5C10 3 12 8 12 8zm0 0h4.5a2.5 2.5 0 0 0 0-5C14 3 12 8 12 8z" strokeLinejoin="round" />
-      <path d="M5 12h14v9H5z" strokeLinejoin="round" />
-    </svg>
-  );
-}

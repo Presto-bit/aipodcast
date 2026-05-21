@@ -9,8 +9,7 @@ import {
   IconFeatureCitation,
   IconFeatureFormats,
   IconFeaturePodcast,
-  IconFeatureSources,
-  IconTrustGift
+  IconFeatureSources
 } from "../../components/marketing/MarketingFeatureIcons";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
@@ -176,24 +175,6 @@ export default function MarketingLandingPage() {
                 工作台首页
               </Link>
             </div>
-
-            <p
-              className="mx-auto mt-6 flex max-w-xl flex-wrap items-center justify-center gap-x-2 gap-y-2 rounded-xl border border-line/70 bg-surface/70 px-3.5 py-2.5 text-left shadow-soft sm:mt-7 sm:gap-x-3 sm:px-4 lg:mx-0 lg:justify-start"
-              role="note"
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
-                <IconTrustGift className="h-[18px] w-[18px]" aria-hidden />
-              </span>
-              <span className="min-w-0 text-sm leading-snug text-muted">
-                <span className="font-medium text-ink">注册即送</span>
-                <span className="mx-1 inline-flex flex-wrap items-center gap-1.5 sm:gap-2">
-                  <span className="rounded-md bg-fill px-1.5 py-0.5 text-xs font-medium tabular-nums text-ink">20 分钟语音</span>
-                  <span className="rounded-md bg-fill px-1.5 py-0.5 text-xs font-medium tabular-nums text-ink">20 分钟转写</span>
-                  <span className="rounded-md bg-fill px-1.5 py-0.5 text-xs font-medium tabular-nums text-ink">1 万字文本</span>
-                </span>
-                额度
-              </span>
-            </p>
 
             {!ready ? (
               <p className="mt-6 text-xs text-muted lg:text-left" aria-live="polite">
