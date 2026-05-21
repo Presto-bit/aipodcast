@@ -150,12 +150,22 @@ def merge_script_continuation_material(
     return "\n\n".join(blocks)
 
 
+_ARTICLE_FAREWELL_PARA_RE = re.compile(
+    r"(?:"
+    r"咱们下次|下次再聊|再聊|感谢收听|感谢你的收听|我们下次再见|下期再见|"
+    r"希望今晚的分享|今天就聊到这里|节目就到这里|故事讲完了|夜深了|"
+    r"愿你.*清醒|咱们(?:今天)?就到这儿"
+    r")",
+    re.IGNORECASE,
+)
+
+
 def _tail_has_dialogue_farewell(accumulated: str, window: int = 360) -> bool:
     tail = (accumulated or "")[-window:] if len(accumulated or "") > window else (accumulated or "")
     return bool(
         re.search(
             r"(?:"
-            r"拜拜|再见啦|下次再见|感谢收听|感谢你的收听|"
+            r"拜拜|再见啦|下次再见|咱们下次|下次再聊|感谢收听|感谢你的收听|"
             r"晚安\s*[,，]\s*好梦|晚安\s*[,，]\s*美梦|"
             r"晚安\s*[。！？…]|好梦\s*[。！？…]|"
             r"早点休息|睡吧|该睡了|去睡啦"
@@ -163,6 +173,32 @@ def _tail_has_dialogue_farewell(accumulated: str, window: int = 360) -> bool:
             tail,
         )
     )
+
+
+def _paragraph_looks_like_article_farewell(para: str) -> bool:
+    t = (para or "").strip()
+    if not t or len(t) > 720:
+        return False
+    if _ARTICLE_FAREWELL_PARA_RE.search(t):
+        return True
+    if len(t) <= 140 and re.search(r"(?:再见|再聊|下次见|收听|晚安|下期)", t):
+        return True
+    return False
+
+
+def _trim_article_farewell_trailing(accumulated: str) -> str:
+    """长文多段续写前：去掉上文末尾误写的播客式收场段，避免与下一段硬切。"""
+    text = (accumulated or "").rstrip()
+    if not text:
+        return accumulated
+    parts = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    if not parts:
+        return accumulated
+    while len(parts) > 1 and _paragraph_looks_like_article_farewell(parts[-1]):
+        parts.pop()
+    if len(parts) == 1 and _paragraph_looks_like_article_farewell(parts[0]):
+        return accumulated
+    return "\n\n".join(parts).rstrip()
 
 
 def _strip_speaker_prefix(line: str) -> str:
@@ -213,6 +249,8 @@ def _join_script_continued(accumulated: str, piece: str, output_mode: str) -> st
         return accumulated
     if output_mode == "dialogue":
         p = _trim_redundant_dialogue_farewell_leading(a, p).lstrip()
+    elif output_mode == "article":
+        a = _trim_article_farewell_trailing(a)
     if not p:
         return accumulated
     sep = "\n" if output_mode == "dialogue" else "\n\n"
@@ -603,6 +641,9 @@ def build_script_with_minimax(
                     )
 
                 seg_target = min(remaining, seg_cap)
+                if not accumulated and goal > seg_cap and goal <= 6000:
+                    # 约 4k～6k 字两分段：首段目标约为全文一半，避免单段过长导致中途误写结语
+                    seg_target = min(remaining, max(2000, goal // 2))
                 if not accumulated:
                     segment_role = "first" if goal > seg_cap else None
                 else:

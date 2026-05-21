@@ -127,8 +127,21 @@ _JOB_COVER_MAX_BYTES = 8 * 1024 * 1024
 
 
 def _media_queue_timeout_for_payload(job_type: str, payload: Any) -> str:
-    _ = job_type, payload
-    return "20m"
+    jt = str(job_type or "").strip().lower()
+    if jt not in ("podcast_generate", "podcast"):
+        return "20m"
+    pl = payload if isinstance(payload, dict) else {}
+    chars = 0
+    try:
+        chars = int(pl.get("script_target_chars") or 0)
+    except (TypeError, ValueError):
+        chars = 0
+    if chars <= 0:
+        body = str(pl.get("source_text") or pl.get("text") or "").strip()
+        chars = len(body) if body else 2400
+    # 长稿脚本多轮 + TTS 分片：按目标字数放宽 RQ 超时（默认 20m 对 5k 字易不够）
+    minutes = max(25, min(75, 18 + chars // 120))
+    return f"{minutes}m"
 
 
 def _distribution_pack_markdown(result: dict[str, Any]) -> str:
