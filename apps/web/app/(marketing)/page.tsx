@@ -89,7 +89,7 @@ export default function MarketingLandingPage() {
       </header>
 
       <main className="relative z-[1] mx-auto max-w-6xl px-4 pb-20 sm:px-6 sm:pb-28">
-        <section className="mx-auto mt-2 grid max-w-6xl gap-10 lg:mt-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,440px)] lg:items-center lg:gap-12 xl:gap-16">
+        <section className="mx-auto mt-2 grid max-w-6xl gap-10 lg:mt-4 lg:grid-cols-[1fr_3fr] lg:items-center lg:gap-12 xl:gap-16">
           <div className="mx-auto max-w-3xl text-center lg:mx-0 lg:max-w-none lg:text-left">
             <h1 className="text-balance font-semibold tracking-tight text-ink">
               <span className="block text-lg font-medium leading-snug text-muted sm:text-xl md:text-2xl md:leading-snug">
@@ -122,14 +122,14 @@ export default function MarketingLandingPage() {
               </p>
             ) : null}
           </div>
-          <div className="mx-auto flex w-full max-w-[520px] justify-center lg:mx-0 lg:max-w-none lg:justify-end">
+          <div className="mx-auto w-3/4 lg:mx-0 lg:w-full">
             <Image
               src="/marketing/hero.png"
               alt="PrestoAI：多格式资料输入，经 AI 分析后输出文章、播客、摘要等内容"
               width={1693}
               height={929}
               priority
-              sizes="(max-width: 1024px) 100vw, 480px"
+              sizes="(max-width: 1024px) 75vw, 75vw"
               className="h-auto w-full rounded-2xl border border-line/90 bg-surface/95 shadow-[0_24px_48px_-12px_rgba(15,23,42,0.18)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.45)]"
             />
           </div>
