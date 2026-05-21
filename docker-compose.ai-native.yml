@@ -4,7 +4,35 @@
 # 离线构建勿访问 registry-1.docker.io：先 load 基础镜像，再用 scripts/docker-compose-offline.sh 或 make up-offline（脚本默认 DOCKER_BUILDKIT=1，以启用 apt/pip 缓存 mount）。
 # 固定 amd64，与阿里云 ECS 一致；避免 Apple Silicon 默认打成 arm64 镜像后在服务器无法运行。
 #
+# ai 队列（TTS / 脚本等）：单 ai-worker 容器内 RQ_AI_WORKER_PROCESSES 多进程并行（默认 4）；勿与 compose scale 叠加以免双消费过量。
 # media 队列：单服务名 media-worker + scale: 3，兼容旧脚本 `docker compose build media-worker`，默认三副本并行消费（同一 REDIS_URL）；减并发改为 scale: 2 或 1。
+x-ai-worker-def: &ai_worker_def
+  platform: linux/amd64
+  image: aipodcast-ai-worker:${AIPODCAST_IMAGE_TAG:-latest}
+  build:
+    context: .
+    dockerfile: workers/ai-worker/Dockerfile
+    pull: false
+    args:
+      PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/python:3.12-slim}
+      USE_APT_MIRROR: ${USE_APT_MIRROR:-1}
+  env_file:
+    - .env.ai-native
+  environment:
+    DB_HOST: postgres
+    REDIS_URL: redis://redis:6379/0
+    OBJECT_ENDPOINT: http://minio:9000
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+    orchestrator:
+      condition: service_healthy
+  restart: unless-stopped
+
 x-media-worker-def: &media_worker_def
   platform: linux/amd64
   image: aipodcast-media-worker:${AIPODCAST_IMAGE_TAG:-latest}
@@ -130,7 +158,7 @@ services:
       OBJECT_ENDPOINT: http://minio:9000
       # 默认走本栈 minio-https（宿主机 127.0.0.1:9443）；生产在 .env.ai-native 覆盖为 https://你的域名
       OBJECT_PRESIGN_ENDPOINT: ${OBJECT_PRESIGN_ENDPOINT:-https://127.0.0.1:9443}
-      # 独立 ai-worker / media-worker（compose scale: 3）已消费队列；编排器内关闭内嵌，避免双消费与 API 同进程抢 CPU
+      # 独立 ai-worker（容器内多进程）/ media-worker（scale:3）消费队列；编排器内关闭内嵌，避免双消费与 API 同进程抢 CPU
       ORCHESTRATOR_EMBED_RQ_AI_WORKER: "0"
       ORCHESTRATOR_EMBED_RQ_MEDIA_WORKER: "0"
       # 知识库问答：收紧 embedding 超时，避免单次请求被慢上游长时间拖住
@@ -186,6 +214,8 @@ services:
       DB_HOST: postgres
       REDIS_URL: redis://redis:6379/0
       OBJECT_ENDPOINT: http://minio:9000
+      # 单容器内并行消费 ai 队列（TTS/脚本等）；与 MiniMax TTS 并发上限协调，默认 4，可改为 1～32
+      RQ_AI_WORKER_PROCESSES: ${RQ_AI_WORKER_PROCESSES:-4}
       # 预签名公网 Host 仅编排器生成 URL 时需要 OBJECT_PRESIGN_ENDPOINT；Worker 写桶用内网 endpoint 即可
     depends_on:
       postgres:

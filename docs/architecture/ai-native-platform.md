@@ -38,3 +38,9 @@
 - 环境变量：`RQ_WORKER_MODE`（`auto` / `simple` / `standard`，默认 `auto`）。
 - `auto`：macOS 使用 `SimpleWorker`（避免 fork 问题），Linux 使用标准 `Worker`。
 - 本地排障建议：显式设置 `RQ_WORKER_MODE=simple`，减少平台差异导致的队列异常。
+
+### ai-worker 单容器多进程
+
+- 环境变量：`RQ_AI_WORKER_PROCESSES`（默认 `1`；Docker Compose 对 `ai-worker` 服务默认注入 `4`）。
+- 父进程为 supervisor，拉起 N 个子进程各消费 Redis `ai` 队列；`/health` 的 `rq_workers.ai` 应接近 N。
+- 与 Compose `scale` 勿叠加以免消费者过多；资源紧时先将 `RQ_AI_WORKER_PROCESSES` 降为 `1`～`2`。
