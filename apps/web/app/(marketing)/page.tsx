@@ -1,9 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import BrandGlyph from "../../components/brand/BrandGlyph";
-import MarketingHeroIllustration from "../../components/marketing/MarketingHeroIllustration";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 
@@ -122,8 +122,16 @@ export default function MarketingLandingPage() {
               </p>
             ) : null}
           </div>
-          <div className="mx-auto flex w-full max-w-[480px] justify-center lg:mx-0 lg:max-w-none lg:justify-end">
-            <MarketingHeroIllustration />
+          <div className="mx-auto flex w-full max-w-[520px] justify-center lg:mx-0 lg:max-w-none lg:justify-end">
+            <Image
+              src="/marketing/hero.png"
+              alt="PrestoAI：多格式资料输入，经 AI 分析后输出文章、播客、摘要等内容"
+              width={1693}
+              height={929}
+              priority
+              sizes="(max-width: 1024px) 100vw, 480px"
+              className="h-auto w-full rounded-2xl border border-line/90 bg-surface/95 shadow-[0_24px_48px_-12px_rgba(15,23,42,0.18)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.45)]"
+            />
           </div>
         </section>
 
