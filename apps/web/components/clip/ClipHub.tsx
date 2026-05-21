@@ -8,6 +8,7 @@ import { clipJobLabel } from "../../lib/clipJobLabels";
 import type { ClipProjectRow } from "../../lib/clipTypes";
 import { isShownotesOnlyClipProject } from "../../lib/shownotesClipProject";
 import { useI18n } from "../../lib/I18nContext";
+import { PrestoBrandHeading } from "../brand/PrestoBrandHeading";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 
 function formatClipHubDate(iso: string | undefined, locale: string): string {
@@ -209,9 +210,9 @@ export default function ClipHub() {
       />
 
       <header className="border-b border-line pb-8 pt-6 sm:pt-8">
-        <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{t("clip.pageTitle")}</h1>
+        <PrestoBrandHeading productLabel={t("clip.brandProduct")} />
         {t("clip.pageSubtitle").trim() ? (
-          <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted sm:text-[15px]">{t("clip.pageSubtitle")}</p>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted sm:text-[15px]">{t("clip.pageSubtitle")}</p>
         ) : null}
         <div className="mt-6 flex flex-wrap gap-3">
           <button
