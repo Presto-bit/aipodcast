@@ -133,21 +133,26 @@ export default function ShownotesLandingClient() {
               if (f) void createProjectAndStage(f);
             }}
           />
-          <button
-            type="button"
-            disabled={uploadBusy}
-            onClick={() => inputRef.current?.click()}
-            className="flex w-full flex-col items-center gap-3 py-10 transition hover:opacity-90 disabled:opacity-50"
+          <div
+            className="rounded-2xl border border-dashed border-line/90 bg-fill/20 px-4 py-2 shadow-sm sm:px-6"
+            aria-label="上传音频"
           >
-            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-fill/60 text-brand">
-              <Plus className="h-7 w-7" strokeWidth={2} aria-hidden />
-            </span>
-            <span className="text-sm font-medium text-ink">{uploadBusy ? "创建工程并上传中…" : "点击上传音频"}</span>
-          </button>
-          <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-muted">
-            <li>支持 MP3、WAV、M4A 等常见格式；上传后将自动保存为 Shownotes 工程。</li>
-            <li>请点击「开始生成」发起转写；提交后在后台进行，刷新或稍后再回来即可查看进度。</li>
-          </ul>
+            <button
+              type="button"
+              disabled={uploadBusy}
+              onClick={() => inputRef.current?.click()}
+              className="flex w-full flex-col items-center gap-3 rounded-xl py-10 transition hover:bg-fill/30 hover:opacity-95 disabled:opacity-50"
+            >
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-fill/60 text-brand">
+                <Plus className="h-7 w-7" strokeWidth={2} aria-hidden />
+              </span>
+              <span className="text-sm font-medium text-ink">{uploadBusy ? "创建工程并上传中…" : "点击上传音频"}</span>
+            </button>
+            <ul className="border-t border-line/50 px-1 pb-3 pt-3 space-y-1.5 text-xs leading-relaxed text-muted">
+              <li>支持 MP3、WAV、M4A 等常见格式；上传后将自动保存为 Shownotes 工程。</li>
+              <li>请点击「开始生成」发起转写；提交后在后台进行，刷新或稍后再回来即可查看进度。</li>
+            </ul>
+          </div>
           <ShownotesMyProjectsList
             refreshKey={listRefreshKey}
             onOpenProject={(id, label) => openProject(id, label)}
