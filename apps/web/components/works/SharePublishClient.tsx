@@ -1157,10 +1157,7 @@ export function SharePublishClient({
         ...(createdBy ? { created_by: createdBy } : {})
       });
       if (prev.allowed === false) {
-        throw new Error((prev.detail || "").trim() || "当前无法创建语音合成任务（余额或套餐）。");
-      }
-      if (prev.summary) {
-        setAudioRegenMessage(String(prev.summary));
+        throw new Error((prev.detail || "").trim() || "余额不足，请先充值后再试。");
       }
 
       setAudioRegenProgress(5);

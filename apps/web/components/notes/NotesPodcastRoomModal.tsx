@@ -12,7 +12,10 @@ import {
   type SetStateAction
 } from "react";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
-import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+import {
+  messageSuggestsBillingTopUpOrSubscription,
+  simplifyWalletBillingMessageForUi
+} from "../../lib/billingShortfall";
 import {
   DEFAULT_CREATIVE_TEMPLATE_VALUE,
   formatCreativeTemplateChip,
@@ -487,12 +490,16 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
           ...(createdByPhone ? { created_by: createdByPhone } : {})
         });
         if (prev.allowed === false) {
-          setBillingGateMessage(prev.detail || "余额或套餐不足，请前往订阅页处理。");
+          setBillingGateMessage(
+            simplifyWalletBillingMessageForUi(
+              prev.detail || "余额不足，请先充值后再试。"
+            )
+          );
           return;
         }
       } catch (pe) {
         const peMsg = String(pe instanceof Error ? pe.message : pe);
-        setBillingGateMessage(peMsg);
+        setBillingGateMessage(simplifyWalletBillingMessageForUi(peMsg));
         return;
       }
       const createRes = await fetch("/api/jobs", {

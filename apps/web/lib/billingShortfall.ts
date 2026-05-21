@@ -29,3 +29,16 @@ export function messageSuggestsBillingTopUpOrSubscription(text: string): boolean
 
 /** 订阅页打开充值弹窗的锚点（与 subscription/page 内 hash 处理一致） */
 export const SUBSCRIPTION_WALLET_TOPUP_HASH = "#wallet-topup";
+
+const WALLET_BILLING_DETAIL_RE =
+  /脚本文本|语音预估|预估计费|当前余额|钱包余额|预估需从钱包|超出体验包.*约需/;
+
+/** 将编排器钱包预检/入队错误中的金额明细收敛为对用户友好的短文案 */
+export function simplifyWalletBillingMessageForUi(text: string): string {
+  const s = (text || "").trim();
+  if (!s) return s;
+  if (messageLooksLikeWalletTopupHint(s) || WALLET_BILLING_DETAIL_RE.test(s)) {
+    return "余额不足，请先充值后再试。";
+  }
+  return s;
+}

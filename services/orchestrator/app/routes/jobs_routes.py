@@ -465,18 +465,9 @@ def _media_job_wallet_preview_dict(phone: str | None, job_type: str, payload: di
     out["wallet_balance_cents"] = bal_m
     if need_cents > 0 and bal_m < need_cents:
         out["allowed"] = False
-        out["detail"] = (
-            f"预估成片约 {est_m:.1f} 分钟，超出体验包语音分钟后约需 ¥{need_cents / 100:.2f}，"
-            f"钱包余额 ¥{bal_m / 100:.2f} 不足，请先充值。"
-        )
+        out["detail"] = "余额不足，请先充值。"
     else:
         out["allowed"] = True
-        if need_cents > 0:
-            out["summary"] = (
-                f"预估口播约 {est_m:.1f} 分钟；超出体验包部分约需从钱包扣 ¥{need_cents / 100:.2f}（当前余额 ¥{bal_m / 100:.2f}）。"
-            )
-        else:
-            out["summary"] = f"预估口播约 {est_m:.1f} 分钟；预计在体验包语音额度内，无需从钱包扣费。"
     return out
 
 
@@ -504,18 +495,7 @@ def _enforce_combined_wallet_for_enqueue(phone: str | None, job_type: str, paylo
         return
     bal = int(wallet_balance_cents_for_phone(p))
     if bal < total:
-        parts: list[str] = []
-        if text_c:
-            parts.append(f"脚本文本（预估计费上界）约 ¥{text_c / 100:.2f}")
-        if audio_c:
-            parts.append(f"语音预估计费约 ¥{audio_c / 100:.2f}")
-        joiner = "；"
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"钱包余额 ¥{bal / 100:.2f} 不足；估计需约 ¥{total / 100:.2f}（{joiner.join(parts)}）。请先充值。"
-            ),
-        )
+        raise HTTPException(status_code=400, detail="余额不足，请先充值。")
 
 
 @router.post("/jobs/preview-media")
@@ -542,19 +522,7 @@ def preview_media_job_api(req: JobCreateRequest, request: Request):
         audio_ok = bool(body.get("allowed", True))
         if audio_ok and total > bal:
             body["allowed"] = False
-            parts: list[str] = []
-            if text_c:
-                parts.append(f"脚本文本（上界）约 ¥{text_c / 100:.2f}")
-            if audio_c:
-                parts.append(f"语音预估约 ¥{audio_c / 100:.2f}")
-            body["detail"] = f"钱包余额 ¥{bal / 100:.2f}；{'；'.join(parts)}，请先充值。"
-        elif audio_ok and total > 0:
-            segs: list[str] = []
-            if text_c:
-                segs.append(f"脚本文本（上界）约 ¥{text_c / 100:.2f}")
-            if audio_c:
-                segs.append(f"语音预估约 ¥{audio_c / 100:.2f}")
-            body["summary"] = f"{'；'.join(segs)}（当前余额 ¥{bal / 100:.2f}）。"
+            body["detail"] = "余额不足，请先充值。"
     body["success"] = True
     return JSONResponse(jsonable_encoder(body))
 

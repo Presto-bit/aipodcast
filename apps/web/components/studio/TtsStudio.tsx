@@ -48,7 +48,10 @@ import FloatingPopover from "../ui/FloatingPopover";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
-import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
+import {
+  messageSuggestsBillingTopUpOrSubscription,
+  simplifyWalletBillingMessageForUi
+} from "../../lib/billingShortfall";
 import { readSessionStorageScoped, removeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { notesRoomFeaturesEnabled } from "../../lib/noteReferenceLimits";
 import { useLoginRequiredAction } from "../../lib/useLoginRequiredAction";
@@ -670,28 +673,18 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
         });
         if (prev.allowed === false) {
           applyTaskFromEvent(
-            softenBareErrorLineForUi(prev.detail || "余额或套餐不足，请前往订阅与订单处理")
+            simplifyWalletBillingMessageForUi(
+              prev.detail || "余额不足，请先充值后再试。"
+            )
           );
           return;
-        }
-        const wb = prev.wallet_balance_cents;
-        const textC = typeof prev.wallet_text_charge_cents_preview === "number" ? prev.wallet_text_charge_cents_preview : 0;
-        const audioC = typeof prev.wallet_charge_cents === "number" ? prev.wallet_charge_cents : 0;
-        const totalC =
-          typeof prev.wallet_total_charge_cents_preview === "number"
-            ? prev.wallet_total_charge_cents_preview
-            : textC + audioC;
-        if (typeof wb === "number" && typeof totalC === "number" && totalC > wb) {
-          applyTaskFromEvent(
-            `预估需从钱包支付约 ¥${(totalC / 100).toFixed(2)}，当前余额 ¥${(wb / 100).toFixed(2)} 不足。请先充值后再试。`
-          );
-          return;
-        }
-        if (prev.summary) {
-          applyTaskFromEvent(prev.summary, 3);
         }
       } catch (pe) {
-        applyTaskFromEvent(softenBareErrorLineForUi(String(pe instanceof Error ? pe.message : pe)));
+        applyTaskFromEvent(
+          simplifyWalletBillingMessageForUi(
+            softenBareErrorLineForUi(String(pe instanceof Error ? pe.message : pe))
+          )
+        );
         return;
       }
       const createRes = await fetch("/api/jobs", {
