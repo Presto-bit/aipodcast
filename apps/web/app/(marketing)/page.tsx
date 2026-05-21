@@ -10,9 +10,7 @@ import {
   IconFeatureFormats,
   IconFeaturePodcast,
   IconFeatureSources,
-  IconTrustGift,
-  IconTrustQuote,
-  IconTrustWallet
+  IconTrustGift
 } from "../../components/marketing/MarketingFeatureIcons";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
@@ -92,24 +90,6 @@ const FEATURE_CARDS: FeatureCard[] = [
     )
   }
 ];
-
-const TRUST_ITEMS = [
-  {
-    Icon: IconTrustGift,
-    title: "注册即领体验包",
-    desc: "一次性赠送 20 分钟语音、20 分钟转写与 1 万字文本额度，先做出第一篇再考虑付费。"
-  },
-  {
-    Icon: IconTrustQuote,
-    title: "回答可核对出处",
-    desc: "关键结论标注引用来源，便于对照你的资料核对，减轻「AI 瞎编」顾虑。"
-  },
-  {
-    Icon: IconTrustWallet,
-    title: "用尽后再按量扣费",
-    desc: "体验包用完后按公示单价从余额扣费；价目与流水可在「套餐与余额」页查看。"
-  }
-] as const;
 
 const REGISTER_HREF = `/register?returnTo=${encodeURIComponent(WORKBENCH_HOME_PATH)}`;
 
@@ -197,25 +177,23 @@ export default function MarketingLandingPage() {
               </Link>
             </div>
 
-            <ul
-              className="mx-auto mt-8 grid max-w-2xl gap-3 text-left sm:grid-cols-3 lg:mx-0 lg:max-w-none"
-              aria-label="产品承诺"
+            <p
+              className="mx-auto mt-6 flex max-w-xl flex-wrap items-center justify-center gap-x-2 gap-y-2 rounded-xl border border-line/70 bg-surface/70 px-3.5 py-2.5 text-left shadow-soft sm:mt-7 sm:gap-x-3 sm:px-4 lg:mx-0 lg:justify-start"
+              role="note"
             >
-              {TRUST_ITEMS.map((item) => (
-                <li
-                  key={item.title}
-                  className="flex gap-2.5 rounded-xl border border-line/70 bg-surface/60 px-3 py-3 shadow-soft sm:flex-col sm:items-start sm:gap-2"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
-                    <item.Icon className="h-[18px] w-[18px]" />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-ink">{item.title}</p>
-                    <p className="mt-0.5 text-[11px] leading-snug text-muted sm:text-xs sm:leading-relaxed">{item.desc}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                <IconTrustGift className="h-[18px] w-[18px]" aria-hidden />
+              </span>
+              <span className="min-w-0 text-sm leading-snug text-muted">
+                <span className="font-medium text-ink">注册即送</span>
+                <span className="mx-1 inline-flex flex-wrap items-center gap-1.5 sm:gap-2">
+                  <span className="rounded-md bg-fill px-1.5 py-0.5 text-xs font-medium tabular-nums text-ink">20 分钟语音</span>
+                  <span className="rounded-md bg-fill px-1.5 py-0.5 text-xs font-medium tabular-nums text-ink">20 分钟转写</span>
+                  <span className="rounded-md bg-fill px-1.5 py-0.5 text-xs font-medium tabular-nums text-ink">1 万字文本</span>
+                </span>
+                额度
+              </span>
+            </p>
 
             {!ready ? (
               <p className="mt-6 text-xs text-muted lg:text-left" aria-live="polite">
@@ -287,43 +265,6 @@ export default function MarketingLandingPage() {
                 </div>
               </article>
             ))}
-          </div>
-        </section>
-
-        <section
-          className="fym-tech-cap fym-surface-card mx-auto mt-16 max-w-5xl rounded-2xl border border-line/80 px-6 py-10 text-center shadow-soft sm:mt-20 sm:px-10 sm:py-12"
-          aria-labelledby="marketing-final-cta-heading"
-        >
-          <h2 id="marketing-final-cta-heading" className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">
-            先做出你的第一篇，再决定是否付费
-          </h2>
-          <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-muted">
-            注册即领一次性体验包（20 分钟语音、20 分钟转写、1 万字文本）。用尽后按公示单价扣费，价目透明可查。
-          </p>
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            {loggedIn ? (
-              <Link
-                href="/create"
-                className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-cta px-6 py-2.5 text-sm font-semibold text-cta-foreground shadow-soft transition hover:bg-cta/90"
-              >
-                开始创作
-              </Link>
-            ) : (
-              <Link
-                href={REGISTER_HREF}
-                prefetch={false}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-cta px-6 py-2.5 text-sm font-semibold text-cta-foreground shadow-soft transition hover:bg-cta/90"
-              >
-                免费注册体验
-              </Link>
-            )}
-            <Link
-              href="/subscription"
-              prefetch={false}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-line bg-surface px-6 py-2.5 text-sm font-semibold text-ink transition hover:bg-fill"
-            >
-              查看套餐与余额
-            </Link>
           </div>
         </section>
       </main>
