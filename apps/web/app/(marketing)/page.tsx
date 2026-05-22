@@ -183,8 +183,8 @@ export default function MarketingLandingPage() {
               <Image
                 src="/marketing/scenario-cards.png"
                 alt="典型场景：播客创作者、知识博主、个人知识库"
-                width={1280}
-                height={720}
+                width={1584}
+                height={672}
                 sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 896px"
                 className="h-auto w-full rounded-2xl border border-line/80 shadow-soft"
               />
