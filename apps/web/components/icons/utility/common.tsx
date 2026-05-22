@@ -142,44 +142,49 @@ export function IconVolume(props: IconProps) {
   );
 }
 
-/** 音色页：克隆 */
+/** 音色页：克隆（同系麦克风） */
 export function IconVoiceCloneTab(props: IconProps) {
   return (
     <U {...props}>
-      <rect x="9" y="3" width="6" height="9" rx="3" />
-      <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 19v3" />
+      <rect x="9.5" y="5" width="5" height="8" rx="2.5" strokeLinejoin="round" />
+      <path d="M7.5 13a4.5 4.5 0 0 0 9 0" strokeLinecap="round" />
+      <path d="M12 13v2.5" strokeLinecap="round" />
+      <path d="M16.5 9.5c.9 1 1.3 2.2 1.2 3.5" strokeLinecap="round" opacity={0.5} />
+      <path d="M7.5 10c-.8.9-1.2 2-1.1 3.2" strokeLinecap="round" opacity={0.5} />
     </U>
   );
 }
 
-/** 音色页：库 */
+/** 音色页：库（同系四宫格） */
 export function IconVoiceLibraryTab(props: IconProps) {
   return (
     <U {...props}>
-      <rect x="4" y="4" width="7" height="7" />
-      <rect x="13" y="4" width="7" height="7" />
-      <rect x="4" y="13" width="7" height="7" />
-      <rect x="13" y="13" width="7" height="7" />
+      <rect x="4" y="4" width="7" height="7" rx="2" strokeLinejoin="round" />
+      <rect x="13" y="4" width="7" height="7" rx="2" strokeLinejoin="round" />
+      <rect x="4" y="13" width="7" height="7" rx="2" strokeLinejoin="round" />
+      <rect x="13" y="13" width="7" height="7" rx="2" strokeLinejoin="round" opacity={0.38} />
     </U>
   );
 }
 
-/** 音色页：人设 */
+/** 音色页：人设（同系文稿 + 加号） */
 export function IconVoicePersonaTab(props: IconProps) {
   return (
     <U {...props}>
-      <path d="M4 5h16M4 12h10M4 19h14" />
-      <path d="M18 10v4M16 12h4" />
+      <rect x="4" y="5" width="13" height="14" rx="2" strokeLinejoin="round" />
+      <path d="M7 10h7M7 13h5" strokeLinecap="round" />
+      <path d="M17.5 11.5v5M15 14h5" strokeLinecap="round" />
     </U>
   );
 }
 
-/** 参考资料侧栏：装订册 */
+/** 参考资料：装订册（同系笔记） */
 export function IconSourcesBinder(props: IconProps) {
   return (
     <U {...props}>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="M9 4v16" />
+      <rect x="4" y="5" width="16" height="14" rx="2.5" strokeLinejoin="round" />
+      <path d="M9 5v14" strokeLinecap="round" opacity={0.35} />
+      <path d="M11.5 11h6" strokeLinecap="round" />
     </U>
   );
 }

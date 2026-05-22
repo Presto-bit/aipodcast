@@ -118,10 +118,10 @@ function NavIconBox({ active, children }: { active: boolean; children: ReactNode
   return (
     <span
       className={[
-        "flex h-8 w-8 shrink-0 items-center justify-center rounded-dawn-md transition-colors",
+        "flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] transition-all duration-150",
         active
-          ? "bg-brand/18 text-brand shadow-inset-brand dark:bg-brand/22"
-          : "bg-fill text-muted group-hover:bg-track group-hover:text-ink"
+          ? "bg-brand/20 text-brand shadow-inset-brand ring-1 ring-brand/30 dark:bg-brand/24"
+          : "bg-fill/90 text-muted ring-1 ring-line/55 group-hover:bg-track group-hover:text-ink group-hover:ring-line/80"
       ].join(" ")}
     >
       {children}
