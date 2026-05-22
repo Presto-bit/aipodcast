@@ -2,89 +2,65 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import type { ComponentType, ReactNode, SVGProps } from "react";
+import type { ReactNode } from "react";
 import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import BrandGlyph from "../../components/brand/BrandGlyph";
-import {
-  IconFeatureCitation,
-  IconFeatureFormats,
-  IconFeaturePodcast,
-  IconFeatureSources
-} from "../../components/marketing/MarketingFeatureIcons";
+import MarketingFeatureCard from "../../components/marketing/MarketingFeatureCard";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 
-const SCENARIO_CARDS = [
-  {
-    title: "播客创作者",
-    lines: [
-      "无稿想快写稿子：上传电子书、资料等，快速生成播客文稿和音频。",
-      "有稿想快出节目：一键转语音，支持设置片头片尾与音色、超长音频，自动 Shownotes、金句。",
-      "有音频要剪辑：可按文字剪辑，同时生成 Shownotes。"
-    ]
-  },
-  {
-    title: "知识博主",
-    lines: [
-      "以参考资料为依据，再对标文风写深度稿。",
-      "多体裁写作，支持简报、万字长文、小红书文案等。",
-      "和参考资料对话以给你灵感。"
-    ]
-  },
-  {
-    title: "备考与研究",
-    lines: [
-      "厚 PDF/讲义/论文堆在一起：集中提问、要提纲与考点，带引用核对后再记笔记。",
-      "所有参考资料溯本求源，有理有据。"
-    ]
-  }
-] as const;
-
 type FeatureCard = {
   title: string;
-  Icon: ComponentType<SVGProps<SVGSVGElement>>;
+  imageSrc: string;
+  imageAlt: string;
+  reverse?: boolean;
   body: ReactNode;
 };
 
 const FEATURE_CARDS: FeatureCard[] = [
   {
     title: "多源资料处理",
-    Icon: IconFeatureSources,
+    imageSrc: "/marketing/features/sources.png",
+    imageAlt: "多源资料处理：电子书、文档、网页等汇入 PrestoAI，提炼要点并串联主题",
     body: (
       <>
-        上传电子书、文档、网页等常见资料，PrestoAI 会提炼要点、串联不同主题，并
-        <strong className="font-medium text-ink">仅依据你的资料</strong>
-        生成回答与延伸内容。
+        常见格式一次接入，要点与主题自动串联；回答与延伸内容
+        <strong className="font-medium text-ink">严格 grounded 在你的资料</strong>，不凭空编造。
       </>
     )
   },
   {
     title: "规避 AI 幻觉",
-    Icon: IconFeatureCitation,
+    imageSrc: "/marketing/features/citation.png",
+    imageAlt: "规避 AI 幻觉：回答附带 PDF、文档、网页等来源引用，便于核对",
+    reverse: true,
     body: (
       <>
-        可放心使用生成结果：关键结论会<strong className="font-medium text-ink">标注引用来源</strong>
-        ，便于核对出处，把「可解释」写进工作流。
+        关键结论带可点击的<strong className="font-medium text-ink">来源标注</strong>
+        ，从生成到核对一条链路，把可解释性写进日常工作流。
       </>
     )
   },
   {
     title: "多种输出格式",
-    Icon: IconFeatureFormats,
+    imageSrc: "/marketing/features/formats.png",
+    imageAlt: "多种输出格式：同一批资料可生成播客、Shownotes、文章与小红书等平台内容",
     body: (
       <>
-        一键生成播客，Shownotes 等繁琐环节交给 PrestoAI；同一批资料还可快速整理为
-        <strong className="font-medium text-ink">适合小红书等平台的博文</strong>
-        ，少在格式与平台规则上耗时间。
+        同一批资料可分支为播客、Shownotes、长文与
+        <strong className="font-medium text-ink">小红书等平台博文</strong>，少在格式转换上反复折腾。
       </>
     )
   },
   {
     title: "多角色与播客级成片",
-    Icon: IconFeaturePodcast,
+    imageSrc: "/marketing/features/podcast.png",
+    imageAlt: "多角色与播客级成片：多轨配音、片头片尾与可发布成品",
+    reverse: true,
     body: (
       <>
-        支持多角色配音与播客向编排，把「能写」推进到「能听、能发」的成品形态，减少在多套工具间导出、重剪的来回成本。
+        多角色配音与播客向编排，从「能写」到<strong className="font-medium text-ink">能听、能发</strong>
+        ；减少在多套工具间导出、重剪的来回。
       </>
     )
   }
@@ -205,20 +181,15 @@ export default function MarketingLandingPage() {
           >
             典型场景
           </h2>
-          <div className="mt-8 grid gap-4 sm:grid-cols-3 sm:gap-5">
-            {SCENARIO_CARDS.map((card) => (
-              <article
-                key={card.title}
-                className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6"
-              >
-                <h3 className="text-base font-semibold text-ink">{card.title}</h3>
-                <div className="mt-2 space-y-2 text-sm leading-relaxed text-muted">
-                  {card.lines.map((line, i) => (
-                    <p key={i}>{line}</p>
-                  ))}
-                </div>
-              </article>
-            ))}
+          <div className="mt-8">
+            <Image
+              src="/marketing/scenario-cards.png"
+              alt="典型场景：播客创作者、知识博主、个人知识库"
+              width={1280}
+              height={720}
+              sizes="(max-width: 1280px) 100vw, 1280px"
+              className="h-auto w-full rounded-2xl border border-line/80 shadow-soft"
+            />
           </div>
         </section>
 
@@ -229,22 +200,16 @@ export default function MarketingLandingPage() {
           <h2 id="marketing-features-heading" className="text-center text-lg font-semibold tracking-tight text-ink sm:text-xl">
             核心能力
           </h2>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 sm:gap-5">
+          <div className="mt-8 flex flex-col gap-12 sm:gap-14">
             {FEATURE_CARDS.map((card) => (
-              <article
+              <MarketingFeatureCard
                 key={card.title}
-                className="fym-surface-card rounded-2xl border border-line/80 p-5 text-left shadow-soft sm:p-6"
-              >
-                <div className="flex items-start gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
-                    <card.Icon />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-base font-semibold text-ink">{card.title}</h3>
-                    <p className="mt-2 text-sm leading-relaxed text-muted">{card.body}</p>
-                  </div>
-                </div>
-              </article>
+                title={card.title}
+                body={card.body}
+                imageSrc={card.imageSrc}
+                imageAlt={card.imageAlt}
+                reverse={card.reverse}
+              />
             ))}
           </div>
         </section>
