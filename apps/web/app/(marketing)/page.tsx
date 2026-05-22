@@ -13,7 +13,6 @@ type FeatureCard = {
   title: string;
   imageSrc: string;
   imageAlt: string;
-  reverse?: boolean;
   body: ReactNode;
 };
 
@@ -33,7 +32,6 @@ const FEATURE_CARDS: FeatureCard[] = [
     title: "规避 AI 幻觉",
     imageSrc: "/marketing/features/citation.png",
     imageAlt: "规避 AI 幻觉：回答附带 PDF、文档、网页等来源引用，便于核对",
-    reverse: true,
     body: (
       <>
         关键结论带可点击的<strong className="font-medium text-ink">来源标注</strong>
@@ -56,7 +54,6 @@ const FEATURE_CARDS: FeatureCard[] = [
     title: "多角色与播客级成片",
     imageSrc: "/marketing/features/podcast.png",
     imageAlt: "多角色与播客级成片：多轨配音、片头片尾与可发布成品",
-    reverse: true,
     body: (
       <>
         多角色配音与播客向编排，从「能写」到<strong className="font-medium text-ink">能听、能发</strong>
@@ -208,7 +205,6 @@ export default function MarketingLandingPage() {
                 body={card.body}
                 imageSrc={card.imageSrc}
                 imageAlt={card.imageAlt}
-                reverse={card.reverse}
               />
             ))}
           </div>
