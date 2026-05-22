@@ -98,8 +98,20 @@ import {
   type NotesAskSource,
   type NotesAskWebSource
 } from "../../../lib/notesAskCitation";
-import { loadNotesAskChat, saveNotesAskChat } from "../../../lib/notesAskChatStorage";
+import {
+  clearNotesAskChatBundle,
+  loadNotesAskChatBundle,
+  saveNotesAskChatBundle,
+  type SerializedNotesAskTurn
+} from "../../../lib/notesAskChatStorage";
+import { packNotesAskMemory } from "../../../lib/notesAskMemoryPack";
+import type { NotesAskMemoryTurn, NotesAskSessionState } from "../../../lib/notesAskMemoryTypes";
 import { notesAskClientLog } from "../../../lib/notesAskClientLog";
+import {
+  activeThreadIdForSession,
+  bumpNotesAskSourcesRevision,
+  updateNotesAskSessionState
+} from "../../../lib/notesAskSessionState";
 import {
   accountKeyFromUser,
   readLocalStorageScoped,
@@ -166,10 +178,39 @@ type NotesAskTurn = {
   followUpQuestions?: string[];
   activeChapters?: Array<{ noteId: string; chapterId: string; title?: string }>;
   activeShards?: Array<{ noteId: string; shardId: string; title?: string }>;
+  threadId?: string;
   coverageHint?: string;
   qaMode?: string;
   lowConfidence?: boolean;
 };
+
+function notesAskTurnsToMemoryTurns(turns: NotesAskTurn[]): NotesAskMemoryTurn[] {
+  return turns
+    .filter((m) => !m.streaming && !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX))
+    .map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      ...(m.activeChapters?.length ? { activeChapters: m.activeChapters } : {}),
+      ...(m.activeShards?.length ? { activeShards: m.activeShards } : {}),
+      ...(m.threadId ? { threadId: m.threadId } : {})
+    }));
+}
+
+function serializeNotesAskTurnsForStorage(turns: NotesAskTurn[]): SerializedNotesAskTurn[] {
+  return turns
+    .filter((m) => !m.streaming && !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX))
+    .map((m) => {
+      const row: SerializedNotesAskTurn = { id: m.id, role: m.role, content: m.content };
+      if (m.role === "assistant" && m.sources?.length) row.sources = m.sources;
+      if (m.role === "assistant" && m.hintSuggestions?.length) row.hintSuggestions = m.hintSuggestions;
+      if (m.role === "assistant" && m.followUpQuestions?.length) row.followUpQuestions = m.followUpQuestions;
+      if (m.role === "assistant" && m.activeChapters?.length) row.activeChapters = m.activeChapters;
+      if (m.role === "assistant" && m.activeShards?.length) row.activeShards = m.activeShards;
+      if (m.threadId) row.threadId = m.threadId;
+      return row;
+    });
+}
 
 function normalizeNotesAskFollowUpQuestions(raw: unknown): string[] {
   const arr = Array.isArray(raw) ? raw : [];
@@ -862,6 +903,9 @@ export default function NotesPage() {
   const storageAccountScope = useMemo(() => accountKeyFromUser(user), [user]);
   const skipNotesAskSaveRef = useRef(true);
   const notesAskMessagesSnapshotRef = useRef<NotesAskTurn[]>([]);
+  const notesAskSessionStateRef = useRef<NotesAskSessionState | null>(null);
+  const [notesAskSessionState, setNotesAskSessionState] = useState<NotesAskSessionState | null>(null);
+  const prevDraftNoteIdsKeyRef = useRef("");
   /** 对话持久化分区：笔记本作用域 + 选中笔记 ID（排序拼接），避免删笔记后同标题新笔记继承旧会话 */
   const prevNotesAskChatScopeRef = useRef<{ nb: string; askSalt: string } | null>(null);
   const noteRefCap = useMemo(() => maxNotesForReference(), []);
@@ -1208,9 +1252,11 @@ export default function NotesPage() {
     setNotesAskBusy(false);
     setNotesAskError("");
     setNotesAskMessages([]);
+    setNotesAskSessionState(null);
+    notesAskSessionStateRef.current = null;
     const nb = effectiveDraftNotebookKey.trim();
     if (nb) {
-      saveNotesAskChat(nb, [], notesAskChatScopeSalt);
+      clearNotesAskChatBundle(nb, notesAskChatScopeSalt);
       skipNotesAskSaveRef.current = true;
     }
   }, [notesAskMessages.length, effectiveDraftNotebookKey, notesAskChatScopeSalt]);
@@ -1298,7 +1344,16 @@ export default function NotesPage() {
     if (prev && (prev.nb !== nb || prev.askSalt !== askSalt)) {
       const snap = notesAskMessagesSnapshotRef.current;
       if (!snap.some((m) => m.streaming)) {
-        if (prev.nb) saveNotesAskChat(prev.nb, snap, prev.askSalt);
+        if (prev.nb) {
+          saveNotesAskChatBundle(
+            prev.nb,
+            {
+              messages: serializeNotesAskTurnsForStorage(snap),
+              sessionState: notesAskSessionStateRef.current
+            },
+            prev.askSalt
+          );
+        }
       }
     }
     prevNotesAskChatScopeRef.current = { nb, askSalt };
@@ -1306,23 +1361,32 @@ export default function NotesPage() {
     if (!nb) {
       notesAskClientLog("debug", "persist", "chat_cleared_no_notebook");
       setNotesAskMessages([]);
+      setNotesAskSessionState(null);
+      notesAskSessionStateRef.current = null;
       skipNotesAskSaveRef.current = true;
       return;
     }
-    const loaded = loadNotesAskChat(nb, askSalt);
+    const loaded = loadNotesAskChatBundle(nb, askSalt);
     notesAskClientLog("info", "persist", "chat_scope_loaded", {
       nb,
-      messageCount: loaded?.length ?? 0
+      messageCount: loaded?.messages.length ?? 0,
+      hasSessionState: Boolean(loaded?.sessionState)
     });
+    const session = loaded?.sessionState ?? null;
+    notesAskSessionStateRef.current = session;
+    setNotesAskSessionState(session);
     setNotesAskMessages(
-      loaded?.length
-        ? loaded
+      loaded?.messages.length
+        ? loaded.messages
             .filter((m) => !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX))
             .map((m) => ({
               ...m,
               streaming: false as boolean | undefined,
               hintSuggestions: m.hintSuggestions?.length ? [...m.hintSuggestions] : undefined,
-              followUpQuestions: m.followUpQuestions?.length ? [...m.followUpQuestions] : undefined
+              followUpQuestions: m.followUpQuestions?.length ? [...m.followUpQuestions] : undefined,
+              activeChapters: m.activeChapters?.length ? [...m.activeChapters] : undefined,
+              activeShards: m.activeShards?.length ? [...m.activeShards] : undefined,
+              threadId: m.threadId
             }))
         : []
     );
@@ -1338,27 +1402,47 @@ export default function NotesPage() {
     if (!nb) return;
     if (notesAskMessages.some((m) => m.streaming)) return;
     const timer = window.setTimeout(() => {
-      saveNotesAskChat(nb, notesAskMessages, notesAskChatScopeSalt);
+      saveNotesAskChatBundle(
+        nb,
+        {
+          messages: serializeNotesAskTurnsForStorage(notesAskMessages),
+          sessionState: notesAskSessionStateRef.current
+        },
+        notesAskChatScopeSalt
+      );
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [notesAskMessages, effectiveDraftNotebookKey, notesAskChatScopeSalt, storageAccountScope]);
+  }, [notesAskMessages, notesAskSessionState, effectiveDraftNotebookKey, notesAskChatScopeSalt, storageAccountScope]);
+
+  useEffect(() => {
+    const key = [...draftSelectedNoteIds].sort().join(",");
+    const prev = prevDraftNoteIdsKeyRef.current;
+    if (prev && prev !== key) {
+      const bumped = bumpNotesAskSourcesRevision(notesAskSessionStateRef.current);
+      notesAskSessionStateRef.current = bumped;
+      setNotesAskSessionState(bumped);
+    }
+    prevDraftNoteIdsKeyRef.current = key;
+  }, [draftSelectedNoteIds]);
 
   const notesAskUnloadRef = useRef({
     messages: [] as NotesAskTurn[],
+    sessionState: null as NotesAskSessionState | null,
     nb: "",
     askSalt: "0"
   });
   useEffect(() => {
     notesAskUnloadRef.current = {
       messages: notesAskMessages,
+      sessionState: notesAskSessionStateRef.current,
       nb: effectiveDraftNotebookKey.trim(),
       askSalt: notesAskChatScopeSalt
     };
-  }, [notesAskMessages, effectiveDraftNotebookKey, notesAskChatScopeSalt]);
+  }, [notesAskMessages, notesAskSessionState, effectiveDraftNotebookKey, notesAskChatScopeSalt]);
 
   useEffect(() => {
     const onHide = () => {
-      const { messages, nb, askSalt } = notesAskUnloadRef.current;
+      const { messages, sessionState, nb, askSalt } = notesAskUnloadRef.current;
       if (!nb) return;
       if (messages.some((m) => m.streaming)) {
         notesAskClientLog("debug", "persist", "pagehide_skip_streaming");
@@ -1368,7 +1452,11 @@ export default function NotesPage() {
         nb,
         messageCount: messages.length
       });
-      saveNotesAskChat(nb, messages, askSalt);
+      saveNotesAskChatBundle(
+        nb,
+        { messages: serializeNotesAskTurnsForStorage(messages), sessionState },
+        askSalt
+      );
     };
     window.addEventListener("pagehide", onHide);
     return () => window.removeEventListener("pagehide", onHide);
@@ -2436,25 +2524,10 @@ export default function NotesPage() {
     }
     const userMsgId = crypto.randomUUID();
     const assistantId = crypto.randomUUID();
-    const chatHistory = notesAskMessages
-      .filter((m) => !m.streaming && !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX))
-      .slice(-8)
-      .map((m) => {
-        const row: {
-          role: string;
-          content: string;
-          activeChapters?: NotesAskTurn["activeChapters"];
-          activeShards?: NotesAskTurn["activeShards"];
-        } = { role: m.role, content: (m.content || "").trim() };
-        if (m.role === "assistant" && m.activeChapters?.length) {
-          row.activeChapters = m.activeChapters;
-        }
-        if (m.role === "assistant" && m.activeShards?.length) {
-          row.activeShards = m.activeShards;
-        }
-        return row;
-      })
-      .filter((m) => m.content);
+    const memoryPacked = packNotesAskMemory(
+      notesAskTurnsToMemoryTurns(notesAskMessages),
+      notesAskSessionStateRef.current
+    );
     setNotesAskError("");
     setNotesAskBusy(true);
     setNotesAskMessages((prev) => [
@@ -2494,7 +2567,8 @@ export default function NotesPage() {
           notebook: nb,
           note_ids: draftSelectedNoteIds,
           question: q,
-          chatHistory,
+          chatHistory: memoryPacked.chatHistory,
+          ...(memoryPacked.sessionState ? { sessionState: memoryPacked.sessionState } : {}),
           ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {})
         })
       });
@@ -2722,6 +2796,8 @@ export default function NotesPage() {
                 const activeShards = Array.isArray(ev.activeShards) ? ev.activeShards : undefined;
                 const coverageHint = typeof ev.coverageHint === "string" ? ev.coverageHint.trim() : "";
                 const lowConf = Boolean(ev.lowConfidence);
+                const threadId = activeThreadIdForSession(notesAskSessionStateRef.current);
+                const answerForSession = doneAnswer;
                 setNotesAskMessages((prev) => {
                   const next = [...prev];
                   const idx = next.findIndex((m) => m.id === assistantId);
@@ -2736,10 +2812,20 @@ export default function NotesPage() {
                     ...(doneFollowUps.length ? { followUpQuestions: doneFollowUps } : {}),
                     ...(activeChapters?.length ? { activeChapters } : {}),
                     ...(activeShards?.length ? { activeShards } : {}),
+                    ...(threadId ? { threadId } : {}),
                     ...(coverageHint ? { coverageHint } : {}),
                     ...(ev.qaMode ? { qaMode: String(ev.qaMode) } : {}),
                     ...(lowConf ? { lowConfidence: true } : {})
                   };
+                  const mergedForState = notesAskTurnsToMemoryTurns(next);
+                  const nextSession = updateNotesAskSessionState(
+                    notesAskSessionStateRef.current,
+                    mergedForState,
+                    q,
+                    answerForSession || next[idx]!.content || ""
+                  );
+                  notesAskSessionStateRef.current = nextSession;
+                  setNotesAskSessionState(nextSession);
                   return next;
                 });
               } else if (ev.type === "followups") {

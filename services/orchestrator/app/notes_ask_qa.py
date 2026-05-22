@@ -615,6 +615,7 @@ def build_notes_qa_context_with_plan(
     notebook: str,
     note_ids: list[str],
     question: str,
+    retrieval_question: str | None = None,
     user_ref: str | None,
     project_owner_user_uuid: str | None = None,
     top_k: int | None = None,
@@ -624,6 +625,7 @@ def build_notes_qa_context_with_plan(
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """带分片/章路由的上下文构建；失败时降级 RAG / legacy。"""
     q = (question or "").strip()
+    q_embed = (retrieval_question or q).strip() or q
     ordered = _ordered_note_ids(note_ids)
     if plan is None:
         plan = resolve_notes_ask_plan(
@@ -716,7 +718,7 @@ def build_notes_qa_context_with_plan(
         sh_block, retr_meta = _build_shard_deep_block(
             routed=routed,
             rows=rows,
-            question=q,
+            question=q_embed,
             retrieval_budget=budgets["retrieval_budget"],
             user_ref=user_ref,
             api_key=None,
@@ -738,11 +740,11 @@ def build_notes_qa_context_with_plan(
         else:
             sh_filter = _shard_filter_from_routed(routed)
             ch_filter = _chapter_filter_from_routed(ch_routed) if ch_routed else None
-            if NOTE_LAYERED_RAG and q:
+            if NOTE_LAYERED_RAG and q_embed:
                 layered, sources, lmeta = build_layered_notes_context(
                     notebook=notebook,
                     note_ids=ordered,
-                    query=q,
+                    query=q_embed,
                     user_ref=user_ref,
                     summary_budget=max(6_000, budgets["summary_budget"] // 2),
                     retrieval_budget=max(8_000, budgets["retrieval_budget"] // 2),
@@ -769,7 +771,7 @@ def build_notes_qa_context_with_plan(
         ch_block, retr_meta = _build_chapter_deep_block(
             routed=routed,
             rows=rows,
-            question=q,
+            question=q_embed,
             retrieval_budget=budgets["retrieval_budget"],
             user_ref=user_ref,
             api_key=None,
@@ -783,11 +785,11 @@ def build_notes_qa_context_with_plan(
             meta["degradedFrom"] = "chapter_deep"
         else:
             ch_filter = _chapter_filter_from_routed(routed)
-            if NOTE_LAYERED_RAG and q:
+            if NOTE_LAYERED_RAG and q_embed:
                 layered, sources, lmeta = build_layered_notes_context(
                     notebook=notebook,
                     note_ids=ordered,
-                    query=q,
+                    query=q_embed,
                     user_ref=user_ref,
                     summary_budget=max(6_000, budgets["summary_budget"] // 2),
                     retrieval_budget=max(8_000, budgets["retrieval_budget"] // 2),
@@ -808,7 +810,7 @@ def build_notes_qa_context_with_plan(
                 sources = _enrich_sources_with_chunks(sources, retr_meta)
             return ch_block, sources, meta
 
-    if qa_mode == "rag" and corpus_mode == "per_note" and len(ordered) >= 2 and NOTE_LAYERED_RAG and q:
+    if qa_mode == "rag" and corpus_mode == "per_note" and len(ordered) >= 2 and NOTE_LAYERED_RAG and q_embed:
         blocks: list[str] = []
         combined_meta: dict[str, Any] = {"qaMode": qa_mode, "corpusMode": "per_note", "perNote": True}
         note_top_k = per_note_retrieval_top_k(top_k, len(ordered))
@@ -818,7 +820,7 @@ def build_notes_qa_context_with_plan(
             layered, src_part, lmeta = build_layered_notes_context(
                 notebook=notebook,
                 note_ids=[nid],
-                query=q,
+                query=q_embed,
                 user_ref=user_ref,
                 summary_budget=per_note_budgets["summary_budget"],
                 retrieval_budget=per_note_budgets["retrieval_budget"],
@@ -843,7 +845,7 @@ def build_notes_qa_context_with_plan(
             )
             return ctx, sources, combined_meta
 
-    if qa_mode == "rag" and NOTE_LAYERED_RAG and q:
+    if qa_mode == "rag" and NOTE_LAYERED_RAG and q_embed:
         sh_filter = None
         if is_long_doc(total_chars) and routed_for_embed:
             sh_filter = _shard_filter_from_routed(
@@ -856,7 +858,7 @@ def build_notes_qa_context_with_plan(
         layered, sources, lmeta = build_layered_notes_context(
             notebook=notebook,
             note_ids=ordered,
-            query=q,
+            query=q_embed,
             user_ref=user_ref,
             summary_budget=budgets["summary_budget"],
             retrieval_budget=budgets["retrieval_budget"],
@@ -889,7 +891,7 @@ def build_notes_qa_context_with_plan(
         notebook=notebook,
         note_ids=ordered,
         user_ref=user_ref,
-        question=q,
+        question=q_embed,
         project_owner_user_uuid=project_owner_user_uuid,
     )
     meta["layered"] = False

@@ -29,6 +29,7 @@ from .notes_ask_style import (
     two_phase_planner_enabled,
 )
 from .rag_core import _keyword_score, split_text_into_chunks
+from .notes_ask_memory import build_conversation_context_blocks, expand_retrieval_query
 from .notes_ask_profile import notes_ask_profile_emit
 from .provider_router import (
     invoke_llm_chat_messages_stream_iter,
@@ -42,7 +43,6 @@ logger = logging.getLogger(__name__)
 _MAX_QUESTION_CHARS = 800
 _MAX_TOTAL_CONTEXT = 44_000
 _MAX_PER_NOTE = 16_000
-_ASK_HISTORY_MAX_TURNS = 8
 _ASK_CONTEXT_CACHE_TTL_SEC = 30.0
 _ASK_CONTEXT_CACHE: dict[str, tuple[float, str, list[dict[str, Any]]]] = {}
 
@@ -435,25 +435,6 @@ def _run_notes_ask_planner(
         return None
 
 
-def _build_history_block(chat_history: list[dict[str, str]] | None) -> str:
-    rows = chat_history or []
-    if not rows:
-        return ""
-    normed: list[str] = []
-    for row in rows[-_ASK_HISTORY_MAX_TURNS:]:
-        role = str(row.get("role") or "").strip().lower()
-        if role not in ("user", "assistant"):
-            continue
-        content = str(row.get("content") or "").strip()
-        if not content:
-            continue
-        who = "用户" if role == "user" else "助手"
-        normed.append(f"{who}：{content[:1200]}")
-    if not normed:
-        return ""
-    return "对话历史（仅作上下文衔接，事实依据仍以本轮资料摘录为准）：\n\n" + "\n\n".join(normed)
-
-
 def _prepare_notes_ask_messages(
     *,
     notebook: str,
@@ -461,6 +442,7 @@ def _prepare_notes_ask_messages(
     question: str,
     user_ref: str | None,
     chat_history: list[dict[str, str]] | None = None,
+    session_state: dict[str, Any] | None = None,
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
@@ -506,6 +488,8 @@ def _prepare_notes_ask_messages(
         note_count=len([str(x).strip() for x in note_ids if str(x).strip()]),
     )
 
+    retrieval_q = expand_retrieval_query(q, session_state)
+
     qa_plan = resolve_notes_ask_plan(
         notebook=notebook,
         note_ids=note_ids,
@@ -519,6 +503,7 @@ def _prepare_notes_ask_messages(
         notebook=notebook,
         note_ids=note_ids,
         question=q,
+        retrieval_question=retrieval_q,
         user_ref=user_ref,
         project_owner_user_uuid=project_owner_user_uuid,
         top_k=top_k,
@@ -538,7 +523,7 @@ def _prepare_notes_ask_messages(
     if not context.strip():
         raise ValueError("empty_context")
 
-    history_block = _build_history_block(chat_history)
+    history_block = build_conversation_context_blocks(chat_history, session_state)
     preamble = build_notes_ask_user_preamble()
     hint = str(qa_plan.get("coverageHint") or "").strip()
     if hint:
@@ -654,6 +639,7 @@ def iter_notes_answer_events(
     user_ref: str | None,
     api_key: str | None = None,
     chat_history: list[dict[str, str]] | None = None,
+    session_state: dict[str, Any] | None = None,
     include_all_sources: bool | None = None,
     require_preprocess_ready: bool | None = None,
     prepared_messages_sources: (
@@ -678,6 +664,7 @@ def iter_notes_answer_events(
             question=question,
             user_ref=user_ref,
             chat_history=chat_history,
+            session_state=session_state,
             require_preprocess_ready=require_preprocess_ready,
             project_owner_user_uuid=project_owner_user_uuid,
         )
@@ -860,6 +847,7 @@ def iter_notes_answer_events(
                 question=question,
                 answer=full,
                 chat_history=chat_history,
+                session_state=session_state,
                 api_key=api_key,
             )
             if followup:
@@ -1084,6 +1072,7 @@ def generate_notes_ask_followup(
     question: str,
     answer: str,
     chat_history: list[dict[str, str]] | None = None,
+    session_state: dict[str, Any] | None = None,
     api_key: str | None = None,
 ) -> str:
     """答后单条关联问句；失败或不可延展时返回空字符串。"""
@@ -1093,7 +1082,7 @@ def generate_notes_ask_followup(
     a = (answer or "").strip()
     if not q or len(a) < followup_min_answer_chars():
         return ""
-    history_block = _build_history_block(chat_history)
+    history_block = build_conversation_context_blocks(chat_history, session_state)
     user_parts = [
         f"用户问题：{q[:800]}",
         f"助手回答：{a[:2400]}",
@@ -1127,6 +1116,7 @@ def answer_notes_question(
     user_ref: str | None,
     api_key: str | None = None,
     chat_history: list[dict[str, str]] | None = None,
+    session_state: dict[str, Any] | None = None,
     include_all_sources: bool | None = None,
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
@@ -1137,6 +1127,7 @@ def answer_notes_question(
         question=question,
         user_ref=user_ref,
         chat_history=chat_history,
+        session_state=session_state,
         require_preprocess_ready=require_preprocess_ready,
         project_owner_user_uuid=project_owner_user_uuid,
     )
@@ -1193,6 +1184,7 @@ def answer_notes_question(
         question=question,
         answer=ans,
         chat_history=chat_history,
+        session_state=session_state,
         api_key=api_key,
     )
     if followup:

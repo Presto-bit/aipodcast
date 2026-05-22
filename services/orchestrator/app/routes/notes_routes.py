@@ -1265,6 +1265,7 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
             question=body.question.strip(),
             user_ref=user_ref,
             chat_history=body.chat_history,
+            session_state=body.session_state,
             include_all_sources=body.include_all_sources,
             require_preprocess_ready=body.require_preprocess_ready,
             project_owner_user_uuid=project_owner,
@@ -1331,6 +1332,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 question=body.question.strip(),
                 user_ref=user_ref,
                 chat_history=body.chat_history,
+                session_state=body.session_state,
                 require_preprocess_ready=body.require_preprocess_ready,
                 project_owner_user_uuid=project_owner,
             )
@@ -1360,6 +1362,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             question=body.question.strip(),
             user_ref=user_ref,
             chat_history=body.chat_history,
+            session_state=body.session_state,
             include_all_sources=body.include_all_sources,
             require_preprocess_ready=body.require_preprocess_ready,
             prepared_messages_sources=prepared,

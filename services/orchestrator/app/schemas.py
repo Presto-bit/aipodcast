@@ -144,6 +144,10 @@ class NotesAskRequest(BaseModel):
         default_factory=list,
         validation_alias=AliasChoices("chat_history", "chatHistory"),
     )
+    session_state: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("session_state", "sessionState"),
+    )
     include_all_sources: bool | None = Field(
         default=None,
         validation_alias=AliasChoices("include_all_sources", "includeAllSources"),
@@ -173,57 +177,16 @@ class NotesAskRequest(BaseModel):
     @field_validator("chat_history")
     @classmethod
     def _normalize_chat_history(cls, v: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        if not isinstance(v, list):
-            return out
-        for row in v[-8:]:
-            if not isinstance(row, dict):
-                continue
-            role = str(row.get("role") or "").strip().lower()
-            if role not in ("user", "assistant"):
-                continue
-            content = str(row.get("content") or "").strip()
-            if not content:
-                continue
-            item: dict[str, Any] = {"role": role, "content": content[:1200]}
-            ac = row.get("activeChapters") or row.get("active_chapters")
-            if role == "assistant" and isinstance(ac, list) and ac:
-                cleaned = []
-                for c in ac:
-                    if not isinstance(c, dict):
-                        continue
-                    nid = str(c.get("noteId") or c.get("note_id") or "").strip()
-                    cid = str(c.get("chapterId") or c.get("chapter_id") or "").strip()
-                    if nid and cid:
-                        cleaned.append(
-                            {
-                                "noteId": nid,
-                                "chapterId": cid,
-                                "title": str(c.get("title") or "")[:200],
-                            }
-                        )
-                if cleaned:
-                    item["activeChapters"] = cleaned[:6]
-            ash = row.get("activeShards") or row.get("active_shards")
-            if role == "assistant" and isinstance(ash, list) and ash:
-                sh_cleaned = []
-                for c in ash:
-                    if not isinstance(c, dict):
-                        continue
-                    nid = str(c.get("noteId") or c.get("note_id") or "").strip()
-                    sid = str(c.get("shardId") or c.get("shard_id") or "").strip()
-                    if nid and sid:
-                        sh_cleaned.append(
-                            {
-                                "noteId": nid,
-                                "shardId": sid,
-                                "title": str(c.get("title") or "")[:200],
-                            }
-                        )
-                if sh_cleaned:
-                    item["activeShards"] = sh_cleaned[:6]
-            out.append(item)
-        return out
+        from .notes_ask_memory import normalize_chat_history_validator
+
+        return normalize_chat_history_validator(v)
+
+    @field_validator("session_state")
+    @classmethod
+    def _normalize_session_state(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        from .notes_ask_memory import normalize_session_state
+
+        return normalize_session_state(v if isinstance(v, dict) else None)
 
 
 class SavedVoicesWriteRequest(BaseModel):
