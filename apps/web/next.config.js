@@ -49,6 +49,11 @@ const CACHE_DOCUMENT =
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  images: {
+    /** 营销配图等静态资源经优化器缓存更久，减轻重复访问开销 */
+    minimumCacheTTL: 86400,
+    formats: ["image/avif", "image/webp"]
+  },
   async headers() {
     return [
       {

@@ -19,7 +19,7 @@ type FeatureCard = {
 const FEATURE_CARDS: FeatureCard[] = [
   {
     title: "多源资料处理",
-    imageSrc: "/marketing/features/sources.png",
+    imageSrc: "/marketing/features/sources.webp",
     imageAlt: "多源资料处理：电子书、文档、网页等汇入 PrestoAI，提炼要点并串联主题",
     body: (
       <>
@@ -30,7 +30,7 @@ const FEATURE_CARDS: FeatureCard[] = [
   },
   {
     title: "规避 AI 幻觉",
-    imageSrc: "/marketing/features/citation.png",
+    imageSrc: "/marketing/features/citation.webp",
     imageAlt: "规避 AI 幻觉：回答附带 PDF、文档、网页等来源引用，便于核对",
     body: (
       <>
@@ -41,7 +41,7 @@ const FEATURE_CARDS: FeatureCard[] = [
   },
   {
     title: "多种输出格式",
-    imageSrc: "/marketing/features/formats.png",
+    imageSrc: "/marketing/features/formats.webp",
     imageAlt: "多种输出格式：同一批资料可生成播客、Shownotes、文章与小红书等平台内容",
     body: (
       <>
@@ -52,7 +52,7 @@ const FEATURE_CARDS: FeatureCard[] = [
   },
   {
     title: "多角色与播客级成片",
-    imageSrc: "/marketing/features/podcast.png",
+    imageSrc: "/marketing/features/podcast.webp",
     imageAlt: "多角色与播客级成片：多轨配音、片头片尾与可发布成品",
     body: (
       <>
@@ -157,12 +157,14 @@ export default function MarketingLandingPage() {
           </div>
           <div className="mx-auto w-3/4 lg:mx-0 lg:w-full">
             <Image
-              src="/marketing/hero.png"
+              src="/marketing/hero.webp"
               alt="PrestoAI：多格式资料输入，经 AI 分析后输出文章、播客、摘要等内容"
-              width={1693}
-              height={929}
+              width={1200}
+              height={658}
               priority
-              sizes="(max-width: 1024px) 75vw, 75vw"
+              fetchPriority="high"
+              quality={85}
+              sizes="(max-width: 1024px) 75vw, 900px"
               className="h-auto w-full rounded-2xl border border-line/90 bg-surface/95 shadow-[0_24px_48px_-12px_rgba(15,23,42,0.18)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.45)]"
             />
           </div>
@@ -181,10 +183,14 @@ export default function MarketingLandingPage() {
           <div className="mt-8 flex justify-center">
             <div className="w-full max-w-2xl sm:max-w-3xl lg:max-w-4xl">
               <Image
-                src="/marketing/scenario-cards.png"
+                src="/marketing/scenario-cards.webp"
                 alt="典型场景：播客创作者、知识博主、个人知识库"
-                width={1584}
-                height={672}
+                width={960}
+                height={407}
+                loading="lazy"
+                fetchPriority="low"
+                decoding="async"
+                quality={85}
                 sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 896px"
                 className="h-auto w-full rounded-2xl border border-line/80 shadow-soft"
               />

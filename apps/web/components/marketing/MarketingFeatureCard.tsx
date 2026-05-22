@@ -20,9 +20,12 @@ export default function MarketingFeatureCard({ title, body, imageSrc, imageAlt }
         <Image
           src={imageSrc}
           alt={imageAlt}
-          width={1376}
-          height={768}
+          width={840}
+          height={468}
           loading="lazy"
+          fetchPriority="low"
+          decoding="async"
+          quality={85}
           sizes="(max-width: 1024px) 100vw, 700px"
           className="h-auto w-full rounded-2xl border border-line/80 bg-surface/50 shadow-soft"
         />
