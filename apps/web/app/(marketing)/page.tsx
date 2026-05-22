@@ -178,15 +178,17 @@ export default function MarketingLandingPage() {
           >
             典型场景
           </h2>
-          <div className="mt-8">
-            <Image
-              src="/marketing/scenario-cards.png"
-              alt="典型场景：播客创作者、知识博主、个人知识库"
-              width={1280}
-              height={720}
-              sizes="(max-width: 1280px) 100vw, 1280px"
-              className="h-auto w-full rounded-2xl border border-line/80 shadow-soft"
-            />
+          <div className="mt-8 flex justify-center">
+            <div className="w-full max-w-2xl sm:max-w-3xl lg:max-w-4xl">
+              <Image
+                src="/marketing/scenario-cards.png"
+                alt="典型场景：播客创作者、知识博主、个人知识库"
+                width={1280}
+                height={720}
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 896px"
+                className="h-auto w-full rounded-2xl border border-line/80 shadow-soft"
+              />
+            </div>
           </div>
         </section>
 
