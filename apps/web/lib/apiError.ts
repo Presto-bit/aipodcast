@@ -107,6 +107,27 @@ function mapTextProviderConfigHint(message: string): string | undefined {
   return undefined;
 }
 
+/** fetch 未拿到 HTTP 响应时浏览器常见原文（断网、CORS、本机服务未起、流中途断等） */
+function humanizeBrowserFetchError(message: string): string | undefined {
+  const m = (message || "").trim();
+  if (!m) return undefined;
+  const lower = m.toLowerCase();
+  if (
+    lower === "network error" ||
+    lower === "networkerror" ||
+    lower.includes("failed to fetch") ||
+    lower.includes("load failed") ||
+    lower.includes("networkerror when attempting to fetch")
+  ) {
+    return (
+      "无法连接问答服务（浏览器在发起请求或读取流式响应时失败）。" +
+      "本机开发请确认已执行 `make dev-infra`（需 Docker）与 `make dev`（或分别 `make dev-api`、`make dev-web`），且 `ORCHESTRATOR_URL` 指向可访问的编排器；" +
+      "线上部署请检查编排器健康、网关/CDN 对 `/api/notes/ask*` 的超时（建议 ≥180s），以及 `NEXT_PUBLIC_NOTES_ASK_BFF_ORIGIN` 与 `NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS` 是否成对配置。"
+    );
+  }
+  return undefined;
+}
+
 /** CDN/Nginx/Tengine 等返回的整页 HTML 错误（避免把 DOCTYPE 当主文案重复刷屏） */
 export function looksLikeUpstreamHtmlErrorPage(s: string): boolean {
   const t = (s || "").trim().toLowerCase();
@@ -175,7 +196,14 @@ export function formatNotesAskStreamError(message: string, meta?: NotesAskStream
   const fromCode = code && NOTES_ASK_CODE_MAP[code] ? NOTES_ASK_CODE_MAP[code] : "";
   const fromMessage = raw && NOTES_ASK_CODE_MAP[raw] ? NOTES_ASK_CODE_MAP[raw] : "";
   const configHint = mapTextProviderConfigHint(raw) || mapTextProviderConfigHint(code);
-  const base = fromCode || fromMessage || configHint || raw || "对话失败，请稍后重试。";
+  const browserFetch = humanizeBrowserFetchError(raw);
+  const base =
+    fromCode ||
+    fromMessage ||
+    configHint ||
+    browserFetch ||
+    raw ||
+    "对话失败，请稍后重试。";
 
   const lines: string[] = [base];
   if (meta?.httpStatus != null && Number.isFinite(meta.httpStatus)) {
