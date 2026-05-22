@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Music2, Pause, Play, RotateCw, Save, Sparkles } from "lucide-react";
+import { FileText, Music2, RotateCw, Save, Sparkles } from "../icons";
+import { IconPause, IconPlayFilled } from "../icons";
 import {
   fetchClipProjectShareAiCopy,
   fetchClipTitleSuggestions,
@@ -470,7 +471,7 @@ export default function ShownotesStudio({
                 else void el.play().catch(() => {});
               }}
             >
-              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 pl-0.5" />}
+              {playing ? <IconPause className="h-4 w-4" /> : <IconPlayFilled className="h-4 w-4 translate-x-px" />}
             </button>
             <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink" title={displayName}>
               {displayName}

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "../icons";
 import type { ReactNode } from "react";
 
 type EngineState = "idle" | "queued" | "running" | "ready" | "failed";

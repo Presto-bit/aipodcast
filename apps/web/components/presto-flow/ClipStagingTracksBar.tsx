@@ -1,6 +1,7 @@
 "use client";
 
-import { GripVertical, Headphones, MoreHorizontal, Pause, Play, Plus } from "lucide-react";
+import { GripVertical, Headphones, MoreHorizontal, Plus } from "../icons";
+import { IconPause, IconPlayFilled } from "../icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
@@ -503,9 +504,9 @@ export default function ClipStagingTracksBar({
                 onClick={() => togglePreview(serverSource.playbackUrl!)}
               >
                 {playingHref === serverSource.playbackUrl ? (
-                  <Pause className="h-3.5 w-3.5" aria-hidden />
+                  <IconPause className="h-3.5 w-3.5" aria-hidden />
                 ) : (
-                  <Play className="h-3.5 w-3.5" aria-hidden />
+                  <IconPlayFilled className="h-3.5 w-3.5 translate-x-px" aria-hidden />
                 )}
               </button>
             ) : null}
@@ -566,9 +567,9 @@ export default function ClipStagingTracksBar({
                     onClick={() => togglePreview(playHref)}
                   >
                     {playingHref === playHref ? (
-                      <Pause className="h-3.5 w-3.5" aria-hidden />
+                      <IconPause className="h-3.5 w-3.5" aria-hidden />
                     ) : (
-                      <Play className="h-3.5 w-3.5" aria-hidden />
+                      <IconPlayFilled className="h-3.5 w-3.5 translate-x-px" aria-hidden />
                     )}
                   </button>
                   <button

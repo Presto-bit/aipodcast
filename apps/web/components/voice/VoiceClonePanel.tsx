@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { rememberJobId } from "../../lib/jobRecent";
 import { useAuth } from "../../lib/auth";
 import UserErrorBanner from "../ui/UserErrorBanner";
+import { IconRotateCw } from "../icons";
 
 /** 本地录音上传上限（与后端上限一致，避免长音频被拒） */
 const MAX_RECORD_BYTES = 20 * 1024 * 1024;
@@ -215,15 +216,7 @@ export default function VoiceClonePanel() {
                     className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[11px] text-muted hover:border-brand/35 hover:text-ink"
                     onClick={refreshReadingPassage}
                   >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
-                      <path
-                        d="M4 9a8 8 0 0113.657-5.657M20 15a8 8 0 01-13.657 5.657M20 15v-4M4 9v4"
-                        stroke="currentColor"
-                        strokeWidth="1.75"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
+                    <IconRotateCw width={12} height={12} aria-hidden />
                     换一段
                   </button>
                   <button

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp } from "../icons";
 import { useMemo } from "react";
 import type { ClipTimelineClip, ClipTimelineDoc } from "../../lib/clipTypes";
 

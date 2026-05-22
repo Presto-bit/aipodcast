@@ -27,7 +27,7 @@ import { setActiveGenerationJob } from "../../lib/activeJobSession";
 import CreativeTemplatePicker from "../studio/CreativeTemplatePicker";
 import IntroOutroPresetBar from "../studio/IntroOutroPresetBar";
 import { chipClass } from "../studio/chipStyles";
-import { PlayIcon } from "../studio/MediaIcons";
+import { IconPlayFilled } from "../icons";
 import { VoiceSelect } from "../studio/VoiceSelect";
 import BgmControlRow from "../studio/BgmControlRow";
 import { bgmSegmentPayloadFromState, type BgmUiMode } from "../../lib/bgmUpload";
@@ -967,7 +967,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
                       {busy ? (
                         <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                       ) : (
-                        <PlayIcon className="h-4 w-4 translate-x-px" />
+                        <IconPlayFilled className="h-4 w-4 translate-x-px" />
                       )}
                     </button>
                   ) : null}

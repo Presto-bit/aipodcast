@@ -1,8 +1,8 @@
 "use client";
 
-import { Download, Layers, Music } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { IconClip, IconDownloadBundle, IconVoice } from "../icons";
 import type { PrestoNavSection } from "./prestoFlowNavTypes";
 
 export type { PrestoNavSection } from "./prestoFlowNavTypes";
@@ -39,8 +39,8 @@ export default function PrestoFlowSideNav({ active, onSelect, onDownloadClick, h
       className="relative z-20 flex w-14 shrink-0 flex-col items-center gap-2 border-r border-line bg-fill/40 py-3 sm:w-16"
       aria-label="音频剪辑"
     >
-      {btn("storyboard", <Layers className="h-5 w-5" aria-hidden />, labels.storyboard)}
-      {btn("music", <Music className="h-5 w-5" aria-hidden />, labels.music)}
+      {btn("storyboard", <IconClip className="h-5 w-5" aria-hidden />, labels.storyboard)}
+      {btn("music", <IconVoice className="h-5 w-5" aria-hidden />, labels.music)}
       <div className="flex-1" />
       <button
         type="button"
@@ -50,7 +50,7 @@ export default function PrestoFlowSideNav({ active, onSelect, onDownloadClick, h
         onClick={onDownloadClick}
         className="flex h-11 w-11 items-center justify-center rounded-lg text-muted transition hover:bg-fill hover:text-ink disabled:opacity-35"
       >
-        <Download className="h-5 w-5" aria-hidden />
+        <IconDownloadBundle className="h-5 w-5" aria-hidden />
       </button>
     </nav>
   );

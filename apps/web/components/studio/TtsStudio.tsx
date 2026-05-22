@@ -24,7 +24,7 @@ const PodcastWorksGallery = dynamic(() => import("../podcast/PodcastWorksGallery
   )
 });
 import { chipClass } from "./chipStyles";
-import { PlayIcon, StopIcon } from "./MediaIcons";
+import { IconPlayFilled, IconStopFilled } from "../icons";
 import { VoiceSelect, type VoiceOpt } from "./VoiceSelect";
 import BgmControlRow from "./BgmControlRow";
 import IntroOutroPresetBar from "./IntroOutroPresetBar";
@@ -1131,7 +1131,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                   className="inline-flex min-w-[6.25rem] shrink-0 items-center justify-center gap-2 self-end rounded-full bg-cta px-3 py-2 text-xs font-medium text-cta-foreground shadow-soft transition hover:scale-105 hover:bg-cta/90 sm:ml-1 sm:self-start"
                   aria-label={busy ? "停止合成" : "开始合成"}
                 >
-                  {busy ? <StopIcon className="h-3.5 w-3.5" /> : <PlayIcon className="h-4 w-4 translate-x-px" />}
+                  {busy ? <IconStopFilled className="h-3.5 w-3.5" /> : <IconPlayFilled className="h-4 w-4 translate-x-px" />}
                   <span>{busy ? "停止合成" : "开始合成"}</span>
                 </button>
               ) : null}

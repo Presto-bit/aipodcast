@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Plus } from "../icons";
 import { useRef, useState } from "react";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp } from "../icons";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { ClipProjectRow } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";

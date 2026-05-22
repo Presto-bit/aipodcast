@@ -20,6 +20,7 @@ import {
 import type { PodcastWorkRow } from "./workGalleryListShared";
 import { useWorkGalleryListContext } from "./workGalleryListContext";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
+import { IconPause, IconPlayFilled, WorkTypeIcon } from "../icons";
 
 const WORK_GALLERY_LIST_COVER_MAX_W = 400;
 
@@ -69,14 +70,9 @@ function CircularPlayControl({
         className={`relative z-[1] flex ${btn} cursor-pointer items-center justify-center rounded-full bg-surface text-brand shadow-soft outline-none ring-offset-2 hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-wait disabled:opacity-60`}
       >
         {playing ? (
-          <svg className={iconSm} viewBox="0 0 24 24" fill="currentColor">
-            <rect x="6" y="5" width="4" height="14" rx="1" />
-            <rect x="14" y="5" width="4" height="14" rx="1" />
-          </svg>
+          <IconPause className={iconSm} aria-hidden />
         ) : (
-          <svg className={`ml-px ${iconPlay}`} viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-          </svg>
+          <IconPlayFilled className={`ml-px ${iconPlay}`} aria-hidden />
         )}
       </button>
     </div>
@@ -449,9 +445,7 @@ if (variant === "all") {
           />
         ) : (
           <div className="flex h-full min-h-[3rem] flex-col items-center justify-center gap-1 bg-gradient-to-br from-brand/[0.14] via-fill to-cta/[0.12] px-2 text-center">
-            <span className="text-2xl leading-none opacity-90" aria-hidden>
-              {isScriptDraft ? "📝" : "🎙️"}
-            </span>
+            <WorkTypeIcon scriptDraft={isScriptDraft} size={28} className="text-brand/80" aria-hidden />
             <span className="text-[10px] font-medium leading-tight text-muted">
               {isScriptDraft
                 ? inFlightQueue
@@ -740,9 +734,7 @@ return (
         />
       ) : (
         <div className="flex h-full min-h-[3rem] flex-col items-center justify-center gap-1 bg-gradient-to-br from-brand/[0.14] via-fill to-cta/[0.12] px-2 text-center">
-          <span className="text-2xl leading-none opacity-90" aria-hidden>
-            {isScriptDraft ? "📝" : "🎙️"}
-          </span>
+          <WorkTypeIcon scriptDraft={isScriptDraft} size={28} className="text-brand/80" aria-hidden />
           <span className="text-[10px] font-medium leading-tight text-muted">
             {isScriptDraft
               ? inFlightQueue

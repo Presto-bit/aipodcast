@@ -17,6 +17,7 @@ import { useAuth } from "./auth";
 import { APP_SIDEBAR_COLLAPSED_KEY, APP_SIDEBAR_COLLAPSE_EVENT, APP_SIDEBAR_TOGGLE_EVENT } from "./appSidebarCollapse";
 import { readLocalStorageScoped } from "./userScopedStorage";
 import { SIDEBAR_COLLAPSED_STORAGE } from "./appShellLayout";
+import { IconChevronDown, IconChevronUp, IconPause, IconPlayFilled, IconX } from "../components/icons";
 
 const APP_NAV_SIDEBAR_PX_EXPANDED = 232;
 const APP_NAV_SIDEBAR_PX_COLLAPSED = 72;
@@ -731,14 +732,9 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
                     onClick={() => (isPlaying ? pause() : resume())}
                   >
                     {isPlaying ? (
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor">
-                        <rect x="6" y="5" width="4" height="14" rx="1" />
-                        <rect x="14" y="5" width="4" height="14" rx="1" />
-                      </svg>
+                      <IconPause className="h-3.5 w-3.5" aria-hidden />
                     ) : (
-                      <svg className="ml-px h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
+                      <IconPlayFilled className="ml-px h-4 w-4" aria-hidden />
                     )}
                   </button>
                   <p className="min-w-0 flex-1 truncate text-[11px] font-medium leading-tight text-ink" title={activeDisplayTitle}>
@@ -751,9 +747,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
                     title="展开"
                     onClick={() => setDockExpanded(true)}
                   >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                      <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
+                    <IconChevronDown className="h-4 w-4" aria-hidden />
                   </button>
                   <button
                     type="button"
@@ -762,9 +756,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
                     title="关闭"
                     onClick={() => dismiss()}
                   >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
-                      <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
-                    </svg>
+                    <IconX className="h-4 w-4" aria-hidden />
                   </button>
                 </div>
                 {playError ? (
@@ -791,9 +783,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
                     title="收起"
                     onClick={() => setDockExpanded(false)}
                   >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                      <path d="M18 15l-6-6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
+                    <IconChevronUp className="h-4 w-4" aria-hidden />
                   </button>
                   <button
                     type="button"
@@ -802,9 +792,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
                     title="关闭"
                     onClick={() => dismiss()}
                   >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
-                      <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
-                    </svg>
+                    <IconX className="h-4 w-4" aria-hidden />
                   </button>
                 </div>
                 <div
@@ -848,14 +836,9 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
                     onClick={() => (isPlaying ? pause() : resume())}
                   >
                     {isPlaying ? (
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-                        <rect x="6" y="5" width="4" height="14" rx="1" />
-                        <rect x="14" y="5" width="4" height="14" rx="1" />
-                      </svg>
+                      <IconPause className="h-4 w-4" aria-hidden />
                     ) : (
-                      <svg className="ml-0.5 h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
+                      <IconPlayFilled className="ml-0.5 h-4 w-4" aria-hidden />
                     )}
                   </button>
                   <button

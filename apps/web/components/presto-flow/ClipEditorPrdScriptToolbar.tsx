@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, History } from "lucide-react";
+import { ChevronDown, History } from "../icons";
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { ClipWord } from "../../lib/clipTypes";
 import type { SpeakerLine } from "../../lib/prestoFlowTranscript";

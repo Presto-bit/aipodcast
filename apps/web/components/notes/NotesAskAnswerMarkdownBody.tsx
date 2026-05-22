@@ -2,7 +2,7 @@
 
 import type { MouseEventHandler, ReactNode } from "react";
 import { useCallback, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { IconCheck, IconClipboard } from "../icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -63,12 +63,12 @@ function FenceCodeBlock({ className, children }: { className?: string; children?
         >
           {copied ? (
             <>
-              <Check className="size-3.5 text-success-ink" aria-hidden />
+              <IconCheck className="size-3.5 text-success-ink" aria-hidden />
               已复制
             </>
           ) : (
             <>
-              <Copy className="size-3.5 text-muted" aria-hidden />
+              <IconClipboard className="size-3.5 text-muted" aria-hidden />
               复制
             </>
           )}

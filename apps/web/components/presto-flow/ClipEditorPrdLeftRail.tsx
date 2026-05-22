@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "../icons";
 import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { ClipAudioStagingEntry, ClipProjectRow } from "../../lib/clipTypes";

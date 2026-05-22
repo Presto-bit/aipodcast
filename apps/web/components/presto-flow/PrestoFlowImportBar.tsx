@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { Plus } from "../icons";
 import { useRef, useState } from "react";
 import type { ClipProjectRow } from "../../lib/clipTypes";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";

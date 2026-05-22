@@ -8,6 +8,22 @@ import InlineConfirmBar from "../../../components/ui/InlineConfirmBar";
 import InlineTextPrompt from "../../../components/ui/InlineTextPrompt";
 import SmallPromptModal from "../../../components/ui/SmallPromptModal";
 import EmptyState from "../../../components/ui/EmptyState";
+import {
+  IconArrowRight,
+  IconChevronLeft,
+  IconChevronRight,
+  IconClipboard,
+  IconFilePlus,
+  IconPencil,
+  IconShareNodes,
+  IconSourcesBinder,
+  IconSparkle,
+  IconStopSquare,
+  IconWorkPodcast,
+  IconWorkScript,
+  NotebookIcon,
+  NOTEBOOK_ICON_COUNT
+} from "../../../components/icons";
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
 const NotesPodcastRoomModal = dynamic(() => import("../../../components/notes/NotesPodcastRoomModal"));
 const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
@@ -469,8 +485,6 @@ const NOTEBOOK_CARD_THEMES = [
     chip: "bg-cta/12 text-cta"
   }
 ] as const;
-const NOTEBOOK_ICONS = ["📘", "📙", "🗂️", "🧠", "🧪", "🪄", "🛰️", "📝"] as const;
-
 type NotebookMeta = {
   noteCount: number;
   /** 与侧栏「参考资料」、热门笔记本 API 一致：该笔记本下资料笔记条数（非仅含链接的笔记） */
@@ -530,14 +544,14 @@ function stableNotebookVisualFromKey(key: string): NotebookVisual {
   const u = h >>> 0;
   return {
     themeIndex: u % NOTEBOOK_CARD_THEMES.length,
-    iconIndex: Math.floor(u / NOTEBOOK_CARD_THEMES.length) % NOTEBOOK_ICONS.length
+    iconIndex: Math.floor(u / NOTEBOOK_CARD_THEMES.length) % NOTEBOOK_ICON_COUNT
   };
 }
 
 function randomNotebookVisual(): NotebookVisual {
   return {
     themeIndex: Math.floor(Math.random() * NOTEBOOK_CARD_THEMES.length),
-    iconIndex: Math.floor(Math.random() * NOTEBOOK_ICONS.length)
+    iconIndex: Math.floor(Math.random() * NOTEBOOK_ICON_COUNT)
   };
 }
 
@@ -612,7 +626,7 @@ function HubMineNotebookCards({
         const picked = notebookVisualByName[nb];
         const visual = {
           theme: NOTEBOOK_CARD_THEMES[picked?.themeIndex ?? 0],
-          icon: NOTEBOOK_ICONS[picked?.iconIndex ?? 0]
+          iconIndex: picked?.iconIndex ?? 0
         };
         const meta = notebookMetaByName[nb];
         const cov = notebookCoverByName[nb];
@@ -709,7 +723,7 @@ function HubMineNotebookCards({
                     className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base ${visual.theme.iconWrap}`}
                     aria-hidden
                   >
-                    {visual.icon}
+                    <NotebookIcon index={visual.iconIndex} width={20} height={20} />
                   </span>
                 ) : null}
                 <div className="min-w-0">
@@ -772,7 +786,7 @@ function HubPopularNotebookGrid({
             const pv = stableNotebookVisualFromKey(`${item.ownerUserId}:${item.notebook}`);
             const pvis = {
               theme: NOTEBOOK_CARD_THEMES[pv.themeIndex],
-              icon: NOTEBOOK_ICONS[pv.iconIndex]
+              iconIndex: pv.iconIndex
             };
             const sourceN = typeof item.sourceCount === "number" ? item.sourceCount : 0;
             const accessLabel = item.publicAccess === "edit" ? "可创作" : "只读";
@@ -808,7 +822,7 @@ function HubPopularNotebookGrid({
                         className={`mb-1 inline-flex h-9 w-9 items-center justify-center rounded-full text-lg ${pvis.theme.iconWrap}`}
                         aria-hidden
                       >
-                        {pvis.icon}
+                        <NotebookIcon index={pvis.iconIndex} width={22} height={22} />
                       </span>
                     ) : null}
                     <p className="line-clamp-2 text-xs font-semibold text-ink">{item.ownerDisplayName}</p>
@@ -836,31 +850,6 @@ function HubPopularNotebookGrid({
         </div>
       ) : null}
     </div>
-  );
-}
-
-function FreshNoteSparkleIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden
-    >
-      <path
-        d="M12 2l1.2 4.8L18 8l-4.8 1.2L12 14l-1.2-4.8L6 8l4.8-1.2L12 2z"
-        fill="currentColor"
-        opacity={0.88}
-      />
-      <path
-        d="M19 14l.6 2.4L22 17l-2.4.6L19 20l-.6-2.4L16 17l2.4-.6L19 14z"
-        fill="currentColor"
-        opacity={0.5}
-      />
-    </svg>
   );
 }
 
@@ -3971,34 +3960,9 @@ export default function NotesPage() {
                   title="展开参考资料"
                   onClick={() => setSourcesPanelCollapsed(false)}
                 >
-                  <svg
-                    width="20"
-                    height="20"
-                    className="shrink-0 text-muted"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    aria-hidden
-                  >
-                    <rect x="3" y="4" width="18" height="16" rx="2" />
-                    <path d="M9 4v16" />
-                  </svg>
+                  <IconSourcesBinder width={20} height={20} className="shrink-0 text-muted" aria-hidden />
                   <span className="text-sm font-semibold text-ink lg:text-xs lg:[writing-mode:vertical-rl]">参考资料</span>
-                  <svg
-                    width="18"
-                    height="18"
-                    className="shrink-0 text-ink"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden
-                  >
-                    <path d="M9 6l6 6-6 6" />
-                  </svg>
+                  <IconChevronRight width={18} height={18} className="shrink-0 text-ink" aria-hidden />
                 </button>
               ) : (
                 <>
@@ -4029,19 +3993,7 @@ export default function NotesPage() {
                       title="向左收起"
                       onClick={() => setSourcesPanelCollapsed(true)}
                     >
-                      <svg
-                        width="18"
-                        height="18"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden
-                      >
-                        <path d="M15 18l-6-6 6-6" />
-                      </svg>
+                      <IconChevronLeft width={18} height={18} aria-hidden />
                     </button>
                 </div>
                 <button
@@ -4139,7 +4091,7 @@ export default function NotesPage() {
                                 role="img"
                                 aria-label="刚加入的资料"
                               >
-                                <FreshNoteSparkleIcon />
+                                <IconSparkle width={14} height={14} className="text-brand" />
                               </span>
                             ) : null}
                             {n.retrieveState === "failed" || n.ragIndexError ? (
@@ -4337,18 +4289,7 @@ export default function NotesPage() {
                                       disabled={!(m.content || "").trim()}
                                       onClick={() => void copyNotesAskAnswer(m.content)}
                                     >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path
-                                          d="M6 11c0-1.1.9-2 2-2h7a2 2 0 012 2v9a2 2 0 01-2 2H8a2 2 0 01-2-2v-9z"
-                                          stroke="currentColor"
-                                          strokeWidth="1.75"
-                                        />
-                                        <path
-                                          d="M9 7V6a2 2 0 012-2h7a2 2 0 012 2v9a2 2 0 01-2 2h-2"
-                                          stroke="currentColor"
-                                          strokeWidth="1.75"
-                                        />
-                                      </svg>
+                                      <IconClipboard width={14} height={14} aria-hidden />
                                     </button>
                                     <button
                                       type="button"
@@ -4358,15 +4299,7 @@ export default function NotesPage() {
                                       disabled={sharedBrowse?.access === "read_only"}
                                       onClick={() => beginEditNotesAskUserTurn(m.id, m.content)}
                                     >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path
-                                          d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L8 18l-4 1 1-4L16.5 3.5z"
-                                          stroke="currentColor"
-                                          strokeWidth="1.75"
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                        />
-                                      </svg>
+                                      <IconPencil width={14} height={14} aria-hidden />
                                     </button>
                                   </div>
                                 <div className="min-w-0 flex-1 rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm">
@@ -4439,18 +4372,7 @@ export default function NotesPage() {
                                       aria-label="复制"
                                       onClick={() => void copyNotesAskAnswer(askBody)}
                                     >
-                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path
-                                          d="M6 11c0-1.1.9-2 2-2h7a2 2 0 012 2v9a2 2 0 01-2 2H8a2 2 0 01-2-2v-9z"
-                                          stroke="currentColor"
-                                          strokeWidth="1.75"
-                                        />
-                                        <path
-                                          d="M9 7V6a2 2 0 012-2h7a2 2 0 012 2v9a2 2 0 01-2 2h-2"
-                                          stroke="currentColor"
-                                          strokeWidth="1.75"
-                                        />
-                                      </svg>
+                                      <IconClipboard width={16} height={16} aria-hidden />
                                     </button>
                                     <button
                                       type="button"
@@ -4459,17 +4381,7 @@ export default function NotesPage() {
                                       aria-label="分享"
                                       onClick={() => void shareNotesAskAnswer(askBody)}
                                     >
-                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <circle cx="18" cy="5" r="2.5" stroke="currentColor" strokeWidth="1.5" />
-                                        <circle cx="6" cy="12" r="2.5" stroke="currentColor" strokeWidth="1.5" />
-                                        <circle cx="18" cy="19" r="2.5" stroke="currentColor" strokeWidth="1.5" />
-                                        <path
-                                          d="M8.2 13.6l6.6 3.2M15.8 7.2L9.2 10.4"
-                                          stroke="currentColor"
-                                          strokeWidth="1.5"
-                                          strokeLinecap="round"
-                                        />
-                                      </svg>
+                                      <IconShareNodes width={16} height={16} aria-hidden />
                                     </button>
                                     <button
                                       type="button"
@@ -4479,16 +4391,7 @@ export default function NotesPage() {
                                       disabled={Boolean(sharedBrowse) || notesAskNoteBusyId === m.id}
                                       onClick={() => void saveAskAnswerAsNote(askBody, m.id)}
                                     >
-                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                                        <path
-                                          d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"
-                                          stroke="currentColor"
-                                          strokeWidth="1.5"
-                                          strokeLinejoin="round"
-                                        />
-                                        <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-                                        <path d="M12 18v-6M9 15h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                                      </svg>
+                                      <IconFilePlus width={16} height={16} aria-hidden />
                                     </button>
                                   </div>
                                 ) : null}
@@ -4510,10 +4413,10 @@ export default function NotesPage() {
                     className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-brand/35 bg-gradient-to-br from-brand/15 to-brand/[0.06] px-3 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98] enabled:active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[10.125rem]"
                   >
                     <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-[1.125rem] leading-none"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand"
                       aria-hidden
                     >
-                      🔊
+                      <IconWorkPodcast width={20} height={20} />
                     </span>
                     <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">
                       {audioOverviewBusy ? "音频概览…" : "音频概览"}
@@ -4526,10 +4429,10 @@ export default function NotesPage() {
                     className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-success/35 bg-gradient-to-br from-success-soft/90 to-success/[0.08] px-3 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[10.125rem]"
                   >
                     <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-success-soft/50 text-[1.125rem] leading-none"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-success-soft/50 text-success-ink"
                       aria-hidden
                     >
-                      📝
+                      <IconWorkScript width={20} height={20} />
                     </span>
                     <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">生成文章</span>
                   </button>
@@ -4547,7 +4450,7 @@ export default function NotesPage() {
                   >
                   <textarea
                     ref={notesAskTextareaRef}
-                    className="min-h-[1.875rem] flex-1 resize-none overflow-y-hidden border-0 bg-transparent text-sm leading-normal text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
+                    className="max-h-24 min-h-[1.875rem] flex-1 resize-none border-0 bg-transparent text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
                     placeholder={
                       draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "输入问题…"
                     }
@@ -4584,9 +4487,7 @@ export default function NotesPage() {
                       aria-label="停止生成"
                       onClick={() => notesAskStreamAbortRef.current?.abort()}
                     >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                        <rect x="7" y="7" width="10" height="10" rx="1.5" />
-                      </svg>
+                      <IconStopSquare width={16} height={16} aria-hidden />
                     </button>
                   ) : (
                     <button
@@ -4599,15 +4500,7 @@ export default function NotesPage() {
                       aria-label="发送提问"
                       onClick={() => void submitNotesAsk()}
                     >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <path
-                          d="M5 12h14M13 8l6 6-6 6"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
+                      <IconArrowRight width={18} height={18} aria-hidden />
                     </button>
                   )}
                   </div>

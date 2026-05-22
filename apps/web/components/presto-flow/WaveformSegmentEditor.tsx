@@ -4,7 +4,7 @@ import {
   Minus,
   Plus,
   Undo2
-} from "lucide-react";
+} from "../icons";
 import { type ReactNode } from "react";
 
 type Props = {

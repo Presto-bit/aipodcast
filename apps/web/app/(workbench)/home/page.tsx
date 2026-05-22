@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconClip, IconShownotes, IconTts, IconVoice, IconGrid } from "../../../components/NavIcons";
+import { IconClip, IconGrid, IconShownotes, IconTts, IconVoice } from "../../../components/icons";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../../../lib/worksTypes";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";

@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "../icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";

@@ -3,20 +3,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { iconSvgProps } from "./icons/Icon";
+
 export function IconSubscriptionCrown({ className }: { className?: string }) {
   return (
-    <svg
-      className={className}
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
+    <svg {...iconSvgProps({ size: 16, className, width: 14, height: 14 })}>
       <path d="M2 17l2-8h4l3 6 3-10 3 10 3-6h4l2 8H2z" />
       <path d="M4 17v3h16v-3" />
     </svg>

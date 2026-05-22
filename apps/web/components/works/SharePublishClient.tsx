@@ -87,8 +87,11 @@ import {
   IconDownloadBundle,
   IconShareCheck,
   IconShareClipboard,
-  IconShareExport
-} from "./share-publish/SharePublishIcons";
+  IconShareExport,
+  IconPause,
+  IconPlayFilled,
+  WorkTypeIcon
+} from "../icons";
 
 type Props = {
   jobId: string;
@@ -1865,9 +1868,7 @@ export function SharePublishClient({
                 />
               ) : (
                 <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-4 text-center lg:aspect-auto lg:h-[280px] lg:min-h-[280px]">
-                  <span className="text-3xl" aria-hidden>
-                    🎙️
-                  </span>
+                  <WorkTypeIcon scriptDraft={scriptDraft} size={32} className="text-brand/75" aria-hidden />
                   <span className="text-xs text-muted">暂无封面</span>
                 </div>
               )}
@@ -1898,14 +1899,9 @@ export function SharePublishClient({
                     {workAudio.loadingJobId === jobId ? (
                       <span className="h-5 w-5 animate-pulse rounded-full bg-brand-foreground/70" aria-hidden />
                     ) : workAudio.activeJobId === jobId && workAudio.isPlaying ? (
-                      <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                        <rect x="6" y="5" width="4" height="14" rx="1" />
-                        <rect x="14" y="5" width="4" height="14" rx="1" />
-                      </svg>
+                      <IconPause className="h-5 w-5 text-white" aria-hidden />
                     ) : (
-                      <svg className="ml-0.5 h-6 w-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
+                      <IconPlayFilled className="ml-0.5 h-6 w-6 text-white" aria-hidden />
                     )}
                   </button>
                 </div>

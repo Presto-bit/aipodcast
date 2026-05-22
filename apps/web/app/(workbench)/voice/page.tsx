@@ -6,6 +6,7 @@ import VoiceClonePanel from "../../../components/voice/VoiceClonePanel";
 import MyVoicesPanel from "../../../components/voice/MyVoicesPanel";
 import UserTemplatesPanel from "../../../components/voice/UserTemplatesPanel";
 import { useI18n } from "../../../lib/I18nContext";
+import { IconVoiceCloneTab, IconVoiceLibraryTab, IconVoicePersonaTab } from "../../../components/icons";
 
 type VoiceTab = "my" | "clone" | "persona";
 
@@ -49,29 +50,15 @@ export default function VoiceManagementPage() {
           aria-label={t("voice.page.subNavAria")}
         >
           <button type="button" className={navBtn(tab === "clone")} onClick={() => setTabAndUrl("clone")}>
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-90" aria-hidden>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" strokeLinejoin="round" />
-                <path d="M19 10v1a7 7 0 0 1-14 0v-1M12 19v3" strokeLinecap="round" />
-              </svg>
-            </span>
+            <IconVoiceCloneTab className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
             <span className="whitespace-nowrap">{t("voice.page.navClone")}</span>
           </button>
           <button type="button" className={navBtn(tab === "my")} onClick={() => setTabAndUrl("my")}>
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-90" aria-hidden>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M4 4h7v7H4V4zM13 4h7v7h-7V4zM4 13h7v7H4v-7zM13 13h7v7h-7v-7z" strokeLinejoin="round" />
-              </svg>
-            </span>
+            <IconVoiceLibraryTab className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
             <span className="whitespace-nowrap">{t("voice.page.navLibrary")}</span>
           </button>
           <button type="button" className={navBtn(tab === "persona")} onClick={() => setTabAndUrl("persona")}>
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center opacity-90" aria-hidden>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M4 5h16M4 12h10M4 19h14" strokeLinecap="round" />
-                <path d="M18 10v4M16 12h4" strokeLinecap="round" />
-              </svg>
-            </span>
+            <IconVoicePersonaTab className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
             <span className="whitespace-nowrap">{t("voice.page.navPersonaStyle")}</span>
           </button>
         </nav>

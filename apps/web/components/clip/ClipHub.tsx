@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "../icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../lib/auth";
 import { clipJobLabel } from "../../lib/clipJobLabels";

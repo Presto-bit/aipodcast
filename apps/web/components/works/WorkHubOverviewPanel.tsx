@@ -6,6 +6,7 @@ import { workCoverImageSrc } from "../../lib/workCoverImage";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { WorkHubManuscriptBar } from "./WorkHubManuscriptBar";
 import { WorkHubScriptActions } from "./WorkHubScriptActions";
+import { IconPause, IconPlayFilled, WorkTypeIcon } from "../icons";
 
 function formatClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "—";
@@ -199,9 +200,7 @@ export function WorkHubOverviewPanel({
             />
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-1 text-center">
-              <span className="text-lg leading-none" aria-hidden>
-                {scriptDraft ? "📝" : "🎙️"}
-              </span>
+              <WorkTypeIcon scriptDraft={scriptDraft} size={22} className="text-brand/80" aria-hidden />
               <span className="scale-90 text-[9px] leading-tight text-muted">{scriptDraft ? "文稿" : "无封面"}</span>
             </div>
           )}
@@ -222,14 +221,9 @@ export function WorkHubOverviewPanel({
                 {loadingThis ? (
                   <span className="h-3 w-3 animate-pulse rounded-full bg-brand-foreground/70" aria-hidden />
                 ) : playingThis ? (
-                  <svg className="h-3 w-3 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                    <rect x="6" y="5" width="4" height="14" rx="1" />
-                    <rect x="14" y="5" width="4" height="14" rx="1" />
-                  </svg>
+                  <IconPause className="h-3 w-3 text-white" aria-hidden />
                 ) : (
-                  <svg className="ml-px h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
+                  <IconPlayFilled className="ml-px h-3.5 w-3.5 text-white" aria-hidden />
                 )}
               </button>
             </div>

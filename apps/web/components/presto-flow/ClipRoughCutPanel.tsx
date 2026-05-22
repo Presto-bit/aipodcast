@@ -6,7 +6,7 @@ import {
   ChevronUp,
   CircleX,
   Scissors
-} from "lucide-react";
+} from "../icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipExportPausePolicy, ClipProjectRow, ClipSilenceSegment, ClipWord } from "../../lib/clipTypes";
 import type { VirtualAudioCue } from "../../lib/clipVirtualTimeline";

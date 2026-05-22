@@ -4,7 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { IconClip, IconMic, IconShownotes, IconTts } from "../../../components/NavIcons";
+import { IconChevronDown, IconClip, IconMic, IconRotateCw, IconShownotes, IconTts } from "../../../components/icons";
 import type { PodcastStudioActivity } from "../../../components/studio/PodcastStudio";
 import type { TtsStudioActivity } from "../../../components/studio/TtsStudio";
 
@@ -464,22 +464,12 @@ export default function CreatePage() {
                 aria-hidden
               />
             ) : null}
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
+            <IconChevronDown
+              width={16}
+              height={16}
               className={`shrink-0 text-muted transition-transform duration-200 ${hotTopicAssistantOpen ? "rotate-180" : ""}`}
               aria-hidden
-            >
-              <path
-                d="M6 9l6 6 6-6"
-                stroke="currentColor"
-                strokeWidth="1.75"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            />
           </span>
         </button>
         <div
@@ -499,22 +489,12 @@ export default function CreatePage() {
               aria-label="换一批"
               onClick={() => refreshHotTopics()}
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
+              <IconRotateCw
+                width={14}
+                height={14}
                 aria-hidden
                 className={hotTopicsLoading ? "animate-spin" : ""}
-              >
-                <path
-                  d="M4 9a8 8 0 0113.657-5.657M20 15a8 8 0 01-13.657 5.657M20 15v-4M4 9v4"
-                  stroke="currentColor"
-                  strokeWidth="1.75"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              />
             </button>
           </div>
           {hotTopicsErr ? (

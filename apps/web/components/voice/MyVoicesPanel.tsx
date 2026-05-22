@@ -22,6 +22,7 @@ import { useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import SystemVoicesVirtualList from "./SystemVoicesVirtualList";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
+import { IconDotsHorizontal, IconPause, IconPlayFilled, IconStar, IconX } from "../icons";
 import { readFavoriteVoiceIds, toggleFavoriteVoiceId } from "../../lib/favoriteVoiceIdsStorage";
 import { voicePreviewSampleForCatalogLanguage } from "../../lib/voicePreviewSampleText";
 
@@ -552,13 +553,9 @@ export default function MyVoicesPanel() {
             {loading ? (
               <span className="text-xs text-muted">…</span>
             ) : playing ? (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                <path d="M7 5h4v14H7zM13 5h4v14h-4z" />
-              </svg>
+              <IconPause width={16} height={16} aria-hidden />
             ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                <path d="M8 5.14v14l11-7-11-7z" />
-              </svg>
+              <IconPlayFilled width={16} height={16} className="translate-x-px" aria-hidden />
             )}
           </button>
           <div className="min-w-0 flex-1">
@@ -607,9 +604,7 @@ export default function MyVoicesPanel() {
               aria-label={fav ? t("voice.action.unfavorite") : t("voice.action.favorite")}
               onClick={() => onToggleFavorite(voiceId)}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill={fav ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" strokeLinejoin="round" />
-              </svg>
+              <IconStar width={18} height={18} filled={fav} />
             </button>
             <button
               type="button"
@@ -637,11 +632,7 @@ export default function MyVoicesPanel() {
                 });
               }}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                <circle cx="5" cy="12" r="2" />
-                <circle cx="12" cy="12" r="2" />
-                <circle cx="19" cy="12" r="2" />
-              </svg>
+              <IconDotsHorizontal width={18} height={18} aria-hidden />
             </button>
           </div>
         </div>
@@ -894,7 +885,7 @@ export default function MyVoicesPanel() {
                   detailPendingAutoplay.current = false;
                 }}
               >
-                ✕
+                <IconX width={16} height={16} aria-hidden />
               </button>
             </div>
             <dl className="mt-4 space-y-3 text-sm">
@@ -1051,9 +1042,7 @@ export default function MyVoicesPanel() {
                 {detailPreviewLoading ? (
                   <span className="text-xs text-muted">…</span>
                 ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                    <path d="M8 5.14v14l11-7-11-7z" />
-                  </svg>
+                  <IconPlayFilled width={18} height={18} className="translate-x-px" aria-hidden />
                 )}
               </button>
               {detailOpen.kind === "preset" ? (

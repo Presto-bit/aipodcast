@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CircleHelp, Download, History, PanelRightClose, PanelRightOpen, Scissors, Search, SlidersHorizontal, Sparkles } from "lucide-react";
+import { CircleHelp, Download, History, PanelRightClose, PanelRightOpen, Scissors, Search, SlidersHorizontal, Sparkles } from "../icons";
 import {
   useCallback,
   useEffect,
@@ -13,7 +13,7 @@ import {
   type MouseEvent,
   type PointerEvent as ReactPointerEvent
 } from "react";
-import { Maximize2, Minimize2 } from "lucide-react";
+import { Maximize2, Minimize2 } from "../icons";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import type { ClipProjectRow, ClipSilenceSegment, ClipWord } from "../../lib/clipTypes";

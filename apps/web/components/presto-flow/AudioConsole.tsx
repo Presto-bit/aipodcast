@@ -2,7 +2,8 @@
 
 import type { RefObject } from "react";
 import { createPortal } from "react-dom";
-import { Pause, Play, Volume2 } from "lucide-react";
+import { Volume2 } from "../icons";
+import { IconPause, IconPlayFilled } from "../icons";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ClipMaterialTimelineScrubber from "../clip/ClipMaterialTimelineScrubber";
 import { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
@@ -198,7 +199,7 @@ export default function AudioConsole({
             className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-ink text-surface shadow-soft hover:opacity-95"
             onClick={togglePlay}
           >
-            {playing ? <Pause className="h-5 w-5" aria-hidden /> : <Play className="h-5 w-5 pl-0.5" aria-hidden />}
+            {playing ? <IconPause className="h-5 w-5" aria-hidden /> : <IconPlayFilled className="h-5 w-5 translate-x-px" aria-hidden />}
           </button>
           {onPlaybackRateChange ? (
             <div ref={rateWrapRef} className="relative shrink-0">
