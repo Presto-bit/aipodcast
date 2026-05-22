@@ -1100,6 +1100,16 @@ export default function NotesPage() {
   const [notesAskError, setNotesAskError] = useState("");
   const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
   const notesAskTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const syncNotesAskTextareaHeight = useCallback(() => {
+    const el = notesAskTextareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const minPx = 30;
+    const maxPx = 96;
+    const next = Math.min(Math.max(el.scrollHeight, minPx), maxPx);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > maxPx ? "auto" : "hidden";
+  }, []);
   /** 当前向资料提问的 fetch；用于「停止生成」 */
   const notesAskStreamAbortRef = useRef<AbortController | null>(null);
   const [notesAskNoteBusyId, setNotesAskNoteBusyId] = useState<string | null>(null);
@@ -1178,6 +1188,10 @@ export default function NotesPage() {
     return null;
   }, [notesAskMessages]);
 
+  useLayoutEffect(() => {
+    syncNotesAskTextareaHeight();
+  }, [notesAskQuestion, syncNotesAskTextareaHeight]);
+
   const beginEditNotesAskUserTurn = useCallback((userTurnId: string, text: string) => {
     notesAskStreamAbortRef.current?.abort();
     setNotesAskQuestion(text);
@@ -1187,8 +1201,11 @@ export default function NotesPage() {
       if (idx < 0) return prev;
       return prev.slice(0, idx);
     });
-    window.setTimeout(() => notesAskTextareaRef.current?.focus(), 0);
-  }, []);
+    window.setTimeout(() => {
+      notesAskTextareaRef.current?.focus();
+      syncNotesAskTextareaHeight();
+    }, 0);
+  }, [syncNotesAskTextareaHeight]);
 
   const clearNotesAskConversation = useCallback(() => {
     setNotesAskOverflowMenuOpen(false);
@@ -4530,7 +4547,7 @@ export default function NotesPage() {
                   >
                   <textarea
                     ref={notesAskTextareaRef}
-                    className="max-h-24 min-h-[1.875rem] flex-1 resize-none border-0 bg-transparent text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
+                    className="min-h-[1.875rem] flex-1 resize-none overflow-y-hidden border-0 bg-transparent text-sm leading-normal text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
                     placeholder={
                       draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "输入问题…"
                     }
