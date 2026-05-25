@@ -8,44 +8,35 @@ export type SocialPublishTone = "casual" | "pro" | "humor" | "motivational";
 
 export type SocialPublishSourceType = "ask_answer" | "notes_only";
 
-export type SocialPublishPersonaCrowd =
-  | "ingredient"
-  | "refined_mom"
+/** 小红书：目标人群定位 */
+export type SocialPublishTargetGender = "female" | "male" | "any";
+export type SocialPublishTargetAge = "18_24" | "25_34" | "35_44" | "45_plus" | "all_ages";
+export type SocialPublishTargetRegion = "tier1" | "tier2" | "tier3_down" | "any";
+export type SocialPublishTargetOccupation =
   | "office_worker"
   | "student"
-  | "fitness"
-  | "pet_owner"
-  | "home_renovator"
-  | "beauty_lover"
-  | "night_owl"
-  | "career_starter"
-  | "traveler"
-  | "foodie"
-  | "digital_geek"
-  | "gen_z"
-  | "sensitive_skin"
-  | "wedding_prep"
-  | "mom_baby"
-  | "male_grooming"
-  | "renter"
-  | "silver_gen"
+  | "parent"
+  | "freelancer"
+  | "entrepreneur"
+  | "creator"
   | "custom";
 
-export type SocialPublishAnxiety =
-  | "waste_money"
-  | "harm"
-  | "no_time"
-  | "info_overload"
-  | "appearance"
-  | "social"
-  | "uncertain";
+/** 小红书：写作人设（单选） */
+export type SocialPublishWriterVoice =
+  | "bestie_brother"
+  | "expert_scholar"
+  | "growth_companion"
+  | "sharp_truth";
 
 export type SocialPublishPersonaOptions = {
-  /** 目标人群，可多选（最多 3 项） */
-  crowds: SocialPublishPersonaCrowd[];
-  crowdCustom: string;
-  anxieties: SocialPublishAnxiety[];
-  keywords: string[];
+  gender: SocialPublishTargetGender;
+  ageRange: SocialPublishTargetAge;
+  region: SocialPublishTargetRegion;
+  occupation: SocialPublishTargetOccupation;
+  occupationCustom: string;
+  writerVoice: SocialPublishWriterVoice;
+  /** 其他要求（替代原高级选项补充说明） */
+  otherRequirements: string;
 };
 
 export type SocialPublishCompliance = {

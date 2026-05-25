@@ -87,22 +87,91 @@ def _resolve_crowd_labels(persona: dict[str, Any]) -> list[str]:
     return out[:4]
 
 
+_GENDER_CN = {
+    "female": "女性为主",
+    "male": "男性为主",
+    "any": "性别不限",
+}
+_AGE_CN = {
+    "18_24": "18–24 岁",
+    "25_34": "25–34 岁",
+    "35_44": "35–44 岁",
+    "45_plus": "45 岁及以上",
+    "all_ages": "全年龄段",
+}
+_REGION_CN = {
+    "tier1": "一线城市（北上广深等）",
+    "tier2": "二线城市",
+    "tier3_down": "三四线及以下城市",
+    "any": "地域不限",
+}
+_WRITER_VOICE_CN = {
+    "bestie_brother": "贴心闺蜜/兄弟型：口语亲切、像朋友安利、适度 emoji，不说教",
+    "expert_scholar": "行业专家/斜杠学霸：有观点、有结构、引用经验与对比，可信克制",
+    "growth_companion": "养成系/真实陪伴：记录变化、真诚克制、过程感与陪伴感",
+    "sharp_truth": "毒舌人间清醒：直给结论、适度犀利、反套路、不说空话",
+}
+
+
+def _resolve_occupation_label(persona: dict[str, Any]) -> str:
+    leg = str(persona.get("occupationLabel") or "").strip()
+    if leg:
+        return leg[:40]
+    occ = str(persona.get("occupation") or "").strip()
+    custom = str(persona.get("occupationCustom") or "").strip()
+    _OCC_CN = {
+        "office_worker": "上班族/职场白领",
+        "student": "学生",
+        "parent": "宝妈/宝爸",
+        "freelancer": "自由职业",
+        "entrepreneur": "创业者",
+        "creator": "自媒体/内容创作者",
+    }
+    if occ == "custom" and custom:
+        return custom[:40]
+    return _OCC_CN.get(occ, occ or "泛职场人群")
+
+
 def build_persona_prompt_block(options: dict[str, Any]) -> str:
     persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
-    anxieties = persona.get("anxieties") if isinstance(persona.get("anxieties"), list) else []
-    keywords = persona.get("keywords") if isinstance(persona.get("keywords"), list) else []
-    crowd_labels = _resolve_crowd_labels(persona)
-    anx_cn = [_ANXIETY_CN.get(str(a).strip(), str(a)) for a in anxieties if str(a).strip()][:3]
-    kw = [str(k).strip() for k in keywords if str(k).strip()][:12]
-    lines = ["【用户定位】"]
-    if crowd_labels:
-        lines.append(f"目标人群（可多重心智，须融合表达）：{'、'.join(crowd_labels)}")
+    writer_voice = str(persona.get("writerVoice") or "").strip()
+    other_req = str(
+        persona.get("otherRequirements") or options.get("userNote") or ""
+    ).strip()[:500]
+
+    if writer_voice or persona.get("gender") or persona.get("ageRange"):
+        gender_cn = _GENDER_CN.get(str(persona.get("gender") or "").strip(), "性别不限")
+        age_cn = _AGE_CN.get(str(persona.get("ageRange") or "").strip(), "全年龄段")
+        region_cn = _REGION_CN.get(str(persona.get("region") or "").strip(), "地域不限")
+        occ_cn = _resolve_occupation_label(persona)
+        voice_cn = _WRITER_VOICE_CN.get(writer_voice, _WRITER_VOICE_CN["bestie_brother"])
+        lines = [
+            "【目标人群定位】",
+            f"性别：{gender_cn}",
+            f"年龄段：{age_cn}",
+            f"地域：{region_cn}",
+            f"职业：{occ_cn}",
+            f"【写作人设】{voice_cn}",
+        ]
+        if other_req:
+            lines.append(f"【其他要求】{other_req}")
     else:
-        lines.append("目标人群：泛大众")
-    if anx_cn:
-        lines.append(f"核心焦虑：{'、'.join(anx_cn)}")
-    if kw:
-        lines.append(f"文案关键词（须自然融入标题与开头）：{'、'.join(kw)}")
+        anxieties = persona.get("anxieties") if isinstance(persona.get("anxieties"), list) else []
+        keywords = persona.get("keywords") if isinstance(persona.get("keywords"), list) else []
+        crowd_labels = _resolve_crowd_labels(persona)
+        anx_cn = [_ANXIETY_CN.get(str(a).strip(), str(a)) for a in anxieties if str(a).strip()][:3]
+        kw = [str(k).strip() for k in keywords if str(k).strip()][:12]
+        lines = ["【用户定位】"]
+        if crowd_labels:
+            lines.append(f"目标人群（可多重心智，须融合表达）：{'、'.join(crowd_labels)}")
+        else:
+            lines.append("目标人群：泛大众")
+        if anx_cn:
+            lines.append(f"核心焦虑：{'、'.join(anx_cn)}")
+        if kw:
+            lines.append(f"文案关键词（须自然融入标题与开头）：{'、'.join(kw)}")
+        if other_req:
+            lines.append(f"【其他要求】{other_req}")
     extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
     sk = _SKELETON_CN.get(str(extras.get("bodySkeleton") or "dry_goods"), _SKELETON_CN["dry_goods"])
     hook = _HOOK_CN.get(str(extras.get("coverHookStyle") or "pain"), "痛点型")

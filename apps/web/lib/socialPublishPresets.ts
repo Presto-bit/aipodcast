@@ -1,12 +1,15 @@
 import type {
   SocialPublishAdvancedOptions,
-  SocialPublishAnxiety,
   SocialPublishIntent,
-  SocialPublishPersonaCrowd,
   SocialPublishPersonaOptions,
   SocialPublishPlatform,
   SocialPublishQuickOptions,
-  SocialPublishTargetCharsPreset
+  SocialPublishTargetCharsPreset,
+  SocialPublishTargetGender,
+  SocialPublishTargetAge,
+  SocialPublishTargetRegion,
+  SocialPublishTargetOccupation,
+  SocialPublishWriterVoice
 } from "./socialPublishTypes";
 
 export const SOCIAL_TARGET_CHARS_MIN = 100;
@@ -38,40 +41,42 @@ export const SOCIAL_PUBLISH_AUDIENCE_OPTIONS = [
   { id: "pro" as const, label: "专业" }
 ];
 
-export const SOCIAL_PUBLISH_PERSONA_CROWD: { id: SocialPublishPersonaCrowd; label: string }[] = [
-  { id: "office_worker", label: "打工人" },
-  { id: "student", label: "学生党" },
-  { id: "refined_mom", label: "精致妈妈" },
-  { id: "mom_baby", label: "宝妈" },
-  { id: "ingredient", label: "成分党" },
-  { id: "beauty_lover", label: "爱美党" },
-  { id: "sensitive_skin", label: "敏感肌" },
-  { id: "night_owl", label: "熬夜党" },
-  { id: "fitness", label: "健身减脂" },
-  { id: "foodie", label: "美食探店" },
-  { id: "traveler", label: "旅行党" },
-  { id: "digital_geek", label: "数码党" },
-  { id: "gen_z", label: "Z 世代" },
-  { id: "career_starter", label: "职场新人" },
-  { id: "pet_owner", label: "铲屎官" },
-  { id: "home_renovator", label: "家装党" },
-  { id: "renter", label: "租房党" },
-  { id: "wedding_prep", label: "备婚族" },
-  { id: "male_grooming", label: "男士理容" },
-  { id: "silver_gen", label: "银发族" },
-  { id: "custom", label: "自定义" }
+export const SOCIAL_PUBLISH_TARGET_GENDER: { id: SocialPublishTargetGender; label: string }[] = [
+  { id: "female", label: "女性" },
+  { id: "male", label: "男性" },
+  { id: "any", label: "不限" }
 ];
 
-export const SOCIAL_PUBLISH_PERSONA_CROWD_MAX = 3;
+export const SOCIAL_PUBLISH_TARGET_AGE: { id: SocialPublishTargetAge; label: string }[] = [
+  { id: "18_24", label: "18–24 岁" },
+  { id: "25_34", label: "25–34 岁" },
+  { id: "35_44", label: "35–44 岁" },
+  { id: "45_plus", label: "45 岁+" },
+  { id: "all_ages", label: "全年龄" }
+];
 
-export const SOCIAL_PUBLISH_ANXIETY_OPTIONS: { id: SocialPublishAnxiety; label: string }[] = [
-  { id: "waste_money", label: "怕踩雷" },
-  { id: "harm", label: "怕伤身" },
-  { id: "no_time", label: "没时间" },
-  { id: "info_overload", label: "信息太多" },
-  { id: "appearance", label: "颜值焦虑" },
-  { id: "social", label: "社交尴尬" },
-  { id: "uncertain", label: "效果不确定" }
+export const SOCIAL_PUBLISH_TARGET_REGION: { id: SocialPublishTargetRegion; label: string }[] = [
+  { id: "tier1", label: "一线" },
+  { id: "tier2", label: "二线" },
+  { id: "tier3_down", label: "三四线及以下" },
+  { id: "any", label: "不限" }
+];
+
+export const SOCIAL_PUBLISH_TARGET_OCCUPATION: { id: SocialPublishTargetOccupation; label: string }[] = [
+  { id: "office_worker", label: "上班族" },
+  { id: "student", label: "学生" },
+  { id: "parent", label: "宝妈/宝爸" },
+  { id: "freelancer", label: "自由职业" },
+  { id: "entrepreneur", label: "创业者" },
+  { id: "creator", label: "自媒体/创作者" },
+  { id: "custom", label: "其他" }
+];
+
+export const SOCIAL_PUBLISH_WRITER_VOICE: { id: SocialPublishWriterVoice; label: string; hint: string }[] = [
+  { id: "bestie_brother", label: "贴心闺蜜/兄弟型", hint: "口语亲切、像朋友安利" },
+  { id: "expert_scholar", label: "行业专家/斜杠学霸", hint: "有观点、有结构、可信" },
+  { id: "growth_companion", label: "养成系/真实陪伴", hint: "过程感、真诚克制" },
+  { id: "sharp_truth", label: "毒舌人间清醒", hint: "直给结论、反套路" }
 ];
 
 export function defaultTargetCharsForPlatform(platform: SocialPublishPlatform): number {
@@ -104,18 +109,28 @@ export function charsFromPreset(preset: SocialPublishTargetCharsPreset, customCh
 
 export function defaultPersonaOptions(): SocialPublishPersonaOptions {
   return {
-    crowds: ["office_worker"],
-    crowdCustom: "",
-    anxieties: ["waste_money"],
-    keywords: []
+    gender: "female",
+    ageRange: "25_34",
+    region: "tier1",
+    occupation: "office_worker",
+    occupationCustom: "",
+    writerVoice: "bestie_brother",
+    otherRequirements: ""
   };
 }
 
-export function personaCrowdLabels(persona: SocialPublishPersonaOptions): string[] {
-  return persona.crowds.map((id) => {
-    if (id === "custom") return persona.crowdCustom.trim() || "自定义人群";
-    return SOCIAL_PUBLISH_PERSONA_CROWD.find((c) => c.id === id)?.label || id;
-  });
+export function occupationLabel(persona: SocialPublishPersonaOptions): string {
+  if (persona.occupation === "custom") {
+    return persona.occupationCustom.trim() || "其他职业";
+  }
+  return SOCIAL_PUBLISH_TARGET_OCCUPATION.find((o) => o.id === persona.occupation)?.label || persona.occupation;
+}
+
+export function isXhsPersonaValid(persona: SocialPublishPersonaOptions): boolean {
+  if (persona.occupation === "custom") {
+    return persona.occupationCustom.trim().length >= 2;
+  }
+  return Boolean(persona.occupation);
 }
 
 export function defaultAdvancedOptions(platform: SocialPublishPlatform): SocialPublishAdvancedOptions {
@@ -156,15 +171,22 @@ export function buildOptionsPayload(
     audience: quick.audience,
     target_chars: targetChars,
     tone: advanced.tone,
-    userNote: advanced.userNote.trim(),
+    userNote:
+      platform === "xiaohongshu" && persona
+        ? persona.otherRequirements.trim()
+        : advanced.userNote.trim(),
     persona:
-      platform === "xiaohongshu" && persona && persona.crowds.length
+      platform === "xiaohongshu" && persona
         ? {
-            crowds: persona.crowds,
-            crowdLabels: personaCrowdLabels(persona),
-            crowdCustom: persona.crowds.includes("custom") ? persona.crowdCustom.trim() : "",
-            anxieties: persona.anxieties,
-            keywords: persona.keywords
+            gender: persona.gender,
+            ageRange: persona.ageRange,
+            region: persona.region,
+            occupation: persona.occupation,
+            occupationLabel: occupationLabel(persona),
+            occupationCustom:
+              persona.occupation === "custom" ? persona.occupationCustom.trim() : "",
+            writerVoice: persona.writerVoice,
+            otherRequirements: persona.otherRequirements.trim()
           }
         : undefined,
     extras: {

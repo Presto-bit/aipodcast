@@ -9,13 +9,16 @@ import {
   defaultAdvancedOptions,
   defaultPersonaOptions,
   defaultQuickOptions,
+  isXhsPersonaValid,
   platformLabel,
-  SOCIAL_PUBLISH_ANXIETY_OPTIONS,
   SOCIAL_PUBLISH_AUDIENCE_OPTIONS,
   SOCIAL_PUBLISH_CHARS_PRESETS,
   SOCIAL_PUBLISH_INTENT_OPTIONS,
-  SOCIAL_PUBLISH_PERSONA_CROWD,
-  SOCIAL_PUBLISH_PERSONA_CROWD_MAX,
+  SOCIAL_PUBLISH_TARGET_AGE,
+  SOCIAL_PUBLISH_TARGET_GENDER,
+  SOCIAL_PUBLISH_TARGET_OCCUPATION,
+  SOCIAL_PUBLISH_TARGET_REGION,
+  SOCIAL_PUBLISH_WRITER_VOICE,
   SOCIAL_TARGET_CHARS_MAX,
   SOCIAL_TARGET_CHARS_MIN,
   charsFromPreset
@@ -25,7 +28,6 @@ import { loadSocialPublishPrefs, saveSocialPublishPrefs } from "../../lib/social
 import { buildSocialPublishSourceCandidates, resolveSourceMaterial } from "../../lib/socialPublishSources";
 import type {
   SocialPublishAdvancedOptions,
-  SocialPublishAnxiety,
   SocialPublishDraft,
   SocialPublishPersonaOptions,
   SocialPublishPlatform,
@@ -65,7 +67,6 @@ export default function NotesSocialPublishModal({
     defaultAdvancedOptions(prefs.platform)
   );
   const [persona, setPersona] = useState<SocialPublishPersonaOptions>(() => defaultPersonaOptions());
-  const [keywordsInput, setKeywordsInput] = useState("");
   const [targetCharsInput, setTargetCharsInput] = useState("600");
   const [sourceKey, setSourceKey] = useState("notes_only");
   const [draft, setDraft] = useState<SocialPublishDraft | null>(null);
@@ -93,7 +94,6 @@ export default function NotesSocialPublishModal({
     setTargetCharsInput(String(p.quick.targetChars));
     setAdvanced(defaultAdvancedOptions(p.platform));
     setPersona(defaultPersonaOptions());
-    setKeywordsInput("");
     setStep("platform");
     setDraft(null);
     setError("");
@@ -110,15 +110,6 @@ export default function NotesSocialPublishModal({
     return () => window.clearTimeout(t);
   }, [copyToast]);
 
-  const personaForPayload = useMemo((): SocialPublishPersonaOptions => {
-    const kw = keywordsInput
-      .split(/[,，\s#]+/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .slice(0, 12);
-    return { ...persona, keywords: kw.length ? kw : persona.keywords };
-  }, [persona, keywordsInput]);
-
   const quickForPayload = useMemo(
     (): SocialPublishQuickOptions => ({
       ...quick,
@@ -130,10 +121,7 @@ export default function NotesSocialPublishModal({
     [quick, targetCharsInput]
   );
 
-  const xhsPersonaValid =
-    platform !== "xiaohongshu" ||
-    (persona.crowds.length > 0 &&
-      (!persona.crowds.includes("custom") || persona.crowdCustom.trim().length > 0));
+  const xhsPersonaValid = platform !== "xiaohongshu" || isXhsPersonaValid(persona);
 
   const handlePlatformPick = (p: SocialPublishPlatform) => {
     setPlatform(p);
@@ -172,7 +160,7 @@ export default function NotesSocialPublishModal({
       const options = buildOptionsPayload(
         quickForPayload,
         advanced,
-        platform === "xiaohongshu" ? personaForPayload : null,
+        platform === "xiaohongshu" ? persona : null,
         platform
       );
       const result = await fetchSocialPublishDraft({
@@ -199,25 +187,13 @@ export default function NotesSocialPublishModal({
     quickForPayload,
     advanced,
     platform,
-    personaForPayload
+    persona
   ]);
 
-  function toggleCrowd(id: SocialPublishPersonaOptions["crowds"][number]) {
-    setPersona((p) => {
-      const has = p.crowds.includes(id);
-      if (has) return { ...p, crowds: p.crowds.filter((c) => c !== id) };
-      if (p.crowds.length >= SOCIAL_PUBLISH_PERSONA_CROWD_MAX) return p;
-      return { ...p, crowds: [...p.crowds, id] };
-    });
-  }
-
-  function toggleAnxiety(id: SocialPublishAnxiety) {
-    setPersona((p) => {
-      const has = p.anxieties.includes(id);
-      if (has) return { ...p, anxieties: p.anxieties.filter((a) => a !== id) };
-      if (p.anxieties.length >= 3) return p;
-      return { ...p, anxieties: [...p.anxieties, id] };
-    });
+  function chipBtn(active: boolean) {
+    return `rounded-full border px-2.5 py-1 text-xs ${
+      active ? "border-brand bg-brand/10 text-brand" : "border-line text-muted"
+    }`;
   }
 
   async function copyPublishPack() {
@@ -320,174 +296,259 @@ export default function NotesSocialPublishModal({
               换平台
             </button>
             {platform === "xiaohongshu" ? (
-              <div className="space-y-3 rounded-xl border border-brand/20 bg-brand/5 p-2.5">
-                <p className="text-xs font-semibold text-ink">用户定位</p>
+              <>
+                <div className="space-y-3 rounded-xl border border-brand/20 bg-brand/5 p-2.5">
+                  <p className="text-xs font-semibold text-ink">目标人群定位</p>
+                  <div>
+                    <p className="mb-1 text-[11px] text-muted">性别</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SOCIAL_PUBLISH_TARGET_GENDER.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          className={chipBtn(persona.gender === o.id)}
+                          onClick={() => setPersona((p) => ({ ...p, gender: o.id }))}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] text-muted">年龄段</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SOCIAL_PUBLISH_TARGET_AGE.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          className={chipBtn(persona.ageRange === o.id)}
+                          onClick={() => setPersona((p) => ({ ...p, ageRange: o.id }))}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] text-muted">地域</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SOCIAL_PUBLISH_TARGET_REGION.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          className={chipBtn(persona.region === o.id)}
+                          onClick={() => setPersona((p) => ({ ...p, region: o.id }))}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] text-muted">职业</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SOCIAL_PUBLISH_TARGET_OCCUPATION.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          className={chipBtn(persona.occupation === o.id)}
+                          onClick={() => setPersona((p) => ({ ...p, occupation: o.id }))}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                    {persona.occupation === "custom" ? (
+                      <input
+                        type="text"
+                        className={`mt-1.5 w-full ${inputCls}`}
+                        placeholder="请填写职业，2～20 字"
+                        maxLength={20}
+                        value={persona.occupationCustom}
+                        onChange={(e) =>
+                          setPersona((p) => ({ ...p, occupationCustom: e.target.value }))
+                        }
+                      />
+                    ) : null}
+                  </div>
+                </div>
                 <div>
-                  <p className="mb-1 text-[11px] text-muted">
-                    目标人群（可多选，最多 {SOCIAL_PUBLISH_PERSONA_CROWD_MAX} 项）
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SOCIAL_PUBLISH_PERSONA_CROWD.map((o) => (
+                  <p className="mb-1.5 text-xs font-medium text-ink">写作人设</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {SOCIAL_PUBLISH_WRITER_VOICE.map((o) => (
                       <button
                         key={o.id}
                         type="button"
-                        className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                          persona.crowds.includes(o.id)
-                            ? "border-brand bg-brand/10 text-brand"
-                            : "border-line text-muted"
+                        className={`rounded-xl border p-2.5 text-left transition ${
+                          persona.writerVoice === o.id
+                            ? "border-brand bg-brand/10"
+                            : "border-line bg-fill/50 hover:border-brand/35"
                         }`}
-                        onClick={() => toggleCrowd(o.id)}
+                        onClick={() => setPersona((p) => ({ ...p, writerVoice: o.id }))}
+                      >
+                        <span className="block text-xs font-medium text-ink">{o.label}</span>
+                        <span className="mt-0.5 block text-[10px] text-muted">{o.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-ink">字数</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SOCIAL_PUBLISH_CHARS_PRESETS.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        className={chipBtn(quick.targetCharsPreset === o.id)}
+                        onClick={() => {
+                          if (o.id === "custom") {
+                            setQuick((q) => ({ ...q, targetCharsPreset: "custom" }));
+                            return;
+                          }
+                          setQuick((q) => ({
+                            ...q,
+                            targetCharsPreset: o.id,
+                            targetChars: o.chars
+                          }));
+                          setTargetCharsInput(String(o.chars));
+                        }}
                       >
                         {o.label}
                       </button>
                     ))}
                   </div>
-                  {persona.crowds.includes("custom") ? (
+                  {quick.targetCharsPreset === "custom" ? (
+                    <label className="mt-2 block text-[11px] text-ink">
+                      自定义字数
+                      <input
+                        type="number"
+                        min={SOCIAL_TARGET_CHARS_MIN}
+                        max={SOCIAL_TARGET_CHARS_MAX}
+                        className={`mt-1 w-full ${inputCls}`}
+                        value={targetCharsInput}
+                        onChange={(e) => setTargetCharsInput(e.target.value)}
+                        onBlur={commitTargetCharsInput}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            commitTargetCharsInput();
+                          }
+                        }}
+                      />
+                    </label>
+                  ) : (
+                    <p className="mt-1.5 text-[10px] text-muted">当前约 {quick.targetChars} 字</p>
+                  )}
+                </div>
+                <label className="block text-xs font-medium text-ink">
+                  其他要求
+                  <textarea
+                    className={`mt-1.5 min-h-[72px] w-full resize-y ${inputCls}`}
+                    value={persona.otherRequirements}
+                    onChange={(e) =>
+                      setPersona((p) => ({ ...p, otherRequirements: e.target.value }))
+                    }
+                    placeholder="例如：突出对比实验、不要提价格、语气更犀利…"
+                    maxLength={300}
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-ink">这篇主要想</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SOCIAL_PUBLISH_INTENT_OPTIONS.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        className={chipBtn(quick.intent === o.id)}
+                        onClick={() => setQuick((q) => ({ ...q, intent: o.id }))}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-ink">写给谁</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SOCIAL_PUBLISH_AUDIENCE_OPTIONS.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        className={chipBtn(quick.audience === o.id)}
+                        onClick={() => setQuick((q) => ({ ...q, audience: o.id }))}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-ink">目标字数</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SOCIAL_PUBLISH_CHARS_PRESETS.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        className={chipBtn(quick.targetCharsPreset === o.id)}
+                        onClick={() => {
+                          if (o.id === "custom") {
+                            setQuick((q) => ({ ...q, targetCharsPreset: "custom" }));
+                            return;
+                          }
+                          setQuick((q) => ({
+                            ...q,
+                            targetCharsPreset: o.id,
+                            targetChars: o.chars
+                          }));
+                          setTargetCharsInput(String(o.chars));
+                        }}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  {quick.targetCharsPreset === "custom" ? (
+                    <label className="mt-2 block text-[11px] text-ink">
+                      自定义字数
+                      <input
+                        type="number"
+                        min={SOCIAL_TARGET_CHARS_MIN}
+                        max={SOCIAL_TARGET_CHARS_MAX}
+                        className={`mt-1 w-full ${inputCls}`}
+                        value={targetCharsInput}
+                        onChange={(e) => setTargetCharsInput(e.target.value)}
+                        onBlur={commitTargetCharsInput}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            commitTargetCharsInput();
+                          }
+                        }}
+                      />
+                    </label>
+                  ) : (
+                    <p className="mt-1.5 text-[10px] text-muted">当前约 {quick.targetChars} 字</p>
+                  )}
+                </div>
+                <details className="rounded-lg border border-line/80 bg-fill/30 px-2.5 py-2">
+                  <summary className="cursor-pointer text-xs font-medium text-ink">高级选项</summary>
+                  <label className="mt-2 block text-[11px] text-ink">
+                    补充说明（可选）
                     <input
                       type="text"
-                      className={`mt-1.5 w-full ${inputCls}`}
-                      placeholder="自定义人群，2～12 字"
-                      maxLength={24}
-                      value={persona.crowdCustom}
-                      onChange={(e) => setPersona((p) => ({ ...p, crowdCustom: e.target.value }))}
+                      className={`mt-1 w-full ${inputCls}`}
+                      value={advanced.userNote}
+                      onChange={(e) => setAdvanced((a) => ({ ...a, userNote: e.target.value }))}
+                      placeholder="例如：突出对比、不要提价格"
+                      maxLength={200}
                     />
-                  ) : null}
-                </div>
-                <div>
-                  <p className="mb-1 text-[11px] text-muted">核心焦虑（最多 3 项）</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SOCIAL_PUBLISH_ANXIETY_OPTIONS.map((o) => (
-                      <button
-                        key={o.id}
-                        type="button"
-                        className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                          persona.anxieties.includes(o.id)
-                            ? "border-brand bg-brand/10 text-brand"
-                            : "border-line text-muted"
-                        }`}
-                        onClick={() => toggleAnxiety(o.id)}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <label className="block text-[11px] text-ink">
-                  文案关键词（逗号分隔，将融入标题与开头）
-                  <input
-                    type="text"
-                    className={`mt-1 w-full ${inputCls}`}
-                    value={keywordsInput}
-                    onChange={(e) => setKeywordsInput(e.target.value)}
-                    placeholder="如：敏感肌, 防晒, 平价"
-                  />
-                </label>
-              </div>
-            ) : null}
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-ink">这篇主要想</p>
-              <div className="flex flex-wrap gap-1.5">
-                {SOCIAL_PUBLISH_INTENT_OPTIONS.map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    className={`rounded-full border px-2.5 py-1 text-xs ${
-                      quick.intent === o.id
-                        ? "border-brand bg-brand/10 text-brand"
-                        : "border-line text-muted"
-                    }`}
-                    onClick={() => setQuick((q) => ({ ...q, intent: o.id }))}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-ink">写给谁</p>
-              <div className="flex flex-wrap gap-1.5">
-                {SOCIAL_PUBLISH_AUDIENCE_OPTIONS.map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    className={`rounded-full border px-2.5 py-1 text-xs ${
-                      quick.audience === o.id
-                        ? "border-brand bg-brand/10 text-brand"
-                        : "border-line text-muted"
-                    }`}
-                    onClick={() => setQuick((q) => ({ ...q, audience: o.id }))}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-ink">目标字数</p>
-              <div className="flex flex-wrap gap-1.5">
-                {SOCIAL_PUBLISH_CHARS_PRESETS.map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    className={`rounded-full border px-2.5 py-1 text-xs ${
-                      quick.targetCharsPreset === o.id
-                        ? "border-brand bg-brand/10 text-brand"
-                        : "border-line text-muted"
-                    }`}
-                    onClick={() => {
-                      if (o.id === "custom") {
-                        setQuick((q) => ({ ...q, targetCharsPreset: "custom" }));
-                        return;
-                      }
-                      setQuick((q) => ({
-                        ...q,
-                        targetCharsPreset: o.id,
-                        targetChars: o.chars
-                      }));
-                      setTargetCharsInput(String(o.chars));
-                    }}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-              {quick.targetCharsPreset === "custom" ? (
-                <label className="mt-2 block text-[11px] text-ink">
-                  自定义字数
-                  <input
-                    type="number"
-                    min={SOCIAL_TARGET_CHARS_MIN}
-                    max={SOCIAL_TARGET_CHARS_MAX}
-                    className={`mt-1 w-full ${inputCls}`}
-                    value={targetCharsInput}
-                    onChange={(e) => setTargetCharsInput(e.target.value)}
-                    onBlur={commitTargetCharsInput}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        commitTargetCharsInput();
-                      }
-                    }}
-                  />
-                </label>
-              ) : (
-                <p className="mt-1.5 text-[10px] text-muted">当前约 {quick.targetChars} 字</p>
-              )}
-            </div>
-            <details className="rounded-lg border border-line/80 bg-fill/30 px-2.5 py-2">
-              <summary className="cursor-pointer text-xs font-medium text-ink">高级选项</summary>
-              <label className="mt-2 block text-[11px] text-ink">
-                补充说明（可选）
-                <input
-                  type="text"
-                  className={`mt-1 w-full ${inputCls}`}
-                  value={advanced.userNote}
-                  onChange={(e) => setAdvanced((a) => ({ ...a, userNote: e.target.value }))}
-                  placeholder="例如：突出对比、不要提价格"
-                  maxLength={200}
-                />
-              </label>
-            </details>
+                  </label>
+                </details>
+              </>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
