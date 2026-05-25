@@ -9,35 +9,9 @@ import logging
 import re
 from typing import Any
 
-from .provider_router import invoke_llm_chat_messages_deepseek_only
-from .social_xhs import build_persona_prompt_block, finalize_xhs_pack
+from .social_llm_utils import invoke_social_llm, normalize_tags, parse_json_object
 
 logger = logging.getLogger(__name__)
-
-
-def _strip_code_fence(text: str) -> str:
-    t = (text or "").strip()
-    t = re.sub(r"^```(?:json)?\s*", "", t, flags=re.IGNORECASE)
-    t = re.sub(r"\s*```\s*$", "", t)
-    return t.strip()
-
-
-def _parse_json_object(raw: str) -> dict[str, Any]:
-    t = _strip_code_fence(raw)
-    i = t.find("{")
-    j = t.rfind("}")
-    if i < 0 or j <= i:
-        raise ValueError("no_json_object")
-    return json.loads(t[i : j + 1])
-
-
-def _normalize_tags(tags: Any) -> list[str]:
-    if isinstance(tags, list):
-        return [str(x).strip() for x in tags if str(x).strip()][:12]
-    if isinstance(tags, str) and tags.strip():
-        parts = re.split(r"[,，\s#]+", tags.strip())
-        return [p for p in parts if p][:12]
-    return []
 
 
 def condense_podcast_script_for_social(raw: str, max_chars: int = 12000) -> str:
@@ -77,19 +51,6 @@ def _fallback_pack(platform: str) -> dict[str, Any]:
     }
 
 
-def _invoke_social_llm(system: str, user: str) -> tuple[str, None]:
-    """自媒体爆款文案：固定 DeepSeek（DEEPSEEK_API_KEY），不回退 MiniMax。"""
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ]
-    return invoke_llm_chat_messages_deepseek_only(
-        messages,
-        temperature=0.65,
-        timeout_sec=120,
-    )
-
-
 def generate_viral_social_copy(
     podcast_script: str,
     *,
@@ -106,6 +67,8 @@ def generate_viral_social_copy(
         raise RuntimeError("empty_script_after_condense")
 
     if platform == "xiaohongshu":
+        from .social_xhs import build_persona_prompt_block, finalize_xhs_pack
+
         persona_block = build_persona_prompt_block({})
         system = f"""你是小红书头部 MCN 内容总监。用户会给你一期播客口播底稿（已去掉 Speaker 前缀）。
 你必须把材料**重写**为工业级小红书笔记 JSON，而不是照抄。
@@ -117,9 +80,9 @@ def generate_viral_social_copy(
 只输出 JSON，无 markdown。"""
 
         user = f"请根据播客底稿重写为上述 JSON。\n\n【底稿】\n{condensed}"
-        raw, trace_id = _invoke_social_llm(system, user)
+        raw, trace_id = invoke_social_llm(system, user)
         try:
-            data = _parse_json_object(raw)
+            data = parse_json_object(raw)
         except (json.JSONDecodeError, ValueError) as exc:
             logger.warning("viral_copy xhs json failed: %s", exc)
             fb = _fallback_pack(platform)
@@ -159,11 +122,11 @@ def generate_viral_social_copy(
         f"【底稿】\n{condensed}"
     )
 
-    raw, trace_id = _invoke_social_llm(system, user)
+    raw, trace_id = invoke_social_llm(system, user)
 
     data: dict[str, Any]
     try:
-        data = _parse_json_object(raw)
+        data = parse_json_object(raw)
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning("viral_copy json parse failed, retry once: %s", exc)
         fix_user = (
@@ -172,8 +135,8 @@ def generate_viral_social_copy(
             f"仍基于下列底稿重写（禁止照抄）：\n{condensed[:8000]}"
         )
         try:
-            raw2, _tid2 = _invoke_social_llm(system, fix_user)
-            data = _parse_json_object(raw2)
+            raw2, _tid2 = invoke_social_llm(system, fix_user)
+            data = parse_json_object(raw2)
         except Exception as exc2:
             logger.warning("viral_copy retry failed: %s", exc2)
             data = dict(_fallback_pack(platform))
@@ -181,11 +144,11 @@ def generate_viral_social_copy(
     title = str(data.get("title") or "").strip() or _fallback_pack(platform)["title"]
     theme = str(data.get("theme") or "").strip()
     body = str(data.get("body") or "").strip().replace("\\n\\n", "\n\n").replace("\\n", "\n")
-    tags = _normalize_tags(data.get("tags"))
+    tags = normalize_tags(data.get("tags"))
     interaction = str(data.get("interaction") or "").strip() or "欢迎评论交流～"
 
     if not tags:
-        tags = _normalize_tags(_fallback_pack(platform)["tags"])
+        tags = normalize_tags(_fallback_pack(platform)["tags"])
 
     return {
         "title": title[:120],

@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from .social_compliance import apply_compliance_to_mp_fields
-from .social_viral_copy import _invoke_social_llm, _normalize_tags, _parse_json_object
+from .social_llm_utils import invoke_social_llm, normalize_tags, parse_json_object
 from .social_xhs import build_persona_prompt_block, finalize_xhs_pack
 
 logger = logging.getLogger(__name__)
@@ -149,9 +149,9 @@ def generate_social_publish_draft(
     if platform == "xiaohongshu":
         system = _xhs_system_prompt(opt_block)
         user = f"请根据下列素材重写为上述 JSON。\n\n【素材】\n{raw}"
-        raw_out, trace_id = _invoke_social_llm(system, user)
+        raw_out, trace_id = invoke_social_llm(system, user)
         try:
-            data = _parse_json_object(raw_out)
+            data = parse_json_object(raw_out)
         except (json.JSONDecodeError, ValueError):
             data = dict(_fallback_xhs())
         try:
@@ -178,9 +178,9 @@ def generate_social_publish_draft(
 - cta（可选，文末引导语一段；无则空字符串）"""
 
     user = f"请根据下列素材改写为上述 JSON。\n\n【素材】\n{raw}"
-    raw_out, trace_id = _invoke_social_llm(system, user)
+    raw_out, trace_id = invoke_social_llm(system, user)
     try:
-        data = _parse_json_object(raw_out)
+        data = parse_json_object(raw_out)
     except (json.JSONDecodeError, ValueError):
         data = dict(_fallback_mp())
     title = str(data.get("title") or "").strip()[:120] or _fallback_mp()["title"]

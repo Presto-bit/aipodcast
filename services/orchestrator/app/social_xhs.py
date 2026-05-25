@@ -9,7 +9,7 @@ from .social_compliance import (
     xhs_fields_from_pack,
     xhs_pack_from_compliant_fields,
 )
-from .social_viral_copy import _normalize_tags
+from .social_llm_utils import normalize_tags
 
 _PERSONA_CN = {
     "ingredient": "成分党（看配方、比浓度、理性避雷）",
@@ -186,7 +186,7 @@ def normalize_xhs_llm_data(data: dict[str, Any]) -> dict[str, Any]:
     if not interaction:
         interaction = "觉得有用先马住，评论区聊聊你的看法～"
 
-    tags = _normalize_tags(data.get("tags"))[:8]
+    tags = normalize_tags(data.get("tags"))[:8]
     if len(tags) < 5 and tags:
         pass
     elif len(tags) > 8:
