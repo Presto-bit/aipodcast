@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { IconChevronLeft, IconClipboard } from "../icons";
 import { buildSocialPublishClipboardText, copyGuideLines } from "../../lib/socialPublishCopy";
 import { platformLabel } from "../../lib/socialPublishPresets";
@@ -11,28 +12,35 @@ type Props = {
   onDraftChange: (d: SocialPublishDraft) => void;
   onBack: () => void;
   onClose: () => void;
-  onCopy: () => void;
+  onCopy: () => void | Promise<void>;
 };
 
 const inputCls =
   "w-full rounded-lg border border-line bg-fill p-2 text-sm text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20";
 
 export function NotesSocialPublishStudio({ draft, platform, onDraftChange, onBack, onClose, onCopy }: Props) {
+  const [copyHint, setCopyHint] = useState("");
+
   return (
     <div className="fixed inset-0 z-[540] flex flex-col bg-surface">
-      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-4 py-3">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 text-sm text-brand hover:underline"
-          onClick={onBack}
-        >
-          <IconChevronLeft width={16} height={16} />
-          返回
-        </button>
-        <span className="text-sm font-semibold text-ink">{platformLabel(platform)} · 编辑与预览</span>
-        <button type="button" className="text-sm text-muted hover:text-ink" onClick={onClose}>
-          关闭
-        </button>
+      <header className="flex shrink-0 flex-col gap-1 border-b border-line px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-sm text-brand hover:underline"
+            onClick={onBack}
+          >
+            <IconChevronLeft width={16} height={16} />
+            返回
+          </button>
+          <span className="text-sm font-semibold text-ink">{platformLabel(platform)} · 编辑与预览</span>
+          <button type="button" className="text-sm text-muted hover:text-ink" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+        {"compliance" in draft && draft.compliance ? (
+          <p className="text-center text-[11px] text-muted">{draft.compliance.userMessage}</p>
+        ) : null}
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 lg:grid-cols-2">
@@ -178,11 +186,19 @@ export function NotesSocialPublishStudio({ draft, platform, onDraftChange, onBac
         </div>
       </div>
 
-      <footer className="flex shrink-0 gap-2 border-t border-line p-3">
+      <footer className="flex shrink-0 flex-col gap-2 border-t border-line p-3">
+        {copyHint ? (
+          <p className="text-center text-[11px] font-medium text-brand">{copyHint}</p>
+        ) : null}
         <button
           type="button"
-          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-semibold text-brand-foreground"
-          onClick={onCopy}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-semibold text-brand-foreground"
+          onClick={() => {
+            void (async () => {
+              await onCopy();
+              setCopyHint("已复制发布包，请按右侧指引到平台粘贴");
+            })();
+          }}
         >
           <IconClipboard width={18} height={18} />
           复制发布包

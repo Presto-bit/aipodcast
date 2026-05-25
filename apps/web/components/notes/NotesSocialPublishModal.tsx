@@ -2,32 +2,37 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { IconChevronLeft, IconClipboard, IconX } from "../icons";
-import { fetchSocialPublishDraft, fetchViralCopyForXhs } from "../../lib/socialPublishApi";
+import { fetchSocialPublishDraft } from "../../lib/socialPublishApi";
 import {
   buildOptionsPayload,
+  clampTargetChars,
   defaultAdvancedOptions,
+  defaultPersonaOptions,
+  defaultQuickOptions,
   platformLabel,
+  SOCIAL_PUBLISH_ANXIETY_OPTIONS,
   SOCIAL_PUBLISH_AUDIENCE_OPTIONS,
+  SOCIAL_PUBLISH_CHARS_PRESETS,
   SOCIAL_PUBLISH_INTENT_OPTIONS,
-  SOCIAL_PUBLISH_LENGTH_OPTIONS,
-  summarizeWizardIntent
+  SOCIAL_PUBLISH_PERSONA_CROWD,
+  SOCIAL_PUBLISH_PERSONA_CROWD_MAX,
+  SOCIAL_TARGET_CHARS_MAX,
+  SOCIAL_TARGET_CHARS_MIN,
+  charsFromPreset
 } from "../../lib/socialPublishPresets";
 import { buildSocialPublishClipboardText, copyGuideLines } from "../../lib/socialPublishCopy";
 import { loadSocialPublishPrefs, saveSocialPublishPrefs } from "../../lib/socialPublishStorage";
-import {
-  buildSocialPublishSourceCandidates,
-  notesOnlySourceCandidate,
-  resolveSourceMaterial
-} from "../../lib/socialPublishSources";
+import { buildSocialPublishSourceCandidates, resolveSourceMaterial } from "../../lib/socialPublishSources";
 import type {
   SocialPublishAdvancedOptions,
+  SocialPublishAnxiety,
   SocialPublishDraft,
+  SocialPublishPersonaOptions,
   SocialPublishPlatform,
   SocialPublishQuickOptions,
   SocialPublishSourceCandidate,
   SocialPublishWizardStep
 } from "../../lib/socialPublishTypes";
-import type { WorkItem } from "../../lib/worksTypes";
 import { NotesSocialPublishStudio } from "./NotesSocialPublishStudio";
 
 type AskMsg = { role: string; content: string; supplementContent?: string };
@@ -38,7 +43,6 @@ type Props = {
   notebook: string;
   noteIds: string[];
   askMessages: AskMsg[];
-  works: WorkItem[];
   authHeaders: Record<string, string>;
 };
 
@@ -51,7 +55,6 @@ export default function NotesSocialPublishModal({
   notebook,
   noteIds,
   askMessages,
-  works,
   authHeaders
 }: Props) {
   const prefs = useMemo(() => loadSocialPublishPrefs(), [open]);
@@ -61,7 +64,10 @@ export default function NotesSocialPublishModal({
   const [advanced, setAdvanced] = useState<SocialPublishAdvancedOptions>(() =>
     defaultAdvancedOptions(prefs.platform)
   );
-  const [sourceKey, setSourceKey] = useState("ask_answer");
+  const [persona, setPersona] = useState<SocialPublishPersonaOptions>(() => defaultPersonaOptions());
+  const [keywordsInput, setKeywordsInput] = useState("");
+  const [targetCharsInput, setTargetCharsInput] = useState("600");
+  const [sourceKey, setSourceKey] = useState("notes_only");
   const [draft, setDraft] = useState<SocialPublishDraft | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -69,17 +75,10 @@ export default function NotesSocialPublishModal({
   const [showStudio, setShowStudio] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
 
-  const sourceCandidates = useMemo(() => {
-    const base = buildSocialPublishSourceCandidates({
-      notebook,
-      works,
-      askMessages
-    });
-    if (noteIds.length > 0) {
-      base.push(notesOnlySourceCandidate(noteIds.length));
-    }
-    return base;
-  }, [notebook, works, askMessages, noteIds.length]);
+  const sourceCandidates = useMemo(
+    () => buildSocialPublishSourceCandidates({ noteIds, askMessages }),
+    [noteIds, askMessages]
+  );
 
   const selectedSource = useMemo(
     () => sourceCandidates.find((s) => s.key === sourceKey) || sourceCandidates[0],
@@ -91,19 +90,19 @@ export default function NotesSocialPublishModal({
     const p = loadSocialPublishPrefs();
     setPlatform(p.platform);
     setQuick(p.quick);
+    setTargetCharsInput(String(p.quick.targetChars));
     setAdvanced(defaultAdvancedOptions(p.platform));
+    setPersona(defaultPersonaOptions());
+    setKeywordsInput("");
     setStep("platform");
     setDraft(null);
     setError("");
     setBusy(false);
     setShowStudio(false);
     setShowGuide(false);
-    const rec = buildSocialPublishSourceCandidates({ notebook, works, askMessages }).find(
-      (s) => s.recommended
-    );
-    if (rec) setSourceKey(rec.key);
-    else if (noteIds.length) setSourceKey("notes_only");
-  }, [open, notebook, works, askMessages, noteIds.length]);
+    const rec = buildSocialPublishSourceCandidates({ noteIds, askMessages }).find((s) => s.recommended);
+    setSourceKey(rec?.key || (noteIds.length > 0 ? "notes_only" : "ask_answer"));
+  }, [open, noteIds, askMessages]);
 
   useEffect(() => {
     if (!copyToast) return;
@@ -111,13 +110,50 @@ export default function NotesSocialPublishModal({
     return () => window.clearTimeout(t);
   }, [copyToast]);
 
-  const intentSummary = summarizeWizardIntent(platform, quick);
+  const personaForPayload = useMemo((): SocialPublishPersonaOptions => {
+    const kw = keywordsInput
+      .split(/[,，\s#]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+    return { ...persona, keywords: kw.length ? kw : persona.keywords };
+  }, [persona, keywordsInput]);
+
+  const quickForPayload = useMemo(
+    (): SocialPublishQuickOptions => ({
+      ...quick,
+      targetChars: charsFromPreset(
+        quick.targetCharsPreset,
+        Number(targetCharsInput) || quick.targetChars
+      )
+    }),
+    [quick, targetCharsInput]
+  );
+
+  const xhsPersonaValid =
+    platform !== "xiaohongshu" ||
+    (persona.crowds.length > 0 &&
+      (!persona.crowds.includes("custom") || persona.crowdCustom.trim().length > 0));
 
   const handlePlatformPick = (p: SocialPublishPlatform) => {
     setPlatform(p);
+    const q = defaultQuickOptions(p);
+    setQuick(q);
+    setTargetCharsInput(String(q.targetChars));
     setAdvanced(defaultAdvancedOptions(p));
     setStep("options");
   };
+
+  function commitTargetCharsInput() {
+    const parsed = Number(targetCharsInput);
+    if (Number.isNaN(parsed)) {
+      setTargetCharsInput(String(quick.targetChars));
+      return;
+    }
+    const clamped = clampTargetChars(parsed);
+    setTargetCharsInput(String(clamped));
+    setQuick((q) => ({ ...q, targetChars: clamped }));
+  }
 
   const runGenerate = useCallback(async () => {
     if (!selectedSource) {
@@ -133,40 +169,23 @@ export default function NotesSocialPublishModal({
         authHeaders,
         noteIds
       });
-      const options = buildOptionsPayload(quick, advanced);
-      let result: SocialPublishDraft;
-      if (
-        platform === "xiaohongshu" &&
-        selectedSource.type === "podcast_job" &&
-        selectedSource.jobId &&
-        advanced.useRecommendedBundle
-      ) {
-        try {
-          result = await fetchViralCopyForXhs({
-            sourceJobId: selectedSource.jobId,
-            authHeaders
-          });
-        } catch {
-          result = await fetchSocialPublishDraft({
-            platform,
-            materialText: material,
-            options,
-            sourceType: selectedSource.type,
-            authHeaders
-          });
-        }
-      } else {
-        result = await fetchSocialPublishDraft({
-          platform,
-          materialText: material,
-          options,
-          sourceType: selectedSource.type,
-          authHeaders
-        });
-      }
+      const options = buildOptionsPayload(
+        quickForPayload,
+        advanced,
+        platform === "xiaohongshu" ? personaForPayload : null,
+        platform
+      );
+      const result = await fetchSocialPublishDraft({
+        platform,
+        materialText: material,
+        options,
+        sourceType: selectedSource.type,
+        authHeaders
+      });
       setDraft(result);
-      saveSocialPublishPrefs(platform, quick);
+      saveSocialPublishPrefs(platform, quickForPayload);
       setStep("result");
+      setShowStudio(true);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
       setStep("source");
@@ -177,10 +196,29 @@ export default function NotesSocialPublishModal({
     selectedSource,
     authHeaders,
     noteIds,
-    quick,
+    quickForPayload,
     advanced,
     platform,
+    personaForPayload
   ]);
+
+  function toggleCrowd(id: SocialPublishPersonaOptions["crowds"][number]) {
+    setPersona((p) => {
+      const has = p.crowds.includes(id);
+      if (has) return { ...p, crowds: p.crowds.filter((c) => c !== id) };
+      if (p.crowds.length >= SOCIAL_PUBLISH_PERSONA_CROWD_MAX) return p;
+      return { ...p, crowds: [...p.crowds, id] };
+    });
+  }
+
+  function toggleAnxiety(id: SocialPublishAnxiety) {
+    setPersona((p) => {
+      const has = p.anxieties.includes(id);
+      if (has) return { ...p, anxieties: p.anxieties.filter((a) => a !== id) };
+      if (p.anxieties.length >= 3) return p;
+      return { ...p, anxieties: [...p.anxieties, id] };
+    });
+  }
 
   async function copyPublishPack() {
     if (!draft) return;
@@ -204,7 +242,7 @@ export default function NotesSocialPublishModal({
         onDraftChange={setDraft}
         onBack={() => setShowStudio(false)}
         onClose={onClose}
-        onCopy={() => void copyPublishPack()}
+        onCopy={copyPublishPack}
       />
     );
   }
@@ -281,7 +319,71 @@ export default function NotesSocialPublishModal({
               <IconChevronLeft width={14} height={14} />
               换平台
             </button>
-            <p className="rounded-lg bg-fill/60 px-2.5 py-1.5 text-[11px] text-ink">{intentSummary}</p>
+            {platform === "xiaohongshu" ? (
+              <div className="space-y-3 rounded-xl border border-brand/20 bg-brand/5 p-2.5">
+                <p className="text-xs font-semibold text-ink">用户定位</p>
+                <div>
+                  <p className="mb-1 text-[11px] text-muted">
+                    目标人群（可多选，最多 {SOCIAL_PUBLISH_PERSONA_CROWD_MAX} 项）
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SOCIAL_PUBLISH_PERSONA_CROWD.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                          persona.crowds.includes(o.id)
+                            ? "border-brand bg-brand/10 text-brand"
+                            : "border-line text-muted"
+                        }`}
+                        onClick={() => toggleCrowd(o.id)}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  {persona.crowds.includes("custom") ? (
+                    <input
+                      type="text"
+                      className={`mt-1.5 w-full ${inputCls}`}
+                      placeholder="自定义人群，2～12 字"
+                      maxLength={24}
+                      value={persona.crowdCustom}
+                      onChange={(e) => setPersona((p) => ({ ...p, crowdCustom: e.target.value }))}
+                    />
+                  ) : null}
+                </div>
+                <div>
+                  <p className="mb-1 text-[11px] text-muted">核心焦虑（最多 3 项）</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SOCIAL_PUBLISH_ANXIETY_OPTIONS.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                          persona.anxieties.includes(o.id)
+                            ? "border-brand bg-brand/10 text-brand"
+                            : "border-line text-muted"
+                        }`}
+                        onClick={() => toggleAnxiety(o.id)}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label className="block text-[11px] text-ink">
+                  文案关键词（逗号分隔，将融入标题与开头）
+                  <input
+                    type="text"
+                    className={`mt-1 w-full ${inputCls}`}
+                    value={keywordsInput}
+                    onChange={(e) => setKeywordsInput(e.target.value)}
+                    placeholder="如：敏感肌, 防晒, 平价"
+                  />
+                </label>
+              </div>
+            ) : null}
             <div>
               <p className="mb-1.5 text-xs font-medium text-ink">这篇主要想</p>
               <div className="flex flex-wrap gap-1.5">
@@ -321,23 +423,56 @@ export default function NotesSocialPublishModal({
               </div>
             </div>
             <div>
-              <p className="mb-1.5 text-xs font-medium text-ink">篇幅</p>
+              <p className="mb-1.5 text-xs font-medium text-ink">目标字数</p>
               <div className="flex flex-wrap gap-1.5">
-                {SOCIAL_PUBLISH_LENGTH_OPTIONS.map((o) => (
+                {SOCIAL_PUBLISH_CHARS_PRESETS.map((o) => (
                   <button
                     key={o.id}
                     type="button"
                     className={`rounded-full border px-2.5 py-1 text-xs ${
-                      quick.length === o.id
+                      quick.targetCharsPreset === o.id
                         ? "border-brand bg-brand/10 text-brand"
                         : "border-line text-muted"
                     }`}
-                    onClick={() => setQuick((q) => ({ ...q, length: o.id }))}
+                    onClick={() => {
+                      if (o.id === "custom") {
+                        setQuick((q) => ({ ...q, targetCharsPreset: "custom" }));
+                        return;
+                      }
+                      setQuick((q) => ({
+                        ...q,
+                        targetCharsPreset: o.id,
+                        targetChars: o.chars
+                      }));
+                      setTargetCharsInput(String(o.chars));
+                    }}
                   >
                     {o.label}
                   </button>
                 ))}
               </div>
+              {quick.targetCharsPreset === "custom" ? (
+                <label className="mt-2 block text-[11px] text-ink">
+                  自定义字数
+                  <input
+                    type="number"
+                    min={SOCIAL_TARGET_CHARS_MIN}
+                    max={SOCIAL_TARGET_CHARS_MAX}
+                    className={`mt-1 w-full ${inputCls}`}
+                    value={targetCharsInput}
+                    onChange={(e) => setTargetCharsInput(e.target.value)}
+                    onBlur={commitTargetCharsInput}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitTargetCharsInput();
+                      }
+                    }}
+                  />
+                </label>
+              ) : (
+                <p className="mt-1.5 text-[10px] text-muted">当前约 {quick.targetChars} 字</p>
+              )}
             </div>
             <details className="rounded-lg border border-line/80 bg-fill/30 px-2.5 py-2">
               <summary className="cursor-pointer text-xs font-medium text-ink">高级选项</summary>
@@ -363,7 +498,8 @@ export default function NotesSocialPublishModal({
               </button>
               <button
                 type="button"
-                className="rounded-lg bg-brand px-3 py-2 text-sm text-brand-foreground"
+                className="rounded-lg bg-brand px-3 py-2 text-sm text-brand-foreground disabled:opacity-45"
+                disabled={!xhsPersonaValid}
                 onClick={() => setStep("source")}
               >
                 下一步
@@ -383,9 +519,7 @@ export default function NotesSocialPublishModal({
               改选项
             </button>
             {sourceCandidates.length === 0 ? (
-              <p className="text-sm text-muted">
-                暂无可用素材。请先向资料提问，或生成文章 / 音频概览后再试。
-              </p>
+              <p className="text-sm text-muted">请先勾选左侧参考资料；若要用对话回答，需先向资料提问。</p>
             ) : (
               <>
                 <p className="text-xs text-muted">将主要依据</p>
@@ -448,13 +582,20 @@ export default function NotesSocialPublishModal({
           <div className="mt-8 flex flex-col items-center gap-3 py-6 text-center">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
             <p className="text-sm text-ink">正在按 {platformLabel(platform)} 版式改写…</p>
-            <p className="text-[11px] text-muted">通常 20–40 秒</p>
+            <p className="text-[11px] text-muted">
+              {platform === "xiaohongshu"
+                ? "结构化生成后将在后台自动合规优化"
+                : "通常 20–40 秒"}
+            </p>
           </div>
         ) : null}
 
         {step === "result" && draft ? (
           <div className="mt-4 space-y-3">
             <p className="text-sm font-medium text-success-ink">✓ {platformLabel(platform)} 稿已就绪</p>
+            {"compliance" in draft && draft.compliance ? (
+              <p className="text-[11px] text-muted">{draft.compliance.userMessage}</p>
+            ) : null}
             <div className="max-h-48 overflow-y-auto rounded-xl border border-line bg-fill/30 p-3 text-xs leading-relaxed text-ink">
               {draft.platform === "xiaohongshu" ? (
                 <>

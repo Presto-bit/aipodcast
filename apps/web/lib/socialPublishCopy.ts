@@ -5,7 +5,8 @@ export function buildSocialPublishClipboardText(draft: SocialPublishDraft): stri
     const title = draft.titles[draft.selectedTitleIndex] || draft.titles[0] || "";
     const tags = draft.tags.map((t) => (t.startsWith("#") ? t : `#${t}`)).join(" ");
     const parts = [
-      `【标题】\n${title}`,
+      `【封面标题】\n${draft.coverHook || title}`,
+      draft.opening30 ? `【开头30字】\n${draft.opening30}` : "",
       `【正文】\n${draft.body.trim()}`,
       tags ? `【话题】\n${tags}` : "",
       draft.interaction.trim() ? `【互动】\n${draft.interaction.trim()}` : ""

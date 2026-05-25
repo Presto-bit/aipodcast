@@ -1,5 +1,43 @@
 import { apiErrorMessage } from "./apiError";
-import type { SocialPublishDraft, SocialPublishPlatform } from "./socialPublishTypes";
+import type {
+  SocialPublishCompliance,
+  SocialPublishDraft,
+  SocialPublishPlatform
+} from "./socialPublishTypes";
+
+function parseCompliance(data: Record<string, unknown>): SocialPublishCompliance | undefined {
+  const c = data.compliance;
+  if (!c || typeof c !== "object") return undefined;
+  const row = c as Record<string, unknown>;
+  const status = row.status === "auto_softened" ? "auto_softened" : "passed";
+  return {
+    status,
+    hitCount: Number(row.hit_count ?? row.hitCount ?? 0) || 0,
+    categories: Array.isArray(row.categories) ? row.categories.map((x) => String(x)) : [],
+    userMessage: String(row.user_message ?? row.userMessage ?? "").trim() || "可直接复制发布"
+  };
+}
+
+function mapXhsDraft(data: Record<string, unknown>): SocialPublishDraft {
+  const titles = Array.isArray(data.titles) ? data.titles.map((t) => String(t).trim()).filter(Boolean) : [];
+  const opening30 = String(data.opening_30 ?? data.opening30 ?? "").trim();
+  const body = String(data.body || "").trim();
+  return {
+    platform: "xiaohongshu",
+    titles: titles.length ? titles : [String(data.cover_hook || data.title || "笔记标题")],
+    selectedTitleIndex: 0,
+    coverHook: String(data.cover_hook || "").trim() || undefined,
+    opening30: opening30 || undefined,
+    theme: String(data.theme || ""),
+    body,
+    tags: Array.isArray(data.tags) ? data.tags.map((t) => String(t).trim()).filter(Boolean) : [],
+    interaction: String(data.interaction || ""),
+    coverSuggestions: Array.isArray(data.coverSuggestions)
+      ? data.coverSuggestions.map((t) => String(t).trim()).filter(Boolean)
+      : [],
+    compliance: parseCompliance(data)
+  };
+}
 
 export async function fetchSocialPublishDraft(params: {
   platform: SocialPublishPlatform;
@@ -24,30 +62,19 @@ export async function fetchSocialPublishDraft(params: {
     throw new Error(apiErrorMessage(data, "生成发布稿失败"));
   }
   if (params.platform === "xiaohongshu") {
-    const titles = Array.isArray(data.titles) ? data.titles.map((t) => String(t).trim()).filter(Boolean) : [];
-    return {
-      platform: "xiaohongshu",
-      titles: titles.length ? titles : [String(data.title || "笔记标题")],
-      selectedTitleIndex: 0,
-      theme: String(data.theme || ""),
-      body: String(data.body || ""),
-      tags: Array.isArray(data.tags) ? data.tags.map((t) => String(t).trim()).filter(Boolean) : [],
-      interaction: String(data.interaction || ""),
-      coverSuggestions: Array.isArray(data.coverSuggestions)
-        ? data.coverSuggestions.map((t) => String(t).trim()).filter(Boolean)
-        : []
-    };
+    return mapXhsDraft(data);
   }
   return {
     platform: "wechat_mp",
     title: String(data.title || ""),
     digest: String(data.digest || ""),
     body: String(data.body || ""),
-    cta: String(data.cta || "")
+    cta: String(data.cta || ""),
+    compliance: parseCompliance(data)
   };
 }
 
-/** 播客成片：优先走 viral-copy（已针对口播稿优化） */
+/** 播客成片：走 viral-copy（小红书同样经后台合规终稿） */
 export async function fetchViralCopyForXhs(params: {
   sourceJobId: string;
   authHeaders: Record<string, string>;
@@ -62,15 +89,13 @@ export async function fetchViralCopyForXhs(params: {
   if (!res.ok || data.success === false) {
     throw new Error(apiErrorMessage(data, "生成小红书文案失败"));
   }
+  if (Array.isArray(data.titles)) {
+    return mapXhsDraft(data);
+  }
   const title = String(data.title || "").trim();
-  return {
-    platform: "xiaohongshu",
-    titles: title ? [title, `${title}（备选）`] : ["小红书笔记"],
-    selectedTitleIndex: 0,
-    theme: String(data.theme || ""),
-    body: String(data.body || ""),
-    tags: Array.isArray(data.tags) ? data.tags.map((t) => String(t).trim()).filter(Boolean) : [],
-    interaction: String(data.interaction || ""),
-    coverSuggestions: []
-  };
+  return mapXhsDraft({
+    ...data,
+    titles: title ? [title] : ["小红书笔记"],
+    cover_hook: title
+  });
 }

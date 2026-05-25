@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from .provider_router import invoke_llm_chat_messages_deepseek_only
+from .social_xhs import build_persona_prompt_block, finalize_xhs_pack
 
 logger = logging.getLogger(__name__)
 
@@ -104,12 +105,39 @@ def generate_viral_social_copy(
     if not condensed.strip():
         raise RuntimeError("empty_script_after_condense")
 
-    platform_cn = "小红书" if platform == "xiaohongshu" else "抖音"
-    style_extra = (
-        "语气像闺蜜发笔记：短段落、适度 emoji（全文不超过 6 个）、避免播客腔。"
-        if platform == "xiaohongshu"
-        else "语气像抖音描述：第一句强钩子、短句、可带少量 emoji（不超过 4 个）、避免播客腔。"
-    )
+    if platform == "xiaohongshu":
+        persona_block = build_persona_prompt_block({})
+        system = f"""你是小红书头部 MCN 内容总监。用户会给你一期播客口播底稿（已去掉 Speaker 前缀）。
+你必须把材料**重写**为工业级小红书笔记 JSON，而不是照抄。
+
+{persona_block}
+
+硬性禁止：播客腔开场、Speaker 格式、照抄 18 字以上、绝对化/医疗化/硬引流。
+结构：cover_hook、titles(5)、opening_30(≤30字)、body 或 sections、cta_*、tags(5～8)、coverSuggestions、theme。
+只输出 JSON，无 markdown。"""
+
+        user = f"请根据播客底稿重写为上述 JSON。\n\n【底稿】\n{condensed}"
+        raw, trace_id = _invoke_social_llm(system, user)
+        try:
+            data = _parse_json_object(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.warning("viral_copy xhs json failed: %s", exc)
+            fb = _fallback_pack(platform)
+            data = {
+                "cover_hook": fb["title"],
+                "titles": [fb["title"]],
+                "opening_30": "听完这期，我总结了 3 个关键点",
+                "body": fb["body"],
+                "tags": fb["tags"],
+                "interaction": fb["interaction"],
+                "theme": fb["theme"],
+            }
+        pack = finalize_xhs_pack(data, trace_id=trace_id)
+        pack["title"] = pack.get("cover_hook") or (pack.get("titles") or [""])[0]
+        return pack
+
+    platform_cn = "抖音"
+    style_extra = "语气像抖音描述：第一句强钩子、短句、可带少量 emoji（不超过 4 个）、避免播客腔。"
 
     system = f"""你是{platform_cn}头部 MCN 的内容总监。用户会给你一期播客口播底稿（可能曾是对话轮次，已去掉 Speaker 前缀）。
 你必须把材料**重写**成适合在{platform_cn}发布的「信息流爆款」配套文案，而不是把底稿誊抄或轻微改写。

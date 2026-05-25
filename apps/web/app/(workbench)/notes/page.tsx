@@ -5152,7 +5152,6 @@ export default function NotesPage() {
         notebook={selectedNotebook}
         noteIds={draftSelectedNoteIds}
         askMessages={notesAskMessages}
-        works={podcastWorks}
         authHeaders={getAuthHeaders()}
       />
 

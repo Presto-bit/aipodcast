@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
+from .social_compliance import apply_compliance_to_mp_fields
 from .social_viral_copy import _invoke_social_llm, _normalize_tags, _parse_json_object
+from .social_xhs import build_persona_prompt_block, finalize_xhs_pack
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +23,25 @@ _AUDIENCE_CN = {
     "general": "普通读者",
     "pro": "行业从业者",
 }
-_LENGTH_CN = {
-    "short": "短文（约 300–600 字）",
-    "medium": "中等（约 600–1200 字）",
-    "long": "长文（约 1200 字以上）",
+_LENGTH_CN_LEGACY = {
+    "short": 400,
+    "medium": 600,
+    "long": 1500,
 }
+
+
+def _resolve_target_chars(options: dict[str, Any]) -> int:
+    raw = options.get("target_chars")
+    if isinstance(raw, int) and raw > 0:
+        return min(5000, max(100, raw))
+    if isinstance(raw, float) and raw > 0:
+        return min(5000, max(100, int(raw)))
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return min(5000, max(100, int(raw.strip())))
+    leg = str(options.get("length") or "").strip()
+    return _LENGTH_CN_LEGACY.get(leg, 600)
+
+
 _TONE_CN = {
     "casual": "亲切口语",
     "pro": "专业克制",
@@ -38,7 +53,7 @@ _TONE_CN = {
 def _options_prompt_block(options: dict[str, Any], platform: str) -> str:
     intent = _INTENT_CN.get(str(options.get("intent") or "").strip(), "干货科普")
     audience = _AUDIENCE_CN.get(str(options.get("audience") or "").strip(), "普通读者")
-    length = _LENGTH_CN.get(str(options.get("length") or "").strip(), "中等（约 600–1200 字）")
+    target_chars = _resolve_target_chars(options)
     tone = _TONE_CN.get(str(options.get("tone") or "").strip(), "亲切口语")
     extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
     must = extras.get("mustInclude") if isinstance(extras.get("mustInclude"), list) else []
@@ -49,28 +64,14 @@ def _options_prompt_block(options: dict[str, Any], platform: str) -> str:
         f"【内容目标】{intent}",
         f"【读者】{audience}",
         f"【语气】{tone}",
-        f"【篇幅】{length}",
+        f"【目标字数】约 {target_chars} 字（正文主体，不含标题与话题）",
     ]
     if must:
         lines.append(f"【必须包含】{', '.join(str(x) for x in must[:8])}")
     if avoid:
         lines.append(f"【规避】{', '.join(str(x) for x in avoid[:8])}")
     if platform == "xiaohongshu":
-        note_form = str(extras.get("noteForm") or "image_text").strip()
-        emoji = str(extras.get("emojiLevel") or "medium").strip()
-        interaction = str(extras.get("interaction") or "collect").strip()
-        want_titles = extras.get("wantTitleOptions", True)
-        want_tags = str(extras.get("tagsMode") or "vertical10").strip()
-        want_cover = extras.get("wantCoverSuggestions", True)
-        lines.append(f"【小红书形态】{'图文笔记' if note_form != 'video_caption' else '视频配文'}")
-        lines.append(f"【Emoji】{emoji}")
-        lines.append(f"【互动】{interaction}")
-        if want_titles:
-            lines.append("【标题】请输出 5 个不同类型备选标题（数组 titles）")
-        if want_tags:
-            lines.append("【话题】6～10 个垂类话题词（数组 tags，不带#）")
-        if want_cover:
-            lines.append("【封面】2～3 条首图构图与封面文案建议（数组 coverSuggestions）")
+        lines.append(build_persona_prompt_block(options))
     else:
         mp_type = str(extras.get("mpArticleType") or "headline").strip()
         structure = str(extras.get("mpStructure") or "intro_sections").strip()
@@ -89,11 +90,13 @@ def _options_prompt_block(options: dict[str, Any], platform: str) -> str:
 
 def _fallback_xhs() -> dict[str, Any]:
     return {
-        "titles": ["这篇干货我先收藏了", "3 分钟搞懂重点", "看完省你一小时弯路", "别划走，结尾有彩蛋", "亲测有用的笔记"],
-        "body": "核心内容已帮你压成短段落。\n\n若显示异常，请刷新后重新生成。",
-        "tags": ["成长笔记", "干货分享", "自我提升", "学习打卡", "收藏夹吃灰"],
-        "interaction": "哪一条最有用？评论告诉我～",
-        "coverSuggestions": ["封面大字：干货总结 + 干净书桌背景", "对比图：Before/After 两栏"],
+        "titles": ["打工人熬夜党！百元搞定暗沉，不看亏大"],
+        "cover_hook": "打工人熬夜党！百元搞定暗沉，不看亏大",
+        "opening_30": "你是不是也一到下午就脸垮？",
+        "body": "📌 先说结论：先把作息和防晒稳住。\n\n💡 其次，选温和提亮而不是猛药。\n\n✅ 最后，坚持两周再看变化。",
+        "tags": ["干货分享", "好物分享", "护肤心得", "打工人", "避坑指南"],
+        "interaction": "⭐ 觉得有用先马住～\n\n💬 评论区聊聊你踩过哪些坑？",
+        "coverSuggestions": ["封面大字：熬夜脸急救 + 对比分屏", "书桌前素颜对镜，自然光"],
         "theme": "把资料里的重点整理成可收藏的笔记式摘要。",
     }
 
@@ -105,6 +108,26 @@ def _fallback_mp() -> dict[str, Any]:
         "body": "## 引言\n\n本文根据你勾选的资料整理。\n\n## 核心要点\n\n- 要点一\n- 要点二\n\n## 结语\n\n欢迎收藏，如需完整版可继续阅读相关作品。",
         "cta": "",
     }
+
+
+def _xhs_system_prompt(opt_block: str) -> str:
+    return f"""你是小红书头部 MCN 内容总监。用户会给你一份素材（可能来自对话、文章或播客整理）。
+你必须**重写**为工业级小红书笔记配套文案，而不是照抄素材。
+
+{opt_block}
+
+结构硬性要求：
+1. 封面标题 cover_hook + titles 数组（共 5 个备选，≤28字）：人群/场景 + 痛点 + 解法/情绪价值。
+2. opening_30：正文开头，总字数≤30（含标点），须在一屏内读完。
+3. body 或 sections：干货用总-分-总/序号；种草用场景→问题→转折→效果；每段≤4行，段间 \\n\\n。
+4. cta_interact / cta_save / cta_convert 可分别输出；或合并到 interaction。
+5. tags：5～8 个垂类话题词，不带#。
+6. coverSuggestions：2～3 条封面构图与封面文字建议。
+
+禁止：Speaker 对话格式、连续照抄 18 字以上、绝对化/医疗化/硬引流用语。
+
+只输出一个 JSON 对象，不要 markdown 代码块。键：
+cover_hook, titles, opening_30, body（或 sections 数组）, cta_interact, cta_save, cta_convert, interaction, tags, coverSuggestions, theme"""
 
 
 def generate_social_publish_draft(
@@ -124,55 +147,20 @@ def generate_social_publish_draft(
     opt_block = _options_prompt_block(opts, platform)
 
     if platform == "xiaohongshu":
-        system = f"""你是小红书头部 MCN 内容总监。用户会给你一份素材（可能来自对话、文章或播客整理）。
-你必须**重写**为适合小红书发布的笔记配套文案，而不是照抄素材。
-
-{opt_block}
-
-硬性禁止：
-1. 禁止 Speaker/主持人/嘉宾轮次对话格式。
-2. 禁止连续照搬素材 18 个以上相同汉字。
-3. body 为 2～6 段，段间用 \\n\\n，口语化、可分点，每段不宜超过 4 行。
-
-只输出一个 JSON 对象，不要 markdown 代码块。键：
-- titles（字符串数组，5 个备选标题，每个≤28字）
-- theme（40～100字价值概括，可选展示）
-- body（正文）
-- tags（6～10个话题词，不带#）
-- interaction（一句互动引导）
-- coverSuggestions（2～3条封面构图与封面文字建议）"""
-
+        system = _xhs_system_prompt(opt_block)
         user = f"请根据下列素材重写为上述 JSON。\n\n【素材】\n{raw}"
         raw_out, trace_id = _invoke_social_llm(system, user)
         try:
             data = _parse_json_object(raw_out)
         except (json.JSONDecodeError, ValueError):
             data = dict(_fallback_xhs())
-        titles = data.get("titles")
-        if not isinstance(titles, list) or not titles:
-            t0 = str(data.get("title") or "").strip()
-            titles = [t0] if t0 else _fallback_xhs()["titles"]
-        titles = [str(t).strip()[:120] for t in titles if str(t).strip()][:5]
-        if not titles:
-            titles = _fallback_xhs()["titles"]
-        body = str(data.get("body") or "").strip().replace("\\n\\n", "\n\n").replace("\\n", "\n")
-        if not body:
-            body = _fallback_xhs()["body"]
-        tags = _normalize_tags(data.get("tags")) or _fallback_xhs()["tags"]
-        covers = data.get("coverSuggestions")
-        if not isinstance(covers, list):
-            covers = _fallback_xhs()["coverSuggestions"]
-        covers = [str(c).strip()[:300] for c in covers if str(c).strip()][:3]
-        return {
-            "platform": "xiaohongshu",
-            "titles": titles,
-            "theme": str(data.get("theme") or "").strip()[:500],
-            "body": body[:8000],
-            "tags": tags,
-            "interaction": str(data.get("interaction") or "欢迎评论交流～")[:300],
-            "coverSuggestions": covers or _fallback_xhs()["coverSuggestions"],
-            "trace_id": trace_id,
-        }
+        try:
+            return finalize_xhs_pack(data, options=opts, trace_id=trace_id)
+        except RuntimeError as exc:
+            if str(exc) == "compliance_failed":
+                logger.warning("xhs compliance_failed, using fallback pack")
+                return finalize_xhs_pack(_fallback_xhs(), options=opts, trace_id=trace_id)
+            raise
 
     system = f"""你是微信公众号资深编辑。用户会给你一份素材，请改写为适合公众号图文发布的稿件（非照抄）。
 
@@ -181,13 +169,13 @@ def generate_social_publish_draft(
 要求：
 1. 使用 Markdown：## 小标题、列表、引用块（> ）均可。
 2. 语气符合选项，结构清晰，避免播客口播腔。
-3. 禁止 Speaker 轮次格式。
+3. 禁止 Speaker 轮次格式；禁止绝对化、医疗化承诺、硬引流。
 
 只输出一个 JSON 对象。键：
 - title（≤64字）
 - digest（≤120字，导语摘要）
 - body（Markdown 正文，可含 ## 小节）
-- cta（可选，文末引导语一段，如收听链接说明；无则空字符串）"""
+- cta（可选，文末引导语一段；无则空字符串）"""
 
     user = f"请根据下列素材改写为上述 JSON。\n\n【素材】\n{raw}"
     raw_out, trace_id = _invoke_social_llm(system, user)
@@ -200,11 +188,24 @@ def generate_social_publish_draft(
     body = str(data.get("body") or "").strip().replace("\\n\\n", "\n\n").replace("\\n", "\n")
     if not body:
         body = _fallback_mp()["body"]
+    cta = str(data.get("cta") or "").strip()[:500]
+
+    mp_fields = {"title": title, "digest": digest, "body": body, "cta": cta}
+    try:
+        compliant, compliance = apply_compliance_to_mp_fields(mp_fields)
+        title = compliant.get("title", title)
+        digest = compliant.get("digest", digest)
+        body = compliant.get("body", body)
+        cta = compliant.get("cta", cta)
+    except RuntimeError:
+        compliance = {"status": "passed", "hit_count": 0, "categories": [], "user_message": "合规检查通过"}
+
     return {
         "platform": "wechat_mp",
         "title": title,
         "digest": digest or _fallback_mp()["digest"],
         "body": body[:12000],
-        "cta": str(data.get("cta") or "").strip()[:500],
+        "cta": cta,
+        "compliance": compliance,
         "trace_id": trace_id,
     }
