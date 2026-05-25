@@ -65,6 +65,44 @@ def script_provider() -> str:
     return "minimax"
 
 
+def deepseek_text_config_ok() -> bool:
+    """DeepSeek OpenAI 兼容文本是否已配置（自媒体文案等固定走此路径）。"""
+    return bool(str(os.getenv("DEEPSEEK_API_KEY") or "").strip())
+
+
+def invoke_llm_chat_messages_deepseek_only(
+    messages: list[dict[str, Any]],
+    *,
+    temperature: float = 0.45,
+    timeout_sec: int = 120,
+    max_tokens: int | None = None,
+) -> tuple[str, None]:
+    """
+    纯文本改写（小红书/公众号自媒体稿等）：固定 DeepSeek，不回退 MiniMax。
+    与 TEXT_PROVIDER 环境变量无关。
+    """
+    key = str(os.getenv("DEEPSEEK_API_KEY") or "").strip()
+    base = str(os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
+    model = str(os.getenv("DEEPSEEK_TEXT_MODEL") or "deepseek-v4-flash").strip()
+    if not key:
+        raise RuntimeError("deepseek_api_key_missing")
+    if not base:
+        raise RuntimeError("text_provider_deepseek_config_missing")
+    out = chat_completion_openai_compatible(
+        messages=messages,
+        api_base=base,
+        api_key=key,
+        model=model,
+        temperature=float(temperature),
+        timeout_sec=int(timeout_sec),
+        max_tokens=max_tokens,
+    )
+    text = str(out or "").strip()
+    if not text:
+        raise RuntimeError("openai_compatible_empty_content")
+    return text, None
+
+
 def invoke_llm_chat_messages_with_minimax_fallback(
     messages: list[dict[str, Any]],
     *,

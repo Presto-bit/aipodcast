@@ -26,6 +26,7 @@ import {
 } from "../../../components/icons";
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
 const NotesPodcastRoomModal = dynamic(() => import("../../../components/notes/NotesPodcastRoomModal"));
+const NotesSocialPublishModal = dynamic(() => import("../../../components/notes/NotesSocialPublishModal"));
 const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
     <div
@@ -1109,6 +1110,7 @@ export default function NotesPage() {
   const [showPodcastRoomModal, setShowPodcastRoomModal] = useState(false);
 
   const [showArticleModal, setShowArticleModal] = useState(false);
+  const [showSocialPublishModal, setShowSocialPublishModal] = useState(false);
   const [articleModalStep, setArticleModalStep] = useState<"pick" | "form">("pick");
   const [artKind, setArtKind] = useState<ArtKindKey>("custom");
   const [artLang, setArtLang] = useState("中文");
@@ -3600,6 +3602,23 @@ export default function NotesPage() {
     setShowArticleModal(true);
   }
 
+  function openSocialPublishFlow() {
+    if (sharedBrowse?.access === "read_only") {
+      setError("当前为只读分享笔记本，不可发布到自媒体。");
+      return;
+    }
+    if (!selectedNotebook.trim()) {
+      setError(`发布到自媒体：${NOTES_NEED_NOTEBOOK}`);
+      return;
+    }
+    if (draftSelectedNoteIds.length === 0) {
+      setError(`发布到自媒体：${NOTES_ASK_SOURCE_REQUIRED}`);
+      return;
+    }
+    setError("");
+    setShowSocialPublishModal(true);
+  }
+
   async function pickArticleKind(k: ArtKindKey) {
     setArtKind(k);
     setArticleModalStep("form");
@@ -4476,6 +4495,23 @@ export default function NotesPage() {
                     </span>
                     <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">生成文章</span>
                   </button>
+                  <button
+                    type="button"
+                    disabled={sharedBrowse?.access === "read_only"}
+                    onClick={() => openSocialPublishFlow()}
+                    className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-line bg-gradient-to-br from-fill/90 to-surface px-3 py-2 text-left shadow-soft transition hover:border-brand/35 hover:brightness-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[10.125rem]"
+                  >
+                    <span
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-fill text-ink"
+                      aria-hidden
+                    >
+                      <IconShareNodes width={20} height={20} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold leading-tight text-ink">发布到自媒体</span>
+                      <span className="block text-[10px] leading-tight text-muted">预览 · 复制</span>
+                    </span>
+                  </button>
                 </div>
                 <div className="flex min-w-0 shrink-0 flex-col gap-2">
                   {notebookDigestSummary ? (
@@ -5108,6 +5144,16 @@ export default function NotesPage() {
         notesSourceOwnerUserId={
           sharedBrowse?.access === "edit" && sharedBrowse.ownerUserId ? sharedBrowse.ownerUserId : null
         }
+      />
+
+      <NotesSocialPublishModal
+        open={showSocialPublishModal}
+        onClose={() => setShowSocialPublishModal(false)}
+        notebook={selectedNotebook}
+        noteIds={draftSelectedNoteIds}
+        askMessages={notesAskMessages}
+        works={podcastWorks}
+        authHeaders={getAuthHeaders()}
       />
 
       {showArticleModal ? (

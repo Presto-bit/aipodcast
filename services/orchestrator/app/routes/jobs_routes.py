@@ -78,6 +78,7 @@ from ..schemas import (
     JobCoverDataRequest,
     JobCreateRequest,
     JobResultScriptBodyRequest,
+    SocialPublishDraftRequest,
     SocialViralCopyRequest,
 )
 from ..public_share_listen import (
@@ -96,6 +97,8 @@ from ..share_publish_llm import (
     refine_share_show_notes_with_prompt,
     resolve_script_body_for_share,
 )
+from ..provider_router import deepseek_text_config_ok
+from ..social_publish_draft import generate_social_publish_draft
 from ..social_viral_copy import generate_viral_social_copy
 from ..security import verify_internal_signature
 from ..subscription_manifest import BILLING_MAX_NOTE_REFS
@@ -1619,6 +1622,30 @@ def stream_job_events(job_id: str, request: Request, after_id: int = 0):
     return StreamingResponse(_event_gen(), media_type="text/event-stream")
 
 
+@router.post("/social/publish-draft")
+def social_publish_draft_api(req: SocialPublishDraftRequest, request: Request):
+    _ = _current_user_ref_or_401(request)
+    if not deepseek_text_config_ok():
+        raise HTTPException(status_code=503, detail="服务端未配置 DEEPSEEK_API_KEY")
+    material = (req.material_text or "").strip()
+    if len(material) < 40:
+        raise HTTPException(status_code=400, detail="material_too_short")
+    try:
+        pack = generate_social_publish_draft(
+            material,
+            platform=req.platform,
+            options=req.options if isinstance(req.options, dict) else {},
+        )
+    except RuntimeError as exc:
+        code = str(exc)
+        if code == "material_too_short":
+            raise HTTPException(status_code=400, detail=code) from exc
+        raise HTTPException(status_code=500, detail=code[:500]) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+    return JSONResponse(jsonable_encoder({"success": True, **pack}))
+
+
 @router.post("/social/viral-copy")
 def social_viral_copy_api(req: SocialViralCopyRequest, request: Request):
     _ = _current_user_ref_or_401(request)
@@ -1639,14 +1666,12 @@ def social_viral_copy_api(req: SocialViralCopyRequest, request: Request):
     script = str(result.get("script_text") or result.get("preview") or result.get("script_preview") or "").strip()
     if not script:
         raise HTTPException(status_code=400, detail="source_has_no_script")
-    api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
-    if not api_key:
-        raise HTTPException(status_code=503, detail="服务端未配置 MINIMAX_API_KEY")
+    if not deepseek_text_config_ok():
+        raise HTTPException(status_code=503, detail="服务端未配置 DEEPSEEK_API_KEY")
     try:
         pack = generate_viral_social_copy(
             script,
             platform=req.platform,
-            api_key=api_key,
             subscription_tier=None,
         )
     except Exception as exc:

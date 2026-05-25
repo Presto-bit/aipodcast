@@ -423,6 +423,23 @@ class SocialViralCopyRequest(BaseModel):
         return p
 
 
+class SocialPublishDraftRequest(BaseModel):
+    """知识库「发布到自媒体」：按勾选项将素材改写为可复制发布稿。"""
+
+    platform: str = Field(min_length=1, max_length=24)
+    material_text: str = Field(min_length=40, max_length=50_000)
+    options: dict[str, Any] = Field(default_factory=dict)
+    source_type: str = Field(default="", max_length=32)
+
+    @field_validator("platform")
+    @classmethod
+    def _norm_social_publish_platform(cls, v: str) -> str:
+        p = (v or "").strip().lower()
+        if p not in ("xiaohongshu", "wechat_mp"):
+            raise ValueError("platform_must_be_xiaohongshu_or_wechat_mp")
+        return p
+
+
 class RssPublishRequest(BaseModel):
     channel_id: str = Field(min_length=1, max_length=64)
     job_id: str = Field(min_length=1, max_length=64)

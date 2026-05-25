@@ -1,6 +1,6 @@
 """根据播客文稿生成社交平台「爆款」结构化文案（小红书 / 抖音）。
 
-使用独立 Chat 补全（非 build_script 播客管线），避免模型按对话稿输出。
+使用 DeepSeek OpenAI 兼容 Chat（固定，不回退 MiniMax），非 build_script 播客管线。
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import logging
 import re
 from typing import Any
 
-from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
+from .provider_router import invoke_llm_chat_messages_deepseek_only
 
 logger = logging.getLogger(__name__)
 
@@ -76,16 +76,15 @@ def _fallback_pack(platform: str) -> dict[str, Any]:
     }
 
 
-def _invoke_social_llm(system: str, user: str, api_key: str | None) -> tuple[str, str | None]:
-    """与脚本/笔记问答一致：TEXT_PROVIDER=deepseek|qwen 时先 OpenAI 兼容 Chat，失败再 MiniMax。"""
+def _invoke_social_llm(system: str, user: str) -> tuple[str, None]:
+    """自媒体爆款文案：固定 DeepSeek（DEEPSEEK_API_KEY），不回退 MiniMax。"""
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    return invoke_llm_chat_messages_with_minimax_fallback(
+    return invoke_llm_chat_messages_deepseek_only(
         messages,
         temperature=0.65,
-        api_key=api_key,
         timeout_sec=120,
     )
 
@@ -94,7 +93,6 @@ def generate_viral_social_copy(
     podcast_script: str,
     *,
     platform: str,
-    api_key: str | None,
     subscription_tier: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -133,7 +131,7 @@ def generate_viral_social_copy(
         f"【底稿】\n{condensed}"
     )
 
-    raw, trace_id = _invoke_social_llm(system, user, api_key)
+    raw, trace_id = _invoke_social_llm(system, user)
 
     data: dict[str, Any]
     try:
@@ -146,10 +144,8 @@ def generate_viral_social_copy(
             f"仍基于下列底稿重写（禁止照抄）：\n{condensed[:8000]}"
         )
         try:
-            raw2, tid2 = _invoke_social_llm(system, fix_user, api_key)
+            raw2, _tid2 = _invoke_social_llm(system, fix_user)
             data = _parse_json_object(raw2)
-            if tid2:
-                trace_id = tid2
         except Exception as exc2:
             logger.warning("viral_copy retry failed: %s", exc2)
             data = dict(_fallback_pack(platform))
