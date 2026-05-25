@@ -12,20 +12,9 @@ from .social_llm_utils import format_hashtag_line
 
 logger = logging.getLogger(__name__)
 
-# (pattern, category, replacement) — 按顺序替换，pattern 可为简单子串（小写匹配）
-_RULE_REPLACEMENTS: list[tuple[str, str, str]] = [
-    ("最好", "absolute", "我个人觉得不错"),
-    ("最佳", "absolute", "比较出彩"),
-    ("第一", "absolute", "名列前茅"),
-    ("顶级", "absolute", "高口碑"),
-    ("100%", "absolute", "很大比例"),
-    ("绝对", "absolute", "比较"),
-    ("根治", "medical", "改善感受"),
-    ("治愈", "medical", "缓解"),
-    ("疗效", "medical", "使用感受"),
-    ("治疗", "medical", "护理"),
-    ("药效", "medical", "成分表现"),
-    ("加微信", "drainage", "主页合集"),
+# 明确违禁短语：整段匹配后替换（不误伤正常用语）
+_LITERAL_RULES: list[tuple[str, str, str]] = [
+    ("加微信", "drainage", "主页查看"),
     ("加v", "drainage", "主页看看"),
     ("加V", "drainage", "主页看看"),
     ("私信领取", "drainage", "评论区交流"),
@@ -34,11 +23,39 @@ _RULE_REPLACEMENTS: list[tuple[str, str, str]] = [
     ("扫码领取", "drainage", "戳主页"),
     ("vx", "drainage", ""),
     ("v信", "drainage", ""),
+    ("根治", "medical", "改善感受"),
+    ("治愈", "medical", "缓解"),
+    ("疗效", "medical", "使用感受"),
+    ("治疗", "medical", "护理"),
+    ("药效", "medical", "成分表现"),
     ("三天变白", "exaggeration", "坚持一段时间更有感"),
-    (" garantee", "exaggeration", ""),
     ("保证治愈", "exaggeration", "因人而异"),
     ("必瘦", "exaggeration", "更有线条感"),
-    ("最强", "absolute", "很能打"),
+]
+
+# 绝对化/夸大：仅正则匹配典型宣传句式（不匹配「第一时间」「第一步」等）
+_ABSOLUTE_REGEX_RULES: list[tuple[str, str, str]] = [
+    (r"最好的", "absolute", "很不错的"),
+    (r"最佳的", "absolute", "很出彩的"),
+    (r"最强的", "absolute", "很能打的"),
+    (r"顶级的", "absolute", "高口碑的"),
+    (r"100\s*%", "absolute", "大部分"),
+    (r"绝对化", "absolute", "比较"),
+    (r"(?:全网|行业|销量|口碑|TOP)\s*第一(?:名|位)?", "absolute", "表现亮眼"),
+    (r"第一(?:名|位)(?![\u4e00-\u9fff])", "absolute", "表现亮眼"),
+    (r"NO\.?\s*1", "absolute", "人气很高"),
+]
+
+# 扫描用：合并字面关键词与正则（仅用于命中检测）
+_SCAN_LITERAL_KEYWORDS: list[tuple[str, str]] = [
+    ("最好的", "absolute"),
+    ("最佳的", "absolute"),
+    ("最强的", "absolute"),
+    ("顶级的", "absolute"),
+    ("100%", "absolute"),
+    ("绝对", "absolute"),
+    ("第一", "absolute"),
+    *((p, c) for p, c, _ in _LITERAL_RULES),
 ]
 
 _SAFE_CTA_INTERACT = "姐妹们评论区聊聊你的体验～"
@@ -82,23 +99,51 @@ def scan_text(text: str, field_name: str = "text") -> list[ComplianceHit]:
     lower = raw.lower()
     hits: list[ComplianceHit] = []
     seen: set[tuple[str, str]] = set()
-    for pattern, category, suggestion in _RULE_REPLACEMENTS:
-        p_low = pattern.lower()
-        if p_low not in lower and pattern not in raw:
+
+    for pattern, category in _SCAN_LITERAL_KEYWORDS:
+        if pattern.lower() not in lower and pattern not in raw:
             continue
         key = (field_name, pattern)
         if key in seen:
             continue
         seen.add(key)
-        hits.append(
-            ComplianceHit(
-                field=field_name,
-                span=pattern,
-                category=category,
-                suggestion=suggestion,
-            )
-        )
+        hits.append(ComplianceHit(field=field_name, span=pattern, category=category, suggestion=""))
+
+    for regex, category, _repl in _ABSOLUTE_REGEX_RULES:
+        m = re.search(regex, raw, flags=re.IGNORECASE)
+        if not m:
+            continue
+        span = m.group(0)
+        key = (field_name, span)
+        if key in seen:
+            continue
+        seen.add(key)
+        hits.append(ComplianceHit(field=field_name, span=span, category=category, suggestion=""))
+
     return hits
+
+
+def _soften_text(text: str, *, apply_absolute: bool = True) -> tuple[str, int]:
+    """规则软化：字面短语全量替换；绝对化仅按正则；话题标签应设 apply_absolute=False。"""
+    out = str(text or "")
+    n = 0
+
+    for pattern, _cat, repl in _LITERAL_RULES:
+        if pattern not in out:
+            continue
+        out = out.replace(pattern, repl)
+        n += 1
+
+    if apply_absolute:
+        for regex, _cat, repl in _ABSOLUTE_REGEX_RULES:
+            new_out, subs = re.subn(regex, repl, out, count=0, flags=re.IGNORECASE)
+            if subs:
+                out = new_out
+                n += subs
+
+    out = re.sub(r" {2,}", " ", out)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out, n
 
 
 def scan_xhs_fields(fields: dict[str, str]) -> ComplianceScanResult:
@@ -110,27 +155,16 @@ def scan_xhs_fields(fields: dict[str, str]) -> ComplianceScanResult:
 
 
 def rule_soften_text(text: str) -> tuple[str, int]:
-    out = str(text or "")
-    n = 0
-    for pattern, _cat, repl in _RULE_REPLACEMENTS:
-        if pattern in out:
-            out = out.replace(pattern, repl, 1)
-            n += 1
-        elif pattern.lower() in out.lower():
-            idx = out.lower().find(pattern.lower())
-            if idx >= 0:
-                out = out[:idx] + repl + out[idx + len(pattern) :]
-                n += 1
-    out = re.sub(r" {2,}", " ", out)
-    out = re.sub(r"\n{3,}", "\n\n", out).strip()
-    return out, n
+    return _soften_text(text, apply_absolute=True)
 
 
 def rule_soften_xhs_fields(fields: dict[str, str]) -> tuple[dict[str, str], int]:
     total = 0
     out: dict[str, str] = {}
     for k, v in fields.items():
-        softened, n = rule_soften_text(v)
+        # 话题词为短标签，不做绝对化正则替换，避免误改「护肤第一」等
+        apply_absolute = not k.startswith("tag_")
+        softened, n = _soften_text(v, apply_absolute=apply_absolute)
         out[k] = softened
         total += n
     return out, total
@@ -184,7 +218,7 @@ def _apply_safe_fallbacks(fields: dict[str, str]) -> dict[str, str]:
     # 去掉空 tag 后由上层补标签
     body = out.get("body", "")
     if scan_text(body, "body"):
-        out["body"] = rule_soften_text(body)[0] or body
+        out["body"] = _soften_text(body, apply_absolute=True)[0] or body
     return out
 
 
