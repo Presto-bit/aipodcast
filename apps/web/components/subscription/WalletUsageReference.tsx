@@ -63,11 +63,12 @@ export function WalletUsageReference({ refData }: Props) {
           </span>
         </li>
         <li>
-          <span className="font-medium text-ink">脚本文本</span>
+          <span className="font-medium text-ink">仅文稿</span>
           <span className="text-muted">：</span>
           {typeof text10k === "number" && Number.isFinite(text10k) ? (
             <span className="text-ink">
-              文本模型成稿按字数，约 <span className="font-medium">{fmtYuanTwoDecimals(text10k)}</span> / 万字（向上取整到分）
+              仅生成文章/脚本、未合成播客成片时，约{" "}
+              <span className="font-medium">{fmtYuanTwoDecimals(text10k)}</span> / 万字（向上取整到分）；播客成片已含在上项分钟价内
             </span>
           ) : (
             <span className="text-muted">—</span>

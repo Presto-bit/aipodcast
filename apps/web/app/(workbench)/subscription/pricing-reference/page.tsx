@@ -3,9 +3,9 @@ import { PricingHero } from "../../../../components/subscription/PricingHero";
 
 const ROWS: { type: string; price: string; features: string }[] = [
   {
-    type: "文本转语音 / TTS",
+    type: "播客成片（音频）",
     price: "0.25 元 / 分钟",
-    features: "生成播客"
+    features: "生成播客；含撰稿、口语润色与合成，不另收文稿万字费"
   },
   {
     type: "语音识别 / ASR",
@@ -13,9 +13,9 @@ const ROWS: { type: string; price: string; features: string }[] = [
     features: "音频剪辑中的转写功能（按输入音频时长计，结算向上取整到分）"
   },
   {
-    type: "文本模型",
+    type: "仅文稿（未成播客）",
     price: "输出 1 元 / 万字",
-    features: "生成文章，播客文案，Shownotes 等需要文本模型输出的内容"
+    features: "仅生成文章/脚本、未走播客成片流程时按成稿字数计费"
   },
   {
     type: "语音克隆",

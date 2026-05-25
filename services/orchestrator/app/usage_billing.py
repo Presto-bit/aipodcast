@@ -10,7 +10,7 @@
   ``MINIMAX_VOICE_DESIGN_REF_CNY_PER_CALL``）。
 - **image-01-live**：0.025 元/张（``MINIMAX_IMAGE_01_LIVE_REF_CNY_PER_IMAGE``）。
 - **MiniMax-M2.7**（元/百万 tokens）：输入 2.1、输出 8.4、缓存读取 0.42、缓存写入 2.625。
-- **DeepSeek V4**（元/百万 tokens，官网定价页）：``deepseek-v4-flash`` 未命中输入 1、输出 2；命中输入 0.2；
+- **DeepSeek V4**（元/百万 tokens，官网定价页）：``deepseek-v4-flash`` 未命中输入 1、输出 2；命中输入 0.02；
   ``deepseek-v4-pro`` 未命中 12、输出 24；``deepseek-chat`` / ``deepseek-reasoner`` 仍兼容且映射至 Flash 档位。
   ``estimate_llm_cost_cny`` 无缓存命中信息，输入按**未命中**计价（偏保守）。
 - **豆包语音转写**：``DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR``（元/小时音频）。
@@ -50,7 +50,7 @@ MINIMAX_M27_CACHE_READ_CNY_PER_MTOK = 0.42
 MINIMAX_M27_CACHE_WRITE_CNY_PER_MTOK = 2.625
 
 # DeepSeek V4 Flash（元/百万 tokens；与官网「模型 & 价格」表一致）
-DEEPSEEK_V4_FLASH_INPUT_CACHE_HIT_CNY_PER_MTOK = 0.2
+DEEPSEEK_V4_FLASH_INPUT_CACHE_HIT_CNY_PER_MTOK = 0.02
 DEEPSEEK_V4_FLASH_INPUT_CACHE_MISS_CNY_PER_MTOK = 1.0
 DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MTOK = 2.0
 # DeepSeek V4 Pro

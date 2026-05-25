@@ -30,9 +30,9 @@ from .alipay_page_pay import alipay_page_pay_ready
 def _wallet_usage_reference() -> dict[str, Any]:
     """
     供前端充值区「扣费参考」：
-    - 成片语音：manifest 分钟单价（元/分钟）；AI 润色不单列，含于该单价。
+    - 成片语音：manifest 分钟单价（元/分钟）；播客撰稿与 AI 润色不单列，含于该单价。
     - 剪辑 ASR：按输入音频时长，元/分钟（与 media_wallet 当前每小时单价及 ASR_WALLET_CENTS_PER_AUDIO_HOUR 环境覆盖一致）。
-    - 脚本文本：按成稿字符数，元/万字（由 TEXT_OUTPUT_CENTS_PER_10K_CHARS 换算）。
+    - 仅文稿（未成播客成片）：按成稿字符数，元/万字（由 TEXT_OUTPUT_CENTS_PER_10K_CHARS 换算）。
     - 克隆：manifest 按次价（分）。
     """
     m30, c30 = PAYG_30_MINUTES, PAYG_30_CENTS

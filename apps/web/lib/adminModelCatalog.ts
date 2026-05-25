@@ -36,7 +36,7 @@ export const ADMIN_MODEL_CATALOG: AdminModelRow[] = [
     category: "文本模型",
     usage: "脚本生成、润色、对话式播客稿等，按提示与输出 token 计量；路由由环境变量 TEXT_PROVIDER 决定。",
     billing:
-      "用量看板按当前 TEXT_PROVIDER 估算：MiniMax 系单价取自代码内与官网一致的 M2/M2.7 等档（元/百万 tokens，含高速档差异），见 https://platform.minimaxi.com/docs/guides/pricing-paygo ；DeepSeek 系按官方 V4 定价页：deepseek-v4-flash 未命中输入 1 / 输出 2（元/百万 tokens），deepseek-v4-pro 未命中 12 / 输出 24；旧名 deepseek-chat / deepseek-reasoner 与 Flash 同档估算，见 https://api-docs.deepseek.com/zh-cn/quick_start/pricing ；Qwen 兼容通道为公开美元价量级折算的保守近似。字符→token 仍用 1600 汉字≈1000 tokens。",
+      "用量看板按当前 TEXT_PROVIDER 估算：MiniMax 系单价取自代码内与官网一致的 M2/M2.7 等档（元/百万 tokens，含高速档差异），见 https://platform.minimaxi.com/docs/guides/pricing-paygo ；DeepSeek 系按官方 V4 定价页：deepseek-v4-flash 命中输入 0.02 / 未命中输入 1 / 输出 2（元/百万 tokens），deepseek-v4-pro 未命中 12 / 输出 24；看板无缓存命中数据时输入按未命中计价；旧名 deepseek-chat / deepseek-reasoner 与 Flash 同档估算，见 https://api-docs.deepseek.com/zh-cn/quick_start/pricing ；Qwen 兼容通道为公开美元价量级折算的保守近似。字符→token 仍用 1600 汉字≈1000 tokens。用户钱包：播客成片仅按分钟扣费（文稿含于分钟价）；仅 script_draft 等未成成片任务按万字扣费。",
     estimatedUnitCostCny: 0.04,
     costField: "llm",
     features: ["podcast_generate", "script_draft", "PolishTtsText（TTS 页润色）", "笔记播客脚本"],

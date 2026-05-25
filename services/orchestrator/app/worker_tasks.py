@@ -965,7 +965,6 @@ def run_media_job(job_id: str) -> dict[str, Any]:
             return {"status": "failed", "error": err}
 
         if job_type in ("podcast_generate", "podcast"):
-            podcast_text_bill_meta: dict[str, Any] = {}
             ref_meta_podcast: dict[str, Any] = {}
             resynth_only = bool(payload.get("resynth_audio_only"))
             forced_script = str(payload.get("resynth_script_text") or "").strip()
@@ -1132,8 +1131,6 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                 )
                 if not ok_a:
                     raise RuntimeError(str((ass_meta or {}).get("message") or "media billing insufficient"))
-            if not (resynth_only and forced_script):
-                podcast_text_bill_meta = _debit_script_text_billing_or_raise(job_id, created_by, script)
 
             try:
 
@@ -1332,16 +1329,6 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                         "播客语音合成未成功，已退回本次套餐外扣费",
                         {"wallet_cents": int(media_bill_meta.get("wallet_cents") or 0)},
                     )
-                if podcast_text_bill_meta:
-                    ph_r = (phone_for_job_created_by(created_by) or "").strip()
-                    if ph_r:
-                        script_text_billing_refund(ph_r, podcast_text_bill_meta)
-                        append_job_event(
-                            job_id,
-                            "log",
-                            "播客流程异常，已退回脚本文本扣费（体验包与/或钱包）",
-                            {"wallet_cents": int(podcast_text_bill_meta.get("wallet_cents") or 0)},
-                        )
                 raise
 
         fail_non_podcast = os.getenv("MEDIA_WORKER_FAIL_ON_NON_PODCAST", "").strip().lower() in (

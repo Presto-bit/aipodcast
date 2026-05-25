@@ -1,10 +1,22 @@
 """usage_billing：Embedding 参考价（0.5 元/百万 tokens）。"""
 
 from app.usage_billing import (
+    DEEPSEEK_V4_FLASH_INPUT_CACHE_HIT_CNY_PER_MTOK,
+    DEEPSEEK_V4_FLASH_INPUT_CACHE_MISS_CNY_PER_MTOK,
+    DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MTOK,
     EMBEDDING_REFERENCE_CNY_PER_MTOK,
     build_usage_event_meta,
+    deepseek_text_estimate_input_output_cny_per_mtok,
     estimate_embedding_cost_cny,
 )
+
+
+def test_deepseek_v4_flash_pricing_constants() -> None:
+    assert DEEPSEEK_V4_FLASH_INPUT_CACHE_HIT_CNY_PER_MTOK == 0.02
+    assert DEEPSEEK_V4_FLASH_INPUT_CACHE_MISS_CNY_PER_MTOK == 1.0
+    assert DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MTOK == 2.0
+    pi, po = deepseek_text_estimate_input_output_cny_per_mtok("deepseek-v4-flash")
+    assert (pi, po) == (1.0, 2.0)
 
 
 def test_embedding_cost_api_backend() -> None:

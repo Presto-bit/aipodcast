@@ -106,11 +106,11 @@ PAYG_MINUTE_PACK_EXPIRE_DAYS = 90
 PAYG_EXPIRE_DAYS = PAYG_MINUTE_PACK_EXPIRE_DAYS
 
 # TTS / 播客成片：超出「月配额分钟」与「按次分钟包」后，钱包按分钟扣费；单价与 30 分钟包一致（分/分钟）。
-# 产品口径：成片语音 ¥0.25/分钟；AI 润色（进 TTS 前的文本模型）不单列，含于该分钟单价。
+# 产品口径：成片语音 ¥0.25/分钟；播客撰稿 + 进 TTS 前口语润色 + 知识库检索等文本成本均含于该分钟单价，不另收万字稿费。
 MEDIA_WALLET_CENTS_PER_MINUTE = max(1, int(PAYG_30_CENTS // max(1, PAYG_30_MINUTES)))
 
-# 脚本/大纲等「模型成稿」：按成稿字符数计费，单位分 / 1 万字符（不足一万按比例向上取整到分）。
-# 产品口径：¥1 / 万字；数值仍可对照 `usage_billing.text_model_pricing_per_million_tokens` 与成本再调。
+# 仅文稿任务（如 script_draft，未成播客成片）：按成稿字符数计费，单位分 / 1 万字符（不足一万按比例向上取整到分）。
+# 产品口径：¥1 / 万字；播客成片（podcast / podcast_generate）不在此列，文稿含于分钟价。
 TEXT_OUTPUT_CENTS_PER_10K_CHARS = 100
 
 # 钱包充值：不设最低金额（仍须为正整数分）；前端推荐 ¥30 / ¥50 / ¥100 / 自定义。

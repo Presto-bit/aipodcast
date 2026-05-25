@@ -103,20 +103,27 @@ def _payload_source_char_est(payload: dict[str, Any]) -> int:
     return len("\n".join(parts))
 
 
+def script_text_billed_separately_for_job_type(job_type: str) -> bool:
+    """
+    是否对模型成稿单独扣「脚本文本」费（体验包字数 + 钱包元/万字）。
+    播客成片（podcast / podcast_generate）文稿费用含在语音分钟价内，不在此列。
+    """
+    jt = (job_type or "").strip().lower()
+    return jt not in ("podcast_generate", "podcast")
+
+
 def estimate_billed_script_chars_upper_bound(job_type: str, payload: dict[str, Any]) -> int:
     """
     入队前预检：脚本成稿字数上界近似（与 worker 脚本阶段同一量级），用于估算文本费用。
+    仅对 ``script_text_billed_separately_for_job_type`` 为真的任务类型返回非零。
     """
     jt = (job_type or "").strip().lower()
-    if jt not in ("script_draft", "podcast_generate", "podcast"):
+    if not script_text_billed_separately_for_job_type(jt):
+        return 0
+    if jt != "script_draft":
         return 0
     intro = str(payload.get("intro_text") or "").strip()
     outro = str(payload.get("outro_text") or str(payload.get("ending_text") or "")).strip()
-    if jt in ("podcast_generate", "podcast"):
-        st = normalize_script_target_input(payload.get("script_target_chars"))
-        base = int(st) if st is not None else _payload_source_char_est(payload)
-        base_chars = max(200, min(50_000, int(base)))
-        return max(1, base_chars + len(intro) + len(outro))
     st = normalize_script_target_input(payload.get("script_target_chars"))
     body = int(st) if st is not None else 800
     body = max(200, min(50_000, body))
@@ -124,7 +131,9 @@ def estimate_billed_script_chars_upper_bound(job_type: str, payload: dict[str, A
 
 
 def preview_wallet_cents_for_text_enqueue(phone: str | None, job_type: str, payload: dict[str, Any]) -> int:
-    """不修改数据库：脚本类任务入队前，超出体验包字数的预估钱包扣费（分）。"""
+    """不修改数据库：仅「单独计文稿」任务入队前，超出体验包字数的预估钱包扣费（分）。"""
+    if not script_text_billed_separately_for_job_type(job_type):
+        return 0
     if not media_wallet_billing_enabled():
         return 0
     p = (phone or "").strip()
