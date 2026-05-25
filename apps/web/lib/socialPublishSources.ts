@@ -73,3 +73,38 @@ export async function resolveSourceMaterial(params: {
   }
   return merged.slice(0, 48_000);
 }
+
+/** 小红书默认素材：勾选资料 + 最近一条足够长的对话回答（若有） */
+export async function resolveXhsDefaultMaterial(params: {
+  noteIds: string[];
+  askMessages: Array<{ role: string; content: string; supplementContent?: string }>;
+  authHeaders: Record<string, string>;
+}): Promise<string> {
+  const parts: string[] = [];
+
+  if (params.noteIds.length > 0) {
+    const notes = await resolveSourceMaterial({
+      source: {
+        key: "notes_only",
+        type: "notes_only",
+        label: "",
+        materialPreview: "",
+        materialText: ""
+      },
+      authHeaders: params.authHeaders,
+      noteIds: params.noteIds
+    });
+    parts.push(`【勾选资料】\n${notes}`);
+  }
+
+  const ask = lastAssistantAnswerText(params.askMessages);
+  if (ask.length >= 40) {
+    parts.push(`【刚才的对话回答】\n${ask.slice(0, 24_000)}`);
+  }
+
+  const merged = parts.join("\n\n---\n\n").trim();
+  if (merged.length < 40) {
+    throw new Error("请先勾选左侧参考资料，或先向资料提问后再发布");
+  }
+  return merged.slice(0, 48_000);
+}

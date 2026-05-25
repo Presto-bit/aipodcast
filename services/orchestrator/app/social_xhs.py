@@ -118,6 +118,28 @@ _EMOJI_STYLE_CN = {
     "title_sparkle": "标题/封面钩子可用 ✨🔥 吸睛",
     "none": "正文与标题尽量不用 emoji",
 }
+_INTEREST_CN = {
+    "beauty": "美妆护肤",
+    "fashion": "穿搭",
+    "food": "美食",
+    "travel": "旅行",
+    "fitness": "健身运动",
+    "home": "家居生活",
+    "tech": "数码科技",
+    "career": "职场成长",
+    "study": "读书学习",
+    "parenting": "母婴育儿",
+    "pets": "萌宠",
+    "photo": "摄影",
+    "coffee": "咖啡探店",
+    "entertainment": "影视娱乐",
+    "music": "音乐",
+    "gaming": "游戏",
+    "finance": "理财",
+    "emotion": "情感",
+    "diy": "手工 DIY",
+    "outdoor": "户外",
+}
 _OCC_CN = {
     "office_worker": "上班族/职场白领",
     "student": "学生",
@@ -187,21 +209,24 @@ def build_persona_prompt_block(options: dict[str, Any]) -> str:
     genders = _persona_id_list(persona, "genders", "gender")
     ages = _persona_id_list(persona, "ageRanges", "ageRange")
     regions = _persona_id_list(persona, "regions", "region")
+    interests = _persona_id_list(persona, "interests", "interest")
     voices = _persona_id_list(persona, "writerVoices", "writerVoice")
 
-    emoji_styles = _persona_id_list(persona, "emojiStyles", "")
-    if genders or ages or regions or voices or emoji_styles:
+    if genders or ages or regions or voices or interests:
         gender_cn = _labels_from_map(genders, _GENDER_CN, "性别不限")
         age_cn = _labels_from_map(ages, _AGE_CN, "全年龄段")
         region_cn = _labels_from_map(regions, _REGION_CN, "地域不限")
+        interest_cn = _labels_from_map(interests, _INTEREST_CN, "")
         occ_cn = _resolve_occupation_labels(persona)
         lines = [
-            "【目标人群定位】（以下维度可多选，须融合为统一读者画像，勿写成割裂列表）",
+            "【目标人群定位】（须融合为统一读者画像）",
             f"性别：{gender_cn}",
             f"年龄段：{age_cn}",
             f"地域：{region_cn}",
-            f"职业：{occ_cn}",
         ]
+        if interest_cn:
+            lines.append(f"兴趣爱好：{interest_cn}（内容垂类与话术贴近以上兴趣）")
+        lines.append(f"职业：{occ_cn}")
         if voices:
             voice_cn = _WRITER_VOICE_CN.get(voices[0], voices[0])
             lines.append(f"【写作人设】{voice_cn}")
@@ -284,6 +309,9 @@ def normalize_xhs_llm_data(data: dict[str, Any]) -> dict[str, Any]:
         titles = [t0[:28], *titles]
     if not titles:
         titles = ["这篇干货我先收藏了"]
+    titles = titles[:3]
+    while len(titles) < 3:
+        titles.append(titles[0] if titles else "笔记标题备选")
 
     opening = _clamp_opening_30(str(data.get("opening_30") or data.get("opening") or ""))
     if not opening:
@@ -308,14 +336,19 @@ def normalize_xhs_llm_data(data: dict[str, Any]) -> dict[str, Any]:
     elif len(tags) > 8:
         tags = tags[:8]
 
-    covers = data.get("coverSuggestions") or data.get("cover_suggestions")
+    covers = (
+        data.get("imageSuggestions")
+        or data.get("image_suggestions")
+        or data.get("coverSuggestions")
+        or data.get("cover_suggestions")
+    )
     cover_list: list[str] = []
     if isinstance(covers, list):
-        cover_list = [str(c).strip()[:300] for c in covers if str(c).strip()][:3]
+        cover_list = [str(c).strip()[:300] for c in covers if str(c).strip()][:4]
 
     theme = str(data.get("theme") or "").strip()[:500]
     return {
-        "titles": titles[:5],
+        "titles": titles[:3],
         "opening_30": opening,
         "body_main": body_main[:7500],
         "interaction": interaction[:500],

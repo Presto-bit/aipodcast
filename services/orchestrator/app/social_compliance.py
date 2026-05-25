@@ -302,19 +302,32 @@ def xhs_pack_from_compliant_fields(
     body_main = str(fields.get("body") or "").strip()
     interaction = str(fields.get("interaction") or "").strip()
 
-    body_parts = [p for p in [opening, body_main, interaction] if p]
+    body_parts = [p for p in [opening, body_main] if p]
     full_body = "\n\n".join(body_parts)
+    if tags:
+        tag_line = " ".join(
+            t if str(t).startswith("#") else f"#{t}" for t in tags[:8] if str(t).strip()
+        )
+        if tag_line:
+            full_body = f"{full_body}\n\n{tag_line}".strip() if full_body else tag_line
+    if interaction:
+        full_body = f"{full_body}\n\n{interaction}".strip() if full_body else interaction
+
+    titles_out = titles[:3] if titles else ["笔记标题"]
+    while len(titles_out) < 3:
+        titles_out.append(titles_out[0] if titles_out else "笔记标题备选")
 
     pack: dict[str, Any] = {
         "platform": "xiaohongshu",
-        "titles": titles[:5] if titles else ["笔记标题"],
-        "cover_hook": titles[0] if titles else "",
+        "titles": titles_out[:3],
+        "cover_hook": titles_out[0] if titles_out else "",
         "opening_30": opening[:30],
         "theme": theme[:500],
         "body": full_body[:8000],
         "tags": tags[:8],
         "interaction": interaction[:300],
-        "coverSuggestions": covers[:3],
+        "imageSuggestions": covers[:4],
+        "coverSuggestions": covers[:4],
         "compliance": compliance,
     }
     if trace_id is not None:

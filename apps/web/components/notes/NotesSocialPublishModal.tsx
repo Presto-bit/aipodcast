@@ -18,8 +18,8 @@ import {
   SOCIAL_PUBLISH_TARGET_GENDER,
   SOCIAL_PUBLISH_TARGET_OCCUPATION,
   SOCIAL_PUBLISH_TARGET_REGION,
+  SOCIAL_PUBLISH_INTERESTS,
   SOCIAL_PUBLISH_WRITER_VOICE,
-  SOCIAL_PUBLISH_EMOJI_STYLE,
   toggleMultiSelect,
   SOCIAL_TARGET_CHARS_MAX,
   SOCIAL_TARGET_CHARS_MIN,
@@ -27,7 +27,12 @@ import {
 } from "../../lib/socialPublishPresets";
 import { buildSocialPublishClipboardText, copyGuideLines } from "../../lib/socialPublishCopy";
 import { loadSocialPublishPrefs, saveSocialPublishPrefs } from "../../lib/socialPublishStorage";
-import { buildSocialPublishSourceCandidates, resolveSourceMaterial } from "../../lib/socialPublishSources";
+import {
+  buildSocialPublishSourceCandidates,
+  lastAssistantAnswerText,
+  resolveSourceMaterial,
+  resolveXhsDefaultMaterial
+} from "../../lib/socialPublishSources";
 import type {
   SocialPublishAdvancedOptions,
   SocialPublishDraft,
@@ -146,19 +151,26 @@ export default function NotesSocialPublishModal({
   }
 
   const runGenerate = useCallback(async () => {
-    if (!selectedSource) {
+    if (platform === "wechat_mp" && !selectedSource) {
       setError("请先选择素材来源");
+      return;
+    }
+    if (platform === "xiaohongshu" && noteIds.length === 0 && !lastAssistantAnswerText(askMessages)) {
+      setError("请先勾选左侧参考资料，或先向资料提问后再发布");
       return;
     }
     setBusy(true);
     setError("");
     setStep("generating");
     try {
-      const material = await resolveSourceMaterial({
-        source: selectedSource,
-        authHeaders,
-        noteIds
-      });
+      const material =
+        platform === "xiaohongshu"
+          ? await resolveXhsDefaultMaterial({ noteIds, askMessages, authHeaders })
+          : await resolveSourceMaterial({
+              source: selectedSource!,
+              authHeaders,
+              noteIds
+            });
       const options = buildOptionsPayload(
         quickForPayload,
         advanced,
@@ -169,7 +181,7 @@ export default function NotesSocialPublishModal({
         platform,
         materialText: material,
         options,
-        sourceType: selectedSource.type,
+        sourceType: platform === "xiaohongshu" ? "notes_and_ask" : selectedSource!.type,
         authHeaders
       });
       setDraft(result);
@@ -178,12 +190,13 @@ export default function NotesSocialPublishModal({
       setShowStudio(true);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
-      setStep("source");
+      setStep(platform === "xiaohongshu" ? "options" : "source");
     } finally {
       setBusy(false);
     }
   }, [
     selectedSource,
+    askMessages,
     authHeaders,
     noteIds,
     quickForPayload,
@@ -196,12 +209,6 @@ export default function NotesSocialPublishModal({
     return `rounded-full border px-2.5 py-1 text-xs ${
       active ? "border-brand bg-brand/10 text-brand" : "border-line text-muted"
     }`;
-  }
-
-  function multiHint(selected: number) {
-    return selected > 0 ? (
-      <span className="ml-1 text-[10px] font-normal text-muted">已选 {selected}</span>
-    ) : null;
   }
 
   async function copyPublishPack() {
@@ -307,13 +314,8 @@ export default function NotesSocialPublishModal({
               <>
                 <div className="space-y-3 rounded-xl border border-brand/20 bg-brand/5 p-2.5">
                   <p className="text-xs font-semibold text-ink">目标人群定位</p>
-                  <p className="text-[10px] text-muted">各维度可多选；选「不限/全年龄」会清空同组其它项</p>
                   <div>
-                    <p className="mb-1 text-[11px] text-ink">
-                      性别
-                      <span className="text-muted">（可多选）</span>
-                      {multiHint(persona.genders.length)}
-                    </p>
+                    <p className="mb-1 text-[11px] text-ink">性别</p>
                     <div className="flex flex-wrap gap-1.5">
                       {SOCIAL_PUBLISH_TARGET_GENDER.map((o) => (
                         <button
@@ -333,11 +335,7 @@ export default function NotesSocialPublishModal({
                     </div>
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] text-ink">
-                      年龄段
-                      <span className="text-muted">（可多选）</span>
-                      {multiHint(persona.ageRanges.length)}
-                    </p>
+                    <p className="mb-1 text-[11px] text-ink">年龄段</p>
                     <div className="flex flex-wrap gap-1.5">
                       {SOCIAL_PUBLISH_TARGET_AGE.map((o) => (
                         <button
@@ -357,11 +355,7 @@ export default function NotesSocialPublishModal({
                     </div>
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] text-ink">
-                      地域
-                      <span className="text-muted">（可多选）</span>
-                      {multiHint(persona.regions.length)}
-                    </p>
+                    <p className="mb-1 text-[11px] text-ink">地域</p>
                     <div className="flex flex-wrap gap-1.5">
                       {SOCIAL_PUBLISH_TARGET_REGION.map((o) => (
                         <button
@@ -381,11 +375,27 @@ export default function NotesSocialPublishModal({
                     </div>
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] text-ink">
-                      职业
-                      <span className="text-muted">（可多选）</span>
-                      {multiHint(persona.occupations.length)}
-                    </p>
+                    <p className="mb-1 text-[11px] text-ink">兴趣爱好</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SOCIAL_PUBLISH_INTERESTS.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          className={chipBtn(persona.interests.includes(o.id))}
+                          onClick={() =>
+                            setPersona((p) => ({
+                              ...p,
+                              interests: toggleMultiSelect(p.interests, o.id)
+                            }))
+                          }
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[11px] text-ink">职业</p>
                     <div className="flex flex-wrap gap-1.5">
                       {SOCIAL_PUBLISH_TARGET_OCCUPATION.map((o) => (
                         <button
@@ -433,33 +443,6 @@ export default function NotesSocialPublishModal({
                       >
                         <span className="block text-xs font-medium text-ink">{o.label}</span>
                         <span className="mt-0.5 block text-[10px] text-muted">{o.hint}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <p className="mb-1.5 text-xs font-medium text-ink">
-                    Emoji 风格
-                    <span className="ml-1 text-[11px] font-normal text-muted">（小红书视觉，可多选）</span>
-                    {multiHint(persona.emojiStyles.length)}
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SOCIAL_PUBLISH_EMOJI_STYLE.map((o) => (
-                      <button
-                        key={o.id}
-                        type="button"
-                        className={chipBtn(persona.emojiStyles.includes(o.id))}
-                        onClick={() =>
-                          setPersona((p) => ({
-                            ...p,
-                            emojiStyles: toggleMultiSelect(p.emojiStyles, o.id, "none")
-                          }))
-                        }
-                      >
-                        <span>{o.label}</span>
-                        {o.id !== "none" ? (
-                          <span className="ml-1 opacity-80">{o.sample}</span>
-                        ) : null}
                       </button>
                     ))}
                   </div>
@@ -632,16 +615,23 @@ export default function NotesSocialPublishModal({
               <button
                 type="button"
                 className="rounded-lg bg-brand px-3 py-2 text-sm text-brand-foreground disabled:opacity-45"
-                disabled={!xhsPersonaValid}
-                onClick={() => setStep("source")}
+                disabled={
+                  platform === "xiaohongshu"
+                    ? !xhsPersonaValid ||
+                      (noteIds.length === 0 && !lastAssistantAnswerText(askMessages))
+                    : false
+                }
+                onClick={() =>
+                  platform === "xiaohongshu" ? void runGenerate() : setStep("source")
+                }
               >
-                下一步
+                {platform === "xiaohongshu" ? "开始生成" : "下一步"}
               </button>
             </div>
           </div>
         ) : null}
 
-        {step === "source" ? (
+        {step === "source" && platform === "wechat_mp" ? (
           <div className="mt-4 space-y-3">
             <button
               type="button"

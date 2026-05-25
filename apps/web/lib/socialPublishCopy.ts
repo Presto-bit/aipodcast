@@ -3,14 +3,16 @@ import type { SocialPublishDraft, SocialPublishPlatform } from "./socialPublishT
 export function buildSocialPublishClipboardText(draft: SocialPublishDraft): string {
   if (draft.platform === "xiaohongshu") {
     const title = draft.titles[draft.selectedTitleIndex] || draft.titles[0] || "";
-    const tags = draft.tags.map((t) => (t.startsWith("#") ? t : `#${t}`)).join(" ");
     const parts = [
-      `【封面标题】\n${draft.coverHook || title}`,
-      draft.opening30 ? `【开头30字】\n${draft.opening30}` : "",
-      `【正文】\n${draft.body.trim()}`,
-      tags ? `【话题】\n${tags}` : "",
-      draft.interaction.trim() ? `【互动】\n${draft.interaction.trim()}` : ""
+      `【标题】\n${draft.coverHook || title}`,
+      draft.opening30 ? `【开头】\n${draft.opening30}` : "",
+      `【正文】\n${draft.body.trim()}`
     ].filter(Boolean);
+    if (draft.imageSuggestions.length) {
+      parts.push(
+        `【图片制作建议】\n${draft.imageSuggestions.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
+      );
+    }
     return parts.join("\n\n---\n\n");
   }
   const parts = [
@@ -27,8 +29,8 @@ export function copyGuideLines(platform: SocialPublishPlatform): string[] {
     return [
       "打开小红书 App",
       "点底部 ＋ → 图文笔记",
-      "粘贴正文，自行添加图片",
-      "填入标题与话题后发布"
+      "粘贴正文（已含话题与互动句）",
+      "按图片建议配图后发布"
     ];
   }
   return [

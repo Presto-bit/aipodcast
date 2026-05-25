@@ -10,7 +10,7 @@ import type {
   SocialPublishTargetRegion,
   SocialPublishTargetOccupation,
   SocialPublishWriterVoice,
-  SocialPublishEmojiStyle
+  SocialPublishInterest
 } from "./socialPublishTypes";
 
 export const SOCIAL_TARGET_CHARS_MIN = 100;
@@ -80,19 +80,32 @@ export const SOCIAL_PUBLISH_WRITER_VOICE: { id: SocialPublishWriterVoice; label:
   { id: "sharp_truth", label: "毒舌人间清醒", hint: "直给结论、反套路" }
 ];
 
-export const SOCIAL_PUBLISH_EMOJI_STYLE: {
-  id: SocialPublishEmojiStyle;
-  label: string;
-  sample: string;
-}[] = [
-  { id: "section_anchor", label: "段首锚点", sample: "📌💡🚨" },
-  { id: "list_markers", label: "清单符号", sample: "✅☑️" },
-  { id: "mood", label: "情绪点缀", sample: "🥹🔥✨" },
-  { id: "title_sparkle", label: "标题吸睛", sample: "✨🔥" },
-  { id: "none", label: "尽量不用", sample: "—" }
+export const SOCIAL_PUBLISH_INTERESTS: { id: SocialPublishInterest; label: string }[] = [
+  { id: "beauty", label: "美妆护肤" },
+  { id: "fashion", label: "穿搭" },
+  { id: "food", label: "美食" },
+  { id: "travel", label: "旅行" },
+  { id: "fitness", label: "健身运动" },
+  { id: "home", label: "家居生活" },
+  { id: "tech", label: "数码科技" },
+  { id: "career", label: "职场成长" },
+  { id: "study", label: "读书学习" },
+  { id: "parenting", label: "母婴育儿" },
+  { id: "pets", label: "萌宠" },
+  { id: "photo", label: "摄影" },
+  { id: "coffee", label: "咖啡探店" },
+  { id: "entertainment", label: "影视娱乐" },
+  { id: "music", label: "音乐" },
+  { id: "gaming", label: "游戏" },
+  { id: "finance", label: "理财" },
+  { id: "emotion", label: "情感" },
+  { id: "diy", label: "手工 DIY" },
+  { id: "outdoor", label: "户外" }
 ];
 
-/** 多选切换；exclusiveId 为「不限/全年龄/不用」类互斥项 */
+export const XHS_TITLE_COUNT = 3;
+
+/** 多选切换；exclusiveId 为「不限/全年龄」类互斥项 */
 export function toggleMultiSelect<T extends string>(
   current: T[],
   id: T,
@@ -110,11 +123,19 @@ export function toggleMultiSelect<T extends string>(
   return next;
 }
 
-export function deriveEmojiLevel(styles: SocialPublishEmojiStyle[]): "none" | "medium" | "rich" {
-  if (!styles.length || styles.includes("none")) return "none";
-  if (styles.length >= 3) return "rich";
-  if (styles.includes("mood") && styles.includes("section_anchor")) return "rich";
-  return "medium";
+export function interestLabels(persona: SocialPublishPersonaOptions): string[] {
+  return persona.interests.map(
+    (id) => SOCIAL_PUBLISH_INTERESTS.find((o) => o.id === id)?.label || id
+  );
+}
+
+export function ensureXhsTitles(titles: string[]): [string, string, string] {
+  const base = titles.map((t) => t.trim()).filter(Boolean);
+  const out = [...base];
+  while (out.length < XHS_TITLE_COUNT) {
+    out.push(out[0] || "笔记标题备选");
+  }
+  return [out[0]!, out[1]!, out[2]!];
 }
 
 export function defaultTargetCharsForPlatform(platform: SocialPublishPlatform): number {
@@ -150,10 +171,10 @@ export function defaultPersonaOptions(): SocialPublishPersonaOptions {
     genders: ["female"],
     ageRanges: ["25_34"],
     regions: ["tier1"],
+    interests: [],
     occupations: ["office_worker"],
     occupationCustom: "",
     writerVoice: "bestie_brother",
-    emojiStyles: ["section_anchor", "list_markers", "mood"],
     otherRequirements: ""
   };
 }
@@ -175,8 +196,7 @@ export function isXhsPersonaValid(persona: SocialPublishPersonaOptions): boolean
     !persona.ageRanges.length ||
     !persona.regions.length ||
     !persona.occupations.length ||
-    !persona.writerVoice ||
-    !persona.emojiStyles.length
+    !persona.writerVoice
   ) {
     return false;
   }
@@ -234,13 +254,14 @@ export function buildOptionsPayload(
             genders: persona.genders,
             ageRanges: persona.ageRanges,
             regions: persona.regions,
+            interests: persona.interests,
+            interestLabels: interestLabels(persona),
             occupations: persona.occupations,
             occupationLabels: occupationLabels(persona),
             occupationCustom: persona.occupations.includes("custom")
               ? persona.occupationCustom.trim()
               : "",
             writerVoice: persona.writerVoice,
-            emojiStyles: persona.emojiStyles,
             otherRequirements: persona.otherRequirements.trim()
           }
         : undefined,
@@ -248,12 +269,7 @@ export function buildOptionsPayload(
       mustInclude: advanced.mustInclude,
       avoid: advanced.avoid,
       noteForm: advanced.noteForm,
-      emojiLevel:
-        platform === "xiaohongshu" && persona
-          ? deriveEmojiLevel(persona.emojiStyles)
-          : advanced.emojiLevel,
-      emojiStyles:
-        platform === "xiaohongshu" && persona ? persona.emojiStyles : undefined,
+      emojiLevel: advanced.emojiLevel,
       interaction: advanced.interaction,
       wantTitleOptions: advanced.wantTitleOptions,
       tagsMode: advanced.tagsMode,

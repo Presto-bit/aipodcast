@@ -1,4 +1,5 @@
 import { apiErrorMessage } from "./apiError";
+import { ensureXhsTitles } from "./socialPublishPresets";
 import type {
   SocialPublishCompliance,
   SocialPublishDraft,
@@ -19,22 +20,26 @@ function parseCompliance(data: Record<string, unknown>): SocialPublishCompliance
 }
 
 function mapXhsDraft(data: Record<string, unknown>): SocialPublishDraft {
-  const titles = Array.isArray(data.titles) ? data.titles.map((t) => String(t).trim()).filter(Boolean) : [];
+  const titlesRaw = Array.isArray(data.titles)
+    ? data.titles.map((t) => String(t).trim()).filter(Boolean)
+    : [];
+  const fallback = String(data.cover_hook || data.title || "笔记标题").trim();
+  const titles = ensureXhsTitles(titlesRaw.length ? titlesRaw : fallback ? [fallback] : []);
   const opening30 = String(data.opening_30 ?? data.opening30 ?? "").trim();
   const body = String(data.body || "").trim();
+  const imageRaw = data.imageSuggestions ?? data.image_suggestions ?? data.coverSuggestions;
+  const imageSuggestions = Array.isArray(imageRaw)
+    ? imageRaw.map((t) => String(t).trim()).filter(Boolean)
+    : [];
   return {
     platform: "xiaohongshu",
-    titles: titles.length ? titles : [String(data.cover_hook || data.title || "笔记标题")],
+    titles,
     selectedTitleIndex: 0,
     coverHook: String(data.cover_hook || "").trim() || undefined,
     opening30: opening30 || undefined,
     theme: String(data.theme || ""),
     body,
-    tags: Array.isArray(data.tags) ? data.tags.map((t) => String(t).trim()).filter(Boolean) : [],
-    interaction: String(data.interaction || ""),
-    coverSuggestions: Array.isArray(data.coverSuggestions)
-      ? data.coverSuggestions.map((t) => String(t).trim()).filter(Boolean)
-      : [],
+    imageSuggestions,
     compliance: parseCompliance(data)
   };
 }

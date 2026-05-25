@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { IconChevronLeft, IconClipboard } from "../icons";
 import { buildSocialPublishClipboardText, copyGuideLines } from "../../lib/socialPublishCopy";
-import { platformLabel } from "../../lib/socialPublishPresets";
+import { ensureXhsTitles, platformLabel } from "../../lib/socialPublishPresets";
 import type { SocialPublishDraft, SocialPublishPlatform } from "../../lib/socialPublishTypes";
 
 type Props = {
@@ -48,23 +48,25 @@ export function NotesSocialPublishStudio({ draft, platform, onDraftChange, onBac
           {draft.platform === "xiaohongshu" ? (
             <div className="space-y-3">
               <label className="block text-xs font-medium text-ink">
-                标题（点选主标题）
+                标题（3 选 1）
                 <div className="mt-1 space-y-1">
                   {draft.titles.map((t, i) => (
-                    <label key={`${i}-${t.slice(0, 12)}`} className="flex gap-2 text-sm">
+                    <label key={`title-${i}`} className="flex gap-2 text-sm">
                       <input
                         type="radio"
                         checked={draft.selectedTitleIndex === i}
                         onChange={() => onDraftChange({ ...draft, selectedTitleIndex: i })}
                       />
+                      <span className="mt-2 shrink-0 text-[10px] text-muted">备选 {i + 1}</span>
                       <input
                         type="text"
                         className={inputCls}
                         value={t}
+                        maxLength={28}
                         onChange={(e) => {
-                          const titles = [...draft.titles];
-                          titles[i] = e.target.value;
-                          onDraftChange({ ...draft, titles });
+                          const next = [...draft.titles] as [string, string, string];
+                          next[i] = e.target.value;
+                          onDraftChange({ ...draft, titles: ensureXhsTitles(next) });
                         }}
                       />
                     </label>
@@ -73,35 +75,54 @@ export function NotesSocialPublishStudio({ draft, platform, onDraftChange, onBac
               </label>
               <label className="block text-xs font-medium text-ink">
                 正文
+                <span className="ml-1 font-normal text-muted">（已含话题与互动句）</span>
                 <textarea
-                  className={`mt-1 min-h-40 ${inputCls}`}
+                  className={`mt-1 min-h-48 ${inputCls}`}
                   value={draft.body}
                   onChange={(e) => onDraftChange({ ...draft, body: e.target.value })}
                 />
               </label>
-              <label className="block text-xs font-medium text-ink">
-                话题（逗号分隔）
-                <input
-                  type="text"
-                  className={`mt-1 ${inputCls}`}
-                  value={draft.tags.join("，")}
-                  onChange={(e) =>
-                    onDraftChange({
-                      ...draft,
-                      tags: e.target.value.split(/[,，\s#]+/).filter(Boolean)
-                    })
-                  }
-                />
-              </label>
-              <label className="block text-xs font-medium text-ink">
-                互动句
-                <input
-                  type="text"
-                  className={`mt-1 ${inputCls}`}
-                  value={draft.interaction}
-                  onChange={(e) => onDraftChange({ ...draft, interaction: e.target.value })}
-                />
-              </label>
+              <div>
+                <p className="text-xs font-medium text-ink">图片制作建议</p>
+                <p className="mt-0.5 text-[10px] text-muted">发布配图时可参考，显示在正文之后</p>
+                <div className="mt-1.5 space-y-2">
+                  {(draft.imageSuggestions.length
+                    ? draft.imageSuggestions
+                    : [""]
+                  ).map((line, i) => (
+                    <input
+                      key={`img-sug-${i}`}
+                      type="text"
+                      className={inputCls}
+                      placeholder={`建议 ${i + 1}`}
+                      value={line}
+                      onChange={(e) => {
+                        const base = draft.imageSuggestions.length
+                          ? [...draft.imageSuggestions]
+                          : [""];
+                        while (base.length <= i) base.push("");
+                        base[i] = e.target.value;
+                        onDraftChange({
+                          ...draft,
+                          imageSuggestions: base.map((s) => s.trim()).filter(Boolean)
+                        });
+                      }}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    className="text-[11px] text-brand hover:underline"
+                    onClick={() =>
+                      onDraftChange({
+                        ...draft,
+                        imageSuggestions: [...draft.imageSuggestions, ""]
+                      })
+                    }
+                  >
+                    + 增加一条建议
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
@@ -158,13 +179,15 @@ export function NotesSocialPublishStudio({ draft, platform, onDraftChange, onBac
                   {draft.titles[draft.selectedTitleIndex] || draft.titles[0]}
                 </p>
                 <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-ink">{draft.body}</p>
-                {draft.tags.length ? (
-                  <p className="mt-3 text-xs text-brand">
-                    {draft.tags.map((t) => (t.startsWith("#") ? t : `#${t}`)).join(" ")}
-                  </p>
-                ) : null}
-                {draft.interaction ? (
-                  <p className="mt-3 text-xs text-muted">{draft.interaction}</p>
+                {draft.imageSuggestions.length ? (
+                  <div className="mt-4 border-t border-line/80 pt-3">
+                    <p className="text-[10px] font-medium text-muted">图片制作建议</p>
+                    <ul className="mt-1.5 list-decimal pl-4 text-[11px] leading-relaxed text-ink/90">
+                      {draft.imageSuggestions.map((s) => (
+                        <li key={s}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
                 ) : null}
               </>
             ) : (

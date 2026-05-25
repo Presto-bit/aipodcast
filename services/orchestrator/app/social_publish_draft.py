@@ -90,13 +90,21 @@ def _options_prompt_block(options: dict[str, Any], platform: str) -> str:
 
 def _fallback_xhs() -> dict[str, Any]:
     return {
-        "titles": ["打工人熬夜党！百元搞定暗沉，不看亏大"],
-        "cover_hook": "打工人熬夜党！百元搞定暗沉，不看亏大",
+        "titles": [
+            "打工人熬夜党！百元搞定暗沉",
+            "熬夜脸急救｜3步稳住状态",
+            "不看亏大！暗沉肌自救笔记",
+        ],
+        "cover_hook": "打工人熬夜党！百元搞定暗沉",
         "opening_30": "你是不是也一到下午就脸垮？",
         "body": "📌 先说结论：先把作息和防晒稳住。\n\n💡 其次，选温和提亮而不是猛药。\n\n✅ 最后，坚持两周再看变化。",
         "tags": ["干货分享", "好物分享", "护肤心得", "打工人", "避坑指南"],
-        "interaction": "⭐ 觉得有用先马住～\n\n💬 评论区聊聊你踩过哪些坑？",
-        "coverSuggestions": ["封面大字：熬夜脸急救 + 对比分屏", "书桌前素颜对镜，自然光"],
+        "interaction": "⭐ 觉得有用先马住～评论区聊聊你踩过哪些坑？",
+        "imageSuggestions": [
+            "封面：大字「熬夜急救」+ 左右脸对比分屏，暖白光",
+            "内页：书桌素颜对镜 3 张连拍，自然窗光",
+            "结尾图：产品平铺 + 手写便签标注步骤序号",
+        ],
         "theme": "把资料里的重点整理成可收藏的笔记式摘要。",
     }
 
@@ -117,17 +125,17 @@ def _xhs_system_prompt(opt_block: str) -> str:
 {opt_block}
 
 结构硬性要求：
-1. 封面标题 cover_hook + titles 数组（共 5 个备选，≤28字）：人群/场景 + 痛点 + 解法/情绪价值。
-2. opening_30：正文开头，总字数≤30（含标点），须在一屏内读完。
-3. body 或 sections：干货用总-分-总/序号；种草用场景→问题→转折→效果；每段≤4行，段间 \\n\\n。
-4. cta_interact / cta_save / cta_convert 可分别输出；或合并到 interaction。
-5. tags：5～8 个垂类话题词，不带#。
-6. coverSuggestions：2～3 条封面构图与封面文字建议。
+1. cover_hook + titles 数组（恰好 3 个备选标题，每个≤28字）：人群/场景 + 痛点 + 解法/情绪价值。
+2. opening_30：正文开头句，总字数≤30（含标点）。
+3. body 或 sections：正文主体（干货/种草结构），段间 \\n\\n；勿把话题与互动句写入 body。
+4. tags：5～8 个垂类话题词，不带#（由系统并入正文末尾）。
+5. interaction：1～2 句互动引导（由系统并入正文末尾）。
+6. imageSuggestions：2～4 条图片制作建议（配图主题、构图、封面大字、色调/道具），供发布者拍图参考，不是封面文案本身。
 
 禁止：Speaker 对话格式、连续照抄 18 字以上、绝对化/医疗化/硬引流用语。
 
 只输出一个 JSON 对象，不要 markdown 代码块。键：
-cover_hook, titles, opening_30, body（或 sections 数组）, cta_interact, cta_save, cta_convert, interaction, tags, coverSuggestions, theme"""
+cover_hook, titles, opening_30, body（或 sections 数组）, interaction, tags, imageSuggestions, theme"""
 
 
 def generate_social_publish_draft(

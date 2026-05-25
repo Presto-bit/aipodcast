@@ -28,22 +28,37 @@ export type SocialPublishWriterVoice =
   | "growth_companion"
   | "sharp_truth";
 
-/** 小红书：Emoji 呈现风格（可多选） */
-export type SocialPublishEmojiStyle =
-  | "section_anchor"
-  | "list_markers"
-  | "mood"
-  | "title_sparkle"
-  | "none";
+/** 小红书：兴趣爱好（可多选，贴近平台垂类） */
+export type SocialPublishInterest =
+  | "beauty"
+  | "fashion"
+  | "food"
+  | "travel"
+  | "fitness"
+  | "home"
+  | "tech"
+  | "career"
+  | "study"
+  | "parenting"
+  | "pets"
+  | "photo"
+  | "coffee"
+  | "entertainment"
+  | "music"
+  | "gaming"
+  | "finance"
+  | "emotion"
+  | "diy"
+  | "outdoor";
 
 export type SocialPublishPersonaOptions = {
   genders: SocialPublishTargetGender[];
   ageRanges: SocialPublishTargetAge[];
   regions: SocialPublishTargetRegion[];
+  interests: SocialPublishInterest[];
   occupations: SocialPublishTargetOccupation[];
   occupationCustom: string;
   writerVoice: SocialPublishWriterVoice;
-  emojiStyles: SocialPublishEmojiStyle[];
   /** 其他要求（替代原高级选项补充说明） */
   otherRequirements: string;
 };
@@ -91,15 +106,16 @@ export type SocialPublishAdvancedOptions = {
 
 export type SocialPublishXhsDraft = {
   platform: "xiaohongshu";
-  titles: string[];
+  /** 固定 3 个备选标题 */
+  titles: [string, string, string];
   selectedTitleIndex: number;
   coverHook?: string;
   opening30?: string;
   theme: string;
+  /** 含开头、正文、话题与互动句（已并入） */
   body: string;
-  tags: string[];
-  interaction: string;
-  coverSuggestions: string[];
+  /** 正文之后的图片制作建议 */
+  imageSuggestions: string[];
   compliance?: SocialPublishCompliance;
 };
 
