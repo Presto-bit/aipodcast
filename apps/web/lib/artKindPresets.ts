@@ -1,42 +1,15 @@
-/** 笔记「生成文章」体裁；含原 Studio 产物（大纲/测验等） */
-export type ArtKindKey =
-  | "custom"
-  | "xiaohongshu"
-  | "brief"
-  | "blog"
-  | "guide"
-  | "outline"
-  | "faq"
-  | "quiz"
-  | "timeline"
-  | "flashcards"
-  | "mindmap";
+/** 笔记「生成文章」体裁 */
+export type ArtKindKey = "custom" | "xiaohongshu" | "brief" | "blog" | "guide";
 
 /** 走后端 note_studio（L0+片摘要），生成后填入文章提词 */
-export const STUDIO_ART_KINDS: ArtKindKey[] = [
-  "outline",
-  "brief",
-  "faq",
-  "quiz",
-  "timeline",
-  "flashcards",
-  "mindmap"
-];
+export const STUDIO_ART_KINDS: ArtKindKey[] = ["brief"];
 
 export function studioTaskForArtKind(k: ArtKindKey): string | null {
   if (STUDIO_ART_KINDS.includes(k)) return k;
   return null;
 }
 
-export function studioResponseToArtText(data: {
-  markdown?: string;
-  timeline?: Array<{ date?: string; event?: string }>;
-}): string {
-  if (Array.isArray(data.timeline) && data.timeline.length > 0) {
-    return data.timeline
-      .map((row) => `- ${row.date?.trim() || "—"} ${row.event?.trim() || ""}`.trim())
-      .join("\n");
-  }
+export function studioResponseToArtText(data: { markdown?: string }): string {
   return String(data.markdown || "").trim();
 }
 
@@ -87,35 +60,5 @@ export const ART_KIND_PRESETS: Record<
     textPrefix:
       "【体裁：指南】请输出可执行的操作指南：按步骤编号，每步说明目的与注意事项，必要时附「常见错误」小节。",
     programName: "笔记文章 · 指南"
-  },
-  outline: {
-    label: "章节大纲",
-    textPrefix: "",
-    programName: "笔记文章 · 大纲"
-  },
-  faq: {
-    label: "FAQ",
-    textPrefix: "",
-    programName: "笔记文章 · FAQ"
-  },
-  quiz: {
-    label: "测验题",
-    textPrefix: "",
-    programName: "笔记文章 · 测验"
-  },
-  timeline: {
-    label: "时间线",
-    textPrefix: "",
-    programName: "笔记文章 · 时间线"
-  },
-  flashcards: {
-    label: "闪卡",
-    textPrefix: "",
-    programName: "笔记文章 · 闪卡"
-  },
-  mindmap: {
-    label: "思维导图",
-    textPrefix: "",
-    programName: "笔记文章 · 思维导图"
   }
 };

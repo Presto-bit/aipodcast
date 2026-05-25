@@ -963,12 +963,6 @@ export default function NotesPage() {
   const [previewCharRange, setPreviewCharRange] = useState<{ start: number; end: number } | null>(null);
   /** 从问答角标打开：仅展示引用摘录/上下文，非全书预览 */
   const [previewCitationView, setPreviewCitationView] = useState(false);
-  const [previewStudioBusy, setPreviewStudioBusy] = useState(false);
-  const [previewStudioResult, setPreviewStudioResult] = useState<{
-    task: string;
-    markdown?: string;
-    timeline?: Array<{ date?: string; event?: string; partTitle?: string }>;
-  } | null>(null);
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
   const [renameNoteTitle, setRenameNoteTitle] = useState("");
   const [importUrl, setImportUrl] = useState("");
@@ -3164,7 +3158,6 @@ export default function NotesPage() {
     setPreviewSimplified(false);
     setPreviewHighlightHint("");
     setPreviewCharRange(null);
-    setPreviewStudioResult(null);
 
     const excerptOnly = citationView && Boolean(opts.excerptText?.trim());
     if (excerptOnly) {
@@ -3467,44 +3460,6 @@ export default function NotesPage() {
     }
   }
 
-  async function runPreviewStudio(task: "outline" | "quiz" | "timeline") {
-    if (!previewNoteId || previewStudioBusy) return;
-    setPreviewStudioBusy(true);
-    setPreviewStudioResult(null);
-    try {
-      const pv = new URLSearchParams();
-      if (sharedBrowse?.ownerUserId) pv.set("sharedFromOwnerUserId", sharedBrowse.ownerUserId);
-      const qs = pv.toString();
-      const res = await fetch(
-        `/api/notes/${encodeURIComponent(previewNoteId)}/studio/${task}${qs ? `?${qs}` : ""}`,
-        {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "content-type": "application/json", ...getAuthHeaders() }
-        }
-      );
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        markdown?: string;
-        timeline?: Array<{ date?: string; event?: string; partTitle?: string }>;
-        detail?: unknown;
-      };
-      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "Studio 生成失败"));
-      setPreviewStudioResult({
-        task,
-        markdown: data.markdown,
-        timeline: Array.isArray(data.timeline) ? data.timeline : undefined
-      });
-    } catch (err) {
-      setPreviewStudioResult({
-        task,
-        markdown: String(err instanceof Error ? err.message : err)
-      });
-    } finally {
-      setPreviewStudioBusy(false);
-    }
-  }
-
   function openNotebook(name: string) {
     setNotebookCardMenu(null);
     userPrefersNotebookHubRef.current = false;
@@ -3663,7 +3618,6 @@ export default function NotesPage() {
         const data = (await res.json().catch(() => ({}))) as {
           success?: boolean;
           markdown?: string;
-          timeline?: Array<{ date?: string; event?: string }>;
           detail?: unknown;
         };
         if (!res.ok || !data.success) {

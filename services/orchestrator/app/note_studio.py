@@ -1,12 +1,11 @@
 """
-资料 Studio：基于 L0 + 片摘要生成大纲 / 测验 / 时间线等（不重扫全文）。
+资料 Studio：基于 L0 + 片摘要生成简报等（不重扫全文）。
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
-import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -20,32 +19,9 @@ from .provider_router import invoke_llm_chat_messages_with_minimax_fallback
 logger = logging.getLogger(__name__)
 
 _TASK_PROMPTS: dict[str, str] = {
-    "outline": (
-        "你是学习助手。根据全书概览与各部分摘要，输出 Markdown 章节大纲（层级标题 + 每节 1～2 句要点）。"
-        "只使用给定摘要中的信息，不要编造。"
-    ),
-    "quiz": (
-        "你是教师。根据给定部分摘要，出 5 道测验题（混合选择/简答），附简短参考答案并标明对应「部分」标题。"
-        "不要编造摘要中没有的事实。"
-    ),
-    "timeline": (
-        "你是编辑。从各部分摘要中提取带日期或时间顺序的事件，输出 JSON 数组："
-        '[{"date":"...","event":"...","partTitle":"..."}]，最多 20 条。无日期则按逻辑顺序。只输出 JSON。'
-    ),
     "brief": (
         "你是编辑。根据摘要写一份 1 页以内的学习简报（Markdown）：核心论点、关键事实、待进一步阅读的问题。"
         "只使用摘要内容。"
-    ),
-    "faq": (
-        "你是教师。根据摘要列出 8～12 个常见问题与简短回答（Markdown Q&A 列表）。不要编造。"
-    ),
-    "flashcards": (
-        "你是教师。输出 JSON 数组，每项 {\"front\":\"问题\",\"back\":\"答案\",\"partTitle\":\"部分标题\"}，共 10～16 张。"
-        "只输出 JSON。"
-    ),
-    "mindmap": (
-        "你是信息架构师。根据摘要输出思维导图 JSON："
-        '{"title":"中心主题","children":[{"title":"分支","children":[]}]} ，最多 3 层。只输出 JSON。'
     ),
 }
 
@@ -133,7 +109,7 @@ def run_note_studio(
     api_key: str | None = None,
     persist: bool = True,
 ) -> dict[str, Any]:
-    """task: outline | quiz | timeline | brief | faq | flashcards | mindmap"""
+    """task: brief"""
     row = get_note_by_id(note_id, user_ref=user_ref)
     if not row:
         return {"ok": False, "error": "note_not_found"}
@@ -163,22 +139,6 @@ def run_note_studio(
         return {"ok": False, "error": str(exc)[:200]}
 
     result: dict[str, Any] = {"ok": True, "task": t, "markdown": text}
-    if t == "timeline":
-        try:
-            m = re.search(r"\[[\s\S]*\]", text)
-            if m:
-                result["timeline"] = json.loads(m.group(0))
-        except Exception:
-            result["timeline"] = []
-            result["parseWarning"] = "timeline_json_parse_failed"
-    if t in ("flashcards", "mindmap"):
-        try:
-            m = re.search(r"[\[{][\s\S]*[\]}]", text)
-            if m:
-                result[t] = json.loads(m.group(0))
-        except Exception:
-            result[t] = []
-            result["parseWarning"] = f"{t}_json_parse_failed"
 
     if persist:
         aid = str(uuid.uuid4())
@@ -188,12 +148,6 @@ def run_note_studio(
             "createdAt": datetime.now(timezone.utc).isoformat(),
             "markdown": text,
         }
-        if result.get("timeline"):
-            artifact["timeline"] = result["timeline"]
-        if result.get("flashcards"):
-            artifact["flashcards"] = result["flashcards"]
-        if result.get("mindmap"):
-            artifact["mindmap"] = result["mindmap"]
         _append_artifact(note_id, artifact)
         result["artifactId"] = aid
 
@@ -213,8 +167,8 @@ def run_notebook_studio(
     if not ctx.strip():
         return {"ok": False, "error": "no_summaries"}
     t = (task or "").strip().lower()
-    if t not in ("outline", "brief", "faq"):
-        return {"ok": False, "error": "invalid_task", "hint": "笔记本级仅支持 outline/brief/faq"}
+    if t != "brief":
+        return {"ok": False, "error": "invalid_task", "hint": "笔记本级仅支持 brief"}
     system = _TASK_PROMPTS[t]
     try:
         out, _ = invoke_llm_chat_messages_with_minimax_fallback(
