@@ -19,6 +19,8 @@ import {
   SOCIAL_PUBLISH_TARGET_OCCUPATION,
   SOCIAL_PUBLISH_TARGET_REGION,
   SOCIAL_PUBLISH_WRITER_VOICE,
+  SOCIAL_PUBLISH_EMOJI_STYLE,
+  toggleMultiSelect,
   SOCIAL_TARGET_CHARS_MAX,
   SOCIAL_TARGET_CHARS_MIN,
   charsFromPreset
@@ -196,6 +198,12 @@ export default function NotesSocialPublishModal({
     }`;
   }
 
+  function multiHint(selected: number) {
+    return selected > 0 ? (
+      <span className="ml-1 text-[10px] font-normal text-muted">已选 {selected}</span>
+    ) : null;
+  }
+
   async function copyPublishPack() {
     if (!draft) return;
     const text = buildSocialPublishClipboardText(draft);
@@ -299,15 +307,25 @@ export default function NotesSocialPublishModal({
               <>
                 <div className="space-y-3 rounded-xl border border-brand/20 bg-brand/5 p-2.5">
                   <p className="text-xs font-semibold text-ink">目标人群定位</p>
+                  <p className="text-[10px] text-muted">各维度可多选；选「不限/全年龄」会清空同组其它项</p>
                   <div>
-                    <p className="mb-1 text-[11px] text-muted">性别</p>
+                    <p className="mb-1 text-[11px] text-ink">
+                      性别
+                      <span className="text-muted">（可多选）</span>
+                      {multiHint(persona.genders.length)}
+                    </p>
                     <div className="flex flex-wrap gap-1.5">
                       {SOCIAL_PUBLISH_TARGET_GENDER.map((o) => (
                         <button
                           key={o.id}
                           type="button"
-                          className={chipBtn(persona.gender === o.id)}
-                          onClick={() => setPersona((p) => ({ ...p, gender: o.id }))}
+                          className={chipBtn(persona.genders.includes(o.id))}
+                          onClick={() =>
+                            setPersona((p) => ({
+                              ...p,
+                              genders: toggleMultiSelect(p.genders, o.id, "any")
+                            }))
+                          }
                         >
                           {o.label}
                         </button>
@@ -315,14 +333,23 @@ export default function NotesSocialPublishModal({
                     </div>
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] text-muted">年龄段</p>
+                    <p className="mb-1 text-[11px] text-ink">
+                      年龄段
+                      <span className="text-muted">（可多选）</span>
+                      {multiHint(persona.ageRanges.length)}
+                    </p>
                     <div className="flex flex-wrap gap-1.5">
                       {SOCIAL_PUBLISH_TARGET_AGE.map((o) => (
                         <button
                           key={o.id}
                           type="button"
-                          className={chipBtn(persona.ageRange === o.id)}
-                          onClick={() => setPersona((p) => ({ ...p, ageRange: o.id }))}
+                          className={chipBtn(persona.ageRanges.includes(o.id))}
+                          onClick={() =>
+                            setPersona((p) => ({
+                              ...p,
+                              ageRanges: toggleMultiSelect(p.ageRanges, o.id, "all_ages")
+                            }))
+                          }
                         >
                           {o.label}
                         </button>
@@ -330,14 +357,23 @@ export default function NotesSocialPublishModal({
                     </div>
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] text-muted">地域</p>
+                    <p className="mb-1 text-[11px] text-ink">
+                      地域
+                      <span className="text-muted">（可多选）</span>
+                      {multiHint(persona.regions.length)}
+                    </p>
                     <div className="flex flex-wrap gap-1.5">
                       {SOCIAL_PUBLISH_TARGET_REGION.map((o) => (
                         <button
                           key={o.id}
                           type="button"
-                          className={chipBtn(persona.region === o.id)}
-                          onClick={() => setPersona((p) => ({ ...p, region: o.id }))}
+                          className={chipBtn(persona.regions.includes(o.id))}
+                          onClick={() =>
+                            setPersona((p) => ({
+                              ...p,
+                              regions: toggleMultiSelect(p.regions, o.id, "any")
+                            }))
+                          }
                         >
                           {o.label}
                         </button>
@@ -345,20 +381,29 @@ export default function NotesSocialPublishModal({
                     </div>
                   </div>
                   <div>
-                    <p className="mb-1 text-[11px] text-muted">职业</p>
+                    <p className="mb-1 text-[11px] text-ink">
+                      职业
+                      <span className="text-muted">（可多选）</span>
+                      {multiHint(persona.occupations.length)}
+                    </p>
                     <div className="flex flex-wrap gap-1.5">
                       {SOCIAL_PUBLISH_TARGET_OCCUPATION.map((o) => (
                         <button
                           key={o.id}
                           type="button"
-                          className={chipBtn(persona.occupation === o.id)}
-                          onClick={() => setPersona((p) => ({ ...p, occupation: o.id }))}
+                          className={chipBtn(persona.occupations.includes(o.id))}
+                          onClick={() =>
+                            setPersona((p) => ({
+                              ...p,
+                              occupations: toggleMultiSelect(p.occupations, o.id)
+                            }))
+                          }
                         >
                           {o.label}
                         </button>
                       ))}
                     </div>
-                    {persona.occupation === "custom" ? (
+                    {persona.occupations.includes("custom") ? (
                       <input
                         type="text"
                         className={`mt-1.5 w-full ${inputCls}`}
@@ -388,6 +433,33 @@ export default function NotesSocialPublishModal({
                       >
                         <span className="block text-xs font-medium text-ink">{o.label}</span>
                         <span className="mt-0.5 block text-[10px] text-muted">{o.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-ink">
+                    Emoji 风格
+                    <span className="ml-1 text-[11px] font-normal text-muted">（小红书视觉，可多选）</span>
+                    {multiHint(persona.emojiStyles.length)}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SOCIAL_PUBLISH_EMOJI_STYLE.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        className={chipBtn(persona.emojiStyles.includes(o.id))}
+                        onClick={() =>
+                          setPersona((p) => ({
+                            ...p,
+                            emojiStyles: toggleMultiSelect(p.emojiStyles, o.id, "none")
+                          }))
+                        }
+                      >
+                        <span>{o.label}</span>
+                        {o.id !== "none" ? (
+                          <span className="ml-1 opacity-80">{o.sample}</span>
+                        ) : null}
                       </button>
                     ))}
                   </div>

@@ -9,7 +9,8 @@ import type {
   SocialPublishTargetAge,
   SocialPublishTargetRegion,
   SocialPublishTargetOccupation,
-  SocialPublishWriterVoice
+  SocialPublishWriterVoice,
+  SocialPublishEmojiStyle
 } from "./socialPublishTypes";
 
 export const SOCIAL_TARGET_CHARS_MIN = 100;
@@ -79,6 +80,43 @@ export const SOCIAL_PUBLISH_WRITER_VOICE: { id: SocialPublishWriterVoice; label:
   { id: "sharp_truth", label: "毒舌人间清醒", hint: "直给结论、反套路" }
 ];
 
+export const SOCIAL_PUBLISH_EMOJI_STYLE: {
+  id: SocialPublishEmojiStyle;
+  label: string;
+  sample: string;
+}[] = [
+  { id: "section_anchor", label: "段首锚点", sample: "📌💡🚨" },
+  { id: "list_markers", label: "清单符号", sample: "✅☑️" },
+  { id: "mood", label: "情绪点缀", sample: "🥹🔥✨" },
+  { id: "title_sparkle", label: "标题吸睛", sample: "✨🔥" },
+  { id: "none", label: "尽量不用", sample: "—" }
+];
+
+/** 多选切换；exclusiveId 为「不限/全年龄/不用」类互斥项 */
+export function toggleMultiSelect<T extends string>(
+  current: T[],
+  id: T,
+  exclusiveId?: T
+): T[] {
+  if (exclusiveId && id === exclusiveId) {
+    return current.includes(id) ? [] : [exclusiveId];
+  }
+  let next = exclusiveId ? current.filter((x) => x !== exclusiveId) : [...current];
+  if (next.includes(id)) {
+    next = next.filter((x) => x !== id);
+  } else {
+    next = [...next, id];
+  }
+  return next;
+}
+
+export function deriveEmojiLevel(styles: SocialPublishEmojiStyle[]): "none" | "medium" | "rich" {
+  if (!styles.length || styles.includes("none")) return "none";
+  if (styles.length >= 3) return "rich";
+  if (styles.includes("mood") && styles.includes("section_anchor")) return "rich";
+  return "medium";
+}
+
 export function defaultTargetCharsForPlatform(platform: SocialPublishPlatform): number {
   return platform === "wechat_mp" ? 1500 : 600;
 }
@@ -109,28 +147,43 @@ export function charsFromPreset(preset: SocialPublishTargetCharsPreset, customCh
 
 export function defaultPersonaOptions(): SocialPublishPersonaOptions {
   return {
-    gender: "female",
-    ageRange: "25_34",
-    region: "tier1",
-    occupation: "office_worker",
+    genders: ["female"],
+    ageRanges: ["25_34"],
+    regions: ["tier1"],
+    occupations: ["office_worker"],
     occupationCustom: "",
     writerVoice: "bestie_brother",
+    emojiStyles: ["section_anchor", "list_markers", "mood"],
     otherRequirements: ""
   };
 }
 
-export function occupationLabel(persona: SocialPublishPersonaOptions): string {
-  if (persona.occupation === "custom") {
-    return persona.occupationCustom.trim() || "其他职业";
-  }
-  return SOCIAL_PUBLISH_TARGET_OCCUPATION.find((o) => o.id === persona.occupation)?.label || persona.occupation;
+export function occupationLabels(persona: SocialPublishPersonaOptions): string[] {
+  return persona.occupations.flatMap((id) => {
+    if (id === "custom") {
+      const c = persona.occupationCustom.trim();
+      return c ? [c] : [];
+    }
+    const row = SOCIAL_PUBLISH_TARGET_OCCUPATION.find((o) => o.id === id);
+    return row ? [row.label] : [];
+  });
 }
 
 export function isXhsPersonaValid(persona: SocialPublishPersonaOptions): boolean {
-  if (persona.occupation === "custom") {
-    return persona.occupationCustom.trim().length >= 2;
+  if (
+    !persona.genders.length ||
+    !persona.ageRanges.length ||
+    !persona.regions.length ||
+    !persona.occupations.length ||
+    !persona.writerVoice ||
+    !persona.emojiStyles.length
+  ) {
+    return false;
   }
-  return Boolean(persona.occupation);
+  if (persona.occupations.includes("custom") && persona.occupationCustom.trim().length < 2) {
+    return false;
+  }
+  return true;
 }
 
 export function defaultAdvancedOptions(platform: SocialPublishPlatform): SocialPublishAdvancedOptions {
@@ -178,14 +231,16 @@ export function buildOptionsPayload(
     persona:
       platform === "xiaohongshu" && persona
         ? {
-            gender: persona.gender,
-            ageRange: persona.ageRange,
-            region: persona.region,
-            occupation: persona.occupation,
-            occupationLabel: occupationLabel(persona),
-            occupationCustom:
-              persona.occupation === "custom" ? persona.occupationCustom.trim() : "",
+            genders: persona.genders,
+            ageRanges: persona.ageRanges,
+            regions: persona.regions,
+            occupations: persona.occupations,
+            occupationLabels: occupationLabels(persona),
+            occupationCustom: persona.occupations.includes("custom")
+              ? persona.occupationCustom.trim()
+              : "",
             writerVoice: persona.writerVoice,
+            emojiStyles: persona.emojiStyles,
             otherRequirements: persona.otherRequirements.trim()
           }
         : undefined,
@@ -193,7 +248,12 @@ export function buildOptionsPayload(
       mustInclude: advanced.mustInclude,
       avoid: advanced.avoid,
       noteForm: advanced.noteForm,
-      emojiLevel: advanced.emojiLevel,
+      emojiLevel:
+        platform === "xiaohongshu" && persona
+          ? deriveEmojiLevel(persona.emojiStyles)
+          : advanced.emojiLevel,
+      emojiStyles:
+        platform === "xiaohongshu" && persona ? persona.emojiStyles : undefined,
       interaction: advanced.interaction,
       wantTitleOptions: advanced.wantTitleOptions,
       tagsMode: advanced.tagsMode,

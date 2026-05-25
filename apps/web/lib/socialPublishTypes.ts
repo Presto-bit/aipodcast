@@ -28,13 +28,22 @@ export type SocialPublishWriterVoice =
   | "growth_companion"
   | "sharp_truth";
 
+/** 小红书：Emoji 呈现风格（可多选） */
+export type SocialPublishEmojiStyle =
+  | "section_anchor"
+  | "list_markers"
+  | "mood"
+  | "title_sparkle"
+  | "none";
+
 export type SocialPublishPersonaOptions = {
-  gender: SocialPublishTargetGender;
-  ageRange: SocialPublishTargetAge;
-  region: SocialPublishTargetRegion;
-  occupation: SocialPublishTargetOccupation;
+  genders: SocialPublishTargetGender[];
+  ageRanges: SocialPublishTargetAge[];
+  regions: SocialPublishTargetRegion[];
+  occupations: SocialPublishTargetOccupation[];
   occupationCustom: string;
   writerVoice: SocialPublishWriterVoice;
+  emojiStyles: SocialPublishEmojiStyle[];
   /** 其他要求（替代原高级选项补充说明） */
   otherRequirements: string;
 };

@@ -111,48 +111,101 @@ _WRITER_VOICE_CN = {
     "growth_companion": "养成系/真实陪伴：记录变化、真诚克制、过程感与陪伴感",
     "sharp_truth": "毒舌人间清醒：直给结论、适度犀利、反套路、不说空话",
 }
+_EMOJI_STYLE_CN = {
+    "section_anchor": "段首锚点（📌💡🚨 等，每段最多 1 个）",
+    "list_markers": "清单条目前缀（✅☑️❌）",
+    "mood": "情绪点缀（🥹😭🔥✨ 适度穿插）",
+    "title_sparkle": "标题/封面钩子可用 ✨🔥 吸睛",
+    "none": "正文与标题尽量不用 emoji",
+}
+_OCC_CN = {
+    "office_worker": "上班族/职场白领",
+    "student": "学生",
+    "parent": "宝妈/宝爸",
+    "freelancer": "自由职业",
+    "entrepreneur": "创业者",
+    "creator": "自媒体/内容创作者",
+}
 
 
-def _resolve_occupation_label(persona: dict[str, Any]) -> str:
-    leg = str(persona.get("occupationLabel") or "").strip()
-    if leg:
-        return leg[:40]
-    occ = str(persona.get("occupation") or "").strip()
+def _persona_id_list(persona: dict[str, Any], plural: str, singular: str) -> list[str]:
+    raw = persona.get(plural)
+    if isinstance(raw, list) and raw:
+        return [str(x).strip() for x in raw if str(x).strip()]
+    leg = str(persona.get(singular) or "").strip()
+    return [leg] if leg else []
+
+
+def _labels_from_map(ids: list[str], mapping: dict[str, str], fallback: str) -> str:
+    if not ids:
+        return fallback
+    return "、".join(mapping.get(i, i) for i in ids[:6])
+
+
+def _resolve_occupation_labels(persona: dict[str, Any]) -> str:
+    leg = persona.get("occupationLabels")
+    if isinstance(leg, list) and leg:
+        return "、".join(str(x).strip() for x in leg if str(x).strip())[:120]
     custom = str(persona.get("occupationCustom") or "").strip()
-    _OCC_CN = {
-        "office_worker": "上班族/职场白领",
-        "student": "学生",
-        "parent": "宝妈/宝爸",
-        "freelancer": "自由职业",
-        "entrepreneur": "创业者",
-        "creator": "自媒体/内容创作者",
-    }
-    if occ == "custom" and custom:
-        return custom[:40]
-    return _OCC_CN.get(occ, occ or "泛职场人群")
+    occs = _persona_id_list(persona, "occupations", "occupation")
+    out: list[str] = []
+    for occ in occs:
+        if occ == "custom" and custom:
+            out.append(custom[:40])
+        elif occ != "custom":
+            out.append(_OCC_CN.get(occ, occ))
+    return "、".join(out) if out else "泛职场人群"
+
+
+def _emoji_prompt_line(persona: dict[str, Any], extras: dict[str, Any]) -> str:
+    styles = _persona_id_list(persona, "emojiStyles", "")
+    if not styles and isinstance(extras.get("emojiStyles"), list):
+        styles = [str(x).strip() for x in extras["emojiStyles"] if str(x).strip()]
+    if "none" in styles:
+        return "Emoji：正文与标题均不使用 emoji"
+    if styles:
+        hints = [_EMOJI_STYLE_CN.get(s, s) for s in styles if s != "none"]
+        return (
+            f"【Emoji 风格（小红书）】{'；'.join(hints)}；"
+            "全文 emoji 建议 4～10 个，段首/清单优先，忌连续堆砌"
+        )
+    emoji = str(extras.get("emojiLevel") or "medium")
+    if emoji == "none":
+        return "Emoji：极少，不用作段首锚点"
+    if emoji == "rich":
+        return "Emoji：段首用 📌💡🚨✅ 作视觉锚点，全文不超过 8 个"
+    return "Emoji：段首适度 📌💡，全文不超过 6 个"
 
 
 def build_persona_prompt_block(options: dict[str, Any]) -> str:
     persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
-    writer_voice = str(persona.get("writerVoice") or "").strip()
     other_req = str(
         persona.get("otherRequirements") or options.get("userNote") or ""
     ).strip()[:500]
+    extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
 
-    if writer_voice or persona.get("gender") or persona.get("ageRange"):
-        gender_cn = _GENDER_CN.get(str(persona.get("gender") or "").strip(), "性别不限")
-        age_cn = _AGE_CN.get(str(persona.get("ageRange") or "").strip(), "全年龄段")
-        region_cn = _REGION_CN.get(str(persona.get("region") or "").strip(), "地域不限")
-        occ_cn = _resolve_occupation_label(persona)
-        voice_cn = _WRITER_VOICE_CN.get(writer_voice, _WRITER_VOICE_CN["bestie_brother"])
+    genders = _persona_id_list(persona, "genders", "gender")
+    ages = _persona_id_list(persona, "ageRanges", "ageRange")
+    regions = _persona_id_list(persona, "regions", "region")
+    voices = _persona_id_list(persona, "writerVoices", "writerVoice")
+
+    emoji_styles = _persona_id_list(persona, "emojiStyles", "")
+    if genders or ages or regions or voices or emoji_styles:
+        gender_cn = _labels_from_map(genders, _GENDER_CN, "性别不限")
+        age_cn = _labels_from_map(ages, _AGE_CN, "全年龄段")
+        region_cn = _labels_from_map(regions, _REGION_CN, "地域不限")
+        occ_cn = _resolve_occupation_labels(persona)
         lines = [
-            "【目标人群定位】",
+            "【目标人群定位】（以下维度可多选，须融合为统一读者画像，勿写成割裂列表）",
             f"性别：{gender_cn}",
             f"年龄段：{age_cn}",
             f"地域：{region_cn}",
             f"职业：{occ_cn}",
-            f"【写作人设】{voice_cn}",
         ]
+        if voices:
+            voice_cn = _WRITER_VOICE_CN.get(voices[0], voices[0])
+            lines.append(f"【写作人设】{voice_cn}")
+        lines.append(_emoji_prompt_line(persona, extras))
         if other_req:
             lines.append(f"【其他要求】{other_req}")
     else:
@@ -172,6 +225,7 @@ def build_persona_prompt_block(options: dict[str, Any]) -> str:
             lines.append(f"文案关键词（须自然融入标题与开头）：{'、'.join(kw)}")
         if other_req:
             lines.append(f"【其他要求】{other_req}")
+        lines.append(_emoji_prompt_line(persona, extras))
     extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
     sk = _SKELETON_CN.get(str(extras.get("bodySkeleton") or "dry_goods"), _SKELETON_CN["dry_goods"])
     hook = _HOOK_CN.get(str(extras.get("coverHookStyle") or "pain"), "痛点型")
@@ -182,13 +236,6 @@ def build_persona_prompt_block(options: dict[str, Any]) -> str:
     cta = extras.get("ctaTypes") if isinstance(extras.get("ctaTypes"), list) else []
     if cta:
         lines.append(f"结尾CTA：{', '.join(str(x) for x in cta[:4])}")
-    emoji = str(extras.get("emojiLevel") or "medium")
-    if emoji == "none":
-        lines.append("Emoji：极少，不用作段首锚点")
-    elif emoji == "rich":
-        lines.append("Emoji：段首用 📌💡🚨✅ 作视觉锚点，全文不超过 8 个")
-    else:
-        lines.append("Emoji：段首适度 📌💡，全文不超过 6 个")
     tag_mode = str(extras.get("tagsMode") or "balanced")
     if tag_mode == "none":
         lines.append("话题标签：不输出 tags 或输出空数组")
