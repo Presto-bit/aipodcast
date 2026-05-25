@@ -24,13 +24,48 @@ def parse_json_object(raw: str) -> dict[str, Any]:
     return json.loads(t[i : j + 1])
 
 
+def _clean_tag_token(raw: str) -> str:
+    t = str(raw or "").strip().strip("'\"`#，,、 ")
+    if not t or t in ("'", '"', "，", ",") or len(t) < 2:
+        return ""
+    if t.startswith("[") and t.endswith("]"):
+        return ""
+    return t[:40]
+
+
 def normalize_tags(tags: Any) -> list[str]:
     if isinstance(tags, list):
-        return [str(x).strip() for x in tags if str(x).strip()][:12]
+        out = [_clean_tag_token(x) for x in tags]
+        return [t for t in out if t][:12]
     if isinstance(tags, str) and tags.strip():
-        parts = re.split(r"[,，\s#]+", tags.strip())
-        return [p for p in parts if p][:12]
+        s = tags.strip()
+        quoted = re.findall(r"['\"]([^'\"]{2,40})['\"]", s)
+        if quoted:
+            out = [_clean_tag_token(x) for x in quoted]
+            return [t for t in out if t][:12]
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = json.loads(s.replace("'", '"'))
+                if isinstance(parsed, list):
+                    out = [_clean_tag_token(x) for x in parsed]
+                    return [t for t in out if t][:12]
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+        parts = re.split(r"[,，\s#]+", s)
+        out = [_clean_tag_token(p) for p in parts]
+        return [t for t in out if t][:12]
     return []
+
+
+def format_hashtag_line(tags: list[str]) -> str:
+    """小红书/公众号正文末尾话题行。"""
+    parts: list[str] = []
+    for t in tags:
+        tok = _clean_tag_token(t)
+        if not tok:
+            continue
+        parts.append(tok if tok.startswith("#") else f"#{tok}")
+    return " ".join(parts)
 
 
 def invoke_social_llm(system: str, user: str) -> tuple[str, None]:

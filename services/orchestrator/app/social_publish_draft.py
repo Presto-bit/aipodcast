@@ -33,11 +33,11 @@ _LENGTH_CN_LEGACY = {
 def _resolve_target_chars(options: dict[str, Any]) -> int:
     raw = options.get("target_chars")
     if isinstance(raw, int) and raw > 0:
-        return min(5000, max(100, raw))
+        return min(5000, max(200, raw))
     if isinstance(raw, float) and raw > 0:
-        return min(5000, max(100, int(raw)))
+        return min(5000, max(200, int(raw)))
     if isinstance(raw, str) and raw.strip().isdigit():
-        return min(5000, max(100, int(raw.strip())))
+        return min(5000, max(200, int(raw.strip())))
     leg = str(options.get("length") or "").strip()
     return _LENGTH_CN_LEGACY.get(leg, 600)
 
@@ -70,19 +70,11 @@ def _options_prompt_block(options: dict[str, Any], platform: str) -> str:
         lines.append(f"【必须包含】{', '.join(str(x) for x in must[:8])}")
     if avoid:
         lines.append(f"【规避】{', '.join(str(x) for x in avoid[:8])}")
-    if platform == "xiaohongshu":
+    persona = options.get("persona") if isinstance(options.get("persona"), dict) else None
+    if persona:
         lines.append(build_persona_prompt_block(options))
-    else:
-        mp_type = str(extras.get("mpArticleType") or "headline").strip()
-        structure = str(extras.get("mpStructure") or "intro_sections").strip()
-        want_digest = extras.get("wantDigest", True)
-        cta = extras.get("mpCta") if isinstance(extras.get("mpCta"), list) else []
-        lines.append(f"【公众号类型】{'头条长文' if mp_type == 'headline' else '次条短文' if mp_type == 'sub' else '快讯简报'}")
-        lines.append(f"【结构】{structure}")
-        if want_digest:
-            lines.append("【摘要】输出 digest（≤120 字）")
-        if cta:
-            lines.append(f"【文末模块】{', '.join(str(x) for x in cta[:6])}")
+    elif platform == "wechat_mp":
+        lines.append("【读者】公众号订阅用户，重可读性与转发价值")
     if note:
         lines.append(f"【用户补充】{note}")
     return "\n".join(lines)
@@ -111,11 +103,41 @@ def _fallback_xhs() -> dict[str, Any]:
 
 def _fallback_mp() -> dict[str, Any]:
     return {
-        "title": "一文读懂：资料里的核心结论",
-        "digest": "把笔记本里的要点整理成可读长文，方便转发与收藏。",
-        "body": "## 引言\n\n本文根据你勾选的资料整理。\n\n## 核心要点\n\n- 要点一\n- 要点二\n\n## 结语\n\n欢迎收藏，如需完整版可继续阅读相关作品。",
-        "cta": "",
+        "titles": [
+            "一文读懂：资料里的核心结论",
+            "深度解读：这件事你必须知道",
+            "收藏这篇，下次用得上",
+        ],
+        "cover_hook": "一文读懂：资料里的核心结论",
+        "opening_30": "如果你最近也在关注这个话题，这篇值得读完。",
+        "body": "## 核心结论\n\n先把最重要的信息说清楚。\n\n## 展开说明\n\n- 要点一\n- 要点二\n\n## 小结\n\n欢迎转发给需要的朋友。",
+        "tags": ["深度好文", "干货分享", "职场成长", "收藏推荐"],
+        "interaction": "你觉得哪一点最有用？欢迎留言讨论。",
+        "imageSuggestions": [
+            "头图：16:9 横图，主标题大字 + 简洁背景",
+            "文内插图：信息图或步骤示意图 1～2 张",
+        ],
+        "theme": "公众号长文导读",
     }
+
+
+def _mp_system_prompt(opt_block: str) -> str:
+    return f"""你是微信公众号资深编辑。用户会给你一份素材，请改写为适合公众号图文发布的稿件（非照抄）。
+
+{opt_block}
+
+结构硬性要求：
+1. cover_hook + titles 数组（恰好 3 个备选标题，每个≤28字）：信息明确、适合订阅号列表点击。
+2. opening_30：导读句，总字数≤30（含标点）。
+3. body：正文主体，可用 Markdown（## 小标题、列表）；勿把话题与文末引导写入 body。
+4. tags：5～8 个领域关键词，不带#（由系统并入正文末尾）。
+5. interaction：1～2 句留言/转发引导（由系统并入正文末尾）。
+6. imageSuggestions：2～4 条配图建议（头图比例、文内插图主题与构图）。
+
+禁止：播客腔、绝对化/医疗化承诺、硬引流。
+
+只输出一个 JSON 对象，不要 markdown 代码块。键：
+cover_hook, titles, opening_30, body, interaction, tags, imageSuggestions, theme"""
 
 
 def _xhs_system_prompt(opt_block: str) -> str:
@@ -170,50 +192,17 @@ def generate_social_publish_draft(
                 return finalize_xhs_pack(_fallback_xhs(), options=opts, trace_id=trace_id)
             raise
 
-    system = f"""你是微信公众号资深编辑。用户会给你一份素材，请改写为适合公众号图文发布的稿件（非照抄）。
-
-{opt_block}
-
-要求：
-1. 使用 Markdown：## 小标题、列表、引用块（> ）均可。
-2. 语气符合选项，结构清晰，避免播客口播腔。
-3. 禁止 Speaker 轮次格式；禁止绝对化、医疗化承诺、硬引流。
-
-只输出一个 JSON 对象。键：
-- title（≤64字）
-- digest（≤120字，导语摘要）
-- body（Markdown 正文，可含 ## 小节）
-- cta（可选，文末引导语一段；无则空字符串）"""
-
+    system = _mp_system_prompt(opt_block)
     user = f"请根据下列素材改写为上述 JSON。\n\n【素材】\n{raw}"
     raw_out, trace_id = invoke_social_llm(system, user)
     try:
         data = parse_json_object(raw_out)
     except (json.JSONDecodeError, ValueError):
         data = dict(_fallback_mp())
-    title = str(data.get("title") or "").strip()[:120] or _fallback_mp()["title"]
-    digest = str(data.get("digest") or "").strip()[:120]
-    body = str(data.get("body") or "").strip().replace("\\n\\n", "\n\n").replace("\\n", "\n")
-    if not body:
-        body = _fallback_mp()["body"]
-    cta = str(data.get("cta") or "").strip()[:500]
-
-    mp_fields = {"title": title, "digest": digest, "body": body, "cta": cta}
     try:
-        compliant, compliance = apply_compliance_to_mp_fields(mp_fields)
-        title = compliant.get("title", title)
-        digest = compliant.get("digest", digest)
-        body = compliant.get("body", body)
-        cta = compliant.get("cta", cta)
-    except RuntimeError:
-        compliance = {"status": "passed", "hit_count": 0, "categories": [], "user_message": "合规检查通过"}
-
-    return {
-        "platform": "wechat_mp",
-        "title": title,
-        "digest": digest or _fallback_mp()["digest"],
-        "body": body[:12000],
-        "cta": cta,
-        "compliance": compliance,
-        "trace_id": trace_id,
-    }
+        return finalize_xhs_pack(data, options=opts, trace_id=trace_id)
+    except RuntimeError as exc:
+        if str(exc) == "compliance_failed":
+            logger.warning("mp compliance_failed, using fallback pack")
+            return finalize_xhs_pack(_fallback_mp(), options=opts, trace_id=trace_id)
+        raise

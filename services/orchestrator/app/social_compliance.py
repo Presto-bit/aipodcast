@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .provider_router import invoke_llm_chat_messages_deepseek_only
+from .social_llm_utils import format_hashtag_line
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 _RULE_REPLACEMENTS: list[tuple[str, str, str]] = [
     ("最好", "absolute", "我个人觉得不错"),
     ("最佳", "absolute", "比较出彩"),
-    ("第一", "absolute", "靠前"),
+    ("第一", "absolute", "名列前茅"),
     ("顶级", "absolute", "高口碑"),
     ("100%", "absolute", "很大比例"),
     ("绝对", "absolute", "比较"),
@@ -294,6 +295,7 @@ def xhs_pack_from_compliant_fields(
     compliance: dict[str, Any],
     theme: str = "",
     trace_id: Any = None,
+    platform: str = "xiaohongshu",
 ) -> dict[str, Any]:
     titles = [fields[k] for k in sorted(fields) if k.startswith("title_") and fields[k].strip()]
     tags = [fields[k] for k in sorted(fields) if k.startswith("tag_") and fields[k].strip()]
@@ -305,9 +307,7 @@ def xhs_pack_from_compliant_fields(
     body_parts = [p for p in [opening, body_main] if p]
     full_body = "\n\n".join(body_parts)
     if tags:
-        tag_line = " ".join(
-            t if str(t).startswith("#") else f"#{t}" for t in tags[:8] if str(t).strip()
-        )
+        tag_line = format_hashtag_line(tags[:8])
         if tag_line:
             full_body = f"{full_body}\n\n{tag_line}".strip() if full_body else tag_line
     if interaction:
@@ -318,7 +318,7 @@ def xhs_pack_from_compliant_fields(
         titles_out.append(titles_out[0] if titles_out else "笔记标题备选")
 
     pack: dict[str, Any] = {
-        "platform": "xiaohongshu",
+        "platform": "wechat_mp" if platform == "wechat_mp" else "xiaohongshu",
         "titles": titles_out[:3],
         "cover_hook": titles_out[0] if titles_out else "",
         "opening_30": opening[:30],

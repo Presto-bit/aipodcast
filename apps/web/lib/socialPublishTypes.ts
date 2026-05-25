@@ -1,17 +1,14 @@
 export type SocialPublishPlatform = "xiaohongshu" | "wechat_mp";
 
-export type SocialPublishIntent = "zhongcao" | "dry_goods" | "opinion" | "checklist" | "story";
-export type SocialPublishAudience = "beginner" | "general" | "pro";
-export type SocialPublishTargetCharsPreset = "c400" | "c600" | "c1000" | "c1500" | "custom";
-
-export type SocialPublishTone = "casual" | "pro" | "humor" | "motivational";
+export type SocialPublishTargetCharsPreset = "c200" | "c400" | "c600" | "c1000" | "c1500" | "custom";
 
 export type SocialPublishSourceType = "ask_answer" | "notes_only";
 
-/** 小红书：目标人群定位 */
+/** 目标人群定位（两平台共用维度） */
 export type SocialPublishTargetGender = "female" | "male" | "any";
 export type SocialPublishTargetAge = "18_24" | "25_34" | "35_44" | "45_plus" | "all_ages";
 export type SocialPublishTargetRegion = "tier1" | "tier2" | "tier3_down" | "any";
+
 export type SocialPublishTargetOccupation =
   | "office_worker"
   | "student"
@@ -19,16 +16,22 @@ export type SocialPublishTargetOccupation =
   | "freelancer"
   | "entrepreneur"
   | "creator"
+  | "civil_servant"
+  | "teacher"
+  | "professional"
+  | "retiree"
   | "custom";
 
-/** 小红书：写作人设（单选） */
 export type SocialPublishWriterVoice =
   | "bestie_brother"
   | "expert_scholar"
   | "growth_companion"
-  | "sharp_truth";
+  | "sharp_truth"
+  | "official_account"
+  | "insight_column"
+  | "warm_story"
+  | "practical_guide";
 
-/** 小红书：兴趣爱好（可多选，贴近平台垂类） */
 export type SocialPublishInterest =
   | "beauty"
   | "fashion"
@@ -49,7 +52,17 @@ export type SocialPublishInterest =
   | "finance"
   | "emotion"
   | "diy"
-  | "outdoor";
+  | "outdoor"
+  | "biz_finance"
+  | "edu_exam"
+  | "health"
+  | "lifestyle"
+  | "news_current"
+  | "humanities"
+  | "law"
+  | "auto"
+  | "real_estate"
+  | "agri";
 
 export type SocialPublishPersonaOptions = {
   genders: SocialPublishTargetGender[];
@@ -58,8 +71,8 @@ export type SocialPublishPersonaOptions = {
   interests: SocialPublishInterest[];
   occupations: SocialPublishTargetOccupation[];
   occupationCustom: string;
-  writerVoice: SocialPublishWriterVoice;
-  /** 其他要求（替代原高级选项补充说明） */
+  /** 可不选；未选时由模型按素材推断口吻 */
+  writerVoice: SocialPublishWriterVoice | null;
   otherRequirements: string;
 };
 
@@ -72,63 +85,51 @@ export type SocialPublishCompliance = {
 
 export type SocialPublishWizardStep = "platform" | "options" | "source" | "generating" | "result";
 
+/** @deprecated 保留类型兼容；选项页已不再使用 */
 export type SocialPublishQuickOptions = {
-  intent: SocialPublishIntent;
-  audience: SocialPublishAudience;
+  intent: string;
+  audience: string;
   targetCharsPreset: SocialPublishTargetCharsPreset;
   targetChars: number;
 };
 
 export type SocialPublishAdvancedOptions = {
-  tone: SocialPublishTone;
+  tone: string;
   mustInclude: string[];
   avoid: string[];
   userNote: string;
   useRecommendedBundle: boolean;
-  /** 小红书 */
-  noteForm: "image_text" | "video_caption";
+  noteForm: string;
   emojiLevel: "rich" | "medium" | "none";
-  interaction: "comment" | "collect" | "follow" | "poll" | "none";
+  interaction: string;
   wantTitleOptions: boolean;
   wantCoverSuggestions: boolean;
-  coverHookStyle: "pain" | "number" | "contrast" | "emotion";
-  openingMode: "pain_question" | "conclusion" | "scene";
-  bodySkeleton: "dry_goods" | "story_seed" | "checklist";
-  ctaTypes: Array<"interact" | "save" | "convert" | "follow">;
-  tagsMode: "vertical10" | "broad5" | "none" | "balanced";
-  complianceMode: "strict" | "standard";
-  /** 公众号 */
-  mpArticleType: "headline" | "sub" | "brief";
-  mpStructure: "intro_sections" | "qa" | "checklist" | "essay";
+  coverHookStyle: string;
+  openingMode: string;
+  bodySkeleton: string;
+  ctaTypes: string[];
+  tagsMode: string;
+  complianceMode: string;
+  mpArticleType: string;
+  mpStructure: string;
   wantDigest: boolean;
   mpCta: string[];
 };
 
-export type SocialPublishXhsDraft = {
-  platform: "xiaohongshu";
-  /** 固定 3 个备选标题 */
+/** 小红书 / 公众号统一发布稿结构 */
+export type SocialPublishContentDraft = {
+  platform: SocialPublishPlatform;
   titles: [string, string, string];
   selectedTitleIndex: number;
   coverHook?: string;
   opening30?: string;
   theme: string;
-  /** 含开头、正文、话题与互动句（已并入） */
   body: string;
-  /** 正文之后的图片制作建议 */
   imageSuggestions: string[];
   compliance?: SocialPublishCompliance;
 };
 
-export type SocialPublishMpDraft = {
-  platform: "wechat_mp";
-  title: string;
-  digest: string;
-  body: string;
-  cta: string;
-  compliance?: SocialPublishCompliance;
-};
-
-export type SocialPublishDraft = SocialPublishXhsDraft | SocialPublishMpDraft;
+export type SocialPublishDraft = SocialPublishContentDraft;
 
 export type SocialPublishSourceCandidate = {
   key: string;

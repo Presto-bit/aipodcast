@@ -110,6 +110,28 @@ _WRITER_VOICE_CN = {
     "expert_scholar": "行业专家/斜杠学霸：有观点、有结构、引用经验与对比，可信克制",
     "growth_companion": "养成系/真实陪伴：记录变化、真诚克制、过程感与陪伴感",
     "sharp_truth": "毒舌人间清醒：直给结论、适度犀利、反套路、不说空话",
+    "official_account": "机构/品牌官方：稳重可信、信息清晰、少口语化夸张",
+    "insight_column": "深度洞察专栏：有论据、有结构、适合公众号长文阅读",
+    "warm_story": "温暖人文叙事：故事感与共情，适合订阅用户深度阅读",
+    "practical_guide": "实用攻略体：步骤清晰、小标题分节、收藏转发导向",
+}
+_INTEREST_CN_MP = {
+    "biz_finance": "财经商业",
+    "edu_exam": "教育考试",
+    "health": "健康养生",
+    "lifestyle": "生活方式",
+    "news_current": "时政资讯",
+    "humanities": "人文历史",
+    "law": "法律普法",
+    "auto": "汽车出行",
+    "real_estate": "房产置业",
+    "agri": "三农",
+}
+_OCC_CN_MP = {
+    "civil_servant": "体制内/事业单位",
+    "teacher": "教师/科研工作者",
+    "professional": "医生/律师等专业人士",
+    "retiree": "退休群体",
 }
 _EMOJI_STYLE_CN = {
     "section_anchor": "段首锚点（📌💡🚨 等，每段最多 1 个）",
@@ -118,7 +140,7 @@ _EMOJI_STYLE_CN = {
     "title_sparkle": "标题/封面钩子可用 ✨🔥 吸睛",
     "none": "正文与标题尽量不用 emoji",
 }
-_INTEREST_CN = {
+_INTEREST_CN_XHS = {
     "beauty": "美妆护肤",
     "fashion": "穿搭",
     "food": "美食",
@@ -164,19 +186,34 @@ def _labels_from_map(ids: list[str], mapping: dict[str, str], fallback: str) -> 
     return "、".join(mapping.get(i, i) for i in ids[:6])
 
 
-def _resolve_occupation_labels(persona: dict[str, Any]) -> str:
+def _interest_map(platform: str) -> dict[str, str]:
+    m = dict(_INTEREST_CN_XHS)
+    if platform == "wechat_mp":
+        m.update(_INTEREST_CN_MP)
+    return m
+
+
+def _occ_map(platform: str) -> dict[str, str]:
+    m = dict(_OCC_CN)
+    if platform == "wechat_mp":
+        m.update(_OCC_CN_MP)
+    return m
+
+
+def _resolve_occupation_labels(persona: dict[str, Any], platform: str = "xiaohongshu") -> str:
     leg = persona.get("occupationLabels")
     if isinstance(leg, list) and leg:
         return "、".join(str(x).strip() for x in leg if str(x).strip())[:120]
     custom = str(persona.get("occupationCustom") or "").strip()
     occs = _persona_id_list(persona, "occupations", "occupation")
+    occ_cn = _occ_map(platform)
     out: list[str] = []
     for occ in occs:
         if occ == "custom" and custom:
             out.append(custom[:40])
         elif occ != "custom":
-            out.append(_OCC_CN.get(occ, occ))
-    return "、".join(out) if out else "泛职场人群"
+            out.append(occ_cn.get(occ, occ))
+    return "、".join(out) if out else "泛读者人群"
 
 
 def _emoji_prompt_line(persona: dict[str, Any], extras: dict[str, Any]) -> str:
@@ -201,6 +238,7 @@ def _emoji_prompt_line(persona: dict[str, Any], extras: dict[str, Any]) -> str:
 
 def build_persona_prompt_block(options: dict[str, Any]) -> str:
     persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+    platform = str(options.get("platform") or "xiaohongshu").strip()
     other_req = str(
         persona.get("otherRequirements") or options.get("userNote") or ""
     ).strip()[:500]
@@ -216,10 +254,11 @@ def build_persona_prompt_block(options: dict[str, Any]) -> str:
         gender_cn = _labels_from_map(genders, _GENDER_CN, "性别不限")
         age_cn = _labels_from_map(ages, _AGE_CN, "全年龄段")
         region_cn = _labels_from_map(regions, _REGION_CN, "地域不限")
-        interest_cn = _labels_from_map(interests, _INTEREST_CN, "")
-        occ_cn = _resolve_occupation_labels(persona)
+        interest_cn = _labels_from_map(interests, _interest_map(platform), "")
+        occ_cn = _resolve_occupation_labels(persona, platform)
+        plat_cn = "微信公众号" if platform == "wechat_mp" else "小红书"
         lines = [
-            "【目标人群定位】（须融合为统一读者画像）",
+            f"【目标人群定位】（{plat_cn}，须融合为统一读者画像）",
             f"性别：{gender_cn}",
             f"年龄段：{age_cn}",
             f"地域：{region_cn}",
@@ -230,6 +269,10 @@ def build_persona_prompt_block(options: dict[str, Any]) -> str:
         if voices:
             voice_cn = _WRITER_VOICE_CN.get(voices[0], voices[0])
             lines.append(f"【写作人设】{voice_cn}")
+        else:
+            lines.append("【写作人设】未指定，请根据素材推断合适口吻")
+        if platform == "wechat_mp":
+            lines.append("正文可用 Markdown（## 小标题、列表、引用），语气适合公众号深度阅读与转发")
         lines.append(_emoji_prompt_line(persona, extras))
         if other_req:
             lines.append(f"【其他要求】{other_req}")
@@ -397,9 +440,11 @@ def finalize_xhs_pack(
         for i, t in enumerate(norm["titles"][:5]):
             compliant_fields[f"title_{i}"] = t
 
+    plat = str((options or {}).get("platform") or "xiaohongshu").strip()
     return xhs_pack_from_compliant_fields(
         compliant_fields,
         compliance=compliance,
         theme=norm["theme"],
         trace_id=trace_id,
+        platform=plat,
     )

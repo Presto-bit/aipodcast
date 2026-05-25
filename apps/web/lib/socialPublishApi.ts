@@ -19,7 +19,10 @@ function parseCompliance(data: Record<string, unknown>): SocialPublishCompliance
   };
 }
 
-function mapXhsDraft(data: Record<string, unknown>): SocialPublishDraft {
+function mapContentDraft(
+  data: Record<string, unknown>,
+  platform: SocialPublishPlatform
+): SocialPublishDraft {
   const titlesRaw = Array.isArray(data.titles)
     ? data.titles.map((t) => String(t).trim()).filter(Boolean)
     : [];
@@ -32,7 +35,7 @@ function mapXhsDraft(data: Record<string, unknown>): SocialPublishDraft {
     ? imageRaw.map((t) => String(t).trim()).filter(Boolean)
     : [];
   return {
-    platform: "xiaohongshu",
+    platform,
     titles,
     selectedTitleIndex: 0,
     coverHook: String(data.cover_hook || "").trim() || undefined,
@@ -66,17 +69,7 @@ export async function fetchSocialPublishDraft(params: {
   if (!res.ok || data.success === false) {
     throw new Error(apiErrorMessage(data, "生成发布稿失败"));
   }
-  if (params.platform === "xiaohongshu") {
-    return mapXhsDraft(data);
-  }
-  return {
-    platform: "wechat_mp",
-    title: String(data.title || ""),
-    digest: String(data.digest || ""),
-    body: String(data.body || ""),
-    cta: String(data.cta || ""),
-    compliance: parseCompliance(data)
-  };
+  return mapContentDraft(data, params.platform);
 }
 
 /** 播客成片：走 viral-copy（小红书同样经后台合规终稿） */
@@ -95,12 +88,15 @@ export async function fetchViralCopyForXhs(params: {
     throw new Error(apiErrorMessage(data, "生成小红书文案失败"));
   }
   if (Array.isArray(data.titles)) {
-    return mapXhsDraft(data);
+    return mapContentDraft(data, "xiaohongshu");
   }
   const title = String(data.title || "").trim();
-  return mapXhsDraft({
-    ...data,
-    titles: title ? [title] : ["小红书笔记"],
-    cover_hook: title
-  });
+  return mapContentDraft(
+    {
+      ...data,
+      titles: title ? [title] : ["小红书笔记"],
+      cover_hook: title
+    },
+    "xiaohongshu"
+  );
 }

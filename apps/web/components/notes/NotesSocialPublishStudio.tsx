@@ -4,11 +4,10 @@ import { useState } from "react";
 import { IconChevronLeft, IconClipboard } from "../icons";
 import { buildSocialPublishClipboardText, copyGuideLines } from "../../lib/socialPublishCopy";
 import { ensureXhsTitles, platformLabel } from "../../lib/socialPublishPresets";
-import type { SocialPublishDraft, SocialPublishPlatform } from "../../lib/socialPublishTypes";
+import type { SocialPublishDraft } from "../../lib/socialPublishTypes";
 
 type Props = {
   draft: SocialPublishDraft;
-  platform: SocialPublishPlatform;
   onDraftChange: (d: SocialPublishDraft) => void;
   onBack: () => void;
   onClose: () => void;
@@ -18,7 +17,7 @@ type Props = {
 const inputCls =
   "w-full rounded-lg border border-line bg-fill p-2 text-sm text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20";
 
-export function NotesSocialPublishStudio({ draft, platform, onDraftChange, onBack, onClose, onCopy }: Props) {
+export function NotesSocialPublishStudio({ draft, onDraftChange, onBack, onClose, onCopy }: Props) {
   const [copyHint, setCopyHint] = useState("");
 
   return (
@@ -33,176 +32,100 @@ export function NotesSocialPublishStudio({ draft, platform, onDraftChange, onBac
             <IconChevronLeft width={16} height={16} />
             返回
           </button>
-          <span className="text-sm font-semibold text-ink">{platformLabel(platform)} · 编辑与预览</span>
+          <span className="text-sm font-semibold text-ink">
+            {platformLabel(draft.platform)} · 编辑与预览
+          </span>
           <button type="button" className="text-sm text-muted hover:text-ink" onClick={onClose}>
             关闭
           </button>
         </div>
-        {"compliance" in draft && draft.compliance ? (
+        {draft.compliance ? (
           <p className="text-center text-[11px] text-muted">{draft.compliance.userMessage}</p>
         ) : null}
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 lg:grid-cols-2">
         <div className="min-h-0 overflow-y-auto border-b border-line p-4 lg:border-b-0 lg:border-r">
-          {draft.platform === "xiaohongshu" ? (
-            <div className="space-y-3">
-              <label className="block text-xs font-medium text-ink">
-                标题（3 选 1）
-                <div className="mt-1 space-y-1">
-                  {draft.titles.map((t, i) => (
-                    <label key={`title-${i}`} className="flex gap-2 text-sm">
-                      <input
-                        type="radio"
-                        checked={draft.selectedTitleIndex === i}
-                        onChange={() => onDraftChange({ ...draft, selectedTitleIndex: i })}
-                      />
-                      <span className="mt-2 shrink-0 text-[10px] text-muted">备选 {i + 1}</span>
-                      <input
-                        type="text"
-                        className={inputCls}
-                        value={t}
-                        maxLength={28}
-                        onChange={(e) => {
-                          const next = [...draft.titles] as [string, string, string];
-                          next[i] = e.target.value;
-                          onDraftChange({ ...draft, titles: ensureXhsTitles(next) });
-                        }}
-                      />
-                    </label>
-                  ))}
-                </div>
-              </label>
-              <label className="block text-xs font-medium text-ink">
-                正文
-                <span className="ml-1 font-normal text-muted">（已含话题与互动句）</span>
-                <textarea
-                  className={`mt-1 min-h-48 ${inputCls}`}
-                  value={draft.body}
-                  onChange={(e) => onDraftChange({ ...draft, body: e.target.value })}
-                />
-              </label>
+          <div className="space-y-3">
+            <label className="block text-xs font-medium text-ink">
+              标题（3 选 1）
+              <div className="mt-1 space-y-1">
+                {draft.titles.map((t, i) => (
+                  <label key={`title-${i}`} className="flex gap-2 text-sm">
+                    <input
+                      type="radio"
+                      checked={draft.selectedTitleIndex === i}
+                      onChange={() => onDraftChange({ ...draft, selectedTitleIndex: i })}
+                    />
+                    <span className="mt-2 shrink-0 text-[10px] text-muted">备选 {i + 1}</span>
+                    <input
+                      type="text"
+                      className={inputCls}
+                      value={t}
+                      maxLength={draft.platform === "wechat_mp" ? 64 : 28}
+                      onChange={(e) => {
+                        const next = [...draft.titles] as [string, string, string];
+                        next[i] = e.target.value;
+                        onDraftChange({ ...draft, titles: ensureXhsTitles(next) });
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </label>
+            <label className="block text-xs font-medium text-ink">
+              正文
+              <span className="ml-1 font-normal text-muted">
+                {draft.platform === "wechat_mp"
+                  ? "（已含话题与互动句，可用 Markdown）"
+                  : "（已含话题与互动句）"}
+              </span>
+              <textarea
+                className={`mt-1 min-h-48 ${inputCls} ${draft.platform === "wechat_mp" ? "font-mono text-xs" : ""}`}
+                value={draft.body}
+                onChange={(e) => onDraftChange({ ...draft, body: e.target.value })}
+              />
+            </label>
+            {draft.imageSuggestions.length > 0 ? (
               <div>
                 <p className="text-xs font-medium text-ink">图片制作建议</p>
                 <p className="mt-0.5 text-[10px] text-muted">发布配图时可参考，显示在正文之后</p>
-                <div className="mt-1.5 space-y-2">
-                  {(draft.imageSuggestions.length
-                    ? draft.imageSuggestions
-                    : [""]
-                  ).map((line, i) => (
-                    <input
-                      key={`img-sug-${i}`}
-                      type="text"
-                      className={inputCls}
-                      placeholder={`建议 ${i + 1}`}
-                      value={line}
-                      onChange={(e) => {
-                        const base = draft.imageSuggestions.length
-                          ? [...draft.imageSuggestions]
-                          : [""];
-                        while (base.length <= i) base.push("");
-                        base[i] = e.target.value;
-                        onDraftChange({
-                          ...draft,
-                          imageSuggestions: base.map((s) => s.trim()).filter(Boolean)
-                        });
-                      }}
-                    />
+                <ul className="mt-1.5 space-y-1.5 text-sm text-ink">
+                  {draft.imageSuggestions.map((line, i) => (
+                    <li key={`img-${i}`} className="rounded-lg border border-line/80 bg-fill/40 px-2 py-1.5">
+                      {line}
+                    </li>
                   ))}
-                  <button
-                    type="button"
-                    className="text-[11px] text-brand hover:underline"
-                    onClick={() =>
-                      onDraftChange({
-                        ...draft,
-                        imageSuggestions: [...draft.imageSuggestions, ""]
-                      })
-                    }
-                  >
-                    + 增加一条建议
-                  </button>
-                </div>
+                </ul>
               </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <label className="block text-xs font-medium text-ink">
-                标题
-                <input
-                  type="text"
-                  className={`mt-1 ${inputCls}`}
-                  value={draft.title}
-                  onChange={(e) => onDraftChange({ ...draft, title: e.target.value })}
-                />
-              </label>
-              <label className="block text-xs font-medium text-ink">
-                摘要（≤120 字）
-                <input
-                  type="text"
-                  className={`mt-1 ${inputCls}`}
-                  value={draft.digest}
-                  maxLength={120}
-                  onChange={(e) => onDraftChange({ ...draft, digest: e.target.value })}
-                />
-              </label>
-              <label className="block text-xs font-medium text-ink">
-                正文（Markdown）
-                <textarea
-                  className={`mt-1 min-h-48 font-mono text-xs ${inputCls}`}
-                  value={draft.body}
-                  onChange={(e) => onDraftChange({ ...draft, body: e.target.value })}
-                />
-              </label>
-              <label className="block text-xs font-medium text-ink">
-                文末引导
-                <input
-                  type="text"
-                  className={`mt-1 ${inputCls}`}
-                  value={draft.cta}
-                  onChange={(e) => onDraftChange({ ...draft, cta: e.target.value })}
-                />
-              </label>
-            </div>
-          )}
+            ) : null}
+          </div>
         </div>
 
         <div className="flex min-h-0 flex-col bg-fill/20 p-4">
           <p className="mb-2 text-xs font-medium text-muted">预览（仅供参考）</p>
           <div
             className={`mx-auto min-h-0 flex-1 overflow-y-auto rounded-2xl border border-line bg-surface p-4 shadow-soft ${
-              platform === "xiaohongshu" ? "max-w-[360px]" : "max-w-[480px] w-full"
+              draft.platform === "xiaohongshu" ? "max-w-[360px]" : "max-w-[480px] w-full"
             }`}
           >
-            {draft.platform === "xiaohongshu" ? (
-              <>
-                <p className="text-base font-bold text-ink">
-                  {draft.titles[draft.selectedTitleIndex] || draft.titles[0]}
-                </p>
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-ink">{draft.body}</p>
-                {draft.imageSuggestions.length ? (
-                  <div className="mt-4 border-t border-line/80 pt-3">
-                    <p className="text-[10px] font-medium text-muted">图片制作建议</p>
-                    <ul className="mt-1.5 list-decimal pl-4 text-[11px] leading-relaxed text-ink/90">
-                      {draft.imageSuggestions.map((s) => (
-                        <li key={s}>{s}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <h1 className="text-lg font-bold text-ink">{draft.title}</h1>
-                {draft.digest ? <p className="mt-2 text-xs text-muted">{draft.digest}</p> : null}
-                <div className="prose prose-sm mt-4 max-w-none whitespace-pre-wrap text-sm text-ink">
-                  {draft.body}
-                </div>
-                {draft.cta ? <p className="mt-4 border-t border-line pt-3 text-xs text-muted">{draft.cta}</p> : null}
-              </>
-            )}
+            <p className="text-base font-bold text-ink">
+              {draft.titles[draft.selectedTitleIndex] || draft.titles[0]}
+            </p>
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-ink">{draft.body}</p>
+            {draft.imageSuggestions.length ? (
+              <div className="mt-4 border-t border-line/80 pt-3">
+                <p className="text-[10px] font-medium text-muted">图片制作建议</p>
+                <ul className="mt-1.5 list-decimal pl-4 text-[11px] leading-relaxed text-ink/90">
+                  {draft.imageSuggestions.map((s) => (
+                    <li key={s}>{s}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
           <ol className="mt-3 list-decimal pl-4 text-[10px] text-muted">
-            {copyGuideLines(platform).map((line) => (
+            {copyGuideLines(draft.platform).map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ol>

@@ -9,17 +9,10 @@ import {
   defaultAdvancedOptions,
   defaultPersonaOptions,
   defaultQuickOptions,
-  isXhsPersonaValid,
+  isPersonaValid,
   platformLabel,
-  SOCIAL_PUBLISH_AUDIENCE_OPTIONS,
+  publishPresetBundle,
   SOCIAL_PUBLISH_CHARS_PRESETS,
-  SOCIAL_PUBLISH_INTENT_OPTIONS,
-  SOCIAL_PUBLISH_TARGET_AGE,
-  SOCIAL_PUBLISH_TARGET_GENDER,
-  SOCIAL_PUBLISH_TARGET_OCCUPATION,
-  SOCIAL_PUBLISH_TARGET_REGION,
-  SOCIAL_PUBLISH_INTERESTS,
-  SOCIAL_PUBLISH_WRITER_VOICE,
   toggleMultiSelect,
   SOCIAL_TARGET_CHARS_MAX,
   SOCIAL_TARGET_CHARS_MIN,
@@ -28,10 +21,8 @@ import {
 import { buildSocialPublishClipboardText, copyGuideLines } from "../../lib/socialPublishCopy";
 import { loadSocialPublishPrefs, saveSocialPublishPrefs } from "../../lib/socialPublishStorage";
 import {
-  buildSocialPublishSourceCandidates,
   lastAssistantAnswerText,
-  resolveSourceMaterial,
-  resolveXhsDefaultMaterial
+  resolveDefaultPublishMaterial
 } from "../../lib/socialPublishSources";
 import type {
   SocialPublishAdvancedOptions,
@@ -39,7 +30,6 @@ import type {
   SocialPublishPersonaOptions,
   SocialPublishPlatform,
   SocialPublishQuickOptions,
-  SocialPublishSourceCandidate,
   SocialPublishWizardStep
 } from "../../lib/socialPublishTypes";
 import { NotesSocialPublishStudio } from "./NotesSocialPublishStudio";
@@ -73,9 +63,10 @@ export default function NotesSocialPublishModal({
   const [advanced, setAdvanced] = useState<SocialPublishAdvancedOptions>(() =>
     defaultAdvancedOptions(prefs.platform)
   );
-  const [persona, setPersona] = useState<SocialPublishPersonaOptions>(() => defaultPersonaOptions());
+  const [persona, setPersona] = useState<SocialPublishPersonaOptions>(() =>
+    defaultPersonaOptions(prefs.platform)
+  );
   const [targetCharsInput, setTargetCharsInput] = useState("600");
-  const [sourceKey, setSourceKey] = useState("notes_only");
   const [draft, setDraft] = useState<SocialPublishDraft | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -83,15 +74,10 @@ export default function NotesSocialPublishModal({
   const [showStudio, setShowStudio] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
 
-  const sourceCandidates = useMemo(
-    () => buildSocialPublishSourceCandidates({ noteIds, askMessages }),
-    [noteIds, askMessages]
-  );
+  const preset = useMemo(() => publishPresetBundle(platform), [platform]);
 
-  const selectedSource = useMemo(
-    () => sourceCandidates.find((s) => s.key === sourceKey) || sourceCandidates[0],
-    [sourceCandidates, sourceKey]
-  );
+  const canGenerate =
+    noteIds.length > 0 || lastAssistantAnswerText(askMessages).length >= 40;
 
   useEffect(() => {
     if (!open) return;
@@ -100,15 +86,13 @@ export default function NotesSocialPublishModal({
     setQuick(p.quick);
     setTargetCharsInput(String(p.quick.targetChars));
     setAdvanced(defaultAdvancedOptions(p.platform));
-    setPersona(defaultPersonaOptions());
+    setPersona(defaultPersonaOptions(p.platform));
     setStep("platform");
     setDraft(null);
     setError("");
     setBusy(false);
     setShowStudio(false);
     setShowGuide(false);
-    const rec = buildSocialPublishSourceCandidates({ noteIds, askMessages }).find((s) => s.recommended);
-    setSourceKey(rec?.key || (noteIds.length > 0 ? "notes_only" : "ask_answer"));
   }, [open, noteIds, askMessages]);
 
   useEffect(() => {
@@ -128,7 +112,7 @@ export default function NotesSocialPublishModal({
     [quick, targetCharsInput]
   );
 
-  const xhsPersonaValid = platform !== "xiaohongshu" || isXhsPersonaValid(persona);
+  const personaValid = isPersonaValid(persona);
 
   const handlePlatformPick = (p: SocialPublishPlatform) => {
     setPlatform(p);
@@ -136,6 +120,7 @@ export default function NotesSocialPublishModal({
     setQuick(q);
     setTargetCharsInput(String(q.targetChars));
     setAdvanced(defaultAdvancedOptions(p));
+    setPersona(defaultPersonaOptions(p));
     setStep("options");
   };
 
@@ -151,11 +136,7 @@ export default function NotesSocialPublishModal({
   }
 
   const runGenerate = useCallback(async () => {
-    if (platform === "wechat_mp" && !selectedSource) {
-      setError("请先选择素材来源");
-      return;
-    }
-    if (platform === "xiaohongshu" && noteIds.length === 0 && !lastAssistantAnswerText(askMessages)) {
+    if (!canGenerate) {
       setError("请先勾选左侧参考资料，或先向资料提问后再发布");
       return;
     }
@@ -163,25 +144,17 @@ export default function NotesSocialPublishModal({
     setError("");
     setStep("generating");
     try {
-      const material =
-        platform === "xiaohongshu"
-          ? await resolveXhsDefaultMaterial({ noteIds, askMessages, authHeaders })
-          : await resolveSourceMaterial({
-              source: selectedSource!,
-              authHeaders,
-              noteIds
-            });
-      const options = buildOptionsPayload(
-        quickForPayload,
-        advanced,
-        platform === "xiaohongshu" ? persona : null,
-        platform
-      );
+      const material = await resolveDefaultPublishMaterial({
+        noteIds,
+        askMessages,
+        authHeaders
+      });
+      const options = buildOptionsPayload(quickForPayload, advanced, persona, platform);
       const result = await fetchSocialPublishDraft({
         platform,
         materialText: material,
         options,
-        sourceType: platform === "xiaohongshu" ? "notes_and_ask" : selectedSource!.type,
+        sourceType: "notes_and_ask",
         authHeaders
       });
       setDraft(result);
@@ -190,20 +163,11 @@ export default function NotesSocialPublishModal({
       setShowStudio(true);
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
-      setStep(platform === "xiaohongshu" ? "options" : "source");
+      setStep("options");
     } finally {
       setBusy(false);
     }
-  }, [
-    selectedSource,
-    askMessages,
-    authHeaders,
-    noteIds,
-    quickForPayload,
-    advanced,
-    platform,
-    persona
-  ]);
+  }, [canGenerate, askMessages, authHeaders, noteIds, quickForPayload, advanced, platform, persona]);
 
   function chipBtn(active: boolean) {
     return `rounded-full border px-2.5 py-1 text-xs ${
@@ -229,7 +193,6 @@ export default function NotesSocialPublishModal({
     return (
       <NotesSocialPublishStudio
         draft={draft}
-        platform={platform}
         onDraftChange={setDraft}
         onBack={() => setShowStudio(false)}
         onClose={onClose}
@@ -310,14 +273,14 @@ export default function NotesSocialPublishModal({
               <IconChevronLeft width={14} height={14} />
               换平台
             </button>
-            {platform === "xiaohongshu" ? (
-              <>
-                <div className="space-y-3 rounded-xl border border-brand/20 bg-brand/5 p-2.5">
-                  <p className="text-xs font-semibold text-ink">目标人群定位</p>
+            <>
+              <details className="rounded-xl border border-brand/20 bg-brand/5 p-2.5" open>
+                <summary className="cursor-pointer text-xs font-semibold text-ink">目标人群定位</summary>
+                <div className="mt-3 space-y-3">
                   <div>
                     <p className="mb-1 text-[11px] text-ink">性别</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {SOCIAL_PUBLISH_TARGET_GENDER.map((o) => (
+                      {preset.genders.map((o) => (
                         <button
                           key={o.id}
                           type="button"
@@ -337,7 +300,7 @@ export default function NotesSocialPublishModal({
                   <div>
                     <p className="mb-1 text-[11px] text-ink">年龄段</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {SOCIAL_PUBLISH_TARGET_AGE.map((o) => (
+                      {preset.ages.map((o) => (
                         <button
                           key={o.id}
                           type="button"
@@ -357,7 +320,7 @@ export default function NotesSocialPublishModal({
                   <div>
                     <p className="mb-1 text-[11px] text-ink">地域</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {SOCIAL_PUBLISH_TARGET_REGION.map((o) => (
+                      {preset.regions.map((o) => (
                         <button
                           key={o.id}
                           type="button"
@@ -377,7 +340,7 @@ export default function NotesSocialPublishModal({
                   <div>
                     <p className="mb-1 text-[11px] text-ink">兴趣爱好</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {SOCIAL_PUBLISH_INTERESTS.map((o) => (
+                      {preset.interests.map((o) => (
                         <button
                           key={o.id}
                           type="button"
@@ -397,7 +360,7 @@ export default function NotesSocialPublishModal({
                   <div>
                     <p className="mb-1 text-[11px] text-ink">职业</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {SOCIAL_PUBLISH_TARGET_OCCUPATION.map((o) => (
+                      {preset.occupations.map((o) => (
                         <button
                           key={o.id}
                           type="button"
@@ -427,20 +390,29 @@ export default function NotesSocialPublishModal({
                     ) : null}
                   </div>
                 </div>
-                <div>
-                  <p className="mb-1.5 text-xs font-medium text-ink">写作人设</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {SOCIAL_PUBLISH_WRITER_VOICE.map((o) => (
-                      <button
-                        key={o.id}
-                        type="button"
-                        className={`rounded-xl border p-2.5 text-left transition ${
-                          persona.writerVoice === o.id
-                            ? "border-brand bg-brand/10"
-                            : "border-line bg-fill/50 hover:border-brand/35"
-                        }`}
-                        onClick={() => setPersona((p) => ({ ...p, writerVoice: o.id }))}
-                      >
+              </details>
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-ink">
+                  写作人设
+                  <span className="ml-1 text-[11px] font-normal text-muted">（可选）</span>
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {preset.writerVoices.map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      className={`rounded-xl border p-2.5 text-left transition ${
+                        persona.writerVoice === o.id
+                          ? "border-brand bg-brand/10"
+                          : "border-line bg-fill/50 hover:border-brand/35"
+                      }`}
+                      onClick={() =>
+                        setPersona((p) => ({
+                          ...p,
+                          writerVoice: p.writerVoice === o.id ? null : o.id
+                        }))
+                      }
+                    >
                         <span className="block text-xs font-medium text-ink">{o.label}</span>
                         <span className="mt-0.5 block text-[10px] text-muted">{o.hint}</span>
                       </button>
@@ -507,103 +479,12 @@ export default function NotesSocialPublishModal({
                     maxLength={300}
                   />
                 </label>
-              </>
-            ) : (
-              <>
-                <div>
-                  <p className="mb-1.5 text-xs font-medium text-ink">这篇主要想</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SOCIAL_PUBLISH_INTENT_OPTIONS.map((o) => (
-                      <button
-                        key={o.id}
-                        type="button"
-                        className={chipBtn(quick.intent === o.id)}
-                        onClick={() => setQuick((q) => ({ ...q, intent: o.id }))}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <p className="mb-1.5 text-xs font-medium text-ink">写给谁</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SOCIAL_PUBLISH_AUDIENCE_OPTIONS.map((o) => (
-                      <button
-                        key={o.id}
-                        type="button"
-                        className={chipBtn(quick.audience === o.id)}
-                        onClick={() => setQuick((q) => ({ ...q, audience: o.id }))}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <p className="mb-1.5 text-xs font-medium text-ink">目标字数</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SOCIAL_PUBLISH_CHARS_PRESETS.map((o) => (
-                      <button
-                        key={o.id}
-                        type="button"
-                        className={chipBtn(quick.targetCharsPreset === o.id)}
-                        onClick={() => {
-                          if (o.id === "custom") {
-                            setQuick((q) => ({ ...q, targetCharsPreset: "custom" }));
-                            return;
-                          }
-                          setQuick((q) => ({
-                            ...q,
-                            targetCharsPreset: o.id,
-                            targetChars: o.chars
-                          }));
-                          setTargetCharsInput(String(o.chars));
-                        }}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                  {quick.targetCharsPreset === "custom" ? (
-                    <label className="mt-2 block text-[11px] text-ink">
-                      自定义字数
-                      <input
-                        type="number"
-                        min={SOCIAL_TARGET_CHARS_MIN}
-                        max={SOCIAL_TARGET_CHARS_MAX}
-                        className={`mt-1 w-full ${inputCls}`}
-                        value={targetCharsInput}
-                        onChange={(e) => setTargetCharsInput(e.target.value)}
-                        onBlur={commitTargetCharsInput}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            commitTargetCharsInput();
-                          }
-                        }}
-                      />
-                    </label>
-                  ) : (
-                    <p className="mt-1.5 text-[10px] text-muted">当前约 {quick.targetChars} 字</p>
-                  )}
-                </div>
-                <details className="rounded-lg border border-line/80 bg-fill/30 px-2.5 py-2">
-                  <summary className="cursor-pointer text-xs font-medium text-ink">高级选项</summary>
-                  <label className="mt-2 block text-[11px] text-ink">
-                    补充说明（可选）
-                    <input
-                      type="text"
-                      className={`mt-1 w-full ${inputCls}`}
-                      value={advanced.userNote}
-                      onChange={(e) => setAdvanced((a) => ({ ...a, userNote: e.target.value }))}
-                      placeholder="例如：突出对比、不要提价格"
-                      maxLength={200}
-                    />
-                  </label>
-                </details>
-              </>
-            )}
+              <p className="text-[10px] text-muted">
+                将默认使用勾选的资料
+                {lastAssistantAnswerText(askMessages).length >= 40 ? "与刚才的对话回答" : ""}
+                作为生成素材。
+              </p>
+            </>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -615,84 +496,7 @@ export default function NotesSocialPublishModal({
               <button
                 type="button"
                 className="rounded-lg bg-brand px-3 py-2 text-sm text-brand-foreground disabled:opacity-45"
-                disabled={
-                  platform === "xiaohongshu"
-                    ? !xhsPersonaValid ||
-                      (noteIds.length === 0 && !lastAssistantAnswerText(askMessages))
-                    : false
-                }
-                onClick={() =>
-                  platform === "xiaohongshu" ? void runGenerate() : setStep("source")
-                }
-              >
-                {platform === "xiaohongshu" ? "开始生成" : "下一步"}
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {step === "source" && platform === "wechat_mp" ? (
-          <div className="mt-4 space-y-3">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 text-xs text-brand hover:underline"
-              onClick={() => setStep("options")}
-            >
-              <IconChevronLeft width={14} height={14} />
-              改选项
-            </button>
-            {sourceCandidates.length === 0 ? (
-              <p className="text-sm text-muted">请先勾选左侧参考资料；若要用对话回答，需先向资料提问。</p>
-            ) : (
-              <>
-                <p className="text-xs text-muted">将主要依据</p>
-                <div className="space-y-2">
-                  {sourceCandidates.map((s) => (
-                    <label
-                      key={s.key}
-                      className={`flex cursor-pointer gap-2 rounded-xl border p-2.5 ${
-                        sourceKey === s.key ? "border-brand/50 bg-brand/5" : "border-line"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="social-source"
-                        className="mt-1"
-                        checked={sourceKey === s.key}
-                        onChange={() => setSourceKey(s.key)}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="text-sm font-medium text-ink">
-                          {s.label}
-                          {s.recommended ? (
-                            <span className="ml-1 text-[10px] text-brand">推荐</span>
-                          ) : null}
-                        </span>
-                        <span className="mt-0.5 block text-[10px] leading-snug text-muted">
-                          {s.materialPreview}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-                <p className="rounded-lg border border-line/70 bg-fill/40 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
-                  将为 <strong className="text-ink">{platformLabel(platform)}</strong> 生成可复制发布包。
-                  引用 {noteIds.length} 篇勾选资料。
-                </p>
-              </>
-            )}
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-lg border border-line px-3 py-2 text-sm"
-                onClick={() => setStep("options")}
-              >
-                上一步
-              </button>
-              <button
-                type="button"
-                className="rounded-lg bg-brand px-3 py-2 text-sm text-brand-foreground disabled:opacity-45"
-                disabled={sourceCandidates.length === 0}
+                disabled={!personaValid || !canGenerate}
                 onClick={() => void runGenerate()}
               >
                 开始生成
@@ -720,21 +524,11 @@ export default function NotesSocialPublishModal({
               <p className="text-[11px] text-muted">{draft.compliance.userMessage}</p>
             ) : null}
             <div className="max-h-48 overflow-y-auto rounded-xl border border-line bg-fill/30 p-3 text-xs leading-relaxed text-ink">
-              {draft.platform === "xiaohongshu" ? (
-                <>
-                  <p className="font-semibold">
-                    {draft.titles[draft.selectedTitleIndex] || draft.titles[0]}
-                  </p>
-                  <p className="mt-2 whitespace-pre-wrap">{draft.body.slice(0, 600)}</p>
-                  {draft.body.length > 600 ? <p className="mt-1 text-muted">…</p> : null}
-                </>
-              ) : (
-                <>
-                  <p className="font-semibold">{draft.title}</p>
-                  {draft.digest ? <p className="mt-1 text-muted">{draft.digest}</p> : null}
-                  <p className="mt-2 whitespace-pre-wrap">{draft.body.slice(0, 600)}</p>
-                </>
-              )}
+              <p className="font-semibold">
+                {draft.titles[draft.selectedTitleIndex] || draft.titles[0]}
+              </p>
+              <p className="mt-2 whitespace-pre-wrap">{draft.body.slice(0, 600)}</p>
+              {draft.body.length > 600 ? <p className="mt-1 text-muted">…</p> : null}
             </div>
             <button
               type="button"

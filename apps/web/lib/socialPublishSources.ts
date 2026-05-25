@@ -74,8 +74,8 @@ export async function resolveSourceMaterial(params: {
   return merged.slice(0, 48_000);
 }
 
-/** 小红书默认素材：勾选资料 + 最近一条足够长的对话回答（若有） */
-export async function resolveXhsDefaultMaterial(params: {
+/** 默认素材：勾选资料 + 最近一条足够长的对话回答（若有） */
+export async function resolveDefaultPublishMaterial(params: {
   noteIds: string[];
   askMessages: Array<{ role: string; content: string; supplementContent?: string }>;
   authHeaders: Record<string, string>;
@@ -108,3 +108,5 @@ export async function resolveXhsDefaultMaterial(params: {
   }
   return merged.slice(0, 48_000);
 }
+
+export const resolveXhsDefaultMaterial = resolveDefaultPublishMaterial;

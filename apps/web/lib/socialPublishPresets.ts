@@ -1,6 +1,6 @@
 import type {
   SocialPublishAdvancedOptions,
-  SocialPublishIntent,
+  SocialPublishInterest,
   SocialPublishPersonaOptions,
   SocialPublishPlatform,
   SocialPublishQuickOptions,
@@ -9,11 +9,10 @@ import type {
   SocialPublishTargetAge,
   SocialPublishTargetRegion,
   SocialPublishTargetOccupation,
-  SocialPublishWriterVoice,
-  SocialPublishInterest
+  SocialPublishWriterVoice
 } from "./socialPublishTypes";
 
-export const SOCIAL_TARGET_CHARS_MIN = 100;
+export const SOCIAL_TARGET_CHARS_MIN = 200;
 export const SOCIAL_TARGET_CHARS_MAX = 5000;
 
 export const SOCIAL_PUBLISH_CHARS_PRESETS: {
@@ -21,6 +20,7 @@ export const SOCIAL_PUBLISH_CHARS_PRESETS: {
   label: string;
   chars: number;
 }[] = [
+  { id: "c200", label: "200 字", chars: 200 },
   { id: "c400", label: "400 字", chars: 400 },
   { id: "c600", label: "600 字", chars: 600 },
   { id: "c1000", label: "1000 字", chars: 1000 },
@@ -28,27 +28,13 @@ export const SOCIAL_PUBLISH_CHARS_PRESETS: {
   { id: "custom", label: "自定义", chars: 0 }
 ];
 
-export const SOCIAL_PUBLISH_INTENT_OPTIONS: { id: SocialPublishIntent; label: string }[] = [
-  { id: "zhongcao", label: "种草" },
-  { id: "dry_goods", label: "干货" },
-  { id: "opinion", label: "观点" },
-  { id: "checklist", label: "清单" },
-  { id: "story", label: "故事" }
-];
-
-export const SOCIAL_PUBLISH_AUDIENCE_OPTIONS = [
-  { id: "beginner" as const, label: "入门" },
-  { id: "general" as const, label: "一般" },
-  { id: "pro" as const, label: "专业" }
-];
-
-export const SOCIAL_PUBLISH_TARGET_GENDER: { id: SocialPublishTargetGender; label: string }[] = [
+const GENDERS: { id: SocialPublishTargetGender; label: string }[] = [
   { id: "female", label: "女性" },
   { id: "male", label: "男性" },
   { id: "any", label: "不限" }
 ];
 
-export const SOCIAL_PUBLISH_TARGET_AGE: { id: SocialPublishTargetAge; label: string }[] = [
+const AGES: { id: SocialPublishTargetAge; label: string }[] = [
   { id: "18_24", label: "18–24 岁" },
   { id: "25_34", label: "25–34 岁" },
   { id: "35_44", label: "35–44 岁" },
@@ -56,28 +42,11 @@ export const SOCIAL_PUBLISH_TARGET_AGE: { id: SocialPublishTargetAge; label: str
   { id: "all_ages", label: "全年龄" }
 ];
 
-export const SOCIAL_PUBLISH_TARGET_REGION: { id: SocialPublishTargetRegion; label: string }[] = [
+const REGIONS: { id: SocialPublishTargetRegion; label: string }[] = [
   { id: "tier1", label: "一线" },
   { id: "tier2", label: "二线" },
   { id: "tier3_down", label: "三四线及以下" },
   { id: "any", label: "不限" }
-];
-
-export const SOCIAL_PUBLISH_TARGET_OCCUPATION: { id: SocialPublishTargetOccupation; label: string }[] = [
-  { id: "office_worker", label: "上班族" },
-  { id: "student", label: "学生" },
-  { id: "parent", label: "宝妈/宝爸" },
-  { id: "freelancer", label: "自由职业" },
-  { id: "entrepreneur", label: "创业者" },
-  { id: "creator", label: "自媒体/创作者" },
-  { id: "custom", label: "其他" }
-];
-
-export const SOCIAL_PUBLISH_WRITER_VOICE: { id: SocialPublishWriterVoice; label: string; hint: string }[] = [
-  { id: "bestie_brother", label: "贴心闺蜜/兄弟型", hint: "口语亲切、像朋友安利" },
-  { id: "expert_scholar", label: "行业专家/斜杠学霸", hint: "有观点、有结构、可信" },
-  { id: "growth_companion", label: "养成系/真实陪伴", hint: "过程感、真诚克制" },
-  { id: "sharp_truth", label: "毒舌人间清醒", hint: "直给结论、反套路" }
 ];
 
 export const SOCIAL_PUBLISH_INTERESTS: { id: SocialPublishInterest; label: string }[] = [
@@ -103,9 +72,78 @@ export const SOCIAL_PUBLISH_INTERESTS: { id: SocialPublishInterest; label: strin
   { id: "outdoor", label: "户外" }
 ];
 
+export const SOCIAL_PUBLISH_MP_INTERESTS: { id: SocialPublishInterest; label: string }[] = [
+  { id: "biz_finance", label: "财经商业" },
+  { id: "tech", label: "科技互联网" },
+  { id: "edu_exam", label: "教育考试" },
+  { id: "health", label: "健康养生" },
+  { id: "lifestyle", label: "生活方式" },
+  { id: "news_current", label: "时政资讯" },
+  { id: "humanities", label: "人文历史" },
+  { id: "career", label: "职场管理" },
+  { id: "parenting", label: "亲子教育" },
+  { id: "emotion", label: "情感心理" },
+  { id: "law", label: "法律普法" },
+  { id: "auto", label: "汽车出行" },
+  { id: "real_estate", label: "房产置业" },
+  { id: "food", label: "美食" },
+  { id: "travel", label: "旅行" },
+  { id: "study", label: "读书文化" },
+  { id: "agri", label: "三农" },
+  { id: "entertainment", label: "文娱" }
+];
+
+export const SOCIAL_PUBLISH_TARGET_OCCUPATION: { id: SocialPublishTargetOccupation; label: string }[] = [
+  { id: "office_worker", label: "上班族" },
+  { id: "student", label: "学生" },
+  { id: "parent", label: "宝妈/宝爸" },
+  { id: "freelancer", label: "自由职业" },
+  { id: "entrepreneur", label: "创业者" },
+  { id: "creator", label: "自媒体/创作者" },
+  { id: "custom", label: "其他" }
+];
+
+export const SOCIAL_PUBLISH_MP_OCCUPATION: { id: SocialPublishTargetOccupation; label: string }[] = [
+  { id: "office_worker", label: "企业白领" },
+  { id: "civil_servant", label: "体制内" },
+  { id: "teacher", label: "教师/科研" },
+  { id: "professional", label: "医生/律师等专业人士" },
+  { id: "entrepreneur", label: "企业主/管理者" },
+  { id: "student", label: "在校学生" },
+  { id: "freelancer", label: "自由职业/撰稿人" },
+  { id: "retiree", label: "退休群体" },
+  { id: "custom", label: "其他" }
+];
+
+export const SOCIAL_PUBLISH_WRITER_VOICE: { id: SocialPublishWriterVoice; label: string; hint: string }[] = [
+  { id: "bestie_brother", label: "贴心闺蜜/兄弟型", hint: "口语亲切、像朋友安利" },
+  { id: "expert_scholar", label: "行业专家/斜杠学霸", hint: "有观点、有结构、可信" },
+  { id: "growth_companion", label: "养成系/真实陪伴", hint: "过程感、真诚克制" },
+  { id: "sharp_truth", label: "毒舌人间清醒", hint: "直给结论、反套路" }
+];
+
+export const SOCIAL_PUBLISH_MP_WRITER_VOICE: { id: SocialPublishWriterVoice; label: string; hint: string }[] = [
+  { id: "official_account", label: "机构/品牌官方", hint: "稳重可信、信息清晰" },
+  { id: "insight_column", label: "深度洞察专栏", hint: "有论据、有结构、偏专业" },
+  { id: "warm_story", label: "温暖人文叙事", hint: "故事感、共情、可读" },
+  { id: "practical_guide", label: "实用攻略体", hint: "步骤清晰、收藏转发向" }
+];
+
+export function publishPresetBundle(platform: SocialPublishPlatform) {
+  return {
+    genders: GENDERS,
+    ages: AGES,
+    regions: REGIONS,
+    interests: platform === "wechat_mp" ? SOCIAL_PUBLISH_MP_INTERESTS : SOCIAL_PUBLISH_INTERESTS,
+    occupations:
+      platform === "wechat_mp" ? SOCIAL_PUBLISH_MP_OCCUPATION : SOCIAL_PUBLISH_TARGET_OCCUPATION,
+    writerVoices:
+      platform === "wechat_mp" ? SOCIAL_PUBLISH_MP_WRITER_VOICE : SOCIAL_PUBLISH_WRITER_VOICE
+  };
+}
+
 export const XHS_TITLE_COUNT = 3;
 
-/** 多选切换；exclusiveId 为「不限/全年龄」类互斥项 */
 export function toggleMultiSelect<T extends string>(
   current: T[],
   id: T,
@@ -123,17 +161,19 @@ export function toggleMultiSelect<T extends string>(
   return next;
 }
 
-export function interestLabels(persona: SocialPublishPersonaOptions): string[] {
-  return persona.interests.map(
-    (id) => SOCIAL_PUBLISH_INTERESTS.find((o) => o.id === id)?.label || id
-  );
+export function interestLabels(
+  persona: SocialPublishPersonaOptions,
+  platform: SocialPublishPlatform
+): string[] {
+  const list = platform === "wechat_mp" ? SOCIAL_PUBLISH_MP_INTERESTS : SOCIAL_PUBLISH_INTERESTS;
+  return persona.interests.map((id) => list.find((o) => o.id === id)?.label || id);
 }
 
 export function ensureXhsTitles(titles: string[]): [string, string, string] {
   const base = titles.map((t) => t.trim()).filter(Boolean);
   const out = [...base];
   while (out.length < XHS_TITLE_COUNT) {
-    out.push(out[0] || "笔记标题备选");
+    out.push(out[0] || "标题备选");
   }
   return [out[0]!, out[1]!, out[2]!];
 }
@@ -166,7 +206,7 @@ export function charsFromPreset(preset: SocialPublishTargetCharsPreset, customCh
   return row?.chars ? clampTargetChars(row.chars) : 600;
 }
 
-export function defaultPersonaOptions(): SocialPublishPersonaOptions {
+export function defaultPersonaOptions(platform: SocialPublishPlatform): SocialPublishPersonaOptions {
   return {
     genders: ["female"],
     ageRanges: ["25_34"],
@@ -174,29 +214,33 @@ export function defaultPersonaOptions(): SocialPublishPersonaOptions {
     interests: [],
     occupations: ["office_worker"],
     occupationCustom: "",
-    writerVoice: "bestie_brother",
+    writerVoice: null,
     otherRequirements: ""
   };
 }
 
-export function occupationLabels(persona: SocialPublishPersonaOptions): string[] {
+export function occupationLabels(
+  persona: SocialPublishPersonaOptions,
+  platform: SocialPublishPlatform
+): string[] {
+  const list =
+    platform === "wechat_mp" ? SOCIAL_PUBLISH_MP_OCCUPATION : SOCIAL_PUBLISH_TARGET_OCCUPATION;
   return persona.occupations.flatMap((id) => {
     if (id === "custom") {
       const c = persona.occupationCustom.trim();
       return c ? [c] : [];
     }
-    const row = SOCIAL_PUBLISH_TARGET_OCCUPATION.find((o) => o.id === id);
+    const row = list.find((o) => o.id === id);
     return row ? [row.label] : [];
   });
 }
 
-export function isXhsPersonaValid(persona: SocialPublishPersonaOptions): boolean {
+export function isPersonaValid(persona: SocialPublishPersonaOptions): boolean {
   if (
     !persona.genders.length ||
     !persona.ageRanges.length ||
     !persona.regions.length ||
-    !persona.occupations.length ||
-    !persona.writerVoice
+    !persona.occupations.length
   ) {
     return false;
   }
@@ -205,6 +249,9 @@ export function isXhsPersonaValid(persona: SocialPublishPersonaOptions): boolean
   }
   return true;
 }
+
+/** @deprecated 使用 isPersonaValid */
+export const isXhsPersonaValid = isPersonaValid;
 
 export function defaultAdvancedOptions(platform: SocialPublishPlatform): SocialPublishAdvancedOptions {
   return {
@@ -240,31 +287,28 @@ export function buildOptionsPayload(
   const targetChars = clampTargetChars(quick.targetChars);
 
   return {
+    platform,
     intent: quick.intent,
     audience: quick.audience,
     target_chars: targetChars,
     tone: advanced.tone,
-    userNote:
-      platform === "xiaohongshu" && persona
-        ? persona.otherRequirements.trim()
-        : advanced.userNote.trim(),
-    persona:
-      platform === "xiaohongshu" && persona
-        ? {
-            genders: persona.genders,
-            ageRanges: persona.ageRanges,
-            regions: persona.regions,
-            interests: persona.interests,
-            interestLabels: interestLabels(persona),
-            occupations: persona.occupations,
-            occupationLabels: occupationLabels(persona),
-            occupationCustom: persona.occupations.includes("custom")
-              ? persona.occupationCustom.trim()
-              : "",
-            writerVoice: persona.writerVoice,
-            otherRequirements: persona.otherRequirements.trim()
-          }
-        : undefined,
+    userNote: persona ? persona.otherRequirements.trim() : advanced.userNote.trim(),
+    persona: persona
+      ? {
+          genders: persona.genders,
+          ageRanges: persona.ageRanges,
+          regions: persona.regions,
+          interests: persona.interests,
+          interestLabels: interestLabels(persona, platform),
+          occupations: persona.occupations,
+          occupationLabels: occupationLabels(persona, platform),
+          occupationCustom: persona.occupations.includes("custom")
+            ? persona.occupationCustom.trim()
+            : "",
+          writerVoice: persona.writerVoice || "",
+          otherRequirements: persona.otherRequirements.trim()
+        }
+      : undefined,
     extras: {
       mustInclude: advanced.mustInclude,
       avoid: advanced.avoid,
