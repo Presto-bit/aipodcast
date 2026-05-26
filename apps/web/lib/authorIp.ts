@@ -202,6 +202,28 @@ export type AuthorIpMaterial = {
   materialType: string;
   experienceTemplateId?: string;
   authorIpId?: string;
+  includeInStyleLearning?: boolean;
+};
+
+export type AuthorIpTrait = {
+  dimension?: string;
+  label?: string;
+  evidence?: string;
+  defaultOn?: boolean;
+  confidence?: number;
+};
+
+export type AuthorIpVitality = {
+  lastLearnedAt?: string | boolean;
+  learnMode?: string;
+  tagCloud?: string[];
+  topContributors?: string[];
+  recentChange?: string;
+  materialSummary?: {
+    experienceCount?: number;
+    articleCount?: number;
+    learningCount?: number;
+  };
 };
 
 export function needsAuthorIpColdStart(item: AuthorIpItem | null): boolean {
@@ -358,18 +380,54 @@ export function profileFirstCompareShown(item: AuthorIpItem | null): boolean {
   return Boolean(flags?.firstCompareShown);
 }
 
-export async function learnAuthorIp(ipId: string): Promise<AuthorIpItem> {
+export type AuthorIpLearnMode = "lite" | "full";
+
+export async function learnAuthorIp(ipId: string, mode: AuthorIpLearnMode = "full"): Promise<AuthorIpItem> {
   const res = await fetch(`/api/author-ips/${encodeURIComponent(ipId)}/learn`, {
     method: "POST",
     credentials: "include",
     headers: authHeaders(),
-    body: "{}"
+    body: JSON.stringify({ mode })
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(String((data as { detail?: string }).detail || "学习失败"));
   }
   return (data as { item: AuthorIpItem }).item;
+}
+
+export async function patchAuthorIpTraits(ipId: string, traits: AuthorIpTrait[]): Promise<AuthorIpItem> {
+  const res = await fetch(`/api/author-ips/${encodeURIComponent(ipId)}/traits`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: authHeaders(),
+    body: JSON.stringify({ traits })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(String((data as { detail?: string }).detail || "保存特色失败"));
+  }
+  return (data as { item: AuthorIpItem }).item;
+}
+
+export async function patchAuthorIpMaterialLearning(
+  ipId: string,
+  noteId: string,
+  includeInStyleLearning: boolean
+): Promise<void> {
+  const res = await fetch(
+    `/api/author-ips/${encodeURIComponent(ipId)}/materials/${encodeURIComponent(noteId)}/learning`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: authHeaders(),
+      body: JSON.stringify({ includeInStyleLearning })
+    }
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(String((data as { detail?: string }).detail || "更新失败"));
+  }
 }
 
 export type AuthorIpResolver = {

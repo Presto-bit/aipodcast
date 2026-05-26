@@ -226,7 +226,7 @@ export default function AuthorIpWritePage() {
         title: topicTrimmed.slice(0, 80) || "成稿"
       });
       setSavedNote(true);
-      await learnAuthorIp(ipId);
+      await learnAuthorIp(ipId, "full");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
@@ -487,7 +487,7 @@ export default function AuthorIpWritePage() {
                       disabled={saveBusy}
                       onClick={() => {
                         setSaveBusy(true);
-                        void learnAuthorIp(ipId)
+                        void learnAuthorIp(ipId, "full")
                           .then(() => load())
                           .catch((e) => setError(e instanceof Error ? e.message : "失败"))
                           .finally(() => setSaveBusy(false));

@@ -17,11 +17,14 @@ import {
   learnAuthorIp,
   needsAuthorIpColdStart,
   patchAuthorIp,
-  submitAuthorIpColdStart
+  patchAuthorIpMaterialLearning,
+  patchAuthorIpTraits,
+  submitAuthorIpColdStart,
+  type AuthorIpLearnMode,
+  type AuthorIpTrait
 } from "../../../lib/authorIp";
 import AuthorIpAddMaterialChooserModal from "./AuthorIpAddMaterialChooserModal";
 import AuthorIpArticleUploadModal from "./AuthorIpArticleUploadModal";
-import AuthorIpColdStartModal from "./AuthorIpColdStartModal";
 import AuthorIpDistillPanel from "./AuthorIpDistillPanel";
 import AuthorIpIdentityPanel from "./AuthorIpIdentityPanel";
 import AuthorIpMaterialPreviewModal from "./AuthorIpMaterialPreviewModal";
@@ -48,12 +51,12 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [coldOpen, setColdOpen] = useState(false);
-  const [coldDismissed, setColdDismissed] = useState(false);
+  const [positioningEditing, setPositioningEditing] = useState(false);
+  const [positioningDismissed, setPositioningDismissed] = useState(false);
   const [whoAmI, setWhoAmI] = useState("");
   const [audience, setAudience] = useState("");
   const [oneLiner, setOneLiner] = useState("");
-  const [coldError, setColdError] = useState<string | null>(null);
+  const [positioningError, setPositioningError] = useState<string | null>(null);
 
   const [chooserOpen, setChooserOpen] = useState(false);
   const [resumeOpen, setResumeOpen] = useState(false);
@@ -92,31 +95,31 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
   }, [load]);
 
   useEffect(() => {
-    if (loading || !item || coldDismissed) return;
-    if (needsAuthorIpColdStart(item)) setColdOpen(true);
-  }, [loading, item, coldDismissed]);
+    if (loading || !item || positioningDismissed) return;
+    if (needsAuthorIpColdStart(item)) setPositioningEditing(true);
+  }, [loading, item, positioningDismissed]);
 
   const counts = useMemo(() => countMaterialsByType(materials), [materials]);
   const filtered = useMemo(() => filterMaterials(materials, segment), [materials, segment]);
   const readOnly = Boolean(item?.isReadOnly);
 
-  const openColdEdit = () => {
+  const openPositioningEdit = () => {
     if (!item) return;
     const prof = item.profile as { coldStart?: { whoAmI?: string; audience?: string } };
     setWhoAmI(prof.coldStart?.whoAmI || "");
     setAudience(prof.coldStart?.audience || "");
     setOneLiner(item.oneLiner || "");
-    setColdError(null);
-    setColdOpen(true);
+    setPositioningError(null);
+    setPositioningEditing(true);
   };
 
-  const submitCold = async () => {
+  const submitPositioning = async () => {
     if (!oneLiner.trim()) {
-      setColdError("请填写一句话定位");
+      setPositioningError("请填写一句话定位");
       return;
     }
     setBusy(true);
-    setColdError(null);
+    setPositioningError(null);
     try {
       const updated = await submitAuthorIpColdStart(ipId, {
         whoAmI: whoAmI.trim(),
@@ -124,10 +127,10 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
         oneLiner: oneLiner.trim()
       });
       setItem(updated);
-      setColdOpen(false);
+      setPositioningEditing(false);
       await load();
     } catch (e) {
-      setColdError(e instanceof Error ? e.message : "保存失败");
+      setPositioningError(e instanceof Error ? e.message : "保存失败");
     } finally {
       setBusy(false);
     }
@@ -177,12 +180,12 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
     }
   };
 
-  const onLearn = async () => {
+  const onLearn = async (mode: AuthorIpLearnMode = "full") => {
     if (!item) return;
     const before = new Set(tagCloudFromItem(item));
     setBusy(true);
     try {
-      const updated = await learnAuthorIp(ipId);
+      const updated = await learnAuthorIp(ipId, mode);
       setItem(updated);
       const after = tagCloudFromItem(updated);
       const fresh = new Set<string>();
@@ -193,6 +196,31 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "学习失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onTraitsChange = async (traits: AuthorIpTrait[]) => {
+    setBusy(true);
+    try {
+      const updated = await patchAuthorIpTraits(ipId, traits);
+      setItem(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存特色失败");
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onMaterialLearningToggle = async (noteId: string, include: boolean) => {
+    setBusy(true);
+    try {
+      await patchAuthorIpMaterialLearning(ipId, noteId, include);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "更新参与学习设置失败");
     } finally {
       setBusy(false);
     }
@@ -293,39 +321,47 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
         </div>
 
         <div className="flex min-h-[45vh] flex-1 flex-col overflow-hidden rounded-2xl border border-line/80 lg:min-h-0">
-          <div className="h-[28%] min-h-[140px] shrink-0 lg:h-[30%] lg:min-h-[160px]">
-            <AuthorIpIdentityPanel item={item} onEdit={openColdEdit} />
+          <div
+            className={
+              positioningEditing
+                ? "min-h-[220px] max-h-[min(48vh,400px)] shrink-0 lg:min-h-[240px]"
+                : "h-[28%] min-h-[140px] shrink-0 lg:h-[30%] lg:min-h-[160px]"
+            }
+          >
+            <AuthorIpIdentityPanel
+              item={item}
+              editing={positioningEditing}
+              whoAmI={whoAmI}
+              audience={audience}
+              oneLiner={oneLiner}
+              onChangeWho={setWhoAmI}
+              onChangeAudience={setAudience}
+              onChangeOneLiner={setOneLiner}
+              busy={busy}
+              positioningError={positioningError}
+              onSubmitPositioning={() => void submitPositioning()}
+              onLaterPositioning={() => {
+                setPositioningDismissed(true);
+                setPositioningEditing(false);
+              }}
+              onCancelPositioning={() => setPositioningEditing(false)}
+              onEdit={openPositioningEdit}
+            />
           </div>
           <div className="min-h-0 flex-1">
             <AuthorIpDistillPanel
+              ipId={ipId}
               item={item}
               counts={{ experience: counts.experience, article: counts.article + counts.draft }}
               readOnly={readOnly}
               busy={busy}
               highlightTags={highlightTags}
-              onLearn={() => void onLearn()}
+              onLearn={(mode) => void onLearn(mode)}
+              onTraitsChange={onTraitsChange}
             />
           </div>
         </div>
       </div>
-
-      <AuthorIpColdStartModal
-        open={coldOpen}
-        whoAmI={whoAmI}
-        audience={audience}
-        oneLiner={oneLiner}
-        onChangeWho={setWhoAmI}
-        onChangeAudience={setAudience}
-        onChangeOneLiner={setOneLiner}
-        busy={busy}
-        error={coldError}
-        onSubmit={() => void submitCold()}
-        onLater={() => {
-          setColdDismissed(true);
-          setColdOpen(false);
-        }}
-        onCancel={() => setColdOpen(false)}
-      />
 
       <AuthorIpAddMaterialChooserModal
         open={chooserOpen}
@@ -373,10 +409,16 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
       <AuthorIpMaterialPreviewModal
         open={Boolean(previewMaterial)}
         material={previewMaterial}
+        readOnly={readOnly}
         onClose={() => setPreviewMaterial(null)}
         onEditResume={
           previewMaterial?.materialType === "experience_card" && !readOnly
             ? () => openResumeEdit(previewMaterial)
+            : undefined
+        }
+        onLearningToggle={
+          previewMaterial && !readOnly
+            ? (include) => void onMaterialLearningToggle(previewMaterial.noteId, include)
             : undefined
         }
       />

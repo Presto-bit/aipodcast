@@ -6,6 +6,7 @@ from typing import Any
 
 from psycopg2.extras import Json
 
+from .author_ip_distill import run_author_ip_distill
 from .author_ip_store import get_author_ip
 from .author_ip_style import list_ip_materials
 from .db import get_conn, get_cursor
@@ -61,6 +62,10 @@ def list_author_ip_materials(user_ref: str | None, ip_id: str) -> list[dict[str,
         preview = str(m.get("body") or "")[:240]
         m["preview"] = preview
         m["bodyLength"] = len(str(m.get("body") or ""))
+        if m.get("includeInStyleLearning") is False:
+            m["includeInStyleLearning"] = False
+        else:
+            m["includeInStyleLearning"] = True
     return items
 
 
@@ -370,27 +375,20 @@ def mark_author_ip_first_compare_shown(user_ref: str | None, ip_id: str) -> None
             conn.commit()
 
 
-def learn_author_ip(user_ref: str | None, ip_id: str) -> dict[str, Any]:
-    """轻量学习：根据素材刷新 maturity，并写入 vitality 摘要。"""
-    ip_item = get_author_ip(user_ref, ip_id)
-    if not ip_item:
-        raise ValueError("ip_not_found")
+def learn_author_ip(user_ref: str | None, ip_id: str, *, mode: str = "full") -> dict[str, Any]:
+    """从参与学习的素材蒸馏词云、特色、场景与生命力摘要。"""
+    ip_item, err = _guard_writable(get_author_ip(user_ref, ip_id))
+    if err:
+        raise ValueError("read_only" if "只读" in err else "ip_not_found")
     materials = list_ip_materials(user_ref, ip_item)
     profile = ip_item.get("profile") if isinstance(ip_item.get("profile"), dict) else {}
-    exp_titles = [str(m.get("title") or "") for m in materials if m.get("materialType") == "experience_card"][:6]
-    pub_titles = [
-        str(m.get("title") or "") for m in materials if m.get("materialType") in ("published", "draft")
-    ][:6]
-    vitality = profile.get("vitality") if isinstance(profile.get("vitality"), dict) else {}
-    vitality["lastLearnedAt"] = vitality.get("lastLearnedAt") or True
-    vitality["materialSummary"] = {
-        "experienceCount": len(exp_titles),
-        "articleCount": len(pub_titles),
-    }
-    tag_cloud = list(dict.fromkeys(exp_titles[:3] + pub_titles[:3]))[:8]
-    if tag_cloud:
-        vitality["tagCloud"] = tag_cloud
-    profile["vitality"] = vitality
+    learn_mode = "lite" if str(mode or "").strip().lower() == "lite" else "full"
+    profile = run_author_ip_distill(
+        profile,
+        materials,
+        one_liner=str(ip_item.get("oneLiner") or ""),
+        mode=learn_mode,
+    )
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -408,3 +406,89 @@ def learn_author_ip(user_ref: str | None, ip_id: str) -> dict[str, Any]:
     if not updated:
         raise ValueError("ip_not_found")
     return updated
+
+
+def patch_author_ip_traits(
+    user_ref: str | None,
+    ip_id: str,
+    traits: list[dict[str, Any]],
+) -> dict[str, Any]:
+    ip_item, err = _guard_writable(get_author_ip(user_ref, ip_id))
+    if err:
+        raise ValueError("read_only" if "只读" in err else "ip_not_found")
+    from .author_ip_distill import _merge_traits, _normalize_trait
+
+    cleaned: list[dict[str, Any]] = []
+    for tr in traits[:16]:
+        if not isinstance(tr, dict):
+            continue
+        n = _normalize_trait(tr)
+        if n:
+            cleaned.append(n)
+    merged = _merge_traits([], cleaned, max_items=16)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                raise ValueError("not_logged_in")
+            meta = _load_profile_row(cur, user_uuid, ip_id)
+            if not meta:
+                raise ValueError("ip_not_found")
+            prof = meta["profile"]
+            prof["traits"] = merged
+            cur.execute(
+                """
+                UPDATE author_ips SET profile_json = %s::jsonb, updated_at = NOW()
+                WHERE user_id = %s::uuid AND id = %s::uuid
+                """,
+                (Json(prof), user_uuid, ip_id),
+            )
+            conn.commit()
+    updated = refresh_author_ip_maturity(user_ref, ip_id)
+    if not updated:
+        raise ValueError("ip_not_found")
+    return updated
+
+
+def patch_author_ip_material_learning(
+    user_ref: str | None,
+    ip_id: str,
+    note_id: str,
+    *,
+    include_in_style_learning: bool,
+) -> dict[str, Any]:
+    """更新单条素材是否参与文风学习（写入 note metadata）。"""
+    ip_item, err = _guard_writable(get_author_ip(user_ref, ip_id))
+    if err:
+        raise ValueError("read_only" if "只读" in err else "ip_not_found")
+    materials = list_ip_materials(user_ref, ip_item)
+    if not any(str(m.get("noteId") or "") == note_id for m in materials):
+        raise ValueError("note_not_in_ip")
+    flag = bool(include_in_style_learning)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                raise ValueError("not_logged_in")
+            cur.execute(
+                """
+                UPDATE inputs i
+                SET metadata = jsonb_set(
+                    COALESCE(i.metadata, '{}'::jsonb),
+                    '{includeInStyleLearning}',
+                    to_jsonb(%s::boolean),
+                    true
+                )
+                FROM projects p
+                WHERE i.project_id = p.id
+                  AND i.id = %s::uuid
+                  AND i.input_type IN ('note_text', 'note_file')
+                  AND i.deleted_at IS NULL
+                  AND p.user_id = %s::uuid
+                """,
+                (flag, note_id, user_uuid),
+            )
+            if cur.rowcount < 1:
+                raise ValueError("note_not_found")
+            conn.commit()
+    return {"noteId": note_id, "includeInStyleLearning": flag}

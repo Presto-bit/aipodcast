@@ -30,6 +30,8 @@ from ..author_ip_materials import (
     list_author_ip_materials,
     mark_author_ip_first_compare_shown,
     patch_author_ip_domains,
+    patch_author_ip_material_learning,
+    patch_author_ip_traits,
     refresh_author_ip_maturity,
     save_compose_to_ip_material,
     submit_author_ip_cold_start,
@@ -142,6 +144,24 @@ class AuthorIpTrialComposeBody(BaseModel):
 
 class AuthorIpDomainsPatchBody(BaseModel):
     domains: list[dict[str, Any]] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+
+class AuthorIpLearnBody(BaseModel):
+    mode: str = Field(default="full")
+
+    model_config = {"populate_by_name": True}
+
+
+class AuthorIpTraitsPatchBody(BaseModel):
+    traits: list[dict[str, Any]] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+
+class AuthorIpMaterialLearningPatchBody(BaseModel):
+    include_in_style_learning: bool = Field(alias="includeInStyleLearning")
 
     model_config = {"populate_by_name": True}
 
@@ -361,13 +381,44 @@ def save_author_ip_compose_api(request: Request, ip_id: str, body: AuthorIpCompo
 
 
 @router.post("/{ip_id}/learn")
-def learn_author_ip_api(request: Request, ip_id: str):
+def learn_author_ip_api(request: Request, ip_id: str, body: AuthorIpLearnBody | None = None):
     user_ref = _current_user_ref_or_401(request)
+    mode = (body.mode if body else "full") or "full"
     try:
-        item = learn_author_ip(user_ref, ip_id)
+        item = learn_author_ip(user_ref, ip_id, mode=mode)
     except ValueError as exc:
         _raise_value_error(exc)
     return {"success": True, "item": item}
+
+
+@router.patch("/{ip_id}/traits")
+def patch_author_ip_traits_api(request: Request, ip_id: str, body: AuthorIpTraitsPatchBody):
+    user_ref = _current_user_ref_or_401(request)
+    try:
+        item = patch_author_ip_traits(user_ref, ip_id, body.traits)
+    except ValueError as exc:
+        _raise_value_error(exc)
+    return {"success": True, "item": item}
+
+
+@router.patch("/{ip_id}/materials/{note_id}/learning")
+def patch_author_ip_material_learning_api(
+    request: Request,
+    ip_id: str,
+    note_id: str,
+    body: AuthorIpMaterialLearningPatchBody,
+):
+    user_ref = _current_user_ref_or_401(request)
+    try:
+        result = patch_author_ip_material_learning(
+            user_ref,
+            ip_id,
+            note_id,
+            include_in_style_learning=body.include_in_style_learning,
+        )
+    except ValueError as exc:
+        _raise_value_error(exc)
+    return {"success": True, **result}
 
 
 @router.post("/{ip_id}/style/resolve")

@@ -61,6 +61,11 @@ def list_ip_materials(user_ref: str | None, ip_item: dict[str, Any]) -> list[dic
     for row in rows or []:
         md = _md_dict(row)
         body = str(row.get("content_text") or "").strip()
+        include_learn = md.get("includeInStyleLearning")
+        if include_learn is False:
+            include_flag = False
+        else:
+            include_flag = True
         out.append(
             {
                 "noteId": str(row.get("id") or ""),
@@ -68,6 +73,7 @@ def list_ip_materials(user_ref: str | None, ip_item: dict[str, Any]) -> list[dic
                 "body": body,
                 "materialType": str(md.get("authorMaterialType") or "published").strip(),
                 "experienceTemplateId": str(md.get("experienceTemplateId") or "").strip(),
+                "includeInStyleLearning": include_flag,
             }
         )
     return out

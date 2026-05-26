@@ -1,97 +1,144 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { IconRotateCw } from "../../icons";
-import type { AuthorIpItem } from "../../../lib/authorIp";
+import type { AuthorIpItem, AuthorIpLearnMode, AuthorIpTrait } from "../../../lib/authorIp";
+import AuthorIpDistillDomains from "./AuthorIpDistillDomains";
+import AuthorIpDistillResolver from "./AuthorIpDistillResolver";
+import AuthorIpDistillTraits from "./AuthorIpDistillTraits";
+import AuthorIpDistillVitality from "./AuthorIpDistillVitality";
 import MaturityTriangleChart from "./MaturityTriangleChart";
-import { tagCloudFromItem, traitsFromItem, triangleState, type TraitRow } from "./utils";
+import {
+  domainsFromItem,
+  maturityDistillHint,
+  tagCloudFromItem,
+  traitsFromItem,
+  triangleState
+} from "./utils";
 
 type Props = {
+  ipId: string;
   item: AuthorIpItem;
   counts: { experience: number; article: number };
   readOnly: boolean;
   busy: boolean;
   highlightTags: Set<string>;
-  onLearn: () => void;
+  onLearn: (mode: AuthorIpLearnMode) => void;
+  onTraitsChange: (traits: AuthorIpTrait[]) => Promise<void>;
 };
 
-function TraitBar({ trait }: { trait: TraitRow }) {
-  const label = String(trait.label || "").trim() || "—";
-  const on = trait.defaultOn !== false;
-  const width = on ? 72 : 28;
-  return (
-    <div className="flex items-center gap-2" title={trait.evidence || label}>
-      <div className="h-1.5 flex-1 rounded-full bg-line/50">
-        <div className="h-full rounded-full bg-brand/80 transition-all" style={{ width: `${width}%` }} />
-      </div>
-      <span className="w-24 shrink-0 truncate text-xs text-ink">{label}</span>
-    </div>
-  );
-}
-
 export default function AuthorIpDistillPanel({
+  ipId,
   item,
   counts,
   readOnly,
   busy,
   highlightTags,
-  onLearn
+  onLearn,
+  onTraitsChange
 }: Props) {
   const [hintOpen, setHintOpen] = useState(false);
+  const [traitsLocal, setTraitsLocal] = useState<AuthorIpTrait[] | null>(null);
+
   const tri = triangleState(item, counts);
-  const traits = traitsFromItem(item).slice(0, 6);
+  const traits = traitsLocal ?? traitsFromItem(item);
   const tags = tagCloudFromItem(item);
+  const domains = domainsFromItem(item);
+  const hint = maturityDistillHint(item, counts);
+
+  const syncTraits = useCallback(
+    async (next: AuthorIpTrait[]) => {
+      setTraitsLocal(next);
+      await onTraitsChange(next);
+      setTraitsLocal(null);
+    },
+    [onTraitsChange]
+  );
+
+  const onToggle = (index: number, on: boolean) => {
+    const next = traits.map((t, i) => (i === index ? { ...t, defaultOn: on } : t));
+    void syncTraits(next);
+  };
+
+  const onRemove = (index: number) => {
+    const next = traits.filter((_, i) => i !== index);
+    void syncTraits(next);
+  };
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-br-2xl bg-gradient-to-br from-brand/[0.06] via-surface to-surface">
-      <div className="flex shrink-0 items-center gap-2 border-l-4 border-brand/60 px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-l-4 border-brand/60 px-3 py-2">
         <h2 className="text-sm font-semibold text-ink">蒸馏</h2>
         <button
           type="button"
           className="text-muted hover:text-ink"
           aria-label="说明"
-          title="事实与引用请用知识库；本页只学经历与写法"
           onClick={() => setHintOpen((v) => !v)}
         >
           ⓘ
         </button>
         {!readOnly ? (
-          <button
-            type="button"
-            title="刷新学习"
-            aria-label="刷新学习"
-            disabled={busy}
-            className="ml-auto inline-flex items-center gap-1 rounded-dawn-md border border-line bg-surface px-2.5 py-1 text-xs text-ink hover:bg-fill disabled:opacity-50"
-            onClick={onLearn}
-          >
-            <IconRotateCw width={14} height={14} className={busy ? "animate-spin" : ""} aria-hidden />
-            学习
-          </button>
+          <div className="ml-auto flex flex-wrap gap-1">
+            <button
+              type="button"
+              title="快速学习（AI）：更新词云与摘要"
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded-dawn-md border border-line bg-surface px-2 py-1 text-[10px] text-ink hover:bg-fill disabled:opacity-50"
+              onClick={() => onLearn("lite")}
+            >
+              <IconRotateCw width={12} height={12} className={busy ? "animate-spin" : ""} aria-hidden />
+              快速
+            </button>
+            <button
+              type="button"
+              title="深度学习（AI）：提炼特色、场景与词云"
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded-dawn-md border border-brand/40 bg-brand/10 px-2 py-1 text-[10px] font-medium text-brand hover:bg-brand/15 disabled:opacity-50"
+              onClick={() => onLearn("full")}
+            >
+              <IconRotateCw width={12} height={12} className={busy ? "animate-spin" : ""} aria-hidden />
+              深度学习（AI）
+            </button>
+          </div>
         ) : null}
       </div>
       {hintOpen ? (
-        <p className="mx-3 mb-1 text-[10px] text-muted">事实与引用请用「知识库」；本页只学经历与写法。词云环绕三角，新词高亮。</p>
+        <p className="mx-3 mb-1 text-[10px] text-muted">
+          事实与引用请用「知识库」；本页从简历与成稿蒸馏写法。快速/深度学习均调用 AI 提炼词云；深度学习另归纳特色与场景。未勾选「参与学习」的素材会被跳过；AI 失败时自动回退规则提炼。
+        </p>
       ) : null}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-4">
-        <MaturityTriangleChart
-          positioning={tri.positioning}
-          experience={tri.experience}
-          article={tri.article}
-          traitsReady={tri.traitsReady}
-          maturity={String(item.maturity)}
-          tags={tags}
-          highlightTags={highlightTags}
-        />
-        {traits.length > 0 ? (
-          <div className="mt-2 space-y-2 px-2">
-            <p className="text-xs font-medium text-muted">口吻</p>
-            {traits.map((t, i) => (
-              <TraitBar key={`${t.label}-${i}`} trait={t} />
-            ))}
-          </div>
-        ) : (
-          <p className="mt-2 px-2 text-center text-xs text-muted">添加素材并学习后，将显示提炼出的特色。</p>
-        )}
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <AuthorIpDistillVitality item={item} hint={hint} />
+
+        <div className="shrink-0 py-1">
+          <MaturityTriangleChart
+            positioning={tri.positioning}
+            experience={tri.experience}
+            article={tri.article}
+            traitsReady={tri.traitsReady}
+            maturity={String(item.maturity)}
+            tags={tags}
+            highlightTags={highlightTags}
+          />
+        </div>
+
+        <AuthorIpDistillDomains domains={domains} />
+
+        <div className="mt-3 border-t border-line/50 pt-2">
+          <p className="mb-1 px-2 text-xs font-medium text-muted">我的特色</p>
+          <AuthorIpDistillTraits
+            traits={traits}
+            readOnly={readOnly}
+            busy={busy}
+            onToggle={onToggle}
+            onRemove={onRemove}
+          />
+        </div>
+
+        <div className="mt-2 pb-3">
+          <AuthorIpDistillResolver ipId={ipId} disabled={readOnly || busy} />
+        </div>
       </div>
     </section>
   );

@@ -9,11 +9,20 @@ import { tryParseResume, resumeToMarkdown } from "./resumeTypes";
 type Props = {
   open: boolean;
   material: AuthorIpMaterial | null;
+  readOnly?: boolean;
   onClose: () => void;
   onEditResume?: () => void;
+  onLearningToggle?: (includeInStyleLearning: boolean) => void;
 };
 
-export default function AuthorIpMaterialPreviewModal({ open, material, onClose, onEditResume }: Props) {
+export default function AuthorIpMaterialPreviewModal({
+  open,
+  material,
+  readOnly,
+  onClose,
+  onEditResume,
+  onLearningToggle
+}: Props) {
   const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -60,7 +69,20 @@ export default function AuthorIpMaterialPreviewModal({ open, material, onClose, 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink/90">{displayBody || "（无正文）"}</pre>
         </div>
-        <div className="flex justify-end gap-2 border-t border-line px-5 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-5 py-3">
+          {onLearningToggle && !readOnly ? (
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-ink">
+              <input
+                type="checkbox"
+                checked={material.includeInStyleLearning !== false}
+                onChange={(e) => onLearningToggle(e.target.checked)}
+              />
+              参与文风学习（蒸馏）
+            </label>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
           {isResume && onEditResume ? (
             <Button type="button" variant="secondary" onClick={onEditResume}>
               编辑简历
@@ -69,6 +91,7 @@ export default function AuthorIpMaterialPreviewModal({ open, material, onClose, 
           <Button type="button" onClick={onClose}>
             关闭
           </Button>
+          </div>
         </div>
       </div>
     </div>,

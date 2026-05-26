@@ -1,4 +1,4 @@
-import type { AuthorIpItem } from "../../../lib/authorIp";
+import type { AuthorIpDomain, AuthorIpItem } from "../../../lib/authorIp";
 
 export type MaterialSegment = "all" | "experience" | "article";
 
@@ -7,6 +7,7 @@ export type TraitRow = {
   label?: string;
   evidence?: string;
   defaultOn?: boolean;
+  confidence?: number;
 };
 
 export function maturityLabel(m: string): string {
@@ -85,5 +86,71 @@ export function traitsFromItem(item: AuthorIpItem | null): TraitRow[] {
 export function tagCloudFromItem(item: AuthorIpItem | null): string[] {
   const prof = item?.profile as { vitality?: { tagCloud?: string[] } } | undefined;
   const tags = prof?.vitality?.tagCloud;
-  return Array.isArray(tags) ? tags.slice(0, 8) : [];
+  return Array.isArray(tags) ? tags.slice(0, 10) : [];
+}
+
+export function vitalityFromItem(item: AuthorIpItem | null) {
+  const v = (item?.profile as { vitality?: Record<string, unknown> } | undefined)?.vitality;
+  if (!v || typeof v !== "object") return null;
+  return v as {
+    lastLearnedAt?: string | boolean;
+    learnMode?: string;
+    tagCloud?: string[];
+    topContributors?: string[];
+    recentChange?: string;
+    materialSummary?: { experienceCount?: number; articleCount?: number; learningCount?: number };
+  };
+}
+
+export function domainsFromItem(item: AuthorIpItem | null): AuthorIpDomain[] {
+  const d = (item?.profile as { domains?: AuthorIpDomain[] } | undefined)?.domains;
+  return Array.isArray(d) ? d : [];
+}
+
+export const TRAIT_DIMENSION_ORDER = ["立场", "结构", "语气", "修辞", "禁区", "平台", "口吻"] as const;
+
+export function groupTraitsByDimension(traits: TraitRow[]): Record<string, TraitRow[]> {
+  const groups: Record<string, TraitRow[]> = {};
+  for (const t of traits) {
+    const dim = String(t.dimension || "语气").trim() || "语气";
+    if (!groups[dim]) groups[dim] = [];
+    groups[dim].push(t);
+  }
+  const ordered: Record<string, TraitRow[]> = {};
+  for (const dim of TRAIT_DIMENSION_ORDER) {
+    if (groups[dim]?.length) ordered[dim] = groups[dim];
+  }
+  for (const dim of Object.keys(groups)) {
+    if (!ordered[dim]) ordered[dim] = groups[dim];
+  }
+  return ordered;
+}
+
+export function formatLastLearnedAt(raw: string | boolean | undefined): string | null {
+  if (!raw) return null;
+  if (raw === true) return "刚刚";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+export function maturityDistillHint(
+  item: AuthorIpItem | null,
+  counts: { experience: number; article: number }
+): string {
+  if (!item) return "";
+  const traitCount = item.traitCount ?? traitsFromItem(item).length;
+  const m = String(item.maturity || "empty");
+  if (m === "empty") return "先完善定位，并添加至少 1 条简历或成稿";
+  if (m === "sketch") {
+    if (counts.article < 1) return "再添加 1 篇成稿，可进入「草图+」";
+    return "添加素材后点「深度学习」，提炼口吻与结构";
+  }
+  if (m === "sketch_plus") {
+    const need = Math.max(0, 3 - traitCount);
+    if (need > 0) return `还差 ${need} 条已开启的特色，可达「已建立」`;
+    return "特色接近完备，可用下方预览验证写作场景";
+  }
+  if (m === "ready") return "风格已建立；素材更新后建议再次深度学习";
+  return "建议刷新学习以同步词云与特色";
 }
