@@ -21,17 +21,23 @@ type PlacedWord = ClusterCloudItem & {
   w: number;
   h: number;
   phase: number;
+  clusterId: CloudClusterId;
 };
 
-const CLUSTER_LAYOUT: Record<
-  CloudClusterId,
-  { cx: number; cy: number; color: string; hub: string }
-> = {
-  positioning: { cx: 72, cy: 58, color: "#0f766e", hub: "定位" },
-  style: { cx: 148, cy: 42, color: "var(--color-brand, #6366f1)", hub: "写作风格" },
-  scene: { cx: 228, cy: 58, color: "#b45309", hub: "场景" },
-  experience: { cx: 72, cy: 168, color: "#0369a1", hub: "经历" },
-  insight: { cx: 228, cy: 168, color: "#7c3aed", hub: "素材洞察" }
+type HubLayout = {
+  id: CloudClusterId;
+  cx: number;
+  cy: number;
+  color: string;
+  hub: string;
+};
+
+const HUB_STYLE: Record<CloudClusterId, { color: string; hub: string }> = {
+  positioning: { color: "#0f766e", hub: "定位" },
+  style: { color: "var(--color-brand, #6366f1)", hub: "写作风格" },
+  scene: { color: "#b45309", hub: "场景" },
+  experience: { color: "#0369a1", hub: "经历" },
+  insight: { color: "#7c3aed", hub: "素材洞察" }
 };
 
 const KIND_STYLE: Record<CloudWordKind, { size: number; weight: number; fill: string; italic?: boolean }> = {
@@ -44,75 +50,115 @@ const KIND_STYLE: Record<CloudWordKind, { size: number; weight: number; fill: st
   meta: { size: 8, weight: 400, fill: "#94a3b8" }
 };
 
+const VIEW_W = 300;
+const VIEW_H = 220;
+const HUB_R = 24;
+const CENTER = { x: VIEW_W / 2, y: VIEW_H / 2 };
+
 function measure(text: string, fontSize: number) {
   return { w: text.length * fontSize * 0.58 + 8, h: fontSize + 6 };
 }
 
-function overlaps(a: PlacedWord, b: PlacedWord, pad = 4) {
+function overlaps(a: PlacedWord, b: PlacedWord, pad = 5) {
   return (
     Math.abs(a.x - b.x) < (a.w + b.w) / 2 + pad && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + pad
   );
 }
 
-function layoutCluster(
-  cluster: DistillCluster,
-  tick: number
-): PlacedWord[] {
-  const hub = CLUSTER_LAYOUT[cluster.id];
-  const placed: PlacedWord[] = [];
-  const maxR = cluster.id === "style" ? 52 : 44;
+function tooCloseToHub(x: number, y: number, hub: HubLayout, minR = HUB_R + 10) {
+  return Math.hypot(x - hub.cx, y - hub.cy) < minR;
+}
 
-  cluster.items.forEach((item, i) => {
-    const style = KIND_STYLE[item.kind];
-    const label = item.text.length > 14 ? `${item.text.slice(0, 13)}…` : item.text;
-    const { w, h } = measure(label, style.size);
-    let x = hub.cx;
-    let y = hub.cy;
-    let ok = false;
-    for (let ring = 0; ring < 6 && !ok; ring += 1) {
-      const count = Math.max(6, ring * 4 + 2);
-      for (let j = 0; j < count; j += 1) {
-        const angle = (j / count) * Math.PI * 2 + i * 0.7 + ring * 0.35;
-        const r = 18 + ring * 11;
-        const cx = hub.cx + r * Math.cos(angle);
-        const cy = hub.cy + r * Math.sin(angle) * 0.85;
-        if (Math.hypot(cx - hub.cx, cy - hub.cy) > maxR) continue;
-        const candidate: PlacedWord = {
+/** 按活跃聚类数量自动排布中心点（圆周分布） */
+function computeHubLayouts(clusters: DistillCluster[]): HubLayout[] {
+  const n = clusters.length;
+  if (n === 0) return [];
+  if (n === 1) {
+    const c = clusters[0];
+    const style = HUB_STYLE[c.id];
+    return [{ id: c.id, cx: CENTER.x, cy: CENTER.y, ...style }];
+  }
+  const ringR = n <= 3 ? 72 : n === 4 ? 78 : 82;
+  return clusters.map((c, i) => {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const style = HUB_STYLE[c.id];
+    return {
+      id: c.id,
+      cx: CENTER.x + ringR * Math.cos(angle),
+      cy: CENTER.y + ringR * Math.sin(angle) * 0.82,
+      ...style
+    };
+  });
+}
+
+function layoutAllClusters(clusters: DistillCluster[], hubs: HubLayout[], tick: number): PlacedWord[] {
+  const hubById = new Map(hubs.map((h) => [h.id, h]));
+  const placed: PlacedWord[] = [];
+  const drift = 1.5;
+
+  for (const cluster of clusters) {
+    const hub = hubById.get(cluster.id);
+    if (!hub) continue;
+    const maxR = cluster.id === "style" ? 48 : 40;
+
+    cluster.items.forEach((item, i) => {
+      const style = KIND_STYLE[item.kind];
+      const label = item.text.length > 14 ? `${item.text.slice(0, 13)}…` : item.text;
+      const { w, h } = measure(label, style.size);
+      let placedOne: PlacedWord | null = null;
+
+      for (let ring = 0; ring < 7 && !placedOne; ring += 1) {
+        const slots = Math.max(5, ring * 3 + 4);
+        for (let j = 0; j < slots; j += 1) {
+          const angle = (j / slots) * Math.PI * 2 + i * 0.65 + ring * 0.4;
+          const r = HUB_R + 8 + ring * 10;
+          const x = hub.cx + r * Math.cos(angle);
+          const y = hub.cy + r * Math.sin(angle) * 0.88;
+          if (Math.hypot(x - hub.cx, y - hub.cy) > maxR) continue;
+          if (tooCloseToHub(x, y, hub)) continue;
+          const candidate: PlacedWord = {
+            ...item,
+            text: label,
+            x,
+            y,
+            fontSize: style.size,
+            w,
+            h,
+            phase: i * 1.2 + j * 0.15,
+            clusterId: cluster.id
+          };
+          const hitWord = placed.some((p) => overlaps(p, candidate));
+          const hitHub = hubs.some(
+            (other) => other.id !== hub.id && tooCloseToHub(x, y, other, HUB_R + 6)
+          );
+          if (!hitWord && !hitHub) {
+            placedOne = candidate;
+            break;
+          }
+        }
+      }
+
+      if (!placedOne) {
+        placedOne = {
           ...item,
           text: label,
-          x: cx,
-          y: cy,
+          x: hub.cx + ((i % 3) - 1) * 16,
+          y: hub.cy + 28 + Math.floor(i / 3) * 11,
           fontSize: style.size,
           w,
           h,
-          phase: i * 1.3 + j * 0.2
+          phase: i,
+          clusterId: cluster.id
         };
-        if (!placed.some((p) => overlaps(p, candidate))) {
-          placed.push(candidate);
-          ok = true;
-          break;
-        }
       }
-    }
-    if (!ok) {
-      placed.push({
-        ...item,
-        text: label,
-        x: hub.cx + ((i % 3) - 1) * 14,
-        y: hub.cy + Math.floor(i / 3) * 12 - 8,
-        fontSize: style.size,
-        w,
-        h,
-        phase: i
-      });
-    }
-  });
+      placed.push(placedOne);
+    });
+  }
 
-  const drift = 1.8;
   return placed.map((p) => ({
     ...p,
-    x: p.x + Math.sin(tick * 0.0012 + p.phase) * drift,
-    y: p.y + Math.cos(tick * 0.001 + p.phase * 1.1) * drift * 0.7
+    x: p.x + Math.sin(tick * 0.0011 + p.phase) * drift,
+    y: p.y + Math.cos(tick * 0.00095 + p.phase) * drift * 0.75
   }));
 }
 
@@ -123,6 +169,7 @@ type Props = {
 
 export default function ClusterCloudChart({ clusters, maturityLabel }: Props) {
   const [tick, setTick] = useState(0);
+  const active = clusters.filter((c) => c.items.length > 0);
 
   useEffect(() => {
     let mounted = true;
@@ -139,29 +186,40 @@ export default function ClusterCloudChart({ clusters, maturityLabel }: Props) {
     };
   }, []);
 
-  const placedByCluster = useMemo(() => {
+  const hubs = useMemo(() => computeHubLayouts(active), [active]);
+  const words = useMemo(() => layoutAllClusters(active, hubs, tick), [active, hubs, tick]);
+  const wordsByCluster = useMemo(() => {
     const map = new Map<CloudClusterId, PlacedWord[]>();
-    for (const c of clusters) {
-      map.set(c.id, layoutCluster(c, tick));
+    for (const w of words) {
+      const list = map.get(w.clusterId) || [];
+      list.push(w);
+      map.set(w.clusterId, list);
     }
     return map;
-  }, [clusters, tick]);
+  }, [words]);
+
+  if (active.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center text-xs text-muted">
+        添加素材并更新特色后，此处将展示蒸馏词云
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <svg
-        viewBox="0 0 300 220"
+        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         className="mx-auto h-full min-h-[200px] w-full max-w-[360px] flex-1"
         role="img"
         aria-label={`蒸馏词云：${maturityLabel}`}
       >
-        {clusters.map((cluster) => {
-          const hub = CLUSTER_LAYOUT[cluster.id];
-          const words = placedByCluster.get(cluster.id) || [];
+        {hubs.map((hub) => {
+          const clusterWords = wordsByCluster.get(hub.id) || [];
           return (
-            <g key={cluster.id}>
-              <circle cx={hub.cx} cy={hub.cy} r={34} fill={`${hub.color}14`} stroke={hub.color} strokeWidth={1} strokeOpacity={0.35} />
-              <circle cx={hub.cx} cy={hub.cy} r={20} fill="var(--color-surface, #fff)" stroke={hub.color} strokeWidth={1.5} />
+            <g key={hub.id}>
+              <circle cx={hub.cx} cy={hub.cy} r={36} fill={`${hub.color}12`} stroke={hub.color} strokeWidth={1} strokeOpacity={0.3} />
+              <circle cx={hub.cx} cy={hub.cy} r={HUB_R} fill="var(--color-surface, #fff)" stroke={hub.color} strokeWidth={1.5} />
               <text
                 x={hub.cx}
                 y={hub.cy + 1}
@@ -173,10 +231,10 @@ export default function ClusterCloudChart({ clusters, maturityLabel }: Props) {
               >
                 {hub.hub}
               </text>
-              {words.map((w, i) => {
+              {clusterWords.map((w, i) => {
                 const style = KIND_STYLE[w.kind];
                 return (
-                  <g key={`${cluster.id}-${w.text}-${i}`} opacity={w.dimmed ? 0.38 : 1}>
+                  <g key={`${hub.id}-${w.text}-${i}`} opacity={w.dimmed ? 0.38 : 1}>
                     {w.highlight ? (
                       <circle cx={w.x} cy={w.y} r={14} fill="none" stroke={hub.color} strokeWidth={1} opacity={0.4}>
                         <animate attributeName="r" values="10;16;10" dur="2.2s" repeatCount="indefinite" />
@@ -200,9 +258,11 @@ export default function ClusterCloudChart({ clusters, maturityLabel }: Props) {
             </g>
           );
         })}
-        <text x={150} y={112} textAnchor="middle" fill="var(--color-muted, #94a3b8)" fontSize={9}>
-          {maturityLabel}
-        </text>
+        {active.length > 1 ? (
+          <text x={CENTER.x} y={CENTER.y} textAnchor="middle" dominantBaseline="middle" fill="var(--color-muted, #94a3b8)" fontSize={8}>
+            {maturityLabel}
+          </text>
+        ) : null}
       </svg>
     </div>
   );

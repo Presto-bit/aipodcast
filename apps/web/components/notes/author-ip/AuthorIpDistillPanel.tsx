@@ -17,13 +17,13 @@ type Props = {
   onLearn: () => void;
 };
 
-const LEGEND: { label: string; color: string }[] = [
-  { label: "定位", color: "#0f766e" },
-  { label: "写作风格", color: "var(--color-brand, #6366f1)" },
-  { label: "场景", color: "#b45309" },
-  { label: "经历", color: "#0369a1" },
-  { label: "素材洞察", color: "#7c3aed" }
-];
+const LEGEND_COLOR: Record<string, string> = {
+  定位: "#0f766e",
+  写作风格: "var(--color-brand, #6366f1)",
+  场景: "#b45309",
+  经历: "#0369a1",
+  素材洞察: "#7c3aed"
+};
 
 export default function AuthorIpDistillPanel({
   item,
@@ -71,12 +71,15 @@ export default function AuthorIpDistillPanel({
           </button>
         ) : null}
       </div>
-      {hintOpen ? (
+      {hintOpen && clusters.length > 0 ? (
         <div className="mx-3 mb-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted">
-          {LEGEND.map((l) => (
-            <span key={l.label} className="inline-flex items-center gap-1">
-              <span className="inline-block h-2 w-2 rounded-full" style={{ background: l.color }} />
-              {l.label}
+          {clusters.map((c) => (
+            <span key={c.id} className="inline-flex items-center gap-1">
+              <span
+                className="inline-block h-2 w-2 rounded-full"
+                style={{ background: LEGEND_COLOR[c.label] || "#94a3b8" }}
+              />
+              {c.label}
             </span>
           ))}
         </div>

@@ -1,6 +1,13 @@
 "use client";
 
-import { formatPeriod, parsePeriod, periodSelectClassName, YEAR_MONTH_OPTIONS, type YearMonthPeriod } from "./yearMonthPeriod";
+import {
+  formatPeriodFromParts,
+  MONTH_OPTIONS,
+  parsePeriodParts,
+  periodSelectClassName,
+  YEAR_OPTIONS,
+  type YearMonthPeriodParts
+} from "./yearMonthPeriod";
 
 type Props = {
   value: string;
@@ -8,57 +15,81 @@ type Props = {
 };
 
 export default function YearMonthRangePicker({ value, onChange }: Props) {
-  const parsed = parsePeriod(value);
+  const parsed = parsePeriodParts(value);
 
-  const apply = (patch: Partial<YearMonthPeriod>) => {
+  const apply = (patch: Partial<YearMonthPeriodParts>) => {
     const next = { ...parsed, ...patch };
     if (patch.present === true) {
-      next.end = "";
+      next.endYear = "";
+      next.endMonth = "";
     }
-    onChange(formatPeriod(next));
+    onChange(formatPeriodFromParts(next));
   };
 
   return (
     <div className="mt-1 space-y-2">
-      <div className="grid grid-cols-2 gap-2">
-        <label className="block">
-          <span className="text-[10px] text-muted">开始</span>
+      <div>
+        <span className="text-[10px] text-muted">开始</span>
+        <div className="mt-0.5 grid grid-cols-2 gap-2">
           <select
             className={periodSelectClassName()}
-            value={parsed.start || ""}
-            onChange={(e) => apply({ start: e.target.value })}
+            value={parsed.startYear}
+            onChange={(e) => apply({ startYear: e.target.value })}
           >
-            <option value="">选择年月</option>
-            {YEAR_MONTH_OPTIONS.map((o) => (
-              <option key={`s-${o.value}`} value={o.value}>
+            <option value="">年</option>
+            {YEAR_OPTIONS.map((o) => (
+              <option key={`sy-${o.value}`} value={o.value}>
                 {o.label}
               </option>
             ))}
           </select>
-        </label>
-        <label className="block">
-          <span className="text-[10px] text-muted">结束</span>
           <select
             className={periodSelectClassName()}
-            value={parsed.present ? "" : parsed.end || ""}
+            value={parsed.startMonth}
+            onChange={(e) => apply({ startMonth: e.target.value })}
+          >
+            <option value="">月</option>
+            {MONTH_OPTIONS.map((o) => (
+              <option key={`sm-${o.value}`} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div>
+        <span className="text-[10px] text-muted">结束</span>
+        <div className="mt-0.5 grid grid-cols-2 gap-2">
+          <select
+            className={periodSelectClassName()}
+            value={parsed.present ? "" : parsed.endYear}
             disabled={parsed.present}
-            onChange={(e) => apply({ end: e.target.value, present: false })}
+            onChange={(e) => apply({ endYear: e.target.value, present: false })}
           >
-            <option value="">{parsed.present ? "至今" : "选择年月"}</option>
-            {YEAR_MONTH_OPTIONS.map((o) => (
-              <option key={`e-${o.value}`} value={o.value}>
+            <option value="">年</option>
+            {YEAR_OPTIONS.map((o) => (
+              <option key={`ey-${o.value}`} value={o.value}>
                 {o.label}
               </option>
             ))}
           </select>
-        </label>
+          <select
+            className={periodSelectClassName()}
+            value={parsed.present ? "" : parsed.endMonth}
+            disabled={parsed.present}
+            onChange={(e) => apply({ endMonth: e.target.value, present: false })}
+          >
+            <option value="">月</option>
+            {MONTH_OPTIONS.map((o) => (
+              <option key={`em-${o.value}`} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
       <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
-        <input
-          type="checkbox"
-          checked={parsed.present}
-          onChange={(e) => apply({ present: e.target.checked })}
-        />
+        <input type="checkbox" checked={parsed.present} onChange={(e) => apply({ present: e.target.checked })} />
         至今
       </label>
     </div>
