@@ -3,15 +3,9 @@
 import { useMemo, useState } from "react";
 import { IconRotateCw } from "../../icons";
 import type { AuthorIpItem } from "../../../lib/authorIp";
-import AuthorIpDistillVitality from "./AuthorIpDistillVitality";
-import MaturityTriangleChart, { type CenterCloudItem } from "./MaturityTriangleChart";
-import {
-  domainsFromItem,
-  maturityDistillHint,
-  tagCloudFromItem,
-  traitsFromItem,
-  triangleState
-} from "./utils";
+import { buildDistillCenterCloud } from "./distillCenterCloud";
+import MaturityTriangleChart from "./MaturityTriangleChart";
+import { triangleState } from "./utils";
 
 type Props = {
   item: AuthorIpItem;
@@ -21,6 +15,16 @@ type Props = {
   highlightTags: Set<string>;
   onLearn: () => void;
 };
+
+const LEGEND: { kind: string; label: string; color: string }[] = [
+  { kind: "profile", label: "定位", color: "#0f766e" },
+  { kind: "trait", label: "特色", color: "var(--color-brand, #6366f1)" },
+  { kind: "scene", label: "场景", color: "#b45309" },
+  { kind: "tag", label: "关键词", color: "#64748b" },
+  { kind: "contributor", label: "贡献成稿", color: "#4f46e5" },
+  { kind: "insight", label: "变像", color: "#7c3aed" },
+  { kind: "meta", label: "摘要", color: "#94a3b8" }
+];
 
 export default function AuthorIpDistillPanel({
   item,
@@ -33,27 +37,10 @@ export default function AuthorIpDistillPanel({
   const [hintOpen, setHintOpen] = useState(false);
 
   const tri = triangleState(item, counts);
-  const tags = tagCloudFromItem(item);
-  const domains = domainsFromItem(item);
-  const traits = traitsFromItem(item);
-  const hint = maturityDistillHint(item, counts);
-
-  const centerItems = useMemo((): CenterCloudItem[] => {
-    const items: CenterCloudItem[] = [];
-    for (const d of domains) {
-      const name = (d.displayName || "").trim();
-      if (name) items.push({ text: name, kind: "scene" });
-    }
-    for (const t of traits) {
-      if (t.defaultOn === false) continue;
-      const label = String(t.label || "").trim();
-      if (label) items.push({ text: label, kind: "trait" });
-    }
-    for (const tag of tags) {
-      if (tag) items.push({ text: tag, kind: "tag" });
-    }
-    return items;
-  }, [domains, traits, tags]);
+  const centerItems = useMemo(
+    () => buildDistillCenterCloud(item, counts, highlightTags),
+    [item, counts, highlightTags]
+  );
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-br-2xl bg-gradient-to-br from-brand/[0.06] via-surface to-surface">
@@ -62,7 +49,7 @@ export default function AuthorIpDistillPanel({
         <button
           type="button"
           className="text-muted hover:text-ink"
-          aria-label="说明"
+          aria-label="词云图例"
           onClick={() => setHintOpen((v) => !v)}
         >
           ⓘ
@@ -70,7 +57,7 @@ export default function AuthorIpDistillPanel({
         {!readOnly ? (
           <button
             type="button"
-            title="根据素材 AI 更新词云、特色与场景"
+            title="根据素材 AI 更新词云"
             disabled={busy}
             className="ml-auto inline-flex items-center gap-1 rounded-dawn-md border border-brand/40 bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/15 disabled:opacity-50"
             onClick={onLearn}
@@ -81,24 +68,24 @@ export default function AuthorIpDistillPanel({
         ) : null}
       </div>
       {hintOpen ? (
-        <p className="mx-3 mb-1 text-[10px] text-muted">
-          事实与引用请用「知识库」。中间词云汇聚特色、场景与关键词；添加素材后点「更新特色」解析你的写作风格。未参与学习的素材会被跳过。
-        </p>
+        <div className="mx-3 mb-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted">
+          {LEGEND.map((l) => (
+            <span key={l.kind} className="inline-flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full" style={{ background: l.color }} />
+              {l.label}
+            </span>
+          ))}
+        </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <AuthorIpDistillVitality item={item} hint={hint} />
-        <div className="shrink-0 py-1">
-          <MaturityTriangleChart
-            positioning={tri.positioning}
-            experience={tri.experience}
-            article={tri.article}
-            traitsReady={tri.traitsReady}
-            maturity={String(item.maturity)}
-            centerItems={centerItems}
-            highlightTags={highlightTags}
-          />
-        </div>
+      <div className="flex min-h-0 flex-1 px-1 pb-2">
+        <MaturityTriangleChart
+          positioning={tri.positioning}
+          experience={tri.experience}
+          article={tri.article}
+          maturity={String(item.maturity)}
+          centerItems={centerItems}
+        />
       </div>
     </section>
   );
