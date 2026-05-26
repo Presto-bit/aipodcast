@@ -4,18 +4,24 @@ import { useMemo } from "react";
 import { cn } from "../../../lib/cn";
 import { maturityLabel } from "./utils";
 
+export type CenterCloudItem = {
+  text: string;
+  kind: "tag" | "trait" | "scene";
+  highlight?: boolean;
+};
+
 type Props = {
   positioning: boolean;
   experience: boolean;
   article: boolean;
   traitsReady: boolean;
   maturity: string;
-  tags?: string[];
+  centerItems?: CenterCloudItem[];
   highlightTags?: Set<string>;
 };
 
 const CX = 120;
-const CY = 98;
+const CY = 100;
 
 export default function MaturityTriangleChart({
   positioning,
@@ -23,7 +29,7 @@ export default function MaturityTriangleChart({
   article,
   traitsReady,
   maturity,
-  tags = [],
+  centerItems = [],
   highlightTags = new Set()
 }: Props) {
   const center = maturityLabel(maturity);
@@ -32,21 +38,35 @@ export default function MaturityTriangleChart({
   const fillOn = "var(--color-brand, #6366f1)";
   const fillOff = "transparent";
 
-  const orbitTags = useMemo(() => {
-    const list = tags.filter(Boolean).slice(0, 10);
-    if (list.length === 0) return [];
-    const rx = 108;
-    const ry = 78;
-    return list.map((text, i) => {
-      const angle = (i / list.length) * Math.PI * 2 - Math.PI / 2;
+  const innerCloud = useMemo(() => {
+    const seen = new Set<string>();
+    const list: CenterCloudItem[] = [];
+    for (const item of centerItems) {
+      const t = item.text.trim();
+      if (!t || seen.has(t)) continue;
+      seen.add(t);
+      list.push({
+        ...item,
+        highlight: item.highlight || highlightTags.has(t)
+      });
+    }
+    return list.slice(0, 14);
+  }, [centerItems, highlightTags]);
+
+  const placed = useMemo(() => {
+    const n = innerCloud.length;
+    if (n === 0) return [];
+    const rx = 62;
+    const ry = 42;
+    return innerCloud.map((item, i) => {
+      const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
       return {
-        text,
+        ...item,
         x: CX + rx * Math.cos(angle),
-        y: CY + ry * Math.sin(angle),
-        highlight: highlightTags.has(text)
+        y: CY + ry * Math.sin(angle)
       };
     });
-  }, [tags, highlightTags]);
+  }, [innerCloud]);
 
   const node = (nx: number, ny: number, on: boolean, label: string) => (
     <g key={label}>
@@ -58,13 +78,20 @@ export default function MaturityTriangleChart({
   );
 
   return (
-    <svg viewBox="0 0 240 220" className="mx-auto h-[220px] w-full max-w-[280px]" role="img" aria-label={`蒸馏进度：${center}`}>
-      {orbitTags.map((t, i) => (
+    <svg viewBox="0 0 240 240" className="mx-auto h-[240px] w-full max-w-[300px]" role="img" aria-label={`蒸馏：${center}`}>
+      <polygon points="120,24 205,158 35,158" fill="none" stroke={strokeOff} strokeWidth={1.5} strokeDasharray="4 3" />
+      <line x1="120" y1="36" x2="120" y2="58" stroke={positioning ? strokeOn : strokeOff} strokeWidth={positioning ? 2 : 1} />
+      <line x1="108" y1="60" x2="72" y2="146" stroke={experience ? strokeOn : strokeOff} strokeWidth={experience ? 2 : 1} />
+      <line x1="132" y1="60" x2="168" y2="146" stroke={article ? strokeOn : strokeOff} strokeWidth={article ? 2 : 1} />
+      {node(120, 32, positioning, "定位")}
+      {node(72, 152, experience, "经历")}
+      {node(168, 152, article, "成稿")}
+
+      {placed.map((t, i) => (
         <g key={`${t.text}-${i}`}>
           {t.highlight ? (
-            <circle cx={t.x} cy={t.y} r={22} fill="none" stroke={strokeOn} strokeWidth={1} opacity={0.35}>
-              <animate attributeName="r" values="18;24;18" dur="2.5s" repeatCount="indefinite" />
-              <animate attributeName="opacity" values="0.2;0.45;0.2" dur="2.5s" repeatCount="indefinite" />
+            <circle cx={t.x} cy={t.y} r={20} fill="none" stroke={strokeOn} strokeWidth={1} opacity={0.3}>
+              <animate attributeName="r" values="16;22;16" dur="2.5s" repeatCount="indefinite" />
             </circle>
           ) : null}
           <text
@@ -73,27 +100,24 @@ export default function MaturityTriangleChart({
             textAnchor="middle"
             dominantBaseline="middle"
             className={cn(
-              "select-none text-[10px] font-medium",
-              t.highlight ? "fill-brand" : "fill-muted"
+              "select-none font-medium",
+              t.kind === "scene" ? "fill-amber-700 dark:fill-amber-300" : "",
+              t.kind === "trait" ? "fill-brand" : "",
+              t.kind === "tag" ? "fill-muted" : "",
+              t.highlight ? "text-[11px]" : "text-[10px]"
             )}
             style={{ fontSize: t.highlight ? 11 : 10 }}
           >
-            {t.text.length > 8 ? `${t.text.slice(0, 7)}…` : t.text}
+            {t.text.length > 9 ? `${t.text.slice(0, 8)}…` : t.text}
           </text>
         </g>
       ))}
-      <polygon points="120,28 200,152 40,152" fill="none" stroke={strokeOff} strokeWidth={1.5} strokeDasharray="4 3" />
-      <line x1="120" y1="40" x2="120" y2="62" stroke={positioning ? strokeOn : strokeOff} strokeWidth={positioning ? 2 : 1} />
-      <line x1="110" y1="64" x2="76" y2="140" stroke={experience ? strokeOn : strokeOff} strokeWidth={experience ? 2 : 1} />
-      <line x1="130" y1="64" x2="164" y2="140" stroke={article ? strokeOn : strokeOff} strokeWidth={article ? 2 : 1} />
-      {node(120, 36, positioning, "定位")}
-      {node(76, 148, experience, "简历")}
-      {node(164, 148, article, "成稿")}
-      <text x={CX} y={CY + 4} textAnchor="middle" className="fill-ink text-sm font-semibold">
+
+      <text x={CX} y={CY - 6} textAnchor="middle" className="fill-ink text-xs font-semibold">
         {center}
       </text>
-      <text x={CX} y={CY + 20} textAnchor="middle" className="fill-muted text-[9px]">
-        {traitsReady ? "特色已就绪" : "待补素材"}
+      <text x={CX} y={CY + 8} textAnchor="middle" className="fill-muted text-[9px]">
+        {traitsReady ? "特色已就绪" : placed.length > 0 ? "词云 · 特色 · 场景" : "待补素材"}
       </text>
     </svg>
   );

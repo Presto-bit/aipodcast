@@ -9,7 +9,7 @@ import type { MaterialSegment } from "./utils";
 
 const SEGMENTS: { id: MaterialSegment; label: string }[] = [
   { id: "all", label: "全部" },
-  { id: "experience", label: "简历" },
+  { id: "experience", label: "经历" },
   { id: "article", label: "成稿" }
 ];
 
@@ -82,7 +82,7 @@ export default function AuthorIpMaterialsColumn({
       <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3 pt-2">
         {materials.length === 0 ? (
           <li className="py-8 text-center text-xs text-muted">
-            {segment === "experience" ? "暂无简历经历" : segment === "article" ? "暂无成稿" : "暂无素材"}
+            {segment === "experience" ? "暂无经历" : segment === "article" ? "暂无成稿" : "暂无素材"}
             {!readOnly ? (
               <p className="mt-2">
                 <button type="button" className="text-brand hover:underline" onClick={onAdd}>

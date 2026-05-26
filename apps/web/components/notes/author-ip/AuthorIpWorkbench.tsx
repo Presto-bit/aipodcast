@@ -20,7 +20,6 @@ import {
   patchAuthorIpMaterialLearning,
   patchAuthorIpTraits,
   submitAuthorIpColdStart,
-  type AuthorIpLearnMode,
   type AuthorIpTrait
 } from "../../../lib/authorIp";
 import AuthorIpAddMaterialChooserModal from "./AuthorIpAddMaterialChooserModal";
@@ -53,9 +52,6 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
 
   const [positioningEditing, setPositioningEditing] = useState(false);
   const [positioningDismissed, setPositioningDismissed] = useState(false);
-  const [whoAmI, setWhoAmI] = useState("");
-  const [audience, setAudience] = useState("");
-  const [oneLiner, setOneLiner] = useState("");
   const [positioningError, setPositioningError] = useState<string | null>(null);
 
   const [chooserOpen, setChooserOpen] = useState(false);
@@ -74,14 +70,16 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
     if (!ipId) return;
     setError(null);
     try {
-      await bootstrapAuthorIpsOnce();
-      const [found, mats] = await Promise.all([fetchAuthorIpItem(ipId), fetchAuthorIpMaterials(ipId)]);
+      const bootstrapped =
+        typeof sessionStorage !== "undefined" && sessionStorage.getItem("presto_author_ip_bootstrapped_v2");
+      const bootPromise = bootstrapped ? Promise.resolve() : bootstrapAuthorIpsOnce();
+      const [found, mats] = await Promise.all([
+        fetchAuthorIpItem(ipId),
+        fetchAuthorIpMaterials(ipId),
+        bootPromise
+      ]);
       setItem(found);
       setMaterials(mats);
-      const prof = found.profile as { coldStart?: { whoAmI?: string; audience?: string; oneLiner?: string } };
-      setWhoAmI(prof.coldStart?.whoAmI || "");
-      setAudience(prof.coldStart?.audience || "");
-      setOneLiner(found.oneLiner || prof.coldStart?.oneLiner || "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载失败");
       setItem(null);
@@ -105,28 +103,34 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
 
   const openPositioningEdit = () => {
     if (!item) return;
-    const prof = item.profile as { coldStart?: { whoAmI?: string; audience?: string } };
-    setWhoAmI(prof.coldStart?.whoAmI || "");
-    setAudience(prof.coldStart?.audience || "");
-    setOneLiner(item.oneLiner || "");
     setPositioningError(null);
     setPositioningEditing(true);
   };
 
-  const submitPositioning = async () => {
-    if (!oneLiner.trim()) {
-      setPositioningError("请填写一句话定位");
+  const submitPositioning = async (payload: {
+    whoAmI: string;
+    audience: string;
+    oneLiner: string;
+    traits: AuthorIpTrait[];
+  }) => {
+    if (!payload.oneLiner.trim()) {
+      setPositioningError("请完成一句话定位");
       return;
     }
     setBusy(true);
     setPositioningError(null);
     try {
       const updated = await submitAuthorIpColdStart(ipId, {
-        whoAmI: whoAmI.trim(),
-        audience: audience.trim(),
-        oneLiner: oneLiner.trim()
+        whoAmI: payload.whoAmI.trim(),
+        audience: payload.audience.trim(),
+        oneLiner: payload.oneLiner.trim()
       });
-      setItem(updated);
+      if (payload.traits.length > 0) {
+        const withTraits = await patchAuthorIpTraits(ipId, payload.traits);
+        setItem(withTraits);
+      } else {
+        setItem(updated);
+      }
       setPositioningEditing(false);
       await load();
     } catch (e) {
@@ -180,12 +184,12 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
     }
   };
 
-  const onLearn = async (mode: AuthorIpLearnMode = "full") => {
+  const onLearn = async () => {
     if (!item) return;
     const before = new Set(tagCloudFromItem(item));
     setBusy(true);
     try {
-      const updated = await learnAuthorIp(ipId, mode);
+      const updated = await learnAuthorIp(ipId, "full");
       setItem(updated);
       const after = tagCloudFromItem(updated);
       const fresh = new Set<string>();
@@ -196,19 +200,6 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "学习失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onTraitsChange = async (traits: AuthorIpTrait[]) => {
-    setBusy(true);
-    try {
-      const updated = await patchAuthorIpTraits(ipId, traits);
-      setItem(updated);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "保存特色失败");
-      await load();
     } finally {
       setBusy(false);
     }
@@ -331,15 +322,9 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
             <AuthorIpIdentityPanel
               item={item}
               editing={positioningEditing}
-              whoAmI={whoAmI}
-              audience={audience}
-              oneLiner={oneLiner}
-              onChangeWho={setWhoAmI}
-              onChangeAudience={setAudience}
-              onChangeOneLiner={setOneLiner}
               busy={busy}
               positioningError={positioningError}
-              onSubmitPositioning={() => void submitPositioning()}
+              onSubmitPositioning={(p) => void submitPositioning(p)}
               onLaterPositioning={() => {
                 setPositioningDismissed(true);
                 setPositioningEditing(false);
@@ -350,14 +335,12 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
           </div>
           <div className="min-h-0 flex-1">
             <AuthorIpDistillPanel
-              ipId={ipId}
               item={item}
               counts={{ experience: counts.experience, article: counts.article + counts.draft }}
               readOnly={readOnly}
               busy={busy}
               highlightTags={highlightTags}
-              onLearn={(mode) => void onLearn(mode)}
-              onTraitsChange={onTraitsChange}
+              onLearn={() => void onLearn()}
             />
           </div>
         </div>

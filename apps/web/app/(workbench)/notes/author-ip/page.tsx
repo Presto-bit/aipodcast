@@ -152,6 +152,7 @@ function AuthorIpGridCard({
       </div>
       <Link
         href={`/notes/author-ip/${item.id}`}
+        prefetch
         className="flex flex-1 flex-col items-center justify-center px-6 pt-2 text-center"
       >
         <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
@@ -206,8 +207,10 @@ export default function AuthorIpListPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      await bootstrapAuthorIpsOnce();
-      const list = await fetchAuthorIps();
+      const bootstrapped =
+        typeof sessionStorage !== "undefined" && sessionStorage.getItem("presto_author_ip_bootstrapped_v2");
+      const bootPromise = bootstrapped ? Promise.resolve() : bootstrapAuthorIpsOnce();
+      const [list] = await Promise.all([fetchAuthorIps(), bootPromise]);
       setItems(list);
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载失败");
@@ -248,6 +251,7 @@ export default function AuthorIpListPage() {
     try {
       const item = await createAuthorIp(name);
       setCreateOpen(false);
+      router.prefetch(`/notes/author-ip/${item.id}`);
       router.push(`/notes/author-ip/${item.id}`);
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : "创建失败");

@@ -1,4 +1,4 @@
-/** 简历式经历结构（存入 experience_card 正文，experienceTemplateId=resume_v1） */
+/** 结构化经历（存入 experience_card 正文，experienceTemplateId=resume_v1） */
 
 export type ResumeWorkEntry = {
   company: string;
@@ -133,9 +133,9 @@ export function resumeCardTitle(data: ResumeData): string {
   const first = data.work.find((w) => w.company.trim() || w.role.trim());
   if (first) {
     const t = `${first.company} · ${first.role}`.trim();
-    return t.startsWith("·") ? "我的简历" : t;
+    return t.startsWith("·") ? "我的经历" : t;
   }
-  return "我的简历";
+  return "我的经历";
 }
 
 export function resumeCardSubtitle(data: ResumeData): string {
@@ -143,5 +143,5 @@ export function resumeCardSubtitle(data: ResumeData): string {
   const parts = [`${n} 段工作`];
   if (data.education.some((e) => e.school.trim())) parts.push("含教育");
   if (data.projects.some((p) => p.name.trim())) parts.push("含项目");
-  return `简历 · ${parts.join(" · ")}`;
+  return `经历 · ${parts.join(" · ")}`;
 }

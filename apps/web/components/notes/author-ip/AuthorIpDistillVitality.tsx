@@ -33,7 +33,7 @@ export default function AuthorIpDistillVitality({ item, hint }: Props) {
         ) : null}
         {summary ? (
           <span>
-            参与学习 {summary.learningCount ?? 0} 条（简历 {summary.experienceCount ?? 0} · 成稿{" "}
+            参与学习 {summary.learningCount ?? 0} 条（经历 {summary.experienceCount ?? 0} · 成稿{" "}
             {summary.articleCount ?? 0}）
           </span>
         ) : null}

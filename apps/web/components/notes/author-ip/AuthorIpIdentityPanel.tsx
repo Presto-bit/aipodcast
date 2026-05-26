@@ -1,23 +1,22 @@
 "use client";
 
 import { IconUser } from "../../icons";
-import type { AuthorIpItem } from "../../../lib/authorIp";
-import AuthorIpPositioningEditor from "./AuthorIpPositioningEditor";
+import type { AuthorIpItem, AuthorIpTrait } from "../../../lib/authorIp";
+import AuthorIpPositioningWizard from "./AuthorIpPositioningWizard";
 import IdentityRing from "./IdentityRing";
 import { positioningProgress } from "./utils";
 
 type Props = {
   item: AuthorIpItem;
   editing: boolean;
-  whoAmI: string;
-  audience: string;
-  oneLiner: string;
-  onChangeWho: (v: string) => void;
-  onChangeAudience: (v: string) => void;
-  onChangeOneLiner: (v: string) => void;
   busy?: boolean;
   positioningError?: string | null;
-  onSubmitPositioning: () => void;
+  onSubmitPositioning: (payload: {
+    whoAmI: string;
+    audience: string;
+    oneLiner: string;
+    traits: AuthorIpTrait[];
+  }) => void;
   onLaterPositioning?: () => void;
   onCancelPositioning: () => void;
   onEdit: () => void;
@@ -26,12 +25,6 @@ type Props = {
 export default function AuthorIpIdentityPanel({
   item,
   editing,
-  whoAmI,
-  audience,
-  oneLiner,
-  onChangeWho,
-  onChangeAudience,
-  onChangeOneLiner,
   busy,
   positioningError,
   onSubmitPositioning,
@@ -56,7 +49,7 @@ export default function AuthorIpIdentityPanel({
           </button>
         ) : null}
         {!readOnly && editing ? (
-          <span className="ml-auto text-xs text-muted">编辑中</span>
+          <span className="ml-auto text-xs text-muted">引导填写</span>
         ) : null}
       </div>
 
@@ -67,14 +60,8 @@ export default function AuthorIpIdentityPanel({
       ) : null}
 
       {editing && !readOnly ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-2">
-          <AuthorIpPositioningEditor
-            whoAmI={whoAmI}
-            audience={audience}
-            oneLiner={oneLiner}
-            onChangeWho={onChangeWho}
-            onChangeAudience={onChangeAudience}
-            onChangeOneLiner={onChangeOneLiner}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-2">
+          <AuthorIpPositioningWizard
             busy={busy}
             error={positioningError}
             showLater={needsSetup}

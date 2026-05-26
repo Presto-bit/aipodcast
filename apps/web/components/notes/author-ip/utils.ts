@@ -141,7 +141,7 @@ export function maturityDistillHint(
   if (!item) return "";
   const traitCount = item.traitCount ?? traitsFromItem(item).length;
   const m = String(item.maturity || "empty");
-  if (m === "empty") return "先完善定位，并添加至少 1 条简历或成稿";
+  if (m === "empty") return "先完善定位，并添加至少 1 条经历或成稿";
   if (m === "sketch") {
     if (counts.article < 1) return "再添加 1 篇成稿，可进入「草图+」";
     return "添加素材后点「深度学习」，提炼口吻与结构";
