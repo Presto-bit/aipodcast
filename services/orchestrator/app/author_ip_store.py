@@ -28,17 +28,16 @@ NOTEBOOK_PREFIX = "__author_ip:"
 DEFAULT_IP_DISPLAY_NAME = "我的 IP"
 TEMPLATE_ID_XHS_AI = "xhs_ai_product_v1"
 def _seed_template_path() -> Path | None:
-    candidates = [
-        Path(__file__).resolve().parent / "data" / "author-ip-template-xhs-ai-product-v1.json",
-        Path(__file__).resolve().parents[3]
-        / "docs"
-        / "product"
-        / "seeds"
-        / "author-ip-template-xhs-ai-product-v1.json",
-    ]
-    for p in candidates:
-        if p.is_file():
-            return p
+    """解析种子 JSON：优先 app/data（Docker 可用），再向上查找仓库 docs/seeds。"""
+    seed_name = "author-ip-template-xhs-ai-product-v1.json"
+    here = Path(__file__).resolve().parent
+    bundled = here / "data" / seed_name
+    if bundled.is_file():
+        return bundled
+    for parent in Path(__file__).resolve().parents:
+        docs_seed = parent / "docs" / "product" / "seeds" / seed_name
+        if docs_seed.is_file():
+            return docs_seed
     return None
 
 
