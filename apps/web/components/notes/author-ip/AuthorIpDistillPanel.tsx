@@ -49,7 +49,7 @@ export default function AuthorIpDistillPanel({
         <button
           type="button"
           className="text-muted hover:text-ink"
-          aria-label="词云图例"
+          aria-label="辐射图图例"
           onClick={() => setHintOpen((v) => !v)}
         >
           ⓘ
@@ -86,7 +86,11 @@ export default function AuthorIpDistillPanel({
       ) : null}
 
       <div className="flex min-h-0 flex-1 px-1 pb-2">
-        <ClusterCloudChart clusters={clusters} maturityLabel={maturityLabel(String(item.maturity))} />
+        <ClusterCloudChart
+          clusters={clusters}
+          centerTitle={item.displayName}
+          maturityLabel={maturityLabel(String(item.maturity))}
+        />
       </div>
     </section>
   );

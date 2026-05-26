@@ -25,7 +25,7 @@ export default function AuthorIpSubNav({ displayName }: Props) {
   return (
     <div className="mb-6 border-b border-line">
       <Link href="/notes/author-ip" className="text-sm text-muted hover:text-ink">
-        ← 个人特色 IP
+        ← 我的风格IP
       </Link>
       {displayName ? <p className="mt-1 text-lg font-semibold text-ink">{displayName}</p> : null}
       <nav className="mt-3 flex gap-4" aria-label="IP 工作台">
