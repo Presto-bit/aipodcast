@@ -122,6 +122,7 @@ class AuthorIpColdStartBody(BaseModel):
     who_am_i: str = Field(default="", max_length=4000, alias="whoAmI")
     audience: str = Field(default="", max_length=4000)
     one_liner: str = Field(min_length=1, max_length=300, alias="oneLiner")
+    traits: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
@@ -356,6 +357,7 @@ def author_ip_cold_start_api(request: Request, ip_id: str, body: AuthorIpColdSta
             who_am_i=body.who_am_i,
             audience=body.audience,
             one_liner=body.one_liner,
+            traits=body.traits or None,
         )
     except ValueError as exc:
         _raise_value_error(exc)

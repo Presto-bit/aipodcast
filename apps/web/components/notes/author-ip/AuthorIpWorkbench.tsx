@@ -18,7 +18,6 @@ import {
   needsAuthorIpColdStart,
   patchAuthorIp,
   patchAuthorIpMaterialLearning,
-  patchAuthorIpTraits,
   submitAuthorIpColdStart,
   type AuthorIpTrait
 } from "../../../lib/authorIp";
@@ -123,14 +122,10 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
       const updated = await submitAuthorIpColdStart(ipId, {
         whoAmI: payload.whoAmI.trim(),
         audience: payload.audience.trim(),
-        oneLiner: payload.oneLiner.trim()
+        oneLiner: payload.oneLiner.trim(),
+        traits: payload.traits
       });
-      if (payload.traits.length > 0) {
-        const withTraits = await patchAuthorIpTraits(ipId, payload.traits);
-        setItem(withTraits);
-      } else {
-        setItem(updated);
-      }
+      setItem(updated);
       setPositioningEditing(false);
       await load();
     } catch (e) {
@@ -336,6 +331,7 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
           <div className="min-h-0 flex-1">
             <AuthorIpDistillPanel
               item={item}
+              materials={materials}
               counts={{ experience: counts.experience, article: counts.article + counts.draft }}
               readOnly={readOnly}
               busy={busy}

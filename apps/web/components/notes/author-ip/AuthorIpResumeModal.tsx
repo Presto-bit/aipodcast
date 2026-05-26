@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../ui/Button";
 import AuthorIpCompactModal from "./AuthorIpCompactModal";
-import { EDU_PERIOD_OPTIONS, periodSelectClassName, WORK_PERIOD_OPTIONS } from "./experiencePeriodOptions";
+import YearMonthRangePicker from "./YearMonthRangePicker";
 import {
   emptyResume,
   resumeCardTitle,
@@ -28,35 +28,6 @@ type Props = {
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span className="text-xs font-medium text-muted">{children}</span>;
-}
-
-function PeriodSelect({
-  value,
-  options,
-  onChange
-}: {
-  value: string;
-  options: readonly { value: string; label: string }[];
-  onChange: (v: string) => void;
-}) {
-  const inList = options.some((o) => o.value === value);
-  return (
-    <select
-      className={periodSelectClassName()}
-      value={inList ? value : "__custom__"}
-      onChange={(e) => {
-        const v = e.target.value;
-        onChange(v === "__custom__" ? "" : v);
-      }}
-    >
-      {options.map((o) => (
-        <option key={o.value || "empty"} value={o.value || "__custom__"}>
-          {o.label}
-        </option>
-      ))}
-      {!inList && value ? <option value="__custom__">{value}</option> : null}
-    </select>
-  );
 }
 
 export default function AuthorIpResumeModal({
@@ -182,11 +153,7 @@ export default function AuthorIpResumeModal({
                 onChange={(e) => updateWork(i, { role: e.target.value })}
               />
               <FieldLabel>时间段</FieldLabel>
-              <PeriodSelect
-                value={w.period}
-                options={WORK_PERIOD_OPTIONS}
-                onChange={(v) => updateWork(i, { period: v })}
-              />
+              <YearMonthRangePicker value={w.period} onChange={(v) => updateWork(i, { period: v })} />
               <textarea
                 className={inputClass}
                 rows={3}
@@ -238,11 +205,7 @@ export default function AuthorIpResumeModal({
                 onChange={(ev) => updateEdu(i, { degree: ev.target.value })}
               />
               <FieldLabel>时间段</FieldLabel>
-              <PeriodSelect
-                value={e.period}
-                options={EDU_PERIOD_OPTIONS}
-                onChange={(v) => updateEdu(i, { period: v })}
-              />
+              <YearMonthRangePicker value={e.period} onChange={(v) => updateEdu(i, { period: v })} />
             </div>
           ))}
         </section>

@@ -1,5 +1,7 @@
 /** 个人特色 IP API 类型与请求（BFF `/api/author-ips`） */
 
+import { apiErrorMessage } from "./apiError";
+
 export type AuthorIpMaturity = "empty" | "sketch" | "sketch_plus" | "ready" | "stale";
 
 export type AuthorIpItem = {
@@ -275,7 +277,7 @@ export async function deleteAuthorIpMaterial(ipId: string, noteId: string): Prom
 
 export async function submitAuthorIpColdStart(
   ipId: string,
-  payload: { whoAmI: string; audience: string; oneLiner: string }
+  payload: { whoAmI: string; audience: string; oneLiner: string; traits?: AuthorIpTrait[] }
 ): Promise<AuthorIpItem> {
   const res = await fetch(`/api/author-ips/${encodeURIComponent(ipId)}/cold-start`, {
     method: "POST",
@@ -405,7 +407,11 @@ export async function patchAuthorIpTraits(ipId: string, traits: AuthorIpTrait[])
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(String((data as { detail?: string }).detail || "保存特色失败"));
+    const msg = apiErrorMessage(data, "保存特色失败");
+    if (msg === "read_only") {
+      throw new Error("示例 IP 为只读，请复制后再编辑");
+    }
+    throw new Error(msg);
   }
   return (data as { item: AuthorIpItem }).item;
 }

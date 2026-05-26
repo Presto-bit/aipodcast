@@ -1,4 +1,4 @@
-import type { AuthorIpDomain, AuthorIpItem } from "../../../lib/authorIp";
+import type { AuthorIpDomain, AuthorIpItem, AuthorIpMaterial } from "../../../lib/authorIp";
 
 export type MaterialSegment = "all" | "experience" | "article";
 
@@ -132,6 +132,19 @@ export function formatLastLearnedAt(raw: string | boolean | undefined): string |
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** 是否有可参与风格学习的素材，用于「更新特色」按钮可用态 */
+export function canUpdateAuthorIpStyle(item: AuthorIpItem | null, materials: AuthorIpMaterial[]): boolean {
+  if (!item || item.isReadOnly || item.maturity === "empty") return false;
+  return materials.some((m) => {
+    if (m.includeInStyleLearning === false) return false;
+    if (m.materialType !== "experience_card" && m.materialType !== "published" && m.materialType !== "draft") {
+      return false;
+    }
+    const len = m.bodyLength ?? m.body?.length ?? m.preview?.length ?? 0;
+    return len > 0;
+  });
 }
 
 export function maturityDistillHint(

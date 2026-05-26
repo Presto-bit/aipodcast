@@ -135,6 +135,7 @@ def submit_author_ip_cold_start(
     who_am_i: str,
     audience: str,
     one_liner: str,
+    traits: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     ip_item, err = _guard_writable(get_author_ip(user_ref, ip_id))
     if err:
@@ -147,34 +148,7 @@ def submit_author_ip_cold_start(
     if not liner:
         raise ValueError("one_liner_required")
     created: list[str] = []
-    if who:
-        nid = create_text_note(
-            project_id,
-            "我是谁",
-            nb,
-            who,
-            user_ref=user_ref,
-            extra_metadata={
-                "authorIpId": ip_id,
-                "authorMaterialType": "experience_card",
-                "experienceTemplateId": "who_am_i",
-            },
-        )
-        created.append(nid)
-    if aud:
-        nid = create_text_note(
-            project_id,
-            "写给谁",
-            nb,
-            aud,
-            user_ref=user_ref,
-            extra_metadata={
-                "authorIpId": ip_id,
-                "authorMaterialType": "experience_card",
-                "experienceTemplateId": "audience",
-            },
-        )
-        created.append(nid)
+    already_done = False
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -184,13 +158,27 @@ def submit_author_ip_cold_start(
             if not meta:
                 raise ValueError("ip_not_found")
             prof = meta["profile"]
+            cs = prof.get("coldStart") if isinstance(prof.get("coldStart"), dict) else {}
+            already_done = bool(cs.get("completedAt"))
             prof["coldStart"] = {
                 "whoAmI": who[:2000],
                 "audience": aud[:2000],
                 "oneLiner": liner,
                 "completedAt": True,
             }
-            if not prof.get("traits"):
+            from .author_ip_distill import _merge_traits, _normalize_trait
+
+            if traits:
+                cleaned: list[dict[str, Any]] = []
+                for tr in traits[:16]:
+                    if not isinstance(tr, dict):
+                        continue
+                    n = _normalize_trait(tr)
+                    if n:
+                        cleaned.append(n)
+                if cleaned:
+                    prof["traits"] = _merge_traits([], cleaned, max_items=16)
+            elif not prof.get("traits"):
                 prof["traits"] = [
                     {
                         "dimension": "口吻",
@@ -214,6 +202,35 @@ def submit_author_ip_cold_start(
                 (liner, Json(prof), ip_id, user_uuid),
             )
             conn.commit()
+    if not already_done:
+        if who:
+            nid = create_text_note(
+                project_id,
+                "我是谁",
+                nb,
+                who,
+                user_ref=user_ref,
+                extra_metadata={
+                    "authorIpId": ip_id,
+                    "authorMaterialType": "experience_card",
+                    "experienceTemplateId": "who_am_i",
+                },
+            )
+            created.append(nid)
+        if aud:
+            nid = create_text_note(
+                project_id,
+                "写给谁",
+                nb,
+                aud,
+                user_ref=user_ref,
+                extra_metadata={
+                    "authorIpId": ip_id,
+                    "authorMaterialType": "experience_card",
+                    "experienceTemplateId": "audience",
+                },
+            )
+            created.append(nid)
     item = get_author_ip(user_ref, ip_id)
     if not item:
         raise ValueError("ip_not_found")

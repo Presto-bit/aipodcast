@@ -19,40 +19,47 @@ type Props = {
   onCancel: () => void;
 };
 
-type Choice = { id: string; label: string; hint?: string };
+type Choice = { id: string; label: string };
 
-const STEP1: Choice[] = [
-  { id: "career", label: "职场成长 / 复盘干货" },
-  { id: "tutorial", label: "教程清单 / 方法论" },
-  { id: "review", label: "测评种草 / 工具解读" },
-  { id: "opinion", label: "行业观察 / 观点评论" },
-  { id: "story", label: "个人故事 / 经历分享" }
+const TOPIC_CHOICES: Choice[] = [
+  { id: "knowledge", label: "知识分享 / 教程 / 方法论" },
+  { id: "experience", label: "个人经历 / 复盘 / 成长故事" },
+  { id: "industry", label: "行业观察 / 观点 / 评论" },
+  { id: "product", label: "产品 / 工具 / 测评推荐" },
+  { id: "life", label: "生活方式 / 兴趣 / 日常记录" }
 ];
 
-const STEP2: Choice[] = [
-  { id: "junior", label: "职场新人 / 打工人" },
-  { id: "founder", label: "创业者 / 小团队负责人" },
-  { id: "peer", label: "同行从业者" },
-  { id: "general", label: "泛兴趣读者" }
+const AUDIENCE_CHOICES: Choice[] = [
+  { id: "beginner", label: "新手 / 入门学习者" },
+  { id: "practitioner", label: "同行 / 从业者" },
+  { id: "decision", label: "需要做决策的人（负责人、采购等）" },
+  { id: "general", label: "普通读者 / 泛人群" }
+];
+
+const GOAL_CHOICES: Choice[] = [
+  { id: "help", label: "帮读者解决一个具体问题" },
+  { id: "inspire", label: "给读者启发或情绪共鸣" },
+  { id: "persuade", label: "表达观点、影响看法" },
+  { id: "record", label: "记录与沉淀自己的思考" }
 ];
 
 type StyleChoice = Choice & { dimension: string };
 
 const STYLE_CHOICES: StyleChoice[] = [
-  { id: "conclusion", label: "结论前置", dimension: "立场" },
-  { id: "list", label: "清单体、少套话", dimension: "结构" },
-  { id: "you", label: "称「你」、聊天感", dimension: "语气" },
-  { id: "fit", label: "写清适合 / 不适合谁", dimension: "结构" },
-  { id: "scene", label: "先场景后细节", dimension: "修辞" },
-  { id: "honest", label: "克制夸张、实事求是", dimension: "立场" }
+  { id: "conclusion", label: "结论前置、观点清晰", dimension: "结构" },
+  { id: "list", label: "条理清楚、步骤/清单化", dimension: "结构" },
+  { id: "plain", label: "语言直白、少套话", dimension: "口吻" },
+  { id: "warm", label: "亲切对话感（称「你」）", dimension: "语气" },
+  { id: "honest", label: "实事求是、克制夸张", dimension: "立场" },
+  { id: "scene", label: "先讲场景再给细节", dimension: "修辞" }
 ];
 
-const ONE_LINER_PRESETS: Record<string, string[]> = {
-  career: ["帮职场人把复盘写成可发布的文章", "帮打工人把经历沉淀为可复用的表达"],
-  tutorial: ["用步骤清单帮读者快速上手一件事", "把复杂流程拆成可照做的教程"],
-  review: ["帮读者按场景选对工具、少踩坑", "用测评与对比帮人选型"],
-  opinion: ["用清晰观点帮读者理解行业变化", "把观察写成有态度但不煽情的评论"],
-  story: ["用真实经历帮读者获得共鸣与启发", "把个人转折讲成可借鉴的故事"]
+const ONE_LINER_BY_TOPIC: Record<string, string[]> = {
+  knowledge: ["把复杂问题讲清楚，让读者能照着做", "用结构化方法帮读者快速入门"],
+  experience: ["用真实经历帮读者获得可借鉴的启发", "把复盘与成长故事写成可发布的表达"],
+  industry: ["用清晰观点帮读者理解变化与趋势", "把观察写成有依据、不煽情的评论"],
+  product: ["帮读者按场景选对方案、少踩坑", "用对比与体验帮读者做判断"],
+  life: ["用真实感受连接读者，记录值得分享的时刻", "把兴趣与生活体验写成轻松可读的内容"]
 };
 
 function ChoiceGroup({
@@ -80,13 +87,7 @@ function ChoiceGroup({
             selected === c.id ? "border-brand/40 bg-brand/5" : "border-line hover:bg-fill/40"
           )}
         >
-          <input
-            type="radio"
-            name="choice"
-            className="mt-1"
-            checked={selected === c.id}
-            onChange={() => onSelect(c.id)}
-          />
+          <input type="radio" name="choice" className="mt-1" checked={selected === c.id} onChange={() => onSelect(c.id)} />
           <span className="text-ink">{c.label}</span>
         </label>
       ))}
@@ -97,12 +98,7 @@ function ChoiceGroup({
         )}
       >
         <span className="flex items-center gap-2">
-          <input
-            type="radio"
-            name="choice"
-            checked={selected === "custom"}
-            onChange={() => onSelect("custom")}
-          />
+          <input type="radio" name="choice" checked={selected === "custom"} onChange={() => onSelect("custom")} />
           <span className="text-ink">其他（自己填写）</span>
         </span>
         {selected === "custom" ? (
@@ -132,34 +128,31 @@ export default function AuthorIpPositioningWizard({
   onCancel
 }: Props) {
   const [step, setStep] = useState(0);
-  const [s1, setS1] = useState("");
-  const [s1Custom, setS1Custom] = useState("");
-  const [s2, setS2] = useState("");
-  const [s2Custom, setS2Custom] = useState("");
+  const [topic, setTopic] = useState("");
+  const [topicCustom, setTopicCustom] = useState("");
+  const [audience, setAudience] = useState("");
+  const [audienceCustom, setAudienceCustom] = useState("");
+  const [goal, setGoal] = useState("");
+  const [goalCustom, setGoalCustom] = useState("");
   const [oneLinerPick, setOneLinerPick] = useState("");
   const [oneLinerCustom, setOneLinerCustom] = useState("");
   const [styles, setStyles] = useState<Set<string>>(new Set());
   const [styleCustom, setStyleCustom] = useState("");
 
-  const oneLinerOptions = useMemo(() => {
-    const base = ONE_LINER_PRESETS[s1] || ONE_LINER_PRESETS.career;
-    return base;
-  }, [s1]);
+  const oneLinerOptions = useMemo(() => ONE_LINER_BY_TOPIC[topic] || ONE_LINER_BY_TOPIC.knowledge, [topic]);
 
-  const whoAmI = resolveChoice(STEP1, s1, s1Custom);
-  const audience = resolveChoice(STEP2, s2, s2Custom);
+  const whoAmI = resolveChoice(TOPIC_CHOICES, topic, topicCustom);
+  const audienceText = resolveChoice(AUDIENCE_CHOICES, audience, audienceCustom);
+  const goalText = resolveChoice(GOAL_CHOICES, goal, goalCustom);
   const oneLiner =
-    oneLinerPick === "custom"
-      ? oneLinerCustom.trim()
-      : oneLinerPick === "auto" && whoAmI && audience
-        ? `帮${audience.replace(/ \/ .*/, "")}，用${whoAmI.split("/")[0]?.trim() || "内容"}表达`
-        : oneLinerPick;
+    oneLinerPick === "custom" ? oneLinerCustom.trim() : oneLinerPick;
 
   const canNext = () => {
-    if (step === 0) return Boolean(s1 && (s1 !== "custom" || s1Custom.trim()));
-    if (step === 1) return Boolean(s2 && (s2 !== "custom" || s2Custom.trim()));
-    if (step === 2) return Boolean(oneLinerPick && (oneLinerPick !== "custom" || oneLinerCustom.trim()));
-    if (step === 3) return styles.size > 0 || styleCustom.trim();
+    if (step === 0) return Boolean(topic && (topic !== "custom" || topicCustom.trim()));
+    if (step === 1) return Boolean(audience && (audience !== "custom" || audienceCustom.trim()));
+    if (step === 2) return Boolean(goal && (goal !== "custom" || goalCustom.trim()));
+    if (step === 3) return Boolean(oneLinerPick && (oneLinerPick !== "custom" || oneLinerCustom.trim()));
+    if (step === 4) return styles.size > 0 || styleCustom.trim();
     return false;
   };
 
@@ -171,7 +164,7 @@ export default function AuthorIpPositioningWizard({
         out.push({
           dimension: c.dimension,
           label: c.label,
-          evidence: "定位向导选择",
+          evidence: "定位向导",
           defaultOn: true,
           confidence: 0.85
         });
@@ -190,45 +183,57 @@ export default function AuthorIpPositioningWizard({
   };
 
   const handleFinish = () => {
-    if (!oneLiner.trim()) return;
+    const liner = oneLiner.trim();
+    if (!liner) return;
+    const combinedWho = goalText ? `${whoAmI}（${goalText}）` : whoAmI;
     onSubmit({
-      whoAmI,
-      audience,
-      oneLiner: oneLiner.trim(),
+      whoAmI: combinedWho.slice(0, 500),
+      audience: audienceText,
+      oneLiner: liner,
       traits: buildTraits()
     });
   };
 
-  const titles = ["你主要写什么？", "主要写给谁？", "一句话定位", "你的写作风格"];
+  const titles = ["你主要创作哪类内容？", "主要写给谁？", "创作目标是什么？", "一句话定位", "你的写作风格"];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <p className="text-xs text-muted">
-        步骤 {step + 1}/4 · {titles[step]}
+        步骤 {step + 1}/5 · {titles[step]}
       </p>
 
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
         {step === 0 ? (
           <ChoiceGroup
-            choices={STEP1}
-            selected={s1}
-            custom={s1Custom}
-            onSelect={setS1}
-            onCustom={setS1Custom}
-            customPlaceholder="例如：B2B 营销与品牌策略"
+            choices={TOPIC_CHOICES}
+            selected={topic}
+            custom={topicCustom}
+            onSelect={setTopic}
+            onCustom={setTopicCustom}
+            customPlaceholder="例如：职场沟通、育儿、投资理财"
           />
         ) : null}
         {step === 1 ? (
           <ChoiceGroup
-            choices={STEP2}
-            selected={s2}
-            custom={s2Custom}
-            onSelect={setS2}
-            onCustom={setS2Custom}
-            customPlaceholder="例如：一线城市产品经理"
+            choices={AUDIENCE_CHOICES}
+            selected={audience}
+            custom={audienceCustom}
+            onSelect={setAudience}
+            onCustom={setAudienceCustom}
+            customPlaceholder="例如：一线城市职场妈妈"
           />
         ) : null}
         {step === 2 ? (
+          <ChoiceGroup
+            choices={GOAL_CHOICES}
+            selected={goal}
+            custom={goalCustom}
+            onSelect={setGoal}
+            onCustom={setGoalCustom}
+            customPlaceholder="例如：建立专业可信度"
+          />
+        ) : null}
+        {step === 3 ? (
           <div className="space-y-1.5">
             {oneLinerOptions.map((text) => (
               <label
@@ -258,15 +263,15 @@ export default function AuthorIpPositioningWizard({
                   rows={2}
                   value={oneLinerCustom}
                   onChange={(e) => setOneLinerCustom(e.target.value)}
-                  placeholder="例如：帮创业者把洞察写成可转发的长文"
+                  placeholder="用一句话说明你能为读者带来什么"
                 />
               ) : null}
             </label>
           </div>
         ) : null}
-        {step === 3 ? (
+        {step === 4 ? (
           <div className="space-y-2">
-            <p className="text-xs text-muted">可多选 2～4 项，将写入「特色」供写作引用</p>
+            <p className="text-xs text-muted">可多选，将写入「特色」供写作引用</p>
             {STYLE_CHOICES.map((c) => (
               <label
                 key={c.id}
@@ -322,13 +327,8 @@ export default function AuthorIpPositioningWizard({
             上一步
           </Button>
         ) : null}
-        {step < 3 ? (
-          <Button
-            type="button"
-            className="px-2.5 py-1.5 text-xs"
-            disabled={busy || !canNext()}
-            onClick={() => setStep((s) => s + 1)}
-          >
+        {step < 4 ? (
+          <Button type="button" className="px-2.5 py-1.5 text-xs" disabled={busy || !canNext()} onClick={() => setStep((s) => s + 1)}>
             下一步
           </Button>
         ) : (
