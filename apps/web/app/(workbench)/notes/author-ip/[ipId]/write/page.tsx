@@ -12,6 +12,7 @@ import {
   ackAuthorIpFirstCompare,
   composeAuthorIpArticle,
   composeAuthorIpArticleStream,
+  fetchAuthorIpItem,
   fetchAuthorIps,
   fetchComposeBillingPreview,
   learnAuthorIp,
