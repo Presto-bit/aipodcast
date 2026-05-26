@@ -6,11 +6,23 @@ import EmptyState from "../../../../components/ui/EmptyState";
 import { isLoggedInAccountUser, useAuth } from "../../../../lib/auth";
 import { shouldHideWorkFromUserGallery } from "../../../../lib/worksTypes";
 
+type TrashTab = "reference" | "author_ip";
+
 type NoteRow = {
   noteId: string;
   title?: string;
   notebook?: string;
   deletedAt?: string;
+  authorIpId?: string | null;
+  authorIpName?: string | null;
+  isAuthorIpMaterial?: boolean;
+};
+
+type AuthorIpTrashRow = {
+  id: string;
+  displayName: string;
+  archivedAt?: string | null;
+  materialCount?: number;
 };
 
 type WorkRow = {
@@ -59,16 +71,26 @@ async function deletePurgeWork(workId: string, headers: Record<string, string>) 
   return { ok: res.ok && Boolean(data.success), detail: String(data.detail || res.status) };
 }
 
+function restoreDetailMessage(detail: string): string {
+  if (detail === "author_ip_missing_restore_blocked") {
+    return "所属个人特色 IP 已删除，请先在「个人特色 IP」Tab 恢复该 IP";
+  }
+  return detail;
+}
+
 export default function NotesTrashPage() {
   const { getAuthHeaders, user } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
+  const [tab, setTab] = useState<TrashTab>("reference");
   const [notes, setNotes] = useState<NoteRow[]>([]);
+  const [archivedIps, setArchivedIps] = useState<AuthorIpTrashRow[]>([]);
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [selectedNoteIds, setSelectedNoteIds] = useState<string[]>([]);
   const [selectedWorkIds, setSelectedWorkIds] = useState<string[]>([]);
+  const [selectedIpIds, setSelectedIpIds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,42 +98,70 @@ export default function NotesTrashPage() {
     try {
       if (!isLoggedIn) {
         setNotes([]);
+        setArchivedIps([]);
         setWorks([]);
         setSelectedNoteIds([]);
         setSelectedWorkIds([]);
+        setSelectedIpIds([]);
         return;
       }
       const authHdr = getAuthHeaders();
-      const [notesRes, worksRes] = await Promise.all([
-        fetch("/api/notes/trash?limit=80&offset=0", { cache: "no-store", headers: { ...authHdr } }),
-        fetch("/api/works/trash?limit=80&offset=0", { cache: "no-store", headers: { ...authHdr } })
-      ]);
+      const notesUrl = `/api/notes/trash?limit=80&offset=0&tab=${tab}`;
+      const fetches: Promise<Response>[] = [fetch(notesUrl, { cache: "no-store", headers: { ...authHdr } })];
+      if (tab === "reference") {
+        fetches.push(fetch("/api/works/trash?limit=80&offset=0", { cache: "no-store", headers: { ...authHdr } }));
+      } else {
+        fetches.push(fetch("/api/author-ips/trash", { cache: "no-store", headers: { ...authHdr } }));
+      }
+      const [notesRes, secondRes] = await Promise.all(fetches);
       const notesData = (await notesRes.json().catch(() => ({}))) as { success?: boolean; notes?: NoteRow[]; error?: string };
-      const worksData = (await worksRes.json().catch(() => ({}))) as {
-        success?: boolean;
-        ai?: WorkRow[];
-        tts?: WorkRow[];
-        notes?: WorkRow[];
-        error?: string;
-      };
       if (!notesRes.ok || !notesData.success) throw new Error(notesData.error || `加载笔记回收站失败 ${notesRes.status}`);
-      if (!worksRes.ok || !worksData.success) throw new Error(worksData.error || `加载作品回收站失败 ${worksRes.status}`);
       const nextNotes = Array.isArray(notesData.notes) ? notesData.notes : [];
-      const nextWorks = [...(worksData.ai || []), ...(worksData.tts || []), ...(worksData.notes || [])].filter(
-        (w) => !shouldHideWorkFromUserGallery(w)
-      );
       setNotes(nextNotes);
-      setWorks(nextWorks);
       const noteIdSet = new Set(nextNotes.map((n) => n.noteId));
-      const workIdSet = new Set(nextWorks.map((w) => w.id));
       setSelectedNoteIds((xs) => xs.filter((id) => noteIdSet.has(id)));
-      setSelectedWorkIds((xs) => xs.filter((id) => workIdSet.has(id)));
+
+      if (tab === "reference") {
+        const worksData = (await secondRes.json().catch(() => ({}))) as {
+          success?: boolean;
+          ai?: WorkRow[];
+          tts?: WorkRow[];
+          notes?: WorkRow[];
+          error?: string;
+        };
+        if (!secondRes.ok || !worksData.success) {
+          throw new Error(worksData.error || `加载作品回收站失败 ${secondRes.status}`);
+        }
+        const nextWorks = [...(worksData.ai || []), ...(worksData.tts || []), ...(worksData.notes || [])].filter(
+          (w) => !shouldHideWorkFromUserGallery(w)
+        );
+        setWorks(nextWorks);
+        setArchivedIps([]);
+        const workIdSet = new Set(nextWorks.map((w) => w.id));
+        setSelectedWorkIds((xs) => xs.filter((id) => workIdSet.has(id)));
+        setSelectedIpIds([]);
+      } else {
+        const ipData = (await secondRes.json().catch(() => ({}))) as {
+          success?: boolean;
+          items?: AuthorIpTrashRow[];
+          detail?: string;
+        };
+        if (!secondRes.ok || !ipData.success) {
+          throw new Error(String(ipData.detail || `加载 IP 回收站失败 ${secondRes.status}`));
+        }
+        const nextIps = Array.isArray(ipData.items) ? ipData.items : [];
+        setArchivedIps(nextIps);
+        setWorks([]);
+        setSelectedWorkIds([]);
+        const ipIdSet = new Set(nextIps.map((i) => i.id));
+        setSelectedIpIds((xs) => xs.filter((id) => ipIdSet.has(id)));
+      }
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
       setLoading(false);
     }
-  }, [getAuthHeaders, isLoggedIn]);
+  }, [getAuthHeaders, isLoggedIn, tab]);
 
   useEffect(() => {
     void load();
@@ -154,7 +204,48 @@ export default function NotesTrashPage() {
     setErr("");
     try {
       const { ok, detail } = await postRestoreNote(noteId, getAuthHeaders());
-      if (!ok) throw new Error(detail);
+      if (!ok) throw new Error(restoreDetailMessage(detail));
+      await load();
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function restoreIp(ipId: string) {
+    setBusy(`ip:${ipId}`);
+    setErr("");
+    try {
+      const res = await fetch(`/api/author-ips/${encodeURIComponent(ipId)}/restore`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: "{}"
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+      if (!res.ok || !data.success) throw new Error(String(data.detail || res.status));
+      await load();
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function purgeIp(ipId: string) {
+    if (!window.confirm("永久删除该 IP 及其素材？不可恢复。")) return;
+    setBusy(`ip-purge:${ipId}`);
+    setErr("");
+    try {
+      const res = await fetch(`/api/author-ips/${encodeURIComponent(ipId)}/purge`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: "{}"
+      });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
+      if (!res.ok || !data.success) throw new Error(String(data.detail || res.status));
       await load();
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -297,23 +388,78 @@ export default function NotesTrashPage() {
       </div>
       <h1 className="text-2xl font-semibold text-ink">回收站</h1>
       <p className="mt-2 text-sm text-muted">
-        删除的笔记与作品会进入此处；可恢复，或永久删除。回收站内容默认保留 7 天，超时自动清理。
+        删除的笔记、作品与个人特色 IP 会进入此处；可恢复或永久删除。默认保留 7 天。
       </p>
+
+      <div className="mt-4 flex gap-2 border-b border-line">
+        <button
+          type="button"
+          className={`border-b-2 px-3 py-2 text-sm ${tab === "reference" ? "border-brand font-medium text-ink" : "border-transparent text-muted"}`}
+          onClick={() => setTab("reference")}
+        >
+          参考资料
+        </button>
+        <button
+          type="button"
+          className={`border-b-2 px-3 py-2 text-sm ${tab === "author_ip" ? "border-brand font-medium text-ink" : "border-transparent text-muted"}`}
+          onClick={() => setTab("author_ip")}
+        >
+          个人特色 IP
+        </button>
+      </div>
 
       {err ? <p className="mt-4 text-sm text-danger-ink">{err}</p> : null}
 
       {loading ? (
         <p className="mt-8 text-sm text-muted">加载中…</p>
-      ) : notes.length === 0 && works.length === 0 ? (
-        <EmptyState
-          className="mt-8"
-          title="回收站为空"
-          description="删除笔记或作品后，会出现在这里。"
-        />
+      ) : tab === "reference" && notes.length === 0 && works.length === 0 ? (
+        <EmptyState className="mt-8" title="参考资料回收站为空" description="删除的参考资料笔记或作品会出现在这里。" />
+      ) : tab === "author_ip" && notes.length === 0 && archivedIps.length === 0 ? (
+        <EmptyState className="mt-8" title="个人特色 IP 回收站为空" description="删除的 IP 或其素材会出现在这里。" />
       ) : (
         <div className="mt-6 space-y-6">
+          {tab === "author_ip" && archivedIps.length > 0 ? (
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-ink">已删除的个人特色 IP</h2>
+              <ul className="space-y-2">
+                {archivedIps.map((ip) => (
+                  <li
+                    key={ip.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface p-3 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-ink">{ip.displayName}</p>
+                      <p className="text-xs text-muted">
+                        删除于 {ip.archivedAt?.replace("T", " ").slice(0, 19) || "—"}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        className="rounded-lg border border-line px-3 py-1 text-xs text-ink hover:bg-fill disabled:opacity-50"
+                        onClick={() => void restoreIp(ip.id)}
+                      >
+                        恢复 IP
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        className="rounded-lg border border-danger/40 px-3 py-1 text-xs text-danger-ink hover:bg-danger-soft disabled:opacity-50"
+                        onClick={() => void purgeIp(ip.id)}
+                      >
+                        永久删除
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           <section>
-            <h2 className="mb-2 text-sm font-semibold text-ink">已删除笔记</h2>
+            <h2 className="mb-2 text-sm font-semibold text-ink">
+              {tab === "author_ip" ? "已删除 IP 素材" : "已删除笔记"}
+            </h2>
             {notes.length === 0 ? (
               <p className="text-xs text-muted">暂无已删除笔记</p>
             ) : (
@@ -370,6 +516,7 @@ export default function NotesTrashPage() {
                         <div className="min-w-0">
                           <p className="truncate font-medium text-ink">{n.title || n.noteId}</p>
                           <p className="text-xs text-muted">
+                            {n.authorIpName ? `${n.authorIpName} · ` : ""}
                             {n.notebook} · 删除于 {n.deletedAt?.replace("T", " ").slice(0, 19) || "—"}
                           </p>
                         </div>
@@ -398,6 +545,7 @@ export default function NotesTrashPage() {
               </>
             )}
           </section>
+          {tab === "reference" ? (
           <section>
             <h2 className="mb-2 text-sm font-semibold text-ink">已删除作品</h2>
             {works.length === 0 ? (
@@ -484,6 +632,7 @@ export default function NotesTrashPage() {
               </>
             )}
           </section>
+          ) : null}
         </div>
       )}
     </main>

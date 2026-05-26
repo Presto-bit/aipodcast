@@ -40,6 +40,7 @@ import { useI18n } from "../lib/I18nContext";
 import AnimatedPageShell from "./AnimatedPageShell";
 import WorkAudioShell from "./WorkAudioShell";
 import BrandGlyph from "./brand/BrandGlyph";
+import NotesNavExpanded from "./notes/NotesNavExpanded";
 import { dispatchNotesShowNotebookHub, NOTES_MINIMAL_MAIN_NAV_EVENT } from "../lib/notesLastNotebook";
 import {
   APP_SHELL_MOBILE_MEDIA_QUERY,
@@ -52,6 +53,7 @@ import {
 } from "../lib/appShellLayout";
 import {
   isMarketingShellLessPath,
+  matchesNotesAuthorIp,
   matchesNotesWorkbench,
   matchesProductStudio,
   normalizePathname,
@@ -268,6 +270,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
    */
   const [sidebarPortaled, setSidebarPortaled] = useState(false);
   const [createSubNavExpanded, setCreateSubNavExpanded] = useState(true);
+  const [notesSubNavExpanded, setNotesSubNavExpanded] = useState(true);
   const navPrimary = useMemo<NavItem[]>(
     () => [{ href: WORKBENCH_HOME_PATH, label: t("nav.home"), short: "首", Icon: IconHome }],
     [t]
@@ -365,6 +368,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (pathMatchesRoot(path, "/create")) setCreateSubNavExpanded(true);
+    if (matchesNotesAuthorIp(path)) setNotesSubNavExpanded(true);
   }, [path]);
 
   useEffect(() => {
@@ -675,6 +679,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   path={path}
                   createSubNavExpanded={createSubNavExpanded}
                   setCreateSubNavExpanded={setCreateSubNavExpanded}
+                />
+              )}
+            </Fragment>
+          ) : item.href === "/notes" ? (
+            <Fragment key={item.href}>
+              {collapsed ? (
+                renderSidebarNavItem(item)
+              ) : (
+                <NotesNavExpanded
+                  item={item}
+                  path={path}
+                  notesSubNavExpanded={notesSubNavExpanded}
+                  setNotesSubNavExpanded={setNotesSubNavExpanded}
+                  NavIconBox={NavIconBox}
                 />
               )}
             </Fragment>

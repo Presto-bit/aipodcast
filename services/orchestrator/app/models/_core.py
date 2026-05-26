@@ -830,6 +830,14 @@ def set_notebook_sharing(
     nb = (notebook_name or "").strip()
     if not nb:
         return False, "笔记本名称不能为空"
+    try:
+        from ..author_ip_store import is_author_ip_notebook_name, notebook_is_system_reserved
+
+        if is_author_ip_notebook_name(nb) or notebook_is_system_reserved(user_ref, nb):
+            if is_public or listed_in_discover:
+                return False, "个人 IP 笔记本不支持公开分享或热门展示"
+    except Exception:
+        pass
     mode = (public_access or "").strip().lower() if public_access else ""
     if is_public and mode not in ("read_only", "edit"):
         return False, "公开访问需选择 read_only 或 edit"
@@ -1354,6 +1362,14 @@ def create_notebook_only(name: str, user_ref: str | None = None) -> tuple[bool, 
         return False, "笔记本名称不能为空"
     if nb == LEGACY_DEFAULT_NOTEBOOK:
         return False, "该名称保留给历史数据，请换一个名称"
+    try:
+        from ..author_ip_store import guard_notebook_mutation
+
+        blocked = guard_notebook_mutation(user_ref, nb, action="create")
+        if blocked:
+            return False, blocked
+    except Exception:
+        pass
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -1396,6 +1412,15 @@ def rename_notebook_db(old: str, new_name: str, user_ref: str | None = None) -> 
         return False, "名称不能为空"
     if n == LEGACY_DEFAULT_NOTEBOOK:
         return False, "不能使用该名称"
+    try:
+        from ..author_ip_store import guard_notebook_mutation
+
+        for nb, act in ((o, "rename"), (n, "create")):
+            blocked = guard_notebook_mutation(user_ref, nb, action=act)
+            if blocked:
+                return False, blocked
+    except Exception:
+        pass
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -1535,6 +1560,14 @@ def delete_notebook_db(name: str, user_ref: str | None = None) -> tuple[bool, st
     n = (name or "").strip()
     if not n:
         return False, "名称不能为空", 0, 0
+    try:
+        from ..author_ip_store import guard_notebook_mutation
+
+        blocked = guard_notebook_mutation(user_ref, n, action="delete")
+        if blocked:
+            return False, blocked, 0, 0
+    except Exception:
+        pass
     cover_kt, cover_kf = "", ""
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -1823,6 +1856,60 @@ def update_note_title(note_id: str, new_title: str, user_ref: str | None = None)
             ok = cur.rowcount > 0
             conn.commit()
             return ok
+
+
+def trash_notes_in_notebook(notebook_name: str, user_ref: str | None = None) -> int:
+    """将某笔记本下未删除笔记一并移入回收站。"""
+    nb = (notebook_name or "").strip()
+    if not nb:
+        return 0
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return 0
+            cur.execute(
+                """
+                UPDATE inputs i SET deleted_at = NOW()
+                FROM projects p
+                WHERE i.project_id = p.id
+                  AND p.user_id = %s::uuid
+                  AND i.input_type IN ('note_text', 'note_file')
+                  AND COALESCE(i.metadata->>'notebook', '') = %s
+                  AND i.deleted_at IS NULL
+                """,
+                (user_uuid, nb),
+            )
+            cnt = int(cur.rowcount or 0)
+            conn.commit()
+            return cnt
+
+
+def restore_notes_in_notebook(notebook_name: str, user_ref: str | None = None) -> int:
+    """恢复某笔记本下已删除笔记（用于 IP 从回收站恢复时）。"""
+    nb = (notebook_name or "").strip()
+    if not nb:
+        return 0
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return 0
+            cur.execute(
+                """
+                UPDATE inputs i SET deleted_at = NULL
+                FROM projects p
+                WHERE i.project_id = p.id
+                  AND p.user_id = %s::uuid
+                  AND i.input_type IN ('note_text', 'note_file')
+                  AND COALESCE(i.metadata->>'notebook', '') = %s
+                  AND i.deleted_at IS NOT NULL
+                """,
+                (user_uuid, nb),
+            )
+            cnt = int(cur.rowcount or 0)
+            conn.commit()
+            return cnt
 
 
 def delete_note(note_id: str, user_ref: str | None = None) -> bool:

@@ -164,6 +164,14 @@ def ensure_notebooks_schema() -> None:
             except Exception:
                 pass
             conn.commit()
+    try:
+        from ..author_ip_store import ensure_author_ip_schema
+
+        ensure_author_ip_schema()
+    except Exception:
+        logger.exception("ensure_notebooks_schema: author_ip schema failed")
+
+
 def ensure_jobs_trash_schema() -> None:
     with get_conn() as conn:
         with get_cursor(conn) as cur:
@@ -190,6 +198,8 @@ def ensure_jobs_trash_schema() -> None:
             except Exception:
                 pass
             conn.commit()
+
+
 def ensure_default_library_notebook(user_ref: str | None) -> None:
     """确保存在「默认资料库」：即使用户已新建其他笔记本也会自动补齐，与创作侧资料上传默认笔记本一致。幂等。"""
     raw = (user_ref or "").strip()

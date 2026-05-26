@@ -48,6 +48,7 @@ from .routes import (
     e2e_smoke_routes,
     health,
     jobs_routes,
+    author_ip_routes,
     notes_routes,
     rss_routes,
     search_routes,
@@ -385,6 +386,7 @@ app.include_router(user_prefs_routes.router)
 app.include_router(clip_routes.router)
 app.include_router(jobs_routes.router)
 app.include_router(notes_routes.router)
+app.include_router(author_ip_routes.router)
 app.include_router(voice_routes.router)
 app.include_router(subscription_routes.router)
 app.include_router(admin_routes.router)

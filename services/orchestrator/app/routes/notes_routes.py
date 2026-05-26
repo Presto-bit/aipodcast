@@ -1137,14 +1137,29 @@ def list_trash_notes_api(
     request: Request,
     limit: int = Query(default=40, ge=1, le=500),
     offset: int = Query(default=0, ge=0, le=50_000),
+    tab: str | None = Query(default=None, description="reference | author_ip"),
 ):
     # 默认保留 7 天，查询回收站时顺带清理过期项。
     purge_expired_trashed_notes(retention_days=NOTE_TRASH_RETENTION_DAYS, max_rows=settings.trash_purge_max_rows)
     user_ref = _current_user_ref_or_401(request)
-    rows = list_trashed_notes(limit=limit, offset=offset, user_ref=user_ref)
+    tab_norm = str(tab or "").strip().lower()
+    try:
+        from ..author_ip_store import author_ip_display_name_map, note_is_author_ip_material
+    except Exception:
+        author_ip_display_name_map = lambda _u: {}  # type: ignore[assignment]
+        note_is_author_ip_material = lambda _m, _n: False  # type: ignore[assignment]
+    ip_names = author_ip_display_name_map(user_ref)
+    fetch_limit = min(500, max(limit * 4, limit + 20)) if tab_norm in ("reference", "author_ip") else limit
+    rows = list_trashed_notes(limit=fetch_limit, offset=offset, user_ref=user_ref)
     notes: list[dict[str, object]] = []
     for r in rows:
         md = _normalize_metadata_dict(r)
+        notebook = str(md.get("notebook") or "")
+        is_ip_material = note_is_author_ip_material(md, notebook)
+        if tab_norm == "author_ip" and not is_ip_material:
+            continue
+        if tab_norm == "reference" and is_ip_material:
+            continue
         it = str(r.get("input_type") or "")
         src_url = str(r.get("source_url") or md.get("sourceUrl") or "")
         ext = _display_ext_for_note(input_type=it, metadata=md, source_url=src_url)
@@ -1168,11 +1183,15 @@ def list_trash_notes_api(
             created_at=str(r.get("created_at") or ""),
             rag_index_at=str(r.get("note_rag_index_at") or ""),
         )
+        author_ip_id = str(md.get("authorIpId") or "").strip()
         notes.append(
             {
                 "noteId": note_uuid,
                 "title": str(md.get("title") or "未命名笔记"),
-                "notebook": str(md.get("notebook") or ""),
+                "notebook": notebook,
+                "authorIpId": author_ip_id or None,
+                "authorIpName": ip_names.get(author_ip_id) if author_ip_id else None,
+                "isAuthorIpMaterial": is_ip_material,
                 "ext": ext or "txt",
                 "relativePath": f"/api/notes/{note_uuid}/file" if file_key else "",
                 "createdAt": str(r.get("created_at") or ""),
@@ -1188,8 +1207,10 @@ def list_trash_notes_api(
                 "preprocessStatus": str(md.get("preprocessStatus") or ""),
             }
         )
-    has_more = len(rows) >= limit
-    return {"success": True, "notes": notes, "has_more": has_more}
+    if tab_norm in ("reference", "author_ip") and len(notes) > limit:
+        notes = notes[:limit]
+    has_more = len(rows) >= fetch_limit or len(notes) >= limit
+    return {"success": True, "notes": notes, "has_more": has_more, "tab": tab_norm or None}
 
 
 @router.post("/notes")
@@ -1883,6 +1904,23 @@ def delete_note_api(note_id: str, request: Request):
 @router.post("/notes/{note_id}/restore")
 def restore_note_api(note_id: str, request: Request):
     user_ref = _current_user_ref_or_401(request)
+    row = get_note_by_id(note_id, include_deleted=True, user_ref=user_ref)
+    if row:
+        md = _normalize_metadata_dict(row)
+        aid = str(md.get("authorIpId") or "").strip()
+        if aid:
+            try:
+                from ..author_ip_store import author_ip_is_active
+
+                if not author_ip_is_active(user_ref, aid):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="author_ip_missing_restore_blocked",
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
     ok = restore_note(note_id, user_ref=user_ref)
     if not ok:
         raise HTTPException(status_code=404, detail="note_not_found")
@@ -2050,11 +2088,38 @@ def list_notebooks_api(request: Request):
     user_ref = _current_user_ref_or_401(request)
     migrate_legacy_default_notebook_for_user(user_ref)
     ensure_default_library_notebook(user_ref)
+    notebook_kinds: dict[str, dict[str, Any]] = {}
+    try:
+        from ..author_ip_store import (
+            ensure_author_ip_notebook,
+            list_user_notebook_kinds_meta,
+            order_notebook_names_for_list,
+        )
+
+        ensure_author_ip_notebook(user_ref)
+        notebook_kinds = list_user_notebook_kinds_meta(user_ref)
+    except Exception:
+        _notes_startup_logger.exception("list_notebooks: ensure author ip failed")
     names = list_notebook_names(user_ref=user_ref)
-    ordered = sorted(set(names), key=lambda x: x)
+    try:
+        from ..author_ip_store import exclude_author_ip_notebooks
+
+        names = exclude_author_ip_notebooks(names, user_ref)
+    except Exception:
+        _notes_startup_logger.exception("list_notebooks: exclude author ip notebooks failed")
+    if notebook_kinds:
+        ordered = order_notebook_names_for_list(names, notebook_kinds)
+    else:
+        ordered = sorted(set(names), key=lambda x: x)
     sharing = list_user_notebook_sharing_meta(user_ref)
     covers = list_notebook_covers_meta(user_ref)
-    return {"success": True, "notebooks": ordered, "notebookSharing": sharing, "notebookCovers": covers}
+    return {
+        "success": True,
+        "notebooks": ordered,
+        "notebookSharing": sharing,
+        "notebookCovers": covers,
+        "notebookKinds": notebook_kinds,
+    }
 
 
 @router.get("/notebooks/popular")

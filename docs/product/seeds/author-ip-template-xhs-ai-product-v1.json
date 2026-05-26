@@ -1,0 +1,137 @@
+{
+  "templateId": "xhs_ai_product_v1",
+  "displayName": "示例 · AI 产品小红书号",
+  "subtitle": "工具测评 · 教程干货 · 避坑清单",
+  "oneLiner": "帮想上手 AI 工具的人，用测评和步骤清单少踩坑、快点用上。",
+  "maturity": "ready",
+  "isTemplate": true,
+  "isReadOnly": true,
+  "persona": {
+    "nickname": "阿橘",
+    "platform": "xiaohongshu",
+    "vertical": "AI 产品"
+  },
+  "domains": [
+    {
+      "displayName": "测评种草",
+      "boundArticleTitles": [
+        "📌 5 款 AI 写作工具怎么选？我按场景帮你排好了",
+        "💡 Midjourney 替代品实测：谁适合小白做封面"
+      ]
+    },
+    {
+      "displayName": "教程清单",
+      "boundArticleTitles": ["⚠️ 用 AI 写商单文案前，我先做这 3 件事（避坑）"],
+      "boundExperienceTemplates": ["star_project"]
+    }
+  ],
+  "experienceCards": [
+    {
+      "templateId": "who_am_i",
+      "title": "我是谁",
+      "body": "我是阿橘，前互联网产品经理，现在全职做小红书，专注 AI 产品：写作、绘图、视频、办公自动化都会测。读者主要是想提效的内容创作者、小团队负责人和转岗做 AI 的产品人。我不堆参数表，更爱回答「适不适合你、怎么在 30 分钟内跑通」。"
+    },
+    {
+      "templateId": "turning_point",
+      "title": "转折时刻",
+      "body": "2024 年中，我连续三周日更 AI 工具笔记，有一篇「5 个国产 AI 写作工具对比」突然破 10 万阅读。那天我意识到：大家不要科普，要「帮我选 + 告诉我第一步点哪里」。之后我固定结构：结论前置 → 3 个亮点 → 1 个坑 → 适合谁。"
+    },
+    {
+      "templateId": "stance",
+      "title": "立场清单",
+      "body": "坚信：先定使用场景再选工具；免费额度够做验证，别一上来年费。反对：把 AI 吹成「替代所有人」；不标注局限的测评。常提醒：注意数据与版权；涉密内容别上传公网模型。"
+    },
+    {
+      "templateId": "voice_pref",
+      "title": "表达偏好",
+      "body": "称呼「你」；句子偏短；列表和 emoji 适中（📌💡⚠️✅，一篇 6～10 个）。不爱用：赋能、闭环、颠覆、王者。类比多用「像手机里多雇了一个实习生」。"
+    },
+    {
+      "templateId": "star_project",
+      "title": "代表项目",
+      "body": "S：粉丝问「团队想统一用 AI 写公众号，选哪个」。T：7 天内出对比笔记 + 内部试用建议。A：拉 4 款工具，同一选题各写 500 字；评维度：中文表达、模板、协作、价格。R：选定其中 2 款做组合；笔记收藏率高于账号平均 40%。教训：协作功能不能只看官网，要实测「多人改同一稿」。"
+    },
+    {
+      "templateId": "timeline",
+      "title": "经历时间线",
+      "body": "2019 入行产品经理（协作 SaaS）→ 2023 业余发 AI 工具笔记 → 2024.06 单篇 10 万+ 决定垂直 → 2024.12 粉丝 8 万 → 2025 全职，固定「周一测评周三教程」。"
+    },
+    {
+      "templateId": "audience",
+      "title": "写给谁",
+      "body": "主读者：小红书里的创作者、运营、小老板，想用 AI 省时间。次读者：转型 AI 方向的产品/运营。不适合：要硬核算法推导、论文级深度的人。"
+    },
+    {
+      "templateId": "tags",
+      "title": "记忆标签",
+      "body": "AI工具, 测评, 避坑, 教程, 写作, 绘图, 效率, 产品经理"
+    }
+  ],
+  "articles": [
+    {
+      "authorMaterialType": "published",
+      "title": "📌 5 款 AI 写作工具怎么选？我按场景帮你排好了",
+      "tags": ["#AI工具", "#写作", "#测评"],
+      "bodyMarkdown": "先说结论：只写公众号 → 选 A；要团队协作 → B+C；想便宜试错 → D。\n\n1️⃣ A 工具：中文表达稳，模板多，适合日更党……\n2️⃣ B 工具：多人批注爽，但移动端弱……\n⚠️ 共同坑：别在后台填真实客户名，用脱敏稿测试。\n\n✅ 适合：1–3 人内容小组。不适合：强合规金融稿。"
+    },
+    {
+      "authorMaterialType": "published",
+      "title": "💡 Midjourney 替代品实测：谁适合小白做封面",
+      "tags": ["#AI绘图", "#小红书运营", "#工具测评"],
+      "bodyMarkdown": "📌 结论：想做小红书封面、不想学复杂参数 → 优先试 X；要精细控图别选 Y。\n\n测了 3 款国产替代，同一 prompt「清爽科技风 podcast 封面」……\n💡 小技巧：先出 4 张九宫格再裁，比一次赌大图省额度。\n⚠️ Y 的「风格一致性」宣传过头，系列图仍要手动统一色板。"
+    },
+    {
+      "authorMaterialType": "published",
+      "title": "⚠️ 用 AI 写商单文案前，我先做这 3 件事（避坑）",
+      "tags": ["#AI写作", "#商单", "#避坑"],
+      "bodyMarkdown": "商单 + AI = 容易翻车的不是文笔，是事实与承诺。\n\n① 品牌 brief 里「绝对不能说的」先贴进禁区清单……\n② 数据句全部人工复核，模型只写结构……\n③ 发布前用第二家模型做「夸张表述扫描」……\n\n✅ 这样改完后，客户通过率更高。"
+    },
+    {
+      "authorMaterialType": "draft",
+      "title": "（草稿）Cursor + 语音输入：我的一周工作流",
+      "includeInStyleLearning": true,
+      "styleLearningNote": "仅语气参考",
+      "bodyMarkdown": "草稿未完成：仅展示草稿态与语气学习开关。"
+    },
+    {
+      "authorMaterialType": "third_party",
+      "title": "某科技媒体对阿橘的采访节选",
+      "includeInStyleLearning": false,
+      "bodyMarkdown": "（虚构）阿橘认为 AI 工具测评应先看场景再看参数……"
+    }
+  ],
+  "traits": [
+    { "dimension": "立场", "label": "结论前置", "evidence": "先说结论：只写公众号 → 选 A…", "defaultOn": true },
+    { "dimension": "立场", "label": "反对夸张营销", "evidence": "不爱把 AI 吹成替代所有人", "defaultOn": true },
+    { "dimension": "结构", "label": "清单体 + emoji 锚点", "evidence": "1️⃣ 2️⃣ ⚠️ ✅", "defaultOn": true },
+    { "dimension": "结构", "label": "适合/不适合谁", "evidence": "✅ 适合…不适合…", "defaultOn": true },
+    { "dimension": "语气", "label": "称「你」、短句", "evidence": "全文", "defaultOn": true },
+    { "dimension": "语气", "label": "同行聊天感", "evidence": "像手机里多雇了一个实习生", "defaultOn": true },
+    { "dimension": "修辞", "label": "场景先于参数", "evidence": "先定使用场景再选工具", "defaultOn": true },
+    { "dimension": "修辞", "label": "测评四维", "evidence": "中文表达、模板、协作、价格", "defaultOn": true },
+    { "dimension": "禁区", "label": "不用「赋能」等", "evidence": "voice_pref 卡", "defaultOn": true },
+    { "dimension": "禁区", "label": "提醒数据版权", "evidence": "立场卡", "defaultOn": true },
+    { "dimension": "小红书", "label": "文末标签 3–6 个", "evidence": "#AI工具 #测评", "defaultOn": true },
+    { "dimension": "小红书", "label": "emoji 6～10/篇", "evidence": "voice_pref 卡", "defaultOn": true }
+  ],
+  "vitality": {
+    "tagCloud": ["AI工具", "测评", "避坑", "教程", "写作", "绘图", "商单", "效率"],
+    "topContributors": [
+      "📌 5 款 AI 写作工具怎么选？我按场景帮你排好了",
+      "💡 Midjourney 替代品实测：谁适合小白做封面",
+      "⚠️ 用 AI 写商单文案前，我先做这 3 件事（避坑）"
+    ],
+    "recentChange": "清单体与结论前置权重高；商单文更强调复核三步"
+  },
+  "composeDemo": {
+    "contentType": "article",
+    "topic": "测一款新的 AI 视频工具：值不值得为小红书博主开会员",
+    "bodyMarkdown": "先说结论：如果你一周发 3 条以上带口播的短视频，这款工具的「脚本 → 分镜 → 字幕一条龙」值得开试用；只偶尔发图文，先别年费。\n\n📌 我是什么场景测的：同一选题「AI 工具测评类 60 秒口播」，对比我现用的两套工作流……\n\n💡 三个真亮点：① 中文口语词库顺眼；② 字幕时间轴能一键对齐 B-roll；③ 和常用剪辑软件导出格式兼容。\n\n⚠️ 两个坑：团队协作要额外席位；「自动成片」对竖版封面理解仍不稳，封面要自己修。\n\n✅ 适合：日更口播、小团队。不适合：只做静态图文封面的账号。",
+    "imprint": {
+      "sceneName": "测评种草",
+      "contentTypeLabel": "通用文章",
+      "citedExperiences": ["代表项目 STAR"],
+      "diffSummary": "更结论前置、清单分点，并标明适合/不适合谁"
+    }
+  }
+}

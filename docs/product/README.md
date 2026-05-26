@@ -8,7 +8,7 @@
 
 **Presto AI Podcast（FindingYourVoice）**：面向内容创作的 AI 工作台，核心路径包括「笔记 / 素材 → 播客与语音产物 → 作品管理与分发相关能力」，配套登录鉴权、订阅与用量。
 
-一句话：**降低从想法到可发布音频（及延伸形态）的流水线成本**，在质量、配额与合规（如商用授权）之间可分层。
+一句话：**降低从想法到可发布音频与视频制片稿（及延伸形态）的流水线成本**，在质量、配额与合规（如商用授权）之间可分层。
 
 ---
 
@@ -24,6 +24,7 @@
 | 音色 | 音色浏览与管理 | `/voice` |
 | 任务 | 任务列表与详情 | `/jobs`、`/jobs/[jobId]` |
 | 作品 | 作品库、导出、视频相关能力 | `/works`、`/works/video-studio`、`/works/share/[jobId]` |
+| 视频脚本（规划 M0） | 工业化分镜/提词器稿；M0 入口仅 `/create/video-script` | `/create/video-script`、`/works/{jobId}` |
 | 草稿 | 草稿管理 | `/drafts` |
 | 搜索 | 全站搜索 | `/search` |
 | 订阅与个人 | 订阅、个人资料与设置 | `/subscription`、`/me/*`、`/settings` |
@@ -40,6 +41,9 @@
 | ---- | ---- |
 | [subscription-experience-pricing-playbook.md](./subscription-experience-pricing-playbook.md) | 个人创作者向：**Free / Pro / Creator** 权益、体验礼包、按次分钟包、触发与引导、定价与埋点口径、落地节奏与文案原则 |
 | [future-roadmap.md](./future-roadmap.md) | **Backlog**：多平台管家、内容再造、叙事剪辑师等方向；**非迭代承诺**，实现前需单独评审 |
+| [author-ip-product-v5.md](./author-ip-product-v5.md) | **个人特色 IP（v5.2）**：M0 **写一篇**；默认体裁 **通用文章** |
+| [author-ip-execution-schedule.md](./author-ip-execution-schedule.md) | **执行排期**：迭代 1～15 至 M3；对齐 v5；M3 仅站内分享图 |
+| [video-script-product-m0.md](./video-script-product-m0.md) | **视频脚本（M0）**：五体裁制片稿、知识库/IP 分工、schema、竞品与写稿能力路线 |
 
 ---
 
