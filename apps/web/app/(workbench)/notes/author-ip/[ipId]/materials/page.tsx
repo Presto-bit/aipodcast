@@ -8,8 +8,8 @@ import {
   type AuthorIpMaterial,
   addAuthorIpMaterial,
   deleteAuthorIpMaterial,
+  fetchAuthorIpItem,
   fetchAuthorIpMaterials,
-  fetchAuthorIps,
   learnAuthorIp
 } from "../../../../../../lib/authorIp";
 
@@ -36,8 +36,8 @@ export default function AuthorIpMaterialsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [list, mats] = await Promise.all([fetchAuthorIps(), fetchAuthorIpMaterials(ipId)]);
-      setItem(list.find((x) => x.id === ipId) ?? null);
+      const [found, mats] = await Promise.all([fetchAuthorIpItem(ipId), fetchAuthorIpMaterials(ipId)]);
+      setItem(found);
       setMaterials(mats);
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载失败");
@@ -76,7 +76,7 @@ export default function AuthorIpMaterialsPage() {
   };
 
   const onDelete = async (noteId: string) => {
-    if (!window.confirm("移入回收站？可在回收站「个人特色 IP」Tab 恢复。")) return;
+    if (!window.confirm("移入回收站？可在知识库一级导航的「回收站」中恢复。")) return;
     setBusy(true);
     try {
       await deleteAuthorIpMaterial(ipId, noteId);

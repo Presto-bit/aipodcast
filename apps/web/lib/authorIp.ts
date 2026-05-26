@@ -50,6 +50,30 @@ export async function fetchAuthorIpItem(ipId: string): Promise<AuthorIpItem> {
   return (data as { item: AuthorIpItem }).item;
 }
 
+const BOOTSTRAP_SESSION_KEY = "presto_author_ip_bootstrapped_v2";
+
+/** 首次进入个人特色 IP 时调用一次（灌示例模板素材），后续走 session 跳过。 */
+export async function bootstrapAuthorIpsOnce(): Promise<void> {
+  if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(BOOTSTRAP_SESSION_KEY)) {
+    return;
+  }
+  const res = await fetch("/api/author-ips/bootstrap", {
+    method: "POST",
+    credentials: "include",
+    headers: authHeaders(),
+    body: "{}"
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(String((data as { detail?: string }).detail || "初始化失败"));
+  }
+  try {
+    sessionStorage.setItem(BOOTSTRAP_SESSION_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function fetchAuthorIps(): Promise<AuthorIpItem[]> {
   const res = await fetch("/api/author-ips", { cache: "no-store", credentials: "include", headers: authHeaders() });
   const data = (await res.json().catch(() => ({}))) as AuthorIpListResponse & { detail?: string };

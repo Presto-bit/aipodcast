@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from ..author_ip_billing import can_afford_author_compose, debit_author_compose
 from ..author_ip_store import (
     archive_author_ip,
+    bootstrap_author_ips,
     create_blank_author_ip,
     duplicate_author_ip,
     ensure_default_author_ip,
@@ -196,6 +197,14 @@ def ensure_default_author_ip_api(request: Request):
     if not item:
         raise HTTPException(status_code=400, detail="ensure_default_failed")
     return {"success": True, "item": item}
+
+
+@router.post("/bootstrap")
+def bootstrap_author_ips_api(request: Request):
+    """首次进入：默认 IP + 示例模板（含素材）；列表页仅需调用一次。"""
+    user_ref = _current_user_ref_or_401(request)
+    out = bootstrap_author_ips(user_ref)
+    return {"success": True, "bootstrapped": True, **out}
 
 
 @router.post("")

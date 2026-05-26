@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import UserErrorBanner from "../../../../../components/ui/UserErrorBanner";
 import {
   type AuthorIpItem,
+  bootstrapAuthorIpsOnce,
   fetchAuthorIpItem,
   learnAuthorIp,
   trialComposeAuthorIp
@@ -24,6 +25,7 @@ export default function AuthorIpDetailPage() {
     if (!ipId) return;
     setError(null);
     try {
+      await bootstrapAuthorIpsOnce();
       const found = await fetchAuthorIpItem(ipId);
       setItem(found);
     } catch (e) {

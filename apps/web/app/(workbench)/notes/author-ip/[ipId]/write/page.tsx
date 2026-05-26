@@ -64,10 +64,11 @@ export default function AuthorIpWritePage() {
   const load = useCallback(async () => {
     if (!ipId) return;
     try {
-      const list = await fetchAuthorIps();
-      setAllIps(list);
-      const found = list.find((x) => x.id === ipId) ?? null;
+      const found = await fetchAuthorIpItem(ipId);
       setItem(found);
+      void fetchAuthorIps()
+        .then(setAllIps)
+        .catch(() => setAllIps([]));
       setColdStartOpen(needsAuthorIpColdStart(found));
       if (found?.oneLiner) setOneLiner((prev) => prev || found.oneLiner);
       if (found?.isTemplate) {

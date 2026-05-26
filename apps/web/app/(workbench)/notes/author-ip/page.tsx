@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { IconSparkle } from "../../../../components/icons";
 import AuthorIpEducationBanner from "../../../../components/notes/AuthorIpEducationBanner";
+import SmallPromptModal from "../../../../components/ui/SmallPromptModal";
 import UserErrorBanner from "../../../../components/ui/UserErrorBanner";
 import {
   AUTHOR_IP_HOVER_HINT,
   type AuthorIpItem,
+  bootstrapAuthorIpsOnce,
   createAuthorIp,
   deleteAuthorIp,
   duplicateAuthorIp,
@@ -43,11 +45,14 @@ export default function AuthorIpListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState("我的职场号");
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
+      await bootstrapAuthorIpsOnce();
       const list = await fetchAuthorIps();
       setItems(list);
     } catch (e) {
@@ -61,24 +66,28 @@ export default function AuthorIpListPage() {
     void load();
   }, [load]);
 
-  const onCreate = async () => {
-    const name = window.prompt("新 IP 名称", "我的职场号");
-    if (!name?.trim()) return;
+  const submitCreate = async () => {
+    const name = createName.trim();
+    if (!name) {
+      setCreateError("请填写名称");
+      return;
+    }
     setBusy(true);
+    setCreateError(null);
     try {
-      const item = await createAuthorIp(name.trim());
+      const item = await createAuthorIp(name);
+      setCreateOpen(false);
       router.push(`/notes/author-ip/${item.id}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "创建失败");
+      setCreateError(e instanceof Error ? e.message : "创建失败");
     } finally {
       setBusy(false);
     }
   };
 
   const onDelete = async (item: AuthorIpItem) => {
-    if (item.isSystemSeed) return;
-    if (item.isTemplate) return;
-    if (!window.confirm(`删除「${item.displayName}」？素材将进入回收站「个人特色 IP」Tab，可恢复。`)) {
+    if (item.isSystemSeed || item.isTemplate) return;
+    if (!window.confirm(`删除「${item.displayName}」？可在知识库一级导航的「回收站」中恢复。`)) {
       return;
     }
     setBusy(true);
@@ -121,21 +130,19 @@ export default function AuthorIpListPage() {
         <p className="mt-2 max-w-2xl text-sm text-muted" title={AUTHOR_IP_HOVER_HINT}>
           {AUTHOR_IP_HOVER_HINT}
         </p>
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-4">
           <button
             type="button"
             className="rounded-dawn-md bg-brand px-4 py-2 text-sm font-medium text-brand-foreground hover:opacity-90 disabled:opacity-50"
-            disabled={busy}
-            onClick={() => void onCreate()}
+            disabled={busy || loading}
+            onClick={() => {
+              setCreateName("我的职场号");
+              setCreateError(null);
+              setCreateOpen(true);
+            }}
           >
             空白新建
           </button>
-          <Link
-            href="/notes/trash"
-            className="rounded-dawn-md border border-line px-4 py-2 text-sm text-ink hover:bg-fill"
-          >
-            回收站
-          </Link>
         </div>
       </header>
 
@@ -144,7 +151,13 @@ export default function AuthorIpListPage() {
       {error ? <UserErrorBanner className="mb-4" message={error} /> : null}
 
       {loading ? (
-        <p className="text-sm text-muted">加载中…</p>
+        <ul className="grid gap-4 sm:grid-cols-2" aria-busy="true" aria-label="加载中">
+          {[0, 1].map((i) => (
+            <li key={i} className="h-48 animate-pulse rounded-2xl border border-line bg-fill/60" />
+          ))}
+        </ul>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-muted">暂无 IP，可空白新建或使用系统示例。</p>
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2">
           {items.map((item) => (
@@ -156,7 +169,12 @@ export default function AuthorIpListPage() {
               )}
             >
               {item.isTemplate ? (
-                <span className="absolute right-3 top-3 rounded-full bg-cta/15 px-2 py-0.5 text-xs font-medium text-cta">
+                <span
+                  className={cn(
+                    "absolute right-3 top-3 rounded-full bg-cta/15 px-2 py-0.5 text-xs font-medium text-cta",
+                    item.isDefault ? "right-16" : ""
+                  )}
+                >
                   示例
                 </span>
               ) : null}
@@ -222,12 +240,27 @@ export default function AuthorIpListPage() {
                 ) : null}
               </div>
               {item.isTemplate ? (
-                <p className="mt-3 text-xs text-muted">虚构示范数据，不会用于你的真实写作，除非复制后自行修改。</p>
+                <p className="mt-3 text-xs text-muted">系统预设示例，可复制后改成你的真实情况。</p>
               ) : null}
             </li>
           ))}
         </ul>
       )}
+
+      <SmallPromptModal
+        open={createOpen}
+        title="空白新建 IP"
+        value={createName}
+        onChange={setCreateName}
+        placeholder="例如：我的职场号"
+        submitLabel="创建"
+        busy={busy}
+        error={createError}
+        onCancel={() => {
+          if (!busy) setCreateOpen(false);
+        }}
+        onSubmit={() => void submitCreate()}
+      />
     </div>
   );
 }

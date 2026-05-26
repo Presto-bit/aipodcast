@@ -3,7 +3,7 @@
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import AuthorIpSubNav from "../../../../../components/notes/AuthorIpSubNav";
-import { type AuthorIpItem, fetchAuthorIps } from "../../../../../lib/authorIp";
+import { type AuthorIpItem, fetchAuthorIpItem } from "../../../../../lib/authorIp";
 
 export default function AuthorIpLayout({ children }: { children: React.ReactNode }) {
   const params = useParams();
@@ -13,8 +13,7 @@ export default function AuthorIpLayout({ children }: { children: React.ReactNode
   const load = useCallback(async () => {
     if (!ipId) return;
     try {
-      const list = await fetchAuthorIps();
-      setItem(list.find((x) => x.id === ipId) ?? null);
+      setItem(await fetchAuthorIpItem(ipId));
     } catch {
       setItem(null);
     }
