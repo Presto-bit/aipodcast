@@ -44,7 +44,7 @@ export default function MaterialStackBar({ experience, article, draft, active, o
       <div className="flex gap-3 text-[10px] text-muted">
         <span className="inline-flex items-center gap-1">
           <span className="h-1.5 w-1.5 rounded-sm bg-teal-600" aria-hidden />
-          经历
+          简历
         </span>
         <span className="inline-flex items-center gap-1">
           <span className="h-1.5 w-1.5 rounded-sm bg-amber-600" aria-hidden />

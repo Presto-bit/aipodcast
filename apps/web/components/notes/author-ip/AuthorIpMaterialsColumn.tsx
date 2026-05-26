@@ -9,7 +9,7 @@ import type { MaterialSegment } from "./utils";
 
 const SEGMENTS: { id: MaterialSegment; label: string }[] = [
   { id: "all", label: "全部" },
-  { id: "experience", label: "经历" },
+  { id: "experience", label: "简历" },
   { id: "article", label: "成稿" }
 ];
 
@@ -20,8 +20,8 @@ type Props = {
   counts: { experience: number; article: number; draft: number };
   readOnly: boolean;
   busy: boolean;
-  onAddExperience: () => void;
-  onAddArticle: () => void;
+  onAdd: () => void;
+  onPreview: (material: AuthorIpMaterial) => void;
   onDelete: (noteId: string) => void;
 };
 
@@ -32,8 +32,8 @@ export default function AuthorIpMaterialsColumn({
   counts,
   readOnly,
   busy,
-  onAddExperience,
-  onAddArticle,
+  onAdd,
+  onPreview,
   onDelete
 }: Props) {
   const activeBar = segment === "experience" ? "experience" : segment === "article" ? "article" : undefined;
@@ -50,28 +50,16 @@ export default function AuthorIpMaterialsColumn({
           onSegmentClick={(s) => onSegment(s)}
         />
         {!readOnly ? (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              title="添加经历"
-              aria-label="添加经历"
-              disabled={busy}
-              className="flex flex-1 items-center justify-center gap-1 rounded-dawn-md border border-line bg-surface py-2 text-brand hover:bg-fill disabled:opacity-50"
-              onClick={onAddExperience}
-            >
-              <Plus className="h-4 w-4" aria-hidden />
-            </button>
-            <button
-              type="button"
-              title="添加成稿"
-              aria-label="添加成稿"
-              disabled={busy}
-              className="flex flex-1 items-center justify-center gap-1 rounded-dawn-md border border-line bg-surface py-2 text-brand hover:bg-fill disabled:opacity-50"
-              onClick={onAddArticle}
-            >
-              <Plus className="h-4 w-4" aria-hidden />
-            </button>
-          </div>
+          <button
+            type="button"
+            title="添加素材"
+            aria-label="添加素材"
+            disabled={busy}
+            className="flex w-full items-center justify-center rounded-dawn-md border border-line bg-surface py-2.5 text-brand hover:bg-fill disabled:opacity-50"
+            onClick={onAdd}
+          >
+            <Plus className="h-5 w-5" strokeWidth={2.25} aria-hidden />
+          </button>
         ) : null}
         <div className="flex rounded-lg bg-fill p-0.5" role="tablist" aria-label="素材筛选">
           {SEGMENTS.map((s) => (
@@ -94,11 +82,11 @@ export default function AuthorIpMaterialsColumn({
       <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3 pt-2">
         {materials.length === 0 ? (
           <li className="py-8 text-center text-xs text-muted">
-            {segment === "experience" ? "暂无经历" : segment === "article" ? "暂无成稿" : "暂无素材"}
+            {segment === "experience" ? "暂无简历经历" : segment === "article" ? "暂无成稿" : "暂无素材"}
             {!readOnly ? (
               <p className="mt-2">
-                <button type="button" className="text-brand hover:underline" onClick={onAddExperience}>
-                  添加经历
+                <button type="button" className="text-brand hover:underline" onClick={onAdd}>
+                  添加素材
                 </button>
               </p>
             ) : null}
@@ -110,6 +98,7 @@ export default function AuthorIpMaterialsColumn({
               material={m}
               readOnly={readOnly}
               busy={busy}
+              onPreview={onPreview}
               onDelete={onDelete}
             />
           ))

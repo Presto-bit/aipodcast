@@ -4,13 +4,14 @@ import { useState } from "react";
 import { IconRotateCw } from "../../icons";
 import type { AuthorIpItem } from "../../../lib/authorIp";
 import MaturityTriangleChart from "./MaturityTriangleChart";
-import { maturityLabel, tagCloudFromItem, traitsFromItem, triangleState, type TraitRow } from "./utils";
+import { tagCloudFromItem, traitsFromItem, triangleState, type TraitRow } from "./utils";
 
 type Props = {
   item: AuthorIpItem;
   counts: { experience: number; article: number };
   readOnly: boolean;
   busy: boolean;
+  highlightTags: Set<string>;
   onLearn: () => void;
 };
 
@@ -28,7 +29,14 @@ function TraitBar({ trait }: { trait: TraitRow }) {
   );
 }
 
-export default function AuthorIpDistillPanel({ item, counts, readOnly, busy, onLearn }: Props) {
+export default function AuthorIpDistillPanel({
+  item,
+  counts,
+  readOnly,
+  busy,
+  highlightTags,
+  onLearn
+}: Props) {
   const [hintOpen, setHintOpen] = useState(false);
   const tri = triangleState(item, counts);
   const traits = traitsFromItem(item).slice(0, 6);
@@ -62,36 +70,28 @@ export default function AuthorIpDistillPanel({ item, counts, readOnly, busy, onL
         ) : null}
       </div>
       {hintOpen ? (
-        <p className="mx-3 mb-1 text-[10px] text-muted">事实与引用请用「知识库」；本页只学经历与写法。</p>
+        <p className="mx-3 mb-1 text-[10px] text-muted">事实与引用请用「知识库」；本页只学经历与写法。词云环绕三角，新词高亮。</p>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-4">
         <MaturityTriangleChart
           positioning={tri.positioning}
           experience={tri.experience}
           article={tri.article}
           traitsReady={tri.traitsReady}
           maturity={String(item.maturity)}
+          tags={tags}
+          highlightTags={highlightTags}
         />
         {traits.length > 0 ? (
-          <div className="mt-4 space-y-2">
+          <div className="mt-2 space-y-2 px-2">
             <p className="text-xs font-medium text-muted">口吻</p>
             {traits.map((t, i) => (
               <TraitBar key={`${t.label}-${i}`} trait={t} />
             ))}
           </div>
         ) : (
-          <p className="mt-4 text-xs text-muted">添加素材并学习后，将显示提炼出的特色。</p>
+          <p className="mt-2 px-2 text-center text-xs text-muted">添加素材并学习后，将显示提炼出的特色。</p>
         )}
-        {tags.length > 0 ? (
-          <div className="mt-4 flex flex-wrap gap-1.5">
-            {tags.map((t) => (
-              <span key={t} className="rounded-full bg-fill px-2 py-0.5 text-[11px] text-ink">
-                {t}
-              </span>
-            ))}
-          </div>
-        ) : null}
-        <p className="mt-3 text-center text-[10px] text-muted">{maturityLabel(String(item.maturity))}</p>
       </div>
     </section>
   );

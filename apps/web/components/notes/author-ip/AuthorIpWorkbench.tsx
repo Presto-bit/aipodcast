@@ -19,15 +19,19 @@ import {
   patchAuthorIp,
   submitAuthorIpColdStart
 } from "../../../lib/authorIp";
+import AuthorIpAddMaterialChooserModal from "./AuthorIpAddMaterialChooserModal";
+import AuthorIpArticleUploadModal from "./AuthorIpArticleUploadModal";
 import AuthorIpColdStartModal from "./AuthorIpColdStartModal";
 import AuthorIpDistillPanel from "./AuthorIpDistillPanel";
 import AuthorIpIdentityPanel from "./AuthorIpIdentityPanel";
-import AuthorIpMaterialFormModal from "./AuthorIpMaterialFormModal";
+import AuthorIpMaterialPreviewModal from "./AuthorIpMaterialPreviewModal";
 import AuthorIpMaterialsColumn from "./AuthorIpMaterialsColumn";
+import AuthorIpResumeModal from "./AuthorIpResumeModal";
 import AuthorIpWorkbenchHeader from "./AuthorIpWorkbenchHeader";
 import {
   countMaterialsByType,
   filterMaterials,
+  tagCloudFromItem,
   type MaterialSegment
 } from "./utils";
 
@@ -51,11 +55,13 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
   const [oneLiner, setOneLiner] = useState("");
   const [coldError, setColdError] = useState<string | null>(null);
 
-  const [materialModal, setMaterialModal] = useState<"experience" | "article" | null>(null);
-  const [matTitle, setMatTitle] = useState("");
-  const [matBody, setMatBody] = useState("");
-  const [matTemplateId, setMatTemplateId] = useState("");
-  const [matError, setMatError] = useState<string | null>(null);
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [resumeOpen, setResumeOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const [editingMaterial, setEditingMaterial] = useState<AuthorIpMaterial | null>(null);
+  const [previewMaterial, setPreviewMaterial] = useState<AuthorIpMaterial | null>(null);
+  const [highlightTags, setHighlightTags] = useState<Set<string>>(new Set());
 
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameName, setRenameName] = useState("");
@@ -127,35 +133,35 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
     }
   };
 
-  const openMaterialModal = (mode: "experience" | "article") => {
-    setMaterialModal(mode);
-    setMatTitle("");
-    setMatBody("");
-    setMatTemplateId("");
-    setMatError(null);
-  };
-
-  const submitMaterial = async () => {
-    if (!matTitle.trim() || !matBody.trim()) {
-      setMatError("请填写标题与正文");
-      return;
-    }
+  const submitResume = async (payload: { title: string; body: string; experienceTemplateId: string }) => {
     setBusy(true);
-    setMatError(null);
+    setResumeError(null);
     try {
+      if (editingMaterial) {
+        await deleteAuthorIpMaterial(ipId, editingMaterial.noteId);
+      }
       await addAuthorIpMaterial(ipId, {
-        title: matTitle.trim(),
-        body: matBody.trim(),
-        materialType: materialModal === "article" ? "published" : "experience_card",
-        experienceTemplateId: materialModal === "experience" ? matTemplateId : undefined
+        title: payload.title,
+        body: payload.body,
+        materialType: "experience_card",
+        experienceTemplateId: payload.experienceTemplateId
       });
-      setMaterialModal(null);
+      setResumeOpen(false);
+      setEditingMaterial(null);
+      setPreviewMaterial(null);
       await load();
     } catch (e) {
-      setMatError(e instanceof Error ? e.message : "添加失败");
+      setResumeError(e instanceof Error ? e.message : "保存失败");
     } finally {
       setBusy(false);
     }
+  };
+
+  const openResumeEdit = (material: AuthorIpMaterial) => {
+    setEditingMaterial(material);
+    setResumeError(null);
+    setPreviewMaterial(null);
+    setResumeOpen(true);
   };
 
   const onDeleteMaterial = async (noteId: string) => {
@@ -172,9 +178,18 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
   };
 
   const onLearn = async () => {
+    if (!item) return;
+    const before = new Set(tagCloudFromItem(item));
     setBusy(true);
     try {
-      await learnAuthorIp(ipId);
+      const updated = await learnAuthorIp(ipId);
+      setItem(updated);
+      const after = tagCloudFromItem(updated);
+      const fresh = new Set<string>();
+      for (const t of after) {
+        if (!before.has(t)) fresh.add(t);
+      }
+      setHighlightTags(fresh);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "学习失败");
@@ -271,8 +286,8 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
             counts={counts}
             readOnly={readOnly}
             busy={busy}
-            onAddExperience={() => openMaterialModal("experience")}
-            onAddArticle={() => openMaterialModal("article")}
+            onAdd={() => setChooserOpen(true)}
+            onPreview={(m) => setPreviewMaterial(m)}
             onDelete={(id) => void onDeleteMaterial(id)}
           />
         </div>
@@ -287,6 +302,7 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
               counts={{ experience: counts.experience, article: counts.article + counts.draft }}
               readOnly={readOnly}
               busy={busy}
+              highlightTags={highlightTags}
               onLearn={() => void onLearn()}
             />
           </div>
@@ -311,19 +327,58 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
         onCancel={() => setColdOpen(false)}
       />
 
-      <AuthorIpMaterialFormModal
-        open={materialModal !== null}
-        mode={materialModal === "article" ? "article" : "experience"}
-        title={matTitle}
-        body={matBody}
-        templateId={matTemplateId}
-        onTitle={setMatTitle}
-        onBody={setMatBody}
-        onTemplateId={setMatTemplateId}
+      <AuthorIpAddMaterialChooserModal
+        open={chooserOpen}
+        onPickResume={() => {
+          setChooserOpen(false);
+          setEditingMaterial(null);
+          setResumeError(null);
+          setResumeOpen(true);
+        }}
+        onPickUpload={() => {
+          setChooserOpen(false);
+          setUploadOpen(true);
+        }}
+        onCancel={() => setChooserOpen(false)}
+      />
+
+      <AuthorIpResumeModal
+        open={resumeOpen}
+        initialBody={editingMaterial?.body}
+        initialTitle={editingMaterial?.title}
         busy={busy}
-        error={matError}
-        onSubmit={() => void submitMaterial()}
-        onCancel={() => setMaterialModal(null)}
+        error={resumeError}
+        onSubmit={(p) => void submitResume(p)}
+        onCancel={() => {
+          if (!busy) {
+            setResumeOpen(false);
+            setEditingMaterial(null);
+          }
+        }}
+      />
+
+      <AuthorIpArticleUploadModal
+        open={uploadOpen}
+        notebookName={item.notebookName}
+        busy={busy}
+        onSuccess={() => {
+          setUploadOpen(false);
+          void load();
+        }}
+        onCancel={() => {
+          if (!busy) setUploadOpen(false);
+        }}
+      />
+
+      <AuthorIpMaterialPreviewModal
+        open={Boolean(previewMaterial)}
+        material={previewMaterial}
+        onClose={() => setPreviewMaterial(null)}
+        onEditResume={
+          previewMaterial?.materialType === "experience_card" && !readOnly
+            ? () => openResumeEdit(previewMaterial)
+            : undefined
+        }
       />
 
       <SmallPromptModal
