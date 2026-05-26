@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { IconSparkle, Plus } from "../../../../components/icons";
+import { IconSparkle, MoreHorizontal, Plus } from "../../../../components/icons";
 import AuthorIpEducationBanner from "../../../../components/notes/AuthorIpEducationBanner";
 import SmallPromptModal from "../../../../components/ui/SmallPromptModal";
 import UserErrorBanner from "../../../../components/ui/UserErrorBanner";
@@ -14,11 +14,14 @@ import {
   createAuthorIp,
   deleteAuthorIp,
   duplicateAuthorIp,
-  fetchAuthorIps
+  fetchAuthorIps,
+  patchAuthorIp
 } from "../../../../lib/authorIp";
 import { cn } from "../../../../lib/cn";
 
 const GRID_CLASS = "grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4";
+const USER_CARD_SURFACE =
+  "border-brand/30 bg-gradient-to-br from-brand/[0.06] via-surface to-brand/[0.1] hover:border-brand/40";
 
 function maturityLabel(m: string): string {
   const map: Record<string, string> = {
@@ -31,22 +34,8 @@ function maturityLabel(m: string): string {
   return map[m] || m;
 }
 
-function cardSurface(item: AuthorIpItem): string {
-  if (item.isTemplate) {
-    return "border-cta/35 bg-gradient-to-br from-cta/[0.06] via-surface to-cta/[0.12]";
-  }
-  if (item.isSystemSeed) {
-    return "border-brand/30 bg-gradient-to-br from-brand/[0.06] via-surface to-brand/[0.1]";
-  }
-  return "border-line/80 bg-surface hover:border-brand/30";
-}
-
-function sortUserIps(list: AuthorIpItem[]): AuthorIpItem[] {
-  return [...list].sort((a, b) => {
-    if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-    if (a.isSystemSeed !== b.isSystemSeed) return a.isSystemSeed ? -1 : 1;
-    return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
-  });
+function sortExtraUserIps(list: AuthorIpItem[]): AuthorIpItem[] {
+  return [...list].sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
 }
 
 function CreateIpCard({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
@@ -70,31 +59,100 @@ function CreateIpCard({ disabled, onClick }: { disabled: boolean; onClick: () =>
 function AuthorIpGridCard({
   item,
   busy,
-  onDelete,
-  onDuplicate
+  menuOpen,
+  onMenuToggle,
+  onRename,
+  onDuplicate,
+  onDelete
 }: {
   item: AuthorIpItem;
   busy: boolean;
-  onDelete: (item: AuthorIpItem) => void;
+  menuOpen: boolean;
+  onMenuToggle: () => void;
+  onRename: (item: AuthorIpItem) => void;
   onDuplicate: (item: AuthorIpItem) => void;
+  onDelete: (item: AuthorIpItem) => void;
 }) {
   const canDelete = !item.isSystemSeed && !item.isTemplate;
+  const canRename = !item.isTemplate;
 
   return (
     <li
       className={cn(
         "group relative flex min-h-[148px] flex-col rounded-2xl border p-4 shadow-sm transition-shadow hover:shadow-md",
-        cardSurface(item)
+        USER_CARD_SURFACE
       )}
     >
-      {item.isDefault ? (
-        <span className="absolute right-2 top-2 rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-medium text-brand">
+      {item.isDefault && !item.isTemplate ? (
+        <span className="absolute left-2 top-2 rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-medium text-brand">
           默认
         </span>
       ) : null}
+      <div className="absolute right-2 top-2 z-10">
+        <span className="relative flex" data-author-ip-card-menu>
+          <button
+            type="button"
+            disabled={busy}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-fill hover:text-ink disabled:opacity-50"
+            aria-label="更多操作"
+            aria-expanded={menuOpen}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onMenuToggle();
+            }}
+          >
+            <MoreHorizontal className="h-4 w-4" aria-hidden />
+          </button>
+          {menuOpen ? (
+            <div
+              className="absolute right-0 top-full z-20 mt-0.5 min-w-[7rem] rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
+              role="menu"
+            >
+              {canRename ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="block w-full px-2 py-1.5 text-left hover:bg-fill"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRename(item);
+                  }}
+                >
+                  改名
+                </button>
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full px-2 py-1.5 text-left hover:bg-fill"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDuplicate(item);
+                }}
+              >
+                复制
+              </button>
+              {canDelete ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="block w-full px-2 py-1.5 text-left text-danger-ink hover:bg-danger-soft"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(item);
+                  }}
+                >
+                  删除
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </span>
+      </div>
       <Link
         href={`/notes/author-ip/${item.id}`}
-        className="flex flex-1 flex-col items-center justify-center text-center"
+        className="flex flex-1 flex-col items-center justify-center px-6 pt-2 text-center"
       >
         <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
           <IconSparkle width={22} height={22} aria-hidden />
@@ -106,44 +164,17 @@ function AuthorIpGridCard({
           <p className="mt-1 text-xs text-muted">{maturityLabel(String(item.maturity))}</p>
         )}
       </Link>
-      <div className="mt-3 flex flex-wrap justify-center gap-1 border-t border-line/60 pt-2">
-        <Link
-          href={`/notes/author-ip/${item.id}/write`}
-          className="rounded px-2 py-0.5 text-[11px] text-brand hover:bg-brand/10"
-          onClick={(e) => e.stopPropagation()}
-        >
-          写一篇
-        </Link>
-        <button
-          type="button"
-          className="rounded px-2 py-0.5 text-[11px] text-ink hover:bg-fill disabled:opacity-50"
-          disabled={busy}
-          onClick={() => onDuplicate(item)}
-        >
-          复制
-        </button>
-        {canDelete ? (
-          <button
-            type="button"
-            className="rounded px-2 py-0.5 text-[11px] text-danger-ink hover:bg-danger-soft disabled:opacity-50"
-            disabled={busy}
-            onClick={() => onDelete(item)}
-          >
-            删除
-          </button>
-        ) : null}
-      </div>
     </li>
   );
 }
 
-function GridSkeleton() {
+function GridSkeleton({ withCreate }: { withCreate?: boolean }) {
   return (
     <ul className={GRID_CLASS} aria-busy="true" aria-label="加载中">
-      <li className="min-h-[148px] animate-pulse rounded-2xl border-2 border-dashed border-line/60 bg-fill/40" />
-      {[0, 1, 2].map((i) => (
-        <li key={i} className="min-h-[148px] animate-pulse rounded-2xl border border-line bg-fill/60" />
-      ))}
+      {withCreate ? (
+        <li className="min-h-[148px] animate-pulse rounded-2xl border-2 border-dashed border-line/60 bg-fill/40" />
+      ) : null}
+      <li className="min-h-[148px] animate-pulse rounded-2xl border border-line bg-fill/60" />
     </ul>
   );
 }
@@ -157,11 +188,19 @@ export default function AuthorIpListPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("我的职场号");
   const [createError, setCreateError] = useState<string | null>(null);
+  const [menuIpId, setMenuIpId] = useState<string | null>(null);
+  const [renameItem, setRenameItem] = useState<AuthorIpItem | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
 
-  const { userIps, exampleIps } = useMemo(() => {
+  const { myIp, extraUserIps, exampleIps } = useMemo(() => {
     const examples = items.filter((i) => i.isTemplate);
-    const users = sortUserIps(items.filter((i) => !i.isTemplate));
-    return { userIps: users, exampleIps: examples };
+    const system =
+      items.find((i) => i.isSystemSeed && !i.isTemplate) ??
+      items.find((i) => i.isDefault && !i.isTemplate) ??
+      null;
+    const extra = sortExtraUserIps(items.filter((i) => !i.isTemplate && !i.isSystemSeed));
+    return { myIp: system, extraUserIps: extra, exampleIps: examples };
   }, [items]);
 
   const load = useCallback(async () => {
@@ -180,6 +219,17 @@ export default function AuthorIpListPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!menuIpId) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("[data-author-ip-card-menu]")) return;
+      setMenuIpId(null);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuIpId]);
 
   const openCreate = () => {
     setCreateName("我的职场号");
@@ -206,7 +256,35 @@ export default function AuthorIpListPage() {
     }
   };
 
+  const openRename = (item: AuthorIpItem) => {
+    setMenuIpId(null);
+    setRenameItem(item);
+    setRenameName(item.displayName);
+    setRenameError(null);
+  };
+
+  const submitRename = async () => {
+    if (!renameItem) return;
+    const name = renameName.trim();
+    if (!name) {
+      setRenameError("请填写名称");
+      return;
+    }
+    setBusy(true);
+    setRenameError(null);
+    try {
+      await patchAuthorIp(renameItem.id, { displayName: name });
+      setRenameItem(null);
+      await load();
+    } catch (e) {
+      setRenameError(e instanceof Error ? e.message : "改名失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onDelete = async (item: AuthorIpItem) => {
+    setMenuIpId(null);
     if (item.isSystemSeed || item.isTemplate) return;
     if (!window.confirm(`删除「${item.displayName}」？可在知识库一级导航的「回收站」中恢复。`)) {
       return;
@@ -223,6 +301,7 @@ export default function AuthorIpListPage() {
   };
 
   const onDuplicate = async (item: AuthorIpItem) => {
+    setMenuIpId(null);
     if (
       !window.confirm(
         item.isTemplate
@@ -242,6 +321,19 @@ export default function AuthorIpListPage() {
       setBusy(false);
     }
   };
+
+  const renderCard = (item: AuthorIpItem) => (
+    <AuthorIpGridCard
+      key={item.id}
+      item={item}
+      busy={busy}
+      menuOpen={menuIpId === item.id}
+      onMenuToggle={() => setMenuIpId((id) => (id === item.id ? null : item.id))}
+      onRename={openRename}
+      onDuplicate={(i) => void onDuplicate(i)}
+      onDelete={(i) => void onDelete(i)}
+    />
+  );
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
@@ -264,52 +356,31 @@ export default function AuthorIpListPage() {
 
       <section aria-label="我的 IP">
         {loading ? (
-          <GridSkeleton />
+          <GridSkeleton withCreate />
         ) : (
           <ul className={GRID_CLASS}>
             <CreateIpCard disabled={busy} onClick={openCreate} />
-            {userIps.map((item) => (
-              <AuthorIpGridCard
-                key={item.id}
-                item={item}
-                busy={busy}
-                onDelete={(i) => void onDelete(i)}
-                onDuplicate={(i) => void onDuplicate(i)}
-              />
-            ))}
+            {myIp ? renderCard(myIp) : null}
+            {extraUserIps.map((item) => renderCard(item))}
           </ul>
         )}
-        {!loading && userIps.length === 0 ? (
-          <p className="mt-3 text-sm text-muted">暂无个人 IP，点击「新建 IP」开始创建。</p>
+        {!loading && !myIp ? (
+          <p className="mt-3 text-sm text-muted">正在初始化「我的 IP」…</p>
         ) : null}
       </section>
 
       <div className="my-8 border-t border-line" role="separator" />
 
-      <section aria-label="示例 IP" className="flex flex-col gap-4 sm:flex-row sm:gap-6">
-        <h2 className="shrink-0 text-sm font-semibold text-ink sm:w-16 sm:pt-2">示例 IP</h2>
-        <div className="min-w-0 flex-1">
+      <section aria-label="示例 IP">
+        <h2 className="text-sm font-semibold text-ink">示例 IP</h2>
+        <p className="mt-1 text-xs text-muted">系统预设示例，可复制后改成你的真实情况。</p>
+        <div className="mt-4">
           {loading ? (
-            <ul className={GRID_CLASS} aria-busy="true">
-              <li className="min-h-[148px] animate-pulse rounded-2xl border border-cta/20 bg-fill/60" />
-            </ul>
+            <GridSkeleton />
           ) : exampleIps.length === 0 ? (
             <p className="text-sm text-muted">系统示例加载中或暂不可用，请刷新后重试。</p>
           ) : (
-            <>
-              <ul className={GRID_CLASS}>
-                {exampleIps.map((item) => (
-                  <AuthorIpGridCard
-                    key={item.id}
-                    item={item}
-                    busy={busy}
-                    onDelete={(i) => void onDelete(i)}
-                    onDuplicate={(i) => void onDuplicate(i)}
-                  />
-                ))}
-              </ul>
-              <p className="mt-3 text-xs text-muted">系统预设示例，可复制后改成你的真实情况。</p>
-            </>
+            <ul className={GRID_CLASS}>{exampleIps.map((item) => renderCard(item))}</ul>
           )}
         </div>
       </section>
@@ -327,6 +398,21 @@ export default function AuthorIpListPage() {
           if (!busy) setCreateOpen(false);
         }}
         onSubmit={() => void submitCreate()}
+      />
+
+      <SmallPromptModal
+        open={Boolean(renameItem)}
+        title="改名"
+        value={renameName}
+        onChange={setRenameName}
+        placeholder="IP 名称"
+        submitLabel="保存"
+        busy={busy}
+        error={renameError}
+        onCancel={() => {
+          if (!busy) setRenameItem(null);
+        }}
+        onSubmit={() => void submitRename()}
       />
     </div>
   );
