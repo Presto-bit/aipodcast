@@ -201,7 +201,7 @@ export default function NotebookStyleButton({
         className="inline-flex shrink-0 items-center justify-center gap-1 rounded-xl border border-brand/35 bg-brand/8 px-3 py-2.5 text-sm font-medium text-brand transition-colors hover:bg-brand/12 disabled:cursor-not-allowed disabled:opacity-45"
         onClick={() => void runLearn()}
       >
-        {busy ? "提炼中…" : "提炼我的写作风格"}
+        {busy ? "提炼中…" : "提炼写作风格"}
       </button>
       <NotebookStyleModal
         open={modalOpen}

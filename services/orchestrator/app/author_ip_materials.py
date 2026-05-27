@@ -8,7 +8,7 @@ from typing import Any
 from psycopg2.extras import Json
 
 from .author_ip_distill import material_in_style_learning, run_author_ip_distill
-from .author_ip_store import get_author_ip
+from .author_ip_store import get_author_ip, is_author_ip_notebook_name
 from .author_ip_style import list_ip_materials
 from .db import get_conn, get_cursor
 from .models import NOTES_PODCAST_STUDIO_PROJECT, create_text_note, delete_note, ensure_default_project
@@ -203,7 +203,9 @@ def submit_author_ip_cold_start(
                 (liner, Json(prof), ip_id, user_uuid),
             )
             conn.commit()
-    if not already_done:
+    # v6：用户真实笔记本只写 profile.coldStart，不自动生成「我是谁/写给谁」经历卡 note；
+    # 经历卡 note 仅保留在系统隐藏本 __author_ip:*（旧 IP 工作台兼容）。
+    if not already_done and is_author_ip_notebook_name(nb):
         if who:
             nid = create_text_note(
                 project_id,

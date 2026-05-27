@@ -1052,6 +1052,14 @@ def list_notes_api(
     notes: list[dict[str, object]] = []
     for r in rows:
         md = _normalize_metadata_dict(r)
+        notebook_name = str(md.get("notebook") or "").strip()
+        try:
+            from ..author_ip_store import is_author_ip_notebook_name
+
+            if is_author_ip_notebook_name(notebook_name):
+                continue
+        except Exception:
+            pass
         it = str(r.get("input_type") or "")
         src_url = str(r.get("source_url") or md.get("sourceUrl") or "")
         ext = _display_ext_for_note(input_type=it, metadata=md, source_url=src_url)

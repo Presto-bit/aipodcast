@@ -1601,7 +1601,9 @@ export default function NotesPage() {
       if (res.ok && data.success && Array.isArray(data.notebooks)) {
         const currentNb = selectedNotebook.trim();
         const merged =
-          currentNb && !data.notebooks.includes(currentNb)
+          currentNb &&
+          !currentNb.startsWith("__author_ip:") &&
+          !data.notebooks.includes(currentNb)
             ? mergeNotebookName(data.notebooks, currentNb)
             : data.notebooks;
         setNotebooks(merged);
