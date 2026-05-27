@@ -7,7 +7,7 @@ from typing import Any
 
 from .social_compliance import apply_compliance_to_mp_fields
 from .social_llm_utils import invoke_and_parse_social_json, normalize_tags
-from .social_xhs import build_persona_prompt_block, finalize_xhs_pack, normalize_xhs_llm_data
+from .social_xhs import build_persona_prompt_block, finalize_xhs_pack
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +199,15 @@ def _fallback_from_material(raw: str, platform: str) -> dict[str, Any]:
     }
 
 
+def _trim_material_for_llm(raw: str) -> str:
+    text = (raw or "").strip()
+    cap = _LLM_MATERIAL_MAX_CHARS
+    if len(text) <= cap:
+        return text
+    half = cap // 2
+    return f"{text[:half]}\n\n…（中间省略，完整资料已用于摘录回退）…\n\n{text[-half:]}"
+
+
 def _finalize_draft_pack(
     data: dict[str, Any],
     *,
@@ -207,29 +216,21 @@ def _finalize_draft_pack(
     material_text: str,
     trace_id: Any = None,
 ) -> dict[str, Any]:
-    try:
-        return finalize_xhs_pack(
-            data,
-            options=options,
-            trace_id=trace_id,
-        )
-    except RuntimeError as exc:
-        if str(exc) != "compliance_failed":
-            raise
-        logger.warning(
-            "social_publish compliance_failed platform=%s, material-aware fallback",
-            platform,
-        )
-        fallback_data = _fallback_from_material(material_text, platform)
-        norm = normalize_xhs_llm_data(fallback_data)
-        if len(str(norm.get("body_main") or "").strip()) >= 80:
+    static = _fallback_xhs() if platform == "xiaohongshu" else _fallback_mp()
+    for cand in (data, _fallback_from_material(material_text, platform), static):
+        try:
             return finalize_xhs_pack(
-                fallback_data,
+                cand,
                 options=options,
                 trace_id=trace_id,
             )
-        static = _fallback_xhs() if platform == "xiaohongshu" else _fallback_mp()
-        return finalize_xhs_pack(static, options=options, trace_id=trace_id)
+        except Exception as exc:
+            logger.warning(
+                "social_publish finalize attempt failed platform=%s: %s",
+                platform,
+                exc,
+            )
+    raise RuntimeError("social_publish_pack_failed")
 
 
 def _mp_system_prompt(opt_block: str) -> str:
@@ -272,6 +273,8 @@ cover_hook, titles, opening_30, body（或 sections 数组）, interaction, tags
 
 
 _MERGE_PLACEHOLDER = "请介绍 AI Native 应用架构"
+# 送入 LLM 的素材上限（字符）；合并参考可达 48k，过长易触发上游 context/超时错误
+_LLM_MATERIAL_MAX_CHARS = 18_000
 
 
 def _merge_reference_for_social(
@@ -385,24 +388,18 @@ def generate_social_publish_draft(
         "硬性要求：正文必须引用素材中的具体事实、数据、步骤或观点，禁止输出与素材无关的通用模板"
         "（如「要点一/要点二」「先把最重要的信息说清楚」等空泛占位）。"
     )
+    llm_material = _trim_material_for_llm(raw)
 
     if platform == "xiaohongshu":
         system = _xhs_system_prompt(opt_block)
-        user = f"{material_rule}\n\n请根据下列素材重写为上述 JSON。\n\n【素材】\n{raw}"
+        user = f"{material_rule}\n\n请根据下列素材重写为上述 JSON。\n\n【素材】\n{llm_material}"
     else:
         system = _mp_system_prompt(opt_block)
-        user = f"{material_rule}\n\n请根据下列素材改写为上述 JSON。\n\n【素材】\n{raw}"
+        user = f"{material_rule}\n\n请根据下列素材改写为上述 JSON。\n\n【素材】\n{llm_material}"
 
-    try:
-        data, trace_id = invoke_and_parse_social_json(system, user, max_tokens=max_tokens)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("social_publish json parse failed platform=%s: %s", platform, exc)
-        data = _fallback_from_material(raw, platform)
-        trace_id = None
-    except RuntimeError as exc:
-        if str(exc) == "openai_compatible_empty_content":
-            raise
-        logger.warning("social_publish llm failed platform=%s: %s", platform, exc)
+    data, trace_id = invoke_and_parse_social_json(system, user, max_tokens=max_tokens)
+    if not data:
+        logger.warning("social_publish llm unavailable or invalid json platform=%s", platform)
         data = _fallback_from_material(raw, platform)
         trace_id = None
 

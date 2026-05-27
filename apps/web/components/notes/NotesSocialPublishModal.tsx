@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { IconChevronLeft, IconClipboard, IconX } from "../icons";
+import { apiErrorMessage, softenBareErrorLineForUi } from "../../lib/apiError";
 import { fetchSocialPublishDraft } from "../../lib/socialPublishApi";
 import {
   buildOptionsPayload,
@@ -190,7 +191,8 @@ export default function NotesSocialPublishModal({
       setStep("result");
       setShowStudio(true);
     } catch (err) {
-      setError(String(err instanceof Error ? err.message : err));
+      const raw = err instanceof Error ? err.message : String(err);
+      setError(softenBareErrorLineForUi(raw) || apiErrorMessage({}, "生成发布稿失败"));
       setStep("options");
     } finally {
       setBusy(false);

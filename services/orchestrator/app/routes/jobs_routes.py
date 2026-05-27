@@ -1629,6 +1629,10 @@ def _social_publish_error_detail(exc: Exception) -> tuple[int, str]:
         "notes_material_empty": "勾选资料暂无可用正文，请确认资料已解析完成后再发布",
         "material_too_short_or_no_notes": "请先勾选左侧参考资料",
     }
+    known_500 = {
+        "social_publish_pack_failed": "发布稿组装失败，请减少勾选资料或稍后重试",
+        "compliance_failed": "文案合规处理失败，请修改资料或选项后重试",
+    }
     known_503 = {
         "deepseek_api_key_missing": "服务未配置文案模型（DEEPSEEK_API_KEY），请联系管理员",
         "text_provider_deepseek_config_missing": "服务未配置文案模型，请联系管理员",
@@ -1637,8 +1641,12 @@ def _social_publish_error_detail(exc: Exception) -> tuple[int, str]:
         return 400, known_400[code]
     if code in known_503:
         return 503, known_503[code]
+    if code in known_500:
+        return 500, known_500[code]
     if code == "openai_compatible_empty_content":
         return 502, "文案模型未返回有效内容，请稍后重试"
+    if code.startswith("upstream_error"):
+        return 502, "文案模型服务异常，请稍后重试"
     return 500, code[:500] if code else "social_publish_failed"
 
 

@@ -28,7 +28,13 @@ const NOTES_ASK_CODE_MAP: Record<string, string> = {
   material_too_short: "勾选资料过短或尚未解析完成，请换选资料或稍后再试",
   notes_material_empty: "勾选资料暂无可用正文，请确认资料已解析完成后再发布",
   material_too_short_or_no_notes: "请先勾选左侧参考资料",
-  deepseek_api_key_missing: "服务未配置文案模型，请联系管理员"
+  deepseek_api_key_missing: "服务未配置文案模型，请联系管理员",
+  social_publish_failed: "生成发布稿失败，请稍后重试或减少勾选资料",
+  social_publish_pack_failed: "发布稿组装失败，请稍后重试",
+  compliance_failed: "文案合规处理未通过，请调整选项或资料后重试",
+  upstream_error: "文案模型服务异常，请稍后重试",
+  upstream_error_empty_body: "编排服务无响应，请确认服务已启动后重试",
+  platform_must_be_xiaohongshu_or_wechat_mp: "平台参数无效，请刷新页面后重试"
 };
 
 /** BFF + 知识库问答等：凡出现在 `error` 字段的 code 尽量映射为中文（避免裸 snake_case） */

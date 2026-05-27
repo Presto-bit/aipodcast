@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from .provider_router import invoke_llm_chat_messages_deepseek_only
+
+logger = logging.getLogger(__name__)
 
 
 def strip_code_fence(text: str) -> str:
@@ -94,9 +97,13 @@ def invoke_and_parse_social_json(
     user: str,
     *,
     max_tokens: int | None = None,
-) -> tuple[dict[str, Any], None]:
-    """调用模型并解析 JSON；失败时追加约束重试一次。"""
-    raw_out, trace_id = invoke_social_llm(system, user, max_tokens=max_tokens)
+) -> tuple[dict[str, Any] | None, None]:
+    """调用模型并解析 JSON；失败时追加约束重试一次；仍失败则返回 None。"""
+    try:
+        raw_out, trace_id = invoke_social_llm(system, user, max_tokens=max_tokens)
+    except Exception as exc:
+        logger.warning("invoke_social_llm failed: %s", exc)
+        return None, None
     try:
         return parse_json_object(raw_out), trace_id
     except (json.JSONDecodeError, ValueError):
@@ -104,5 +111,13 @@ def invoke_and_parse_social_json(
             f"{user}\n\n"
             "【格式】只输出一个合法 JSON 对象，不要用 markdown 代码块，不要附加解释。"
         )
-        raw2, trace_id2 = invoke_social_llm(system, repair_user, max_tokens=max_tokens)
-        return parse_json_object(raw2), trace_id2
+        try:
+            raw2, trace_id2 = invoke_social_llm(system, repair_user, max_tokens=max_tokens)
+        except Exception as exc:
+            logger.warning("invoke_social_llm repair failed: %s", exc)
+            return None, None
+        try:
+            return parse_json_object(raw2), trace_id2
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.warning("social json parse failed after repair: %s", exc)
+            return None, None

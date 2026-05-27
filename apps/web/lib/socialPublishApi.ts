@@ -74,7 +74,9 @@ export async function fetchSocialPublishDraft(params: {
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok || data.success === false) {
-    throw new Error(apiErrorMessage(data, "生成发布稿失败"));
+    const msg = apiErrorMessage(data, "生成发布稿失败");
+    const statusHint = !res.ok && msg === "生成发布稿失败" ? `（HTTP ${res.status}）` : "";
+    throw new Error(`${msg}${statusHint}`);
   }
   return mapContentDraft(data, params.platform);
 }
