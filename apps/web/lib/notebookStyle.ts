@@ -3,16 +3,59 @@
 import type { AuthorIpItem } from "./authorIp";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
 
-type TraitRow = { label?: string; defaultOn?: boolean };
+/** 与后端 TRAIT_DIMENSIONS 一致 */
+export const STYLE_TRAIT_DIMENSIONS = ["立场", "结构", "语气", "修辞", "禁区", "平台"] as const;
+
+export type StyleTraitRow = {
+  dimension?: string;
+  label?: string;
+  defaultOn?: boolean;
+  evidence?: string;
+};
+
+type TraitRow = StyleTraitRow;
+
+function normalizeTraitDimension(dim: string | undefined): string {
+  const d = (dim || "语气").trim() || "语气";
+  return d === "口吻" ? "语气" : d;
+}
+
+function traitsFromItemFull(item: AuthorIpItem | null): StyleTraitRow[] {
+  const traits = (item?.profile as { traits?: StyleTraitRow[] })?.traits;
+  return Array.isArray(traits) ? traits : [];
+}
 
 function traitsFromItem(item: AuthorIpItem | null): TraitRow[] {
-  const traits = (item?.profile as { traits?: TraitRow[] })?.traits;
-  return Array.isArray(traits) ? traits : [];
+  return traitsFromItemFull(item);
+}
+
+/** 按 dimension 分组，同分类排在一起 */
+export function groupStyleTraitsByDimension(
+  traits: StyleTraitRow[]
+): Array<{ dimension: string; items: StyleTraitRow[] }> {
+  const active = traits.filter((t) => t.defaultOn !== false && String(t.label || "").trim());
+  const buckets = new Map<string, StyleTraitRow[]>();
+  for (const t of active) {
+    const dim = normalizeTraitDimension(t.dimension);
+    const list = buckets.get(dim) || [];
+    list.push(t);
+    buckets.set(dim, list);
+  }
+  const out: Array<{ dimension: string; items: StyleTraitRow[] }> = [];
+  for (const dim of STYLE_TRAIT_DIMENSIONS) {
+    const items = buckets.get(dim);
+    if (items?.length) out.push({ dimension: dim, items });
+    buckets.delete(dim);
+  }
+  for (const [dimension, items] of [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh-CN"))) {
+    if (items.length) out.push({ dimension, items });
+  }
+  return out;
 }
 
 function tagCloudFromItem(item: AuthorIpItem | null): string[] {
   const tags = (item?.profile as { vitality?: { tagCloud?: string[] } })?.vitality?.tagCloud;
-  return Array.isArray(tags) ? tags.slice(0, 10) : [];
+  return Array.isArray(tags) ? tags.slice(0, 12) : [];
 }
 
 function formatLastLearnedAt(raw: string | boolean | undefined): string | null {
@@ -106,14 +149,22 @@ export function buildStyleSummaryText(item: AuthorIpItem | null): string {
   return "勾选资料后提炼你的写作口吻与特色";
 }
 
-export function buildStyleSummaryChips(item: AuthorIpItem | null, max = 5): string[] {
+export function buildStyleSummaryChips(item: AuthorIpItem | null, max = 8): string[] {
   const tags = tagCloudFromItem(item);
-  const traits = traitsFromItem(item)
-    .filter((t) => t.defaultOn !== false && t.label)
-    .map((t) => String(t.label));
+  const grouped = groupStyleTraitsByDimension(traitsFromItemFull(item));
+  const traitLabels: string[] = [];
+  let gi = 0;
+  while (traitLabels.length < max && grouped.some((g) => gi < g.items.length)) {
+    for (const g of grouped) {
+      const label = String(g.items[gi]?.label || "").trim();
+      if (label) traitLabels.push(label);
+      if (traitLabels.length >= max) break;
+    }
+    gi += 1;
+  }
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const t of [...traits, ...tags]) {
+  for (const t of [...traitLabels, ...tags]) {
     if (!t || seen.has(t)) continue;
     seen.add(t);
     out.push(t);
@@ -163,13 +214,18 @@ export function buildNotebookStylePromptBlock(item: AuthorIpItem | null): string
   const parts: string[] = [];
   const one = (item.oneLiner || "").trim();
   if (one) parts.push(`写作定位：${one}`);
-  const traits = traitsFromItem(item)
-    .filter((t) => t.defaultOn !== false && t.label)
-    .slice(0, 8);
-  if (traits.length) {
-    parts.push(`口吻特色：${traits.map((t) => t.label).join("、")}`);
+  const grouped = groupStyleTraitsByDimension(traitsFromItemFull(item)).slice(0, 6);
+  if (grouped.length) {
+    const lines = grouped.map((g) => {
+      const labels = g.items
+        .map((t) => String(t.label || "").trim())
+        .filter(Boolean)
+        .slice(0, 4);
+      return labels.length ? `【${g.dimension}】${labels.join("；")}` : "";
+    });
+    parts.push(`各维度风格：\n${lines.filter(Boolean).join("\n")}`);
   }
-  const tags = tagCloudFromItem(item).slice(0, 6);
+  const tags = tagCloudFromItem(item).slice(0, 8);
   if (tags.length) parts.push(`关键词：${tags.join("、")}`);
   return parts.join("\n");
 }

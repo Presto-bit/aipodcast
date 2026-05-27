@@ -64,7 +64,23 @@ def test_infer_domains_two_articles():
     assert domains[0].get("boundArticleTitles")
 
 
-def test_run_distill_full_sets_vitality():
+def test_merge_traits_round_robin_across_dimensions() -> None:
+    discovered = [
+        {"dimension": "立场", "label": f"立场{i}", "defaultOn": True, "confidence": 0.9 - i * 0.01}
+        for i in range(4)
+    ] + [
+        {"dimension": "结构", "label": f"结构{i}", "defaultOn": True, "confidence": 0.85 - i * 0.01}
+        for i in range(4)
+    ] + [
+        {"dimension": "语气", "label": f"语气{i}", "defaultOn": True, "confidence": 0.8 - i * 0.01}
+        for i in range(4)
+    ]
+    from app.author_ip_distill import _merge_traits
+
+    merged = _merge_traits([], discovered, max_items=9)
+    dims = [t["dimension"] for t in merged]
+    assert len(set(dims)) >= 3
+    assert dims.count("立场") <= 4
     prof = {"traits": [], "vitality": {}}
     mats = [
         {

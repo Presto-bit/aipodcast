@@ -26,11 +26,13 @@ _SYSTEM_FULL = """你是个人写作风格分析师。根据作者的定位与�
 1. 只输出一个 JSON 对象，不要 Markdown 代码块，不要其它说明。
 2. 特色必须来自素材，禁止捏造素材中未出现的个人经历、公司、数据。
 3. trait 聚焦「怎么写」（口吻、结构、立场、禁区、平台习惯），不要复述事实百科。
-4. dimension 优先使用：立场、结构、语气、修辞、禁区、平台（小红书/公众号等可写在平台维度）。
-5. evidence 为素材中的短摘录或概括（≤80 字）。
-6. tagCloud 为 6～10 个中文关键词或短语（2～8 字为主），适合标签云展示。
-7. domains 为 1～4 个写作场景；每个场景 displayName 简短；boundArticleTitles 填相关成稿标题（来自素材）。
-8. recentChange 用一句话说明本次相较「已有特色」的新增或强化（若无变化可写「延续既有风格」）。
+4. dimension 必须使用：立场、结构、语气、修辞、禁区、平台（「口吻」归入「语气」）。
+5. traits 总数 10～16 条；每个有证据的 dimension 至少 2 条不同 label，避免只写「结论前置」一类笼统项。
+6. 同一 dimension 下多条 trait 写在一起（JSON 数组顺序按 dimension 分组：立场→结构→语气→修辞→禁区→平台）。
+7. evidence 为素材中的短摘录或概括（≤80 字）。
+8. tagCloud 为 8～12 个中文关键词或短语（2～8 字为主），覆盖口吻、结构、话题，避免近义重复。
+9. domains 为 1～4 个写作场景；每个场景 displayName 简短；boundArticleTitles 填相关成稿标题（来自素材）。
+10. recentChange 用一句话说明本次相较「已有特色」的新增或强化（若无变化可写「延续既有风格」）。
 
 JSON 结构：
 {
@@ -120,7 +122,9 @@ def _parse_traits(raw_list: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         dim = str(item.get("dimension") or "语气").strip()
-        if dim not in TRAIT_DIMENSIONS and dim not in ("口吻",):
+        if dim == "口吻":
+            dim = "语气"
+        if dim not in TRAIT_DIMENSIONS:
             dim = "语气"
         n = _normalize_trait(
             {
@@ -147,7 +151,7 @@ def _parse_tag_cloud(raw: Any) -> list[str]:
             continue
         seen.add(s)
         out.append(s)
-        if len(out) >= 10:
+        if len(out) >= 14:
             break
     return out
 
@@ -275,8 +279,9 @@ _SYSTEM_MERGE = """你是写作风格整合师。输入为多篇资料「已预�
 规则：
 1. 只输出一个 JSON 对象，不要 Markdown 代码块。
 2. 不得捏造素材未出现的经历、公司、数据。
-3. trait 聚焦怎么写（口吻、结构、立场、禁区、平台）。
-4. tagCloud 6～10 个中文关键词；domains 1～4 个场景；recentChange 一句话。
+3. trait 聚焦怎么写（口吻、结构、立场、禁区、平台）；dimension 用：立场、结构、语气、修辞、禁区、平台。
+4. traits 10～16 条，每个 dimension 尽量 2 条以上且 label 互不重复；tagCloud 8～12 个；domains 1～4 个；recentChange 一句话。
+5. 合并时保留各资料差异点（如不同体裁的结构习惯），勿过度归纳成单一句式。
 
 JSON 结构同完整蒸馏（tagCloud, traits, domains, recentChange）。"""
 
@@ -329,7 +334,7 @@ def distill_profile_merge_features(
     if len(user) < 40:
         return None
     try:
-        data = _invoke_distill_json(_SYSTEM_MERGE, user, temperature=0.35, timeout_sec=90)
+        data = _invoke_distill_json(_SYSTEM_MERGE, user, temperature=0.42, timeout_sec=90)
         tags = _parse_tag_cloud(data.get("tagCloud"))
         traits = _parse_traits(data.get("traits"))
         domains = _parse_domains(data.get("domains"), materials)

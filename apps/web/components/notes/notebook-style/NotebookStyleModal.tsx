@@ -9,6 +9,7 @@ import {
   buildStyleSummaryChips,
   buildStyleSummaryText,
   formatStyleLearnedAt,
+  groupStyleTraitsByDimension,
   type StyleSyncStatus
 } from "../../../lib/notebookStyle";
 import { traitsFromItem } from "../author-ip/utils";
@@ -41,9 +42,9 @@ export default function NotebookStyleModal({
   const [positioningError, setPositioningError] = useState<string | null>(null);
 
   const summary = useMemo(() => buildStyleSummaryText(item), [item]);
-  const chips = useMemo(() => buildStyleSummaryChips(item, 5), [item]);
+  const chips = useMemo(() => buildStyleSummaryChips(item, 8), [item]);
   const learned = formatStyleLearnedAt(item);
-  const traits = traitsFromItem(item);
+  const traitGroups = useMemo(() => groupStyleTraitsByDimension(traitsFromItem(item)), [item]);
   const recentChange = (item?.profile as { vitality?: { recentChange?: string } })?.vitality?.recentChange;
 
   const statusLabel =
@@ -129,14 +130,23 @@ export default function NotebookStyleModal({
             {detailOpen ? "收起详情" : "查看详情"}
           </button>
           {detailOpen ? (
-            <div className="space-y-2 rounded-lg border border-line/80 bg-fill/30 p-3 text-sm">
-              {traits.length === 0 ? (
+            <div className="space-y-3 rounded-lg border border-line/80 bg-fill/30 p-3 text-sm">
+              {traitGroups.length === 0 ? (
                 <p className="text-xs text-muted">暂无特色条目</p>
               ) : (
-                traits.slice(0, 8).map((t, i) => (
-                  <div key={`${t.dimension}-${t.label}-${i}`}>
-                    <span className="text-[10px] text-muted">{t.dimension || "语气"}</span>
-                    <p className="font-medium text-ink">{t.label}</p>
+                traitGroups.map((group) => (
+                  <div key={group.dimension}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">{group.dimension}</p>
+                    <ul className="mt-1 space-y-1">
+                      {group.items.map((t, i) => (
+                        <li key={`${group.dimension}-${t.label}-${i}`} className="text-xs leading-snug">
+                          <span className="font-medium text-ink">{t.label}</span>
+                          {t.evidence ? (
+                            <span className="mt-0.5 block text-[10px] text-muted line-clamp-2">{t.evidence}</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 ))
               )}

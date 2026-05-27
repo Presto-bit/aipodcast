@@ -128,6 +128,8 @@ def _trait_key(tr: dict[str, Any]) -> str:
 
 def _normalize_trait(tr: dict[str, Any]) -> dict[str, Any]:
     dim = str(tr.get("dimension") or "语气").strip()[:24] or "语气"
+    if dim == "口吻":
+        dim = "语气"
     label = str(tr.get("label") or "").strip()[:120]
     if not label:
         return {}
@@ -155,7 +157,7 @@ def _merge_traits(
     existing: list[dict[str, Any]],
     discovered: list[dict[str, Any]],
     *,
-    max_items: int = 12,
+    max_items: int = 18,
 ) -> list[dict[str, Any]]:
     by_key: dict[str, dict[str, Any]] = {}
     for tr in existing:
@@ -185,7 +187,25 @@ def _merge_traits(
             t["label"],
         )
     )
-    return ordered[:max_items]
+    if len(ordered) <= max_items:
+        return ordered
+
+    by_dim: dict[str, list[dict[str, Any]]] = {}
+    for t in ordered:
+        by_dim.setdefault(str(t.get("dimension") or "语气"), []).append(t)
+    dim_order = [d for d in TRAIT_DIMENSIONS if d in by_dim] + sorted(
+        k for k in by_dim if k not in TRAIT_DIMENSIONS
+    )
+    out: list[dict[str, Any]] = []
+    while len(out) < max_items and any(by_dim.get(d) for d in dim_order):
+        for d in dim_order:
+            bucket = by_dim.get(d) or []
+            if not bucket:
+                continue
+            out.append(bucket.pop(0))
+            if len(out) >= max_items:
+                break
+    return out
 
 
 def _detect_traits_from_text(blob: str, *, source_title: str = "") -> list[dict[str, Any]]:
@@ -600,7 +620,7 @@ def run_author_ip_distill(
             merged = _merge_traits(
                 existing_traits,
                 list(llm_out["traits"]) + heuristic_traits,
-                max_items=12,
+                max_items=18,
             )
             if merged:
                 prof["traits"] = merged
