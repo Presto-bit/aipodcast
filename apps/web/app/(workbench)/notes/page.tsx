@@ -130,6 +130,7 @@ import type { AuthorIpItem } from "../../../lib/authorIp";
 import { resolveNotebookCreativeTemplateValue } from "../../../lib/notebookPodcastStyle";
 import {
   buildNotebookStylePromptBlock,
+  buildStyleSummaryChips,
   computeStyleSyncStatus,
   dismissNotebookStyleHint,
   isNoteInStyleSnapshot,
@@ -1524,6 +1525,10 @@ export default function NotesPage() {
 
   const notebookStylePrompt = useMemo(
     () => buildNotebookStylePromptBlock(notebookStyleItem),
+    [notebookStyleItem]
+  );
+  const notebookStyleChips = useMemo(
+    () => buildStyleSummaryChips(notebookStyleItem, 4),
     [notebookStyleItem]
   );
 
@@ -5279,9 +5284,14 @@ export default function NotesPage() {
         onClose={() => setShowSocialPublishModal(false)}
         notebook={selectedNotebook}
         noteIds={draftSelectedNoteIds}
-        askMessages={notesAskMessages}
+        selectedNoteTitles={draftSelectedNoteIds.map((id) => (noteTitleById[id] || "").trim())}
+        notesSourceOwnerUserId={
+          sharedBrowse?.access === "edit" && sharedBrowse.ownerUserId ? sharedBrowse.ownerUserId : null
+        }
         authHeaders={getAuthHeaders()}
         notebookStylePrompt={notebookStylePrompt}
+        notebookStyleChips={notebookStyleChips}
+        notebookStyleName={notebookStyleItem?.displayName || selectedNotebook}
       />
 
       {showArticleModal ? (

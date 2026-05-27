@@ -20,10 +20,6 @@ import {
 } from "../../lib/socialPublishPresets";
 import { buildSocialPublishClipboardText, copyGuideLines } from "../../lib/socialPublishCopy";
 import { loadSocialPublishPrefs, saveSocialPublishPrefs } from "../../lib/socialPublishStorage";
-import {
-  lastAssistantAnswerText,
-  resolveDefaultPublishMaterial
-} from "../../lib/socialPublishSources";
 import type {
   SocialPublishAdvancedOptions,
   SocialPublishDraft,
@@ -34,17 +30,20 @@ import type {
 } from "../../lib/socialPublishTypes";
 import { NotesSocialPublishStudio } from "./NotesSocialPublishStudio";
 
-type AskMsg = { role: string; content: string; supplementContent?: string };
-
 type Props = {
   open: boolean;
   onClose: () => void;
   notebook: string;
   noteIds: string[];
-  askMessages: AskMsg[];
+  selectedNoteTitles?: string[];
+  notesSourceOwnerUserId?: string | null;
   authHeaders: Record<string, string>;
   /** 本笔记本已提炼的写作风格，并入写作人设 */
   notebookStylePrompt?: string;
+  /** 与风格弹窗一致的关键词 chips（最多展示 4 个） */
+  notebookStyleChips?: string[];
+  /** 风格名称（可改名后的 displayName） */
+  notebookStyleName?: string;
 };
 
 const inputCls =
@@ -55,9 +54,12 @@ export default function NotesSocialPublishModal({
   onClose,
   notebook,
   noteIds,
-  askMessages,
+  selectedNoteTitles = [],
+  notesSourceOwnerUserId = null,
   authHeaders,
-  notebookStylePrompt = ""
+  notebookStylePrompt = "",
+  notebookStyleChips = [],
+  notebookStyleName = ""
 }: Props) {
   const prefs = useMemo(() => loadSocialPublishPrefs(), [open]);
   const [step, setStep] = useState<SocialPublishWizardStep>("platform");
@@ -77,12 +79,21 @@ export default function NotesSocialPublishModal({
   const [showStudio, setShowStudio] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const hasNotebookStyle = Boolean(notebookStylePrompt.trim());
+  const styleChipsPreview = useMemo(
+    () => notebookStyleChips.filter(Boolean).slice(0, 4),
+    [notebookStyleChips]
+  );
+  const notebookStyleCardHint =
+    styleChipsPreview.length > 0
+      ? styleChipsPreview.join(" · ")
+      : notebookStylePrompt.trim().slice(0, 72) +
+        (notebookStylePrompt.trim().length > 72 ? "…" : "");
+  const notebookStyleCardTitle = (notebookStyleName || "本笔记本风格").trim();
   const [useNotebookPersona, setUseNotebookPersona] = useState(true);
 
   const preset = useMemo(() => publishPresetBundle(platform), [platform]);
 
-  const canGenerate =
-    noteIds.length > 0 || lastAssistantAnswerText(askMessages).length >= 40;
+  const canGenerate = noteIds.length > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -99,7 +110,7 @@ export default function NotesSocialPublishModal({
     setShowStudio(false);
     setShowGuide(false);
     setUseNotebookPersona(Boolean(notebookStylePrompt.trim()));
-  }, [open, noteIds, askMessages, notebookStylePrompt]);
+  }, [open, noteIds, notebookStylePrompt]);
 
   useEffect(() => {
     if (!copyToast) return;
@@ -143,18 +154,13 @@ export default function NotesSocialPublishModal({
 
   const runGenerate = useCallback(async () => {
     if (!canGenerate) {
-      setError("请先勾选左侧参考资料，或先向资料提问后再发布");
+      setError("请先勾选左侧参考资料");
       return;
     }
     setBusy(true);
     setError("");
     setStep("generating");
     try {
-      const material = await resolveDefaultPublishMaterial({
-        noteIds,
-        askMessages,
-        authHeaders
-      });
       const personaForPayload =
         useNotebookPersona && notebookStylePrompt.trim()
           ? {
@@ -168,10 +174,12 @@ export default function NotesSocialPublishModal({
       const options = buildOptionsPayload(quickForPayload, advanced, personaForPayload, platform);
       const result = await fetchSocialPublishDraft({
         platform,
-        materialText: material,
         options,
-        sourceType: "notes_and_ask",
-        authHeaders
+        sourceType: "notes_rag",
+        authHeaders,
+        selectedNoteIds: noteIds,
+        selectedNoteTitles,
+        notesSourceOwnerUserId
       });
       setDraft(result);
       saveSocialPublishPrefs(platform, quickForPayload);
@@ -183,7 +191,19 @@ export default function NotesSocialPublishModal({
     } finally {
       setBusy(false);
     }
-  }, [canGenerate, askMessages, authHeaders, noteIds, quickForPayload, advanced, platform, persona]);
+  }, [
+    canGenerate,
+    authHeaders,
+    noteIds,
+    selectedNoteTitles,
+    notesSourceOwnerUserId,
+    quickForPayload,
+    advanced,
+    platform,
+    persona,
+    useNotebookPersona,
+    notebookStylePrompt
+  ]);
 
   function chipBtn(active: boolean) {
     return `rounded-full border px-2.5 py-1 text-xs ${
@@ -412,31 +432,38 @@ export default function NotesSocialPublishModal({
                   写作人设
                   <span className="ml-1 text-[11px] font-normal text-muted">（可选）</span>
                 </p>
-                {hasNotebookStyle ? (
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {hasNotebookStyle ? (
                     <button
                       type="button"
-                      className={`rounded-lg border px-2.5 py-1 text-[11px] font-medium transition ${
+                      className={`rounded-xl border p-2.5 text-left transition ${
                         useNotebookPersona
-                          ? "border-brand bg-brand/10 text-brand"
-                          : "border-line bg-fill/50 text-ink hover:border-brand/35"
+                          ? "border-brand bg-brand/10"
+                          : "border-line bg-fill/50 hover:border-brand/35"
                       }`}
-                      onClick={() => setUseNotebookPersona(true)}
+                      onClick={() => {
+                        setUseNotebookPersona(true);
+                        setPersona((p) => ({ ...p, writerVoice: null }));
+                      }}
                     >
-                      本笔记本风格
+                      <span className="block text-xs font-medium text-ink">{notebookStyleCardTitle}</span>
+                      <span className="mt-0.5 block text-[10px] leading-snug text-muted line-clamp-2">
+                        {notebookStyleCardHint || "已提炼的写作口吻与特色"}
+                      </span>
+                      {styleChipsPreview.length > 0 ? (
+                        <span className="mt-1.5 flex flex-wrap gap-1">
+                          {styleChipsPreview.map((c) => (
+                            <span
+                              key={c}
+                              className="rounded border border-line/70 bg-canvas/80 px-1.5 py-0.5 text-[9px] font-medium text-ink"
+                            >
+                              {c}
+                            </span>
+                          ))}
+                        </span>
+                      ) : null}
                     </button>
-                    {!useNotebookPersona ? (
-                      <button
-                        type="button"
-                        className="text-[11px] text-brand hover:underline"
-                        onClick={() => setUseNotebookPersona(true)}
-                      >
-                        恢复为本笔记本风格
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                <div className="grid gap-2 sm:grid-cols-2">
+                  ) : null}
                   {preset.writerVoices.map((o) => (
                     <button
                       key={o.id}
@@ -454,11 +481,10 @@ export default function NotesSocialPublishModal({
                         }));
                       }}
                     >
-                        <span className="block text-xs font-medium text-ink">{o.label}</span>
-                        <span className="mt-0.5 block text-[10px] text-muted">{o.hint}</span>
-                      </button>
-                    ))}
-                  </div>
+                      <span className="block text-xs font-medium text-ink">{o.label}</span>
+                      <span className="mt-0.5 block text-[10px] text-muted">{o.hint}</span>
+                    </button>
+                  ))}
                 </div>
                 <div>
                   <p className="mb-1.5 text-xs font-medium text-ink">字数</p>
@@ -521,9 +547,7 @@ export default function NotesSocialPublishModal({
                   />
                 </label>
               <p className="text-[10px] text-muted">
-                将默认使用勾选的资料
-                {lastAssistantAnswerText(askMessages).length >= 40 ? "与刚才的对话回答" : ""}
-                作为生成素材。
+                与「生成文章」相同：仅依据左侧勾选的参考资料（RAG 检索合并）生成，不包含对话回答。
               </p>
             </>
             <div className="flex justify-end gap-2">

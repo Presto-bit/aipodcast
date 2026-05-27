@@ -1624,12 +1624,34 @@ def stream_job_events(job_id: str, request: Request, after_id: int = 0):
 
 @router.post("/social/publish-draft")
 def social_publish_draft_api(req: SocialPublishDraftRequest, request: Request):
-    _ = _current_user_ref_or_401(request)
+    user_ref = _current_user_ref_or_401(request)
     if not deepseek_text_config_ok():
         raise HTTPException(status_code=503, detail="服务端未配置 DEEPSEEK_API_KEY")
-    material = (req.material_text or "").strip()
-    if len(material) < 40:
-        raise HTTPException(status_code=400, detail="material_too_short")
+    note_ids = [str(x).strip() for x in (req.selected_note_ids or []) if str(x).strip()]
+    if note_ids:
+        from ..social_publish_draft import resolve_social_publish_material_from_notes
+
+        persona = req.options.get("persona") if isinstance(req.options.get("persona"), dict) else {}
+        hint = str(persona.get("otherRequirements") or "")[:500] if isinstance(persona, dict) else ""
+        try:
+            material = resolve_social_publish_material_from_notes(
+                user_ref,
+                selected_note_ids=note_ids,
+                notes_source_owner_user_id=req.notes_source_owner_user_id,
+                use_rag=req.use_rag,
+                rag_max_chars=req.rag_max_chars,
+                reference_rag_mode=req.reference_rag_mode,
+                material_hint=hint,
+            )
+        except RuntimeError as exc:
+            code = str(exc)
+            if code == "material_too_short":
+                raise HTTPException(status_code=400, detail=code) from exc
+            raise HTTPException(status_code=500, detail=code[:500]) from exc
+    else:
+        material = (req.material_text or "").strip()
+        if len(material) < 40:
+            raise HTTPException(status_code=400, detail="material_too_short")
     try:
         pack = generate_social_publish_draft(
             material,

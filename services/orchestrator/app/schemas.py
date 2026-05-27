@@ -426,10 +426,33 @@ class SocialViralCopyRequest(BaseModel):
 class SocialPublishDraftRequest(BaseModel):
     """知识库「发布到自媒体」：按勾选项将素材改写为可复制发布稿。"""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     platform: str = Field(min_length=1, max_length=24)
-    material_text: str = Field(min_length=40, max_length=50_000)
+    material_text: str = Field(default="", max_length=50_000)
     options: dict[str, Any] = Field(default_factory=dict)
     source_type: str = Field(default="", max_length=32)
+    selected_note_ids: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("selected_note_ids", "selectedNoteIds"),
+    )
+    selected_note_titles: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("selected_note_titles", "selectedNoteTitles"),
+    )
+    notes_source_owner_user_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("notes_source_owner_user_id", "notesSourceOwnerUserId"),
+    )
+    use_rag: bool = Field(default=True, validation_alias=AliasChoices("use_rag", "useRag"))
+    rag_max_chars: int = Field(
+        default=56_000,
+        validation_alias=AliasChoices("rag_max_chars", "ragMaxChars"),
+    )
+    reference_rag_mode: str = Field(
+        default="truncate",
+        validation_alias=AliasChoices("reference_rag_mode", "referenceRagMode"),
+    )
 
     @field_validator("platform")
     @classmethod
@@ -438,6 +461,15 @@ class SocialPublishDraftRequest(BaseModel):
         if p not in ("xiaohongshu", "wechat_mp"):
             raise ValueError("platform_must_be_xiaohongshu_or_wechat_mp")
         return p
+
+    @model_validator(mode="after")
+    def _material_or_notes(self) -> "SocialPublishDraftRequest":
+        nids = [str(x).strip() for x in (self.selected_note_ids or []) if str(x).strip()]
+        if nids:
+            return self
+        if len((self.material_text or "").strip()) < 40:
+            raise ValueError("material_too_short_or_no_notes")
+        return self
 
 
 class RssPublishRequest(BaseModel):

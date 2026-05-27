@@ -160,6 +160,52 @@ def _xhs_system_prompt(opt_block: str) -> str:
 cover_hook, titles, opening_30, body（或 sections 数组）, interaction, tags, imageSuggestions, theme"""
 
 
+def resolve_social_publish_material_from_notes(
+    user_ref: str | None,
+    *,
+    selected_note_ids: list[str],
+    notes_source_owner_user_id: str | None = None,
+    use_rag: bool = True,
+    rag_max_chars: int = 56_000,
+    reference_rag_mode: str = "truncate",
+    material_hint: str = "",
+) -> str:
+    """与生成文章一致：勾选笔记 + 分层 RAG / 合并参考（merge_reference_for_script）。"""
+    from .reference_material import merge_reference_for_script
+
+    nids = [str(x).strip() for x in selected_note_ids if str(x).strip()]
+    if not nids:
+        raise RuntimeError("material_too_short")
+    mode = str(reference_rag_mode or "truncate").strip().lower()
+    if mode not in ("truncate", "keyword", "full_coverage", "hybrid"):
+        mode = "truncate"
+    try:
+        rag_cap = int(rag_max_chars)
+    except (TypeError, ValueError):
+        rag_cap = 56_000
+    rag_cap = max(8_000, min(120_000, rag_cap))
+
+    payload: dict[str, Any] = {
+        "selected_note_ids": nids,
+        "use_rag": bool(use_rag),
+        "rag_max_chars": rag_cap,
+        "reference_rag_mode": mode,
+        "text": (material_hint or "根据勾选资料撰写自媒体发布稿").strip()[:2000],
+        "script_language": "中文",
+    }
+    owner = str(notes_source_owner_user_id or "").strip()
+    if owner:
+        payload["notes_source_owner_user_id"] = owner
+
+    merged, _meta = merge_reference_for_script(payload, "", "", user_ref=user_ref)
+    raw = (merged or "").strip()
+    if len(raw) < 40:
+        raise RuntimeError("material_too_short")
+    if len(raw) > 48_000:
+        raw = raw[:48_000] + "…"
+    return raw
+
+
 def generate_social_publish_draft(
     material_text: str,
     *,

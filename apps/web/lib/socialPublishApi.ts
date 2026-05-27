@@ -1,4 +1,5 @@
 import { apiErrorMessage } from "./apiError";
+import { buildSocialPublishReferenceBody } from "./socialPublishReference";
 import { ensureXhsTitles } from "./socialPublishPresets";
 import type {
   SocialPublishCompliance,
@@ -49,10 +50,12 @@ function mapContentDraft(
 
 export async function fetchSocialPublishDraft(params: {
   platform: SocialPublishPlatform;
-  materialText: string;
   options: Record<string, unknown>;
   sourceType: string;
   authHeaders: Record<string, string>;
+  selectedNoteIds: string[];
+  selectedNoteTitles?: string[];
+  notesSourceOwnerUserId?: string | null;
 }): Promise<SocialPublishDraft> {
   const res = await fetch("/api/social/publish-draft", {
     method: "POST",
@@ -60,9 +63,13 @@ export async function fetchSocialPublishDraft(params: {
     headers: { "content-type": "application/json", ...params.authHeaders },
     body: JSON.stringify({
       platform: params.platform,
-      material_text: params.materialText,
       options: params.options,
-      source_type: params.sourceType
+      source_type: params.sourceType,
+      ...buildSocialPublishReferenceBody({
+        selectedNoteIds: params.selectedNoteIds,
+        selectedNoteTitles: params.selectedNoteTitles,
+        notesSourceOwnerUserId: params.notesSourceOwnerUserId
+      })
     })
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
