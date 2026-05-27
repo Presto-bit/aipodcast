@@ -74,6 +74,11 @@ export async function fetchSocialPublishDraft(params: {
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok || data.success === false) {
+    if (res.status === 504 || res.status === 524) {
+      throw new Error(
+        "网关超时（504）：发布稿需合并资料并调用大模型，整体常超过 60 秒。请将 Nginx/CDN/SLB 对 `/api/social/` 的回源读超时调至 ≥180 秒，或减少勾选资料后重试。"
+      );
+    }
     const msg = apiErrorMessage(data, "生成发布稿失败");
     const statusHint = !res.ok && msg === "生成发布稿失败" ? `（HTTP ${res.status}）` : "";
     throw new Error(`${msg}${statusHint}`);

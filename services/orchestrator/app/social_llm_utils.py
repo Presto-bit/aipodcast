@@ -76,6 +76,7 @@ def invoke_social_llm(
     user: str,
     *,
     max_tokens: int | None = None,
+    timeout_sec: int = 75,
 ) -> tuple[str, None]:
     """自媒体文案：固定 DeepSeek（DEEPSEEK_API_KEY），不回退 MiniMax。"""
     messages = [
@@ -84,10 +85,11 @@ def invoke_social_llm(
     ]
     tok = int(max_tokens) if max_tokens is not None else 4096
     tok = max(1024, min(8192, tok))
+    wait = max(30, min(120, int(timeout_sec)))
     return invoke_llm_chat_messages_deepseek_only(
         messages,
         temperature=0.65,
-        timeout_sec=120,
+        timeout_sec=wait,
         max_tokens=tok,
     )
 
@@ -106,18 +108,7 @@ def invoke_and_parse_social_json(
         return None, None
     try:
         return parse_json_object(raw_out), trace_id
-    except (json.JSONDecodeError, ValueError):
-        repair_user = (
-            f"{user}\n\n"
-            "【格式】只输出一个合法 JSON 对象，不要用 markdown 代码块，不要附加解释。"
-        )
-        try:
-            raw2, trace_id2 = invoke_social_llm(system, repair_user, max_tokens=max_tokens)
-        except Exception as exc:
-            logger.warning("invoke_social_llm repair failed: %s", exc)
-            return None, None
-        try:
-            return parse_json_object(raw2), trace_id2
-        except (json.JSONDecodeError, ValueError) as exc:
-            logger.warning("social json parse failed after repair: %s", exc)
-            return None, None
+    except (json.JSONDecodeError, ValueError) as exc:
+        # 不重试第二次 LLM（易叠加 RAG+合规导致网关 504）；由上层走资料摘录回退
+        logger.warning("social json parse failed: %s", exc)
+        return None, None

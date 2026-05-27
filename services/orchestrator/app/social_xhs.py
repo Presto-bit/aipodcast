@@ -411,6 +411,7 @@ def finalize_xhs_pack(
     *,
     options: dict[str, Any] | None = None,
     trace_id: Any = None,
+    compliance_max_llm_passes: int = 1,
 ) -> dict[str, Any]:
     """结构化数据 → 合规终稿 → 对外 pack（含 compliance）。"""
     norm = normalize_xhs_llm_data(data)
@@ -424,7 +425,10 @@ def finalize_xhs_pack(
         tags=norm["tags"],
         cover_suggestions=norm["coverSuggestions"],
     )
-    compliant_fields, compliance = apply_compliance_to_xhs_fields(fields)
+    compliant_fields, compliance = apply_compliance_to_xhs_fields(
+        fields,
+        max_llm_passes=max(0, int(compliance_max_llm_passes)),
+    )
 
     tags_out = [compliant_fields[k] for k in sorted(compliant_fields) if k.startswith("tag_") and compliant_fields[k].strip()]
     while len(tags_out) < 5:

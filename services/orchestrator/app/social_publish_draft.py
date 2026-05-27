@@ -223,6 +223,7 @@ def _finalize_draft_pack(
                 cand,
                 options=options,
                 trace_id=trace_id,
+                compliance_max_llm_passes=0,
             )
         except Exception as exc:
             logger.warning(

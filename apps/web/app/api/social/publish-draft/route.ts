@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../../lib/bff";
+import { SOCIAL_PUBLISH_BFF_TIMEOUT_MS } from "../../../../lib/socialPublishTimeouts";
 
 export async function POST(req: NextRequest) {
   const raw = await req.text();
@@ -8,6 +9,6 @@ export async function POST(req: NextRequest) {
     payload: raw || "{}",
     body: raw || "{}",
     headers: { "content-type": "application/json", ...incomingAuthHeadersFrom(req) },
-    timeoutMs: 120_000
+    timeoutMs: SOCIAL_PUBLISH_BFF_TIMEOUT_MS
   });
 }

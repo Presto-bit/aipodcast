@@ -2,7 +2,8 @@
 
 import type { ReferenceRagMode } from "./jobReferencePayload";
 
-export const SOCIAL_PUBLISH_RAG_MAX_CHARS = 56_000;
+/** 自媒体发布：RAG 上限低于「生成文章」，缩短合并耗时、降低网关 504 概率 */
+export const SOCIAL_PUBLISH_RAG_MAX_CHARS = 20_000;
 export const SOCIAL_PUBLISH_REFERENCE_RAG_MODE: ReferenceRagMode = "truncate";
 
 export function buildSocialPublishReferenceBody(input: {
