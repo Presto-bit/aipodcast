@@ -486,8 +486,9 @@ export default function NotesSocialPublishModal({
                     </button>
                   ))}
                 </div>
-                <div>
-                  <p className="mb-1.5 text-xs font-medium text-ink">字数</p>
+              </div>
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-ink">字数</p>
                   <div className="flex flex-wrap gap-1.5">
                     {SOCIAL_PUBLISH_CHARS_PRESETS.map((o) => (
                       <button
@@ -546,9 +547,9 @@ export default function NotesSocialPublishModal({
                     maxLength={300}
                   />
                 </label>
-              <p className="text-[10px] text-muted">
-                与「生成文章」相同：仅依据左侧勾选的参考资料（RAG 检索合并）生成，不包含对话回答。
-              </p>
+                <p className="text-[10px] text-muted">
+                  与「生成文章」相同：仅依据左侧勾选的参考资料（RAG 检索合并）生成，不包含对话回答。
+                </p>
             </>
             <div className="flex justify-end gap-2">
               <button
