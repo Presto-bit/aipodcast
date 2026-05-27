@@ -6,8 +6,8 @@ import logging
 from typing import Any
 
 from .social_compliance import apply_compliance_to_mp_fields
-from .social_llm_utils import invoke_social_llm, normalize_tags, parse_json_object
-from .social_xhs import build_persona_prompt_block, finalize_xhs_pack
+from .social_llm_utils import invoke_and_parse_social_json, normalize_tags
+from .social_xhs import build_persona_prompt_block, finalize_xhs_pack, normalize_xhs_llm_data
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,117 @@ def _fallback_mp() -> dict[str, Any]:
         ],
         "theme": "公众号长文导读",
     }
+
+
+def _normalize_social_options(options: dict[str, Any], platform: str) -> dict[str, Any]:
+    """合并 platform；性别互斥（女+男→不限），避免矛盾画像导致模型空回。"""
+    opts = dict(options)
+    opts["platform"] = platform
+    persona = opts.get("persona")
+    if not isinstance(persona, dict):
+        return opts
+    genders_raw = persona.get("genders")
+    if isinstance(genders_raw, list):
+        gset = {str(g).strip() for g in genders_raw if str(g).strip()}
+        if not gset:
+            gset = {"any"}
+        elif "any" in gset or ("female" in gset and "male" in gset):
+            gset = {"any"}
+        elif len(gset) > 1:
+            gset = {next(iter(gset))}
+        opts["persona"] = {**persona, "genders": list(gset)}
+    return opts
+
+
+def _social_llm_max_tokens(options: dict[str, Any]) -> int:
+    target = _resolve_target_chars(options)
+    # 中文发布稿 JSON 约 2～3 字/token，留足标题/话题/配图字段
+    return max(2048, min(8192, int(target * 2.8) + 800))
+
+
+def _fallback_from_material(raw: str, platform: str) -> dict[str, Any]:
+    """LLM/合规失败时：用勾选资料摘录组装可编辑草稿，避免通用占位话术。"""
+    excerpt = (raw or "").strip()[:4000]
+    if len(excerpt) < 40:
+        return _fallback_xhs() if platform == "xiaohongshu" else _fallback_mp()
+    lines = [ln.strip() for ln in excerpt.splitlines() if ln.strip()]
+    headline = (lines[0] if lines else excerpt)[:28] or "资料要点整理"
+    core = "\n".join(lines[1:12]) if len(lines) > 1 else excerpt
+    core = core[:2400].strip() or excerpt[:1200]
+    if platform == "wechat_mp":
+        body = (
+            f"## 核心结论\n\n{core[:900]}\n\n"
+            f"## 展开说明\n\n{core[900:2200] if len(core) > 900 else core}\n\n"
+            "## 小结\n\n以上内容整理自你勾选的笔记本资料，可按需要增删小标题与案例。"
+        )
+        return {
+            "titles": [
+                headline,
+                f"{headline[:18]}｜要点梳理" if len(headline) > 4 else "资料要点梳理",
+                "收藏这篇资料整理",
+            ],
+            "cover_hook": headline,
+            "opening_30": headline[:30],
+            "body": body,
+            "tags": ["深度好文", "干货分享", "知识整理", "收藏推荐", "阅读笔记"],
+            "interaction": "哪一段对你最有启发？欢迎留言。",
+            "imageSuggestions": [
+                "头图：资料主题关键词 + 简洁背景",
+                "文内：摘录中的关键数据或步骤做成信息图",
+            ],
+            "theme": "基于勾选资料整理的公众号稿",
+        }
+    body = f"📌 先说结论\n\n{core[:700]}\n\n💡 展开\n\n{core[700:1600] if len(core) > 700 else ''}".strip()
+    return {
+        "titles": [
+            headline,
+            f"{headline[:16]}｜真实整理" if len(headline) > 4 else "资料笔记整理",
+            "先收藏这篇干货",
+        ],
+        "cover_hook": headline,
+        "opening_30": headline[:30],
+        "body": body or excerpt[:1200],
+        "tags": ["干货分享", "真实体验", "知识整理", "避坑指南", "收藏推荐"],
+        "interaction": "你觉得哪一点最有用？评论区聊聊～",
+        "imageSuggestions": [
+            "封面：资料主题关键词 + 大字标题",
+            "内页：摘录要点做成清单图",
+        ],
+        "theme": "基于勾选资料整理的小红书稿",
+    }
+
+
+def _finalize_draft_pack(
+    data: dict[str, Any],
+    *,
+    options: dict[str, Any],
+    platform: str,
+    material_text: str,
+    trace_id: Any = None,
+) -> dict[str, Any]:
+    try:
+        return finalize_xhs_pack(
+            data,
+            options=options,
+            trace_id=trace_id,
+        )
+    except RuntimeError as exc:
+        if str(exc) != "compliance_failed":
+            raise
+        logger.warning(
+            "social_publish compliance_failed platform=%s, material-aware fallback",
+            platform,
+        )
+        fallback_data = _fallback_from_material(material_text, platform)
+        norm = normalize_xhs_llm_data(fallback_data)
+        if len(str(norm.get("body_main") or "").strip()) >= 80:
+            return finalize_xhs_pack(
+                fallback_data,
+                options=options,
+                trace_id=trace_id,
+            )
+        static = _fallback_xhs() if platform == "xiaohongshu" else _fallback_mp()
+        return finalize_xhs_pack(static, options=options, trace_id=trace_id)
 
 
 def _mp_system_prompt(opt_block: str) -> str:
@@ -261,7 +372,7 @@ def generate_social_publish_draft(
     options: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """platform: xiaohongshu | wechat_mp"""
-    opts = options if isinstance(options, dict) else {}
+    opts = _normalize_social_options(options if isinstance(options, dict) else {}, platform)
     raw = (material_text or "").strip()
     if len(raw) < 40:
         raise RuntimeError("material_too_short")
@@ -269,34 +380,36 @@ def generate_social_publish_draft(
         raw = raw[:48_000] + "…"
 
     opt_block = _options_prompt_block(opts, platform)
+    max_tokens = _social_llm_max_tokens(opts)
+    material_rule = (
+        "硬性要求：正文必须引用素材中的具体事实、数据、步骤或观点，禁止输出与素材无关的通用模板"
+        "（如「要点一/要点二」「先把最重要的信息说清楚」等空泛占位）。"
+    )
 
     if platform == "xiaohongshu":
         system = _xhs_system_prompt(opt_block)
-        user = f"请根据下列素材重写为上述 JSON。\n\n【素材】\n{raw}"
-        raw_out, trace_id = invoke_social_llm(system, user)
-        try:
-            data = parse_json_object(raw_out)
-        except (json.JSONDecodeError, ValueError):
-            data = dict(_fallback_xhs())
-        try:
-            return finalize_xhs_pack(data, options=opts, trace_id=trace_id)
-        except RuntimeError as exc:
-            if str(exc) == "compliance_failed":
-                logger.warning("xhs compliance_failed, using fallback pack")
-                return finalize_xhs_pack(_fallback_xhs(), options=opts, trace_id=trace_id)
-            raise
+        user = f"{material_rule}\n\n请根据下列素材重写为上述 JSON。\n\n【素材】\n{raw}"
+    else:
+        system = _mp_system_prompt(opt_block)
+        user = f"{material_rule}\n\n请根据下列素材改写为上述 JSON。\n\n【素材】\n{raw}"
 
-    system = _mp_system_prompt(opt_block)
-    user = f"请根据下列素材改写为上述 JSON。\n\n【素材】\n{raw}"
-    raw_out, trace_id = invoke_social_llm(system, user)
     try:
-        data = parse_json_object(raw_out)
-    except (json.JSONDecodeError, ValueError):
-        data = dict(_fallback_mp())
-    try:
-        return finalize_xhs_pack(data, options=opts, trace_id=trace_id)
+        data, trace_id = invoke_and_parse_social_json(system, user, max_tokens=max_tokens)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("social_publish json parse failed platform=%s: %s", platform, exc)
+        data = _fallback_from_material(raw, platform)
+        trace_id = None
     except RuntimeError as exc:
-        if str(exc) == "compliance_failed":
-            logger.warning("mp compliance_failed, using fallback pack")
-            return finalize_xhs_pack(_fallback_mp(), options=opts, trace_id=trace_id)
-        raise
+        if str(exc) == "openai_compatible_empty_content":
+            raise
+        logger.warning("social_publish llm failed platform=%s: %s", platform, exc)
+        data = _fallback_from_material(raw, platform)
+        trace_id = None
+
+    return _finalize_draft_pack(
+        data,
+        options=opts,
+        platform=platform,
+        material_text=raw,
+        trace_id=trace_id,
+    )

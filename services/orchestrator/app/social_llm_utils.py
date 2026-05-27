@@ -68,14 +68,41 @@ def format_hashtag_line(tags: list[str]) -> str:
     return " ".join(parts)
 
 
-def invoke_social_llm(system: str, user: str) -> tuple[str, None]:
+def invoke_social_llm(
+    system: str,
+    user: str,
+    *,
+    max_tokens: int | None = None,
+) -> tuple[str, None]:
     """自媒体文案：固定 DeepSeek（DEEPSEEK_API_KEY），不回退 MiniMax。"""
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+    tok = int(max_tokens) if max_tokens is not None else 4096
+    tok = max(1024, min(8192, tok))
     return invoke_llm_chat_messages_deepseek_only(
         messages,
         temperature=0.65,
         timeout_sec=120,
+        max_tokens=tok,
     )
+
+
+def invoke_and_parse_social_json(
+    system: str,
+    user: str,
+    *,
+    max_tokens: int | None = None,
+) -> tuple[dict[str, Any], None]:
+    """调用模型并解析 JSON；失败时追加约束重试一次。"""
+    raw_out, trace_id = invoke_social_llm(system, user, max_tokens=max_tokens)
+    try:
+        return parse_json_object(raw_out), trace_id
+    except (json.JSONDecodeError, ValueError):
+        repair_user = (
+            f"{user}\n\n"
+            "【格式】只输出一个合法 JSON 对象，不要用 markdown 代码块，不要附加解释。"
+        )
+        raw2, trace_id2 = invoke_social_llm(system, repair_user, max_tokens=max_tokens)
+        return parse_json_object(raw2), trace_id2

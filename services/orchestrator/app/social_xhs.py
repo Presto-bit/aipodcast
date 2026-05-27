@@ -245,6 +245,11 @@ def build_persona_prompt_block(options: dict[str, Any]) -> str:
     extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
 
     genders = _persona_id_list(persona, "genders", "gender")
+    gset = {g for g in genders if g}
+    if "any" in gset or ("female" in gset and "male" in gset):
+        genders = ["any"]
+    elif gset:
+        genders = [next(iter(gset))]
     ages = _persona_id_list(persona, "ageRanges", "ageRange")
     regions = _persona_id_list(persona, "regions", "region")
     interests = _persona_id_list(persona, "interests", "interest")

@@ -14,6 +14,7 @@ import {
   publishPresetBundle,
   SOCIAL_PUBLISH_CHARS_PRESETS,
   toggleMultiSelect,
+  toggleSocialGender,
   SOCIAL_TARGET_CHARS_MAX,
   SOCIAL_TARGET_CHARS_MIN,
   charsFromPreset
@@ -161,7 +162,7 @@ export default function NotesSocialPublishModal({
     setError("");
     setStep("generating");
     try {
-      const personaForPayload =
+      let personaForPayload =
         useNotebookPersona && notebookStylePrompt.trim()
           ? {
               ...persona,
@@ -170,7 +171,10 @@ export default function NotesSocialPublishModal({
                 .filter(Boolean)
                 .join("\n\n")
             }
-          : persona;
+          : { ...persona };
+      if (!personaForPayload.genders.length) {
+        personaForPayload = { ...personaForPayload, genders: ["any"] };
+      }
       const options = buildOptionsPayload(quickForPayload, advanced, personaForPayload, platform);
       const result = await fetchSocialPublishDraft({
         platform,
@@ -324,7 +328,7 @@ export default function NotesSocialPublishModal({
                           onClick={() =>
                             setPersona((p) => ({
                               ...p,
-                              genders: toggleMultiSelect(p.genders, o.id, "any")
+                              genders: toggleSocialGender(p.genders, o.id)
                             }))
                           }
                         >

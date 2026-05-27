@@ -161,6 +161,22 @@ export function toggleMultiSelect<T extends string>(
   return next;
 }
 
+/** 性别单选：女/男互斥；「不限」与具体性别互斥，避免空选或矛盾画像。 */
+export function toggleSocialGender(
+  current: SocialPublishTargetGender[],
+  id: SocialPublishTargetGender
+): SocialPublishTargetGender[] {
+  if (id === "any") {
+    return current.includes("any") ? ["female"] : ["any"];
+  }
+  const withoutAny = current.filter((x) => x !== "any");
+  if (withoutAny.includes(id)) {
+    const next = withoutAny.filter((x) => x !== id);
+    return next.length ? next : ["female"];
+  }
+  return [id];
+}
+
 export function interestLabels(
   persona: SocialPublishPersonaOptions,
   platform: SocialPublishPlatform
