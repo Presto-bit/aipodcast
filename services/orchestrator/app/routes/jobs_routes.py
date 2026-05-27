@@ -1622,11 +1622,34 @@ def stream_job_events(job_id: str, request: Request, after_id: int = 0):
     return StreamingResponse(_event_gen(), media_type="text/event-stream")
 
 
+def _social_publish_error_detail(exc: Exception) -> tuple[int, str]:
+    code = str(exc).strip()
+    known_400 = {
+        "material_too_short": "勾选资料过短或尚未解析完成，请换选资料或稍后再试",
+        "notes_material_empty": "勾选资料暂无可用正文，请确认资料已解析完成后再发布",
+        "material_too_short_or_no_notes": "请先勾选左侧参考资料",
+    }
+    known_503 = {
+        "deepseek_api_key_missing": "服务未配置文案模型（DEEPSEEK_API_KEY），请联系管理员",
+        "text_provider_deepseek_config_missing": "服务未配置文案模型，请联系管理员",
+    }
+    if code in known_400:
+        return 400, known_400[code]
+    if code in known_503:
+        return 503, known_503[code]
+    if code == "openai_compatible_empty_content":
+        return 502, "文案模型未返回有效内容，请稍后重试"
+    return 500, code[:500] if code else "social_publish_failed"
+
+
 @router.post("/social/publish-draft")
 def social_publish_draft_api(req: SocialPublishDraftRequest, request: Request):
     user_ref = _current_user_ref_or_401(request)
     if not deepseek_text_config_ok():
-        raise HTTPException(status_code=503, detail="服务端未配置 DEEPSEEK_API_KEY")
+        raise HTTPException(
+            status_code=503,
+            detail="服务未配置文案模型（DEEPSEEK_API_KEY），请联系管理员",
+        )
     note_ids = [str(x).strip() for x in (req.selected_note_ids or []) if str(x).strip()]
     if note_ids:
         from ..social_publish_draft import resolve_social_publish_material_from_notes
@@ -1644,14 +1667,19 @@ def social_publish_draft_api(req: SocialPublishDraftRequest, request: Request):
                 material_hint=hint,
             )
         except RuntimeError as exc:
-            code = str(exc)
-            if code == "material_too_short":
-                raise HTTPException(status_code=400, detail=code) from exc
-            raise HTTPException(status_code=500, detail=code[:500]) from exc
+            status, detail = _social_publish_error_detail(exc)
+            raise HTTPException(status_code=status, detail=detail) from exc
+        except Exception as exc:
+            logger.exception("social_publish: resolve material failed")
+            status, detail = _social_publish_error_detail(exc)
+            raise HTTPException(status_code=status, detail=detail) from exc
     else:
         material = (req.material_text or "").strip()
         if len(material) < 40:
-            raise HTTPException(status_code=400, detail="material_too_short")
+            raise HTTPException(
+                status_code=400,
+                detail="请先勾选左侧参考资料",
+            )
     try:
         pack = generate_social_publish_draft(
             material,
@@ -1659,12 +1687,12 @@ def social_publish_draft_api(req: SocialPublishDraftRequest, request: Request):
             options=req.options if isinstance(req.options, dict) else {},
         )
     except RuntimeError as exc:
-        code = str(exc)
-        if code == "material_too_short":
-            raise HTTPException(status_code=400, detail=code) from exc
-        raise HTTPException(status_code=500, detail=code[:500]) from exc
+        status, detail = _social_publish_error_detail(exc)
+        raise HTTPException(status_code=status, detail=detail) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)[:500]) from exc
+        logger.exception("social_publish: generate draft failed")
+        status, detail = _social_publish_error_detail(exc)
+        raise HTTPException(status_code=status, detail=detail) from exc
     return JSONResponse(jsonable_encoder({"success": True, **pack}))
 
 

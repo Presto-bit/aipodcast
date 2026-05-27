@@ -160,6 +160,42 @@ def _xhs_system_prompt(opt_block: str) -> str:
 cover_hook, titles, opening_30, body（或 sections 数组）, interaction, tags, imageSuggestions, theme"""
 
 
+_MERGE_PLACEHOLDER = "请介绍 AI Native 应用架构"
+
+
+def _merge_reference_for_social(
+    payload: dict[str, Any],
+    user_ref: str | None,
+) -> tuple[str, dict[str, Any]]:
+    from .reference_material import merge_reference_for_script
+
+    return merge_reference_for_script(payload, "", "", user_ref=user_ref)
+
+
+def _fallback_note_bodies_for_social(
+    user_ref: str | None,
+    note_ids: list[str],
+    *,
+    notes_source_owner_user_id: str | None = None,
+) -> str:
+    """merge 未命中笔记时，按生成文章同款逻辑直接加载笔记正文。"""
+    from .reference_material import load_note_text_for_script
+
+    owner = str(notes_source_owner_user_id or "").strip() or None
+    parts: list[str] = []
+    for nid in note_ids[:24]:
+        body, title = load_note_text_for_script(
+            nid,
+            user_ref=user_ref,
+            project_owner_user_uuid=owner,
+        )
+        text = (body or "").strip()
+        if not text:
+            continue
+        parts.append(f"【笔记：{title}】\n{text[:12_000]}")
+    return "\n\n".join(parts).strip()
+
+
 def resolve_social_publish_material_from_notes(
     user_ref: str | None,
     *,
@@ -171,8 +207,6 @@ def resolve_social_publish_material_from_notes(
     material_hint: str = "",
 ) -> str:
     """与生成文章一致：勾选笔记 + 分层 RAG / 合并参考（merge_reference_for_script）。"""
-    from .reference_material import merge_reference_for_script
-
     nids = [str(x).strip() for x in selected_note_ids if str(x).strip()]
     if not nids:
         raise RuntimeError("material_too_short")
@@ -197,10 +231,24 @@ def resolve_social_publish_material_from_notes(
     if owner:
         payload["notes_source_owner_user_id"] = owner
 
-    merged, _meta = merge_reference_for_script(payload, "", "", user_ref=user_ref)
+    meta: dict[str, Any] = {}
+    merged = ""
+    try:
+        merged, meta = _merge_reference_for_social(payload, user_ref)
+    except Exception:
+        logger.exception("social_publish: merge_reference_for_script failed note_count=%s", len(nids))
+        merged = ""
+
+    notes_loaded = int(meta.get("notes_loaded") or 0)
     raw = (merged or "").strip()
+    if notes_loaded < 1 or len(raw) < 40 or (notes_loaded < 1 and raw == _MERGE_PLACEHOLDER):
+        fallback = _fallback_note_bodies_for_social(
+            user_ref, nids, notes_source_owner_user_id=owner
+        )
+        if fallback:
+            raw = fallback
     if len(raw) < 40:
-        raise RuntimeError("material_too_short")
+        raise RuntimeError("notes_material_empty")
     if len(raw) > 48_000:
         raw = raw[:48_000] + "…"
     return raw

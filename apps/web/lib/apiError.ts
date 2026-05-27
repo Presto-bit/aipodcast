@@ -24,7 +24,12 @@ const NOTES_ASK_CODE_MAP: Record<string, string> = {
   too_many_notes: "勾选的资料条数超过上限，请减少勾选后再试。",
   note_notebook_mismatch: "勾选资料与当前笔记本不一致，请刷新后重选。",
   hints_llm_output_invalid: "导读模型返回格式异常，请稍后重试或换一批资料。",
-  hints_failed: "导读暂时无法生成，请稍后重试。"
+  hints_failed: "导读暂时无法生成，请稍后重试。",
+  material_too_short: "勾选资料过短或尚未解析完成，请换选资料或稍后再试",
+  notes_material_empty: "勾选资料暂无可用正文，请确认资料已解析完成后再发布",
+  material_too_short_or_no_notes: "请先勾选左侧参考资料",
+  deepseek_api_key_missing: "服务未配置文案模型，请联系管理员",
+  openai_compatible_empty_content: "文案模型未返回有效内容，请稍后重试"
 };
 
 /** BFF + 知识库问答等：凡出现在 `error` 字段的 code 尽量映射为中文（避免裸 snake_case） */
