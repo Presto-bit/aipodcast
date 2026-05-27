@@ -190,9 +190,11 @@ const eagerCover = index < eagerCoverFirstCount;
 const isPublicTpl = Boolean(w.isPodcastPublicTemplate);
 const templateReuseArgs = isPublicTpl ? ({ publicTemplate: true } as const) : undefined;
 const isScriptDraft = String(w.type || "") === "script_draft";
+const isSocialPublishDraft = String(w.type || "") === "social_publish_draft";
+const isTextOnlyWork = isScriptDraft || isSocialPublishDraft;
 const jobStatus = String(w.status || "").trim();
 const isMediaInFlight =
-  !isScriptDraft && (jobStatus === "queued" || jobStatus === "running");
+  !isTextOnlyWork && (jobStatus === "queued" || jobStatus === "running");
 const showPendingLog =
   variant === "notes_studio" &&
   pendingStudioWork?.id === id &&
@@ -214,7 +216,11 @@ const totalSecForLabel =
       ? baseSec
       : undefined;
 const durationLine = totalSecForLabel !== undefined ? formatClock(totalSecForLabel) : "—";
-const durationCaption = isScriptDraft ? "文章出稿（无音频）" : `时长 ${durationLine}`;
+const durationCaption = isSocialPublishDraft
+  ? "自媒体发布稿（无音频）"
+  : isScriptDraft
+    ? "文章出稿（无音频）"
+    : `时长 ${durationLine}`;
 const created = formatWorkCreatedAtZh(w.createdAt);
 const createdShort = created;
 const publications = publicationsByJobId[id] || [];

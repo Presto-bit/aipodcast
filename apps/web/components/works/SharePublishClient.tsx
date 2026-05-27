@@ -39,7 +39,13 @@ import { presentJobProgressMessageForUser } from "../../lib/jobProgressUserText"
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, type PublishPlatformMeta, PUBLISH_PLATFORMS } from "../../lib/publishPlatforms";
 import { PUBLISH_PLATFORM_ICON_URL } from "../../lib/publishPlatformAssets";
-import { resolveJobScriptBodyText, SCRIPT_TEXT_LIKELY_FULL_MIN_LEN } from "../../lib/jobScriptText";
+import {
+  isSocialPublishDraftJobType,
+  resolveJobManuscriptText,
+  resolveJobScriptBodyText,
+  SCRIPT_TEXT_LIKELY_FULL_MIN_LEN,
+  socialPublishTitleFromResult
+} from "../../lib/jobScriptText";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { buildWorksSharePageUrl, rssFeedUrlForSlug } from "../../lib/rssPublicBase";
 import { jobResultCoverUrl, workCoverImageSrc } from "../../lib/workCoverImage";
@@ -356,7 +362,12 @@ export function SharePublishClient({
       } catch {
         rawTitle = "";
       }
-      rawTitle = rawTitle || String(resultEarly.title || "").trim();
+      rawTitle =
+        rawTitle ||
+        String(resultEarly.title || "").trim() ||
+        (isSocialPublishDraftJobType(String(row.job_type || ""))
+          ? socialPublishTitleFromResult(resultEarly)
+          : "");
 
       const rawCh = resultEarly.audio_chapters;
       const hasCh =
@@ -373,21 +384,27 @@ export function SharePublishClient({
             ? Number.parseFloat(String(durRaw))
             : null;
 
+      const jtLower = String(row.job_type || "").trim().toLowerCase();
       const shortFrom = String(resultEarly.script_text || "").trim();
       let fullScript = shortFrom;
       if (succeeded) {
         if (canceledRef.current) return;
-        const showScriptSpinner = shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN;
+        const showScriptSpinner =
+          !isSocialPublishDraftJobType(jtLower) && shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN;
         if (showScriptSpinner) setScriptResolvePending(true);
         try {
-          fullScript = await resolveJobScriptBodyText(jobId, rowRec, getBearerAuthHeadersSync());
+          fullScript = await resolveJobManuscriptText(jobId, rowRec, getBearerAuthHeadersSync(), {
+            succeeded: true
+          });
         } catch {
           /* ignore */
         } finally {
           if (!canceledRef.current && showScriptSpinner) setScriptResolvePending(false);
         }
       } else {
-        fullScript = shortFrom || String(resultEarly.preview || resultEarly.script_preview || "").trim();
+        fullScript = await resolveJobManuscriptText(jobId, rowRec, getBearerAuthHeadersSync(), {
+          succeeded: false
+        });
       }
 
       if (canceledRef.current) return;
@@ -560,7 +577,10 @@ export function SharePublishClient({
               }
             })() ||
             fallback ||
-            String(resultEarly.title || "").trim();
+            String(resultEarly.title || "").trim() ||
+            (isSocialPublishDraftJobType(String(row.job_type || ""))
+              ? socialPublishTitleFromResult(resultEarly)
+              : "");
           const rawCh = resultEarly.audio_chapters;
           const hasCh =
             Array.isArray(rawCh) &&
@@ -575,14 +595,19 @@ export function SharePublishClient({
                 ? Number.parseFloat(String(durRaw))
                 : null;
 
+          const jtLowerLoad = String(row.job_type || "").trim().toLowerCase();
           const shortFrom = String(resultEarly.script_text || "").trim();
-          const needsArtifactPath = shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN;
+          const needsArtifactPath =
+            !isSocialPublishDraftJobType(jtLowerLoad) &&
+            shortFrom.length < SCRIPT_TEXT_LIKELY_FULL_MIN_LEN;
           if (needsArtifactPath) {
             setScriptResolvePending(true);
           }
           let fullScript = shortFrom;
           try {
-            fullScript = await resolveJobScriptBodyText(jobId, rowRec, getBearerAuthHeadersSync());
+            fullScript = await resolveJobManuscriptText(jobId, rowRec, getBearerAuthHeadersSync(), {
+              succeeded: true
+            });
           } catch {
             /* ignore */
           } finally {
@@ -870,6 +895,8 @@ export function SharePublishClient({
   }, [jobId, layout, shareJobHydrated, formReady, mergeRunningJobSnapshot]);
 
   const scriptDraft = jobType === "script_draft";
+  const socialPublishDraft = jobType === "social_publish_draft";
+  const textOnlyWork = scriptDraft || socialPublishDraft;
 
   const viewerTemplateReadonly = useMemo(() => {
     const row = ownerJobRecord;
@@ -893,7 +920,7 @@ export function SharePublishClient({
     setWorkHubDownloadBusy(true);
     const title = episodeTitle.trim() || jobTitle.trim() || id;
     try {
-      if (scriptDraft) {
+      if (textOnlyWork) {
         await downloadJobManuscriptTxt({ jobId: id, title });
       } else {
         await downloadJobBundleZip({
@@ -912,8 +939,8 @@ export function SharePublishClient({
     } finally {
       setWorkHubDownloadBusy(false);
     }
-  }, [jobId, episodeTitle, jobTitle, scriptDraft, showNotes, viewerTemplateReadonly, showError]);
-  const audioBlocked = scriptDraft || !hasAudio;
+  }, [jobId, episodeTitle, jobTitle, textOnlyWork, showNotes, viewerTemplateReadonly, showError]);
+  const audioBlocked = textOnlyWork || !hasAudio;
   /** 未 hydration 前 blocked 为 false，避免误显分享区；仅 hydration 后才允许复制链接与发布表单。 */
   const showShareAndPublish = shareJobHydrated && !audioBlocked;
 
@@ -925,7 +952,7 @@ export function SharePublishClient({
   }, [listenCoverUrl, ownerJobRecord]);
 
   const audioDurationHintSec = useMemo(() => {
-    if (scriptDraft) return null;
+    if (textOnlyWork) return null;
     if (ownerJobRecord) {
       const r = ownerJobRecord.result as Record<string, unknown>;
       const raw = r.audio_duration_sec;
@@ -940,7 +967,7 @@ export function SharePublishClient({
       return listenDurationSec;
     }
     return null;
-  }, [scriptDraft, ownerJobRecord, listenDurationSec]);
+  }, [textOnlyWork, ownerJobRecord, listenDurationSec]);
 
   const podcastOpenCloseDisplay = useMemo(() => {
     const row = ownerJobRecord;
@@ -1108,10 +1135,10 @@ export function SharePublishClient({
   );
 
   const regenerateVoiceSupported = useMemo(() => {
-    if (!ownerJobRecord || scriptDraft || !hasAudio || viewerTemplateReadonly) return false;
+    if (!ownerJobRecord || textOnlyWork || !hasAudio || viewerTemplateReadonly) return false;
     const jt = String(ownerJobRecord.job_type || "").trim().toLowerCase();
     return jt === "podcast" || jt === "podcast_generate";
-  }, [ownerJobRecord, scriptDraft, hasAudio, viewerTemplateReadonly]);
+  }, [ownerJobRecord, textOnlyWork, hasAudio, viewerTemplateReadonly]);
 
   const startAudioResynth = useCallback(async () => {
     const row = ownerJobRecord;
@@ -1770,7 +1797,7 @@ export function SharePublishClient({
     !loadErr &&
     formReady &&
     Boolean(ownerJobRecord) &&
-    !scriptDraft;
+    !textOnlyWork;
 
   return (
     <main className={`mx-auto min-h-0 w-full ${mainMax} px-3 pb-12 pt-5 sm:px-4`}>
@@ -1804,7 +1831,7 @@ export function SharePublishClient({
               disabled={viewerTemplateReadonly || workHubDownloadBusy}
               onClick={() => void onWorkHubDownloadBundle()}
               className="rounded-xl border border-line bg-fill/40 p-2.5 text-ink hover:bg-fill disabled:opacity-40"
-              aria-label={scriptDraft ? "下载文稿" : "下载作品包"}
+              aria-label={textOnlyWork ? "下载文稿" : "下载作品包"}
               title={
                 viewerTemplateReadonly
                   ? "模板作品仅创建者可下载"
@@ -1961,7 +1988,7 @@ export function SharePublishClient({
             coverUrl={jobCoverUrl}
             navMetaPipe={navMetaPipe}
             hasAudio={hasAudio}
-            scriptDraft={scriptDraft}
+            scriptDraft={textOnlyWork}
             audioBlocked={audioBlocked}
             durationSecHint={audioDurationHintSec}
             manuscriptBody={manuscriptBody}
@@ -2151,8 +2178,10 @@ export function SharePublishClient({
             {!showShareAndPublish ? (
               <div className="rounded-xl border border-warning/35 bg-warning-soft/60 px-4 py-5 text-sm text-warning-ink">
                 <p>
-                  {scriptDraft
-                    ? "纯文稿作品无播客成片，无法通过 RSS 发布音频节目。"
+                  {textOnlyWork
+                    ? socialPublishDraft
+                      ? "自媒体发布稿为纯文稿，无法通过 RSS 发布音频节目；请在作品页复制正文后到平台粘贴。"
+                      : "纯文稿作品无播客成片，无法通过 RSS 发布音频节目。"
                     : "暂无可发布的播客音频，请确认任务已成功完成后再试。"}
                 </p>
               </div>

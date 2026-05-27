@@ -71,7 +71,7 @@ function jobCreatorDisplayName(j: JobRecord): string {
 function succeededContentPeekKinds(j: JobRecord): { audio: boolean; article: boolean } | null {
   if (j.status !== "succeeded") return null;
   const jt = String(j.job_type || "");
-  if (jt === "script_draft") return { audio: false, article: true };
+  if (jt === "script_draft" || jt === "social_publish_draft") return { audio: false, article: true };
   if (jt === "podcast_generate" || jt === "podcast") return { audio: true, article: true };
   if (jt === "tts" || jt === "text_to_speech") return { audio: true, article: false };
   return null;

@@ -5293,6 +5293,7 @@ export default function NotesPage() {
         notebookStyleChips={notebookStyleChips}
         notebookStyleName={notebookStyleItem?.displayName || selectedNotebook}
         createdByPhone={createdByPhone}
+        onSucceeded={() => void fetchPodcastWorks()}
       />
 
       {showArticleModal ? (

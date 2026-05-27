@@ -289,9 +289,21 @@ def _work_item_dict_from_recent_row(
         result = {}
     job_type = str(row.get("job_type") or "")
     preview_src = result.get("preview") or result.get("script_preview") or ""
+    if not preview_src and job_type == "social_publish_draft":
+        preview_src = result.get("body") or ""
     ps = str(preview_src or "").strip()
     preview_list = ps[:400] + ("…" if len(ps) > 400 else "")
     title_raw = str(result.get("title") or "").strip()
+    if not title_raw and job_type == "social_publish_draft":
+        titles_raw = result.get("titles")
+        if isinstance(titles_raw, list):
+            for t in titles_raw:
+                s = str(t).strip()
+                if s:
+                    title_raw = s
+                    break
+        if not title_raw:
+            title_raw = str(result.get("cover_hook") or "").strip()
     if title_raw:
         title = title_raw[:200]
     elif ps:
@@ -404,6 +416,10 @@ def _works_script_notes_extras(result: dict[str, Any], payload: dict[str, Any], 
         st = result.get("script_text")
         if isinstance(st, str) and st.strip():
             out["scriptCharCount"] = len(st.strip())
+    if "scriptCharCount" not in out and job_type == "social_publish_draft":
+        body = result.get("body")
+        if isinstance(body, str) and body.strip():
+            out["scriptCharCount"] = len(body.strip())
     if "scriptCharCount" not in out and job_type in ("text_to_speech", "tts"):
         tx = str(payload.get("text") or "").strip()
         if tx:
@@ -680,7 +696,13 @@ def list_works_api(
         )
         if job_type in ("text_to_speech", "tts"):
             buckets["tts"].append(work)
-        elif job_type in ("script_draft", "podcast_generate", "podcast", "podcast_short_video"):
+        elif job_type in (
+            "script_draft",
+            "social_publish_draft",
+            "podcast_generate",
+            "podcast",
+            "podcast_short_video",
+        ):
             buckets["ai"].append(work)
         else:
             buckets["notes"].append(work)
@@ -1086,7 +1108,13 @@ def list_works_trash_api(
         }
         if job_type in ("text_to_speech", "tts"):
             buckets["tts"].append(work)
-        elif job_type in ("script_draft", "podcast_generate", "podcast", "podcast_short_video"):
+        elif job_type in (
+            "script_draft",
+            "social_publish_draft",
+            "podcast_generate",
+            "podcast",
+            "podcast_short_video",
+        ):
             buckets["ai"].append(work)
         else:
             buckets["notes"].append(work)

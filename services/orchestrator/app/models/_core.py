@@ -2157,7 +2157,7 @@ def list_trashed_works(limit: int = 120, offset: int = 0, user_ref: str | None =
                 LEFT JOIN projects p ON p.id = j.project_id
                 WHERE j.status = 'succeeded'
                   AND j.deleted_at IS NOT NULL
-                  AND j.job_type NOT IN ('note_rag_index', 'note_style_features', 'social_publish_draft')
+                  AND j.job_type NOT IN ('note_rag_index', 'note_style_features')
                   AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
                 ORDER BY j.deleted_at DESC, j.completed_at DESC NULLS LAST, j.created_at DESC
                 LIMIT %s OFFSET %s
@@ -2280,7 +2280,7 @@ def list_recent_works(
                     LEFT JOIN projects p ON p.id = j.project_id
                     WHERE j.status = 'succeeded'
                       AND j.deleted_at IS NULL
-                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features', 'social_publish_draft')
+                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features')
                       AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
                     ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
                     LIMIT %s OFFSET %s
@@ -2296,7 +2296,7 @@ def list_recent_works(
                     LEFT JOIN projects p ON p.id = j.project_id
                     WHERE j.status = 'succeeded'
                       AND j.deleted_at IS NULL
-                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features', 'social_publish_draft')
+                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features')
                       AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
                     ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
                     LIMIT %s OFFSET %s
@@ -2326,7 +2326,7 @@ def aggregate_succeeded_works_metrics(*, user_ref: str | None = None) -> dict[st
                   LEFT JOIN projects p ON p.id = j.project_id
                   WHERE j.status = 'succeeded'
                     AND j.deleted_at IS NULL
-                    AND j.job_type NOT IN ('note_rag_index', 'note_style_features', 'social_publish_draft')
+                    AND j.job_type NOT IN ('note_rag_index', 'note_style_features')
                     AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
                 )
                 SELECT
@@ -2468,7 +2468,7 @@ def list_recent_works_for_public_shared_notebook(
                     LEFT JOIN projects p ON p.id = j.project_id
                     WHERE j.status = 'succeeded'
                       AND j.deleted_at IS NULL
-                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features', 'social_publish_draft')
+                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features')
                       AND COALESCE(j.created_by, p.user_id) = %s::uuid
                       AND (
                            NULLIF(TRIM(j.payload::jsonb->>'notes_notebook'), '') = %s
@@ -2544,7 +2544,7 @@ def list_admin_succeeded_works(
                     LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
                     WHERE j.status = 'succeeded'
                       AND j.deleted_at IS NULL
-                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features', 'social_publish_draft')
+                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features')
                     ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
                     LIMIT %s OFFSET %s
                     """,
@@ -2562,7 +2562,7 @@ def list_admin_succeeded_works(
                     LEFT JOIN users u ON u.id = COALESCE(j.created_by, p.user_id)
                     WHERE j.status = 'succeeded'
                       AND j.deleted_at IS NULL
-                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features', 'social_publish_draft')
+                      AND j.job_type NOT IN ('note_rag_index', 'note_style_features')
                     ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
                     LIMIT %s OFFSET %s
                     """,

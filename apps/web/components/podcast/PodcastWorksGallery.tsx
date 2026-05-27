@@ -50,10 +50,10 @@ const WORK_DOWNLOAD_GATE_TIP = "需有充值记录方可下载";
 
 const PODCAST_TYPES = new Set(["podcast_generate", "podcast", "podcast_short_video"]);
 const TTS_TYPES = new Set(["text_to_speech", "tts"]);
-/** 笔记本出稿（script_draft） */
-const NOTES_WORK_TYPES = new Set(["script_draft"]);
-/** 笔记本页：成片 + 文章出稿 */
-const NOTES_STUDIO_TYPES = new Set(["podcast_generate", "podcast", "script_draft"]);
+/** 笔记本出稿（script_draft / 自媒体发布稿） */
+const NOTES_WORK_TYPES = new Set(["script_draft", "social_publish_draft"]);
+/** 笔记本页：成片 + 文章出稿 + 自媒体发布稿 */
+const NOTES_STUDIO_TYPES = new Set(["podcast_generate", "podcast", "script_draft", "social_publish_draft"]);
 
 type GalleryKeys = {
   hiddenKey: string;
@@ -559,7 +559,10 @@ export default function PodcastWorksGallery({
     setZipBusy(id);
     const title = String(row.displayTitle || row.title || id).trim() || id;
     try {
-      if (String(row.type || "") === "script_draft") {
+      if (
+        String(row.type || "") === "script_draft" ||
+        String(row.type || "") === "social_publish_draft"
+      ) {
         await downloadJobManuscriptTxt({ jobId: id, title });
       } else {
         await downloadJobBundleZip({ jobId: id, title });
@@ -651,12 +654,13 @@ export default function PodcastWorksGallery({
   );
 
   function downloadBusyLabel(workType: string | undefined): string {
-    return String(workType || "") === "script_draft" ? "正在下载…" : "正在打包…";
+    const t = String(workType || "");
+    return t === "script_draft" || t === "social_publish_draft" ? "正在下载…" : "正在打包…";
   }
 
   function downloadLabelForWorkType(type: string | undefined): string {
     const t = String(type || "");
-    if (t === "script_draft") return "下载 TXT 文稿";
+    if (t === "script_draft" || t === "social_publish_draft") return "下载 TXT 文稿";
     return "下载（音频·文稿·配图）";
   }
 
@@ -1017,7 +1021,10 @@ export default function PodcastWorksGallery({
         const title = row.displayTitle || row.title || row.id;
         const id = row.id;
         try {
-          if (String(row.type || "") === "script_draft") {
+          if (
+            String(row.type || "") === "script_draft" ||
+            String(row.type || "") === "social_publish_draft"
+          ) {
             await downloadJobManuscriptTxt({ jobId: id, title });
           } else {
             await downloadJobBundleZip({ jobId: id, title });

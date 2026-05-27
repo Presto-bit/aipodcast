@@ -61,3 +61,45 @@ export async function resolveJobScriptBodyText(
   if (fromResult) return fromResult;
   return previewFallback;
 }
+
+export function isSocialPublishDraftJobType(jobType: string | undefined): boolean {
+  return String(jobType || "").trim().toLowerCase() === "social_publish_draft";
+}
+
+/** 自媒体发布稿终稿正文（result.body 已含话题与互动句） */
+export function socialPublishBodyFromResult(result: Record<string, unknown>): string {
+  return String(result.body || "").trim();
+}
+
+export function socialPublishTitleFromResult(result: Record<string, unknown>): string {
+  const titles = result.titles;
+  if (Array.isArray(titles)) {
+    for (const t of titles) {
+      const s = String(t).trim();
+      if (s) return s;
+    }
+  }
+  return String(result.cover_hook || result.title || "").trim();
+}
+
+/** 作品详情页正文：文章工件 / 自媒体 result.body */
+export async function resolveJobManuscriptText(
+  jobId: string,
+  row: Record<string, unknown>,
+  authHdr: Record<string, string>,
+  options?: { succeeded?: boolean }
+): Promise<string> {
+  const jt = String(row.job_type || "").trim().toLowerCase();
+  const result = coerceJobResult(row.result);
+  if (isSocialPublishDraftJobType(jt)) {
+    return socialPublishBodyFromResult(result);
+  }
+  const shortFrom = String(result.script_text || "").trim();
+  if (options?.succeeded === false) {
+    return shortFrom || String(result.preview || result.script_preview || "").trim();
+  }
+  if (shortFrom.length >= SCRIPT_TEXT_LIKELY_FULL_MIN_LEN) {
+    return shortFrom;
+  }
+  return resolveJobScriptBodyText(jobId, row, authHdr);
+}

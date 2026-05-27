@@ -56,6 +56,8 @@ type Props = {
   /** 风格名称（可改名后的 displayName） */
   notebookStyleName?: string;
   createdByPhone?: string;
+  /** 生成成功并写入作品库后刷新笔记本作品区 */
+  onSucceeded?: (jobId: string) => void;
 };
 
 const inputCls =
@@ -72,7 +74,8 @@ export default function NotesSocialPublishModal({
   notebookStylePrompt = "",
   notebookStyleChips = [],
   notebookStyleName = "",
-  createdByPhone = ""
+  createdByPhone = "",
+  onSucceeded
 }: Props) {
   const prefs = useMemo(() => loadSocialPublishPrefs(), [open]);
   const [step, setStep] = useState<SocialPublishWizardStep>("platform");
@@ -170,6 +173,7 @@ export default function NotesSocialPublishModal({
         setStep("result");
         setShowStudio(true);
         saveSocialPublishPrefs(platform, quickForPayload);
+        onSucceeded?.(jid);
       } catch (err) {
         setError(softenBareErrorLineForUi(String(err instanceof Error ? err.message : err)));
         setStep("options");
@@ -258,6 +262,7 @@ export default function NotesSocialPublishModal({
       saveSocialPublishPrefs(platform, quickForPayload);
       setStep("result");
       setShowStudio(true);
+      onSucceeded?.(jobId);
     } catch (err) {
       clearActiveGenerationJob("social_publish");
       const raw = err instanceof Error ? err.message : String(err);
@@ -279,7 +284,8 @@ export default function NotesSocialPublishModal({
     useNotebookPersona,
     notebookStylePrompt,
     createdByPhone,
-    notebook
+    notebook,
+    onSucceeded
   ]);
 
   function chipBtn(active: boolean) {
@@ -666,6 +672,9 @@ export default function NotesSocialPublishModal({
         {step === "result" && draft ? (
           <div className="mt-4 space-y-3">
             <p className="text-sm font-medium text-success-ink">✓ {platformLabel(platform)} 稿已就绪</p>
+            <p className="text-[11px] text-muted">
+              已保存到本页下方「作品」，关闭或刷新后仍可从作品区打开、复制或下载文稿。
+            </p>
             {"compliance" in draft && draft.compliance ? (
               <p className="text-[11px] text-muted">{draft.compliance.userMessage}</p>
             ) : null}

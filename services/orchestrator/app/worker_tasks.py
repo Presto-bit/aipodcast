@@ -792,6 +792,25 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 return {"status": "cancelled"}
             pack = generate_social_publish_draft(material, platform=platform, options=options)
             result = {**pack, "success": True, "platform": platform}
+            body = str(result.get("body") or "").strip()
+            titles_raw = result.get("titles")
+            title = ""
+            if isinstance(titles_raw, list):
+                for t in titles_raw:
+                    s = str(t).strip()
+                    if s:
+                        title = s
+                        break
+            if not title:
+                title = str(result.get("cover_hook") or "").strip()
+            if title:
+                result["title"] = title[:200]
+            if body:
+                result["preview"] = body[:240]
+                result["script_preview"] = body[:240]
+            _enrich_result_script_notes_meta(
+                result, payload if isinstance(payload, dict) else {}, body
+            )
             if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
                 append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
                 return {"status": "cancelled"}

@@ -2,7 +2,7 @@ import { normalizeHexForMp3 } from "./audioHex";
 import { unusableInsecureHttpOnHttpsPage } from "./insecureHttpOnHttpsPage";
 import { getBearerAuthHeadersSync } from "./authHeaders";
 import { coerceJobResult } from "./coerceJobResult";
-import { resolveJobScriptBodyText } from "./jobScriptText";
+import { resolveJobManuscriptText } from "./jobScriptText";
 
 export type JobBundleExportOptions = {
   jobId: string;
@@ -319,7 +319,10 @@ async function loadJobManuscriptParts(jobId: string): Promise<{
     );
   }
   const result = coerceJobResult(row.result);
-  const scriptBody = await resolveJobScriptBodyText(jobId, row, authHdr);
+  const st = String(row.status || "").trim().toLowerCase();
+  const scriptBody = await resolveJobManuscriptText(jobId, row, authHdr, {
+    succeeded: st === "succeeded"
+  });
   const introT = String(result.tts_intro_text || "").trim();
   const outroT = String(result.tts_outro_text || "").trim();
   const hex = normalizeHexForMp3(String(result.audio_hex || ""));

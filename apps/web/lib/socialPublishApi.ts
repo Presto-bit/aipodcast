@@ -119,7 +119,7 @@ export async function waitForSocialPublishJob(params: {
     await sleep(POLL_INTERVAL_MS);
   }
 
-  throw new Error("生成超时：任务仍在后台执行，请稍后在「创作记录」查看或关闭弹窗后重试");
+  throw new Error("生成超时：任务仍在后台执行，请稍后在笔记本「作品」区或「创作记录」查看");
 }
 
 /**

@@ -76,7 +76,8 @@ export function formatNotesStudioCardSynopsis(
   scriptCharCountDisplay: number | null,
   createdShort: string
 ): string {
-  const genre = isScriptDraft ? "文章" : "播客";
+  const jt = String(w.type || "").trim();
+  const genre = jt === "social_publish_draft" ? "自媒体" : isScriptDraft ? "文章" : "播客";
   const rawTitles = Array.isArray(w.notesSourceTitles) ? w.notesSourceTitles : [];
   const labeled = rawTitles.map((t) => humanNoteSourceLabel(String(t)));
   const firstTitle = labeled.find((t) => t && t !== "未命名笔记") || labeled[0] || "";
@@ -87,13 +88,14 @@ export function formatNotesStudioCardSynopsis(
     : nTotal > 0
       ? `已选 ${nTotal} 条笔记`
       : "参考资料未记录";
-  const metric = isScriptDraft
-    ? scriptCharCountDisplay != null && scriptCharCountDisplay > 0
-      ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
-      : ""
-    : durationLine !== "—"
-      ? `时长 ${durationLine}`
-      : "—";
+  const metric =
+    jt === "script_draft" || jt === "social_publish_draft"
+      ? scriptCharCountDisplay != null && scriptCharCountDisplay > 0
+        ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字`
+        : ""
+      : durationLine !== "—"
+        ? `时长 ${durationLine}`
+        : "—";
   const segs = [genre, sourcePart, metric, createdShort].map((s) => String(s || "").trim()).filter(Boolean);
   return segs.join(" · ");
 }

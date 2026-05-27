@@ -49,6 +49,12 @@ export function shouldHideWorkFromUserGallery(work: Pick<WorkItem, "type">): boo
   return String(work.type || "") === "note_rag_index";
 }
 
+/** 纯文稿类作品（无播客音频）：文章出稿、自媒体发布稿 */
+export function isTextOnlyWorkType(type: string | undefined): boolean {
+  const t = String(type || "").trim();
+  return t === "script_draft" || t === "social_publish_draft";
+}
+
 /** 合并 ai / tts / notes 桶并排序，排除内部任务类型 */
 export function mergeUserFacingWorksByRecency(ai: WorkItem[], tts: WorkItem[], notes: WorkItem[]): WorkItem[] {
   const map = new Map<string, WorkItem>();
