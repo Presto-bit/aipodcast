@@ -7,6 +7,7 @@ import UserErrorBanner from "../../ui/UserErrorBanner";
 import {
   type AuthorIpItem,
   type AuthorIpMaterial,
+  type AuthorIpTrait,
   addAuthorIpMaterial,
   bootstrapAuthorIpsOnce,
   deleteAuthorIp,
@@ -15,19 +16,19 @@ import {
   fetchAuthorIpItem,
   fetchAuthorIpMaterials,
   learnAuthorIp,
-  needsAuthorIpColdStart,
   patchAuthorIp,
   patchAuthorIpMaterialLearning,
   submitAuthorIpColdStart,
-  type AuthorIpTrait
 } from "../../../lib/authorIp";
 import AuthorIpAddMaterialChooserModal from "./AuthorIpAddMaterialChooserModal";
 import AuthorIpArticleUploadModal from "./AuthorIpArticleUploadModal";
-import AuthorIpDistillPanel from "./AuthorIpDistillPanel";
-import AuthorIpIdentityPanel from "./AuthorIpIdentityPanel";
+import AuthorIpCompactModal from "./AuthorIpCompactModal";
+import AuthorIpMainPanel from "./AuthorIpMainPanel";
 import AuthorIpMaterialPreviewModal from "./AuthorIpMaterialPreviewModal";
 import AuthorIpMaterialsColumn from "./AuthorIpMaterialsColumn";
+import AuthorIpPositioningWizard from "./AuthorIpPositioningWizard";
 import AuthorIpResumeModal from "./AuthorIpResumeModal";
+import AuthorIpStyleProfileDrawer from "./AuthorIpStyleProfileDrawer";
 import AuthorIpWorkbenchHeader from "./AuthorIpWorkbenchHeader";
 import {
   countMaterialsByType,
@@ -49,8 +50,9 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [positioningEditing, setPositioningEditing] = useState(false);
-  const [positioningDismissed, setPositioningDismissed] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [positioningOpen, setPositioningOpen] = useState(false);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [positioningError, setPositioningError] = useState<string | null>(null);
 
   const [chooserOpen, setChooserOpen] = useState(false);
@@ -91,20 +93,10 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (loading || !item || positioningDismissed) return;
-    if (needsAuthorIpColdStart(item)) setPositioningEditing(true);
-  }, [loading, item, positioningDismissed]);
-
   const counts = useMemo(() => countMaterialsByType(materials), [materials]);
   const filtered = useMemo(() => filterMaterials(materials, segment), [materials, segment]);
   const readOnly = Boolean(item?.isReadOnly);
-
-  const openPositioningEdit = () => {
-    if (!item) return;
-    setPositioningError(null);
-    setPositioningEditing(true);
-  };
+  const writeHref = `/notes/author-ip/${ipId}/write`;
 
   const submitPositioning = async (payload: {
     whoAmI: string;
@@ -126,7 +118,7 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
         traits: payload.traits
       });
       setItem(updated);
-      setPositioningEditing(false);
+      setPositioningOpen(false);
       await load();
     } catch (e) {
       setPositioningError(e instanceof Error ? e.message : "保存失败");
@@ -279,7 +271,7 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
       <AuthorIpWorkbenchHeader
         item={item}
         busy={busy}
-        writeHref={`/notes/author-ip/${ipId}/write`}
+        writeHref={writeHref}
         onRename={() => {
           setRenameName(item.displayName);
           setRenameError(null);
@@ -292,7 +284,24 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
       {error ? <UserErrorBanner className="mx-4 mt-2 shrink-0" message={error} /> : null}
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 lg:flex-row">
-        <div className="h-[42vh] shrink-0 lg:h-auto lg:w-[30%] lg:min-w-[280px] lg:max-w-[400px]">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line/80 bg-surface">
+          <AuthorIpMainPanel
+            item={item}
+            materials={materials}
+            writeHref={writeHref}
+            readOnly={readOnly}
+            showOnboarding={!onboardingDismissed}
+            onOpenProfile={() => setProfileOpen(true)}
+            onAddMaterial={() => setChooserOpen(true)}
+            onSetupPositioning={() => {
+              setPositioningError(null);
+              setPositioningOpen(true);
+            }}
+            onDismissOnboarding={() => setOnboardingDismissed(true)}
+          />
+        </div>
+
+        <div className="h-[38vh] shrink-0 lg:h-auto lg:w-[32%] lg:min-w-[260px] lg:max-w-[380px]">
           <AuthorIpMaterialsColumn
             materials={filtered}
             segment={segment}
@@ -305,42 +314,42 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
             onDelete={(id) => void onDeleteMaterial(id)}
           />
         </div>
-
-        <div className="flex min-h-[45vh] flex-1 flex-col overflow-hidden rounded-2xl border border-line/80 lg:min-h-0">
-          <div
-            className={
-              positioningEditing
-                ? "min-h-[220px] max-h-[min(48vh,400px)] shrink-0 lg:min-h-[240px]"
-                : "h-[28%] min-h-[140px] shrink-0 lg:h-[30%] lg:min-h-[160px]"
-            }
-          >
-            <AuthorIpIdentityPanel
-              item={item}
-              editing={positioningEditing}
-              busy={busy}
-              positioningError={positioningError}
-              onSubmitPositioning={(p) => void submitPositioning(p)}
-              onLaterPositioning={() => {
-                setPositioningDismissed(true);
-                setPositioningEditing(false);
-              }}
-              onCancelPositioning={() => setPositioningEditing(false)}
-              onEdit={openPositioningEdit}
-            />
-          </div>
-          <div className="min-h-0 flex-1">
-            <AuthorIpDistillPanel
-              item={item}
-              materials={materials}
-              counts={{ experience: counts.experience, article: counts.article + counts.draft }}
-              readOnly={readOnly}
-              busy={busy}
-              highlightTags={highlightTags}
-              onLearn={() => void onLearn()}
-            />
-          </div>
-        </div>
       </div>
+
+      <AuthorIpStyleProfileDrawer
+        open={profileOpen}
+        item={item}
+        materials={materials}
+        counts={{ experience: counts.experience, article: counts.article + counts.draft }}
+        readOnly={readOnly}
+        busy={busy}
+        highlightTags={highlightTags}
+        onClose={() => setProfileOpen(false)}
+        onLearn={() => void onLearn()}
+        onEditPositioning={() => {
+          setProfileOpen(false);
+          setPositioningError(null);
+          setPositioningOpen(true);
+        }}
+      />
+
+      <AuthorIpCompactModal
+        open={positioningOpen && !readOnly}
+        title="完善定位"
+        description="约 2 分钟，帮助系统理解你的写作方向"
+        maxWidthClass="max-w-lg"
+        busy={busy}
+        onClose={() => !busy && setPositioningOpen(false)}
+      >
+        <AuthorIpPositioningWizard
+          busy={busy}
+          error={positioningError}
+          showLater
+          onSubmit={(p) => void submitPositioning(p)}
+          onLater={() => setPositioningOpen(false)}
+          onCancel={() => setPositioningOpen(false)}
+        />
+      </AuthorIpCompactModal>
 
       <AuthorIpAddMaterialChooserModal
         open={chooserOpen}

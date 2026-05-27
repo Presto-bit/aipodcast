@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AuthorIpContentTypeChips, { CHAR_PRESETS } from "../../../../../../components/notes/AuthorIpContentTypeChips";
 import UserErrorBanner from "../../../../../../components/ui/UserErrorBanner";
@@ -27,6 +27,7 @@ import {
 export default function AuthorIpWritePage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const ipId = String(params?.ipId || "");
   const [allIps, setAllIps] = useState<AuthorIpItem[]>([]);
   const [item, setItem] = useState<AuthorIpItem | null>(null);
@@ -84,6 +85,11 @@ export default function AuthorIpWritePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const fromUrl = searchParams?.get("topic")?.trim();
+    if (fromUrl) setTopic((prev) => prev || fromUrl);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!ipId || !topic.trim()) {

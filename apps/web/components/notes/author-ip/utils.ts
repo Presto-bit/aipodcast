@@ -21,6 +21,55 @@ export function maturityLabel(m: string): string {
   return map[m] || m;
 }
 
+/** 用户侧三态（弱化 empty/sketch 等技术成熟度） */
+export function readinessUserLabel(m: string): string {
+  if (m === "ready" || m === "sketch_plus") return "已就绪";
+  if (m === "empty") return "未开始";
+  return "学习中";
+}
+
+export function countLearningMaterials(materials: AuthorIpMaterial[]): number {
+  return materials.filter((m) => {
+    if (m.includeInStyleLearning === false) return false;
+    if (m.materialType !== "experience_card" && m.materialType !== "published" && m.materialType !== "draft") {
+      return false;
+    }
+    const len = m.bodyLength ?? m.body?.length ?? m.preview?.length ?? 0;
+    return len > 0;
+  }).length;
+}
+
+export function buildStyleSummaryText(item: AuthorIpItem | null): string {
+  if (!item) return "";
+  const oneLiner = (item.oneLiner || "").trim();
+  if (oneLiner) return oneLiner;
+  const traits = traitsFromItem(item).filter((t) => t.defaultOn !== false);
+  if (traits.length >= 2) {
+    return traits
+      .slice(0, 3)
+      .map((t) => t.label)
+      .filter(Boolean)
+      .join("、");
+  }
+  return "上传成稿或经历后，系统将自动提炼你的写作风格";
+}
+
+export function buildStyleSummaryChips(item: AuthorIpItem | null, max = 6): string[] {
+  const tags = tagCloudFromItem(item);
+  const traits = traitsFromItem(item)
+    .filter((t) => t.defaultOn !== false && t.label)
+    .map((t) => String(t.label));
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of [...traits, ...tags]) {
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 export function countMaterialsByType(materials: { materialType: string }[]) {
   let experience = 0;
   let article = 0;

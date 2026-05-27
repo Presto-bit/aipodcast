@@ -39,7 +39,7 @@ export default function AuthorIpWorkbenchHeader({
   return (
     <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface/95 px-4 backdrop-blur">
       <Link href="/notes/author-ip" className="shrink-0 text-sm text-muted hover:text-brand">
-        ← 个人风格 IP
+        ← 我的风格IP
       </Link>
       <span className="truncate text-base font-semibold text-ink">{item.displayName}</span>
       <span
