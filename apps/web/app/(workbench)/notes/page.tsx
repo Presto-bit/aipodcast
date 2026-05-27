@@ -3176,7 +3176,7 @@ export default function NotesPage() {
               : "分析师",
           script_constraints: "",
           output_mode: "article",
-          generate_cover: true,
+          generate_cover: false,
           ...(artCoreQuestion.trim() ? { core_question: artCoreQuestion.trim() } : {})
         }
       });
@@ -5403,8 +5403,8 @@ export default function NotesPage() {
                   />
                 </label>
                 {notebookStylePrompt.trim() ? (
-                  <details className="mt-3 rounded-lg border border-line/80 bg-fill/30 px-3 py-2">
-                    <summary className="cursor-pointer text-xs font-medium text-ink">高级 · 写作风格</summary>
+                  <div className="mt-3 rounded-lg border border-line/80 bg-fill/30 px-3 py-2">
+                    <p className="text-xs font-medium text-ink">写作风格</p>
                     <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-ink">
                       <input
                         type="checkbox"
@@ -5421,7 +5421,7 @@ export default function NotesPage() {
                     ) : (
                       <p className="mt-1 text-[10px] text-muted">仅依据所选资料生成，不套用已提炼风格。</p>
                     )}
-                  </details>
+                  </div>
                 ) : null}
                 <label className="mt-3 block text-xs text-ink">
                   AI 提词（可编辑）

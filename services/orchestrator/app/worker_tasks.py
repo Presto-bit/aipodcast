@@ -890,6 +890,12 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 append_job_event(job_id, "log", "封面生成未完全成功", {"detail": cerr[:500]})
         elif _payload_wants_generate_cover(payload, job_type) and not api_key:
             append_job_event(job_id, "log", "跳过封面（未配置 MINIMAX_API_KEY）", {})
+        if (
+            job_type == "script_draft"
+            and str(payload.get("output_mode") or "").strip().lower() == "article"
+            and not str(result.get("cover_image") or "").strip()
+        ):
+            result["cover_image"] = "/brand/cover-placeholder.svg"
         assign_work_result_title_with_optional_llm(
             result,
             payload if isinstance(payload, dict) else {},

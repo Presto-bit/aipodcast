@@ -149,11 +149,16 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     if (open) setBillingGateMessage(null);
   }, [open]);
 
+  /** 打开弹窗或切换体裁时：优先本笔记本自定义人设（usr:），否则回退站点默认 */
   useEffect(() => {
     if (!open) return;
     const preferred = (preferredCreativeTemplateValue || "").trim();
-    if (preferred.startsWith("usr:")) setCreativeTemplateValue(preferred);
-  }, [open, preferredCreativeTemplateValue]);
+    if (preferred.startsWith("usr:")) {
+      setCreativeTemplateValue(preferred);
+      return;
+    }
+    setCreativeTemplateValue(DEFAULT_CREATIVE_TEMPLATE_VALUE);
+  }, [open, preferredCreativeTemplateValue, presetKey]);
 
   const [speakerMode, setSpeakerMode] = useState<"single" | "dual">("dual");
   const [introText, setIntroText] = useState(DEFAULT_INTRO_LINE);
@@ -344,12 +349,6 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);
-
-  /** 体裁默认提词由父级在选择体裁时写入；此处仅在同体裁下重置创作模板，避免每次打开覆盖用户已改文案 */
-  useEffect(() => {
-    if (!open) return;
-    setCreativeTemplateValue(DEFAULT_CREATIVE_TEMPLATE_VALUE);
-  }, [open, presetKey]);
 
   useEffect(() => {
     if (introVoiceFollow) setIntroVoiceKey(voiceKey1);
