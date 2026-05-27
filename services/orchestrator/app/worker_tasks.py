@@ -782,7 +782,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 created_by,
                 selected_note_ids=nids,
                 notes_source_owner_user_id=owner,
-                use_rag=bool(payload.get("use_rag", True)),
+                use_rag=bool(payload.get("use_rag", False)),
                 rag_max_chars=rag_cap,
                 reference_rag_mode=mode,
                 material_hint=hint,
