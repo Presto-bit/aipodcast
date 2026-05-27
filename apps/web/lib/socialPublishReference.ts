@@ -2,8 +2,8 @@
 
 import type { ReferenceRagMode } from "./jobReferencePayload";
 
-/** 自媒体发布：RAG 上限低于「生成文章」，缩短合并耗时、降低网关 504 概率 */
-export const SOCIAL_PUBLISH_RAG_MAX_CHARS = 20_000;
+/** 自媒体发布：默认直读勾选笔记正文，不走分层 RAG（避免把检索说明塞进成稿、并缩短耗时） */
+export const SOCIAL_PUBLISH_RAG_MAX_CHARS = 12_000;
 export const SOCIAL_PUBLISH_REFERENCE_RAG_MODE: ReferenceRagMode = "truncate";
 
 export function buildSocialPublishReferenceBody(input: {
@@ -15,7 +15,8 @@ export function buildSocialPublishReferenceBody(input: {
   return {
     selected_note_ids: ids,
     selected_note_titles: ids.map((_, i) => String(input.selectedNoteTitles?.[i] ?? "").trim()),
-    use_rag: true,
+    use_rag: false,
+    notes_reference_full_text: true,
     rag_max_chars: SOCIAL_PUBLISH_RAG_MAX_CHARS,
     reference_rag_mode: SOCIAL_PUBLISH_REFERENCE_RAG_MODE,
     ...(input.notesSourceOwnerUserId?.trim()

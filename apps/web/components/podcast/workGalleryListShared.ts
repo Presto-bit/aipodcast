@@ -55,14 +55,14 @@ export function truncateByGraphemes(s: string, maxChars: number): string {
 
 export function formatUnifiedWorksNavMetaLine(
   w: PodcastWorkRow,
-  isScriptDraft: boolean,
+  isTextOnlyManuscript: boolean,
   durationLine: string,
   scriptCharCountDisplay: number | null,
   createdZh: string,
   authorDisplay: string
 ): string {
   const primaryK = worksNavPrimaryKind(w.type);
-  const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
+  const metricP = worksNavMetricPart(isTextOnlyManuscript, durationLine, scriptCharCountDisplay);
   return [primaryK, authorDisplay, metricP, createdZh]
     .map((s) => String(s || "").trim())
     .filter(Boolean)

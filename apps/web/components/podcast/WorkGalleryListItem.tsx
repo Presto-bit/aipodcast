@@ -242,12 +242,12 @@ const activeSummary = String(w.activeJobSummary || "").trim();
 const syncedGenBarPct = useSyncedGeneratingBarPct(w, inFlightQueue);
 
 /** 笔记本侧栏「我的作品」或首页「全部作品」紧凑列表：无封面顶栏、标题 + 元数据 + 操作（文稿在紧凑模式下仍走下方大图卡片分支） */
-if (useNotesStyleCards && !(useCompactAllLayout && isScriptDraft)) {
+if (useNotesStyleCards && !(useCompactAllLayout && isTextOnlyWork)) {
   const headlineFull = String(w.displayTitle || "").trim() || id;
   const headlineShown = truncateByGraphemes(headlineFull, NOTES_STUDIO_REF_TITLE_MAX_CHARS);
   const metaLine = formatUnifiedWorksNavMetaLine(
     w,
-    isScriptDraft,
+    isTextOnlyWork,
     durationLine,
     scriptCharCountDisplay,
     createdShort,
@@ -324,7 +324,7 @@ if (useNotesStyleCards && !(useCompactAllLayout && isScriptDraft)) {
         ) : null}
         <div className="mt-0.5 flex items-center justify-between gap-1 border-t border-line/50 pt-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-1">
-            {!isScriptDraft ? (
+            {!isTextOnlyWork ? (
               isMediaInFlight ? (
                 <span className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border border-line/80 bg-fill/60 px-1.5 text-[9px] font-medium text-muted">
                   {jobStatus === "queued" ? "排队" : "生成"}
@@ -391,7 +391,7 @@ if (variant === "all") {
   const dayP = formatWorkCreatedAtZh(w.createdAt);
   const navMetaLine = formatUnifiedWorksNavMetaLine(
     w,
-    isScriptDraft,
+    isTextOnlyWork,
     durationLine,
     scriptCharCountDisplay,
     dayP,
@@ -451,12 +451,14 @@ if (variant === "all") {
           />
         ) : (
           <div className="flex h-full min-h-[3rem] flex-col items-center justify-center gap-1 bg-gradient-to-br from-brand/[0.14] via-fill to-cta/[0.12] px-2 text-center">
-            <WorkTypeIcon scriptDraft={isScriptDraft} size={28} className="text-brand/80" aria-hidden />
+            <WorkTypeIcon scriptDraft={isTextOnlyWork} size={28} className="text-brand/80" aria-hidden />
             <span className="text-[10px] font-medium leading-tight text-muted">
-              {isScriptDraft
+              {isTextOnlyWork
                 ? inFlightQueue
                   ? "正文生成中…"
-                  : "文稿作品"
+                  : isSocialPublishDraft
+                    ? "自媒体文稿"
+                    : "文稿作品"
                 : inFlightQueue
                   ? "音频生成中…"
                   : "待生成或暂无封面"}
@@ -465,7 +467,7 @@ if (variant === "all") {
         )}
         {inFlightQueue ? <ActiveJobCoverProgressBar pct={syncedGenBarPct} /> : null}
       </Link>
-      {isScriptDraft ? (
+      {isTextOnlyWork ? (
         <div className="shrink-0 border-b border-line/70 px-3 py-2">
           <p className="line-clamp-2 text-sm font-semibold leading-snug text-ink" title={w.displayTitle}>
             {w.displayTitle}
@@ -532,7 +534,7 @@ if (variant === "all") {
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
-        {isScriptDraft ? (
+        {isTextOnlyWork ? (
           <>
             {inFlightQueue ? (
               <button
@@ -676,14 +678,14 @@ if (variant === "all") {
 
 const navMetaLineCard = formatUnifiedWorksNavMetaLine(
   w,
-  isScriptDraft,
+  isTextOnlyWork,
   durationLine,
   scriptCharCountDisplay,
   created,
   worksNavAuthorDisplay
 );
 const navMetaLineCardShown = inFlightQueue && activeSummary ? activeSummary : navMetaLineCard;
-const scriptCardMetaTitle = isScriptDraft
+const scriptCardMetaTitle = isTextOnlyWork
   ? `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, created)}\n\n${navMetaLineCardShown}`
   : "";
 
@@ -740,12 +742,14 @@ return (
         />
       ) : (
         <div className="flex h-full min-h-[3rem] flex-col items-center justify-center gap-1 bg-gradient-to-br from-brand/[0.14] via-fill to-cta/[0.12] px-2 text-center">
-          <WorkTypeIcon scriptDraft={isScriptDraft} size={28} className="text-brand/80" aria-hidden />
+          <WorkTypeIcon scriptDraft={isTextOnlyWork} size={28} className="text-brand/80" aria-hidden />
           <span className="text-[10px] font-medium leading-tight text-muted">
-            {isScriptDraft
+            {isTextOnlyWork
               ? inFlightQueue
                 ? "正文生成中…"
-                : "文稿作品"
+                : isSocialPublishDraft
+                  ? "自媒体文稿"
+                  : "文稿作品"
               : inFlightQueue
                 ? "音频生成中…"
                 : "待生成或暂无封面"}
@@ -755,7 +759,7 @@ return (
       {inFlightQueue ? <ActiveJobCoverProgressBar pct={syncedGenBarPct} /> : null}
     </Link>
 
-    {isScriptDraft ? (
+    {isTextOnlyWork ? (
       <div className="shrink-0 border-t border-line/70 px-3 py-2">
         <p className="line-clamp-2 text-sm font-semibold leading-snug text-ink" title={w.displayTitle}>
           {w.displayTitle}
@@ -845,7 +849,7 @@ return (
       </p>
     ) : null}
     <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
-      {isScriptDraft ? (
+      {isTextOnlyWork ? (
         <>
           {inFlightQueue ? (
             <button

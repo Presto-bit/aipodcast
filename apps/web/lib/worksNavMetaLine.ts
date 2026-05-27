@@ -1,4 +1,5 @@
 import type { JobRecord } from "./types";
+import { isTextOnlyWorkType } from "./worksTypes";
 
 const TTS_TYPES = new Set(["text_to_speech", "tts"]);
 
@@ -6,16 +7,17 @@ const TTS_TYPES = new Set(["text_to_speech", "tts"]);
 export function worksNavPrimaryKind(type: string | undefined): string {
   const t = String(type || "");
   if (t === "script_draft") return "文章";
+  if (t === "social_publish_draft") return "自媒体";
   if (TTS_TYPES.has(t)) return "文本转语音";
   return "播客";
 }
 
 export function worksNavMetricPart(
-  isScriptDraft: boolean,
+  isTextOnlyManuscript: boolean,
   durationLine: string,
   scriptCharCountDisplay: number | null
 ): string {
-  if (isScriptDraft) {
+  if (isTextOnlyManuscript) {
     // 文稿类不展示时长；统计口径为字符数（与生成参数 script_target_chars 一致）。
     return scriptCharCountDisplay != null && scriptCharCountDisplay > 0
       ? `约 ${Math.round(scriptCharCountDisplay).toLocaleString()} 字符`
@@ -72,6 +74,10 @@ function scriptCharCountFromJob(job: JobRecord): number | null {
   }
   const st = String(result.script_text || "").trim();
   if (st) return st.length;
+  if (String(job.job_type || "") === "social_publish_draft") {
+    const body = String(result.body || "").trim();
+    if (body) return body.length;
+  }
   return null;
 }
 
@@ -91,11 +97,11 @@ export function formatUnifiedWorksNavMetaLineFromJobRecord(
   opts?: { manuscriptBody?: string }
 ): string {
   const result = (job.result || {}) as Record<string, unknown>;
-  const isScriptDraft = String(job.job_type || "") === "script_draft";
+  const textOnly = isTextOnlyWorkType(job.job_type);
   const primaryK = worksNavPrimaryKind(job.job_type);
-  const durationLine = isScriptDraft ? "—" : durationLineFromJobResult(result);
+  const durationLine = textOnly ? "—" : durationLineFromJobResult(result);
   const scriptCharCountDisplay = scriptCharCountForWorksNavDisplay(job, opts?.manuscriptBody);
-  const metricP = worksNavMetricPart(isScriptDraft, durationLine, scriptCharCountDisplay);
+  const metricP = worksNavMetricPart(textOnly, durationLine, scriptCharCountDisplay);
   const createdZh = formatWorkCreatedAtZh(job.completed_at || job.created_at);
   return [primaryK, authorDisplay, metricP, createdZh]
     .map((s) => String(s || "").trim())

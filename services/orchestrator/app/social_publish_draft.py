@@ -149,10 +149,14 @@ def _social_llm_max_tokens(options: dict[str, Any]) -> int:
 
 def _fallback_from_material(raw: str, platform: str) -> dict[str, Any]:
     """LLM/合规失败时：用勾选资料摘录组装可编辑草稿，避免通用占位话术。"""
-    excerpt = (raw or "").strip()[:4000]
+    excerpt = _strip_social_material_boilerplate((raw or "").strip())[:4000]
     if len(excerpt) < 40:
         return _fallback_xhs() if platform == "xiaohongshu" else _fallback_mp()
-    lines = [ln.strip() for ln in excerpt.splitlines() if ln.strip()]
+    lines = [
+        ln.strip()
+        for ln in excerpt.splitlines()
+        if ln.strip() and not ln.strip().startswith(("【", "##", "---"))
+    ]
     headline = (lines[0] if lines else excerpt)[:28] or "资料要点整理"
     core = "\n".join(lines[1:12]) if len(lines) > 1 else excerpt
     core = core[:2400].strip() or excerpt[:1200]
@@ -277,6 +281,47 @@ _MERGE_PLACEHOLDER = "请介绍 AI Native 应用架构"
 # 送入 LLM 的素材上限（字符）；合并参考可达 48k，过长易触发上游 context/超时错误
 _LLM_MATERIAL_MAX_CHARS = 18_000
 
+# RAG/合并参考时的系统说明块，不应进入发布稿正文或 fallback 摘录
+_SOCIAL_MATERIAL_BOILERPLATE_MARKERS = (
+    "【勾选笔记·摘要与向量检索】",
+    "【来源清单】",
+    "【来源数量锁定】",
+    "## 异步摘要",
+    "与任务相关的原文摘录",
+    "向量检索，勾选笔记范围内",
+)
+
+
+def _strip_social_material_boilerplate(text: str) -> str:
+    """去掉分层 RAG 说明与来源锁定提示，保留笔记正文与摘录。"""
+    s = (text or "").strip()
+    if not s:
+        return ""
+    if "【勾选笔记·摘要与向量检索】" in s:
+        parts = s.split("---", 1)
+        if len(parts) > 1:
+            s = parts[1].strip()
+    lines: list[str] = []
+    skip_block = False
+    for ln in s.splitlines():
+        t = ln.strip()
+        if any(m in t for m in _SOCIAL_MATERIAL_BOILERPLATE_MARKERS):
+            skip_block = True
+            continue
+        if skip_block and t.startswith("##"):
+            skip_block = False
+        if skip_block and not t:
+            continue
+        if t.startswith("【笔记：") or (t and not t.startswith("【") and not t.startswith("## 异步")):
+            skip_block = False
+        if skip_block:
+            continue
+        if t.startswith("## 异步摘要"):
+            continue
+        lines.append(ln)
+    out = "\n".join(lines).strip()
+    return out if len(out) >= 40 else s
+
 
 def _merge_reference_for_social(
     payload: dict[str, Any],
@@ -321,10 +366,19 @@ def resolve_social_publish_material_from_notes(
     reference_rag_mode: str = "truncate",
     material_hint: str = "",
 ) -> str:
-    """与生成文章一致：勾选笔记 + 分层 RAG / 合并参考（merge_reference_for_script）。"""
+    """优先直读勾选笔记正文；仅在正文不足时再合并参考（可选 RAG）。"""
     nids = [str(x).strip() for x in selected_note_ids if str(x).strip()]
     if not nids:
         raise RuntimeError("material_too_short")
+    owner = str(notes_source_owner_user_id or "").strip() or None
+    bodies = _fallback_note_bodies_for_social(user_ref, nids, notes_source_owner_user_id=owner)
+    bodies = _strip_social_material_boilerplate(bodies)
+    if len(bodies) >= 200:
+        raw = bodies
+        if len(raw) > 48_000:
+            raw = raw[:48_000] + "…"
+        return raw
+
     mode = str(reference_rag_mode or "truncate").strip().lower()
     if mode not in ("truncate", "keyword", "full_coverage", "hybrid"):
         mode = "truncate"
@@ -342,7 +396,6 @@ def resolve_social_publish_material_from_notes(
         "text": (material_hint or "根据勾选资料撰写自媒体发布稿").strip()[:2000],
         "script_language": "中文",
     }
-    owner = str(notes_source_owner_user_id or "").strip()
     if owner:
         payload["notes_source_owner_user_id"] = owner
 
@@ -355,13 +408,10 @@ def resolve_social_publish_material_from_notes(
         merged = ""
 
     notes_loaded = int(meta.get("notes_loaded") or 0)
-    raw = (merged or "").strip()
-    if notes_loaded < 1 or len(raw) < 40 or (notes_loaded < 1 and raw == _MERGE_PLACEHOLDER):
-        fallback = _fallback_note_bodies_for_social(
-            user_ref, nids, notes_source_owner_user_id=owner
-        )
-        if fallback:
-            raw = fallback
+    raw = _strip_social_material_boilerplate((merged or "").strip())
+    if notes_loaded < 1 or len(raw) < 40 or raw == _MERGE_PLACEHOLDER:
+        if bodies:
+            raw = bodies
     if len(raw) < 40:
         raise RuntimeError("notes_material_empty")
     if len(raw) > 48_000:
@@ -389,7 +439,7 @@ def generate_social_publish_draft(
         "硬性要求：正文必须引用素材中的具体事实、数据、步骤或观点，禁止输出与素材无关的通用模板"
         "（如「要点一/要点二」「先把最重要的信息说清楚」等空泛占位）。"
     )
-    llm_material = _trim_material_for_llm(raw)
+    llm_material = _trim_material_for_llm(_strip_social_material_boilerplate(raw))
 
     if platform == "xiaohongshu":
         system = _xhs_system_prompt(opt_block)
