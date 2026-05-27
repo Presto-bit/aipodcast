@@ -558,7 +558,7 @@ def create_job_api(req: JobCreateRequest, request: Request):
     owner_src = str(payload.get("notes_source_owner_user_id") or "").strip()
     nb_src = str(payload.get("notes_notebook") or "").strip()
     jt0 = str(req.job_type or "").strip().lower()
-    if owner_src and nb_src and jt0 in ("script_draft", "podcast_generate", "podcast"):
+    if owner_src and nb_src and jt0 in ("script_draft", "podcast_generate", "podcast", "social_publish_draft"):
         if get_shared_notebook_public_access(owner_src, nb_src) != "edit":
             raise HTTPException(status_code=403, detail="shared_notebook_edit_required")
         sn = payload.get("selected_note_ids")

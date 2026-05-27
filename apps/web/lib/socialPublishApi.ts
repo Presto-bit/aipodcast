@@ -1,11 +1,16 @@
 import { apiErrorMessage } from "./apiError";
+import { createJob } from "./api";
 import { buildSocialPublishReferenceBody } from "./socialPublishReference";
 import { ensureXhsTitles } from "./socialPublishPresets";
+import { NOTES_PODCAST_PROJECT_NAME } from "./notesProject";
 import type {
   SocialPublishCompliance,
   SocialPublishDraft,
   SocialPublishPlatform
 } from "./socialPublishTypes";
+
+const POLL_INTERVAL_MS = 2500;
+const POLL_MAX_MS = 20 * 60 * 1000;
 
 function parseCompliance(data: Record<string, unknown>): SocialPublishCompliance | undefined {
   const c = data.compliance;
@@ -20,7 +25,7 @@ function parseCompliance(data: Record<string, unknown>): SocialPublishCompliance
   };
 }
 
-function mapContentDraft(
+export function mapContentDraft(
   data: Record<string, unknown>,
   platform: SocialPublishPlatform
 ): SocialPublishDraft {
@@ -48,7 +53,125 @@ function mapContentDraft(
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchJobRow(jobId: string, authHeaders: Record<string, string>): Promise<Record<string, unknown>> {
+  const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: { ...authHeaders }
+  });
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    throw new Error(apiErrorMessage(data, `查询任务失败（HTTP ${res.status}）`));
+  }
+  return data;
+}
+
+/** 轮询已有任务直至终态（与生成文章一致，不占用长连接） */
+export async function waitForSocialPublishJob(params: {
+  jobId: string;
+  platform: SocialPublishPlatform;
+  authHeaders: Record<string, string>;
+  onProgress?: (message: string, progress?: number) => void;
+}): Promise<SocialPublishDraft> {
+  const jobId = String(params.jobId || "").trim();
+  if (!jobId) throw new Error("任务编号无效");
+
+  const deadline = Date.now() + POLL_MAX_MS;
+  let lastMsg = "";
+
+  while (Date.now() < deadline) {
+    const row = await fetchJobRow(jobId, params.authHeaders);
+    const st = String(row.status || "").trim();
+    const progress = typeof row.progress === "number" ? row.progress : undefined;
+
+    if (st === "succeeded") {
+      const result = row.result;
+      if (!result || typeof result !== "object") {
+        throw new Error("任务已完成但未返回发布稿内容");
+      }
+      const platRaw = String((result as Record<string, unknown>).platform || params.platform);
+      const plat: SocialPublishPlatform =
+        platRaw === "wechat_mp" ? "wechat_mp" : "xiaohongshu";
+      return mapContentDraft(result as Record<string, unknown>, plat);
+    }
+    if (st === "failed" || st === "cancelled") {
+      const errMsg = String(row.error_message || "").trim();
+      throw new Error(
+        errMsg || (st === "cancelled" ? "任务已取消" : apiErrorMessage(row, "生成发布稿失败"))
+      );
+    }
+
+    if (progress != null && progress >= 55) {
+      lastMsg = "正在调用模型生成发布稿…";
+    } else if (progress != null && progress >= 18) {
+      lastMsg = "正在合并参考资料…";
+    } else if (st === "queued") {
+      lastMsg = "排队中，请稍候…";
+    } else {
+      lastMsg = "处理中…";
+    }
+    params.onProgress?.(lastMsg, progress);
+
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  throw new Error("生成超时：任务仍在后台执行，请稍后在「创作记录」查看或关闭弹窗后重试");
+}
+
+/**
+ * 与「生成文章」相同：创建 AI 队列任务并轮询，避免同步 HTTP 触发网关 504。
+ */
 export async function fetchSocialPublishDraft(params: {
+  platform: SocialPublishPlatform;
+  options: Record<string, unknown>;
+  sourceType: string;
+  authHeaders: Record<string, string>;
+  selectedNoteIds: string[];
+  selectedNoteTitles?: string[];
+  notesSourceOwnerUserId?: string | null;
+  notebookName?: string;
+  createdBy?: string | null;
+  onProgress?: (message: string, progress?: number) => void;
+}): Promise<SocialPublishDraft> {
+  const refBody = buildSocialPublishReferenceBody({
+    selectedNoteIds: params.selectedNoteIds,
+    selectedNoteTitles: params.selectedNoteTitles,
+    notesSourceOwnerUserId: params.notesSourceOwnerUserId
+  });
+  const job = await createJob({
+    project_name: NOTES_PODCAST_PROJECT_NAME,
+    job_type: "social_publish_draft",
+    queue_name: "ai",
+    created_by: params.createdBy || undefined,
+    payload: {
+      platform: params.platform,
+      options: params.options,
+      source_type: params.sourceType,
+      ...(params.notebookName?.trim() ? { notes_notebook: params.notebookName.trim() } : {}),
+      ...refBody
+    }
+  });
+  const jobId = String(job.id || "").trim();
+  if (!jobId) {
+    throw new Error("创建发布稿任务失败：未返回任务编号");
+  }
+
+  params.onProgress?.("已提交云端队列，正在合并资料…", 10);
+
+  return waitForSocialPublishJob({
+    jobId,
+    platform: params.platform,
+    authHeaders: params.authHeaders,
+    onProgress: params.onProgress
+  });
+}
+
+/** @deprecated 同步接口保留给兼容；前端请使用 fetchSocialPublishDraft（异步任务） */
+export async function fetchSocialPublishDraftSync(params: {
   platform: SocialPublishPlatform;
   options: Record<string, unknown>;
   sourceType: string;
@@ -76,7 +199,7 @@ export async function fetchSocialPublishDraft(params: {
   if (!res.ok || data.success === false) {
     if (res.status === 504 || res.status === 524) {
       throw new Error(
-        "网关超时（504）：发布稿需合并资料并调用大模型，整体常超过 60 秒。请将 Nginx/CDN/SLB 对 `/api/social/` 的回源读超时调至 ≥180 秒，或减少勾选资料后重试。"
+        "网关超时（504）：请改用异步生成（刷新页面后重试），或调大 Nginx/CDN 对 /api/social/ 的超时。"
       );
     }
     const msg = apiErrorMessage(data, "生成发布稿失败");

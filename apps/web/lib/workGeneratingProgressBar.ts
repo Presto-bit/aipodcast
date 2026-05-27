@@ -7,6 +7,7 @@ export function defaultJobGenEstimateSec(jobType: string): number {
   const j = String(jobType || "").toLowerCase();
   if (j.includes("short_video")) return 420;
   if (j === "script_draft") return 420;
+  if (j === "social_publish_draft") return 120;
   return 540;
 }
 

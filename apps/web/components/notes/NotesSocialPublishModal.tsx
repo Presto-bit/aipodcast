@@ -2,8 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { IconChevronLeft, IconClipboard, IconX } from "../icons";
+import {
+  clearActiveGenerationJob,
+  readActiveGenerationJob,
+  setActiveGenerationJob
+} from "../../lib/activeJobSession";
 import { apiErrorMessage, softenBareErrorLineForUi } from "../../lib/apiError";
-import { fetchSocialPublishDraft } from "../../lib/socialPublishApi";
+import { createJob } from "../../lib/api";
+import { waitForSocialPublishJob } from "../../lib/socialPublishApi";
+import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
+import { buildSocialPublishReferenceBody } from "../../lib/socialPublishReference";
 import {
   buildOptionsPayload,
   clampTargetChars,
@@ -46,6 +54,7 @@ type Props = {
   notebookStyleChips?: string[];
   /** 风格名称（可改名后的 displayName） */
   notebookStyleName?: string;
+  createdByPhone?: string;
 };
 
 const inputCls =
@@ -61,7 +70,8 @@ export default function NotesSocialPublishModal({
   authHeaders,
   notebookStylePrompt = "",
   notebookStyleChips = [],
-  notebookStyleName = ""
+  notebookStyleName = "",
+  createdByPhone = ""
 }: Props) {
   const prefs = useMemo(() => loadSocialPublishPrefs(), [open]);
   const [step, setStep] = useState<SocialPublishWizardStep>("platform");
@@ -92,6 +102,7 @@ export default function NotesSocialPublishModal({
         (notebookStylePrompt.trim().length > 72 ? "…" : "");
   const notebookStyleCardTitle = (notebookStyleName || "本笔记本风格").trim();
   const [useNotebookPersona, setUseNotebookPersona] = useState(true);
+  const [progressHint, setProgressHint] = useState("");
 
   const preset = useMemo(() => publishPresetBundle(platform), [platform]);
 
@@ -112,6 +123,7 @@ export default function NotesSocialPublishModal({
     setShowStudio(false);
     setShowGuide(false);
     setUseNotebookPersona(Boolean(notebookStylePrompt.trim()));
+    setProgressHint("");
   }, [open, noteIds, notebookStylePrompt]);
 
   useEffect(() => {
@@ -132,6 +144,36 @@ export default function NotesSocialPublishModal({
   );
 
   const personaValid = isPersonaValid(persona);
+
+  useEffect(() => {
+    if (!open) return;
+    const jid = readActiveGenerationJob("social_publish");
+    if (!jid) return;
+    setStep("generating");
+    setBusy(true);
+    setError("");
+    void (async () => {
+      try {
+        const result = await waitForSocialPublishJob({
+          jobId: jid,
+          platform,
+          authHeaders,
+          onProgress: (msg) => setProgressHint(msg)
+        });
+        setDraft(result);
+        setStep("result");
+        setShowStudio(true);
+        saveSocialPublishPrefs(platform, quickForPayload);
+      } catch (err) {
+        setError(softenBareErrorLineForUi(String(err instanceof Error ? err.message : err)));
+        setStep("options");
+      } finally {
+        clearActiveGenerationJob("social_publish");
+        setBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅打开时恢复未完成任务
+  }, [open]);
 
   const handlePlatformPick = (p: SocialPublishPlatform) => {
     setPlatform(p);
@@ -177,20 +219,41 @@ export default function NotesSocialPublishModal({
         personaForPayload = { ...personaForPayload, genders: ["any"] };
       }
       const options = buildOptionsPayload(quickForPayload, advanced, personaForPayload, platform);
-      const result = await fetchSocialPublishDraft({
-        platform,
-        options,
-        sourceType: "notes_rag",
-        authHeaders,
+      const refBody = buildSocialPublishReferenceBody({
         selectedNoteIds: noteIds,
         selectedNoteTitles,
         notesSourceOwnerUserId
       });
+      const job = await createJob({
+        project_name: NOTES_PODCAST_PROJECT_NAME,
+        job_type: "social_publish_draft",
+        queue_name: "ai",
+        created_by: createdByPhone || undefined,
+        payload: {
+          platform,
+          options,
+          source_type: "notes_rag",
+          notes_notebook: notebook.trim(),
+          ...refBody
+        }
+      });
+      const jobId = String(job.id || "").trim();
+      if (!jobId) throw new Error("创建发布稿任务失败");
+      setActiveGenerationJob("social_publish", jobId);
+      setProgressHint("已提交云端队列…");
+      const result = await waitForSocialPublishJob({
+        jobId,
+        platform,
+        authHeaders,
+        onProgress: (msg) => setProgressHint(msg)
+      });
+      clearActiveGenerationJob("social_publish");
       setDraft(result);
       saveSocialPublishPrefs(platform, quickForPayload);
       setStep("result");
       setShowStudio(true);
     } catch (err) {
+      clearActiveGenerationJob("social_publish");
       const raw = err instanceof Error ? err.message : String(err);
       setError(softenBareErrorLineForUi(raw) || apiErrorMessage({}, "生成发布稿失败"));
       setStep("options");
@@ -208,7 +271,9 @@ export default function NotesSocialPublishModal({
     platform,
     persona,
     useNotebookPersona,
-    notebookStylePrompt
+    notebookStylePrompt,
+    createdByPhone,
+    notebook
   ]);
 
   function chipBtn(active: boolean) {
@@ -554,7 +619,7 @@ export default function NotesSocialPublishModal({
                   />
                 </label>
                 <p className="text-[10px] text-muted">
-                  与「生成文章」相同：仅依据左侧勾选的参考资料（RAG 检索合并）生成，不包含对话回答。
+                  与「生成文章」相同：提交云端队列后轮询结果，不占长连接，避免网关 504；仅依据左侧勾选资料生成。
                 </p>
             </>
             <div className="flex justify-end gap-2">
@@ -580,11 +645,9 @@ export default function NotesSocialPublishModal({
         {step === "generating" ? (
           <div className="mt-8 flex flex-col items-center gap-3 py-6 text-center">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-            <p className="text-sm text-ink">正在按 {platformLabel(platform)} 版式改写…</p>
+            <p className="text-sm text-ink">正在生成 {platformLabel(platform)} 发布稿…</p>
             <p className="text-[11px] text-muted">
-              {platform === "xiaohongshu"
-                ? "结构化生成后将在后台自动合规优化"
-                : "通常 20–40 秒"}
+              {progressHint || "与「生成文章」相同：已提交云端队列，关闭弹窗后任务仍会继续"}
             </p>
           </div>
         ) : null}

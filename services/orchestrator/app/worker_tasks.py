@@ -751,6 +751,53 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             append_job_event(job_id, "complete", "风格特征已缓存", {"progress": 100})
             return out
 
+        if job_type == "social_publish_draft":
+            from .provider_router import deepseek_text_config_ok
+            from .social_publish_draft import (
+                generate_social_publish_draft,
+                resolve_social_publish_material_from_notes,
+            )
+
+            if not deepseek_text_config_ok():
+                raise RuntimeError("deepseek_api_key_missing")
+            platform = str(payload.get("platform") or "xiaohongshu").strip().lower()
+            if platform not in ("xiaohongshu", "wechat_mp"):
+                raise RuntimeError("platform_must_be_xiaohongshu_or_wechat_mp")
+            options = payload.get("options") if isinstance(payload.get("options"), dict) else {}
+            nids = [str(x).strip() for x in (payload.get("selected_note_ids") or []) if str(x).strip()]
+            if not nids:
+                raise RuntimeError("material_too_short_or_no_notes")
+            append_job_event(job_id, "progress", "正在合并参考资料", {"progress": 18})
+            if _guard_cancelled(job_id):
+                return {"status": "cancelled"}
+            persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+            hint = str(persona.get("otherRequirements") or "")[:500]
+            owner = str(payload.get("notes_source_owner_user_id") or "").strip() or None
+            try:
+                rag_cap = int(payload.get("rag_max_chars") or 20_000)
+            except (TypeError, ValueError):
+                rag_cap = 20_000
+            mode = str(payload.get("reference_rag_mode") or "truncate").strip().lower()
+            material = resolve_social_publish_material_from_notes(
+                created_by,
+                selected_note_ids=nids,
+                notes_source_owner_user_id=owner,
+                use_rag=bool(payload.get("use_rag", True)),
+                rag_max_chars=rag_cap,
+                reference_rag_mode=mode,
+                material_hint=hint,
+            )
+            append_job_event(job_id, "progress", "正在生成发布稿", {"progress": 55})
+            if _guard_cancelled(job_id):
+                return {"status": "cancelled"}
+            pack = generate_social_publish_draft(material, platform=platform, options=options)
+            result = {**pack, "success": True, "platform": platform}
+            if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
+                append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
+                return {"status": "cancelled"}
+            append_job_event(job_id, "complete", "发布稿已生成", {"progress": 100})
+            return result
+
         append_job_event(job_id, "progress", "正在汇总参考材料（多 URL / 笔记 / 附加文本）", {"progress": 18})
         stop_ref, thr_ref = _start_progress_heartbeat(
             job_id,

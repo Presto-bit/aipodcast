@@ -20,6 +20,7 @@ const JOB_TYPE_LABEL: Record<string, string> = {
   text_to_speech: "文本转语音",
   voice_clone: "声音复刻",
   note_import: "笔记导入",
+  social_publish_draft: "自媒体发布稿",
   default: "创作任务"
 };
 

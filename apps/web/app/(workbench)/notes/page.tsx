@@ -5292,6 +5292,7 @@ export default function NotesPage() {
         notebookStylePrompt={notebookStylePrompt}
         notebookStyleChips={notebookStyleChips}
         notebookStyleName={notebookStyleItem?.displayName || selectedNotebook}
+        createdByPhone={createdByPhone}
       />
 
       {showArticleModal ? (
