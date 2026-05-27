@@ -32,7 +32,6 @@ const NOTES_ASK_CODE_MAP: Record<string, string> = {
   social_publish_failed: "生成发布稿失败，请稍后重试或减少勾选资料",
   social_publish_pack_failed: "发布稿组装失败，请稍后重试",
   compliance_failed: "文案合规处理未通过，请调整选项或资料后重试",
-  upstream_error: "文案模型服务异常，请稍后重试",
   upstream_error_empty_body: "编排服务无响应，请确认服务已启动后重试",
   platform_must_be_xiaohongshu_or_wechat_mp: "平台参数无效，请刷新页面后重试"
 };
