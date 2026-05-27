@@ -37,6 +37,7 @@ export default function NotebookStyleModal({
 }: Props) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [renameSaving, setRenameSaving] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
 
@@ -76,12 +77,15 @@ export default function NotebookStyleModal({
       return;
     }
     setRenameError(null);
+    setRenameSaving(true);
     try {
       const updated = await patchAuthorIp(item.id, { displayName: name });
       onItemUpdated(updated);
       setRenaming(false);
     } catch (e) {
       setRenameError(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setRenameSaving(false);
     }
   };
 
@@ -131,7 +135,7 @@ export default function NotebookStyleModal({
                 className="w-full rounded-lg border border-line bg-fill px-2 py-1.5 text-sm text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
                 value={renameDraft}
                 maxLength={120}
-                disabled={busy}
+                disabled={busy || renameSaving}
                 onChange={(e) => setRenameDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void submitRename();
@@ -147,15 +151,15 @@ export default function NotebookStyleModal({
                 <button
                   type="button"
                   className="text-xs font-medium text-brand hover:underline disabled:opacity-50"
-                  disabled={busy}
+                  disabled={busy || renameSaving}
                   onClick={() => void submitRename()}
                 >
-                  保存
+                  {renameSaving ? "保存中…" : "保存"}
                 </button>
                 <button
                   type="button"
                   className="text-xs text-muted hover:text-ink"
-                  disabled={busy}
+                  disabled={busy || renameSaving}
                   onClick={() => {
                     setRenaming(false);
                     setRenameDraft(styleTitle);

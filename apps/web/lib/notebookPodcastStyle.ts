@@ -47,7 +47,8 @@ export function syncPodcastCreativeFromAuthorIp(
   const id = notebookCreativeTemplateId(ipId);
   const one = (item.oneLiner || "").trim();
   const prompt = buildNotebookStylePromptBlock(item);
-  const label = `本笔记本风格 · ${nb.slice(0, 28)}`;
+  const name = (item.displayName || nb).trim().slice(0, 28);
+  const label = name.startsWith("本笔记本风格") ? name : `本笔记本风格 · ${name}`;
 
   const row = {
     id,

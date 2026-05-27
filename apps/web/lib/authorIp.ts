@@ -177,17 +177,32 @@ export async function patchAuthorIp(
   ipId: string,
   patch: { displayName?: string; isDefault?: boolean }
 ): Promise<AuthorIpItem> {
-  const res = await fetch(`/api/author-ips/${encodeURIComponent(ipId)}`, {
+  const id = String(ipId || "").trim();
+  if (!id) {
+    throw new Error("风格记录无效，请刷新页面后重试");
+  }
+  const body: Record<string, unknown> = {};
+  if (patch.displayName !== undefined) {
+    body.displayName = patch.displayName.trim();
+  }
+  if (patch.isDefault !== undefined) {
+    body.isDefault = patch.isDefault;
+  }
+  const res = await fetch(`/api/author-ips/${encodeURIComponent(id)}`, {
     method: "PATCH",
     credentials: "include",
     headers: authHeaders(),
-    body: JSON.stringify(patch)
+    body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(String((data as { detail?: string }).detail || "保存失败"));
+    throw new Error(apiErrorMessage(data, "保存失败"));
   }
-  return (data as { item: AuthorIpItem }).item;
+  const item = (data as { item?: AuthorIpItem }).item;
+  if (!item?.id) {
+    throw new Error(apiErrorMessage(data, "保存失败：服务未返回有效数据"));
+  }
+  return item;
 }
 
 export const AUTHOR_IP_HOVER_HINT =

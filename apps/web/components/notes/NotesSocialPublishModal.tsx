@@ -24,6 +24,7 @@ import {
   SOCIAL_PUBLISH_CHARS_PRESETS,
   toggleMultiSelect,
   toggleSocialGender,
+  toggleSocialPersonaMulti,
   SOCIAL_TARGET_CHARS_MAX,
   SOCIAL_TARGET_CHARS_MIN,
   charsFromPreset
@@ -100,7 +101,12 @@ export default function NotesSocialPublishModal({
       ? styleChipsPreview.join(" · ")
       : notebookStylePrompt.trim().slice(0, 72) +
         (notebookStylePrompt.trim().length > 72 ? "…" : "");
-  const notebookStyleCardTitle = (notebookStyleName || "本笔记本风格").trim();
+  const notebookStyleCardTitle = ((notebookStyleName || "本笔记本风格").trim() || "本笔记本风格").slice(
+    0,
+    16
+  );
+  const personaCardHintCls =
+    "mt-0.5 block min-h-[2.5rem] text-[10px] leading-snug text-muted line-clamp-2";
   const [useNotebookPersona, setUseNotebookPersona] = useState(true);
   const [progressHint, setProgressHint] = useState("");
 
@@ -395,7 +401,7 @@ export default function NotesSocialPublishModal({
                           onClick={() =>
                             setPersona((p) => ({
                               ...p,
-                              genders: toggleSocialGender(p.genders, o.id)
+                              genders: toggleSocialGender(p.genders, o.id as typeof p.genders[0])
                             }))
                           }
                         >
@@ -415,7 +421,12 @@ export default function NotesSocialPublishModal({
                           onClick={() =>
                             setPersona((p) => ({
                               ...p,
-                              ageRanges: toggleMultiSelect(p.ageRanges, o.id, "all_ages")
+                              ageRanges: toggleSocialPersonaMulti(
+                                p.ageRanges,
+                                o.id as typeof p.ageRanges[0],
+                                "all_ages",
+                                ["25_34"]
+                              )
                             }))
                           }
                         >
@@ -435,7 +446,12 @@ export default function NotesSocialPublishModal({
                           onClick={() =>
                             setPersona((p) => ({
                               ...p,
-                              regions: toggleMultiSelect(p.regions, o.id, "any")
+                              regions: toggleSocialPersonaMulti(
+                                p.regions,
+                                o.id as typeof p.regions[0],
+                                "any",
+                                ["tier1"]
+                              )
                             }))
                           }
                         >
@@ -475,7 +491,12 @@ export default function NotesSocialPublishModal({
                           onClick={() =>
                             setPersona((p) => ({
                               ...p,
-                              occupations: toggleMultiSelect(p.occupations, o.id)
+                              occupations: toggleSocialPersonaMulti(
+                                p.occupations,
+                                o.id as typeof p.occupations[0],
+                                undefined,
+                                ["office_worker"]
+                              )
                             }))
                           }
                         >
@@ -507,7 +528,7 @@ export default function NotesSocialPublishModal({
                   {hasNotebookStyle ? (
                     <button
                       type="button"
-                      className={`rounded-xl border p-2.5 text-left transition ${
+                      className={`flex min-h-[5.25rem] flex-col rounded-xl border p-2.5 text-left transition ${
                         useNotebookPersona
                           ? "border-brand bg-brand/10"
                           : "border-line bg-fill/50 hover:border-brand/35"
@@ -517,29 +538,19 @@ export default function NotesSocialPublishModal({
                         setPersona((p) => ({ ...p, writerVoice: null }));
                       }}
                     >
-                      <span className="block text-xs font-medium text-ink">{notebookStyleCardTitle}</span>
-                      <span className="mt-0.5 block text-[10px] leading-snug text-muted line-clamp-2">
+                      <span className="block text-xs font-medium text-ink line-clamp-1">
+                        {notebookStyleCardTitle}
+                      </span>
+                      <span className={personaCardHintCls}>
                         {notebookStyleCardHint || "已提炼的写作口吻与特色"}
                       </span>
-                      {styleChipsPreview.length > 0 ? (
-                        <span className="mt-1.5 flex flex-wrap gap-1">
-                          {styleChipsPreview.map((c) => (
-                            <span
-                              key={c}
-                              className="rounded border border-line/70 bg-canvas/80 px-1.5 py-0.5 text-[9px] font-medium text-ink"
-                            >
-                              {c}
-                            </span>
-                          ))}
-                        </span>
-                      ) : null}
                     </button>
                   ) : null}
                   {preset.writerVoices.map((o) => (
                     <button
                       key={o.id}
                       type="button"
-                      className={`rounded-xl border p-2.5 text-left transition ${
+                      className={`flex min-h-[5.25rem] flex-col rounded-xl border p-2.5 text-left transition ${
                         !useNotebookPersona && persona.writerVoice === o.id
                           ? "border-brand bg-brand/10"
                           : "border-line bg-fill/50 hover:border-brand/35"
@@ -552,8 +563,8 @@ export default function NotesSocialPublishModal({
                         }));
                       }}
                     >
-                      <span className="block text-xs font-medium text-ink">{o.label}</span>
-                      <span className="mt-0.5 block text-[10px] text-muted">{o.hint}</span>
+                      <span className="block text-xs font-medium text-ink line-clamp-1">{o.label}</span>
+                      <span className={personaCardHintCls}>{o.hint}</span>
                     </button>
                   ))}
                 </div>

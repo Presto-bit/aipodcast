@@ -168,7 +168,10 @@ export default function NotebookStyleButton({
           busy={busy}
           onClose={() => setModalOpen(false)}
           onLearn={() => void runLearn()}
-          onItemUpdated={setItem}
+          onItemUpdated={(updated) => {
+            setItem(updated);
+            syncPodcastCreativeFromAuthorIp(nb, updated);
+          }}
         />
       </div>
     );
@@ -200,7 +203,10 @@ export default function NotebookStyleButton({
         busy={busy}
         onClose={() => setModalOpen(false)}
         onLearn={() => void runLearn()}
-        onItemUpdated={setItem}
+        onItemUpdated={(updated) => {
+          setItem(updated);
+          syncPodcastCreativeFromAuthorIp(nb, updated);
+        }}
       />
     </>
   );

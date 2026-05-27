@@ -177,6 +177,29 @@ export function toggleSocialGender(
   return [id];
 }
 
+/** 多选字段取消最后一项时回退默认，避免「开始生成」因空数组被禁用 */
+export function toggleSocialPersonaMulti<T extends string>(
+  current: T[],
+  id: T,
+  exclusiveId: T | undefined,
+  defaultWhenEmpty: T[]
+): T[] {
+  const next = toggleMultiSelect(current, id, exclusiveId);
+  return next.length ? next : [...defaultWhenEmpty];
+}
+
+export function ensureSocialPersonaDefaults(
+  persona: SocialPublishPersonaOptions
+): SocialPublishPersonaOptions {
+  return {
+    ...persona,
+    genders: persona.genders.length ? persona.genders : ["female"],
+    ageRanges: persona.ageRanges.length ? persona.ageRanges : ["25_34"],
+    regions: persona.regions.length ? persona.regions : ["tier1"],
+    occupations: persona.occupations.length ? persona.occupations : ["office_worker"]
+  };
+}
+
 export function interestLabels(
   persona: SocialPublishPersonaOptions,
   platform: SocialPublishPlatform
@@ -252,15 +275,8 @@ export function occupationLabels(
 }
 
 export function isPersonaValid(persona: SocialPublishPersonaOptions): boolean {
-  if (
-    !persona.genders.length ||
-    !persona.ageRanges.length ||
-    !persona.regions.length ||
-    !persona.occupations.length
-  ) {
-    return false;
-  }
-  if (persona.occupations.includes("custom") && persona.occupationCustom.trim().length < 2) {
+  const p = ensureSocialPersonaDefaults(persona);
+  if (p.occupations.includes("custom") && p.occupationCustom.trim().length < 2) {
     return false;
   }
   return true;
