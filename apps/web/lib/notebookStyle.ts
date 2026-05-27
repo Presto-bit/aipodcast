@@ -66,7 +66,10 @@ function formatLastLearnedAt(raw: string | boolean | undefined): string | null {
   return d.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-export type StyleSyncStatus = "none" | "ready" | "outdated";
+export type StyleSyncStatus = "none" | "ready" | "pending";
+
+/** 后端持久化的 sync 字段（learn 成功后为 ready） */
+export type StyleSyncStatusStored = "none" | "ready" | "outdated";
 
 export type StyleSnapshot = {
   noteIds?: string[];
@@ -101,14 +104,35 @@ export function styleSnapshotFromItem(item: AuthorIpItem | null): StyleSnapshot 
   return snap && typeof snap === "object" ? snap : null;
 }
 
-export function styleSyncStatusFromProfile(item: AuthorIpItem | null): StyleSyncStatus {
+export function styleSyncStatusFromProfile(item: AuthorIpItem | null): StyleSyncStatusStored {
   const prof = item?.profile as { styleSyncStatus?: string; styleSnapshot?: StyleSnapshot } | undefined;
   const stored = prof?.styleSyncStatus;
   if (stored === "ready" || stored === "outdated" || stored === "none") return stored;
   return styleSnapshotFromItem(item) ? "ready" : "none";
 }
 
-/** 对比当前勾选与快照，计算是否待更新 */
+function selectedSetMatchesSnapshot(selectedNoteIds: string[], snapIds: string[]): boolean {
+  const selected = [...selectedNoteIds].sort();
+  const snap = [...snapIds].sort();
+  return selected.length === snap.length && selected.every((id, i) => id === snap[i]);
+}
+
+function snapshotVersionsMatchSelection(
+  selectedNoteIds: string[],
+  noteMetas: NoteStyleMeta[],
+  versions: Record<string, string>
+): boolean {
+  for (const meta of noteMetas) {
+    if (!selectedNoteIds.includes(meta.noteId)) continue;
+    const current =
+      meta.noteRagBodyHash?.trim() || meta.contentVersion?.trim() || meta.updatedAt?.trim() || "";
+    const prev = versions[meta.noteId] || "";
+    if (current && prev && current !== prev) return false;
+  }
+  return true;
+}
+
+/** 对比当前勾选与快照：一致为 ready；有快照但勾选/正文变化为 pending（用户主动点提炼） */
 export function computeStyleSyncStatus(
   item: AuthorIpItem | null,
   selectedNoteIds: string[],
@@ -117,21 +141,41 @@ export function computeStyleSyncStatus(
   const snap = styleSnapshotFromItem(item);
   if (!snap?.noteIds?.length) return "none";
 
-  const selected = [...selectedNoteIds].sort();
-  const snapIds = [...(snap.noteIds || [])].sort();
-  if (selected.length !== snapIds.length || selected.some((id, i) => id !== snapIds[i])) {
-    return "outdated";
-  }
-
+  const snapIds = snap.noteIds || [];
   const versions = snap.noteVersions || {};
-  for (const meta of noteMetas) {
-    if (!selectedNoteIds.includes(meta.noteId)) continue;
+  if (
+    selectedSetMatchesSnapshot(selectedNoteIds, snapIds) &&
+    snapshotVersionsMatchSelection(selectedNoteIds, noteMetas, versions)
+  ) {
+    return "ready";
+  }
+  return "pending";
+}
+
+/** 相对上次 learn，当前勾选里尚未纳入快照的资料条数 */
+export function pendingStyleLearnNoteCount(
+  item: AuthorIpItem | null,
+  selectedNoteIds: string[],
+  noteMetas: NoteStyleMeta[]
+): number {
+  const snap = styleSnapshotFromItem(item);
+  if (!snap?.noteIds?.length) return selectedNoteIds.length;
+  const snapSet = new Set(snap.noteIds);
+  const versions = snap.noteVersions || {};
+  let count = 0;
+  for (const id of selectedNoteIds) {
+    if (!snapSet.has(id)) {
+      count += 1;
+      continue;
+    }
+    const meta = noteMetas.find((m) => m.noteId === id);
+    if (!meta) continue;
     const current =
       meta.noteRagBodyHash?.trim() || meta.contentVersion?.trim() || meta.updatedAt?.trim() || "";
-    const prev = versions[meta.noteId] || "";
-    if (current && prev && current !== prev) return "outdated";
+    const prev = versions[id] || "";
+    if (current && prev && current !== prev) count += 1;
   }
-  return "ready";
+  return count;
 }
 
 export function buildStyleSummaryText(item: AuthorIpItem | null): string {
@@ -175,7 +219,6 @@ export function buildStyleSummaryChips(item: AuthorIpItem | null, max = 8): stri
 
 /** 是否在最近一次成功 learn 的快照内（已就绪时展示「已纳入风格」） */
 export function isNoteInStyleSnapshot(noteId: string, item: AuthorIpItem | null): boolean {
-  if (styleSyncStatusFromProfile(item) !== "ready") return false;
   const snap = styleSnapshotFromItem(item);
   const ids = snap?.noteIds;
   return Array.isArray(ids) && ids.includes(noteId);

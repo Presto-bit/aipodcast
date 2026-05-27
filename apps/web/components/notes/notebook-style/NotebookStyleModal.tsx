@@ -48,9 +48,9 @@ export default function NotebookStyleModal({
   const recentChange = (item?.profile as { vitality?: { recentChange?: string } })?.vitality?.recentChange;
 
   const statusLabel =
-    syncStatus === "none" ? "未生成" : syncStatus === "outdated" ? "待更新" : "已就绪";
+    syncStatus === "none" ? "未生成" : syncStatus === "pending" ? "待提炼" : "已就绪";
   const statusDot =
-    syncStatus === "ready" ? "bg-brand" : syncStatus === "outdated" ? "bg-amber-500" : "bg-line";
+    syncStatus === "ready" ? "bg-brand" : syncStatus === "pending" ? "bg-amber-500" : "bg-line";
 
   const submitPositioning = async (payload: {
     whoAmI: string;
@@ -87,14 +87,14 @@ export default function NotebookStyleModal({
         busy={busy}
         onClose={onClose}
         footer={
-          syncStatus !== "none" ? (
+          syncStatus === "pending" ? (
             <button
               type="button"
               disabled={busy || selectedCount === 0}
               className="w-full rounded-dawn-md border border-brand/40 bg-brand/10 py-2 text-sm font-medium text-brand disabled:opacity-50"
               onClick={onLearn}
             >
-              {syncStatus === "outdated" ? `更新风格 (${selectedCount}条)` : `重新提炼 (${selectedCount}条)`}
+              提炼写作风格 ({selectedCount}条)
             </button>
           ) : null
         }

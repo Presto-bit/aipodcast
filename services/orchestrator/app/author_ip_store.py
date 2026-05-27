@@ -1,10 +1,9 @@
-"""个人特色 IP：实体、绑定笔记本、示例模板种子。"""
+"""个人特色 IP：实体、绑定笔记本、系统默认隐藏本。"""
 from __future__ import annotations
 
 import json
 import logging
 import uuid
-from pathlib import Path
 from typing import Any
 
 from psycopg2.extras import Json
@@ -26,19 +25,6 @@ logger = logging.getLogger(__name__)
 
 NOTEBOOK_PREFIX = "__author_ip:"
 DEFAULT_IP_DISPLAY_NAME = "我的 IP"
-TEMPLATE_ID_XHS_AI = "xhs_ai_product_v1"
-def _seed_template_path() -> Path | None:
-    """解析种子 JSON：优先 app/data（Docker 可用），再向上查找仓库 docs/seeds。"""
-    seed_name = "author-ip-template-xhs-ai-product-v1.json"
-    here = Path(__file__).resolve().parent
-    bundled = here / "data" / seed_name
-    if bundled.is_file():
-        return bundled
-    for parent in Path(__file__).resolve().parents:
-        docs_seed = parent / "docs" / "product" / "seeds" / seed_name
-        if docs_seed.is_file():
-            return docs_seed
-    return None
 
 
 def _notebook_for_ip(ip_id: str) -> str:
@@ -92,44 +78,6 @@ def ensure_author_ip_schema() -> None:
                 """
             )
             conn.commit()
-
-
-def _load_template_seed() -> dict[str, Any]:
-    path = _seed_template_path()
-    if path:
-        try:
-            raw = path.read_text(encoding="utf-8")
-            data = json.loads(raw)
-            if isinstance(data, dict) and data.get("displayName"):
-                return data
-        except Exception:
-            logger.exception("author_ip: load template seed failed path=%s", path)
-    # 部署环境缺种子文件时仍创建示例 IP（完整素材在首次打开或 ensure-bootstrap 时灌入）
-    return {
-        "templateId": TEMPLATE_ID_XHS_AI,
-        "displayName": "示例 · AI 产品小红书号",
-        "subtitle": "工具测评 · 教程干货 · 避坑清单",
-        "oneLiner": "帮想上手 AI 工具的人，用测评和步骤清单少踩坑、快点用上。",
-        "maturity": "ready",
-        "isTemplate": True,
-        "isReadOnly": True,
-        "traits": [],
-        "domains": [
-            {"displayName": "测评种草", "boundArticleTitles": []},
-            {"displayName": "教程清单", "boundArticleTitles": []},
-        ],
-        "vitality": {"tagCloud": ["AI工具", "测评", "避坑"]},
-    }
-
-
-def _profile_from_seed(seed: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "traits": seed.get("traits") or [],
-        "domains": seed.get("domains") or [],
-        "vitality": seed.get("vitality") or {},
-        "composeDemo": seed.get("composeDemo") or {},
-        "taboosGlobal": [],
-    }
 
 
 def _row_to_item(row: dict[str, Any], *, material_count: int = 0) -> dict[str, Any]:
@@ -252,64 +200,6 @@ def _insert_ip_row(
     return dict(row)
 
 
-def _seed_ip_materials(
-    user_ref: str | None,
-    *,
-    ip_id: str,
-    notebook_name: str,
-    seed: dict[str, Any],
-) -> None:
-    project_id = ensure_default_project(NOTES_PODCAST_STUDIO_PROJECT, created_by=user_ref)
-    cards = seed.get("experienceCards") if isinstance(seed.get("experienceCards"), list) else []
-    for card in cards:
-        if not isinstance(card, dict):
-            continue
-        tpl = str(card.get("templateId") or "experience").strip()
-        title = str(card.get("title") or tpl).strip()[:200]
-        body = str(card.get("body") or "").strip()
-        if not body:
-            continue
-        create_text_note(
-            project_id,
-            title,
-            notebook_name,
-            body,
-            user_ref=user_ref,
-            extra_metadata={
-                "authorIpId": ip_id,
-                "authorMaterialType": "experience_card",
-                "experienceTemplateId": tpl,
-                "includeInStyleLearning": False,
-                "preprocessStatus": "ready",
-                "bookSummaryL0": body[:800],
-            },
-        )
-    articles = seed.get("articles") if isinstance(seed.get("articles"), list) else []
-    for art in articles:
-        if not isinstance(art, dict):
-            continue
-        title = str(art.get("title") or "未命名").strip()[:200]
-        body = str(art.get("bodyMarkdown") or "").strip()
-        if not body:
-            continue
-        mat_type = str(art.get("authorMaterialType") or "published").strip()
-        include_style = bool(art.get("includeInStyleLearning", mat_type != "third_party"))
-        create_text_note(
-            project_id,
-            title,
-            notebook_name,
-            body,
-            user_ref=user_ref,
-            extra_metadata={
-                "authorIpId": ip_id,
-                "authorMaterialType": mat_type,
-                "includeInStyleLearning": include_style,
-                "preprocessStatus": "ready",
-                "bookSummaryL0": body[:800],
-            },
-        )
-
-
 def _clear_default_flag(cur: Any, user_uuid: str, *, except_ip_id: str | None = None) -> None:
     if except_ip_id:
         cur.execute(
@@ -376,139 +266,22 @@ def ensure_default_author_ip(user_ref: str | None) -> dict[str, Any] | None:
             return _row_to_item(ip_row, material_count=0)
 
 
-def ensure_template_author_ip(
-    user_ref: str | None,
-    *,
-    seed_materials: bool = True,
-) -> dict[str, Any] | None:
-    ensure_author_ip_schema()
-    seed = _load_template_seed()
-    with get_conn() as conn:
-        with get_cursor(conn) as cur:
-            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
-            if not user_uuid:
-                return None
-            cur.execute(
-                """
-                SELECT * FROM author_ips
-                WHERE user_id = %s::uuid AND is_template = TRUE AND template_id = %s
-                  AND archived_at IS NULL
-                LIMIT 1
-                """,
-                (user_uuid, TEMPLATE_ID_XHS_AI),
-            )
-            existing = cur.fetchone()
-            if existing:
-                nb = str(existing["notebook_name"])
-                ip_id = str(existing["id"])
-                prof_raw = existing.get("profile_json") or {}
-                if isinstance(prof_raw, str):
-                    try:
-                        prof_raw = json.loads(prof_raw)
-                    except Exception:
-                        prof_raw = {}
-                if isinstance(prof_raw, dict) and not (prof_raw.get("traits") or []):
-                    full_file_seed = _load_template_seed_from_file_only()
-                    if full_file_seed:
-                        merged = _profile_from_seed(full_file_seed)
-                        cur.execute(
-                            """
-                            UPDATE author_ips SET profile_json = %s::jsonb, updated_at = NOW()
-                            WHERE id = %s::uuid
-                            """,
-                            (Json(merged), ip_id),
-                        )
-                        conn.commit()
-                if seed_materials and _count_materials(user_ref, nb) == 0:
-                    full_seed = _load_template_seed_from_file_only()
-                    if full_seed:
-                        try:
-                            _seed_ip_materials(
-                                user_ref,
-                                ip_id=ip_id,
-                                notebook_name=nb,
-                                seed=full_seed,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "author_ip: lazy seed template materials ip_id=%s", ip_id
-                            )
-                cur.execute(
-                    "SELECT * FROM author_ips WHERE id = %s::uuid",
-                    (ip_id,),
-                )
-                existing = cur.fetchone() or existing
-                return _row_to_item(existing, material_count=_count_materials(user_ref, nb))
-            full_file_seed = _load_template_seed_from_file_only()
-            profile = _profile_from_seed(full_file_seed if full_file_seed else seed)
-            ip_row = _insert_ip_row(
-                cur,
-                user_uuid=user_uuid,
-                display_name=str(seed.get("displayName") or "示例 IP"),
-                subtitle=str(seed.get("subtitle") or ""),
-                avatar_color="cta",
-                notebook_name="",
-                is_default=False,
-                is_system_seed=False,
-                is_template=True,
-                is_read_only=True,
-                template_id=TEMPLATE_ID_XHS_AI,
-                maturity=str(seed.get("maturity") or "ready"),
-                one_liner=str(seed.get("oneLiner") or ""),
-                profile=profile,
-            )
-            ip_id = str(ip_row["id"])
-            nb = _notebook_for_ip(ip_id)
-            cur.execute(
-                "UPDATE author_ips SET notebook_name = %s, updated_at = NOW() WHERE id = %s::uuid",
-                (nb, ip_id),
-            )
-            conn.commit()
-            ip_row["notebook_name"] = nb
-            create_notebook_only(nb, user_ref=user_ref)
-    if seed_materials:
-        full_seed = _load_template_seed_from_file_only() or seed
-        try:
-            _seed_ip_materials(user_ref, ip_id=ip_id, notebook_name=nb, seed=full_seed)
-        except Exception:
-            logger.exception("author_ip: seed template materials failed ip_id=%s", ip_id)
-    return _row_to_item(ip_row, material_count=_count_materials(user_ref, nb))
-
-
-def _load_template_seed_from_file_only() -> dict[str, Any]:
-    path = _seed_template_path()
-    if not path:
-        return {}
-    try:
-        raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        logger.exception("author_ip: load template seed file failed path=%s", path)
-        return {}
-
-
 def ensure_author_ip_notebook(user_ref: str | None) -> None:
     """兼容旧调用：确保默认「我的 IP」存在。"""
     ensure_default_author_ip(user_ref)
 
 
 def bootstrap_author_ips(user_ref: str | None) -> dict[str, Any]:
-    """幂等：默认 IP + 示例模板（含素材灌库）。列表页勿每次调用。"""
+    """幂等：确保 schema 与系统默认「我的 IP」隐藏本。列表页勿每次调用。"""
     ensure_author_ip_schema()
     default_item = ensure_default_author_ip(user_ref)
-    template_item = ensure_template_author_ip(user_ref, seed_materials=True)
-    return {
-        "default": default_item,
-        "template": template_item,
-    }
+    return {"default": default_item}
 
 
 def list_author_ips(user_ref: str | None, *, lightweight: bool = True) -> list[dict[str, Any]]:
-    """lightweight=True：列表用，不灌示例素材，素材数批量 SQL。"""
+    """lightweight=True：列表用，素材数批量 SQL。"""
     ensure_author_ip_schema()
     ensure_default_author_ip(user_ref)
-    ensure_template_author_ip(user_ref, seed_materials=not lightweight)
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -550,8 +323,6 @@ def get_author_ip(user_ref: str | None, ip_id: str) -> dict[str, Any] | None:
             if not row:
                 return None
             nb = str(row.get("notebook_name") or "")
-            if bool(row.get("is_template")) and _count_materials(user_ref, nb) == 0:
-                ensure_template_author_ip(user_ref, seed_materials=True)
             return _row_to_item(row, material_count=_count_materials(user_ref, nb))
 
 

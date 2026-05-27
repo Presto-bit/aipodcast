@@ -1522,12 +1522,6 @@ export default function NotesPage() {
     [notesSorted]
   );
 
-  const styleOutdated = useMemo(
-    () =>
-      computeStyleSyncStatus(notebookStyleItem, draftSelectedNoteIds, styleNoteMetas) === "outdated",
-    [notebookStyleItem, draftSelectedNoteIds, styleNoteMetas]
-  );
-
   const notebookStylePrompt = useMemo(
     () => buildNotebookStylePromptBlock(notebookStyleItem),
     [notebookStyleItem]
@@ -4192,11 +4186,6 @@ export default function NotesPage() {
                     >
                       知道了
                     </button>
-                  </p>
-                ) : null}
-                {styleOutdated ? (
-                  <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/8 px-2.5 py-1.5 text-[11px] leading-snug text-amber-900 dark:text-amber-200">
-                    资料已变，建议点击「待更新」重新提炼写作风格后更准确。
                   </p>
                 ) : null}
                 {styleActionToast ? (

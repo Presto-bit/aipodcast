@@ -453,6 +453,7 @@ def learn_author_ip(
         learning,
         one_liner=str(ip_item.get("oneLiner") or ""),
         mode=learn_mode,
+        fresh_traits=scoped_by_selection,
     )
     profile["styleSnapshot"] = _build_style_snapshot(learning)
     profile["styleSyncStatus"] = "ready"

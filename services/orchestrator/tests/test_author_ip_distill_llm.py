@@ -58,13 +58,13 @@ def test_run_distill_uses_llm_when_available(mock_llm):
         }
     ]
     out = run_author_ip_distill(prof, mats, one_liner="one", mode="full")
-    assert out["vitality"]["distillSource"] in ("llm", "llm+heuristic")
+    assert out["vitality"]["distillSource"] == "llm"
     assert out["vitality"]["recentChange"] == "LLM 提炼"
     assert any(t.get("label") == "直给" for t in out.get("traits") or [])
 
 
 @patch("app.author_ip_distill_llm.distill_profile_with_llm", return_value=None)
-def test_run_distill_fallback_heuristic(mock_llm):
+def test_run_distill_no_llm_fallback(mock_llm):
     assert distill_llm_enabled() in (True, False)
     prof = {"traits": [], "vitality": {}}
     mats = [
@@ -75,6 +75,7 @@ def test_run_distill_fallback_heuristic(mock_llm):
             "includeInStyleLearning": True,
         }
     ]
-    out = run_author_ip_distill(prof, mats, mode="full")
-    assert out["vitality"]["distillSource"] == "heuristic"
+    out = run_author_ip_distill(prof, mats, mode="full", fresh_traits=True)
+    assert out["vitality"]["distillSource"] == "none"
+    assert out.get("traits") == []
     mock_llm.assert_called_once()

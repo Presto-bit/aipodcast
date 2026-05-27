@@ -134,8 +134,13 @@ export function buildDistillClusterCloud(
       pushUnique(buckets.insight, seen, { text: `学习于${learned}`, kind: "meta" });
     }
     const src = String(v.distillSource || "");
-    if (src) {
-      const label = src === "llm" ? "AI提炼" : src === "llm+heuristic" ? "AI+规则" : "规则提炼";
+    if (src && src !== "none") {
+      const label =
+        src === "llm"
+          ? "AI提炼"
+          : src === "features_merge"
+            ? "AI合并提炼"
+            : "AI提炼";
       pushUnique(buckets.insight, seen, { text: label, kind: "meta" });
     }
   }

@@ -227,7 +227,7 @@ def ensure_default_author_ip_api(request: Request):
 
 @router.post("/bootstrap")
 def bootstrap_author_ips_api(request: Request):
-    """首次进入：默认 IP + 示例模板（含素材）；列表页仅需调用一次。"""
+    """首次进入：确保 schema 与系统默认 IP；列表页仅需调用一次。"""
     user_ref = _current_user_ref_or_401(request)
     out = bootstrap_author_ips(user_ref)
     return {"success": True, "bootstrapped": True, **out}

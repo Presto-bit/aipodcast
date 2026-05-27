@@ -132,22 +132,18 @@ export default function NotebookStyleButton({
 
   if (!nb) return null;
 
-  const showChip = syncStatus === "ready" || syncStatus === "outdated";
+  const showReadyChip = syncStatus === "ready";
 
-  if (showChip) {
+  if (showReadyChip) {
     return (
       <div className="relative shrink-0" ref={menuRef}>
         <button
           type="button"
           disabled={disabled || readOnly || loading}
-          className={
-            syncStatus === "outdated"
-              ? "inline-flex items-center gap-1 rounded-xl border border-amber-500/50 bg-amber-500/10 px-3 py-2.5 text-sm font-medium text-amber-900 dark:text-amber-100"
-              : "inline-flex items-center gap-1 rounded-xl border border-brand/35 bg-brand/8 px-3 py-2.5 text-sm font-medium text-brand"
-          }
+          className="inline-flex items-center gap-1 rounded-xl border border-brand/35 bg-brand/8 px-3 py-2.5 text-sm font-medium text-brand"
           onClick={() => setMenuOpen((v) => !v)}
         >
-          {syncStatus === "outdated" ? `待更新 ▾` : `风格已就绪 ▾`}
+          风格已就绪 ▾
         </button>
         {menuOpen ? (
           <div className="absolute left-0 top-full z-30 mt-1 min-w-[9rem] rounded-lg border border-line bg-surface py-1 shadow-card">
@@ -160,14 +156,6 @@ export default function NotebookStyleButton({
               }}
             >
               查看详情
-            </button>
-            <button
-              type="button"
-              className="block w-full px-3 py-1.5 text-left text-xs hover:bg-fill disabled:opacity-50"
-              disabled={btnDisabled}
-              onClick={() => void runLearn()}
-            >
-              更新风格 ({selectedCount}条)
             </button>
           </div>
         ) : null}
