@@ -84,6 +84,8 @@ export type NotesPodcastRoomModalProps = {
   closeOnSuccess?: boolean;
   /** 内联布局：同步忙碌状态给父级（左侧操作区） */
   onBusyChange?: (busy: boolean) => void;
+  /** 本笔记本已提炼风格时默认选中的人设模板（usr:…） */
+  preferredCreativeTemplateValue?: string | null;
 };
 
 export type NotesPodcastRoomModalHandle = {
@@ -106,7 +108,8 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
       notesSourceOwnerUserId,
       hideGenerateButton = false,
       closeOnSuccess = true,
-      onBusyChange
+      onBusyChange,
+      preferredCreativeTemplateValue = null
     },
     ref
   ) {
@@ -145,6 +148,12 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   useEffect(() => {
     if (open) setBillingGateMessage(null);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const preferred = (preferredCreativeTemplateValue || "").trim();
+    if (preferred.startsWith("usr:")) setCreativeTemplateValue(preferred);
+  }, [open, preferredCreativeTemplateValue]);
 
   const [speakerMode, setSpeakerMode] = useState<"single" | "dual">("dual");
   const [introText, setIntroText] = useState(DEFAULT_INTRO_LINE);

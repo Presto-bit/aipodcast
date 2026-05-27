@@ -431,12 +431,17 @@ def learn_author_ip(
     if err:
         raise ValueError("read_only" if "只读" in err else "ip_not_found")
     materials = list_ip_materials(user_ref, ip_item)
-    if note_ids is not None:
+    scoped_by_selection = note_ids is not None
+    if scoped_by_selection:
         allowed = {str(x).strip() for x in note_ids if str(x).strip()}
         if not allowed:
             raise ValueError("note_ids_required")
         materials = [m for m in materials if str(m.get("noteId") or "") in allowed]
-    learning = [m for m in materials if material_in_style_learning(m)]
+    # v6.1：learn 显式传入 noteIds 时以勾选为准，不再受 includeInStyleLearning 开关阻挡
+    if scoped_by_selection:
+        learning = list(materials)
+    else:
+        learning = [m for m in materials if material_in_style_learning(m)]
     if not learning:
         raise ValueError("no_learning_materials")
     profile = ip_item.get("profile") if isinstance(ip_item.get("profile"), dict) else {}

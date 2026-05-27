@@ -76,6 +76,8 @@ export default function NotesSocialPublishModal({
   const [copyToast, setCopyToast] = useState("");
   const [showStudio, setShowStudio] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const hasNotebookStyle = Boolean(notebookStylePrompt.trim());
+  const [useNotebookPersona, setUseNotebookPersona] = useState(true);
 
   const preset = useMemo(() => publishPresetBundle(platform), [platform]);
 
@@ -96,7 +98,8 @@ export default function NotesSocialPublishModal({
     setBusy(false);
     setShowStudio(false);
     setShowGuide(false);
-  }, [open, noteIds, askMessages]);
+    setUseNotebookPersona(Boolean(notebookStylePrompt.trim()));
+  }, [open, noteIds, askMessages, notebookStylePrompt]);
 
   useEffect(() => {
     if (!copyToast) return;
@@ -152,14 +155,16 @@ export default function NotesSocialPublishModal({
         askMessages,
         authHeaders
       });
-      const personaForPayload = notebookStylePrompt.trim()
-        ? {
-            ...persona,
-            otherRequirements: [notebookStylePrompt.trim(), persona.otherRequirements.trim()]
-              .filter(Boolean)
-              .join("\n\n")
-          }
-        : persona;
+      const personaForPayload =
+        useNotebookPersona && notebookStylePrompt.trim()
+          ? {
+              ...persona,
+              writerVoice: null,
+              otherRequirements: [notebookStylePrompt.trim(), persona.otherRequirements.trim()]
+                .filter(Boolean)
+                .join("\n\n")
+            }
+          : persona;
       const options = buildOptionsPayload(quickForPayload, advanced, personaForPayload, platform);
       const result = await fetchSocialPublishDraft({
         platform,
@@ -407,22 +412,47 @@ export default function NotesSocialPublishModal({
                   写作人设
                   <span className="ml-1 text-[11px] font-normal text-muted">（可选）</span>
                 </p>
+                {hasNotebookStyle ? (
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className={`rounded-lg border px-2.5 py-1 text-[11px] font-medium transition ${
+                        useNotebookPersona
+                          ? "border-brand bg-brand/10 text-brand"
+                          : "border-line bg-fill/50 text-ink hover:border-brand/35"
+                      }`}
+                      onClick={() => setUseNotebookPersona(true)}
+                    >
+                      本笔记本风格
+                    </button>
+                    {!useNotebookPersona ? (
+                      <button
+                        type="button"
+                        className="text-[11px] text-brand hover:underline"
+                        onClick={() => setUseNotebookPersona(true)}
+                      >
+                        恢复为本笔记本风格
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="grid gap-2 sm:grid-cols-2">
                   {preset.writerVoices.map((o) => (
                     <button
                       key={o.id}
                       type="button"
                       className={`rounded-xl border p-2.5 text-left transition ${
-                        persona.writerVoice === o.id
+                        !useNotebookPersona && persona.writerVoice === o.id
                           ? "border-brand bg-brand/10"
                           : "border-line bg-fill/50 hover:border-brand/35"
                       }`}
-                      onClick={() =>
+                      onClick={() => {
+                        setUseNotebookPersona(false);
                         setPersona((p) => ({
                           ...p,
                           writerVoice: p.writerVoice === o.id ? null : o.id
-                        }))
-                      }
+                        }));
+                      }}
                     >
                         <span className="block text-xs font-medium text-ink">{o.label}</span>
                         <span className="mt-0.5 block text-[10px] text-muted">{o.hint}</span>

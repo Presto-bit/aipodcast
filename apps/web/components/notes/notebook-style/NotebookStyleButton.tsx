@@ -7,6 +7,7 @@ import {
   learnAuthorIp,
   type AuthorIpItem
 } from "../../../lib/authorIp";
+import { syncPodcastCreativeFromAuthorIp } from "../../../lib/notebookPodcastStyle";
 import {
   computeStyleSyncStatus,
   selectedNotesStyleFeaturesReady,
@@ -111,6 +112,7 @@ export default function NotebookStyleButton({
       }
       const updated = await learnAuthorIp(ip.id, "full", selectedNoteIds);
       setItem(updated);
+      syncPodcastCreativeFromAuthorIp(nb, updated);
       onToast?.("风格已更新，已用于播客、文章与自媒体");
       setModalOpen(false);
     } catch (e) {

@@ -127,9 +127,14 @@ import {
 import { uploadNoteFileWithProgress } from "../../../lib/uploadNoteFile";
 import type { WorkItem } from "../../../lib/worksTypes";
 import type { AuthorIpItem } from "../../../lib/authorIp";
+import { resolveNotebookCreativeTemplateValue } from "../../../lib/notebookPodcastStyle";
 import {
   buildNotebookStylePromptBlock,
-  computeStyleSyncStatus
+  computeStyleSyncStatus,
+  dismissNotebookStyleHint,
+  isNoteInStyleSnapshot,
+  notebookAutoSelectStorageKey,
+  shouldShowNotebookStyleHint
 } from "../../../lib/notebookStyle";
 type NotesAskStreamEvent =
   | {
@@ -1075,6 +1080,8 @@ export default function NotesPage() {
   const [draftSelectedNoteIds, setDraftSelectedNoteIds] = useState<string[]>([]);
   const [notebookStyleItem, setNotebookStyleItem] = useState<AuthorIpItem | null>(null);
   const [styleActionToast, setStyleActionToast] = useState("");
+  const [showNotebookStyleHint, setShowNotebookStyleHint] = useState(shouldShowNotebookStyleHint);
+  const [useNotebookStyleInArticle, setUseNotebookStyleInArticle] = useState(true);
   /** loadNotes 内校验「已删除的笔记 id」：避免 localStorage 里残留旧 id 导致仍加载旧对话 */
   const draftSelectedNoteIdsRef = useRef<string[]>([]);
   useEffect(() => {
@@ -1526,6 +1533,15 @@ export default function NotesPage() {
     [notebookStyleItem]
   );
 
+  const notebookCreativeTemplateValue = useMemo(
+    () => resolveNotebookCreativeTemplateValue(selectedNotebook, notebookStyleItem),
+    [selectedNotebook, notebookStyleItem]
+  );
+
+  useEffect(() => {
+    if (notebookStylePrompt.trim()) setUseNotebookStyleInArticle(true);
+  }, [notebookStylePrompt]);
+
   useEffect(() => {
     if (!styleActionToast) return;
     const t = window.setTimeout(() => setStyleActionToast(""), 4000);
@@ -1926,6 +1942,18 @@ export default function NotesPage() {
       }
       setNotes(list);
       setHasMoreNotes(Boolean(data.has_more));
+      const nb = selectedNotebook.trim();
+      if (
+        nb &&
+        sharedBrowse?.access !== "read_only" &&
+        list.length === 1 &&
+        isSourceUsable(list[0]!) &&
+        draftSelectedNoteIdsRef.current.length === 0 &&
+        !readLocalStorageScoped(notebookAutoSelectStorageKey(nb))
+      ) {
+        setDraftSelectedNoteIds([list[0]!.noteId]);
+        writeLocalStorageScoped(notebookAutoSelectStorageKey(nb), "1");
+      }
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -3124,13 +3152,22 @@ export default function NotesPage() {
             ragMaxChars: 56_000,
             referenceRagMode: "truncate" as ReferenceRagMode
           }),
-          script_style: [notebookStylePrompt, "简洁清晰，重点突出"].filter(Boolean).join("\n"),
+          script_style: [
+            useNotebookStyleInArticle ? notebookStylePrompt : "",
+            "简洁清晰，重点突出"
+          ]
+            .filter(Boolean)
+            .join("\n"),
           script_language: artLang,
           program_name: programName,
-          speaker1_persona: notebookStyleItem?.oneLiner
-            ? `主持人 · ${notebookStyleItem.oneLiner.slice(0, 120)}`
-            : "主持人",
-          speaker2_persona: notebookStyleItem?.oneLiner ? "评论员 · 本笔记本风格" : "分析师",
+          speaker1_persona:
+            useNotebookStyleInArticle && notebookStyleItem?.oneLiner
+              ? `主持人 · ${notebookStyleItem.oneLiner.slice(0, 120)}`
+              : "主持人",
+          speaker2_persona:
+            useNotebookStyleInArticle && notebookStyleItem?.oneLiner
+              ? "评论员 · 本笔记本风格"
+              : "分析师",
           script_constraints: "",
           output_mode: "article",
           generate_cover: true,
@@ -4133,6 +4170,23 @@ export default function NotesPage() {
                     onError={setError}
                   />
                 </div>
+                {showNotebookStyleHint &&
+                computeStyleSyncStatus(notebookStyleItem, draftSelectedNoteIds, styleNoteMetas) ===
+                  "none" ? (
+                  <p className="mt-2 flex items-start justify-between gap-2 rounded-lg border border-brand/25 bg-brand/6 px-2.5 py-1.5 text-[11px] leading-snug text-ink">
+                    <span>勾选资料后可一键提炼本笔记本写作风格，用于播客、文章与自媒体。</span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-[10px] text-muted hover:text-ink"
+                      onClick={() => {
+                        dismissNotebookStyleHint();
+                        setShowNotebookStyleHint(false);
+                      }}
+                    >
+                      知道了
+                    </button>
+                  </p>
+                ) : null}
                 {styleOutdated ? (
                   <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/8 px-2.5 py-1.5 text-[11px] leading-snug text-amber-900 dark:text-amber-200">
                     资料已变，建议点击「待更新」重新提炼写作风格后更准确。
@@ -4220,6 +4274,14 @@ export default function NotesPage() {
                                 aria-label="刚加入的资料"
                               >
                                 <IconSparkle width={14} height={14} className="text-brand" />
+                              </span>
+                            ) : null}
+                            {isNoteInStyleSnapshot(n.noteId, notebookStyleItem) ? (
+                              <span
+                                className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-brand/12 text-brand"
+                                title="已纳入最近一次风格提炼"
+                              >
+                                已纳入风格
                               </span>
                             ) : null}
                             {n.retrieveState === "failed" || n.ragIndexError ? (
@@ -5210,6 +5272,7 @@ export default function NotesPage() {
         onPodcastJobCreated={onPodcastJobCreated}
         externalPrompt={notesStudioPrompt}
         onExternalPromptChange={setNotesStudioPrompt}
+        preferredCreativeTemplateValue={notebookCreativeTemplateValue}
         notesSourceOwnerUserId={
           sharedBrowse?.access === "edit" && sharedBrowse.ownerUserId ? sharedBrowse.ownerUserId : null
         }
@@ -5333,6 +5396,27 @@ export default function NotesPage() {
                     placeholder="全文须围绕回答的一个问题，例如：……"
                   />
                 </label>
+                {notebookStylePrompt.trim() ? (
+                  <details className="mt-3 rounded-lg border border-line/80 bg-fill/30 px-3 py-2">
+                    <summary className="cursor-pointer text-xs font-medium text-ink">高级 · 写作风格</summary>
+                    <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-ink">
+                      <input
+                        type="checkbox"
+                        className="accent-brand"
+                        checked={useNotebookStyleInArticle}
+                        onChange={(e) => setUseNotebookStyleInArticle(e.target.checked)}
+                      />
+                      本笔记本风格（默认开启）
+                    </label>
+                    {useNotebookStyleInArticle ? (
+                      <p className="mt-1 text-[10px] leading-snug text-muted line-clamp-3">
+                        {notebookStylePrompt}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-[10px] text-muted">仅依据所选资料生成，不套用已提炼风格。</p>
+                    )}
+                  </details>
+                ) : null}
                 <label className="mt-3 block text-xs text-ink">
                   AI 提词（可编辑）
                   <span className="mb-1 mt-0.5 block text-[10px] font-normal leading-snug text-muted">

@@ -1,6 +1,7 @@
 /** 笔记本绑定写作风格（v6）：快照与同步状态 */
 
 import type { AuthorIpItem } from "./authorIp";
+import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
 
 type TraitRow = { label?: string; defaultOn?: boolean };
 
@@ -119,6 +120,32 @@ export function buildStyleSummaryChips(item: AuthorIpItem | null, max = 5): stri
     if (out.length >= max) break;
   }
   return out;
+}
+
+/** 是否在最近一次成功 learn 的快照内（已就绪时展示「已纳入风格」） */
+export function isNoteInStyleSnapshot(noteId: string, item: AuthorIpItem | null): boolean {
+  if (styleSyncStatusFromProfile(item) !== "ready") return false;
+  const snap = styleSnapshotFromItem(item);
+  const ids = snap?.noteIds;
+  return Array.isArray(ids) && ids.includes(noteId);
+}
+
+export const NOTEBOOK_STYLE_HINT_STORAGE_KEY = "presto_notebook_style_hint_v1";
+
+export function shouldShowNotebookStyleHint(): boolean {
+  try {
+    return !readLocalStorageScoped(NOTEBOOK_STYLE_HINT_STORAGE_KEY);
+  } catch {
+    return true;
+  }
+}
+
+export function dismissNotebookStyleHint(): void {
+  writeLocalStorageScoped(NOTEBOOK_STYLE_HINT_STORAGE_KEY, "1");
+}
+
+export function notebookAutoSelectStorageKey(notebookName: string): string {
+  return `presto_nb_auto_sel:${notebookName.trim()}`;
 }
 
 export function formatStyleLearnedAt(item: AuthorIpItem | null): string | null {

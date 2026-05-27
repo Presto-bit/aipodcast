@@ -298,7 +298,7 @@ POST /api/v1/author-ips/{ipId}/learn
 | **M0** | 按钮 + 简洁弹窗；`ensure` + `learn(noteIds)`；`styleSnapshot` + outdated UI；隐藏二级导航 | 勾选 2 条 → 生成 → 摘要/chips 可见；改勾选 → 待更新 |
 | **M0+**（v6.1） | 工具栏一键提炼/更新；勾选即参与风格；芯片态；弹窗降级为详情 | 主路径 ≤2 次点击完成 learn |
 | **M1** | 生成文章 + 自媒体「本笔记本风格」默认带入 | 成稿口吻贴近素材；表单项默认折叠 |
-| **M2** | 播客人设方案自动同步 + 工作室默认 | 芯片显示笔记本名 |
+| **M2** | 播客人设方案自动同步 + 工作室默认 | learn 后写入用户「人设风格」模板；笔记本播客室默认选中 |
 | **M3** | 老用户迁移、旧 URL 跳转 | 无断档 |
 | **P2** | 多维蒸馏 v2（styleProfile / beliefs / memories） | 详情区扩展 |
 
@@ -434,21 +434,21 @@ POST /api/v1/author-ips/{ipId}/learn
 
 **v6.0**
 
-- [ ] `learn` 支持 `noteIds` 过滤  
-- [ ] `styleSnapshot` 写入与 outdated 计算（前后端一致）  
-- [ ] 笔记本列表排除 `__author_ip:*`  
-- [ ] 弹窗组件无写作/路由依赖  
-- [ ] 生成文章 / 自媒体 / 播客三处读同一 IP profile  
-- [ ] 旧 `/notes/author-ip` 跳转策略  
+- [x] `learn` 支持 `noteIds` 过滤  
+- [x] `styleSnapshot` 写入与 outdated 计算（前后端一致）  
+- [x] 笔记本列表排除 `__author_ip:*`  
+- [x] 弹窗组件无写作/路由依赖  
+- [x] 生成文章 / 自媒体 / 播客读同一风格包（文章/自媒体可关；播客经用户人设模板）  
+- [x] 旧 `/notes/author-ip` 跳转策略  
 
 **v6.1（体验）**
 
-- [ ] 工具栏一键 learn（未生成 / 待更新）  
-- [ ] 已就绪芯片 + 下拉（查看 / 更新 / 补充定位）  
-- [ ] 勾选与 `includeInStyleLearning` 同步，UI 不双开关  
-- [ ] 生成文章 / 自媒体默认「本笔记本风格」且折叠  
-- [ ] outdated 顶栏一行提示，不拦创作  
-- [ ] 对外文案走「风格」词表，非「IP/蒸馏」  
+- [x] 工具栏一键 learn（未生成 / 待更新）  
+- [x] 已就绪芯片 + 下拉（查看 / 更新 / 补充定位）  
+- [x] 勾选即参与 learn（显式 `noteIds` 不受旧 `includeInStyleLearning` 阻挡）  
+- [x] 生成文章 / 自媒体默认「本笔记本风格」且折叠  
+- [x] outdated 顶栏一行提示，不拦创作  
+- [x] 对外文案走「风格」词表，非「IP/蒸馏」  
 
 **v6.2（与知识库统一 P0/P1）**
 
