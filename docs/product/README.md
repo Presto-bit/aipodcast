@@ -41,9 +41,10 @@
 | ---- | ---- |
 | [subscription-experience-pricing-playbook.md](./subscription-experience-pricing-playbook.md) | 个人创作者向：**Free / Pro / Creator** 权益、体验礼包、按次分钟包、触发与引导、定价与埋点口径、落地节奏与文案原则 |
 | [future-roadmap.md](./future-roadmap.md) | **Backlog**：多平台管家、内容再造、叙事剪辑师等方向；**非迭代承诺**，实现前需单独评审 |
-| [author-ip-product-v5.md](./author-ip-product-v5.md) | **个人特色 IP（v5.2）**：M0 **写一篇**；默认体裁 **通用文章** |
+| [author-ip-product-v5.md](./author-ip-product-v5.md) | **个人特色 IP（v5.2）**：M0 **写一篇**；默认体裁 **通用文章**（导航/独立工作台，部分已被 v6 替代） |
+| [author-ip-product-v6.md](./author-ip-product-v6.md) | **个人特色 IP（v6.2）**：笔记本即 IP；与 RAG/摘要统一数据源（P0/P1）；一键提炼；三端默认本笔记本风格 |
 | [author-ip-execution-schedule.md](./author-ip-execution-schedule.md) | **执行排期**：迭代 1～15 至 M3；对齐 v5；M3 仅站内分享图 |
-| [video-script-product-m0.md](./video-script-product-m0.md) | **视频脚本（M0）**：五体裁制片稿、知识库/IP 分工、schema、竞品与写稿能力路线 |
+| [video-script-product-m0.md](./video-script-product-m0.md) | **视频脚本（M0）**：五体裁制片稿、知识库/IP 分工、schema、竞品；附录十维评价/PUS、提词器差异、质量提升路线图 |
 
 ---
 

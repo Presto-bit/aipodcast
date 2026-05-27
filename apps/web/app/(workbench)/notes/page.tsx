@@ -27,6 +27,10 @@ import {
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
 const NotesPodcastRoomModal = dynamic(() => import("../../../components/notes/NotesPodcastRoomModal"));
 const NotesSocialPublishModal = dynamic(() => import("../../../components/notes/NotesSocialPublishModal"));
+const NotebookStyleButton = dynamic(
+  () => import("../../../components/notes/notebook-style/NotebookStyleButton"),
+  { ssr: false }
+);
 const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
     <div
@@ -122,6 +126,11 @@ import {
 } from "../../../lib/userScopedStorage";
 import { uploadNoteFileWithProgress } from "../../../lib/uploadNoteFile";
 import type { WorkItem } from "../../../lib/worksTypes";
+import type { AuthorIpItem } from "../../../lib/authorIp";
+import {
+  buildNotebookStylePromptBlock,
+  computeStyleSyncStatus
+} from "../../../lib/notebookStyle";
 type NotesAskStreamEvent =
   | {
       type: "chunk";
@@ -262,6 +271,9 @@ type NoteItem = {
   sourceReady?: boolean;
   sourceHint?: string;
   ragChunkCount?: number;
+  noteRagBodyHash?: string;
+  styleFeaturesReady?: boolean;
+  noteSummary?: string;
   ragIndexError?: string;
   ragIndexedAt?: string;
   parseStatus?: string;
@@ -1061,6 +1073,8 @@ export default function NotesPage() {
   );
 
   const [draftSelectedNoteIds, setDraftSelectedNoteIds] = useState<string[]>([]);
+  const [notebookStyleItem, setNotebookStyleItem] = useState<AuthorIpItem | null>(null);
+  const [styleActionToast, setStyleActionToast] = useState("");
   /** loadNotes 内校验「已删除的笔记 id」：避免 localStorage 里残留旧 id 导致仍加载旧对话 */
   const draftSelectedNoteIdsRef = useRef<string[]>([]);
   useEffect(() => {
@@ -1486,6 +1500,37 @@ export default function NotesPage() {
     selectableNoteIdsOnPage.length > 0 &&
     selectableNoteIdsOnPage.every((id) => draftSelectedNoteIds.includes(id));
   const someNotesOnPageSelected = selectableNoteIdsOnPage.some((id) => draftSelectedNoteIds.includes(id));
+
+  const styleNoteMetas = useMemo(
+    () =>
+      notesSorted.map((n) => ({
+        noteId: n.noteId,
+        updatedAt: n.createdAt || "",
+        noteRagBodyHash: n.noteRagBodyHash || "",
+        contentVersion: n.noteRagBodyHash || `${n.createdAt || ""}:${n.preprocessStatus || ""}:${n.parseState || ""}`,
+        ragChunkCount: n.ragChunkCount ?? 0,
+        styleFeaturesReady: Boolean(n.styleFeaturesReady),
+        bodyLength: isSourceUsable(n) ? 1 : 0
+      })),
+    [notesSorted]
+  );
+
+  const styleOutdated = useMemo(
+    () =>
+      computeStyleSyncStatus(notebookStyleItem, draftSelectedNoteIds, styleNoteMetas) === "outdated",
+    [notebookStyleItem, draftSelectedNoteIds, styleNoteMetas]
+  );
+
+  const notebookStylePrompt = useMemo(
+    () => buildNotebookStylePromptBlock(notebookStyleItem),
+    [notebookStyleItem]
+  );
+
+  useEffect(() => {
+    if (!styleActionToast) return;
+    const t = window.setTimeout(() => setStyleActionToast(""), 4000);
+    return () => window.clearTimeout(t);
+  }, [styleActionToast]);
 
   useLayoutEffect(() => {
     const el = selectAllOnPageInputRef.current;
@@ -3079,11 +3124,13 @@ export default function NotesPage() {
             ragMaxChars: 56_000,
             referenceRagMode: "truncate" as ReferenceRagMode
           }),
-          script_style: "简洁清晰，重点突出",
+          script_style: [notebookStylePrompt, "简洁清晰，重点突出"].filter(Boolean).join("\n"),
           script_language: artLang,
           program_name: programName,
-          speaker1_persona: "主持人",
-          speaker2_persona: "分析师",
+          speaker1_persona: notebookStyleItem?.oneLiner
+            ? `主持人 · ${notebookStyleItem.oneLiner.slice(0, 120)}`
+            : "主持人",
+          speaker2_persona: notebookStyleItem?.oneLiner ? "评论员 · 本笔记本风格" : "分析师",
           script_constraints: "",
           output_mode: "article",
           generate_cover: true,
@@ -4055,25 +4102,47 @@ export default function NotesPage() {
                       <IconChevronLeft width={18} height={18} aria-hidden />
                     </button>
                 </div>
-                <button
-                  type="button"
-                  disabled={notebooks.length === 0 || Boolean(sharedBrowse)}
-                  title={
-                    sharedBrowse
-                      ? "分享浏览模式下不可添加资料"
-                      : notebooks.length === 0
-                        ? "请先新建笔记本"
-                        : undefined
-                  }
-                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line/90 bg-surface py-2.5 text-sm font-medium text-ink shadow-soft transition-colors hover:border-brand/35 hover:bg-fill/50 disabled:cursor-not-allowed disabled:opacity-45"
-                  onClick={() => {
-                    setImportUrlError("");
-                    setShowAddNoteModal(true);
-                  }}
-                >
-                  <span className="text-base leading-none text-brand">+</span>
-                  添加资料
-                </button>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={notebooks.length === 0 || Boolean(sharedBrowse)}
+                    title={
+                      sharedBrowse
+                        ? "分享浏览模式下不可添加资料"
+                        : notebooks.length === 0
+                          ? "请先新建笔记本"
+                          : undefined
+                    }
+                    className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-dashed border-line/90 bg-surface py-2.5 text-sm font-medium text-ink shadow-soft transition-colors hover:border-brand/35 hover:bg-fill/50 disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={() => {
+                      setImportUrlError("");
+                      setShowAddNoteModal(true);
+                    }}
+                  >
+                    <span className="text-base leading-none text-brand">+</span>
+                    添加资料
+                  </button>
+                  <NotebookStyleButton
+                    notebookName={selectedNotebook}
+                    selectedNoteIds={draftSelectedNoteIds}
+                    noteMetas={styleNoteMetas}
+                    readOnly={sharedBrowse?.access === "read_only"}
+                    disabled={notebooks.length === 0}
+                    onItemChange={setNotebookStyleItem}
+                    onToast={setStyleActionToast}
+                    onError={setError}
+                  />
+                </div>
+                {styleOutdated ? (
+                  <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/8 px-2.5 py-1.5 text-[11px] leading-snug text-amber-900 dark:text-amber-200">
+                    资料已变，建议点击「待更新」重新提炼写作风格后更准确。
+                  </p>
+                ) : null}
+                {styleActionToast ? (
+                  <p className="mt-2 text-[11px] font-medium text-brand" role="status">
+                    {styleActionToast}
+                  </p>
+                ) : null}
 
                   <div className="mt-3 min-h-0 max-h-[min(100dvh-12rem,520px)] flex-1 overflow-y-auto overflow-x-hidden pr-0.5 lg:max-h-none">
                 <p className="text-[11px] leading-snug text-muted">
@@ -5153,6 +5222,7 @@ export default function NotesPage() {
         noteIds={draftSelectedNoteIds}
         askMessages={notesAskMessages}
         authHeaders={getAuthHeaders()}
+        notebookStylePrompt={notebookStylePrompt}
       />
 
       {showArticleModal ? (

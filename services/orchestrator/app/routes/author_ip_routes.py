@@ -15,8 +15,10 @@ from ..author_ip_store import (
     bootstrap_author_ips,
     create_blank_author_ip,
     duplicate_author_ip,
+    ensure_author_ip_for_notebook,
     ensure_default_author_ip,
     get_author_ip,
+    get_author_ip_by_notebook,
     list_archived_author_ips,
     list_author_ips,
     patch_author_ip,
@@ -151,6 +153,7 @@ class AuthorIpDomainsPatchBody(BaseModel):
 
 class AuthorIpLearnBody(BaseModel):
     mode: str = Field(default="full")
+    note_ids: list[str] = Field(default_factory=list, alias="noteIds")
 
     model_config = {"populate_by_name": True}
 
@@ -201,6 +204,8 @@ def _raise_value_error(exc: ValueError) -> None:
         raise HTTPException(status_code=404, detail="not_found") from exc
     if code in ("read_only", "read_only_ip"):
         raise HTTPException(status_code=400, detail="read_only") from exc
+    if code in ("note_ids_required", "no_learning_materials", "invalid_notebook"):
+        raise HTTPException(status_code=400, detail=code) from exc
     raise HTTPException(status_code=400, detail=code) from exc
 
 
@@ -226,6 +231,34 @@ def bootstrap_author_ips_api(request: Request):
     user_ref = _current_user_ref_or_401(request)
     out = bootstrap_author_ips(user_ref)
     return {"success": True, "bootstrapped": True, **out}
+
+
+class AuthorIpNotebookEnsureBody(BaseModel):
+    notebook_name: str = Field(min_length=1, max_length=500, alias="notebookName")
+
+    model_config = {"populate_by_name": True}
+
+
+@router.get("/by-notebook")
+def get_author_ip_by_notebook_api(
+    request: Request,
+    notebookName: str = Query(..., min_length=1, max_length=500),
+):
+    user_ref = _current_user_ref_or_401(request)
+    item = get_author_ip_by_notebook(user_ref, notebookName)
+    if not item:
+        return {"success": True, "item": None}
+    return {"success": True, "item": item}
+
+
+@router.post("/by-notebook/ensure")
+def ensure_author_ip_for_notebook_api(request: Request, body: AuthorIpNotebookEnsureBody):
+    user_ref = _current_user_ref_or_401(request)
+    try:
+        item = ensure_author_ip_for_notebook(user_ref, body.notebook_name)
+    except ValueError as exc:
+        _raise_value_error(exc)
+    return {"success": True, "item": item}
 
 
 @router.post("")
@@ -386,8 +419,10 @@ def save_author_ip_compose_api(request: Request, ip_id: str, body: AuthorIpCompo
 def learn_author_ip_api(request: Request, ip_id: str, body: AuthorIpLearnBody | None = None):
     user_ref = _current_user_ref_or_401(request)
     mode = (body.mode if body else "full") or "full"
+    raw_ids = body.note_ids if body else []
+    note_ids = [str(x).strip() for x in raw_ids if str(x).strip()] if raw_ids else None
     try:
-        item = learn_author_ip(user_ref, ip_id, mode=mode)
+        item = learn_author_ip(user_ref, ip_id, mode=mode, note_ids=note_ids)
     except ValueError as exc:
         _raise_value_error(exc)
     return {"success": True, "item": item}

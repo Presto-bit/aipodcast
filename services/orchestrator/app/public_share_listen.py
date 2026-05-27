@@ -24,6 +24,7 @@ _PODCASTISH_STORAGE_PROBE = frozenset({"podcast", "podcast_generate", "podcast_s
 _OWNER_WORK_LISTEN_DENY_TYPES = frozenset(
     {
         "note_rag_index",
+        "note_style_features",
         "auth_register",
         "auth_login",
     }

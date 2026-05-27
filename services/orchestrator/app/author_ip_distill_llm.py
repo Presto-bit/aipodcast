@@ -102,8 +102,10 @@ def build_distill_user_payload(
         title = str(m.get("title") or "未命名").strip()
         mt = str(m.get("materialType") or "")
         tid = str(m.get("experienceTemplateId") or "").strip()
-        body = _truncate(str(m.get("body") or ""), _MAX_BODY_PER_MAT)
-        meta = f"type={mt}" + (f", template={tid}" if tid else "")
+        raw = str(m.get("distillBody") or m.get("body") or "")
+        body = _truncate(raw, _MAX_BODY_PER_MAT)
+        src = str(m.get("distillSourceKind") or "full_body")
+        meta = f"type={mt}, distill={src}" + (f", template={tid}" if tid else "")
         lines.append(f"\n--- 素材{i}：{title} ({meta}) ---\n{body or '（无正文）'}")
 
     text = "\n".join(lines).strip()
@@ -266,4 +268,109 @@ def distill_profile_with_llm(
     except Exception as exc:
         logger.warning("author_ip_distill llm failed: %s", exc)
         return None
+
+
+_SYSTEM_MERGE = """你是写作风格整合师。输入为多篇资料「已预提取的风格要点」（非全文），请合并为作者统一风格画像。
+
+规则：
+1. 只输出一个 JSON 对象，不要 Markdown 代码块。
+2. 不得捏造素材未出现的经历、公司、数据。
+3. trait 聚焦怎么写（口吻、结构、立场、禁区、平台）。
+4. tagCloud 6～10 个中文关键词；domains 1～4 个场景；recentChange 一句话。
+
+JSON 结构同完整蒸馏（tagCloud, traits, domains, recentChange）。"""
+
+_SYSTEM_FEATURES_ENRICH = """你是写作风格分析师。根据单篇资料提要，补充 3～5 个口吻关键词（toneHints）与 5～8 个 tagHints。
+
+只输出 JSON：{"toneHints":["…"],"tagHints":["…"]}
+不要其它文字。"""
+
+
+def build_merge_features_user_payload(
+    materials: list[dict[str, Any]],
+    *,
+    one_liner: str = "",
+    existing_traits: list[dict[str, Any]] | None = None,
+) -> str:
+    from .note_style_features import format_style_features_block
+
+    lines: list[str] = []
+    if one_liner.strip():
+        lines.append(f"【一句话定位】{one_liner.strip()}")
+    if existing_traits:
+        labels = [
+            f"{t.get('dimension', '')}·{t.get('label', '')}"
+            for t in existing_traits[:16]
+            if isinstance(t, dict) and t.get("label")
+        ]
+        if labels:
+            lines.append("【已有特色】" + "；".join(labels[:12]))
+    lines.append("【各资料预提取风格要点】")
+    for i, m in enumerate(materials[:16], 1):
+        sf = m.get("styleFeatures") if isinstance(m.get("styleFeatures"), dict) else {}
+        title = str(m.get("title") or f"资料{i}")
+        block = format_style_features_block(sf, title=title)
+        lines.append(f"\n--- {title} ---\n{block or '（无）'}")
+    return "\n".join(lines)[:_MAX_USER_CHARS]
+
+
+def distill_profile_merge_features(
+    materials: list[dict[str, Any]],
+    *,
+    one_liner: str = "",
+    existing_traits: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """P2：基于 per-note styleFeatures 单次聚合为人设，不灌全文。"""
+    if not distill_llm_enabled():
+        return None
+    user = build_merge_features_user_payload(
+        materials, one_liner=one_liner, existing_traits=existing_traits
+    )
+    if len(user) < 40:
+        return None
+    try:
+        data = _invoke_distill_json(_SYSTEM_MERGE, user, temperature=0.35, timeout_sec=90)
+        tags = _parse_tag_cloud(data.get("tagCloud"))
+        traits = _parse_traits(data.get("traits"))
+        domains = _parse_domains(data.get("domains"), materials)
+        change = str(data.get("recentChange") or "").strip()[:240]
+        if not tags and not traits:
+            return None
+        return {
+            "tagCloud": tags,
+            "traits": traits,
+            "domains": domains,
+            "recentChange": change,
+        }
+    except Exception as exc:
+        logger.warning("author_ip_distill merge_features failed: %s", exc)
+        return None
+
+
+def enrich_style_features_with_llm(
+    features: dict[str, Any],
+    *,
+    title: str,
+    excerpt: str,
+    api_key: str | None = None,
+) -> dict[str, Any]:
+    if not distill_llm_enabled():
+        return features
+    user = f"【标题】{title[:120]}\n【提要】\n{(excerpt or '')[:2400]}"
+    try:
+        data = _invoke_distill_json(_SYSTEM_FEATURES_ENRICH, user, temperature=0.25, timeout_sec=45)
+        tones = data.get("toneHints") if isinstance(data.get("toneHints"), list) else []
+        tags = data.get("tagHints") if isinstance(data.get("tagHints"), list) else []
+        out = dict(features)
+        if tones:
+            merged = list(dict.fromkeys([*out.get("toneHints", []), *[str(t) for t in tones if str(t).strip()]]))
+            out["toneHints"] = merged[:8]
+        if tags:
+            merged = list(dict.fromkeys([*out.get("tagHints", []), *[str(t) for t in tags if str(t).strip()]]))
+            out["tagHints"] = merged[:12]
+        out["extractKind"] = "llm_lite"
+        return out
+    except Exception as exc:
+        logger.warning("enrich_style_features_with_llm failed: %s", exc)
+        return features
 

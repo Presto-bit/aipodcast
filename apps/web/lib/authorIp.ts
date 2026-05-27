@@ -384,12 +384,48 @@ export function profileFirstCompareShown(item: AuthorIpItem | null): boolean {
 
 export type AuthorIpLearnMode = "lite" | "full";
 
-export async function learnAuthorIp(ipId: string, mode: AuthorIpLearnMode = "full"): Promise<AuthorIpItem> {
+export async function fetchAuthorIpByNotebook(notebookName: string): Promise<AuthorIpItem | null> {
+  const q = new URLSearchParams({ notebookName });
+  const res = await fetch(`/api/author-ips/by-notebook?${q}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: authHeaders()
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(String((data as { detail?: string }).detail || "加载风格失败"));
+  }
+  const item = (data as { item?: AuthorIpItem | null }).item;
+  return item ?? null;
+}
+
+export async function ensureAuthorIpForNotebook(notebookName: string): Promise<AuthorIpItem> {
+  const res = await fetch("/api/author-ips/by-notebook", {
+    method: "POST",
+    credentials: "include",
+    headers: authHeaders(),
+    body: JSON.stringify({ notebookName })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(String((data as { detail?: string }).detail || "创建风格失败"));
+  }
+  return (data as { item: AuthorIpItem }).item;
+}
+
+export async function learnAuthorIp(
+  ipId: string,
+  mode: AuthorIpLearnMode = "full",
+  noteIds?: string[]
+): Promise<AuthorIpItem> {
   const res = await fetch(`/api/author-ips/${encodeURIComponent(ipId)}/learn`, {
     method: "POST",
     credentials: "include",
     headers: authHeaders(),
-    body: JSON.stringify({ mode })
+    body: JSON.stringify({
+      mode,
+      ...(noteIds && noteIds.length > 0 ? { noteIds } : {})
+    })
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

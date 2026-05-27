@@ -96,7 +96,9 @@ def material_in_style_learning(m: dict[str, Any]) -> bool:
     mt = str(m.get("materialType") or "").strip()
     if mt in ("third_party", "reference"):
         return False
-    return bool(str(m.get("body") or "").strip() or str(m.get("title") or "").strip())
+    from .author_ip_distill_inputs import material_has_distill_input
+
+    return material_has_distill_input(m) or bool(str(m.get("title") or "").strip())
 
 
 def _learning_materials(materials: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -551,17 +553,37 @@ def run_author_ip_distill(
     distill_source = "heuristic"
 
     llm_out: dict[str, Any] | None = None
-    try:
-        from .author_ip_distill_llm import distill_profile_with_llm
+    if learn_mode == "full":
+        try:
+            from .note_style_features import learn_merge_features_enabled, learning_materials_with_fresh_features
 
-        llm_out = distill_profile_with_llm(
-            materials,
-            one_liner=one_liner,
-            existing_traits=existing_traits,
-            mode=learn_mode,
-        )
-    except Exception:
-        llm_out = None
+            if learn_merge_features_enabled():
+                feature_mats = learning_materials_with_fresh_features(materials)
+                if feature_mats:
+                    from .author_ip_distill_llm import distill_profile_merge_features
+
+                    llm_out = distill_profile_merge_features(
+                        feature_mats,
+                        one_liner=one_liner,
+                        existing_traits=existing_traits,
+                    )
+                    if llm_out:
+                        distill_source = "features_merge"
+        except Exception:
+            llm_out = None
+
+    if llm_out is None:
+        try:
+            from .author_ip_distill_llm import distill_profile_with_llm
+
+            llm_out = distill_profile_with_llm(
+                materials,
+                one_liner=one_liner,
+                existing_traits=existing_traits,
+                mode=learn_mode,
+            )
+        except Exception:
+            llm_out = None
 
     if llm_out:
         distill_source = "llm"

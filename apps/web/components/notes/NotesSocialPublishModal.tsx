@@ -43,6 +43,8 @@ type Props = {
   noteIds: string[];
   askMessages: AskMsg[];
   authHeaders: Record<string, string>;
+  /** 本笔记本已提炼的写作风格，并入写作人设 */
+  notebookStylePrompt?: string;
 };
 
 const inputCls =
@@ -54,7 +56,8 @@ export default function NotesSocialPublishModal({
   notebook,
   noteIds,
   askMessages,
-  authHeaders
+  authHeaders,
+  notebookStylePrompt = ""
 }: Props) {
   const prefs = useMemo(() => loadSocialPublishPrefs(), [open]);
   const [step, setStep] = useState<SocialPublishWizardStep>("platform");
@@ -149,7 +152,15 @@ export default function NotesSocialPublishModal({
         askMessages,
         authHeaders
       });
-      const options = buildOptionsPayload(quickForPayload, advanced, persona, platform);
+      const personaForPayload = notebookStylePrompt.trim()
+        ? {
+            ...persona,
+            otherRequirements: [notebookStylePrompt.trim(), persona.otherRequirements.trim()]
+              .filter(Boolean)
+              .join("\n\n")
+          }
+        : persona;
+      const options = buildOptionsPayload(quickForPayload, advanced, personaForPayload, platform);
       const result = await fetchSocialPublishDraft({
         platform,
         materialText: material,

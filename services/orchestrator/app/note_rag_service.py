@@ -780,6 +780,41 @@ def embed_shards_on_demand(
     return {"ok": True, "chunks_added": len(texts), "shards": need}
 
 
+def sample_rag_chunk_texts_for_notes(
+    note_ids: list[str],
+    *,
+    per_note: int = 3,
+    max_chars_per_chunk: int = 1400,
+) -> dict[str, list[str]]:
+    """按 note 采样 RAG 分块文本，供风格提炼复用索引产物（避免重复灌全文）。"""
+    cap = max(1, min(6, int(per_note)))
+    rows = _load_chunk_rows_light(note_ids)
+    grouped: dict[str, list[tuple[int, str]]] = {}
+    for row in rows:
+        if row.get("deleted_at"):
+            continue
+        nid = str(row.get("note_id") or "").strip()
+        if not nid:
+            continue
+        txt = str(row.get("chunk_text") or "").strip()[:max_chars_per_chunk]
+        if not txt:
+            continue
+        grouped.setdefault(nid, []).append((int(row.get("chunk_index") or 0), txt))
+    out: dict[str, list[str]] = {}
+    for nid, pairs in grouped.items():
+        pairs.sort(key=lambda x: x[0])
+        texts = [t for _, t in pairs]
+        if len(texts) <= cap:
+            out[nid] = texts
+        elif cap == 1:
+            out[nid] = [texts[0]]
+        else:
+            mid = len(texts) // 2
+            picked = [texts[0], texts[mid], texts[-1]]
+            out[nid] = picked[:cap]
+    return out
+
+
 def count_rag_chunks_for_notes(note_ids: list[str]) -> int:
     if not note_ids:
         return 0
@@ -1130,6 +1165,12 @@ def _index_note_incremental_append(
             "incrementalAppend": True,
         },
     )
+    try:
+        from .note_style_features import try_enqueue_note_style_features
+
+        try_enqueue_note_style_features(note_id, user_ref)
+    except Exception:
+        pass
     return {"ok": True, "incremental": True, "chunks_added": len(texts), "shards": affected_ids}
 
 
@@ -1327,9 +1368,16 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
         index_metadata=index_metadata,
     )
     invalidate_retrieval_cache_for_notes([note_id])
+    try:
+        from .note_style_features import try_enqueue_note_style_features
+
+        sf_jid = try_enqueue_note_style_features(note_id, user_ref)
+    except Exception:
+        sf_jid = None
     return {
         "ok": True,
         "chunks": len(chunks),
+        "style_features_job_id": sf_jid,
         "chunks_total": int(index_stats.get("ragChunksTotal") or len(chunks_all)),
         "index_truncated": bool(index_stats.get("ragIndexTruncated")),
         "index_strategy": str(index_stats.get("ragIndexStrategy") or ""),

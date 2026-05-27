@@ -5,8 +5,11 @@ import json
 import re
 from typing import Any
 
+from .author_ip_distill_inputs import build_distill_excerpt, note_content_fingerprint
+from .note_style_features import format_style_features_block, parse_style_features, style_features_match_hash
 from .author_ip_store import get_author_ip
 from .models import list_notes
+from .note_rag_service import sample_rag_chunk_texts_for_notes
 from .provider_router import (
     invoke_llm_chat_messages_stream_iter,
     invoke_llm_chat_messages_with_minimax_fallback,
@@ -57,6 +60,8 @@ def list_ip_materials(user_ref: str | None, ip_item: dict[str, Any]) -> list[dic
     if not nb:
         return []
     rows = list_notes(user_ref=user_ref, notebook=nb, limit=200, offset=0)
+    note_ids = [str(row.get("id") or "").strip() for row in rows or [] if str(row.get("id") or "").strip()]
+    chunk_map = sample_rag_chunk_texts_for_notes(note_ids, per_note=3)
     out: list[dict[str, Any]] = []
     for row in rows or []:
         md = _md_dict(row)
@@ -66,14 +71,42 @@ def list_ip_materials(user_ref: str | None, ip_item: dict[str, Any]) -> list[dic
             include_flag = False
         else:
             include_flag = True
+        updated_raw = row.get("updated_at") or row.get("created_at")
+        updated_at = updated_raw.isoformat() if hasattr(updated_raw, "isoformat") else str(updated_raw or "")
+        note_id = str(row.get("id") or "")
+        rag_hash = str(row.get("note_rag_body_hash") or "").strip()
+        note_summary = str(row.get("note_summary") or "").strip()
+        pre_summary = str(md.get("preprocessSummary") or "").strip()
+        rag_chunks = int(row.get("rag_chunk_count") or 0)
+        cached_sf = parse_style_features(md)
+        if style_features_match_hash(cached_sf, rag_hash):
+            distill_body = format_style_features_block(cached_sf, title=str(md.get("title") or "未命名"))
+            distill_kind = "cached_features"
+        else:
+            distill_body, distill_kind = build_distill_excerpt(
+                body=body,
+                note_summary=note_summary,
+                preprocess_summary=pre_summary,
+                rag_chunk_texts=chunk_map.get(note_id) or [],
+            )
+        fingerprint = note_content_fingerprint(body, rag_hash)
         out.append(
             {
-                "noteId": str(row.get("id") or ""),
+                "noteId": note_id,
                 "title": str(md.get("title") or "未命名").strip()[:200],
                 "body": body,
+                "distillBody": distill_body,
+                "distillSourceKind": distill_kind,
+                "noteSummary": note_summary,
+                "preprocessSummary": pre_summary,
+                "ragChunkCount": rag_chunks,
+                "noteRagBodyHash": rag_hash,
                 "materialType": str(md.get("authorMaterialType") or "published").strip(),
                 "experienceTemplateId": str(md.get("experienceTemplateId") or "").strip(),
                 "includeInStyleLearning": include_flag,
+                "updatedAt": updated_at,
+                "contentVersion": fingerprint,
+                "styleFeatures": cached_sf if style_features_match_hash(cached_sf, rag_hash) else None,
             }
         )
     return out

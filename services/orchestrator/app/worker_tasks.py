@@ -732,6 +732,25 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             append_job_event(job_id, "complete", "笔记索引完成", {"progress": 100})
             return out
 
+        if job_type == "note_style_features":
+            nid = str(payload.get("note_id") or "").strip()
+            if not nid:
+                raise RuntimeError("note_id_required")
+            append_job_event(job_id, "progress", "正在提取写作风格特征", {"progress": 30})
+            from .note_style_features import extract_and_persist_note_style_features
+
+            out = extract_and_persist_note_style_features(nid, created_by, api_key=api_key)
+            if not out.get("ok"):
+                err = str(out.get("error") or "note_style_features_failed")
+                if finalize_job_terminal_unless_cancelled(job_id, "failed", progress=100, error_message=err[:500]):
+                    append_job_event(job_id, "error", "风格特征提取失败", {"progress": 100, "error": err[:500]})
+                return {"status": "failed", "error": err}
+            if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=out):
+                append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
+                return {"status": "cancelled"}
+            append_job_event(job_id, "complete", "风格特征已缓存", {"progress": 100})
+            return out
+
         append_job_event(job_id, "progress", "正在汇总参考材料（多 URL / 笔记 / 附加文本）", {"progress": 18})
         stop_ref, thr_ref = _start_progress_heartbeat(
             job_id,

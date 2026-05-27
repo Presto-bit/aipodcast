@@ -555,6 +555,72 @@ def get_author_ip(user_ref: str | None, ip_id: str) -> dict[str, Any] | None:
             return _row_to_item(row, material_count=_count_materials(user_ref, nb))
 
 
+def get_author_ip_by_notebook(user_ref: str | None, notebook_name: str) -> dict[str, Any] | None:
+    """按用户笔记本名查找绑定的 IP（不含系统隐藏本 __author_ip:*）。"""
+    nb = str(notebook_name or "").strip()
+    if not nb or is_author_ip_notebook_name(nb):
+        return None
+    ensure_author_ip_schema()
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return None
+            cur.execute(
+                """
+                SELECT * FROM author_ips
+                WHERE user_id = %s::uuid AND notebook_name = %s AND archived_at IS NULL
+                  AND is_template = FALSE
+                LIMIT 1
+                """,
+                (user_uuid, nb),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            nb_row = str(row.get("notebook_name") or "")
+            return _row_to_item(row, material_count=_count_materials(user_ref, nb_row))
+
+
+def ensure_author_ip_for_notebook(user_ref: str | None, notebook_name: str) -> dict[str, Any]:
+    """笔记本 1:1 IP：不存在则懒创建，notebook_name 指向真实用户笔记本。"""
+    nb = str(notebook_name or "").strip()
+    if not nb or is_author_ip_notebook_name(nb):
+        raise ValueError("invalid_notebook")
+    existing = get_author_ip_by_notebook(user_ref, nb)
+    if existing:
+        return existing
+    ensure_author_ip_schema()
+    display = nb[:120]
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                raise ValueError("not_logged_in")
+            ip_row = _insert_ip_row(
+                cur,
+                user_uuid=user_uuid,
+                display_name=display,
+                subtitle="",
+                avatar_color="brand",
+                notebook_name=nb,
+                is_default=False,
+                is_system_seed=False,
+                is_template=False,
+                is_read_only=False,
+                template_id=None,
+                maturity="empty",
+                one_liner="",
+                profile={},
+            )
+            conn.commit()
+            ip_id = str(ip_row["id"])
+    item = get_author_ip(user_ref, ip_id)
+    if not item:
+        raise ValueError("ip_create_failed")
+    return item
+
+
 def patch_author_ip(
     user_ref: str | None,
     ip_id: str,

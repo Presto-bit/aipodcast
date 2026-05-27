@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from psycopg2.extras import Json
 
-from .author_ip_distill import run_author_ip_distill
+from .author_ip_distill import material_in_style_learning, run_author_ip_distill
 from .author_ip_store import get_author_ip
 from .author_ip_style import list_ip_materials
 from .db import get_conn, get_cursor
@@ -392,20 +393,62 @@ def mark_author_ip_first_compare_shown(user_ref: str | None, ip_id: str) -> None
             conn.commit()
 
 
-def learn_author_ip(user_ref: str | None, ip_id: str, *, mode: str = "full") -> dict[str, Any]:
-    """从参与学习的素材蒸馏词云、特色、场景与生命力摘要。"""
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _build_style_snapshot(learning_materials: list[dict[str, Any]]) -> dict[str, Any]:
+    note_ids: list[str] = []
+    note_versions: dict[str, str] = {}
+    for m in learning_materials:
+        nid = str(m.get("noteId") or "").strip()
+        if not nid:
+            continue
+        note_ids.append(nid)
+        ver = str(m.get("noteRagBodyHash") or "").strip()
+        if not ver:
+            ver = str(m.get("contentVersion") or "").strip()
+        if not ver:
+            ver = str(m.get("updatedAt") or "")[:40]
+        note_versions[nid] = ver or "0"
+    return {
+        "noteIds": note_ids,
+        "noteVersions": note_versions,
+        "versionScheme": "note_rag_body_hash",
+        "learnedAt": _now_iso(),
+    }
+
+
+def learn_author_ip(
+    user_ref: str | None,
+    ip_id: str,
+    *,
+    mode: str = "full",
+    note_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """从参与学习的素材蒸馏词云、特色、场景与生命力摘要。可选 note_ids 限定笔记本勾选范围。"""
     ip_item, err = _guard_writable(get_author_ip(user_ref, ip_id))
     if err:
         raise ValueError("read_only" if "只读" in err else "ip_not_found")
     materials = list_ip_materials(user_ref, ip_item)
+    if note_ids is not None:
+        allowed = {str(x).strip() for x in note_ids if str(x).strip()}
+        if not allowed:
+            raise ValueError("note_ids_required")
+        materials = [m for m in materials if str(m.get("noteId") or "") in allowed]
+    learning = [m for m in materials if material_in_style_learning(m)]
+    if not learning:
+        raise ValueError("no_learning_materials")
     profile = ip_item.get("profile") if isinstance(ip_item.get("profile"), dict) else {}
     learn_mode = "lite" if str(mode or "").strip().lower() == "lite" else "full"
     profile = run_author_ip_distill(
         profile,
-        materials,
+        learning,
         one_liner=str(ip_item.get("oneLiner") or ""),
         mode=learn_mode,
     )
+    profile["styleSnapshot"] = _build_style_snapshot(learning)
+    profile["styleSyncStatus"] = "ready"
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)

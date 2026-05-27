@@ -90,6 +90,7 @@ from ..note_rag_service import (
     invalidate_retrieval_cache_for_notes,
     set_note_rag_index_error,
 )
+from ..note_style_features import parse_style_features, style_features_match_hash
 from ..text_decode import safe_decode_bytes
 from ..schemas import (
     NoteCreateRequest,
@@ -1076,6 +1077,8 @@ def list_notes_api(
         )
         parse_err_final = explicit_parse_error_code or str(cap.get("parseErrorCode") or "").strip()
         parse_hint_actions = hint_actions_for_code(parse_err_final)
+        rag_hash = str(r.get("note_rag_body_hash") or "").strip()
+        sf = parse_style_features(md)
         notes.append(
             {
                 "noteId": note_uuid,
@@ -1090,6 +1093,9 @@ def list_notes_api(
                 "sourceHint": str(cap["sourceHint"] or ""),
                 "parseHintActions": parse_hint_actions,
                 "ragChunkCount": rag_chunks,
+                "noteRagBodyHash": rag_hash,
+                "noteSummary": str(r.get("note_summary") or "").strip(),
+                "styleFeaturesReady": bool(rag_hash and style_features_match_hash(sf, rag_hash)),
                 "ragIndexError": (str(rag_err).strip() if rag_err else ""),
                 "ragIndexedAt": str(r.get("note_rag_index_at") or ""),
                 "parseStatus": p_st,
