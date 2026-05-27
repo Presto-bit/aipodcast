@@ -1599,7 +1599,12 @@ export default function NotesPage() {
         notebookCovers?: Record<string, NotebookCoverMeta>;
       };
       if (res.ok && data.success && Array.isArray(data.notebooks)) {
-        setNotebooks(data.notebooks);
+        const currentNb = selectedNotebook.trim();
+        const merged =
+          currentNb && !data.notebooks.includes(currentNb)
+            ? mergeNotebookName(data.notebooks, currentNb)
+            : data.notebooks;
+        setNotebooks(merged);
       }
       if (res.ok && data.success && data.notebookSharing && typeof data.notebookSharing === "object") {
         setNotebookSharingByName(data.notebookSharing);
@@ -1612,7 +1617,7 @@ export default function NotesPage() {
     } finally {
       setNotebooksReady(true);
     }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, mergeNotebookName, selectedNotebook]);
 
   const loadPopularNotebooks = useCallback(
     async (append: boolean) => {

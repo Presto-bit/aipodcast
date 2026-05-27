@@ -998,10 +998,13 @@ def list_author_ip_notebook_names(user_ref: str | None) -> set[str]:
 
 
 def exclude_author_ip_notebooks(names: list[str], user_ref: str | None) -> list[str]:
-    bound = list_author_ip_notebook_names(user_ref)
-    if not bound:
-        return names
-    return [n for n in names if n not in bound]
+    """仅排除系统隐藏本 ``__author_ip:*``。
+
+    v6 用户笔记本与 author_ips 1:1 绑定后仍应出现在列表中；
+    勿按「已绑定 IP」整本过滤，否则上传/提炼后笔记本会从侧栏消失。
+    """
+    del user_ref
+    return [n for n in names if not is_author_ip_notebook_name(n)]
 
 
 def list_user_notebook_kinds_meta(user_ref: str | None) -> dict[str, dict[str, Any]]:
