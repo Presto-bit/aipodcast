@@ -28,7 +28,11 @@ import { useAppNotice } from "../../lib/AppNoticeContext";
 import UserErrorBanner from "../ui/UserErrorBanner";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
-import { WorkGalleryListProvider, type WorkGalleryListContextValue } from "./workGalleryListContext";
+import {
+  WorkGalleryListProvider,
+  type WorkGalleryListContextValue,
+  type WorkGalleryRowLayout
+} from "./workGalleryListContext";
 import { WorkGalleryListItem } from "./WorkGalleryListItem";
 import { WorkGalleryVirtualGrid } from "./WorkGalleryVirtualGrid";
 import { useWorkGalleryGridColumnCount } from "./useWorkGalleryGridColumnCount";
@@ -176,6 +180,8 @@ type Props = {
   emptyStateFooter?: ReactNode;
   /** 「进行中」列表：卡片底部用停止/删除替换下载/修改文稿 */
   activeQueueCardActions?: boolean;
+  /** notes_studio 侧栏「更多作品」链接；默认 /works?tab=audio */
+  viewAllHref?: string;
 };
 
 /** 笔记本侧栏 ⋯ 菜单：fixed 定位，避免 overflow/滚动裁切 */
@@ -223,7 +229,8 @@ export default function PodcastWorksGallery({
   compactCards = false,
   workDetailReturnTo,
   emptyStateFooter,
-  activeQueueCardActions = false
+  activeQueueCardActions = false,
+  viewAllHref
 }: Props) {
   const { t } = useI18n();
   const router = useRouter();
@@ -249,6 +256,12 @@ export default function PodcastWorksGallery({
   }, [user]);
   const useCompactAllLayout = variant === "all" && compactCards;
   const useNotesStyleCards = variant === "notes_studio" || useCompactAllLayout;
+  const rowLayout = useMemo((): WorkGalleryRowLayout => {
+    if (activeQueueCardActions) return "active";
+    if (variant === "notes") return "script-list";
+    if (variant === "notes_studio" || useCompactAllLayout) return "compact";
+    return "grid";
+  }, [activeQueueCardActions, variant, useCompactAllLayout]);
   const { hiddenKey, titlesKey, allowedTypes } = useMemo(() => galleryStorageKeys(variant), [variant]);
 
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -362,9 +375,9 @@ export default function PodcastWorksGallery({
   const gridColumnCount = useWorkGalleryGridColumnCount();
   const [clientMounted, setClientMounted] = useState(false);
   useEffect(() => setClientMounted(true), []);
-  const useGridVirtual = clientMounted && !useNotesStyleCards && visibleItems.length >= 12;
+  const useGridVirtual = clientMounted && rowLayout === "grid" && visibleItems.length >= 12;
   const eagerCoverFirstCount = useGridVirtual ? gridColumnCount : 4;
-  const useListCoverThumbs = !useNotesStyleCards;
+  const useListCoverThumbs = rowLayout === "grid";
 
   useEffect(() => {
     const firstN = visibleItems.slice(0, eagerCoverFirstCount);
@@ -1047,9 +1060,17 @@ export default function PodcastWorksGallery({
     }
   }
 
+  const sidebarViewAllHref = useMemo(() => {
+    if (viewAllHref?.trim()) return viewAllHref.trim();
+    const q = new URLSearchParams({ tab: "audio" });
+    if (workDetailReturnTo?.trim()) q.set("returnTo", workDetailReturnTo.trim());
+    return `/works?${q.toString()}`;
+  }, [viewAllHref, workDetailReturnTo]);
+
   const listCtxValue = useMemo<WorkGalleryListContextValue>(
     () => ({
       variant,
+      rowLayout,
       useNotesStyleCards,
       useCompactAllLayout,
       enableBatchActions: Boolean(enableBatchActions),
@@ -1092,6 +1113,7 @@ export default function PodcastWorksGallery({
     }),
     [
       variant,
+      rowLayout,
       useNotesStyleCards,
       useCompactAllLayout,
       enableBatchActions,
@@ -1266,7 +1288,7 @@ export default function PodcastWorksGallery({
         </div>
       ) : (
         <>
-        {useNotesStyleCards ? (
+        {rowLayout !== "grid" ? (
           <ul className="grid w-full grid-cols-1 gap-2 overflow-visible">
             {visibleItems.map((w, index) => (
               <WorkGalleryListItem
@@ -1303,7 +1325,7 @@ export default function PodcastWorksGallery({
           </ul>
         )}
 
-        {useNotesStyleCards && notesStudioMenuPortalData && notesStudioMenuPos
+        {rowLayout !== "grid" && notesStudioMenuPortalData && notesStudioMenuPos
           ? createPortal(
               (() => {
                 const m = notesStudioMenuPortalData;
@@ -1527,7 +1549,7 @@ export default function PodcastWorksGallery({
         {sidebarMoreCount > 0 ? (
           <div className="mt-3 flex justify-center">
             <Link
-              href="/works"
+              href={sidebarViewAllHref}
               className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/5"
             >
               更多作品

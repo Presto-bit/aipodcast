@@ -29,6 +29,8 @@ type Props = {
   coverUrl: string;
   /** 与「我的作品」卡片 meta 一致，用 | 分隔 */
   navMetaPipe: string;
+  /** 体裁展示名（如笔记文章 · 简报） */
+  workProgramName?: string;
   hasAudio: boolean;
   scriptDraft: boolean;
   /** 自媒体发布稿：展示标题/配图等结构，正文区展示 body */
@@ -72,6 +74,7 @@ export function WorkHubOverviewPanel({
   episodeSummary,
   coverUrl,
   navMetaPipe,
+  workProgramName = "",
   hasAudio,
   scriptDraft,
   socialPublishDraft = false,
@@ -124,6 +127,8 @@ export function WorkHubOverviewPanel({
   }, [hasAudio, audioBlocked, workAudio, jobId, displayTitleForDownload, episodeTitle]);
 
   const coverSrc = workCoverImageSrc(coverUrl);
+  const programLabel = String(workProgramName || "").trim();
+  const textOnlyManuscript = scriptDraft || socialPublishDraft;
   const totalHint =
     durationSecHint != null && Number.isFinite(durationSecHint) && durationSecHint > 0
       ? formatClock(durationSecHint)
@@ -195,62 +200,95 @@ export function WorkHubOverviewPanel({
         </div>
       ) : null}
       {jobGenProgressEl}
-      <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-5">
-        <div className="relative h-[4.5rem] w-[4.5rem] shrink-0 overflow-hidden rounded-xl border border-line bg-fill/30 shadow-soft sm:h-[4.75rem] sm:w-[4.75rem]">
-          {coverSrc ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={coverSrc}
-              alt=""
-              className="h-full w-full object-cover"
-              referrerPolicy="no-referrer"
-              loading="eager"
-            />
-          ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-1 text-center">
-              <WorkTypeIcon scriptDraft={scriptDraft} size={22} className="text-brand/80" aria-hidden />
-              <span className="scale-90 text-[9px] leading-tight text-muted">
-                {socialPublishDraft ? "自媒体" : scriptDraft ? "文稿" : "无封面"}
-              </span>
-            </div>
-          )}
-
-          {!audioBlocked && hasAudio ? (
-            <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-1">
-              <button
-                type="button"
-                disabled={loadingThis}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCoverPlayClick();
-                }}
-                className="pointer-events-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink/80 text-brand-foreground shadow-md backdrop-blur-sm transition hover:bg-ink/90 disabled:opacity-50"
-                aria-label={playingThis ? "暂停" : "播放"}
-                title={playingThis ? "暂停" : totalHint ? `播放（约 ${totalHint}）` : "播放"}
-              >
-                {loadingThis ? (
-                  <span className="h-3 w-3 animate-pulse rounded-full bg-brand-foreground/70" aria-hidden />
-                ) : playingThis ? (
-                  <IconPause className="h-3 w-3 text-white" aria-hidden />
-                ) : (
-                  <IconPlayFilled className="ml-px h-3.5 w-3.5 text-white" aria-hidden />
-                )}
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-2 text-center sm:text-left">
-          <h2 className="text-balance text-base font-semibold tracking-tight text-ink sm:text-lg">
-            {episodeTitle.trim() || "未命名作品"}
-          </h2>
-          {!scriptDraft ? (
-            jobGenerating ? null : episodeSummary.trim() ? (
-              <p className="text-[13px] leading-relaxed text-muted sm:text-sm">{episodeSummary.trim()}</p>
+      <div
+        className={
+          textOnlyManuscript
+            ? "flex flex-col gap-3 rounded-xl border border-line/80 bg-fill/20 p-3 sm:p-4"
+            : "flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-5"
+        }
+      >
+        {!textOnlyManuscript ? (
+          <div className="relative h-[4.5rem] w-[4.5rem] shrink-0 overflow-hidden rounded-xl border border-line bg-fill/30 shadow-soft sm:h-[4.75rem] sm:w-[4.75rem]">
+            {coverSrc ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={coverSrc}
+                alt=""
+                className="h-full w-full object-cover"
+                referrerPolicy="no-referrer"
+                loading="eager"
+              />
             ) : (
-              <p className="text-[13px] text-muted sm:text-sm">暂无简介</p>
-            )
-          ) : null}
-          <p className="text-[11px] leading-relaxed text-muted break-words sm:text-xs">{navMetaPipe.trim() || "—"}</p>
+              <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-1 text-center">
+                <WorkTypeIcon scriptDraft={false} size={22} className="text-brand/80" aria-hidden />
+                <span className="scale-90 text-[9px] leading-tight text-muted">无封面</span>
+              </div>
+            )}
+
+            {!audioBlocked && hasAudio ? (
+              <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-1">
+                <button
+                  type="button"
+                  disabled={loadingThis}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCoverPlayClick();
+                  }}
+                  className="pointer-events-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink/80 text-brand-foreground shadow-md backdrop-blur-sm transition hover:bg-ink/90 disabled:opacity-50"
+                  aria-label={playingThis ? "暂停" : "播放"}
+                  title={playingThis ? "暂停" : totalHint ? `播放（约 ${totalHint}）` : "播放"}
+                >
+                  {loadingThis ? (
+                    <span className="h-3 w-3 animate-pulse rounded-full bg-brand-foreground/70" aria-hidden />
+                  ) : playingThis ? (
+                    <IconPause className="h-3 w-3 text-white" aria-hidden />
+                  ) : (
+                    <IconPlayFilled className="ml-px h-3.5 w-3.5 text-white" aria-hidden />
+                  )}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-line/80 bg-surface">
+              <WorkTypeIcon scriptDraft size={24} className="text-brand/85" aria-hidden />
+            </div>
+            <div className="min-w-0 flex-1">
+              {programLabel ? (
+                <span className="inline-flex max-w-full truncate rounded-md bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
+                  {programLabel}
+                </span>
+              ) : null}
+              <h2 className="mt-1 text-balance text-base font-semibold tracking-tight text-ink sm:text-lg">
+                {episodeTitle.trim() || "未命名作品"}
+              </h2>
+            </div>
+          </div>
+        )}
+        <div
+          className={`flex min-w-0 flex-1 flex-col gap-2 ${textOnlyManuscript ? "sm:pt-0.5" : "text-center sm:text-left"}`}
+        >
+          {!textOnlyManuscript ? (
+            <>
+              <h2 className="text-balance text-base font-semibold tracking-tight text-ink sm:text-lg">
+                {episodeTitle.trim() || "未命名作品"}
+              </h2>
+              {jobGenerating ? null : episodeSummary.trim() ? (
+                <p className="text-[13px] leading-relaxed text-muted sm:text-sm">{episodeSummary.trim()}</p>
+              ) : (
+                <p className="text-[13px] text-muted sm:text-sm">暂无简介</p>
+              )}
+              <p className="text-[11px] leading-relaxed text-muted break-words sm:text-xs">{navMetaPipe.trim() || "—"}</p>
+            </>
+          ) : (
+            <>
+              <p className="text-[13px] leading-relaxed text-muted sm:text-sm">
+                {socialPublishDraft ? "自媒体发布稿 · 正文见下方" : "文章出稿 · 正文见下方"}
+              </p>
+              <p className="text-[11px] leading-relaxed text-muted break-words sm:text-xs">{navMetaPipe.trim() || "—"}</p>
+            </>
+          )}
         </div>
       </div>
 
@@ -308,7 +346,7 @@ export function WorkHubOverviewPanel({
           ) : null}
 
           {scriptManuscriptPanel ? (
-            <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
+            <section id="work-hub-manuscript" className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4 scroll-mt-24">
               {regenProgressEl}
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">

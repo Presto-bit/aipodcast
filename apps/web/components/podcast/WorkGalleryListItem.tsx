@@ -19,6 +19,8 @@ import {
 } from "./workGalleryListShared";
 import type { PodcastWorkRow } from "./workGalleryListShared";
 import { useWorkGalleryListContext } from "./workGalleryListContext";
+import { WorkGalleryActiveRow, WorkGalleryScriptListRow } from "./workGalleryAlternateRows";
+import { scriptExcerptFromWork, workGalleryTypeChipLabel } from "../../lib/workGalleryDisplay";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { IconPause, IconPlayFilled, WorkTypeIcon } from "../icons";
 
@@ -144,6 +146,7 @@ export function WorkGalleryListItem({
   const compA11y = outer === "div" && !suppressContainerRole ? ({ role: "listitem" as const } as const) : ({} as const);
   const {
     variant,
+    rowLayout,
     useNotesStyleCards,
     useCompactAllLayout,
     enableBatchActions,
@@ -240,20 +243,62 @@ const inFlightQueue =
   Boolean(activeQueueCardActions) && (jobStatus === "queued" || jobStatus === "running");
 const activeSummary = String(w.activeJobSummary || "").trim();
 const syncedGenBarPct = useSyncedGeneratingBarPct(w, inFlightQueue);
+const navMetaForRow = formatUnifiedWorksNavMetaLine(
+  w,
+  isTextOnlyWork,
+  durationLine,
+  scriptCharCountDisplay,
+  createdShort,
+  worksNavAuthorDisplay
+);
+const navMetaLineShown = inFlightQueue && activeSummary ? activeSummary : navMetaForRow;
+const scriptExcerpt = isTextOnlyWork ? scriptExcerptFromWork(w) : "";
 
-/** 笔记本侧栏「我的作品」或首页「全部作品」紧凑列表：无封面顶栏、标题 + 元数据 + 操作（文稿在紧凑模式下仍走下方大图卡片分支） */
-if (useNotesStyleCards && !(useCompactAllLayout && isTextOnlyWork)) {
+if (rowLayout === "active") {
+  return (
+    <WorkGalleryActiveRow
+      w={w}
+      id={id}
+      outer={outer}
+      compA11y={compA11y}
+      isTextOnlyWork={isTextOnlyWork}
+      inFlightQueue={inFlightQueue}
+      isMediaInFlight={isMediaInFlight}
+      jobStatus={jobStatus}
+      activeSummary={activeSummary}
+      syncedGenBarPct={syncedGenBarPct}
+      navMetaLineShown={navMetaLineShown}
+      rowMutationsLocked={rowMutationsLocked}
+      rowPlayMsg={rowPlayMsg}
+    />
+  );
+}
+
+if (rowLayout === "script-list") {
+  return (
+    <WorkGalleryScriptListRow
+      w={w}
+      id={id}
+      outer={outer}
+      compA11y={compA11y}
+      isTextOnlyWork={isTextOnlyWork}
+      inFlightQueue={inFlightQueue}
+      isMediaInFlight={isMediaInFlight}
+      jobStatus={jobStatus}
+      activeSummary={activeSummary}
+      syncedGenBarPct={syncedGenBarPct}
+      navMetaLineShown={navMetaLineShown}
+      rowMutationsLocked={rowMutationsLocked}
+      rowPlayMsg={rowPlayMsg}
+    />
+  );
+}
+
+/** 知识库等紧凑列表：无封面、标题 + 摘要 + 元数据 */
+if (rowLayout === "compact" || useNotesStyleCards) {
   const headlineFull = String(w.displayTitle || "").trim() || id;
   const headlineShown = truncateByGraphemes(headlineFull, NOTES_STUDIO_REF_TITLE_MAX_CHARS);
-  const metaLine = formatUnifiedWorksNavMetaLine(
-    w,
-    isTextOnlyWork,
-    durationLine,
-    scriptCharCountDisplay,
-    createdShort,
-    worksNavAuthorDisplay
-  );
-  const metaLineShown = inFlightQueue && activeSummary ? activeSummary : metaLine;
+  const metaLineShown = navMetaLineShown;
   const synopsisHoverFull = useCompactAllLayout
     ? `${metaLineShown}\n\n${headlineFull}`
     : `${metaLineShown}\n\n${formatNotesStudioCardSynopsis(
@@ -303,6 +348,18 @@ if (useNotesStyleCards && !(useCompactAllLayout && isTextOnlyWork)) {
           ) : (
             <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
           )}
+          {isTextOnlyWork ? (
+            <div className="mt-1 flex flex-wrap items-center gap-1">
+              <span className="inline-flex max-w-full truncate rounded-md bg-brand/10 px-1 py-0.5 text-[9px] font-medium text-brand">
+                {workGalleryTypeChipLabel(w)}
+              </span>
+            </div>
+          ) : null}
+          {scriptExcerpt ? (
+            <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-muted" title={scriptExcerpt}>
+              {scriptExcerpt}
+            </p>
+          ) : null}
           <div className="group/synopsis relative mt-1 min-h-0">
             <p className="line-clamp-3 min-h-0 text-[9px] leading-snug text-muted">{metaLineShown}</p>
             <div
@@ -324,6 +381,14 @@ if (useNotesStyleCards && !(useCompactAllLayout && isTextOnlyWork)) {
         ) : null}
         <div className="mt-0.5 flex items-center justify-between gap-1 border-t border-line/50 pt-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-1">
+            {isTextOnlyWork && !inFlightQueue ? (
+              <Link
+                href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true })}
+                className="rounded-md border border-brand/35 bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/15"
+              >
+                {rowMutationsLocked ? "查看" : "阅读"}
+              </Link>
+            ) : null}
             {!isTextOnlyWork ? (
               isMediaInFlight ? (
                 <span className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border border-line/80 bg-fill/60 px-1.5 text-[9px] font-medium text-muted">
@@ -387,9 +452,29 @@ if (useNotesStyleCards && !(useCompactAllLayout && isTextOnlyWork)) {
   );
 }
 
+if (variant === "all" && isTextOnlyWork) {
+  return (
+    <WorkGalleryScriptListRow
+      w={w}
+      id={id}
+      outer={outer}
+      compA11y={compA11y}
+      isTextOnlyWork={isTextOnlyWork}
+      inFlightQueue={inFlightQueue}
+      isMediaInFlight={isMediaInFlight}
+      jobStatus={jobStatus}
+      activeSummary={activeSummary}
+      syncedGenBarPct={syncedGenBarPct}
+      navMetaLineShown={navMetaLineShown}
+      rowMutationsLocked={rowMutationsLocked}
+      rowPlayMsg={rowPlayMsg}
+    />
+  );
+}
+
 if (variant === "all") {
   const dayP = formatWorkCreatedAtZh(w.createdAt);
-  const navMetaLine = formatUnifiedWorksNavMetaLine(
+  const navMetaLineAll = formatUnifiedWorksNavMetaLine(
     w,
     isTextOnlyWork,
     durationLine,
@@ -397,7 +482,7 @@ if (variant === "all") {
     dayP,
     worksNavAuthorDisplay
   );
-  const navMetaLineShown = inFlightQueue && activeSummary ? activeSummary : navMetaLine;
+  const navMetaLineShownAll = inFlightQueue && activeSummary ? activeSummary : navMetaLineAll;
   return (
     <Comp
       key={id}
@@ -475,10 +560,10 @@ if (variant === "all") {
           <p
             className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted"
             title={
-              `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, dayP)}\n\n${navMetaLineShown}`.trim()
+              `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, dayP)}\n\n${navMetaLineShownAll}`.trim()
             }
           >
-            {navMetaLineShown}
+            {navMetaLineShownAll}
           </p>
         </div>
       ) : (
@@ -507,8 +592,8 @@ if (variant === "all") {
               )}
             </div>
           </div>
-          <p className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted" title={navMetaLineShown}>
-            {navMetaLineShown}
+          <p className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-muted" title={navMetaLineShownAll}>
+            {navMetaLineShownAll}
           </p>
         </div>
       )}
@@ -565,10 +650,10 @@ if (variant === "all") {
               )
             ) : (
               <Link
-                href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
+                href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true })}
                 className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
               >
-                {rowMutationsLocked ? "查看文稿" : "修改文稿"}
+                {rowMutationsLocked ? "查看" : "阅读"}
               </Link>
             )}
             {rowMutationsLocked ? null : (
@@ -676,15 +761,7 @@ if (variant === "all") {
   );
 }
 
-const navMetaLineCard = formatUnifiedWorksNavMetaLine(
-  w,
-  isTextOnlyWork,
-  durationLine,
-  scriptCharCountDisplay,
-  created,
-  worksNavAuthorDisplay
-);
-const navMetaLineCardShown = inFlightQueue && activeSummary ? activeSummary : navMetaLineCard;
+const navMetaLineCardShown = navMetaLineShown;
 const scriptCardMetaTitle = isTextOnlyWork
   ? `${formatNotesStudioCardSynopsis(w, isScriptDraft, durationLine, scriptCharCountDisplay, created)}\n\n${navMetaLineCardShown}`
   : "";
@@ -880,10 +957,10 @@ return (
             )
           ) : (
             <Link
-              href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
+              href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true })}
               className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
             >
-              {rowMutationsLocked ? "查看文稿" : "修改文稿"}
+              {rowMutationsLocked ? "查看" : "阅读"}
             </Link>
           )}
           {rowMutationsLocked ? null : (

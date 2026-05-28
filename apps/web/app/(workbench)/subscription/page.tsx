@@ -1309,7 +1309,7 @@ export default function SubscriptionPage() {
                       <p>暂无消费记录</p>
                       <p className="mt-2 text-xs">
                         生成播客或语音后会在此汇总；也可前往
-                        <Link href="/works" className="mx-0.5 font-medium text-brand underline underline-offset-2 hover:opacity-90">
+                        <Link href="/works?tab=audio" className="mx-0.5 font-medium text-brand underline underline-offset-2 hover:opacity-90">
                           我的作品
                         </Link>
                         查看任务。

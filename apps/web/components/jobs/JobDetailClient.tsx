@@ -458,7 +458,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
                   : "生成中；久无进展可刷新或点「停止创作」后重试。"}{" "}
                 无需一直停在本页：完成后到{" "}
                 <Link href="/works?tab=active" className="font-medium text-brand hover:underline">
-                  我的作品 → 进行中
+                  我的作品 · 进行中
                 </Link>{" "}
                 或刷新本页查看结果。
               </p>

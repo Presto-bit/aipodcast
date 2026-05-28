@@ -149,28 +149,34 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
           }
         />
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-6">
           {mediaWorks.length > 0 ? (
-            <PodcastWorksGallery
-              variant="all"
-              works={mediaWorks}
-              loading={false}
-              fetchError=""
-              onWorkDeleted={onGalleryWorkChanged}
-              workDetailReturnTo={ACTIVE_RETURN}
-              activeQueueCardActions
-            />
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-ink">播客生成中</h2>
+              <PodcastWorksGallery
+                variant="podcast"
+                works={mediaWorks}
+                loading={false}
+                fetchError=""
+                onWorkDeleted={onGalleryWorkChanged}
+                workDetailReturnTo={ACTIVE_RETURN}
+                activeQueueCardActions
+              />
+            </section>
           ) : null}
           {scriptWorks.length > 0 ? (
-            <PodcastWorksGallery
-              variant="notes"
-              works={scriptWorks}
-              loading={false}
-              fetchError=""
-              onWorkDeleted={onGalleryWorkChanged}
-              workDetailReturnTo={ACTIVE_RETURN}
-              activeQueueCardActions
-            />
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-ink">正文生成中</h2>
+              <PodcastWorksGallery
+                variant="notes"
+                works={scriptWorks}
+                loading={false}
+                fetchError=""
+                onWorkDeleted={onGalleryWorkChanged}
+                workDetailReturnTo={ACTIVE_RETURN}
+                activeQueueCardActions
+              />
+            </section>
           ) : null}
         </div>
       )}

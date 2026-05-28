@@ -998,7 +998,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       setActiveGenerationJob("podcast", jobId);
       setActivePanel(null);
 
-      router.push(`/works/${encodeURIComponent(jobId)}`);
+      router.push(`/works/${encodeURIComponent(jobId)}?returnTo=${encodeURIComponent("/create")}`);
     } catch (err) {
       applyTaskFromEvent(`生成失败：${String(err)}`);
     } finally {
@@ -1645,7 +1645,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
               <Link href="/jobs" className="font-medium text-brand hover:underline">
                 任务详情
               </Link>
-              <Link href="/works" className="font-medium text-brand hover:underline">
+              <Link href="/works?tab=active" className="font-medium text-brand hover:underline">
                 我的作品
               </Link>
             </div>

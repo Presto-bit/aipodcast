@@ -33,15 +33,18 @@ const NotebookStyleControls = dynamic(
 );
 import { NotebookStyleHeaderChip } from "../../../components/notes/notebook-style/NotebookStyleControls";
 import NotebookStyleSourcesNotice from "../../../components/notes/NotebookStyleSourcesNotice";
-const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
-  loading: () => (
-    <div
-      className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
-      aria-busy
-      aria-label="加载作品列表"
-    />
-  )
-});
+const NotesWorkbenchWorksPanel = dynamic(
+  () => import("../../../components/works/NotesWorkbenchWorksPanel"),
+  {
+    loading: () => (
+      <div
+        className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
+        aria-busy
+        aria-label="加载作品列表"
+      />
+    )
+  }
+);
 const NoteMarkdownPreview = dynamic(() => import("../../../components/notes/NoteMarkdownPreview"), {
   loading: () => (
     <div
@@ -2117,6 +2120,49 @@ export default function NotesPage() {
     }
     return null;
   }, [podcastGenBusy, podcastGenMessage, draftBusy, draftMessage]);
+
+  const notesPendingStudioWork = useMemo((): WorkItem | null => {
+    if (!notesWorkbenchCreationProgress?.busy) return null;
+    const progressText = notesWorkbenchCreationProgress.text;
+    const podcastId = readActiveGenerationJob("podcast");
+    if ((podcastGenBusy || notesWorkbenchCreationProgress.billingPodcast) && podcastId) {
+      const row = buildPodcastPendingStudioWork(podcastId, "running");
+      return { ...row, activeJobSummary: progressText, activeJobProgress: undefined };
+    }
+    const scriptId = readActiveGenerationJob("script_draft");
+    if ((draftBusy || notesWorkbenchCreationProgress.billingDraft) && scriptId) {
+      return {
+        id: scriptId,
+        type: "script_draft",
+        title: progressText.slice(0, 120) || "文章生成中",
+        status: "running",
+        notesSourceNotebook: selectedNotebook.trim() || undefined,
+        activeJobSummary: progressText,
+        createdAt: new Date().toISOString()
+      };
+    }
+    const socialId = readActiveGenerationJob("social_publish");
+    if (socialId) {
+      return {
+        id: socialId,
+        type: "social_publish_draft",
+        title: progressText.slice(0, 120) || "自媒体稿生成中",
+        status: "running",
+        notesSourceNotebook: selectedNotebook.trim() || undefined,
+        activeJobSummary: progressText,
+        createdAt: new Date().toISOString()
+      };
+    }
+    return null;
+  }, [
+    notesWorkbenchCreationProgress,
+    podcastGenBusy,
+    draftBusy,
+    buildPodcastPendingStudioWork,
+    selectedNotebook
+  ]);
+
+  const notesPendingStudioSubtitle = notesWorkbenchCreationProgress?.text || "";
 
   const fetchPodcastWorks = useCallback(async () => {
     setPodcastWorksError("");
@@ -4897,7 +4943,7 @@ export default function NotesPage() {
                   {worksPanelExpanded ? "收起" : "展开"}
                 </button>
                 <a
-                  href="/works"
+                  href="/works?tab=audio&returnTo=/notes"
                   className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-brand hover:bg-fill"
                 >
                   查看全部
@@ -4910,14 +4956,14 @@ export default function NotesPage() {
                   worksPanelExpanded ? "max-h-[min(92vh,1040px)]" : "max-h-[min(46vh,520px)]"
                 }`}
               >
-                <PodcastWorksGallery
+                <NotesWorkbenchWorksPanel
                   works={podcastWorks}
                   loading={podcastWorksLoading}
                   fetchError={podcastWorksError}
                   onDismissError={() => setPodcastWorksError("")}
                   onWorkDeleted={() => void fetchPodcastWorks()}
-                  variant="all"
-                  workDetailReturnTo="/notes"
+                  pendingStudioWork={notesPendingStudioWork}
+                  pendingStudioSubtitle={notesPendingStudioSubtitle}
                 />
               </div>
             </div>

@@ -91,6 +91,13 @@ export function scriptCharCountForWorksNavDisplay(job: JobRecord, manuscriptBody
 /**
  * 与「我的作品」合并列表卡片 meta 完全一致：一级 | 作者 | 时长或字数 | 时间（文稿类不含时长）
  */
+/** 任务 payload / result 中的体裁名（与列表 workProgramName 一致） */
+export function workProgramNameFromJob(job: JobRecord): string {
+  const payload = (job.payload || {}) as Record<string, unknown>;
+  const result = (job.result || {}) as Record<string, unknown>;
+  return String(payload.program_name || result.program_name || "").trim().slice(0, 200);
+}
+
 export function formatUnifiedWorksNavMetaLineFromJobRecord(
   job: JobRecord,
   authorDisplay: string,

@@ -6,8 +6,11 @@ import type { WorkItem } from "../../lib/worksTypes";
 import type { RssPublication } from "../../lib/api";
 import type { PodcastWorkRow } from "./workGalleryListShared";
 
+export type WorkGalleryRowLayout = "grid" | "compact" | "script-list" | "active";
+
 export type WorkGalleryListContextValue = {
   variant: "podcast" | "tts" | "notes" | "notes_studio" | "all";
+  rowLayout: WorkGalleryRowLayout;
   useNotesStyleCards: boolean;
   useCompactAllLayout: boolean;
   enableBatchActions: boolean;

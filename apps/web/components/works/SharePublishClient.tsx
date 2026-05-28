@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -51,7 +51,7 @@ import { buildWorksSharePageUrl, rssFeedUrlForSlug } from "../../lib/rssPublicBa
 import { jobResultCoverUrl, workCoverImageSrc } from "../../lib/workCoverImage";
 import { blobToDataUrlBase64 } from "../../lib/podcastCoverImage";
 import { useAuth, userAccountRef } from "../../lib/auth";
-import { formatUnifiedWorksNavMetaLineFromJobRecord } from "../../lib/worksNavMetaLine";
+import { formatUnifiedWorksNavMetaLineFromJobRecord, workProgramNameFromJob } from "../../lib/worksNavMetaLine";
 import {
   computeWorkHubGeneratingBarPct,
   defaultJobGenEstimateSec
@@ -116,6 +116,8 @@ export function SharePublishClient({
   returnTo: returnToProp = null
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const focusReadManuscript = String(searchParams?.get("focus") || "").trim().toLowerCase() === "read";
   const { user, phone } = useAuth();
   const workAudio = useWorkAudioPlayer();
   const [loadErr, setLoadErr] = useState("");
@@ -898,6 +900,15 @@ export function SharePublishClient({
   const socialPublishDraft = jobType === "social_publish_draft";
   const textOnlyWork = scriptDraft || socialPublishDraft;
 
+  useEffect(() => {
+    if (layout !== "work_hub" || !focusReadManuscript || !textOnlyWork) return;
+    if (!shareJobHydrated || !formReady || loadErr) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("work-hub-manuscript")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [layout, focusReadManuscript, textOnlyWork, shareJobHydrated, formReady, loadErr]);
+
   const viewerTemplateReadonly = useMemo(() => {
     const row = ownerJobRecord;
     if (!row) return false;
@@ -1046,6 +1057,11 @@ export function SharePublishClient({
       manuscriptBody
     });
   }, [ownerJobRecord, worksNavAuthorDisplay, manuscriptBody]);
+
+  const workProgramName = useMemo(() => {
+    if (!ownerJobRecord) return "";
+    return workProgramNameFromJob(ownerJobRecord);
+  }, [ownerJobRecord]);
 
   const canEditWorkScript = useMemo(() => {
     const jt = String(ownerJobRecord?.job_type || "").trim().toLowerCase();
@@ -1799,6 +1815,9 @@ export function SharePublishClient({
     Boolean(ownerJobRecord) &&
     !textOnlyWork;
 
+  const showWorkHubDownloadEntry =
+    layout === "work_hub" && shareJobHydrated && !loadErr && formReady && Boolean(ownerJobRecord);
+
   return (
     <main className={`mx-auto min-h-0 w-full ${mainMax} px-3 pb-12 pt-5 sm:px-4`}>
       <div className="mb-5 flex items-start justify-between gap-3">
@@ -1824,7 +1843,7 @@ export function SharePublishClient({
             {layout === "work_hub" ? "作品详情" : "发给朋友听"}
           </h1>
         </div>
-        {showWorkHubShareEntry ? (
+        {showWorkHubDownloadEntry ? (
           <div className="mt-1 flex shrink-0 items-center gap-1.5">
             <button
               type="button"
@@ -1842,16 +1861,18 @@ export function SharePublishClient({
             >
               <IconDownloadBundle className={`h-5 w-5 ${workHubDownloadBusy ? "opacity-60" : ""}`} />
             </button>
-            <button
-              type="button"
-              disabled={viewerTemplateReadonly}
-              onClick={() => setShareConfigModalOpen(true)}
-              className="rounded-xl border border-line bg-fill/40 p-2.5 text-ink hover:bg-fill disabled:opacity-40"
-              aria-label="分享与发布"
-              title={viewerTemplateReadonly ? "模板作品仅创建者可分享发布" : "分享与发布"}
-            >
-              <IconShareExport className="h-5 w-5" />
-            </button>
+            {showWorkHubShareEntry ? (
+              <button
+                type="button"
+                disabled={viewerTemplateReadonly}
+                onClick={() => setShareConfigModalOpen(true)}
+                className="rounded-xl border border-line bg-fill/40 p-2.5 text-ink hover:bg-fill disabled:opacity-40"
+                aria-label="分享与发布"
+                title={viewerTemplateReadonly ? "模板作品仅创建者可分享发布" : "分享与发布"}
+              >
+                <IconShareExport className="h-5 w-5" />
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -1987,8 +2008,10 @@ export function SharePublishClient({
             episodeSummary={summary}
             coverUrl={jobCoverUrl}
             navMetaPipe={navMetaPipe}
+            workProgramName={workProgramName}
             hasAudio={hasAudio}
-            scriptDraft={textOnlyWork}
+            scriptDraft={scriptDraft}
+            socialPublishDraft={socialPublishDraft}
             audioBlocked={audioBlocked}
             durationSecHint={audioDurationHintSec}
             manuscriptBody={manuscriptBody}

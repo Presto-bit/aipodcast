@@ -16,15 +16,18 @@ import { apiErrorMessage } from "../../../lib/apiError";
 import { countUserVisibleActiveJobs } from "../../../lib/activeJobsVisible";
 import type { JobRecord } from "../../../lib/types";
 
-const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
-  loading: () => (
-    <div
-      className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
-      aria-busy
-      aria-label="加载作品列表"
-    />
-  )
-});
+const WorksGroupedGalleryPanel = dynamic(
+  () => import("../../../components/works/WorksGroupedGalleryPanel"),
+  {
+    loading: () => (
+      <div
+        className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
+        aria-busy
+        aria-label="加载作品列表"
+      />
+    )
+  }
+);
 
 const HOME_WORKS_PREVIEW = 10;
 
@@ -497,7 +500,7 @@ export default function HomePage() {
                 <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">欢迎回来</h1>
                 <div className="mt-5 flex flex-wrap items-center gap-2 sm:gap-3">
                   <Link
-                    href="/works"
+                    href="/works?tab=audio"
                     className="inline-flex items-center rounded-lg bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground shadow-soft transition hover:bg-cta/90"
                   >
                     我的作品
@@ -551,7 +554,7 @@ export default function HomePage() {
                     打开知识库
                   </Link>
                   <Link
-                    href="/works"
+                    href="/works?tab=audio"
                     className="inline-flex items-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-fill"
                   >
                     我的作品
@@ -572,7 +575,7 @@ export default function HomePage() {
             role="group"
             aria-label="工作台概览"
           >
-            <Link href="/works" className={statLinkClass}>
+            <Link href="/works?tab=audio" className={statLinkClass}>
               <div className="text-xs font-medium text-muted group-hover:text-ink">作品数量</div>
               <div className="mt-0.5 font-medium tabular-nums text-ink">{overview.worksCount}</div>
             </Link>
@@ -580,13 +583,13 @@ export default function HomePage() {
               <div className="text-xs font-medium text-muted group-hover:text-ink">笔记本数量</div>
               <div className="mt-0.5 font-medium tabular-nums text-ink">{overview.notebookCount}</div>
             </Link>
-            <Link href="/works" className={statLinkClass}>
+            <Link href="/works?tab=audio" className={statLinkClass}>
               <div className="text-xs font-medium text-muted group-hover:text-ink">创作时长</div>
               <div className="mt-0.5 font-medium tabular-nums text-ink">
                 {(overview.audioDurationSecSum / 60).toFixed(1)} 分
               </div>
             </Link>
-            <Link href="/works" className={statLinkClass}>
+            <Link href="/works?tab=audio" className={statLinkClass}>
               <div className="text-xs font-medium text-muted group-hover:text-ink">编写字数</div>
               <div className="mt-0.5 font-medium tabular-nums text-ink">
                 {(overview.scriptCharCountSum / 10_000).toFixed(1)} 万字
@@ -635,7 +638,7 @@ export default function HomePage() {
             <div className="min-w-0">
               <h2 className="text-base font-semibold tracking-tight text-ink">
                 <Link
-                  href="/works"
+                  href="/works?tab=audio"
                   className="rounded-sm outline-offset-2 hover:text-brand hover:underline focus-visible:outline focus-visible:ring-2 focus-visible:ring-brand/40"
                 >
                   最近成品
@@ -650,31 +653,24 @@ export default function HomePage() {
             </div>
           </div>
           <Link
-            href="/works"
+            href="/works?tab=audio"
             className="text-sm font-medium text-brand hover:underline"
           >
             去我的作品
           </Link>
         </div>
         <div className="mt-4">
-          <PodcastWorksGallery
-            variant="all"
-            works={homeWorks.slice(0, HOME_WORKS_PREVIEW)}
+          <WorksGroupedGalleryPanel
+            works={homeWorks}
             loading={worksLoading}
             fetchError={worksFetchErr}
             onDismissError={() => setWorksFetchErr("")}
             onWorkDeleted={() => setWorksRefreshKey((k) => k + 1)}
-            workDetailReturnTo="/home"
+            returnTo="/home"
+            maxPerGroup={4}
+            emptyHint="暂无成片；在知识库或创作页生成后将显示在这里。"
           />
         </div>
-        {!worksLoading && homeWorks.length > HOME_WORKS_PREVIEW ? (
-          <p className="mt-2 text-center text-sm text-muted">
-            最近 {HOME_WORKS_PREVIEW} 条 ·{" "}
-            <Link href="/works" className="font-medium text-brand hover:underline">
-              查看全部
-            </Link>
-          </p>
-        ) : null}
       </section>
     </main>
   );

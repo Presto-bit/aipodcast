@@ -35,6 +35,18 @@ const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/Po
     />
   )
 });
+const WorksGroupedGalleryPanel = dynamic(
+  () => import("../../../components/works/WorksGroupedGalleryPanel"),
+  {
+    loading: () => (
+      <div
+        className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
+        aria-busy
+        aria-label="加载作品列表"
+      />
+    )
+  }
+);
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { apiErrorMessage, softenBareErrorLineForUi } from "../../../lib/apiError";
 import { useI18n } from "../../../lib/I18nContext";
@@ -435,7 +447,7 @@ export default function CreatePage() {
               <Link href="/jobs" className="font-medium text-brand hover:underline">
                 任务详情
               </Link>
-              <Link href="/works" className="font-medium text-brand hover:underline">
+              <Link href="/works?tab=active" className="font-medium text-brand hover:underline">
                 我的作品
               </Link>
             </div>
@@ -570,7 +582,10 @@ export default function CreatePage() {
               </button>
             </div>
           </div>
-          <Link href="/works" className="text-xs font-medium text-brand hover:underline sm:shrink-0">
+          <Link
+            href="/works?tab=audio&returnTo=/create"
+            className="text-xs font-medium text-brand hover:underline sm:shrink-0"
+          >
             查看全部
           </Link>
         </div>
@@ -584,46 +599,53 @@ export default function CreatePage() {
             「我的」列表加载失败：{softenBareErrorLineForUi(worksErr)}
           </p>
         ) : null}
-        <PodcastWorksGallery
-          key={createWorksGalleryTab}
-          variant="all"
-          works={createWorksGalleryTab === "recent" ? homeWorks.slice(0, 12) : templateGalleryWorks}
-          loading={
-            (createWorksGalleryTab === "recent" && worksLoading) ||
-            (createWorksGalleryTab === "templates" && templatesLoading)
-          }
-          fetchError={createWorksGalleryTab === "recent" ? worksErr : templatesErr}
-          onDismissError={() => {
-            if (createWorksGalleryTab === "recent") setWorksErr("");
-            else setTemplatesErr("");
-          }}
-          onWorkDeleted={() => void refreshWorks()}
-          workDetailReturnTo="/create"
-          emptyStateFooter={
-            <div className="flex flex-wrap justify-center gap-x-4 gap-y-2">
-              {!isLoggedIn ? (
-                <Link
-                  href={`/login?returnTo=${encodeURIComponent("/create")}`}
-                  className="font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90"
-                >
-                  登录后保存与查看成片
-                </Link>
-              ) : (
-                <>
+        {createWorksGalleryTab === "recent" ? (
+          <WorksGroupedGalleryPanel
+            works={homeWorks}
+            loading={worksLoading}
+            fetchError={worksErr}
+            onDismissError={() => setWorksErr("")}
+            onWorkDeleted={() => void refreshWorks()}
+            returnTo="/create"
+            maxPerGroup={4}
+            emptyHint="暂无成片；完成播客或语音合成后将显示在这里（不含知识库笔记本内产出）。"
+          />
+        ) : (
+          <PodcastWorksGallery
+            key="templates"
+            variant="all"
+            works={templateGalleryWorks}
+            loading={templatesLoading}
+            fetchError={templatesErr}
+            onDismissError={() => setTemplatesErr("")}
+            onWorkDeleted={() => void refreshWorks()}
+            workDetailReturnTo="/create"
+            emptyStateFooter={
+              <div className="flex flex-wrap justify-center gap-x-4 gap-y-2">
+                {!isLoggedIn ? (
                   <Link
-                    href="/notes"
+                    href={`/login?returnTo=${encodeURIComponent("/create")}`}
                     className="font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90"
                   >
-                    去知识库添加资料
+                    登录后保存与查看成片
                   </Link>
-                  <Link href="/help" className="font-medium text-muted underline underline-offset-2 hover:text-ink">
-                    使用帮助
-                  </Link>
-                </>
-              )}
-            </div>
-          }
-        />
+                ) : (
+                  <>
+                    <Link
+                      href="/notes"
+                      className="font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90"
+                    >
+                      去知识库添加资料
+                    </Link>
+                    <Link href="/help" className="font-medium text-muted underline underline-offset-2 hover:text-ink">
+                      使用帮助
+                    </Link>
+                  </>
+                )}
+              </div>
+            }
+          />
+        )}
       </section>
     </main>
   );

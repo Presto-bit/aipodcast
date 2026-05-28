@@ -18,6 +18,7 @@ import { chipClass } from "../../../components/studio/chipStyles";
 import EmptyState from "../../../components/ui/EmptyState";
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
 import { isTextOnlyWorkType, type WorkItem } from "../../../lib/worksTypes";
+import { isAudioGalleryWorkType } from "../../../lib/workGalleryDisplay";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
 import { listJobs } from "../../../lib/api";
@@ -32,6 +33,15 @@ function mergeById(prev: WorkItem[], next: WorkItem[]): WorkItem[] {
 
 const ACTIVE_JOBS_LIMIT = 80;
 
+type WorksTab = "audio" | "script" | "active";
+
+function parseWorksTab(raw: string | null): WorksTab {
+  const t = String(raw || "").trim().toLowerCase();
+  if (t === "active") return "active";
+  if (t === "script") return "script";
+  return "audio";
+}
+
 export default function WorksPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -40,16 +50,24 @@ export default function WorksPage() {
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const [ai, setAi] = useState<WorkItem[]>([]);
   const [tts, setTts] = useState<WorkItem[]>([]);
+  const [notesBucket, setNotesBucket] = useState<WorkItem[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  /** 音频 / 文稿为已结束成品；进行中为队列任务 */
-  const [worksView, setWorksView] = useState<"audio" | "script" | "active">("audio");
+  const [worksView, setWorksView] = useState<WorksTab>("audio");
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [activeJobCount, setActiveJobCount] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [recentOnly, setRecentOnly] = useState(false);
+  /** 文稿 Tab：体裁筛选 */
+  const [scriptKindFilter, setScriptKindFilter] = useState<"all" | "article" | "social">("all");
+
+  const worksReturnTo = useMemo(() => {
+    if (worksView === "active") return "/works?tab=active";
+    if (worksView === "script") return "/works?tab=script";
+    return "/works?tab=audio";
+  }, [worksView]);
 
   const refreshActiveJobCount = useCallback(async () => {
     if (!ready) {
@@ -84,6 +102,7 @@ export default function WorksPage() {
           if (!append) {
             setAi([]);
             setTts([]);
+            setNotesBucket([]);
             setOffset(0);
             setHasMore(false);
             setActiveJobCount(0);
@@ -114,11 +133,10 @@ export default function WorksPage() {
             has_more?: boolean;
           };
           if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-          const nextAi = Array.isArray(data.ai) ? data.ai : [];
-          const nextTts = Array.isArray(data.tts) ? data.tts : [];
-          setAi(nextAi);
-          setTts(nextTts);
-          const t = typeof data.total === "number" ? data.total : nextAi.length + nextTts.length;
+          setAi(Array.isArray(data.ai) ? data.ai : []);
+          setTts(Array.isArray(data.tts) ? data.tts : []);
+          setNotesBucket(Array.isArray(data.notes) ? data.notes : []);
+          const t = typeof data.total === "number" ? data.total : (data.ai?.length || 0) + (data.tts?.length || 0);
           setOffset(t);
           setHasMore(Boolean(data.has_more));
           setActiveJobCount(
@@ -140,11 +158,10 @@ export default function WorksPage() {
             has_more?: boolean;
           };
           if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-          const nextAi = Array.isArray(data.ai) ? data.ai : [];
-          const nextTts = Array.isArray(data.tts) ? data.tts : [];
-          setAi((p) => mergeById(p, nextAi));
-          setTts((p) => mergeById(p, nextTts));
-          const t = typeof data.total === "number" ? data.total : nextAi.length + nextTts.length;
+          setAi((p) => mergeById(p, Array.isArray(data.ai) ? data.ai : []));
+          setTts((p) => mergeById(p, Array.isArray(data.tts) ? data.tts : []));
+          setNotesBucket((p) => mergeById(p, Array.isArray(data.notes) ? data.notes : []));
+          const t = typeof data.total === "number" ? data.total : (data.ai?.length || 0) + (data.tts?.length || 0);
           setOffset(o + t);
           setHasMore(Boolean(data.has_more));
         }
@@ -161,17 +178,11 @@ export default function WorksPage() {
   useEffect(() => {
     if (!ready) return;
     void fetchWorks(false);
-    // 仅随登录态刷新全表；勿依赖 fetchWorks/offset，否则会「加载更多」后重复首屏请求
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, getAuthHeaders, user]);
 
   useEffect(() => {
-    const t = searchParams?.get("tab");
-    if (t === "active") {
-      setWorksView("active");
-    } else {
-      setWorksView((v) => (v === "active" ? "audio" : v));
-    }
+    setWorksView(parseWorksTab(searchParams?.get("tab") ?? null));
   }, [searchParams]);
 
   useEffect(() => {
@@ -183,24 +194,62 @@ export default function WorksPage() {
     void refreshActiveJobCount();
   }, [refreshActiveJobCount]);
 
-  const aiPodcastWorks = useMemo(
-    () =>
-      ai.filter((w) =>
-        ["podcast_generate", "podcast"].includes(String(w.type || ""))
-      ),
-    [ai]
-  );
-  const notesDraftWorks = useMemo(
-    () => ai.filter((w) => isTextOnlyWorkType(String(w.type || ""))),
-    [ai]
-  );
+  const routeForTab = useCallback((tab: WorksTab) => {
+    if (tab === "audio") return "/works?tab=audio";
+    if (tab === "script") return "/works?tab=script";
+    return "/works?tab=active";
+  }, []);
+
+  const audioFinishedWorks = useMemo(() => {
+    const merged: WorkItem[] = [];
+    const seen = new Set<string>();
+    const push = (w: WorkItem) => {
+      const id = String(w.id || "").trim();
+      if (!id || seen.has(id)) return;
+      if (isTextOnlyWorkType(String(w.type || ""))) return;
+      if (!isAudioGalleryWorkType(String(w.type || ""))) return;
+      seen.add(id);
+      merged.push(w);
+    };
+    for (const w of ai) push(w);
+    for (const w of tts) push(w);
+    for (const w of notesBucket) push(w);
+    merged.sort((a, b) => {
+      const ta = new Date(String(a.createdAt || 0)).getTime();
+      const tb = new Date(String(b.createdAt || 0)).getTime();
+      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+    });
+    return merged;
+  }, [ai, tts, notesBucket]);
+
+  const scriptFinishedWorks = useMemo(() => {
+    const merged: WorkItem[] = [];
+    const seen = new Set<string>();
+    const push = (w: WorkItem) => {
+      const id = String(w.id || "").trim();
+      if (!id || seen.has(id)) return;
+      if (!isTextOnlyWorkType(String(w.type || ""))) return;
+      seen.add(id);
+      merged.push(w);
+    };
+    for (const w of ai) push(w);
+    for (const w of notesBucket) push(w);
+    merged.sort((a, b) => {
+      const ta = new Date(String(a.createdAt || 0)).getTime();
+      const tb = new Date(String(b.createdAt || 0)).getTime();
+      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+    });
+    return merged;
+  }, [ai, notesBucket]);
+
   const keyword = query.trim().toLowerCase();
   const recentThresholdMs = useMemo(() => Date.now() - 1000 * 60 * 60 * 24 * 14, []);
 
   const matchesFilter = useCallback(
     (w: WorkItem): boolean => {
       const title = String(w.title || w.id || "").toLowerCase();
-      if (keyword && !title.includes(keyword)) return false;
+      const excerpt = String(w.scriptText || "").toLowerCase();
+      if (keyword && !title.includes(keyword) && !excerpt.includes(keyword)) return false;
       if (!recentOnly) return true;
       const ts = new Date(String(w.createdAt || "")).getTime();
       return Number.isFinite(ts) && ts >= recentThresholdMs;
@@ -208,32 +257,30 @@ export default function WorksPage() {
     [keyword, recentOnly, recentThresholdMs]
   );
 
-  const filteredNotesWorks = useMemo(() => notesDraftWorks.filter(matchesFilter), [notesDraftWorks, matchesFilter]);
-  const audioFinishedWorks = useMemo(() => {
-    const merged = [...aiPodcastWorks, ...tts];
-    merged.sort((a, b) => {
-      const ta = new Date(String(a.createdAt || 0)).getTime();
-      const tb = new Date(String(b.createdAt || 0)).getTime();
-      const na = Number.isFinite(ta) ? ta : 0;
-      const nb = Number.isFinite(tb) ? tb : 0;
-      return nb - na;
-    });
-    return merged;
-  }, [aiPodcastWorks, tts]);
-  const filteredAudioFinishedWorks = useMemo(
+  const filteredAudioWorks = useMemo(
     () => audioFinishedWorks.filter(matchesFilter),
     [audioFinishedWorks, matchesFilter]
   );
+  const filteredScriptWorks = useMemo(() => {
+    let list = scriptFinishedWorks.filter(matchesFilter);
+    if (scriptKindFilter === "article") {
+      list = list.filter((w) => String(w.type || "") === "script_draft");
+    } else if (scriptKindFilter === "social") {
+      list = list.filter((w) => String(w.type || "") === "social_publish_draft");
+    }
+    return list;
+  }, [scriptFinishedWorks, matchesFilter, scriptKindFilter]);
 
-  const emptyAll = !loading && ai.length === 0 && tts.length === 0;
-  const totalLoaded = ai.length + tts.length;
+  const emptyAudio = !loading && filteredAudioWorks.length === 0;
+  const emptyScript = !loading && filteredScriptWorks.length === 0;
+  const totalLoaded = ai.length + tts.length + notesBucket.length;
 
   return (
     <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-8 pt-2 sm:px-4">
       <div className="mb-2 flex flex-col gap-1 border-b border-line/80 pb-2 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">我的作品</h1>
-          <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">成品与进行中任务</p>
+          <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">播客音频、文稿成品与进行中任务</p>
         </div>
         {(worksView === "audio" || worksView === "script") && !loading ? (
           <p className="shrink-0 text-xs text-muted">
@@ -249,7 +296,7 @@ export default function WorksPage() {
           className={chipClass(worksView === "audio", "sm")}
           onClick={() => {
             setWorksView("audio");
-            router.replace("/works", { scroll: false });
+            router.replace(routeForTab("audio"), { scroll: false });
           }}
         >
           音频
@@ -259,7 +306,7 @@ export default function WorksPage() {
           className={chipClass(worksView === "script", "sm")}
           onClick={() => {
             setWorksView("script");
-            router.replace("/works", { scroll: false });
+            router.replace(routeForTab("script"), { scroll: false });
           }}
         >
           文稿
@@ -269,7 +316,7 @@ export default function WorksPage() {
           className={[chipClass(worksView === "active", "sm"), "inline-flex items-center"].join(" ")}
           onClick={() => {
             setWorksView("active");
-            router.replace("/works?tab=active", { scroll: false });
+            router.replace(routeForTab("active"), { scroll: false });
           }}
         >
           进行中
@@ -284,7 +331,7 @@ export default function WorksPage() {
             <span className="hidden h-4 w-px bg-line sm:inline-block" aria-hidden />
             <input
               className="min-w-[8rem] flex-1 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-ink sm:max-w-[11rem]"
-              placeholder="搜索标题…"
+              placeholder="搜索标题或摘要…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               aria-label="搜索作品"
@@ -292,6 +339,32 @@ export default function WorksPage() {
             <button type="button" className={chipClass(recentOnly, "sm")} onClick={() => setRecentOnly((v) => !v)}>
               14 天内
             </button>
+            {worksView === "script" ? (
+              <>
+                <span className="hidden h-4 w-px bg-line sm:inline-block" aria-hidden />
+                <button
+                  type="button"
+                  className={chipClass(scriptKindFilter === "all", "sm")}
+                  onClick={() => setScriptKindFilter("all")}
+                >
+                  全部
+                </button>
+                <button
+                  type="button"
+                  className={chipClass(scriptKindFilter === "article", "sm")}
+                  onClick={() => setScriptKindFilter("article")}
+                >
+                  文章
+                </button>
+                <button
+                  type="button"
+                  className={chipClass(scriptKindFilter === "social", "sm")}
+                  onClick={() => setScriptKindFilter("social")}
+                >
+                  自媒体
+                </button>
+              </>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -304,10 +377,12 @@ export default function WorksPage() {
 
       {(worksView === "audio" || worksView === "script") && loading ? (
         <p className="py-6 text-center text-sm text-muted">{t("common.loading")}</p>
-      ) : (worksView === "audio" || worksView === "script") && emptyAll ? (
+      ) : null}
+
+      {worksView === "audio" && !loading && emptyAudio ? (
         <EmptyState
-          title={t("empty.worksFinished.title")}
-          description={t("empty.worksFinished.desc")}
+          title="暂无音频成片"
+          description="播客、语音合成等任务完成后会出现在这里；进行中的任务请查看「进行中」Tab。"
           action={
             <button
               type="button"
@@ -320,32 +395,50 @@ export default function WorksPage() {
         />
       ) : null}
 
-      {worksView === "audio" && !emptyAll ? (
-        <PodcastWorksGallery
-          variant="all"
-          works={filteredAudioFinishedWorks}
-          loading={loading}
-          fetchError={error}
-          onDismissError={() => setError("")}
-          onWorkDeleted={() => void fetchWorks(false)}
-          enableBatchActions
-          workDetailReturnTo="/works"
-        />
-      ) : null}
-      {worksView === "script" && !emptyAll ? (
-        <PodcastWorksGallery
-          variant="notes"
-          works={filteredNotesWorks}
-          loading={loading}
-          fetchError={error}
-          onDismissError={() => setError("")}
-          onWorkDeleted={() => void fetchWorks(false)}
-          enableBatchActions
-          workDetailReturnTo="/works"
+      {worksView === "script" && !loading && emptyScript ? (
+        <EmptyState
+          title="暂无文稿成品"
+          description="在知识库生成文章或自媒体发布稿后，会集中显示在本 Tab。"
+          action={
+            <button
+              type="button"
+              className="text-sm text-brand underline"
+              onClick={() => void fetchWorks(false)}
+            >
+              {t("common.refresh")}
+            </button>
+          }
         />
       ) : null}
 
-      {(worksView === "audio" || worksView === "script") && !loading && !emptyAll && hasMore ? (
+      {worksView === "audio" && !loading && !emptyAudio ? (
+        <PodcastWorksGallery
+          variant="podcast"
+          works={filteredAudioWorks}
+          loading={loading}
+          fetchError={error}
+          onDismissError={() => setError("")}
+          onWorkDeleted={() => void fetchWorks(false)}
+          enableBatchActions
+          workDetailReturnTo={worksReturnTo}
+        />
+      ) : null}
+      {worksView === "script" && !loading && !emptyScript ? (
+        <PodcastWorksGallery
+          variant="notes"
+          works={filteredScriptWorks}
+          loading={loading}
+          fetchError={error}
+          onDismissError={() => setError("")}
+          onWorkDeleted={() => void fetchWorks(false)}
+          enableBatchActions
+          workDetailReturnTo={worksReturnTo}
+        />
+      ) : null}
+
+      {((worksView === "audio" && !loading && !emptyAudio) ||
+        (worksView === "script" && !loading && !emptyScript)) &&
+      hasMore ? (
         <div className="mt-4 flex justify-center">
           <button
             type="button"

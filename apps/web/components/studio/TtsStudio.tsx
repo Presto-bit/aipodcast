@@ -714,7 +714,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
       setActiveGenerationJob("tts", jobId);
       setActivePanel(null);
 
-      router.push(`/works/${encodeURIComponent(jobId)}`);
+      router.push(`/works/${encodeURIComponent(jobId)}?returnTo=${encodeURIComponent("/create")}`);
     } catch (err) {
       applyTaskFromEvent(`错误: ${String(err)}`);
     } finally {
