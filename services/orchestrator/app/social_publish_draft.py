@@ -267,6 +267,7 @@ def _xhs_system_prompt(opt_block: str) -> str:
 1. cover_hook + titles 数组（恰好 3 个备选标题，每个≤28字）：人群/场景 + 痛点 + 解法/情绪价值。
 2. opening_30：正文开头句，总字数≤30（含标点）。
 3. body 或 sections：正文主体（干货/种草结构），段间 \\n\\n；勿把话题与互动句写入 body。
+   sections 若使用数组，每项必须是 JSON 对象 {{"heading":"小标题","content":"段落"}}，禁止输出 Python 字典字面量字符串。
 4. tags：5～8 个垂类话题词，不带#（由系统并入正文末尾）。
 5. interaction：1～2 句互动引导（由系统并入正文末尾）。
 6. imageSuggestions：2～4 条图片制作建议（配图主题、构图、封面大字、色调/道具），供发布者拍图参考，不是封面文案本身。

@@ -328,6 +328,70 @@ def _clamp_opening_30(text: str) -> str:
     return t[:30]
 
 
+def _section_item_to_markdown(item: Any) -> str:
+    """将 sections 数组项转为 Markdown 段落（禁止 str(dict) 泄漏到正文）。"""
+    if item is None:
+        return ""
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        heading = str(
+            item.get("heading")
+            or item.get("title")
+            or item.get("section_title")
+            or item.get("name")
+            or ""
+        ).strip()
+        content = str(
+            item.get("content")
+            or item.get("body")
+            or item.get("text")
+            or item.get("paragraph")
+            or ""
+        ).strip()
+        parts: list[str] = []
+        if heading:
+            parts.append(heading if heading.startswith("#") else f"## {heading}")
+        if content:
+            parts.append(content)
+        return "\n\n".join(parts)
+    return str(item).strip()
+
+
+def _format_sections_list(sections: list[Any]) -> str:
+    blocks = [_section_item_to_markdown(s) for s in sections]
+    blocks = [b for b in blocks if b]
+    return "\n\n".join(blocks)
+
+
+def _repair_python_dict_sections_in_body(body: str) -> str:
+    """兜底：正文若已是 Python dict 字面量串，拆成 Markdown。"""
+    raw = (body or "").strip()
+    if not raw or ("'heading'" not in raw and '"heading"' not in raw):
+        return raw
+    if not re.search(r"['\"]heading['\"]\s*:", raw):
+        return raw
+
+    blocks = re.findall(
+        r"\{\s*['\"]heading['\"]\s*:\s*['\"](.*?)['\"]\s*,\s*['\"]content['\"]\s*:\s*['\"](.*?)"
+        r"['\"]\s*\}",
+        raw,
+        flags=re.DOTALL,
+    )
+    if not blocks:
+        return raw
+    parts: list[str] = []
+    for heading, content in blocks:
+        h = heading.strip()
+        c = content.strip()
+        if h:
+            parts.append(h if h.startswith("#") else f"## {h}")
+        if c:
+            parts.append(c)
+    repaired = "\n\n".join(parts).strip()
+    return repaired if parts else raw
+
+
 def _parse_cta_blocks(data: dict[str, Any], fallback_interaction: str) -> str:
     parts: list[str] = []
     for key, prefix in (
@@ -369,10 +433,11 @@ def normalize_xhs_llm_data(data: dict[str, Any]) -> dict[str, Any]:
     sections = data.get("sections")
     body_main = str(data.get("body") or "").strip()
     if isinstance(sections, list) and sections:
-        sec_text = "\n\n".join(str(s).strip() for s in sections if str(s).strip())
+        sec_text = _format_sections_list(sections)
         if sec_text:
             body_main = sec_text
     body_main = body_main.replace("\\n\\n", "\n\n").replace("\\n", "\n")
+    body_main = _repair_python_dict_sections_in_body(body_main)
 
     interaction = _parse_cta_blocks(data, str(data.get("interaction") or ""))
     if not interaction:
