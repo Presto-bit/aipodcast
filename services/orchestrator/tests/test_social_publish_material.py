@@ -21,6 +21,23 @@ def test_resolve_uses_fallback_when_merge_loads_no_notes():
     assert "正文" in out
 
 
+def test_resolve_uses_merge_when_use_rag_even_with_long_bodies():
+    long_bodies = "【笔记：测】\n" + "正文" * 200
+    with patch("app.social_publish_draft._merge_reference_for_social") as mock_merge:
+        mock_merge.return_value = ("合并后的素材" * 50, {"notes_loaded": 1})
+        with patch(
+            "app.social_publish_draft._fallback_note_bodies_for_social",
+            return_value=long_bodies,
+        ):
+            out = resolve_social_publish_material_from_notes(
+                "user-1",
+                selected_note_ids=["nid-1"],
+                use_rag=True,
+            )
+    mock_merge.assert_called_once()
+    assert "合并后的素材" in out
+
+
 def test_resolve_raises_when_no_note_body():
     with patch("app.social_publish_draft._merge_reference_for_social") as mock_merge:
         mock_merge.return_value = ("", {"notes_loaded": 0})

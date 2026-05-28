@@ -278,8 +278,8 @@ cover_hook, titles, opening_30, body（或 sections 数组）, interaction, tags
 
 
 _MERGE_PLACEHOLDER = "请介绍 AI Native 应用架构"
-# 送入 LLM 的素材上限（字符）；合并参考可达 48k，过长易触发上游 context/超时错误
-_LLM_MATERIAL_MAX_CHARS = 18_000
+# 送入 LLM 的素材上限（字符）；合并参考可达 56k，过长易触发上游 context/超时错误
+_LLM_MATERIAL_MAX_CHARS = 24_000
 
 # RAG/合并参考时的系统说明块，不应进入发布稿正文或 fallback 摘录
 _SOCIAL_MATERIAL_BOILERPLATE_MARKERS = (
@@ -366,14 +366,15 @@ def resolve_social_publish_material_from_notes(
     reference_rag_mode: str = "truncate",
     material_hint: str = "",
 ) -> str:
-    """优先直读勾选笔记正文；仅在正文不足时再合并参考（可选 RAG）。"""
+    """合并勾选资料：use_rag 时与生成文章同源 merge_reference_for_script；否则可直读笔记正文。"""
     nids = [str(x).strip() for x in selected_note_ids if str(x).strip()]
     if not nids:
         raise RuntimeError("material_too_short")
     owner = str(notes_source_owner_user_id or "").strip() or None
     bodies = _fallback_note_bodies_for_social(user_ref, nids, notes_source_owner_user_id=owner)
     bodies = _strip_social_material_boilerplate(bodies)
-    if len(bodies) >= 200:
+    use_rag_merge = bool(use_rag)
+    if not use_rag_merge and len(bodies) >= 200:
         raw = bodies
         if len(raw) > 48_000:
             raw = raw[:48_000] + "…"
@@ -388,13 +389,16 @@ def resolve_social_publish_material_from_notes(
         rag_cap = 56_000
     rag_cap = max(8_000, min(120_000, rag_cap))
 
+    hint = (material_hint or "根据勾选资料撰写自媒体发布稿").strip()[:2000]
     payload: dict[str, Any] = {
         "selected_note_ids": nids,
-        "use_rag": bool(use_rag),
+        "use_rag": use_rag_merge,
         "rag_max_chars": rag_cap,
         "reference_rag_mode": mode,
-        "text": (material_hint or "根据勾选资料撰写自媒体发布稿").strip()[:2000],
+        "text": hint,
         "script_language": "中文",
+        "script_style": "自媒体发布稿，信息密度高、可发布",
+        "program_name": "自媒体发布",
     }
     if owner:
         payload["notes_source_owner_user_id"] = owner

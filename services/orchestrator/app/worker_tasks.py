@@ -774,15 +774,15 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             hint = str(persona.get("otherRequirements") or "")[:500]
             owner = str(payload.get("notes_source_owner_user_id") or "").strip() or None
             try:
-                rag_cap = int(payload.get("rag_max_chars") or 20_000)
+                rag_cap = int(payload.get("rag_max_chars") or 56_000)
             except (TypeError, ValueError):
-                rag_cap = 20_000
+                rag_cap = 56_000
             mode = str(payload.get("reference_rag_mode") or "truncate").strip().lower()
             material = resolve_social_publish_material_from_notes(
                 created_by,
                 selected_note_ids=nids,
                 notes_source_owner_user_id=owner,
-                use_rag=bool(payload.get("use_rag", False)),
+                use_rag=bool(payload.get("use_rag", True)),
                 rag_max_chars=rag_cap,
                 reference_rag_mode=mode,
                 material_hint=hint,
