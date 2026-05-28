@@ -371,6 +371,65 @@ def _epub_block_nested_in_block(el: Tag) -> bool:
     return False
 
 
+def _epub_block_dict_from_element(el: Tag, idx: int) -> dict[str, Any] | None:
+    txt = ""
+    t = (el.name or "").lower()
+    if t == "img":
+        src = (el.get("src") or "").strip()
+        if not src:
+            return None
+        txt = f"![{(el.get('alt') or '').strip()}]({src})"
+    elif t == "table":
+        rows = []
+        for tr in el.find_all("tr"):
+            cols = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+            if cols:
+                rows.append("| " + " | ".join(cols) + " |")
+        if not rows:
+            return None
+        if len(rows) >= 1 and not re.search(r"\|\s*-+\s*\|", rows[1] if len(rows) > 1 else ""):
+            sep = "| " + " | ".join(["---"] * max(1, rows[0].count("|") - 1)) + " |"
+            rows = [rows[0], sep, *rows[1:]]
+        txt = "\n".join(rows)
+    elif t in ("h1", "h2", "h3", "p", "li", "div"):
+        txt = _element_text_preserving_breaks(el)
+    txt = (txt or "").strip()
+    if not txt or (t == "div" and len(txt) < 6):
+        return None
+    block: dict[str, Any] = {"id": f"epub-{idx}", "type": t, "text": txt}
+    if t in ("h1", "h2", "h3"):
+        block["level"] = int(t[1])
+    return block
+
+
+def _extract_epub_blocks_from_tags(tags: list[Tag]) -> list[dict[str, Any]]:
+    """按给定块级节点顺序抽取（用于 nav 锚点范围内）。"""
+    blocks: list[dict[str, Any]] = []
+    idx = 0
+    for el in tags:
+        if not isinstance(el, Tag):
+            continue
+        if _epub_block_nested_in_block(el):
+            continue
+        blk = _epub_block_dict_from_element(el, idx + 1)
+        if not blk:
+            continue
+        idx += 1
+        blocks.append(blk)
+        if len(blocks) >= 800:
+            break
+    return blocks
+
+
+def _extract_epub_blocks_from_scope(
+    soup: BeautifulSoup,
+    scoped_tags: list[Tag] | None,
+) -> list[dict[str, Any]]:
+    if scoped_tags is not None:
+        return _extract_epub_blocks_from_tags(scoped_tags)
+    return _extract_epub_blocks_from_soup(soup)
+
+
 def _extract_epub_blocks_from_soup(soup: BeautifulSoup) -> list[dict[str, Any]]:
     """EPUB 章节 HTML：按 p/li/标题/div 等块级元素抽取，对齐预览 structuredBlocks。"""
     blocks: list[dict[str, Any]] = []
@@ -378,35 +437,11 @@ def _extract_epub_blocks_from_soup(soup: BeautifulSoup) -> list[dict[str, Any]]:
     for el in soup.find_all(["h1", "h2", "h3", "p", "li", "div", "table", "img"]):
         if _epub_block_nested_in_block(el):
             continue
-        txt = ""
-        t = (el.name or "").lower()
-        if t == "img":
-            src = (el.get("src") or "").strip()
-            if not src:
-                continue
-            txt = f"![{(el.get('alt') or '').strip()}]({src})"
-        elif t == "table":
-            rows = []
-            for tr in el.find_all("tr"):
-                cols = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
-                if cols:
-                    rows.append("| " + " | ".join(cols) + " |")
-            if not rows:
-                continue
-            if len(rows) >= 1 and not re.search(r"\|\s*-+\s*\|", rows[1] if len(rows) > 1 else ""):
-                sep = "| " + " | ".join(["---"] * max(1, rows[0].count("|") - 1)) + " |"
-                rows = [rows[0], sep, *rows[1:]]
-            txt = "\n".join(rows)
-        elif t in ("h1", "h2", "h3", "p", "li", "div"):
-            txt = _element_text_preserving_breaks(el)
-        txt = (txt or "").strip()
-        if not txt or (t == "div" and len(txt) < 6):
+        blk = _epub_block_dict_from_element(el, idx + 1)
+        if not blk:
             continue
         idx += 1
-        block: dict[str, Any] = {"id": f"epub-{idx}", "type": t, "text": txt}
-        if t in ("h1", "h2", "h3"):
-            block["level"] = int(t[1])
-        blocks.append(block)
+        blocks.append(blk)
         if len(blocks) >= 800:
             break
     return blocks
@@ -1757,9 +1792,15 @@ class ContentParser:
 
     def parse_epub(self, epub_path: str) -> Dict[str, Any]:
         """
-        解析 EPUB 文件正文（按 spine 顺序提取章节文本）。
-        每章插入 Markdown 二级标题并输出 rag_segments（heading_path）供笔记目录与索引。
+        解析 EPUB：优先 EPUB3 nav / NCX 一级目录 + 锚点切分；无目录时回退 spine 按文件解析。
         """
+        from .epub_toc import (
+            epub_chapter_html_blocks,
+            epub_landmark_paths,
+            epub_load_nav_toc_entries,
+            filter_toc_entries,
+        )
+
         logs = []
         logs.append(f"开始解析 EPUB: {epub_path}")
         try:
@@ -1809,67 +1850,104 @@ class ContentParser:
 
                 md_parts: list[str] = []
                 rag_segments: list[dict[str, Any]] = []
-                title_seen: dict[str, int] = {}
-                chapter_md_index: dict[str, int] = {}
                 chapter_index = 0
-                ncx_labels = _epub_ncx_labels(zf, opf_root, opf_dir)
 
-                for path in ordered_files:
-                    try:
-                        html = zf.read(path).decode("utf-8", errors="ignore")
-                    except KeyError:
-                        continue
-                    soup = BeautifulSoup(html, "html.parser")
-                    for bad in soup(["script", "style", "noscript"]):
-                        bad.decompose()
-                    title = self._epub_chapter_title_from_soup(soup, path)
-                    ncx_title = _epub_title_from_ncx(path, ncx_labels)
-                    if ncx_title:
-                        title = ncx_title
-                    html_blocks = _extract_epub_blocks_from_soup(soup)
-                    if not html_blocks and not title:
-                        continue
-                    if _epub_stem_looks_internal(title):
-                        for blk in html_blocks:
-                            if str(blk.get("type") or "").lower() in ("h1", "h2", "h3"):
-                                alt = str(blk.get("text") or "").strip()
-                                if alt and len(alt) >= 2 and not _epub_stem_looks_internal(alt):
-                                    title = alt[:240]
-                                    break
-                    probe_title = title or f"章节 {chapter_index + 1}"
-                    body, chapter_segments = _epub_chapter_body_and_segments(
-                        html_blocks, probe_title
+                def _scope_extract(soup: BeautifulSoup, scoped: list[Tag] | None = None) -> list[dict[str, Any]]:
+                    return _extract_epub_blocks_from_scope(soup, scoped)
+
+                landmark_paths = epub_landmark_paths(opf_root, opf_dir)
+                toc_entries = filter_toc_entries(
+                    epub_load_nav_toc_entries(zf, opf_root, opf_dir, manifest),
+                    landmark_paths,
+                )
+
+                if toc_entries:
+                    logs.append(
+                        f"按 EPUB3 nav / NCX 一级目录解析，共 {len(toc_entries)} 章（锚点切分）"
                     )
-                    if _epub_should_skip_spine(path, probe_title, body, html_blocks):
-                        continue
-                    chapter_index += 1
-                    if not title:
-                        title = f"章节 {chapter_index}"
-                    title_seen[title] = title_seen.get(title, 0) + 1
-                    display_title = title
-                    if display_title != probe_title:
+                    for i, ent in enumerate(toc_entries):
+                        nxt = toc_entries[i + 1] if i + 1 < len(toc_entries) else None
+                        html_blocks = epub_chapter_html_blocks(
+                            zf, ordered_files, ent, nxt, _scope_extract
+                        )
+                        if not html_blocks:
+                            continue
+                        chapter_index += 1
+                        display_title = ent.title
                         body, chapter_segments = _epub_chapter_body_and_segments(
                             html_blocks, display_title
                         )
-                    title_key = display_title.strip().casefold()
-                    if title_key in chapter_md_index:
-                        idx = chapter_md_index[title_key]
                         if body:
-                            md_parts[idx] = f"{md_parts[idx]}\n\n{body}".strip()
+                            md_parts.append(f"## {display_title}\n\n{body}")
+                        else:
+                            md_parts.append(f"## {display_title}")
+                        for seg in chapter_segments:
+                            if isinstance(seg.get("meta"), dict):
+                                seg["meta"]["epub_href"] = ent.path
+                                if ent.fragment:
+                                    seg["meta"]["epub_fragment"] = ent.fragment
+                        rag_segments.extend(chapter_segments)
+                else:
+                    logs.append("未找到 EPUB3 nav / NCX 目录，回退按 spine 文件解析")
+                    title_seen: dict[str, int] = {}
+                    chapter_md_index: dict[str, int] = {}
+                    ncx_labels = _epub_ncx_labels(zf, opf_root, opf_dir)
+                    for path in ordered_files:
+                        try:
+                            html = zf.read(path).decode("utf-8", errors="ignore")
+                        except KeyError:
+                            continue
+                        soup = BeautifulSoup(html, "html.parser")
+                        for bad in soup(["script", "style", "noscript"]):
+                            bad.decompose()
+                        title = self._epub_chapter_title_from_soup(soup, path)
+                        ncx_title = _epub_title_from_ncx(path, ncx_labels)
+                        if ncx_title:
+                            title = ncx_title
+                        html_blocks = _extract_epub_blocks_from_soup(soup)
+                        if not html_blocks and not title:
+                            continue
+                        if _epub_stem_looks_internal(title):
+                            for blk in html_blocks:
+                                if str(blk.get("type") or "").lower() in ("h1", "h2", "h3"):
+                                    alt = str(blk.get("text") or "").strip()
+                                    if alt and len(alt) >= 2 and not _epub_stem_looks_internal(alt):
+                                        title = alt[:240]
+                                        break
+                        probe_title = title or f"章节 {chapter_index + 1}"
+                        body, chapter_segments = _epub_chapter_body_and_segments(
+                            html_blocks, probe_title
+                        )
+                        if _epub_should_skip_spine(path, probe_title, body, html_blocks):
+                            continue
+                        chapter_index += 1
+                        if not title:
+                            title = f"章节 {chapter_index}"
+                        title_seen[title] = title_seen.get(title, 0) + 1
+                        display_title = title
+                        if display_title != probe_title:
+                            body, chapter_segments = _epub_chapter_body_and_segments(
+                                html_blocks, display_title
+                            )
+                        title_key = display_title.strip().casefold()
+                        if title_key in chapter_md_index:
+                            idx = chapter_md_index[title_key]
+                            if body:
+                                md_parts[idx] = f"{md_parts[idx]}\n\n{body}".strip()
+                            for seg in chapter_segments:
+                                if isinstance(seg.get("meta"), dict):
+                                    seg["meta"]["epub_href"] = path
+                            rag_segments.extend(chapter_segments)
+                            continue
+                        if body:
+                            md_parts.append(f"## {display_title}\n\n{body}")
+                        else:
+                            md_parts.append(f"## {display_title}")
+                        chapter_md_index[title_key] = len(md_parts) - 1
                         for seg in chapter_segments:
                             if isinstance(seg.get("meta"), dict):
                                 seg["meta"]["epub_href"] = path
                         rag_segments.extend(chapter_segments)
-                        continue
-                    if body:
-                        md_parts.append(f"## {display_title}\n\n{body}")
-                    else:
-                        md_parts.append(f"## {display_title}")
-                    chapter_md_index[title_key] = len(md_parts) - 1
-                    for seg in chapter_segments:
-                        if isinstance(seg.get("meta"), dict):
-                            seg["meta"]["epub_href"] = path
-                    rag_segments.extend(chapter_segments)
 
                 if not md_parts:
                     raise ValueError("EPUB 未提取到可用正文")
