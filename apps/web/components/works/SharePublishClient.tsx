@@ -46,6 +46,7 @@ import {
   SCRIPT_TEXT_LIKELY_FULL_MIN_LEN,
   socialPublishTitleFromResult
 } from "../../lib/jobScriptText";
+import { parseSocialPublishWorkDetail } from "../../lib/socialPublishWorkDetail";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { buildWorksSharePageUrl, rssFeedUrlForSlug } from "../../lib/rssPublicBase";
 import { jobResultCoverUrl, workCoverImageSrc } from "../../lib/workCoverImage";
@@ -899,6 +900,11 @@ export function SharePublishClient({
   const scriptDraft = jobType === "script_draft";
   const socialPublishDraft = jobType === "social_publish_draft";
   const textOnlyWork = scriptDraft || socialPublishDraft;
+
+  const socialPublishDetail = useMemo(() => {
+    if (!ownerJobRecord || !socialPublishDraft) return null;
+    return parseSocialPublishWorkDetail(ownerJobRecord.result, ownerJobRecord.payload);
+  }, [ownerJobRecord, socialPublishDraft]);
 
   useEffect(() => {
     if (layout !== "work_hub" || !focusReadManuscript || !textOnlyWork) return;
@@ -2012,6 +2018,7 @@ export function SharePublishClient({
             hasAudio={hasAudio}
             scriptDraft={scriptDraft}
             socialPublishDraft={socialPublishDraft}
+            socialPublishDetail={socialPublishDetail}
             audioBlocked={audioBlocked}
             durationSecHint={audioDurationHintSec}
             manuscriptBody={manuscriptBody}

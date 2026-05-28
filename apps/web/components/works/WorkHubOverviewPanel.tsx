@@ -117,7 +117,8 @@ export function WorkHubOverviewPanel({
     setScriptDeleteBump(0);
   }, [jobId]);
 
-  const scriptManuscriptPanel = scriptDraft && showManuscriptTools;
+  const textOnlyManuscript = scriptDraft || socialPublishDraft;
+  const scriptManuscriptPanel = textOnlyManuscript && showManuscriptTools;
   const podcastChapterSection = !scriptDraft && !audioBlocked && showManuscriptTools;
   const showSocialMeta = socialPublishDraft && Boolean(socialPublishDetail);
 
@@ -128,7 +129,6 @@ export function WorkHubOverviewPanel({
 
   const coverSrc = workCoverImageSrc(coverUrl);
   const programLabel = String(workProgramName || "").trim();
-  const textOnlyManuscript = scriptDraft || socialPublishDraft;
   const totalHint =
     durationSecHint != null && Number.isFinite(durationSecHint) && durationSecHint > 0
       ? formatClock(durationSecHint)
@@ -333,7 +333,7 @@ export function WorkHubOverviewPanel({
         )
       ) : null}
 
-      {scriptDraft || detailTab === "edit" ? (
+      {textOnlyManuscript || detailTab === "edit" ? (
         <>
           {scriptManuscriptPanel ? (
             <p className="text-xs leading-relaxed text-muted">
