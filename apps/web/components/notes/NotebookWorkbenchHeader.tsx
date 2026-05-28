@@ -50,7 +50,7 @@ export default function NotebookWorkbenchHeader({
   };
 
   return (
-    <header className="sticky top-0 z-20 mb-3 flex min-w-0 items-center gap-2 border-b border-line/50 bg-canvas/90 py-2.5 backdrop-blur-sm">
+    <header className="sticky top-0 z-10 mb-3 flex min-w-0 items-center gap-2 border-b border-line/50 bg-canvas/90 py-2.5 backdrop-blur-sm">
       <button
         type="button"
         className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-fill hover:text-ink"

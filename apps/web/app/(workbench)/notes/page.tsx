@@ -622,6 +622,10 @@ type WorkbenchMobilePanel = "chat" | "sources";
 
 const WORKBENCH_SECTION_TITLE = "text-base font-semibold tracking-tight text-ink";
 
+/** 工作台分区表头：页面滚动时压在「知识库 / 笔记本」顶栏之上 */
+const WORKBENCH_PANEL_STICKY_HEAD =
+  "sticky top-0 z-30 -mx-4 border-b border-line/50 bg-fill/95 px-4 backdrop-blur-sm supports-[backdrop-filter]:bg-fill/90";
+
 type HubMineNotebookCardsProps = {
   notebooks: string[];
   notebookVisualByName: Record<string, NotebookCardVisual>;
@@ -4095,7 +4099,9 @@ export default function NotesPage() {
                       </button>
                     </div>
                   ) : null}
-                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-3">
+                  <div
+                    className={`${WORKBENCH_PANEL_STICKY_HEAD} flex shrink-0 items-center justify-between gap-2 pb-3`}
+                  >
                     <h2 className={`min-w-0 flex-1 truncate ${WORKBENCH_SECTION_TITLE}`}>
                       参考资料
                     </h2>
@@ -4357,34 +4363,34 @@ export default function NotesPage() {
 
             <div className="flex min-h-0 min-w-0 w-full flex-1 overflow-hidden">
             <section
-              className={`flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft max-lg:min-h-0 max-lg:flex-1 lg:h-full ${
+              className={`flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 px-4 pb-5 pt-4 shadow-soft max-lg:min-h-0 max-lg:flex-1 max-lg:pb-6 lg:h-full ${
                 workbenchMobilePanel !== "chat" ? "max-lg:hidden" : ""
               }`}
               role="region"
               aria-label="对话"
             >
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line/50 pb-2">
+              <div
+                className={`${WORKBENCH_PANEL_STICKY_HEAD} flex shrink-0 flex-wrap items-center justify-between gap-2 pb-2`}
+              >
                 <h2 className={WORKBENCH_SECTION_TITLE}>对话</h2>
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
                   <button
                     type="button"
                     disabled={sharedBrowse?.access === "read_only" || audioOverviewBusy}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line/70 bg-surface text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
-                    title={audioOverviewBusy ? "生成播客…" : "生成播客"}
-                    aria-label={audioOverviewBusy ? "生成播客…" : "生成播客"}
+                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-line/70 bg-surface px-3 text-xs font-medium text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
                     onClick={() => openPodcastFlow()}
                   >
-                    <IconWorkPodcast width={22} height={22} aria-hidden />
+                    <IconWorkPodcast width={20} height={20} className="shrink-0" aria-hidden />
+                    <span>{audioOverviewBusy ? "生成播客…" : "生成播客"}</span>
                   </button>
                   <button
                     type="button"
                     disabled={sharedBrowse?.access === "read_only"}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line/70 bg-surface text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
-                    title="生成文章"
-                    aria-label="生成文章"
+                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-line/70 bg-surface px-3 text-xs font-medium text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
                     onClick={() => openArticleFlow()}
                   >
-                    <IconWorkScript width={22} height={22} aria-hidden />
+                    <IconWorkScript width={20} height={20} className="shrink-0" aria-hidden />
+                    <span>生成文章</span>
                   </button>
                   <div className="relative" data-notes-ask-overflow-menu>
                     <button
@@ -4589,7 +4595,7 @@ export default function NotesPage() {
                     </div>
                   )}
                 </div>
-                <div className="mt-auto flex min-w-0 shrink-0 flex-col gap-2 pt-2">
+                <div className="mt-auto flex min-w-0 shrink-0 flex-col gap-2 pb-2 pt-2">
                   {notebookDigestSummary ? (
                     <p className="rounded-lg border border-line/70 bg-fill/40 px-2.5 py-1.5 text-[11px] leading-snug text-muted">
                       笔记本综述：{notebookDigestSummary}
@@ -4731,7 +4737,9 @@ export default function NotesPage() {
 
           </div>
           <section className="w-full min-w-0 rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft">
-            <div className="flex flex-wrap items-start justify-between gap-2 border-b border-line/50 pb-3">
+            <div
+              className={`${WORKBENCH_PANEL_STICKY_HEAD} flex flex-wrap items-start justify-between gap-2 pb-3`}
+            >
               <div className="min-w-0 flex-1">
                 <h2 className="text-lg font-semibold tracking-tight text-ink">我的作品</h2>
                 {notesWorkbenchCreationProgress ? (
