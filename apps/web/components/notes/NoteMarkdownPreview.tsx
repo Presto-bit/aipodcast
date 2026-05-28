@@ -1,21 +1,40 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { estimateWordCount } from "../../lib/noteWordCount";
 import { shouldShowVectorTruncationWarning } from "../../lib/noteCoverageCopy";
+import {
+  type NoteDisplayProfile,
+  type NotePageBreak,
+  profileShowOpenSource,
+  profileShowSimplifiedToggle,
+  profileShowToc,
+  profileTypeLabel,
+  sourceUrlHostname
+} from "../../lib/noteReaderDisplayProfile";
+import {
+  blockHasInlineHeading,
+  buildRenderBlocksFromText,
+  extractSheetTabs,
+  injectPageBreakBlocks,
+  type NoteRenderBlock
+} from "../../lib/noteReaderBlocks";
 
 const NoteMarkdownDoc = dynamic(() => import("./NoteMarkdownDoc"), {
   ssr: false,
-  loading: () => <p className="mt-3 text-sm text-muted">预览加载中…</p>
+  loading: () => <p className="py-8 text-center text-sm text-muted">正文加载中…</p>
 });
 
 type Props = {
   title: string;
   filteredText: string;
+  displayProfile: NoteDisplayProfile;
+  ext?: string;
+  pageBreaks?: NotePageBreak[];
+  inputType?: string;
   loading?: boolean;
   truncated?: boolean;
-  /** 向量索引状态等辅助说明 */
   statusLine?: string;
   sourceType?: string;
   createdAt?: string;
@@ -26,6 +45,8 @@ type Props = {
   shardsTotal?: number;
   shardsWithSummary?: number;
   sourceUrl?: string;
+  parseDetail?: string;
+  parseState?: string;
   canReindex?: boolean;
   reindexBusy?: boolean;
   onReindex?: () => void;
@@ -40,19 +61,11 @@ type Props = {
   onToggleSimplified: (enabled: boolean) => void;
   simplified: boolean;
   highlightHint?: string;
-  /** 全文 UTF-16 字符区间高亮（与 preview_text 正文一致） */
   charHighlightRange?: { start: number; end: number } | null;
-  /** 问答角标引用视图：隐藏全书元数据，仅展示摘录/上下文 */
   citationView?: boolean;
   onClose?: () => void;
-};
-
-type RenderBlock = {
-  id: string;
-  markdown: string;
-  tocText?: string;
-  tocLevel?: number;
-  synthetic?: boolean;
+  onDownloadFile?: () => void;
+  onViewFullDocument?: () => void;
 };
 
 function normalizeSearchAnchor(s: string): string {
@@ -61,7 +74,6 @@ function normalizeSearchAnchor(s: string): string {
     .trim();
 }
 
-/** 从全文 UTF-16 区间取可在预览 DOM 中搜索的定位锚文本 */
 function pickRangeAnchor(fullText: string, start: number, end: number): string {
   const len = fullText.length;
   if (len <= 0 || end <= start) return "";
@@ -73,7 +85,7 @@ function pickRangeAnchor(fullText: string, start: number, end: number): string {
   return pad.slice(0, 160);
 }
 
-function findBlockIndexForAnchor(blocks: RenderBlock[], anchor: string): number {
+function findBlockIndexForAnchor(blocks: NoteRenderBlock[], anchor: string): number {
   const a = normalizeSearchAnchor(anchor);
   if (a.length < 8) return -1;
   for (let len = Math.min(100, a.length); len >= 12; len -= 4) {
@@ -101,9 +113,7 @@ function statusPillClass(text: string): string {
     s.includes("不可用") ||
     s.includes("失败") ||
     s.includes("未就绪");
-  if (isFail) {
-    return "border-danger/45 bg-danger-soft text-danger-ink";
-  }
+  if (isFail) return "border-danger/45 bg-danger-soft text-danger-ink";
   const isProgress =
     s.includes("indexing") ||
     s.includes("处理中") ||
@@ -111,9 +121,7 @@ function statusPillClass(text: string): string {
     s.includes("索引中") ||
     s.includes("摘要中") ||
     s.includes("提取中");
-  if (isProgress) {
-    return "border-warning/45 bg-warning-soft text-warning-ink";
-  }
+  if (isProgress) return "border-warning/45 bg-warning-soft text-warning-ink";
   const isSuccess =
     s.includes("成功") ||
     s.includes("success") ||
@@ -122,15 +130,31 @@ function statusPillClass(text: string): string {
     s.includes("可问答") ||
     s.includes("可引用") ||
     s.includes("可检索");
-  if (isSuccess) {
-    return "border-success/45 bg-success-soft text-success-ink";
-  }
+  if (isSuccess) return "border-success/45 bg-success-soft text-success-ink";
   return "border-line/70 bg-surface text-ink";
 }
+
+function statusNeedsAttention(statusLine?: string): boolean {
+  const s = String(statusLine || "").toLowerCase();
+  return (
+    s.includes("failed") ||
+    s.includes("失败") ||
+    s.includes("解析") ||
+    s.includes("索引") ||
+    s.includes("处理中")
+  );
+}
+
+const iconBtn =
+  "rounded-lg border border-line/70 bg-surface px-2 py-1 text-xs text-ink hover:bg-fill disabled:pointer-events-none disabled:opacity-40";
 
 export default function NoteMarkdownPreview({
   title,
   filteredText,
+  displayProfile,
+  ext,
+  pageBreaks = [],
+  inputType,
   loading,
   truncated,
   statusLine,
@@ -143,6 +167,8 @@ export default function NoteMarkdownPreview({
   shardsTotal,
   shardsWithSummary,
   sourceUrl,
+  parseDetail,
+  parseState,
   canReindex,
   reindexBusy,
   onReindex,
@@ -154,7 +180,9 @@ export default function NoteMarkdownPreview({
   highlightHint,
   charHighlightRange,
   citationView = false,
-  onClose
+  onClose,
+  onDownloadFile,
+  onViewFullDocument
 }: Props) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -162,165 +190,35 @@ export default function NoteMarkdownPreview({
   const [matchCount, setMatchCount] = useState(0);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const [visibleBlocks, setVisibleBlocks] = useState(20);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [metaOpen, setMetaOpen] = useState(false);
+  const [tocOpen, setTocOpen] = useState(false);
   const headingPrefix = useId().replace(/:/g, "");
+
+  const isTable = displayProfile === "table";
+  const isUnavailable = displayProfile === "unavailable";
+  const isCitation = displayProfile === "citation";
+  const showToc = profileShowToc(displayProfile);
+  const typeLabel = profileTypeLabel(ext, displayProfile);
+  const host = sourceUrlHostname(sourceUrl);
+
   const rangeAnchor = useMemo(() => {
     if (!charHighlightRange || charHighlightRange.end <= charHighlightRange.start) return "";
     return pickRangeAnchor(filteredText, charHighlightRange.start, charHighlightRange.end);
   }, [filteredText, charHighlightRange?.start, charHighlightRange?.end]);
-  /** 引用跳转优先用全文区间锚文本，其次关键字 */
+
   const highlightTerm = (rangeAnchor || keyword || "").trim();
-  const blocks = useMemo<RenderBlock[]>(() => {
-    const normalizeFromStored = (items: NonNullable<Props["structuredBlocks"]>): RenderBlock[] => {
-      const out: RenderBlock[] = [];
-      for (const row of items) {
-        const text = String(row?.text || "").trim();
-        const typ = String(row?.type || "").trim().toLowerCase();
-        const level = Number(row?.level || 0);
-        if (!text) continue;
-        const id = String(row?.id || `sb-${out.length + 1}`);
-        if (typ === "heading" || typ === "h1" || typ === "h2" || typ === "h3") {
-          const lv = level >= 1 && level <= 3 ? level : 2;
-          out.push({ id, markdown: `${"#".repeat(lv)} ${text}`, tocText: text, tocLevel: lv });
-        } else if (typ === "table" || typ === "table_row") {
-          out.push({ id, markdown: text });
-        } else if (typ === "image" || typ === "img") {
-          out.push({ id, markdown: text.startsWith("![") ? text : `![image](${text})` });
-        } else if (typ === "list_item" || typ === "li") {
-          out.push({ id, markdown: text.startsWith("- ") ? text : `- ${text}` });
-        } else {
-          out.push({ id, markdown: text });
-        }
-      }
-      return out;
-    };
-    if (Array.isArray(structuredBlocks) && structuredBlocks.length > 0) {
-      const stored = normalizeFromStored(structuredBlocks);
-      if (stored.length > 0) return stored;
+
+  const blocks = useMemo(() => {
+    const base = buildRenderBlocksFromText(filteredText, structuredBlocks);
+    if (displayProfile === "prose" && pageBreaks.length > 0 && !citationView) {
+      return injectPageBreakBlocks(base, filteredText, pageBreaks);
     }
-    const normalizeStickyLines = (raw: string): string => {
-      const lines = raw.split("\n");
-      const out: string[] = [];
-      const endPunct = /[。！？.!?;；:：]$/;
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line) {
-          out.push("");
-          continue;
-        }
-        const prev = out.length ? out[out.length - 1] : "";
-        const shouldJoin =
-          !!prev &&
-          prev.trim().length < 90 &&
-          line.length < 120 &&
-          !endPunct.test(prev.trim()) &&
-          !/^([#>\-|*]|\d+\.)/.test(line);
-        if (shouldJoin) out[out.length - 1] = `${prev.trim()} ${line}`;
-        else out.push(line);
-      }
-      return out.join("\n");
-    };
-    const pushParagraph = (target: RenderBlock[], txt: string) => {
-      const t = txt.trim();
-      if (!t) return;
-      target.push({ id: `b-${target.length + 1}`, markdown: t });
-    };
-    const normalized = normalizeStickyLines(filteredText || "");
-    const lines = normalized.split("\n");
-    const out: RenderBlock[] = [];
-    let i = 0;
-    while (i < lines.length) {
-      const trimmed = (lines[i] || "").trim();
-      if (!trimmed) {
-        i += 1;
-        continue;
-      }
-      const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
-      if (heading) {
-        out.push({
-          id: `b-${out.length + 1}`,
-          markdown: trimmed,
-          tocText: heading[2].trim(),
-          tocLevel: heading[1].length
-        });
-        i += 1;
-        continue;
-      }
-      if (trimmed.startsWith("|")) {
-        const table: string[] = [trimmed];
-        i += 1;
-        while (i < lines.length && (lines[i] || "").trim().startsWith("|")) {
-          table.push((lines[i] || "").trim());
-          i += 1;
-        }
-        out.push({ id: `b-${out.length + 1}`, markdown: table.join("\n") });
-        continue;
-      }
-      if (/^(\- |\* |\d+\.\s+)/.test(trimmed)) {
-        const list: string[] = [trimmed];
-        i += 1;
-        while (i < lines.length && /^(\- |\* |\d+\.\s+)/.test((lines[i] || "").trim())) {
-          list.push((lines[i] || "").trim());
-          i += 1;
-        }
-        out.push({ id: `b-${out.length + 1}`, markdown: list.join("\n") });
-        continue;
-      }
-      const paraLines: string[] = [trimmed];
-      i += 1;
-      while (i < lines.length) {
-        const cur = (lines[i] || "").trim();
-        if (!cur) break;
-        if (/^(#{1,3})\s+/.test(cur) || cur.startsWith("|") || /^(\- |\* |\d+\.\s+)/.test(cur)) break;
-        paraLines.push(cur);
-        i += 1;
-      }
-      const paragraph = paraLines.join(" ");
-      if (paragraph.length > 260) {
-        const chunks = paragraph.split(/(?<=[。！？.!?；;])\s*/).filter(Boolean);
-        if (chunks.length > 1) {
-          let merged = "";
-          for (const c of chunks) {
-            const next = `${merged}${merged ? " " : ""}${c}`.trim();
-            if (next.length >= 180) {
-              pushParagraph(out, next);
-              merged = "";
-            } else {
-              merged = next;
-            }
-          }
-          if (merged) pushParagraph(out, merged);
-          continue;
-        }
-      }
-      pushParagraph(out, paragraph);
-    }
-    if (out.some((b) => b.tocText)) return out;
-    const withSynthetic: RenderBlock[] = [];
-    let syntheticIndex = 0;
-    let charAcc = 0;
-    let sectionHint = "";
-    for (const b of out) {
-      const md = b.markdown.trim();
-      if (!md) continue;
-      charAcc += md.length;
-      sectionHint += `${sectionHint ? " " : ""}${md.slice(0, 40)}`;
-      if (charAcc >= 1200) {
-        syntheticIndex += 1;
-        const title = `章节 ${syntheticIndex} · ${(sectionHint || "内容").slice(0, 18)}`;
-        withSynthetic.push({
-          id: `s-${syntheticIndex}`,
-          markdown: `## ${title}`,
-          tocText: title,
-          tocLevel: 2,
-          synthetic: true
-        });
-        charAcc = 0;
-        sectionHint = "";
-      }
-      withSynthetic.push(b);
-    }
-    return withSynthetic;
-  }, [filteredText, structuredBlocks]);
+    return base;
+  }, [filteredText, structuredBlocks, displayProfile, pageBreaks, citationView]);
+
+  const sheetTabs = useMemo(() => (isTable ? extractSheetTabs(blocks) : []), [blocks, isTable]);
+
   const canLoadMore = blocks.length > visibleBlocks;
   const renderBlocks = useMemo(() => blocks.slice(0, visibleBlocks), [blocks, visibleBlocks]);
   const previewWordCount = useMemo(() => estimateWordCount(filteredText), [filteredText]);
@@ -330,6 +228,7 @@ export default function NoteMarkdownPreview({
     const hidden = blocks.slice(visibleBlocks);
     return estimateWordCount(hidden.map((b) => b.markdown || "").join("\n\n"));
   }, [blocks, visibleBlocks]);
+
   const statusPills = useMemo(() => {
     const raw = String(statusLine || "").trim();
     if (!raw) return [] as string[];
@@ -339,19 +238,44 @@ export default function NoteMarkdownPreview({
       .map((s) => s.trim())
       .filter(Boolean);
   }, [statusLine]);
+
   const tocItems = useMemo(() => {
+    if (!showToc || isTable) return [];
     const out: Array<{ id: string; text: string; level: number }> = [];
     for (const b of blocks) {
-      if (!b.tocText || !b.tocLevel) continue;
+      if (!b.tocText || !b.tocLevel || b.pageLabel) continue;
       out.push({ id: `${headingPrefix}-${b.id}`, text: b.tocText, level: b.tocLevel });
       if (out.length >= 36) break;
     }
     return out;
-  }, [blocks, headingPrefix]);
+  }, [blocks, headingPrefix, showToc, isTable]);
+
+  const pageCount = pageBreaks.length > 0 ? pageBreaks[pageBreaks.length - 1]?.page : 0;
+  const docVariant = isTable ? "table" : "prose";
+
+  const scrollToBlockId = useCallback((blockId: string) => {
+    const root = contentRef.current;
+    if (!root) return;
+    const el = root.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(blockId)}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const scrollToHeading = useCallback(
+    (headingDomId: string) => {
+      const root = contentRef.current;
+      if (!root) return;
+      const el = root.querySelector<HTMLElement>(`#${CSS.escape(headingDomId)}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+    []
+  );
 
   useEffect(() => {
     setVisibleBlocks(20);
-  }, [filteredText, simplified]);
+    setSearchOpen(false);
+    setMetaOpen(false);
+    setTocOpen(false);
+  }, [filteredText, simplified, displayProfile]);
 
   useEffect(() => {
     citationExpandAllRef.current = false;
@@ -366,7 +290,7 @@ export default function NoteMarkdownPreview({
   }, [blocks, rangeAnchor, keyword]);
 
   useEffect(() => {
-    if (!canLoadMore) return;
+    if (!canLoadMore || isUnavailable) return;
     const sentinel = loadMoreRef.current;
     const root = contentRef.current;
     if (!sentinel || !root) return;
@@ -380,15 +304,15 @@ export default function NoteMarkdownPreview({
     );
     io.observe(sentinel);
     return () => io.disconnect();
-  }, [blocks.length, canLoadMore, renderBlocks.length]);
+  }, [blocks.length, canLoadMore, renderBlocks.length, isUnavailable]);
 
   useEffect(() => {
+    if (isUnavailable) return;
     const root = contentRef.current;
     if (!root) return;
 
     const unwrap = () => {
-      const marks = root.querySelectorAll("mark[data-note-highlight='1']");
-      marks.forEach((m) => {
+      root.querySelectorAll("mark[data-note-highlight='1']").forEach((m) => {
         const parent = m.parentNode;
         if (!parent) return;
         parent.replaceChild(document.createTextNode(m.textContent || ""), m);
@@ -403,10 +327,11 @@ export default function NoteMarkdownPreview({
       return;
     }
 
-    const pattern = rangeAnchor ? anchorToFlexiblePattern(rangeAnchor) : highlightTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = rangeAnchor
+      ? anchorToFlexiblePattern(rangeAnchor)
+      : highlightTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (!pattern) return;
     const re = new RegExp(pattern, rangeAnchor ? "i" : "gi");
-    let firstMark: HTMLElement | undefined;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const textNodes: Text[] = [];
     while (walker.nextNode()) {
@@ -435,7 +360,6 @@ export default function NoteMarkdownPreview({
           ? "rounded bg-brand/25 px-[1px] text-ink ring-1 ring-brand/40"
           : "rounded bg-warning/35 px-[1px] text-ink";
         mark.textContent = txt.slice(start, end);
-        if (!firstMark) firstMark = mark;
         frag.appendChild(mark);
         last = end;
       }
@@ -463,7 +387,30 @@ export default function NoteMarkdownPreview({
     return () => {
       unwrap();
     };
-  }, [renderBlocks, highlightTerm, rangeAnchor, blocks.length]);
+  }, [renderBlocks, highlightTerm, rangeAnchor, blocks.length, isUnavailable]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (tocOpen) {
+          setTocOpen(false);
+          e.preventDefault();
+          return;
+        }
+        if (searchOpen) {
+          setSearchOpen(false);
+          e.preventDefault();
+          return;
+        }
+        if (metaOpen) {
+          setMetaOpen(false);
+          e.preventDefault();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tocOpen, searchOpen, metaOpen]);
 
   function jumpToMatch(offset: number) {
     const root = contentRef.current;
@@ -475,176 +422,365 @@ export default function NoteMarkdownPreview({
     marks[next]?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  return (
-    <div className="flex max-h-[min(92vh,800px)] w-full max-w-5xl flex-col rounded-2xl border border-line bg-surface shadow-modal">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
-        <h3 id="note-preview-title" className="text-base font-semibold text-ink">
-          {title || "笔记预览"}
-        </h3>
-        {onClose ? (
-          <button type="button" className="text-sm text-muted hover:text-ink" onClick={onClose}>
-            关闭
-          </button>
-        ) : null}
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-        {citationView ? (
-          <p className="mb-3 rounded-lg border border-line/70 bg-fill/30 px-3 py-2 text-[11px] leading-relaxed text-muted">
-            以下为问答引用内容（摘录或附近上下文），不是整本资料预览。需要全书请从资料列表打开。
-          </p>
-        ) : (
-        <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-line/70 bg-fill/30 p-3 text-xs text-muted sm:grid-cols-2 lg:grid-cols-3">
-          <p className="sm:col-span-2 lg:col-span-3 text-[11px] font-medium text-muted">基本信息</p>
-          {statusPills.length > 0 ? (
-            <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center gap-1.5">
-              {statusPills.map((pill, idx) => (
-                <span
-                  key={`${pill}-${idx}`}
-                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] ${statusPillClass(pill)}`}
-                >
-                  {pill}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          <p>参考资料标题：<span className="text-ink">{title || "未命名参考资料"}</span></p>
-          <p>类型：<span className="text-ink">{sourceType || "未知"}</span></p>
-          <p>上传时间：<span className="text-ink">{createdAt || "-"}</span></p>
-          <p>字数：<span className="text-ink tabular-nums">{displayWordCount > 0 ? displayWordCount.toLocaleString() : "-"}</span></p>
-          {shouldShowVectorTruncationWarning({
-            ragIndexTruncated,
-            ragIndexCoveragePct,
-            shardsTotal,
-            shardsWithSummary
-          }) ? (
-            <p className="sm:col-span-2 lg:col-span-3 text-[11px] leading-relaxed text-warning-ink">
-              全文已保存。向量检索块约覆盖全文的 {ragIndexCoveragePct}%
-              {ragIndexStrategy === "head_tail" ? "（前段与尾段抽样）" : "（前段抽样）"}
-              ，用于相似度召回；若片摘要尚未齐，中间段落可能难引用。片摘要完成后问答主要走片路由，不限于该比例。
-            </p>
-          ) : shardsTotal && shardsTotal > 1 && (shardsWithSummary ?? 0) >= shardsTotal ? (
-            <p className="sm:col-span-2 lg:col-span-3 text-[11px] leading-relaxed text-muted">
-              全文已保存。片摘要 {shardsWithSummary}/{shardsTotal} 已完成，问答可走片路由与精读；向量块约 {ragIndexCoveragePct}%
-              为检索抽样，不代表资料未处理完。
-            </p>
-          ) : null}
-          <p>
-            视图：
-            <button
-              type="button"
-              className="ml-1 rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill"
-              onClick={() => onToggleSimplified(!simplified)}
+  const metaPanel = !isCitation && metaOpen ? (
+    <div className="shrink-0 border-b border-line/60 bg-fill/20 px-4 py-3 text-xs text-muted max-h-[40vh] overflow-y-auto">
+      <p className="mb-2 text-[11px] font-medium text-muted">资料信息</p>
+      {statusPills.length > 0 ? (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {statusPills.map((pill, idx) => (
+            <span
+              key={`${pill}-${idx}`}
+              className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] ${statusPillClass(pill)}`}
             >
-              {simplified ? "精简视图" : "原文视图"}
-            </button>
-          </p>
-          {sourceUrl ? (
-            <p className="sm:col-span-2 lg:col-span-3 break-all">
-              参考资料链接：<a href={sourceUrl} target="_blank" rel="noreferrer" className="text-brand underline">{sourceUrl}</a>
-            </p>
-          ) : null}
-          {canReindex ? (
-            <p className="sm:col-span-2 lg:col-span-3">
-              <button
-                type="button"
-                className="rounded border border-line bg-surface px-2 py-1 text-[11px] text-ink hover:bg-fill disabled:opacity-50"
-                disabled={!!reindexBusy}
-                onClick={onReindex}
-              >
-                {reindexBusy ? "重建中…" : "手动重建索引"}
-              </button>
-            </p>
-          ) : null}
+              {pill}
+            </span>
+          ))}
         </div>
-        )}
-        <input
-          className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
-          placeholder={citationView ? "在引用内容中搜索" : "关键字过滤行"}
-          value={keyword}
-          onChange={(e) => onKeywordChange(e.target.value)}
-          aria-label="关键字过滤"
+      ) : null}
+      <p className="mb-1">
+        类型 <span className="text-ink">{sourceType || typeLabel}</span>
+        {createdAt ? (
+          <>
+            {" "}
+            · 上传 <span className="text-ink">{createdAt}</span>
+          </>
+        ) : null}
+        {displayWordCount > 0 ? (
+          <>
+            {" "}
+            · <span className="tabular-nums text-ink">{displayWordCount.toLocaleString()}</span> 字
+          </>
+        ) : null}
+      </p>
+      {profileShowSimplifiedToggle(displayProfile) ? (
+        <p className="mb-2">
+          视图{" "}
+          <button
+            type="button"
+            className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill"
+            onClick={() => onToggleSimplified(!simplified)}
+          >
+            {simplified ? "精简（去网页噪声）" : "原文"}
+          </button>
+        </p>
+      ) : null}
+      {shouldShowVectorTruncationWarning({
+        ragIndexTruncated,
+        ragIndexCoveragePct,
+        shardsTotal,
+        shardsWithSummary
+      }) ? (
+        <p className="mb-2 text-[11px] leading-relaxed text-warning-ink">
+          全文已保存。向量检索块约覆盖全文的 {ragIndexCoveragePct}%
+          {ragIndexStrategy === "head_tail" ? "（前段与尾段抽样）" : "（前段抽样）"}
+          ，用于相似度召回。
+        </p>
+      ) : shardsTotal && shardsTotal > 1 && (shardsWithSummary ?? 0) >= shardsTotal ? (
+        <p className="mb-2 text-[11px] leading-relaxed text-muted">
+          片摘要 {shardsWithSummary}/{shardsTotal} 已完成；向量块约 {ragIndexCoveragePct}% 为检索抽样。
+        </p>
+      ) : null}
+      {sourceUrl ? (
+        <p className="mb-2 break-all">
+          来源{" "}
+          <a href={sourceUrl} target="_blank" rel="noreferrer" className="text-brand underline">
+            {sourceUrl}
+          </a>
+        </p>
+      ) : null}
+      {parseState === "partial" ? (
+        <p className="mb-2 text-[11px] text-warning-ink">正文解析不完整，以下内容为已提取部分。</p>
+      ) : null}
+      {canReindex ? (
+        <button
+          type="button"
+          className="rounded border border-line bg-surface px-2 py-1 text-[11px] text-ink hover:bg-fill disabled:opacity-50"
+          disabled={!!reindexBusy}
+          onClick={onReindex}
+        >
+          {reindexBusy ? "重建中…" : "手动重建索引"}
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+
+  const searchBar = searchOpen ? (
+    <div className="shrink-0 border-b border-line/60 bg-surface px-4 py-2">
+      <input
+        className="w-full rounded-lg border border-line bg-fill px-3 py-2 text-sm text-ink"
+        placeholder={isCitation ? "在引用内容中搜索" : isTable ? "在表格中搜索" : "在本文中搜索"}
+        value={keyword}
+        onChange={(e) => onKeywordChange(e.target.value)}
+        aria-label="搜索正文"
+        autoFocus
+      />
+      {matchCount > 0 ? (
+        <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+          <span>
+            命中 {activeMatchIndex + 1}/{matchCount}
+          </span>
+          <button type="button" className={iconBtn} onClick={() => jumpToMatch(-1)}>
+            上一个
+          </button>
+          <button type="button" className={iconBtn} onClick={() => jumpToMatch(1)}>
+            下一个
+          </button>
+        </div>
+      ) : null}
+      {highlightHint ? <p className="mt-1 text-xs text-brand">已定位：{highlightHint}</p> : null}
+    </div>
+  ) : null;
+
+  const tocSidebar =
+    tocOpen && showToc && tocItems.length > 0 ? (
+      <aside className="hidden w-60 shrink-0 overflow-y-auto border-r border-line/60 bg-fill/10 p-3 lg:block">
+        <p className="mb-2 text-[11px] font-medium text-muted">目录</p>
+        <nav className="flex flex-col gap-0.5">
+          {tocItems.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`truncate rounded px-2 py-1.5 text-left text-sm text-ink hover:bg-fill/60 ${
+                t.level >= 3 ? "pl-6" : t.level >= 2 ? "pl-3" : ""
+              }`}
+              title={t.text}
+              onClick={() => scrollToHeading(t.id)}
+            >
+              {t.text}
+            </button>
+          ))}
+        </nav>
+      </aside>
+    ) : null;
+
+  const tocSheet =
+    tocOpen && showToc && tocItems.length > 0 ? (
+      <>
+        <button
+          type="button"
+          className="fixed inset-0 z-[530] bg-black/30 lg:hidden"
+          aria-label="关闭目录"
+          onClick={() => setTocOpen(false)}
         />
-        {tocItems.length > 0 ? (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded border border-line/70 bg-fill/20 p-2">
-            <span className="text-[11px] font-medium text-muted">目录（h1~h3/智能章节）</span>
+        <div
+          className="fixed inset-x-0 bottom-0 z-[531] max-h-[50vh] overflow-y-auto rounded-t-2xl border-t border-line bg-surface p-4 lg:hidden"
+          role="dialog"
+          aria-label="目录"
+        >
+          <p className="mb-2 text-sm font-medium text-ink">目录</p>
+          <nav className="flex flex-col gap-1">
             {tocItems.map((t) => (
               <button
                 key={t.id}
                 type="button"
-                className={`rounded border border-line/60 bg-surface px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill ${
-                  t.level >= 3 ? "ml-1" : ""
-                }`}
+                className="rounded px-2 py-2 text-left text-sm text-ink hover:bg-fill"
                 onClick={() => {
-                  const root = contentRef.current;
-                  if (!root) return;
-                  const el = root.querySelector<HTMLElement>(`#${CSS.escape(t.id)}`);
-                  el?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  scrollToHeading(t.id);
+                  setTocOpen(false);
                 }}
-                title={t.text}
               >
                 {t.text}
               </button>
             ))}
-          </div>
-        ) : null}
-        {matchCount > 0 ? (
-          <div className="mt-2 flex items-center gap-2 text-xs text-muted">
-            <span>
-              命中 {activeMatchIndex + 1}/{matchCount}
-            </span>
-            <button
-              type="button"
-              className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill"
-              onClick={() => jumpToMatch(-1)}
-            >
-              上一个
-            </button>
-            <button
-              type="button"
-              className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink hover:bg-fill"
-              onClick={() => jumpToMatch(1)}
-            >
-              下一个
-            </button>
-          </div>
-        ) : null}
-        {truncated ? <p className="mt-2 text-xs text-warning-ink">内容已截断展示</p> : null}
-        {highlightHint ? (
-          <p className="mt-2 rounded border border-brand/30 bg-brand/10 px-2 py-1 text-xs text-brand">
-            已定位引用片段：{highlightHint}
-          </p>
-        ) : null}
-        {loading ? <p className="mt-3 text-sm text-muted">加载中…</p> : null}
+          </nav>
+        </div>
+      </>
+    ) : null;
 
-        <div
-          ref={contentRef}
-          className="markdown-body mt-3 max-h-[min(72vh,34rem)] min-h-0 flex-1 overflow-y-auto rounded-lg border border-line bg-surface px-4 py-3 text-[15px] leading-7 text-ink [word-break:break-word]"
-        >
+  const sheetBar =
+    isTable && sheetTabs.length > 1 ? (
+      <div className="shrink-0 flex flex-wrap gap-1 border-b border-line/60 px-4 py-2">
+        {sheetTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className="rounded-full border border-line/70 bg-surface px-2.5 py-1 text-xs text-ink hover:bg-fill"
+            onClick={() => scrollToBlockId(tab.id)}
+          >
+            {tab.title}
+          </button>
+        ))}
+      </div>
+    ) : null;
+
+  const bodyInner = isUnavailable ? (
+    <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
+      <p className="text-base font-medium text-ink">暂无法阅读正文</p>
+      <p className="mt-2 max-w-md text-sm text-muted">
+        {parseDetail?.trim().slice(0, 200) ||
+          (loading
+            ? "正在提取正文，请稍候…"
+            : "可能尚未解析完成，或文件为扫描件/图片版。可下载原文件查看。")}
+      </p>
+      {onDownloadFile ? (
+        <button type="button" className={`${iconBtn} mt-4 px-4 py-2`} onClick={onDownloadFile}>
+          下载原文件
+        </button>
+      ) : null}
+    </div>
+  ) : (
+    <>
+      {isCitation ? (
+        <p className="shrink-0 px-6 pt-4 text-xs text-muted">
+          以下为问答引用内容（摘录或附近上下文）。需要全书请从资料列表或下方按钮打开。
+        </p>
+      ) : null}
+      {truncated ? (
+        <p className="shrink-0 px-6 pt-3 text-xs text-warning-ink">
+          预览仅展示前 40 万字，全文已保存，问答仍可使用完整内容。
+        </p>
+      ) : null}
+      {loading ? <p className="shrink-0 px-6 py-3 text-sm text-muted">加载中…</p> : null}
+      <div
+        ref={contentRef}
+        className={`min-h-0 flex-1 overflow-y-auto ${
+          isTable ? "bg-surface px-4 py-4" : "bg-fill/15 px-4 py-6 sm:px-6"
+        }`}
+      >
+        <div className={isTable ? "w-full" : "mx-auto w-full max-w-[42rem]"}>
           {renderBlocks.map((b) => (
-            <section key={b.id} className={b.synthetic ? "opacity-90" : ""}>
-              {b.tocText ? (
-                <h4 id={`${headingPrefix}-${b.id}`} className="mb-1 mt-2 text-xs font-semibold text-muted">
+            <section key={b.id} data-block-id={b.id} className={b.synthetic && !b.pageLabel ? "opacity-90" : ""}>
+              {b.pageLabel ? (
+                <div
+                  className="my-6 flex items-center gap-3 text-xs font-medium text-muted"
+                  aria-label={b.pageLabel}
+                >
+                  <span className="h-px flex-1 bg-line/70" />
+                  <span>{b.pageLabel}</span>
+                  <span className="h-px flex-1 bg-line/70" />
+                </div>
+              ) : null}
+              {b.tocText && !blockHasInlineHeading(b) && !b.pageLabel ? (
+                <h4
+                  id={`${headingPrefix}-${b.id}`}
+                  className="mb-2 mt-4 scroll-mt-4 text-sm font-semibold text-muted"
+                >
                   {b.tocText}
                 </h4>
               ) : null}
-              <NoteMarkdownDoc filteredText={b.markdown} headingIdPrefix={`${headingPrefix}-${b.id}`} />
+              {b.markdown ? (
+                <NoteMarkdownDoc
+                  filteredText={b.markdown}
+                  headingIdPrefix={`${headingPrefix}-${b.id}`}
+                  variant={docVariant}
+                />
+              ) : null}
             </section>
           ))}
           <div ref={loadMoreRef} className="h-2 w-full" />
         </div>
-        {canLoadMore ? (
-          <div className="mt-2 flex justify-center">
+      </div>
+      {canLoadMore ? (
+        <div className="shrink-0 flex justify-center border-t border-line/40 py-2">
+          <button type="button" className={iconBtn} onClick={() => setVisibleBlocks((n) => Math.min(n + 12, blocks.length))}>
+            继续阅读（约剩 {remainingWords.toLocaleString()} 字）
+          </button>
+        </div>
+      ) : null}
+      {isCitation && onViewFullDocument ? (
+        <div className="shrink-0 border-t border-line/60 px-4 py-3">
+          <button type="button" className={`${iconBtn} w-full py-2`} onClick={onViewFullDocument}>
+            查看全书资料
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <header className="flex shrink-0 items-center gap-2 border-b border-line/60 px-3 py-2.5 sm:px-4">
+        {onClose ? (
+          <button type="button" className="shrink-0 text-sm text-muted hover:text-ink" onClick={onClose}>
+            关闭
+          </button>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 rounded bg-fill px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+              {typeLabel}
+            </span>
+            <h3 id="note-preview-title" className="truncate text-base font-semibold text-ink">
+              {title || "参考资料"}
+            </h3>
+          </div>
+          {displayProfile === "web" && host ? (
+            <p className="truncate text-xs text-muted">来源 {host}</p>
+          ) : null}
+          {displayProfile === "prose" && ext === "pdf" && pageCount > 0 ? (
+            <p className="text-xs text-muted">提取正文 · 共 {pageCount} 页</p>
+          ) : null}
+          {displayProfile === "table" ? <p className="text-xs text-muted">表格预览（提取为 Markdown）</p> : null}
+          {isCitation ? <p className="text-xs text-muted">引用摘录 · 非全书</p> : null}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+          {profileShowOpenSource(displayProfile, sourceUrl) && sourceUrl ? (
+            <a
+              href={sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className={iconBtn}
+            >
+              原文
+            </a>
+          ) : null}
+          {onDownloadFile && inputType === "note_file" && !isCitation ? (
+            <button type="button" className={iconBtn} onClick={onDownloadFile}>
+              下载
+            </button>
+          ) : null}
+          {!isUnavailable ? (
             <button
               type="button"
-              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs text-ink hover:bg-fill"
-              onClick={() => setVisibleBlocks((n) => Math.min(n + 12, blocks.length))}
+              className={iconBtn}
+              aria-expanded={searchOpen}
+              onClick={() => {
+                setSearchOpen((v) => !v);
+                if (!searchOpen) setTocOpen(false);
+              }}
             >
-              加载更多（剩余约 {remainingWords.toLocaleString()} 字）
+              搜索
             </button>
-          </div>
-        ) : null}
+          ) : null}
+          {showToc && tocItems.length > 0 ? (
+            <button
+              type="button"
+              className={iconBtn}
+              aria-expanded={tocOpen}
+              onClick={() => {
+                setTocOpen((v) => !v);
+                if (!tocOpen) setSearchOpen(false);
+              }}
+            >
+              目录
+            </button>
+          ) : null}
+          {!isCitation ? (
+            <button
+              type="button"
+              className={`${iconBtn} relative`}
+              aria-expanded={metaOpen}
+              onClick={() => setMetaOpen((v) => !v)}
+            >
+              信息
+              {statusNeedsAttention(statusLine) ? (
+                <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-warning" aria-hidden />
+              ) : null}
+            </button>
+          ) : null}
+        </div>
+      </header>
+
+      {metaPanel}
+      {searchBar}
+      {sheetBar}
+
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {tocSidebar}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{bodyInner}</div>
       </div>
+
+      {tocSheet}
     </div>
   );
 }

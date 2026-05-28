@@ -47,7 +47,7 @@ const NoteMarkdownPreview = dynamic(() => import("../../../components/notes/Note
     <div
       className="flex min-h-[200px] items-center justify-center rounded-2xl border border-line/50 bg-fill/40 text-sm text-muted"
       aria-busy
-      aria-label="加载预览"
+      aria-label="加载阅读器"
     />
   )
 });
@@ -126,6 +126,11 @@ import {
 } from "../../../lib/notebookCardThemes";
 import NotebookWorkbenchHeader from "../../../components/notes/NotebookWorkbenchHeader";
 import { ALLOWED_NOTE_EXT, NOTE_FILE_INPUT_ACCEPT } from "../../../lib/noteUploadConstants";
+import {
+  deriveDisplayProfile,
+  profileDefaultSimplified,
+  type NotePageBreak
+} from "../../../lib/noteReaderDisplayProfile";
 import { maxNotesForReference, notesRefSelectionLimitMessage } from "../../../lib/noteReferenceLimits";
 import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../../lib/billingShortfall";
@@ -397,6 +402,9 @@ type PreviewResp = {
     text?: string;
     level?: number;
   }>;
+  ext?: string;
+  pageBreaks?: NotePageBreak[];
+  parseGate?: string;
 };
 
 const card =
@@ -970,6 +978,13 @@ export default function NotesPage() {
   const [previewCharRange, setPreviewCharRange] = useState<{ start: number; end: number } | null>(null);
   /** 从问答角标打开：仅展示引用摘录/上下文，非全书预览 */
   const [previewCitationView, setPreviewCitationView] = useState(false);
+  const [previewExt, setPreviewExt] = useState("");
+  const [previewPageBreaks, setPreviewPageBreaks] = useState<NotePageBreak[]>([]);
+  const [previewInputType, setPreviewInputType] = useState("");
+  const [previewParseState, setPreviewParseState] = useState("");
+  const [previewParseStatus, setPreviewParseStatus] = useState("");
+  const [previewParseGate, setPreviewParseGate] = useState("");
+  const [previewParseDetail, setPreviewParseDetail] = useState("");
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
   const [renameNoteTitle, setRenameNoteTitle] = useState("");
   const [importUrl, setImportUrl] = useState("");
@@ -2112,7 +2127,10 @@ export default function NotesPage() {
       const notesOnlyWorks = allWorks.filter((w) => {
         const project = String(w.projectName || "").trim();
         const notesNotebook = String(w.notesSourceNotebook || "").trim();
-        return project === NOTES_PODCAST_PROJECT_NAME || !!notesNotebook;
+        const inNotesScope = project === NOTES_PODCAST_PROJECT_NAME || !!notesNotebook;
+        if (!inNotesScope) return false;
+        if (nb && notesNotebook) return notesNotebook === nb;
+        return true;
       });
       setPodcastWorks(notesOnlyWorks);
     } catch (e) {
@@ -3298,9 +3316,14 @@ export default function NotesPage() {
       citationView?: boolean;
       excerptText?: string;
       previewTitle?: string;
+      ext?: string;
+      inputType?: string;
     } = {}
   ) {
     const citationView = Boolean(opts.citationView);
+    const hit = notes.find((n) => n.noteId === noteId);
+    const seedExt = String(opts.ext ?? hit?.ext ?? "").trim();
+    const seedInputType = String(opts.inputType ?? hit?.inputType ?? "").trim();
     setPreviewOpen(true);
     setPreviewLoading(true);
     setPreviewNoteId(noteId);
@@ -3323,6 +3346,13 @@ export default function NotesPage() {
     setPreviewSimplified(false);
     setPreviewHighlightHint("");
     setPreviewCharRange(null);
+    setPreviewExt(seedExt);
+    setPreviewPageBreaks([]);
+    setPreviewInputType(seedInputType);
+    setPreviewParseState("");
+    setPreviewParseStatus("");
+    setPreviewParseGate("");
+    setPreviewParseDetail("");
 
     const excerptOnly = citationView && Boolean(opts.excerptText?.trim());
     if (excerptOnly) {
@@ -3346,11 +3376,32 @@ export default function NotesPage() {
         }
       );
       const data = (await res.json().catch(() => ({}))) as PreviewResp & { detail?: unknown };
-      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "预览失败"));
+      if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "阅读加载失败"));
+      const loadedText = data.text || "";
+      const loadedExt = String(data.ext || seedExt || "").trim();
+      const loadedInputType = seedInputType;
       setPreviewTitle(data.title || "");
-      setPreviewText(data.text || "");
+      setPreviewText(loadedText);
       setPreviewStructuredBlocks(Array.isArray(data.structuredBlocks) ? data.structuredBlocks : []);
       setPreviewTruncated(!!data.truncated);
+      setPreviewExt(loadedExt);
+      setPreviewPageBreaks(Array.isArray(data.pageBreaks) ? data.pageBreaks : []);
+      setPreviewInputType(loadedInputType);
+      setPreviewParseState(String(data.parseState || ""));
+      setPreviewParseStatus(String(data.parseStatus || ""));
+      setPreviewParseGate(String(data.parseGate || ""));
+      setPreviewParseDetail(String(data.parseDetail || ""));
+      const loadedProfile = deriveDisplayProfile({
+        ext: loadedExt,
+        sourceUrl: data.sourceUrl,
+        inputType: loadedInputType,
+        citationView,
+        text: loadedText,
+        parseState: data.parseState,
+        parseStatus: data.parseStatus,
+        parseGate: data.parseGate
+      });
+      setPreviewSimplified(profileDefaultSimplified(loadedProfile));
       setPreviewSourceType(String(data.sourceType || ""));
       setPreviewSourceUrl(String(data.sourceUrl || ""));
       setPreviewCreatedAt(formatPreviewDateTime(data.createdAt));
@@ -3463,6 +3514,19 @@ export default function NotesPage() {
     }
   }
 
+  function downloadPreviewFile() {
+    const nid = previewNoteId.trim();
+    if (!nid) return;
+    const pv = new URLSearchParams();
+    if (sharedBrowse?.ownerUserId) pv.set("sharedFromOwnerUserId", sharedBrowse.ownerUserId);
+    const qs = pv.toString();
+    window.open(
+      `/api/notes/${encodeURIComponent(nid)}/file${qs ? `?${qs}` : ""}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
+
   async function reindexPreviewNote() {
     const nid = previewNoteId.trim();
     if (!nid || previewReindexBusy) return;
@@ -3477,7 +3541,7 @@ export default function NotesPage() {
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; detail?: unknown };
       if (!res.ok || !data.success) throw new Error(apiErrorMessage(data, "重建索引失败"));
-      await openPreview(nid);
+      await openPreview(nid, { ext: previewExt, inputType: previewInputType });
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -3584,13 +3648,38 @@ export default function NotesPage() {
     }
   }
 
+  const previewDisplayProfile = useMemo(() => {
+    if (previewCitationView && !previewText.trim() && previewLoading) return "citation";
+    if (previewLoading && !previewText.trim()) return "prose";
+    return deriveDisplayProfile({
+      ext: previewExt,
+      sourceUrl: previewSourceUrl,
+      inputType: previewInputType,
+      citationView: previewCitationView,
+      text: previewText,
+      parseState: previewParseState,
+      parseStatus: previewParseStatus,
+      parseGate: previewParseGate
+    });
+  }, [
+    previewCitationView,
+    previewLoading,
+    previewText,
+    previewExt,
+    previewSourceUrl,
+    previewInputType,
+    previewParseState,
+    previewParseStatus,
+    previewParseGate
+  ]);
+
   const filteredPreview = useMemo(() => {
     const base = previewSimplified ? simplifySourceText(previewText) : previewText;
     const kw = previewKw.trim();
-    if (!kw || previewCharRange) return base;
+    if (!kw || previewCharRange || previewDisplayProfile === "table") return base;
     const lines = base.split("\n");
     return lines.filter((l) => l.includes(kw)).join("\n");
-  }, [previewText, previewKw, previewSimplified, previewCharRange]);
+  }, [previewText, previewKw, previewSimplified, previewCharRange, previewDisplayProfile]);
 
   function openPreviewFromAskSource(
     source: NotesAskSource,
@@ -4159,8 +4248,10 @@ export default function NotesPage() {
                               className={`min-w-0 truncate text-left text-sm font-medium underline-offset-2 hover:underline ${
                                 preReady ? "text-ink" : "text-muted"
                               }`}
-                              onClick={() => void openPreview(n.noteId)}
-                              title="查看参考资料内容"
+                              onClick={() =>
+                                void openPreview(n.noteId, { ext: n.ext, inputType: n.inputType })
+                              }
+                              title="阅读参考资料"
                             >
                               <span className="inline-flex items-center gap-1 whitespace-nowrap">
                                 <span className="shrink-0 rounded bg-fill px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted">
@@ -5410,11 +5501,21 @@ export default function NotesPage() {
           onPointerDown={(e) => {
             if (e.target === e.currentTarget) setPreviewOpen(false);
           }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setPreviewOpen(false);
+          }}
         >
-          <div className="flex max-h-[min(92vh,820px)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card" onPointerDown={(e) => e.stopPropagation()}>
+          <div
+            className="flex h-[min(92vh,820px)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
             <NoteMarkdownPreview
               title={previewTitle || "参考资料内容"}
               filteredText={filteredPreview}
+              displayProfile={previewDisplayProfile}
+              ext={previewExt}
+              pageBreaks={previewPageBreaks}
+              inputType={previewInputType}
               structuredBlocks={previewStructuredBlocks}
               loading={previewLoading}
               truncated={previewTruncated}
@@ -5428,6 +5529,8 @@ export default function NotesPage() {
               shardsTotal={previewShardsTotal}
               shardsWithSummary={previewShardsWithSummary}
               sourceUrl={previewSourceUrl}
+              parseDetail={previewParseDetail}
+              parseState={previewParseState}
               canReindex={previewCanReindex}
               reindexBusy={previewReindexBusy}
               onReindex={() => void reindexPreviewNote()}
@@ -5439,6 +5542,14 @@ export default function NotesPage() {
               charHighlightRange={previewCharRange}
               citationView={previewCitationView}
               onClose={() => setPreviewOpen(false)}
+              onDownloadFile={
+                previewInputType === "note_file" ? downloadPreviewFile : undefined
+              }
+              onViewFullDocument={
+                previewCitationView && previewNoteId
+                  ? () => void openPreview(previewNoteId, { previewTitle: previewTitle })
+                  : undefined
+              }
             />
           </div>
         </div>
