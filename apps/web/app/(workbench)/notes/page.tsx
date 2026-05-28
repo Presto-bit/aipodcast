@@ -3089,10 +3089,24 @@ export default function NotesPage() {
           content: raw
         })
       });
-      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: unknown };
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        noteId?: string;
+        detail?: unknown;
+      };
       if (!res.ok) throw new Error(apiErrorMessage(data, "保存失败"));
+      const noteId = String(data.noteId || "").trim();
       await loadNotebookMeta();
       await loadNotes();
+      if (noteId) {
+        setDraftSelectedNoteIds((prev) => {
+          if (prev.includes(noteId)) return prev;
+          const next = [...prev, noteId];
+          if (next.length <= noteRefCap) return next;
+          return [noteId, ...prev].slice(0, noteRefCap);
+        });
+        markNoteAsFresh(noteId);
+      }
     } catch (err) {
       setNotesAskError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -4505,12 +4519,12 @@ export default function NotesPage() {
                                   <div className="mt-3 flex flex-wrap items-center gap-1 border-t border-line/40 pt-2">
                                     <button
                                       type="button"
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
+                                      className="inline-flex h-8 items-center rounded-lg px-2 text-xs font-medium text-muted hover:bg-fill hover:text-ink"
                                       title="复制"
                                       aria-label="复制"
                                       onClick={() => void copyNotesAskAnswer(askBodyForCopy)}
                                     >
-                                      <IconClipboard width={16} height={16} aria-hidden />
+                                      复制
                                     </button>
                                     <button
                                       type="button"
