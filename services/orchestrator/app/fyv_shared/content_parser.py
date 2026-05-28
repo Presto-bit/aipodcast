@@ -351,6 +351,172 @@ def _extract_semantic_text(root: Tag | BeautifulSoup) -> str:
     return _dedupe_lines("\n".join(lines))
 
 
+def _element_text_preserving_breaks(el: Tag) -> str:
+    """保留 <br> 与块内换行，段内单换行、段间双换行。"""
+    for br in el.find_all("br"):
+        br.replace_with("\n")
+    text = el.get_text(separator="\n", strip=True)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _epub_block_nested_in_block(el: Tag) -> bool:
+    """避免 p/div 嵌套时重复抽取。"""
+    if el.find_parent(["p", "li", "h1", "h2", "h3", "td", "th", "table"]):
+        return True
+    if el.name == "div" and el.find(["p", "h1", "h2", "h3", "li", "div", "table"]):
+        return True
+    return False
+
+
+def _extract_epub_blocks_from_soup(soup: BeautifulSoup) -> list[dict[str, Any]]:
+    """EPUB 章节 HTML：按 p/li/标题/div 等块级元素抽取，对齐预览 structuredBlocks。"""
+    blocks: list[dict[str, Any]] = []
+    idx = 0
+    for el in soup.find_all(["h1", "h2", "h3", "p", "li", "div", "table", "img"]):
+        if _epub_block_nested_in_block(el):
+            continue
+        txt = ""
+        t = (el.name or "").lower()
+        if t == "img":
+            src = (el.get("src") or "").strip()
+            if not src:
+                continue
+            txt = f"![{(el.get('alt') or '').strip()}]({src})"
+        elif t == "table":
+            rows = []
+            for tr in el.find_all("tr"):
+                cols = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+                if cols:
+                    rows.append("| " + " | ".join(cols) + " |")
+            if not rows:
+                continue
+            if len(rows) >= 1 and not re.search(r"\|\s*-+\s*\|", rows[1] if len(rows) > 1 else ""):
+                sep = "| " + " | ".join(["---"] * max(1, rows[0].count("|") - 1)) + " |"
+                rows = [rows[0], sep, *rows[1:]]
+            txt = "\n".join(rows)
+        elif t in ("h1", "h2", "h3", "p", "li", "div"):
+            txt = _element_text_preserving_breaks(el)
+        txt = (txt or "").strip()
+        if not txt or (t == "div" and len(txt) < 6):
+            continue
+        idx += 1
+        block: dict[str, Any] = {"id": f"epub-{idx}", "type": t, "text": txt}
+        if t in ("h1", "h2", "h3"):
+            block["level"] = int(t[1])
+        blocks.append(block)
+        if len(blocks) >= 800:
+            break
+    return blocks
+
+
+def _html_blocks_to_markdown_and_segments(
+    html_blocks: list[dict[str, Any]],
+    *,
+    chapter_title: str = "",
+    chapter_mode: bool = False,
+) -> tuple[str, list[dict[str, Any]]]:
+    """
+    HTML 块 → 预览 Markdown（段间 \\n\\n）与 rag_segments（按段）。
+    chapter_mode=True 时用于 EPUB 单章；否则用于本地上传 HTML。
+    """
+    md_parts: list[str] = []
+    segments: list[dict[str, Any]] = []
+    chap_key = chapter_title.strip().casefold()
+    heading_stack: list[str] = []
+
+    if chapter_mode and chapter_title:
+        segments.append(
+            {
+                "text": chapter_title,
+                "meta": {"block_type": "epub_chapter", "heading_path": [chapter_title]},
+            }
+        )
+        heading_stack = [chapter_title]
+
+    def current_path() -> list[str]:
+        if chapter_mode and chapter_title:
+            return list(heading_stack) if heading_stack else [chapter_title]
+        return list(heading_stack)
+
+    def push_paragraph(para: str) -> None:
+        p = para.strip()
+        if not p:
+            return
+        md_parts.append(p)
+        segments.append(
+            {
+                "text": p,
+                "meta": {"block_type": "paragraph", "heading_path": current_path()},
+            }
+        )
+
+    for blk in html_blocks:
+        typ = str(blk.get("type") or "p").lower()
+        txt = str(blk.get("text") or "").strip()
+        if not txt:
+            continue
+        if typ in ("h1", "h2", "h3"):
+            if chapter_mode and txt.casefold() == chap_key:
+                continue
+            lv = int(blk.get("level") or int(typ[1]))
+            lv = max(1, min(6, lv))
+            if chapter_mode:
+                md_lv = min(6, lv + 2)
+                heading_stack = [chapter_title, txt] if chapter_title else [txt]
+            else:
+                md_lv = lv
+                heading_stack = heading_stack[: lv - 1] + [txt]
+            md_parts.append(f"{'#' * md_lv} {txt}")
+            segments.append(
+                {
+                    "text": txt,
+                    "meta": {
+                        "block_type": "heading",
+                        "level": lv,
+                        "heading_path": current_path(),
+                    },
+                }
+            )
+        elif typ == "li":
+            line = txt if re.match(r"^(\- |\* |\d+\.\s+)", txt) else f"- {txt}"
+            md_parts.append(line)
+            segments.append(
+                {
+                    "text": txt,
+                    "meta": {"block_type": "list", "heading_path": current_path()},
+                }
+            )
+        elif typ in ("img", "table"):
+            md_parts.append(txt)
+            segments.append(
+                {
+                    "text": txt,
+                    "meta": {"block_type": typ, "heading_path": current_path()},
+                }
+            )
+        else:
+            parts = re.split(r"\n{2,}", txt) if "\n" in txt else [txt]
+            for part in parts:
+                push_paragraph(part)
+
+    return "\n\n".join(md_parts), segments
+
+
+def _epub_chapter_body_and_segments(
+    html_blocks: list[dict[str, Any]],
+    chapter_title: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    """单章正文 Markdown 与 rag_segments（EPUB spine 章节）。"""
+    return _html_blocks_to_markdown_and_segments(
+        html_blocks,
+        chapter_title=chapter_title,
+        chapter_mode=True,
+    )
+
+
 def _extract_structured_blocks_from_html(soup: BeautifulSoup) -> list[dict[str, Any]]:
     """从 HTML 提取轻量结构块，供预览分块渲染与目录锚点。"""
     blocks: list[dict[str, Any]] = []
@@ -1558,9 +1724,8 @@ class ContentParser:
                     for bad in soup(["script", "style", "noscript"]):
                         bad.decompose()
                     title = self._epub_chapter_title_from_soup(soup, path)
-                    body = soup.get_text(separator="\n", strip=True)
-                    body = re.sub(r"\n{2,}", "\n", body).strip()
-                    if not body and not title:
+                    html_blocks = _extract_epub_blocks_from_soup(soup)
+                    if not html_blocks and not title:
                         continue
                     chapter_index += 1
                     if not title:
@@ -1568,33 +1733,31 @@ class ContentParser:
                     n = title_seen.get(title, 0) + 1
                     title_seen[title] = n
                     display_title = title if n == 1 else f"{title} ({n})"
+                    body, chapter_segments = _epub_chapter_body_and_segments(
+                        html_blocks, display_title
+                    )
                     if body:
                         md_parts.append(f"## {display_title}\n\n{body}")
                     else:
                         md_parts.append(f"## {display_title}")
-                    rag_segments.append(
-                        {
-                            "text": body or display_title,
-                            "meta": {
-                                "block_type": "epub_chapter",
-                                "heading_path": [display_title],
-                                "epub_href": path,
-                            },
-                        }
-                    )
+                    for seg in chapter_segments:
+                        if isinstance(seg.get("meta"), dict):
+                            seg["meta"]["epub_href"] = path
+                    rag_segments.extend(chapter_segments)
 
                 if not md_parts:
                     raise ValueError("EPUB 未提取到可用正文")
 
                 content = "\n\n".join(md_parts).strip()
                 logs.append(
-                    f"成功提取 EPUB 文本，共 {len(content)} 字符，{len(rag_segments)} 个章节"
+                    f"成功提取 EPUB 文本，共 {len(content)} 字符，{chapter_index} 个 spine 章节，"
+                    f"{len(rag_segments)} 个结构段"
                 )
                 return {
                     "success": True,
                     "content": content,
                     "rag_segments": rag_segments,
-                    "chapter_count": len(rag_segments),
+                    "chapter_count": chapter_index,
                     "logs": logs,
                     "source": "epub",
                 }

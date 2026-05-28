@@ -77,17 +77,89 @@ export function storedBlocksHaveTocHeadings(blocks: NoteRenderBlock[]): boolean 
   return blocks.some((b) => Boolean(b.tocText && b.tocLevel));
 }
 
+/** 后端 structuredBlocks 是否含章节标题（EPUB/PDF 等入库结构） */
+export function structuredRowsHaveChapterHeadings(structuredBlocks?: StructuredRow[]): boolean {
+  if (!Array.isArray(structuredBlocks) || structuredBlocks.length === 0) return false;
+  return structuredBlocks.some((row) => {
+    const typ = String(row?.type || "")
+      .trim()
+      .toLowerCase();
+    return typ === "heading" || typ === "h1" || typ === "h2" || typ === "h3";
+  });
+}
+
+/** 正文是否含后端写入的 Markdown 章节标题（如 EPUB ## 章节名） */
+export function textHasChapterHeadings(text: string): boolean {
+  return /^(#{1,3})\s+\S/im.test(String(text || ""));
+}
+
+/** 是否允许前端「智能章节」兜底（仅无任何后端/正文章节结构时） */
+export function shouldUseSyntheticChapters(
+  blocks: NoteRenderBlock[],
+  structuredBlocks?: StructuredRow[],
+  filteredText?: string
+): boolean {
+  if (blocks.some((b) => b.tocText && !b.synthetic)) return false;
+  if (structuredRowsHaveChapterHeadings(structuredBlocks)) return false;
+  if (textHasChapterHeadings(filteredText || "")) return false;
+  return true;
+}
+
+export type BuildRenderBlocksOptions = {
+  /** 资料扩展名，如 epub */
+  sourceExt?: string;
+};
+
+function normalizeSourceExt(ext?: string): string {
+  return String(ext || "")
+    .trim()
+    .toLowerCase();
+}
+
+/** 上传资料已有按段 structuredBlocks 时，优先直出、跳过粘行（与 EPUB 对齐） */
+const PREFER_STORED_BLOCK_EXTS = new Set(["epub", "html", "htm", "xhtml", "docx", "doc"]);
+
+export function prefersStoredStructuredBlocks(sourceExt?: string): boolean {
+  return PREFER_STORED_BLOCK_EXTS.has(normalizeSourceExt(sourceExt));
+}
+
+function shouldPreferStoredStructuredBlocks(
+  sourceExt: string,
+  stored: NoteRenderBlock[]
+): boolean {
+  if (!prefersStoredStructuredBlocks(sourceExt) || stored.length === 0) return false;
+  if (storedBlocksHaveTocHeadings(stored)) return true;
+  const totalLen = stored.reduce((n, b) => n + (b.markdown?.length ?? 0), 0);
+  return stored.length > 1 || totalLen < 12_000;
+}
+
+/** 已有段落结构时，不做粘行合并 */
+export function shouldSkipStickyLineMerge(
+  filteredText: string,
+  structuredBlocks?: StructuredRow[],
+  sourceExt?: string
+): boolean {
+  if (prefersStoredStructuredBlocks(sourceExt)) return true;
+  if (structuredRowsHaveChapterHeadings(structuredBlocks)) return true;
+  if (textHasChapterHeadings(filteredText)) return true;
+  return (filteredText.match(/\n\n/g) || []).length >= 2;
+}
+
 export function buildRenderBlocksFromText(
   filteredText: string,
-  structuredBlocks?: StructuredRow[]
+  structuredBlocks?: StructuredRow[],
+  options?: BuildRenderBlocksOptions
 ): NoteRenderBlock[] {
+  const sourceExt = normalizeSourceExt(options?.sourceExt);
   if (Array.isArray(structuredBlocks) && structuredBlocks.length > 0) {
     const stored = normalizeFromStored(structuredBlocks);
-    if (stored.length > 0 && storedBlocksHaveTocHeadings(stored)) {
+    if (shouldPreferStoredStructuredBlocks(sourceExt, stored)) {
       return stored;
     }
   }
-  const normalized = normalizeStickyLines(filteredText || "");
+  const normalized = shouldSkipStickyLineMerge(filteredText, structuredBlocks, sourceExt)
+    ? String(filteredText || "").replace(/\r\n/g, "\n")
+    : normalizeStickyLines(filteredText || "");
   const lines = normalized.split("\n");
   const out: NoteRenderBlock[] = [];
   let i = 0;
@@ -171,6 +243,9 @@ export function buildRenderBlocksFromText(
     pushParagraph(out, paragraph);
   }
   if (out.some((b) => b.tocText)) return out;
+  if (!shouldUseSyntheticChapters(out, structuredBlocks, filteredText)) {
+    return out;
+  }
   const withSynthetic: NoteRenderBlock[] = [];
   let syntheticIndex = 0;
   let charAcc = 0;

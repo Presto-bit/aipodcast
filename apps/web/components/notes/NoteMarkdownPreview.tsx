@@ -240,7 +240,7 @@ export default function NoteMarkdownPreview({
   const highlightTerm = (rangeAnchor || keyword || "").trim();
 
   const blocks = useMemo(() => {
-    const base = buildRenderBlocksFromText(filteredText, structuredBlocks);
+    const base = buildRenderBlocksFromText(filteredText, structuredBlocks, { sourceExt: ext });
     if (displayProfile === "prose" && pageBreaks.length > 0 && !citationView) {
       return injectPageBreakBlocks(base, filteredText, pageBreaks);
     }
@@ -305,12 +305,29 @@ export default function NoteMarkdownPreview({
   const pageCount = pageBreaks.length > 0 ? pageBreaks[pageBreaks.length - 1]?.page : 0;
   const docVariant = isTable ? "table" : "prose";
 
-  const scrollToBlockId = useCallback((blockId: string) => {
-    const root = contentRef.current;
-    if (!root) return;
-    const el = root.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(blockId)}"]`);
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
+  const scrollToBlockId = useCallback(
+    (blockId: string, opts?: { expandLazy?: boolean }) => {
+      const bid = String(blockId || "").trim();
+      if (!bid) return;
+      if (opts?.expandLazy !== false) {
+        const targetIdx = blocks.findIndex((b) => b.id === bid);
+        if (targetIdx >= 0) {
+          setVisibleBlocks((n) => Math.max(n, Math.min(blocks.length, targetIdx + 4)));
+        }
+      }
+      const runScroll = () => {
+        const root = contentRef.current;
+        if (!root) return;
+        const el = root.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(bid)}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          setActiveTocBlockId(bid);
+        }
+      };
+      requestAnimationFrame(() => requestAnimationFrame(runScroll));
+    },
+    [blocks]
+  );
 
   const persistReadPosition = useCallback(() => {
     const root = contentRef.current;

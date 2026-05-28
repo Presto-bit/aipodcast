@@ -193,6 +193,21 @@ def structured_blocks_from_rag_segments(
                 **({"charStart": int(cs), "charEnd": int(ce)} if cs is not None and ce is not None else {}),
             })
             continue
+        if bt == "heading":
+            try:
+                lvl = int(meta.get("level") or 2)
+            except (TypeError, ValueError):
+                lvl = 2
+            lvl = max(1, min(6, lvl))
+            blocks.append({
+                "id": bid,
+                "type": "heading",
+                "level": lvl,
+                "text": txt[:500],
+                "page": page,
+                **({"charStart": int(cs), "charEnd": int(ce)} if cs is not None and ce is not None else {}),
+            })
+            continue
         if heading and bt != "paragraph":
             lvl = 2
             blocks.append({

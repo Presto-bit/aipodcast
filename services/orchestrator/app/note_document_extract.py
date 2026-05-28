@@ -4,7 +4,7 @@
 - PDF：优先 PyMuPDF（fitz），失败或几乎无字时回退 PyPDF2。
 - DOCX：优先 python-docx，失败回退 word/document.xml 正则。
 - 纯文本：charset-normalizer 探测编码，失败再用 utf-8 ignore。
-- HTML/HTM/XHTML：BeautifulSoup 去脚本样式与嵌入媒体后抽取可见文本。
+- HTML/HTM/XHTML：按块级 DOM 分段（段间双换行），与 EPUB 同源抽取逻辑。
 - EPUB：临时文件 + content_parser.parse_epub（避免重复实现 spine 逻辑）。
 - DOC：临时文件 + antiword / catdoc / soffice（与旧逻辑一致）。
 - CSV / XLSX / XLS：表格线性化为 Markdown（含表头），大表按行列上限截断并注明；.xls 使用 xlrd。
@@ -302,7 +302,7 @@ def _docx_python_docx(data: bytes) -> str:
                 cells = [c.text.strip() for c in row.cells if (c.text or "").strip()]
                 if cells:
                     lines.append("\t".join(cells))
-        return "\n".join(lines).strip()
+        return "\n\n".join(lines).strip()
     except Exception as exc:
         logger.debug("python-docx parse failed: %s", exc)
         return ""
@@ -349,19 +349,7 @@ def _docx_rag_segments(data: bytes) -> list[dict[str, Any]]:
         return []
 
     heading_path: list[str] = []
-    buf: list[str] = []
     segments: list[dict[str, Any]] = []
-
-    def flush_buf() -> None:
-        nonlocal buf
-        if not buf:
-            return
-        t = "\n".join(buf).strip()
-        buf = []
-        if t:
-            segments.append(
-                {"text": t, "meta": {"block_type": "paragraph", "heading_path": list(heading_path)}}
-            )
 
     try:
         for el in doc.element.body:
@@ -376,20 +364,39 @@ def _docx_rag_segments(data: bytes) -> list[dict[str, Any]]:
                 except Exception:
                     pass
                 if st_name.startswith("Heading"):
-                    flush_buf()
                     try:
                         lev = int(st_name.replace("Heading", "").strip() or "2")
                     except Exception:
                         lev = 2
                     lev = max(1, min(6, lev))
                     heading_path = heading_path[: lev - 1] + [t]
+                    segments.append(
+                        {
+                            "text": t,
+                            "meta": {
+                                "block_type": "heading",
+                                "level": lev,
+                                "heading_path": list(heading_path),
+                            },
+                        }
+                    )
                 elif "标题" in st_name and not st_name.startswith("Heading"):
-                    flush_buf()
                     heading_path = heading_path[:1] + [t] if heading_path else [t]
+                    segments.append(
+                        {
+                            "text": t,
+                            "meta": {
+                                "block_type": "heading",
+                                "level": 2,
+                                "heading_path": list(heading_path),
+                            },
+                        }
+                    )
                 else:
-                    buf.append(t)
+                    segments.append(
+                        {"text": t, "meta": {"block_type": "paragraph", "heading_path": list(heading_path)}}
+                    )
             elif el.tag == qn("w:tbl"):
-                flush_buf()
                 table = Table(el, doc)
                 rows_txt: list[str] = []
                 for row in table.rows:
@@ -413,55 +420,51 @@ def _docx_rag_segments(data: bytes) -> list[dict[str, Any]]:
     except Exception as exc:
         logger.debug("docx rag segments failed: %s", exc)
         return []
-    flush_buf()
     return segments
 
 
-def _html_rag_segments(raw_html: str) -> list[dict[str, Any]]:
-    try:
-        from bs4 import BeautifulSoup
-    except Exception:
+def _normalize_prose_plaintext(text: str) -> str:
+    """将 antiword 等输出的纯文本规范为段间双换行，便于阅读器分块。"""
+    raw = str(text or "").replace("\r\n", "\n").strip()
+    if not raw:
+        return ""
+    if re.search(r"\n\s*\n", raw):
+        parts = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
+    else:
+        parts = [p.strip() for p in raw.split("\n") if p.strip()]
+    return "\n\n".join(parts)
+
+
+def _plain_text_rag_segments(text: str) -> list[dict[str, Any]]:
+    """按段/标题切分纯文本（DOC 等无 DOM 来源）。"""
+    normalized = _normalize_prose_plaintext(text)
+    if not normalized:
         return []
-
-    soup = BeautifulSoup(raw_html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "template", "iframe", "object", "embed"]):
-        tag.decompose()
-
-    root = soup.body or soup
-    path: list[str] = []
+    heading_path: list[str] = []
     segments: list[dict[str, Any]] = []
-    for el in root.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "table"], recursive=True):
-        if el.name != "table" and el.find_parent("table") is not None:
+    for para in normalized.split("\n\n"):
+        p = para.strip()
+        if not p:
             continue
-        if el.name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
-            try:
-                lev = int(el.name[1])
-            except Exception:
-                lev = 2
-            txt = el.get_text(" ", strip=True)
-            if txt:
-                path = path[: lev - 1] + [txt]
+        hm = re.match(r"^(#{1,3})\s+(.+)$", p)
+        if hm:
+            lev = len(hm.group(1))
+            title = hm.group(2).strip()
+            heading_path = heading_path[: lev - 1] + [title]
+            segments.append(
+                {
+                    "text": title,
+                    "meta": {
+                        "block_type": "heading",
+                        "level": lev,
+                        "heading_path": list(heading_path),
+                    },
+                }
+            )
             continue
-        if el.name == "p":
-            txt = el.get_text(" ", strip=True)
-            if len(txt) >= 4:
-                segments.append(
-                    {"text": txt, "meta": {"block_type": "paragraph", "heading_path": list(path)}}
-                )
-        elif el.name == "table":
-            rows_o: list[str] = []
-            for tr in el.find_all("tr"):
-                cols = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
-                cols = [c for c in cols if c]
-                if cols:
-                    rows_o.append("| " + " | ".join(cols) + " |")
-            if rows_o:
-                segments.append(
-                    {
-                        "text": "\n".join(rows_o),
-                        "meta": {"block_type": "table", "heading_path": list(path), "table_rows": len(rows_o)},
-                    }
-                )
+        segments.append(
+            {"text": p, "meta": {"block_type": "paragraph", "heading_path": list(heading_path)}}
+        )
     return segments
 
 
@@ -641,13 +644,18 @@ def _parse_doc_path(path: str) -> tuple[str, bool]:
 
 
 def _extract_html_from_bytes(data: bytes) -> NoteParseResult:
-    """从本地保存的网页（HTML/XHTML）抽取可见正文，与 parse_url 的 DOM 清洗思路对齐。"""
+    """从本地 HTML/XHTML 按块级 DOM 抽取正文（段间 \\n\\n），对齐 EPUB 阅读器分块。"""
     if not data:
         return NoteParseResult(text="", status="empty", engine="html", detail="空文件")
     try:
         from bs4 import BeautifulSoup
+
+        from .fyv_shared.content_parser import (
+            _extract_epub_blocks_from_soup,
+            _html_blocks_to_markdown_and_segments,
+        )
     except Exception as exc:  # pragma: no cover
-        logger.warning("BeautifulSoup unavailable: %s", exc)
+        logger.warning("HTML parse deps unavailable: %s", exc)
         return NoteParseResult(
             text="",
             status="error",
@@ -658,18 +666,34 @@ def _extract_html_from_bytes(data: bytes) -> NoteParseResult:
     soup = BeautifulSoup(raw, "html.parser")
     for tag in soup(["script", "style", "noscript", "template"]):
         tag.decompose()
-    # 嵌入媒体/控件无可靠文本，移除以免污染或误把 URL 当正文
     for tag in soup.find_all(["iframe", "object", "embed", "video", "audio", "svg", "canvas"]):
         tag.decompose()
-    text_out = soup.get_text(separator="\n", strip=True)
-    lines = [ln.strip() for ln in text_out.split("\n") if ln.strip()]
-    content = "\n".join(lines)
+    html_blocks = _extract_epub_blocks_from_soup(soup)
+    if not html_blocks:
+        text_out = soup.get_text(separator="\n", strip=True)
+        lines = [ln.strip() for ln in text_out.split("\n") if ln.strip()]
+        content = _normalize_prose_plaintext("\n".join(lines))
+        segs = _plain_text_rag_segments(content) if content else []
+        if content:
+            return NoteParseResult(
+                text=content,
+                status="ok",
+                engine="html-bs4-fallback",
+                detail=None,
+                rag_segments=segs if segs else None,
+            )
+        return NoteParseResult(
+            text="",
+            status="empty",
+            engine="html-bs4",
+            detail="HTML 中未解析出可见文本（可能为框架页或需登录内容）",
+        )
+    content, segs = _html_blocks_to_markdown_and_segments(html_blocks, chapter_mode=False)
     if content.strip():
-        segs = _html_rag_segments(raw)
         return NoteParseResult(
             text=content.strip(),
             status="ok",
-            engine="html-bs4",
+            engine="html-bs4-blocks",
             detail=None,
             rag_segments=segs if segs else None,
         )
@@ -869,7 +893,15 @@ def extract_text_from_bytes(data: bytes, ext: str) -> NoteParseResult:
         try:
             text, ok = _parse_doc_path(path)
             if ok and text.strip():
-                return NoteParseResult(text=text, status="ok", engine="antiword|catdoc|soffice", detail=None)
+                normalized = _normalize_prose_plaintext(text)
+                segs = _plain_text_rag_segments(normalized)
+                return NoteParseResult(
+                    text=normalized,
+                    status="ok",
+                    engine="antiword|catdoc|soffice",
+                    detail=None,
+                    rag_segments=segs if segs else None,
+                )
             return NoteParseResult(
                 text="",
                 status="empty",
