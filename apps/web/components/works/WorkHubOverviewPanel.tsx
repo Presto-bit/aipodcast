@@ -1,12 +1,15 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { WorkHubManuscriptBar } from "./WorkHubManuscriptBar";
 import { WorkHubScriptActions } from "./WorkHubScriptActions";
-import type { SocialPublishWorkDetail } from "../../lib/socialPublishWorkDetail";
+import {
+  buildSocialPublishManuscriptViewText,
+  type SocialPublishWorkDetail
+} from "../../lib/socialPublishWorkDetail";
 import { IconPause, IconPlayFilled, WorkTypeIcon } from "../icons";
 
 function formatClock(sec: number): string {
@@ -119,6 +122,13 @@ export function WorkHubOverviewPanel({
   const textOnlyManuscript = scriptDraft || socialPublishDraft;
   const scriptManuscriptPanel = textOnlyManuscript && showManuscriptTools;
   const podcastChapterSection = !scriptDraft && !audioBlocked && showManuscriptTools;
+
+  const manuscriptPreviewBody = useMemo(() => {
+    if (socialPublishDraft && socialPublishDetail) {
+      return buildSocialPublishManuscriptViewText(manuscriptBody, socialPublishDetail);
+    }
+    return manuscriptBody;
+  }, [socialPublishDraft, socialPublishDetail, manuscriptBody]);
 
   const onCoverPlayClick = useCallback(() => {
     if (!hasAudio || audioBlocked) return;
@@ -349,6 +359,12 @@ export function WorkHubOverviewPanel({
                     </ol>
                   </div>
                 ) : null}
+                {socialPublishDraft && socialPublishDetail?.theme ? (
+                  <div className="mb-4">
+                    <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted">主题</h4>
+                    <p className="mt-2 text-[13px] leading-relaxed text-ink">{socialPublishDetail.theme}</p>
+                  </div>
+                ) : null}
                 {socialPublishDraft && socialPublishDetail && socialPublishDetail.imageSuggestions.length > 0 ? (
                   <div className="mb-4">
                     <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted">配图建议</h4>
@@ -362,6 +378,7 @@ export function WorkHubOverviewPanel({
                 <WorkHubManuscriptBar
                   jobId={jobId}
                   manuscriptBody={manuscriptBody}
+                  previewBody={manuscriptPreviewBody}
                   scriptResolvePending={scriptResolvePending}
                   onManuscriptSaved={onManuscriptSaved}
                   canEditScript={canEditScript}

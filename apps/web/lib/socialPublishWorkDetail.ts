@@ -4,7 +4,54 @@ import type { SocialPublishCompliance, SocialPublishDraft, SocialPublishPlatform
 
 export type SocialPublishWorkDetail = SocialPublishDraft & {
   tags?: string[];
+  interaction?: string;
 };
+
+/** 格式化为小红书正文末尾话题行（#标签） */
+export function formatSocialPublishHashtagLine(tags: string[]): string {
+  const parts: string[] = [];
+  for (const raw of tags) {
+    const tok = String(raw || "")
+      .trim()
+      .replace(/^#+/, "");
+    if (tok) parts.push(`#${tok}`);
+  }
+  return parts.join(" ");
+}
+
+function bodyContainsHashtagLine(body: string, tags: string[]): boolean {
+  const line = formatSocialPublishHashtagLine(tags);
+  if (!line) return true;
+  const trimmed = body.trim();
+  if (trimmed.endsWith(line) || trimmed.includes(`\n${line}`)) return true;
+  return tags.every((raw) => {
+    const tok = String(raw || "")
+      .trim()
+      .replace(/^#+/, "");
+    if (!tok) return true;
+    return trimmed.includes(`#${tok}`);
+  });
+}
+
+/**
+ * 自媒体稿阅读正文：在 result.body 基础上补全未并入的话题标签与互动引导。
+ */
+export function buildSocialPublishManuscriptViewText(
+  body: string,
+  detail: Pick<SocialPublishWorkDetail, "tags" | "interaction">
+): string {
+  let text = String(body || "").trim();
+  const tags = detail.tags ?? [];
+  const tagLine = formatSocialPublishHashtagLine(tags);
+  if (tagLine && !bodyContainsHashtagLine(text, tags)) {
+    text = text ? `${text}\n\n${tagLine}` : tagLine;
+  }
+  const interaction = String(detail.interaction || "").trim();
+  if (interaction && !text.includes(interaction)) {
+    text = text ? `${text}\n\n${interaction}` : interaction;
+  }
+  return text;
+}
 
 function parseCompliance(data: Record<string, unknown>): SocialPublishCompliance | undefined {
   const c = data.compliance;
@@ -47,6 +94,7 @@ export function parseSocialPublishWorkDetail(
   const tags = Array.isArray(tagsRaw)
     ? tagsRaw.map((t) => String(t).trim()).filter(Boolean).slice(0, 12)
     : [];
+  const interaction = String(result.interaction || "").trim() || undefined;
 
   return {
     platform,
@@ -58,6 +106,7 @@ export function parseSocialPublishWorkDetail(
     body,
     imageSuggestions,
     tags: tags.length ? tags : undefined,
+    interaction,
     compliance: parseCompliance(result)
   };
 }

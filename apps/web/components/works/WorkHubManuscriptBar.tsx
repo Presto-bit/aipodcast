@@ -11,6 +11,8 @@ const SCRIPT_AUTOSAVE_MS = 750;
 type Props = {
   jobId: string;
   manuscriptBody: string;
+  /** 只读预览用正文（可与保存稿不同，如自媒体稿补全话题标签） */
+  previewBody?: string;
   scriptResolvePending: boolean;
   onManuscriptSaved: (next: string) => void | Promise<void>;
   canEditScript: boolean;
@@ -39,6 +41,7 @@ type Props = {
 export function WorkHubManuscriptBar({
   jobId,
   manuscriptBody,
+  previewBody,
   scriptResolvePending,
   onManuscriptSaved,
   canEditScript,
@@ -302,7 +305,7 @@ export function WorkHubManuscriptBar({
           </div>
         ) : (
           <WorkHubManuscriptPreview
-            body={manuscriptBody}
+            body={previewBody ?? manuscriptBody}
             emptyHint={readonlyEmptyHint}
             className={
               pureManuscriptOnly
