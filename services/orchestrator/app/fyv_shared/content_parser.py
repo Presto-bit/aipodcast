@@ -1467,9 +1467,35 @@ class ContentParser:
                 "source": "pdf",
             }
 
+    @staticmethod
+    def _epub_chapter_title_from_soup(soup: BeautifulSoup, href_path: str) -> str:
+        """章节显示名：h1–h3 → HTML title → 文件名（单文件内 h1 通常比重复的书名 title 更准确）。"""
+        for tag in ("h1", "h2", "h3"):
+            el = soup.find(tag)
+            if el is None:
+                continue
+            t = el.get_text(" ", strip=True)
+            if t and len(t) >= 2:
+                return t[:240]
+        try:
+            if soup.title and soup.title.string:
+                t = str(soup.title.string).strip()
+                if t and len(t) >= 2:
+                    return t[:240]
+        except Exception:
+            pass
+        base = (href_path or "").replace("\\", "/").rsplit("/", 1)[-1]
+        stem = os.path.splitext(base)[0].strip()
+        if stem:
+            stem = re.sub(r"[_\-]+", " ", stem).strip()
+            if stem:
+                return stem[:240]
+        return ""
+
     def parse_epub(self, epub_path: str) -> Dict[str, Any]:
         """
         解析 EPUB 文件正文（按 spine 顺序提取章节文本）。
+        每章插入 Markdown 二级标题并输出 rag_segments（heading_path）供笔记目录与索引。
         """
         logs = []
         logs.append(f"开始解析 EPUB: {epub_path}")
@@ -1518,30 +1544,59 @@ class ContentParser:
                         if name.lower().endswith((".xhtml", ".html", ".htm"))
                     ]
 
-                all_text = []
+                md_parts: list[str] = []
+                rag_segments: list[dict[str, Any]] = []
+                title_seen: dict[str, int] = {}
+                chapter_index = 0
+
                 for path in ordered_files:
                     try:
                         html = zf.read(path).decode("utf-8", errors="ignore")
                     except KeyError:
                         continue
                     soup = BeautifulSoup(html, "html.parser")
-                    for bad in soup(["script", "style"]):
+                    for bad in soup(["script", "style", "noscript"]):
                         bad.decompose()
-                    text = soup.get_text(separator="\n", strip=True)
-                    text = re.sub(r"\n{2,}", "\n", text).strip()
-                    if text:
-                        all_text.append(text)
+                    title = self._epub_chapter_title_from_soup(soup, path)
+                    body = soup.get_text(separator="\n", strip=True)
+                    body = re.sub(r"\n{2,}", "\n", body).strip()
+                    if not body and not title:
+                        continue
+                    chapter_index += 1
+                    if not title:
+                        title = f"章节 {chapter_index}"
+                    n = title_seen.get(title, 0) + 1
+                    title_seen[title] = n
+                    display_title = title if n == 1 else f"{title} ({n})"
+                    if body:
+                        md_parts.append(f"## {display_title}\n\n{body}")
+                    else:
+                        md_parts.append(f"## {display_title}")
+                    rag_segments.append(
+                        {
+                            "text": body or display_title,
+                            "meta": {
+                                "block_type": "epub_chapter",
+                                "heading_path": [display_title],
+                                "epub_href": path,
+                            },
+                        }
+                    )
 
-                if not all_text:
+                if not md_parts:
                     raise ValueError("EPUB 未提取到可用正文")
 
-                content = "\n\n".join(all_text).strip()
-                logs.append(f"成功提取 EPUB 文本，共 {len(content)} 字符")
+                content = "\n\n".join(md_parts).strip()
+                logs.append(
+                    f"成功提取 EPUB 文本，共 {len(content)} 字符，{len(rag_segments)} 个章节"
+                )
                 return {
                     "success": True,
                     "content": content,
+                    "rag_segments": rag_segments,
+                    "chapter_count": len(rag_segments),
                     "logs": logs,
-                    "source": "epub"
+                    "source": "epub",
                 }
         except Exception as e:
             error_msg = f"EPUB 解析失败: {str(e)}"

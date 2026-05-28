@@ -586,17 +586,20 @@ def _pdf_pypdf2(data: bytes) -> tuple[str, bool]:
         return "", False
 
 
-def _epub_via_content_parser(path: str) -> tuple[str, bool]:
+def _epub_via_content_parser(path: str) -> tuple[str, bool, list[dict[str, Any]] | None]:
     try:
         from app.fyv_shared.content_parser import content_parser
 
         r = content_parser.parse_epub(path)
         if r.get("success"):
-            return str(r.get("content") or "").strip(), True
-        return "", False
+            text = str(r.get("content") or "").strip()
+            raw_segs = r.get("rag_segments")
+            segs = raw_segs if isinstance(raw_segs, list) and raw_segs else None
+            return text, True, segs
+        return "", False, None
     except Exception as exc:
         logger.warning("epub parse: %s", exc)
-        return "", False
+        return "", False, None
 
 
 def _parse_doc_path(path: str) -> tuple[str, bool]:
@@ -838,9 +841,15 @@ def extract_text_from_bytes(data: bytes, ext: str) -> NoteParseResult:
             tmp.write(data)
             path = tmp.name
         try:
-            text, ok = _epub_via_content_parser(path)
+            text, ok, segs = _epub_via_content_parser(path)
             if ok and text.strip():
-                return NoteParseResult(text=text, status="ok", engine="epub", detail=None)
+                return NoteParseResult(
+                    text=text,
+                    status="ok",
+                    engine="epub",
+                    detail=None,
+                    rag_segments=segs,
+                )
             return NoteParseResult(
                 text="",
                 status="empty",

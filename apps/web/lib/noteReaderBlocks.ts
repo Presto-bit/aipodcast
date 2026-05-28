@@ -72,13 +72,20 @@ function pushParagraph(target: NoteRenderBlock[], txt: string) {
   target.push({ id: `b-${target.length + 1}`, markdown: t });
 }
 
+/** structuredBlocks 是否含可用于目录的标题（无则改走正文分块/智能章节，避免 EPUB 仅段落块顶掉兜底） */
+export function storedBlocksHaveTocHeadings(blocks: NoteRenderBlock[]): boolean {
+  return blocks.some((b) => Boolean(b.tocText && b.tocLevel));
+}
+
 export function buildRenderBlocksFromText(
   filteredText: string,
   structuredBlocks?: StructuredRow[]
 ): NoteRenderBlock[] {
   if (Array.isArray(structuredBlocks) && structuredBlocks.length > 0) {
     const stored = normalizeFromStored(structuredBlocks);
-    if (stored.length > 0) return stored;
+    if (stored.length > 0 && storedBlocksHaveTocHeadings(stored)) {
+      return stored;
+    }
   }
   const normalized = normalizeStickyLines(filteredText || "");
   const lines = normalized.split("\n");
