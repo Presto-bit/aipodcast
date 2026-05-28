@@ -1362,6 +1362,18 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
         )
         try:
             prep_t0 = time.perf_counter()
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "phase",
+                        "phase": "retrieving",
+                        "message": "正在检索并整理勾选资料…",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
             prepared = _prepare_notes_ask_messages(
                 notebook=body.notebook.strip(),
                 note_ids=body.note_ids,
@@ -1378,6 +1390,18 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 rid,
                 (time.perf_counter() - req_t0) * 1000.0,
                 (time.perf_counter() - prep_t0) * 1000.0,
+            )
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "phase",
+                        "phase": "answering",
+                        "message": "资料已就绪，正在生成回答…",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
             )
         except ValueError as e:
             msg = str(e)

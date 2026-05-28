@@ -50,6 +50,7 @@ const NoteMarkdownPreview = dynamic(() => import("../../../components/notes/Note
   )
 });
 import { NotesAskAnswerDisplay } from "../../../components/notes/NotesAskAnswerDisplay";
+import { NotesAskStreamingStatus } from "../../../components/notes/NotesAskStreamingStatus";
 import {
   buildNotesAskAnswerBody,
   isDismissedNotesAskSupplement
@@ -80,6 +81,7 @@ import {
 } from "../../../lib/artKindPresets";
 import {
   defaultNotesAskDialogueStyle,
+  notesAskDialogueStyleHint,
   notesAskDialogueStyleLabel,
   type NotesAskDialogueStyleMode
 } from "../../../lib/notesAskDialogueStyle";
@@ -179,7 +181,7 @@ type NotesAskStreamEvent =
       activeShards?: unknown;
       lowConfidence?: boolean;
     }
-  | { type: "phase"; phase?: string }
+  | { type: "phase"; phase?: string; message?: string }
   | { type: "followups"; followUpQuestions?: unknown }
   | { type: "info"; message: string; code?: string; requestId?: string }
   | {
@@ -201,6 +203,8 @@ type NotesAskTurn = {
   streaming?: boolean;
   /** 流式阶段暂存模型推理文本；完成或中断后不写入持久化 */
   streamingReasoning?: string;
+  /** 检索 / 生成阶段提示（SSE phase） */
+  streamingPhase?: string;
   /** 编排器 done 事件中的 sources，用于 [n] 脚注与内链 */
   sources?: NotesAskSource[];
   /** 联网检索 done.webSources，[w1] 脚注 */
@@ -249,6 +253,14 @@ function normalizeNotesAskFollowUpQuestions(raw: unknown): string[] {
   const arr = Array.isArray(raw) ? raw : [];
   const q = arr.map((x) => String(x || "").trim()).find(Boolean);
   return q ? [q] : [];
+}
+
+function notesAskPhaseUserMessage(phase?: string, message?: string): string {
+  const custom = String(message || "").trim();
+  if (custom) return custom;
+  const p = String(phase || "").trim();
+  if (p === "supplement_start") return "正在整理通识参考…";
+  return "";
 }
 
 function notesAskClientRequestId(): string {
@@ -2629,7 +2641,13 @@ export default function NotesPage() {
     setNotesAskMessages((prev) => [
       ...prev,
       { id: userMsgId, role: "user", content: q },
-      { id: assistantId, role: "assistant", content: "", streaming: true }
+      {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        streaming: true,
+        streamingPhase: "正在连接…"
+      }
     ]);
     setNotesAskQuestion("");
     const streamRid = notesAskClientRequestId();
@@ -2748,6 +2766,7 @@ export default function NotesPage() {
        */
       let chunkPendingAnswer = "";
       let chunkPendingSupplement = "";
+      let chunkPendingReasoning = "";
       let chunkFlushTimer: ReturnType<typeof setTimeout> | null = null;
       const STREAM_FLUSH_MS_VISIBLE = 16;
       const STREAM_FLUSH_CHARS_VISIBLE = 120;
@@ -2761,28 +2780,45 @@ export default function NotesPage() {
       const streamFlushCharThreshold = () =>
         streamTabHidden() ? STREAM_FLUSH_CHARS_HIDDEN : STREAM_FLUSH_CHARS_VISIBLE;
 
+      const patchAssistantStreaming = (
+        patch: Partial<Pick<NotesAskTurn, "content" | "supplementContent" | "streamingReasoning" | "streamingPhase">>
+      ) => {
+        startTransition(() => {
+          setNotesAskMessages((prev) => {
+            const next = [...prev];
+            const idx = next.findIndex((m) => m.id === assistantId);
+            if (idx < 0) return prev;
+            next[idx] = { ...next[idx]!, ...patch, streaming: true };
+            return next;
+          });
+        });
+      };
+
       const applyPendingChunks = () => {
         const batchA = chunkPendingAnswer;
         const batchS = chunkPendingSupplement;
+        const batchR = chunkPendingReasoning;
         chunkPendingAnswer = "";
         chunkPendingSupplement = "";
-        if (!batchA && !batchS) return;
+        chunkPendingReasoning = "";
+        if (!batchA && !batchS && !batchR) return;
         startTransition(() => {
-        setNotesAskMessages((prev) => {
-          const next = [...prev];
-          const idx = next.findIndex((m) => m.id === assistantId);
-          if (idx < 0) return prev;
-          const cur = next[idx]!;
-          next[idx] = {
-            ...cur,
-            ...(batchA ? { content: (cur.content || "") + batchA } : {}),
-            ...(batchS && !isDismissedNotesAskSupplement((cur.supplementContent || "") + batchS)
-              ? { supplementContent: (cur.supplementContent || "") + batchS }
-              : {}),
-            streaming: true
-          };
-          return next;
-        });
+          setNotesAskMessages((prev) => {
+            const next = [...prev];
+            const idx = next.findIndex((m) => m.id === assistantId);
+            if (idx < 0) return prev;
+            const cur = next[idx]!;
+            next[idx] = {
+              ...cur,
+              ...(batchA ? { content: (cur.content || "") + batchA } : {}),
+              ...(batchS && !isDismissedNotesAskSupplement((cur.supplementContent || "") + batchS)
+                ? { supplementContent: (cur.supplementContent || "") + batchS }
+                : {}),
+              ...(batchR ? { streamingReasoning: (cur.streamingReasoning || "") + batchR } : {}),
+              streaming: true
+            };
+            return next;
+          });
         });
       };
       const clearChunkFlushTimer = () => {
@@ -2838,7 +2874,10 @@ export default function NotesPage() {
               if (ev.type === "info") {
                 continue;
               } else if (ev.type === "phase") {
-                continue;
+                const phaseMsg = notesAskPhaseUserMessage(ev.phase, ev.message);
+                if (phaseMsg) {
+                  patchAssistantStreaming({ streamingPhase: phaseMsg });
+                }
               } else if (ev.type === "chunk") {
                 const chunkText = String(ev.text ?? "");
                 if (!chunkText) continue;
@@ -2858,14 +2897,16 @@ export default function NotesPage() {
                 chunkCount += 1;
                 chunkChars += chunkText.length;
                 if (streamRole === "reasoning") {
-                  continue;
-                }
-                if (section === "supplement") {
+                  chunkPendingReasoning += chunkText;
+                } else if (section === "supplement") {
                   chunkPendingSupplement += chunkText;
                 } else {
                   chunkPendingAnswer += chunkText;
                 }
-                const pendingTotal = chunkPendingAnswer.length + chunkPendingSupplement.length;
+                const pendingTotal =
+                  chunkPendingAnswer.length +
+                  chunkPendingSupplement.length +
+                  chunkPendingReasoning.length;
                 if (pendingTotal >= streamFlushCharThreshold()) {
                   clearChunkFlushTimer();
                   applyPendingChunks();
@@ -2905,6 +2946,7 @@ export default function NotesPage() {
                     ...next[idx]!,
                     streaming: false,
                     streamingReasoning: undefined,
+                    streamingPhase: undefined,
                     ...(doneAnswer ? { content: doneAnswer } : {}),
                     ...(doneSupplement ? { supplementContent: doneSupplement } : {}),
                     ...(doneSources?.length ? { sources: doneSources } : {}),
@@ -4541,7 +4583,7 @@ export default function NotesPage() {
                 ) : null}
                 <div
                   ref={notesAskScrollRef}
-                  className="h-[min(50vh,420px)] max-h-[min(50vh,420px)] min-h-[200px] w-full min-w-0 shrink-0 overflow-y-auto rounded-xl border border-line/80 bg-surface/80 p-3.5"
+                  className="h-[min(50vh,420px)] max-h-[min(50vh,420px)] min-h-[200px] w-full min-w-0 shrink-0 overflow-y-auto py-1"
                 >
                   {notesAskMessages.length === 0 ? (
                     <p className="text-xs text-muted">勾选左侧资料后即可提问</p>
@@ -4579,12 +4621,12 @@ export default function NotesPage() {
                                       <IconPencil width={14} height={14} aria-hidden />
                                     </button>
                                   </div>
-                                <div className="min-w-0 flex-1 rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm">
+                                <div className="min-w-0 flex-1 text-sm text-ink">
                                   <p className="min-w-0 whitespace-pre-wrap break-words">{m.content}</p>
                                 </div>
                               </div>
                             ) : (
-                              <div className="max-w-[min(92%,24rem)] min-w-0 rounded-2xl bg-brand/12 px-3 py-2 text-sm text-ink shadow-sm">
+                              <div className="max-w-[min(92%,28rem)] min-w-0 text-sm text-ink">
                                 <p className="min-w-0 whitespace-pre-wrap break-words">{m.content}</p>
                               </div>
                             )
@@ -4600,10 +4642,20 @@ export default function NotesPage() {
                                 m.content,
                                 m.supplementContent
                               );
-                              return m.streaming && !displayReady ? (
-                              <p className="text-muted">思考中…</p>
-                            ) : (
-                              <div className="min-w-0">
+                              return (
+                              <div className="min-w-0 space-y-3">
+                                {m.streaming ? (
+                                  m.streamingPhase ||
+                                  m.streamingReasoning ||
+                                  (!corpusOnly && !hasSupplement) ? (
+                                    <NotesAskStreamingStatus
+                                      phase={m.streamingPhase}
+                                      reasoning={m.streamingReasoning}
+                                      hasAnswer={Boolean(corpusOnly || hasSupplement)}
+                                    />
+                                  ) : null
+                                ) : null}
+                                {displayReady ? (
                                 <NotesAskAnswerDisplay
                                   text={corpusOnly}
                                   supplementContent={m.supplementContent}
@@ -4622,6 +4674,7 @@ export default function NotesPage() {
                                   }}
                                   onOpenSourceInPreview={openPreviewFromAskSource}
                                 />
+                                ) : null}
                                 {!m.streaming &&
                                 m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) &&
                                 (m.hintSuggestions?.length ?? 0) > 0 ? (
@@ -4680,7 +4733,7 @@ export default function NotesPage() {
                                   </div>
                                 ) : null}
                               </div>
-                            );
+                              );
                           })()}
                               </div>
                             )}
@@ -4728,10 +4781,11 @@ export default function NotesPage() {
                     </p>
                   ) : null}
                   <div
-                    className={`flex shrink-0 items-end gap-2 rounded-2xl border border-line/90 px-3 py-2 shadow-soft ring-1 ring-line/60 ${
-                      draftSelectedNoteIds.length === 0 ? "bg-fill/50" : "bg-surface"
+                    className={`flex shrink-0 flex-col gap-1.5 border-t border-line/60 pt-3 ${
+                      draftSelectedNoteIds.length === 0 ? "opacity-70" : ""
                     }`}
                   >
+                  <div className="flex items-end gap-2">
                   <textarea
                     ref={notesAskTextareaRef}
                     className="max-h-24 min-h-[1.875rem] flex-1 resize-none border-0 bg-transparent text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
@@ -4814,6 +4868,10 @@ export default function NotesPage() {
                       <IconArrowRight width={18} height={18} aria-hidden />
                     </button>
                   )}
+                  </div>
+                  <p className="text-[10px] leading-snug text-muted">
+                    风格：{notesAskDialogueStyleHint(notesAskDialogueStyle, Boolean(notebookStylePrompt.trim()))}
+                  </p>
                   </div>
                   {NOTES_ASK_DEBUG_BODY_ENABLED ? (
                     <div className="rounded-xl border border-amber-500/45 bg-amber-500/[0.08] px-3 py-2 text-xs leading-snug text-ink">
