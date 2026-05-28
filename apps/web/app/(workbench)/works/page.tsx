@@ -17,7 +17,7 @@ import WorksActiveJobsPanel from "../../../components/works/WorksActiveJobsPanel
 import { chipClass } from "../../../components/studio/chipStyles";
 import EmptyState from "../../../components/ui/EmptyState";
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
-import type { WorkItem } from "../../../lib/worksTypes";
+import { isTextOnlyWorkType, type WorkItem } from "../../../lib/worksTypes";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
 import { listJobs } from "../../../lib/api";
@@ -190,7 +190,10 @@ export default function WorksPage() {
       ),
     [ai]
   );
-  const notesDraftWorks = useMemo(() => ai.filter((w) => String(w.type || "") === "script_draft"), [ai]);
+  const notesDraftWorks = useMemo(
+    () => ai.filter((w) => isTextOnlyWorkType(String(w.type || ""))),
+    [ai]
+  );
   const keyword = query.trim().toLowerCase();
   const recentThresholdMs = useMemo(() => Date.now() - 1000 * 60 * 60 * 24 * 14, []);
 

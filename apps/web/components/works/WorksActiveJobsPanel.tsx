@@ -8,7 +8,7 @@ import { listJobs } from "../../lib/api";
 import { activeJobRecordToWorkItem } from "../../lib/activeJobWorkItem";
 import type { JobRecord } from "../../lib/types";
 import type { WorkItem } from "../../lib/worksTypes";
-import { shouldHideWorkFromUserGallery } from "../../lib/worksTypes";
+import { isTextOnlyWorkType, shouldHideWorkFromUserGallery } from "../../lib/worksTypes";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShortfall";
 import { classifyErrorTone, errorPageCopy } from "../../lib/errorCopy";
@@ -99,7 +99,7 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
     for (const j of jobs) {
       const w = activeJobRecordToWorkItem(j);
       if (shouldHideWorkFromUserGallery(w)) continue;
-      if (String(w.type || "") === "script_draft") scripts.push(w);
+      if (isTextOnlyWorkType(String(w.type || ""))) scripts.push(w);
       else media.push(w);
     }
     return { scriptWorks: scripts, mediaWorks: media };
