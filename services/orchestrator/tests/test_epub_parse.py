@@ -60,9 +60,8 @@ def test_epub_parse_inserts_markdown_headings_and_segments(tmp_path) -> None:
     assert "段落二" in content
     assert "\n\n段落一" in content or "段落一。\n\n段落二" in content
     segs = r.get("rag_segments")
-    assert isinstance(segs, list) and len(segs) >= 3
-    meta = segs[0].get("meta") or {}
-    assert meta.get("heading_path") == ["开篇"]
+    assert isinstance(segs, list) and len(segs) >= 2
     para_segs = [s for s in segs if (s.get("meta") or {}).get("block_type") == "paragraph"]
     assert len(para_segs) >= 2
     assert para_segs[0].get("text") == "段落一。"
+    assert (para_segs[0].get("meta") or {}).get("heading_path") == ["开篇"]

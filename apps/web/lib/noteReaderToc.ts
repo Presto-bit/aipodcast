@@ -34,15 +34,39 @@ export function blockCharOffsets(blocks: NoteRenderBlock[], fullText: string): M
   return map;
 }
 
+/** 过滤 EPUB 内部文件名式目录项（part0000 等） */
+export function isBoilerplateTocTitle(text: string): boolean {
+  const compact = String(text || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/\(\d+\)$/, "");
+  if (!compact) return true;
+  if (/^part\d+$/i.test(compact)) return true;
+  if (/^chapter\d+$/i.test(compact)) return true;
+  return false;
+}
+
 export function buildTocEntries(
   blocks: NoteRenderBlock[],
-  opts: { pageBreaks?: NotePageBreak[]; fullText?: string; max?: number }
+  opts: {
+    pageBreaks?: NotePageBreak[];
+    fullText?: string;
+    max?: number;
+    /** EPUB：仅保留 spine 级 ##（level 2）章节，避免章内小标题刷屏 */
+    epubSpineOnly?: boolean;
+  }
 ): TocEntry[] {
   const max = opts.max ?? 36;
   const offsets = blockCharOffsets(blocks, opts.fullText || "");
   const out: TocEntry[] = [];
+  const seenTitles = new Set<string>();
   for (const b of blocks) {
     if (!b.tocText || !b.tocLevel || b.pageLabel) continue;
+    if (opts.epubSpineOnly && b.tocLevel !== 2) continue;
+    if (isBoilerplateTocTitle(b.tocText)) continue;
+    const dedupeKey = b.tocText.trim().toLowerCase();
+    if (seenTitles.has(dedupeKey)) continue;
+    seenTitles.add(dedupeKey);
     const entry: TocEntry = {
       blockId: b.id,
       text: b.tocText,

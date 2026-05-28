@@ -273,9 +273,10 @@ export default function NoteMarkdownPreview({
     if (!showToc || isTable) return [];
     return buildTocEntries(blocks, {
       pageBreaks: isPdf ? pageBreaks : undefined,
-      fullText: filteredText
+      fullText: filteredText,
+      epubSpineOnly: isEpub
     });
-  }, [blocks, showToc, isTable, isPdf, pageBreaks, filteredText]);
+  }, [blocks, showToc, isTable, isPdf, isEpub, pageBreaks, filteredText]);
 
   const citationBlockId = useMemo(() => {
     if (!charHighlightRange || charHighlightRange.end <= charHighlightRange.start) return "";

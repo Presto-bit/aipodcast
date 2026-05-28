@@ -131,7 +131,7 @@ export default function NoteMarkdownDoc({
         td: ({ children }) => <td className="border border-line/60 px-2 py-1 align-top text-sm">{children}</td>,
         img: ({ src, alt }) => {
           const safe = sanitizeUserMarkdownHref(src);
-          if (!safe) return <span className="text-muted">[图片链接不可用]</span>;
+          if (!safe) return null;
           return (
             <Image
               src={safe}

@@ -111,6 +111,15 @@ from ..security import verify_internal_signature
 router = APIRouter(prefix="/api/v1", tags=["notes"], dependencies=[Depends(verify_internal_signature)])
 NOTE_TRASH_RETENTION_DAYS = settings.trash_retention_days
 UPLOAD_DEBUG_MODE = (os.getenv("UPLOAD_DEBUG_MODE") or "").strip().lower() in ("1", "true", "yes", "on")
+_notebooks_schema_ready = False
+
+
+def _ensure_notebooks_schema_once() -> None:
+    global _notebooks_schema_ready
+    if _notebooks_schema_ready:
+        return
+    ensure_notebooks_schema()
+    _notebooks_schema_ready = True
 
 
 def _upload_diag(event: str, **fields: object) -> None:
@@ -798,7 +807,7 @@ def _persist_note_upload(
         data_len=len(data),
     )
     try:
-        ensure_notebooks_schema()
+        _ensure_notebooks_schema_once()
     except Exception as exc:
         _notes_startup_logger.exception("notes upload: ensure_notebooks_schema failed")
         raise HTTPException(status_code=503, detail="笔记存储未就绪，请稍后重试。") from exc

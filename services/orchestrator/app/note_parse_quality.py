@@ -193,6 +193,8 @@ def structured_blocks_from_rag_segments(
                 **({"charStart": int(cs), "charEnd": int(ce)} if cs is not None and ce is not None else {}),
             })
             continue
+        if bt == "epub_chapter":
+            continue
         if bt == "heading":
             try:
                 lvl = int(meta.get("level") or 2)
@@ -254,7 +256,7 @@ def merge_upload_parse_metadata(
 ) -> None:
     rs = getattr(parse_result, "rag_segments", None)
     if isinstance(rs, list) and rs:
-        segs = attach_char_offsets_to_segments(content_text, rs[:3000])
+        segs = attach_char_offsets_to_segments(content_text, rs[:1200])
         extra_meta["ragChunkSegments"] = segs
         extra_meta["structuredBlocks"] = structured_blocks_from_rag_segments(segs)
     pq = compute_parse_quality(parse_result, content_text=content_text, ext=ext)
