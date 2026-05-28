@@ -130,11 +130,14 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
   const headlineFull = String(w.displayTitle || "").trim() || id;
   const headlineShown = truncateByGraphemes(headlineFull, NOTES_STUDIO_REF_TITLE_MAX_CHARS);
   const detailHref = buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true });
-  const readLabel = rowMutationsLocked ? "查看" : "阅读";
 
   return (
     <RowShell id={id} outer={outer} compA11y={compA11y} rowPlayMsg={rowPlayMsg}>
-      <div className="flex gap-3 p-3">
+      <Link
+        href={detailHref}
+        className="flex gap-3 p-3 transition-colors hover:bg-fill/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 rounded-t-xl"
+        aria-label={`阅读：${headlineFull}`}
+      >
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-line/80 bg-fill/50">
           <WorkTypeIcon scriptDraft size={22} className="text-brand/85" aria-hidden />
         </div>
@@ -154,7 +157,7 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
             {inFlightQueue && activeSummary ? activeSummary : navMetaLineShown}
           </p>
         </div>
-      </div>
+      </Link>
       <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
         {inFlightQueue && activeQueueCardActions ? (
           <>
@@ -172,24 +175,9 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
             >
               {stopBusyId === id ? "停止中…" : "停止"}
             </button>
-            {rowMutationsLocked ? null : (
-              <button
-                type="button"
-                className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink"
-                onClick={() => requestDelete(id)}
-              >
-                删除
-              </button>
-            )}
           </>
         ) : (
           <>
-            <Link
-              href={detailHref}
-              className="rounded-md border border-brand/40 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15"
-            >
-              {readLabel}
-            </Link>
             {renderDownloadGated(
               w,
               id,
@@ -211,22 +199,13 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
               {copyManuscriptBusyId === id ? "复制中…" : "复制全文"}
             </button>
             {rowMutationsLocked ? null : (
-              <>
-                <button
-                  type="button"
-                  className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                  onClick={() => openRename(id, w.displayTitle)}
-                >
-                  改名
-                </button>
-                <button
-                  type="button"
-                  className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink"
-                  onClick={() => requestDelete(id)}
-                >
-                  删除
-                </button>
-              </>
+              <button
+                type="button"
+                className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
+                onClick={() => openRename(id, w.displayTitle)}
+              >
+                改名
+              </button>
             )}
           </>
         )}

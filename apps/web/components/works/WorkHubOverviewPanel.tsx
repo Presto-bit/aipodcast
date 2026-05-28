@@ -292,7 +292,7 @@ export function WorkHubOverviewPanel({
         </div>
       </div>
 
-      {!scriptDraft ? (
+      {!textOnlyManuscript ? (
         <div className="flex gap-1 rounded-xl border border-line bg-fill/35 p-1">
           <button
             type="button"
@@ -321,7 +321,7 @@ export function WorkHubOverviewPanel({
         </div>
       ) : null}
 
-      {audioBlocked && !scriptDraft ? (
+      {audioBlocked && !textOnlyManuscript ? (
         jobGenerating ? (
           <div className="rounded-2xl border border-brand/25 bg-brand/10 px-4 py-4 text-sm text-brand">
             <p>{jobLiveLine?.trim() || jobGenPlaceholder}</p>
@@ -364,7 +364,17 @@ export function WorkHubOverviewPanel({
                   />
                 ) : null}
               </div>
-              <div className="mt-3 min-w-0">
+              <div className="mt-3 min-w-0 space-y-4">
+                {socialPublishDraft && socialPublishDetail && socialPublishDetail.imageSuggestions.length > 0 ? (
+                  <div className="rounded-xl border border-line/70 bg-fill/30 px-3 py-3">
+                    <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted">配图建议</h4>
+                    <ul className="mt-2 list-decimal space-y-1.5 pl-4 text-[13px] leading-relaxed text-ink">
+                      {socialPublishDetail.imageSuggestions.map((s, i) => (
+                        <li key={`img-${i}`}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
                 <WorkHubManuscriptBar
                   jobId={jobId}
                   manuscriptBody={manuscriptBody}

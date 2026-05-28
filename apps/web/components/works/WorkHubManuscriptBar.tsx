@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getBearerAuthHeadersSync } from "../../lib/authHeaders";
 import { useAppNotice } from "../../lib/AppNoticeContext";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
+import { WorkHubManuscriptPreview } from "./WorkHubManuscriptPreview";
 
 const SCRIPT_AUTOSAVE_MS = 750;
 
@@ -300,17 +301,17 @@ export function WorkHubManuscriptBar({
             )}
           </div>
         ) : (
-          <pre
+          <WorkHubManuscriptPreview
+            body={manuscriptBody}
+            emptyHint={readonlyEmptyHint}
             className={
               pureManuscriptOnly
-                ? "max-h-[min(80vh,36rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm"
+                ? "max-h-[min(80vh,36rem)]"
                 : tallScriptArea
-                  ? "min-h-[min(56vh,30rem)] max-h-[min(92vh,56rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm"
-                  : "max-h-[min(40vh,18rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm"
+                  ? "min-h-[min(56vh,30rem)] max-h-[min(92vh,56rem)]"
+                  : "max-h-[min(40vh,18rem)]"
             }
-          >
-            {manuscriptBody.trim() ? manuscriptBody : readonlyEmptyHint?.trim() || "（无正文）"}
-          </pre>
+          />
         )}
       </div>
 

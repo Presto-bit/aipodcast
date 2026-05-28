@@ -331,9 +331,12 @@ if (rowLayout === "compact" || useNotesStyleCards) {
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
         <Link
-          href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
+          href={buildWorkDetailHref(id, {
+            returnTo: workDetailReturnTo,
+            focusRead: isTextOnlyWork ? true : undefined
+          })}
           className="block min-w-0 rounded-md outline-none ring-brand/0 transition hover:bg-fill/45 focus-visible:ring-2 focus-visible:ring-brand"
-          aria-label={`查看作品详情：${headlineFull}`}
+          aria-label={isTextOnlyWork ? `阅读：${headlineFull}` : `查看作品详情：${headlineFull}`}
         >
           {headlineFull !== headlineShown ? (
             <div className="group/reftitle relative min-h-0">
@@ -381,14 +384,6 @@ if (rowLayout === "compact" || useNotesStyleCards) {
         ) : null}
         <div className="mt-0.5 flex items-center justify-between gap-1 border-t border-line/50 pt-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-1">
-            {isTextOnlyWork && !inFlightQueue ? (
-              <Link
-                href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true })}
-                className="rounded-md border border-brand/35 bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand hover:bg-brand/15"
-              >
-                {rowMutationsLocked ? "查看" : "阅读"}
-              </Link>
-            ) : null}
             {!isTextOnlyWork ? (
               isMediaInFlight ? (
                 <span className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border border-line/80 bg-fill/60 px-1.5 text-[9px] font-medium text-muted">
@@ -500,9 +495,12 @@ if (variant === "all") {
         </label>
       ) : null}
       <Link
-        href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
+        href={buildWorkDetailHref(id, {
+          returnTo: workDetailReturnTo,
+          focusRead: isTextOnlyWork ? true : undefined
+        })}
         className="relative block aspect-[4/3] w-full shrink-0 overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill outline-none ring-brand/0 transition hover:opacity-[0.97] focus-visible:ring-2 focus-visible:ring-brand"
-        aria-label={`查看作品详情：${w.displayTitle}`}
+        aria-label={isTextOnlyWork ? `阅读：${w.displayTitle}` : `查看作品详情：${w.displayTitle}`}
       >
         {w.coverImage ? (
           /* eslint-disable-next-line @next/next/no-img-element */
@@ -553,7 +551,10 @@ if (variant === "all") {
         {inFlightQueue ? <ActiveJobCoverProgressBar pct={syncedGenBarPct} /> : null}
       </Link>
       {isTextOnlyWork ? (
-        <div className="shrink-0 border-b border-line/70 px-3 py-2">
+        <Link
+          href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true })}
+          className="block shrink-0 border-b border-line/70 px-3 py-2 transition-colors hover:bg-fill/30"
+        >
           <p className="line-clamp-2 text-sm font-semibold leading-snug text-ink" title={w.displayTitle}>
             {w.displayTitle}
           </p>
@@ -565,7 +566,7 @@ if (variant === "all") {
           >
             {navMetaLineShownAll}
           </p>
-        </div>
+        </Link>
       ) : (
         <div className="shrink-0 border-b border-line/70 px-3 py-2">
           <div className="flex items-start gap-2">
@@ -638,24 +639,6 @@ if (variant === "all") {
                 zipBusy === id ? downloadBusyLabel(w.type) : "下载"
               )
             )}
-            {inFlightQueue ? (
-              rowMutationsLocked ? null : (
-                <button
-                  type="button"
-                  className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
-                  onClick={() => requestDelete(id)}
-                >
-                  删除
-                </button>
-              )
-            ) : (
-              <Link
-                href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true })}
-                className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-              >
-                {rowMutationsLocked ? "查看" : "阅读"}
-              </Link>
-            )}
             {rowMutationsLocked ? null : (
               <button
                 type="button"
@@ -663,15 +646,6 @@ if (variant === "all") {
                 onClick={() => openRename(id, w.displayTitle)}
               >
                 修改名称
-              </button>
-            )}
-            {rowMutationsLocked || inFlightQueue ? null : (
-              <button
-                type="button"
-                className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
-                onClick={() => requestDelete(id)}
-              >
-                删除
               </button>
             )}
           </>
@@ -783,9 +757,12 @@ return (
       </label>
     ) : null}
     <Link
-      href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo })}
+      href={buildWorkDetailHref(id, {
+        returnTo: workDetailReturnTo,
+        focusRead: isTextOnlyWork ? true : undefined
+      })}
       className="relative block aspect-[4/3] w-full overflow-hidden rounded-t-xl bg-gradient-to-br from-fill to-fill outline-none ring-brand/0 transition hover:opacity-[0.97] focus-visible:ring-2 focus-visible:ring-brand"
-      aria-label={`查看作品详情：${w.displayTitle}`}
+      aria-label={isTextOnlyWork ? `阅读：${w.displayTitle}` : `查看作品详情：${w.displayTitle}`}
     >
       {w.coverImage ? (
         /* eslint-disable-next-line @next/next/no-img-element */
@@ -837,7 +814,10 @@ return (
     </Link>
 
     {isTextOnlyWork ? (
-      <div className="shrink-0 border-t border-line/70 px-3 py-2">
+      <Link
+        href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true })}
+        className="block shrink-0 border-t border-line/70 px-3 py-2 transition-colors hover:bg-fill/30"
+      >
         <p className="line-clamp-2 text-sm font-semibold leading-snug text-ink" title={w.displayTitle}>
           {w.displayTitle}
         </p>
@@ -847,7 +827,7 @@ return (
         >
           {navMetaLineCardShown}
         </p>
-      </div>
+      </Link>
     ) : (
       <div className="flex min-h-[4.25rem] shrink-0 flex-row items-center gap-2 border-t border-line px-3 py-2.5">
         <div className="min-w-0 flex-1">
@@ -945,24 +925,6 @@ return (
               zipBusy === id ? downloadBusyLabel(w.type) : "下载"
             )
           )}
-          {inFlightQueue ? (
-            rowMutationsLocked ? null : (
-              <button
-                type="button"
-                className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
-                onClick={() => requestDelete(id)}
-              >
-                删除
-              </button>
-            )
-          ) : (
-            <Link
-              href={buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true })}
-              className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-            >
-              {rowMutationsLocked ? "查看" : "阅读"}
-            </Link>
-          )}
           {rowMutationsLocked ? null : (
             <button
               type="button"
@@ -970,15 +932,6 @@ return (
               onClick={() => openRename(id, w.displayTitle)}
             >
               修改名称
-            </button>
-          )}
-          {rowMutationsLocked || inFlightQueue ? null : (
-            <button
-              type="button"
-              className="rounded-md border border-danger/35 bg-danger-soft/50 px-2 py-1 text-danger-ink hover:bg-danger-soft/80"
-              onClick={() => requestDelete(id)}
-            >
-              删除
             </button>
           )}
         </>
