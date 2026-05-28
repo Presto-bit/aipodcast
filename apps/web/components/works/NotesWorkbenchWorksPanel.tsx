@@ -57,19 +57,22 @@ function mergeActiveWorks(inFlight: WorkItem[], pending: WorkItem | null | undef
   return sortWorksByRecency([...map.values()]);
 }
 
+function defaultHomeFinishedTab(works: WorkItem[]): Exclude<WorksGalleryTab, "active"> {
+  const split = splitWorksByGalleryKind(works);
+  const finishedAudio = split.audio.filter((w) => !workIsInFlight(w));
+  const finishedScript = split.script.filter((w) => !workIsInFlight(w));
+  if (finishedAudio.length > 0) return "audio";
+  if (finishedScript.length > 0) return "script";
+  return "audio";
+}
+
 function preferredVisibleTab(
   works: WorkItem[],
   pendingStudioWork: WorkItem | null | undefined,
   showActiveTab: boolean
 ): WorksGalleryTab {
-  const inferred = inferPreferredWorksGalleryTab({ works, pendingStudioWork });
-  if (showActiveTab) return inferred;
-  if (inferred === "script") return "script";
-  if (inferred === "audio") return "audio";
-  const { audio, script } = splitWorksByGalleryKind(works);
-  if (script.length > audio.length) return "script";
-  if (audio.length > 0) return "audio";
-  return "script";
+  if (!showActiveTab) return defaultHomeFinishedTab(works);
+  return inferPreferredWorksGalleryTab({ works, pendingStudioWork });
 }
 
 /**

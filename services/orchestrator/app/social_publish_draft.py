@@ -121,6 +121,36 @@ def _fallback_mp() -> dict[str, Any]:
     }
 
 
+_MP_GENERIC_MARKERS = (
+    "先把最重要的信息说清楚",
+    "要点一",
+    "要点二",
+    "欢迎转发给需要的朋友",
+    "如果你最近也在关注这个话题，这篇值得读完",
+)
+
+
+def _is_generic_social_placeholder(data: dict[str, Any], platform: str) -> bool:
+    """识别 LLM/静态回退的通用占位稿，避免当作成稿返回。"""
+    if not isinstance(data, dict):
+        return True
+    body = str(data.get("body") or "").strip()
+    opening = str(data.get("opening_30") or data.get("opening") or "").strip()
+    if not body:
+        return True
+    static = _fallback_mp() if platform == "wechat_mp" else _fallback_xhs()
+    static_body = str(static.get("body") or "").strip()
+    if body == static_body:
+        return True
+    if platform == "wechat_mp":
+        marker_hits = sum(1 for m in _MP_GENERIC_MARKERS if m in f"{opening}\n{body}")
+        if marker_hits >= 3:
+            return True
+        if "要点一" in body and "要点二" in body and "先把最重要的信息说清楚" in body:
+            return True
+    return False
+
+
 def _normalize_social_options(options: dict[str, Any], platform: str) -> dict[str, Any]:
     """合并 platform；性别互斥（女+男→不限），避免矛盾画像导致模型空回。"""
     opts = dict(options)
@@ -149,7 +179,10 @@ def _social_llm_max_tokens(options: dict[str, Any]) -> int:
 
 def _fallback_from_material(raw: str, platform: str) -> dict[str, Any]:
     """LLM/合规失败时：用勾选资料摘录组装可编辑草稿，避免通用占位话术。"""
-    excerpt = _strip_social_material_boilerplate((raw or "").strip())[:4000]
+    stripped = (raw or "").strip()
+    excerpt = _strip_social_material_boilerplate(stripped)[:4000]
+    if len(excerpt) < 40:
+        excerpt = stripped[:4000]
     if len(excerpt) < 40:
         return _fallback_xhs() if platform == "xiaohongshu" else _fallback_mp()
     lines = [
@@ -220,8 +253,15 @@ def _finalize_draft_pack(
     material_text: str,
     trace_id: Any = None,
 ) -> dict[str, Any]:
-    static = _fallback_xhs() if platform == "xiaohongshu" else _fallback_mp()
-    for cand in (data, _fallback_from_material(material_text, platform), static):
+    material_fb = _fallback_from_material(material_text, platform)
+    candidates: list[dict[str, Any]] = []
+    if isinstance(data, dict) and data and not _is_generic_social_placeholder(data, platform):
+        candidates.append(data)
+    candidates.append(material_fb)
+    if len((material_text or "").strip()) < 40:
+        static = _fallback_xhs() if platform == "xiaohongshu" else _fallback_mp()
+        candidates.append(static)
+    for cand in candidates:
         try:
             return finalize_xhs_pack(
                 cand,
@@ -454,8 +494,11 @@ def generate_social_publish_draft(
         user = f"{material_rule}\n\n请根据下列素材改写为上述 JSON。\n\n【素材】\n{llm_material}"
 
     data, trace_id = invoke_and_parse_social_json(system, user, max_tokens=max_tokens)
-    if not data:
-        logger.warning("social_publish llm unavailable or invalid json platform=%s", platform)
+    if not data or _is_generic_social_placeholder(data, platform):
+        if data and _is_generic_social_placeholder(data, platform):
+            logger.warning("social_publish llm returned generic placeholder platform=%s", platform)
+        else:
+            logger.warning("social_publish llm unavailable or invalid json platform=%s", platform)
         data = _fallback_from_material(raw, platform)
         trace_id = None
 
