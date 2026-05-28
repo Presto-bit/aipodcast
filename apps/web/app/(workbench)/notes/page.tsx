@@ -13,9 +13,7 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconClipboard,
-  IconFilePlus,
   IconPencil,
-  IconShareNodes,
   IconSourcesBinder,
   IconSparkle,
   IconStopSquare,
@@ -70,7 +68,12 @@ import {
   notesAskFetchCredentials,
   notesAskResolveRequestUrl
 } from "../../../lib/notesAskBffOrigin";
-import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../../lib/activeJobSession";
+import {
+  clearActiveGenerationJob,
+  readActiveGenerationJob,
+  setActiveGenerationJob
+} from "../../../lib/activeJobSession";
+import { usePodcastJobProgressTracker } from "../../../lib/usePodcastJobProgressTracker";
 import { rememberJobId } from "../../../lib/jobRecent";
 import { buildReferenceJobFields, type ReferenceRagMode } from "../../../lib/jobReferencePayload";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../../lib/notesRoomPresets";
@@ -1193,7 +1196,6 @@ export default function NotesPage() {
   const [podcastWorksLoading, setPodcastWorksLoading] = useState(false);
   const [podcastWorksError, setPodcastWorksError] = useState("");
   const [worksPanelExpanded, setWorksPanelExpanded] = useState(false);
-  const podcastRecoveryStartedRef = useRef(false);
   /** 来自 /notes?note=<id> 深链：解析笔记本并滚动到对应卡片 */
   const pendingFocusNoteIdRef = useRef<string | null>(null);
   /** 与「参考资料」勾选持久化配合：仅在当前笔记本已做过一次恢复后再写入，避免切换瞬间用旧笔记本的勾选覆盖新键 */
@@ -2121,6 +2123,16 @@ export default function NotesPage() {
     }
   }, [getAuthHeaders, sharedBrowse?.ownerUserId, selectedNotebook]);
 
+  const { startTracking: startPodcastJobTracking } = usePodcastJobProgressTracker({
+    getAuthHeaders,
+    onMessage: setPodcastGenMessage,
+    onBusy: setPodcastGenBusy,
+    onTerminal: () => {
+      void fetchPodcastWorks();
+    },
+    recoverOnMount: true
+  });
+
   useEffect(() => {
     if (hubView || !selectedNotebook.trim()) {
       setPodcastWorks([]);
@@ -2134,41 +2146,12 @@ export default function NotesPage() {
   const onPodcastJobCreated = useCallback(
     (jobId: string) => {
       rememberJobId(jobId);
-      clearActiveGenerationJob("podcast");
       void fetchPodcastWorks();
+      startPodcastJobTracking(jobId);
       router.push(`/works/${encodeURIComponent(jobId)}?returnTo=${encodeURIComponent("/notes")}`);
     },
-    [router, fetchPodcastWorks]
+    [router, fetchPodcastWorks, startPodcastJobTracking]
   );
-
-  useEffect(() => {
-    if (podcastRecoveryStartedRef.current) return;
-    const sid = readActiveGenerationJob("podcast");
-    if (!sid) return;
-    podcastRecoveryStartedRef.current = true;
-    void (async () => {
-      try {
-        const row = (await fetch(`/api/jobs/${sid}`, {
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { ...getAuthHeaders() }
-        }).then((r) => r.json())) as Record<string, unknown>;
-        const st = String(row.status || "");
-        if (st === "succeeded" || st === "failed" || st === "cancelled") {
-          clearActiveGenerationJob("podcast");
-          return;
-        }
-        if (st === "queued" || st === "running") {
-          rememberJobId(sid);
-          clearActiveGenerationJob("podcast");
-          router.replace(`/works/${encodeURIComponent(sid)}?returnTo=${encodeURIComponent("/notes")}`);
-        }
-      } catch {
-        clearActiveGenerationJob("podcast");
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载时尝试恢复
-  }, [getAuthHeaders, router]);
 
   useEffect(() => {
     if (draftRecoveryStartedRef.current) return;
@@ -3075,23 +3058,6 @@ export default function NotesPage() {
       setError("");
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
-    }
-  }
-
-  async function shareNotesAskAnswer(text: string) {
-    const t = (text || "").trim();
-    if (!t) return;
-    try {
-      if (typeof navigator !== "undefined" && "share" in navigator && typeof navigator.share === "function") {
-        await navigator.share({ title: "知识库回答", text: t });
-      } else {
-        await navigator.clipboard.writeText(t);
-      }
-      setNotesAskError("");
-    } catch (err) {
-      const e = err as Error;
-      if (e?.name === "AbortError") return;
-      setNotesAskError(String(e?.message || err));
     }
   }
 
@@ -4358,12 +4324,12 @@ export default function NotesPage() {
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
                   <button
                     type="button"
-                    disabled={sharedBrowse?.access === "read_only" || audioOverviewBusy}
+                    disabled={sharedBrowse?.access === "read_only" || podcastGenBusy}
                     className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-line/70 bg-surface px-3 text-xs font-medium text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
                     onClick={() => openPodcastFlow()}
                   >
                     <IconWorkPodcast width={20} height={20} className="shrink-0" aria-hidden />
-                    <span>{audioOverviewBusy ? "生成播客…" : "生成播客"}</span>
+                    <span>{podcastGenBusy ? "生成播客…" : "生成播客"}</span>
                   </button>
                   <button
                     type="button"
@@ -4536,7 +4502,7 @@ export default function NotesPage() {
                                 {!m.streaming &&
                                 askBodyForCopy.trim() &&
                                 !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) ? (
-                                  <div className="mt-3 flex flex-wrap items-center gap-0.5 border-t border-line/40 pt-2">
+                                  <div className="mt-3 flex flex-wrap items-center gap-1 border-t border-line/40 pt-2">
                                     <button
                                       type="button"
                                       className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
@@ -4548,22 +4514,11 @@ export default function NotesPage() {
                                     </button>
                                     <button
                                       type="button"
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
-                                      title="分享"
-                                      aria-label="分享"
-                                      onClick={() => void shareNotesAskAnswer(askBodyForCopy)}
-                                    >
-                                      <IconShareNodes width={16} height={16} aria-hidden />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink disabled:opacity-40"
-                                      title="新增为笔记"
-                                      aria-label="新增为笔记"
+                                      className="inline-flex h-8 items-center rounded-lg px-2 text-xs font-medium text-muted hover:bg-fill hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
                                       disabled={Boolean(sharedBrowse) || notesAskNoteBusyId === m.id}
                                       onClick={() => void saveAskAnswerAsNote(m.content || "", m.id)}
                                     >
-                                      <IconFilePlus width={16} height={16} aria-hidden />
+                                      {notesAskNoteBusyId === m.id ? "加入中…" : "加入资料"}
                                     </button>
                                   </div>
                                 ) : null}
@@ -5221,6 +5176,16 @@ export default function NotesPage() {
         noteTitleById={noteTitleById}
         presetKey={podcastRoomPresetKey}
         onPodcastJobCreated={onPodcastJobCreated}
+        onBusyChange={(busy) => {
+          if (busy) {
+            setPodcastGenBusy(true);
+            setPodcastGenMessage((prev) => (prev.trim() ? prev : "正在提交播客任务…"));
+            return;
+          }
+          if (!readActiveGenerationJob("podcast")) {
+            setPodcastGenBusy(false);
+          }
+        }}
         externalPrompt={notesStudioPrompt}
         onExternalPromptChange={setNotesStudioPrompt}
         preferredCreativeTemplateValue={notebookCreativeTemplateValue}
