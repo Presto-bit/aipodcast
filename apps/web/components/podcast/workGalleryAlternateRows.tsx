@@ -1,18 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { scriptExcerptFromWork, workGalleryTypeChipLabel } from "../../lib/workGalleryDisplay";
+import type { ReactNode, Ref } from "react";
+import { workGalleryTypeChipLabel } from "../../lib/workGalleryDisplay";
 import { buildWorkDetailHref } from "./workGalleryNav";
-import { NOTES_STUDIO_REF_TITLE_MAX_CHARS, truncateByGraphemes } from "./workGalleryListShared";
+import { truncateByGraphemes } from "./workGalleryListShared";
 import type { PodcastWorkRow } from "./workGalleryListShared";
 import { useWorkGalleryListContext } from "./workGalleryListContext";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { WorkTypeIcon } from "../icons";
 
+const SCRIPT_CARD_TITLE_MAX = 36;
+
 function TypeChip({ w }: { w: PodcastWorkRow }) {
   return (
-    <span className="inline-flex max-w-[10rem] shrink-0 truncate rounded-md bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
+    <span className="inline-flex max-w-full truncate rounded-md bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
       {workGalleryTypeChipLabel(w)}
     </span>
   );
@@ -21,7 +23,7 @@ function TypeChip({ w }: { w: PodcastWorkRow }) {
 function ActiveProgressBar({ pct }: { pct: number }) {
   const p = Math.max(0, Math.min(100, pct));
   return (
-    <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-line/80" aria-hidden>
+    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-line/80" aria-hidden>
       <div className="h-full bg-brand transition-[width] duration-500" style={{ width: `${p}%` }} />
     </div>
   );
@@ -33,9 +35,10 @@ type RowShellProps = {
   compA11y: Record<string, unknown>;
   children: ReactNode;
   rowPlayMsg?: string;
+  className?: string;
 };
 
-function RowShell({ id, outer, compA11y, children, rowPlayMsg }: RowShellProps) {
+function RowShell({ id, outer, compA11y, children, rowPlayMsg, className = "" }: RowShellProps) {
   const Comp = outer === "div" ? "div" : "li";
   const {
     enableBatchActions,
@@ -52,17 +55,17 @@ function RowShell({ id, outer, compA11y, children, rowPlayMsg }: RowShellProps) 
     <Comp
       key={id}
       {...compA11y}
-      className="relative flex w-full min-w-0 max-w-full flex-col overflow-visible rounded-xl border border-line bg-surface shadow-soft"
+      className={`relative flex w-full min-w-0 max-w-full flex-col overflow-visible rounded-xl border border-line bg-surface shadow-soft ${className}`.trim()}
     >
       {enableBatchActions && batchMode ? (
-        <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-3 py-1.5 text-xs text-ink">
+        <label className="flex items-center gap-2 border-b border-line bg-fill/40 px-2 py-1 text-[10px] text-ink">
           <input type="checkbox" checked={selectedIds.has(id)} onChange={() => toggleSelect(id)} />
-          选择此作品
+          选择
         </label>
       ) : null}
       {children}
       {renameJobId === id ? (
-        <div className="border-t border-line px-3 py-2">
+        <div className="border-t border-line px-2 py-1.5">
           <InlineTextPrompt
             open
             title="作品名称"
@@ -110,105 +113,94 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
     compA11y,
     inFlightQueue,
     activeSummary,
-    navMetaLineShown,
+    syncedGenBarPct,
     rowMutationsLocked,
     rowPlayMsg
   } = props;
   const {
-    renderDownloadGated,
-    zipBusy,
-    openRename,
-    requestDelete,
+    menuOpenId,
+    setMenuOpenId,
+    menuWrapRef,
     stopBusyId,
     requestStopActiveJob,
     activeQueueCardActions,
-    workDetailReturnTo,
-    copyManuscriptBusyId,
-    requestCopyManuscript
+    workDetailReturnTo
   } = useWorkGalleryListContext();
-  const excerpt = scriptExcerptFromWork(w);
   const headlineFull = String(w.displayTitle || "").trim() || id;
-  const headlineShown = truncateByGraphemes(headlineFull, NOTES_STUDIO_REF_TITLE_MAX_CHARS);
+  const headlineShown = truncateByGraphemes(headlineFull, SCRIPT_CARD_TITLE_MAX);
   const detailHref = buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true });
 
-  return (
-    <RowShell id={id} outer={outer} compA11y={compA11y} rowPlayMsg={rowPlayMsg}>
-      <Link
-        href={detailHref}
-        className="flex gap-3 p-3 transition-colors hover:bg-fill/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 rounded-t-xl"
-        aria-label={`阅读：${headlineFull}`}
-      >
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-line/80 bg-fill/50">
-          <WorkTypeIcon scriptDraft size={22} className="text-brand/85" aria-hidden />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <TypeChip w={w} />
-            <p className="min-w-0 flex-1 text-sm font-semibold leading-snug text-ink line-clamp-2" title={headlineFull}>
-              {headlineShown}
-            </p>
+  if (inFlightQueue && activeQueueCardActions) {
+    return (
+      <RowShell id={id} outer={outer} compA11y={compA11y} rowPlayMsg={rowPlayMsg} className="col-span-2">
+        <div className="p-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <TypeChip w={w} />
+              <p className="mt-1 line-clamp-1 text-xs font-semibold text-ink" title={headlineFull}>
+                {headlineShown}
+              </p>
+              {activeSummary ? (
+                <p className="mt-1 line-clamp-1 text-[10px] text-muted">{activeSummary}</p>
+              ) : null}
+              <ActiveProgressBar pct={syncedGenBarPct} />
+            </div>
+            <span className="shrink-0 text-[10px] tabular-nums text-brand">{syncedGenBarPct}%</span>
           </div>
-          {excerpt ? (
-            <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-muted" title={excerpt}>
-              {excerpt}
-            </p>
-          ) : null}
-          <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-muted" title={navMetaLineShown}>
-            {inFlightQueue && activeSummary ? activeSummary : navMetaLineShown}
-          </p>
-        </div>
-      </Link>
-      <div className="flex flex-wrap items-center gap-1.5 border-t border-line bg-fill/30 px-2 py-1.5 text-[11px]">
-        {inFlightQueue && activeQueueCardActions ? (
-          <>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
             <Link
               href={detailHref}
-              className="rounded-md border border-brand/40 bg-brand/10 px-2 py-1 font-medium text-brand hover:bg-brand/15"
+              className="rounded-md border border-brand/40 bg-brand/10 px-2 py-0.5 font-medium text-brand hover:bg-brand/15"
             >
               查看进度
             </Link>
             <button
               type="button"
-              className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
+              className="rounded-md border border-line bg-surface px-2 py-0.5 text-ink hover:bg-fill disabled:opacity-50"
               disabled={stopBusyId === id}
               onClick={() => void requestStopActiveJob(id)}
             >
               {stopBusyId === id ? "停止中…" : "停止"}
             </button>
-          </>
-        ) : (
-          <>
-            {renderDownloadGated(
-              w,
-              id,
-              "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-40",
-              zipBusy === id ? "正在下载…" : "下载"
-            )}
+          </div>
+        </div>
+      </RowShell>
+    );
+  }
+
+  return (
+    <RowShell id={id} outer={outer} compA11y={compA11y} rowPlayMsg={rowPlayMsg}>
+      <div className="relative min-h-[3.5rem] p-2.5">
+        {!rowMutationsLocked ? (
+          <div
+            className="absolute right-1 top-1 z-10"
+            ref={(menuOpenId === id ? menuWrapRef : undefined) as Ref<HTMLDivElement> | undefined}
+          >
             <button
               type="button"
-              className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
-              disabled={copyManuscriptBusyId === id}
-              onClick={() =>
-                requestCopyManuscript(id, {
-                  scriptText: w.scriptText,
-                  scriptCharCount: w.scriptCharCount,
-                  status: w.status
-                })
-              }
+              className="flex h-6 w-6 items-center justify-center rounded-full text-muted hover:bg-fill"
+              aria-label="更多操作"
+              aria-expanded={menuOpenId === id}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMenuOpenId((x) => (x === id ? null : id));
+              }}
             >
-              {copyManuscriptBusyId === id ? "复制中…" : "复制全文"}
+              <span className="text-sm leading-none">⋯</span>
             </button>
-            {rowMutationsLocked ? null : (
-              <button
-                type="button"
-                className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill"
-                onClick={() => openRename(id, w.displayTitle)}
-              >
-                改名
-              </button>
-            )}
-          </>
-        )}
+          </div>
+        ) : null}
+        <Link
+          href={detailHref}
+          className="block min-w-0 pr-5 outline-none transition-colors hover:opacity-90 focus-visible:ring-2 focus-visible:ring-brand/40 rounded-md"
+          aria-label={`阅读：${headlineFull}`}
+        >
+          <TypeChip w={w} />
+          <p className="mt-1 line-clamp-1 text-xs font-semibold leading-snug text-ink" title={headlineFull}>
+            {headlineShown}
+          </p>
+        </Link>
       </div>
     </RowShell>
   );

@@ -20,6 +20,7 @@ import {
 } from "../../lib/workDownloadRechargeGate";
 import { listRssPublicationsByJobIds, type RssPublication, cancelJob } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
+import { isTextOnlyWorkType } from "../../lib/worksTypes";
 import { useI18n } from "../../lib/I18nContext";
 import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
 import { copyWorkManuscriptToClipboard } from "../../lib/copyWorkManuscript";
@@ -449,7 +450,13 @@ export default function PodcastWorksGallery({
     const pubs = publicationsByJobId[id] || [];
     const publishActionText = pubs.length > 0 ? "已发过" : "分享";
     if (variant === "all") {
+      if (isTextOnlyWorkType(String(w.type || ""))) {
+        return { layout: "script-card" as const, w, id };
+      }
       return { layout: "toolbar" as const, w, id, isScriptDraft };
+    }
+    if (variant === "notes") {
+      return { layout: "script-card" as const, w, id };
     }
     return { layout: "card" as const, w, id, isScriptDraft, publishActionText };
   }, [variant, compactCards, menuOpenId, items, publicationsByJobId]);
@@ -1310,7 +1317,20 @@ export default function PodcastWorksGallery({
         </div>
       ) : (
         <>
-        {rowLayout !== "grid" ? (
+        {rowLayout === "script-list" ? (
+          <ul className="grid w-full grid-cols-2 gap-2 overflow-visible">
+            {visibleItems.map((w, index) => (
+              <WorkGalleryListItem
+                key={String(w.id)}
+                w={w}
+                index={index}
+                outer="li"
+                eagerCoverFirstCount={eagerCoverFirstCount}
+                useListCoverThumb={useListCoverThumbs}
+              />
+            ))}
+          </ul>
+        ) : rowLayout !== "grid" ? (
           <ul className="grid w-full grid-cols-1 gap-2 overflow-visible">
             {visibleItems.map((w, index) => (
               <WorkGalleryListItem
@@ -1427,6 +1447,45 @@ export default function PodcastWorksGallery({
               (() => {
                 const spec = worksGridMenuPortalData;
                 const pos = notesStudioMenuPos;
+                if (spec.layout === "script-card") {
+                  const { w, id } = spec;
+                  const rowLocked = workGalleryRowMutationsLocked(w, viewerAccountRefStr);
+                  return (
+                    <div
+                      ref={notesStudioMenuPortalRef}
+                      role="menu"
+                      className="fixed z-[1210] min-w-[8.5rem] overflow-hidden rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
+                      style={{ top: pos.top, left: pos.left }}
+                    >
+                      {!rowLocked ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="block w-full px-3 py-2 text-left hover:bg-fill"
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            openRename(id, w.displayTitle);
+                          }}
+                        >
+                          改名
+                        </button>
+                      ) : null}
+                      {!rowLocked ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="block w-full px-3 py-2 text-left text-danger-ink hover:bg-danger-soft"
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            requestDelete(id);
+                          }}
+                        >
+                          删除
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                }
                 if (spec.layout === "toolbar") {
                   const { w, id, isScriptDraft } = spec;
                   const rowLocked = workGalleryRowMutationsLocked(w, viewerAccountRefStr);
