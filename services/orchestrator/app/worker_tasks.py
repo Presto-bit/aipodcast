@@ -713,6 +713,25 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     )
                 raise
 
+        if job_type == "note_file_parse":
+            nid = str(payload.get("note_id") or "").strip()
+            if not nid:
+                raise RuntimeError("note_id_required")
+            append_job_event(job_id, "progress", "正在解析笔记附件正文", {"progress": 20})
+            from .note_file_parse import run_note_file_parse
+
+            out = run_note_file_parse(nid, user_ref=created_by)
+            if not out.get("ok"):
+                err = str(out.get("error") or "note_file_parse_failed")
+                if finalize_job_terminal_unless_cancelled(job_id, "failed", progress=100, error_message=err[:500]):
+                    append_job_event(job_id, "error", "笔记正文解析失败", {"progress": 100, "error": err[:500]})
+                return {"status": "failed", "error": err}
+            if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=out):
+                append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
+                return {"status": "cancelled"}
+            append_job_event(job_id, "complete", "笔记正文解析完成", {"progress": 100})
+            return out
+
         if job_type == "note_rag_index":
             nid = str(payload.get("note_id") or "").strip()
             if not nid:

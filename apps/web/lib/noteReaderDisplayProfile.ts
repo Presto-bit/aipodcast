@@ -34,6 +34,9 @@ export function deriveDisplayProfile(input: NoteDisplayProfileInput): NoteDispla
   const parseState = String(input.parseState || "").trim();
   const parseStatus = String(input.parseStatus || "").trim();
   const textLen = String(input.text || "").replace(/\s+/g, "").length;
+  if (parseState === "pending" || parseState === "parsing") {
+    return "prose";
+  }
   if (gate === "blocked" || parseState === "failed" || (parseStatus && parseStatus !== "ok" && textLen < 20)) {
     return "unavailable";
   }

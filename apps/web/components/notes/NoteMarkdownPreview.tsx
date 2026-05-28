@@ -226,7 +226,8 @@ export default function NoteMarkdownPreview({
   const isPdf = normExt === "pdf";
 
   const isTable = displayProfile === "table";
-  const isUnavailable = displayProfile === "unavailable";
+  const isParsing = parseState === "pending" || parseState === "parsing";
+  const isUnavailable = displayProfile === "unavailable" && !isParsing;
   const isCitation = displayProfile === "citation";
   const showToc = profileShowToc(displayProfile);
   const typeLabel = profileTypeLabel(ext, displayProfile);
@@ -786,7 +787,20 @@ export default function NoteMarkdownPreview({
     isTable
   ]);
 
-  const bodyInner = isUnavailable ? (
+  const bodyInner = isParsing ? (
+    <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
+      <p className="text-base font-medium text-ink">正在解析正文</p>
+      <p className="mt-2 max-w-md text-sm text-muted">
+        {parseDetail?.trim().slice(0, 200) ||
+          "文件已保存，后台解析完成后将自动显示正文。您可先下载原文件查看。"}
+      </p>
+      {onDownloadFile ? (
+        <button type="button" className={`${iconBtn} mt-4 px-4 py-2`} onClick={onDownloadFile}>
+          下载原文件
+        </button>
+      ) : null}
+    </div>
+  ) : isUnavailable ? (
     <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
       <p className="text-base font-medium text-ink">暂无法阅读正文</p>
       <p className="mt-2 max-w-md text-sm text-muted">

@@ -73,7 +73,7 @@ from ..models import (
 from ..queue import ai_queue
 from ..worker_tasks import run_ai_job
 from ..storage_paths import note_upload_object_key
-from ..note_document_extract import NoteParseResult, extract_text_from_bytes
+from ..note_document_extract import NoteParseResult
 from ..note_parse_quality import page_breaks_from_segments
 from ..object_store import delete_object_key, get_object_bytes, upload_bytes
 from ..notes_ask import (
@@ -263,6 +263,16 @@ def _try_enqueue_note_rag_index(note_id: str, user_ref: str | None) -> None:
         except Exception:
             pass
         _notes_startup_logger.warning("note_rag_index enqueue failed note_id=%s: %s", note_id, exc)
+
+
+def _try_enqueue_note_file_parse(note_id: str, user_ref: str | None) -> None:
+    """异步：从对象存储解析附件正文（方案 B 阶段 2）。"""
+    try:
+        pid = ensure_default_project(NOTES_PODCAST_STUDIO_PROJECT, created_by=user_ref)
+        jid = create_job(pid, "note_file_parse", "ai", {"note_id": note_id}, user_ref)
+        ai_queue.enqueue(run_ai_job, jid, job_timeout="20m")
+    except Exception as exc:
+        _notes_startup_logger.warning("note_file_parse enqueue failed note_id=%s: %s", note_id, exc)
 
 
 def _current_user_ref_or_401(request: Request) -> str | None:
@@ -564,7 +574,20 @@ def _derive_source_capabilities(
     rag_err: str,
     created_at: str,
     rag_index_at: str,
+    metadata_parse_state: str = "",
+    has_file_object: bool = False,
 ) -> dict[str, object]:
+    mps = (metadata_parse_state or "").strip().lower()
+    if mps in ("pending", "parsing"):
+        return {
+            "parseOk": False,
+            "parseState": mps,
+            "parseErrorCode": "",
+            "citeState": "unavailable",
+            "retrieveState": "not_ready",
+            "sourceReady": has_file_object,
+            "sourceHint": "正在解析正文，可先下载原文件",
+        }
     ct = (content_text or "").strip()
     p_st = (parse_status or "").strip().lower()
     parse_ok = p_st == "ok" if p_st else (input_type == "note_text" and bool(ct)) or (input_type == "note_file" and len(ct) >= 20)
@@ -633,6 +656,9 @@ def _derive_preprocess_stage(md: dict, cap: dict[str, object]) -> tuple[str, str
     parse_ok = bool(cap.get("parseOk"))
     retrieve_state = str(cap.get("retrieveState") or "")
     parse_err_code = str(cap.get("parseErrorCode") or "")
+    cap_parse_state = str(cap.get("parseState") or "").strip().lower()
+    if cap_parse_state in ("pending", "parsing"):
+        return "解析中", str(cap.get("sourceHint") or "正在后台解析正文，请稍后刷新。")
     if not parse_ok:
         if parse_err_code:
             return "解析中", f"解析未成功（{parse_err_code}）：建议重传文本版来源（txt/md/html）或检查原文件质量。"
@@ -894,6 +920,9 @@ def _persist_note_upload(
             }
             if parse_empty:
                 out_dup["parseEmpty"] = True
+            mps_dup = str(md.get("parseState") or "").strip().lower()
+            if mps_dup in ("pending", "parsing") or parse_empty:
+                _try_enqueue_note_file_parse(dup_id, user_ref)
             return attach_hint_actions_to_upload_result(out_dup)
     note_id = f"note_{int(time.time())}_{uuid.uuid4().hex[:8]}"
     owner_uuid = resolved_user_uuid_string(user_ref)
@@ -907,63 +936,24 @@ def _persist_note_upload(
             status_code=503,
             detail="文件暂无法上传到存储，请确认对象存储可用后重试。",
         ) from exc
-    parse_started = time.perf_counter()
-    try:
-        parse_result = extract_text_from_bytes(data, ext)
-        _upload_diag(
-            "persist_parse_ok",
-            parse_status=parse_result.status,
-            parse_engine=parse_result.engine,
-            parse_encoding=parse_result.encoding or "",
-            parse_detail=(parse_result.detail or "")[:120],
-        )
-    except UnicodeDecodeError as exc:
-        _raise_upload_unicode_error("extract_text_from_bytes", exc)
-    except Exception as exc:
-        _notes_startup_logger.exception("notes upload: extract_text_from_bytes failed")
-        parse_result = NoteParseResult(
-            text="",
-            status="error",
-            engine="exception",
-            detail=str(exc)[:400],
-        )
-    parse_duration_ms = int((time.perf_counter() - parse_started) * 1000)
-    parsed = (parse_result.text or "").strip()
-    parse_error_code = _parse_error_code_for_upload(ext, parse_result)
     extra_meta: dict[str, object] = {
-        "parseStatus": parse_result.status,
-        "parseEngine": parse_result.engine,
-        "parseDurationMs": parse_duration_ms,
-        "parseTextChars": len(parsed),
+        "parseState": "pending",
+        "parseStatus": "pending",
+        "parseEngine": "",
+        "parseDurationMs": 0,
+        "parseTextChars": 0,
+        "contentSha256": content_sha256,
+        "preprocessStatus": "empty",
+        "preprocessSummary": "",
+        "preprocessTags": [],
+        "preprocessEntities": [],
     }
-    if parse_result.detail:
-        extra_meta["parseDetail"] = str(parse_result.detail)[:500]
-    if parse_result.encoding:
-        extra_meta["parseEncoding"] = str(parse_result.encoding)[:120]
-    if parse_error_code:
-        extra_meta["parseErrorCode"] = parse_error_code
-    extra_meta["contentSha256"] = content_sha256
-    from ..note_parse_quality import merge_upload_parse_metadata
-
-    merge_upload_parse_metadata(
-        extra_meta,
-        parse_result,
-        content_text=parsed,
-        ext=ext,
-        parse_error_code=parse_error_code or "",
-    )
-    try:
-        if "structuredBlocks" not in extra_meta:
-            extra_meta["structuredBlocks"] = _build_structured_blocks_from_text(parsed)
-        extra_meta.update(_build_preprocess_fields(parsed))
-    except UnicodeDecodeError as exc:
-        _raise_upload_unicode_error("build_preprocess_metadata", exc)
     try:
         row_id = create_file_note(
             project_id=project_id,
             title=title,
             notebook=notebook,
-            content_text=parsed,
+            content_text="",
             file_object_key=object_key,
             ext=ext,
             original_filename=raw_name,
@@ -972,7 +962,7 @@ def _persist_note_upload(
             user_ref=user_ref,
             extra_metadata=extra_meta,
         )
-        _upload_diag("persist_db_insert_ok", note_id=row_id, parse_error_code=parse_error_code or "", parse_text_chars=len(parsed))
+        _upload_diag("persist_db_insert_ok", note_id=row_id, parse_state="pending")
     except UnicodeDecodeError as exc:
         delete_object_key(object_key)
         _raise_upload_unicode_error("create_file_note", exc)
@@ -993,8 +983,7 @@ def _persist_note_upload(
             status_code=500,
             detail="笔记保存失败，请稍后重试或联系管理员。",
         ) from exc
-    _try_enqueue_note_rag_index(row_id, user_ref)
-    parse_empty = bool(len(data) > 0 and not (parsed or "").strip())
+    _try_enqueue_note_file_parse(row_id, user_ref)
     out: dict = {
         "success": True,
         "note": {
@@ -1006,28 +995,16 @@ def _persist_note_upload(
             "createdAt": "",
         },
         "parse": {
-            "status": parse_result.status,
-            "engine": parse_result.engine,
-            "detail": (parse_result.detail or "")[:500],
-            "encoding": (parse_result.encoding or "")[:120],
-            "errorCode": parse_error_code,
-            "durationMs": parse_duration_ms,
-            "textChars": len(parsed),
+            "status": "pending",
+            "engine": "",
+            "detail": "正文将在后台解析",
+            "encoding": "",
+            "errorCode": "",
+            "durationMs": 0,
+            "textChars": 0,
+            "parseState": "pending",
         },
     }
-    if parse_empty:
-        out["parseEmpty"] = True
-    if len(parsed) >= LONG_DOC_IMPORT_WARN_CHARS:
-        out["longDocImport"] = {
-            "warn": True,
-            "textChars": len(parsed),
-            "threshold": LONG_DOC_IMPORT_WARN_CHARS,
-            "message": (
-                f"本文约 {len(parsed):,} 字，超过建议单条上限（{LONG_DOC_IMPORT_WARN_CHARS:,} 字）。"
-                "保存后系统将自动在后台分片索引与摘要，您仍只需管理这一条资料；"
-                "问答时请尽量指明「第几部分」或章节名，未索引段落可能无法检索。"
-            ),
-        }
     return attach_hint_actions_to_upload_result(out)
 
 
@@ -1081,6 +1058,7 @@ def list_notes_api(
         p_eng = str(md.get("parseEngine") or "").strip()
         p_de = str(md.get("parseDetail") or "").strip()
         explicit_parse_error_code = str(md.get("parseErrorCode") or "").strip()
+        mps = str(md.get("parseState") or "").strip()
         cap = _derive_source_capabilities(
             input_type=it,
             content_text=ct,
@@ -1091,6 +1069,8 @@ def list_notes_api(
             rag_err=(str(rag_err).strip() if rag_err else ""),
             created_at=str(r.get("created_at") or ""),
             rag_index_at=str(r.get("note_rag_index_at") or ""),
+            metadata_parse_state=mps,
+            has_file_object=bool(file_key),
         )
         parse_err_final = explicit_parse_error_code or str(cap.get("parseErrorCode") or "").strip()
         parse_hint_actions = hint_actions_for_code(parse_err_final)
@@ -1195,6 +1175,7 @@ def list_trash_notes_api(
         p_eng = str(md.get("parseEngine") or "").strip()
         p_de = str(md.get("parseDetail") or "").strip()
         explicit_parse_error_code = str(md.get("parseErrorCode") or "").strip()
+        mps = str(md.get("parseState") or "").strip()
         cap = _derive_source_capabilities(
             input_type=it,
             content_text=ct,
@@ -1205,6 +1186,8 @@ def list_trash_notes_api(
             rag_err=rag_err,
             created_at=str(r.get("created_at") or ""),
             rag_index_at=str(r.get("note_rag_index_at") or ""),
+            metadata_parse_state=mps,
+            has_file_object=bool(file_key),
         )
         author_ip_id = str(md.get("authorIpId") or "").strip()
         notes.append(
@@ -1520,6 +1503,8 @@ def preview_note_text_api(
     p_st = str(md.get("parseStatus") or "").strip()
     p_eng = str(md.get("parseEngine") or "").strip()
     p_de = str(md.get("parseDetail") or "").strip()
+    file_key = row.get("file_object_key")
+    mps = str(md.get("parseState") or "").strip()
     cap = _derive_source_capabilities(
         input_type=str(row.get("input_type") or ""),
         content_text=str(row.get("content_text") or ""),
@@ -1530,6 +1515,8 @@ def preview_note_text_api(
         rag_err=str(row.get("note_rag_index_error") or "").strip(),
         created_at=str(row.get("created_at") or ""),
         rag_index_at=str(row.get("note_rag_index_at") or ""),
+        metadata_parse_state=mps,
+        has_file_object=bool(file_key),
     )
     preprocess_stage, next_action = _derive_preprocess_stage(md, cap)
     content_text = str(row.get("content_text") or "")

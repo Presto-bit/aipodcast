@@ -302,8 +302,10 @@ function isSourceUsable(note: {
   sourceReady?: boolean;
   citeState?: string;
 }): boolean {
+  const ps = String(note.parseState || "").trim().toLowerCase();
+  if (ps === "pending" || ps === "parsing") return false;
   if ((note.parseGate || "") === "blocked") return false;
-  if ((note.parseState || "") === "failed") return false;
+  if (ps === "failed") return false;
   if (note.sourceReady === false) return false;
   if ((note.citeState || "") === "unavailable") return false;
   return true;
@@ -540,6 +542,7 @@ function mapParseStateLabel(state: string): string {
   const s = String(state || "").trim().toLowerCase();
   if (s === "success") return "成功";
   if (s === "failed" || s === "error" || s === "empty") return "失败";
+  if (s === "pending" || s === "parsing") return "解析中";
   if (s === "partial") return "进行中";
   return s ? "进行中" : "—";
 }
@@ -1890,8 +1893,8 @@ export default function NotesPage() {
     }
   }, [notebooks, notebooksReady]);
 
-  const loadNotes = useCallback(async () => {
-    setLoading(true);
+  const loadNotes = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError("");
     try {
       const params = new URLSearchParams();
@@ -1952,9 +1955,21 @@ export default function NotesPage() {
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [selectedNotebook, notePage, getAuthHeaders, sharedBrowse]);
+
+  useEffect(() => {
+    const hasParsing = notes.some((n) => {
+      const ps = String(n.parseState || "").trim().toLowerCase();
+      return ps === "pending" || ps === "parsing";
+    });
+    if (!hasParsing) return;
+    const timer = setInterval(() => {
+      void loadNotes({ silent: true });
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [notes, loadNotes]);
 
   useEffect(() => {
     setNotePage(1);
@@ -3677,6 +3692,51 @@ export default function NotesPage() {
     previewParseGate
   ]);
 
+  useEffect(() => {
+    if (!previewOpen || !previewNoteId) return;
+    const ps = String(previewParseState || "").trim().toLowerCase();
+    if (ps !== "pending" && ps !== "parsing") return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const pv = new URLSearchParams();
+        if (sharedBrowse?.ownerUserId) pv.set("sharedFromOwnerUserId", sharedBrowse.ownerUserId);
+        const qs = pv.toString();
+        const res = await fetch(
+          `/api/notes/${encodeURIComponent(previewNoteId)}/preview_text${qs ? `?${qs}` : ""}`,
+          {
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { ...getAuthHeaders() }
+          }
+        );
+        const data = (await res.json().catch(() => ({}))) as PreviewResp & { detail?: unknown };
+        if (cancelled || !res.ok || !data.success) return;
+        setPreviewText(data.text || "");
+        setPreviewStructuredBlocks(Array.isArray(data.structuredBlocks) ? data.structuredBlocks : []);
+        setPreviewParseState(String(data.parseState || ""));
+        setPreviewParseStatus(String(data.parseStatus || ""));
+        setPreviewParseDetail(String(data.parseDetail || ""));
+        setPreviewWordCount(Number(data.wordCount || 0));
+      } catch {
+        // 轮询失败时保持当前展示
+      }
+    };
+    const timer = setInterval(() => {
+      void refresh();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [
+    previewOpen,
+    previewNoteId,
+    previewParseState,
+    sharedBrowse?.ownerUserId,
+    getAuthHeaders
+  ]);
+
   const filteredPreview = useMemo(() => {
     let base = previewSimplified ? simplifySourceText(previewText) : previewText;
     if (previewDisplayProfile === "web" && previewSimplified) {
@@ -4267,14 +4327,30 @@ export default function NotesPage() {
                                 <span className="truncate">{n.title || n.noteId}</span>
                               </span>
                             </button>
-                            {n.parseState === "failed" || n.sourceReady === false ? (
-                              <span
-                                className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-warning-soft text-warning-ink"
-                                title={n.sourceHint || "参考资料尚未可用"}
-                              >
-                                参考资料待就绪
-                              </span>
-                            ) : null}
+                            {(() => {
+                              const ps = String(n.parseState || "").trim().toLowerCase();
+                              if (ps === "pending" || ps === "parsing") {
+                                return (
+                                  <span
+                                    className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-brand/12 text-brand"
+                                    title={n.sourceHint || "正在后台解析正文"}
+                                  >
+                                    解析中
+                                  </span>
+                                );
+                              }
+                              if (n.parseState === "failed" || !isSourceUsable(n)) {
+                                return (
+                                  <span
+                                    className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-warning-soft text-warning-ink"
+                                    title={n.sourceHint || "参考资料尚未可用"}
+                                  >
+                                    参考资料待就绪
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
                             {n.citeState === "unavailable" ? (
                               <span
                                 className="shrink-0 rounded px-1 py-0 text-[9px] font-medium bg-warning-soft text-warning-ink"
