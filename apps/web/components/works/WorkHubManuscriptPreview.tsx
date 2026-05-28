@@ -10,7 +10,7 @@ type Props = {
 };
 
 /**
- * 文稿只读预览：结构化小节（heading/content、## 标题）或纯文本。
+ * 文稿只读预览：连续正文区，小节标题 inline，整体可滚动。
  */
 export function WorkHubManuscriptPreview({ body, emptyHint, className = "" }: Props) {
   const sections = useMemo(() => manuscriptBodyToDisplaySections(body), [body]);
@@ -29,7 +29,7 @@ export function WorkHubManuscriptPreview({ body, emptyHint, className = "" }: Pr
   if (!multiSection) {
     return (
       <div
-        className={`max-h-[min(80vh,36rem)] overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-fill/20 p-3 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm ${className}`.trim()}
+        className={`max-h-[min(85vh,48rem)] overflow-y-auto whitespace-pre-wrap [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm ${className}`.trim()}
       >
         {trimmed}
       </div>
@@ -37,27 +37,18 @@ export function WorkHubManuscriptPreview({ body, emptyHint, className = "" }: Pr
   }
 
   return (
-    <div className={`space-y-4 ${className}`.trim()}>
+    <div
+      className={`max-h-[min(85vh,48rem)] overflow-y-auto [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm ${className}`.trim()}
+    >
       {sections.map((section, index) => (
-        <article
-          key={`${index}-${section.heading.slice(0, 24)}`}
-          className="rounded-xl border border-line/70 bg-fill/25 px-3 py-3 sm:px-4"
-        >
+        <div key={`${index}-${section.heading.slice(0, 24)}`} className={index > 0 ? "mt-5" : ""}>
           {section.heading ? (
-            <h4 className="border-l-2 border-brand/70 pl-2.5 text-sm font-semibold leading-snug text-ink sm:text-[15px]">
-              {section.heading}
-            </h4>
+            <h4 className="text-sm font-semibold leading-snug text-ink sm:text-[15px]">{section.heading}</h4>
           ) : null}
           {section.content ? (
-            <p
-              className={`whitespace-pre-wrap [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm ${
-                section.heading ? "mt-2.5" : ""
-              }`}
-            >
-              {section.content}
-            </p>
+            <p className={`whitespace-pre-wrap ${section.heading ? "mt-2" : ""}`}>{section.content}</p>
           ) : null}
-        </article>
+        </div>
       ))}
     </div>
   );

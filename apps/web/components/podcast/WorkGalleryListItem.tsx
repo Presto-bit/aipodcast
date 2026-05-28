@@ -20,7 +20,7 @@ import {
 import type { PodcastWorkRow } from "./workGalleryListShared";
 import { useWorkGalleryListContext } from "./workGalleryListContext";
 import { WorkGalleryActiveRow, WorkGalleryScriptListRow } from "./workGalleryAlternateRows";
-import { scriptExcerptFromWork, workGalleryTypeChipLabel } from "../../lib/workGalleryDisplay";
+import { scriptExcerptFromWork } from "../../lib/workGalleryDisplay";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { IconPause, IconPlayFilled, WorkTypeIcon } from "../icons";
 
@@ -351,18 +351,17 @@ if (rowLayout === "compact" || useNotesStyleCards) {
           ) : (
             <p className="line-clamp-2 min-h-0 text-[11px] font-semibold leading-tight text-ink">{headlineShown}</p>
           )}
-          {isTextOnlyWork ? (
-            <div className="mt-1 flex flex-wrap items-center gap-1">
-              <span className="inline-flex max-w-full truncate rounded-md bg-brand/10 px-1 py-0.5 text-[9px] font-medium text-brand">
-                {workGalleryTypeChipLabel(w)}
-              </span>
-            </div>
+          {metaLineShown ? (
+            <p className="mt-1 line-clamp-2 min-h-0 text-[9px] leading-snug text-muted" title={metaLineShown}>
+              {metaLineShown}
+            </p>
           ) : null}
-          {scriptExcerpt ? (
+          {!isTextOnlyWork && scriptExcerpt ? (
             <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-muted" title={scriptExcerpt}>
               {scriptExcerpt}
             </p>
           ) : null}
+          {!isTextOnlyWork ? (
           <div className="group/synopsis relative mt-1 min-h-0">
             <p className="line-clamp-3 min-h-0 text-[9px] leading-snug text-muted">{metaLineShown}</p>
             <div
@@ -372,6 +371,7 @@ if (rowLayout === "compact" || useNotesStyleCards) {
               {synopsisHoverFull}
             </div>
           </div>
+          ) : null}
         </Link>
         {showPendingLog ? (
           <p

@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import type { ReactNode, Ref } from "react";
-import { workGalleryTypeChipLabel } from "../../lib/workGalleryDisplay";
 import { buildWorkDetailHref } from "./workGalleryNav";
 import { truncateByGraphemes } from "./workGalleryListShared";
 import type { PodcastWorkRow } from "./workGalleryListShared";
@@ -11,14 +10,6 @@ import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { WorkTypeIcon } from "../icons";
 
 const SCRIPT_CARD_TITLE_MAX = 36;
-
-function TypeChip({ w }: { w: PodcastWorkRow }) {
-  return (
-    <span className="inline-flex max-w-full truncate rounded-md bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
-      {workGalleryTypeChipLabel(w)}
-    </span>
-  );
-}
 
 function ActiveProgressBar({ pct }: { pct: number }) {
   const p = Math.max(0, Math.min(100, pct));
@@ -114,6 +105,7 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
     inFlightQueue,
     activeSummary,
     syncedGenBarPct,
+    navMetaLineShown,
     rowMutationsLocked,
     rowPlayMsg
   } = props;
@@ -128,6 +120,7 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
   } = useWorkGalleryListContext();
   const headlineFull = String(w.displayTitle || "").trim() || id;
   const headlineShown = truncateByGraphemes(headlineFull, SCRIPT_CARD_TITLE_MAX);
+  const metaLine = String(navMetaLineShown || "").trim();
   const detailHref = buildWorkDetailHref(id, { returnTo: workDetailReturnTo, focusRead: true });
 
   if (inFlightQueue && activeQueueCardActions) {
@@ -136,8 +129,7 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
         <div className="p-2.5">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
-              <TypeChip w={w} />
-              <p className="mt-1 line-clamp-1 text-xs font-semibold text-ink" title={headlineFull}>
+              <p className="line-clamp-1 text-xs font-semibold text-ink" title={headlineFull}>
                 {headlineShown}
               </p>
               {activeSummary ? (
@@ -170,7 +162,7 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
 
   return (
     <RowShell id={id} outer={outer} compA11y={compA11y} rowPlayMsg={rowPlayMsg}>
-      <div className="relative min-h-[3.5rem] p-2.5">
+      <div className="relative min-h-[3.75rem] p-2.5">
         {!rowMutationsLocked ? (
           <div
             className="absolute right-1 top-1 z-10"
@@ -196,10 +188,14 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
           className="block min-w-0 pr-5 outline-none transition-colors hover:opacity-90 focus-visible:ring-2 focus-visible:ring-brand/40 rounded-md"
           aria-label={`阅读：${headlineFull}`}
         >
-          <TypeChip w={w} />
-          <p className="mt-1 line-clamp-1 text-xs font-semibold leading-snug text-ink" title={headlineFull}>
+          <p className="line-clamp-1 text-xs font-semibold leading-snug text-ink" title={headlineFull}>
             {headlineShown}
           </p>
+          {metaLine ? (
+            <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-muted" title={metaLine}>
+              {metaLine}
+            </p>
+          ) : null}
         </Link>
       </div>
     </RowShell>
@@ -249,7 +245,6 @@ export function WorkGalleryActiveRow(props: AlternateRowProps): ReactNode {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
-              <TypeChip w={w} />
               <span className="rounded-md bg-fill px-1.5 py-0.5 text-[10px] font-medium text-muted">{statusLabel}</span>
             </div>
             <p className="mt-1 text-sm font-semibold leading-snug text-ink line-clamp-2" title={headlineFull}>
