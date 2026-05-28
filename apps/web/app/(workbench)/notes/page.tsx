@@ -166,6 +166,7 @@ import {
 } from "../../../lib/userScopedStorage";
 import { uploadNoteFileWithProgress } from "../../../lib/uploadNoteFile";
 import type { WorkItem } from "../../../lib/worksTypes";
+import { buildWorksTabHref, inferPreferredWorksGalleryTab } from "../../../lib/workGalleryDisplay";
 import type { AuthorIpItem } from "../../../lib/authorIp";
 import { resolveNotebookCreativeTemplateValue } from "../../../lib/notebookPodcastStyle";
 import {
@@ -2163,6 +2164,15 @@ export default function NotesPage() {
   ]);
 
   const notesPendingStudioSubtitle = notesWorkbenchCreationProgress?.text || "";
+
+  const notesWorksViewAllHref = useMemo(
+    () =>
+      buildWorksTabHref(
+        inferPreferredWorksGalleryTab({ works: podcastWorks, pendingStudioWork: notesPendingStudioWork }),
+        "/notes"
+      ),
+    [podcastWorks, notesPendingStudioWork]
+  );
 
   const fetchPodcastWorks = useCallback(async () => {
     setPodcastWorksError("");
@@ -4943,7 +4953,7 @@ export default function NotesPage() {
                   {worksPanelExpanded ? "收起" : "展开"}
                 </button>
                 <a
-                  href="/works?tab=audio&returnTo=/notes"
+                  href={notesWorksViewAllHref}
                   className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-brand hover:bg-fill"
                 >
                   查看全部

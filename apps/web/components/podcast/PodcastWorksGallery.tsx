@@ -22,6 +22,7 @@ import { listRssPublicationsByJobIds, type RssPublication, cancelJob } from "../
 import type { WorkItem } from "../../lib/worksTypes";
 import { useI18n } from "../../lib/I18nContext";
 import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
+import { copyWorkManuscriptToClipboard } from "../../lib/copyWorkManuscript";
 import { insertPodcastDraftAtTop, setDraftsNavigationFocusDraftId } from "../../lib/podcastDrafts";
 import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { useAppNotice } from "../../lib/AppNoticeContext";
@@ -241,7 +242,7 @@ export default function PodcastWorksGallery({
     [viewerAccountRefStr]
   );
   const workAudio = useWorkAudioPlayer();
-  const { showError } = useAppNotice();
+  const { showError, showInfo } = useAppNotice();
 
   const worksNavAuthorDisplay = useMemo(() => {
     const u = user as { display_name?: string; username?: string; phone?: string } | null | undefined;
@@ -283,6 +284,7 @@ export default function PodcastWorksGallery({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [zipBusy, setZipBusy] = useState<string | null>(null);
   const [stopBusyId, setStopBusyId] = useState<string | null>(null);
+  const [copyManuscriptBusyId, setCopyManuscriptBusyId] = useState<string | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
@@ -614,6 +616,22 @@ export default function PodcastWorksGallery({
       }
     },
     [onWorkDeleted]
+  );
+
+  const requestCopyManuscript = useCallback(
+    async (jobId: string, work?: Pick<WorkItem, "scriptText" | "scriptCharCount" | "status">) => {
+      if (copyManuscriptBusyId) return;
+      setCopyManuscriptBusyId(jobId);
+      try {
+        await copyWorkManuscriptToClipboard(jobId, { authHeaders: getAuthHeaders(), work });
+        showInfo("已复制到剪贴板");
+      } catch (e) {
+        showError(e instanceof Error ? e.message : "复制失败，请检查浏览器是否允许本站访问剪贴板。");
+      } finally {
+        setCopyManuscriptBusyId(null);
+      }
+    },
+    [copyManuscriptBusyId, getAuthHeaders, showError, showInfo]
   );
 
   const renderDownloadGated = useCallback(
@@ -1109,7 +1127,9 @@ export default function PodcastWorksGallery({
       viewerAccountRef: viewerAccountRefStr,
       activeQueueCardActions,
       stopBusyId,
-      requestStopActiveJob
+      requestStopActiveJob,
+      copyManuscriptBusyId,
+      requestCopyManuscript
     }),
     [
       variant,
@@ -1148,7 +1168,9 @@ export default function PodcastWorksGallery({
       viewerAccountRefStr,
       activeQueueCardActions,
       stopBusyId,
-      requestStopActiveJob
+      requestStopActiveJob,
+      copyManuscriptBusyId,
+      requestCopyManuscript
     ]
   );
 

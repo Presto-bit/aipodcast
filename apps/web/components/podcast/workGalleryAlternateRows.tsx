@@ -122,7 +122,9 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
     stopBusyId,
     requestStopActiveJob,
     activeQueueCardActions,
-    workDetailReturnTo
+    workDetailReturnTo,
+    copyManuscriptBusyId,
+    requestCopyManuscript
   } = useWorkGalleryListContext();
   const excerpt = scriptExcerptFromWork(w);
   const headlineFull = String(w.displayTitle || "").trim() || id;
@@ -194,6 +196,20 @@ export function WorkGalleryScriptListRow(props: AlternateRowProps): ReactNode {
               "rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-40",
               zipBusy === id ? "正在下载…" : "下载"
             )}
+            <button
+              type="button"
+              className="rounded-md border border-line bg-surface px-2 py-1 text-ink hover:bg-fill disabled:opacity-50"
+              disabled={copyManuscriptBusyId === id}
+              onClick={() =>
+                requestCopyManuscript(id, {
+                  scriptText: w.scriptText,
+                  scriptCharCount: w.scriptCharCount,
+                  status: w.status
+                })
+              }
+            >
+              {copyManuscriptBusyId === id ? "复制中…" : "复制全文"}
+            </button>
             {rowMutationsLocked ? null : (
               <>
                 <button

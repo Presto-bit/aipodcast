@@ -62,6 +62,8 @@ export type WorkGalleryListContextValue = {
   activeQueueCardActions: boolean;
   stopBusyId: string | null;
   requestStopActiveJob: (jobId: string) => void;
+  copyManuscriptBusyId: string | null;
+  requestCopyManuscript: (jobId: string, work?: Pick<WorkItem, "scriptText" | "scriptCharCount" | "status">) => void;
 };
 
 const WorkGalleryListContext = createContext<WorkGalleryListContextValue | null>(null);

@@ -589,7 +589,7 @@ export default function HomePage() {
                 {(overview.audioDurationSecSum / 60).toFixed(1)} 分
               </div>
             </Link>
-            <Link href="/works?tab=audio" className={statLinkClass}>
+            <Link href="/works?tab=script" className={statLinkClass}>
               <div className="text-xs font-medium text-muted group-hover:text-ink">编写字数</div>
               <div className="mt-0.5 font-medium tabular-nums text-ink">
                 {(overview.scriptCharCountSum / 10_000).toFixed(1)} 万字

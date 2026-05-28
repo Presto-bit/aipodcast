@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { useMemo } from "react";
 import type { WorkItem } from "../../lib/worksTypes";
 import { isTextOnlyWorkType } from "../../lib/worksTypes";
-import { sortWorksByRecency, splitWorksByGalleryKind } from "../../lib/workGalleryDisplay";
+import { sortWorksByRecency, splitWorksByGalleryKind, buildWorksTabHref } from "../../lib/workGalleryDisplay";
 
 const PodcastWorksGallery = dynamic(() => import("../podcast/PodcastWorksGallery"), {
   loading: () => (
@@ -29,8 +29,7 @@ type Props = {
 };
 
 function worksTabHref(tab: "audio" | "script" | "active", returnTo: string): string {
-  const q = new URLSearchParams({ tab, returnTo });
-  return `/works?${q.toString()}`;
+  return buildWorksTabHref(tab, returnTo);
 }
 
 function WorksGroup({

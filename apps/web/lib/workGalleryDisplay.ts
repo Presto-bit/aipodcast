@@ -51,3 +51,46 @@ export function sortWorksByRecency(works: WorkItem[]): WorkItem[] {
     return nb - na;
   });
 }
+
+export type WorksGalleryTab = "audio" | "script" | "active";
+
+const ACTIVE_JOB_STATUSES = new Set(["running", "queued", "processing", "pending"]);
+
+function workIsInFlight(work: WorkItem): boolean {
+  const st = String(work.status || "").trim().toLowerCase();
+  return ACTIVE_JOB_STATUSES.has(st);
+}
+
+/**
+ * 知识库/侧栏「查看全部」默认 Tab：优先进行中，否则按最近成片类型，再按数量兜底。
+ */
+export function inferPreferredWorksGalleryTab(input: {
+  works: WorkItem[];
+  pendingStudioWork?: WorkItem | null;
+}): WorksGalleryTab {
+  const pending = input.pendingStudioWork;
+  if (pending && workIsInFlight(pending)) {
+    return "active";
+  }
+
+  const sorted = sortWorksByRecency(input.works);
+  const latest = sorted[0];
+  if (latest) {
+    const t = String(latest.type || "");
+    if (isTextOnlyWorkType(t)) return "script";
+    if (isAudioGalleryWorkType(t)) return "audio";
+  }
+
+  const { audio, script } = splitWorksByGalleryKind(input.works);
+  if (script.length > audio.length) return "script";
+  if (audio.length > 0) return "audio";
+  if (script.length > 0) return "script";
+  return "audio";
+}
+
+export function buildWorksTabHref(tab: WorksGalleryTab, returnTo?: string): string {
+  const q = new URLSearchParams({ tab });
+  const rt = String(returnTo || "").trim();
+  if (rt) q.set("returnTo", rt);
+  return `/works?${q.toString()}`;
+}
