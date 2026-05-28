@@ -35,7 +35,7 @@ const NotebookStyleControls = dynamic(
 );
 import {
   NotebookStyleHeaderChip,
-  NotebookStyleLearnAction
+  NotebookStyleSourcesLearnHint
 } from "../../../components/notes/notebook-style/NotebookStyleControls";
 import NotebookStyleSourcesNotice from "../../../components/notes/NotebookStyleSourcesNotice";
 const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
@@ -981,6 +981,7 @@ export default function NotesPage() {
   const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false);
   const [deleteNotebookTarget, setDeleteNotebookTarget] = useState<string | null>(null);
   const [noteMenuOpenId, setNoteMenuOpenId] = useState<string | null>(null);
+  const [notesAskMenuOpen, setNotesAskMenuOpen] = useState(false);
   const [notebookCardMenu, setNotebookCardMenu] = useState<string | null>(null);
   const [hubDiscoverTab, setHubDiscoverTab] = useState<NotesHubDiscoverTab>("mine");
   const [workbenchMobilePanel, setWorkbenchMobilePanel] = useState<WorkbenchMobilePanel>("chat");
@@ -1032,15 +1033,16 @@ export default function NotesPage() {
 
   /** 仅用 Escape：不在 document 上监听 pointerdown，避免与侧栏导航同一事件管线冲突。 */
   useEffect(() => {
-    if (!notebookCardMenu && !noteMenuOpenId) return;
+    if (!notebookCardMenu && !noteMenuOpenId && !notesAskMenuOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       setNotebookCardMenu(null);
       setNoteMenuOpenId(null);
+      setNotesAskMenuOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [notebookCardMenu, noteMenuOpenId]);
+  }, [notebookCardMenu, noteMenuOpenId, notesAskMenuOpen]);
 
   /** 仅在主内容 <main> 上冒泡关闭溢出菜单；点击侧栏时事件不会进入 main，故不会触发 setState。 */
   const onNotesMainPointerDown = useCallback(
@@ -1053,8 +1055,11 @@ export default function NotesPage() {
       if (noteMenuOpenId && !t.closest("[data-note-overflow-menu]")) {
         setNoteMenuOpenId(null);
       }
+      if (notesAskMenuOpen && !t.closest("[data-notes-ask-overflow-menu]")) {
+        setNotesAskMenuOpen(false);
+      }
     },
-    [notebookCardMenu, noteMenuOpenId]
+    [notebookCardMenu, noteMenuOpenId, notesAskMenuOpen]
   );
 
   const [draftSelectedNoteIds, setDraftSelectedNoteIds] = useState<string[]>([]);
@@ -1143,7 +1148,7 @@ export default function NotesPage() {
   const scrollToNotebookStyleLearn = useCallback(() => {
     setSourcesPanelCollapsed(false);
     window.setTimeout(() => {
-      document.getElementById("notebook-style-learn-action")?.scrollIntoView({
+      document.getElementById("notebook-style-learn-hint")?.scrollIntoView({
         behavior: "smooth",
         block: "nearest"
       });
@@ -3748,15 +3753,15 @@ export default function NotesPage() {
 
   function openPodcastFlow() {
     if (sharedBrowse?.access === "read_only") {
-      setError("当前为只读分享笔记本，不可生成音频概览。");
+      setError("当前为只读分享笔记本，不可生成播客。");
       return;
     }
     if (!selectedNotebook.trim()) {
-      setError(`音频概览：${NOTES_NEED_NOTEBOOK}`);
+      setError(`生成播客：${NOTES_NEED_NOTEBOOK}`);
       return;
     }
     if (draftSelectedNoteIds.length === 0) {
-      setError(`音频概览：${NOTES_ASK_SOURCE_REQUIRED}`);
+      setError(`生成播客：${NOTES_ASK_SOURCE_REQUIRED}`);
       return;
     }
     setError("");
@@ -4129,10 +4134,7 @@ export default function NotesPage() {
                     添加资料
                   </button>
                 </div>
-                <NotebookStyleSourcesNotice
-                  item={notebookStyleItem}
-                  selectedNoteIds={draftSelectedNoteIds}
-                  noteMetas={styleNoteMetas}
+                <NotebookStyleSourcesLearnHint
                   showFirstLearnHint={
                     showNotebookStyleHint &&
                     computeStyleSyncStatus(notebookStyleItem, draftSelectedNoteIds, styleNoteMetas) ===
@@ -4142,8 +4144,8 @@ export default function NotesPage() {
                     dismissNotebookStyleHint();
                     setShowNotebookStyleHint(false);
                   }}
-                  actionToast={styleActionToast}
                 />
+                <NotebookStyleSourcesNotice actionToast={styleActionToast} />
 
                   <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-0.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4152,7 +4154,6 @@ export default function NotesPage() {
                       ? "创建笔记本后即可添加资料。"
                       : `已选 ${draftSelectedNoteIds.length} 条 · 本页 ${stats.total} 条${hasMoreNotes ? " · 仍有更多" : ""}`}
                   </p>
-                  {notebooks.length > 0 ? <NotebookStyleLearnAction /> : null}
                 </div>
                 {notesSorted.length > 0 ? (
                   <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink hover:bg-surface/70">
@@ -4364,33 +4365,57 @@ export default function NotesPage() {
             >
               <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line/50 pb-2">
                 <h2 className={WORKBENCH_SECTION_TITLE}>对话</h2>
-                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
                   <button
                     type="button"
                     disabled={sharedBrowse?.access === "read_only" || audioOverviewBusy}
-                    className="rounded-lg border border-line/70 bg-surface px-2 py-1 text-xs font-medium text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line/70 bg-surface text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                    title={audioOverviewBusy ? "生成播客…" : "生成播客"}
+                    aria-label={audioOverviewBusy ? "生成播客…" : "生成播客"}
                     onClick={() => openPodcastFlow()}
                   >
-                    {audioOverviewBusy ? "音频概览…" : "音频概览"}
+                    <IconWorkPodcast width={22} height={22} aria-hidden />
                   </button>
                   <button
                     type="button"
                     disabled={sharedBrowse?.access === "read_only"}
-                    className="rounded-lg border border-line/70 bg-surface px-2 py-1 text-xs font-medium text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line/70 bg-surface text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                    title="生成文章"
+                    aria-label="生成文章"
                     onClick={() => openArticleFlow()}
                   >
-                    生成文章
+                    <IconWorkScript width={22} height={22} aria-hidden />
                   </button>
-                  <button
-                    type="button"
-                    className="rounded-lg border border-line/70 bg-surface px-2 py-1 text-xs font-medium text-muted transition hover:bg-fill hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
-                    disabled={
-                      notesAskMessages.length === 0 && !notesAskMessages.some((m) => m.streaming)
-                    }
-                    onClick={() => clearNotesAskConversation()}
-                  >
-                    清除对话
-                  </button>
+                  <div className="relative" data-notes-ask-overflow-menu>
+                    <button
+                      type="button"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line/70 bg-surface text-lg leading-none text-muted transition hover:bg-fill hover:text-ink"
+                      aria-label="更多"
+                      aria-expanded={notesAskMenuOpen}
+                      title="更多"
+                      onClick={() => setNotesAskMenuOpen((v) => !v)}
+                    >
+                      ⋯
+                    </button>
+                    {notesAskMenuOpen ? (
+                      <div className="absolute right-0 top-full z-20 mt-1 min-w-[7.5rem] rounded-lg border border-line/80 bg-surface py-1 shadow-card">
+                        <button
+                          type="button"
+                          className="block w-full px-3 py-1.5 text-left text-xs text-muted hover:bg-fill hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
+                          disabled={
+                            notesAskMessages.length === 0 &&
+                            !notesAskMessages.some((m) => m.streaming)
+                          }
+                          onClick={() => {
+                            setNotesAskMenuOpen(false);
+                            clearNotesAskConversation();
+                          }}
+                        >
+                          清除对话
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
@@ -4405,7 +4430,7 @@ export default function NotesPage() {
                 ) : null}
                 <div
                   ref={notesAskScrollRef}
-                  className="h-[min(50vh,420px)] max-h-[min(50vh,420px)] min-h-[200px] w-full min-w-0 shrink-0 overflow-y-auto py-1"
+                  className="min-h-[200px] w-full min-w-0 flex-1 overflow-y-auto py-1"
                 >
                   {notesAskMessages.length === 0 ? (
                     <p className="text-xs text-muted">勾选左侧资料后即可提问</p>
@@ -4564,7 +4589,7 @@ export default function NotesPage() {
                     </div>
                   )}
                 </div>
-                <div className="flex min-w-0 shrink-0 flex-col gap-2">
+                <div className="mt-auto flex min-w-0 shrink-0 flex-col gap-2 pt-2">
                   {notebookDigestSummary ? (
                     <p className="rounded-lg border border-line/70 bg-fill/40 px-2.5 py-1.5 text-[11px] leading-snug text-muted">
                       笔记本综述：{notebookDigestSummary}

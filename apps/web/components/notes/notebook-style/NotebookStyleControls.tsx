@@ -213,16 +213,7 @@ export function NotebookStyleControls({
 
 /** C：参考资料标题行 — 风格已就绪 / 待更新芯片 */
 export function NotebookStyleHeaderChip() {
-  const {
-    syncStatus,
-    loading,
-    busy,
-    readOnly,
-    disabled,
-    selectedCount,
-    runLearn,
-    openModal
-  } = useNotebookStyleContext();
+  const { syncStatus, loading, busy, readOnly, disabled, openModal } = useNotebookStyleContext();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -274,62 +265,90 @@ export function NotebookStyleHeaderChip() {
           >
             查看详情
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="block w-full px-3 py-1.5 text-left text-xs text-ink hover:bg-fill disabled:opacity-45"
-            disabled={selectedCount === 0 || readOnly}
-            onClick={() => {
-              setMenuOpen(false);
-              runLearn();
-            }}
-          >
-            更新风格{selectedCount > 0 ? ` (${selectedCount}条)` : ""}
-          </button>
         </div>
       ) : null}
     </div>
   );
 }
 
-/** B：「已选 N 条」行 — 提炼 / 更新主按钮（已就绪且无待更新时不展示） */
-export function NotebookStyleLearnAction() {
+type NotebookStyleSourcesLearnHintProps = {
+  showFirstLearnHint?: boolean;
+  onDismissFirstLearnHint?: () => void;
+};
+
+/** 参考资料区：待更新 / 首次提炼提示（不含「更新风格 (N条)」计数文案） */
+export function NotebookStyleSourcesLearnHint({
+  showFirstLearnHint = false,
+  onDismissFirstLearnHint
+}: NotebookStyleSourcesLearnHintProps) {
   const {
     syncStatus,
     selectedCount,
     learnDisabled,
     busy,
+    readOnly,
     indexingHint,
     runLearn
   } = useNotebookStyleContext();
 
-  if (syncStatus === "ready") return null;
+  if (syncStatus === "ready" || readOnly) return null;
+  if (syncStatus === "none" && !showFirstLearnHint) return null;
 
   const isPending = syncStatus === "pending";
-  const label = busy ? "更新中…" : isPending ? `更新风格 (${selectedCount}条)` : "提炼写作风格";
+  const actionLabel = busy ? "更新中…" : isPending ? "更新风格" : "提炼风格";
 
   return (
-    <button
-      id="notebook-style-learn-action"
-      type="button"
-      disabled={learnDisabled}
-      title={
-        selectedCount === 0
-          ? "请先勾选资料"
-          : learnDisabled && !busy
-            ? "所选资料暂无可用正文"
-            : indexingHint
-      }
-      className={`inline-flex shrink-0 items-center justify-center rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+    <div
+      id="notebook-style-learn-hint"
+      className={`mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] leading-snug ${
         isPending
-          ? "border-warning/45 bg-warning-soft/80 text-warning-ink hover:bg-warning-soft"
-          : "border-brand/35 bg-brand/8 text-brand hover:bg-brand/12"
+          ? "border-warning/40 bg-warning-soft/70 text-warning-ink"
+          : "border-brand/25 bg-brand/6 text-ink"
       }`}
-      onClick={() => runLearn()}
+      role="status"
     >
-      {label}
-    </button>
+      <span className="min-w-0 flex-1">
+        {isPending
+          ? "所选资料有变化，可更新写作风格以用于对话、播客与文章"
+          : "勾选资料后可提炼写作风格，用于对话、播客与文章"}
+      </span>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {syncStatus === "none" && onDismissFirstLearnHint ? (
+          <button
+            type="button"
+            className="rounded-md px-1.5 py-0.5 text-[10px] text-muted hover:text-ink"
+            onClick={onDismissFirstLearnHint}
+          >
+            知道了
+          </button>
+        ) : null}
+        <button
+          type="button"
+          disabled={learnDisabled}
+          title={
+            selectedCount === 0
+              ? "请先勾选资料"
+              : learnDisabled && !busy
+                ? "所选资料暂无可用正文"
+                : indexingHint
+          }
+          className={`rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+            isPending
+              ? "border-warning/45 bg-surface/90 text-warning-ink hover:bg-surface"
+              : "border-brand/35 bg-brand/10 text-brand hover:bg-brand/15"
+          }`}
+          onClick={() => runLearn()}
+        >
+          {actionLabel}
+        </button>
+      </div>
+    </div>
   );
+}
+
+/** @deprecated 已由 NotebookStyleSourcesLearnHint 替代 */
+export function NotebookStyleLearnAction() {
+  return null;
 }
 
 export type { NoteStyleMeta as NotebookStyleNoteMeta };
