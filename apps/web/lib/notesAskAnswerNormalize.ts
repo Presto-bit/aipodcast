@@ -1,18 +1,19 @@
 /**
  * 将「向资料提问」的纯文本回答规范化：段间空行保留为段落，段内单行换行转为 Markdown 硬换行，便于阅读。
  */
+import { GENERAL_REFERENCE_HEADING_RE } from "./notesAskGeneralReference";
+
 const STIFF_HEADING_RE = /^#{1,3}\s*(可执行结论|开篇结论|直接结论)\s*$/gm;
 
 const SUPPLEMENT_DISMISS_RE =
   /资料已足够|无需补充|不必补充|不需要补充|无须补充|已足够回答/i;
-const SUPPLEMENT_HEADING_RE = /^#+\s*补充说明[^\n]*\n+/m;
 
 /** 模型判定「无需补充」时的内部文案，不向用户展示 */
 export function isDismissedNotesAskSupplement(raw: string): boolean {
   const t = String(raw || "").trim();
   if (!t) return true;
   if (t.includes("[[NO_SUPPLEMENT]]")) return true;
-  const body = t.replace(SUPPLEMENT_HEADING_RE, "").trim();
+  const body = t.replace(GENERAL_REFERENCE_HEADING_RE, "").trim();
   if (!body) return true;
   if (SUPPLEMENT_DISMISS_RE.test(body) && body.length < 220) return true;
   const lines = body.split("\n").map((ln) => ln.trim()).filter(Boolean);
@@ -20,7 +21,7 @@ export function isDismissedNotesAskSupplement(raw: string): boolean {
   return false;
 }
 
-/** 资料正文 + 通识补充（合并为同一文稿区展示） */
+/** 资料正文 + 通识参考（合并为同一文稿区展示，如保存到自媒体素材） */
 export function buildNotesAskAnswerBody(
   content: string,
   supplementContent?: string

@@ -52,4 +52,19 @@ def test_discard_marker_and_heading_skip():
 
 def test_sanitize_adds_heading():
     out = sanitize_supplement_answer("这是通识解释。")
-    assert out.startswith("## 补充说明")
+    assert "通识参考" in out
+    assert "非资料原文" in out
+
+
+def test_should_run_on_short_context():
+    assert should_run_supplement_stage(
+        corpus_answer="根据现有摘录……",
+        qa_plan={"contextChars": 600, "retrievalChunksMeta": [{"score": 0.2}]},
+    )
+
+
+def test_legacy_heading_normalized():
+    out = sanitize_supplement_answer(
+        "## 补充说明（非资料原文，仅供参考）\n\n- 通识要点一"
+    )
+    assert out.startswith("## 通识参考")

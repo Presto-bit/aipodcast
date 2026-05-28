@@ -227,10 +227,17 @@ def per_note_retrieval_top_k(top_k: int | None, note_count: int) -> int:
     return max(12, min(32, base // n))
 
 
-def build_notes_ask_system_prompt(answer_type: str) -> str:
+def build_notes_ask_system_prompt(answer_type: str, dialogue_style_prompt: str | None = None) -> str:
     t = answer_type if answer_type in _STYLE_HINTS else "general"
     hint = _STYLE_HINTS[t]
-    return f"{_SYSTEM_CORE}\n{hint}"
+    base = f"{_SYSTEM_CORE}\n{hint}"
+    style = (dialogue_style_prompt or "").strip()
+    if not style:
+        return base
+    return (
+        f"{base}\n\n【对话口吻】\n{style}\n"
+        "以上口吻仅影响表述方式；事实仍须严格依据资料摘录，不得因风格要求编造或 extrapolate。"
+    )
 
 
 def build_notes_ask_user_preamble() -> str:

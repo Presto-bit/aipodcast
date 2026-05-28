@@ -1304,6 +1304,7 @@ def notes_ask_api(body: NotesAskRequest, request: Request):
             include_all_sources=body.include_all_sources,
             require_preprocess_ready=body.require_preprocess_ready,
             project_owner_user_uuid=project_owner,
+            dialogue_style_prompt=body.dialogue_style_prompt,
         )
     except ValueError as e:
         msg = str(e)
@@ -1370,6 +1371,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 session_state=body.session_state,
                 require_preprocess_ready=body.require_preprocess_ready,
                 project_owner_user_uuid=project_owner,
+                dialogue_style_prompt=body.dialogue_style_prompt,
             )
             _notes_startup_logger.info(
                 "notes_ask_stage stage=context_ready request_id=%s elapsed_ms=%.1f context_ms=%.1f",
@@ -1403,6 +1405,7 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
             prepared_messages_sources=prepared,
             project_owner_user_uuid=project_owner,
             request_id=rid,
+            dialogue_style_prompt=body.dialogue_style_prompt,
         ):
             ev_type = str(ev.get("type") or "").strip()
             if ev_type == "chunk" and not saw_first_chunk:

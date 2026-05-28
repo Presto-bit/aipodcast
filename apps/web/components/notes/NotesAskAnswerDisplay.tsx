@@ -7,10 +7,25 @@ import {
   type NotesAskSource,
   type NotesAskWebSource
 } from "../../lib/notesAskCitation";
+import {
+  isDismissedNotesAskSupplement,
+  normalizeNotesAskAnswerForDisplay
+} from "../../lib/notesAskAnswerNormalize";
+import {
+  markGeneralReferenceToastSeen,
+  NOTES_ASK_GENERAL_REFERENCE_DISCLAIMER,
+  NOTES_ASK_LOW_CONFIDENCE_HINT,
+  shouldShowGeneralReferenceToast
+} from "../../lib/notesAskGeneralReference";
 import NotesAskAnswerMarkdownBody from "./NotesAskAnswerMarkdownBody";
 
 type Props = {
+  /** 仅资料摘录支持的回答正文 */
   text: string;
+  /** 通识参考块（非资料原文），与 text 分开展示 */
+  supplementContent?: string;
+  /** 本轮检索置信度偏低 */
+  lowConfidence?: boolean;
   /** 与编排器 done.sources 一致；有则正文 [n] 可点击查看摘录。 */
   sources?: NotesAskSource[];
   /** 联网检索条目，[w1] 外链与脚注 */
@@ -155,6 +170,8 @@ function SourceExcerptModal({
  */
 export function NotesAskAnswerDisplay({
   text,
+  supplementContent,
+  lowConfidence = false,
   sources,
   webSources,
   followUpQuestion,
@@ -164,6 +181,22 @@ export function NotesAskAnswerDisplay({
 }: Props) {
   const [modalSource, setModalSource] = useState<NotesAskSource | null>(null);
   const [webSourcesOpen, setWebSourcesOpen] = useState(false);
+  const [generalRefToast, setGeneralRefToast] = useState("");
+
+  const supplementBody = useMemo(() => {
+    const raw = String(supplementContent || "").trim();
+    if (!raw || isDismissedNotesAskSupplement(raw)) return "";
+    return normalizeNotesAskAnswerForDisplay(raw);
+  }, [supplementContent]);
+
+  useEffect(() => {
+    if (!supplementBody) return;
+    if (!shouldShowGeneralReferenceToast()) return;
+    markGeneralReferenceToastSeen();
+    setGeneralRefToast("本次回答包含通识参考，非你的资料原文，请自行核实。");
+    const t = window.setTimeout(() => setGeneralRefToast(""), 4200);
+    return () => window.clearTimeout(t);
+  }, [supplementBody]);
 
   const sortedSources = useMemo(() => {
     if (!sources?.length) return [];
@@ -183,6 +216,19 @@ export function NotesAskAnswerDisplay({
 
   return (
     <div className={`notes-ask-answer flex min-w-0 flex-col gap-3 text-ink ${wrap}`}>
+      {generalRefToast ? (
+        <p
+          className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-snug text-amber-950 dark:text-amber-100"
+          role="status"
+        >
+          {generalRefToast}
+        </p>
+      ) : null}
+      {lowConfidence && !supplementBody ? (
+        <p className="rounded-lg border border-line/80 bg-fill/50 px-2.5 py-1.5 text-[11px] leading-snug text-muted">
+          {NOTES_ASK_LOW_CONFIDENCE_HINT}
+        </p>
+      ) : null}
       <NotesAskAnswerMarkdownBody
         text={text}
         sources={sources}
@@ -193,6 +239,17 @@ export function NotesAskAnswerDisplay({
           setModalSource(src);
         }}
       />
+      {supplementBody ? (
+        <section
+          className="mt-1 border-t border-amber-500/35 pt-3"
+          aria-label="通识参考"
+        >
+          <p className="mb-2 text-[11px] leading-snug text-amber-900/90 dark:text-amber-100/90">
+            {NOTES_ASK_GENERAL_REFERENCE_DISCLAIMER}
+          </p>
+          <NotesAskAnswerMarkdownBody text={supplementBody} sources={[]} webSources={[]} />
+        </section>
+      ) : null}
 
       {followUpQuestion?.trim() ? (
         <p className="mt-4 min-w-0 text-[14px] leading-[1.65] text-ink">

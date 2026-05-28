@@ -6,6 +6,8 @@ import { workCoverImageSrc } from "../../lib/workCoverImage";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { WorkHubManuscriptBar } from "./WorkHubManuscriptBar";
 import { WorkHubScriptActions } from "./WorkHubScriptActions";
+import { WorkHubSocialPublishDetail } from "./WorkHubSocialPublishDetail";
+import type { SocialPublishWorkDetail } from "../../lib/socialPublishWorkDetail";
 import { IconPause, IconPlayFilled, WorkTypeIcon } from "../icons";
 
 function formatClock(sec: number): string {
@@ -29,6 +31,9 @@ type Props = {
   navMetaPipe: string;
   hasAudio: boolean;
   scriptDraft: boolean;
+  /** 自媒体发布稿：展示标题/配图等结构，正文区展示 body */
+  socialPublishDraft?: boolean;
+  socialPublishDetail?: SocialPublishWorkDetail | null;
   audioBlocked: boolean;
   durationSecHint: number | null;
   manuscriptBody: string;
@@ -69,6 +74,8 @@ export function WorkHubOverviewPanel({
   navMetaPipe,
   hasAudio,
   scriptDraft,
+  socialPublishDraft = false,
+  socialPublishDetail = null,
   audioBlocked,
   durationSecHint,
   manuscriptBody,
@@ -109,6 +116,7 @@ export function WorkHubOverviewPanel({
 
   const scriptManuscriptPanel = scriptDraft && showManuscriptTools;
   const podcastChapterSection = !scriptDraft && !audioBlocked && showManuscriptTools;
+  const showSocialMeta = socialPublishDraft && Boolean(socialPublishDetail);
 
   const onCoverPlayClick = useCallback(() => {
     if (!hasAudio || audioBlocked) return;
@@ -201,7 +209,9 @@ export function WorkHubOverviewPanel({
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-1 text-center">
               <WorkTypeIcon scriptDraft={scriptDraft} size={22} className="text-brand/80" aria-hidden />
-              <span className="scale-90 text-[9px] leading-tight text-muted">{scriptDraft ? "文稿" : "无封面"}</span>
+              <span className="scale-90 text-[9px] leading-tight text-muted">
+                {socialPublishDraft ? "自媒体" : scriptDraft ? "文稿" : "无封面"}
+              </span>
             </div>
           )}
 
@@ -288,14 +298,22 @@ export function WorkHubOverviewPanel({
       {scriptDraft || detailTab === "edit" ? (
         <>
           {scriptManuscriptPanel ? (
-            <p className="text-xs leading-relaxed text-muted">纯文稿作品无播客音频</p>
+            <p className="text-xs leading-relaxed text-muted">
+              {socialPublishDraft ? "自媒体发布稿为纯文稿，无播客音频" : "纯文稿作品无播客音频"}
+            </p>
+          ) : null}
+
+          {showSocialMeta && socialPublishDetail ? (
+            <WorkHubSocialPublishDetail detail={socialPublishDetail} jobGenerating={jobGenerating} />
           ) : null}
 
           {scriptManuscriptPanel ? (
             <section className="rounded-2xl border border-line bg-fill/20 px-3 py-3 sm:px-4">
               {regenProgressEl}
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">文稿</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  {socialPublishDraft ? "正文（含话题与互动）" : "文稿"}
+                </h3>
                 {showManuscriptTools ? (
                   <WorkHubScriptActions
                     manuscriptBody={manuscriptBody}

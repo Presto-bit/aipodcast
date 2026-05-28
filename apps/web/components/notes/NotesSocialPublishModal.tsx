@@ -1,7 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { IconChevronLeft, IconClipboard, IconX } from "../icons";
+import { IconChevronLeft, IconX } from "../icons";
 import {
   clearActiveGenerationJob,
   readActiveGenerationJob,
@@ -9,7 +10,6 @@ import {
 } from "../../lib/activeJobSession";
 import { apiErrorMessage, softenBareErrorLineForUi } from "../../lib/apiError";
 import { createJob } from "../../lib/api";
-import { waitForSocialPublishJob } from "../../lib/socialPublishApi";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { buildSocialPublishReferenceBody } from "../../lib/socialPublishReference";
 import {
@@ -19,7 +19,6 @@ import {
   defaultPersonaOptions,
   defaultQuickOptions,
   isPersonaValid,
-  platformLabel,
   publishPresetBundle,
   SOCIAL_PUBLISH_CHARS_PRESETS,
   toggleMultiSelect,
@@ -29,17 +28,14 @@ import {
   SOCIAL_TARGET_CHARS_MIN,
   charsFromPreset
 } from "../../lib/socialPublishPresets";
-import { buildSocialPublishClipboardText, copyGuideLines } from "../../lib/socialPublishCopy";
 import { loadSocialPublishPrefs, saveSocialPublishPrefs } from "../../lib/socialPublishStorage";
 import type {
   SocialPublishAdvancedOptions,
-  SocialPublishDraft,
   SocialPublishPersonaOptions,
   SocialPublishPlatform,
   SocialPublishQuickOptions,
   SocialPublishWizardStep
 } from "../../lib/socialPublishTypes";
-import { NotesSocialPublishStudio } from "./NotesSocialPublishStudio";
 
 type Props = {
   open: boolean;
@@ -56,8 +52,10 @@ type Props = {
   /** 风格名称（可改名后的 displayName） */
   notebookStyleName?: string;
   createdByPhone?: string;
-  /** 生成成功并写入作品库后刷新笔记本作品区 */
-  onSucceeded?: (jobId: string) => void;
+  /** 创建任务后跳转作品详情时的 returnTo 查询参数 */
+  workDetailReturnTo?: string;
+  /** 任务已创建（写入最近作品、刷新列表） */
+  onJobCreated?: (jobId: string) => void;
 };
 
 const inputCls =
@@ -70,13 +68,15 @@ export default function NotesSocialPublishModal({
   noteIds,
   selectedNoteTitles = [],
   notesSourceOwnerUserId = null,
-  authHeaders,
+  authHeaders: _authHeadersUnused,
   notebookStylePrompt = "",
   notebookStyleChips = [],
   notebookStyleName = "",
   createdByPhone = "",
-  onSucceeded
+  workDetailReturnTo = "/notes",
+  onJobCreated
 }: Props) {
+  const router = useRouter();
   const prefs = useMemo(() => loadSocialPublishPrefs(), [open]);
   const [step, setStep] = useState<SocialPublishWizardStep>("platform");
   const [platform, setPlatform] = useState<SocialPublishPlatform>(prefs.platform);
@@ -88,12 +88,8 @@ export default function NotesSocialPublishModal({
     defaultPersonaOptions(prefs.platform)
   );
   const [targetCharsInput, setTargetCharsInput] = useState("600");
-  const [draft, setDraft] = useState<SocialPublishDraft | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [copyToast, setCopyToast] = useState("");
-  const [showStudio, setShowStudio] = useState(false);
-  const [showGuide, setShowGuide] = useState(false);
   const hasNotebookStyle = Boolean(notebookStylePrompt.trim());
   const styleChipsPreview = useMemo(
     () => notebookStyleChips.filter(Boolean).slice(0, 4),
@@ -111,7 +107,6 @@ export default function NotesSocialPublishModal({
   const personaCardHintCls =
     "mt-0.5 block min-h-[2.5rem] text-[10px] leading-snug text-muted line-clamp-2";
   const [useNotebookPersona, setUseNotebookPersona] = useState(true);
-  const [progressHint, setProgressHint] = useState("");
 
   const preset = useMemo(() => publishPresetBundle(platform), [platform]);
 
@@ -126,20 +121,22 @@ export default function NotesSocialPublishModal({
     setAdvanced(defaultAdvancedOptions(p.platform));
     setPersona(defaultPersonaOptions(p.platform));
     setStep("platform");
-    setDraft(null);
     setError("");
     setBusy(false);
-    setShowStudio(false);
-    setShowGuide(false);
     setUseNotebookPersona(Boolean(notebookStylePrompt.trim()));
-    setProgressHint("");
   }, [open, noteIds, notebookStylePrompt]);
 
   useEffect(() => {
-    if (!copyToast) return;
-    const t = window.setTimeout(() => setCopyToast(""), 3200);
-    return () => window.clearTimeout(t);
-  }, [copyToast]);
+    if (!open) return;
+    const jid = readActiveGenerationJob("social_publish");
+    if (!jid) return;
+    onClose();
+    const returnTo = workDetailReturnTo.trim() || "/notes";
+    router.push(
+      `/works/${encodeURIComponent(jid)}?returnTo=${encodeURIComponent(returnTo)}`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅打开时恢复未完成任务
+  }, [open]);
 
   const quickForPayload = useMemo(
     (): SocialPublishQuickOptions => ({
@@ -153,37 +150,6 @@ export default function NotesSocialPublishModal({
   );
 
   const personaValid = isPersonaValid(persona);
-
-  useEffect(() => {
-    if (!open) return;
-    const jid = readActiveGenerationJob("social_publish");
-    if (!jid) return;
-    setStep("generating");
-    setBusy(true);
-    setError("");
-    void (async () => {
-      try {
-        const result = await waitForSocialPublishJob({
-          jobId: jid,
-          platform,
-          authHeaders,
-          onProgress: (msg) => setProgressHint(msg)
-        });
-        setDraft(result);
-        setStep("result");
-        setShowStudio(true);
-        saveSocialPublishPrefs(platform, quickForPayload);
-        onSucceeded?.(jid);
-      } catch (err) {
-        setError(softenBareErrorLineForUi(String(err instanceof Error ? err.message : err)));
-        setStep("options");
-      } finally {
-        clearActiveGenerationJob("social_publish");
-        setBusy(false);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅打开时恢复未完成任务
-  }, [open]);
 
   const handlePlatformPick = (p: SocialPublishPlatform) => {
     setPlatform(p);
@@ -213,7 +179,6 @@ export default function NotesSocialPublishModal({
     }
     setBusy(true);
     setError("");
-    setStep("generating");
     try {
       let personaForPayload =
         useNotebookPersona && notebookStylePrompt.trim()
@@ -250,30 +215,22 @@ export default function NotesSocialPublishModal({
       const jobId = String(job.id || "").trim();
       if (!jobId) throw new Error("创建发布稿任务失败");
       setActiveGenerationJob("social_publish", jobId);
-      setProgressHint("已提交云端队列…");
-      const result = await waitForSocialPublishJob({
-        jobId,
-        platform,
-        authHeaders,
-        onProgress: (msg) => setProgressHint(msg)
-      });
-      clearActiveGenerationJob("social_publish");
-      setDraft(result);
       saveSocialPublishPrefs(platform, quickForPayload);
-      setStep("result");
-      setShowStudio(true);
-      onSucceeded?.(jobId);
+      onJobCreated?.(jobId);
+      onClose();
+      const returnTo = workDetailReturnTo.trim() || "/notes";
+      router.push(
+        `/works/${encodeURIComponent(jobId)}?returnTo=${encodeURIComponent(returnTo)}`
+      );
     } catch (err) {
       clearActiveGenerationJob("social_publish");
       const raw = err instanceof Error ? err.message : String(err);
       setError(softenBareErrorLineForUi(raw) || apiErrorMessage({}, "生成发布稿失败"));
-      setStep("options");
     } finally {
       setBusy(false);
     }
   }, [
     canGenerate,
-    authHeaders,
     noteIds,
     selectedNoteTitles,
     notesSourceOwnerUserId,
@@ -285,7 +242,10 @@ export default function NotesSocialPublishModal({
     notebookStylePrompt,
     createdByPhone,
     notebook,
-    onSucceeded
+    onJobCreated,
+    onClose,
+    router,
+    workDetailReturnTo
   ]);
 
   function chipBtn(active: boolean) {
@@ -294,31 +254,7 @@ export default function NotesSocialPublishModal({
     }`;
   }
 
-  async function copyPublishPack() {
-    if (!draft) return;
-    const text = buildSocialPublishClipboardText(draft);
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyToast("已复制发布包，请按下方指引粘贴到平台");
-      setShowGuide(true);
-    } catch {
-      setError("复制失败，请检查浏览器权限");
-    }
-  }
-
   if (!open) return null;
-
-  if (showStudio && draft) {
-    return (
-      <NotesSocialPublishStudio
-        draft={draft}
-        onDraftChange={setDraft}
-        onBack={() => setShowStudio(false)}
-        onClose={onClose}
-        onCopy={copyPublishPack}
-      />
-    );
-  }
 
   return (
     <div
@@ -339,7 +275,9 @@ export default function NotesSocialPublishModal({
             <h2 id="social-publish-title" className="text-base font-semibold text-ink">
               发布到自媒体
             </h2>
-            <p className="mt-0.5 text-[11px] text-muted">预览与复制，需自行在平台 App 内粘贴发布</p>
+            <p className="mt-0.5 text-[11px] text-muted">
+              提交后进入作品详情页查看进度与完整发布稿，需自行在平台 App 内粘贴发布
+            </p>
           </div>
           <button
             type="button"
@@ -577,154 +515,84 @@ export default function NotesSocialPublishModal({
               </div>
               <div>
                 <p className="mb-1.5 text-xs font-medium text-ink">字数</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SOCIAL_PUBLISH_CHARS_PRESETS.map((o) => (
-                      <button
-                        key={o.id}
-                        type="button"
-                        className={chipBtn(quick.targetCharsPreset === o.id)}
-                        onClick={() => {
-                          if (o.id === "custom") {
-                            setQuick((q) => ({ ...q, targetCharsPreset: "custom" }));
-                            return;
-                          }
-                          setQuick((q) => ({
-                            ...q,
-                            targetCharsPreset: o.id,
-                            targetChars: o.chars
-                          }));
-                          setTargetCharsInput(String(o.chars));
-                        }}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                  {quick.targetCharsPreset === "custom" ? (
-                    <label className="mt-2 block text-[11px] text-ink">
-                      自定义字数
-                      <input
-                        type="number"
-                        min={SOCIAL_TARGET_CHARS_MIN}
-                        max={SOCIAL_TARGET_CHARS_MAX}
-                        className={`mt-1 w-full ${inputCls}`}
-                        value={targetCharsInput}
-                        onChange={(e) => setTargetCharsInput(e.target.value)}
-                        onBlur={commitTargetCharsInput}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            commitTargetCharsInput();
-                          }
-                        }}
-                      />
-                    </label>
-                  ) : (
-                    <p className="mt-1.5 text-[10px] text-muted">当前约 {quick.targetChars} 字</p>
-                  )}
+                <div className="flex flex-wrap gap-1.5">
+                  {SOCIAL_PUBLISH_CHARS_PRESETS.map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      className={chipBtn(quick.targetCharsPreset === o.id)}
+                      onClick={() => {
+                        if (o.id === "custom") {
+                          setQuick((q) => ({ ...q, targetCharsPreset: "custom" }));
+                          return;
+                        }
+                        setQuick((q) => ({
+                          ...q,
+                          targetCharsPreset: o.id,
+                          targetChars: o.chars
+                        }));
+                        setTargetCharsInput(String(o.chars));
+                      }}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
                 </div>
-                <label className="block text-xs font-medium text-ink">
-                  其他要求
-                  <textarea
-                    className={`mt-1.5 min-h-[72px] w-full resize-y ${inputCls}`}
-                    value={persona.otherRequirements}
-                    onChange={(e) =>
-                      setPersona((p) => ({ ...p, otherRequirements: e.target.value }))
-                    }
-                    placeholder="例如：突出对比实验、不要提价格、语气更犀利…"
-                    maxLength={300}
-                  />
-                </label>
-                <p className="text-[10px] text-muted">
-                  与「生成文章」相同：提交云端队列后轮询结果，不占长连接，避免网关 504；仅依据左侧勾选资料生成。
-                </p>
+                {quick.targetCharsPreset === "custom" ? (
+                  <label className="mt-2 block text-[11px] text-ink">
+                    自定义字数
+                    <input
+                      type="number"
+                      min={SOCIAL_TARGET_CHARS_MIN}
+                      max={SOCIAL_TARGET_CHARS_MAX}
+                      className={`mt-1 w-full ${inputCls}`}
+                      value={targetCharsInput}
+                      onChange={(e) => setTargetCharsInput(e.target.value)}
+                      onBlur={commitTargetCharsInput}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitTargetCharsInput();
+                        }
+                      }}
+                    />
+                  </label>
+                ) : (
+                  <p className="mt-1.5 text-[10px] text-muted">当前约 {quick.targetChars} 字</p>
+                )}
+              </div>
+              <label className="block text-xs font-medium text-ink">
+                其他要求
+                <textarea
+                  className={`mt-1.5 min-h-[72px] w-full resize-y ${inputCls}`}
+                  value={persona.otherRequirements}
+                  onChange={(e) => setPersona((p) => ({ ...p, otherRequirements: e.target.value }))}
+                  placeholder="例如：突出对比实验、不要提价格、语气更犀利…"
+                  maxLength={300}
+                />
+              </label>
+              <p className="text-[10px] text-muted">
+                与「生成文章」相同：提交后跳转作品详情页查看进度，生成完成后在同一页查看标题、配图建议与正文。
+              </p>
             </>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
                 className="rounded-lg border border-line px-3 py-2 text-sm"
                 onClick={() => setStep("platform")}
+                disabled={busy}
               >
                 上一步
               </button>
               <button
                 type="button"
                 className="rounded-lg bg-brand px-3 py-2 text-sm text-brand-foreground disabled:opacity-45"
-                disabled={!personaValid || !canGenerate}
+                disabled={!personaValid || !canGenerate || busy}
                 onClick={() => void runGenerate()}
               >
-                开始生成
+                {busy ? "提交中…" : "开始生成"}
               </button>
             </div>
-          </div>
-        ) : null}
-
-        {step === "generating" ? (
-          <div className="mt-8 flex flex-col items-center gap-3 py-6 text-center">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-            <p className="text-sm text-ink">正在生成 {platformLabel(platform)} 发布稿…</p>
-            <p className="text-[11px] text-muted">
-              {progressHint || "与「生成文章」相同：已提交云端队列，关闭弹窗后任务仍会继续"}
-            </p>
-          </div>
-        ) : null}
-
-        {step === "result" && draft ? (
-          <div className="mt-4 space-y-3">
-            <p className="text-sm font-medium text-success-ink">✓ {platformLabel(platform)} 稿已就绪</p>
-            <p className="text-[11px] text-muted">
-              已保存到本页下方「作品」，关闭或刷新后仍可从作品区打开、复制或下载文稿。
-            </p>
-            {"compliance" in draft && draft.compliance ? (
-              <p className="text-[11px] text-muted">{draft.compliance.userMessage}</p>
-            ) : null}
-            <div className="max-h-48 overflow-y-auto rounded-xl border border-line bg-fill/30 p-3 text-xs leading-relaxed text-ink">
-              <p className="font-semibold">
-                {draft.titles[draft.selectedTitleIndex] || draft.titles[0]}
-              </p>
-              <p className="mt-2 whitespace-pre-wrap">{draft.body.slice(0, 600)}</p>
-              {draft.body.length > 600 ? <p className="mt-1 text-muted">…</p> : null}
-            </div>
-            <button
-              type="button"
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-brand-foreground"
-              onClick={() => void copyPublishPack()}
-            >
-              <IconClipboard width={18} height={18} />
-              复制发布包
-            </button>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="flex-1 rounded-lg border border-line px-3 py-2 text-sm"
-                onClick={() => setShowStudio(true)}
-              >
-                精细编辑与预览
-              </button>
-              <button
-                type="button"
-                className="flex-1 rounded-lg border border-line px-3 py-2 text-sm"
-                onClick={() => {
-                  setStep("options");
-                  setDraft(null);
-                }}
-              >
-                重新生成
-              </button>
-            </div>
-            {showGuide || copyToast ? (
-              <div className="rounded-lg border border-brand/25 bg-brand/5 px-2.5 py-2 text-[11px] text-ink">
-                {copyToast ? <p className="font-medium">{copyToast}</p> : null}
-                <ol className="mt-1 list-decimal pl-4 text-muted">
-                  {copyGuideLines(platform).map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ol>
-              </div>
-            ) : null}
-            <button type="button" className="w-full text-center text-xs text-muted hover:text-ink" onClick={onClose}>
-              关闭
-            </button>
           </div>
         ) : null}
       </div>

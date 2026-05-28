@@ -156,6 +156,11 @@ class NotesAskRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("require_preprocess_ready", "requirePreprocessReady"),
     )
+    dialogue_style_prompt: str | None = Field(
+        default=None,
+        max_length=4000,
+        validation_alias=AliasChoices("dialogue_style_prompt", "dialogueStylePrompt"),
+    )
 
     @field_validator("note_ids")
     @classmethod

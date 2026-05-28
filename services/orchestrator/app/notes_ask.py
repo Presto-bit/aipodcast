@@ -445,6 +445,7 @@ def _prepare_notes_ask_messages(
     session_state: dict[str, Any] | None = None,
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
+    dialogue_style_prompt: str | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
     q = (question or "").strip()
     if not q:
@@ -530,8 +531,10 @@ def _prepare_notes_ask_messages(
         preamble += f"\n\n【覆盖率与本轮模式】{hint}（qaMode={qa_plan.get('qaMode')}）"
     if qa_meta.get("lowConfidence") or qa_plan.get("lowConfidence"):
         preamble += (
-            "\n\n【置信度】检索分数偏低或向量覆盖率不足：若材料未明确记载，"
-            "须直接说明「无法从已索引内容确认」，勿编造。"
+            "\n\n【资料覆盖说明】本轮从勾选资料中检索到的摘录较少或相关性偏低。"
+            "请先回答摘录中能够支持的内容；对摘录未涉及的部分须明确写「资料中未提及」或"
+            "「无法从已索引内容确认」，勿编造。系统可能在资料回答之后追加「通识参考」块"
+            "（非资料原文），勿与摘录混写在同一段。"
         )
     body_parts: list[str] = [preamble + context]
     if history_block:
@@ -541,10 +544,13 @@ def _prepare_notes_ask_messages(
     body_parts.append(f"问题：{q}")
     user_block = "\n\n---\n\n".join(body_parts)
     messages = [
-        {"role": "system", "content": build_notes_ask_system_prompt(answer_type)},
+        {
+            "role": "system",
+            "content": build_notes_ask_system_prompt(answer_type, dialogue_style_prompt),
+        },
         {"role": "user", "content": user_block},
     ]
-    qa_plan = {**qa_plan, **qa_meta}
+    qa_plan = {**qa_plan, **qa_meta, "contextChars": len(context.strip())}
     if plan:
         cov = str(plan.get("coverage") or "").strip().lower()
         if cov in ("full", "partial", "none"):
@@ -562,7 +568,10 @@ def _prepare_notes_ask_messages(
 
 
 _NOTES_ASK_VALUE_ERROR_MESSAGES: dict[str, str] = {
-    "empty_context": "当前勾选资料没有可用于问答的正文（可能尚在解析/索引中）。请打开资料预览确认已有文字，或稍后再试。",
+    "empty_context": (
+        "当前勾选资料尚无可用于问答的正文（可能仍在解析或索引中），本次无法基于资料作答，也不会生成通识参考。"
+        "请打开资料预览确认已有文字，或稍后再试。"
+    ),
     "note_not_found": "部分资料已不存在或无权访问，请刷新列表后重新勾选。",
     "notebook_required": "请先选择笔记本。",
     "note_ids_required": "请至少勾选一条资料后再提问。",
@@ -647,6 +656,7 @@ def iter_notes_answer_events(
     ) = None,
     project_owner_user_uuid: str | None = None,
     request_id: str | None = None,
+    dialogue_style_prompt: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """SSE 事件：chunk / done / followups / error。
 
@@ -667,6 +677,7 @@ def iter_notes_answer_events(
             session_state=session_state,
             require_preprocess_ready=require_preprocess_ready,
             project_owner_user_uuid=project_owner_user_uuid,
+            dialogue_style_prompt=dialogue_style_prompt,
         )
     acc_answer: list[str] = []
     try:
@@ -1120,6 +1131,7 @@ def answer_notes_question(
     include_all_sources: bool | None = None,
     require_preprocess_ready: bool | None = None,
     project_owner_user_uuid: str | None = None,
+    dialogue_style_prompt: str | None = None,
 ) -> dict[str, Any]:
     messages, sources, qa_plan = _prepare_notes_ask_messages(
         notebook=notebook,
@@ -1130,6 +1142,7 @@ def answer_notes_question(
         session_state=session_state,
         require_preprocess_ready=require_preprocess_ready,
         project_owner_user_uuid=project_owner_user_uuid,
+        dialogue_style_prompt=dialogue_style_prompt,
     )
     try:
         answer, trace_id = invoke_llm_chat_messages_with_minimax_fallback(

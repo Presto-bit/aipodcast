@@ -15,7 +15,7 @@ const NOTES_ASK_CODE_MAP: Record<string, string> = {
   chat_messages_empty: "发送给模型的消息为空，请刷新页面后重试。",
   upstream_error: "上游模型服务异常，请稍后重试。",
   empty_context:
-    "当前勾选资料没有可用于问答的正文（可能尚在解析/索引中）。请打开资料预览确认已有文字，或稍后再试。",
+    "当前勾选资料尚无可用于问答的正文（可能仍在解析或索引中），本次无法基于资料作答，也不会生成通识参考。请打开资料预览确认已有文字，或稍后再试。",
   note_not_found: "部分资料已不存在或无权访问，请刷新列表后重新勾选。",
   notebook_not_shared: "该分享笔记本不可访问或链接已失效。",
   notebook_required: "请先选择笔记本。",

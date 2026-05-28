@@ -6,6 +6,7 @@ import os
 import re
 from typing import Any, Iterator
 
+from .notes_ask_general_reference import GENERAL_REFERENCE_HEADING, normalize_general_reference_heading
 from .notes_ask_style import notes_ask_temperature
 from .provider_router import invoke_llm_chat_messages_stream_iter
 
@@ -49,7 +50,7 @@ _SKIP_SUPPLEMENT_RE = re.compile(
     re.I,
 )
 _SUPPLEMENT_HEADING_RE = re.compile(
-    r"^#+\s*补充说明[^\n]*\n+",
+    r"^#+\s*(?:通识参考|补充说明)[^\n]*\n+",
     re.MULTILINE,
 )
 _CITATION_IN_SUPPLEMENT_RE = re.compile(r"\[\s*\d+\s*\]")
@@ -69,6 +70,20 @@ def notes_ask_supplement_max_tokens() -> int:
         return max(256, min(2048, int(os.getenv("NOTES_ASK_SUPPLEMENT_MAX_TOKENS", "1024") or "1024")))
     except (TypeError, ValueError):
         return 1024
+
+
+def _supplement_min_context_chars() -> int:
+    try:
+        return max(400, min(8000, int(os.getenv("NOTES_ASK_SUPPLEMENT_MIN_CONTEXT_CHARS", "1200") or "1200")))
+    except (TypeError, ValueError):
+        return 1200
+
+
+def _supplement_retrieval_score_threshold() -> float:
+    try:
+        return max(0.02, min(0.35, float(os.getenv("NOTES_ASK_SUPPLEMENT_MAX_SCORE", "0.12") or "0.12")))
+    except (TypeError, ValueError):
+        return 0.12
 
 
 def _max_retrieval_score(retr_meta: list[dict[str, Any]] | None) -> float | None:
@@ -93,9 +108,10 @@ def should_run_supplement_stage(
     qa_plan: dict[str, Any],
     shared_read_only: bool = False,
 ) -> bool:
-    """是否在资料作答后追加通识补充阶段。"""
+    """是否在资料作答后追加通识参考阶段（P1：扩大低置信 / 弱检索触发）。"""
     if shared_read_only or not notes_ask_supplement_enabled():
         return False
+    answer_len = len((corpus_answer or "").strip())
     if bool(qa_plan.get("lowConfidence")):
         return True
     cov = str(qa_plan.get("plannerCoverage") or qa_plan.get("coverage") or "").strip().lower()
@@ -105,10 +121,18 @@ def should_run_supplement_stage(
         return True
     if answer_signals_material_gap(corpus_answer):
         return True
+    ctx_raw = qa_plan.get("contextChars")
+    try:
+        ctx_chars = int(ctx_raw) if ctx_raw is not None else None
+    except (TypeError, ValueError):
+        ctx_chars = None
+    if ctx_chars is not None and ctx_chars < _supplement_min_context_chars() and answer_len < 900:
+        return True
     retr = qa_plan.get("retrievalChunksMeta")
+    score_th = _supplement_retrieval_score_threshold()
     if isinstance(retr, list):
         mx = _max_retrieval_score(retr)
-        if mx is not None and mx < 0.08 and len((corpus_answer or "").strip()) < 400:
+        if mx is not None and mx < score_th and answer_len < 800:
             return True
     return False
 
@@ -132,11 +156,11 @@ def build_supplement_messages(
 ) -> list[dict[str, str]]:
     focus = (supplement_focus or "").strip() or "针对资料未覆盖的部分作通识解释，勿重复资料段。"
     system = (
-        "你是补充说明助手。用户已有一份「仅依据所选资料」的回答；"
+        "你是通识参考助手。用户已有一份「仅依据所选资料」的回答；"
         "你的任务是在资料未覆盖处用通识帮助理解，不要伪造资料引用。\n"
         "硬性规则：\n"
-        "1. 以二级标题开头：## 补充说明（非资料原文，仅供参考）\n"
-        "2. 禁止使用 [1][2] 等角标；不要写「该书指出」式归因；\n"
+        f"1. 以二级标题开头：{GENERAL_REFERENCE_HEADING}\n"
+        "2. 禁止使用 [1][2] 等角标；不要写「该书指出」「笔记里写了」式归因；\n"
         "3. 不要重复资料段已有内容；简洁有条理；正文以 `-` 列表为主，单段不超过 4 句，禁止大段密排文字。\n"
         "4. 若资料段已完整回答问题，只输出精确标记 [[NO_SUPPLEMENT]]，不要输出任何其它文字。\n"
         "5. 使用中文 Markdown。"
@@ -181,8 +205,8 @@ def sanitize_supplement_answer(raw: str) -> str:
     if not t:
         return ""
     if not t.lstrip().startswith("##"):
-        t = "## 补充说明（非资料原文，仅供参考）\n\n" + t
-    return t.strip()
+        t = f"{GENERAL_REFERENCE_HEADING}\n\n" + t
+    return normalize_general_reference_heading(t.strip())
 
 
 def iter_supplement_answer_chunks(

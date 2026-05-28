@@ -2003,11 +2003,17 @@ export function SharePublishClient({
             audioRegenProgress={audioRegenProgress}
             audioRegenMessage={audioRegenMessage}
             jobGenerating={jobGenerating}
-            jobGenPlaceholder={scriptDraft ? JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER : JOB_GEN_PLACEHOLDER}
+            jobGenPlaceholder={textOnlyWork ? JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER : JOB_GEN_PLACEHOLDER}
             jobLiveLine={jobGenBannerLine}
             jobLiveProgressPct={jobLivePctMerged}
             jobFailedMessage={jobFailedMessage}
-            readonlyEmptyHint={jobGenerating ? (scriptDraft ? JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER : JOB_GEN_PLACEHOLDER) : undefined}
+            readonlyEmptyHint={
+              jobGenerating
+                ? textOnlyWork
+                  ? JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER
+                  : JOB_GEN_PLACEHOLDER
+                : undefined
+            }
             hubViewerReadonly={viewerTemplateReadonly}
             detailTab={detailTab}
             onDetailTabChange={setDetailTab}

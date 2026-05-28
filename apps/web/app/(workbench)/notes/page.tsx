@@ -26,7 +26,7 @@ import {
 } from "../../../components/icons";
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
 const NotesPodcastRoomModal = dynamic(() => import("../../../components/notes/NotesPodcastRoomModal"));
-const NotesSocialPublishModal = dynamic(() => import("../../../components/notes/NotesSocialPublishModal"));
+import { NotesArticleSocialForm } from "../../../components/notes/NotesArticleSocialForm";
 const NotebookStyleButton = dynamic(
   () => import("../../../components/notes/notebook-style/NotebookStyleButton"),
   { ssr: false }
@@ -70,11 +70,28 @@ import { rememberJobId } from "../../../lib/jobRecent";
 import { buildReferenceJobFields, type ReferenceRagMode } from "../../../lib/jobReferencePayload";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../../lib/notesRoomPresets";
 import {
+  ART_KIND_PICK_ORDER,
   ART_KIND_PRESETS,
+  isSocialArtKind,
+  socialPlatformFromArtKind,
   studioResponseToArtText,
   studioTaskForArtKind,
   type ArtKindKey
 } from "../../../lib/artKindPresets";
+import {
+  defaultNotesAskDialogueStyle,
+  notesAskDialogueStyleLabel,
+  type NotesAskDialogueStyleMode
+} from "../../../lib/notesAskDialogueStyle";
+import { buildSocialPublishReferenceBody } from "../../../lib/socialPublishReference";
+import { buildOptionsPayload } from "../../../lib/socialPublishPresets";
+import { saveSocialPublishPrefs } from "../../../lib/socialPublishStorage";
+import type {
+  SocialPublishAdvancedOptions,
+  SocialPublishPersonaOptions,
+  SocialPublishPlatform,
+  SocialPublishQuickOptions
+} from "../../../lib/socialPublishTypes";
 import { buildNoteCoverageLine } from "../../../lib/noteCoverageCopy";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../../lib/notesProject";
 import {
@@ -1132,8 +1149,7 @@ export default function NotesPage() {
   const [showPodcastRoomModal, setShowPodcastRoomModal] = useState(false);
 
   const [showArticleModal, setShowArticleModal] = useState(false);
-  const [showSocialPublishModal, setShowSocialPublishModal] = useState(false);
-  const [articleModalStep, setArticleModalStep] = useState<"pick" | "form">("pick");
+  const [articleModalStep, setArticleModalStep] = useState<"pick" | "form" | "social">("pick");
   const [artKind, setArtKind] = useState<ArtKindKey>("custom");
   const [artLang, setArtLang] = useState("中文");
   const [artChars, setArtChars] = useState(NOTES_ART_TARGET_CHARS_DEFAULT);
@@ -1143,6 +1159,7 @@ export default function NotesPage() {
   /** 右侧资料区底部输入：带入播客/文章，不在此自动扩写全文 */
   const [notesStudioPrompt, setNotesStudioPrompt] = useState("");
   const [notesAskQuestion, setNotesAskQuestion] = useState("");
+  const [notesAskDialogueStyle, setNotesAskDialogueStyle] = useState<NotesAskDialogueStyleMode>("general");
   const [notebookDigestSummary, setNotebookDigestSummary] = useState("");
   const [artStudioLoading, setArtStudioLoading] = useState(false);
   const [audioOverviewBusy, setAudioOverviewBusy] = useState(false);
@@ -1540,6 +1557,10 @@ export default function NotesPage() {
   useEffect(() => {
     if (notebookStylePrompt.trim()) setUseNotebookStyleInArticle(true);
   }, [notebookStylePrompt]);
+
+  useEffect(() => {
+    setNotesAskDialogueStyle(defaultNotesAskDialogueStyle(Boolean(notebookStylePrompt.trim())));
+  }, [selectedNotebook, notebookStylePrompt]);
 
   useEffect(() => {
     if (!styleActionToast) return;
@@ -2644,7 +2665,10 @@ export default function NotesPage() {
           question: q,
           chatHistory: memoryPacked.chatHistory,
           ...(memoryPacked.sessionState ? { sessionState: memoryPacked.sessionState } : {}),
-          ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {})
+          ...(sharedBrowse?.ownerUserId ? { sharedFromOwnerUserId: sharedBrowse.ownerUserId } : {}),
+          ...(notesAskDialogueStyle === "notebook" && notebookStylePrompt.trim()
+            ? { dialogueStylePrompt: notebookStylePrompt.trim() }
+            : {})
         })
       });
       streamFetchMs = Math.round(nowMs() - streamT0);
@@ -3113,6 +3137,81 @@ export default function NotesPage() {
       setNotesAskError(String(err instanceof Error ? err.message : err));
     } finally {
       setNotesAskNoteBusyId(null);
+    }
+  }
+
+  async function submitSocialPublishFromArticle(payload: {
+    platform: SocialPublishPlatform;
+    quick: SocialPublishQuickOptions;
+    advanced: SocialPublishAdvancedOptions;
+    persona: SocialPublishPersonaOptions;
+    useNotebookPersona: boolean;
+  }) {
+    if (sharedBrowse?.access === "read_only") {
+      setError("当前为只读分享笔记本，不可生成发布稿。");
+      return;
+    }
+    if (draftSelectedNoteIds.length === 0) {
+      setError("请至少勾选一条笔记");
+      return;
+    }
+    setDraftBusy(true);
+    setError("");
+    try {
+      let personaForPayload =
+        payload.useNotebookPersona && notebookStylePrompt.trim()
+          ? {
+              ...payload.persona,
+              writerVoice: null,
+              otherRequirements: [notebookStylePrompt.trim(), payload.persona.otherRequirements.trim()]
+                .filter(Boolean)
+                .join("\n\n")
+            }
+          : { ...payload.persona };
+      if (!personaForPayload.genders.length) {
+        personaForPayload = { ...personaForPayload, genders: ["any"] };
+      }
+      const options = buildOptionsPayload(
+        payload.quick,
+        payload.advanced,
+        personaForPayload,
+        payload.platform
+      );
+      const refBody = buildSocialPublishReferenceBody({
+        selectedNoteIds: draftSelectedNoteIds,
+        selectedNoteTitles: draftSelectedNoteIds.map((id) => (noteTitleById[id] || "").trim()),
+        notesSourceOwnerUserId:
+          sharedBrowse?.access === "edit" && sharedBrowse.ownerUserId ? sharedBrowse.ownerUserId : null
+      });
+      const data = await createJob({
+        project_name: NOTES_PODCAST_PROJECT_NAME,
+        job_type: "social_publish_draft",
+        queue_name: "ai",
+        created_by: createdByPhone || undefined,
+        payload: {
+          platform: payload.platform,
+          options,
+          source_type: "notes_rag",
+          notes_notebook: selectedNotebook.trim(),
+          use_rag: true,
+          rag_max_chars: 56_000,
+          ...refBody
+        }
+      });
+      const jobId = String(data.id || "").trim();
+      if (!jobId) throw new Error("创建发布稿任务失败");
+      rememberJobId(jobId);
+      setActiveGenerationJob("social_publish", jobId);
+      saveSocialPublishPrefs(payload.platform, payload.quick);
+      setShowArticleModal(false);
+      setArticleModalStep("pick");
+      void fetchPodcastWorks();
+      router.push(`/works/${encodeURIComponent(jobId)}?returnTo=${encodeURIComponent("/notes")}`);
+    } catch (err) {
+      clearActiveGenerationJob("social_publish");
+      setError(String(err instanceof Error ? err.message : err));
+    } finally {
+      setDraftBusy(false);
     }
   }
 
@@ -3692,25 +3791,12 @@ export default function NotesPage() {
     setShowArticleModal(true);
   }
 
-  function openSocialPublishFlow() {
-    if (sharedBrowse?.access === "read_only") {
-      setError("当前为只读分享笔记本，不可发布到自媒体。");
-      return;
-    }
-    if (!selectedNotebook.trim()) {
-      setError(`发布到自媒体：${NOTES_NEED_NOTEBOOK}`);
-      return;
-    }
-    if (draftSelectedNoteIds.length === 0) {
-      setError(`发布到自媒体：${NOTES_ASK_SOURCE_REQUIRED}`);
-      return;
-    }
-    setError("");
-    setShowSocialPublishModal(true);
-  }
-
   async function pickArticleKind(k: ArtKindKey) {
     setArtKind(k);
+    if (isSocialArtKind(k)) {
+      setArticleModalStep("social");
+      return;
+    }
     setArticleModalStep("form");
     const task = studioTaskForArtKind(k);
     const noteId = draftSelectedNoteIds[0];
@@ -4505,16 +4591,23 @@ export default function NotesPage() {
                             ) : (
                               <div className="w-full min-w-0 max-w-full px-0 py-1 text-sm leading-relaxed text-ink">
                             {(() => {
-                              const askBody = buildNotesAskAnswerBody(
+                              const corpusOnly = (m.content || "").trim();
+                              const hasSupplement =
+                                Boolean(m.supplementContent?.trim()) &&
+                                !isDismissedNotesAskSupplement(m.supplementContent || "");
+                              const displayReady = corpusOnly || hasSupplement;
+                              const askBodyForCopy = buildNotesAskAnswerBody(
                                 m.content,
                                 m.supplementContent
                               );
-                              return m.streaming && !askBody.trim() ? (
+                              return m.streaming && !displayReady ? (
                               <p className="text-muted">思考中…</p>
                             ) : (
                               <div className="min-w-0">
                                 <NotesAskAnswerDisplay
-                                  text={askBody}
+                                  text={corpusOnly}
+                                  supplementContent={m.supplementContent}
+                                  lowConfidence={m.lowConfidence}
                                   sources={m.sources}
                                   webSources={m.webSources}
                                   followUpQuestion={
@@ -4553,7 +4646,7 @@ export default function NotesPage() {
                                   </div>
                                 ) : null}
                                 {!m.streaming &&
-                                askBody.trim() &&
+                                askBodyForCopy.trim() &&
                                 !m.id.startsWith(NOTES_ASK_HINTS_BOOT_PREFIX) ? (
                                   <div className="mt-3 flex flex-wrap items-center gap-0.5 border-t border-line/40 pt-2">
                                     <button
@@ -4561,7 +4654,7 @@ export default function NotesPage() {
                                       className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
                                       title="复制"
                                       aria-label="复制"
-                                      onClick={() => void copyNotesAskAnswer(askBody)}
+                                      onClick={() => void copyNotesAskAnswer(askBodyForCopy)}
                                     >
                                       <IconClipboard width={16} height={16} aria-hidden />
                                     </button>
@@ -4570,7 +4663,7 @@ export default function NotesPage() {
                                       className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
                                       title="分享"
                                       aria-label="分享"
-                                      onClick={() => void shareNotesAskAnswer(askBody)}
+                                      onClick={() => void shareNotesAskAnswer(askBodyForCopy)}
                                     >
                                       <IconShareNodes width={16} height={16} aria-hidden />
                                     </button>
@@ -4580,7 +4673,7 @@ export default function NotesPage() {
                                       title="新增为笔记"
                                       aria-label="新增为笔记"
                                       disabled={Boolean(sharedBrowse) || notesAskNoteBusyId === m.id}
-                                      onClick={() => void saveAskAnswerAsNote(askBody, m.id)}
+                                      onClick={() => void saveAskAnswerAsNote(m.content || "", m.id)}
                                     >
                                       <IconFilePlus width={16} height={16} aria-hidden />
                                     </button>
@@ -4627,23 +4720,6 @@ export default function NotesPage() {
                     </span>
                     <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">生成文章</span>
                   </button>
-                  <button
-                    type="button"
-                    disabled={sharedBrowse?.access === "read_only"}
-                    onClick={() => openSocialPublishFlow()}
-                    className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-line bg-gradient-to-br from-fill/90 to-surface px-3 py-2 text-left shadow-soft transition hover:border-brand/35 hover:brightness-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[10.125rem]"
-                  >
-                    <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-fill text-ink"
-                      aria-hidden
-                    >
-                      <IconShareNodes width={20} height={20} />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold leading-tight text-ink">发布到自媒体</span>
-                      <span className="block text-[10px] leading-tight text-muted">预览 · 复制</span>
-                    </span>
-                  </button>
                 </div>
                 <div className="flex min-w-0 shrink-0 flex-col gap-2">
                   {notebookDigestSummary ? (
@@ -4684,6 +4760,33 @@ export default function NotesPage() {
                     title={draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : undefined}
                     rows={1}
                   />
+                  <label className="mb-1 flex shrink-0 flex-col items-end gap-0.5">
+                    <span className="sr-only">对话风格</span>
+                    <select
+                      className="max-w-[7.5rem] rounded-lg border border-line bg-fill px-1.5 py-1 text-[10px] font-medium text-ink disabled:cursor-not-allowed disabled:opacity-45"
+                      value={notesAskDialogueStyle}
+                      disabled={
+                        notesAskBusy ||
+                        draftSelectedNoteIds.length === 0 ||
+                        (notesAskDialogueStyle === "notebook" && !notebookStylePrompt.trim())
+                      }
+                      onChange={(e) =>
+                        setNotesAskDialogueStyle(e.target.value as NotesAskDialogueStyleMode)
+                      }
+                      title="对话口吻"
+                      aria-label="对话风格"
+                    >
+                      <option value="general">通用模式</option>
+                      {notebookStylePrompt.trim() ? (
+                        <option value="notebook">
+                          {notesAskDialogueStyleLabel(
+                            "notebook",
+                            notebookStyleItem?.displayName || selectedNotebook
+                          )}
+                        </option>
+                      ) : null}
+                    </select>
+                  </label>
                   <span className="mb-1 shrink-0 rounded-full bg-fill px-2 py-0.5 text-[10px] font-medium text-muted tabular-nums">
                     {draftSelectedNoteIds.length} 条
                   </span>
@@ -5279,23 +5382,6 @@ export default function NotesPage() {
         }
       />
 
-      <NotesSocialPublishModal
-        open={showSocialPublishModal}
-        onClose={() => setShowSocialPublishModal(false)}
-        notebook={selectedNotebook}
-        noteIds={draftSelectedNoteIds}
-        selectedNoteTitles={draftSelectedNoteIds.map((id) => (noteTitleById[id] || "").trim())}
-        notesSourceOwnerUserId={
-          sharedBrowse?.access === "edit" && sharedBrowse.ownerUserId ? sharedBrowse.ownerUserId : null
-        }
-        authHeaders={getAuthHeaders()}
-        notebookStylePrompt={notebookStylePrompt}
-        notebookStyleChips={notebookStyleChips}
-        notebookStyleName={notebookStyleItem?.displayName || selectedNotebook}
-        createdByPhone={createdByPhone}
-        onSucceeded={() => void fetchPodcastWorks()}
-      />
-
       {showArticleModal ? (
         <div
           className="fym-workspace-scrim z-[520] flex items-center justify-center bg-black/45 p-4"
@@ -5319,7 +5405,7 @@ export default function NotesPage() {
                   选择文章体裁
                 </h2>
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  {(Object.keys(ART_KIND_PRESETS) as ArtKindKey[]).map((k) => (
+                  {ART_KIND_PICK_ORDER.map((k) => (
                     <button
                       key={k}
                       type="button"
@@ -5328,7 +5414,9 @@ export default function NotesPage() {
                       disabled={artStudioLoading}
                     >
                       <span className="text-sm font-semibold text-ink">{ART_KIND_PRESETS[k].label}</span>
-                      <span className="mt-1 block text-[10px] text-muted">{k}</span>
+                      <span className="mt-1 block text-[10px] leading-snug text-muted">
+                        {ART_KIND_PRESETS[k].hint || "长文 · 云端生成"}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -5343,6 +5431,21 @@ export default function NotesPage() {
                   >
                     取消
                   </button>
+                </div>
+              </>
+            ) : articleModalStep === "social" && isSocialArtKind(artKind) ? (
+              <>
+                <h2 className="text-base font-semibold text-ink">生成文章 · {ART_KIND_PRESETS[artKind].label}</h2>
+                <div className="mt-4">
+                  <NotesArticleSocialForm
+                    platform={socialPlatformFromArtKind(artKind)}
+                    notebookStylePrompt={notebookStylePrompt}
+                    notebookStyleChips={notebookStyleChips}
+                    notebookStyleName={notebookStyleItem?.displayName || selectedNotebook}
+                    busy={draftBusy}
+                    onBack={() => setArticleModalStep("pick")}
+                    onSubmit={(p) => void submitSocialPublishFromArticle(p)}
+                  />
                 </div>
               </>
             ) : (
