@@ -33,10 +33,7 @@ const NotebookStyleControls = dynamic(
     })),
   { ssr: false }
 );
-import {
-  NotebookStyleHeaderChip,
-  NotebookStyleSourcesLearnHint
-} from "../../../components/notes/notebook-style/NotebookStyleControls";
+import { NotebookStyleHeaderChip } from "../../../components/notes/notebook-style/NotebookStyleControls";
 import NotebookStyleSourcesNotice from "../../../components/notes/NotebookStyleSourcesNotice";
 const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
@@ -162,11 +159,8 @@ import { resolveNotebookCreativeTemplateValue } from "../../../lib/notebookPodca
 import {
   buildNotebookStylePromptBlock,
   buildStyleSummaryChips,
-  computeStyleSyncStatus,
-  dismissNotebookStyleHint,
   isNoteInStyleSnapshot,
-  notebookAutoSelectStorageKey,
-  shouldShowNotebookStyleHint
+  notebookAutoSelectStorageKey
 } from "../../../lib/notebookStyle";
 type NotesAskStreamEvent =
   | {
@@ -1069,7 +1063,6 @@ export default function NotesPage() {
   const [draftSelectedNoteIds, setDraftSelectedNoteIds] = useState<string[]>([]);
   const [notebookStyleItem, setNotebookStyleItem] = useState<AuthorIpItem | null>(null);
   const [styleActionToast, setStyleActionToast] = useState("");
-  const [showNotebookStyleHint, setShowNotebookStyleHint] = useState(shouldShowNotebookStyleHint);
   const [useNotebookStyleInArticle, setUseNotebookStyleInArticle] = useState(true);
   /** loadNotes 内校验「已删除的笔记 id」：避免 localStorage 里残留旧 id 导致仍加载旧对话 */
   const draftSelectedNoteIdsRef = useRef<string[]>([]);
@@ -1152,7 +1145,7 @@ export default function NotesPage() {
   const scrollToNotebookStyleLearn = useCallback(() => {
     setSourcesPanelCollapsed(false);
     window.setTimeout(() => {
-      document.getElementById("notebook-style-learn-hint")?.scrollIntoView({
+      document.getElementById("notebook-style-header-chip")?.scrollIntoView({
         behavior: "smooth",
         block: "nearest"
       });
@@ -4140,17 +4133,6 @@ export default function NotesPage() {
                     添加资料
                   </button>
                 </div>
-                <NotebookStyleSourcesLearnHint
-                  showFirstLearnHint={
-                    showNotebookStyleHint &&
-                    computeStyleSyncStatus(notebookStyleItem, draftSelectedNoteIds, styleNoteMetas) ===
-                      "none"
-                  }
-                  onDismissFirstLearnHint={() => {
-                    dismissNotebookStyleHint();
-                    setShowNotebookStyleHint(false);
-                  }}
-                />
                 <NotebookStyleSourcesNotice actionToast={styleActionToast} />
 
                   <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-0.5">
