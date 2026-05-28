@@ -1000,7 +1000,6 @@ export default function NotesPage() {
   const [deleteNotebookTarget, setDeleteNotebookTarget] = useState<string | null>(null);
   const [noteMenuOpenId, setNoteMenuOpenId] = useState<string | null>(null);
   const [notebookCardMenu, setNotebookCardMenu] = useState<string | null>(null);
-  const [notesAskOverflowMenuOpen, setNotesAskOverflowMenuOpen] = useState(false);
   const [hubDiscoverTab, setHubDiscoverTab] = useState<NotesHubDiscoverTab>("mine");
   const [workbenchMobilePanel, setWorkbenchMobilePanel] = useState<WorkbenchMobilePanel>("chat");
   const [popularItems, setPopularItems] = useState<PopularNotebookItem[]>([]);
@@ -1051,16 +1050,15 @@ export default function NotesPage() {
 
   /** 仅用 Escape：不在 document 上监听 pointerdown，避免与侧栏导航同一事件管线冲突。 */
   useEffect(() => {
-    if (!notebookCardMenu && !noteMenuOpenId && !notesAskOverflowMenuOpen) return;
+    if (!notebookCardMenu && !noteMenuOpenId) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       setNotebookCardMenu(null);
       setNoteMenuOpenId(null);
-      setNotesAskOverflowMenuOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [notebookCardMenu, noteMenuOpenId, notesAskOverflowMenuOpen]);
+  }, [notebookCardMenu, noteMenuOpenId]);
 
   /** 仅在主内容 <main> 上冒泡关闭溢出菜单；点击侧栏时事件不会进入 main，故不会触发 setState。 */
   const onNotesMainPointerDown = useCallback(
@@ -1073,11 +1071,8 @@ export default function NotesPage() {
       if (noteMenuOpenId && !t.closest("[data-note-overflow-menu]")) {
         setNoteMenuOpenId(null);
       }
-      if (notesAskOverflowMenuOpen && !t.closest("[data-notes-ask-overflow-menu]")) {
-        setNotesAskOverflowMenuOpen(false);
-      }
     },
-    [notebookCardMenu, noteMenuOpenId, notesAskOverflowMenuOpen]
+    [notebookCardMenu, noteMenuOpenId]
   );
 
   const [draftSelectedNoteIds, setDraftSelectedNoteIds] = useState<string[]>([]);
@@ -1270,7 +1265,6 @@ export default function NotesPage() {
   }, [syncNotesAskTextareaHeight]);
 
   const clearNotesAskConversation = useCallback(() => {
-    setNotesAskOverflowMenuOpen(false);
     if (
       notesAskMessages.length > 0 &&
       !window.confirm("确定清除当前笔记本下的全部对话？清除后无法恢复。")
@@ -1835,7 +1829,6 @@ export default function NotesPage() {
     if (!hubView) return;
     setNotebookCardMenu(null);
     setNoteMenuOpenId(null);
-    setNotesAskOverflowMenuOpen(false);
   }, [hubView]);
 
   useEffect(() => {
@@ -4153,7 +4146,6 @@ export default function NotesPage() {
                     setShowNotebookStyleHint(false);
                   }}
                   actionToast={styleActionToast}
-                  onRequestUpdateStyle={scrollToNotebookStyleLearn}
                 />
 
                   <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-0.5">
@@ -4373,38 +4365,36 @@ export default function NotesPage() {
               role="region"
               aria-label="对话"
             >
-              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-2">
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line/50 pb-2">
                 <h2 className={WORKBENCH_SECTION_TITLE}>对话</h2>
-                <span className="relative flex shrink-0" data-notes-ask-overflow-menu>
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
                   <button
                     type="button"
-                    className="inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-1.5 text-lg leading-none text-muted transition hover:bg-fill hover:text-ink"
-                    aria-label="对话更多"
-                    aria-expanded={notesAskOverflowMenuOpen}
-                    aria-haspopup="menu"
-                    onClick={() => setNotesAskOverflowMenuOpen((open) => !open)}
+                    disabled={sharedBrowse?.access === "read_only" || audioOverviewBusy}
+                    className="rounded-lg border border-line/70 bg-surface px-2 py-1 text-xs font-medium text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={() => openPodcastFlow()}
                   >
-                    ⋯
+                    {audioOverviewBusy ? "音频概览…" : "音频概览"}
                   </button>
-                  {notesAskOverflowMenuOpen ? (
-                    <div
-                      role="menu"
-                      className="absolute right-0 top-full z-30 mt-0.5 min-w-[7.5rem] rounded-lg border border-line bg-surface py-1 text-xs shadow-card"
-                    >
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="block w-full px-3 py-2 text-left text-ink hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
-                        disabled={
-                          notesAskMessages.length === 0 && !notesAskMessages.some((m) => m.streaming)
-                        }
-                        onClick={() => clearNotesAskConversation()}
-                      >
-                        清除对话
-                      </button>
-                    </div>
-                  ) : null}
-                </span>
+                  <button
+                    type="button"
+                    disabled={sharedBrowse?.access === "read_only"}
+                    className="rounded-lg border border-line/70 bg-surface px-2 py-1 text-xs font-medium text-ink transition hover:bg-fill disabled:cursor-not-allowed disabled:opacity-45"
+                    onClick={() => openArticleFlow()}
+                  >
+                    生成文章
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-line/70 bg-surface px-2 py-1 text-xs font-medium text-muted transition hover:bg-fill hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={
+                      notesAskMessages.length === 0 && !notesAskMessages.some((m) => m.streaming)
+                    }
+                    onClick={() => clearNotesAskConversation()}
+                  >
+                    清除对话
+                  </button>
+                </div>
               </div>
 
               <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
@@ -4576,38 +4566,6 @@ export default function NotesPage() {
                       ))}
                     </div>
                   )}
-                </div>
-                <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch">
-                  <button
-                    type="button"
-                    disabled={sharedBrowse?.access === "read_only"}
-                    onClick={() => openPodcastFlow()}
-                    className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-brand/35 bg-gradient-to-br from-brand/15 to-brand/[0.06] px-3 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98] enabled:active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[10.125rem]"
-                  >
-                    <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand"
-                      aria-hidden
-                    >
-                      <IconWorkPodcast width={20} height={20} />
-                    </span>
-                    <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">
-                      {audioOverviewBusy ? "音频概览…" : "音频概览"}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={sharedBrowse?.access === "read_only"}
-                    onClick={() => openArticleFlow()}
-                    className="inline-flex min-h-[2.75rem] w-full min-w-0 flex-none flex-row items-center gap-2.5 rounded-xl border border-success/35 bg-gradient-to-br from-success-soft/90 to-success/[0.08] px-3 py-2 text-left shadow-soft transition hover:brightness-[1.03] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[10.125rem]"
-                  >
-                    <span
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-success-soft/50 text-success-ink"
-                      aria-hidden
-                    >
-                      <IconWorkScript width={20} height={20} />
-                    </span>
-                    <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-ink">生成文章</span>
-                  </button>
                 </div>
                 <div className="flex min-w-0 shrink-0 flex-col gap-2">
                   {notebookDigestSummary ? (

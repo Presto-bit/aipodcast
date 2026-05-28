@@ -1,11 +1,7 @@
 "use client";
 
 import type { AuthorIpItem } from "../../lib/authorIp";
-import {
-  computeStyleSyncStatus,
-  styleSnapshotFromItem,
-  type NoteStyleMeta
-} from "../../lib/notebookStyle";
+import { computeStyleSyncStatus, type NoteStyleMeta } from "../../lib/notebookStyle";
 
 type Props = {
   item: AuthorIpItem | null;
@@ -14,36 +10,18 @@ type Props = {
   showFirstLearnHint: boolean;
   onDismissFirstLearnHint: () => void;
   actionToast: string;
-  onRequestUpdateStyle: () => void;
 };
 
-/** 参考资料区唯一持久提示条（outdated 优先于首次引导） */
+/** 参考资料区唯一持久提示条（outdated 由标题行「待更新」芯片承担，此处不再重复） */
 export default function NotebookStyleSourcesNotice({
   item,
   selectedNoteIds,
   noteMetas,
   showFirstLearnHint,
   onDismissFirstLearnHint,
-  actionToast,
-  onRequestUpdateStyle
+  actionToast
 }: Props) {
   const syncStatus = computeStyleSyncStatus(item, selectedNoteIds, noteMetas);
-  const hasSnapshot = Boolean(styleSnapshotFromItem(item)?.noteIds?.length);
-
-  if (syncStatus === "pending" && hasSnapshot) {
-    return (
-      <div className="mt-2 flex items-start justify-between gap-2 rounded-lg border border-warning/35 bg-warning-soft/50 px-2.5 py-1.5 text-[11px] leading-snug text-warning-ink">
-        <span>资料已变，建议更新风格后更准确</span>
-        <button
-          type="button"
-          className="shrink-0 font-medium text-warning-ink underline decoration-warning/40 underline-offset-2 hover:opacity-90"
-          onClick={onRequestUpdateStyle}
-        >
-          更新风格
-        </button>
-      </div>
-    );
-  }
 
   if (showFirstLearnHint && syncStatus === "none") {
     return (
