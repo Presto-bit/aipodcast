@@ -46,3 +46,25 @@ export function resolveNotebookCardVisual(
     iconIndex: picked?.iconIndex ?? 0
   };
 }
+
+/** 与 `NOTEBOOK_ICON_COUNT`（icons/brand/notebooks）保持一致 */
+const NOTEBOOK_CARD_ICON_COUNT = 8;
+
+function fnv1aHash32(key: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i += 1) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** 按笔记本名称生成稳定主题与图标，避免刷新或账号键切换后随机变化 */
+export function stableNotebookVisualFromName(name: string): NotebookCardVisual {
+  const key = String(name || "").trim() || "default";
+  const u = fnv1aHash32(key);
+  return {
+    themeIndex: u % NOTEBOOK_CARD_THEMES.length,
+    iconIndex: Math.floor(u / NOTEBOOK_CARD_THEMES.length) % NOTEBOOK_CARD_ICON_COUNT
+  };
+}

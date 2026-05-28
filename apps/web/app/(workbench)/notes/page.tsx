@@ -21,8 +21,7 @@ import {
   IconStopSquare,
   IconWorkPodcast,
   IconWorkScript,
-  NotebookIcon,
-  NOTEBOOK_ICON_COUNT
+  NotebookIcon
 } from "../../../components/icons";
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
 const NotesPodcastRoomModal = dynamic(() => import("../../../components/notes/NotesPodcastRoomModal"));
@@ -120,7 +119,11 @@ import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
 import type { NotebookCoverMeta } from "../../../lib/notebookCoverDisplay";
 import { notebookCoverImageUrl } from "../../../lib/notebookCoverDisplay";
-import { NOTEBOOK_CARD_THEMES, type NotebookCardVisual } from "../../../lib/notebookCardThemes";
+import {
+  NOTEBOOK_CARD_THEMES,
+  stableNotebookVisualFromName,
+  type NotebookCardVisual
+} from "../../../lib/notebookCardThemes";
 import NotebookWorkbenchHeader from "../../../components/notes/NotebookWorkbenchHeader";
 import { ALLOWED_NOTE_EXT, NOTE_FILE_INPUT_ACCEPT } from "../../../lib/noteUploadConstants";
 import { maxNotesForReference, notesRefSelectionLimitMessage } from "../../../lib/noteReferenceLimits";
@@ -595,27 +598,6 @@ const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
 /** 历史「导读」助手气泡 id 前缀；加载会话时剔除，避免旧数据占位 */
 const NOTES_ASK_HINTS_BOOT_PREFIX = "__hints_boot__";
 
-/** 无上传封面时，用稳定哈希为每个笔记本分配主题色与图标（热门列表等） */
-function stableNotebookVisualFromKey(key: string): NotebookCardVisual {
-  let h = 2166136261;
-  for (let i = 0; i < key.length; i += 1) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const u = h >>> 0;
-  return {
-    themeIndex: u % NOTEBOOK_CARD_THEMES.length,
-    iconIndex: Math.floor(u / NOTEBOOK_CARD_THEMES.length) % NOTEBOOK_ICON_COUNT
-  };
-}
-
-function randomNotebookVisual(): NotebookCardVisual {
-  return {
-    themeIndex: Math.floor(Math.random() * NOTEBOOK_CARD_THEMES.length),
-    iconIndex: Math.floor(Math.random() * NOTEBOOK_ICON_COUNT)
-  };
-}
-
 function formatDisplayDate(value?: string): string {
   const raw = String(value || "").trim();
   if (!raw) return "—";
@@ -848,7 +830,7 @@ function HubPopularNotebookGrid({
             };
             const coverImg = notebookCoverImageUrl(item.notebook, cov, "popular", item.ownerUserId);
             const hasCoverLayer = Boolean(coverImg);
-            const pv = stableNotebookVisualFromKey(`${item.ownerUserId}:${item.notebook}`);
+            const pv = stableNotebookVisualFromName(`${item.ownerUserId}:${item.notebook}`);
             const pvis = {
               theme: NOTEBOOK_CARD_THEMES[pv.themeIndex],
               iconIndex: pv.iconIndex
@@ -1852,7 +1834,7 @@ export default function NotesPage() {
   }, [hubView, selectedNotebook]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !notebooksReady) return;
     let changed = false;
     let nextMap: Record<string, NotebookCardVisual> = {};
     try {
@@ -1866,7 +1848,7 @@ export default function NotesPage() {
     }
     for (const nb of notebooks) {
       if (!nextMap[nb]) {
-        nextMap[nb] = randomNotebookVisual();
+        nextMap[nb] = stableNotebookVisualFromName(nb);
         changed = true;
       }
     }
@@ -1885,7 +1867,7 @@ export default function NotesPage() {
         // ignore
       }
     }
-  }, [notebooks]);
+  }, [notebooks, notebooksReady]);
 
   const loadNotes = useCallback(async () => {
     setLoading(true);
@@ -2254,7 +2236,7 @@ export default function NotesPage() {
       });
       setNotebookVisualByName((prev) => {
         if (prev[name]) return prev;
-        const next = { ...prev, [name]: randomNotebookVisual() };
+        const next = { ...prev, [name]: stableNotebookVisualFromName(name) };
         if (typeof window !== "undefined") {
           try {
             writeLocalStorageScoped(NOTEBOOK_VISUAL_STORAGE_KEY, JSON.stringify(next));
@@ -2301,6 +2283,21 @@ export default function NotesPage() {
         delete next[oldN];
         if (carry) {
           next[newN] = { ...carry, ...(next[newN] || {}) };
+        }
+        return next;
+      });
+      setNotebookVisualByName((prev) => {
+        const carried = prev[oldN];
+        if (!carried) return prev;
+        const next = { ...prev };
+        delete next[oldN];
+        next[newN] = carried;
+        if (typeof window !== "undefined") {
+          try {
+            writeLocalStorageScoped(NOTEBOOK_VISUAL_STORAGE_KEY, JSON.stringify(next));
+          } catch {
+            // ignore
+          }
         }
         return next;
       });
