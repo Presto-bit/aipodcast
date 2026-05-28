@@ -27,10 +27,18 @@ import {
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
 const NotesPodcastRoomModal = dynamic(() => import("../../../components/notes/NotesPodcastRoomModal"));
 import { NotesArticleSocialForm } from "../../../components/notes/NotesArticleSocialForm";
-const NotebookStyleButton = dynamic(
-  () => import("../../../components/notes/notebook-style/NotebookStyleButton"),
+const NotebookStyleControls = dynamic(
+  () =>
+    import("../../../components/notes/notebook-style/NotebookStyleControls").then((m) => ({
+      default: m.NotebookStyleControls
+    })),
   { ssr: false }
 );
+import {
+  NotebookStyleHeaderChip,
+  NotebookStyleLearnAction
+} from "../../../components/notes/notebook-style/NotebookStyleControls";
+import NotebookStyleSourcesNotice from "../../../components/notes/NotebookStyleSourcesNotice";
 const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
     <div
@@ -81,10 +89,9 @@ import {
 } from "../../../lib/artKindPresets";
 import {
   defaultNotesAskDialogueStyle,
-  notesAskDialogueStyleHint,
-  notesAskDialogueStyleLabel,
   type NotesAskDialogueStyleMode
 } from "../../../lib/notesAskDialogueStyle";
+import NotesAskDialogueStylePicker from "../../../components/notes/NotesAskDialogueStylePicker";
 import { buildSocialPublishReferenceBody } from "../../../lib/socialPublishReference";
 import { buildOptionsPayload } from "../../../lib/socialPublishPresets";
 import { saveSocialPublishPrefs } from "../../../lib/socialPublishStorage";
@@ -113,6 +120,8 @@ import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
 import type { NotebookCoverMeta } from "../../../lib/notebookCoverDisplay";
 import { notebookCoverImageUrl } from "../../../lib/notebookCoverDisplay";
+import { NOTEBOOK_CARD_THEMES, type NotebookCardVisual } from "../../../lib/notebookCardThemes";
+import NotebookWorkbenchHeader from "../../../components/notes/NotebookWorkbenchHeader";
 import { ALLOWED_NOTE_EXT, NOTE_FILE_INPUT_ACCEPT } from "../../../lib/noteUploadConstants";
 import { maxNotesForReference, notesRefSelectionLimitMessage } from "../../../lib/noteReferenceLimits";
 import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
@@ -542,38 +551,6 @@ function mapRetrieveStateLabel(state: string): string {
   return s ? "进行中" : "—";
 }
 
-const NOTEBOOK_CARD_THEMES = [
-  {
-    card: "border-info/35 bg-gradient-to-br from-info/[0.08] via-surface to-info/[0.15]",
-    iconWrap: "bg-info-soft text-info-ink",
-    chip: "bg-info-soft/90 text-info-ink"
-  },
-  {
-    card: "border-brand/35 bg-gradient-to-br from-brand/[0.08] via-surface to-brand/[0.15]",
-    iconWrap: "bg-brand/15 text-brand",
-    chip: "bg-brand/12 text-brand"
-  },
-  {
-    card: "border-success/35 bg-gradient-to-br from-success/[0.08] via-surface to-success/[0.15]",
-    iconWrap: "bg-success-soft text-success-ink",
-    chip: "bg-success-soft/90 text-success-ink"
-  },
-  {
-    card: "border-warning/35 bg-gradient-to-br from-warning/[0.08] via-surface to-warning/[0.15]",
-    iconWrap: "bg-warning-soft text-warning-ink",
-    chip: "bg-warning-soft/90 text-warning-ink"
-  },
-  {
-    card: "border-danger/35 bg-gradient-to-br from-danger/[0.08] via-surface to-danger/[0.12]",
-    iconWrap: "bg-danger-soft text-danger-ink",
-    chip: "bg-danger-soft/90 text-danger-ink"
-  },
-  {
-    card: "border-cta/35 bg-gradient-to-br from-cta/[0.08] via-surface to-cta/[0.15]",
-    iconWrap: "bg-cta/15 text-cta",
-    chip: "bg-cta/12 text-cta"
-  }
-] as const;
 type NotebookMeta = {
   noteCount: number;
   /** 与侧栏「参考资料」、热门笔记本 API 一致：该笔记本下资料笔记条数（非仅含链接的笔记） */
@@ -581,11 +558,6 @@ type NotebookMeta = {
   createdAt: string;
   /** 新建笔记本时生成，参与本地对话存储键，避免同名删除再建串会话 */
   instanceId?: string;
-};
-
-type NotebookVisual = {
-  themeIndex: number;
-  iconIndex: number;
 };
 
 type NotebookSharingRow = {
@@ -624,7 +596,7 @@ const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
 const NOTES_ASK_HINTS_BOOT_PREFIX = "__hints_boot__";
 
 /** 无上传封面时，用稳定哈希为每个笔记本分配主题色与图标（热门列表等） */
-function stableNotebookVisualFromKey(key: string): NotebookVisual {
+function stableNotebookVisualFromKey(key: string): NotebookCardVisual {
   let h = 2166136261;
   for (let i = 0; i < key.length; i += 1) {
     h ^= key.charCodeAt(i);
@@ -637,7 +609,7 @@ function stableNotebookVisualFromKey(key: string): NotebookVisual {
   };
 }
 
-function randomNotebookVisual(): NotebookVisual {
+function randomNotebookVisual(): NotebookCardVisual {
   return {
     themeIndex: Math.floor(Math.random() * NOTEBOOK_CARD_THEMES.length),
     iconIndex: Math.floor(Math.random() * NOTEBOOK_ICON_COUNT)
@@ -662,11 +634,15 @@ function formatNotebookCardMonthDay(value?: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-type NotesHubDiscoverTab = "all" | "mine" | "popular";
+type NotesHubDiscoverTab = "mine" | "popular";
+
+type WorkbenchMobilePanel = "chat" | "sources";
+
+const WORKBENCH_SECTION_TITLE = "text-base font-semibold tracking-tight text-ink";
 
 type HubMineNotebookCardsProps = {
   notebooks: string[];
-  notebookVisualByName: Record<string, NotebookVisual>;
+  notebookVisualByName: Record<string, NotebookCardVisual>;
   notebookMetaByName: Record<string, NotebookMeta>;
   notebookSharingByName: Record<string, NotebookSharingRow>;
   notebookCoverByName: Record<string, NotebookCoverMeta>;
@@ -967,7 +943,7 @@ export default function NotesPage() {
   const [notebooks, setNotebooks] = useState<string[]>([]);
   /** 避免首屏 notebooks=[] 时误判为「用户没有任何笔记本」 */
   const [notebooksReady, setNotebooksReady] = useState(false);
-  const [notebookVisualByName, setNotebookVisualByName] = useState<Record<string, NotebookVisual>>({});
+  const [notebookVisualByName, setNotebookVisualByName] = useState<Record<string, NotebookCardVisual>>({});
   const [notebookMetaByName, setNotebookMetaByName] = useState<Record<string, NotebookMeta>>({});
   const [selectedNotebook, setSelectedNotebook] = useState("");
   const [hubView, setHubView] = useState(true);
@@ -1025,11 +1001,8 @@ export default function NotesPage() {
   const [noteMenuOpenId, setNoteMenuOpenId] = useState<string | null>(null);
   const [notebookCardMenu, setNotebookCardMenu] = useState<string | null>(null);
   const [notesAskOverflowMenuOpen, setNotesAskOverflowMenuOpen] = useState(false);
-  const [hubDiscoverTab, setHubDiscoverTab] = useState<NotesHubDiscoverTab>("all");
-  const [hubAllMineExpanded, setHubAllMineExpanded] = useState(false);
-  const [hubAllMineHasOverflow, setHubAllMineHasOverflow] = useState(false);
-  const hubAllMineClipRef = useRef<HTMLDivElement | null>(null);
-  const hubAllMineMeasureRef = useRef<HTMLDivElement | null>(null);
+  const [hubDiscoverTab, setHubDiscoverTab] = useState<NotesHubDiscoverTab>("mine");
+  const [workbenchMobilePanel, setWorkbenchMobilePanel] = useState<WorkbenchMobilePanel>("chat");
   const [popularItems, setPopularItems] = useState<PopularNotebookItem[]>([]);
   const [popularLoading, setPopularLoading] = useState(false);
   const [popularLoadingMore, setPopularLoadingMore] = useState(false);
@@ -1189,6 +1162,15 @@ export default function NotesPage() {
     const next = Math.min(Math.max(el.scrollHeight, minPx), maxPx);
     el.style.height = `${next}px`;
     el.style.overflowY = el.scrollHeight > maxPx ? "auto" : "hidden";
+  }, []);
+  const scrollToNotebookStyleLearn = useCallback(() => {
+    setSourcesPanelCollapsed(false);
+    window.setTimeout(() => {
+      document.getElementById("notebook-style-learn-action")?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest"
+      });
+    }, 80);
   }, []);
   /** 当前向资料提问的 fetch；用于「停止生成」 */
   const notesAskStreamAbortRef = useRef<AbortController | null>(null);
@@ -1843,28 +1825,6 @@ export default function NotesPage() {
     void loadPopularNotebooks(false);
   }, [hubView, hubDiscoverTab, loadPopularNotebooks]);
 
-  useEffect(() => {
-    if (hubDiscoverTab !== "all") setHubAllMineExpanded(false);
-  }, [hubDiscoverTab]);
-
-  useLayoutEffect(() => {
-    if (hubDiscoverTab !== "all" || hubAllMineExpanded || !hubView) {
-      setHubAllMineHasOverflow(false);
-      return;
-    }
-    const clip = hubAllMineClipRef.current;
-    const inner = hubAllMineMeasureRef.current;
-    if (!clip || !inner) return;
-    const sync = () => {
-      setHubAllMineHasOverflow(inner.scrollHeight > clip.clientHeight + 1);
-    };
-    sync();
-    const ro = new ResizeObserver(sync);
-    ro.observe(clip);
-    ro.observe(inner);
-    return () => ro.disconnect();
-  }, [hubDiscoverTab, hubAllMineExpanded, hubView, notebooks]);
-
   /** 「我的」⋯ 菜单挂在卡片上；切到「热门」后 DOM 消失但 state 可能仍非空。 */
   useEffect(() => {
     setNotebookCardMenu(null);
@@ -1901,11 +1861,11 @@ export default function NotesPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     let changed = false;
-    let nextMap: Record<string, NotebookVisual> = {};
+    let nextMap: Record<string, NotebookCardVisual> = {};
     try {
       const cached = readLocalStorageScoped(NOTEBOOK_VISUAL_STORAGE_KEY);
       if (cached) {
-        const parsed = JSON.parse(cached) as Record<string, NotebookVisual>;
+        const parsed = JSON.parse(cached) as Record<string, NotebookCardVisual>;
         if (parsed && typeof parsed === "object") nextMap = { ...parsed };
       }
     } catch {
@@ -3700,6 +3660,7 @@ export default function NotesPage() {
     setSelectedNotebook(name);
     setSharedBrowse(null);
     setHubView(false);
+    setWorkbenchMobilePanel("chat");
     setError("");
   }
 
@@ -3710,6 +3671,7 @@ export default function NotesPage() {
     setSelectedNotebook(item.notebook);
     setSharedBrowse({ ownerUserId: item.ownerUserId, access });
     setHubView(false);
+    setWorkbenchMobilePanel("chat");
     setError("");
   }
 
@@ -3917,19 +3879,6 @@ export default function NotesPage() {
             <button
               type="button"
               role="tab"
-              aria-selected={hubDiscoverTab === "all"}
-              className={`min-w-0 flex-1 rounded-lg border px-2 py-2.5 text-xs transition-colors sm:px-3 sm:text-sm ${
-                hubDiscoverTab === "all"
-                  ? "border-brand/40 bg-surface font-semibold text-ink shadow-md ring-2 ring-brand/20"
-                  : "border-transparent font-medium text-muted hover:border-line/60 hover:bg-fill/50 hover:text-ink"
-              }`}
-              onClick={() => setHubDiscoverTab("all")}
-            >
-              全部笔记本
-            </button>
-            <button
-              type="button"
-              role="tab"
               aria-selected={hubDiscoverTab === "mine"}
               className={`min-w-0 flex-1 rounded-lg border px-2 py-2.5 text-xs transition-colors sm:px-3 sm:text-sm ${
                 hubDiscoverTab === "mine"
@@ -3951,119 +3900,15 @@ export default function NotesPage() {
               }`}
               onClick={() => setHubDiscoverTab("popular")}
             >
-              热门笔记本
+              发现
             </button>
           </div>
           <section className={card}>
-            {hubDiscoverTab === "all" ? (
-              <>
-                <h3 className="text-sm font-semibold text-ink">我的笔记本</h3>
-                <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-                  {notebooks.length === 0 ? (
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-brand-foreground shadow-soft transition-opacity hover:opacity-95"
-                      onClick={() => {
-                        setNotebookModalError("");
-                        setNewNotebookName("");
-                        setShowNotebookModal(true);
-                      }}
-                    >
-                      新建笔记本
-                    </button>
-                  ) : null}
-                </div>
-                {notebooks.length === 0 ? (
-                  <EmptyState
-                    title="还没有笔记本"
-                    description="新建后添加资料，即可在右侧提问或生成。"
-                    className="mt-4 border-dashed border-line bg-fill/40 py-8"
-                  />
-                ) : (
-                  <div className="mt-3">
-                    <div
-                      ref={hubAllMineClipRef}
-                      className={hubAllMineExpanded ? "min-w-0" : "max-h-[196px] min-w-0 overflow-hidden"}
-                    >
-                      <div ref={hubAllMineMeasureRef}>
-                        <HubMineNotebookCards
-                          notebooks={notebooks}
-                          notebookVisualByName={notebookVisualByName}
-                          notebookMetaByName={notebookMetaByName}
-                          notebookSharingByName={notebookSharingByName}
-                          notebookCoverByName={notebookCoversByName}
-                          notebookCardMenu={notebookCardMenu}
-                          setNotebookCardMenu={setNotebookCardMenu}
-                          onOpenNotebook={openNotebook}
-                          onRequestNewNotebook={() => {
-                            setNotebookModalError("");
-                            setShowNotebookModal(true);
-                            setNewNotebookName("");
-                          }}
-                          showNewTile
-                          listClassName="flex flex-wrap gap-3"
-                          onShareNotebook={(nb) => {
-                            const row = notebookSharingByName[nb];
-                            setShareTargetNotebook(nb);
-                            setShareFormAccess(row?.publicAccess === "edit" ? "edit" : "read_only");
-                            setShareModalError("");
-                            setShowShareNotebookModal(true);
-                          }}
-                          onRenameNotebook={(nb) => {
-                            setRenameNotebookOld(nb);
-                            setRenameNotebookNew("");
-                            setShowRenameNotebook(true);
-                          }}
-                          onDeleteNotebook={(nb) => {
-                            setDeleteNotebookTarget(nb);
-                            setDeleteNotebookConfirm(true);
-                          }}
-                          onNotebookCoverSettings={(nb) => {
-                            setNotebookCoverModalTarget(nb);
-                            setNotebookCoverModalErr("");
-                            setShowNotebookCoverModal(true);
-                          }}
-                        />
-                      </div>
-                    </div>
-                    {!hubAllMineExpanded && hubAllMineHasOverflow ? (
-                      <button
-                        type="button"
-                        className="mt-2 text-sm font-medium text-brand underline decoration-brand/35 underline-offset-2 hover:opacity-90"
-                        onClick={() => setHubAllMineExpanded(true)}
-                      >
-                        查看更多
-                      </button>
-                    ) : null}
-                    {hubAllMineExpanded && hubAllMineHasOverflow ? (
-                      <button
-                        type="button"
-                        className="mt-2 text-sm font-medium text-muted underline decoration-line underline-offset-2 hover:text-ink"
-                        onClick={() => setHubAllMineExpanded(false)}
-                      >
-                        收起
-                      </button>
-                    ) : null}
-                  </div>
-                )}
-                <h3 className="mt-8 text-sm font-semibold text-ink">热门笔记本</h3>
-                <div className="mt-2 min-h-0 max-h-[min(70dvh,560px)] min-w-0 overflow-y-auto overscroll-y-contain pr-1 [-webkit-overflow-scrolling:touch]">
-                  <HubPopularNotebookGrid
-                    popularLoading={popularLoading}
-                    popularItems={popularItems}
-                    onPick={openSharedNotebookFromPopular}
-                    showLoadMore
-                    popularHasMore={popularHasMore}
-                    popularLoadingMore={popularLoadingMore}
-                    onPopularLoadMore={() => void loadPopularNotebooks(true)}
-                  />
-                </div>
-              </>
-            ) : hubDiscoverTab === "mine" ? (
+            {hubDiscoverTab === "mine" ? (
               <>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <h2 className="text-base font-semibold text-ink">笔记本</h2>
+                    <h2 className={WORKBENCH_SECTION_TITLE}>我的笔记本</h2>
                   </div>
                   {notebooks.length === 0 ? (
                     <button
@@ -4128,7 +3973,9 @@ export default function NotesPage() {
                 </div>
               </>
             ) : (
-              <div className="mt-1 min-h-0 max-h-[min(85dvh,720px)] min-w-0 overflow-y-auto overscroll-y-contain pr-1 [-webkit-overflow-scrolling:touch]">
+              <>
+                <h2 className={WORKBENCH_SECTION_TITLE}>发现</h2>
+                <div className="mt-3 min-h-0 max-h-[min(85dvh,720px)] min-w-0 overflow-y-auto overscroll-y-contain pr-1 [-webkit-overflow-scrolling:touch]">
                 <HubPopularNotebookGrid
                   popularLoading={popularLoading}
                   popularItems={popularItems}
@@ -4138,94 +3985,77 @@ export default function NotesPage() {
                   popularLoadingMore={popularLoadingMore}
                   onPopularLoadMore={() => void loadPopularNotebooks(true)}
                 />
-              </div>
+                </div>
+              </>
             )}
           </section>
         </>
       ) : (
-        <>
+        <div className="mx-auto w-full max-w-[min(100%,1800px)] px-3 sm:px-4">
+          <NotebookWorkbenchHeader
+            selectedNotebook={selectedNotebook}
+            notebooks={notebooks}
+            notebookVisualByName={notebookVisualByName}
+            sharedBrowse={sharedBrowse}
+            onBackToHub={() => {
+              userPrefersNotebookHubRef.current = true;
+              setSharedBrowse(null);
+              dismissNotesBlockingOverlays();
+              setHubView(true);
+            }}
+            onOpenNotebook={openNotebook}
+            onNewNotebook={() => {
+              setNotebookModalError("");
+              setNewNotebookName("");
+              setShowNotebookModal(true);
+            }}
+          />
+
           <div
-            className={[
-              "mb-4 flex min-w-0 items-center gap-2",
-              sourcesPanelCollapsed
-                ? "w-full"
-                : "w-full lg:w-[18.75rem] lg:min-w-[18.75rem] lg:max-w-[21.25rem] xl:w-[22.5rem] xl:max-w-[22.5rem]"
-            ].join(" ")}
+            className="mb-3 flex gap-1 rounded-xl border border-line/60 bg-fill/35 p-1 lg:hidden"
+            role="tablist"
+            aria-label="工作台分区"
           >
             <button
               type="button"
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-lg text-ink hover:bg-fill"
-              aria-label="返回笔记本列表"
-              title="返回笔记本列表"
-              onClick={() => {
-                userPrefersNotebookHubRef.current = true;
-                setSharedBrowse(null);
-                dismissNotesBlockingOverlays();
-                setHubView(true);
-              }}
+              role="tab"
+              aria-selected={workbenchMobilePanel === "chat"}
+              className={`min-w-0 flex-1 rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                workbenchMobilePanel === "chat"
+                  ? "border-brand/40 bg-surface text-ink shadow-sm ring-1 ring-brand/20"
+                  : "border-transparent text-muted hover:bg-fill/50"
+              }`}
+              onClick={() => setWorkbenchMobilePanel("chat")}
             >
-              ←
+              对话
             </button>
-            {sharedBrowse ? (
-              <div className="min-w-0 flex-1 rounded-lg border border-line bg-fill/35 px-3 py-2">
-                <p className="truncate text-sm font-semibold text-ink" title={selectedNotebook}>
-                  {selectedNotebook}
-                </p>
-                <p className="mt-0.5 text-[10px] text-muted">
-                  {sharedBrowse.access === "edit" ? "他人分享 · 可提问与基于参考资料生成" : "他人分享 · 仅可提问"}
-                </p>
-              </div>
-            ) : notebooks.length >= 1 ? (
-              <div className="min-w-0 flex-1">
-                <select
-                  className={`block w-full ${inputCls}`}
-                  value={selectedNotebook}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === "__new_notebook__") {
-                      setNotebookModalError("");
-                      setNewNotebookName("");
-                      setShowNotebookModal(true);
-                      return;
-                    }
-                    openNotebook(v);
-                  }}
-                  aria-label="筛选并切换笔记本，可选新建笔记本"
-                >
-                  {notebooks.map((nb) => (
-                    <option key={nb} value={nb}>
-                      {nb}
-                    </option>
-                  ))}
-                  <option value="__new_notebook__">+ 新建笔记本</option>
-                </select>
-              </div>
-            ) : selectedNotebook.trim() ? (
-              <h1 className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight text-ink" title={selectedNotebook}>
-                {selectedNotebook}
-              </h1>
-            ) : (
-              <button
-                type="button"
-                className={`min-w-0 flex-1 truncate rounded-lg px-3 py-2 text-left text-sm font-semibold text-brand ring-1 ring-brand/30 transition-colors hover:bg-brand/5`}
-                onClick={() => {
-                  setNotebookModalError("");
-                  setNewNotebookName("");
-                  setShowNotebookModal(true);
-                }}
-              >
-                + 新建笔记本
-              </button>
-            )}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={workbenchMobilePanel === "sources"}
+              className={`min-w-0 flex-1 rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+                workbenchMobilePanel === "sources"
+                  ? "border-brand/40 bg-surface text-ink shadow-sm ring-1 ring-brand/20"
+                  : "border-transparent text-muted hover:bg-fill/50"
+              }`}
+              onClick={() => setWorkbenchMobilePanel("sources")}
+            >
+              参考资料
+              {draftSelectedNoteIds.length > 0 ? (
+                <span className="ml-1 tabular-nums text-muted">({draftSelectedNoteIds.length})</span>
+              ) : null}
+            </button>
           </div>
 
           <div className="flex min-w-0 w-full flex-col gap-3">
-          <div className="flex min-h-0 flex-col gap-3 lg:h-[min(100dvh-5.5rem,900px)] lg:max-h-[min(100dvh-5.5rem,900px)] lg:flex-row lg:items-stretch lg:gap-3 lg:overflow-hidden">
+          <div className="flex min-h-0 flex-col gap-3 max-lg:min-h-[calc(100dvh-10.5rem)] lg:h-[min(100dvh-5.5rem,900px)] lg:max-h-[min(100dvh-5.5rem,900px)] lg:flex-row lg:items-stretch lg:gap-3 lg:overflow-hidden">
             <section
-              className={`flex shrink-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 shadow-soft lg:min-h-0 lg:h-full ${
+              className={`flex shrink-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 shadow-soft max-lg:min-h-0 max-lg:flex-1 lg:min-h-0 lg:h-full ${
+                workbenchMobilePanel !== "sources" ? "max-lg:hidden" : ""
+              } ${
                 sourcesPanelCollapsed
-                  ? "w-full max-lg:min-h-0 lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
-                  : "w-full p-4 lg:w-[18.75rem] lg:min-w-[18.75rem] lg:max-w-[21.25rem] xl:w-[22.5rem] xl:max-w-[22.5rem]"
+                  ? "w-full lg:w-[3.25rem] lg:min-w-[3.25rem] lg:max-w-[3.25rem] p-2"
+                  : "w-full p-4 lg:w-[22rem] lg:min-w-[22rem] lg:max-w-[24rem]"
               }`}
               aria-label="参考资料"
             >
@@ -4242,6 +4072,16 @@ export default function NotesPage() {
                   <IconChevronRight width={18} height={18} className="shrink-0 text-ink" aria-hidden />
                 </button>
               ) : (
+                <NotebookStyleControls
+                  notebookName={selectedNotebook}
+                  selectedNoteIds={draftSelectedNoteIds}
+                  noteMetas={styleNoteMetas}
+                  readOnly={sharedBrowse?.access === "read_only"}
+                  disabled={notebooks.length === 0}
+                  onItemChange={setNotebookStyleItem}
+                  onToast={setStyleActionToast}
+                  onError={setError}
+                >
                 <>
                   {notebooks.length === 0 ? (
                     <div className="mb-3 shrink-0 rounded-xl border border-brand/35 bg-gradient-to-br from-brand/[0.08] to-brand/[0.06] px-3 py-3 shadow-soft ring-1 ring-brand/10">
@@ -4261,19 +4101,24 @@ export default function NotesPage() {
                     </div>
                   ) : null}
                   <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-3">
-                    <h2 className="text-lg font-semibold tracking-tight text-ink">参考资料</h2>
-                    <button
-                      type="button"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface/80 hover:text-ink"
-                      aria-expanded
-                      aria-label="收起参考资料（向左折叠）"
-                      title="向左收起"
-                      onClick={() => setSourcesPanelCollapsed(true)}
-                    >
-                      <IconChevronLeft width={18} height={18} aria-hidden />
-                    </button>
+                    <h2 className={`min-w-0 flex-1 truncate ${WORKBENCH_SECTION_TITLE}`}>
+                      参考资料
+                    </h2>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <NotebookStyleHeaderChip />
+                      <button
+                        type="button"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface/80 hover:text-ink"
+                        aria-expanded
+                        aria-label="收起参考资料（向左折叠）"
+                        title="向左收起"
+                        onClick={() => setSourcesPanelCollapsed(true)}
+                      >
+                        <IconChevronLeft width={18} height={18} aria-hidden />
+                      </button>
+                    </div>
                 </div>
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3">
                   <button
                     type="button"
                     disabled={notebooks.length === 0 || Boolean(sharedBrowse)}
@@ -4284,7 +4129,7 @@ export default function NotesPage() {
                           ? "请先新建笔记本"
                           : undefined
                     }
-                    className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-dashed border-line/90 bg-surface py-2.5 text-sm font-medium text-ink shadow-soft transition-colors hover:border-brand/35 hover:bg-fill/50 disabled:cursor-not-allowed disabled:opacity-45"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line/90 bg-surface py-2.5 text-sm font-medium text-ink shadow-soft transition-colors hover:border-brand/35 hover:bg-fill/50 disabled:cursor-not-allowed disabled:opacity-45"
                     onClick={() => {
                       setImportUrlError("");
                       setShowAddNoteModal(true);
@@ -4293,46 +4138,33 @@ export default function NotesPage() {
                     <span className="text-base leading-none text-brand">+</span>
                     添加资料
                   </button>
-                  <NotebookStyleButton
-                    notebookName={selectedNotebook}
-                    selectedNoteIds={draftSelectedNoteIds}
-                    noteMetas={styleNoteMetas}
-                    readOnly={sharedBrowse?.access === "read_only"}
-                    disabled={notebooks.length === 0}
-                    onItemChange={setNotebookStyleItem}
-                    onToast={setStyleActionToast}
-                    onError={setError}
-                  />
                 </div>
-                {showNotebookStyleHint &&
-                computeStyleSyncStatus(notebookStyleItem, draftSelectedNoteIds, styleNoteMetas) ===
-                  "none" ? (
-                  <p className="mt-2 flex items-start justify-between gap-2 rounded-lg border border-brand/25 bg-brand/6 px-2.5 py-1.5 text-[11px] leading-snug text-ink">
-                    <span>勾选资料后可一键提炼本笔记本写作风格，用于播客、文章与自媒体。</span>
-                    <button
-                      type="button"
-                      className="shrink-0 text-[10px] text-muted hover:text-ink"
-                      onClick={() => {
-                        dismissNotebookStyleHint();
-                        setShowNotebookStyleHint(false);
-                      }}
-                    >
-                      知道了
-                    </button>
-                  </p>
-                ) : null}
-                {styleActionToast ? (
-                  <p className="mt-2 text-[11px] font-medium text-brand" role="status">
-                    {styleActionToast}
-                  </p>
-                ) : null}
+                <NotebookStyleSourcesNotice
+                  item={notebookStyleItem}
+                  selectedNoteIds={draftSelectedNoteIds}
+                  noteMetas={styleNoteMetas}
+                  showFirstLearnHint={
+                    showNotebookStyleHint &&
+                    computeStyleSyncStatus(notebookStyleItem, draftSelectedNoteIds, styleNoteMetas) ===
+                      "none"
+                  }
+                  onDismissFirstLearnHint={() => {
+                    dismissNotebookStyleHint();
+                    setShowNotebookStyleHint(false);
+                  }}
+                  actionToast={styleActionToast}
+                  onRequestUpdateStyle={scrollToNotebookStyleLearn}
+                />
 
-                  <div className="mt-3 min-h-0 max-h-[min(100dvh-12rem,520px)] flex-1 overflow-y-auto overflow-x-hidden pr-0.5 lg:max-h-none">
-                <p className="text-[11px] leading-snug text-muted">
-                  {notebooks.length === 0
-                    ? "创建笔记本后即可添加资料。"
-                    : `已选 ${draftSelectedNoteIds.length} 条 · 本页 ${stats.total} 条${hasMoreNotes ? " · 仍有更多" : ""}`}
-                </p>
+                  <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-0.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="min-w-0 text-[11px] leading-snug text-muted">
+                    {notebooks.length === 0
+                      ? "创建笔记本后即可添加资料。"
+                      : `已选 ${draftSelectedNoteIds.length} 条 · 本页 ${stats.total} 条${hasMoreNotes ? " · 仍有更多" : ""}`}
+                  </p>
+                  {notebooks.length > 0 ? <NotebookStyleLearnAction /> : null}
+                </div>
                 {notesSorted.length > 0 ? (
                   <label className="mt-2 flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink hover:bg-surface/70">
                     <input
@@ -4529,17 +4361,20 @@ export default function NotesPage() {
                 </div>
               </div>
                 </>
+                </NotebookStyleControls>
               )}
             </section>
 
             <div className="flex min-h-0 min-w-0 w-full flex-1 overflow-hidden">
             <section
-              className="flex min-h-0 h-full w-full min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft"
+              className={`flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-3xl border border-line/70 bg-fill/15 p-4 shadow-soft max-lg:min-h-0 max-lg:flex-1 lg:h-full ${
+                workbenchMobilePanel !== "chat" ? "max-lg:hidden" : ""
+              }`}
               role="region"
               aria-label="对话"
             >
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 pb-2">
-                <h2 className="text-sm font-semibold leading-none tracking-tight text-ink">对话</h2>
+                <h2 className={WORKBENCH_SECTION_TITLE}>对话</h2>
                 <span className="relative flex shrink-0" data-notes-ask-overflow-menu>
                   <button
                     type="button"
@@ -4781,11 +4616,10 @@ export default function NotesPage() {
                     </p>
                   ) : null}
                   <div
-                    className={`flex shrink-0 flex-col gap-1.5 border-t border-line/60 pt-3 ${
-                      draftSelectedNoteIds.length === 0 ? "opacity-70" : ""
+                    className={`fym-composer-shell flex shrink-0 items-end gap-2.5 px-3.5 py-2.5 ${
+                      draftSelectedNoteIds.length === 0 ? "fym-composer-shell--idle" : ""
                     }`}
                   >
-                  <div className="flex items-end gap-2">
                   <textarea
                     ref={notesAskTextareaRef}
                     className="max-h-24 min-h-[1.875rem] flex-1 resize-none border-0 bg-transparent text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:text-muted"
@@ -4814,36 +4648,25 @@ export default function NotesPage() {
                     title={draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : undefined}
                     rows={1}
                   />
-                  <label className="mb-1 flex shrink-0 flex-col items-end gap-0.5">
-                    <span className="sr-only">对话风格</span>
-                    <select
-                      className="max-w-[7.5rem] rounded-lg border border-line bg-fill px-1.5 py-1 text-[10px] font-medium text-ink disabled:cursor-not-allowed disabled:opacity-45"
+                  <div className="mb-1 flex shrink-0 items-end">
+                    <NotesAskDialogueStylePicker
                       value={notesAskDialogueStyle}
+                      onChange={setNotesAskDialogueStyle}
+                      hasNotebookStyle={Boolean(notebookStylePrompt.trim())}
+                      onRequestLearnStyle={
+                        !notebookStylePrompt.trim() &&
+                        draftSelectedNoteIds.length > 0 &&
+                        !sharedBrowse
+                          ? scrollToNotebookStyleLearn
+                          : undefined
+                      }
                       disabled={
                         notesAskBusy ||
                         draftSelectedNoteIds.length === 0 ||
                         (notesAskDialogueStyle === "notebook" && !notebookStylePrompt.trim())
                       }
-                      onChange={(e) =>
-                        setNotesAskDialogueStyle(e.target.value as NotesAskDialogueStyleMode)
-                      }
-                      title="对话口吻"
-                      aria-label="对话风格"
-                    >
-                      <option value="general">通用模式</option>
-                      {notebookStylePrompt.trim() ? (
-                        <option value="notebook">
-                          {notesAskDialogueStyleLabel(
-                            "notebook",
-                            notebookStyleItem?.displayName || selectedNotebook
-                          )}
-                        </option>
-                      ) : null}
-                    </select>
-                  </label>
-                  <span className="mb-1 shrink-0 rounded-full bg-fill px-2 py-0.5 text-[10px] font-medium text-muted tabular-nums">
-                    {draftSelectedNoteIds.length} 条
-                  </span>
+                    />
+                  </div>
                   {notesAskBusy ? (
                     <button
                       type="button"
@@ -4857,7 +4680,7 @@ export default function NotesPage() {
                   ) : (
                     <button
                       type="button"
-                      className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-soft transition-opacity disabled:opacity-40"
+                      className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-[0_2px_8px_color-mix(in_srgb,var(--dawn-brand)_35%,transparent)] transition-[opacity,transform] hover:opacity-95 active:scale-[0.97] disabled:opacity-40 disabled:shadow-none"
                       disabled={draftSelectedNoteIds.length === 0 || !notesAskQuestion.trim()}
                       title={
                         draftSelectedNoteIds.length === 0 ? NOTES_ASK_SOURCE_REQUIRED : "提问"
@@ -4868,10 +4691,6 @@ export default function NotesPage() {
                       <IconArrowRight width={18} height={18} aria-hidden />
                     </button>
                   )}
-                  </div>
-                  <p className="text-[10px] leading-snug text-muted">
-                    风格：{notesAskDialogueStyleHint(notesAskDialogueStyle, Boolean(notebookStylePrompt.trim()))}
-                  </p>
                   </div>
                   {NOTES_ASK_DEBUG_BODY_ENABLED ? (
                     <div className="rounded-xl border border-amber-500/45 bg-amber-500/[0.08] px-3 py-2 text-xs leading-snug text-ink">
@@ -4991,7 +4810,7 @@ export default function NotesPage() {
             </div>
           </section>
           </div>
-        </>
+        </div>
       )}
 
       {showAddNoteModal ? (

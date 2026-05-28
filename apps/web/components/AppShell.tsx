@@ -49,8 +49,10 @@ import {
   SIDEBAR_COLLAPSED_STORAGE,
   SIDEBAR_EXPANDED_STORAGE,
   SIDEBAR_WIDTH_COLLAPSED_PX,
-  SIDEBAR_WIDTH_EXPANDED_PX
+  SIDEBAR_WIDTH_EXPANDED_PX,
+  SIDEBAR_WIDTH_NOTES_WORKBENCH_RAIL_PX
 } from "../lib/appShellLayout";
+import NotesWorkbenchMinimalRail from "./notes/NotesWorkbenchMinimalRail";
 import {
   isMarketingShellLessPath,
   matchesNotesAuthorIp,
@@ -450,7 +452,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
     const minimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
     const px = minimalRail
-      ? 0
+      ? SIDEBAR_WIDTH_NOTES_WORKBENCH_RAIL_PX
       : collapsed
         ? SIDEBAR_WIDTH_COLLAPSED_PX
         : SIDEBAR_WIDTH_EXPANDED_PX;
@@ -599,26 +601,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const notesNavMinimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
-  const notesBackHubLabel = t("nav.notesWorkbenchBackHub");
   const useFullSidebar = !notesNavMinimalRail || (mobileLayout && mobileNavOpen);
   const sidebarOffCanvas = mobileLayout && !mobileNavOpen && !notesNavMinimalRail;
   const sidebarDrawerPx = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
-
-  const notesMinimalBackEl = (
-    <button
-      type="button"
-      data-fym-notes-workbench-back
-      className={[
-        "pointer-events-auto fixed top-1/2 z-[100001] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-line/90 bg-surface/95 text-ink shadow-soft backdrop-blur-sm transition-colors hover:bg-fill motion-reduce:transition-none",
-        mobileLayout ? "left-14" : "left-2"
-      ].join(" ")}
-      title={notesBackHubLabel}
-      aria-label={notesBackHubLabel}
-      onClick={() => dispatchNotesShowNotebookHub()}
-    >
-      <IconChevronLeft width={22} height={22} aria-hidden />
-    </button>
-  );
 
   const fullSidebarEl = (
     <aside
@@ -717,7 +702,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     </aside>
   );
 
-  const sidebarAside = useFullSidebar ? fullSidebarEl : notesMinimalBackEl;
+  const notesMinimalRailEl =
+    notesNavMinimalRail && !mobileLayout ? (
+      <NotesWorkbenchMinimalRail
+        homeLabel={t("nav.home")}
+        notesLabel={t("nav.notes")}
+        createLabel={t("nav.create")}
+      />
+    ) : null;
+
+  const sidebarAside = useFullSidebar ? fullSidebarEl : notesMinimalRailEl;
 
   const mobileNavBackdrop =
     mobileLayout && mobileNavOpen ? (

@@ -10,6 +10,8 @@ export const SIDEBAR_WIDTH_EXPANDED_CLASS = "w-[232px]";
 /** 与上列 Tailwind 宽度一致，供写入 `--fym-app-sidebar-w`（`.fym-workspace-scrim` 遮罩左边界） */
 export const SIDEBAR_WIDTH_COLLAPSED_PX = 72;
 export const SIDEBAR_WIDTH_EXPANDED_PX = 232;
+/** 知识库笔记本工作台极简侧栏（仅图标轨） */
+export const SIDEBAR_WIDTH_NOTES_WORKBENCH_RAIL_PX = 48;
 
 /** 与 Tailwind `max-lg`（小于 1024px）一致：窄屏下主导航改为抽屉，主区全宽 */
 export const APP_SHELL_MOBILE_MEDIA_QUERY = "(max-width: 1023px)";
