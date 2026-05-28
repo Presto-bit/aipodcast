@@ -16,8 +16,8 @@ import { apiErrorMessage } from "../../../lib/apiError";
 import { countUserVisibleActiveJobs } from "../../../lib/activeJobsVisible";
 import type { JobRecord } from "../../../lib/types";
 
-const WorksGroupedGalleryPanel = dynamic(
-  () => import("../../../components/works/WorksGroupedGalleryPanel"),
+const NotesWorkbenchWorksPanel = dynamic(
+  () => import("../../../components/works/NotesWorkbenchWorksPanel"),
   {
     loading: () => (
       <div
@@ -28,8 +28,6 @@ const WorksGroupedGalleryPanel = dynamic(
     )
   }
 );
-
-const HOME_WORKS_PREVIEW = 10;
 
 export default function HomePage() {
   const router = useRouter();
@@ -113,6 +111,8 @@ export default function HomePage() {
       const notesMetricsOk = Boolean(pack.notesMetrics?.ok) && nm.success !== false;
       const worksResOk = worksPart?.ok ?? false;
       const latest = Array.isArray(jobsData.jobs) && jobsData.jobs.length > 0 ? jobsData.jobs[0] : null;
+      const activeJobsOk =
+        Boolean(pack.jobsActive?.ok) && activeJobsData.success !== false && Array.isArray(activeJobsData.jobs);
       const ai = Array.isArray(worksData.ai) ? worksData.ai : [];
       const tts = Array.isArray(worksData.tts) ? worksData.tts : [];
       const notesWorks = Array.isArray(worksData.notes) ? worksData.notes : [];
@@ -130,8 +130,6 @@ export default function HomePage() {
       } else if (!silent) {
         setWorksFetchErr("");
       }
-      const activeJobsOk =
-        Boolean(pack.jobsActive?.ok) && activeJobsData.success !== false && Array.isArray(activeJobsData.jobs);
       const activeJobsCount = activeJobsOk
         ? countUserVisibleActiveJobs(activeJobsData.jobs as JobRecord[])
         : null;
@@ -636,39 +634,27 @@ export default function HomePage() {
               <IconGrid width={20} height={20} />
             </span>
             <div className="min-w-0">
-              <h2 className="text-base font-semibold tracking-tight text-ink">
-                <Link
-                  href="/works?tab=audio"
-                  className="rounded-sm outline-offset-2 hover:text-brand hover:underline focus-visible:outline focus-visible:ring-2 focus-visible:ring-brand/40"
-                >
-                  最近成品
-                </Link>
-              </h2>
-              <p className="mt-0.5 text-sm text-muted">
-                队列与进度 ·
-                <Link href="/works?tab=active" className="ml-1 font-medium text-brand hover:underline">
-                  进行中
-                </Link>
-              </p>
+              <h2 className="text-base font-semibold tracking-tight text-ink">最近成品</h2>
+              <p className="mt-0.5 text-sm text-muted">按音频与文章分类浏览</p>
             </div>
           </div>
           <Link
-            href="/works?tab=audio"
+            href="/works?returnTo=/home"
             className="text-sm font-medium text-brand hover:underline"
           >
             去我的作品
           </Link>
         </div>
         <div className="mt-4">
-          <WorksGroupedGalleryPanel
+          <NotesWorkbenchWorksPanel
             works={homeWorks}
             loading={worksLoading}
             fetchError={worksFetchErr}
             onDismissError={() => setWorksFetchErr("")}
             onWorkDeleted={() => setWorksRefreshKey((k) => k + 1)}
             returnTo="/home"
-            maxPerGroup={4}
-            emptyHint="暂无成片；在知识库或创作页生成后将显示在这里。"
+            scope="global"
+            showActiveTab={false}
           />
         </div>
       </section>

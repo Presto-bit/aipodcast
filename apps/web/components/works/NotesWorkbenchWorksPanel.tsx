@@ -31,6 +31,12 @@ type Props = {
   onWorkDeleted: () => void;
   pendingStudioWork?: WorkItem | null;
   pendingStudioSubtitle?: string;
+  /** 详情与「查看全部」回跳路径，默认 /notes */
+  returnTo?: string;
+  /** notebook：知识库侧栏；global：首页等全站入口 */
+  scope?: "notebook" | "global";
+  /** 是否展示「进行中」Tab，首页最近成品可关闭 */
+  showActiveTab?: boolean;
 };
 
 function workIsInFlight(work: WorkItem): boolean {
@@ -51,6 +57,21 @@ function mergeActiveWorks(inFlight: WorkItem[], pending: WorkItem | null | undef
   return sortWorksByRecency([...map.values()]);
 }
 
+function preferredVisibleTab(
+  works: WorkItem[],
+  pendingStudioWork: WorkItem | null | undefined,
+  showActiveTab: boolean
+): WorksGalleryTab {
+  const inferred = inferPreferredWorksGalleryTab({ works, pendingStudioWork });
+  if (showActiveTab) return inferred;
+  if (inferred === "script") return "script";
+  if (inferred === "audio") return "audio";
+  const { audio, script } = splitWorksByGalleryKind(works);
+  if (script.length > audio.length) return "script";
+  if (audio.length > 0) return "audio";
+  return "script";
+}
+
 /**
  * 知识库「我的作品」：音频 / 文章 / 进行中 Tab；音频用封面卡片，文章用文稿列表。
  */
@@ -61,7 +82,10 @@ export default function NotesWorkbenchWorksPanel({
   onDismissError,
   onWorkDeleted,
   pendingStudioWork = null,
-  pendingStudioSubtitle = ""
+  pendingStudioSubtitle = "",
+  returnTo = "/notes",
+  scope = "notebook",
+  showActiveTab = true
 }: Props) {
   const { audio, script, finishedAudio, finishedScript, activeWorks } = useMemo(() => {
     const split = splitWorksByGalleryKind(works);
@@ -76,8 +100,8 @@ export default function NotesWorkbenchWorksPanel({
   }, [works, pendingStudioWork]);
 
   const preferredTab = useMemo(
-    () => inferPreferredWorksGalleryTab({ works, pendingStudioWork }),
-    [works, pendingStudioWork]
+    () => preferredVisibleTab(works, pendingStudioWork, showActiveTab),
+    [works, pendingStudioWork, showActiveTab]
   );
   const [tab, setTab] = useState<WorksGalleryTab>(preferredTab);
   const [tabTouched, setTabTouched] = useState(false);
@@ -88,16 +112,20 @@ export default function NotesWorkbenchWorksPanel({
   }, [preferredTab, tabTouched, loading]);
 
   useEffect(() => {
-    if (!pendingStudioWork || !workIsInFlight(pendingStudioWork)) return;
+    if (!showActiveTab || !pendingStudioWork || !workIsInFlight(pendingStudioWork)) return;
     setTab("active");
-  }, [pendingStudioWork?.id, pendingStudioWork?.status]);
+  }, [showActiveTab, pendingStudioWork?.id, pendingStudioWork?.status]);
 
   const activeCount = activeWorks.length;
   const emptyHint =
     tab === "audio"
-      ? "暂无与本笔记本关联的播客成片。"
+      ? scope === "global"
+        ? "暂无播客或语音成片。"
+        : "暂无与本笔记本关联的播客成片。"
       : tab === "script"
-        ? "暂无与本笔记本关联的文章或自媒体稿。"
+        ? scope === "global"
+          ? "暂无文章或自媒体稿。"
+          : "暂无与本笔记本关联的文章或自媒体稿。"
         : "当前没有进行中的生成任务。";
 
   const showGallery =
@@ -135,21 +163,23 @@ export default function NotesWorkbenchWorksPanel({
           >
             文章{script.length > 0 ? ` ${script.length}` : ""}
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "active"}
-            className={chipClass(tab === "active")}
-            onClick={() => {
-              setTabTouched(true);
-              setTab("active");
-            }}
-          >
-            进行中{activeCount > 0 ? ` ${activeCount}` : ""}
-          </button>
+          {showActiveTab ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "active"}
+              className={chipClass(tab === "active")}
+              onClick={() => {
+                setTabTouched(true);
+                setTab("active");
+              }}
+            >
+              进行中{activeCount > 0 ? ` ${activeCount}` : ""}
+            </button>
+          ) : null}
         </div>
         <Link
-          href={buildWorksTabHref(tab, "/notes")}
+          href={buildWorksTabHref(tab, returnTo)}
           className="shrink-0 text-[11px] font-medium text-brand hover:underline"
         >
           查看全部
@@ -169,7 +199,7 @@ export default function NotesWorkbenchWorksPanel({
           onDismissError={onDismissError}
           onWorkDeleted={onWorkDeleted}
           sidebarMaxItems={MAX_ITEMS}
-          workDetailReturnTo="/notes"
+          workDetailReturnTo={returnTo}
         />
       ) : null}
 
@@ -186,11 +216,11 @@ export default function NotesWorkbenchWorksPanel({
             pendingStudioWork && isTextOnlyWorkType(String(pendingStudioWork.type || "")) ? pendingStudioWork : null
           }
           pendingStudioSubtitle={pendingStudioSubtitle}
-          workDetailReturnTo="/notes"
+          workDetailReturnTo={returnTo}
         />
       ) : null}
 
-      {tab === "active" && showGallery ? (
+      {showActiveTab && tab === "active" && showGallery ? (
         <PodcastWorksGallery
           variant="podcast"
           works={limitedWorks(activeWorks, MAX_ITEMS)}
@@ -200,7 +230,7 @@ export default function NotesWorkbenchWorksPanel({
           onWorkDeleted={onWorkDeleted}
           sidebarMaxItems={MAX_ITEMS}
           activeQueueCardActions
-          workDetailReturnTo="/notes"
+          workDetailReturnTo={returnTo}
         />
       ) : null}
     </div>
