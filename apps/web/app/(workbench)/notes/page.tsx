@@ -131,6 +131,7 @@ import {
   profileDefaultSimplified,
   type NotePageBreak
 } from "../../../lib/noteReaderDisplayProfile";
+import { filterWebReadingLines } from "../../../lib/noteReaderWebFilter";
 import { maxNotesForReference, notesRefSelectionLimitMessage } from "../../../lib/noteReferenceLimits";
 import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../../lib/billingShortfall";
@@ -985,6 +986,7 @@ export default function NotesPage() {
   const [previewParseStatus, setPreviewParseStatus] = useState("");
   const [previewParseGate, setPreviewParseGate] = useState("");
   const [previewParseDetail, setPreviewParseDetail] = useState("");
+  const [previewMaterialSummary, setPreviewMaterialSummary] = useState("");
   const [renameNoteId, setRenameNoteId] = useState<string | null>(null);
   const [renameNoteTitle, setRenameNoteTitle] = useState("");
   const [importUrl, setImportUrl] = useState("");
@@ -3324,6 +3326,7 @@ export default function NotesPage() {
     const hit = notes.find((n) => n.noteId === noteId);
     const seedExt = String(opts.ext ?? hit?.ext ?? "").trim();
     const seedInputType = String(opts.inputType ?? hit?.inputType ?? "").trim();
+    setPreviewMaterialSummary(String(hit?.noteSummary || "").trim());
     setPreviewOpen(true);
     setPreviewLoading(true);
     setPreviewNoteId(noteId);
@@ -3353,6 +3356,7 @@ export default function NotesPage() {
     setPreviewParseStatus("");
     setPreviewParseGate("");
     setPreviewParseDetail("");
+    setPreviewMaterialSummary("");
 
     const excerptOnly = citationView && Boolean(opts.excerptText?.trim());
     if (excerptOnly) {
@@ -3674,7 +3678,10 @@ export default function NotesPage() {
   ]);
 
   const filteredPreview = useMemo(() => {
-    const base = previewSimplified ? simplifySourceText(previewText) : previewText;
+    let base = previewSimplified ? simplifySourceText(previewText) : previewText;
+    if (previewDisplayProfile === "web" && previewSimplified) {
+      base = filterWebReadingLines(base);
+    }
     const kw = previewKw.trim();
     if (!kw || previewCharRange || previewDisplayProfile === "table") return base;
     const lines = base.split("\n");
@@ -5510,12 +5517,14 @@ export default function NotesPage() {
             onPointerDown={(e) => e.stopPropagation()}
           >
             <NoteMarkdownPreview
+              noteId={previewNoteId}
               title={previewTitle || "参考资料内容"}
               filteredText={filteredPreview}
               displayProfile={previewDisplayProfile}
               ext={previewExt}
               pageBreaks={previewPageBreaks}
               inputType={previewInputType}
+              materialSummary={previewMaterialSummary}
               structuredBlocks={previewStructuredBlocks}
               loading={previewLoading}
               truncated={previewTruncated}

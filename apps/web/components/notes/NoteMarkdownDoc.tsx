@@ -109,7 +109,7 @@ export default function NoteMarkdownDoc({
             <table
               className={
                 isTable
-                  ? "min-w-full border-collapse text-sm text-ink [&_th]:sticky [&_th]:top-0 [&_th]:z-[1]"
+                  ? "min-w-full border-collapse text-sm text-ink [&_tbody_tr:nth-child(even)]:bg-fill/30 [&_th]:sticky [&_th]:top-0 [&_th]:z-[1]"
                   : "min-w-full border-collapse text-sm text-ink"
               }
             >
