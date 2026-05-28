@@ -1,5 +1,5 @@
 import type { NotePageBreak } from "./noteReaderDisplayProfile";
-import type { NoteRenderBlock } from "./noteReaderBlocks";
+import { normalizeChapterDedupeKey, type NoteRenderBlock } from "./noteReaderBlocks";
 
 export type TocEntry = {
   /** scroll-spy / DOM：块级锚点 */
@@ -64,7 +64,7 @@ export function buildTocEntries(
     if (!b.tocText || !b.tocLevel || b.pageLabel) continue;
     if (opts.epubSpineOnly && b.tocLevel !== 2) continue;
     if (isBoilerplateTocTitle(b.tocText)) continue;
-    const dedupeKey = b.tocText.trim().toLowerCase();
+    const dedupeKey = normalizeChapterDedupeKey(b.tocText);
     if (seenTitles.has(dedupeKey)) continue;
     seenTitles.add(dedupeKey);
     const entry: TocEntry = {

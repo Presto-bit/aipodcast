@@ -43,6 +43,27 @@ def test_epub_should_skip_empty_part_file() -> None:
     assert _epub_should_skip_spine("part0000.xhtml", "part0000", "", []) is True
 
 
+def test_epub_parse_merges_duplicate_chapter_title(tmp_path) -> None:
+    data = _epub_with_spine(
+        (
+            "a.xhtml",
+            "<html><body><h1>同章</h1><p>第一节。</p></body></html>",
+        ),
+        (
+            "b.xhtml",
+            "<html><body><h1>同章</h1><p>第二节。</p></body></html>",
+        ),
+    )
+    path = tmp_path / "dup.epub"
+    path.write_bytes(data)
+    r = ContentParser().parse_epub(str(path))
+    assert r.get("success") is True
+    content = str(r.get("content") or "")
+    assert content.count("## 同章") == 1
+    assert "第一节" in content and "第二节" in content
+    assert "同章 (2)" not in content
+
+
 def test_epub_parse_skips_boilerplate_spine(tmp_path) -> None:
     data = _epub_with_spine(
         (

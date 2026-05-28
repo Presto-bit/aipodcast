@@ -116,8 +116,8 @@ function normalizeSourceExt(ext?: string): string {
     .toLowerCase();
 }
 
-/** 上传资料已有按段 structuredBlocks 时，优先直出、跳过粘行（与 EPUB 对齐） */
-const PREFER_STORED_BLOCK_EXTS = new Set(["epub", "html", "htm", "xhtml", "docx", "doc"]);
+/** 上传资料已有按段 structuredBlocks 时，优先直出、跳过粘行（EPUB 单独按 ## 分章，不在此列） */
+const PREFER_STORED_BLOCK_EXTS = new Set(["html", "htm", "xhtml", "docx", "doc"]);
 
 export function prefersStoredStructuredBlocks(sourceExt?: string): boolean {
   return PREFER_STORED_BLOCK_EXTS.has(normalizeSourceExt(sourceExt));
@@ -134,11 +134,79 @@ function shouldPreferStoredStructuredBlocks(
 }
 
 /** 已有段落结构时，不做粘行合并 */
+function isBoilerplateChapterTitle(text: string): boolean {
+  const compact = String(text || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/\(\d+\)$/i, "");
+  return /^part\d+$/i.test(compact) || /^chapter\d+$/i.test(compact);
+}
+
+/** 章节目录去重键（忽略「第一章 (2)」类后缀） */
+export function normalizeChapterDedupeKey(text: string): string {
+  return String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s*[(（]\d+[)）]\s*$/i, "")
+    .replace(/\s+/g, "");
+}
+
+/**
+ * EPUB 仅按 spine 写入的 `## 章节` 分块，避免 structuredBlocks + 章内 ### 导致目录重复。
+ */
+export function buildEpubRenderBlocksFromText(filteredText: string): NoteRenderBlock[] {
+  const raw = String(filteredText || "").replace(/\r\n/g, "\n").trim();
+  if (!raw) return [];
+
+  const chunks = raw.split(/(?=^##\s+)/m);
+  const byKey = new Map<string, NoteRenderBlock>();
+  const order: string[] = [];
+
+  const appendBlock = (title: string, markdown: string) => {
+    const displayTitle = title.replace(/\s*[(（]\d+[)）]\s*$/i, "").trim();
+    if (!displayTitle || isBoilerplateChapterTitle(displayTitle)) return;
+    const key = normalizeChapterDedupeKey(displayTitle);
+    const existing = byKey.get(key);
+    if (existing) {
+      const extra = markdown.replace(/^##\s+[^\n]+\n?/, "").trim();
+      if (extra) {
+        existing.markdown = `${existing.markdown}\n\n${extra}`.trim();
+      }
+      return;
+    }
+    const block: NoteRenderBlock = {
+      id: `ch-${order.length + 1}`,
+      markdown: markdown.trim(),
+      tocText: displayTitle,
+      tocLevel: 2
+    };
+    byKey.set(key, block);
+    order.push(key);
+  };
+
+  for (const chunk of chunks) {
+    const trimmed = chunk.trim();
+    if (!trimmed) continue;
+    const heading = /^##\s+(.+?)(?:\n|$)/.exec(trimmed);
+    if (heading) {
+      appendBlock(heading[1].trim(), trimmed);
+      continue;
+    }
+    const preId = `pre-${order.length + 1}`;
+    const preKey = `__pre_${preId}`;
+    byKey.set(preKey, { id: preId, markdown: trimmed });
+    order.push(preKey);
+  }
+
+  return order.map((k) => byKey.get(k)!).filter(Boolean);
+}
+
 export function shouldSkipStickyLineMerge(
   filteredText: string,
   structuredBlocks?: StructuredRow[],
   sourceExt?: string
 ): boolean {
+  if (normalizeSourceExt(sourceExt) === "epub") return true;
   if (prefersStoredStructuredBlocks(sourceExt)) return true;
   if (structuredRowsHaveChapterHeadings(structuredBlocks)) return true;
   if (textHasChapterHeadings(filteredText)) return true;
@@ -151,6 +219,9 @@ export function buildRenderBlocksFromText(
   options?: BuildRenderBlocksOptions
 ): NoteRenderBlock[] {
   const sourceExt = normalizeSourceExt(options?.sourceExt);
+  if (sourceExt === "epub") {
+    return buildEpubRenderBlocksFromText(filteredText);
+  }
   if (Array.isArray(structuredBlocks) && structuredBlocks.length > 0) {
     const stored = normalizeFromStored(structuredBlocks);
     if (shouldPreferStoredStructuredBlocks(sourceExt, stored)) {

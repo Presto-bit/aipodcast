@@ -1810,6 +1810,7 @@ class ContentParser:
                 md_parts: list[str] = []
                 rag_segments: list[dict[str, Any]] = []
                 title_seen: dict[str, int] = {}
+                chapter_md_index: dict[str, int] = {}
                 chapter_index = 0
                 ncx_labels = _epub_ncx_labels(zf, opf_root, opf_dir)
 
@@ -1844,17 +1845,27 @@ class ContentParser:
                     chapter_index += 1
                     if not title:
                         title = f"章节 {chapter_index}"
-                    n = title_seen.get(title, 0) + 1
-                    title_seen[title] = n
-                    display_title = title if n == 1 else f"{title} ({n})"
+                    title_seen[title] = title_seen.get(title, 0) + 1
+                    display_title = title
                     if display_title != probe_title:
                         body, chapter_segments = _epub_chapter_body_and_segments(
                             html_blocks, display_title
                         )
+                    title_key = display_title.strip().casefold()
+                    if title_key in chapter_md_index:
+                        idx = chapter_md_index[title_key]
+                        if body:
+                            md_parts[idx] = f"{md_parts[idx]}\n\n{body}".strip()
+                        for seg in chapter_segments:
+                            if isinstance(seg.get("meta"), dict):
+                                seg["meta"]["epub_href"] = path
+                        rag_segments.extend(chapter_segments)
+                        continue
                     if body:
                         md_parts.append(f"## {display_title}\n\n{body}")
                     else:
                         md_parts.append(f"## {display_title}")
+                    chapter_md_index[title_key] = len(md_parts) - 1
                     for seg in chapter_segments:
                         if isinstance(seg.get("meta"), dict):
                             seg["meta"]["epub_href"] = path
