@@ -579,8 +579,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const notesNavMinimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
-  const useFullSidebar = !notesNavMinimalRail || (mobileLayout && mobileNavOpen);
-  const sidebarOffCanvas = mobileLayout && !mobileNavOpen && !notesNavMinimalRail;
+  /** 桌面端笔记本工作台用 48px 窄轨；移动端始终挂载完整侧栏抽屉，避免汉堡无 `#fym-app-sidebar-root` 可开 */
+  const useFullSidebar = mobileLayout || !notesNavMinimalRail;
+  const sidebarOffCanvas = mobileLayout && !mobileNavOpen;
   const sidebarDrawerPx = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
 
   const fullSidebarEl = (
