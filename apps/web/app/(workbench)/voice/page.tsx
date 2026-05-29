@@ -1,12 +1,24 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import VoiceClonePanel from "../../../components/voice/VoiceClonePanel";
-import MyVoicesPanel from "../../../components/voice/MyVoicesPanel";
-import UserTemplatesPanel from "../../../components/voice/UserTemplatesPanel";
 import { useI18n } from "../../../lib/I18nContext";
 import { IconVoiceCloneTab, IconVoiceLibraryTab, IconVoicePersonaTab } from "../../../components/icons";
+import { SkeletonBlock } from "../../../components/ui/Skeleton";
+
+const VoiceClonePanel = dynamic(() => import("../../../components/voice/VoiceClonePanel"), {
+  ssr: false,
+  loading: () => <SkeletonBlock className="h-48 w-full rounded-xl" />
+});
+const MyVoicesPanel = dynamic(() => import("../../../components/voice/MyVoicesPanel"), {
+  ssr: false,
+  loading: () => <SkeletonBlock className="h-48 w-full rounded-xl" />
+});
+const UserTemplatesPanel = dynamic(() => import("../../../components/voice/UserTemplatesPanel"), {
+  ssr: false,
+  loading: () => <SkeletonBlock className="h-48 w-full rounded-xl" />
+});
 
 type VoiceTab = "my" | "clone" | "persona";
 

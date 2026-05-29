@@ -21,9 +21,8 @@ import { isTextOnlyWorkType, type WorkItem } from "../../../lib/worksTypes";
 import { isAudioGalleryWorkType } from "../../../lib/workGalleryDisplay";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
-import { listJobs } from "../../../lib/api";
-import { countUserVisibleActiveJobs } from "../../../lib/activeJobsVisible";
 import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
+import { useActiveJobCount, useInvalidateActiveJobs } from "../../../lib/queries/activeJobsQuery";
 
 const WORKS_LIMIT = 60;
 
@@ -31,8 +30,6 @@ function mergeById(prev: WorkItem[], next: WorkItem[]): WorkItem[] {
   const ids = new Set(prev.map((x) => x.id));
   return [...prev, ...next.filter((x) => !ids.has(x.id))];
 }
-
-const ACTIVE_JOBS_LIMIT = 80;
 
 type WorksTab = "audio" | "script" | "active";
 
@@ -51,6 +48,8 @@ export default function WorksPage() {
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const pageAbortSignal = usePageAbortSignal();
   const pageFetch = usePageFetch(pageAbortSignal);
+  const activeJobCount = useActiveJobCount(isLoggedIn && ready);
+  const invalidateActiveJobs = useInvalidateActiveJobs();
   const [ai, setAi] = useState<WorkItem[]>([]);
   const [tts, setTts] = useState<WorkItem[]>([]);
   const [notesBucket, setNotesBucket] = useState<WorkItem[]>([]);
@@ -60,7 +59,6 @@ export default function WorksPage() {
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [activeJobCount, setActiveJobCount] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [recentOnly, setRecentOnly] = useState(false);
   /** 文稿 Tab：体裁筛选 */
@@ -71,28 +69,6 @@ export default function WorksPage() {
     if (worksView === "script") return "/works?tab=script";
     return "/works?tab=audio";
   }, [worksView]);
-
-  const refreshActiveJobCount = useCallback(async () => {
-    if (!ready) {
-      setActiveJobCount(null);
-      return;
-    }
-    if (!isLoggedIn) {
-      setActiveJobCount(0);
-      return;
-    }
-    try {
-      const { jobs } = await listJobs({
-        limit: ACTIVE_JOBS_LIMIT,
-        offset: 0,
-        status: "queued,running",
-        slim: true
-      });
-      setActiveJobCount(countUserVisibleActiveJobs(jobs));
-    } catch {
-      setActiveJobCount(null);
-    }
-  }, [ready, isLoggedIn]);
 
   const fetchWorks = useCallback(
     async (append: boolean) => {
@@ -108,23 +84,14 @@ export default function WorksPage() {
             setNotesBucket([]);
             setOffset(0);
             setHasMore(false);
-            setActiveJobCount(0);
           }
           return;
         }
         if (!append) {
-          const [res, jobsPack] = await Promise.all([
-            pageFetch(`/api/works?limit=${WORKS_LIMIT}&offset=0`, {
-              cache: "no-store",
-              headers: { ...getAuthHeaders() }
-            }),
-            listJobs({
-              limit: ACTIVE_JOBS_LIMIT,
-              offset: 0,
-              status: "queued,running",
-              slim: true
-            })
-          ]);
+          const res = await pageFetch(`/api/works?limit=${WORKS_LIMIT}&offset=0`, {
+            cache: "no-store",
+            headers: { ...getAuthHeaders() }
+          });
           const data = (await res.json().catch(() => ({}))) as {
             success?: boolean;
             notes?: WorkItem[];
@@ -143,9 +110,6 @@ export default function WorksPage() {
           const t = typeof data.total === "number" ? data.total : (data.ai?.length || 0) + (data.tts?.length || 0);
           setOffset(t);
           setHasMore(Boolean(data.has_more));
-          setActiveJobCount(
-            Array.isArray(jobsPack.jobs) ? countUserVisibleActiveJobs(jobsPack.jobs) : null
-          );
         } else {
           const res = await pageFetch(`/api/works?limit=${WORKS_LIMIT}&offset=${o}`, {
             cache: "no-store",
@@ -193,14 +157,9 @@ export default function WorksPage() {
     setWorksView(parseWorksTab(searchParams?.get("tab") ?? null));
   }, [searchParams]);
 
-  useEffect(() => {
-    if (worksView === "active") void refreshActiveJobCount();
-  }, [worksView, refreshActiveJobCount]);
-
   const onActiveJobsChanged = useCallback(() => {
-    setActiveJobCount((c) => (typeof c === "number" && c > 0 ? c - 1 : c));
-    void refreshActiveJobCount();
-  }, [refreshActiveJobCount]);
+    invalidateActiveJobs();
+  }, [invalidateActiveJobs]);
 
   const routeForTab = useCallback((tab: WorksTab) => {
     if (tab === "audio") return "/works?tab=audio";

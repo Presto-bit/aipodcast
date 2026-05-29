@@ -2,11 +2,9 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { useI18n } from "../../lib/I18nContext";
-import { listJobs } from "../../lib/api";
 import { activeJobRecordToWorkItem } from "../../lib/activeJobWorkItem";
-import type { JobRecord } from "../../lib/types";
 import type { WorkItem } from "../../lib/worksTypes";
 import { isTextOnlyWorkType, shouldHideWorkFromUserGallery } from "../../lib/worksTypes";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
@@ -15,6 +13,7 @@ import { classifyErrorTone, errorPageCopy } from "../../lib/errorCopy";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import EmptyState from "../ui/EmptyState";
 import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
+import { useActiveJobsQuery, useInvalidateActiveJobs } from "../../lib/queries/activeJobsQuery";
 
 const PodcastWorksGallery = dynamic(() => import("../podcast/PodcastWorksGallery"), {
   loading: () => (
@@ -26,67 +25,27 @@ const PodcastWorksGallery = dynamic(() => import("../podcast/PodcastWorksGallery
   )
 });
 
-/** 与作品详情轮询接近，便于合并 server progress 与列表展示一致 */
-const POLL_MS = 3000;
-const LIST_LIMIT = 40;
 const ACTIVE_RETURN = "/works?tab=active";
 
 type WorksActiveJobsPanelProps = {
-  /** 删除或停止成功后可更新父级「进行中」数量等 */
   onActiveJobsChanged?: () => void;
 };
 
 export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiveJobsPanelProps = {}) {
   const { t } = useI18n();
-  const { phone, ready, user } = useAuth();
-  const [jobs, setJobs] = useState<JobRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-  const visibleRef = useRef(true);
+  const { ready, user } = useAuth();
+  const loggedIn = isLoggedInAccountUser(user);
+  const jobsQuery = useActiveJobsQuery(loggedIn && ready);
+  const invalidateActiveJobs = useInvalidateActiveJobs();
 
-  const load = useCallback(async () => {
-    setErr("");
-    if (!isLoggedInAccountUser(user)) {
-      setJobs([]);
-      setLoading(false);
-      return;
-    }
-    try {
-      const { jobs: list } = await listJobs({
-        limit: LIST_LIMIT,
-        offset: 0,
-        status: "queued,running",
-        slim: true
-      });
-      setJobs(list);
-    } catch (e) {
-      setErr(String(e instanceof Error ? e.message : e));
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
+  const jobs = jobsQuery.data ?? [];
+  const loading = jobsQuery.isLoading;
+  const err = jobsQuery.isError ? String(jobsQuery.error instanceof Error ? jobsQuery.error.message : jobsQuery.error) : "";
 
-  useEffect(() => {
-    if (!ready) return;
-    void load();
-  }, [load, ready, phone, user]);
-
-  useEffect(() => {
-    function onVis() {
-      visibleRef.current = document.visibilityState === "visible";
-    }
-    onVis();
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, []);
-
-  useEffect(() => {
-    if (!ready) return;
-    const id = window.setInterval(() => {
-      if (visibleRef.current) void load();
-    }, POLL_MS);
-    return () => window.clearInterval(id);
-  }, [load, ready]);
+  const onGalleryWorkChanged = useCallback(() => {
+    invalidateActiveJobs();
+    onActiveJobsChanged?.();
+  }, [invalidateActiveJobs, onActiveJobsChanged]);
 
   const errCopy = useMemo(
     () => (err ? errorPageCopy(classifyErrorTone(err), t) : null),
@@ -105,17 +64,11 @@ export default function WorksActiveJobsPanel({ onActiveJobsChanged }: WorksActiv
     return { scriptWorks: scripts, mediaWorks: media };
   }, [jobs]);
 
-  const onGalleryWorkChanged = useCallback(() => {
-    onActiveJobsChanged?.();
-    void load();
-  }, [load, onActiveJobsChanged]);
-
-  if (loading) {
+  if (loading && jobs.length === 0) {
     return (
-      <div className="mt-4 space-y-3">
-        <SkeletonLine className="h-10 w-full" />
-        <SkeletonBlock className="h-36 w-full" />
-        <SkeletonBlock className="h-36 w-full" />
+      <div className="mt-1 space-y-3" aria-busy>
+        <SkeletonLine className="h-4 w-48 mx-auto" />
+        <SkeletonBlock className="h-32 w-full rounded-2xl" />
       </div>
     );
   }

@@ -927,7 +927,7 @@ function HubPopularNotebookGrid({
   );
 }
 
-export default function NotesPageMain() {
+export default function NotesPageMain({ initialNotebookId = null }: { initialNotebookId?: string | null }) {
   const router = useRouter();
   const { t } = useI18n();
   const { user, phone, getAuthHeaders, ready } = useAuth();
@@ -961,6 +961,20 @@ export default function NotesPageMain() {
   const [hubView, setHubView] = useState(true);
   /** 用户主动回到笔记本卡片列表时为 true，避免再次自动进入工作台 */
   const userPrefersNotebookHubRef = useRef(false);
+
+  useEffect(() => {
+    if (!initialNotebookId) return;
+    try {
+      const name = decodeURIComponent(initialNotebookId).trim();
+      if (!name) return;
+      userPrefersNotebookHubRef.current = false;
+      setSelectedNotebook(name);
+      setHubView(false);
+    } catch {
+      // ignore malformed segment
+    }
+  }, [initialNotebookId]);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [newNotebookName, setNewNotebookName] = useState("");
@@ -3871,6 +3885,7 @@ export default function NotesPageMain() {
     setHubView(false);
     setWorkbenchMobilePanel("chat");
     setError("");
+    router.push(`/notes/${encodeURIComponent(name)}`);
   }
 
   function openSharedNotebookFromPopular(item: PopularNotebookItem) {
@@ -4211,6 +4226,8 @@ export default function NotesPageMain() {
               setSharedBrowse(null);
               dismissNotesBlockingOverlays();
               setHubView(true);
+              setSelectedNotebook("");
+              router.push("/notes");
             }}
             onOpenNotebook={openNotebook}
             onNewNotebook={() => {

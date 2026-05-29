@@ -575,8 +575,9 @@ export default function SubscriptionPage() {
   useEffect(() => {
     if (!walletPayEnabled) return undefined;
     const tick = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void loadMe();
-    }, 30_000);
+    }, 60_000);
     const onVis = () => {
       if (document.visibilityState === "visible") void loadMe();
     };

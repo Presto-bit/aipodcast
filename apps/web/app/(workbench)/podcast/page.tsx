@@ -1,7 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import PodcastStudio from "../../../components/studio/PodcastStudio";
-
-export default function PodcastPage() {
-  return <PodcastStudio />;
+/** 深链兼容：统一进入创作页 code-split 入口 */
+export default function PodcastRedirectPage() {
+  redirect("/create?mode=podcast");
 }

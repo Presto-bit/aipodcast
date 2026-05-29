@@ -1,7 +1,19 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useParams, useSearchParams } from "next/navigation";
-import { SharePublishClient } from "../../../../components/works/SharePublishClient";
+
+const SharePublishClient = dynamic(
+  () => import("../../../../components/works/SharePublishClient").then((m) => ({ default: m.SharePublishClient })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="mx-auto max-w-3xl px-3 py-10 text-sm text-muted" aria-busy>
+        加载作品详情…
+      </div>
+    )
+  }
+);
 
 export default function WorkDetailPage() {
   const params = useParams();

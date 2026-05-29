@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { CircleHelp, Download, History, PanelRightClose, PanelRightOpen, Scissors, Search, SlidersHorizontal, Sparkles } from "../icons";
 import {
   useCallback,
@@ -43,7 +44,15 @@ import {
   maxEndMsForLineContainingWordId,
   wordIdsBetweenInclusive
 } from "../../lib/prestoFlowTranscript";
-import ClipWaveformPanel, { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
+import type { ClipWaveformHandle } from "../clip/ClipWaveformPanel";
+const ClipWaveformPanel = dynamic(() => import("../clip/ClipWaveformPanel"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex min-h-[120px] items-center justify-center rounded-xl border border-line/50 bg-fill/40 text-xs text-muted">
+      加载波形…
+    </div>
+  )
+});
 import ClipVirtualAudioTransport from "../clip/ClipVirtualAudioTransport";
 import {
   perStagingEntryDurationMs,

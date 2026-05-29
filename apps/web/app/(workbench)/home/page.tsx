@@ -15,6 +15,7 @@ import { SkeletonBlock, SkeletonLine } from "../../../components/ui/Skeleton";
 import { apiErrorMessage } from "../../../lib/apiError";
 import { countUserVisibleActiveJobs } from "../../../lib/activeJobsVisible";
 import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
+import { useActiveJobCount } from "../../../lib/queries/activeJobsQuery";
 import type { JobRecord } from "../../../lib/types";
 
 const NotesWorkbenchWorksPanel = dynamic(
@@ -67,6 +68,7 @@ export default function HomePage() {
   const homeOverviewReqSeq = useRef(0);
   const pageAbortSignal = usePageAbortSignal();
   const pageFetch = usePageFetch(pageAbortSignal);
+  const activeJobCountFromQuery = useActiveJobCount(isLoggedIn);
 
   const refreshHomeOverview = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
@@ -177,21 +179,9 @@ export default function HomePage() {
   }, [refreshHomeOverview, worksRefreshKey, homeAccountKey, isLoggedIn]);
 
   useEffect(() => {
-    if (!isLoggedIn) return;
-    const tick = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void refreshHomeOverview({ silent: true });
-    };
-    const id = window.setInterval(tick, 60_000);
-    const onVis = () => {
-      if (document.visibilityState === "visible") void refreshHomeOverview({ silent: true });
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      window.clearInterval(id);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [isLoggedIn, refreshHomeOverview]);
+    if (activeJobCountFromQuery == null) return;
+    setOverview((prev) => ({ ...prev, activeJobsCount: activeJobCountFromQuery }));
+  }, [activeJobCountFromQuery]);
 
   useEffect(() => {
     if (!regA11ySuccess) return;

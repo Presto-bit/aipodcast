@@ -53,6 +53,7 @@ import { useI18n } from "../../../lib/I18nContext";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../../../lib/worksTypes";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../../lib/notesProject";
 import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
+import { useCreateRecentWorksQuery, useInvalidateWorksOnMutation } from "../../../lib/queries/worksQueries";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
 import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../../components/studio/CreateStudioIdleShell";
@@ -75,6 +76,8 @@ export default function CreatePage() {
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const pageAbortSignal = usePageAbortSignal();
   const pageFetch = usePageFetch(pageAbortSignal);
+  const worksQuery = useCreateRecentWorksQuery(getAuthHeaders, isLoggedIn, NOTES_PODCAST_PROJECT_NAME, HOME_WORKS_LIMIT);
+  const invalidateWorks = useInvalidateWorksOnMutation();
 
   const [draftText, setDraftText] = useState("");
   const [libraryPreview, setLibraryPreview] = useState("");
@@ -83,6 +86,7 @@ export default function CreatePage() {
   useLayoutEffect(() => {
     const m = (searchParams?.get("mode") || "").trim().toLowerCase();
     if (m === "tts") setMode("tts");
+    else if (m === "podcast") setMode("podcast");
   }, [searchParams]);
   /**
    * 访客首屏先渲染轻量工具条壳，再在浏览器空闲时挂载真实 Studio，兼顾「看得见工具条」与进页轻量。
@@ -182,40 +186,9 @@ export default function CreatePage() {
   }, [fetchHotTopics, hotTopicSeed]);
 
   const refreshWorks = useCallback(async () => {
-    setWorksErr("");
-    try {
-      const res = await pageFetch(`/api/works?limit=${HOME_WORKS_LIMIT}&offset=0`, {
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: { ...getAuthHeaders() }
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        ai?: WorkItem[];
-        tts?: WorkItem[];
-        notes?: WorkItem[];
-        error?: string;
-        detail?: string;
-      };
-      if (!res.ok || data.success === false) {
-        throw new Error(apiErrorMessage(data, `加载失败（${res.status}）`));
-      }
-      const merged = mergeUserFacingWorksByRecency(
-        Array.isArray(data.ai) ? data.ai : [],
-        Array.isArray(data.tts) ? data.tts : [],
-        Array.isArray(data.notes) ? data.notes : []
-      );
-      // 创作页「最近成品」仅展示主站创作入口产出，不含笔记本工作室（同一项目名下）的成片
-      setHomeWorks(
-        merged.filter((w) => String(w.projectName || "").trim() !== NOTES_PODCAST_PROJECT_NAME)
-      );
-    } catch (e) {
-      if (isAbortError(e)) return;
-      setWorksErr(String(e instanceof Error ? e.message : e));
-    } finally {
-      if (!pageAbortSignal.aborted) setWorksLoading(false);
-    }
-  }, [getAuthHeaders, pageAbortSignal, pageFetch]);
+    await invalidateWorks();
+    await worksQuery.refetch();
+  }, [invalidateWorks, worksQuery]);
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -224,8 +197,16 @@ export default function CreatePage() {
       setWorksErr("");
       return;
     }
-    void refreshWorks();
-  }, [refreshWorks, isLoggedIn]);
+    setWorksLoading(worksQuery.isLoading);
+    if (worksQuery.filteredWorks) {
+      setHomeWorks(worksQuery.filteredWorks);
+      setWorksErr("");
+    }
+    if (worksQuery.isError) {
+      setWorksErr(String(worksQuery.error instanceof Error ? worksQuery.error.message : worksQuery.error));
+      setHomeWorks([]);
+    }
+  }, [isLoggedIn, worksQuery.filteredWorks, worksQuery.error, worksQuery.isError, worksQuery.isLoading]);
 
   const refreshPodcastTemplates = useCallback(async () => {
     setTemplatesErr("");

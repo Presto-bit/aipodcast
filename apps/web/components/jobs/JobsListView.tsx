@@ -7,6 +7,7 @@ import EmptyState from "../ui/EmptyState";
 import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
 import { useTableVirtualizer } from "../ui/useTableVirtualizer";
 import { cancelJob, listJobs, purgeJob, retryJob } from "../../lib/api";
+import { isAbortError, usePageAbortSignal } from "../../lib/usePageAbortSignal";
 import { jobsListLoadErrorPresentation } from "../../lib/jobsListErrors";
 import type { JobRecord, JobStatus } from "../../lib/types";
 import { useI18n } from "../../lib/I18nContext";
@@ -93,6 +94,7 @@ type JobsListViewProps = {
 
 /** 创作记录列表（站内 / 管理后台复用） */
 export default function JobsListView({ variant }: JobsListViewProps) {
+  const pageAbortSignal = usePageAbortSignal();
   const { t } = useI18n();
   const basePath = variant === "admin" ? "/admin/jobs" : "/jobs";
   const [jobs, setJobs] = useState<JobRecord[]>([]);
@@ -136,11 +138,12 @@ export default function JobsListView({ variant }: JobsListViewProps) {
       setJobs(list);
       setHasMore(more);
     } catch (e) {
+      if (isAbortError(e)) return;
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
-      setLoading(false);
+      if (!pageAbortSignal.aborted) setLoading(false);
     }
-  }, [filter, page]);
+  }, [filter, page, pageAbortSignal]);
 
   useEffect(() => {
     void load();

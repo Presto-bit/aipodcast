@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
@@ -30,7 +31,7 @@ import {
   IconTrash,
   IconUser
 } from "./icons";
-import { useAuth } from "../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../lib/auth";
 import {
   APP_SIDEBAR_COLLAPSED_KEY as COLLAPSE_KEY,
   APP_SIDEBAR_COLLAPSE_EVENT,
@@ -39,8 +40,10 @@ import {
 import { useI18n } from "../lib/I18nContext";
 import AnimatedPageShell from "./AnimatedPageShell";
 import WorkAudioShell from "./WorkAudioShell";
+import ActiveJobsProvider from "./ActiveJobsProvider";
 import BrandGlyph from "./brand/BrandGlyph";
-import NotesNavExpanded from "./notes/NotesNavExpanded";
+const NotesNavExpanded = dynamic(() => import("./notes/NotesNavExpanded"), { ssr: false });
+const NotesWorkbenchMinimalRail = dynamic(() => import("./notes/NotesWorkbenchMinimalRail"), { ssr: false });
 import { dispatchNotesShowNotebookHub, NOTES_MINIMAL_MAIN_NAV_EVENT } from "../lib/notesLastNotebook";
 import {
   APP_SHELL_MOBILE_MEDIA_QUERY,
@@ -52,7 +55,6 @@ import {
   SIDEBAR_WIDTH_EXPANDED_PX,
   SIDEBAR_WIDTH_NOTES_WORKBENCH_RAIL_PX
 } from "../lib/appShellLayout";
-import NotesWorkbenchMinimalRail from "./notes/NotesWorkbenchMinimalRail";
 import {
   isMarketingShellLessPath,
   matchesNotesWorkbench,
@@ -61,6 +63,7 @@ import {
   NOTES_TEMPLATES_PREFIX,
   NOTES_TRASH_PREFIX,
   pathMatchesRoot,
+  pathNeedsWorkAudio,
   WORKBENCH_HOME_PATH,
   WORKBENCH_NAV_PREFETCH
 } from "../lib/navPaths";
@@ -100,13 +103,13 @@ function navButtonClass(active: boolean, collapsed: boolean): string {
   ].join(" ");
 }
 
-/** 与侧栏「知识库」button 分支一致：/notes 主路由（非模板/回收站） */
+/** 与侧栏「知识库」button 分支一致：/notes 主路由及笔记本工作台（非模板/回收站/author-ip） */
 function isNotesPrimaryWorkbenchPath(pathname: string): boolean {
-  return (
-    normalizePathname(pathname) === "/notes" &&
-    !pathname.startsWith(NOTES_TEMPLATES_PREFIX) &&
-    !pathname.startsWith(NOTES_TRASH_PREFIX)
-  );
+  const n = normalizePathname(pathname);
+  if (!pathMatchesRoot(n, "/notes")) return false;
+  if (pathname.startsWith(NOTES_TEMPLATES_PREFIX) || pathname.startsWith(NOTES_TRASH_PREFIX)) return false;
+  if (n.startsWith("/notes/author-ip")) return false;
+  return n === "/notes" || n.startsWith("/notes/");
 }
 
 function NavSectionHeader({ collapsed, children }: { collapsed: boolean; children: React.ReactNode }) {
@@ -231,7 +234,8 @@ function CreateStudioNavExpanded({
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const path = pathname ?? "";
-  const { ready } = useAuth();
+  const { ready, user } = useAuth();
+  const loggedIn = isLoggedInAccountUser(user);
 
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
@@ -451,12 +455,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const pageShell = <AnimatedPageShell>{children}</AnimatedPageShell>;
   const shellChildren = isMarketingShellLessPath(path) ? (
-    <AnimatedPageShell>{children}</AnimatedPageShell>
+    pageShell
   ) : (
-    <WorkAudioShell>
-      <AnimatedPageShell>{children}</AnimatedPageShell>
-    </WorkAudioShell>
+    <ActiveJobsProvider enabled={ready && loggedIn}>
+      {pathNeedsWorkAudio(path) ? <WorkAudioShell>{pageShell}</WorkAudioShell> : pageShell}
+    </ActiveJobsProvider>
   );
 
   if (!ready) {

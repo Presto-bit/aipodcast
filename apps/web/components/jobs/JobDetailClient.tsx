@@ -13,6 +13,7 @@ import { messageSuggestsBillingTopUpOrSubscription } from "../../lib/billingShor
 import { classifyJobError, failureCopy, failureRecoveryLink } from "../../lib/jobFailure";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { deriveJobStage, type StreamPayload } from "../../lib/jobStage";
+import { isAbortError, usePageAbortSignal } from "../../lib/usePageAbortSignal";
 import {
   presentJobEventTypeForUser,
   presentJobProgressMessageForUser,
@@ -68,6 +69,7 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
   const router = useRouter();
   const { getAuthHeaders } = useAuth();
   const { showError, showInfo } = useAppNotice();
+  const pageAbortSignal = usePageAbortSignal();
   const [job, setJob] = useState<JobRecord | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -142,11 +144,13 @@ export function JobDetailClient({ jobId, recordsListHref }: JobDetailClientProps
     setLoadErr("");
     try {
       const row = await getJob(jobId);
+      if (pageAbortSignal.aborted) return;
       setJob(row);
     } catch (e) {
+      if (isAbortError(e) || pageAbortSignal.aborted) return;
       setLoadErr(String(e instanceof Error ? e.message : e));
     }
-  }, [jobId]);
+  }, [jobId, pageAbortSignal]);
 
   const setPodcastTemplateEnabled = useCallback(
     async (next: boolean) => {

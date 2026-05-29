@@ -1,7 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import TtsStudio from "../../../components/studio/TtsStudio";
-
-export default function TtsPage() {
-  return <TtsStudio />;
+/** 深链兼容：统一进入创作页 code-split 入口 */
+export default function TtsRedirectPage() {
+  redirect("/create?mode=tts");
 }

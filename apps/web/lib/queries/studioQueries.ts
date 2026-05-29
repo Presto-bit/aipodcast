@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { WorkItem } from "../worksTypes";
+import { useWorksListQuery } from "./worksQueries";
 
 export type StudioBootstrapPack = {
   defaultVoices?: Record<string, Record<string, unknown>>;
@@ -43,20 +44,6 @@ async function fetchStudioBootstrap(headers: Record<string, string>): Promise<St
   };
 }
 
-async function fetchPodcastWorks(headers: Record<string, string>): Promise<WorkItem[]> {
-  const res = await fetch("/api/works", { cache: "no-store", headers });
-  const data = (await res.json().catch(() => ({}))) as {
-    success?: boolean;
-    ai?: WorkItem[];
-    error?: string;
-    detail?: string;
-  };
-  if (!res.ok || !data.success) {
-    throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-  }
-  return Array.isArray(data.ai) ? data.ai : [];
-}
-
 export function useStudioBootstrap(getAuthHeaders: () => Record<string, string>, loggedIn: boolean) {
   return useQuery({
     queryKey: ["studio-bootstrap"],
@@ -67,21 +54,21 @@ export function useStudioBootstrap(getAuthHeaders: () => Record<string, string>,
 }
 
 export function usePodcastWorksQuery(getAuthHeaders: () => Record<string, string>, loggedIn: boolean) {
-  return useQuery({
-    queryKey: ["podcast-works-ai"],
-    queryFn: () => fetchPodcastWorks(getAuthHeaders()),
-    enabled: loggedIn,
-    staleTime: 30_000
-  });
+  const q = useWorksListQuery(getAuthHeaders, loggedIn, { limit: 80, offset: 0 });
+  return {
+    ...q,
+    data: q.data?.ai as WorkItem[] | undefined
+  };
 }
 
-/** 音色保存事件：使 studio-bootstrap 与 saved_voices 缓存失效 */
+/** 音色保存事件：使 studio-bootstrap 与 saved_voices / works 缓存失效 */
 export function useInvalidateStudioVoicesOnEvent(enabled: boolean) {
   const queryClient = useQueryClient();
   useEffect(() => {
     if (!enabled || typeof window === "undefined") return;
     const onChange = () => {
       void queryClient.invalidateQueries({ queryKey: ["studio-bootstrap"] });
+      void queryClient.invalidateQueries({ queryKey: ["works-list"] });
     };
     window.addEventListener("fym-saved-voices-changed", onChange);
     return () => window.removeEventListener("fym-saved-voices-changed", onChange);
