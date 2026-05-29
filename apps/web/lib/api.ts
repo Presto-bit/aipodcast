@@ -467,13 +467,35 @@ export async function publishWorkToRss(payload: {
 }
 
 export async function listRssPublicationsByJobIds(jobIds: string[]) {
-  const ids = jobIds.map((x) => String(x || "").trim()).filter(Boolean);
+  const ids = [...new Set(jobIds.map((x) => String(x || "").trim()).filter(Boolean))].sort();
   if (ids.length === 0) return {} as Record<string, RssPublication[]>;
-  const q = new URLSearchParams({ job_ids: ids.join(",") }).toString();
-  const resp = await fetch(`/api/rss/publications?${q}`, { cache: "no-store", headers: authMerge() });
-  if (!resp.ok) throw new Error(await errorMessageFromResponse(resp));
-  const data = (await resp.json()) as { items?: Record<string, RssPublication[]> };
-  return data.items || {};
+  return fetchRssPublicationsByJobIdsDeduped(ids);
+}
+
+const rssPublicationsInflight = new Map<string, Promise<Record<string, RssPublication[]>>>();
+
+/** 相同 job_ids 并发只发一次请求，避免作品列表轮询时打满浏览器连接池。 */
+async function fetchRssPublicationsByJobIdsDeduped(
+  sortedIds: string[]
+): Promise<Record<string, RssPublication[]>> {
+  const key = sortedIds.join(",");
+  const pending = rssPublicationsInflight.get(key);
+  if (pending) return pending;
+
+  const q = new URLSearchParams({ job_ids: key }).toString();
+  const request = (async () => {
+    try {
+      const resp = await fetch(`/api/rss/publications?${q}`, { cache: "no-store", headers: authMerge() });
+      if (!resp.ok) throw new Error(await errorMessageFromResponse(resp));
+      const data = (await resp.json()) as { items?: Record<string, RssPublication[]> };
+      return data.items || {};
+    } finally {
+      rssPublicationsInflight.delete(key);
+    }
+  })();
+
+  rssPublicationsInflight.set(key, request);
+  return request;
 }
 
 export type RssPublishEligibilityResult = {

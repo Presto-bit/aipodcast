@@ -22,6 +22,7 @@ import {
 import { listRssPublicationsByJobIds, type RssPublication, cancelJob } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
 import { isTextOnlyWorkType } from "../../lib/worksTypes";
+import { rssPublicationJobIdsKey } from "../../lib/workGalleryDisplay";
 import { useI18n } from "../../lib/I18nContext";
 import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
 import { copyWorkManuscriptToClipboard } from "../../lib/copyWorkManuscript";
@@ -406,10 +407,10 @@ export default function PodcastWorksGallery({
     }
   }, [visibleItems, coverBustById, eagerCoverFirstCount, useListCoverThumbs]);
 
+  const publicationJobIdsKey = useMemo(() => rssPublicationJobIdsKey(items), [items]);
+
   useEffect(() => {
-    const ids = items
-      .map((x) => String(x.id || "").trim())
-      .filter(Boolean);
+    const ids = publicationJobIdsKey ? publicationJobIdsKey.split(",") : [];
     if (ids.length === 0) {
       setPublicationsByJobId({});
       return;
@@ -426,7 +427,7 @@ export default function PodcastWorksGallery({
     return () => {
       canceled = true;
     };
-  }, [items]);
+  }, [publicationJobIdsKey]);
 
   const notesStudioMenuPortalData = useMemo(() => {
     if (!menuOpenId) return null;

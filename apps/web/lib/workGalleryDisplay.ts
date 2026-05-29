@@ -93,3 +93,22 @@ export function buildWorksTabHref(tab: WorksGalleryTab, returnTo?: string): stri
   if (rt) q.set("returnTo", rt);
   return `/works?${q.toString()}`;
 }
+
+/** 进行中任务尚无 RSS 发布记录，跳过查询以减少轮询时的重复请求。 */
+export function shouldLookupRssPublications(work: Pick<WorkItem, "id" | "status">): boolean {
+  const id = String(work.id || "").trim();
+  if (!id) return false;
+  return !workIsInFlight(work as WorkItem);
+}
+
+/** 稳定 job id 键：仅当成片集合变化时才触发 RSS 批量查询。 */
+export function rssPublicationJobIdsKey(
+  works: ReadonlyArray<Pick<WorkItem, "id" | "status">>
+): string {
+  const ids: string[] = [];
+  for (const w of works) {
+    if (!shouldLookupRssPublications(w)) continue;
+    ids.push(String(w.id).trim());
+  }
+  return [...new Set(ids)].sort().join(",");
+}
