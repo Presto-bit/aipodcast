@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import NotesPageMain from "../../../../components/notes/NotesPageMain";
+import NotesPageMain from "../../../../components/notes/NotesPageMainDynamic";
 
 export default function NotesNotebookPage() {
   const params = useParams();
