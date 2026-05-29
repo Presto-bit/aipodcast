@@ -565,9 +565,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   /**
    * 侧栏主导航：
-   * - 「工作台首页」与其它入口一致用 Link 软路由 + prefetch。
-   * - 仍在 /notes 主路径时，「知识库」用 next/link + preventDefault 调 hub：保留 href 利于无障碍与右键新开。
-   * - 其余入口：next/link 软路由 + prefetch。
+   * - 「工作台首页」用原生 a[href]（登录回跳等场景可靠）。
+   * - 仍在 /notes 主路径时，「知识库」用 Link + preventDefault 调 hub。
+   * - 知识库内其它入口：SidebarNavLink 在 NotesPageMain 挂载时降级为原生 a[href] 整页离开。
+   * - 其余：Next Link 软路由 + hover 预取。
    */
   function renderSidebarNavItem(item: NavItem) {
     const active = linkActive(item);
@@ -576,17 +577,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const tip = item.linkTitle ?? item.label;
     if (item.href === WORKBENCH_HOME_PATH) {
       return (
-        <SidebarNavLink
+        <a
           key={item.href}
           href={WORKBENCH_HOME_PATH}
           className={navButtonClass(active, collapsed)}
           title={tip}
+          onPointerDown={() => dispatchWorkbenchDismissOverlays()}
         >
           <NavIconBox active={active}>
             <Ic />
           </NavIconBox>
           {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
-        </SidebarNavLink>
+        </a>
       );
     }
     if (item.href === "/notes" && isNotesPrimaryWorkbenchPath(path)) {
