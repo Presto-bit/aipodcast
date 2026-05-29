@@ -12,7 +12,7 @@ import type { WorkItem } from "../../lib/worksTypes";
 
 const PAGE_SIZE = 40;
 
-const PODCAST_TYPES = new Set(["podcast_generate", "podcast", "podcast_short_video"]);
+const PODCAST_TYPES = new Set(["podcast_generate", "podcast"]);
 const TTS_TYPES = new Set(["text_to_speech", "tts"]);
 
 function formatDur(sec: number | null | undefined): string {
@@ -28,7 +28,7 @@ function typeLabel(t: string): string {
   if (x === "podcast_generate" || x === "podcast") return "播客";
   if (x === "script_draft") return "文章出稿";
   if (x === "text_to_speech" || x === "tts") return "TTS";
-  if (x === "podcast_short_video") return "短视频";
+  if (x === "podcast_short_video") return "短视频（已下线）";
   return x || "—";
 }
 

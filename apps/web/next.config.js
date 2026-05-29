@@ -54,6 +54,21 @@ const nextConfig = {
     minimumCacheTTL: 86400,
     formats: ["image/avif", "image/webp"]
   },
+  async redirects() {
+    return [
+      { source: "/settings", destination: "/me/profile", permanent: false },
+      { source: "/me", destination: "/me/profile", permanent: false },
+      { source: "/me/general", destination: "/me/profile", permanent: false },
+      { source: "/admin", destination: "/admin/usage", permanent: false },
+      { source: "/admin/hub", destination: "/admin/usage", permanent: false },
+      { source: "/admin/usage-users", destination: "/admin/usage?tab=users", permanent: false },
+      { source: "/admin/usage-works", destination: "/admin/usage?tab=works", permanent: false },
+      { source: "/admin/usage-alerts", destination: "/admin/usage?tab=alerts", permanent: false },
+      { source: "/notes/templates", destination: "/voice?tab=persona", permanent: false },
+      { source: "/notes/author-ip", destination: "/notes", permanent: false },
+      { source: "/notes/author-ip/:path*", destination: "/notes", permanent: false }
+    ];
+  },
   async headers() {
     return [
       {

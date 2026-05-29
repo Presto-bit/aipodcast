@@ -5,11 +5,6 @@ import type { JobRecord } from "./types";
  */
 export function summarizeActiveJobPayload(job: JobRecord): { headline: string; detail: string } {
   const p = job.payload || {};
-  if (String(job.job_type || "") === "podcast_short_video") {
-    const sid = String(p.source_job_id || "").trim();
-    const headline = sid ? `短视频导出（源 ${sid.slice(0, 8)}…）` : "短视频导出";
-    return { headline, detail: "合成 9:16 视频、波形与字幕，完成后可在作品页下载 MP4。" };
-  }
   const title = String(p.title || p.topic || "").trim();
   const text = String(p.text || "").trim().replace(/\s+/g, " ");
   const url = String(p.url || "").trim();

@@ -1,5 +1,7 @@
 # 个人特色 IP 产品方案（v5.2）
 
+> **状态：历史文档。** 独立工作台（`/notes/author-ip/*`）、写一篇、compose 等 API 已下线；**现行产品以 [author-ip-product-v6.md](./author-ip-product-v6.md) 为准**（笔记本内「风格/IP」弹窗 + learn/patch 最小 API）。
+
 > **导航与对象（v5.1）**  
 > 1. 后台 **自动创建**「**我的 IP**」；2. **复制 IP** 新建；3. 知识库点击 → `/notes`，二级仅「个人特色 IP」。  
 >

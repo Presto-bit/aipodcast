@@ -43,6 +43,7 @@ from .middleware.request_id import RequestIdMiddleware
 from .rss_publish_store import ensure_rss_publish_schema
 from .routes import (
     admin_routes,
+    analytics_routes,
     auth_routes,
     clip_routes,
     e2e_smoke_routes,
@@ -51,7 +52,6 @@ from .routes import (
     author_ip_routes,
     notes_routes,
     rss_routes,
-    search_routes,
     subscription_routes,
     user_prefs_routes,
     voice_routes,
@@ -390,7 +390,7 @@ app.include_router(author_ip_routes.router)
 app.include_router(voice_routes.router)
 app.include_router(subscription_routes.router)
 app.include_router(admin_routes.router)
-app.include_router(search_routes.router)
+app.include_router(analytics_routes.router)
 app.include_router(webhooks_routes.router)
 app.include_router(rss_routes.private_router)
 app.include_router(rss_routes.public_router)

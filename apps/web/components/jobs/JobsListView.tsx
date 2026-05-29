@@ -399,8 +399,7 @@ export default function JobsListView({ variant }: JobsListViewProps) {
                 const canAdminRetry =
                   isAdmin &&
                   j.status !== "queued" &&
-                  j.status !== "running" &&
-                  jt !== "podcast_short_video";
+                  j.status !== "running";
                 const peekKinds = succeededContentPeekKinds(j);
                 const peekHref = succeededContentPeekHref(j, isAdmin);
                 return (

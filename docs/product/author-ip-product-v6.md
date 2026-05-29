@@ -502,7 +502,7 @@ POST /api/v1/author-ips/{ipId}/learn
 |------|------|
 | `note_rag_service.sample_rag_chunk_texts_for_notes` | 采样分块文本 |
 | `author_ip_distill_inputs.build_distill_excerpt` | 拼 distill 输入 |
-| `author_ip_style.list_ip_materials` | 挂 `distillBody`、`noteRagBodyHash` |
+| `author_ip_materials.list_ip_materials` | 挂 `distillBody`、`noteRagBodyHash` |
 | `author_ip_distill_llm.build_distill_user_payload` | 读 `distillBody` |
 | `list_notes` / notes API | 返回 `noteRagBodyHash`、`noteSummary`、`styleFeaturesReady` |
 | `note_style_features` | RAG 成功后异步写 `metadata.styleFeatures`；learn 走 `features_merge` |

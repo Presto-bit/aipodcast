@@ -1,5 +1,3 @@
-import time
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..fyv_shared.register_send_code_limiter import (
@@ -13,11 +11,9 @@ from ..schemas import (
     AuthLoginRequest,
     AuthProfilePatchRequest,
     AuthRegisterCompleteRequest,
-    AuthRegisterRequest,
     AuthRegisterSendCodeRequest,
     AuthRegisterVerifyCodeRequest,
     AuthResetPasswordRequest,
-    AuthUnlockFeatureRequest,
     AuthVerifyEmailRequest,
 )
 from ..security import verify_internal_signature
@@ -104,42 +100,6 @@ def auth_register_complete_api(body: AuthRegisterCompleteRequest):
         status="succeeded",
         quantity=1,
         meta={"auth_method": "email_otp"},
-        user_id=uid or None,
-    )
-    return {"success": True, "token": token, "user": user}
-
-
-@router.post("/register")
-def auth_register_api(body: AuthRegisterRequest):
-    if not auth_bridge.is_auth_enabled():
-        raise HTTPException(status_code=400, detail="认证未启用")
-    token, err, meta = auth_bridge.register_user(
-        body.password,
-        body.invite_code.strip(),
-        phone=(body.phone or "").strip() or None,
-        email=(body.email or "").strip().lower() or None,
-        username=(body.username or "").strip() or None,
-    )
-    if meta.get("needs_email_verification"):
-        return {
-            "success": True,
-            "needs_email_verification": True,
-            "verification_email_sent": bool(meta.get("verification_email_sent")),
-            "message": "注册完成",
-        }
-    if err or not token:
-        raise HTTPException(status_code=400, detail=err or "注册失败")
-    user = auth_bridge.user_info_for_session_token(token) or auth_bridge.user_info_from_session_token(token)
-    uid = str(user.get("user_id") or "").strip()
-    sub_phone = str(user.get("phone") or "").strip() or None
-    models.record_usage_event(
-        job_id=None,
-        phone=sub_phone,
-        job_type="auth_register",
-        metric="auth_register",
-        status="succeeded",
-        quantity=1,
-        meta={"auth_method": "legacy_register"},
         user_id=uid or None,
     )
     return {"success": True, "token": token, "user": user}
@@ -278,33 +238,3 @@ def auth_me_api(request: Request):
     if not principal:
         raise HTTPException(status_code=401, detail="未登录")
     return {"success": True, "user": auth_bridge.user_info_for_phone(principal)}
-
-
-@router.get("/status")
-def auth_status_api(request: Request):
-    if not auth_bridge.is_auth_enabled():
-        return {"success": True, "feature_unlocked": True, "feature_expires_in_sec": None}
-    token = bearer_token(request)
-    if not token:
-        raise HTTPException(status_code=401, detail="未登录")
-    sess = auth_bridge.get_session(token)
-    if not sess:
-        raise HTTPException(status_code=401, detail="未登录")
-    now = time.time()
-    fu = sess.get("feature_unlock_expires")
-    unlocked = bool(sess.get("feature_unlocked")) and (not fu or now <= float(fu))
-    left = max(0, int(float(fu) - now)) if unlocked and fu else None
-    return {"success": True, "feature_unlocked": unlocked, "feature_expires_in_sec": left}
-
-
-@router.post("/unlock_feature")
-def auth_unlock_feature_api(request: Request, body: AuthUnlockFeatureRequest):
-    if not auth_bridge.is_auth_enabled():
-        return {"success": True}
-    token = bearer_token(request)
-    if not token:
-        raise HTTPException(status_code=401, detail="未登录")
-    ok, err = auth_bridge.unlock_feature(token, body.password, login_id=(body.phone or "").strip())
-    if not ok:
-        raise HTTPException(status_code=400, detail=err or "验证失败")
-    return {"success": True}

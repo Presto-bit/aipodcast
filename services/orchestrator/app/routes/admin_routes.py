@@ -1,6 +1,5 @@
 import os
-import secrets
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -13,8 +12,6 @@ from ..schemas import (
     AdminSetRoleRequest,
     AdminTtsPolishPromptsPut,
     AdminWalletCreditRequest,
-    WalletTopupCheckoutCompleteRequest,
-    WalletTopupCheckoutCreateRequest,
 )
 from ..security import verify_internal_signature
 from .. import auth_bridge
@@ -345,73 +342,6 @@ def admin_data_consistency_api(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)[:200]) from e
     return {"success": True, **payload}
-
-
-@router.post("/wallet-checkout/create")
-def admin_wallet_checkout_create(request: Request, body: WalletTopupCheckoutCreateRequest):
-    """管理员内测：创建钱包充值待支付会话（不改变订阅档位）。"""
-    actor_phone = _require_admin_phone(request)
-    if not _admin_simulated_checkout_enabled():
-        raise HTTPException(status_code=403, detail="admin_simulated_checkout_disabled")
-    amt = int(body.amount_cents)
-    if not is_valid_wallet_topup_amount_cents(amt):
-        raise HTTPException(status_code=400, detail="invalid_topup_amount")
-    checkout_id = f"admchk_wal_{secrets.token_hex(16)}"
-    if not models.wallet_create_checkout_session(actor_phone, checkout_id, amt):
-        raise HTTPException(status_code=500, detail="wallet_session_create_failed")
-    return {
-        "success": True,
-        "checkout_id": checkout_id,
-        "phone": actor_phone,
-        "amount_cents": amt,
-        "currency": "CNY",
-        "provider": "admin_simulated",
-        "message": "内测收银：确认支付后入账钱包余额（不改变订阅档位）",
-    }
-
-
-@router.post("/wallet-checkout/complete")
-def admin_wallet_checkout_complete(request: Request, body: WalletTopupCheckoutCompleteRequest):
-    """管理员内测：模拟支付成功，写入订单并增加钱包余额（分）。"""
-    actor_phone = _require_admin_phone(request)
-    if not _admin_simulated_checkout_enabled():
-        raise HTTPException(status_code=403, detail="admin_simulated_checkout_disabled")
-    cid = body.checkout_id.strip()
-    if not cid.startswith("admchk_wal_"):
-        raise HTTPException(status_code=400, detail="invalid_checkout_id")
-    expected = models.wallet_get_checkout_session_amount_cents(actor_phone, cid)
-    if expected is None or not is_valid_wallet_topup_amount_cents(expected):
-        raise HTTPException(status_code=400, detail="invalid_or_expired_checkout")
-    ok, reason, row = auth_bridge.apply_payment_event(
-        cid,
-        actor_phone,
-        "free",
-        None,
-        "paid",
-        expected,
-        "admin_simulated",
-        channel="admin_simulated",
-        provider_order_id=f"sim_wal_{secrets.token_hex(10)}",
-        currency="CNY",
-        paid_at=datetime.now(timezone.utc),
-        product_snapshot={
-            "kind": "wallet_topup",
-            "topup_cents": expected,
-            "source": "admin_wallet_checkout",
-            "amount_cents": expected,
-        },
-        source="admin_wallet_checkout",
-    )
-    if not ok:
-        raise HTTPException(status_code=400, detail=reason or "wallet_checkout_complete_failed")
-    models.wallet_delete_checkout_session(actor_phone, cid)
-    return {
-        "success": True,
-        "reason": reason,
-        "order": row,
-        "user": auth_bridge.user_info_for_phone(actor_phone),
-        "wallet_balance_cents": models.wallet_balance_cents_for_phone(actor_phone),
-    }
 
 
 @router.get("/tts-polish-prompts")

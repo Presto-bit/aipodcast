@@ -72,7 +72,7 @@ def try_refine_listing_title_with_llm(
     user = "\n\n".join(user_parts)
 
     jt = (job_type or "").strip().lower()
-    if jt in ("podcast_generate", "podcast", "podcast_short_video"):
+    if jt in ("podcast_generate", "podcast"):
         kind = "播客单集"
     elif jt in ("text_to_speech", "tts"):
         kind = "语音作品"

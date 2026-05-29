@@ -49,7 +49,6 @@ from ..models import (
     get_note_by_id,
     get_notebook_sharing_row,
     get_shared_notebook_public_access,
-    increment_public_notebook_view,
     list_notebook_names,
     list_notes,
     list_notebook_covers_meta,
@@ -101,7 +100,6 @@ from ..schemas import (
     NotebookCreateRequest,
     NotebookPatchRequest,
     NotebookSharingPatchRequest,
-    NotebookViewIncrementRequest,
     NotesAskHintsRequest,
     NotesAskRequest,
 )
@@ -1141,7 +1139,7 @@ def list_trash_notes_api(
     request: Request,
     limit: int = Query(default=40, ge=1, le=500),
     offset: int = Query(default=0, ge=0, le=50_000),
-    tab: str | None = Query(default=None, description="reference | author_ip"),
+    tab: str | None = Query(default=None, description="reference"),
 ):
     # 默认保留 7 天，查询回收站时顺带清理过期项。
     purge_expired_trashed_notes(retention_days=NOTE_TRASH_RETENTION_DAYS, max_rows=settings.trash_purge_max_rows)
@@ -1153,15 +1151,13 @@ def list_trash_notes_api(
         author_ip_display_name_map = lambda _u: {}  # type: ignore[assignment]
         note_is_author_ip_material = lambda _m, _n: False  # type: ignore[assignment]
     ip_names = author_ip_display_name_map(user_ref)
-    fetch_limit = min(500, max(limit * 4, limit + 20)) if tab_norm in ("reference", "author_ip") else limit
+    fetch_limit = min(500, max(limit * 4, limit + 20)) if tab_norm == "reference" else limit
     rows = list_trashed_notes(limit=fetch_limit, offset=offset, user_ref=user_ref)
     notes: list[dict[str, object]] = []
     for r in rows:
         md = _normalize_metadata_dict(r)
         notebook = str(md.get("notebook") or "")
         is_ip_material = note_is_author_ip_material(md, notebook)
-        if tab_norm == "author_ip" and not is_ip_material:
-            continue
         if tab_norm == "reference" and is_ip_material:
             continue
         it = str(r.get("input_type") or "")
@@ -1214,7 +1210,7 @@ def list_trash_notes_api(
                 "preprocessStatus": str(md.get("preprocessStatus") or ""),
             }
         )
-    if tab_norm in ("reference", "author_ip") and len(notes) > limit:
+    if tab_norm == "reference" and len(notes) > limit:
         notes = notes[:limit]
     has_more = len(rows) >= fetch_limit or len(notes) >= limit
     return {"success": True, "notes": notes, "has_more": has_more, "tab": tab_norm or None}
@@ -2128,21 +2124,6 @@ def notebook_digest_get_api(notebook: str, request: Request):
     return {"success": True, "notebook": notebook, "digest": digest}
 
 
-@router.post("/notebooks/{notebook}/digest/refresh")
-def notebook_digest_refresh_api(notebook: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
-    user_ref = _current_user_ref_or_401(request)
-    from ..note_notebook_digest import list_notebook_note_ids, refresh_notebook_digest
-
-    note_ids = body.get("note_ids") or body.get("noteIds")
-    if not isinstance(note_ids, list) or not note_ids:
-        note_ids = list_notebook_note_ids(notebook, user_ref=user_ref)
-    api_key = str(os.getenv("MINIMAX_API_KEY") or "").strip() or None
-    out = refresh_notebook_digest(notebook, note_ids, user_ref=user_ref, api_key=api_key)
-    if not out.get("ok"):
-        raise HTTPException(status_code=400, detail=str(out.get("error") or "digest_failed"))
-    return {"success": True, **out}
-
-
 @router.post("/notebooks/{notebook}/audio_overview")
 def notebook_audio_overview_api(notebook: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
     user_ref = _current_user_ref_or_401(request)
@@ -2227,7 +2208,7 @@ def list_popular_notebooks_api(
     limit: int = Query(default=40, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=10_000),
 ):
-    """公开发现列表：未登录也可浏览（与 POST /notebooks/view 计数等写操作分离）。"""
+    """公开发现列表：未登录也可浏览。"""
     _ = request
     items = list_popular_public_notebooks(limit=limit, offset=offset)
     has_more = len(items) >= limit
@@ -2242,18 +2223,6 @@ def create_notebook_api(body: NotebookCreateRequest, request: Request):
         raise HTTPException(status_code=400, detail=msg)
     ensure_default_library_notebook(user_ref)
     return {"success": True, "name": msg}
-
-
-@router.post("/notebooks/view")
-def increment_notebook_view_api(body: NotebookViewIncrementRequest, request: Request):
-    user_ref = _current_user_ref_or_401(request)
-    owner = body.owner_user_id.strip()
-    nb = body.notebook.strip()
-    if not get_shared_notebook_public_access(owner, nb):
-        raise HTTPException(status_code=404, detail="notebook_not_shared")
-    if not increment_public_notebook_view(owner, nb, viewer_user_ref=user_ref):
-        raise HTTPException(status_code=400, detail="view_increment_failed")
-    return {"success": True}
 
 
 @router.get("/notebooks/cover-public")

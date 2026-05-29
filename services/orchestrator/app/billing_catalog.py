@@ -2,7 +2,7 @@
 钱包计费与公开价目 API 组装。
 
 - 价目来自 `subscription_manifest`；用量上限来自 `entitlement_matrix`。
-- 供 GET /api/v1/subscription/wallet-catalog 等使用。
+- 供 GET /api/v1/subscription/plans 等使用。
 """
 
 from __future__ import annotations

@@ -54,7 +54,7 @@ function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
 /** 与编排器 downloadAllowed / 未充值下载拦截提示一致（宜简短） */
 const WORK_DOWNLOAD_GATE_TIP = "需有充值记录方可下载";
 
-const PODCAST_TYPES = new Set(["podcast_generate", "podcast", "podcast_short_video"]);
+const PODCAST_TYPES = new Set(["podcast_generate", "podcast"]);
 const TTS_TYPES = new Set(["text_to_speech", "tts"]);
 /** 笔记本出稿（script_draft / 自媒体发布稿） */
 const NOTES_WORK_TYPES = new Set(["script_draft", "social_publish_draft"]);

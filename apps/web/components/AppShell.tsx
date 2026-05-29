@@ -55,7 +55,6 @@ import {
 import NotesWorkbenchMinimalRail from "./notes/NotesWorkbenchMinimalRail";
 import {
   isMarketingShellLessPath,
-  matchesNotesAuthorIp,
   matchesNotesWorkbench,
   matchesProductStudio,
   normalizePathname,
@@ -370,7 +369,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (pathMatchesRoot(path, "/create")) setCreateSubNavExpanded(true);
-    if (matchesNotesAuthorIp(path)) setNotesSubNavExpanded(true);
   }, [path]);
 
   useEffect(() => {

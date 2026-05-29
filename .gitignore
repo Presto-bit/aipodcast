@@ -76,6 +76,7 @@ legacy_backend/outputs/tmp/
 node_modules/
 apps/web/node_modules/
 apps/web/.next/
+*.tsbuildinfo
 apps/web/playwright-report/
 apps/web/test-results/
 apps/web/blob-report/

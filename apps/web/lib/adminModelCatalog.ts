@@ -39,8 +39,8 @@ export const ADMIN_MODEL_CATALOG: AdminModelRow[] = [
       "用量看板按当前 TEXT_PROVIDER 估算：MiniMax 系单价取自代码内与官网一致的 M2/M2.7 等档（元/百万 tokens，含高速档差异），见 https://platform.minimaxi.com/docs/guides/pricing-paygo ；DeepSeek 系按官方 V4 定价页：deepseek-v4-flash 命中输入 0.02 / 未命中输入 1 / 输出 2（元/百万 tokens），deepseek-v4-pro 未命中 12 / 输出 24；看板无缓存命中数据时输入按未命中计价；旧名 deepseek-chat / deepseek-reasoner 与 Flash 同档估算，见 https://api-docs.deepseek.com/zh-cn/quick_start/pricing ；Qwen 兼容通道为公开美元价量级折算的保守近似。字符→token 仍用 1600 汉字≈1000 tokens。用户钱包：播客成片仅按分钟扣费（文稿含于分钟价）；仅 script_draft 等未成成片任务按万字扣费。",
     estimatedUnitCostCny: 0.04,
     costField: "llm",
-    features: ["podcast_generate", "script_draft", "PolishTtsText（TTS 页润色）", "笔记播客脚本"],
-    jobTypes: ["podcast_generate", "script_draft", "polish_tts_text", "note_podcast_script"],
+    features: ["podcast_generate", "script_draft", "PolishTtsText（TTS 页润色）"],
+    jobTypes: ["podcast_generate", "script_draft", "polish_tts_text"],
     details: [
       "按输入/输出 token 计费；长文稿与多轮生成会显著增加 token。",
       "建议结合成功率观察重试任务，避免重复消耗。"
@@ -87,7 +87,7 @@ export const ADMIN_MODEL_CATALOG: AdminModelRow[] = [
     estimatedUnitCostCny: 0.001,
     costField: "embedding",
     features: ["note_rag_index", "参考材料 hybrid RAG", "勾选笔记向量检索"],
-    jobTypes: ["note_rag_index", "podcast_generate", "podcast", "script_draft", "note_podcast_script"],
+    jobTypes: ["note_rag_index", "podcast_generate", "podcast", "script_draft"],
     details: [
       "索引任务按切块累计输入字符；播客/脚本任务在参考材料阶段计入查询与混合检索嵌入。",
       "实际以百炼控制台账单为准；DashScope 故障时可回退 MiniMax embo-01。"

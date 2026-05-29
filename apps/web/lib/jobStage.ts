@@ -15,7 +15,6 @@ const JOB_TYPE_LABEL: Record<string, string> = {
   script_draft: "脚本草稿",
   podcast_generate: "播客生成",
   podcast: "播客合成",
-  podcast_short_video: "播客短视频",
   tts: "文本转语音",
   text_to_speech: "文本转语音",
   voice_clone: "声音复刻",

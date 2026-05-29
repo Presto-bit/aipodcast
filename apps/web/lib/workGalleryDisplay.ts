@@ -9,7 +9,6 @@ export function isAudioGalleryWorkType(type: string | undefined): boolean {
   return (
     t === "podcast_generate" ||
     t === "podcast" ||
-    t === "podcast_short_video" ||
     t === "text_to_speech" ||
     t === "tts"
   );

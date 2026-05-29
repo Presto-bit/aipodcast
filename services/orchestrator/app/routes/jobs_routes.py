@@ -701,7 +701,6 @@ def list_works_api(
             "social_publish_draft",
             "podcast_generate",
             "podcast",
-            "podcast_short_video",
         ):
             buckets["ai"].append(work)
         else:
@@ -1113,7 +1112,6 @@ def list_works_trash_api(
             "social_publish_draft",
             "podcast_generate",
             "podcast",
-            "podcast_short_video",
         ):
             buckets["ai"].append(work)
         else:

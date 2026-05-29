@@ -305,7 +305,7 @@ async function handleJsonNoteUpload(req: NextRequest): Promise<Response> {
       level: "error",
       errorCode: "BFF_NOTE_UPLOAD_JSON_PROXY_ERROR",
       module: "bff",
-      route: "/api/notes/upload",
+      route: "/api/note-upload",
       message: msg.slice(0, 600),
       payload: { target: "/api/v1/notes/upload_json" },
       logger: "error"

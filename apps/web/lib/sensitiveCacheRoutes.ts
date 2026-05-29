@@ -20,8 +20,7 @@ const SENSITIVE_DOCUMENT_PREFIXES: readonly string[] = [
   "/tts",
   "/podcast",
   "/drafts",
-  "/settings",
-  "/search"
+  "/settings"
 ];
 
 function matchesDocumentPrefix(pathname: string, prefix: string): boolean {

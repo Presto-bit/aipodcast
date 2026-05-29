@@ -11,7 +11,6 @@ const LIMIT = 400;
 /** 单用户低频、大包体：不应占用与其它 /api 共用的每分钟计数（也避免拿不到 IP 时全退化为 "unknown" 顶满上限） */
 const RATE_LIMIT_EXEMPT_POST_PATHS = new Set([
   "/api/note-upload",
-  "/api/notes/upload",
   "/api/notes/import_url",
   "/api/notes/trash/purge",
   "/api/notes/trash/restore"

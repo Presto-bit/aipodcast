@@ -1,5 +1,7 @@
 # 个人特色 IP — 执行排期（v5.1 → M3）
 
+> **状态：历史排期。** v6 已将 IP 迁入笔记本（见 [author-ip-product-v6.md](./author-ip-product-v6.md)）；下列独立工作台、二级导航、compose 等条目**不再执行**。
+
 > **产品方案**：[author-ip-product-v5.md](./author-ip-product-v5.md)（**v5.2**）。  
 > **已定稿**：无档位 IP 限额（有余额即用）；「我的 IP」不可删可改名；复制默认 **全文克隆**；老用户不引导迁移；`/notes/trash` **双 Tab**。  
 > **执行范围**：迭代 1～15，交付至 **M3**。  

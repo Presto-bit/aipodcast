@@ -3140,63 +3140,6 @@ def _try_record_usage_on_terminal(job_id: str, status: str) -> None:
     )
 
 
-def search_global(query: str, limit: int = 40, user_ref: str | None = None) -> dict[str, Any]:
-    q = (query or "").strip()
-    if len(q) < 2:
-        return {"notes": [], "jobs": []}
-    lim = max(1, min(80, int(limit)))
-    pattern = f"%{q}%"
-    notes_out: list[dict[str, Any]] = []
-    jobs_out: list[dict[str, Any]] = []
-    with get_conn() as conn:
-        with get_cursor(conn) as cur:
-            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
-            cur.execute(
-                """
-                SELECT i.id::text AS id,
-                       i.metadata->>'title' AS title,
-                       i.metadata->>'notebook' AS notebook,
-                       LEFT(COALESCE(i.content_text, ''), 320) AS snippet,
-                       i.created_at
-                FROM inputs i
-                JOIN projects p ON p.id = i.project_id
-                WHERE i.input_type IN ('note_text', 'note_file')
-                  AND i.deleted_at IS NULL
-                  AND (%s::uuid IS NULL OR p.user_id = %s::uuid)
-                  AND (
-                    i.content_text ILIKE %s
-                    OR COALESCE(i.metadata->>'title', '') ILIKE %s
-                  )
-                ORDER BY i.created_at DESC
-                LIMIT %s
-                """,
-                (user_uuid, user_uuid, pattern, pattern, lim),
-            )
-            notes_out = [dict(x) for x in cur.fetchall()]
-            cur.execute(
-                """
-                SELECT j.id::text AS id, j.job_type, j.status,
-                       LEFT(
-                         COALESCE(j.result::text, '') || ' ' || COALESCE(j.payload::text, '') || ' ' || COALESCE(j.error_message, ''),
-                         400
-                       ) AS snippet,
-                       j.created_at
-                FROM jobs j
-                LEFT JOIN projects p ON p.id = j.project_id
-                WHERE (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
-                  AND (
-                    j.job_type ILIKE %s
-                    OR j.result::text ILIKE %s
-                    OR j.payload::text ILIKE %s
-                    OR COALESCE(j.error_message, '') ILIKE %s
-                  )
-                ORDER BY j.created_at DESC
-                LIMIT %s
-                """,
-                (user_uuid, user_uuid, pattern, pattern, pattern, pattern, lim),
-            )
-            jobs_out = [dict(x) for x in cur.fetchall()]
-    return {"notes": notes_out, "jobs": jobs_out}
 
 
 def _admin_usage_events_summary_rows(
@@ -7583,7 +7526,6 @@ def _job_type_feature_label_zh(job_type: str | None) -> str:
         "tts": "文字转语音",
         "podcast_generate": "AI 播客",
         "podcast": "AI 播客",
-        "podcast_short_video": "短视频播客",
         "script_draft": "脚本撰稿",
         "note_podcast_script": "笔记转脚本",
         "voice_clone": "音色克隆",

@@ -7,7 +7,6 @@ export const WORKBENCH_HOME_PATH = "/home";
 
 export const NOTES_TEMPLATES_PREFIX = "/notes/templates";
 export const NOTES_TRASH_PREFIX = "/notes/trash";
-export const NOTES_AUTHOR_IP_PREFIX = "/notes/author-ip";
 
 const PRODUCT_STUDIO_ROOTS = ["/create", "/podcast", "/tts"] as const;
 
@@ -49,11 +48,6 @@ export function matchesNotesWorkbench(pathname: string): boolean {
     !pathname.startsWith(NOTES_TEMPLATES_PREFIX) &&
     !pathname.startsWith(NOTES_TRASH_PREFIX)
   );
-}
-
-/** 个人特色 IP 二级导航路由 */
-export function matchesNotesAuthorIp(pathname: string): boolean {
-  return pathMatchesRoot(pathname, NOTES_AUTHOR_IP_PREFIX);
 }
 
 export function matchesAdminConsole(pathname: string): boolean {

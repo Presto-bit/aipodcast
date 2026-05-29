@@ -18,7 +18,7 @@ from .storage_paths import job_artifact_base
 logger = logging.getLogger(__name__)
 
 _PUBLIC_JOB_TYPES = frozenset({"podcast", "podcast_generate"})
-_PODCASTISH_STORAGE_PROBE = frozenset({"podcast", "podcast_generate", "podcast_short_video"})
+_PODCASTISH_STORAGE_PROBE = frozenset({"podcast", "podcast_generate"})
 
 # 「我的作品」试听：排除明显无成片音频的内部任务；其余只要 result 里可签发/可回退直链即允许（避免新 job_type 漏进白名单导致 404）
 _OWNER_WORK_LISTEN_DENY_TYPES = frozenset(
