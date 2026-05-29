@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { workCoverImageSrc } from "../../lib/workCoverImage";
+import { workCoverImageSrc, handleWorkCoverImageError } from "../../lib/workCoverImage";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { WorkHubManuscriptBar } from "./WorkHubManuscriptBar";
 import { WorkHubScriptActions } from "./WorkHubScriptActions";
@@ -225,6 +225,9 @@ export function WorkHubOverviewPanel({
                   className="h-full w-full object-cover"
                   referrerPolicy="no-referrer"
                   loading="eager"
+                  onError={(e) => {
+                    handleWorkCoverImageError(e.target as HTMLImageElement, coverUrl);
+                  }}
                 />
               ) : (
                 <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-1 text-center">

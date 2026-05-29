@@ -67,6 +67,7 @@ from ..mp3_export import build_export_mp3
 from ..object_store import (
     get_object_bytes,
     head_object_byte_length,
+    is_object_not_found_error,
     iter_object_byte_range,
     iter_object_chunks,
     presigned_get_url,
@@ -1334,6 +1335,8 @@ def download_job_cover_api(
     try:
         data = get_object_bytes(key)
     except Exception as exc:
+        if is_object_not_found_error(exc):
+            raise HTTPException(status_code=404, detail="cover_not_found") from exc
         raise HTTPException(status_code=502, detail=f"cover_fetch_failed:{exc}") from exc
     out_data, out_mime = data, mime
     if int(w) >= 64:

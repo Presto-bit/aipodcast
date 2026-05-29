@@ -44,8 +44,7 @@ import WorkAudioShell from "./WorkAudioShell";
 import ActiveJobsProvider from "./ActiveJobsProvider";
 import BrandGlyph from "./brand/BrandGlyph";
 const NotesNavExpanded = dynamic(() => import("./notes/NotesNavExpanded"), { ssr: false });
-const NotesWorkbenchMinimalRail = dynamic(() => import("./notes/NotesWorkbenchMinimalRail"), { ssr: false });
-import { dispatchNotesShowNotebookHub, NOTES_MINIMAL_MAIN_NAV_EVENT } from "../lib/notesLastNotebook";
+import { dispatchNotesShowNotebookHub } from "../lib/notesLastNotebook";
 import {
   APP_SHELL_MOBILE_MEDIA_QUERY,
   NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
@@ -53,8 +52,7 @@ import {
   SIDEBAR_COLLAPSED_STORAGE,
   SIDEBAR_EXPANDED_STORAGE,
   SIDEBAR_WIDTH_COLLAPSED_PX,
-  SIDEBAR_WIDTH_EXPANDED_PX,
-  SIDEBAR_WIDTH_NOTES_WORKBENCH_RAIL_PX
+  SIDEBAR_WIDTH_EXPANDED_PX
 } from "../lib/appShellLayout";
 import {
   isMarketingShellLessPath,
@@ -180,12 +178,13 @@ function CreateStudioNavExpanded({
   const parentClass = navButtonClass(parentRouteActive, false);
 
   const onParentClick = (e: MouseEvent<HTMLAnchorElement>) => {
-    if (createSubNavExpanded) {
-      e.preventDefault();
-      setCreateSubNavExpanded(false);
-    } else {
-      setCreateSubNavExpanded(true);
+    const onStudioRoute = matchesProductStudio(path);
+    if (!onStudioRoute) {
+      // 从作品/知识库等页进入创作：不拦截，允许 Link 正常跳转 /create
+      return;
     }
+    e.preventDefault();
+    setCreateSubNavExpanded((v) => !v);
   };
 
   const subs: { href: string; label: string; active: boolean }[] = [
@@ -240,8 +239,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
-  /** 知识库已进入笔记本工作台：主导航收起，仅保留左侧浮动返回入口 */
-  const [notesMinimalMainNav, setNotesMinimalMainNav] = useState(false);
   /** 与 APP_SHELL_MOBILE_MEDIA_QUERY 一致（窄于 1024px）：侧栏改为抽屉，主区全宽 */
   const [mobileLayout, setMobileLayout] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -318,19 +315,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
     return () => window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
   }, []);
-
-  useEffect(() => {
-    const onNotesMinimal = (ev: Event) => {
-      const ce = ev as CustomEvent<{ minimal?: boolean }>;
-      setNotesMinimalMainNav(Boolean(ce.detail?.minimal));
-    };
-    window.addEventListener(NOTES_MINIMAL_MAIN_NAV_EVENT, onNotesMinimal);
-    return () => window.removeEventListener(NOTES_MINIMAL_MAIN_NAV_EVENT, onNotesMinimal);
-  }, []);
-
-  useEffect(() => {
-    if (!isNotesPrimaryWorkbenchPath(path)) setNotesMinimalMainNav(false);
-  }, [path]);
 
   useLayoutEffect(() => {
     if (typeof window === "undefined") return;
@@ -466,16 +450,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       document.documentElement.style.setProperty("--fym-app-sidebar-w", "0px");
       return;
     }
-    const minimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
-    const px = minimalRail
-      ? SIDEBAR_WIDTH_NOTES_WORKBENCH_RAIL_PX
-      : collapsed
-        ? SIDEBAR_WIDTH_COLLAPSED_PX
-        : SIDEBAR_WIDTH_EXPANDED_PX;
+    const px = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
     document.documentElement.style.setProperty("--fym-app-sidebar-w", `${px}px`);
     // 不在 cleanup 里 removeProperty：Strict Mode / 依赖重跑时会出现一帧变量缺失，
     // 全屏级 z-index 遮罩会短暂盖住侧栏；无壳场景由上面分支显式清除即可。
-  }, [collapsed, ready, notesMinimalMainNav, path, mobileLayout]);
+  }, [collapsed, ready, path, mobileLayout]);
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((c) => {
@@ -617,9 +596,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const notesNavMinimalRail = notesMinimalMainNav && isNotesPrimaryWorkbenchPath(path);
-  /** 桌面端笔记本工作台用 48px 窄轨；移动端始终挂载完整侧栏抽屉，避免汉堡无 `#fym-app-sidebar-root` 可开 */
-  const useFullSidebar = mobileLayout || !notesNavMinimalRail;
+  /** 始终挂载完整侧栏：48px 窄轨会隐藏作品/订阅等入口，易被误认为「导航点不动」 */
   const sidebarOffCanvas = mobileLayout && !mobileNavOpen;
   const sidebarDrawerPx = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
 
@@ -721,16 +698,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     </aside>
   );
 
-  const notesMinimalRailEl =
-    notesNavMinimalRail && !mobileLayout ? (
-      <NotesWorkbenchMinimalRail
-        homeLabel={t("nav.home")}
-        notesLabel={t("nav.notes")}
-        createLabel={t("nav.create")}
-      />
-    ) : null;
-
-  const sidebarAside = useFullSidebar ? fullSidebarEl : notesMinimalRailEl;
+  const sidebarAside = fullSidebarEl;
 
   const mobileNavBackdrop =
     mobileLayout && mobileNavOpen ? (
@@ -753,7 +721,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           paddingLeft: "max(0.25rem, env(safe-area-inset-left, 0px))"
         }}
         aria-expanded={mobileNavOpen}
-        aria-controls={useFullSidebar ? "fym-app-sidebar-root" : undefined}
+        aria-controls="fym-app-sidebar-root"
         title={mobileNavOpen ? t("nav.closeMenu") : t("nav.openMenu")}
         aria-label={mobileNavOpen ? t("nav.closeMenu") : t("nav.openMenu")}
         onClick={() => toggleMobileNav()}

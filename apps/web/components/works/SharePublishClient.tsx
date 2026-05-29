@@ -50,7 +50,7 @@ import {
 import { parseSocialPublishWorkDetail } from "../../lib/socialPublishWorkDetail";
 import { ShowNotesMarkdownPreview } from "../podcast/ShowNotesMarkdownPreview";
 import { buildWorksSharePageUrl, rssFeedUrlForSlug } from "../../lib/rssPublicBase";
-import { jobResultCoverUrl, workCoverImageSrc } from "../../lib/workCoverImage";
+import { jobResultCoverUrl, workCoverImageSrc, handleWorkCoverImageError } from "../../lib/workCoverImage";
 import { blobToDataUrlBase64 } from "../../lib/podcastCoverImage";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { formatUnifiedWorksNavMetaLineFromJobRecord, workProgramNameFromJob } from "../../lib/worksNavMetaLine";
@@ -1943,6 +1943,9 @@ export function SharePublishClient({
                   className="aspect-square w-full object-cover"
                   referrerPolicy="no-referrer"
                   loading="eager"
+                  onError={(e) => {
+                    handleWorkCoverImageError(e.target as HTMLImageElement, jobCoverUrl);
+                  }}
                 />
               ) : (
                 <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-brand/[0.12] via-fill to-cta/[0.1] px-4 text-center lg:aspect-auto lg:h-[280px] lg:min-h-[280px]">

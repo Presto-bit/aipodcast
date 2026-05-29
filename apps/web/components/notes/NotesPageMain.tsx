@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import type { ChangeEvent, Dispatch, PointerEvent, SetStateAction } from "react";
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import InlineConfirmBar from "../ui/InlineConfirmBar";
@@ -79,17 +79,15 @@ import { buildNoteCoverageLine } from "../../lib/noteCoverageCopy";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import {
   NOTES_NAV_HUB_EVENT,
-  dispatchNotesMinimalMainNav,
   writeLastNotebookName
 } from "../../lib/notesLastNotebook";
 import { readDraftSourceIdsForNotebook, writeDraftSourceIdsForNotebook } from "../../lib/notesDraftSourcesStorage";
 import {
   APP_SIDEBAR_COLLAPSED_KEY,
   APP_SIDEBAR_COLLAPSE_EVENT,
-  APP_SIDEBAR_TOGGLE_EVENT,
-  requestAppSidebarCollapse
+  APP_SIDEBAR_TOGGLE_EVENT
 } from "../../lib/appSidebarCollapse";
-import { isAppShellMobileLayout, SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
+import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import type { NotebookCoverMeta } from "../../lib/notebookCoverDisplay";
@@ -555,6 +553,7 @@ const WORKBENCH_SECTION_TITLE = "text-base font-semibold tracking-tight text-ink
 
 export default function NotesPageMain({ initialNotebookId = null }: { initialNotebookId?: string | null }) {
   const router = useRouter();
+  const pathname = usePathname() || "";
   const { t } = useI18n();
   const { user, phone, getAuthHeaders, ready } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
@@ -839,7 +838,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   useEffect(() => {
     return () => {
       notesAskStreamAbortRef.current?.abort();
-      dispatchNotesMinimalMainNav(false);
     };
   }, []);
 
@@ -1499,13 +1497,10 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     return () => window.removeEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
   }, [dismissNotesBlockingOverlays]);
 
-  /** 进入具体笔记本工作台：主导航折叠并仅保留「返回」；回到笔记本列表时恢复完整主导航 */
+  /** 路由变化时关闭弹层，避免遮罩残留导致主区无法操作 */
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const minimal = !hubView && Boolean(selectedNotebook.trim());
-    dispatchNotesMinimalMainNav(minimal);
-    if (minimal && !isAppShellMobileLayout()) requestAppSidebarCollapse();
-  }, [hubView, selectedNotebook]);
+    dismissNotesBlockingOverlays();
+  }, [pathname, dismissNotesBlockingOverlays]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !notebooksReady) return;

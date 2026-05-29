@@ -156,6 +156,16 @@ def upload_bytes(object_key: str, data: bytes, content_type: str = "application/
     return object_key
 
 
+def is_object_not_found_error(exc: BaseException) -> bool:
+    """S3/MinIO 对象不存在（与连接失败、权限错误区分）。"""
+    if not isinstance(exc, ClientError):
+        return False
+    err = exc.response.get("Error") or {}
+    code = str(err.get("Code") or "")
+    status = int((exc.response.get("ResponseMetadata") or {}).get("HTTPStatusCode") or 0)
+    return status == 404 or code in ("404", "NoSuchKey", "NotFound")
+
+
 def get_object_bytes(object_key: str) -> bytes:
     s3 = _s3()
     obj = s3.get_object(Bucket=settings.object_bucket, Key=object_key)

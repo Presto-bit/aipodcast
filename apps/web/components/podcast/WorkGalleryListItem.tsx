@@ -4,7 +4,7 @@ import Link from "next/link";
 import { memo, useEffect, useState, type ReactNode, type Ref } from "react";
 import { unusableInsecureHttpOnHttpsPage } from "../../lib/insecureHttpOnHttpsPage";
 import { computeWorkHubGeneratingBarPct } from "../../lib/workGeneratingProgressBar";
-import { workCoverImageSrc } from "../../lib/workCoverImage";
+import { workCoverImageSrc, handleWorkCoverImageError } from "../../lib/workCoverImage";
 import { formatWorkCreatedAtZh } from "../../lib/worksNavMetaLine";
 import { buildWorkDetailHref } from "./workGalleryNav";
 import {
@@ -528,18 +528,7 @@ if (variant === "all") {
             fetchPriority={eagerCover ? "high" : "auto"}
             decoding="async"
             onError={(e) => {
-              const el = e.target as HTMLImageElement;
-              const orig = String(w.coverImage || "").trim();
-              if (orig && el.src.includes("/api/image-proxy") && !el.dataset.fallback) {
-                el.dataset.fallback = "1";
-                if (unusableInsecureHttpOnHttpsPage(orig)) {
-                  el.style.display = "none";
-                  return;
-                }
-                el.src = orig;
-                return;
-              }
-              el.style.display = "none";
+              handleWorkCoverImageError(e.target as HTMLImageElement, w.coverImage, unusableInsecureHttpOnHttpsPage);
             }}
           />
         ) : (
@@ -790,18 +779,7 @@ return (
           fetchPriority={eagerCover ? "high" : "auto"}
           decoding="async"
           onError={(e) => {
-            const el = e.target as HTMLImageElement;
-            const orig = String(w.coverImage || "").trim();
-            if (orig && el.src.includes("/api/image-proxy") && !el.dataset.fallback) {
-              el.dataset.fallback = "1";
-              if (unusableInsecureHttpOnHttpsPage(orig)) {
-                el.style.display = "none";
-                return;
-              }
-              el.src = orig;
-              return;
-            }
-            el.style.display = "none";
+            handleWorkCoverImageError(e.target as HTMLImageElement, w.coverImage, unusableInsecureHttpOnHttpsPage);
           }}
         />
       ) : (

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../lib/auth";
 
 const STORAGE_KEY = "fym_first_login_coach_done_v1";
@@ -53,6 +53,8 @@ export default function FirstLoginCoach() {
     [user]
   );
 
+  const prevPathRef = useRef(pathname);
+
   useEffect(() => {
     if (!ready || !isLoggedInAccountUser(user)) return;
     if (pathname.startsWith("/login") || pathname.startsWith("/register")) return;
@@ -68,11 +70,26 @@ export default function FirstLoginCoach() {
     return () => window.clearTimeout(t);
   }, [ready, user, pathname]);
 
+  /** 用户已通过侧栏切页：关闭引导并本会话不再弹出，避免全屏层挡住导航 */
+  useEffect(() => {
+    if (prevPathRef.current === pathname) return;
+    prevPathRef.current = pathname;
+    setOpen((wasOpen) => {
+      if (!wasOpen) return false;
+      try {
+        sessionStorage.setItem(SESSION_SNOOZE_KEY, "1");
+      } catch {
+        /* ignore */
+      }
+      return false;
+    });
+  }, [pathname]);
+
   if (!open) return null;
 
   return (
     <div
-      className="fixed inset-0 z-[200000] flex items-end justify-center bg-ink/40 p-4 sm:items-center"
+      className="fym-workspace-scrim z-[99980] flex items-end justify-center bg-ink/40 p-4 sm:items-center"
       role="dialog"
       aria-modal="true"
       aria-labelledby="fym-coach-title"
