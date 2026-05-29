@@ -76,7 +76,6 @@ import {
 } from "../lib/navPaths";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../lib/userScopedStorage";
 import { reportFrontendGlobalError } from "../lib/frontendGlobalErrorClient";
-import { SkeletonBlock, SkeletonLine } from "./ui/Skeleton";
 
 type NavItem = {
   href: string;
@@ -261,7 +260,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarPortaled, setSidebarPortaled] = useState(false);
   const [createSubNavExpanded, setCreateSubNavExpanded] = useState(true);
   const [navPending, setNavPending] = useState(false);
-  const [routeRemountKey, setRouteRemountKey] = useState(0);
   const navPendingTargetRef = useRef<string | null>(null);
   const navPendingHrefRef = useRef<string | null>(null);
   const pathRef = useRef(path);
@@ -297,7 +295,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       }
       navPendingTargetRef.current = target;
       navPendingHrefRef.current = href;
-      setRouteRemountKey((k) => k + 1);
       setNavPending(true);
     },
     [expandSidebar]
@@ -319,10 +316,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [path, navPending, clearNavPending, queryClient]);
 
   const navPendingTarget = navPending ? navPendingTargetRef.current : null;
-  const showNavPendingOverlay =
-    navPending &&
-    Boolean(navPendingTarget) &&
-    !routeHasWarmQueryCache(queryClient, navPendingTarget ?? "");
+  const showNavPendingOverlay = navPending && Boolean(navPendingTarget);
 
   /** 软路由长时间未切换时整页跳转，避免骨架屏消失后仍停在旧页。 */
   useEffect(() => {
@@ -608,7 +602,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const pageShell = (
     <AnimatedPageShell>
-      <Suspense key={`${path}-${routeRemountKey}`} fallback={navPending ? null : <WorkbenchRouteFallback />}>
+      <Suspense key={path} fallback={<WorkbenchRouteFallback />}>
         {children}
       </Suspense>
     </AnimatedPageShell>
@@ -621,32 +615,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     </ActiveJobsProvider>
   );
 
-  if (!ready) {
-    if (isMarketingShellLessPath(path)) {
-      return <div className="relative min-h-screen bg-canvas text-ink">{shellChildren}</div>;
-    }
-    return (
-      <div className="min-h-screen bg-canvas text-ink">
-        <div className="flex min-h-screen">
-          <aside className="hidden w-[232px] shrink-0 border-r border-line bg-surface/80 px-3 py-4 sm:block" aria-hidden>
-            <SkeletonLine className="h-9 w-9 rounded-lg" />
-            <SkeletonLine className="mt-4 h-4 w-24" />
-            <SkeletonLine className="mt-2 h-9 w-full rounded-lg" />
-            <SkeletonLine className="mt-2 h-9 w-full rounded-lg" />
-            <SkeletonLine className="mt-6 h-4 w-20" />
-            <SkeletonLine className="mt-2 h-9 w-full rounded-lg" />
-            <SkeletonLine className="mt-2 h-9 w-full rounded-lg" />
-          </aside>
-          <div className="flex min-w-0 flex-1 flex-col px-4 py-6 sm:px-8">
-            <SkeletonLine className="h-8 w-48 max-w-[80%]" />
-            <SkeletonLine className="mt-3 h-4 w-full max-w-xl" />
-            <SkeletonBlock className="mt-8 h-52 w-full max-w-3xl rounded-xl" />
-            <SkeletonBlock className="mt-6 h-36 w-full max-w-3xl rounded-xl" />
-            <p className="mt-6 text-center text-xs text-muted">正在加载工作台…</p>
-          </div>
-        </div>
-      </div>
-    );
+  const workbenchMainContent = !ready ? (
+    <>
+      <WorkbenchRouteFallback />
+      <p className="pb-8 text-center text-xs text-muted">正在加载工作台…</p>
+    </>
+  ) : (
+    shellChildren
+  );
+
+  if (!ready && isMarketingShellLessPath(path)) {
+    return <div className="relative min-h-screen bg-canvas text-ink">{shellChildren}</div>;
   }
 
   if (isMarketingShellLessPath(path)) {
@@ -891,10 +870,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         style={{ marginLeft: "var(--fym-app-sidebar-w, 232px)" }}
         tabIndex={-1}
       >
-        {shellChildren}
+        {workbenchMainContent}
         {showNavPendingOverlay ? (
           <div
-            className="absolute inset-0 z-[20] bg-canvas"
+            className="absolute inset-0 z-[20] bg-canvas/95"
             aria-busy
             aria-live="polite"
             aria-label="页面切换中"
