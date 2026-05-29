@@ -226,7 +226,7 @@ async def _scheduled_storage_maintenance_loop(stop: asyncio.Event) -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    run_startup_tasks()
+    await asyncio.to_thread(run_startup_tasks)
     if settings.embed_rq_media_worker:
         try:
             start_embedded_media_rq_worker_thread(settings.redis_url)
