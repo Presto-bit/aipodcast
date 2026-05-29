@@ -27,7 +27,11 @@ export function presentJobProgressMessageForUser(raw: string): string {
     "任务完成": "生成完成",
     "语音合成完成": "生成完成",
     "笔记索引完成": "处理完成",
-    "正在为笔记建立向量索引与摘要": "正在处理笔记内容"
+    "正在为笔记建立向量索引与摘要": "正在处理笔记内容",
+    "正在合并参考资料": "正在整理参考资料",
+    "正在生成发布稿": "正在撰写发布稿",
+    "正在生成发布稿（长稿可能较久）…": "正在撰写发布稿",
+    "发布稿生成中…": "正在撰写发布稿"
   };
   const mapped = exact[s];
   if (mapped) return mapped;

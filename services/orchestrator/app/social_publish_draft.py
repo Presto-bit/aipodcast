@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from .social_compliance import apply_compliance_to_mp_fields
@@ -289,7 +290,7 @@ def _mp_system_prompt(opt_block: str) -> str:
 3. body：正文主体，可用 Markdown（## 小标题、列表）；勿把话题与文末引导写入 body。
 4. tags：5～8 个领域关键词，不带#（由系统并入正文末尾）。
 5. interaction：1～2 句留言/转发引导（由系统并入正文末尾）。
-6. imageSuggestions：2～4 条配图建议（头图比例、文内插图主题与构图）。
+6. imageSuggestions：2～4 条配图建议，每项为简短字符串（如「头图：漫画风格…」），不要用嵌套 JSON 对象。
 
 禁止：播客腔、绝对化/医疗化承诺、硬引流。
 
@@ -310,7 +311,7 @@ def _xhs_system_prompt(opt_block: str) -> str:
    sections 若使用数组，每项必须是 JSON 对象 {{"heading":"小标题","content":"段落"}}，禁止输出 Python 字典字面量字符串。
 4. tags：5～8 个垂类话题词，不带#（由系统并入正文末尾）。
 5. interaction：1～2 句互动引导（由系统并入正文末尾）。
-6. imageSuggestions：2～4 条图片制作建议（配图主题、构图、封面大字、色调/道具），供发布者拍图参考，不是封面文案本身。
+6. imageSuggestions：2～4 条图片制作建议，每项为简短字符串（如「封面：大字标题+实拍」），不要用嵌套 JSON 对象。
 
 禁止：Speaker 对话格式、连续照抄 18 字以上、绝对化/医疗化/硬引流用语。
 
@@ -469,6 +470,7 @@ def generate_social_publish_draft(
     *,
     platform: str,
     options: dict[str, Any] | None,
+    on_stream_delta: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """platform: xiaohongshu | wechat_mp"""
     opts = _normalize_social_options(options if isinstance(options, dict) else {}, platform)
@@ -493,7 +495,12 @@ def generate_social_publish_draft(
         system = _mp_system_prompt(opt_block)
         user = f"{material_rule}\n\n请根据下列素材改写为上述 JSON。\n\n【素材】\n{llm_material}"
 
-    data, trace_id = invoke_and_parse_social_json(system, user, max_tokens=max_tokens)
+    data, trace_id = invoke_and_parse_social_json(
+        system,
+        user,
+        max_tokens=max_tokens,
+        on_stream_delta=on_stream_delta,
+    )
     if not data or _is_generic_social_placeholder(data, platform):
         if data and _is_generic_social_placeholder(data, platform):
             logger.warning("social_publish llm returned generic placeholder platform=%s", platform)

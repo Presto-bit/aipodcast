@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from app.social_llm_utils import extract_partial_social_json_fields
 from app.social_publish_draft import (
     _fallback_from_material,
     _is_generic_social_placeholder,
@@ -67,3 +68,30 @@ def test_generate_rejects_generic_llm_json() -> None:
     assert "先把最重要的信息说清楚" not in body
     assert "要点一" not in body
     assert "新能源汽车" in body or "充电设施" in body or "置换补贴" in body
+
+
+def test_extract_partial_social_json_fields_from_stream() -> None:
+    raw = (
+        '{"titles":["标题一","标题二"],'
+        '"theme":"测试主题",'
+        '"body":"这是正在生成的正文片段'
+    )
+    partial = extract_partial_social_json_fields(raw)
+    assert partial.get("titles") == ["标题一", "标题二"]
+    assert partial.get("theme") == "测试主题"
+    assert partial.get("body") == "这是正在生成的正文片段"
+
+
+def test_format_image_suggestion_item_from_dict() -> None:
+    from app.social_llm_utils import format_image_suggestion_item, normalize_image_suggestion_lines
+
+    raw = {"position": "头图", "description": "漫画风格：主角与关键词同框"}
+    assert format_image_suggestion_item(raw) == "头图：漫画风格：主角与关键词同框"
+    assert normalize_image_suggestion_lines([raw, "纯文本建议"]) == [
+        "头图：漫画风格：主角与关键词同框",
+        "纯文本建议",
+    ]
+    assert (
+        format_image_suggestion_item("{'position': '头图', 'description': '漫画风格'}")
+        == "头图：漫画风格"
+    )

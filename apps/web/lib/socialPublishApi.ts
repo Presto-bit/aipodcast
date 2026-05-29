@@ -1,7 +1,7 @@
 import { apiErrorMessage } from "./apiError";
 import { createJob } from "./api";
 import { buildSocialPublishReferenceBody } from "./socialPublishReference";
-import { ensureXhsTitles } from "./socialPublishPresets";
+import { normalizeSocialImageSuggestions } from "./socialPublishImageSuggestions";
 import { NOTES_PODCAST_PROJECT_NAME } from "./notesProject";
 import type {
   SocialPublishCompliance,
@@ -37,9 +37,7 @@ export function mapContentDraft(
   const opening30 = String(data.opening_30 ?? data.opening30 ?? "").trim();
   const body = String(data.body || "").trim();
   const imageRaw = data.imageSuggestions ?? data.image_suggestions ?? data.coverSuggestions;
-  const imageSuggestions = Array.isArray(imageRaw)
-    ? imageRaw.map((t) => String(t).trim()).filter(Boolean)
-    : [];
+  const imageSuggestions = normalizeSocialImageSuggestions(imageRaw, 8);
   return {
     platform,
     titles,

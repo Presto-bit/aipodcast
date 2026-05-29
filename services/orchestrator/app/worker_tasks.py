@@ -25,6 +25,7 @@ from .subscription_manifest import (
     BILLING_MAX_NOTE_REFS,
     PRODUCT_ENTITLEMENTS_TIER,
 )
+from .job_running_result import patch_job_running_result
 from .models import (
     add_artifact,
     append_cloned_voice_for_user_uuid,
@@ -350,6 +351,62 @@ def _make_script_delta_handler(job_id: str):
             "脚本生成中…",
             {"text_tail": tail, "total_chars": len(acc)},
         )
+
+    return _on_delta
+
+
+def _make_social_partial_handler(job_id: str, platform: str):
+    """流式生成自媒体稿时，周期性写入 result 与 script_chunk 供前端增量展示。"""
+
+    pending = [0]
+    last_len = [0]
+    last_sig = [""]
+
+    def _on_delta(acc: str) -> None:
+        delta_chars = len(acc) - last_len[0]
+        last_len[0] = len(acc)
+        if delta_chars <= 0:
+            return
+        pending[0] += delta_chars
+        if pending[0] < 280:
+            return
+        pending[0] = 0
+        if _guard_cancelled(job_id):
+            return
+        from .social_llm_utils import extract_partial_social_json_fields
+
+        partial = extract_partial_social_json_fields(acc)
+        if not partial:
+            return
+        body = str(partial.get("body") or "").strip()
+        patch: dict[str, Any] = {"platform": platform, "partial": True}
+        for key in ("theme", "cover_hook", "opening_30", "interaction", "titles", "tags", "imageSuggestions"):
+            val = partial.get(key)
+            if not val:
+                continue
+            if key == "imageSuggestions":
+                from .social_llm_utils import normalize_image_suggestion_lines
+
+                patch[key] = normalize_image_suggestion_lines(val, limit=8)
+            else:
+                patch[key] = val
+        if body:
+            patch["body"] = body
+            patch["preview"] = body[:240]
+            patch["script_preview"] = body[:240]
+        sig = json.dumps(patch, ensure_ascii=False, sort_keys=True, default=str)
+        if sig == last_sig[0]:
+            return
+        last_sig[0] = sig
+        patch_job_running_result(job_id, patch)
+        if body:
+            tail = body[-4000:] if len(body) > 4000 else body
+            append_job_event(
+                job_id,
+                "script_chunk",
+                "发布稿生成中…",
+                {"text_tail": tail, "total_chars": len(body)},
+            )
 
     return _on_delta
 
@@ -809,7 +866,21 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             append_job_event(job_id, "progress", "正在生成发布稿", {"progress": 55})
             if _guard_cancelled(job_id):
                 return {"status": "cancelled"}
-            pack = generate_social_publish_draft(material, platform=platform, options=options)
+            stop_soc, thr_soc = _start_progress_heartbeat(
+                job_id,
+                "正在生成发布稿（长稿可能较久）…",
+                70.0,
+            )
+            try:
+                pack = generate_social_publish_draft(
+                    material,
+                    platform=platform,
+                    options=options,
+                    on_stream_delta=_make_social_partial_handler(job_id, platform),
+                )
+            finally:
+                stop_soc.set()
+                thr_soc.join(timeout=2)
             result = {**pack, "success": True, "platform": platform}
             body = str(result.get("body") or "").strip()
             titles_raw = result.get("titles")

@@ -73,6 +73,7 @@ import {
   DRAFT_DEBOUNCE_MS,
   JOB_GEN_PLACEHOLDER,
   JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER,
+  JOB_GEN_SOCIAL_PUBLISH_PLACEHOLDER,
   MORE_MENU_PUBLISH_PLATFORM_IDS,
   MORE_MENU_PUBLISH_PLATFORM_SET,
   PINNED_PUBLISH_PLATFORM_IDS,
@@ -778,6 +779,25 @@ export function SharePublishClient({
             message?: string;
             payload?: { progress?: number };
           };
+          if (data.type === "script_chunk") {
+            const p = data.payload || {};
+            const tail = typeof p.text_tail === "string" ? p.text_tail.trim() : "";
+            if (tail) {
+              setManuscriptBody(tail);
+              setOwnerJobRecord((prev) => {
+                if (!prev) return prev;
+                const prevResult =
+                  prev.result && typeof prev.result === "object"
+                    ? (prev.result as Record<string, unknown>)
+                    : {};
+                return {
+                  ...prev,
+                  result: { ...prevResult, body: tail, partial: true, preview: tail.slice(0, 240) }
+                };
+              });
+            }
+            return;
+          }
           if (data.type === "terminal") return;
           if (isJobEventLogOnlyForUi(data.type)) {
             return;
@@ -900,6 +920,9 @@ export function SharePublishClient({
   const scriptDraft = jobType === "script_draft";
   const socialPublishDraft = jobType === "social_publish_draft";
   const textOnlyWork = scriptDraft || socialPublishDraft;
+  const textOnlyGenPlaceholder = socialPublishDraft
+    ? JOB_GEN_SOCIAL_PUBLISH_PLACEHOLDER
+    : JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER;
 
   const socialPublishDetail = useMemo(() => {
     if (!ownerJobRecord || !socialPublishDraft) return null;
@@ -1115,10 +1138,10 @@ export function SharePublishClient({
     const ss = Math.floor(elapsedSec % 60);
     const elapsedLabel = `${mm}:${String(ss).padStart(2, "0")}`;
     const caption = queued
-      ? `排队中 · 已等待 ${elapsedLabel} · 预估成片约 ${formatEtaRoughCn(estimateSec)}`
+      ? `排队中 · 已等待 ${elapsedLabel}`
       : overdue
-        ? `已进行 ${elapsedLabel} · 常用参考时长约 ${formatEtaRoughCn(estimateSec)}（实际可能更长） · 已超过参考时长，仍在处理中`
-        : `已进行 ${elapsedLabel} · 预估总时长约 ${formatEtaRoughCn(estimateSec)} · 剩余约 ${formatEtaRoughCn(remainingSec)}`;
+        ? `已进行 ${elapsedLabel} · 仍在处理中`
+        : `已进行 ${elapsedLabel} · 预计还需 ${formatEtaRoughCn(remainingSec)}`;
     return { pct, caption };
   }, [ownerJobRecord, jobGenTick]);
 
@@ -2033,14 +2056,14 @@ export function SharePublishClient({
             audioRegenProgress={audioRegenProgress}
             audioRegenMessage={audioRegenMessage}
             jobGenerating={jobGenerating}
-            jobGenPlaceholder={textOnlyWork ? JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER : JOB_GEN_PLACEHOLDER}
+            jobGenPlaceholder={textOnlyWork ? textOnlyGenPlaceholder : JOB_GEN_PLACEHOLDER}
             jobLiveLine={jobGenBannerLine}
             jobLiveProgressPct={jobLivePctMerged}
             jobFailedMessage={jobFailedMessage}
             readonlyEmptyHint={
               jobGenerating
                 ? textOnlyWork
-                  ? JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER
+                  ? textOnlyGenPlaceholder
                   : JOB_GEN_PLACEHOLDER
                 : undefined
             }

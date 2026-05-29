@@ -9,7 +9,7 @@ from .social_compliance import (
     xhs_fields_from_pack,
     xhs_pack_from_compliant_fields,
 )
-from .social_llm_utils import normalize_tags
+from .social_llm_utils import normalize_image_suggestion_lines, normalize_tags
 
 _PERSONA_CN = {
     "ingredient": "成分党（看配方、比浓度、理性避雷）",
@@ -455,9 +455,7 @@ def normalize_xhs_llm_data(data: dict[str, Any]) -> dict[str, Any]:
         or data.get("coverSuggestions")
         or data.get("cover_suggestions")
     )
-    cover_list: list[str] = []
-    if isinstance(covers, list):
-        cover_list = [str(c).strip()[:300] for c in covers if str(c).strip()][:4]
+    cover_list = normalize_image_suggestion_lines(covers, limit=4)
 
     theme = str(data.get("theme") or "").strip()[:500]
     return {

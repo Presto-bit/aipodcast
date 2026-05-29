@@ -1,5 +1,6 @@
 import { coerceJobResult } from "./coerceJobResult";
 import { ensureXhsTitles, platformLabel } from "./socialPublishPresets";
+import { normalizeSocialImageSuggestions } from "./socialPublishImageSuggestions";
 import type { SocialPublishCompliance, SocialPublishDraft, SocialPublishPlatform } from "./socialPublishTypes";
 
 export type SocialPublishWorkDetail = SocialPublishDraft & {
@@ -73,7 +74,6 @@ export function parseSocialPublishWorkDetail(
 ): SocialPublishWorkDetail | null {
   const result = coerceJobResult(resultRaw);
   const body = String(result.body || "").trim();
-  if (!body) return null;
 
   const payload = payloadRaw && typeof payloadRaw === "object" ? (payloadRaw as Record<string, unknown>) : {};
   const platRaw = String(result.platform || payload.platform || "xiaohongshu").trim();
@@ -84,11 +84,11 @@ export function parseSocialPublishWorkDetail(
     : [];
   const fallback = String(result.cover_hook || result.title || "").trim();
   const titles = ensureXhsTitles(titlesRaw.length ? titlesRaw : fallback ? [fallback] : []);
+  const theme = String(result.theme || "").trim();
+  if (!body && !titles.some((t) => t.trim()) && !theme) return null;
 
   const imageRaw = result.imageSuggestions ?? result.image_suggestions ?? result.coverSuggestions;
-  const imageSuggestions = Array.isArray(imageRaw)
-    ? imageRaw.map((t) => String(t).trim()).filter(Boolean).slice(0, 8)
-    : [];
+  const imageSuggestions = normalizeSocialImageSuggestions(imageRaw, 8);
 
   const tagsRaw = result.tags;
   const tags = Array.isArray(tagsRaw)
@@ -102,7 +102,7 @@ export function parseSocialPublishWorkDetail(
     selectedTitleIndex: 0,
     coverHook: String(result.cover_hook || "").trim() || undefined,
     opening30: String(result.opening_30 ?? result.opening30 ?? "").trim() || undefined,
-    theme: String(result.theme || "").trim(),
+    theme,
     body,
     imageSuggestions,
     tags: tags.length ? tags : undefined,

@@ -12,6 +12,6 @@ export const MORE_MENU_PUBLISH_PLATFORM_SET = new Set<PublishPlatformId>(MORE_ME
 export const DRAFT_DEBOUNCE_MS = 600;
 export const JOB_GEN_PLACEHOLDER = "生成中,请稍等...";
 export const JOB_GEN_SCRIPT_DRAFT_PLACEHOLDER =
-  "文稿排队生成中，通常需数分钟，请勿关闭页面；完成后正文会自动载入。若长时间无进度，可刷新本页。";
+  "文稿排队生成中，通常需数分钟，可关闭页面；完成后正文会自动载入。若长时间无进度，可刷新本页。";
 export const JOB_GEN_SOCIAL_PUBLISH_PLACEHOLDER =
-  "自媒体发布稿生成中，通常需 1～3 分钟；完成后标题、配图建议与正文将显示在下方。";
+  "自媒体发布稿生成中，通常需数分钟，可关闭页面；已产出的标题与正文会逐步显示在下方。若长时间无进度，可刷新本页。";
