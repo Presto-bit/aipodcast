@@ -52,6 +52,7 @@ import { apiErrorMessage, softenBareErrorLineForUi } from "../../../lib/apiError
 import { useI18n } from "../../../lib/I18nContext";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../../../lib/worksTypes";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../../lib/notesProject";
+import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
 import { messageSuggestsBillingTopUpOrSubscription } from "../../../lib/billingShortfall";
 import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
 import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../../components/studio/CreateStudioIdleShell";
@@ -72,6 +73,8 @@ export default function CreatePage() {
   const searchParams = useSearchParams();
   const { user, getAuthHeaders } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
+  const pageAbortSignal = usePageAbortSignal();
+  const pageFetch = usePageFetch(pageAbortSignal);
 
   const [draftText, setDraftText] = useState("");
   const [libraryPreview, setLibraryPreview] = useState("");
@@ -132,7 +135,7 @@ export default function CreatePage() {
     setHotTopicsLoading(true);
     setHotTopicsErr("");
     try {
-      const res = await fetch(`/api/create/hot-topics?seed=${encodeURIComponent(String(seed))}`, {
+      const res = await pageFetch(`/api/create/hot-topics?seed=${encodeURIComponent(String(seed))}`, {
         cache: "default",
         credentials: "same-origin"
       });
@@ -147,6 +150,7 @@ export default function CreatePage() {
       const list = Array.isArray(data.topics) ? data.topics : [];
       setHotTopics(list);
     } catch (e) {
+      if (isAbortError(e)) return;
       const msg = String(e instanceof Error ? e.message : e);
       if (opts?.preserveOnError) {
         setHotTopicsErr(msg);
@@ -155,9 +159,9 @@ export default function CreatePage() {
       setHotTopics([]);
       setHotTopicsErr(msg);
     } finally {
-      setHotTopicsLoading(false);
+      if (!pageAbortSignal.aborted) setHotTopicsLoading(false);
     }
-  }, []);
+  }, [pageAbortSignal, pageFetch]);
 
   useEffect(() => {
     if (!hotTopicAssistantOpen) {
@@ -180,7 +184,7 @@ export default function CreatePage() {
   const refreshWorks = useCallback(async () => {
     setWorksErr("");
     try {
-      const res = await fetch(`/api/works?limit=${HOME_WORKS_LIMIT}&offset=0`, {
+      const res = await pageFetch(`/api/works?limit=${HOME_WORKS_LIMIT}&offset=0`, {
         cache: "no-store",
         credentials: "same-origin",
         headers: { ...getAuthHeaders() }
@@ -206,11 +210,12 @@ export default function CreatePage() {
         merged.filter((w) => String(w.projectName || "").trim() !== NOTES_PODCAST_PROJECT_NAME)
       );
     } catch (e) {
+      if (isAbortError(e)) return;
       setWorksErr(String(e instanceof Error ? e.message : e));
     } finally {
-      setWorksLoading(false);
+      if (!pageAbortSignal.aborted) setWorksLoading(false);
     }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, pageAbortSignal, pageFetch]);
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -226,7 +231,7 @@ export default function CreatePage() {
     setTemplatesErr("");
     setTemplatesLoading(true);
     try {
-      const res = await fetch("/api/works/podcast-templates?limit=40&offset=0", {
+      const res = await pageFetch("/api/works/podcast-templates?limit=40&offset=0", {
         cache: "no-store",
         credentials: "same-origin",
         headers: { ...getAuthHeaders() }
@@ -242,12 +247,13 @@ export default function CreatePage() {
       }
       setServerPodcastTemplates(Array.isArray(data.templates) ? data.templates : []);
     } catch (e) {
+      if (isAbortError(e)) return;
       setTemplatesErr(String(e instanceof Error ? e.message : e));
       setServerPodcastTemplates([]);
     } finally {
-      setTemplatesLoading(false);
+      if (!pageAbortSignal.aborted) setTemplatesLoading(false);
     }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, pageAbortSignal, pageFetch]);
 
   /** 全站播客模板列表公开可读；未登录也可拉取展示 */
   useEffect(() => {

@@ -21,6 +21,11 @@ import { presentJobProgressMessageForUser } from "../../lib/jobProgressUserText"
 import { MEDIA_QUEUE_STALL_HINT_MS } from "../../lib/mediaQueueStallHint";
 import { cancelJob, formatOrchestratorErrorText, previewMediaJob } from "../../lib/api";
 import { softenBareErrorLineForUi } from "../../lib/apiError";
+import {
+  useInvalidateStudioVoicesOnEvent,
+  usePodcastWorksQuery,
+  useStudioBootstrap
+} from "../../lib/queries/studioQueries";
 import { buildReferenceJobFields } from "../../lib/jobReferencePayload";
 import { rememberJobId } from "../../lib/jobRecent";
 import { clearActiveGenerationJob, readActiveGenerationJob, setActiveGenerationJob } from "../../lib/activeJobSession";
@@ -139,6 +144,9 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const { t } = useI18n();
   const loggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const { ensureLoggedInForAction, loginPromptNode } = useLoginRequiredAction(loggedIn);
+  const worksQuery = usePodcastWorksQuery(getAuthHeaders, loggedIn);
+  const bootstrapQuery = useStudioBootstrap(getAuthHeaders, loggedIn);
+  useInvalidateStudioVoicesOnEvent(loggedIn);
   const noteRefCap = useMemo(() => maxNotesForReference(), []);
   const roomFeaturesOk = useMemo(() => notesRoomFeaturesEnabled(), []);
   const createdByPhone = useMemo(() => userAccountRef(user) || String(phone || "").trim(), [user, phone]);
@@ -455,22 +463,33 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const fetchPodcastWorks = useCallback(async () => {
     setWorksError("");
     try {
-      const res = await fetch("/api/works", { cache: "no-store", headers: { ...getAuthHeaders() } });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        ai?: WorkItem[];
-        error?: string;
-        detail?: string;
-      };
-      if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-      setWorks(Array.isArray(data.ai) ? data.ai : []);
+      const result = await worksQuery.refetch();
+      if (result.error) throw result.error;
     } catch (e) {
       setWorksError(String(e instanceof Error ? e.message : e));
       setWorks([]);
     } finally {
       setWorksLoading(false);
     }
-  }, [getAuthHeaders]);
+  }, [worksQuery]);
+
+  useEffect(() => {
+    if (!loggedIn) {
+      setWorks([]);
+      setWorksLoading(false);
+      setWorksError("");
+      return;
+    }
+    setWorksLoading(worksQuery.isLoading);
+    if (worksQuery.data) {
+      setWorks(worksQuery.data);
+      setWorksError("");
+    }
+    if (worksQuery.isError) {
+      setWorksError(String(worksQuery.error instanceof Error ? worksQuery.error.message : worksQuery.error));
+      setWorks([]);
+    }
+  }, [loggedIn, worksQuery.data, worksQuery.error, worksQuery.isError, worksQuery.isLoading]);
 
   useEffect(() => {
     if (!loggedIn) return;
@@ -482,16 +501,6 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
 
   useEffect(() => {
     if (!loggedIn) {
-      setWorks([]);
-      setWorksLoading(false);
-      setWorksError("");
-      return;
-    }
-    void fetchPodcastWorks();
-  }, [fetchPodcastWorks, loggedIn]);
-
-  useEffect(() => {
-    if (!loggedIn) {
       setDefaultVoicesMap({});
       setSystemVoicesMap({});
       setSavedCustomVoices([]);
@@ -499,56 +508,14 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       setStudioNotebooks([]);
       return;
     }
-    void (async () => {
-      try {
-        const r = await fetch("/api/studio-bootstrap", {
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { ...getAuthHeaders() }
-        });
-        const pack = (await r.json().catch(() => ({}))) as {
-          defaultVoices?: { ok: boolean; data: unknown };
-          savedVoices?: { ok: boolean; data: unknown };
-          notes?: { ok: boolean; data: unknown };
-          notebooks?: { ok: boolean; data: unknown };
-        };
-        const dd = (pack.defaultVoices?.data ?? {}) as {
-          voices?: Record<string, Record<string, unknown>>;
-          system_voices?: Record<string, Record<string, unknown>>;
-        };
-        const sd = (pack.savedVoices?.data ?? {}) as { voices?: { voiceId: string; displayName?: string }[] };
-        const nd = (pack.notes?.data ?? {}) as {
-          success?: boolean;
-          notes?: { noteId: string; title?: string; notebook?: string }[];
-        };
-        const nbd = (pack.notebooks?.data ?? {}) as { success?: boolean; notebooks?: string[] };
-        if (dd.voices) setDefaultVoicesMap(dd.voices);
-        if (dd.system_voices && typeof dd.system_voices === "object") setSystemVoicesMap(dd.system_voices);
-        if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
-        if (pack.notes?.ok && nd.success && Array.isArray(nd.notes)) setNotesList(nd.notes.slice(0, 300));
-        if (pack.notebooks?.ok && nbd.success && Array.isArray(nbd.notebooks)) setStudioNotebooks(nbd.notebooks);
-      } catch {
-        // ignore
-      }
-    })();
-  }, [getAuthHeaders, loggedIn]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const refetchSaved = () => {
-      void (async () => {
-        try {
-          const s = await fetch("/api/saved_voices", { cache: "no-store", headers: { ...getAuthHeaders() } });
-          const sd = (await s.json().catch(() => ({}))) as { voices?: { voiceId: string; displayName?: string }[] };
-          if (Array.isArray(sd.voices)) setSavedCustomVoices(sd.voices);
-        } catch {
-          // ignore
-        }
-      })();
-    };
-    window.addEventListener("fym-saved-voices-changed", refetchSaved);
-    return () => window.removeEventListener("fym-saved-voices-changed", refetchSaved);
-  }, [getAuthHeaders]);
+    const pack = bootstrapQuery.data;
+    if (!pack) return;
+    if (pack.defaultVoices) setDefaultVoicesMap(pack.defaultVoices);
+    if (pack.systemVoices) setSystemVoicesMap(pack.systemVoices);
+    if (pack.savedVoices) setSavedCustomVoices(pack.savedVoices);
+    if (pack.notes) setNotesList(pack.notes);
+    if (pack.notebooks) setStudioNotebooks(pack.notebooks);
+  }, [bootstrapQuery.data, loggedIn]);
 
   useEffect(() => {
     if (introVoiceFollow) setIntroVoiceKey(voiceKey1);

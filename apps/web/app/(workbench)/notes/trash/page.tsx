@@ -6,6 +6,7 @@ import EmptyState from "../../../../components/ui/EmptyState";
 import { apiErrorMessage } from "../../../../lib/apiError";
 import { isLoggedInAccountUser, useAuth } from "../../../../lib/auth";
 import { shouldHideWorkFromUserGallery } from "../../../../lib/worksTypes";
+import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../../lib/usePageAbortSignal";
 
 type NoteRow = {
   noteId: string;
@@ -121,6 +122,8 @@ function restoreDetailMessage(detail: string): string {
 export default function NotesTrashPage() {
   const { getAuthHeaders, user } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
+  const pageAbortSignal = usePageAbortSignal();
+  const pageFetch = usePageFetch(pageAbortSignal);
   const [notes, setNotes] = useState<NoteRow[]>([]);
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,11 +145,11 @@ export default function NotesTrashPage() {
       }
       const authHdr = getAuthHeaders();
       const [notesRes, worksRes] = await Promise.all([
-        fetch("/api/notes/trash?limit=80&offset=0&tab=reference", {
+        pageFetch("/api/notes/trash?limit=80&offset=0&tab=reference", {
           cache: "no-store",
           headers: { ...authHdr }
         }),
-        fetch("/api/works/trash?limit=80&offset=0", { cache: "no-store", headers: { ...authHdr } })
+        pageFetch("/api/works/trash?limit=80&offset=0", { cache: "no-store", headers: { ...authHdr } })
       ]);
       const notesData = (await notesRes.json().catch(() => ({}))) as { success?: boolean; notes?: NoteRow[]; error?: string };
       if (!notesRes.ok || !notesData.success) throw new Error(notesData.error || `加载笔记回收站失败 ${notesRes.status}`);
@@ -172,11 +175,12 @@ export default function NotesTrashPage() {
       const workIdSet = new Set(nextWorks.map((w) => w.id));
       setSelectedWorkIds((xs) => xs.filter((id) => workIdSet.has(id)));
     } catch (e) {
+      if (isAbortError(e)) return;
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
-      setLoading(false);
+      if (!pageAbortSignal.aborted) setLoading(false);
     }
-  }, [getAuthHeaders, isLoggedIn]);
+  }, [getAuthHeaders, isLoggedIn, pageAbortSignal, pageFetch]);
 
   useEffect(() => {
     void load();

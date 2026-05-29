@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "../ui/Button";
 import EmptyState from "../ui/EmptyState";
 import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
+import { useTableVirtualizer } from "../ui/useTableVirtualizer";
 import { cancelJob, listJobs, purgeJob, retryJob } from "../../lib/api";
 import { jobsListLoadErrorPresentation } from "../../lib/jobsListErrors";
 import type { JobRecord, JobStatus } from "../../lib/types";
@@ -238,6 +239,115 @@ export default function JobsListView({ variant }: JobsListViewProps) {
   }
 
   const isAdmin = variant === "admin";
+  const colCount = isAdmin ? 10 : 11;
+  const { scrollRef, virtualItems, padTop, padBottom, useVirtual } = useTableVirtualizer(jobs.length, 52);
+
+  const renderJobRowCells = (j: JobRecord): ReactNode => {
+    const canStop = j.status === "queued" || j.status === "running";
+    const canAdminRetry = isAdmin && j.status !== "queued" && j.status !== "running";
+    const peekKinds = succeededContentPeekKinds(j);
+    const peekHref = succeededContentPeekHref(j, isAdmin);
+    return (
+      <>
+        {!isAdmin ? (
+          <td className="px-2 py-2 align-middle">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-brand"
+              checked={selectedIds.includes(j.id)}
+              disabled={purgeBusy}
+              onChange={() => toggleRowSelected(j.id)}
+              aria-label={`选择任务 ${j.id.slice(0, 8)}`}
+            />
+          </td>
+        ) : null}
+        <td className="px-3 py-2">
+          <span className={`rounded px-2 py-0.5 text-xs ${statusBadge(j.status)}`}>{j.status}</span>
+        </td>
+        <td className="px-3 py-2 text-ink">{j.job_type}</td>
+        <td className="max-w-[min(22rem,40vw)] px-3 py-2 align-top">
+          <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center">
+            <span className="break-all font-mono text-[11px] text-ink/90 select-all" title={j.id}>
+              {j.id}
+            </span>
+            <button
+              type="button"
+              className="w-max shrink-0 rounded border border-line bg-fill px-1.5 py-0.5 text-[10px] font-medium text-brand hover:bg-surface"
+              onClick={() => void copyJobId(j.id)}
+            >
+              {copiedJobId === j.id ? "已复制" : "复制 ID"}
+            </button>
+          </div>
+        </td>
+        <td className="max-w-[12rem] truncate px-3 py-2 text-ink" title={jobCreatorDisplayName(j)}>
+          {jobCreatorDisplayName(j)}
+        </td>
+        <td className="px-3 py-2 text-muted">{j.queue_name}</td>
+        <td className="px-3 py-2 text-muted">{j.progress}%</td>
+        <td className="px-3 py-2 text-xs tabular-nums text-muted">{formatJobDuration(j)}</td>
+        <td className="px-3 py-2 text-xs text-muted">{j.created_at?.replace("T", " ").slice(0, 19) ?? "-"}</td>
+        <td className="px-3 py-2">
+          {peekKinds && peekHref ? (
+            <Link
+              className="text-sm font-medium text-brand underline hover:text-brand/90"
+              href={peekHref}
+              title={isAdmin ? "打开任务详情（含成品与文稿）" : "打开作品详情（含音频与文稿）"}
+            >
+              详情
+            </Link>
+          ) : (
+            <span className="text-xs text-muted">—</span>
+          )}
+        </td>
+        <td className="px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link className="text-brand underline hover:text-brand/90" href={`${basePath}/${j.id}`}>
+              详情
+            </Link>
+            {canStop ? (
+              <Button
+                type="button"
+                variant="danger"
+                className="!px-2 !py-0.5 !text-xs"
+                loading={stoppingId === j.id}
+                busyLabel="暂停中…"
+                disabledReason={stoppingId === j.id ? "正在暂停" : undefined}
+                onClick={() => void stopJob(j.id)}
+              >
+                {isAdmin ? "暂停" : "停止"}
+              </Button>
+            ) : null}
+            {isAdmin && canAdminRetry ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="!px-2 !py-0.5 !text-xs"
+                loading={retryingId === j.id}
+                busyLabel="提交中…"
+                disabledReason={retryingId === j.id ? "正在提交" : undefined}
+                onClick={() => void retryOne(j.id)}
+              >
+                重新生成
+              </Button>
+            ) : null}
+            {isAdmin ? (
+              <Button
+                type="button"
+                variant="danger"
+                className="!px-2 !py-0.5 !text-xs"
+                loading={purgingId === j.id}
+                busyLabel="删除中…"
+                disabledReason={purgingId === j.id ? "正在删除" : undefined}
+                onClick={() => void purgeOne(j.id)}
+              >
+                删除
+              </Button>
+            ) : null}
+          </div>
+        </td>
+      </>
+    );
+  };
 
   return (
     <main
@@ -374,8 +484,12 @@ export default function JobsListView({ variant }: JobsListViewProps) {
         />
       ) : (
         <section className="fym-table-shell mt-6 min-w-0 max-w-full overflow-x-auto overflow-y-visible overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+          <div
+            ref={scrollRef}
+            className={useVirtual ? "max-h-[min(70vh,640px)] overflow-auto" : undefined}
+          >
           <table className="w-full min-w-[min(110rem,1180px)] text-left text-sm">
-            <thead className="border-b border-line bg-fill text-xs text-muted">
+            <thead className={`border-b border-line bg-fill text-xs text-muted ${useVirtual ? "sticky top-0 z-10" : ""}`}>
               <tr>
                 {!isAdmin ? (
                   <th className="w-10 px-2 py-2" aria-label="多选" />
@@ -393,118 +507,37 @@ export default function JobsListView({ variant }: JobsListViewProps) {
               </tr>
             </thead>
             <tbody>
-              {jobs.map((j) => {
-                const canStop = j.status === "queued" || j.status === "running";
-                const jt = String(j.job_type || "").toLowerCase();
-                const canAdminRetry =
-                  isAdmin &&
-                  j.status !== "queued" &&
-                  j.status !== "running";
-                const peekKinds = succeededContentPeekKinds(j);
-                const peekHref = succeededContentPeekHref(j, isAdmin);
-                return (
+              {useVirtual ? (
+                <>
+                  {padTop > 0 ? (
+                    <tr aria-hidden>
+                      <td colSpan={colCount} style={{ height: padTop, padding: 0, border: 0 }} />
+                    </tr>
+                  ) : null}
+                  {virtualItems.map((vi) => {
+                    const j = jobs[vi.index]!;
+                    return (
+                      <tr key={j.id} className="border-b border-line hover:bg-fill">
+                        {renderJobRowCells(j)}
+                      </tr>
+                    );
+                  })}
+                  {padBottom > 0 ? (
+                    <tr aria-hidden>
+                      <td colSpan={colCount} style={{ height: padBottom, padding: 0, border: 0 }} />
+                    </tr>
+                  ) : null}
+                </>
+              ) : (
+                jobs.map((j) => (
                   <tr key={j.id} className="border-b border-line hover:bg-fill">
-                    {!isAdmin ? (
-                      <td className="px-2 py-2 align-middle">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-brand"
-                          checked={selectedIds.includes(j.id)}
-                          disabled={purgeBusy}
-                          onChange={() => toggleRowSelected(j.id)}
-                          aria-label={`选择任务 ${j.id.slice(0, 8)}`}
-                        />
-                      </td>
-                    ) : null}
-                    <td className="px-3 py-2">
-                      <span className={`rounded px-2 py-0.5 text-xs ${statusBadge(j.status)}`}>{j.status}</span>
-                    </td>
-                    <td className="px-3 py-2 text-ink">{j.job_type}</td>
-                    <td className="max-w-[min(22rem,40vw)] px-3 py-2 align-top">
-                      <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center">
-                        <span className="break-all font-mono text-[11px] text-ink/90 select-all" title={j.id}>
-                          {j.id}
-                        </span>
-                        <button
-                          type="button"
-                          className="w-max shrink-0 rounded border border-line bg-fill px-1.5 py-0.5 text-[10px] font-medium text-brand hover:bg-surface"
-                          onClick={() => void copyJobId(j.id)}
-                        >
-                          {copiedJobId === j.id ? "已复制" : "复制 ID"}
-                        </button>
-                      </div>
-                    </td>
-                    <td className="max-w-[12rem] truncate px-3 py-2 text-ink" title={jobCreatorDisplayName(j)}>
-                      {jobCreatorDisplayName(j)}
-                    </td>
-                    <td className="px-3 py-2 text-muted">{j.queue_name}</td>
-                    <td className="px-3 py-2 text-muted">{j.progress}%</td>
-                    <td className="px-3 py-2 text-xs tabular-nums text-muted">{formatJobDuration(j)}</td>
-                    <td className="px-3 py-2 text-xs text-muted">{j.created_at?.replace("T", " ").slice(0, 19) ?? "-"}</td>
-                    <td className="px-3 py-2">
-                      {peekKinds && peekHref ? (
-                        <Link
-                          className="text-sm font-medium text-brand underline hover:text-brand/90"
-                          href={peekHref}
-                          title={isAdmin ? "打开任务详情（含成品与文稿）" : "打开作品详情（含音频与文稿）"}
-                        >
-                          详情
-                        </Link>
-                      ) : (
-                        <span className="text-xs text-muted">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Link className="text-brand underline hover:text-brand/90" href={`${basePath}/${j.id}`}>
-                          详情
-                        </Link>
-                        {canStop ? (
-                          <Button
-                            type="button"
-                            variant="danger"
-                            className="!px-2 !py-0.5 !text-xs"
-                            loading={stoppingId === j.id}
-                            busyLabel="暂停中…"
-                            disabledReason={stoppingId === j.id ? "正在暂停" : undefined}
-                            onClick={() => void stopJob(j.id)}
-                          >
-                            {isAdmin ? "暂停" : "停止"}
-                          </Button>
-                        ) : null}
-                        {isAdmin && canAdminRetry ? (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            className="!px-2 !py-0.5 !text-xs"
-                            loading={retryingId === j.id}
-                            busyLabel="提交中…"
-                            disabledReason={retryingId === j.id ? "正在提交" : undefined}
-                            onClick={() => void retryOne(j.id)}
-                          >
-                            重新生成
-                          </Button>
-                        ) : null}
-                        {isAdmin ? (
-                          <Button
-                            type="button"
-                            variant="danger"
-                            className="!px-2 !py-0.5 !text-xs"
-                            loading={purgingId === j.id}
-                            busyLabel="删除中…"
-                            disabledReason={purgingId === j.id ? "正在删除" : undefined}
-                            onClick={() => void purgeOne(j.id)}
-                          >
-                            删除
-                          </Button>
-                        ) : null}
-                      </div>
-                    </td>
+                    {renderJobRowCells(j)}
                   </tr>
-                );
-              })}
+                ))
+              )}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 

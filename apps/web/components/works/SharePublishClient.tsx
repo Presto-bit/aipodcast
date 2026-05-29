@@ -65,6 +65,7 @@ import {
 } from "../../lib/workDownloadRechargeGate";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 import { useWorkAudioPlayer, type WorkAudioToggleMeta } from "../../lib/workAudioPlayer";
+import { isAbortError, usePageAbortSignal, usePageFetch } from "../../lib/usePageAbortSignal";
 import { WorkHubOverviewPanel, type WorkHubDetailTab } from "./WorkHubOverviewPanel";
 import { WorkHubShownotesSection } from "./WorkHubShownotesSection";
 import { RssPublishSettingsPanel } from "../rss/RssPublishSettingsPanel";
@@ -123,6 +124,8 @@ export function SharePublishClient({
   const focusReadManuscript = String(searchParams?.get("focus") || "").trim().toLowerCase() === "read";
   const { user, phone } = useAuth();
   const workAudio = useWorkAudioPlayer();
+  const pageAbortSignal = usePageAbortSignal();
+  const pageFetch = usePageFetch(pageAbortSignal);
   const [loadErr, setLoadErr] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [channels, setChannels] = useState<RssChannel[]>([]);
@@ -499,7 +502,7 @@ export function SharePublishClient({
         } catch {
           pubStandalone = null;
         }
-        if (canceled) return;
+        if (canceled || pageAbortSignal.aborted) return;
         if (!pubStandalone) {
           setLoadErr("无法加载该作品或链接已失效。");
           setShareJobHydrated(true);
@@ -540,7 +543,7 @@ export function SharePublishClient({
       } catch {
         row = null;
       }
-      if (canceled) return;
+      if (canceled || pageAbortSignal.aborted) return;
 
       let pub: Awaited<ReturnType<typeof fetchPublicShareListen>> = null;
       if (!row) {
@@ -550,7 +553,7 @@ export function SharePublishClient({
           pub = null;
         }
       }
-      if (canceled) return;
+      if (canceled || pageAbortSignal.aborted) return;
 
       if (!row && !pub) {
         setLoadErr("无法加载该作品或链接已失效。");
@@ -616,10 +619,10 @@ export function SharePublishClient({
           } catch {
             /* ignore */
           } finally {
-            if (!canceled) setScriptResolvePending(false);
+            if (!canceled && !pageAbortSignal.aborted) setScriptResolvePending(false);
           }
 
-          if (!canceled) {
+          if (!canceled && !pageAbortSignal.aborted) {
             const rowStatus = row.status;
             const rowIsGeneratingLoad = rowStatus === "queued" || rowStatus === "running";
             const autoSLoad = String(resultEarly.auto_share_summary || "").trim();
@@ -665,7 +668,7 @@ export function SharePublishClient({
             setManuscriptBody(String(fullScript || "").trim());
           }
 
-          if (!canceled) setFormReady(true);
+          if (!canceled && !pageAbortSignal.aborted) setFormReady(true);
 
           const pubs = await listRssPublicationsByJobIds([jobId]);
           const list = pubs[jobId] || [];
@@ -675,7 +678,7 @@ export function SharePublishClient({
             setPublishedHint("");
           }
 
-          if (!canceled) {
+          if (!canceled && !pageAbortSignal.aborted) {
             const jtLower = String(row.job_type || "").trim().toLowerCase();
             const autoS0 = String(resultEarly.auto_share_summary || "").trim();
             const autoN0 = String(resultEarly.auto_share_show_notes || "").trim();
@@ -689,12 +692,12 @@ export function SharePublishClient({
               deferredShareAiOnceRef.current = true;
               void (async () => {
                 try {
-                  if (canceled) {
+                  if (canceled || pageAbortSignal.aborted) {
                     deferredShareAiOnceRef.current = false;
                     return;
                   }
                   const out = await fetchJobShareAiCopy(jobId, { persist: true });
-                  if (canceled || !out.success) {
+                  if (canceled || pageAbortSignal.aborted || !out.success) {
                     deferredShareAiOnceRef.current = false;
                     return;
                   }
@@ -716,7 +719,7 @@ export function SharePublishClient({
                   if (notes) setShowNotes(notes);
                   try {
                     const fresh = await getJob(jobId);
-                    if (!canceled && fresh) setOwnerJobRecord(fresh);
+                    if (!canceled && !pageAbortSignal.aborted && fresh) setOwnerJobRecord(fresh);
                   } catch {
                     /* ignore */
                   }
@@ -727,7 +730,8 @@ export function SharePublishClient({
             }
           }
         } catch (e) {
-          if (!canceled) setLoadErr(String(e instanceof Error ? e.message : e));
+          if (isAbortError(e) || canceled || pageAbortSignal.aborted) return;
+          setLoadErr(String(e instanceof Error ? e.message : e));
         }
       } else if (pub) {
         setManuscriptBody("");
@@ -757,12 +761,12 @@ export function SharePublishClient({
         setFormReady(true);
       }
 
-      if (!canceled) setShareJobHydrated(true);
+      if (!canceled && !pageAbortSignal.aborted) setShareJobHydrated(true);
     })();
     return () => {
       canceled = true;
     };
-  }, [jobId, layout, applyJobToForm]);
+  }, [jobId, layout, applyJobToForm, pageAbortSignal]);
 
   useEffect(() => {
     if (layout !== "work_hub" || !shareJobHydrated || !formReady) return;
@@ -1277,7 +1281,7 @@ export function SharePublishClient({
         throw new Error("合成等待超时，请到「我的作品」查看新任务是否仍在进行。");
       }
 
-      const coverRes = await fetch(`/api/jobs/${encodeURIComponent(oldId)}/cover`, {
+      const coverRes = await pageFetch(`/api/jobs/${encodeURIComponent(oldId)}/cover`, {
         method: "GET",
         credentials: "same-origin",
         headers: { ...getBearerAuthHeadersSync() }
@@ -1287,7 +1291,7 @@ export function SharePublishClient({
         if (blob.size > 0) {
           const { base64: image_base64 } = await blobToDataUrlBase64(blob);
           const content_type = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
-          const up = await fetch(`/api/jobs/${encodeURIComponent(newId)}/cover`, {
+          const up = await pageFetch(`/api/jobs/${encodeURIComponent(newId)}/cover`, {
             method: "POST",
             credentials: "same-origin",
             headers: { "content-type": "application/json", ...getBearerAuthHeadersSync() },
@@ -1300,7 +1304,7 @@ export function SharePublishClient({
       }
 
       try {
-        const del = await fetch(`/api/jobs/${encodeURIComponent(oldId)}/delete`, {
+        const del = await pageFetch(`/api/jobs/${encodeURIComponent(oldId)}/delete`, {
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getBearerAuthHeadersSync() },
@@ -1370,7 +1374,7 @@ export function SharePublishClient({
       setRssGateDetail("");
       try {
         const r = await fetchRssPublishEligibility(jobId);
-        if (canceled) return;
+        if (canceled || pageAbortSignal.aborted) return;
         if (r.success === false) {
           setRssGate("err");
           setRssGateDetail((r.detail || "").trim() || "无法校验 RSS 发布条件");
@@ -1409,7 +1413,7 @@ export function SharePublishClient({
       setFormErr("");
       try {
         const rows = await listRssChannels();
-        if (canceled) return;
+        if (canceled || pageAbortSignal.aborted) return;
         setChannels(rows);
         if (rows.length > 0) {
           setChannelId((prev) => {

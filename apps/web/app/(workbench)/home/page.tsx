@@ -14,6 +14,7 @@ import NotebookShareDiagnosticsHomeBanner from "../../../components/notebook/Not
 import { SkeletonBlock, SkeletonLine } from "../../../components/ui/Skeleton";
 import { apiErrorMessage } from "../../../lib/apiError";
 import { countUserVisibleActiveJobs } from "../../../lib/activeJobsVisible";
+import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
 import type { JobRecord } from "../../../lib/types";
 
 const NotesWorkbenchWorksPanel = dynamic(
@@ -64,6 +65,8 @@ export default function HomePage() {
   const [worksFetchErr, setWorksFetchErr] = useState("");
   /** 避免 accountKey / 依赖连变时多次概览请求乱序覆盖（进行中数量闪错） */
   const homeOverviewReqSeq = useRef(0);
+  const pageAbortSignal = usePageAbortSignal();
+  const pageFetch = usePageFetch(pageAbortSignal);
 
   const refreshHomeOverview = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
@@ -74,7 +77,7 @@ export default function HomePage() {
         setWorksLoading(true);
         setWorksFetchErr("");
       }
-      const overviewRes = await fetch("/api/home-overview", {
+      const overviewRes = await pageFetch("/api/home-overview", {
         cache: "no-store",
         credentials: "same-origin",
         headers: { ...authHdr }
@@ -146,12 +149,13 @@ export default function HomePage() {
         scriptCharCountSum: worksMetricsOk ? Number(wm.scriptCharCountSum ?? 0) : 0,
         activeJobsCount: activeJobsCount != null ? activeJobsCount : prev.activeJobsCount
       }));
-    } catch {
+    } catch (err) {
+      if (isAbortError(err)) return;
       if (seq === homeOverviewReqSeq.current && !silent) setWorksFetchErr("加载失败，请稍后重试");
     } finally {
-      if (seq === homeOverviewReqSeq.current && !silent) setWorksLoading(false);
+      if (seq === homeOverviewReqSeq.current && !pageAbortSignal.aborted && !silent) setWorksLoading(false);
     }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, pageAbortSignal, pageFetch]);
 
   useEffect(() => {
     if (!isLoggedIn) {

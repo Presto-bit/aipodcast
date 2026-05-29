@@ -67,6 +67,7 @@ import PrestoFlowImportBar from "./PrestoFlowImportBar";
 import VirtualizedTranscript, { type VirtualizedTranscriptHandle } from "./VirtualizedTranscript";
 import WaveformSegmentEditor from "./WaveformSegmentEditor";
 import { useLoginRequiredAction } from "../../lib/useLoginRequiredAction";
+import { isAbortError, usePageAbortSignal, usePageFetch } from "../../lib/usePageAbortSignal";
 import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
 import { clipEditorUsesPrdLayout } from "../../lib/clipEditorPrdUi";
 import ClipEditorPrdLeftRail from "./ClipEditorPrdLeftRail";
@@ -94,6 +95,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const { user, getAuthHeaders } = useAuth();
   const loggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const { ensureLoggedInForAction, loginPromptNode } = useLoginRequiredAction(loggedIn);
+  const pageAbortSignal = usePageAbortSignal();
+  const pageFetch = usePageFetch(pageAbortSignal);
 
   const [project, setProject] = useState<ClipProjectRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -280,7 +283,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     async (timeline: Record<string, unknown> | null) => {
       if (!loggedIn) return;
       const nextTimeline = timeline && typeof timeline === "object" ? timeline : {};
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
+      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
         method: "PUT",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -474,7 +477,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       };
       setProject((prev) => (prev ? { ...prev, timeline_json: nextTimeline } : prev));
       try {
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
+        const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
           method: "PUT",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -526,7 +529,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       };
       setProject((prev) => (prev ? { ...prev, timeline_json: nextTimeline } : prev));
       try {
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
+        const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
           method: "PUT",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -556,7 +559,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       const nextTimeline = { ...prevTimeline, audio_events: nextEvents };
       setProject((prev) => (prev ? { ...prev, timeline_json: nextTimeline } : prev));
       try {
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
+        const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/timeline`, {
           method: "PUT",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -581,7 +584,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setAudioEventsAnalyzeBusy(true);
     setAudioEventsAnalyzeHint("已提交分析任务，正在等待结果…");
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio-events/analyze`, {
+      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio-events/analyze`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -595,7 +598,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         throw new Error(data.detail || `事件分析提交失败 ${res.status}`);
       }
       await new Promise((r) => window.setTimeout(r, 1800));
-      const refresh = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
+      const refresh = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
         credentials: "same-origin",
         headers: { ...getAuthHeaders() }
       });
@@ -804,7 +807,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     const tid = window.setTimeout(() => {
       void (async () => {
         try {
-          const res = await fetch(
+          const res = await pageFetch(
             `/api/clip/projects/${encodeURIComponent(projectId)}/verbal-suggestion-review`,
             {
               method: "POST",
@@ -867,7 +870,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const postSuggestionFeedback = useCallback(
     async (event: Record<string, unknown>) => {
       try {
-        await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/suggestion-feedback`, {
+        await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/suggestion-feedback`, {
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -1107,7 +1110,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setWordchainPreviewBusy(true);
     setErr("");
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/wordchain-preview`, {
+      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/wordchain-preview`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -1133,7 +1136,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       return;
     }
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/silences`, {
+      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/silences`, {
         credentials: "same-origin",
         headers: { ...getAuthHeaders() }
       });
@@ -1320,7 +1323,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         };
       });
       try {
-        const stageRes = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
+        const stageRes = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/stage`, {
           method: "POST",
           credentials: "same-origin",
           headers: {
@@ -1418,7 +1421,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const load = useCallback(async () => {
     setErr("");
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
+      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
         credentials: "same-origin",
         headers: { ...getAuthHeaders() }
       });
@@ -1441,11 +1444,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       setHistoryActions([]);
       bumpExcludedHistory();
     } catch (e) {
+      if (isAbortError(e) || pageAbortSignal.aborted) return;
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
-      setLoading(false);
+      if (!pageAbortSignal.aborted) setLoading(false);
     }
-  }, [getAuthHeaders, projectId]);
+  }, [getAuthHeaders, projectId, pageAbortSignal, pageFetch]);
 
   useEffect(() => {
     void load();
@@ -1458,7 +1462,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setProjectTitleBusy(true);
     setErr("");
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
+      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -1519,7 +1523,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     async (next: Set<string>, opts?: { showSavingHint?: boolean }) => {
       if (!loggedIn) return;
       try {
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
+        const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}`, {
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -2034,7 +2038,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const autoSaveSnapshot = useCallback(async () => {
     try {
-      await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/snapshots`, {
+      await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/studio/snapshots`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -2177,7 +2181,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               }))
             }
           : { mode: "full" };
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/transcribe`, {
+      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/transcribe`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -2249,7 +2253,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setActionBusy(true);
     setErr("");
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/export`, {
+      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/export`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() }
@@ -2278,7 +2282,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setExportGateErr(null);
     setExportGatePhase("analyze");
     try {
-      const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/qc/analyze`, {
+      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/qc/analyze`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -2422,7 +2426,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setErr("");
     try {
       const requestStructured = async (maxWords: number) => {
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/edit-suggestions`, {
+        const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/edit-suggestions`, {
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -2473,7 +2477,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         title: src.title.slice(0, 80)
       });
       try {
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/edit-suggestions`, {
+        const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/edit-suggestions`, {
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -2557,7 +2561,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       setPrdRepairBusyKind(kind);
       setErr("");
       try {
-        const res = await fetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/repair`, {
+        const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/repair`, {
           method: "POST",
           credentials: "same-origin",
           headers: { "content-type": "application/json", ...getAuthHeaders() },

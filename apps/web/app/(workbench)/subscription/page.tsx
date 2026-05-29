@@ -8,6 +8,7 @@ import FormSheetModal from "../../../components/subscription/FormSheetModal";
 import { PricingHero } from "../../../components/subscription/PricingHero";
 import type { WalletTopupPayload } from "../../../components/subscription/types";
 import { parseSubscriptionErrorBody } from "../../../lib/subscriptionError";
+import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
 import { appendRechargeDebug, newRechargeDebugRequestId, summarizePayUrl } from "../../../lib/rechargeClientDebug";
 
 type RechargeRecordRow = {
@@ -159,6 +160,8 @@ type WalletCheckoutState = {
 
 export default function SubscriptionPage() {
   const { getAuthHeaders, refreshMe, user } = useAuth();
+  const pageAbortSignal = usePageAbortSignal();
+  const pageFetch = usePageFetch(pageAbortSignal);
   const [walletTopupInfo, setWalletTopupInfo] = useState<PlansPayload["wallet_topup"]>(undefined);
   const [rechargeRecords, setRechargeRecords] = useState<RechargeRecordRow[]>([]);
   const [consumptionRecords, setConsumptionRecords] = useState<ConsumptionRecordRow[]>([]);
@@ -264,7 +267,7 @@ export default function SubscriptionPage() {
     setPlansLoadError("");
     if (!subscriptionPlansDebugEnabled()) setPlansLoadDiag(null);
     try {
-      const pr = await fetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
+      const pr = await pageFetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
       const pd = (await pr.json().catch(() => ({}))) as PlansPayload;
       if (seq !== plansFetchSeqRef.current) {
         const stale: PlansLoadDiag = {
@@ -341,6 +344,7 @@ export default function SubscriptionPage() {
         if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(badDiag);
       }
     } catch (e) {
+      if (isAbortError(e)) return;
       if (seq === plansFetchSeqRef.current) {
         const msg = String(e instanceof Error ? e.message : e);
         setPlansLoadError(msg);
@@ -353,11 +357,11 @@ export default function SubscriptionPage() {
         if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(netDiag);
       }
     } finally {
-      if (seq === plansFetchSeqRef.current) {
+      if (seq === plansFetchSeqRef.current && !pageAbortSignal.aborted) {
         setPlansConfigLoaded(true);
       }
     }
-  }, [getAuthHeaders]);
+  }, [getAuthHeaders, pageAbortSignal, pageFetch]);
 
   const loadMe = useCallback(
     async (overrides?: LoadMeOverrides) => {
@@ -375,7 +379,7 @@ export default function SubscriptionPage() {
       qs.set("consumption_page", String(cPage));
       qs.set("consumption_page_size", String(WALLET_RECORD_PAGE_SIZE));
       const mePath = `/api/subscription/me?${qs.toString()}`;
-      const mr = await fetch(mePath, {
+      const mr = await pageFetch(mePath, {
         headers: { ...getAuthHeaders(), "x-request-id": rid },
         cache: "no-store"
       });
@@ -460,6 +464,7 @@ export default function SubscriptionPage() {
         );
       }
     } catch (e) {
+      if (isAbortError(e)) return;
       appendRechargeDebug(
         "load_me_error",
         { message: String(e instanceof Error ? e.message : e) },
@@ -468,7 +473,7 @@ export default function SubscriptionPage() {
       );
     }
   },
-    [getAuthHeaders, consumptionSince, consumptionUntil, rechargePage, consumptionPage, user]
+    [getAuthHeaders, consumptionSince, consumptionUntil, rechargePage, consumptionPage, user, pageFetch]
   );
 
   const loadMeRef = useRef(loadMe);

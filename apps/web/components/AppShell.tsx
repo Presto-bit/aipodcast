@@ -512,7 +512,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   /**
    * 侧栏主导航：
-   * - 「工作台首页」始终用原生 <a href="/home">，从登录页等场景可靠回到聚合页（避免软路由未切换主内容）。
+   * - 「工作台首页」与其它入口一致用 Link 软路由 + prefetch。
    * - 仍在 /notes 主路径时，「知识库」用 next/link + preventDefault 调 hub：保留 href 利于无障碍与右键新开。
    * - 其余入口：next/link 软路由 + prefetch。
    */
@@ -523,12 +523,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const tip = item.linkTitle ?? item.label;
     if (item.href === WORKBENCH_HOME_PATH) {
       return (
-        <a key={item.href} href={WORKBENCH_HOME_PATH} className={navButtonClass(active, collapsed)} title={tip}>
+        <Link
+          key={item.href}
+          href={WORKBENCH_HOME_PATH}
+          prefetch={WORKBENCH_NAV_PREFETCH}
+          className={navButtonClass(active, collapsed)}
+          title={tip}
+        >
           <NavIconBox active={active}>
             <Ic />
           </NavIconBox>
           {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
-        </a>
+        </Link>
       );
     }
     if (item.href === "/notes" && isNotesPrimaryWorkbenchPath(path)) {

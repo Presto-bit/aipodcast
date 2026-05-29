@@ -23,6 +23,7 @@ import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
 import { listJobs } from "../../../lib/api";
 import { countUserVisibleActiveJobs } from "../../../lib/activeJobsVisible";
+import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
 
 const WORKS_LIMIT = 60;
 
@@ -48,6 +49,8 @@ export default function WorksPage() {
   const { t } = useI18n();
   const { getAuthHeaders, ready, user } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
+  const pageAbortSignal = usePageAbortSignal();
+  const pageFetch = usePageFetch(pageAbortSignal);
   const [ai, setAi] = useState<WorkItem[]>([]);
   const [tts, setTts] = useState<WorkItem[]>([]);
   const [notesBucket, setNotesBucket] = useState<WorkItem[]>([]);
@@ -111,7 +114,7 @@ export default function WorksPage() {
         }
         if (!append) {
           const [res, jobsPack] = await Promise.all([
-            fetch(`/api/works?limit=${WORKS_LIMIT}&offset=0`, {
+            pageFetch(`/api/works?limit=${WORKS_LIMIT}&offset=0`, {
               cache: "no-store",
               headers: { ...getAuthHeaders() }
             }),
@@ -132,6 +135,7 @@ export default function WorksPage() {
             total?: number;
             has_more?: boolean;
           };
+          if (pageAbortSignal.aborted) return;
           if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
           setAi(Array.isArray(data.ai) ? data.ai : []);
           setTts(Array.isArray(data.tts) ? data.tts : []);
@@ -143,7 +147,7 @@ export default function WorksPage() {
             Array.isArray(jobsPack.jobs) ? countUserVisibleActiveJobs(jobsPack.jobs) : null
           );
         } else {
-          const res = await fetch(`/api/works?limit=${WORKS_LIMIT}&offset=${o}`, {
+          const res = await pageFetch(`/api/works?limit=${WORKS_LIMIT}&offset=${o}`, {
             cache: "no-store",
             headers: { ...getAuthHeaders() }
           });
@@ -157,6 +161,7 @@ export default function WorksPage() {
             total?: number;
             has_more?: boolean;
           };
+          if (pageAbortSignal.aborted) return;
           if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
           setAi((p) => mergeById(p, Array.isArray(data.ai) ? data.ai : []));
           setTts((p) => mergeById(p, Array.isArray(data.tts) ? data.tts : []));
@@ -166,13 +171,16 @@ export default function WorksPage() {
           setHasMore(Boolean(data.has_more));
         }
       } catch (err) {
+        if (isAbortError(err)) return;
         setError(String(err instanceof Error ? err.message : err));
       } finally {
-        setLoading(false);
-        setLoadingMore(false);
+        if (!pageAbortSignal.aborted) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     },
-    [offset, getAuthHeaders, isLoggedIn]
+    [offset, getAuthHeaders, isLoggedIn, pageAbortSignal, pageFetch]
   );
 
   useEffect(() => {
