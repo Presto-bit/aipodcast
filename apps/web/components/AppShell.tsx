@@ -271,14 +271,22 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [notesSubNavExpanded, setNotesSubNavExpanded] = useState(true);
   const [navPending, setNavPending] = useState(false);
   const navPendingTargetRef = useRef<string | null>(null);
+  const navPendingHrefRef = useRef<string | null>(null);
   const pathRef = useRef(path);
   const sidebarIdlePrefetchedRef = useRef(false);
+
+  const clearNavPending = useCallback(() => {
+    navPendingTargetRef.current = null;
+    navPendingHrefRef.current = null;
+    setNavPending(false);
+  }, []);
 
   const beginWorkbenchNav = useCallback((href: string) => {
     const target = normalizePathname(String(href || "").split("?")[0] || href);
     const current = normalizePathname(pathRef.current);
     if (!target || target === current) return;
     navPendingTargetRef.current = target;
+    navPendingHrefRef.current = href;
     setNavPending(true);
   }, []);
 
@@ -290,30 +298,34 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (!navPending) return;
     const target = navPendingTargetRef.current;
     const current = normalizePathname(path);
-    if (!target || current === target || current.startsWith(`${target}/`)) {
-      let raf0 = 0;
-      let raf1 = 0;
-      raf0 = requestAnimationFrame(() => {
-        raf1 = requestAnimationFrame(() => {
-          navPendingTargetRef.current = null;
-          setNavPending(false);
-        });
-      });
-      return () => {
-        cancelAnimationFrame(raf0);
-        cancelAnimationFrame(raf1);
-      };
+    if (target && (current === target || current.startsWith(`${target}/`))) {
+      clearNavPending();
     }
-  }, [path, navPending]);
+  }, [path, navPending, clearNavPending]);
+
+  /** 软路由长时间未切换时整页跳转，避免骨架屏消失后仍停在旧页。 */
+  useEffect(() => {
+    if (!navPending) return;
+    const startedAt = normalizePathname(path);
+    const timer = window.setTimeout(() => {
+      const target = navPendingTargetRef.current;
+      const href = navPendingHrefRef.current;
+      const current = normalizePathname(pathRef.current);
+      if (!target || !href) return;
+      if (current === target || current.startsWith(`${target}/`)) return;
+      if (normalizePathname(pathRef.current) !== startedAt) return;
+      window.location.assign(href);
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [navPending, path]);
 
   useEffect(() => {
     if (!navPending) return;
     const timer = window.setTimeout(() => {
-      navPendingTargetRef.current = null;
-      setNavPending(false);
+      clearNavPending();
     }, 12_000);
     return () => window.clearTimeout(timer);
-  }, [navPending]);
+  }, [navPending, clearNavPending]);
 
   useEffect(() => {
     if (!ready || isMarketingShellLessPath(path) || sidebarIdlePrefetchedRef.current) return;
@@ -557,7 +569,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const pageShell = (
     <AnimatedPageShell>
-      <Suspense fallback={<WorkbenchRouteFallback />}>{children}</Suspense>
+      <Suspense key={path} fallback={<WorkbenchRouteFallback />}>
+        {children}
+      </Suspense>
     </AnimatedPageShell>
   );
   const shellChildren = isMarketingShellLessPath(path) ? (
