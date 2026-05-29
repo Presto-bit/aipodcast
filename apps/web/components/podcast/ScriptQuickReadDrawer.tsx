@@ -93,7 +93,7 @@ export function ScriptQuickReadDrawer({
         role="dialog"
         aria-modal="false"
         aria-labelledby="script-quick-read-title"
-        className="pointer-events-auto fixed flex max-h-[min(70vh,32rem)] w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card right-4 top-[4.5rem] max-md:inset-x-4 max-md:bottom-4 max-md:top-auto max-md:max-h-[70vh] max-md:w-auto"
+        className="pointer-events-auto fixed flex h-auto w-[min(22rem,calc(100vw-2rem))] max-h-[min(70vh,28rem)] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card right-4 top-[4.5rem] max-md:inset-x-4 max-md:bottom-4 max-md:top-auto max-md:max-h-[65vh] max-md:w-auto"
       >
         <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0 flex-1">
@@ -141,7 +141,7 @@ export function ScriptQuickReadDrawer({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <div className="max-h-[calc(min(70vh,28rem)-8.5rem)] shrink overflow-y-auto overscroll-contain px-4 py-3 max-md:max-h-[calc(65vh-8.5rem)]">
           {loadingFull && !body ? (
             <p className="text-sm text-muted" aria-busy>
               正文加载中…
