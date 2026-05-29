@@ -211,7 +211,7 @@ export function NotebookStyleControls({
   );
 }
 
-/** C：参考资料标题行 — 风格已就绪 / 可更新芯片 */
+/** C：参考资料标题行 — 风格已就绪 / 可提炼风格芯片 */
 export function NotebookStyleHeaderChip() {
   const { syncStatus, loading, busy, readOnly, disabled, openModal } = useNotebookStyleContext();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -229,7 +229,7 @@ export function NotebookStyleHeaderChip() {
   if (syncStatus === "none") return null;
 
   const isPending = syncStatus === "pending";
-  const chipLabel = isPending ? "可更新" : "风格已就绪";
+  const chipLabel = isPending ? "可提炼风格" : "风格已就绪";
   const chipClass = "border-brand/35 bg-brand/8 text-brand";
 
   return (
