@@ -89,7 +89,7 @@ import {
   APP_SIDEBAR_TOGGLE_EVENT,
   requestAppSidebarCollapse
 } from "../../lib/appSidebarCollapse";
-import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
+import { isAppShellMobileLayout, SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import type { NotebookCoverMeta } from "../../lib/notebookCoverDisplay";
@@ -1504,7 +1504,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     if (typeof window === "undefined") return;
     const minimal = !hubView && Boolean(selectedNotebook.trim());
     dispatchNotesMinimalMainNav(minimal);
-    if (minimal) requestAppSidebarCollapse();
+    if (minimal && !isAppShellMobileLayout()) requestAppSidebarCollapse();
   }, [hubView, selectedNotebook]);
 
   useEffect(() => {

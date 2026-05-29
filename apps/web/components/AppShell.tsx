@@ -13,6 +13,7 @@ import {
   useState,
   Fragment,
   type ComponentType,
+  type HTMLAttributes,
   type Dispatch,
   type MouseEvent,
   type ReactNode,
@@ -244,6 +245,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   /** 与 APP_SHELL_MOBILE_MEDIA_QUERY 一致（窄于 1024px）：侧栏改为抽屉，主区全宽 */
   const [mobileLayout, setMobileLayout] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const mobileMenuFabRef = useRef<HTMLButtonElement>(null);
   /**
    * 侧栏挂 body：用 useLayoutEffect 在首帧 paint 前 portal，避免与 #__next 同帧叠层竞争（极端环境下
    * 曾出现「只有个别侧栏项可点」的命中错乱）。
@@ -335,16 +338,52 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const onChange = () => {
       const m = mq.matches;
       setMobileLayout(m);
-      if (!m) setMobileNavOpen(false);
+      if (!m) {
+        const root = sidebarRef.current;
+        const active = document.activeElement;
+        if (root && active instanceof HTMLElement && root.contains(active)) {
+          active.blur();
+        }
+        setMobileNavOpen(false);
+      }
     };
     onChange();
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  useEffect(() => {
+  /** 关闭抽屉前先把焦点移出侧栏，避免 inert 与焦点冲突 */
+  const closeMobileNav = useCallback((focusTarget: "fab" | "blur" = "fab") => {
+    const root = sidebarRef.current;
+    const active = document.activeElement;
+    if (root && active instanceof HTMLElement && root.contains(active)) {
+      if (focusTarget === "fab") {
+        mobileMenuFabRef.current?.focus({ preventScroll: true });
+      } else {
+        active.blur();
+      }
+    }
     setMobileNavOpen(false);
-  }, [pathname]);
+  }, []);
+
+  /** 窄屏抽屉打开时用展开宽度，避免 72px 折叠轨 + 汉堡叠层导致入口难辨 */
+  const toggleMobileNav = useCallback(() => {
+    if (mobileNavOpen) {
+      closeMobileNav("fab");
+      return;
+    }
+    setCollapsed(false);
+    try {
+      writeLocalStorageScoped(COLLAPSE_KEY, SIDEBAR_EXPANDED_STORAGE);
+    } catch {
+      // ignore
+    }
+    setMobileNavOpen(true);
+  }, [closeMobileNav, mobileNavOpen]);
+
+  useEffect(() => {
+    closeMobileNav("blur");
+  }, [pathname, closeMobileNav]);
 
   useEffect(() => {
     if (pathMatchesRoot(path, "/create")) setCreateSubNavExpanded(true);
@@ -353,11 +392,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!mobileLayout || !mobileNavOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMobileNavOpen(false);
+      if (e.key === "Escape") closeMobileNav("fab");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mobileLayout, mobileNavOpen]);
+  }, [closeMobileNav, mobileLayout, mobileNavOpen]);
 
   useEffect(() => {
     if (!mobileLayout || !mobileNavOpen) return;
@@ -586,9 +625,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const fullSidebarEl = (
     <aside
+      ref={sidebarRef}
       id="fym-app-sidebar-root"
       data-fym-app-sidebar
-      aria-hidden={sidebarOffCanvas ? true : undefined}
+      {...(sidebarOffCanvas ? ({ inert: true } as HTMLAttributes<HTMLElement>) : {})}
       className={[
         "fixed left-0 top-0 z-[100000] flex h-svh min-h-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width,transform] duration-200 ease-out motion-reduce:transition-none",
         sidebarOffCanvas ? "-translate-x-full pointer-events-none" : "translate-x-0 pointer-events-auto",
@@ -627,7 +667,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         onClick={(e) => {
           if (!mobileLayout || !mobileNavOpen) return;
           const el = e.target as HTMLElement;
-          if (el.closest("a, [href]")) setMobileNavOpen(false);
+          if (el.closest("a, [href]")) closeMobileNav("blur");
         }}
       >
         {navPrimary.map(renderSidebarNavItem)}
@@ -698,13 +738,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         type="button"
         className="fixed inset-0 z-[99990] bg-black/40 backdrop-blur-[1px]"
         aria-label={t("nav.closeMenu")}
-        onClick={() => setMobileNavOpen(false)}
+        onClick={() => closeMobileNav("fab")}
       />
     ) : null;
 
   const mobileMenuFab =
     mobileLayout && ready ? (
       <button
+        ref={mobileMenuFabRef}
         type="button"
         className="fixed left-0 top-0 z-[100002] flex h-12 min-h-[48px] w-12 min-w-[48px] items-center justify-center rounded-br-dawn-lg border-b border-r border-line/80 bg-surface/95 text-ink shadow-soft backdrop-blur-sm transition-colors hover:bg-fill motion-reduce:transition-none"
         style={{
@@ -715,7 +756,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         aria-controls={useFullSidebar ? "fym-app-sidebar-root" : undefined}
         title={mobileNavOpen ? t("nav.closeMenu") : t("nav.openMenu")}
         aria-label={mobileNavOpen ? t("nav.closeMenu") : t("nav.openMenu")}
-        onClick={() => setMobileNavOpen((o) => !o)}
+        onClick={() => toggleMobileNav()}
       >
         <MobileMenuGlyph open={mobileNavOpen} />
       </button>

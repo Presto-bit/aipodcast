@@ -16,6 +16,12 @@ export const SIDEBAR_WIDTH_NOTES_WORKBENCH_RAIL_PX = 48;
 /** 与 Tailwind `max-lg`（小于 1024px）一致：窄屏下主导航改为抽屉，主区全宽 */
 export const APP_SHELL_MOBILE_MEDIA_QUERY = "(max-width: 1023px)";
 
+/** 当前视口是否使用 AppShell 移动端抽屉布局（SSR 返回 false）。 */
+export function isAppShellMobileLayout(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia(APP_SHELL_MOBILE_MEDIA_QUERY).matches;
+}
+
 export const SIDEBAR_COLLAPSED_STORAGE = "1";
 export const SIDEBAR_EXPANDED_STORAGE = "0";
 

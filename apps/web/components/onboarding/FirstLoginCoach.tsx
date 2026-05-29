@@ -76,6 +76,9 @@ export default function FirstLoginCoach() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="fym-coach-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) dismiss(false, true);
+      }}
     >
       <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-2xl">
         <h2 id="fym-coach-title" className="text-lg font-semibold text-ink">
