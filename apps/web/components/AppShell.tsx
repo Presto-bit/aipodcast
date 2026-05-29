@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
@@ -47,6 +48,7 @@ import NotesNavExpanded from "./notes/NotesNavExpanded";
 import SidebarNavLink from "./nav/SidebarNavLink";
 import WorkbenchRouteFallback from "./nav/WorkbenchRouteFallback";
 import { WorkbenchNavContext } from "../lib/WorkbenchNavContext";
+import { routeHasWarmQueryCache } from "../lib/queries/workbenchRouteQueryCache";
 import { prefetchWorkbenchRoute, prefetchWorkbenchSidebarIdle } from "../lib/navPrefetch";
 import {
   dispatchWorkbenchDismissOverlays,
@@ -239,6 +241,7 @@ function CreateStudioNavExpanded({
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const path = pathname ?? "";
   const { ready, user } = useAuth();
   const loggedIn = isLoggedInAccountUser(user);
@@ -288,10 +291,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const target = navPendingTargetRef.current;
     const current = normalizePathname(path);
     if (target && (current === target || current.startsWith(`${target}/`))) {
-      const timer = window.setTimeout(() => clearNavPending(), 180);
+      const delay = routeHasWarmQueryCache(queryClient, target) ? 0 : 180;
+      const timer = window.setTimeout(() => clearNavPending(), delay);
       return () => window.clearTimeout(timer);
     }
-  }, [path, navPending, clearNavPending]);
+  }, [path, navPending, clearNavPending, queryClient]);
+
+  const navPendingTarget = navPending ? navPendingTargetRef.current : null;
+  const showNavPendingOverlay =
+    navPending &&
+    Boolean(navPendingTarget) &&
+    !routeHasWarmQueryCache(queryClient, navPendingTarget ?? "");
 
   /** 软路由长时间未切换时整页跳转，避免骨架屏消失后仍停在旧页。 */
   useEffect(() => {
@@ -843,7 +853,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         tabIndex={-1}
       >
         {shellChildren}
-        {navPending ? (
+        {showNavPendingOverlay ? (
           <div
             className="absolute inset-0 z-[20] bg-canvas"
             aria-busy
@@ -853,7 +863,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <WorkbenchRouteFallback />
           </div>
         ) : null}
-        {normalizePathname(path) === WORKBENCH_HOME_PATH || navPending ? null : (
+        {normalizePathname(path) === WORKBENCH_HOME_PATH || showNavPendingOverlay ? null : (
           <footer className="relative z-[405] mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">
             <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">
               <div className="text-center">

@@ -3,20 +3,20 @@
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { IconClip, IconGrid, IconShownotes, IconTts, IconVoice } from "../../../components/icons";
-import { mergeUserFacingWorksByRecency, type WorkItem } from "../../../lib/worksTypes";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
 import NotebookShareDiagnosticsHomeBanner from "../../../components/notebook/NotebookShareDiagnosticsHomeBanner";
 import { SkeletonBlock, SkeletonLine } from "../../../components/ui/Skeleton";
-import { apiErrorMessage } from "../../../lib/apiError";
-import { countUserVisibleActiveJobs } from "../../../lib/activeJobsVisible";
-import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
 import { useActiveJobCount } from "../../../lib/queries/activeJobsQuery";
-import type { JobRecord } from "../../../lib/types";
+import {
+  useHomeOverviewQuery,
+  useInvalidateHomeOverview,
+  type HomeOverviewMetrics
+} from "../../../lib/queries/homeOverviewQueries";
 
 const NotesWorkbenchWorksPanel = dynamic(
   () => import("../../../components/works/NotesWorkbenchWorksPanel"),
@@ -30,6 +30,16 @@ const NotesWorkbenchWorksPanel = dynamic(
     )
   }
 );
+
+const EMPTY_OVERVIEW: HomeOverviewMetrics = {
+  latestJobId: "",
+  latestJobStatus: "—",
+  worksCount: 0,
+  notebookCount: 0,
+  audioDurationSecSum: 0,
+  scriptCharCountSum: 0,
+  activeJobsCount: 0
+};
 
 export default function HomePage() {
   const router = useRouter();
@@ -51,137 +61,29 @@ export default function HomePage() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [regA11ySuccess, setRegA11ySuccess] = useState("");
-  const [overview, setOverview] = useState({
-    latestJobId: "",
-    latestJobStatus: "—",
-    worksCount: 0,
-    notebookCount: 0,
-    audioDurationSecSum: 0,
-    scriptCharCountSum: 0,
-    activeJobsCount: 0
-  });
-  const [homeWorks, setHomeWorks] = useState<WorkItem[]>([]);
-  const [worksLoading, setWorksLoading] = useState(false);
-  const [worksRefreshKey, setWorksRefreshKey] = useState(0);
-  const [worksFetchErr, setWorksFetchErr] = useState("");
-  /** 避免 accountKey / 依赖连变时多次概览请求乱序覆盖（进行中数量闪错） */
-  const homeOverviewReqSeq = useRef(0);
-  const pageAbortSignal = usePageAbortSignal();
-  const pageFetch = usePageFetch(pageAbortSignal);
   const activeJobCountFromQuery = useActiveJobCount(isLoggedIn);
+  const invalidateHomeOverview = useInvalidateHomeOverview();
+  const homeOverviewQuery = useHomeOverviewQuery(getAuthHeaders, isLoggedIn && ready, homeAccountKey);
 
-  const refreshHomeOverview = useCallback(async (opts?: { silent?: boolean }) => {
-    const silent = Boolean(opts?.silent);
-    const seq = ++homeOverviewReqSeq.current;
-    try {
-      const authHdr = getAuthHeaders();
-      if (!silent) {
-        setWorksLoading(true);
-        setWorksFetchErr("");
-      }
-      const overviewRes = await pageFetch("/api/home-overview", {
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: { ...authHdr }
-      });
-      const pack = (await overviewRes.json().catch(() => ({}))) as {
-        jobsLimit1?: { ok: boolean; status: number; data: unknown };
-        jobsActive?: { ok: boolean; status: number; data: unknown };
-        works?: { ok: boolean; status: number; data: unknown };
-        worksMetrics?: { ok: boolean; status: number; data: unknown };
-        notesMetrics?: { ok: boolean; status: number; data: unknown };
-      };
-      const jobsData = (pack.jobsLimit1?.data ?? {}) as { jobs?: Array<{ id?: string; status?: string }> };
-      const activeJobsData = (pack.jobsActive?.data ?? {}) as {
-        jobs?: unknown[];
-        success?: boolean;
-      };
-      const worksPart = pack.works;
-      const worksData = (worksPart?.data ?? {}) as {
-        ai?: WorkItem[];
-        tts?: WorkItem[];
-        notes?: WorkItem[];
-        success?: boolean;
-        error?: string;
-        detail?: string;
-      };
-      const wm = (pack.worksMetrics?.data ?? {}) as {
-        success?: boolean;
-        worksCount?: number;
-        audioDurationSecSum?: number;
-        scriptCharCountSum?: number;
-      };
-      const nm = (pack.notesMetrics?.data ?? {}) as { success?: boolean; notebookCount?: number };
-      const worksMetricsOk = Boolean(pack.worksMetrics?.ok) && wm.success !== false;
-      const notesMetricsOk = Boolean(pack.notesMetrics?.ok) && nm.success !== false;
-      const worksResOk = worksPart?.ok ?? false;
-      const latest = Array.isArray(jobsData.jobs) && jobsData.jobs.length > 0 ? jobsData.jobs[0] : null;
-      const activeJobsOk =
-        Boolean(pack.jobsActive?.ok) && activeJobsData.success !== false && Array.isArray(activeJobsData.jobs);
-      const ai = Array.isArray(worksData.ai) ? worksData.ai : [];
-      const tts = Array.isArray(worksData.tts) ? worksData.tts : [];
-      const notesWorks = Array.isArray(worksData.notes) ? worksData.notes : [];
-      const merged = mergeUserFacingWorksByRecency(ai, tts, notesWorks);
-      const worksOkForList = worksResOk && worksData.success !== false;
-      if (!worksOkForList) {
-        if (!silent && merged.length === 0) {
-          setWorksFetchErr(
-            apiErrorMessage(
-              { error: worksData.error, detail: worksData.detail },
-              `作品加载失败（${worksPart?.status ?? overviewRes.status}）`
-            )
-          );
-        }
-      } else if (!silent) {
-        setWorksFetchErr("");
-      }
-      const activeJobsCount = activeJobsOk
-        ? countUserVisibleActiveJobs(activeJobsData.jobs as JobRecord[])
-        : null;
+  const homeWorks = homeOverviewQuery.data?.works ?? [];
+  const worksLoading = homeOverviewQuery.isLoading && !homeOverviewQuery.data;
+  const worksFetchErr =
+    homeOverviewQuery.data?.worksFetchErr ??
+    (homeOverviewQuery.error instanceof Error
+      ? homeOverviewQuery.error.message
+      : homeOverviewQuery.error
+        ? String(homeOverviewQuery.error)
+        : "");
 
-      if (seq !== homeOverviewReqSeq.current) return;
+  const overview = useMemo((): HomeOverviewMetrics => {
+    const base = homeOverviewQuery.data?.overview ?? EMPTY_OVERVIEW;
+    if (activeJobCountFromQuery == null) return base;
+    return { ...base, activeJobsCount: activeJobCountFromQuery };
+  }, [homeOverviewQuery.data?.overview, activeJobCountFromQuery]);
 
-      setHomeWorks(merged);
-      setOverview((prev) => ({
-        latestJobId: String(latest?.id || "").trim(),
-        latestJobStatus: String(latest?.status || "—"),
-        worksCount: worksMetricsOk ? Number(wm.worksCount ?? merged.length) : merged.length,
-        notebookCount: notesMetricsOk ? Number(nm.notebookCount ?? 0) : 0,
-        audioDurationSecSum: worksMetricsOk ? Number(wm.audioDurationSecSum ?? 0) : 0,
-        scriptCharCountSum: worksMetricsOk ? Number(wm.scriptCharCountSum ?? 0) : 0,
-        activeJobsCount: activeJobsCount != null ? activeJobsCount : prev.activeJobsCount
-      }));
-    } catch (err) {
-      if (isAbortError(err)) return;
-      if (seq === homeOverviewReqSeq.current && !silent) setWorksFetchErr("加载失败，请稍后重试");
-    } finally {
-      if (seq === homeOverviewReqSeq.current && !pageAbortSignal.aborted && !silent) setWorksLoading(false);
-    }
-  }, [getAuthHeaders, pageAbortSignal, pageFetch]);
-
-  useEffect(() => {
-    if (!isLoggedIn) {
-      setHomeWorks([]);
-      setOverview({
-        latestJobId: "",
-        latestJobStatus: "—",
-        worksCount: 0,
-        notebookCount: 0,
-        audioDurationSecSum: 0,
-        scriptCharCountSum: 0,
-        activeJobsCount: 0
-      });
-      setWorksLoading(false);
-      setWorksFetchErr("");
-      return;
-    }
-    void refreshHomeOverview();
-  }, [refreshHomeOverview, worksRefreshKey, homeAccountKey, isLoggedIn]);
-
-  useEffect(() => {
-    if (activeJobCountFromQuery == null) return;
-    setOverview((prev) => ({ ...prev, activeJobsCount: activeJobCountFromQuery }));
-  }, [activeJobCountFromQuery]);
+  const onHomeWorkDeleted = useCallback(() => {
+    invalidateHomeOverview();
+  }, [invalidateHomeOverview]);
 
   useEffect(() => {
     if (!regA11ySuccess) return;
@@ -644,8 +546,8 @@ export default function HomePage() {
             works={homeWorks}
             loading={worksLoading}
             fetchError={worksFetchErr}
-            onDismissError={() => setWorksFetchErr("")}
-            onWorkDeleted={() => setWorksRefreshKey((k) => k + 1)}
+            onDismissError={() => void homeOverviewQuery.refetch()}
+            onWorkDeleted={onHomeWorkDeleted}
             returnTo="/home"
             scope="global"
             showActiveTab={false}

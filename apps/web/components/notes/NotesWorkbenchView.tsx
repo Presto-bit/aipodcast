@@ -20,7 +20,10 @@ import {
 } from "../icons";
 import NotebookWorkbenchHeader from "./NotebookWorkbenchHeader";
 import NotebookStyleSourcesNotice from "./NotebookStyleSourcesNotice";
-import { NotebookStyleHeaderChip } from "./notebook-style/NotebookStyleControls";
+import {
+  NotebookStyleControls,
+  NotebookStyleHeaderChip
+} from "./notebook-style/NotebookStyleControls";
 import {
   buildNotesAskAnswerBody,
   isDismissedNotesAskSupplement
@@ -31,14 +34,6 @@ import {
   NOTES_ASK_SOURCE_REQUIRED
 } from "./notesWorkbenchConstants";
 import { useNotesWorkbench } from "./notesWorkbenchContext";
-
-const NotebookStyleControls = dynamic(
-  () =>
-    import("./notebook-style/NotebookStyleControls").then((m) => ({
-      default: m.NotebookStyleControls
-    })),
-  { ssr: false }
-);
 const NotesWorkbenchWorksPanel = dynamic(
   () => import("../works/NotesWorkbenchWorksPanel"),
   {
