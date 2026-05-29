@@ -32,6 +32,7 @@ from .models import (
     ensure_users_profile_columns,
     ensure_alipay_page_checkout_schema,
     ensure_payment_reconciliation_queue_schema,
+    ensure_site_traffic_schema,
     purge_expired_trashed_notes,
     purge_expired_trashed_works,
     strip_redundant_audio_hex_from_job_results,
@@ -177,6 +178,7 @@ def run_startup_tasks() -> None:
         ensure_subscription_current_state_schema,
     )
     _startup_step("ensure_alipay_page_checkout_schema", ensure_alipay_page_checkout_schema)
+    _startup_step("ensure_site_traffic_schema", ensure_site_traffic_schema)
     try:
         run_payment_startup_checks()
     except Exception:

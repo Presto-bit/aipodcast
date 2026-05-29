@@ -206,6 +206,7 @@ def admin_usage_dashboard_api(
         "by_input_type": dashboard.get("by_input_type") or [],
         "by_day": dashboard.get("by_day") or [],
         "top_users": dashboard.get("top_users") or [],
+        "pv_uv": dashboard.get("pv_uv") or {},
         "source": dashboard.get("source") or "usage_events",
     }
 

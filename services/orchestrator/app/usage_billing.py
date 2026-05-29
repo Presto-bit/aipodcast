@@ -14,10 +14,12 @@
   ``deepseek-v4-pro`` 未命中 12、输出 24；``deepseek-chat`` / ``deepseek-reasoner`` 仍兼容且映射至 Flash 档位。
   ``estimate_llm_cost_cny`` 无缓存命中信息，输入按**未命中**计价（偏保守）。
 - **豆包语音转写**：``DOUBAO_SEED_ASR_REFERENCE_CNY_PER_AUDIO_HOUR``（元/小时音频）。
-- **Embedding**（如 MiniMax ``embo-01``，元/百万 tokens）：``EMBEDDING_REFERENCE_CNY_PER_MTOK``（默认 0.5）。
-  仅 ``api`` 后端计费；``local`` / ``hash`` 不计入。用户钱包扣费口径不变。
+- **Embedding**（百炼 ``text-embedding-v4``，按**输入** Token）：``EMBEDDING_REFERENCE_CNY_PER_KTOK`` 0.0005 元/千 Token
+  （即 ``EMBEDDING_REFERENCE_CNY_PER_MTOK`` 0.5 元/百万 Token）；输出不计费。DashScope 故障回退 MiniMax ``embo-01`` 时同档参考价。
+  仅 ``api`` 后端计入看板；``local`` / ``hash`` 为 0。用户钱包扣费口径不变。
 
-链接：MiniMax https://platform.minimaxi.com/docs/guides/pricing-paygo
+链接：百炼向量化 https://help.aliyun.com/zh/model-studio/embedding
+MiniMax https://platform.minimaxi.com/docs/guides/pricing-paygo
 DeepSeek https://api-docs.deepseek.com/zh-cn/quick_start/pricing
 """
 
@@ -61,8 +63,11 @@ DEEPSEEK_CHAT_INPUT_CACHE_HIT_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_INPUT_CACHE_HIT_C
 DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_INPUT_CACHE_MISS_CNY_PER_MTOK
 DEEPSEEK_CHAT_OUTPUT_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MTOK
 
-# Embedding（百炼 text-embedding-v4 等）：元 / 百万 tokens；看板参考价，实际以控制台账单为准
-EMBEDDING_REFERENCE_CNY_PER_MTOK = 0.5
+# Embedding：百炼 text-embedding-v4（默认 RAG_EMBEDDING_MODEL）；按输入 Token 计费
+EMBEDDING_REFERENCE_MODEL = "text-embedding-v4"
+EMBEDDING_REFERENCE_CNY_PER_KTOK = 0.0005  # 官网：0.0005 元/千输入 Token（中国内地）
+EMBEDDING_REFERENCE_CNY_PER_MTOK = EMBEDDING_REFERENCE_CNY_PER_KTOK * 1000.0
+EMBEDDING_PRICING_REF_URL = "https://help.aliyun.com/zh/model-studio/embedding"
 
 
 def _parse_jsonish(val: Any) -> dict[str, Any]:
@@ -393,7 +398,7 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
     img = 0.0
     emb = 0.0
 
-    emb_model = str(os.getenv("RAG_EMBEDDING_MODEL") or "text-embedding-v4").strip()
+    emb_model = str(os.getenv("RAG_EMBEDDING_MODEL") or EMBEDDING_REFERENCE_MODEL).strip()
 
     want_cover = _want_generate_cover_for_billing(payload, jt)
 
@@ -464,7 +469,9 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
         "embedding_model_pricing": emb_model if emb > 0 else "",
         "embedding_input_chars": int(emb_chars) if emb_chars > 0 else 0,
         "embedding_backend": emb_backend if emb > 0 else "",
+        "embedding_cny_per_ktok": float(EMBEDDING_REFERENCE_CNY_PER_KTOK) if emb > 0 else 0.0,
         "embedding_cny_per_mtok": float(EMBEDDING_REFERENCE_CNY_PER_MTOK) if emb > 0 else 0.0,
         "pricing_ref": "https://platform.minimaxi.com/docs/guides/pricing-paygo",
         "pricing_ref_deepseek": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+        "pricing_ref_embedding": EMBEDDING_PRICING_REF_URL if emb > 0 else "",
     }

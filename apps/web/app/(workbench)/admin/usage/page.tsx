@@ -22,6 +22,16 @@ type Overview = {
   distinct_jobs?: number; llm_cost_cny?: number; tts_cost_cny?: number; image_cost_cny?: number; embedding_cost_cny?: number; cost_total_cny?: number;
   login_count?: number; login_users?: number; active_sessions?: number; session_users?: number;
 };
+type PvUvYesterday = { day?: string; pv?: number; uv?: number };
+type PvUvRange = { date_from?: string; date_to?: string; pv?: number; uv?: number };
+type PvUvDayRow = { day?: string; pv?: number; uv?: number };
+type PvUvStats = {
+  timezone?: string;
+  t_plus_1_note?: string;
+  yesterday?: PvUvYesterday;
+  range?: PvUvRange;
+  by_day?: PvUvDayRow[];
+};
 type UserRow = {
   user_key?: string;
   user_id?: string;
@@ -64,8 +74,21 @@ type RecentOrderRow = {
   created_at?: string;
 };
 
-type LedgerOverview = { expense_cny_total?: number; revenue_cents_total?: number; revenue_cny_total?: number };
-type LedgerDayRow = { day?: string; expense_cny?: number; revenue_cents?: number; revenue_cny?: number };
+type LedgerOverview = {
+  expense_cny_total?: number;
+  wallet_revenue_cents_total?: number;
+  experience_revenue_cents_total?: number;
+  revenue_cents_total?: number;
+  revenue_cny_total?: number;
+};
+type LedgerDayRow = {
+  day?: string;
+  expense_cny?: number;
+  wallet_revenue_cents?: number;
+  experience_revenue_cents?: number;
+  revenue_cents?: number;
+  revenue_cny?: number;
+};
 type LedgerUserExpense = { user_key?: string; user_id?: string; phone?: string | null; events?: number; expense_cny?: number };
 type LedgerUserRevenue = { phone?: string; user_id?: string | null; revenue_cents?: number; revenue_cny?: number; ledger_rows?: number };
 type LedgerModelExpense = { bucket?: string; model_label?: string; expense_cny?: number };
@@ -102,7 +125,7 @@ type LedgerRevenueDetail = {
   revenue_cents?: number;
   revenue_cny?: number;
 };
-type LedgerNotes = { expense?: string; revenue?: string; revenue_tts?: string };
+type LedgerNotes = { expense?: string; revenue?: string; revenue_tts?: string; margin?: string };
 type LedgerTtsModelRevenue = { model_key?: string; revenue_cents?: number; revenue_cny?: number; ledger_rows?: number };
 
 function ymd(d: Date): string {
@@ -146,6 +169,7 @@ export default function AdminUsagePage(): JSX.Element {
   const [inputRows, setInputRows] = useState<InputTypeRow[]>([]);
   const [dayRows, setDayRows] = useState<DayRow[]>([]);
   const [topUsers, setTopUsers] = useState<TopUserRow[]>([]);
+  const [pvUv, setPvUv] = useState<PvUvStats>({});
 
   const [userRows, setUserRows] = useState<UserRow[]>([]);
   const [worksOverview, setWorksOverview] = useState<WorksOverview>({});
@@ -186,13 +210,14 @@ export default function AdminUsagePage(): JSX.Element {
     try {
       if (tab === "overview") {
         const res = await fetch(`/api/admin/usage/dashboard?${query}`, { headers: getAuthHeaders(), cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; overview?: Overview; by_job_type?: JobTypeRow[]; by_input_type?: InputTypeRow[]; by_day?: DayRow[]; top_users?: TopUserRow[]; source?: string; error?: string };
+        const data = (await res.json().catch(() => ({}))) as { success?: boolean; overview?: Overview; by_job_type?: JobTypeRow[]; by_input_type?: InputTypeRow[]; by_day?: DayRow[]; top_users?: TopUserRow[]; pv_uv?: PvUvStats; source?: string; error?: string };
         if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
         setOverview(data.overview || {});
         setJobRows(Array.isArray(data.by_job_type) ? data.by_job_type : []);
         setInputRows(Array.isArray(data.by_input_type) ? data.by_input_type : []);
         setDayRows(Array.isArray(data.by_day) ? data.by_day : []);
         setTopUsers(Array.isArray(data.top_users) ? data.top_users : []);
+        setPvUv(data.pv_uv && typeof data.pv_uv === "object" ? data.pv_uv : {});
         setUsageSource(typeof data.source === "string" && data.source ? data.source : "usage_events");
         return;
       }
@@ -307,35 +332,40 @@ export default function AdminUsagePage(): JSX.Element {
 
       {err ? <p className="mt-4 text-sm text-danger-ink">{err}</p> : null}
       {tab === "overview" && usageSource === "jobs_fallback" ? <p className="mt-2 text-sm text-warning-ink/90">当前为 jobs 回退数据，建议继续使用 usage_events。</p> : null}
-      {tab === "ledger" && (ledgerNotes.expense || ledgerNotes.revenue || ledgerNotes.revenue_tts) ? (
+      {tab === "ledger" && (ledgerNotes.expense || ledgerNotes.revenue || ledgerNotes.revenue_tts || ledgerNotes.margin) ? (
         <div className="mt-3 space-y-1 rounded-lg border border-line/80 bg-surface/40 px-3 py-2 text-xs text-muted">
           {ledgerNotes.expense ? <p>{ledgerNotes.expense}</p> : null}
           {ledgerNotes.revenue ? <p>{ledgerNotes.revenue}</p> : null}
           {ledgerNotes.revenue_tts ? <p>{ledgerNotes.revenue_tts}</p> : null}
+          {ledgerNotes.margin ? <p>{ledgerNotes.margin}</p> : null}
         </div>
       ) : null}
 
       {tab === "ledger" ? (
         <>
-          <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-3">
-            <MetricCard title="支出合计（参考模型价）" value={money(ledgerOverview.expense_cny_total)} hint="usage_events.meta 分项估算" />
-            <MetricCard title="收入合计（钱包实扣）" value={money(ledgerOverview.revenue_cny_total)} hint={`${num(ledgerOverview.revenue_cents_total)} 分`} />
-            <MetricCard title="毛利（参考）" value={money(Number(ledgerOverview.revenue_cny_total || 0) - Number(ledgerOverview.expense_cny_total || 0))} hint="收入−支出，仅供参考" />
+          <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+            <MetricCard title="支出合计（成功任务）" value={money(ledgerOverview.expense_cny_total)} hint="仅 succeeded 的参考模型价" />
+            <MetricCard title="钱包实扣收入" value={moneyCents(ledgerOverview.wallet_revenue_cents_total)} hint="用户钱包实际扣减" />
+            <MetricCard title="体验包折算收入" value={moneyCents(ledgerOverview.experience_revenue_cents_total)} hint="体验包消耗按 manifest 单价" />
+            <MetricCard title="有效收入合计" value={money(ledgerOverview.revenue_cny_total)} hint={`${num(ledgerOverview.revenue_cents_total)} 分`} />
+            <MetricCard title="毛利（参考）" value={money(Number(ledgerOverview.revenue_cny_total || 0) - Number(ledgerOverview.expense_cny_total || 0))} hint="有效收入−支出" />
           </div>
           <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60">
             <div className="border-b border-line px-3 py-2 text-sm text-muted">按日（Asia/Shanghai）</div>
-            <table className="min-w-[640px] w-full text-left text-sm text-ink">
+            <table className="min-w-[760px] w-full text-left text-sm text-ink">
               <thead className="border-b border-line text-xs text-muted">
                 <tr>
                   <th className="px-3 py-2">日期</th>
                   <th className="px-3 py-2">支出（元）</th>
-                  <th className="px-3 py-2">收入（元）</th>
+                  <th className="px-3 py-2">钱包收入</th>
+                  <th className="px-3 py-2">体验包折算</th>
+                  <th className="px-3 py-2">有效收入</th>
                 </tr>
               </thead>
               <tbody>
                 {ledgerByDay.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="px-3 py-6 text-center text-muted">
+                    <td colSpan={5} className="px-3 py-6 text-center text-muted">
                       暂无数据
                     </td>
                   </tr>
@@ -344,6 +374,8 @@ export default function AdminUsagePage(): JSX.Element {
                     <tr key={`${r.day || "d"}_${i}`} className="border-t border-line/80">
                       <td className="px-3 py-2">{r.day || "—"}</td>
                       <td className="px-3 py-2">{money(r.expense_cny)}</td>
+                      <td className="px-3 py-2">{moneyCents(r.wallet_revenue_cents)}</td>
+                      <td className="px-3 py-2">{moneyCents(r.experience_revenue_cents)}</td>
                       <td className="px-3 py-2">{money(r.revenue_cny)}</td>
                     </tr>
                   ))
@@ -616,6 +648,10 @@ export default function AdminUsagePage(): JSX.Element {
       {tab === "overview" ? (
         <>
           <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <MetricCard title="昨日 PV（T+1）" value={num(pvUv.yesterday?.pv)} hint={pvUv.yesterday?.day ? `${pvUv.yesterday.day} · ${pvUv.timezone || "Asia/Shanghai"}` : "T+1 完整日数据"} />
+            <MetricCard title="昨日 UV（T+1）" value={num(pvUv.yesterday?.uv)} hint={pvUv.t_plus_1_note || "不含当日"} />
+            <MetricCard title="区间 PV" value={num(pvUv.range?.pv)} hint={pvUv.range?.date_from && pvUv.range?.date_to ? `${pvUv.range.date_from} ~ ${pvUv.range.date_to}` : "T+1 口径"} />
+            <MetricCard title="区间 UV" value={num(pvUv.range?.uv)} hint="区间内去重访客" />
             <MetricCard title="总调用事件" value={num(overview.total_events)} />
             <MetricCard title="成功率" value={pct(overview.success_rate)} hint={`成功 ${num(overview.succeeded_events)} / 失败 ${num(overview.failed_events)}`} />
             <MetricCard title="活跃用户" value={num(overview.active_users)} hint={`登录用户 ${num(overview.login_users)} / 登录次数 ${num(overview.login_count)}`} />
@@ -624,7 +660,11 @@ export default function AdminUsagePage(): JSX.Element {
             <MetricCard title="LLM 成本" value={money(overview.llm_cost_cny)} />
             <MetricCard title="TTS 成本" value={money(overview.tts_cost_cny)} />
             <MetricCard title="图像成本" value={money(overview.image_cost_cny)} />
-            <MetricCard title="Embedding 成本" value={money(overview.embedding_cost_cny)} hint="参考价 0.5 元/百万 tokens（api 后端）" />
+            <MetricCard
+              title="Embedding 成本"
+              value={money(overview.embedding_cost_cny)}
+              hint="text-embedding-v4：0.0005 元/千输入 Token（api 后端，输出不计费）"
+            />
             <MetricCard title="在线会话" value={num(overview.active_sessions)} hint={`在线用户 ${num(overview.session_users)}`} />
           </div>
           <div className="mt-6 grid gap-6 lg:grid-cols-2">
@@ -632,6 +672,7 @@ export default function AdminUsagePage(): JSX.Element {
             <div className="overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">输入来源分布</div><table className="min-w-[420px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">输入类型</th><th className="px-3 py-2">次数</th></tr></thead><tbody>{inputRows.length === 0 ? <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : inputRows.map((r, i) => <tr key={`${r.input_type || "other"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.input_type || "other"}</td><td className="px-3 py-2">{num(r.events)}</td></tr>)}</tbody></table></div>
           </div>
           <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">按日趋势 + Top 用户</div><table className="min-w-[720px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">日期</th><th className="px-3 py-2">调用</th><th className="px-3 py-2">成功</th><th className="px-3 py-2">用户</th><th className="px-3 py-2">成本</th></tr></thead><tbody>{dayRows.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : dayRows.map((r, i) => <tr key={`${r.day || "day"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.day || "—"}</td><td className="px-3 py-2">{num(r.events)}</td><td className="px-3 py-2">{num(r.succeeded)}</td><td className="px-3 py-2">{num(r.users)}</td><td className="px-3 py-2">{money(r.cost_total_cny)}</td></tr>)}</tbody></table></div>
+          <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">站点访问 PV/UV（T+1，按日）</div><table className="min-w-[480px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">日期</th><th className="px-3 py-2">PV</th><th className="px-3 py-2">UV</th></tr></thead><tbody>{!pvUv.by_day || pvUv.by_day.length === 0 ? <tr><td colSpan={3} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : pvUv.by_day.map((r, i) => <tr key={`${r.day || "pv"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.day || "—"}</td><td className="px-3 py-2">{num(r.pv)}</td><td className="px-3 py-2">{num(r.uv)}</td></tr>)}</tbody></table></div>
           <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">高活跃用户（Top 20）</div><table className="min-w-[720px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">用户</th><th className="px-3 py-2">调用</th><th className="px-3 py-2">成功</th><th className="px-3 py-2">成本</th><th className="px-3 py-2">最近使用</th></tr></thead><tbody>{topUsers.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : topUsers.map((r, i) => <tr key={`${r.user_key || r.user_id || r.phone || "unknown"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2 font-mono text-xs"><span className="block">{r.phone || r.user_id || r.user_key || "(unknown)"}</span>{r.user_id && r.phone && r.user_id !== r.phone ? <span className="mt-0.5 block text-[10px] text-muted/90">id {r.user_id}</span> : null}</td><td className="px-3 py-2">{num(r.events)}</td><td className="px-3 py-2">{num(r.succeeded)}</td><td className="px-3 py-2">{money(r.cost_total_cny)}</td><td className="px-3 py-2 text-xs text-muted">{r.last_event_at || "—"}</td></tr>)}</tbody></table></div>
         </>
       ) : null}

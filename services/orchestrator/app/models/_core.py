@@ -3553,7 +3553,129 @@ def admin_usage_dashboard(
             login_row = dict(cur.fetchone() or {})
             out["overview"]["login_count"] = _safe_int(login_row.get("login_count"))
             out["overview"]["login_users"] = _safe_int(login_row.get("login_users"))
+    try:
+        out["pv_uv"] = site_traffic_pv_uv_stats(days=days, date_from=date_from, date_to=date_to)
+    except Exception:
+        logger.exception("site_traffic_pv_uv_stats failed")
+        out["pv_uv"] = {}
     return out
+
+
+_SITE_TRAFFIC_TZ = "Asia/Shanghai"
+
+
+def record_site_page_view(*, visitor_id: str, path: str, user_id: str | None = None) -> None:
+    """写入站点 PV 原始事件；UV 由按日去重 visitor_id 聚合。"""
+    vid = (visitor_id or "").strip()
+    if len(vid) < 8:
+        return
+    p = ((path or "/").strip() or "/")[:512]
+    uid: str | None = None
+    if user_id:
+        try:
+            uid = str(uuid.UUID(str(user_id)))
+        except (ValueError, TypeError):
+            uid = None
+    ensure_site_traffic_schema()
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                INSERT INTO site_page_views (visitor_id, user_id, path)
+                VALUES (%s, %s::uuid, %s)
+                """,
+                (vid, uid, p),
+            )
+            conn.commit()
+
+
+def site_traffic_pv_uv_stats(
+    *,
+    days: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> dict[str, Any]:
+    """管理端 PV/UV（Asia/Shanghai 日历日，T+1：不含当日）。"""
+    tz = ZoneInfo(_SITE_TRAFFIC_TZ)
+    today_sh = datetime.now(tz).date()
+    yesterday_sh = today_sh - timedelta(days=1)
+
+    if date_from and date_to:
+        range_start = date_from
+        range_end = min(date_to, yesterday_sh)
+    else:
+        d = max(1, min(365, int(days if days is not None else 30)))
+        range_end = yesterday_sh
+        range_start = range_end - timedelta(days=d - 1)
+
+    if range_start > range_end:
+        range_start = range_end
+
+    def _day_str(val: Any) -> str:
+        if isinstance(val, date):
+            return val.isoformat()
+        return str(val or "")
+
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)::bigint AS pv,
+                       COUNT(DISTINCT visitor_id)::bigint AS uv
+                FROM site_page_views
+                WHERE ((created_at AT TIME ZONE %s)::date) = %s
+                """,
+                (_SITE_TRAFFIC_TZ, yesterday_sh),
+            )
+            yrow = dict(cur.fetchone() or {})
+
+            cur.execute(
+                """
+                SELECT COUNT(*)::bigint AS pv,
+                       COUNT(DISTINCT visitor_id)::bigint AS uv
+                FROM site_page_views
+                WHERE ((created_at AT TIME ZONE %s)::date) >= %s
+                  AND ((created_at AT TIME ZONE %s)::date) <= %s
+                """,
+                (_SITE_TRAFFIC_TZ, range_start, _SITE_TRAFFIC_TZ, range_end),
+            )
+            rrow = dict(cur.fetchone() or {})
+
+            cur.execute(
+                """
+                SELECT ((created_at AT TIME ZONE %s)::date) AS day,
+                       COUNT(*)::bigint AS pv,
+                       COUNT(DISTINCT visitor_id)::bigint AS uv
+                FROM site_page_views
+                WHERE ((created_at AT TIME ZONE %s)::date) >= %s
+                  AND ((created_at AT TIME ZONE %s)::date) <= %s
+                GROUP BY day
+                ORDER BY day ASC
+                """,
+                (_SITE_TRAFFIC_TZ, _SITE_TRAFFIC_TZ, range_start, _SITE_TRAFFIC_TZ, range_end),
+            )
+            by_day = []
+            for row in cur.fetchall():
+                item = dict(row)
+                item["day"] = _day_str(item.get("day"))
+                by_day.append(item)
+
+    return {
+        "timezone": _SITE_TRAFFIC_TZ,
+        "t_plus_1_note": "不含当日（Asia/Shanghai）；完整日数据 T+1 可见",
+        "yesterday": {
+            "day": yesterday_sh.isoformat(),
+            "pv": _safe_int(yrow.get("pv")),
+            "uv": _safe_int(yrow.get("uv")),
+        },
+        "range": {
+            "date_from": range_start.isoformat(),
+            "date_to": range_end.isoformat(),
+            "pv": _safe_int(rrow.get("pv")),
+            "uv": _safe_int(rrow.get("uv")),
+        },
+        "by_day": by_day,
+    }
 
 
 def admin_revenue_expense_board(
@@ -7985,4 +8107,5 @@ from .schema import (  # noqa: E402
     ensure_user_payg_minute_grants_schema,
     ensure_user_wallet_schema,
     ensure_users_profile_columns,
+    ensure_site_traffic_schema,
 )
