@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
   useCallback,
@@ -45,7 +45,10 @@ import ActiveJobsProvider from "./ActiveJobsProvider";
 import BrandGlyph from "./brand/BrandGlyph";
 const NotesNavExpanded = dynamic(() => import("./notes/NotesNavExpanded"), { ssr: false });
 import SidebarNavLink from "./nav/SidebarNavLink";
+import WorkbenchRouteFallback from "./nav/WorkbenchRouteFallback";
 import { dispatchNotesShowNotebookHub } from "../lib/notesLastNotebook";
+import { WorkbenchNavContext } from "../lib/WorkbenchNavContext";
+import { prefetchWorkbenchSidebarIdle } from "../lib/navPrefetch";
 import {
   dispatchWorkbenchDismissOverlays,
   WORKBENCH_MOBILE_FAB_Z_CLASS,
@@ -156,17 +159,6 @@ function readVoiceTabQuery(): string | null {
   }
 }
 
-function WorkbenchRouteFallback() {
-  return (
-    <div className="mx-auto w-full max-w-6xl space-y-4 px-4 py-8 sm:px-6 lg:px-8" aria-busy aria-label="页面加载中">
-      <SkeletonLine className="h-8 w-48 max-w-[80%]" />
-      <SkeletonLine className="h-4 w-full max-w-xl" />
-      <SkeletonBlock className="h-52 w-full max-w-3xl rounded-xl" />
-      <SkeletonBlock className="h-36 w-full max-w-3xl rounded-xl" />
-    </div>
-  );
-}
-
 type CreateStudioNavExpandedProps = {
   item: NavItem;
   path: string;
@@ -258,6 +250,7 @@ function CreateStudioNavExpanded({
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const path = pathname ?? "";
   const { ready, user } = useAuth();
   const loggedIn = isLoggedInAccountUser(user);
@@ -276,6 +269,69 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarPortaled, setSidebarPortaled] = useState(false);
   const [createSubNavExpanded, setCreateSubNavExpanded] = useState(true);
   const [notesSubNavExpanded, setNotesSubNavExpanded] = useState(true);
+  const [navPending, setNavPending] = useState(false);
+  const navPendingTargetRef = useRef<string | null>(null);
+  const pathRef = useRef(path);
+  const sidebarIdlePrefetchedRef = useRef(false);
+
+  const beginWorkbenchNav = useCallback((href: string) => {
+    const target = normalizePathname(String(href || "").split("?")[0] || href);
+    const current = normalizePathname(pathRef.current);
+    if (!target || target === current) return;
+    navPendingTargetRef.current = target;
+    setNavPending(true);
+  }, []);
+
+  useEffect(() => {
+    pathRef.current = path;
+  }, [path]);
+
+  useEffect(() => {
+    if (!navPending) return;
+    const target = navPendingTargetRef.current;
+    const current = normalizePathname(path);
+    if (!target || current === target || current.startsWith(`${target}/`)) {
+      let raf0 = 0;
+      let raf1 = 0;
+      raf0 = requestAnimationFrame(() => {
+        raf1 = requestAnimationFrame(() => {
+          navPendingTargetRef.current = null;
+          setNavPending(false);
+        });
+      });
+      return () => {
+        cancelAnimationFrame(raf0);
+        cancelAnimationFrame(raf1);
+      };
+    }
+  }, [path, navPending]);
+
+  useEffect(() => {
+    if (!navPending) return;
+    const timer = window.setTimeout(() => {
+      navPendingTargetRef.current = null;
+      setNavPending(false);
+    }, 12_000);
+    return () => window.clearTimeout(timer);
+  }, [navPending]);
+
+  useEffect(() => {
+    if (!ready || isMarketingShellLessPath(path) || sidebarIdlePrefetchedRef.current) return;
+    sidebarIdlePrefetchedRef.current = true;
+    const run = () => prefetchWorkbenchSidebarIdle(router);
+    if (typeof requestIdleCallback !== "undefined") {
+      const id = requestIdleCallback(run, { timeout: 4000 });
+      return () => cancelIdleCallback(id);
+    }
+    const timer = window.setTimeout(run, 1500);
+    return () => window.clearTimeout(timer);
+  }, [ready, path, router]);
+
+  const workbenchNavContextValue = useMemo(
+    () => ({ navPending, beginWorkbenchNav }),
+    [navPending, beginWorkbenchNav]
+  );
+
   const navPrimary = useMemo<NavItem[]>(
     () => [{ href: WORKBENCH_HOME_PATH, label: t("nav.home"), short: "首", Icon: IconHome }],
     [t]
@@ -582,7 +638,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           href={WORKBENCH_HOME_PATH}
           className={navButtonClass(active, collapsed)}
           title={tip}
-          onPointerDown={() => dispatchWorkbenchDismissOverlays()}
+          onPointerDown={() => {
+            dispatchWorkbenchDismissOverlays();
+            beginWorkbenchNav(WORKBENCH_HOME_PATH);
+          }}
         >
           <NavIconBox active={active}>
             <Ic />
@@ -770,7 +829,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     ) : null;
 
   return (
-    <div className="relative min-h-screen bg-canvas text-ink">
+    <WorkbenchNavContext.Provider value={workbenchNavContextValue}>
+      <div className="relative min-h-screen bg-canvas text-ink">
       <a
         href="#main-content"
         className="absolute left-[-9999px] z-[300] focus:left-4 focus:top-4 focus:rounded-md focus:bg-brand focus:px-3 focus:py-2 focus:text-sm focus:text-brand-foreground focus:outline-none focus:ring-2 focus:ring-brand/30"
@@ -796,13 +856,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         id="main-content"
         data-fym-app-main
         className={[
-          "flex min-h-screen min-w-0 flex-col",
+          "relative flex min-h-screen min-w-0 flex-col",
           mobileLayout ? "pt-[max(3.5rem,calc(2.75rem+env(safe-area-inset-top,0px)))]" : ""
         ].join(" ")}
         style={{ marginLeft: "var(--fym-app-sidebar-w, 232px)" }}
         tabIndex={-1}
       >
         {shellChildren}
+        {navPending ? (
+          <div
+            className="absolute inset-0 z-[20] bg-canvas/80 backdrop-blur-[1px]"
+            aria-busy
+            aria-live="polite"
+            aria-label="页面切换中"
+          >
+            <WorkbenchRouteFallback />
+          </div>
+        ) : null}
         {normalizePathname(path) === WORKBENCH_HOME_PATH ? null : (
           <footer className="relative z-[405] mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">
             <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">
@@ -815,5 +885,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         )}
       </div>
     </div>
+    </WorkbenchNavContext.Provider>
   );
 }

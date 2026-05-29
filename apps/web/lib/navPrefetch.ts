@@ -1,21 +1,102 @@
 "use client";
 
 import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import { normalizePathname, WORKBENCH_HOME_PATH } from "./navPaths";
 
-/** 默认关闭 Link prefetch，避免弱网时与当前页导航争抢带宽；hover 时再预取。 */
+/** 默认关闭 Link prefetch，避免弱网时与当前页导航争抢带宽；hover / idle 时再预取。 */
 export const WORKBENCH_LINK_PREFETCH = false;
 
-const prefetched = new Set<string>();
+/** 侧栏 idle 预取的高频工作台路由 */
+export const WORKBENCH_SIDEBAR_IDLE_ROUTES = [
+  WORKBENCH_HOME_PATH,
+  "/works",
+  "/create",
+  "/notes",
+  "/drafts",
+  "/clip",
+  "/shownotes",
+  "/voice",
+  "/subscription",
+  "/trash"
+] as const;
+
+const prefetchedRoutes = new Set<string>();
+const warmedChunkIds = new Set<string>();
+
+function warmChunk(id: string, loader: () => Promise<unknown>) {
+  if (warmedChunkIds.has(id)) return;
+  warmedChunkIds.add(id);
+  void loader().catch(() => {
+    warmedChunkIds.delete(id);
+  });
+}
+
+/** 按目标路由预热常见 dynamic import chunk（home / works 共用 gallery 等）。 */
+export function warmWorkbenchRouteChunks(href: string) {
+  const path = normalizePathname(String(href || "").split("?")[0] || href);
+  if (!path) return;
+
+  if (path === "/works" || path === WORKBENCH_HOME_PATH || path === "/create") {
+    warmChunk("podcast-works-gallery", () => import("../components/podcast/PodcastWorksGallery"));
+  }
+  if (path === WORKBENCH_HOME_PATH || pathMatchesNotes(path)) {
+    warmChunk("notes-works-panel", () => import("../components/works/NotesWorkbenchWorksPanel"));
+  }
+  if (path === "/notes") {
+    warmChunk("notes-page-main", () => import("../components/notes/NotesPageMain"));
+  }
+  if (path === "/create" || pathMatchesRoot(path, "/podcast") || pathMatchesRoot(path, "/tts")) {
+    warmChunk("podcast-studio", () => import("../components/studio/PodcastStudio"));
+    warmChunk("tts-studio", () => import("../components/studio/TtsStudio"));
+  }
+  if (path === "/clip") {
+    warmChunk("clip-hub", () => import("../components/clip/ClipHub"));
+  }
+}
+
+function pathMatchesNotes(path: string): boolean {
+  return path === "/notes" || path.startsWith("/notes/");
+}
+
+function pathMatchesRoot(pathname: string, base: string): boolean {
+  const n = normalizePathname(pathname);
+  const b = normalizePathname(base);
+  return n === b || n.startsWith(`${b}/`);
+}
 
 export function prefetchWorkbenchRoute(router: AppRouterInstance, href: string) {
   const path = String(href || "").split("?")[0]?.trim() || "";
-  if (!path || prefetched.has(path)) return;
-  prefetched.add(path);
-  try {
-    router.prefetch(path);
-  } catch {
-    prefetched.delete(path);
+  if (!path) return;
+  if (!prefetchedRoutes.has(path)) {
+    prefetchedRoutes.add(path);
+    try {
+      router.prefetch(path);
+    } catch {
+      prefetchedRoutes.delete(path);
+    }
   }
+  warmWorkbenchRouteChunks(path);
+}
+
+/** AppShell 空闲时分批预取侧栏高频路由与重 chunk。 */
+export function prefetchWorkbenchSidebarIdle(router: AppRouterInstance) {
+  const routes = WORKBENCH_SIDEBAR_IDLE_ROUTES;
+  let index = 0;
+
+  const step = () => {
+    if (index >= routes.length) return;
+    prefetchWorkbenchRoute(router, routes[index]!);
+    index += 1;
+    if (index < routes.length) {
+      if (typeof requestIdleCallback !== "undefined") {
+        requestIdleCallback(step, { timeout: 2500 });
+      } else {
+        window.setTimeout(step, 180);
+      }
+    }
+  };
+
+  step();
 }
 
 export function workbenchLinkHoverProps(router: AppRouterInstance, href: string) {

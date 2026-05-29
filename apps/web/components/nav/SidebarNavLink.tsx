@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import type { ComponentProps } from "react";
+import type { ComponentProps, MouseEvent } from "react";
 import { matchesNotesWorkbench, normalizePathname, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
 import { prefetchWorkbenchRoute } from "../../lib/navPrefetch";
+import { useWorkbenchNavOptional } from "../../lib/WorkbenchNavContext";
 import { dispatchWorkbenchDismissOverlays } from "../../lib/workbenchOverlays";
 
 type SidebarNavLinkProps = Omit<ComponentProps<typeof Link>, "prefetch">;
 
 /**
- * 侧栏专用导航：pointerdown 先关遮罩。
+ * 侧栏专用导航：pointerdown 先关遮罩；软路由点击即标记 navPending。
  * 在知识库工作台时渲染原生 `<a>` 整页跳转——NotesPageMain 会阻塞 Next 软路由。
  */
 export default function SidebarNavLink({
@@ -24,6 +25,7 @@ export default function SidebarNavLink({
 }: SidebarNavLinkProps) {
   const router = useRouter();
   const pathname = usePathname() ?? "";
+  const workbenchNav = useWorkbenchNavOptional();
   const hrefStr = typeof href === "string" ? href : String(href);
   const target = normalizePathname(hrefStr.split("?")[0] || hrefStr);
   const current = normalizePathname(pathname);
@@ -42,6 +44,16 @@ export default function SidebarNavLink({
   const handleFocus: SidebarNavLinkProps["onFocus"] = (e) => {
     prefetchWorkbenchRoute(router, hrefStr);
     onFocus?.(e);
+  };
+
+  const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    onClick?.(e);
+    if (e.defaultPrevented) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    if (target === current) return;
+    if (!useNativeAnchor) {
+      workbenchNav?.beginWorkbenchNav(hrefStr);
+    }
   };
 
   if (useNativeAnchor) {
@@ -66,7 +78,7 @@ export default function SidebarNavLink({
       onPointerDown={handlePointerDown}
       onMouseEnter={handleMouseEnter}
       onFocus={handleFocus}
-      onClick={onClick}
+      onClick={handleClick}
       {...rest}
     >
       {children}
