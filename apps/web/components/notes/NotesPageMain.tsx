@@ -1408,9 +1408,15 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     setDeleteNotebookTarget(null);
     setNotebookCardMenu(null);
     setNoteMenuOpenId(null);
+    setNotesAskMenuOpen(false);
     setRenameNoteId(null);
     setPreviewOpen(false);
   }, []);
+
+  /** 切换笔记本路由时立即关弹层，避免旧 state 闪现在新笔记本上 */
+  useEffect(() => {
+    dismissNotesBlockingOverlays();
+  }, [initialNotebookId, dismissNotesBlockingOverlays]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;

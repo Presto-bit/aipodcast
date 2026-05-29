@@ -1,9 +1,7 @@
 "use client";
 
-import { createPortal } from "react-dom";
-import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
-import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { Button } from "../ui/Button";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import type { ClipQcReport } from "../../lib/clipTypes";
 
 type Props = {
@@ -43,22 +41,10 @@ export default function ClipExportQcGateModal({
   onSkipExport
 }: Props) {
   const busy = busyAnalyze || busyExport;
-  useWorkbenchOverlayDismiss(open, onCancel, { busy });
 
-  if (!open || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center p-4`} role="dialog" aria-modal="true">
-      <button
-        type="button"
-        className="absolute inset-0 bg-surface/50 backdrop-blur-[1px]"
-        aria-label={cancelLabel}
-        disabled={busy}
-        onClick={() => {
-          if (!busy) onCancel();
-        }}
-      />
-      <div className="fym-modal-card relative z-[1] w-full max-w-md p-5">
+  return (
+    <WorkspaceScrimModal open={open} onClose={onCancel} busy={busy}>
+      <div className="fym-modal-card relative z-[1] w-full max-w-md p-5" onPointerDown={(e) => e.stopPropagation()}>
         <h2 className="text-sm font-semibold text-ink">{title}</h2>
         <p className="mt-2 text-xs leading-relaxed text-muted">{bodyIntro}</p>
         {hasReport && reportSummary ? (
@@ -83,7 +69,6 @@ export default function ClipExportQcGateModal({
           </Button>
         </div>
       </div>
-    </div>,
-    document.body
+    </WorkspaceScrimModal>
   );
 }

@@ -54,6 +54,7 @@ import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import { DEFAULT_INTRO_LINE, DEFAULT_OUTRO_LINE } from "../../lib/introOutroDefaults";
 import { PODCAST_ROOM_PRESETS, type PodcastRoomPresetKey } from "../../lib/notesRoomPresets";
 import FloatingPopover from "../ui/FloatingPopover";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import {
   CREATIVE_CHIP_HOVER_HINT
 } from "../../lib/studioHoverHints";
@@ -184,6 +185,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   const [voiceKey1, setVoiceKey1] = useState("mini");
   const [voiceKey2, setVoiceKey2] = useState("max");
   const [activePanel, setActivePanel] = useState<PanelId>(null);
+  useWorkbenchOverlayDismiss(open && activePanel !== null, () => setActivePanel(null));
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const runPodcastRef = useRef<() => Promise<void>>(async () => {});
 

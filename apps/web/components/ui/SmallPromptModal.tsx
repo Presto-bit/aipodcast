@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
-import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
-import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { Button } from "./Button";
+import WorkspaceScrimModal from "./WorkspaceScrimModal";
 
 type Props = {
   open: boolean;
@@ -39,8 +37,6 @@ export default function SmallPromptModal({
   const inputRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  useWorkbenchOverlayDismiss(open, onCancel, { busy });
-
   useEffect(() => {
     if (!open) return;
     const id = requestAnimationFrame(() => inputRef.current?.focus());
@@ -74,20 +70,8 @@ export default function SmallPromptModal({
     return () => root.removeEventListener("keydown", onTab);
   }, [open]);
 
-  if (!open) return null;
-
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center bg-black/35 p-4`}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="prompt-modal-title"
-      onPointerDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onCancel();
-      }}
-    >
+  return (
+    <WorkspaceScrimModal open={open} onClose={onCancel} busy={busy} labelledBy="prompt-modal-title" scrimTone="35">
       <div ref={cardRef} className="fym-modal-card w-full max-w-sm p-5" onPointerDown={(e) => e.stopPropagation()}>
         <h2 id="prompt-modal-title" className="text-sm font-semibold text-ink">
           {title}
@@ -121,7 +105,6 @@ export default function SmallPromptModal({
           </Button>
         </div>
       </div>
-    </div>,
-    document.body
+    </WorkspaceScrimModal>
   );
 }

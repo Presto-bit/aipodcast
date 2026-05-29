@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from "react-dom";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { fetchJobsAudioDurationsBatch, probeJobAudioDurationSec } from "../../lib/jobsAudioDurations";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
@@ -640,6 +641,15 @@ export default function PodcastWorksGallery({
   const closeQuickRead = useCallback(() => {
     setQuickReadWorkId(null);
   }, []);
+
+  const dismissGalleryFloatingLayers = useCallback(() => {
+    setMenuOpenId(null);
+    setNotesStudioMenuPos(null);
+    closeQuickRead();
+  }, [closeQuickRead]);
+
+  const galleryFloatingOpen = Boolean(menuOpenId || notesStudioMenuPos || quickReadWorkId);
+  useWorkbenchOverlayDismiss(galleryFloatingOpen, dismissGalleryFloatingLayers);
 
   const quickReadWork = useMemo(() => {
     if (!quickReadWorkId) return null;

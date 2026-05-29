@@ -79,6 +79,7 @@ import { readLocalStorageScoped, readSessionStorageScoped, removeSessionStorageS
 import { uploadNoteFileWithProgress } from "../../lib/uploadNoteFile";
 import type { WorkItem } from "../../lib/worksTypes";
 import FloatingPopover from "../ui/FloatingPopover";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { useLoginRequiredAction } from "../../lib/useLoginRequiredAction";
 import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
 import {
@@ -209,6 +210,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const [voiceKey1, setVoiceKey1] = useState("mini");
   const [voiceKey2, setVoiceKey2] = useState("max");
   const [activePanel, setActivePanel] = useState<PanelId>(null);
+  useWorkbenchOverlayDismiss(activePanel !== null, () => setActivePanel(null));
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [partialRedoMeta, setPartialRedoMeta] = useState<PartialRedoMeta | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(false);

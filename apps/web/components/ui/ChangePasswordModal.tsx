@@ -1,10 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
-import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { Button } from "./Button";
+import WorkspaceScrimModal from "./WorkspaceScrimModal";
 
 export type ChangePasswordModalProps = {
   open: boolean;
@@ -46,8 +44,6 @@ export default function ChangePasswordModal({ open, onClose, onSuccess, applyCha
     onClose();
   }, [busy, onClose]);
 
-  useWorkbenchOverlayDismiss(open, handleClose, { busy });
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
@@ -71,26 +67,12 @@ export default function ChangePasswordModal({ open, onClose, onSuccess, applyCha
     }
   }
 
-  if (!open) return null;
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center p-4`}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="change-password-modal-title"
-    >
-      <button
-        type="button"
-        className="absolute inset-0 bg-surface/50 backdrop-blur-[1px]"
-        aria-label="关闭"
-        disabled={busy}
-        onClick={handleClose}
-      />
+  return (
+    <WorkspaceScrimModal open={open} onClose={handleClose} busy={busy} labelledBy="change-password-modal-title">
       <form
         className="fym-modal-card relative z-[1] w-full max-w-md space-y-3 p-5"
         onSubmit={(e) => void onSubmit(e)}
+        onPointerDown={(e) => e.stopPropagation()}
       >
         <h2 id="change-password-modal-title" className="text-sm font-semibold text-ink">
           修改密码
@@ -147,7 +129,6 @@ export default function ChangePasswordModal({ open, onClose, onSuccess, applyCha
           </Button>
         </div>
       </form>
-    </div>,
-    document.body
+    </WorkspaceScrimModal>
   );
 }

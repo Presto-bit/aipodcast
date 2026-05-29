@@ -23,6 +23,7 @@ import { useI18n } from "../../lib/I18nContext";
 import SystemVoicesVirtualList from "./SystemVoicesVirtualList";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { IconDotsHorizontal, IconPause, IconPlayFilled, IconStar, IconX } from "../icons";
 import { readFavoriteVoiceIds, toggleFavoriteVoiceId } from "../../lib/favoriteVoiceIdsStorage";
 import { voicePreviewSampleForCatalogLanguage } from "../../lib/voicePreviewSampleText";
@@ -140,6 +141,13 @@ export default function MyVoicesPanel() {
     setDetailPreviewVoiceId(null);
     detailPendingAutoplay.current = false;
   }, []);
+
+  const dismissVoiceFloatingLayers = useCallback(() => {
+    setAssignOpen(null);
+    setOverflowMenu(null);
+  }, []);
+
+  useWorkbenchOverlayDismiss(Boolean(assignOpen || overflowMenu), dismissVoiceFloatingLayers);
 
   /** 合并顺序：系统表在前，默认 mini/max 在后以便同 key 时以后端默认为准（一般不会冲突） */
   const mergedVoiceCatalog = useMemo(

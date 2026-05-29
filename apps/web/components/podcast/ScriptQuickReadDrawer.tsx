@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import {
   formatScriptCharCountLabel,
   scriptCharCountForWork,
@@ -48,14 +49,7 @@ export function ScriptQuickReadDrawer({
     return () => window.clearTimeout(t);
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  useWorkbenchOverlayDismiss(open, onClose);
 
   useEffect(() => {
     if (!open) return;

@@ -1,9 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
-import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 
 type FormSheetModalProps = {
   open: boolean;
@@ -17,25 +15,12 @@ type FormSheetModalProps = {
  * 订阅/钱包类表单弹层：居中卡片、可点遮罩或 Esc 关闭（与 SmallConfirmModal 一致挂 body）。
  */
 export default function FormSheetModal({ open, titleId, title, onClose, children }: FormSheetModalProps) {
-  useWorkbenchOverlayDismiss(open, onClose);
-
-  if (!open) return null;
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center p-0 sm:items-center sm:p-4`}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-    >
-      <button
-        type="button"
-        className="absolute inset-0 bg-surface/55 backdrop-blur-[1px]"
-        aria-label="关闭"
-        onClick={onClose}
-      />
-      <div className="fym-modal-card relative z-[1] flex max-h-[min(90vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-line bg-canvas shadow-lg sm:rounded-2xl">
+  return (
+    <WorkspaceScrimModal open={open} onClose={onClose} labelledBy={titleId} align="end" scrimTone="40" className="p-0 sm:p-4">
+      <div
+        className="fym-modal-card relative z-[1] flex max-h-[min(90vh,720px)] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-line bg-canvas shadow-lg sm:rounded-2xl"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
           <h2 id={titleId} className="text-base font-semibold text-ink">
             {title}
@@ -51,7 +36,6 @@ export default function FormSheetModal({ open, titleId, title, onClose, children
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">{children}</div>
       </div>
-    </div>,
-    document.body
+    </WorkspaceScrimModal>
   );
 }

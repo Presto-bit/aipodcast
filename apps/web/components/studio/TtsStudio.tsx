@@ -45,6 +45,7 @@ import { DEFAULT_INTRO_LINE, DEFAULT_OUTRO_LINE } from "../../lib/introOutroDefa
 import { readLastIntroOutro, writeLastIntroOutro } from "../../lib/introOutroStorage";
 import type { WorkItem } from "../../lib/worksTypes";
 import FloatingPopover from "../ui/FloatingPopover";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
@@ -163,6 +164,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const [taskProgressPct, setTaskProgressPct] = useState(0);
   /** 默认不展开「开场/结尾」；与 AI 播客同一套面板 */
   const [activePanel, setActivePanel] = useState<PanelId>(null);
+  useWorkbenchOverlayDismiss(activePanel !== null, () => setActivePanel(null));
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [works, setWorks] = useState<WorkItem[]>([]);
   const [worksLoading, setWorksLoading] = useState(true);

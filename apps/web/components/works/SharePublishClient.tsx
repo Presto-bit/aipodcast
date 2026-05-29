@@ -18,7 +18,8 @@ import {
   type ShareFormFields
 } from "../../lib/sharePublishDefaults";
 import { getBearerAuthHeadersSync, jobEventsSourceUrl } from "../../lib/authHeaders";
-import { WORKBENCH_DISMISS_OVERLAYS_EVENT, WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
+import { useWorkbenchDismissOverlaysEffect, useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import { readLocalStorageScoped, readSessionStorageScoped, writeLocalStorageScoped } from "../../lib/userScopedStorage";
 import {
@@ -143,6 +144,12 @@ export function SharePublishClient({
   const [shareConfigModalOpen, setShareConfigModalOpen] = useState(
     () => layout === "work_hub" && initialHubTab === "publish"
   );
+  /** 用户手动关闭发布弹层后，同页不再因 URL tab=publish 自动重开 */
+  const publishModalUserDismissedRef = useRef(false);
+  const closeShareConfigModal = useCallback(() => {
+    publishModalUserDismissedRef.current = true;
+    setShareConfigModalOpen(false);
+  }, []);
   const [manuscriptBody, setManuscriptBody] = useState("");
   const [publishAt, setPublishAt] = useState("");
   /** 已确认启用定时发布（开关为开且提交时使用 publishAt）。 */
@@ -1024,8 +1031,17 @@ export function SharePublishClient({
   }, [ownerJobRecord]);
 
   useEffect(() => {
+    publishModalUserDismissedRef.current = false;
+  }, [jobId]);
+
+  useEffect(() => {
     if (layout !== "work_hub") return;
-    setShareConfigModalOpen(initialHubTab === "publish");
+    if (initialHubTab === "publish" && !publishModalUserDismissedRef.current) {
+      setShareConfigModalOpen(true);
+    } else if (initialHubTab !== "publish") {
+      setShareConfigModalOpen(false);
+      publishModalUserDismissedRef.current = false;
+    }
   }, [layout, jobId, initialHubTab]);
 
   useEffect(() => {
@@ -1057,6 +1073,11 @@ export function SharePublishClient({
   }, [morePlatformsOpen]);
 
   const workHubPublishModalVisible = layout === "work_hub" && shareConfigModalOpen;
+
+  useWorkbenchOverlayDismiss(
+    workHubPublishModalVisible && morePlatformsOpen,
+    () => setMorePlatformsOpen(false)
+  );
 
   useEffect(() => {
     if (!(layout === "work_hub" && shareConfigModalOpen)) {
@@ -1475,33 +1496,19 @@ export function SharePublishClient({
     })();
   }, [rssGate, ownerJobRecord]);
 
-  useEffect(() => {
-    const closeWorkbenchOverlays = () => {
-      setShareConfigModalOpen(false);
-      setScheduleModalOpen(false);
-      setRssFullSettingsModalOpen(false);
-      setAiShownotesModalOpen(false);
-      setWorkDownloadRechargeModalOpen(false);
-      setMorePlatformsOpen(false);
-      setScheduleModalErr("");
-      setAiShownotesErr("");
-    };
-    window.addEventListener(WORKBENCH_DISMISS_OVERLAYS_EVENT, closeWorkbenchOverlays);
-    return () => window.removeEventListener(WORKBENCH_DISMISS_OVERLAYS_EVENT, closeWorkbenchOverlays);
+  const closeWorkbenchOverlays = useCallback(() => {
+    publishModalUserDismissedRef.current = true;
+    setShareConfigModalOpen(false);
+    setScheduleModalOpen(false);
+    setRssFullSettingsModalOpen(false);
+    setAiShownotesModalOpen(false);
+    setWorkDownloadRechargeModalOpen(false);
+    setMorePlatformsOpen(false);
+    setScheduleModalErr("");
+    setAiShownotesErr("");
   }, []);
 
-  useEffect(() => {
-    if (!rssFullSettingsModalOpen && !aiShownotesModalOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setRssFullSettingsModalOpen(false);
-        setAiShownotesModalOpen(false);
-        setAiShownotesErr("");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [rssFullSettingsModalOpen, aiShownotesModalOpen]);
+  useWorkbenchDismissOverlaysEffect(closeWorkbenchOverlays);
 
   useEffect(() => {
     if (!aiShownotesModalOpen) return;
@@ -1514,18 +1521,6 @@ export function SharePublishClient({
       setNotesTab("preview");
     }
   }, [aiShownotesModalOpen, notesTab]);
-
-  useEffect(() => {
-    if (!scheduleModalOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setScheduleModalOpen(false);
-        setScheduleModalErr("");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [scheduleModalOpen]);
 
   function openScheduleModal() {
     setScheduleModalDraft(publishAt.trim() ? publishAt : defaultScheduleDatetimeLocal());
@@ -2129,23 +2124,15 @@ export function SharePublishClient({
         </p>
       ) : null}
 
-      {workHubPublishModalVisible && ownerJobRecord ? (
-        typeof document !== "undefined"
-          ? createPortal(
-              <div
-                className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center bg-black/40 p-4 sm:items-center`}
-                role="presentation"
-              >
-                <button
-                  type="button"
-                  className="absolute inset-0 cursor-default"
-                  aria-label="关闭"
-                  onClick={() => setShareConfigModalOpen(false)}
-                />
+      <WorkspaceScrimModal
+        open={workHubPublishModalVisible && Boolean(ownerJobRecord)}
+        onClose={closeShareConfigModal}
+        labelledBy="work-share-publish-modal-title"
+        align="end"
+        scrimTone="40"
+        busy={busy || shareAiBusy}
+      >
                 <div
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="work-share-publish-modal-title"
                   className="relative z-10 max-h-[min(92vh,44rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6"
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -2325,7 +2312,7 @@ export function SharePublishClient({
                   <button
                     type="button"
                     className="text-sm text-muted hover:text-ink"
-                    onClick={() => setShareConfigModalOpen(false)}
+                    onClick={closeShareConfigModal}
                   >
                     关闭
                   </button>
@@ -2380,28 +2367,16 @@ export function SharePublishClient({
             )}
                   </div>
                 </div>
-              </div>,
-              document.body
-            )
-          : null
-      ) : null}
+      </WorkspaceScrimModal>
 
-      {scheduleModalOpen && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center bg-black/40 p-4 sm:items-center`}
-              role="presentation"
-            >
-              <button
-                type="button"
-                className="absolute inset-0 cursor-default"
-                aria-label="关闭"
-                onClick={() => cancelScheduleModal()}
-              />
+      <WorkspaceScrimModal
+        open={scheduleModalOpen}
+        onClose={cancelScheduleModal}
+        labelledBy="schedule-modal-title"
+        align="end"
+        scrimTone="40"
+      >
               <div
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="schedule-modal-title"
                 className="relative z-10 w-full max-w-md rounded-2xl border border-line bg-surface p-5 shadow-card"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -2439,27 +2414,17 @@ export function SharePublishClient({
                   </button>
                 </div>
               </div>
-            </div>,
-            document.body
-          )
-        : null}
+      </WorkspaceScrimModal>
 
-      {rssFullSettingsModalOpen && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center bg-black/40 p-4 sm:items-center`}
-              role="presentation"
-            >
-              <button
-                type="button"
-                className="absolute inset-0 cursor-default"
-                aria-label="关闭"
-                onClick={() => setRssFullSettingsModalOpen(false)}
-              />
+      <WorkspaceScrimModal
+        open={rssFullSettingsModalOpen}
+        onClose={() => setRssFullSettingsModalOpen(false)}
+        labelledBy="rss-full-settings-modal-title"
+        align="end"
+        scrimTone="40"
+        busy={busy}
+      >
               <div
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="rss-full-settings-modal-title"
                 className="relative z-10 max-h-[min(90vh,44rem)] w-full max-w-2xl overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -2479,30 +2444,20 @@ export function SharePublishClient({
                   <RssPublishSettingsPanel variant="embedded" onChannelsUpdated={refreshChannelsAfterRssSettingsSave} />
                 </div>
               </div>
-            </div>,
-            document.body
-          )
-        : null}
+      </WorkspaceScrimModal>
 
-      {aiShownotesModalOpen && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center bg-black/40 p-4 sm:items-center`}
-              role="presentation"
-            >
-              <button
-                type="button"
-                className="absolute inset-0 cursor-default"
-                aria-label="关闭"
-                onClick={() => {
-                  setAiShownotesModalOpen(false);
-                  setAiShownotesErr("");
-                }}
-              />
+      <WorkspaceScrimModal
+        open={aiShownotesModalOpen}
+        onClose={() => {
+          setAiShownotesModalOpen(false);
+          setAiShownotesErr("");
+        }}
+        labelledBy="ai-shownotes-modal-title"
+        align="end"
+        scrimTone="40"
+        busy={shareAiBusy || scriptResolvePending}
+      >
               <div
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="ai-shownotes-modal-title"
                 className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-surface p-5 shadow-card"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -2544,10 +2499,7 @@ export function SharePublishClient({
                   </button>
                 </div>
               </div>
-            </div>,
-            document.body
-          )
-        : null}
+      </WorkspaceScrimModal>
 
       {workHubPublishModalVisible &&
       morePlatformsOpen &&

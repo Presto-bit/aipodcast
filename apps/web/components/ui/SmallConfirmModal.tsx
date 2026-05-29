@@ -1,9 +1,7 @@
 "use client";
 
-import { createPortal } from "react-dom";
-import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
-import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { Button } from "./Button";
+import WorkspaceScrimModal from "./WorkspaceScrimModal";
 
 type Props = {
   open: boolean;
@@ -36,25 +34,12 @@ export default function SmallConfirmModal({
   onConfirm,
   onCancel
 }: Props) {
-  useWorkbenchOverlayDismiss(open, onCancel, { busy });
-
-  if (!open) return null;
-
-  /** 挂到 body：祖先若含 backdrop-filter（如 .fym-surface-card），未 portal 的 fixed 会相对该层定位并被裁切。 */
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <div className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center p-3 sm:p-4`} role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
-      <button
-        type="button"
-        className="absolute inset-0 bg-surface/50 backdrop-blur-[1px]"
-        aria-label="关闭"
-        disabled={busy}
-        onClick={() => {
-          if (!busy) onCancel();
-        }}
-      />
-      <div className="fym-modal-card relative z-[1] w-full max-w-[min(96vw,32rem)] max-h-[min(88vh,42rem)] overflow-y-auto p-4 sm:p-5">
+  return (
+    <WorkspaceScrimModal open={open} onClose={onCancel} busy={busy} labelledBy="confirm-modal-title" scrimTone="40" className="p-3 sm:p-4">
+      <div
+        className="fym-modal-card relative z-[1] max-h-[min(88vh,42rem)] w-full max-w-[min(96vw,32rem)] overflow-y-auto p-4 sm:p-5"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         <h2 id="confirm-modal-title" className="text-sm font-semibold text-ink">
           {title}
         </h2>
@@ -79,7 +64,6 @@ export default function SmallConfirmModal({
           </Button>
         </div>
       </div>
-    </div>,
-    document.body
+    </WorkspaceScrimModal>
   );
 }

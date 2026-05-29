@@ -1,9 +1,7 @@
 "use client";
 
 import { useRef, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { WORKBENCH_SCRIM_Z_CLASS } from "../../../lib/workbenchOverlays";
-import { useWorkbenchOverlayDismiss } from "../../../lib/useWorkbenchOverlayDismiss";
+import WorkspaceScrimModal from "../../ui/WorkspaceScrimModal";
 
 type Props = {
   open: boolean;
@@ -29,19 +27,8 @@ export default function AuthorIpCompactModal({
 }: Props) {
   const cardRef = useRef<HTMLDivElement>(null);
 
-  useWorkbenchOverlayDismiss(open, onClose, { busy });
-
-  if (!open || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center bg-black/35 p-4`}
-      role="dialog"
-      aria-modal="true"
-      onPointerDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose();
-      }}
-    >
+  return (
+    <WorkspaceScrimModal open={open} onClose={onClose} busy={busy} scrimTone="35">
       <div
         ref={cardRef}
         className={`fym-modal-card flex max-h-[min(88vh,720px)] w-full ${maxWidthClass} flex-col p-0`}
@@ -54,7 +41,6 @@ export default function AuthorIpCompactModal({
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">{children}</div>
         {footer ? <div className="shrink-0 border-t border-line px-4 py-3">{footer}</div> : null}
       </div>
-    </div>,
-    document.body
+    </WorkspaceScrimModal>
   );
 }
