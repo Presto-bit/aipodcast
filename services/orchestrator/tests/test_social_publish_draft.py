@@ -70,6 +70,15 @@ def test_generate_rejects_generic_llm_json() -> None:
     assert "新能源汽车" in body or "充电设施" in body or "置换补贴" in body
 
 
+def test_generate_succeeds_with_colloquial_first_material() -> None:
+    material = "第一优先级\n" + "第一时间完成第一步工作。" * 50
+    with patch("app.social_publish_draft.invoke_and_parse_social_json", return_value=(None, None)):
+        pack = generate_social_publish_draft(material, platform="wechat_mp", options={})
+    body = str(pack.get("body") or "")
+    assert "第一时间" in body or "第一步" in body
+    assert pack.get("platform") == "wechat_mp"
+
+
 def test_extract_partial_social_json_fields_from_stream() -> None:
     raw = (
         '{"titles":["标题一","标题二"],'

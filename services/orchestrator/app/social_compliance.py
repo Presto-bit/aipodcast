@@ -46,7 +46,7 @@ _ABSOLUTE_REGEX_RULES: list[tuple[str, str, str]] = [
     (r"NO\.?\s*1", "absolute", "人气很高"),
 ]
 
-# 扫描用：合并字面关键词与正则（仅用于命中检测）
+# 扫描用：字面关键词 + 正则（「第一」仅走下方正则，避免误伤「第一时间/第一步」等）
 _SCAN_LITERAL_KEYWORDS: list[tuple[str, str]] = [
     ("最好的", "absolute"),
     ("最佳的", "absolute"),
@@ -54,7 +54,6 @@ _SCAN_LITERAL_KEYWORDS: list[tuple[str, str]] = [
     ("顶级的", "absolute"),
     ("100%", "absolute"),
     ("绝对", "absolute"),
-    ("第一", "absolute"),
     *((p, c) for p, c, _ in _LITERAL_RULES),
 ]
 

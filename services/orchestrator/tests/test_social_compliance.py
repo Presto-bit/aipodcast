@@ -16,6 +16,22 @@ def test_does_not_replace_colloquial_first() -> None:
     softened, n = rule_soften_text(text)
     assert softened == text
     assert n == 0
+    assert not scan_text(text, "body")
+
+
+def test_compliance_passes_colloquial_first_in_pack() -> None:
+    body = "第一时间完成第一步工作。" * 20
+    fields = xhs_fields_from_pack(
+        titles=["第一优先级任务梳理"],
+        opening_30="第一步先读资料",
+        body=body,
+        interaction="欢迎留言",
+        tags=["深度好文", "干货分享", "知识整理", "收藏推荐", "阅读笔记"],
+        cover_suggestions=["头图：主题关键词"],
+    )
+    out, meta = apply_compliance_to_xhs_fields(fields, max_llm_passes=0)
+    assert meta["status"] in ("passed", "auto_softened")
+    assert "第一时间" in out.get("body", "")
 
 
 def test_replaces_marketing_first_phrase() -> None:
