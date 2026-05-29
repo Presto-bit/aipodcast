@@ -48,7 +48,7 @@ def _normalize_progress(val: Any) -> float:
         return 0.0
 
 
-def serialize_job(row: dict[str, Any] | None) -> dict[str, Any]:
+def serialize_job(row: dict[str, Any] | None, *, include_payload_sha256: bool = True) -> dict[str, Any]:
     if not row:
         return {}
     out = dict(row)
@@ -67,5 +67,6 @@ def serialize_job(row: dict[str, Any] | None) -> dict[str, Any]:
         out["result"] = _coerce_job_result_field(out.get("result"))
         if isinstance(out.get("result"), dict):
             sanitize_job_result_media_urls_for_browser(out["result"])
-    out["payload_sha256"] = _payload_sha256(out.get("payload"))
+    if include_payload_sha256:
+        out["payload_sha256"] = _payload_sha256(out.get("payload"))
     return out

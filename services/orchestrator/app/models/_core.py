@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 _USERNAME_PRINCIPAL_RE = re.compile(r"^[a-zA-Z0-9_]{3,32}$")
 
 _usage_events_user_id_schema_ready = False
+_user_uuid_resolve_cache: dict[str, str | None] = {}
+_USER_UUID_RESOLVE_CACHE_MAX = 4096
 
 LEGACY_DEFAULT_NOTEBOOK = "默认笔记本"
 # 笔记播客页创建的任务 project_name（与 apps/web/lib/notesProject 一致）
@@ -142,7 +144,13 @@ def _resolve_user_uuid_or_none(cur: Any, user_ref: str | None) -> str | None:
     raw = (user_ref or "").strip()
     if not raw:
         return None
-    return _resolve_user_uuid_from_ref(cur, raw)
+    if raw in _user_uuid_resolve_cache:
+        return _user_uuid_resolve_cache[raw]
+    resolved = _resolve_user_uuid_from_ref(cur, raw)
+    if len(_user_uuid_resolve_cache) >= _USER_UUID_RESOLVE_CACHE_MAX:
+        _user_uuid_resolve_cache.clear()
+    _user_uuid_resolve_cache[raw] = resolved
+    return resolved
 
 
 def resolved_user_uuid_string(user_ref: str | None) -> str | None:
@@ -367,6 +375,62 @@ def get_job(job_id: str, user_ref: str | None = None) -> dict[str, Any] | None:
 
                     log_idor_denied("job", str(job_id), user_ref)
             return None
+
+
+def get_job_status_lightweight(job_id: str, user_ref: str | None = None) -> dict[str, Any] | None:
+    """SSE / 轮询用：仅 status + progress，避免拉全量 result JSONB。"""
+    jid = (job_id or "").strip()
+    if not jid:
+        return None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            cur.execute(
+                """
+                SELECT j.id, j.status, j.progress
+                FROM jobs j
+                LEFT JOIN projects p ON p.id = j.project_id
+                WHERE j.id = %s
+                  AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
+                """,
+                (jid, user_uuid, user_uuid),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def get_job_for_usage_billing(job_id: str) -> dict[str, Any] | None:
+    """终态 usage 记账：仅投影 payload 与 result 计费所需字段。"""
+    jid = (job_id or "").strip()
+    if not jid:
+        return None
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                """
+                SELECT j.id, j.job_type, j.created_by, j.payload,
+                  CASE
+                    WHEN j.result IS NULL OR jsonb_typeof(j.result) != 'object' THEN '{}'::jsonb
+                    ELSE jsonb_strip_nulls(
+                      jsonb_build_object(
+                        'preview', j.result->'preview',
+                        'script_preview', j.result->'script_preview',
+                        'script_text', j.result->'script_text',
+                        'cover_image', COALESCE(j.result->'cover_image', j.result->'coverImage'),
+                        'audio_duration_sec', j.result->'audio_duration_sec',
+                        'embedding_input_chars', j.result->'embedding_input_chars',
+                        'embedding_backend', j.result->'embedding_backend'
+                      )
+                    )
+                  END AS result
+                FROM jobs j
+                WHERE j.id = %s
+                LIMIT 1
+                """,
+                (jid,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
 
 
 def get_job_unscoped_for_viewer_acl(job_id: str) -> dict[str, Any] | None:
@@ -1356,6 +1420,40 @@ def list_notebook_names(user_ref: str | None = None) -> list[str]:
             return sorted(names)
 
 
+def aggregate_notebook_input_stats(user_ref: str | None = None) -> dict[str, dict[str, Any]]:
+    """按笔记本聚合资料条数与最早创建时间（替代前端分页扫 /api/notes）。"""
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            cur.execute(
+                """
+                SELECT TRIM(i.metadata->>'notebook') AS notebook,
+                       COUNT(*)::int AS note_count,
+                       MIN(i.created_at) AS created_at
+                FROM inputs i
+                JOIN projects p ON p.id = i.project_id
+                WHERE i.input_type IN ('note_text', 'note_file')
+                  AND i.deleted_at IS NULL
+                  AND COALESCE(i.metadata->>'notebook', '') <> ''
+                  AND (%s::uuid IS NULL OR p.user_id = %s::uuid)
+                GROUP BY 1
+                """,
+                (user_uuid, user_uuid),
+            )
+            out: dict[str, dict[str, Any]] = {}
+            for row in cur.fetchall():
+                nb = str(row.get("notebook") or "").strip()
+                if not nb:
+                    continue
+                created = row.get("created_at")
+                out[nb] = {
+                    "noteCount": int(row.get("note_count") or 0),
+                    "sourceCount": int(row.get("note_count") or 0),
+                    "createdAt": created.isoformat() if hasattr(created, "isoformat") else str(created or ""),
+                }
+            return out
+
+
 def create_notebook_only(name: str, user_ref: str | None = None) -> tuple[bool, str]:
     nb = (name or "").strip()
     if not nb:
@@ -1760,11 +1858,16 @@ def list_notes(
                 cur.execute(
                     """
                     SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type,
-                           (SELECT COUNT(*)::int FROM note_rag_chunks c WHERE c.input_id = i.id) AS rag_chunk_count,
+                           COALESCE(rc.rag_chunk_count, 0) AS rag_chunk_count,
                            i.note_summary, i.note_rag_body_hash,
                            i.note_rag_index_error, i.note_rag_embedding_sig, i.note_rag_index_at
                     FROM inputs i
                     JOIN projects p ON p.id = i.project_id
+                    LEFT JOIN (
+                      SELECT input_id, COUNT(*)::int AS rag_chunk_count
+                      FROM note_rag_chunks
+                      GROUP BY input_id
+                    ) rc ON rc.input_id = i.id
                     WHERE i.input_type IN ('note_text', 'note_file')
                       AND i.deleted_at IS NULL
                       AND (i.metadata->>'notebook') = %s
@@ -1778,11 +1881,16 @@ def list_notes(
                 cur.execute(
                     """
                     SELECT i.id, i.content_text, i.source_url, i.metadata, i.created_at, i.file_object_key, i.input_type,
-                           (SELECT COUNT(*)::int FROM note_rag_chunks c WHERE c.input_id = i.id) AS rag_chunk_count,
+                           COALESCE(rc.rag_chunk_count, 0) AS rag_chunk_count,
                            i.note_summary, i.note_rag_body_hash,
                            i.note_rag_index_error, i.note_rag_embedding_sig, i.note_rag_index_at
                     FROM inputs i
                     JOIN projects p ON p.id = i.project_id
+                    LEFT JOIN (
+                      SELECT input_id, COUNT(*)::int AS rag_chunk_count
+                      FROM note_rag_chunks
+                      GROUP BY input_id
+                    ) rc ON rc.input_id = i.id
                     WHERE i.input_type IN ('note_text', 'note_file')
                       AND i.deleted_at IS NULL
                       AND (%s::uuid IS NULL OR p.user_id = %s::uuid)
@@ -1833,6 +1941,37 @@ def get_note_by_id(
 
                     log_idor_denied("note", str(note_id), user_ref)
             return None
+
+
+def get_notes_by_ids(
+    note_ids: list[str],
+    *,
+    user_ref: str | None = None,
+    project_owner_user_uuid: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """批量拉取笔记（notes ask 等场景，避免 N+1 get_note_by_id）。"""
+    ids = [str(x).strip() for x in note_ids if str(x).strip()]
+    if not ids:
+        return {}
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _effective_project_user_uuid(cur, user_ref, project_owner_user_uuid)
+            cur.execute(
+                """
+                SELECT i.id::text AS id, i.content_text, i.source_url, i.metadata, i.created_at,
+                       i.file_object_key, i.input_type, i.deleted_at,
+                       i.note_summary, i.note_rag_body_hash,
+                       i.note_rag_embedding_sig, i.note_rag_index_error, i.note_rag_index_at
+                FROM inputs i
+                JOIN projects p ON p.id = i.project_id
+                WHERE i.id = ANY(%s::uuid[])
+                  AND i.input_type IN ('note_text', 'note_file')
+                  AND i.deleted_at IS NULL
+                  AND (%s::uuid IS NULL OR p.user_id = %s::uuid)
+                """,
+                (ids, user_uuid, user_uuid),
+            )
+            return {str(r["id"]): dict(r) for r in cur.fetchall()}
 
 
 def update_note_title(note_id: str, new_title: str, user_ref: str | None = None) -> bool:
@@ -2244,7 +2383,25 @@ def list_trashed_works(limit: int = 120, offset: int = 0, user_ref: str | None =
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
             cur.execute(
                 """
-                SELECT j.id, j.job_type, j.status, j.result, j.created_at, j.completed_at, j.project_id, j.deleted_at,
+                SELECT j.id, j.job_type, j.status,
+                  CASE
+                    WHEN j.result IS NULL OR jsonb_typeof(j.result) != 'object' THEN '{}'::jsonb
+                    ELSE jsonb_strip_nulls(
+                      jsonb_build_object(
+                        'preview', j.result->'preview',
+                        'script_preview', j.result->'script_preview',
+                        'title', j.result->'title',
+                        'audio_url', j.result->'audio_url',
+                        'script_url', j.result->'script_url',
+                        'audio_duration_sec', j.result->'audio_duration_sec',
+                        'cover_image', COALESCE(j.result->'cover_image', j.result->'coverImage'),
+                        'cover_object_key', j.result->'cover_object_key',
+                        'script_char_count', j.result->'script_char_count',
+                        'notes_source_notebook', j.result->'notes_source_notebook'
+                      )
+                    )
+                  END AS result,
+                  j.created_at, j.completed_at, j.project_id, j.deleted_at,
                   p.name AS project_name
                 FROM jobs j
                 LEFT JOIN projects p ON p.id = j.project_id
@@ -2330,7 +2487,6 @@ def list_recent_works(
     成功态作品列表。slim_result=True 时仅在 SQL 层投影 result 白名单，避免巨大 audio_hex 进入 API 进程。
     排除知识库索引等内部任务（如 note_rag_index），避免进入「我的作品」/notes 桶。
     """
-    ensure_jobs_trash_schema()
     lim = max(1, min(200, int(limit)))
     off = max(0, min(10_000, int(offset)))
     with get_conn() as conn:
@@ -2404,7 +2560,6 @@ def aggregate_succeeded_works_metrics(*, user_ref: str | None = None) -> dict[st
     与 list_recent_works 相同用户过滤与 job 排除条件下，统计成功作品总数，
     以及 result / payload 中可聚合的音频时长（秒）与稿件字数（字符）。
     """
-    ensure_jobs_trash_schema()
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -2522,7 +2677,6 @@ def list_recent_works_for_public_shared_notebook(
     if get_shared_notebook_public_access(ou, nb) is None:
         return []
     lim = max(1, min(200, int(limit)))
-    ensure_jobs_trash_schema()
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
@@ -2586,7 +2740,6 @@ def list_admin_succeeded_works(
     管理后台「作品管理」：全站已成功且未删除的成片（与 list_recent_works 相同过滤），
     附创建者展示名与播客模板标记。
     """
-    ensure_jobs_trash_schema()
     lim = max(1, min(200, int(limit)))
     off = max(0, min(10_000, int(offset)))
     _creator_label_sql = (
@@ -2674,7 +2827,6 @@ def list_podcast_template_works(
     管理员标记为「创作播客模板」的成功成片，供全站用户在创作页模板区浏览。
     与 list_recent_works 使用相同的 slim result 投影。
     """
-    ensure_jobs_trash_schema()
     lim = max(1, min(200, int(limit)))
     off = max(0, min(10_000, int(offset)))
     jtypes = ["podcast_generate", "podcast"]
@@ -2760,7 +2912,6 @@ def set_job_podcast_template_flag(job_id: str, enabled: bool) -> tuple[bool, str
     将成功播客成片标记为（或取消）全站创作模板。
     返回 (是否更新成功, 错误码)；错误码 ok / invalid_job_id / job_not_found_or_ineligible。
     """
-    ensure_jobs_trash_schema()
     jid = (job_id or "").strip()
     if not jid:
         return False, "invalid_job_id"
@@ -2848,7 +2999,11 @@ def subscription_media_usage_for_phone(phone: str, days: int = 30) -> dict[str, 
                              ),
                              0::double precision
                            )
-                           / 60.0 AS audio_minutes
+                           / 60.0 AS audio_minutes,
+                           COUNT(*) FILTER (
+                             WHERE j.job_type = ANY(ARRAY['podcast_generate', 'podcast']::text[])
+                               AND COALESCE((j.payload::jsonb->>'ai_polish')::boolean, false) IS TRUE
+                           )::bigint AS polish_count
                     FROM jobs j
                     LEFT JOIN projects p ON p.id = j.project_id
                     WHERE j.deleted_at IS NULL
@@ -2863,25 +3018,9 @@ def subscription_media_usage_for_phone(phone: str, days: int = 30) -> dict[str, 
                         uid,
                     ),
                 )
-                row_a = cur.fetchone()
-                audio_min = float(row_a["audio_minutes"] or 0) if row_a else 0.0
-
-                cur.execute(
-                    """
-                    SELECT COUNT(*)::bigint AS n
-                    FROM jobs j
-                    LEFT JOIN projects p ON p.id = j.project_id
-                    WHERE j.deleted_at IS NULL
-                      AND j.status = 'succeeded'
-                      AND j.job_type = ANY(%s::text[])
-                      AND j.completed_at >= NOW() - (%s * INTERVAL '1 day')
-                      AND COALESCE(j.created_by, p.user_id) = %s::uuid
-                      AND COALESCE((j.payload::jsonb->>'ai_polish')::boolean, false) IS TRUE
-                    """,
-                    (["podcast_generate", "podcast"], d, uid),
-                )
-                row_t = cur.fetchone()
-                n_polish = int(row_t["n"] or 0) if row_t else 0
+                row = cur.fetchone()
+                audio_min = float(row["audio_minutes"] or 0) if row else 0.0
+                n_polish = int(row["polish_count"] or 0) if row else 0
                 return {"audio_minutes_used": audio_min, "text_polish_used": n_polish}
     except Exception:
         return {"audio_minutes_used": 0.0, "text_polish_used": 0}
@@ -2934,7 +3073,6 @@ def list_jobs(
     slim: bool = False,
     user_ref: str | None = None,
 ) -> list[dict[str, Any]]:
-    ensure_jobs_trash_schema()
     lim = max(1, min(500, int(limit)))
     off = max(0, min(50_000, int(offset)))
     allowed = ("queued", "running", "succeeded", "failed", "cancelled")
@@ -3118,7 +3256,7 @@ def _usage_event_phone_for_job(row: dict[str, Any]) -> str | None:
 def _try_record_usage_on_terminal(job_id: str, status: str) -> None:
     if status not in ("succeeded", "failed", "cancelled"):
         return
-    row = get_job(job_id)
+    row = get_job_for_usage_billing(job_id)
     if not row:
         return
     phone = _usage_event_phone_for_job(row)
@@ -3576,7 +3714,6 @@ def record_site_page_view(*, visitor_id: str, path: str, user_id: str | None = N
             uid = str(uuid.UUID(str(user_id)))
         except (ValueError, TypeError):
             uid = None
-    ensure_site_traffic_schema()
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
