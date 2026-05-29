@@ -30,6 +30,9 @@ from .note_chapters import (
     detect_chapters,
     persist_chapters,
 )
+from .fyv_shared.embedding_sparse import batch_sparse_vs_query, sparse_from_chunk_meta
+from .fyv_shared.embedding_scenarios import sparse_scoring_enabled, sparse_score_weight
+from .fyv_shared.embedding_index import embed_document_chunks, embed_document_chunks_batched, merge_meta_with_sparse
 from .note_chunk_offsets import attach_char_offsets_to_chunks
 from .note_parse_quality import parse_gate_block_index_enabled
 from .note_rag_profile import query_suggests_table, rag_chunk_params_for_note
@@ -654,34 +657,32 @@ def embed_chapters_on_demand(
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
         ep = EmbeddingProvider()
-        embeddings: list[list[float]] = []
-        batch = 32
-        for i in range(0, len(texts), batch):
-            embeddings.extend(ep.embed_texts([t[:8000] for t in texts[i : i + batch]]))
+        doc_embs, _ = embed_document_chunks_batched(ep, texts)
     except Exception as exc:
         logger.warning("on_demand embed failed note_id=%s: %s", nid, exc)
         return {"ok": False, "error": str(exc)[:200]}
 
-    if len(embeddings) != len(texts):
+    if len(doc_embs) != len(texts):
         return {"ok": False, "error": "embed_count_mismatch"}
 
     start_idx = _max_chunk_index_for_note(nid) + 1
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            for off, (ch, emb, meta) in enumerate(zip(texts, embeddings, metas)):
+            for off, (ch, doc, meta) in enumerate(zip(texts, doc_embs, metas)):
+                meta_obj = merge_meta_with_sparse(meta, doc)
                 cur.execute(
                     """
                     INSERT INTO note_rag_chunks (input_id, chunk_index, chunk_text, embedding, chunk_meta)
                     VALUES (%s::uuid, %s, %s, %s::jsonb, %s::jsonb)
                     """,
-                    (nid, start_idx + off, ch, json.dumps(emb), json.dumps(meta)),
+                    (nid, start_idx + off, ch, json.dumps(doc.dense), json.dumps(meta_obj)),
                 )
             conn.commit()
 
     sig = ""
-    if ep and embeddings:
+    if ep and doc_embs:
         try:
-            sig = ep.embedding_signature(len(embeddings[0]))
+            sig = ep.embedding_signature(len(doc_embs[0].dense))
         except Exception:
             sig = ""
     if sig:
@@ -751,27 +752,25 @@ def embed_shards_on_demand(
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
         ep = EmbeddingProvider()
-        embeddings: list[list[float]] = []
-        batch = 32
-        for i in range(0, len(texts), batch):
-            embeddings.extend(ep.embed_texts([t[:8000] for t in texts[i : i + batch]]))
+        doc_embs, _ = embed_document_chunks_batched(ep, texts)
     except Exception as exc:
         logger.warning("on_demand shard embed failed note_id=%s: %s", nid, exc)
         return {"ok": False, "error": str(exc)[:200]}
 
-    if len(embeddings) != len(texts):
+    if len(doc_embs) != len(texts):
         return {"ok": False, "error": "embed_count_mismatch"}
 
     start_idx = _max_chunk_index_for_note(nid) + 1
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            for off, (ch, emb, meta) in enumerate(zip(texts, embeddings, metas)):
+            for off, (ch, doc, meta) in enumerate(zip(texts, doc_embs, metas)):
+                meta_obj = merge_meta_with_sparse(meta, doc)
                 cur.execute(
                     """
                     INSERT INTO note_rag_chunks (input_id, chunk_index, chunk_text, embedding, chunk_meta)
                     VALUES (%s::uuid, %s, %s, %s::jsonb, %s::jsonb)
                     """,
-                    (nid, start_idx + off, ch, json.dumps(emb), json.dumps(meta)),
+                    (nid, start_idx + off, ch, json.dumps(doc.dense), json.dumps(meta_obj)),
                 )
             conn.commit()
 
@@ -1125,26 +1124,25 @@ def _index_note_incremental_append(
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
         ep = EmbeddingProvider()
-        embeddings: list[list[float]] = []
-        for i in range(0, len(texts), 32):
-            embeddings.extend(ep.embed_texts([t[:8000] for t in texts[i : i + 32]]))
+        doc_embs, _ = embed_document_chunks_batched(ep, texts)
     except Exception as exc:
         return {"ok": False, "error": f"embed_failed:{exc}"[:200]}
 
-    if len(embeddings) != len(texts):
+    if len(doc_embs) != len(texts):
         return {"ok": False, "error": "embed_count_mismatch"}
 
     start_idx = _max_chunk_index_for_note(note_id) + 1
     metas = attach_char_offsets_to_chunks(body, texts, metas)
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            for off, (ch, emb, meta) in enumerate(zip(texts, embeddings, metas)):
+            for off, (ch, doc, meta) in enumerate(zip(texts, doc_embs, metas)):
+                meta_obj = merge_meta_with_sparse(meta, doc)
                 cur.execute(
                     """
                     INSERT INTO note_rag_chunks (input_id, chunk_index, chunk_text, embedding, chunk_meta)
                     VALUES (%s::uuid, %s, %s, %s::jsonb, %s::jsonb)
                     """,
-                    (note_id, start_idx + off, ch, json.dumps(emb), json.dumps(meta)),
+                    (note_id, start_idx + off, ch, json.dumps(doc.dense), json.dumps(meta_obj)),
                 )
             conn.commit()
 
@@ -1287,39 +1285,35 @@ def index_note_for_rag(note_id: str, user_ref: str | None, api_key: str | None =
 
         ep = EmbeddingProvider()
         emb_backend = ep.active_backend()
-        embeddings: list[list[float]] = []
-        batch = 32
-        for i in range(0, len(chunks), batch):
-            batch_texts = [c[:8000] for c in chunks[i : i + batch]]
-            if emb_backend == "api":
-                embedding_input_chars += sum(len(t) for t in batch_texts)
-            embeddings.extend(ep.embed_texts(batch_texts))
+        doc_embs, embedding_input_chars = embed_document_chunks_batched(
+            ep, chunks, count_api_chars=True
+        )
     except Exception as exc:
         logger.warning("note_rag embed failed note_id=%s: %s", note_id, exc)
         _update_note_rag_index_error(note_id, f"embed_failed:{exc}")
         return {"ok": False, "error": f"embed_failed:{exc}"[:200]}
 
-    if len(embeddings) != len(chunks):
+    if len(doc_embs) != len(chunks):
         _update_note_rag_index_error(note_id, "embed_count_mismatch")
         return {"ok": False, "error": "embed_count_mismatch"}
 
     delete_rag_chunks_for_note(note_id)
     with get_conn() as conn:
         with get_cursor(conn) as cur:
-            for idx, (ch, emb, cmeta) in enumerate(zip(chunks, embeddings, chunk_metas)):
-                meta_obj = dict(cmeta) if isinstance(cmeta, dict) else {}
+            for idx, (ch, doc, cmeta) in enumerate(zip(chunks, doc_embs, chunk_metas)):
+                meta_obj = merge_meta_with_sparse(cmeta if isinstance(cmeta, dict) else {}, doc)
                 cur.execute(
                     """
                     INSERT INTO note_rag_chunks (input_id, chunk_index, chunk_text, embedding, chunk_meta)
                     VALUES (%s::uuid, %s, %s, %s::jsonb, %s::jsonb)
                     """,
-                    (note_id, idx, ch, json.dumps(emb), json.dumps(meta_obj)),
+                    (note_id, idx, ch, json.dumps(doc.dense), json.dumps(meta_obj)),
                 )
             conn.commit()
 
     sig = ""
     try:
-        sig = ep.embedding_signature(len(embeddings[0]))
+        sig = ep.embedding_signature(len(doc_embs[0].dense))
     except Exception:
         sig = ""
 
@@ -1897,6 +1891,7 @@ def retrieve_chunks_across_notes(
     )
     _t_embed = time.perf_counter()
     query_embed_chars = 0
+    q_sparse: list[dict[str, Any]] = []
     try:
         from app.fyv_shared.embedding_provider import EmbeddingProvider
 
@@ -1918,9 +1913,11 @@ def retrieve_chunks_across_notes(
         if not uniq:
             uniq = [q]
         q_inputs = [x[:8000] for x in uniq]
-        qvs = ep.embed_texts(q_inputs)
+        q_docs = ep.embed_query_vectors(q_inputs, scenario="notes_ask")
+        qvs = [d.dense for d in q_docs if d.dense]
         if not qvs:
             raise RuntimeError("empty query embeddings")
+        q_sparse = q_docs[0].sparse if q_docs else []
         current_sig = ep.embedding_signature(len(qvs[0]))
         emb_backend = ep.active_backend()
         query_embed_chars = sum(len(t) for t in q_inputs) if emb_backend == "api" else 0
@@ -2007,6 +2004,17 @@ def retrieve_chunks_across_notes(
     for qv in qvs[1:]:
         extra = _batch_cosine_vs_query(qv, vecs)
         sims = [max(a, b) for a, b in zip(sims, extra)]
+    if sparse_scoring_enabled() and q_sparse:
+        doc_sparses = [sparse_from_chunk_meta(p.get("chunk_meta")) for p in parsed]
+        if any(doc_sparses):
+            sparse_raw = batch_sparse_vs_query(q_sparse, doc_sparses)
+            for qdoc in q_docs[1:]:
+                if qdoc.sparse:
+                    extra_s = batch_sparse_vs_query(qdoc.sparse, doc_sparses)
+                    sparse_raw = [max(a, b) for a, b in zip(sparse_raw, extra_s)]
+            ns = _norm_minmax(sparse_raw)
+            w_s = sparse_score_weight()
+            sims = [(1.0 - w_s) * float(d) + w_s * float(s) for d, s in zip(sims, ns)]
     kw_raw = [float(_keyword_score(q, p["_ch"])) for p in parsed]
     nk = _norm_minmax(kw_raw)
     nv = _norm_minmax([float(x) for x in sims])

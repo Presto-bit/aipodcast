@@ -61,7 +61,7 @@ DEEPSEEK_CHAT_INPUT_CACHE_HIT_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_INPUT_CACHE_HIT_C
 DEEPSEEK_CHAT_INPUT_CACHE_MISS_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_INPUT_CACHE_MISS_CNY_PER_MTOK
 DEEPSEEK_CHAT_OUTPUT_CNY_PER_MTOK = DEEPSEEK_V4_FLASH_OUTPUT_CNY_PER_MTOK
 
-# Embedding（如 embo-01）：元 / 百万 tokens；看板参考价，实际以控制台账单为准
+# Embedding（百炼 text-embedding-v4 等）：元 / 百万 tokens；看板参考价，实际以控制台账单为准
 EMBEDDING_REFERENCE_CNY_PER_MTOK = 0.5
 
 
@@ -393,7 +393,7 @@ def build_usage_event_meta(job: dict[str, Any], status: str) -> dict[str, Any]:
     img = 0.0
     emb = 0.0
 
-    emb_model = str(os.getenv("RAG_EMBEDDING_MODEL") or "embo-01").strip()
+    emb_model = str(os.getenv("RAG_EMBEDDING_MODEL") or "text-embedding-v4").strip()
 
     want_cover = _want_generate_cover_for_billing(payload, jt)
 

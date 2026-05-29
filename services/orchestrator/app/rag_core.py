@@ -410,25 +410,36 @@ def apply_hybrid_vector_rag(
     emb_backend = "hash"
     try:
         from app.fyv_shared.embedding_provider import EmbeddingProvider
+        from app.fyv_shared.embedding_sparse import batch_sparse_vs_query
+        from app.fyv_shared.embedding_scenarios import sparse_scoring_enabled, sparse_score_weight
 
         ep = EmbeddingProvider()
         emb_backend = ep.active_backend()
         if emb_backend == "hash":
             logger.warning("hybrid RAG: embedding backend=hash，检索质量可能较差，建议配置 RAG_EMBEDDING_* 或本地模型")
-        # 单批限制避免超大文档爆内存
         batch_size = 32
         q_slice = query[:8000]
-        qv = ep.embed_texts([q_slice])[0]
+        q_doc = ep.embed_query_vectors([q_slice], scenario="podcast_reference")[0]
+        qv = q_doc.dense
+        if not qv:
+            raise RuntimeError("empty query embedding")
         if emb_backend == "api":
             emb_input_chars += len(q_slice)
         vec_raw = []
+        doc_sparse_batch: list[list[dict[str, Any]]] = []
         for i in range(0, len(chunks), batch_size):
             batch = [c[:8000] for c in chunks[i : i + batch_size]]
-            vecs = ep.embed_texts(batch)
+            doc_embs = ep.embed_documents(batch)
             if emb_backend == "api":
                 emb_input_chars += sum(len(b) for b in batch)
-            for v in vecs:
-                vec_raw.append(_cosine(qv, v))
+            for doc in doc_embs:
+                vec_raw.append(_cosine(qv, doc.dense))
+                doc_sparse_batch.append(doc.sparse)
+        if sparse_scoring_enabled() and q_doc.sparse and any(doc_sparse_batch):
+            sparse_raw = batch_sparse_vs_query(q_doc.sparse, doc_sparse_batch)
+            ns = _norm_minmax(sparse_raw)
+            w_s = sparse_score_weight()
+            vec_raw = [(1.0 - w_s) * float(d) + w_s * float(s) for d, s in zip(vec_raw, ns)]
         emb_log = f"emb_backend={emb_backend}"
     except Exception as exc:
         logger.warning("hybrid embedding failed, keyword-only: %s", exc)
