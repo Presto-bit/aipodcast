@@ -71,6 +71,7 @@ import {
   normalizePathname,
   pathMatchesRoot,
   pathNeedsWorkAudio,
+  shouldKeepSidebarExpanded,
   WORKBENCH_HOME_PATH
 } from "../lib/navPaths";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../lib/userScopedStorage";
@@ -272,15 +273,35 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setNavPending(false);
   }, []);
 
-  const beginWorkbenchNav = useCallback((href: string) => {
-    const target = normalizePathname(String(href || "").split("?")[0] || href);
-    const current = normalizePathname(pathRef.current);
-    if (!target || target === current) return;
-    navPendingTargetRef.current = target;
-    navPendingHrefRef.current = href;
-    setRouteRemountKey((k) => k + 1);
-    setNavPending(true);
+  const expandSidebar = useCallback(() => {
+    setCollapsed(false);
+    try {
+      writeLocalStorageScoped(COLLAPSE_KEY, SIDEBAR_EXPANDED_STORAGE);
+    } catch {
+      // ignore
+    }
+    if (typeof window !== "undefined") {
+      queueMicrotask(() => {
+        window.dispatchEvent(new CustomEvent(APP_SIDEBAR_TOGGLE_EVENT));
+      });
+    }
   }, []);
+
+  const beginWorkbenchNav = useCallback(
+    (href: string) => {
+      const target = normalizePathname(String(href || "").split("?")[0] || href);
+      const current = normalizePathname(pathRef.current);
+      if (!target || target === current) return;
+      if (shouldKeepSidebarExpanded(target)) {
+        expandSidebar();
+      }
+      navPendingTargetRef.current = target;
+      navPendingHrefRef.current = href;
+      setRouteRemountKey((k) => k + 1);
+      setNavPending(true);
+    },
+    [expandSidebar]
+  );
 
   useEffect(() => {
     pathRef.current = path;
@@ -466,6 +487,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (pathMatchesRoot(path, "/create")) setCreateSubNavExpanded(true);
   }, [path]);
+
+  /** 知识库 / 创作播客 / 我的作品：进入时恢复宽轨侧栏（含整页跳转后的首屏） */
+  useEffect(() => {
+    if (!ready || mobileLayout) return;
+    if (!shouldKeepSidebarExpanded(path)) return;
+    setCollapsed((c) => {
+      if (!c) return c;
+      try {
+        writeLocalStorageScoped(COLLAPSE_KEY, SIDEBAR_EXPANDED_STORAGE);
+      } catch {
+        // ignore
+      }
+      queueMicrotask(() => {
+        window.dispatchEvent(new CustomEvent(APP_SIDEBAR_TOGGLE_EVENT));
+      });
+      return false;
+    });
+  }, [path, ready, mobileLayout]);
 
   useEffect(() => {
     if (!mobileLayout || !mobileNavOpen) return;

@@ -53,6 +53,15 @@ export function matchesNotesWorkbench(pathname: string): boolean {
   );
 }
 
+/** 侧栏一级入口（知识库 / 创作播客 / 我的作品）：进入时保持 232px 宽轨，不收成 72px 窄轨 */
+export function shouldKeepSidebarExpanded(pathname: string): boolean {
+  const n = normalizePathname(pathname);
+  if (pathMatchesRoot(n, "/notes")) return true;
+  if (matchesProductStudio(n)) return true;
+  if (pathMatchesRoot(n, "/works")) return true;
+  return false;
+}
+
 export function matchesAdminConsole(pathname: string): boolean {
   const n = normalizePathname(pathname);
   return pathMatchesRoot(n, "/admin");
