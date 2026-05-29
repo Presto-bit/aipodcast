@@ -76,7 +76,7 @@ function preferredVisibleTab(
 }
 
 /**
- * 知识库「我的作品」：音频 / 文章 / 进行中 Tab；音频用封面卡片，文章用文稿列表。
+ * 知识库「我的作品」：音频 / 文章 / 进行中 Tab；文章与「我的作品」页同款杂志卡。
  */
 export default function NotesWorkbenchWorksPanel({
   works,

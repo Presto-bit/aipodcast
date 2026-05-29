@@ -39,7 +39,6 @@ import { WorkGalleryListItem } from "./WorkGalleryListItem";
 import { WorkGalleryVirtualGrid } from "./WorkGalleryVirtualGrid";
 import { ScriptQuickReadDrawer } from "./ScriptQuickReadDrawer";
 import { useWorkGalleryGridColumnCount } from "./useWorkGalleryGridColumnCount";
-import { useContainerGridColumnCount } from "./useContainerGridColumnCount";
 import { buildWorkDetailHref } from "./workGalleryNav";
 import {
   humanNoteSourceLabel,
@@ -266,18 +265,7 @@ export default function PodcastWorksGallery({
     if (variant === "notes_studio" || useCompactAllLayout) return "compact";
     return "grid";
   }, [activeQueueCardActions, variant, useCompactAllLayout]);
-  const scriptCardDensity = useMemo(
-    () => (typeof sidebarMaxItems === "number" && sidebarMaxItems > 0 ? "mini" : "full"),
-    [sidebarMaxItems]
-  );
-  const scriptSidebarCompactGrid = scriptCardDensity === "mini";
-  const scriptSidebarGridRef = useRef<HTMLUListElement | null>(null);
-  const sidebarScriptCols = useContainerGridColumnCount(scriptSidebarGridRef, {
-    enabled: scriptSidebarCompactGrid,
-    minItemWidth: 132,
-    gap: 6,
-    maxCols: 3
-  });
+  const scriptCardDensity = "full" as const;
   const { hiddenKey, titlesKey, allowedTypes } = useMemo(() => galleryStorageKeys(variant), [variant]);
 
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -391,7 +379,7 @@ export default function PodcastWorksGallery({
   }, [items.length, variant, sidebarMaxItems]);
 
   const gridColumnCount = useWorkGalleryGridColumnCount();
-  const effectiveGridColumnCount = scriptSidebarCompactGrid ? sidebarScriptCols : gridColumnCount;
+  const effectiveGridColumnCount = gridColumnCount;
   const [clientMounted, setClientMounted] = useState(false);
   useEffect(() => setClientMounted(true), []);
   const useGridVirtual = clientMounted && rowLayout === "grid" && visibleItems.length >= 12;
@@ -1143,7 +1131,7 @@ export default function PodcastWorksGallery({
       variant,
       rowLayout,
       scriptCardDensity,
-      scriptGridSingleColumn: scriptSidebarCompactGrid,
+      scriptGridSingleColumn: false,
       useNotesStyleCards,
       useCompactAllLayout,
       enableBatchActions: Boolean(enableBatchActions),
@@ -1191,7 +1179,6 @@ export default function PodcastWorksGallery({
       variant,
       rowLayout,
       scriptCardDensity,
-      scriptSidebarCompactGrid,
       useNotesStyleCards,
       useCompactAllLayout,
       enableBatchActions,
@@ -1233,12 +1220,8 @@ export default function PodcastWorksGallery({
     ]
   );
 
-  const scriptNotesGridClass = scriptSidebarCompactGrid
-    ? "grid w-full items-stretch gap-1.5 overflow-visible"
-    : "grid grid-cols-1 items-stretch gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
-  const scriptNotesGridStyle = scriptSidebarCompactGrid
-    ? ({ gridTemplateColumns: `repeat(${sidebarScriptCols}, minmax(0, 1fr))` } as const)
-    : undefined;
+  const scriptNotesGridClass =
+    "grid grid-cols-1 items-stretch gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
   return (
     <WorkGalleryListProvider value={listCtxValue}>
@@ -1403,9 +1386,7 @@ export default function PodcastWorksGallery({
           </div>
         ) : (
           <ul
-            ref={variant === "notes" && scriptSidebarCompactGrid ? scriptSidebarGridRef : undefined}
             className={variant === "notes" ? scriptNotesGridClass : "grid grid-cols-1 items-stretch gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}
-            style={variant === "notes" ? scriptNotesGridStyle : undefined}
           >
             {visibleItems.map((w, index) => (
               <WorkGalleryListItem

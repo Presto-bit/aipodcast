@@ -13,7 +13,7 @@ export type ScriptCardDensity = "full" | "mini";
 export type WorkGalleryListContextValue = {
   variant: "podcast" | "tts" | "notes" | "notes_studio" | "all";
   rowLayout: WorkGalleryRowLayout;
-  /** 文稿杂志卡：侧栏限条数时用 mini */
+  /** 文稿杂志卡密度（侧栏与全宽列表现统一为 full） */
   scriptCardDensity: ScriptCardDensity;
   /** 知识库/侧栏等紧凑网格（2 列迷你卡） */
   scriptGridSingleColumn: boolean;

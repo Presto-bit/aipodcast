@@ -60,26 +60,77 @@ export function scriptCardMetaLine(
   return parts.join(" · ");
 }
 
+const TITLE_NOISE_PREFIXES = [
+  "如何",
+  "怎样",
+  "为什么",
+  "何为",
+  "关于",
+  "浅谈",
+  "深度",
+  "读懂",
+  "一篇",
+  "我的",
+  "第"
+] as const;
+
+const COVER_PARTICLE_CHARS = new Set(["的", "了", "吗", "在", "与", "和", "是", "我", "你", "他", "她", "它", "这", "那"]);
+
+const BRACKET_TITLE_RE = /[《「『【\[]([^》」』\]】]{1,10})[》」』\]】]/;
+
+/** 从标题提取更适合封面展示的核心词，避免机械截取前两字。 */
+function extractCoverTitleSeed(rawTitle: string): string {
+  let t = String(rawTitle || "").trim();
+  if (!t) return "";
+
+  const bracketMatch = t.match(BRACKET_TITLE_RE);
+  if (bracketMatch?.[1]?.trim()) {
+    t = bracketMatch[1].trim();
+  }
+
+  t = t.replace(/^[\s#*•·\-—:：|｜]+/, "");
+  for (const prefix of TITLE_NOISE_PREFIXES) {
+    if (t.startsWith(prefix)) {
+      t = t.slice(prefix.length).trim();
+      break;
+    }
+  }
+  return t.replace(/^[\s#*•·\-—:：|｜【\[]+/, "").trim();
+}
+
 export function scriptCoverInitials(title: string, genreLabel?: string, jobType?: string): string {
-  const t = String(title || "").trim();
-  const meaningful = Array.from(t.replace(/\s+/g, "")).filter((c) =>
+  const seed = extractCoverTitleSeed(title);
+  const meaningful = Array.from(seed.replace(/\s+/g, "")).filter((c) =>
     /[\u4e00-\u9fffA-Za-z0-9]/.test(c)
   );
+
   if (meaningful.length > 0) {
     if (/^[\u4e00-\u9fff]/.test(meaningful[0]!)) {
-      return meaningful.slice(0, 2).join("") || "文";
+      if (meaningful.length === 1) return meaningful[0]!;
+      const first = meaningful[0]!;
+      const second =
+        meaningful.slice(1, 5).find((c) => !COVER_PARTICLE_CHARS.has(c) && c !== first) ??
+        meaningful[1];
+      if (!second || first === second) return first;
+      return first + second;
     }
-    const word = t.split(/\s+/).find((w) => /[A-Za-z0-9]/.test(w)) || t;
-    const letters = word.replace(/[^A-Za-z0-9]/g, "");
-    if (letters.length > 0) return letters.slice(0, 2).toUpperCase();
+    const words = seed.split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w));
+    if (words.length >= 2) {
+      return (words[0]![0]! + words[1]![0]!).toUpperCase();
+    }
+    const letters = seed.replace(/[^A-Za-z0-9]/g, "");
+    if (letters.length >= 2) return letters.slice(0, 2).toUpperCase();
+    if (letters.length === 1) return letters.toUpperCase();
   }
+
   const genre = String(genreLabel || "").trim();
+  if (genre === "小红书") return "红";
+  if (genre === "微信公众号") return "微";
   if (genre) {
     const g = Array.from(genre).filter((c) => /[\u4e00-\u9fff]/.test(c));
-    if (g.length >= 2) return g.slice(0, 2).join("");
-    if (g.length === 1) return g[0]!;
+    if (g.length >= 1) return g[0]!;
   }
-  if (String(jobType || "") === "social_publish_draft") return "自媒";
+  if (String(jobType || "") === "social_publish_draft") return "媒";
   return "文";
 }
 

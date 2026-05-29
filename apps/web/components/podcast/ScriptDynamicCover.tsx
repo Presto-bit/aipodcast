@@ -33,6 +33,8 @@ export function ScriptDynamicCover({
   const initials = scriptCoverInitials(title, genreLabel, jobType);
   const charLabel = formatScriptCharCountLabel(charCount);
   const mini = density === "mini";
+  const initialsSizeClass =
+    initials.length <= 1 ? "text-5xl sm:text-6xl" : initials.length === 2 ? "text-4xl sm:text-5xl" : "text-3xl sm:text-4xl";
   const chipCls =
     chip.tone === "social"
       ? "bg-cta/15 text-cta ring-cta/25"
@@ -61,7 +63,7 @@ export function ScriptDynamicCover({
       <div className="absolute inset-0 flex items-center justify-center px-2">
         <span
           className={`select-none font-semibold tracking-wide text-white/90 ${
-            mini ? "text-xl" : "text-4xl sm:text-5xl"
+            mini ? "text-xl" : initialsSizeClass
           }`}
         >
           {initials}
