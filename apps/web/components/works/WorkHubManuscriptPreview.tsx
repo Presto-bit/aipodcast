@@ -7,12 +7,19 @@ type Props = {
   body: string;
   emptyHint?: string;
   className?: string;
+  /** false 时由父级统一滚动，不单独限高 */
+  scrollContained?: boolean;
 };
 
 /**
  * 文稿只读预览：连续正文区，小节标题 inline，整体可滚动。
  */
-export function WorkHubManuscriptPreview({ body, emptyHint, className = "" }: Props) {
+export function WorkHubManuscriptPreview({
+  body,
+  emptyHint,
+  className = "",
+  scrollContained = true
+}: Props) {
   const sections = useMemo(() => manuscriptBodyToDisplaySections(body), [body]);
   const trimmed = String(body || "").trim();
 
@@ -26,10 +33,12 @@ export function WorkHubManuscriptPreview({ body, emptyHint, className = "" }: Pr
 
   const multiSection = sections.length > 1 || Boolean(sections[0]?.heading);
 
+  const scrollCls = scrollContained ? "max-h-[min(85vh,48rem)] overflow-y-auto" : "";
+
   if (!multiSection) {
     return (
       <div
-        className={`max-h-[min(85vh,48rem)] overflow-y-auto whitespace-pre-wrap [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm ${className}`.trim()}
+        className={`${scrollCls} whitespace-pre-wrap [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm ${className}`.trim()}
       >
         {trimmed}
       </div>
@@ -38,7 +47,7 @@ export function WorkHubManuscriptPreview({ body, emptyHint, className = "" }: Pr
 
   return (
     <div
-      className={`max-h-[min(85vh,48rem)] overflow-y-auto [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm ${className}`.trim()}
+      className={`${scrollCls} [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm ${className}`.trim()}
     >
       {sections.map((section, index) => (
         <div key={`${index}-${section.heading.slice(0, 24)}`} className={index > 0 ? "mt-5" : ""}>

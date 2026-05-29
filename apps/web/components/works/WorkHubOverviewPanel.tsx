@@ -341,7 +341,13 @@ export function WorkHubOverviewPanel({
                   />
                 ) : null}
               </div>
-              <div className="mt-3 min-w-0">
+              <div
+                className={
+                  socialPublishDraft
+                    ? "mt-3 min-w-0 max-h-[min(80vh,36rem)] overflow-y-auto"
+                    : "mt-3 min-w-0"
+                }
+              >
                 {socialPublishDraft && socialPublishDetail && socialPublishDetail.titles.some((t) => t.trim()) ? (
                   <div className="mb-4">
                     <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted">备选标题</h4>
@@ -387,6 +393,7 @@ export function WorkHubOverviewPanel({
                   onRegenerateVoice={onRegenerateVoice}
                   pureManuscriptOnly
                   hideToolbar
+                  innerScroll={!socialPublishDraft}
                   requestDelete={scriptDeleteBump}
                   readonlyEmptyHint={readonlyEmptyHint}
                 />

@@ -36,6 +36,8 @@ type Props = {
    * 章节口播：`hideToolbar` + `scriptAutosave` 时为 false 则只读预览；true 时为编辑态（仅一处正文）。
    */
   chapterEditorOpen?: boolean;
+  /** false 时正文区不限高，由父级容器统一滚动（如自媒体稿含标题/配图建议） */
+  innerScroll?: boolean;
 };
 
 export function WorkHubManuscriptBar({
@@ -54,7 +56,8 @@ export function WorkHubManuscriptBar({
   requestDelete = 0,
   chapterEditorOpen,
   readonlyEmptyHint,
-  tallScriptArea = false
+  tallScriptArea = false,
+  innerScroll = true
 }: Props) {
   const { showError } = useAppNotice();
   const [draft, setDraft] = useState(manuscriptBody);
@@ -247,7 +250,9 @@ export function WorkHubManuscriptBar({
             <textarea
               className={
                 pureManuscriptOnly
-                  ? "max-h-[min(110vh,56rem)] min-h-[24rem] w-full rounded-lg border border-line bg-fill/30 p-3 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm"
+                  ? innerScroll
+                    ? "max-h-[min(110vh,56rem)] min-h-[24rem] w-full rounded-lg border border-line bg-fill/30 p-3 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm"
+                    : "min-h-[24rem] w-full rounded-lg border border-line bg-fill/30 p-3 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm"
                   : tallScriptArea
                     ? "max-h-[min(92vh,56rem)] min-h-[min(52vh,28rem)] w-full rounded-lg border border-line bg-fill/30 p-3 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm"
                     : "max-h-[min(55vh,28rem)] min-h-[12rem] w-full rounded-lg border border-line bg-fill/30 p-3 [font-family:var(--dawn-font-sans)] text-[13px] leading-relaxed text-ink sm:text-sm"
@@ -307,12 +312,15 @@ export function WorkHubManuscriptBar({
           <WorkHubManuscriptPreview
             body={previewBody ?? manuscriptBody}
             emptyHint={readonlyEmptyHint}
+            scrollContained={innerScroll}
             className={
-              pureManuscriptOnly
-                ? "max-h-[min(80vh,36rem)]"
-                : tallScriptArea
-                  ? "min-h-[min(56vh,30rem)] max-h-[min(92vh,56rem)]"
-                  : "max-h-[min(40vh,18rem)]"
+              innerScroll
+                ? pureManuscriptOnly
+                  ? "max-h-[min(80vh,36rem)]"
+                  : tallScriptArea
+                    ? "min-h-[min(56vh,30rem)] max-h-[min(92vh,56rem)]"
+                    : "max-h-[min(40vh,18rem)]"
+                : ""
             }
           />
         )}
