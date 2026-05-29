@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import type { PodcastWorkRow } from "./workGalleryListShared";
+import type { WorkGalleryActivePlayback } from "./workGalleryListContext";
 import { WorkGalleryListItem } from "./WorkGalleryListItem";
 
 const GAP_PX = 10;
@@ -14,9 +15,18 @@ type Props = {
   columnCount: number;
   variant: "podcast" | "tts" | "notes" | "notes_studio" | "all";
   eagerCoverFirstCount: number;
+  activeJobId?: string | null;
+  activePlayback?: WorkGalleryActivePlayback | null;
 };
 
-export function WorkGalleryVirtualGrid({ items, columnCount, variant, eagerCoverFirstCount }: Props) {
+export function WorkGalleryVirtualGrid({
+  items,
+  columnCount,
+  variant,
+  eagerCoverFirstCount,
+  activeJobId = null,
+  activePlayback = null
+}: Props) {
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
   const rowCount = Math.max(0, Math.ceil(items.length / Math.max(1, columnCount)));
@@ -74,6 +84,7 @@ export function WorkGalleryVirtualGrid({ items, columnCount, variant, eagerCover
                         eagerCoverFirstCount={eagerCoverFirstCount}
                         useListCoverThumb
                         suppressContainerRole
+                        activePlayback={activeJobId === String(w.id) ? activePlayback : null}
                       />
                     </div>
                   );

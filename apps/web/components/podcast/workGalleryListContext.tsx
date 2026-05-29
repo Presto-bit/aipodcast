@@ -8,9 +8,15 @@ import type { PodcastWorkRow } from "./workGalleryListShared";
 
 export type WorkGalleryRowLayout = "grid" | "compact" | "script-list" | "active";
 
+export type ScriptCardDensity = "full" | "mini";
+
 export type WorkGalleryListContextValue = {
   variant: "podcast" | "tts" | "notes" | "notes_studio" | "all";
   rowLayout: WorkGalleryRowLayout;
+  /** 文稿杂志卡：侧栏限条数时用 mini */
+  scriptCardDensity: ScriptCardDensity;
+  /** 侧栏单列网格（与 scriptCardDensity=mini 同步） */
+  scriptGridSingleColumn: boolean;
   useNotesStyleCards: boolean;
   useCompactAllLayout: boolean;
   enableBatchActions: boolean;
@@ -23,8 +29,6 @@ export type WorkGalleryListContextValue = {
   isPlayingAudio: boolean;
   activePlayError: string | null;
   playErrorById: Record<string, string>;
-  progress01: number;
-  durationSec: number;
   hydratedDurationSec: Record<string, number>;
   publicationsByJobId: Record<string, RssPublication[]>;
   menuOpenId: string | null;
@@ -64,6 +68,14 @@ export type WorkGalleryListContextValue = {
   requestStopActiveJob: (jobId: string) => void;
   copyManuscriptBusyId: string | null;
   requestCopyManuscript: (jobId: string, work?: Pick<WorkItem, "scriptText" | "scriptCharCount" | "status">) => void;
+  quickReadWorkId: string | null;
+  openQuickRead: (work: PodcastWorkRow) => void;
+  closeQuickRead: () => void;
+};
+
+export type WorkGalleryActivePlayback = {
+  progress01: number;
+  durationSec: number;
 };
 
 const WorkGalleryListContext = createContext<WorkGalleryListContextValue | null>(null);

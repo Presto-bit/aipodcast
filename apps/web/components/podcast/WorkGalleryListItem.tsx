@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode, type Ref } from "react";
+import { memo, useEffect, useState, type ReactNode, type Ref } from "react";
 import { unusableInsecureHttpOnHttpsPage } from "../../lib/insecureHttpOnHttpsPage";
 import { computeWorkHubGeneratingBarPct } from "../../lib/workGeneratingProgressBar";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
@@ -18,8 +18,10 @@ import {
   workIsSharedNotebookForeign
 } from "./workGalleryListShared";
 import type { PodcastWorkRow } from "./workGalleryListShared";
+import type { WorkGalleryActivePlayback } from "./workGalleryListContext";
 import { useWorkGalleryListContext } from "./workGalleryListContext";
 import { WorkGalleryActiveRow, WorkGalleryScriptListRow } from "./workGalleryAlternateRows";
+import { ScriptMagazineCard } from "./ScriptMagazineCard";
 import { scriptExcerptFromWork } from "../../lib/workGalleryDisplay";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { IconPause, IconPlayFilled, WorkTypeIcon } from "../icons";
@@ -82,15 +84,6 @@ function CircularPlayControl({
 }
 
 
-export type WorkGalleryListItemProps = {
-  w: PodcastWorkRow;
-  index: number;
-  outer: "li" | "div";
-  eagerCoverFirstCount: number;
-  useListCoverThumb: boolean;
-  suppressContainerRole?: boolean;
-};
-
 function formatClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "—";
   const s = Math.floor(sec);
@@ -134,13 +127,24 @@ function useSyncedGeneratingBarPct(w: PodcastWorkRow, inFlightQueue: boolean): n
   );
 }
 
-export function WorkGalleryListItem({
+export type WorkGalleryListItemProps = {
+  w: PodcastWorkRow;
+  index: number;
+  outer: "li" | "div";
+  eagerCoverFirstCount: number;
+  useListCoverThumb: boolean;
+  suppressContainerRole?: boolean;
+  activePlayback?: WorkGalleryActivePlayback | null;
+};
+
+export const WorkGalleryListItem = memo(function WorkGalleryListItem({
   w,
   index,
   outer,
   eagerCoverFirstCount,
   useListCoverThumb,
-  suppressContainerRole
+  suppressContainerRole,
+  activePlayback = null
 }: WorkGalleryListItemProps): ReactNode {
   const Comp = outer === "div" ? "div" : "li";
   const compA11y = outer === "div" && !suppressContainerRole ? ({ role: "listitem" as const } as const) : ({} as const);
@@ -159,8 +163,6 @@ export function WorkGalleryListItem({
     isPlayingAudio,
     activePlayError,
     playErrorById,
-    progress01,
-    durationSec,
     hydratedDurationSec,
     publicationsByJobId,
     menuOpenId,
@@ -204,7 +206,7 @@ const showPendingLog =
   Boolean(String(pendingStudioSubtitle || "").trim());
 const isActive = activeJobId === id;
 const rowPlayMsg = (isActive && activePlayError) || playErrorById[id];
-const prog = isActive ? progress01 : 0;
+const prog = activePlayback?.progress01 ?? 0;
 const foreignNotebook = workIsSharedNotebookForeign(w);
 const rowMutationsLocked = workGalleryRowMutationsLocked(w, viewerAccountRef);
 const tplNonOwner = workIsPodcastTemplateNonOwner(w, viewerAccountRef);
@@ -213,8 +215,8 @@ const baseSec =
     ? w.audioDurationSec
     : hydratedDurationSec[id];
 const totalSecForLabel =
-  isActive && durationSec > 0 && Number.isFinite(durationSec)
-    ? durationSec
+  isActive && (activePlayback?.durationSec ?? 0) > 0
+    ? activePlayback!.durationSec
     : baseSec !== undefined && Number.isFinite(baseSec)
       ? baseSec
       : undefined;
@@ -253,6 +255,8 @@ const navMetaForRow = formatUnifiedWorksNavMetaLine(
 );
 const navMetaLineShown = inFlightQueue && activeSummary ? activeSummary : navMetaForRow;
 const scriptExcerpt = isTextOnlyWork ? scriptExcerptFromWork(w) : "";
+const scriptInFlight =
+  isTextOnlyWork && (jobStatus === "queued" || jobStatus === "running");
 
 if (rowLayout === "active") {
   return (
@@ -274,7 +278,13 @@ if (rowLayout === "active") {
   );
 }
 
-if (rowLayout === "script-list") {
+if (rowLayout === "grid" && isTextOnlyWork && !scriptInFlight) {
+  return (
+    <ScriptMagazineCard w={w} id={id} outer={outer} compA11y={compA11y} />
+  );
+}
+
+if (rowLayout === "script-list" || (rowLayout === "grid" && scriptInFlight)) {
   return (
     <WorkGalleryScriptListRow
       w={w}
@@ -1004,4 +1014,4 @@ return (
     </div>
   </Comp>
 );
-}
+});

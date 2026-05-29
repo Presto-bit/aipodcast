@@ -37,6 +37,7 @@ import {
 } from "./workGalleryListContext";
 import { WorkGalleryListItem } from "./WorkGalleryListItem";
 import { WorkGalleryVirtualGrid } from "./WorkGalleryVirtualGrid";
+import { ScriptQuickReadDrawer } from "./ScriptQuickReadDrawer";
 import { useWorkGalleryGridColumnCount } from "./useWorkGalleryGridColumnCount";
 import { buildWorkDetailHref } from "./workGalleryNav";
 import {
@@ -260,10 +261,15 @@ export default function PodcastWorksGallery({
   const useNotesStyleCards = variant === "notes_studio" || useCompactAllLayout;
   const rowLayout = useMemo((): WorkGalleryRowLayout => {
     if (activeQueueCardActions) return "active";
-    if (variant === "notes") return "script-list";
+    if (variant === "notes") return "grid";
     if (variant === "notes_studio" || useCompactAllLayout) return "compact";
     return "grid";
   }, [activeQueueCardActions, variant, useCompactAllLayout]);
+  const scriptCardDensity = useMemo(
+    () => (typeof sidebarMaxItems === "number" && sidebarMaxItems > 0 ? "mini" : "full"),
+    [sidebarMaxItems]
+  );
+  const scriptGridSingleColumn = scriptCardDensity === "mini";
   const { hiddenKey, titlesKey, allowedTypes } = useMemo(() => galleryStorageKeys(variant), [variant]);
 
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -286,6 +292,7 @@ export default function PodcastWorksGallery({
   const [zipBusy, setZipBusy] = useState<string | null>(null);
   const [stopBusyId, setStopBusyId] = useState<string | null>(null);
   const [copyManuscriptBusyId, setCopyManuscriptBusyId] = useState<string | null>(null);
+  const [quickReadWorkId, setQuickReadWorkId] = useState<string | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
@@ -376,10 +383,11 @@ export default function PodcastWorksGallery({
   }, [items.length, variant, sidebarMaxItems]);
 
   const gridColumnCount = useWorkGalleryGridColumnCount();
+  const effectiveGridColumnCount = scriptGridSingleColumn ? 1 : gridColumnCount;
   const [clientMounted, setClientMounted] = useState(false);
   useEffect(() => setClientMounted(true), []);
   const useGridVirtual = clientMounted && rowLayout === "grid" && visibleItems.length >= 12;
-  const eagerCoverFirstCount = useGridVirtual ? gridColumnCount : 4;
+  const eagerCoverFirstCount = useGridVirtual ? effectiveGridColumnCount : 4;
   const useListCoverThumbs = rowLayout === "grid";
 
   useEffect(() => {
@@ -640,6 +648,22 @@ export default function PodcastWorksGallery({
     },
     [copyManuscriptBusyId, getAuthHeaders, showError, showInfo]
   );
+
+  const openQuickRead = useCallback((work: PodcastWorkRow) => {
+    const wid = String(work.id || "").trim();
+    if (!wid) return;
+    setQuickReadWorkId(wid);
+    setMenuOpenId(null);
+  }, []);
+
+  const closeQuickRead = useCallback(() => {
+    setQuickReadWorkId(null);
+  }, []);
+
+  const quickReadWork = useMemo(() => {
+    if (!quickReadWorkId) return null;
+    return items.find((w) => String(w.id || "") === quickReadWorkId) ?? null;
+  }, [items, quickReadWorkId]);
 
   const renderDownloadGated = useCallback(
     (
@@ -1092,10 +1116,26 @@ export default function PodcastWorksGallery({
     return `/works?${q.toString()}`;
   }, [viewAllHref, workDetailReturnTo]);
 
+  const activePlayback = useMemo(
+    () =>
+      activeJobId
+        ? { progress01, durationSec }
+        : null,
+    [activeJobId, progress01, durationSec]
+  );
+
+  const rowActivePlayback = useCallback(
+    (jobId: string | undefined) =>
+      activeJobId && jobId && activeJobId === jobId ? activePlayback : null,
+    [activeJobId, activePlayback]
+  );
+
   const listCtxValue = useMemo<WorkGalleryListContextValue>(
     () => ({
       variant,
       rowLayout,
+      scriptCardDensity,
+      scriptGridSingleColumn,
       useNotesStyleCards,
       useCompactAllLayout,
       enableBatchActions: Boolean(enableBatchActions),
@@ -1108,8 +1148,6 @@ export default function PodcastWorksGallery({
       isPlayingAudio,
       activePlayError,
       playErrorById,
-      progress01,
-      durationSec,
       hydratedDurationSec,
       publicationsByJobId,
       menuOpenId,
@@ -1136,11 +1174,16 @@ export default function PodcastWorksGallery({
       stopBusyId,
       requestStopActiveJob,
       copyManuscriptBusyId,
-      requestCopyManuscript
+      requestCopyManuscript,
+      quickReadWorkId,
+      openQuickRead,
+      closeQuickRead
     }),
     [
       variant,
       rowLayout,
+      scriptCardDensity,
+      scriptGridSingleColumn,
       useNotesStyleCards,
       useCompactAllLayout,
       enableBatchActions,
@@ -1152,8 +1195,6 @@ export default function PodcastWorksGallery({
       isPlayingAudio,
       activePlayError,
       playErrorById,
-      progress01,
-      durationSec,
       hydratedDurationSec,
       publicationsByJobId,
       menuOpenId,
@@ -1177,9 +1218,16 @@ export default function PodcastWorksGallery({
       stopBusyId,
       requestStopActiveJob,
       copyManuscriptBusyId,
-      requestCopyManuscript
+      requestCopyManuscript,
+      quickReadWorkId,
+      openQuickRead,
+      closeQuickRead
     ]
   );
+
+  const scriptNotesGridClass = scriptGridSingleColumn
+    ? "grid w-full grid-cols-1 gap-2 overflow-visible"
+    : "grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
   return (
     <WorkGalleryListProvider value={listCtxValue}>
@@ -1317,20 +1365,7 @@ export default function PodcastWorksGallery({
         </div>
       ) : (
         <>
-        {rowLayout === "script-list" ? (
-          <ul className="grid w-full grid-cols-2 gap-2 overflow-visible">
-            {visibleItems.map((w, index) => (
-              <WorkGalleryListItem
-                key={String(w.id)}
-                w={w}
-                index={index}
-                outer="li"
-                eagerCoverFirstCount={eagerCoverFirstCount}
-                useListCoverThumb={useListCoverThumbs}
-              />
-            ))}
-          </ul>
-        ) : rowLayout !== "grid" ? (
+        {rowLayout !== "grid" ? (
           <ul className="grid w-full grid-cols-1 gap-2 overflow-visible">
             {visibleItems.map((w, index) => (
               <WorkGalleryListItem
@@ -1340,6 +1375,7 @@ export default function PodcastWorksGallery({
                 outer="li"
                 eagerCoverFirstCount={eagerCoverFirstCount}
                 useListCoverThumb={useListCoverThumbs}
+                activePlayback={rowActivePlayback(String(w.id))}
               />
             ))}
           </ul>
@@ -1347,13 +1383,15 @@ export default function PodcastWorksGallery({
           <div className="w-full" role="list">
             <WorkGalleryVirtualGrid
               items={visibleItems}
-              columnCount={gridColumnCount}
+              columnCount={effectiveGridColumnCount}
               variant={variant}
               eagerCoverFirstCount={eagerCoverFirstCount}
+              activeJobId={activeJobId}
+              activePlayback={activePlayback}
             />
           </div>
         ) : (
-          <ul className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <ul className={variant === "notes" ? scriptNotesGridClass : "grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}>
             {visibleItems.map((w, index) => (
               <WorkGalleryListItem
                 key={String(w.id)}
@@ -1362,6 +1400,7 @@ export default function PodcastWorksGallery({
                 outer="li"
                 eagerCoverFirstCount={eagerCoverFirstCount}
                 useListCoverThumb={useListCoverThumbs}
+                activePlayback={rowActivePlayback(String(w.id))}
               />
             ))}
           </ul>
@@ -1457,6 +1496,18 @@ export default function PodcastWorksGallery({
                       className="fixed z-[1210] min-w-[8.5rem] overflow-hidden rounded-md border border-line bg-surface py-0.5 text-[11px] shadow-card"
                       style={{ top: pos.top, left: pos.left }}
                     >
+                      {renderDownloadGated(
+                        w,
+                        id,
+                        "block w-full px-3 py-2 text-left hover:bg-fill disabled:opacity-40",
+                        zipBusy === id ? downloadBusyLabel(w.type) : downloadLabelForWorkType(w.type),
+                        {
+                          lockedLinkClassName:
+                            "w-full max-w-none rounded-none border-0 border-b border-line/80 bg-transparent shadow-none",
+                          lockedLabelClassName: "px-3 py-2",
+                          onLockedNavigate: () => setMenuOpenId(null)
+                        }
+                      )}
                       {!rowLocked ? (
                         <button
                           type="button"
@@ -1641,6 +1692,16 @@ export default function PodcastWorksGallery({
         </>
       )}
     </div>
+    <ScriptQuickReadDrawer
+      work={quickReadWork}
+      open={Boolean(quickReadWork)}
+      onClose={closeQuickRead}
+      workDetailReturnTo={workDetailReturnTo}
+      onCopy={(jobId, work) => void requestCopyManuscript(jobId, work)}
+      onDownload={(work) => void onDownload(work)}
+      copyBusy={Boolean(quickReadWorkId && copyManuscriptBusyId === quickReadWorkId)}
+      downloadBusy={Boolean(quickReadWorkId && zipBusy === quickReadWorkId)}
+    />
     </WorkGalleryListProvider>
   );
 }
