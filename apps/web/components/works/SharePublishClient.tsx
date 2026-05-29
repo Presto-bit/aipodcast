@@ -35,6 +35,7 @@ import {
 } from "../../lib/api";
 import type { JobRecord } from "../../lib/types";
 import { isJobEventLogOnlyForUi } from "../../lib/jobEventStreamUi";
+import type { StreamPayload } from "../../lib/jobStage";
 import { presentJobProgressMessageForUser } from "../../lib/jobProgressUserText";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
 import { DEFAULT_PUBLISH_PLATFORM_ID, type PublishPlatformId, type PublishPlatformMeta, PUBLISH_PLATFORMS } from "../../lib/publishPlatforms";
@@ -774,11 +775,7 @@ export function SharePublishClient({
       es = new EventSource(jobEventsSourceUrl(jobId, 0));
       es.onmessage = (evt) => {
         try {
-          const data = JSON.parse(evt.data) as {
-            type?: string;
-            message?: string;
-            payload?: { progress?: number };
-          };
+          const data = JSON.parse(evt.data) as StreamPayload;
           if (data.type === "script_chunk") {
             const p = data.payload || {};
             const tail = typeof p.text_tail === "string" ? p.text_tail.trim() : "";

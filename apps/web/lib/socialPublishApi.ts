@@ -1,6 +1,7 @@
 import { apiErrorMessage } from "./apiError";
 import { createJob } from "./api";
 import { buildSocialPublishReferenceBody } from "./socialPublishReference";
+import { ensureXhsTitles } from "./socialPublishPresets";
 import { normalizeSocialImageSuggestions } from "./socialPublishImageSuggestions";
 import { NOTES_PODCAST_PROJECT_NAME } from "./notesProject";
 import type {
