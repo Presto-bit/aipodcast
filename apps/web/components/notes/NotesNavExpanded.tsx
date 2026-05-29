@@ -1,12 +1,14 @@
 "use client";
 
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, MouseEvent, ReactNode } from "react";
 import SidebarNavLink from "../nav/SidebarNavLink";
-import { normalizePathname } from "../../lib/navPaths";
+import { dispatchNotesShowNotebookHub } from "../../lib/notesLastNotebook";
+import { matchesNotesWorkbench, normalizePathname } from "../../lib/navPaths";
 
 type NavItemShape = {
   href: string;
   label: string;
+  short?: string;
   linkTitle?: string;
   Icon: ComponentType<object>;
 };
@@ -22,28 +24,42 @@ function navButtonClass(active: boolean, collapsed: boolean): string {
 type Props = {
   item: NavItemShape;
   path: string;
-  notesSubNavExpanded: boolean;
-  setNotesSubNavExpanded: (v: boolean) => void;
+  collapsed: boolean;
   NavIconBox: (p: { active: boolean; children: ReactNode }) => ReactNode;
 };
 
-/** 知识库一级导航（v6：个人风格 IP 已迁入笔记本，不再展示二级入口） */
-export default function NotesNavExpanded({
-  item,
-  path,
-  NavIconBox
-}: Props) {
+/** 知识库一级导航：与 CreateStudioNavExpanded 相同——站外软路由进 /notes，已在 hub 时 preventDefault 回卡片列表。 */
+export default function NotesNavExpanded({ item, path, collapsed, NavIconBox }: Props) {
   const n = normalizePathname(path);
   const active = n === "/notes" || n.startsWith("/notes/");
   const Ic = item.Icon;
   const parentTip = item.linkTitle ?? item.label;
+  const label = collapsed && item.short ? item.short : item.label;
+
+  const onParentClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (!matchesNotesWorkbench(path)) {
+      // 从作品/创作等页进入知识库：不拦截，允许 Link 正常跳转 /notes
+      return;
+    }
+    if (normalizePathname(path) !== "/notes") {
+      // /notes/笔记本 等：软路由回 /notes hub
+      return;
+    }
+    e.preventDefault();
+    dispatchNotesShowNotebookHub();
+  };
 
   return (
-    <SidebarNavLink href="/notes" className={navButtonClass(active, false)} title={parentTip}>
+    <SidebarNavLink
+      href="/notes"
+      className={navButtonClass(active, collapsed)}
+      title={parentTip}
+      onClick={onParentClick}
+    >
       <NavIconBox active={active}>
         <Ic />
       </NavIconBox>
-      <span className="min-w-0 flex-1 truncate text-left leading-snug">{item.label}</span>
+      {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
     </SidebarNavLink>
   );
 }

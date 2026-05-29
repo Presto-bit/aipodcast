@@ -12,7 +12,7 @@ type SidebarNavLinkProps = Omit<ComponentProps<typeof Link>, "prefetch">;
 
 /**
  * 侧栏专用导航：pointerdown 先关遮罩；软路由点击即标记 navPending。
- * 进入或离开知识库工作台时用原生 `<a>` 整页跳转——NotesPageMain 会阻塞 Next 软路由。
+ * 离开知识库工作台时用原生 `<a>` 整页跳转——NotesPageMain 会阻塞 Next 软路由。
  */
 export default function SidebarNavLink({
   href,
@@ -29,9 +29,7 @@ export default function SidebarNavLink({
   const hrefStr = typeof href === "string" ? href : String(href);
   const target = normalizePathname(hrefStr.split("?")[0] || hrefStr);
   const current = normalizePathname(pathname);
-  const useNativeAnchor =
-    target !== current &&
-    (matchesNotesWorkbench(pathname) || matchesNotesWorkbench(target));
+  const useNativeAnchor = matchesNotesWorkbench(pathname) && target !== current;
 
   const handlePointerDown: SidebarNavLinkProps["onPointerDown"] = (e) => {
     dispatchWorkbenchDismissOverlays();

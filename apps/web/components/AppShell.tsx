@@ -43,10 +43,9 @@ import AnimatedPageShell from "./AnimatedPageShell";
 import WorkAudioShell from "./WorkAudioShell";
 import ActiveJobsProvider from "./ActiveJobsProvider";
 import BrandGlyph from "./brand/BrandGlyph";
-const NotesNavExpanded = dynamic(() => import("./notes/NotesNavExpanded"), { ssr: false });
+import NotesNavExpanded from "./notes/NotesNavExpanded";
 import SidebarNavLink from "./nav/SidebarNavLink";
 import WorkbenchRouteFallback from "./nav/WorkbenchRouteFallback";
-import { dispatchNotesShowNotebookHub } from "../lib/notesLastNotebook";
 import { WorkbenchNavContext } from "../lib/WorkbenchNavContext";
 import { prefetchWorkbenchSidebarIdle } from "../lib/navPrefetch";
 import {
@@ -68,8 +67,6 @@ import {
   matchesNotesWorkbench,
   matchesProductStudio,
   normalizePathname,
-  NOTES_TEMPLATES_PREFIX,
-  NOTES_TRASH_PREFIX,
   pathMatchesRoot,
   pathNeedsWorkAudio,
   WORKBENCH_HOME_PATH
@@ -108,15 +105,6 @@ function navButtonClass(active: boolean, collapsed: boolean): string {
     "gap-2.5 border-l-2 pl-1.5 pr-2",
     active ? "border-brand/80 bg-fill text-ink" : "border-transparent text-muted hover:bg-fill hover:text-ink"
   ].join(" ");
-}
-
-/** 与侧栏「知识库」button 分支一致：/notes 主路由及笔记本工作台（非模板/回收站/author-ip） */
-function isNotesPrimaryWorkbenchPath(pathname: string): boolean {
-  const n = normalizePathname(pathname);
-  if (!pathMatchesRoot(n, "/notes")) return false;
-  if (pathname.startsWith(NOTES_TEMPLATES_PREFIX) || pathname.startsWith(NOTES_TRASH_PREFIX)) return false;
-  if (n.startsWith("/notes/author-ip")) return false;
-  return n === "/notes" || n.startsWith("/notes/");
 }
 
 function NavSectionHeader({ collapsed, children }: { collapsed: boolean; children: React.ReactNode }) {
@@ -268,7 +256,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
    */
   const [sidebarPortaled, setSidebarPortaled] = useState(false);
   const [createSubNavExpanded, setCreateSubNavExpanded] = useState(true);
-  const [notesSubNavExpanded, setNotesSubNavExpanded] = useState(true);
   const [navPending, setNavPending] = useState(false);
   const navPendingTargetRef = useRef<string | null>(null);
   const navPendingHrefRef = useRef<string | null>(null);
@@ -636,8 +623,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   /**
    * 侧栏主导航：
    * - 「工作台首页」用原生 a[href]（登录回跳等场景可靠）。
-   * - 仍在 /notes 主路径时，「知识库」用 Link + preventDefault 调 hub。
-   * - 知识库内其它入口：SidebarNavLink 在 NotesPageMain 挂载时降级为原生 a[href] 整页离开。
+   * - 「知识库」见 NotesNavExpanded（与 CreateStudioNavExpanded 同模式）。
+   * - 离开知识库时 SidebarNavLink 降级为原生 a[href] 整页离开。
    * - 其余：Next Link 软路由 + hover 预取。
    */
   function renderSidebarNavItem(item: NavItem) {
@@ -662,25 +649,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </NavIconBox>
           {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
         </a>
-      );
-    }
-    if (item.href === "/notes" && isNotesPrimaryWorkbenchPath(path)) {
-      return (
-        <SidebarNavLink
-          key={item.href}
-          href="/notes"
-          className={navButtonClass(active, collapsed)}
-          title={tip}
-          onClick={(e) => {
-            e.preventDefault();
-            dispatchNotesShowNotebookHub();
-          }}
-        >
-          <NavIconBox active={active}>
-            <Ic />
-          </NavIconBox>
-          {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
-        </SidebarNavLink>
       );
     }
     return (
@@ -770,19 +738,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               )}
             </Fragment>
           ) : item.href === "/notes" ? (
-            <Fragment key={item.href}>
-              {collapsed ? (
-                renderSidebarNavItem(item)
-              ) : (
-                <NotesNavExpanded
-                  item={item}
-                  path={path}
-                  notesSubNavExpanded={notesSubNavExpanded}
-                  setNotesSubNavExpanded={setNotesSubNavExpanded}
-                  NavIconBox={NavIconBox}
-                />
-              )}
-            </Fragment>
+            <NotesNavExpanded
+              key={item.href}
+              item={item}
+              path={path}
+              collapsed={collapsed}
+              NavIconBox={NavIconBox}
+            />
           ) : (
             renderSidebarNavItem(item)
           )
