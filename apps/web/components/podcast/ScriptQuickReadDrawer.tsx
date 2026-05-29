@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useAuth } from "../../lib/auth";
 import {
   formatScriptCharCountLabel,
   scriptCharCountForWork,
@@ -38,19 +37,15 @@ export function ScriptQuickReadDrawer({
   copyBusy,
   downloadBusy
 }: Props) {
+  const panelRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const jobId = work?.id ? String(work.id) : "";
   const { body, loadingFull, error } = useScriptManuscriptBody(jobId, work, open);
 
   useEffect(() => {
     if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const t = window.setTimeout(() => closeBtnRef.current?.focus(), 0);
-    return () => {
-      document.body.style.overflow = prev;
-      window.clearTimeout(t);
-    };
+    return () => window.clearTimeout(t);
   }, [open]);
 
   useEffect(() => {
@@ -60,6 +55,17 @@ export function ScriptQuickReadDrawer({
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const panel = panelRef.current;
+      if (!panel || panel.contains(e.target as Node)) return;
+      onClose();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open, onClose]);
 
   if (!open || !work || !jobId) return null;
@@ -78,20 +84,16 @@ export function ScriptQuickReadDrawer({
     chip.tone === "social"
       ? "bg-cta/12 text-cta ring-cta/25"
       : "bg-brand/12 text-brand ring-brand/25";
+  const metaLine = [created !== "—" ? created : "", scriptWorkGenreLabel(work)].filter(Boolean).join(" · ");
 
   return createPortal(
-    <div className="fixed inset-0 z-[1220]" role="presentation">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/35"
-        aria-label="关闭预览"
-        onClick={onClose}
-      />
+    <div className="pointer-events-none fixed inset-0 z-[1220]" role="presentation">
       <div
+        ref={panelRef}
         role="dialog"
-        aria-modal="true"
+        aria-modal="false"
         aria-labelledby="script-quick-read-title"
-        className="absolute flex flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card right-3 top-3 bottom-3 w-[min(24rem,calc(100vw-1.5rem))] max-md:inset-x-3 max-md:bottom-3 max-md:top-auto max-md:max-h-[min(70vh,28rem)]"
+        className="pointer-events-auto fixed flex max-h-[min(70vh,32rem)] w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card right-4 top-[4.5rem] max-md:inset-x-4 max-md:bottom-4 max-md:top-auto max-md:max-h-[70vh] max-md:w-auto"
       >
         <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0 flex-1">
@@ -101,31 +103,28 @@ export function ScriptQuickReadDrawer({
               </span>
               {charLabel ? <span className="tabular-nums">{charLabel}</span> : null}
             </div>
-            <h2 id="script-quick-read-title" className="mt-1.5 text-base font-semibold leading-snug text-ink">
-              <Link href={detailHref} className="hover:text-brand hover:underline" onClick={onClose}>
+            <h2 id="script-quick-read-title" className="mt-1.5 truncate text-base font-semibold leading-snug text-ink">
+              <Link href={detailHref} className="hover:text-brand hover:underline" onClick={onClose} title={title}>
                 {title}
               </Link>
             </h2>
-            {(() => {
-              const meta = [created !== "—" ? created : "", scriptWorkGenreLabel(work)].filter(Boolean).join(" · ");
-              return meta ? (
-                <p className="mt-1 line-clamp-1 text-[11px] text-muted" title={meta}>
-                  {meta}
-                </p>
-              ) : null;
-            })()}
+            {metaLine ? (
+              <p className="mt-1 truncate text-[11px] text-muted" title={metaLine}>
+                {metaLine}
+              </p>
+            ) : null}
             {source ? (
               source.notebookHref ? (
                 <Link
                   href={source.notebookHref}
-                  className="mt-1 line-clamp-1 min-w-0 truncate text-[11px] text-brand hover:underline"
+                  className="mt-1 block min-w-0 truncate text-[11px] text-brand hover:underline"
                   title={source.title}
                   onClick={onClose}
                 >
                   📎 {source.text}
                 </Link>
               ) : (
-                <p className="mt-1 line-clamp-1 min-w-0 truncate text-[11px] text-muted" title={source.title}>
+                <p className="mt-1 truncate text-[11px] text-muted" title={source.title}>
                   📎 {source.text}
                 </p>
               )
