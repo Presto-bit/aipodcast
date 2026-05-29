@@ -1617,17 +1617,22 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     }
   }, [selectedNotebook, notePage, getAuthHeaders, pageAbortSignal, pageFetch, sharedBrowse]);
 
+  const hasParsingNotes = useMemo(
+    () =>
+      notes.some((n) => {
+        const ps = String(n.parseState || "").trim().toLowerCase();
+        return ps === "pending" || ps === "parsing";
+      }),
+    [notes]
+  );
+
   useEffect(() => {
-    const hasParsing = notes.some((n) => {
-      const ps = String(n.parseState || "").trim().toLowerCase();
-      return ps === "pending" || ps === "parsing";
-    });
-    if (!hasParsing) return;
+    if (!hasParsingNotes) return;
     const timer = setInterval(() => {
       void loadNotes({ silent: true });
     }, 3000);
     return () => clearInterval(timer);
-  }, [notes, loadNotes]);
+  }, [hasParsingNotes, loadNotes]);
 
   useEffect(() => {
     setNotePage(1);
@@ -3410,10 +3415,14 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     previewParseGate
   ]);
 
-  useEffect(() => {
-    if (!previewOpen || !previewNoteId) return;
+  const previewNeedsParsePoll = useMemo(() => {
+    if (!previewOpen || !previewNoteId) return false;
     const ps = String(previewParseState || "").trim().toLowerCase();
-    if (ps !== "pending" && ps !== "parsing") return;
+    return ps === "pending" || ps === "parsing";
+  }, [previewOpen, previewNoteId, previewParseState]);
+
+  useEffect(() => {
+    if (!previewNeedsParsePoll || !previewNoteId) return;
     let cancelled = false;
     const refresh = async () => {
       try {
@@ -3449,9 +3458,8 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       clearInterval(timer);
     };
   }, [
-    previewOpen,
+    previewNeedsParsePoll,
     previewNoteId,
-    previewParseState,
     sharedBrowse?.ownerUserId,
     getAuthHeaders,
     pageAbortSignal,

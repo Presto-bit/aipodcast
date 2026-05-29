@@ -6,9 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from "react-dom";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
-import { hexToMp3DataUrl } from "../../lib/audioHex";
-import { fetchJobsAudioDurationsBatch } from "../../lib/jobsAudioDurations";
-import { unusableInsecureHttpOnHttpsPage } from "../../lib/insecureHttpOnHttpsPage";
+import { fetchJobsAudioDurationsBatch, probeJobAudioDurationSec } from "../../lib/jobsAudioDurations";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
 import { blobToDataUrlBase64, cropSquareToPodcastCoverJpeg } from "../../lib/podcastCoverImage";
@@ -22,7 +20,7 @@ import {
 import { listRssPublicationsByJobIds, type RssPublication, cancelJob } from "../../lib/api";
 import type { WorkItem } from "../../lib/worksTypes";
 import { isTextOnlyWorkType } from "../../lib/worksTypes";
-import { rssPublicationJobIdsKey } from "../../lib/workGalleryDisplay";
+import { rssPublicationJobIdsKey, workDurationHydrationJobIdsKey } from "../../lib/workGalleryDisplay";
 import { useI18n } from "../../lib/I18nContext";
 import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
 import { copyWorkManuscriptToClipboard } from "../../lib/copyWorkManuscript";
@@ -467,27 +465,13 @@ export default function PodcastWorksGallery({
     return { layout: "card" as const, w, id, isScriptDraft, publishActionText };
   }, [variant, compactCards, menuOpenId, items, publicationsByJobId]);
 
+  const durationHydrationJobIdsKey = useMemo(() => workDurationHydrationJobIdsKey(items), [items]);
+
   useEffect(() => {
-    const pendingIds: string[] = [];
-    for (const w of items) {
-      const id = w.id;
-      if (!id) continue;
-      const st = String(w.status || "").trim();
-      if (st === "queued" || st === "running") {
-        durationResolvedRef.current.add(id);
-        continue;
-      }
-      if (w.isPodcastPublicTemplate) {
-        durationResolvedRef.current.add(id);
-        continue;
-      }
-      if (typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0) {
-        continue;
-      }
-      if (durationResolvedRef.current.has(id)) continue;
-      if (durationFetchRef.current.has(id)) continue;
-      pendingIds.push(id);
-    }
+    const allIds = durationHydrationJobIdsKey ? durationHydrationJobIdsKey.split(",") : [];
+    const pendingIds = allIds.filter(
+      (id) => !durationResolvedRef.current.has(id) && !durationFetchRef.current.has(id)
+    );
     const batch = pendingIds.slice(0, 50);
     if (!batch.length) return;
 
@@ -495,14 +479,15 @@ export default function PodcastWorksGallery({
     let canceled = false;
 
     void (async () => {
-      let fromServer: Record<string, number> = {};
       try {
+        let fromServer: Record<string, number> = {};
         try {
           fromServer = await fetchJobsAudioDurationsBatch(batch, getAuthHeaders());
         } catch {
           fromServer = {};
         }
         if (canceled) return;
+
         const withDuration = Object.entries(fromServer).filter(([, sec]) => typeof sec === "number" && sec > 0);
         if (withDuration.length) {
           setHydratedDurationSec((prev) => {
@@ -514,57 +499,16 @@ export default function PodcastWorksGallery({
             return next;
           });
         }
+
         const needProbe = batch.filter((id) => !fromServer[id]);
         for (const id of needProbe) {
           if (canceled) return;
-          try {
-            const res = await fetch(`/api/jobs/${id}`, { cache: "no-store", headers: { ...getAuthHeaders() } });
-            const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-            if (!res.ok) {
-              durationResolvedRef.current.add(id);
-              continue;
-            }
-            const result = (row.result || {}) as Record<string, unknown>;
-            const ds = result.audio_duration_sec;
-            if (typeof ds === "number" && Number.isFinite(ds) && ds > 0) {
-              setHydratedDurationSec((prev) => ({ ...prev, [id]: ds }));
-              durationResolvedRef.current.add(id);
-              continue;
-            }
-            const hex = String(result.audio_hex || "").trim();
-            const audioUrl = String(result.audio_url || "").trim();
-            if (!hex && !audioUrl) {
-              durationResolvedRef.current.add(id);
-              continue;
-            }
-            if (!hex && audioUrl && unusableInsecureHttpOnHttpsPage(audioUrl)) {
-              durationResolvedRef.current.add(id);
-              continue;
-            }
-            const a = document.createElement("audio");
-            a.preload = "metadata";
-            a.src = hex ? hexToMp3DataUrl(hex) : audioUrl;
-            await new Promise<void>((resolve) => {
-              const done = () => {
-                a.removeAttribute("src");
-                a.load();
-                resolve();
-              };
-              a.addEventListener("loadedmetadata", () => {
-                if (Number.isFinite(a.duration) && a.duration > 0) {
-                  setHydratedDurationSec((prev) => ({ ...prev, [id]: a.duration }));
-                }
-                durationResolvedRef.current.add(id);
-                done();
-              });
-              a.addEventListener("error", () => {
-                durationResolvedRef.current.add(id);
-                done();
-              });
-            });
-          } catch {
-            durationResolvedRef.current.add(id);
+          const sec = await probeJobAudioDurationSec(id, getAuthHeaders());
+          if (canceled) return;
+          if (typeof sec === "number" && sec > 0) {
+            setHydratedDurationSec((prev) => ({ ...prev, [id]: sec }));
           }
+          durationResolvedRef.current.add(id);
         }
       } finally {
         for (const id of batch) durationFetchRef.current.delete(id);
@@ -574,7 +518,7 @@ export default function PodcastWorksGallery({
     return () => {
       canceled = true;
     };
-  }, [items, getAuthHeaders]);
+  }, [durationHydrationJobIdsKey, getAuthHeaders]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {

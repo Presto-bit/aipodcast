@@ -112,3 +112,30 @@ export function rssPublicationJobIdsKey(
   }
   return [...new Set(ids)].sort().join(",");
 }
+
+export type WorkDurationHydrationInput = Pick<WorkItem, "id" | "status" | "audioDurationSec"> & {
+  isPodcastPublicTemplate?: boolean;
+};
+
+/** 已完成且列表未带时长、非模板的作品才需补全 duration。 */
+export function shouldHydrateWorkDuration(work: WorkDurationHydrationInput): boolean {
+  const id = String(work.id || "").trim();
+  if (!id) return false;
+  if (workIsInFlight(work as WorkItem)) return false;
+  if (work.isPodcastPublicTemplate) return false;
+  const sec = work.audioDurationSec;
+  if (typeof sec === "number" && Number.isFinite(sec) && sec > 0) return false;
+  return true;
+}
+
+/** 稳定 job id 键：仅当待补时长成片集合变化时才触发批量/探测请求。 */
+export function workDurationHydrationJobIdsKey(
+  works: ReadonlyArray<WorkDurationHydrationInput>
+): string {
+  const ids: string[] = [];
+  for (const w of works) {
+    if (!shouldHydrateWorkDuration(w)) continue;
+    ids.push(String(w.id).trim());
+  }
+  return [...new Set(ids)].sort().join(",");
+}
