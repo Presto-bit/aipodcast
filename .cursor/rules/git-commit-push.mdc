@@ -1,0 +1,19 @@
+---
+description: Git 提交与推送的安全流程；在用户要求 commit、commit & push、提交推送、或执行 /terminal/commit-push、/review/commit-push 时遵循
+alwaysApply: false
+---
+
+# Git Commit & Push
+
+- 仅在用户**明确要求**时 commit；push 须用户在本轮对话中明确允许
+- 提交前并行：`git status`、`git diff`、`git log -5 --oneline`
+- 勿提交 `.env`、密钥、凭证；warn 若用户要求提交敏感文件
+- Commit message：1–2 句、说明 why；用 HEREDOC：`git commit -m "$(cat <<'EOF' ... EOF)"`
+- Hook 失败：修问题后**新 commit**，勿 amend（除非用户明确要求且 HEAD 未 push）
+- 禁止：`git config`、main/master 上 force push、未请求的 push
+- 执行方式：用 Shell 工具在 Terminal 完成，不要只描述命令
+
+命令入口：
+
+- Terminal：`/terminal/commit-push`
+- Review 后：`/review/commit-push`

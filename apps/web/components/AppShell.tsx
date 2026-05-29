@@ -88,6 +88,25 @@ type NavItem = {
   activeMatch?: (pathname: string) => boolean;
 };
 
+/** 一级入口路由强制宽轨；其余页读 localStorage。须在首帧 resolve，避免先窄后宽的闪烁。 */
+function resolveSidebarCollapsed(pathname: string, mobile: boolean): boolean {
+  if (mobile) return false;
+  if (shouldKeepSidebarExpanded(pathname)) return false;
+  try {
+    return readLocalStorageScoped(COLLAPSE_KEY) === SIDEBAR_COLLAPSED_STORAGE;
+  } catch {
+    return false;
+  }
+}
+
+function readSidebarCollapsedForCurrentLocation(): boolean {
+  if (typeof window === "undefined") return false;
+  return resolveSidebarCollapsed(
+    normalizePathname(window.location.pathname),
+    window.matchMedia(APP_SHELL_MOBILE_MEDIA_QUERY).matches
+  );
+}
+
 function Chevron({ collapsed }: { collapsed: boolean }) {
   return <IconChevronSidebar collapsed={collapsed} />;
 }
@@ -247,7 +266,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const loggedIn = isLoggedInAccountUser(user);
 
   const { t } = useI18n();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(readSidebarCollapsedForCurrentLocation);
   /** 与 APP_SHELL_MOBILE_MEDIA_QUERY 一致（窄于 1024px）：侧栏改为抽屉，主区全宽 */
   const [mobileLayout, setMobileLayout] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -409,14 +428,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     [t]
   );
 
-  useEffect(() => {
-    try {
-      const v = readLocalStorageScoped(COLLAPSE_KEY);
-      if (v === SIDEBAR_COLLAPSED_STORAGE) setCollapsed(true);
-    } catch {
-      // ignore
+  useLayoutEffect(() => {
+    const next = resolveSidebarCollapsed(path, mobileLayout);
+    setCollapsed(next);
+    if (shouldKeepSidebarExpanded(path) && !next) {
+      try {
+        writeLocalStorageScoped(COLLAPSE_KEY, SIDEBAR_EXPANDED_STORAGE);
+      } catch {
+        // ignore
+      }
     }
-  }, []);
+  }, [path, mobileLayout]);
 
   useEffect(() => {
     const onRequestCollapse = () => setCollapsed(true);
@@ -481,24 +503,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (pathMatchesRoot(path, "/create")) setCreateSubNavExpanded(true);
   }, [path]);
-
-  /** 知识库 / 创作播客 / 我的作品：进入时恢复宽轨侧栏（含整页跳转后的首屏） */
-  useEffect(() => {
-    if (!ready || mobileLayout) return;
-    if (!shouldKeepSidebarExpanded(path)) return;
-    setCollapsed((c) => {
-      if (!c) return c;
-      try {
-        writeLocalStorageScoped(COLLAPSE_KEY, SIDEBAR_EXPANDED_STORAGE);
-      } catch {
-        // ignore
-      }
-      queueMicrotask(() => {
-        window.dispatchEvent(new CustomEvent(APP_SIDEBAR_TOGGLE_EVENT));
-      });
-      return false;
-    });
-  }, [path, ready, mobileLayout]);
 
   useEffect(() => {
     if (!mobileLayout || !mobileNavOpen) return;
@@ -758,7 +762,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {navProducts.map((item) =>
           item.href === "/create" ? (
             <Fragment key={item.href}>
-              {collapsed ? (
+              {collapsed && !shouldKeepSidebarExpanded(path) ? (
                 renderSidebarNavItem(item)
               ) : (
                 <CreateStudioNavExpanded
