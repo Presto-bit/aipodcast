@@ -25,7 +25,6 @@ import {
   buildNotesAskAnswerBody,
   isDismissedNotesAskSupplement
 } from "../../lib/notesAskAnswerNormalize";
-import type { NotesAskDialogueStyleMode } from "../../lib/notesAskDialogueStyle";
 import {
   NOTES_ASK_DEBUG_BODY_ENABLED,
   NOTES_ASK_HINTS_BOOT_PREFIX,
