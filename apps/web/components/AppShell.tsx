@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -45,8 +44,13 @@ import WorkAudioShell from "./WorkAudioShell";
 import ActiveJobsProvider from "./ActiveJobsProvider";
 import BrandGlyph from "./brand/BrandGlyph";
 const NotesNavExpanded = dynamic(() => import("./notes/NotesNavExpanded"), { ssr: false });
+import SidebarNavLink from "./nav/SidebarNavLink";
 import { dispatchNotesShowNotebookHub } from "../lib/notesLastNotebook";
-import { dispatchWorkbenchDismissOverlays } from "../lib/workbenchOverlays";
+import {
+  dispatchWorkbenchDismissOverlays,
+  WORKBENCH_MOBILE_FAB_Z_CLASS,
+  WORKBENCH_SIDEBAR_Z_CLASS
+} from "../lib/workbenchOverlays";
 import {
   APP_SHELL_MOBILE_MEDIA_QUERY,
   NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
@@ -65,8 +69,7 @@ import {
   NOTES_TRASH_PREFIX,
   pathMatchesRoot,
   pathNeedsWorkAudio,
-  WORKBENCH_HOME_PATH,
-  WORKBENCH_NAV_PREFETCH
+  WORKBENCH_HOME_PATH
 } from "../lib/navPaths";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../lib/userScopedStorage";
 import { reportFrontendGlobalError } from "../lib/frontendGlobalErrorClient";
@@ -219,9 +222,8 @@ function CreateStudioNavExpanded({
 
   return (
     <div className="flex w-full flex-col gap-0.5">
-      <Link
+      <SidebarNavLink
         href="/create"
-        prefetch={WORKBENCH_NAV_PREFETCH}
         className={parentClass}
         title={parentTip}
         aria-expanded={createSubNavExpanded}
@@ -229,7 +231,7 @@ function CreateStudioNavExpanded({
         onClick={onParentClick}
       >
         {parentInner}
-      </Link>
+      </SidebarNavLink>
       {createSubNavExpanded ? (
         <div
           id="fym-create-studio-subnav"
@@ -238,16 +240,15 @@ function CreateStudioNavExpanded({
           className="ml-10 flex flex-col gap-0.5"
         >
           {subs.map((s) => (
-            <Link
+            <SidebarNavLink
               key={s.href}
               href={s.href}
-              prefetch={WORKBENCH_NAV_PREFETCH}
               className={navCreateSubLinkClass(s.active)}
               title={s.label}
               aria-current={s.active ? "page" : undefined}
             >
               <span className="min-w-0 truncate">{s.label}</span>
-            </Link>
+            </SidebarNavLink>
           ))}
         </div>
       ) : null}
@@ -464,7 +465,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
    */
   useLayoutEffect(() => {
     if (!ready) {
-      document.documentElement.style.removeProperty("--fym-app-sidebar-w");
+      document.documentElement.style.setProperty("--fym-app-sidebar-w", `${SIDEBAR_WIDTH_EXPANDED_PX}px`);
       return;
     }
     if (isMarketingShellLessPath(path)) {
@@ -575,10 +576,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const tip = item.linkTitle ?? item.label;
     if (item.href === WORKBENCH_HOME_PATH) {
       return (
-        <Link
+        <SidebarNavLink
           key={item.href}
           href={WORKBENCH_HOME_PATH}
-          prefetch={WORKBENCH_NAV_PREFETCH}
           className={navButtonClass(active, collapsed)}
           title={tip}
         >
@@ -586,15 +586,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <Ic />
           </NavIconBox>
           {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
-        </Link>
+        </SidebarNavLink>
       );
     }
     if (item.href === "/notes" && isNotesPrimaryWorkbenchPath(path)) {
       return (
-        <Link
+        <SidebarNavLink
           key={item.href}
           href="/notes"
-          prefetch={WORKBENCH_NAV_PREFETCH}
           className={navButtonClass(active, collapsed)}
           title={tip}
           onClick={(e) => {
@@ -606,14 +605,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <Ic />
           </NavIconBox>
           {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
-        </Link>
+        </SidebarNavLink>
       );
     }
     return (
-      <Link
+      <SidebarNavLink
         key={item.href}
         href={item.href}
-        prefetch={WORKBENCH_NAV_PREFETCH}
         className={navButtonClass(active, collapsed)}
         title={tip}
       >
@@ -621,7 +619,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <Ic />
         </NavIconBox>
         {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
-      </Link>
+      </SidebarNavLink>
     );
   }
 
@@ -635,8 +633,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       id="fym-app-sidebar-root"
       data-fym-app-sidebar
       {...(sidebarOffCanvas ? ({ inert: true } as HTMLAttributes<HTMLElement>) : {})}
+      onPointerDownCapture={() => dispatchWorkbenchDismissOverlays()}
       className={[
-        "fixed left-0 top-0 z-[100000] flex h-svh min-h-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width,transform] duration-200 ease-out motion-reduce:transition-none",
+        `fixed left-0 top-0 ${WORKBENCH_SIDEBAR_Z_CLASS} flex h-svh min-h-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width,transform] duration-200 ease-out motion-reduce:transition-none`,
         sidebarOffCanvas ? "-translate-x-full pointer-events-none" : "translate-x-0 pointer-events-auto",
         mobileLayout ? "shadow-card" : ""
       ].join(" ")}
@@ -645,9 +644,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <div
         className={`flex w-full shrink-0 items-center border-b border-line py-2 ${collapsed ? "justify-center px-2" : "justify-between gap-2 px-2.5"}`}
       >
-        <Link
+        <SidebarNavLink
           href="/"
-          prefetch={WORKBENCH_NAV_PREFETCH}
           className={[
             "flex shrink-0 items-center rounded-lg p-0.5 outline-offset-2 ring-offset-canvas transition-colors hover:bg-fill/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35",
             collapsed ? "justify-center" : ""
@@ -655,7 +653,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           aria-label={t("nav.brandHomeLink")}
         >
           <BrandGlyph size={36} />
-        </Link>
+        </SidebarNavLink>
         <button
           type="button"
           className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
@@ -754,7 +752,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <button
         ref={mobileMenuFabRef}
         type="button"
-        className="fixed left-0 top-0 z-[100002] flex h-12 min-h-[48px] w-12 min-w-[48px] items-center justify-center rounded-br-dawn-lg border-b border-r border-line/80 bg-surface/95 text-ink shadow-soft backdrop-blur-sm transition-colors hover:bg-fill motion-reduce:transition-none"
+        className={`fixed left-0 top-0 ${WORKBENCH_MOBILE_FAB_Z_CLASS} flex h-12 min-h-[48px] w-12 min-w-[48px] items-center justify-center rounded-br-dawn-lg border-b border-r border-line/80 bg-surface/95 text-ink shadow-soft backdrop-blur-sm transition-colors hover:bg-fill motion-reduce:transition-none`}
         style={{
           paddingTop: "max(0.25rem, env(safe-area-inset-top, 0px))",
           paddingLeft: "max(0.25rem, env(safe-area-inset-left, 0px))"
@@ -779,7 +777,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </a>
       {/*
         主导航挂 document.body：与页面内 portal 分离，避免 #__next 子树叠层盖住 fixed 侧栏。
-        z-index 取 100000：高于常见弹层（如 z-[1200]），且避免 2^31-2 级数值在部分浏览器/合成层实现异常。
+        z-index 取 300000：高于工作台弹层（99990）与页面 portal 菜单，避免遮罩叠层挡住侧栏点击。
       */}
       {sidebarPortaled
         ? createPortal(

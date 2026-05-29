@@ -253,6 +253,19 @@ body {
   left: var(--fym-app-sidebar-w, 232px);
 }
 
+/* 桌面端：遮罩不得覆盖侧栏列（即使 --fym-app-sidebar-w 短暂为 0） */
+@media (min-width: 1024px) {
+  .fym-workspace-scrim {
+    left: max(var(--fym-app-sidebar-w, 232px), 72px);
+  }
+
+  [data-fym-app-sidebar] {
+    z-index: 300000;
+    pointer-events: auto;
+    isolation: isolate;
+  }
+}
+
 /* 窄屏侧栏为浮层抽屉，不占主区宽度，弹层遮罩应铺满视口 */
 @media (max-width: 1023px) {
   .fym-workspace-scrim {

@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import type { ComponentType, ReactNode } from "react";
-import { normalizePathname, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
+import SidebarNavLink from "../nav/SidebarNavLink";
+import { normalizePathname } from "../../lib/navPaths";
 
 type NavItemShape = {
   href: string;
@@ -39,16 +39,11 @@ export default function NotesNavExpanded({
   const parentTip = item.linkTitle ?? item.label;
 
   return (
-    <Link
-      href="/notes"
-      prefetch={WORKBENCH_NAV_PREFETCH}
-      className={navButtonClass(active, false)}
-      title={parentTip}
-    >
+    <SidebarNavLink href="/notes" className={navButtonClass(active, false)} title={parentTip}>
       <NavIconBox active={active}>
         <Ic />
       </NavIconBox>
       <span className="min-w-0 flex-1 truncate text-left leading-snug">{item.label}</span>
-    </Link>
+    </SidebarNavLink>
   );
 }
