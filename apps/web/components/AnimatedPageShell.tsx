@@ -21,6 +21,7 @@ export default function AnimatedPageShell({ children }: { children: ReactNode })
       isFirstPathEffect.current = false;
       return;
     }
+    if (navPending) return;
     /** 延后到下一帧再触发动画重启，避免与 Next 切页 commit 抢同一帧布局（减轻卡顿感）。 */
     let raf0 = 0;
     let raf1 = 0;
@@ -35,18 +36,19 @@ export default function AnimatedPageShell({ children }: { children: ReactNode })
       cancelAnimationFrame(raf0);
       cancelAnimationFrame(raf1);
     };
-  }, [pathname]);
+  }, [pathname, navPending]);
 
   return (
     <div
       ref={shellRef}
       className={[
-        "fym-page-enter fym-page-shell min-w-0 transition-opacity duration-150 motion-reduce:transition-none",
-        navPending ? "pointer-events-none opacity-40" : ""
+        "fym-page-enter fym-page-shell min-w-0",
+        navPending ? "pointer-events-none invisible opacity-0" : ""
       ]
         .filter(Boolean)
         .join(" ")}
       data-nav-pending={navPending || undefined}
+      aria-hidden={navPending || undefined}
     >
       {children}
     </div>

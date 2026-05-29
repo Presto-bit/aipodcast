@@ -865,7 +865,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {shellChildren}
         {navPending ? (
           <div
-            className="absolute inset-0 z-[20] bg-canvas/80 backdrop-blur-[1px]"
+            className="absolute inset-0 z-[20] bg-canvas"
             aria-busy
             aria-live="polite"
             aria-label="页面切换中"
@@ -873,7 +873,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <WorkbenchRouteFallback />
           </div>
         ) : null}
-        {normalizePathname(path) === WORKBENCH_HOME_PATH ? null : (
+        {normalizePathname(path) === WORKBENCH_HOME_PATH || navPending ? null : (
           <footer className="relative z-[405] mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">
             <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">
               <div className="text-center">
