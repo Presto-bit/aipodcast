@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useAuth } from "../../lib/auth";
+import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 
 type Props = { children: ReactNode };
@@ -19,7 +19,7 @@ export default function ClipAccessGate({ children }: Props) {
     );
   }
 
-  if (!user) {
+  if (!isLoggedInAccountUser(user)) {
     return null;
   }
 

@@ -20,11 +20,11 @@ export type InitialAuthSession = {
   revalidateInBackground?: boolean;
 };
 
-/** 营销 / 公开文档页：不读 Cookie，首屏即 ready；可选后台 session */
+/** 营销 / 公开文档页：不读 Cookie；首屏等后台 session 完成后再 ready，避免未验会话即跳转 */
 export const STATIC_SHELL_SESSION: InitialAuthSession = {
   authRequired: true,
   user: null,
-  sessionResolved: true,
+  sessionResolved: false,
   hydrateFromServer: true,
   revalidateInBackground: true
 };

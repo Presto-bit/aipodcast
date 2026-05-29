@@ -171,7 +171,6 @@ export default function NotesWorkbenchView() {
       userPrefersNotebookHubRef.current = true;
       setSharedBrowse(null);
       dismissNotesBlockingOverlays();
-      setSelectedNotebook("");
       router.push("/notes");
     }}
     onOpenNotebook={openNotebook}

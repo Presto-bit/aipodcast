@@ -1,5 +1,6 @@
 import type { Viewport } from "next";
 import "./globals.css";
+import ShellProviders from "./ShellProviders";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -18,13 +19,16 @@ export const metadata = {
 
 const THEME_BOOT = `(function(){try{var t=localStorage.getItem('fym_theme');if(t==='dark'){document.documentElement.classList.add('dark');document.documentElement.classList.remove('light');}else{document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');}}catch(e){document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');}})();`;
 
+/** 全站唯一 Providers 壳：避免 (public)/(workbench) 切换时 AuthProvider 重挂载导致登录↔资料页循环跳转 */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN" className="light" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
-      <body>{children}</body>
+      <body>
+        <ShellProviders variant="static">{children}</ShellProviders>
+      </body>
     </html>
   );
 }

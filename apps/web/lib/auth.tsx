@@ -245,10 +245,11 @@ export function AuthProvider({
         clearLegacyToken();
         return;
       }
+      // 会话未确认时勿用本地手机号构造「假登录」user，避免 login↔受保护页闪跳
       setUser((prev) => {
-        if (prev && (prev.phone || prev.display_name)) return prev;
-        const ph = getStorageItem(AUTH_PHONE_KEY).trim();
-        return { phone: ph || "用户" };
+        if (!prev || prev.phone === "local") return null;
+        if (prev.user_id || prev.email || prev.username) return prev;
+        return null;
       });
     },
     []
@@ -274,6 +275,8 @@ export function AuthProvider({
           applyClientSessionPayload(res, data);
         } catch {
           // 静态壳后台刷新失败不挡首屏
+        } finally {
+          if (!cancelled) setSessionResolved(true);
         }
       })();
       return () => {
@@ -303,9 +306,9 @@ export function AuthProvider({
         if (!cancelled) {
           setAuthRequired(true);
           setUser((prev) => {
-            if (prev && (prev.phone || prev.display_name)) return prev;
-            const ph = getStorageItem(AUTH_PHONE_KEY).trim();
-            return ph ? { phone: ph } : null;
+            if (!prev || prev.phone === "local") return null;
+            if (prev.user_id || prev.email || prev.username) return prev;
+            return null;
           });
         }
       } finally {
@@ -521,8 +524,11 @@ export function AuthProvider({
       setUser(null);
       const redirectTo = options?.redirectTo === undefined ? "/" : options.redirectTo;
       if (redirectTo == null || redirectTo === "") return;
-      if (typeof window !== "undefined" && window.location.pathname !== redirectTo) {
-        router.replace(redirectTo);
+      if (typeof window !== "undefined") {
+        const targetPath = redirectTo.startsWith("/") ? redirectTo.split("?")[0] : redirectTo;
+        if (window.location.pathname !== targetPath) {
+          router.replace(redirectTo);
+        }
       }
     },
     [router]

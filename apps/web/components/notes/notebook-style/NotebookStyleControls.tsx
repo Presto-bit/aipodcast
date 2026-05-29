@@ -55,6 +55,20 @@ type NotebookStyleContextValue = {
 
 const NotebookStyleContext = createContext<NotebookStyleContextValue | null>(null);
 
+const EMPTY_NOTEBOOK_STYLE_CONTEXT: NotebookStyleContextValue = {
+  notebookName: "",
+  syncStatus: "none",
+  hasSnapshot: false,
+  selectedCount: 0,
+  loading: false,
+  busy: false,
+  readOnly: true,
+  disabled: true,
+  learnDisabled: true,
+  runLearn: () => {},
+  openModal: () => {}
+};
+
 function useNotebookStyleContext(): NotebookStyleContextValue {
   const ctx = useContext(NotebookStyleContext);
   if (!ctx) {
@@ -188,7 +202,13 @@ export function NotebookStyleControls({
     ]
   );
 
-  if (!nb) return <>{children}</>;
+  if (!nb) {
+    return (
+      <NotebookStyleContext.Provider value={EMPTY_NOTEBOOK_STYLE_CONTEXT}>
+        {children}
+      </NotebookStyleContext.Provider>
+    );
+  }
 
   return (
     <NotebookStyleContext.Provider value={ctxValue}>
