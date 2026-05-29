@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { Button } from "./Button";
 
 type Props = {
@@ -37,20 +39,13 @@ export default function SmallPromptModal({
   const inputRef = useRef<HTMLInputElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
+  useWorkbenchOverlayDismiss(open, onCancel, { busy });
+
   useEffect(() => {
     if (!open) return;
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !busy) onCancel();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, busy, onCancel]);
 
   useEffect(() => {
     if (!open) return;
@@ -85,7 +80,7 @@ export default function SmallPromptModal({
 
   return createPortal(
     <div
-      className="fym-workspace-scrim z-[1200] flex items-center justify-center bg-black/35 p-4"
+      className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center bg-black/35 p-4`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="prompt-modal-title"

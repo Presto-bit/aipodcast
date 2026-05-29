@@ -22,6 +22,7 @@ import { useAuth } from "../../lib/auth";
 import { useI18n } from "../../lib/I18nContext";
 import SystemVoicesVirtualList from "./SystemVoicesVirtualList";
 import { BillingShortfallLinks } from "../subscription/BillingShortfallLinks";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import { IconDotsHorizontal, IconPause, IconPlayFilled, IconStar, IconX } from "../icons";
 import { readFavoriteVoiceIds, toggleFavoriteVoiceId } from "../../lib/favoriteVoiceIdsStorage";
 import { voicePreviewSampleForCatalogLanguage } from "../../lib/voicePreviewSampleText";
@@ -127,6 +128,18 @@ export default function MyVoicesPanel() {
   const [detailOpen, setDetailOpen] = useState<DetailModel | null>(null);
   const [overflowMenu, setOverflowMenu] = useState<OverflowMenuState | null>(null);
   const [msg, setMsg] = useState("");
+
+  const closeDetailModal = useCallback(() => {
+    try {
+      detailAudioRef.current?.pause();
+    } catch {
+      // ignore
+    }
+    setDetailOpen(null);
+    setDetailPreviewUrl(null);
+    setDetailPreviewVoiceId(null);
+    detailPendingAutoplay.current = false;
+  }, []);
 
   /** 合并顺序：系统表在前，默认 mini/max 在后以便同 key 时以后端默认为准（一般不会冲突） */
   const mergedVoiceCatalog = useMemo(
@@ -831,24 +844,13 @@ export default function MyVoicesPanel() {
           )
         : null}
 
-      {detailOpen && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/35 p-4 sm:items-center"
-              role="dialog"
-              aria-modal="true"
-              aria-label={t("voice.detail.title")}
-          onClick={() => {
-            try {
-              detailAudioRef.current?.pause();
-            } catch {
-              // ignore
-            }
-            setDetailOpen(null);
-            setDetailPreviewUrl(null);
-            setDetailPreviewVoiceId(null);
-            detailPendingAutoplay.current = false;
-          }}
+      {detailOpen ? (
+        <WorkspaceScrimModal
+          open
+          onClose={closeDetailModal}
+          labelledBy="voice-detail-title"
+          align="end"
+          scrimTone="35"
         >
           <div
             className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-modal"
@@ -856,7 +858,7 @@ export default function MyVoicesPanel() {
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-base font-semibold text-ink">
+                <h3 id="voice-detail-title" className="text-base font-semibold text-ink">
                   {detailOpen.kind === "preset"
                     ? detailOpen.meta.name
                     : detailOpen.kind === "cloned"
@@ -1101,10 +1103,8 @@ export default function MyVoicesPanel() {
               />
             ) : null}
           </div>
-        </div>,
-            document.body
-          )
-        : null}
+        </WorkspaceScrimModal>
+      ) : null}
 
       {overflowMenu
         ? createPortal(

@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { WORKBENCH_SCRIM_Z_CLASS } from "../../../lib/workbenchOverlays";
+import { useWorkbenchOverlayDismiss } from "../../../lib/useWorkbenchOverlayDismiss";
 
 type Props = {
   open: boolean;
@@ -27,20 +29,13 @@ export default function AuthorIpCompactModal({
 }: Props) {
   const cardRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !busy) onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, busy, onClose]);
+  useWorkbenchOverlayDismiss(open, onClose, { busy });
 
   if (!open || typeof document === "undefined") return null;
 
   return createPortal(
     <div
-      className="fym-workspace-scrim z-[1200] flex items-center justify-center bg-black/35 p-4"
+      className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center bg-black/35 p-4`}
       role="dialog"
       aria-modal="true"
       onPointerDown={(e) => {

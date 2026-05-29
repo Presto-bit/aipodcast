@@ -18,6 +18,7 @@ import {
   type ShareFormFields
 } from "../../lib/sharePublishDefaults";
 import { getBearerAuthHeadersSync, jobEventsSourceUrl } from "../../lib/authHeaders";
+import { WORKBENCH_DISMISS_OVERLAYS_EVENT, WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
 import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import { readLocalStorageScoped, readSessionStorageScoped, writeLocalStorageScoped } from "../../lib/userScopedStorage";
 import {
@@ -1475,6 +1476,21 @@ export function SharePublishClient({
   }, [rssGate, ownerJobRecord]);
 
   useEffect(() => {
+    const closeWorkbenchOverlays = () => {
+      setShareConfigModalOpen(false);
+      setScheduleModalOpen(false);
+      setRssFullSettingsModalOpen(false);
+      setAiShownotesModalOpen(false);
+      setWorkDownloadRechargeModalOpen(false);
+      setMorePlatformsOpen(false);
+      setScheduleModalErr("");
+      setAiShownotesErr("");
+    };
+    window.addEventListener(WORKBENCH_DISMISS_OVERLAYS_EVENT, closeWorkbenchOverlays);
+    return () => window.removeEventListener(WORKBENCH_DISMISS_OVERLAYS_EVENT, closeWorkbenchOverlays);
+  }, []);
+
+  useEffect(() => {
     if (!rssFullSettingsModalOpen && !aiShownotesModalOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -2117,7 +2133,7 @@ export function SharePublishClient({
         typeof document !== "undefined"
           ? createPortal(
               <div
-                className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+                className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center bg-black/40 p-4 sm:items-center`}
                 role="presentation"
               >
                 <button
@@ -2373,7 +2389,7 @@ export function SharePublishClient({
       {scheduleModalOpen && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+              className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center bg-black/40 p-4 sm:items-center`}
               role="presentation"
             >
               <button
@@ -2431,7 +2447,7 @@ export function SharePublishClient({
       {rssFullSettingsModalOpen && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fym-workspace-scrim z-[1300] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+              className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center bg-black/40 p-4 sm:items-center`}
               role="presentation"
             >
               <button
@@ -2471,7 +2487,7 @@ export function SharePublishClient({
       {aiShownotesModalOpen && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+              className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center bg-black/40 p-4 sm:items-center`}
               role="presentation"
             >
               <button

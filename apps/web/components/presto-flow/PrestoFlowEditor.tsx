@@ -83,7 +83,7 @@ import ClipEditorPrdLeftRail from "./ClipEditorPrdLeftRail";
 import ClipEditorPrdScriptToolbar from "./ClipEditorPrdScriptToolbar";
 import ClipEditorPrdTopBar from "./ClipEditorPrdTopBar";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
-import { createPortal } from "react-dom";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import {
   buildInitialAudioSegments,
   firstWordIdAtOrAfterMs,
@@ -2804,18 +2804,13 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           void startTranscribe();
         }}
       />
-      {shortcutHelpOpen && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className="fym-workspace-scrim z-[13000] flex items-center justify-center bg-black/35 p-4"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="shortcut-help-title"
-              onPointerDown={(e) => {
-                if (e.target === e.currentTarget) setShortcutHelpOpen(false);
-              }}
-            >
-              <div className="fym-modal-card w-full max-w-lg p-5" onPointerDown={(e) => e.stopPropagation()}>
+      <WorkspaceScrimModal
+        open={shortcutHelpOpen}
+        onClose={() => setShortcutHelpOpen(false)}
+        labelledBy="shortcut-help-title"
+        scrimTone="35"
+      >
+        <div className="fym-modal-card w-full max-w-lg p-5" onPointerDown={(e) => e.stopPropagation()}>
                 <div className="mb-2 flex items-center justify-between">
                   <h3 id="shortcut-help-title" className="text-sm font-semibold text-ink">
                     快捷键与交互说明
@@ -2842,10 +2837,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                   <li>`?` 打开/关闭本面板</li>
                 </ul>
               </div>
-            </div>,
-            document.body
-          )
-        : null}
+      </WorkspaceScrimModal>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

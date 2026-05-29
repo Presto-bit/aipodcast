@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { Button } from "./Button";
 
 type Props = {
@@ -35,14 +36,7 @@ export default function SmallConfirmModal({
   onConfirm,
   onCancel
 }: Props) {
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !busy) onCancel();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, busy, onCancel]);
+  useWorkbenchOverlayDismiss(open, onCancel, { busy });
 
   if (!open) return null;
 
@@ -50,7 +44,7 @@ export default function SmallConfirmModal({
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <div className="fym-workspace-scrim z-[1200] flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+    <div className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center p-3 sm:p-4`} role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
       <button
         type="button"
         className="absolute inset-0 bg-surface/50 backdrop-blur-[1px]"

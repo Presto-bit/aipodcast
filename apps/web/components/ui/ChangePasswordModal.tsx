@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { Button } from "./Button";
 
 export type ChangePasswordModalProps = {
@@ -44,14 +46,7 @@ export default function ChangePasswordModal({ open, onClose, onSuccess, applyCha
     onClose();
   }, [busy, onClose]);
 
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !busy) handleClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, busy, handleClose]);
+  useWorkbenchOverlayDismiss(open, handleClose, { busy });
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -81,7 +76,7 @@ export default function ChangePasswordModal({ open, onClose, onSuccess, applyCha
 
   return createPortal(
     <div
-      className="fym-workspace-scrim z-[1200] flex items-center justify-center p-4"
+      className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center p-4`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="change-password-modal-title"

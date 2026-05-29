@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../lib/auth";
+import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 
 const STORAGE_KEY = "fym_first_login_coach_done_v1";
 const SESSION_SNOOZE_KEY = "fym_first_login_coach_snooze_v1";
@@ -85,11 +88,15 @@ export default function FirstLoginCoach() {
     });
   }, [pathname]);
 
-  if (!open) return null;
+  const dismissSnooze = useCallback(() => dismiss(false, true), [dismiss]);
+  useWorkbenchOverlayDismiss(open, dismissSnooze);
 
-  return (
+  if (!open) return null;
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
-      className="fym-workspace-scrim z-[99980] flex items-end justify-center bg-ink/40 p-4 sm:items-center"
+      className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center bg-ink/40 p-4 sm:items-center`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="fym-coach-title"
@@ -153,6 +160,7 @@ export default function FirstLoginCoach() {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

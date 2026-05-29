@@ -45,7 +45,8 @@ import WorkAudioShell from "./WorkAudioShell";
 import ActiveJobsProvider from "./ActiveJobsProvider";
 import BrandGlyph from "./brand/BrandGlyph";
 const NotesNavExpanded = dynamic(() => import("./notes/NotesNavExpanded"), { ssr: false });
-import { dispatchNotesShowNotebookHub, dispatchNotesDismissOverlays } from "../lib/notesLastNotebook";
+import { dispatchNotesShowNotebookHub } from "../lib/notesLastNotebook";
+import { dispatchWorkbenchDismissOverlays } from "../lib/workbenchOverlays";
 import {
   APP_SHELL_MOBILE_MEDIA_QUERY,
   NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
@@ -390,10 +391,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     closeMobileNav("blur");
-    if (!matchesNotesWorkbench(path)) {
-      dispatchNotesDismissOverlays();
-    }
-  }, [pathname, closeMobileNav, path]);
+    dispatchWorkbenchDismissOverlays();
+  }, [pathname, closeMobileNav]);
 
   useEffect(() => {
     if (pathMatchesRoot(path, "/create")) setCreateSubNavExpanded(true);
@@ -673,7 +672,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         aria-label={t("nav.mainNavLabel")}
         onClickCapture={(e) => {
           const el = e.target as HTMLElement;
-          if (el.closest("a[href]")) dispatchNotesDismissOverlays();
+          if (el.closest("a[href]")) dispatchWorkbenchDismissOverlays();
         }}
         onClick={(e) => {
           if (!mobileLayout || !mobileNavOpen) return;
@@ -723,7 +722,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         className="shrink-0 space-y-0.5 border-t border-line p-2"
         onClickCapture={(e) => {
           const el = e.target as HTMLElement;
-          if (el.closest("a[href]")) dispatchNotesDismissOverlays();
+          if (el.closest("a[href]")) dispatchWorkbenchDismissOverlays();
         }}
       >
         {navSubscription.map(renderSidebarNavItem)}

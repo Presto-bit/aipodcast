@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 import { Button } from "../ui/Button";
 import type { ClipQcReport } from "../../lib/clipTypes";
 
@@ -41,21 +42,13 @@ export default function ClipExportQcGateModal({
   onAnalyze,
   onSkipExport
 }: Props) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busyAnalyze && !busyExport) onCancel();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, busyAnalyze, busyExport, onCancel]);
+  const busy = busyAnalyze || busyExport;
+  useWorkbenchOverlayDismiss(open, onCancel, { busy });
 
   if (!open || typeof document === "undefined") return null;
 
-  const busy = busyAnalyze || busyExport;
-
   return createPortal(
-    <div className="fym-workspace-scrim z-[1200] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-center justify-center p-4`} role="dialog" aria-modal="true">
       <button
         type="button"
         className="absolute inset-0 bg-surface/50 backdrop-blur-[1px]"

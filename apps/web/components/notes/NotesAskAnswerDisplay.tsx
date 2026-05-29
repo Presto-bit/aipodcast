@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
+import { useMemo, useState, useEffect } from "react";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import {
   sourceHasCitableChunks,
   type NotesAskSource,
@@ -51,27 +51,10 @@ function SourceExcerptModal({
   onClose: () => void;
   onOpenInPreview?: (source: NotesAskSource, chunk?: { charStart?: number; charEnd?: number; excerpt?: string }) => void;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
   if (!open || !source) return null;
 
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className="fym-workspace-scrim z-[1200] flex items-center justify-center bg-black/45 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="notes-ask-source-modal-title"
-      onClick={onClose}
-    >
+  return (
+    <WorkspaceScrimModal open labelledBy="notes-ask-source-modal-title" scrimTone="45" onClose={onClose}>
       <div
         className="max-h-[min(80vh,560px)] w-full max-w-lg overflow-hidden rounded-xl border border-line bg-surface shadow-card"
         onClick={(e) => e.stopPropagation()}
@@ -160,8 +143,7 @@ function SourceExcerptModal({
           </button>
         </div>
       </div>
-    </div>,
-    document.body
+    </WorkspaceScrimModal>
   );
 }
 

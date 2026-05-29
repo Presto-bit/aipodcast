@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { WORKBENCH_SCRIM_Z_CLASS } from "../../lib/workbenchOverlays";
+import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss";
 
 type FormSheetModalProps = {
   open: boolean;
@@ -15,21 +17,14 @@ type FormSheetModalProps = {
  * 订阅/钱包类表单弹层：居中卡片、可点遮罩或 Esc 关闭（与 SmallConfirmModal 一致挂 body）。
  */
 export default function FormSheetModal({ open, titleId, title, onClose, children }: FormSheetModalProps) {
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  useWorkbenchOverlayDismiss(open, onClose);
 
   if (!open) return null;
   if (typeof document === "undefined") return null;
 
   return createPortal(
     <div
-      className="fym-workspace-scrim z-[1200] flex items-end justify-center p-0 sm:items-center sm:p-4"
+      className={`fym-workspace-scrim ${WORKBENCH_SCRIM_Z_CLASS} flex items-end justify-center p-0 sm:items-center sm:p-4`}
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}

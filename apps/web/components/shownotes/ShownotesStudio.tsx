@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import { FileText, Music2, RotateCw, Save, Sparkles } from "../icons";
 import { IconPause, IconPlayFilled } from "../icons";
 import {
@@ -612,25 +612,22 @@ export default function ShownotesStudio({
         ) : null}
       </div>
 
-      {aiModalOpen && typeof document !== "undefined"
-        ? createPortal(
-            <div className="fym-workspace-scrim z-[1200] flex items-end justify-center bg-black/40 p-4 sm:items-center" role="presentation">
-              <button
-                type="button"
-                className="absolute inset-0 cursor-default"
-                aria-label="关闭"
-                onClick={() => {
-                  setAiModalOpen(false);
-                  setAiErr("");
-                }}
-              />
-              <div
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="sn-studio-ai-title"
-                className="relative z-10 w-full max-w-lg rounded-2xl border border-line bg-surface p-5 shadow-card"
-                onClick={(e) => e.stopPropagation()}
-              >
+      <WorkspaceScrimModal
+        open={aiModalOpen}
+        onClose={() => {
+          setAiModalOpen(false);
+          setAiErr("");
+        }}
+        labelledBy="sn-studio-ai-title"
+        align="end"
+        scrimTone="40"
+        busy={shareAiBusy}
+      >
+        <div
+          role="document"
+          className="w-full max-w-lg rounded-2xl border border-line bg-surface p-5 shadow-card"
+          onClick={(e) => e.stopPropagation()}
+        >
                 <h2 id="sn-studio-ai-title" className="inline-flex items-center gap-2 text-base font-semibold text-ink">
                   <Sparkles className="h-4 w-4 text-brand" />
                   AI 优化 Shownotes
@@ -669,10 +666,7 @@ export default function ShownotesStudio({
                   </button>
                 </div>
               </div>
-            </div>,
-            document.body
-          )
-        : null}
+      </WorkspaceScrimModal>
     </div>
   );
 

@@ -26,6 +26,7 @@ import { rememberJobId } from "../../lib/jobRecent";
 import { setActiveGenerationJob } from "../../lib/activeJobSession";
 import CreativeTemplatePicker from "../studio/CreativeTemplatePicker";
 import IntroOutroPresetBar from "../studio/IntroOutroPresetBar";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import { chipClass } from "../studio/chipStyles";
 import { IconPlayFilled } from "../icons";
 import { VoiceSelect } from "../studio/VoiceSelect";
@@ -991,14 +992,13 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
   }
 
   return (
-    <div
-      className="fym-workspace-scrim z-[280] overflow-y-auto overscroll-contain bg-black/50 p-3 py-6 sm:p-4 sm:py-10"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="notes-podcast-room-title"
-      onPointerDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose();
-      }}
+    <WorkspaceScrimModal
+      open={open}
+      onClose={onClose}
+      labelledBy="notes-podcast-room-title"
+      scrimTone="50"
+      busy={busy}
+      className="overflow-y-auto overscroll-contain p-3 py-6 sm:p-4 sm:py-10"
     >
       <div
         className="flex min-h-[calc(100dvh-3rem)] w-full items-start justify-center sm:min-h-[calc(100dvh-5rem)]"
@@ -1008,7 +1008,7 @@ const NotesPodcastRoomModal = forwardRef<NotesPodcastRoomModalHandle, NotesPodca
       >
         {cardInner}
       </div>
-    </div>
+    </WorkspaceScrimModal>
   );
 });
 export default NotesPodcastRoomModal;

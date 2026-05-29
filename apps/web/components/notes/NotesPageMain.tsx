@@ -4,10 +4,10 @@ import dynamic from "next/dynamic";
 import { useRouter, usePathname } from "next/navigation";
 import type { ChangeEvent, Dispatch, PointerEvent, SetStateAction } from "react";
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import InlineConfirmBar from "../ui/InlineConfirmBar";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import SmallPromptModal from "../ui/SmallPromptModal";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import EmptyState from "../ui/EmptyState";
 import UserErrorBanner from "../ui/UserErrorBanner";
 const NotesPodcastRoomModal = dynamic(() => import("./NotesPodcastRoomModal"));
@@ -1512,27 +1512,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   useEffect(() => {
     dismissNotesBlockingOverlays();
   }, [pathname, dismissNotesBlockingOverlays]);
-
-  const notesBlockingOverlayOpen =
-    showAddNoteModal ||
-    showPodcastGenreModal ||
-    showPodcastRoomModal ||
-    showArticleModal ||
-    showShareNotebookModal ||
-    showNotebookModal ||
-    showNotebookCoverModal ||
-    previewOpen ||
-    deleteNotebookConfirm;
-
-  useEffect(() => {
-    if (!notesBlockingOverlayOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      dismissNotesBlockingOverlays();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [notesBlockingOverlayOpen, dismissNotesBlockingOverlays]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !notebooksReady) return;
@@ -4030,33 +4009,28 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
         </NotesWorkbenchProvider>
       )}
 
-      {showAddNoteModal && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className="fym-workspace-scrim z-[99990] flex items-center justify-center bg-black/40 p-4"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="add-note-title"
-              onPointerDown={(e) => {
-                if (e.target === e.currentTarget) setShowAddNoteModal(false);
-              }}
+      <WorkspaceScrimModal
+        open={showAddNoteModal}
+        onClose={() => setShowAddNoteModal(false)}
+        labelledBy="add-note-title"
+        scrimTone="40"
+      >
+        <div
+          className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <h2 id="add-note-title" className="text-base font-semibold text-ink">
+              添加资料
+            </h2>
+            <button
+              type="button"
+              className="text-sm text-muted hover:text-ink"
+              onClick={() => setShowAddNoteModal(false)}
             >
-              <div
-                className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal"
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <h2 id="add-note-title" className="text-base font-semibold text-ink">
-                    添加资料
-                  </h2>
-                  <button
-                    type="button"
-                    className="text-sm text-muted hover:text-ink"
-                    onClick={() => setShowAddNoteModal(false)}
-                  >
-                    关闭
-                  </button>
-                </div>
+              关闭
+            </button>
+          </div>
             <div className="mt-4 space-y-2">
               <label className="block text-xs text-ink">
                 网页链接
@@ -4145,29 +4119,22 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
               ) : null}
             </div>
           </div>
-            </div>,
-            document.body
-          )
-        : null}
-      
+      </WorkspaceScrimModal>
 
-      {showNotebookCoverModal && notebookCoverModalTarget.trim() ? (
+      <WorkspaceScrimModal
+        open={Boolean(showNotebookCoverModal && notebookCoverModalTarget.trim())}
+        onClose={() => {
+          setShowNotebookCoverModal(false);
+          setNotebookCoverModalErr("");
+        }}
+        labelledBy="notebook-cover-title"
+        scrimTone="45"
+        busy={notebookCoverModalBusy}
+      >
         <div
-          className="fym-workspace-scrim z-[525] flex items-center justify-center bg-black/45 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="notebook-cover-title"
-          onPointerDown={(e) => {
-            if (e.target === e.currentTarget && !notebookCoverModalBusy) {
-              setShowNotebookCoverModal(false);
-              setNotebookCoverModalErr("");
-            }
-          }}
+          className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal"
+          onPointerDown={(e) => e.stopPropagation()}
         >
-          <div
-            className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
             <h2 id="notebook-cover-title" className="text-base font-semibold text-ink">
               上传封面
             </h2>
@@ -4227,26 +4194,22 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
+      </WorkspaceScrimModal>
 
-      {showShareNotebookModal ? (
+      <WorkspaceScrimModal
+        open={showShareNotebookModal}
+        onClose={() => {
+          setShowShareNotebookModal(false);
+          setShareCopyHint("");
+        }}
+        labelledBy="share-notebook-title"
+        scrimTone="45"
+        busy={shareModalBusy}
+      >
         <div
-          className="fym-workspace-scrim z-[520] flex items-center justify-center bg-black/45 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="share-notebook-title"
-          onPointerDown={(e) => {
-            if (e.target === e.currentTarget && !shareModalBusy) {
-              setShowShareNotebookModal(false);
-              setShareCopyHint("");
-            }
-          }}
+          className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal"
+          onPointerDown={(e) => e.stopPropagation()}
         >
-          <div
-            className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
             <h2 id="share-notebook-title" className="text-base font-semibold text-ink">
               分享
             </h2>
@@ -4354,8 +4317,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
+      </WorkspaceScrimModal>
 
       {showNotebookModal ? (
         <SmallPromptModal
@@ -4408,20 +4370,16 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
         />
       ) : null}
 
-      {showPodcastGenreModal ? (
+      <WorkspaceScrimModal
+        open={showPodcastGenreModal}
+        onClose={() => setShowPodcastGenreModal(false)}
+        labelledBy="genre-title"
+        scrimTone="45"
+      >
         <div
-          className="fym-workspace-scrim z-[520] flex items-center justify-center bg-black/45 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="genre-title"
-          onPointerDown={(e) => {
-            if (e.target === e.currentTarget) setShowPodcastGenreModal(false);
-          }}
+          className="w-full max-w-lg rounded-2xl border border-line bg-surface p-4 shadow-modal"
+          onPointerDown={(e) => e.stopPropagation()}
         >
-          <div
-            className="w-full max-w-lg rounded-2xl border border-line bg-surface p-4 shadow-modal"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
             <h2 id="genre-title" className="text-base font-semibold text-ink">
               选择体裁
             </h2>
@@ -4459,8 +4417,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
+      </WorkspaceScrimModal>
 
       <NotesPodcastRoomModal
         open={showPodcastRoomModal}
@@ -4488,23 +4445,20 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
         }
       />
 
-      {showArticleModal ? (
+      <WorkspaceScrimModal
+        open={showArticleModal}
+        onClose={() => {
+          setShowArticleModal(false);
+          setArticleModalStep("pick");
+        }}
+        labelledBy="article-modal-title"
+        scrimTone="45"
+        busy={draftBusy}
+      >
         <div
-          className="fym-workspace-scrim z-[520] flex items-center justify-center bg-black/45 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="article-modal-title"
-          onPointerDown={(e) => {
-            if (e.target === e.currentTarget && !draftBusy) {
-              setShowArticleModal(false);
-              setArticleModalStep("pick");
-            }
-          }}
+          className="max-h-[min(90vh,720px)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-4 shadow-modal"
+          onPointerDown={(e) => e.stopPropagation()}
         >
-          <div
-            className="max-h-[min(90vh,720px)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-4 shadow-modal"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
             {articleModalStep === "pick" ? (
               <>
                 <h2 id="article-modal-title" className="text-base font-semibold text-ink">
@@ -4678,26 +4632,18 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
               </>
             )}
           </div>
-        </div>
-      ) : null}
+      </WorkspaceScrimModal>
 
-      {previewOpen ? (
+      <WorkspaceScrimModal
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        labelledBy="note-preview-title"
+        scrimTone="50"
+      >
         <div
-          className="fym-workspace-scrim z-[520] flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="note-preview-title"
-          onPointerDown={(e) => {
-            if (e.target === e.currentTarget) setPreviewOpen(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setPreviewOpen(false);
-          }}
+          className="flex h-[min(92vh,820px)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card"
+          onPointerDown={(e) => e.stopPropagation()}
         >
-          <div
-            className="flex h-[min(92vh,820px)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
             <NoteMarkdownPreview
               noteId={previewNoteId}
               title={previewTitle || "参考资料内容"}
@@ -4743,8 +4689,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
               }
             />
           </div>
-        </div>
-      ) : null}
+      </WorkspaceScrimModal>
     </main>
   );
 }
