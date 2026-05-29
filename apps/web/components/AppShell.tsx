@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
   useCallback,
@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   Fragment,
+  Suspense,
   type ComponentType,
   type HTMLAttributes,
   type Dispatch,
@@ -142,6 +143,26 @@ function navCreateSubLinkClass(active: boolean): string {
   ].join(" ");
 }
 
+function readVoiceTabQuery(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return new URLSearchParams(window.location.search).get("tab");
+  } catch {
+    return null;
+  }
+}
+
+function WorkbenchRouteFallback() {
+  return (
+    <div className="mx-auto w-full max-w-6xl space-y-4 px-4 py-8 sm:px-6 lg:px-8" aria-busy aria-label="页面加载中">
+      <SkeletonLine className="h-8 w-48 max-w-[80%]" />
+      <SkeletonLine className="h-4 w-full max-w-xl" />
+      <SkeletonBlock className="h-52 w-full max-w-3xl rounded-xl" />
+      <SkeletonBlock className="h-36 w-full max-w-3xl rounded-xl" />
+    </div>
+  );
+}
+
 type CreateStudioNavExpandedProps = {
   item: NavItem;
   path: string;
@@ -156,10 +177,12 @@ function CreateStudioNavExpanded({
   setCreateSubNavExpanded
 }: CreateStudioNavExpandedProps) {
   const { t } = useI18n();
-  const searchParams = useSearchParams();
-  const tab = searchParams?.get("tab") ?? null;
+  const [voiceTab, setVoiceTab] = useState<string | null>(null);
+  useEffect(() => {
+    setVoiceTab(readVoiceTabQuery());
+  }, [path]);
   const voiceManageActive =
-    pathMatchesRoot(path, "/voice") && (tab === null || tab === "clone");
+    pathMatchesRoot(path, "/voice") && (voiceTab === null || voiceTab === "clone");
 
   /** 策略 A：仅「创作工作室」路由（/create、/podcast、/tts）父行高亮；在 /clip、/shownotes、/voice 等仅子项高亮。 */
   const parentRouteActive = Boolean(item.activeMatch?.(path));
@@ -473,7 +496,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const pageShell = <AnimatedPageShell>{children}</AnimatedPageShell>;
+  const pageShell = (
+    <AnimatedPageShell>
+      <Suspense fallback={<WorkbenchRouteFallback />}>{children}</Suspense>
+    </AnimatedPageShell>
+  );
   const shellChildren = isMarketingShellLessPath(path) ? (
     pageShell
   ) : (

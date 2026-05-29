@@ -1,7 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import DeployVersionSync from "../components/DeployVersionSync";
 import SiteVisitorBeacon from "../components/SiteVisitorBeacon";
 import AppShell from "../components/AppShell";
@@ -89,9 +89,7 @@ export default function Providers({
         <I18nProvider>
           <AuthProvider initialSession={initialSession}>
             <AppNoticeProvider>
-              <Suspense fallback={null}>
-                <AppShell>{children}</AppShell>
-              </Suspense>
+              <AppShell>{children}</AppShell>
               <FirstLoginCoach />
             </AppNoticeProvider>
           </AuthProvider>
