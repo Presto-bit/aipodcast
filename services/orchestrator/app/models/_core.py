@@ -1959,6 +1959,9 @@ def list_trashed_notes(limit: int = 100, offset: int = 0, user_ref: str | None =
 
 
 def restore_note(note_id: str, user_ref: str | None = None) -> bool:
+    nid = _normalize_user_uuid((note_id or "").strip())
+    if not nid:
+        return False
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -1967,12 +1970,12 @@ def restore_note(note_id: str, user_ref: str | None = None) -> bool:
                 UPDATE inputs i SET deleted_at = NULL
                 FROM projects p
                 WHERE i.project_id = p.id
-                  AND i.id = %s
+                  AND i.id = %s::uuid
                   AND i.input_type IN ('note_text', 'note_file')
                   AND i.deleted_at IS NOT NULL
                   AND (%s::uuid IS NULL OR p.user_id = %s::uuid)
                 """,
-                (note_id, user_uuid, user_uuid),
+                (nid, user_uuid, user_uuid),
             )
             ok = cur.rowcount > 0
             conn.commit()
@@ -1981,6 +1984,9 @@ def restore_note(note_id: str, user_ref: str | None = None) -> bool:
 
 def purge_note_hard(note_id: str, user_ref: str | None = None) -> bool:
     """永久删除（回收站清空）；若有上传原件则删除对象存储中的 file_object_key。"""
+    nid = _normalize_user_uuid((note_id or "").strip())
+    if not nid:
+        return False
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
@@ -1989,13 +1995,13 @@ def purge_note_hard(note_id: str, user_ref: str | None = None) -> bool:
                 DELETE FROM inputs i
                 USING projects p
                 WHERE i.project_id = p.id
-                  AND i.id = %s
+                  AND i.id = %s::uuid
                   AND i.input_type IN ('note_text', 'note_file')
                   AND i.deleted_at IS NOT NULL
                   AND (%s::uuid IS NULL OR p.user_id = %s::uuid)
                 RETURNING i.file_object_key
                 """,
-                (note_id, user_uuid, user_uuid),
+                (nid, user_uuid, user_uuid),
             )
             row = cur.fetchone()
             conn.commit()
@@ -2010,6 +2016,93 @@ def purge_note_hard(note_id: str, user_ref: str | None = None) -> bool:
         except Exception:
             pass
     return True
+
+
+def purge_note_force(note_id: str, user_ref: str | None = None) -> bool:
+    """永久删除笔记（不要求先进回收站）；用于个人特色 IP 素材等直接删除场景。"""
+    nid = _normalize_user_uuid((note_id or "").strip())
+    if not nid:
+        return False
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            cur.execute(
+                """
+                DELETE FROM inputs i
+                USING projects p
+                WHERE i.project_id = p.id
+                  AND i.id = %s::uuid
+                  AND i.input_type IN ('note_text', 'note_file')
+                  AND (%s::uuid IS NULL OR p.user_id = %s::uuid)
+                RETURNING i.file_object_key
+                """,
+                (nid, user_uuid, user_uuid),
+            )
+            row = cur.fetchone()
+            conn.commit()
+    if not row:
+        return False
+    key = str(row.get("file_object_key") or "").strip()
+    if key:
+        from ..object_store import delete_object_key
+
+        try:
+            delete_object_key(key)
+        except Exception:
+            pass
+    return True
+
+
+def purge_notes_hard_batch(note_ids: list[str], user_ref: str | None = None) -> dict[str, Any]:
+    """批量永久删除回收站笔记；返回 purged / failed 计数与 id 列表。"""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for raw in note_ids or []:
+        nid = _normalize_user_uuid(str(raw or "").strip())
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        ids.append(nid)
+    purged_ids: list[str] = []
+    failed_ids: list[str] = []
+    for nid in ids:
+        if purge_note_hard(nid, user_ref=user_ref):
+            purged_ids.append(nid)
+        else:
+            failed_ids.append(nid)
+    return {
+        "total": len(ids),
+        "purged": len(purged_ids),
+        "purgedIds": purged_ids,
+        "failed": len(failed_ids),
+        "failedIds": failed_ids,
+    }
+
+
+def restore_notes_batch(note_ids: list[str], user_ref: str | None = None) -> dict[str, Any]:
+    """批量恢复回收站笔记。"""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for raw in note_ids or []:
+        nid = _normalize_user_uuid(str(raw or "").strip())
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+        ids.append(nid)
+    restored_ids: list[str] = []
+    failed_ids: list[str] = []
+    for nid in ids:
+        if restore_note(nid, user_ref=user_ref):
+            restored_ids.append(nid)
+        else:
+            failed_ids.append(nid)
+    return {
+        "total": len(ids),
+        "restored": len(restored_ids),
+        "restoredIds": restored_ids,
+        "failed": len(failed_ids),
+        "failedIds": failed_ids,
+    }
 
 
 def purge_expired_trashed_notes(retention_days: int = 7, max_rows: int = 200) -> int:

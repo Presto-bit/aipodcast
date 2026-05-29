@@ -302,7 +302,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {
         href: "/drafts",
         label: t("nav.drafts"),
-        short: "草",
+        short: "本",
         Icon: IconDraft,
         activeMatch: (p) => pathMatchesRoot(p, "/drafts")
       },

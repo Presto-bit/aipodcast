@@ -12,7 +12,9 @@ const LIMIT = 400;
 const RATE_LIMIT_EXEMPT_POST_PATHS = new Set([
   "/api/note-upload",
   "/api/notes/upload",
-  "/api/notes/import_url"
+  "/api/notes/import_url",
+  "/api/notes/trash/purge",
+  "/api/notes/trash/restore"
 ]);
 
 /** 敏感工作台文档：禁止 CDN/浏览器长期缓存 HTML */

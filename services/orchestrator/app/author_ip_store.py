@@ -648,6 +648,55 @@ def list_archived_author_ips(user_ref: str | None) -> list[dict[str, Any]]:
     return items
 
 
+def _purge_author_ip_notebook_materials(user_ref: str | None, notebook_name: str) -> None:
+    nb = (notebook_name or "").strip()
+    if not nb:
+        return
+    try:
+        n_deleted, keys = purge_inputs_in_notebook_hard(nb, user_ref=user_ref)
+        if keys:
+            from .object_store import delete_object_key
+
+            for key in keys:
+                try:
+                    delete_object_key(key)
+                except Exception:
+                    pass
+        logger.info("author_ip: purge notebook=%s notes=%s", nb, n_deleted)
+    except Exception:
+        logger.exception("author_ip: purge notebook materials notebook=%s", nb)
+
+
+def delete_author_ip_permanent(user_ref: str | None, ip_id: str) -> tuple[bool, str | None]:
+    """永久删除 IP 及其全部素材（不进回收站）。"""
+    notebook_name = ""
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return False, "未登录"
+            cur.execute(
+                """
+                SELECT is_system_seed, is_template, notebook_name
+                FROM author_ips
+                WHERE user_id = %s::uuid AND id = %s::uuid AND archived_at IS NULL
+                """,
+                (user_uuid, ip_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False, "IP 不存在"
+            if bool(row.get("is_system_seed")):
+                return False, "「我的 IP」不可删除"
+            if bool(row.get("is_template")):
+                return False, "示例 IP 不可删除，可复制后编辑"
+            notebook_name = str(row.get("notebook_name") or "").strip()
+            cur.execute("DELETE FROM author_ips WHERE id = %s::uuid", (ip_id,))
+            conn.commit()
+    _purge_author_ip_notebook_materials(user_ref, notebook_name)
+    return True, None
+
+
 def archive_author_ip(user_ref: str | None, ip_id: str) -> tuple[bool, str | None]:
     notebook_name = ""
     with get_conn() as conn:
@@ -742,20 +791,7 @@ def purge_author_ip(user_ref: str | None, ip_id: str) -> tuple[bool, str | None]
             notebook_name = str(row.get("notebook_name") or "").strip()
             cur.execute("DELETE FROM author_ips WHERE id = %s::uuid", (ip_id,))
             conn.commit()
-    if notebook_name:
-        try:
-            n_deleted, keys = purge_inputs_in_notebook_hard(notebook_name, user_ref=user_ref)
-            if keys:
-                from .object_store import delete_object_key
-
-                for key in keys:
-                    try:
-                        delete_object_key(key)
-                    except Exception:
-                        pass
-            logger.info("author_ip: purge notebook=%s notes=%s", notebook_name, n_deleted)
-        except Exception:
-            logger.exception("author_ip: purge materials ip=%s", ip_id)
+    _purge_author_ip_notebook_materials(user_ref, notebook_name)
     return True, None
 
 

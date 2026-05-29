@@ -140,7 +140,7 @@ export default function DraftsPage() {
   return (
     <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-10 sm:px-4">
       <div className="mb-6 text-center">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">播客草稿箱</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">本地文稿</h1>
         <p className="mt-2 text-sm text-muted">本地文稿；可送到「文本转语音」。</p>
         <p className="mt-1 text-xs text-muted">{storageHint}</p>
       </div>

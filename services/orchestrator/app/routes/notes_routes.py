@@ -60,6 +60,7 @@ from ..models import (
     migrate_legacy_default_notebook_for_user,
     purge_expired_trashed_notes,
     purge_note_hard,
+    purge_notes_hard_batch,
     patch_notebook_cover_db,
     read_notebook_cover_bytes_owner,
     read_notebook_cover_bytes_public,
@@ -1217,6 +1218,67 @@ def list_trash_notes_api(
         notes = notes[:limit]
     has_more = len(rows) >= fetch_limit or len(notes) >= limit
     return {"success": True, "notes": notes, "has_more": has_more, "tab": tab_norm or None}
+
+
+def _parse_trash_note_ids_body(body: dict[str, Any] | None) -> list[str]:
+    raw = (body or {}).get("note_ids") or (body or {}).get("noteIds") or []
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(status_code=400, detail="note_ids_required")
+    ids = [str(x).strip() for x in raw if str(x).strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="note_ids_required")
+    if len(ids) > 200:
+        raise HTTPException(status_code=400, detail="too_many_notes")
+    return ids
+
+
+@router.post("/notes/trash/purge")
+def purge_trash_notes_batch_api(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    user_ref = _current_user_ref_or_401(request)
+    note_ids = _parse_trash_note_ids_body(body)
+    out = purge_notes_hard_batch(note_ids, user_ref=user_ref)
+    if out.get("purgedIds"):
+        invalidate_retrieval_cache_for_notes(list(out["purgedIds"]))
+    return {"success": True, **out}
+
+
+@router.post("/notes/trash/restore")
+def restore_trash_notes_batch_api(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    user_ref = _current_user_ref_or_401(request)
+    note_ids = _parse_trash_note_ids_body(body)
+    restored_ids: list[str] = []
+    failed_ids: list[str] = []
+    blocked_ip = 0
+    for nid in note_ids:
+        row = get_note_by_id(nid, include_deleted=True, user_ref=user_ref)
+        if row:
+            md = _normalize_metadata_dict(row)
+            aid = str(md.get("authorIpId") or "").strip()
+            if aid:
+                try:
+                    from ..author_ip_store import author_ip_is_active
+
+                    if not author_ip_is_active(user_ref, aid):
+                        failed_ids.append(nid)
+                        blocked_ip += 1
+                        continue
+                except Exception:
+                    pass
+        if restore_note(nid, user_ref=user_ref):
+            restored_ids.append(nid)
+        else:
+            failed_ids.append(nid)
+    if restored_ids:
+        invalidate_retrieval_cache_for_notes(restored_ids)
+    return {
+        "success": True,
+        "total": len(note_ids),
+        "restored": len(restored_ids),
+        "restoredIds": restored_ids,
+        "failed": len(failed_ids),
+        "failedIds": failed_ids,
+        "authorIpRestoreBlocked": blocked_ip,
+    }
 
 
 @router.post("/notes")

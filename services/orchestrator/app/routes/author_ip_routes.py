@@ -11,9 +11,9 @@ from pydantic import BaseModel, Field
 
 from ..author_ip_billing import can_afford_author_compose, debit_author_compose
 from ..author_ip_store import (
-    archive_author_ip,
     bootstrap_author_ips,
     create_blank_author_ip,
+    delete_author_ip_permanent,
     duplicate_author_ip,
     ensure_author_ip_for_notebook,
     ensure_default_author_ip,
@@ -312,7 +312,7 @@ def patch_author_ip_api(request: Request, ip_id: str, body: AuthorIpPatchBody):
 @router.delete("/{ip_id}")
 def delete_author_ip_api(request: Request, ip_id: str):
     user_ref = _current_user_ref_or_401(request)
-    ok, err = archive_author_ip(user_ref, ip_id)
+    ok, err = delete_author_ip_permanent(user_ref, ip_id)
     if err:
         raise HTTPException(status_code=400, detail=err)
     if not ok:

@@ -11,8 +11,9 @@ from .author_ip_distill import material_in_style_learning, run_author_ip_distill
 from .author_ip_store import get_author_ip, is_author_ip_notebook_name
 from .author_ip_style import list_ip_materials
 from .db import get_conn, get_cursor
-from .models import NOTES_PODCAST_STUDIO_PROJECT, create_text_note, delete_note, ensure_default_project
+from .models import NOTES_PODCAST_STUDIO_PROJECT, create_text_note, ensure_default_project, purge_note_force
 from .models._core import _resolve_user_uuid_or_none
+from .note_rag_service import invalidate_retrieval_cache_for_notes
 
 _MATURITY_RANK = {"empty": 0, "sketch": 1, "sketch_plus": 2, "ready": 3, "stale": 2}
 
@@ -123,8 +124,9 @@ def delete_author_ip_material(user_ref: str | None, ip_id: str, note_id: str) ->
     materials = {str(m.get("noteId") or "") for m in list_ip_materials(user_ref, ip_item)}
     if note_id not in materials:
         raise ValueError("note_not_in_ip")
-    if not delete_note(note_id, user_ref=user_ref):
+    if not purge_note_force(note_id, user_ref=user_ref):
         raise ValueError("delete_failed")
+    invalidate_retrieval_cache_for_notes([note_id])
     refresh_author_ip_maturity(user_ref, ip_id)
     return True
 

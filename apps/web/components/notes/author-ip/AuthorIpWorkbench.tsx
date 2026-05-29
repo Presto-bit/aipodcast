@@ -159,7 +159,7 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
   };
 
   const onDeleteMaterial = async (noteId: string) => {
-    if (!window.confirm("移入回收站？可在知识库一级导航的「回收站」中恢复。")) return;
+    if (!window.confirm("永久删除该素材？此操作不可恢复。")) return;
     setBusy(true);
     try {
       await deleteAuthorIpMaterial(ipId, noteId);
@@ -223,7 +223,7 @@ export default function AuthorIpWorkbench({ ipId }: Props) {
 
   const onDeleteIp = async () => {
     if (!item || item.isSystemSeed || item.isTemplate) return;
-    if (!window.confirm(`删除「${item.displayName}」？可在知识库一级导航的「回收站」中恢复。`)) return;
+    if (!window.confirm(`永久删除「${item.displayName}」及其全部素材？此操作不可恢复。`)) return;
     setBusy(true);
     try {
       await deleteAuthorIp(item.id);
