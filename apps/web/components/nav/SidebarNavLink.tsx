@@ -3,14 +3,15 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ComponentProps, MouseEvent } from "react";
-import { normalizePathname, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
+import { matchesNotesWorkbench, normalizePathname, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
 import { prefetchWorkbenchRoute } from "../../lib/navPrefetch";
 import { dispatchWorkbenchDismissOverlays } from "../../lib/workbenchOverlays";
 
 type SidebarNavLinkProps = Omit<ComponentProps<typeof Link>, "prefetch">;
 
 /**
- * 侧栏专用 Link：pointerdown 先关遮罩，click 用 router.push 兜底，避免弹层残留时 Next 软路由不切换。
+ * 侧栏专用 Link：pointerdown 先关遮罩。
+ * 知识库页卸载前会阻塞 Next 软路由，离开 /notes 时用整页跳转。
  */
 export default function SidebarNavLink({
   href,
@@ -28,11 +29,15 @@ export default function SidebarNavLink({
     onClick?.(e);
     if (e.defaultPrevented) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+
     const target = normalizePathname(hrefStr.split("?")[0] || hrefStr);
     const current = normalizePathname(pathname);
     if (target === current) return;
-    e.preventDefault();
-    router.push(hrefStr);
+
+    if (matchesNotesWorkbench(pathname)) {
+      e.preventDefault();
+      window.location.assign(hrefStr);
+    }
   };
 
   return (
