@@ -130,7 +130,7 @@ export default function WorksGroupedGalleryPanel({
           maxPerGroup={cap}
           pendingStudioWork={pendingStudioWork}
           pendingStudioSubtitle={pendingStudioSubtitle}
-          galleryVariant="notes_studio"
+          galleryVariant="podcast"
         />
       ) : null}
       <WorksGroup
@@ -143,7 +143,7 @@ export default function WorksGroupedGalleryPanel({
         onWorkDeleted={onWorkDeleted}
         returnTo={returnTo}
         maxPerGroup={cap}
-        galleryVariant="notes_studio"
+        galleryVariant="podcast"
       />
       <WorksGroup
         title={`文稿${script.length > 0 ? `（${script.length}）` : ""}`}
