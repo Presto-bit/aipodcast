@@ -61,7 +61,8 @@ import {
   NOTES_TEMPLATES_PREFIX,
   NOTES_TRASH_PREFIX,
   pathMatchesRoot,
-  WORKBENCH_HOME_PATH
+  WORKBENCH_HOME_PATH,
+  WORKBENCH_NAV_PREFETCH
 } from "../lib/navPaths";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../lib/userScopedStorage";
 import { reportFrontendGlobalError } from "../lib/frontendGlobalErrorClient";
@@ -154,7 +155,6 @@ function CreateStudioNavExpanded({
 }: CreateStudioNavExpandedProps) {
   const { t } = useI18n();
   const searchParams = useSearchParams();
-  const notesHard = isNotesPrimaryWorkbenchPath(path);
   const tab = searchParams?.get("tab") ?? null;
   const voiceManageActive =
     pathMatchesRoot(path, "/voice") && (tab === null || tab === "clone");
@@ -192,30 +192,17 @@ function CreateStudioNavExpanded({
 
   return (
     <div className="flex w-full flex-col gap-0.5">
-      {notesHard ? (
-        <a
-          href="/create"
-          className={parentClass}
-          title={parentTip}
-          aria-expanded={createSubNavExpanded}
-          aria-controls="fym-create-studio-subnav"
-          onClick={onParentClick}
-        >
-          {parentInner}
-        </a>
-      ) : (
-        <Link
-          href="/create"
-          prefetch={false}
-          className={parentClass}
-          title={parentTip}
-          aria-expanded={createSubNavExpanded}
-          aria-controls="fym-create-studio-subnav"
-          onClick={onParentClick}
-        >
-          {parentInner}
-        </Link>
-      )}
+      <Link
+        href="/create"
+        prefetch={WORKBENCH_NAV_PREFETCH}
+        className={parentClass}
+        title={parentTip}
+        aria-expanded={createSubNavExpanded}
+        aria-controls="fym-create-studio-subnav"
+        onClick={onParentClick}
+      >
+        {parentInner}
+      </Link>
       {createSubNavExpanded ? (
         <div
           id="fym-create-studio-subnav"
@@ -223,30 +210,18 @@ function CreateStudioNavExpanded({
           aria-label={t("nav.createSubNavGroup")}
           className="ml-10 flex flex-col gap-0.5"
         >
-          {subs.map((s) =>
-            notesHard ? (
-              <a
-                key={s.href}
-                href={s.href}
-                className={navCreateSubLinkClass(s.active)}
-                title={s.label}
-                aria-current={s.active ? "page" : undefined}
-              >
-                <span className="min-w-0 truncate">{s.label}</span>
-              </a>
-            ) : (
-              <Link
-                key={s.href}
-                href={s.href}
-                prefetch={false}
-                className={navCreateSubLinkClass(s.active)}
-                title={s.label}
-                aria-current={s.active ? "page" : undefined}
-              >
-                <span className="min-w-0 truncate">{s.label}</span>
-              </Link>
-            )
-          )}
+          {subs.map((s) => (
+            <Link
+              key={s.href}
+              href={s.href}
+              prefetch={WORKBENCH_NAV_PREFETCH}
+              className={navCreateSubLinkClass(s.active)}
+              title={s.label}
+              aria-current={s.active ? "page" : undefined}
+            >
+              <span className="min-w-0 truncate">{s.label}</span>
+            </Link>
+          ))}
         </div>
       ) : null}
     </div>
@@ -538,10 +513,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   /**
    * 侧栏主导航：
    * - 「工作台首页」始终用原生 <a href="/home">，从登录页等场景可靠回到聚合页（避免软路由未切换主内容）。
-   * - 仍在 /notes 主路径时，「知识库」用 next/link + preventDefault 调 hub：保留 href 利于无障碍与右键新开，
-   *   且避免曾出现的 preventDefault + router.push 竞态。
-   * - 同状态下其它入口：仅用原生 a[href] 整页离开。
-   * - 离开 /notes 主路径后：next/link 软路由。
+   * - 仍在 /notes 主路径时，「知识库」用 next/link + preventDefault 调 hub：保留 href 利于无障碍与右键新开。
+   * - 其余入口：next/link 软路由 + prefetch。
    */
   function renderSidebarNavItem(item: NavItem) {
     const active = linkActive(item);
@@ -563,7 +536,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <Link
           key={item.href}
           href="/notes"
-          prefetch={false}
+          prefetch={WORKBENCH_NAV_PREFETCH}
           className={navButtonClass(active, collapsed)}
           title={tip}
           onClick={(e) => {
@@ -578,18 +551,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
       );
     }
-    if (isNotesPrimaryWorkbenchPath(path)) {
-      return (
-        <a key={item.href} href={item.href} className={navButtonClass(active, collapsed)} title={tip}>
-          <NavIconBox active={active}>
-            <Ic />
-          </NavIconBox>
-          {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
-        </a>
-      );
-    }
     return (
-      <Link key={item.href} href={item.href} prefetch={false} className={navButtonClass(active, collapsed)} title={tip}>
+      <Link
+        key={item.href}
+        href={item.href}
+        prefetch={WORKBENCH_NAV_PREFETCH}
+        className={navButtonClass(active, collapsed)}
+        title={tip}
+      >
         <NavIconBox active={active}>
           <Ic />
         </NavIconBox>
@@ -620,7 +589,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       >
         <Link
           href="/"
-          prefetch={false}
+          prefetch={WORKBENCH_NAV_PREFETCH}
           className={[
             "flex shrink-0 items-center rounded-lg p-0.5 outline-offset-2 ring-offset-canvas transition-colors hover:bg-fill/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35",
             collapsed ? "justify-center" : ""

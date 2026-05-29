@@ -5,6 +5,9 @@
 /** 工作台聚合首页（原根路径 `/`）；公开营销落地页仍为 `/`。 */
 export const WORKBENCH_HOME_PATH = "/home";
 
+/** 工作台侧栏 Link prefetch：加速高频软路由切页 */
+export const WORKBENCH_NAV_PREFETCH = true;
+
 export const NOTES_TEMPLATES_PREFIX = "/notes/templates";
 export const NOTES_TRASH_PREFIX = "/notes/trash";
 

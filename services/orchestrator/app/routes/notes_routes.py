@@ -36,6 +36,7 @@ from ..note_constants import (
 from ..note_chapters import note_coverage_stats
 from ..models import (
     NOTES_PODCAST_STUDIO_PROJECT,
+    aggregate_notebook_input_stats,
     count_distinct_notebooks_for_user,
     create_file_note,
     create_job,
@@ -1141,8 +1142,6 @@ def list_trash_notes_api(
     offset: int = Query(default=0, ge=0, le=50_000),
     tab: str | None = Query(default=None, description="reference"),
 ):
-    # 默认保留 7 天，查询回收站时顺带清理过期项。
-    purge_expired_trashed_notes(retention_days=NOTE_TRASH_RETENTION_DAYS, max_rows=settings.trash_purge_max_rows)
     user_ref = _current_user_ref_or_401(request)
     tab_norm = str(tab or "").strip().lower()
     try:
@@ -2161,6 +2160,14 @@ def notebook_audio_overview_api(notebook: str, request: Request, body: dict[str,
     job_id = create_job(pid, "script_draft", "ai", payload, created_by=user_ref)
     ai_queue.enqueue(run_ai_job, job_id, job_timeout=3600)
     return {"success": True, "jobId": job_id, "notebook": notebook, "meta": meta}
+
+
+@router.get("/notebooks/stats")
+def notebook_stats_api(request: Request):
+    """按笔记本聚合资料条数与最早创建时间（供知识库 hub 元数据，避免分页扫 notes）。"""
+    user_ref = _current_user_ref_or_401(request)
+    stats = aggregate_notebook_input_stats(user_ref)
+    return {"success": True, "statsByNotebook": stats}
 
 
 @router.get("/notebooks")

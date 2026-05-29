@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Suspense, useEffect, useState } from "react";
 import DeployVersionSync from "../components/DeployVersionSync";
-import SitePageViewBeacon from "../components/SitePageViewBeacon";
+import SiteVisitorBeacon from "../components/SiteVisitorBeacon";
 import AppShell from "../components/AppShell";
 import FirstLoginCoach from "../components/onboarding/FirstLoginCoach";
 import { AuthProvider } from "../lib/auth";
@@ -84,9 +84,7 @@ export default function Providers({
   return (
     <QueryClientProvider client={client}>
       <DeployVersionSync />
-      <Suspense fallback={null}>
-        <SitePageViewBeacon />
-      </Suspense>
+      <SiteVisitorBeacon />
       <ThemeProvider>
         <I18nProvider>
           <AuthProvider initialSession={initialSession}>

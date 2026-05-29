@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
+import { useTableVirtualizer } from "../../../../components/ui/useTableVirtualizer";
 import { useAuth } from "../../../../lib/auth";
 
 type TabKey = "overview" | "ledger" | "orders" | "users" | "works" | "alerts";
@@ -22,15 +24,15 @@ type Overview = {
   distinct_jobs?: number; llm_cost_cny?: number; tts_cost_cny?: number; image_cost_cny?: number; embedding_cost_cny?: number; cost_total_cny?: number;
   login_count?: number; login_users?: number; active_sessions?: number; session_users?: number;
 };
-type PvUvYesterday = { day?: string; pv?: number; uv?: number };
-type PvUvRange = { date_from?: string; date_to?: string; pv?: number; uv?: number };
-type PvUvDayRow = { day?: string; pv?: number; uv?: number };
-type PvUvStats = {
+type SiteUvYesterday = { day?: string; uv?: number };
+type SiteUvRange = { date_from?: string; date_to?: string; uv?: number };
+type SiteUvDayRow = { day?: string; uv?: number };
+type SiteUvStats = {
   timezone?: string;
   t_plus_1_note?: string;
-  yesterday?: PvUvYesterday;
-  range?: PvUvRange;
-  by_day?: PvUvDayRow[];
+  yesterday?: SiteUvYesterday;
+  range?: SiteUvRange;
+  by_day?: SiteUvDayRow[];
 };
 type UserRow = {
   user_key?: string;
@@ -169,7 +171,7 @@ export default function AdminUsagePage(): JSX.Element {
   const [inputRows, setInputRows] = useState<InputTypeRow[]>([]);
   const [dayRows, setDayRows] = useState<DayRow[]>([]);
   const [topUsers, setTopUsers] = useState<TopUserRow[]>([]);
-  const [pvUv, setPvUv] = useState<PvUvStats>({});
+  const [siteUv, setSiteUv] = useState<SiteUvStats>({});
 
   const [userRows, setUserRows] = useState<UserRow[]>([]);
   const [worksOverview, setWorksOverview] = useState<WorksOverview>({});
@@ -195,6 +197,9 @@ export default function AdminUsagePage(): JSX.Element {
   const [ledgerExpenseDetails, setLedgerExpenseDetails] = useState<LedgerExpenseDetail[]>([]);
   const [ledgerRevenueDetails, setLedgerRevenueDetails] = useState<LedgerRevenueDetail[]>([]);
 
+  const expenseVirtual = useTableVirtualizer(ledgerExpenseDetails.length, 40);
+  const revenueVirtual = useTableVirtualizer(ledgerRevenueDetails.length, 40);
+
   const query = useMemo(() => {
     const q = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
     return q.toString();
@@ -205,20 +210,55 @@ export default function AdminUsagePage(): JSX.Element {
     return q.toString();
   }, [dateFrom, dateTo]);
 
+  const overviewQuery = useQuery({
+    queryKey: ["admin-usage-overview", query],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/usage/dashboard?${query}`, {
+        headers: getAuthHeaders(),
+        cache: "no-store"
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        overview?: Overview;
+        by_job_type?: JobTypeRow[];
+        by_input_type?: InputTypeRow[];
+        by_day?: DayRow[];
+        top_users?: TopUserRow[];
+        site_uv?: SiteUvStats;
+        source?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
+      return data;
+    },
+    enabled: tab === "overview",
+    staleTime: 45_000
+  });
+
+  useEffect(() => {
+    if (tab !== "overview" || !overviewQuery.data) return;
+    const data = overviewQuery.data;
+    setOverview(data.overview || {});
+    setJobRows(Array.isArray(data.by_job_type) ? data.by_job_type : []);
+    setInputRows(Array.isArray(data.by_input_type) ? data.by_input_type : []);
+    setDayRows(Array.isArray(data.by_day) ? data.by_day : []);
+    setTopUsers(Array.isArray(data.top_users) ? data.top_users : []);
+    setSiteUv(data.site_uv && typeof data.site_uv === "object" ? data.site_uv : {});
+    setUsageSource(typeof data.source === "string" && data.source ? data.source : "usage_events");
+    setErr("");
+  }, [overviewQuery.data, tab]);
+
+  useEffect(() => {
+    if (tab === "overview" && overviewQuery.isError) {
+      setErr(String(overviewQuery.error instanceof Error ? overviewQuery.error.message : overviewQuery.error));
+    }
+  }, [overviewQuery.error, overviewQuery.isError, tab]);
+
   const load = useCallback(async () => {
     setErr("");
     try {
       if (tab === "overview") {
-        const res = await fetch(`/api/admin/usage/dashboard?${query}`, { headers: getAuthHeaders(), cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; overview?: Overview; by_job_type?: JobTypeRow[]; by_input_type?: InputTypeRow[]; by_day?: DayRow[]; top_users?: TopUserRow[]; pv_uv?: PvUvStats; source?: string; error?: string };
-        if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
-        setOverview(data.overview || {});
-        setJobRows(Array.isArray(data.by_job_type) ? data.by_job_type : []);
-        setInputRows(Array.isArray(data.by_input_type) ? data.by_input_type : []);
-        setDayRows(Array.isArray(data.by_day) ? data.by_day : []);
-        setTopUsers(Array.isArray(data.top_users) ? data.top_users : []);
-        setPvUv(data.pv_uv && typeof data.pv_uv === "object" ? data.pv_uv : {});
-        setUsageSource(typeof data.source === "string" && data.source ? data.source : "usage_events");
+        await overviewQuery.refetch();
         return;
       }
       if (tab === "ledger") {
@@ -294,7 +334,7 @@ export default function AdminUsagePage(): JSX.Element {
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
     }
-  }, [getAuthHeaders, ledgerQuery, query, tab]);
+  }, [getAuthHeaders, ledgerQuery, overviewQuery, query, tab]);
 
   useEffect(() => { setTab(initialTab); }, [initialTab]);
   useEffect(() => { void load(); }, [load]);
@@ -540,8 +580,12 @@ export default function AdminUsagePage(): JSX.Element {
           </div>
           <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60">
             <div className="border-b border-line px-3 py-2 text-sm text-muted">支出明细（最多 400 条，任务终态用量事件）</div>
+            <div
+              ref={expenseVirtual.scrollRef}
+              className={expenseVirtual.useVirtual ? "max-h-[480px] overflow-auto" : "max-h-[480px] overflow-y-auto"}
+            >
             <table className="min-w-[1180px] w-full text-left text-sm text-ink">
-              <thead className="border-b border-line text-xs text-muted">
+              <thead className={`border-b border-line text-xs text-muted ${expenseVirtual.useVirtual ? "sticky top-0 z-10 bg-surface/95" : ""}`}>
                 <tr>
                   <th className="px-3 py-2">时间</th>
                   <th className="px-3 py-2">日</th>
@@ -565,6 +609,48 @@ export default function AdminUsagePage(): JSX.Element {
                       暂无
                     </td>
                   </tr>
+                ) : expenseVirtual.useVirtual ? (
+                  <>
+                    {expenseVirtual.padTop > 0 ? (
+                      <tr aria-hidden>
+                        <td colSpan={13} style={{ height: expenseVirtual.padTop, padding: 0, border: 0 }} />
+                      </tr>
+                    ) : null}
+                    {expenseVirtual.virtualItems.map((vi) => {
+                      const r = ledgerExpenseDetails[vi.index]!;
+                      const i = vi.index;
+                      return (
+                        <tr key={`${r.usage_event_id ?? "e"}_${i}`} className="border-t border-line/80">
+                          <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">{r.created_at || "—"}</td>
+                          <td className="px-3 py-2 text-xs">{r.day || "—"}</td>
+                          <td className="px-3 py-2 font-mono text-xs">{r.phone || r.user_id || "—"}</td>
+                          <td className="max-w-[120px] truncate px-3 py-2 font-mono text-[10px]" title={r.job_id}>
+                            {r.job_id ? `${r.job_id.slice(0, 8)}…` : "—"}
+                          </td>
+                          <td className="max-w-[120px] truncate px-3 py-2 font-mono text-[11px]" title={r.job_type}>
+                            {r.job_type || "—"}
+                          </td>
+                          <td className="px-3 py-2 text-xs">{r.terminal_status || "—"}</td>
+                          <td className="px-3 py-2">{money(r.expense_cny)}</td>
+                          <td className="px-3 py-2">{money(r.llm_cny)}</td>
+                          <td className="px-3 py-2">{money(r.tts_cny)}</td>
+                          <td className="px-3 py-2">{money(r.image_cny)}</td>
+                          <td className="px-3 py-2">{money(r.embedding_cny)}</td>
+                          <td className="max-w-[100px] truncate px-3 py-2 text-[10px] font-mono" title={r.text_model || ""}>
+                            {r.text_model || "—"}
+                          </td>
+                          <td className="max-w-[100px] truncate px-3 py-2 text-[10px] font-mono" title={r.tts_model || ""}>
+                            {r.tts_model || "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {expenseVirtual.padBottom > 0 ? (
+                      <tr aria-hidden>
+                        <td colSpan={13} style={{ height: expenseVirtual.padBottom, padding: 0, border: 0 }} />
+                      </tr>
+                    ) : null}
+                  </>
                 ) : (
                   ledgerExpenseDetails.map((r, i) => (
                     <tr key={`${r.usage_event_id ?? "e"}_${i}`} className="border-t border-line/80">
@@ -594,11 +680,16 @@ export default function AdminUsagePage(): JSX.Element {
                 )}
               </tbody>
             </table>
+            </div>
           </div>
           <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60">
             <div className="border-b border-line px-3 py-2 text-sm text-muted">收入明细（最多 400 条，钱包扣费流水）</div>
+            <div
+              ref={revenueVirtual.scrollRef}
+              className={revenueVirtual.useVirtual ? "max-h-[480px] overflow-auto" : "max-h-[480px] overflow-y-auto"}
+            >
             <table className="min-w-[1180px] w-full text-left text-sm text-ink">
-              <thead className="border-b border-line text-xs text-muted">
+              <thead className={`border-b border-line text-xs text-muted ${revenueVirtual.useVirtual ? "sticky top-0 z-10 bg-surface/95" : ""}`}>
                 <tr>
                   <th className="px-3 py-2">时间</th>
                   <th className="px-3 py-2">日</th>
@@ -617,6 +708,43 @@ export default function AdminUsagePage(): JSX.Element {
                       暂无
                     </td>
                   </tr>
+                ) : revenueVirtual.useVirtual ? (
+                  <>
+                    {revenueVirtual.padTop > 0 ? (
+                      <tr aria-hidden>
+                        <td colSpan={8} style={{ height: revenueVirtual.padTop, padding: 0, border: 0 }} />
+                      </tr>
+                    ) : null}
+                    {revenueVirtual.virtualItems.map((vi) => {
+                      const r = ledgerRevenueDetails[vi.index]!;
+                      const i = vi.index;
+                      return (
+                        <tr key={`${r.ledger_id ?? "l"}_${i}`} className="border-t border-line/80">
+                          <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">{r.created_at || "—"}</td>
+                          <td className="px-3 py-2 text-xs">{r.day || "—"}</td>
+                          <td className="px-3 py-2 font-mono text-xs">{r.phone || r.user_id || "—"}</td>
+                          <td className="max-w-[120px] truncate px-3 py-2 font-mono text-[10px]" title={r.job_id}>
+                            {r.job_id ? `${r.job_id.slice(0, 8)}…` : "—"}
+                          </td>
+                          <td className="max-w-[120px] truncate px-3 py-2 font-mono text-[11px]" title={r.job_type}>
+                            {r.job_type || "—"}
+                          </td>
+                          <td className="max-w-[160px] truncate px-3 py-2 font-mono text-[10px]" title={r.billing_model_key}>
+                            {r.billing_model_key || "—"}
+                          </td>
+                          <td className="px-3 py-2">{money(r.revenue_cny)}</td>
+                          <td className="max-w-[320px] truncate px-3 py-2 text-xs text-muted" title={r.ledger_message}>
+                            {r.ledger_message || "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {revenueVirtual.padBottom > 0 ? (
+                      <tr aria-hidden>
+                        <td colSpan={8} style={{ height: revenueVirtual.padBottom, padding: 0, border: 0 }} />
+                      </tr>
+                    ) : null}
+                  </>
                 ) : (
                   ledgerRevenueDetails.map((r, i) => (
                     <tr key={`${r.ledger_id ?? "l"}_${i}`} className="border-t border-line/80">
@@ -641,6 +769,7 @@ export default function AdminUsagePage(): JSX.Element {
                 )}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}
@@ -648,10 +777,8 @@ export default function AdminUsagePage(): JSX.Element {
       {tab === "overview" ? (
         <>
           <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <MetricCard title="昨日 PV（T+1）" value={num(pvUv.yesterday?.pv)} hint={pvUv.yesterday?.day ? `${pvUv.yesterday.day} · ${pvUv.timezone || "Asia/Shanghai"}` : "T+1 完整日数据"} />
-            <MetricCard title="昨日 UV（T+1）" value={num(pvUv.yesterday?.uv)} hint={pvUv.t_plus_1_note || "不含当日"} />
-            <MetricCard title="区间 PV" value={num(pvUv.range?.pv)} hint={pvUv.range?.date_from && pvUv.range?.date_to ? `${pvUv.range.date_from} ~ ${pvUv.range.date_to}` : "T+1 口径"} />
-            <MetricCard title="区间 UV" value={num(pvUv.range?.uv)} hint="区间内去重访客" />
+            <MetricCard title="昨日 UV（T+1）" value={num(siteUv.yesterday?.uv)} hint={siteUv.yesterday?.day ? `${siteUv.yesterday.day} · ${siteUv.timezone || "Asia/Shanghai"}` : "T+1 完整日数据"} />
+            <MetricCard title="区间 UV" value={num(siteUv.range?.uv)} hint={siteUv.range?.date_from && siteUv.range?.date_to ? `${siteUv.range.date_from} ~ ${siteUv.range.date_to}` : siteUv.t_plus_1_note || "不含当日"} />
             <MetricCard title="总调用事件" value={num(overview.total_events)} />
             <MetricCard title="成功率" value={pct(overview.success_rate)} hint={`成功 ${num(overview.succeeded_events)} / 失败 ${num(overview.failed_events)}`} />
             <MetricCard title="活跃用户" value={num(overview.active_users)} hint={`登录用户 ${num(overview.login_users)} / 登录次数 ${num(overview.login_count)}`} />
@@ -672,7 +799,7 @@ export default function AdminUsagePage(): JSX.Element {
             <div className="overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">输入来源分布</div><table className="min-w-[420px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">输入类型</th><th className="px-3 py-2">次数</th></tr></thead><tbody>{inputRows.length === 0 ? <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : inputRows.map((r, i) => <tr key={`${r.input_type || "other"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.input_type || "other"}</td><td className="px-3 py-2">{num(r.events)}</td></tr>)}</tbody></table></div>
           </div>
           <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">按日趋势 + Top 用户</div><table className="min-w-[720px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">日期</th><th className="px-3 py-2">调用</th><th className="px-3 py-2">成功</th><th className="px-3 py-2">用户</th><th className="px-3 py-2">成本</th></tr></thead><tbody>{dayRows.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : dayRows.map((r, i) => <tr key={`${r.day || "day"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.day || "—"}</td><td className="px-3 py-2">{num(r.events)}</td><td className="px-3 py-2">{num(r.succeeded)}</td><td className="px-3 py-2">{num(r.users)}</td><td className="px-3 py-2">{money(r.cost_total_cny)}</td></tr>)}</tbody></table></div>
-          <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">站点访问 PV/UV（T+1，按日）</div><table className="min-w-[480px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">日期</th><th className="px-3 py-2">PV</th><th className="px-3 py-2">UV</th></tr></thead><tbody>{!pvUv.by_day || pvUv.by_day.length === 0 ? <tr><td colSpan={3} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : pvUv.by_day.map((r, i) => <tr key={`${r.day || "pv"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.day || "—"}</td><td className="px-3 py-2">{num(r.pv)}</td><td className="px-3 py-2">{num(r.uv)}</td></tr>)}</tbody></table></div>
+          <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">站点 UV（T+1，按日）</div><table className="min-w-[360px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">日期</th><th className="px-3 py-2">UV</th></tr></thead><tbody>{!siteUv.by_day || siteUv.by_day.length === 0 ? <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : siteUv.by_day.map((r, i) => <tr key={`${r.day || "uv"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.day || "—"}</td><td className="px-3 py-2">{num(r.uv)}</td></tr>)}</tbody></table></div>
           <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">高活跃用户（Top 20）</div><table className="min-w-[720px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">用户</th><th className="px-3 py-2">调用</th><th className="px-3 py-2">成功</th><th className="px-3 py-2">成本</th><th className="px-3 py-2">最近使用</th></tr></thead><tbody>{topUsers.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : topUsers.map((r, i) => <tr key={`${r.user_key || r.user_id || r.phone || "unknown"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2 font-mono text-xs"><span className="block">{r.phone || r.user_id || r.user_key || "(unknown)"}</span>{r.user_id && r.phone && r.user_id !== r.phone ? <span className="mt-0.5 block text-[10px] text-muted/90">id {r.user_id}</span> : null}</td><td className="px-3 py-2">{num(r.events)}</td><td className="px-3 py-2">{num(r.succeeded)}</td><td className="px-3 py-2">{money(r.cost_total_cny)}</td><td className="px-3 py-2 text-xs text-muted">{r.last_event_at || "—"}</td></tr>)}</tbody></table></div>
         </>
       ) : null}

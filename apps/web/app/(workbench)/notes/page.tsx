@@ -23,7 +23,10 @@ import {
 } from "../../../components/icons";
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
 const NotesPodcastRoomModal = dynamic(() => import("../../../components/notes/NotesPodcastRoomModal"));
-import { NotesArticleSocialForm } from "../../../components/notes/NotesArticleSocialForm";
+const NotesArticleSocialForm = dynamic(
+  () => import("../../../components/notes/NotesArticleSocialForm").then((m) => ({ default: m.NotesArticleSocialForm })),
+  { ssr: false }
+);
 const NotebookStyleControls = dynamic(
   () =>
     import("../../../components/notes/notebook-style/NotebookStyleControls").then((m) => ({
@@ -54,8 +57,14 @@ const NoteMarkdownPreview = dynamic(() => import("../../../components/notes/Note
     />
   )
 });
-import { NotesAskAnswerDisplay } from "../../../components/notes/NotesAskAnswerDisplay";
-import { NotesAskStreamingStatus } from "../../../components/notes/NotesAskStreamingStatus";
+const NotesAskAnswerDisplay = dynamic(
+  () => import("../../../components/notes/NotesAskAnswerDisplay").then((m) => ({ default: m.NotesAskAnswerDisplay })),
+  { ssr: false }
+);
+const NotesAskStreamingStatus = dynamic(
+  () => import("../../../components/notes/NotesAskStreamingStatus").then((m) => ({ default: m.NotesAskStreamingStatus })),
+  { ssr: false }
+);
 import {
   buildNotesAskAnswerBody,
   isDismissedNotesAskSupplement
@@ -93,7 +102,9 @@ import {
   defaultNotesAskDialogueStyle,
   type NotesAskDialogueStyleMode
 } from "../../../lib/notesAskDialogueStyle";
-import NotesAskDialogueStylePicker from "../../../components/notes/NotesAskDialogueStylePicker";
+const NotesAskDialogueStylePicker = dynamic(() => import("../../../components/notes/NotesAskDialogueStylePicker"), {
+  ssr: false
+});
 import { buildSocialPublishReferenceBody } from "../../../lib/socialPublishReference";
 import { buildOptionsPayload } from "../../../lib/socialPublishPresets";
 import { saveSocialPublishPrefs } from "../../../lib/socialPublishStorage";
@@ -421,8 +432,6 @@ const inputCls =
 
 const LANG_OPTIONS_ART = ["中文", "English", "日本語"] as const;
 const NOTE_PAGE = 30;
-const NOTEBOOK_STATS_PAGE = 200;
-
 /** 需要先打开笔记本时的统一提示 */
 const NOTES_NEED_NOTEBOOK = "请先进入笔记本";
 /** 未在左侧参考资料栏勾选资料时的统一提示（占位、无障碍、按钮与校验） */
@@ -1685,43 +1694,16 @@ export default function NotesPage() {
 
   const loadNotebookMeta = useCallback(async () => {
     try {
-      const map: Record<string, NotebookMeta> = {};
-      let offset = 0;
-      let shouldContinue = true;
-      while (shouldContinue) {
-        const q = new URLSearchParams({
-          limit: String(NOTEBOOK_STATS_PAGE),
-          offset: String(offset)
-        });
-        const res = await fetch(`/api/notes?${q.toString()}`, {
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { ...getAuthHeaders() }
-        });
-        const data = (await res.json().catch(() => ({}))) as NotesResp & { detail?: unknown };
-        if (!res.ok || !data.success || !Array.isArray(data.notes)) break;
-        for (const note of data.notes) {
-          const name = String(note.notebook || "").trim();
-          if (!name) continue;
-          if (!map[name]) {
-            map[name] = { noteCount: 0, sourceCount: 0, createdAt: "" };
-          }
-          map[name].noteCount += 1;
-          map[name].sourceCount += 1;
-          const createdTs = Date.parse(String(note.createdAt || ""));
-          if (!Number.isNaN(createdTs)) {
-            const currentTs = Date.parse(String(map[name].createdAt || ""));
-            if (Number.isNaN(currentTs) || createdTs < currentTs) {
-              map[name].createdAt = String(note.createdAt || "");
-            }
-          }
-        }
-        if (data.has_more) {
-          offset += NOTEBOOK_STATS_PAGE;
-        } else {
-          shouldContinue = false;
-        }
-      }
+      const res = await fetch("/api/notebooks/stats", {
+        credentials: "same-origin",
+        headers: { ...getAuthHeaders() }
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        statsByNotebook?: Record<string, NotebookMeta>;
+      };
+      if (!res.ok || !data.success || !data.statsByNotebook) return;
+      const map = data.statsByNotebook;
       setNotebookMetaByName((prev) => {
         const merged: Record<string, NotebookMeta> = {};
         for (const [name, meta] of Object.entries(map)) {

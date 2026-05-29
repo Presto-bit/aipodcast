@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ComponentType, ReactNode } from "react";
-import { normalizePathname } from "../../lib/navPaths";
+import { normalizePathname, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
 
 type NavItemShape = {
   href: string;
@@ -41,7 +41,7 @@ export default function NotesNavExpanded({
   return (
     <Link
       href="/notes"
-      prefetch={false}
+      prefetch={WORKBENCH_NAV_PREFETCH}
       className={navButtonClass(active, false)}
       title={parentTip}
     >

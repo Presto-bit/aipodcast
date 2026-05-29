@@ -3692,22 +3692,21 @@ def admin_usage_dashboard(
             out["overview"]["login_count"] = _safe_int(login_row.get("login_count"))
             out["overview"]["login_users"] = _safe_int(login_row.get("login_users"))
     try:
-        out["pv_uv"] = site_traffic_pv_uv_stats(days=days, date_from=date_from, date_to=date_to)
+        out["site_uv"] = site_traffic_uv_stats(days=days, date_from=date_from, date_to=date_to)
     except Exception:
-        logger.exception("site_traffic_pv_uv_stats failed")
-        out["pv_uv"] = {}
+        logger.exception("site_traffic_uv_stats failed")
+        out["site_uv"] = {}
     return out
 
 
 _SITE_TRAFFIC_TZ = "Asia/Shanghai"
 
 
-def record_site_page_view(*, visitor_id: str, path: str, user_id: str | None = None) -> None:
-    """写入站点 PV 原始事件；UV 由按日去重 visitor_id 聚合。"""
+def record_site_visitor(*, visitor_id: str, user_id: str | None = None) -> None:
+    """写入站点 UV：同一 visitor_id 在同一 Shanghai 日历日仅保留一条。"""
     vid = (visitor_id or "").strip()
     if len(vid) < 8:
         return
-    p = ((path or "/").strip() or "/")[:512]
     uid: str | None = None
     if user_id:
         try:
@@ -3719,20 +3718,27 @@ def record_site_page_view(*, visitor_id: str, path: str, user_id: str | None = N
             cur.execute(
                 """
                 INSERT INTO site_page_views (visitor_id, user_id, path)
-                VALUES (%s, %s::uuid, %s)
+                SELECT %s, %s::uuid, '/'
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM site_page_views
+                    WHERE visitor_id = %s
+                      AND ((created_at AT TIME ZONE %s)::date)
+                          = ((NOW() AT TIME ZONE %s)::date)
+                )
                 """,
-                (vid, uid, p),
+                (vid, uid, vid, _SITE_TRAFFIC_TZ, _SITE_TRAFFIC_TZ),
             )
             conn.commit()
 
 
-def site_traffic_pv_uv_stats(
+def site_traffic_uv_stats(
     *,
     days: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict[str, Any]:
-    """管理端 PV/UV（Asia/Shanghai 日历日，T+1：不含当日）。"""
+    """管理端 UV（Asia/Shanghai 日历日，T+1：不含当日）。"""
     tz = ZoneInfo(_SITE_TRAFFIC_TZ)
     today_sh = datetime.now(tz).date()
     yesterday_sh = today_sh - timedelta(days=1)
@@ -3757,8 +3763,7 @@ def site_traffic_pv_uv_stats(
         with get_cursor(conn) as cur:
             cur.execute(
                 """
-                SELECT COUNT(*)::bigint AS pv,
-                       COUNT(DISTINCT visitor_id)::bigint AS uv
+                SELECT COUNT(DISTINCT visitor_id)::bigint AS uv
                 FROM site_page_views
                 WHERE ((created_at AT TIME ZONE %s)::date) = %s
                 """,
@@ -3768,8 +3773,7 @@ def site_traffic_pv_uv_stats(
 
             cur.execute(
                 """
-                SELECT COUNT(*)::bigint AS pv,
-                       COUNT(DISTINCT visitor_id)::bigint AS uv
+                SELECT COUNT(DISTINCT visitor_id)::bigint AS uv
                 FROM site_page_views
                 WHERE ((created_at AT TIME ZONE %s)::date) >= %s
                   AND ((created_at AT TIME ZONE %s)::date) <= %s
@@ -3781,7 +3785,6 @@ def site_traffic_pv_uv_stats(
             cur.execute(
                 """
                 SELECT ((created_at AT TIME ZONE %s)::date) AS day,
-                       COUNT(*)::bigint AS pv,
                        COUNT(DISTINCT visitor_id)::bigint AS uv
                 FROM site_page_views
                 WHERE ((created_at AT TIME ZONE %s)::date) >= %s
@@ -3802,13 +3805,11 @@ def site_traffic_pv_uv_stats(
         "t_plus_1_note": "不含当日（Asia/Shanghai）；完整日数据 T+1 可见",
         "yesterday": {
             "day": yesterday_sh.isoformat(),
-            "pv": _safe_int(yrow.get("pv")),
             "uv": _safe_int(yrow.get("uv")),
         },
         "range": {
             "date_from": range_start.isoformat(),
             "date_to": range_end.isoformat(),
-            "pv": _safe_int(rrow.get("pv")),
             "uv": _safe_int(rrow.get("uv")),
         },
         "by_day": by_day,

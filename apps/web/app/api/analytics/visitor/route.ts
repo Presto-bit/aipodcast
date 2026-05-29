@@ -3,7 +3,7 @@ import { incomingAuthHeadersFrom, proxyJsonFromOrchestrator } from "../../../../
 
 export async function POST(req: NextRequest) {
   const raw = await req.text();
-  return proxyJsonFromOrchestrator("/api/v1/analytics/page-view", {
+  return proxyJsonFromOrchestrator("/api/v1/analytics/visitor", {
     method: "POST",
     payload: raw || "{}",
     body: raw || "{}",

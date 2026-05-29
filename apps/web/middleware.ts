@@ -136,6 +136,10 @@ export function middleware(req: NextRequest) {
   if (pathname === "/api/webhooks/alipay" && req.method === "POST") {
     return applyNotesAskApiCors(req, withCacheHeaders(NextResponse.next(), CACHE_API));
   }
+  /** UV 埋点：不计入全站 400/min（每访客每日至多 1 次，仍豁免以防误伤） */
+  if (pathname === "/api/analytics/visitor" && req.method === "POST") {
+    return applyNotesAskApiCors(req, withCacheHeaders(NextResponse.next(), CACHE_API));
+  }
   /** 由路由内 `/api/image-proxy` 单独按 IP 限速，避免拖满全站 400/min */
   if (pathname === "/api/image-proxy" && req.method === "GET") {
     return applyNotesAskApiCors(req, withCacheHeaders(NextResponse.next(), CACHE_API));

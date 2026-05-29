@@ -1,4 +1,4 @@
--- 站点 PV/UV 原始事件（按 Asia/Shanghai 日历日聚合；管理端 T+1 展示）
+-- 站点 UV 原始事件（按 Asia/Shanghai 日历日聚合；管理端 T+1 展示）
 CREATE TABLE IF NOT EXISTS site_page_views (
   id BIGSERIAL PRIMARY KEY,
   visitor_id TEXT NOT NULL,
