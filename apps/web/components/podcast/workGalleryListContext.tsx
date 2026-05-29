@@ -15,7 +15,7 @@ export type WorkGalleryListContextValue = {
   rowLayout: WorkGalleryRowLayout;
   /** 文稿杂志卡：侧栏限条数时用 mini */
   scriptCardDensity: ScriptCardDensity;
-  /** 侧栏单列网格（与 scriptCardDensity=mini 同步） */
+  /** 知识库/侧栏等紧凑网格（2 列迷你卡） */
   scriptGridSingleColumn: boolean;
   useNotesStyleCards: boolean;
   useCompactAllLayout: boolean;

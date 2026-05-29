@@ -8,7 +8,8 @@ import {
   formatScriptCharCountLabel,
   scriptCharCountForWork,
   scriptGenreChip,
-  scriptSourceNoteLine
+  scriptSourceNoteLine,
+  scriptWorkGenreLabel
 } from "../../lib/scriptCardPreview";
 import { formatWorkCreatedAtZh } from "../../lib/worksNavMetaLine";
 import { WorkHubManuscriptPreview } from "../works/WorkHubManuscriptPreview";
@@ -82,7 +83,7 @@ export function ScriptQuickReadDrawer({
     <div className="fixed inset-0 z-[1220]" role="presentation">
       <button
         type="button"
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-black/35"
         aria-label="关闭预览"
         onClick={onClose}
       />
@@ -90,7 +91,7 @@ export function ScriptQuickReadDrawer({
         role="dialog"
         aria-modal="true"
         aria-labelledby="script-quick-read-title"
-        className="absolute inset-y-0 right-0 flex w-full max-w-lg flex-col border-l border-line bg-surface shadow-card max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:max-h-[85vh] max-md:rounded-t-2xl max-md:border-l-0 max-md:border-t"
+        className="absolute flex flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card right-3 top-3 bottom-3 w-[min(24rem,calc(100vw-1.5rem))] max-md:inset-x-3 max-md:bottom-3 max-md:top-auto max-md:max-h-[min(70vh,28rem)]"
       >
         <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0 flex-1">
@@ -99,25 +100,32 @@ export function ScriptQuickReadDrawer({
                 {chip.label}
               </span>
               {charLabel ? <span className="tabular-nums">{charLabel}</span> : null}
-              {created !== "—" ? <span>{created}</span> : null}
             </div>
             <h2 id="script-quick-read-title" className="mt-1.5 text-base font-semibold leading-snug text-ink">
               <Link href={detailHref} className="hover:text-brand hover:underline" onClick={onClose}>
                 {title}
               </Link>
             </h2>
+            {(() => {
+              const meta = [created !== "—" ? created : "", scriptWorkGenreLabel(work)].filter(Boolean).join(" · ");
+              return meta ? (
+                <p className="mt-1 line-clamp-1 text-[11px] text-muted" title={meta}>
+                  {meta}
+                </p>
+              ) : null;
+            })()}
             {source ? (
               source.notebookHref ? (
                 <Link
                   href={source.notebookHref}
-                  className="mt-1 inline-block text-[11px] text-brand hover:underline"
+                  className="mt-1 line-clamp-1 min-w-0 truncate text-[11px] text-brand hover:underline"
                   title={source.title}
                   onClick={onClose}
                 >
                   📎 {source.text}
                 </Link>
               ) : (
-                <p className="mt-1 text-[11px] text-muted" title={source.title}>
+                <p className="mt-1 line-clamp-1 min-w-0 truncate text-[11px] text-muted" title={source.title}>
                   📎 {source.text}
                 </p>
               )

@@ -70,13 +70,13 @@ export function WorkGalleryVirtualGrid({
               }}
             >
               <div
-                className="grid w-full gap-2.5"
+                className="grid w-full items-stretch gap-2.5"
                 style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
               >
                 {slice.map((w, col) => {
                   const gi = start + col;
                   return (
-                    <div key={String(w.id)} className="min-w-0" role="listitem">
+                    <div key={String(w.id)} className="flex h-full min-w-0 w-full flex-col" role="listitem">
                       <WorkGalleryListItem
                         w={w}
                         index={gi}

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 import io
@@ -42,6 +43,7 @@ from ..models import (
     ensure_default_project,
     ensure_jobs_trash_schema,
     get_job,
+    get_job_status_lightweight,
     get_job_artifact,
     get_job_via_podcast_template_visible_to_viewer,
     get_job_via_shared_notebook_visible_to_viewer,
@@ -355,6 +357,14 @@ def _work_item_dict_from_recent_row(
         work["jobOwnerUserId"] = ou
     if _program_name:
         work["workProgramName"] = _program_name[:200]
+    elif job_type == "social_publish_draft":
+        plat = str(
+            _payload_dict.get("platform") or result.get("platform") or ""
+        ).strip().lower()
+        if plat == "xiaohongshu":
+            work["workProgramName"] = "小红书"
+        elif plat == "wechat_mp":
+            work["workProgramName"] = "微信公众号"
     work.update(_works_script_notes_extras(result, _payload_dict, job_type))
     if foreign_shared_notebook:
         work["sharedNotebookForeign"] = True
@@ -905,7 +915,7 @@ def list_jobs_api(
             jsonable_encoder(
                 {
                     "success": True,
-                    "jobs": [serialize_job(r) for r in rows],
+                    "jobs": [serialize_job(r, include_payload_sha256=not bool(slim)) for r in rows],
                     "has_more": has_more,
                     "offset": offset,
                     "limit": limit,
@@ -1035,8 +1045,6 @@ def list_works_trash_api(
     limit: int = Query(default=80, ge=1, le=200),
     offset: int = Query(default=0, ge=0, le=10_000),
 ):
-    # 按默认策略：回收站作品保留 7 天，访问列表时顺带清理过期数据。
-    purge_expired_trashed_works(retention_days=WORK_TRASH_RETENTION_DAYS, max_rows=settings.trash_purge_max_rows)
     user_ref = _current_user_ref_or_401(request)
     rows = list_trashed_works(limit=limit, offset=offset, user_ref=user_ref)
     buckets: dict[str, list[dict[str, Any]]] = {"notes": [], "ai": [], "tts": []}
@@ -1610,16 +1618,16 @@ def cancel_job_api(job_id: str, request: Request):
 
 
 @router.get("/jobs/{job_id}/events")
-def stream_job_events(job_id: str, request: Request, after_id: int = 0):
+async def stream_job_events(job_id: str, request: Request, after_id: int = 0):
     scope = _job_row_scope_ref(request)
-    if not get_job(job_id, user_ref=scope):
+    if not await asyncio.to_thread(get_job_status_lightweight, job_id, scope):
         raise HTTPException(status_code=404, detail="job_not_found")
 
-    def _event_gen():
+    async def _event_gen():
         pointer = after_id
         idle_ticks = 0
         while True:
-            events = list_job_events(job_id, after_id=pointer)
+            events = await asyncio.to_thread(list_job_events, job_id, after_id=pointer)
             if events:
                 idle_ticks = 0
                 for ev in events:
@@ -1636,14 +1644,14 @@ def stream_job_events(job_id: str, request: Request, after_id: int = 0):
                 idle_ticks += 1
                 yield "event: ping\ndata: {}\n\n"
 
-            row = get_job(job_id, user_ref=scope)
+            row = await asyncio.to_thread(get_job_status_lightweight, job_id, scope)
             if row and row.get("status") in ("succeeded", "failed", "cancelled"):
                 done_payload = {"type": "terminal", "status": row.get("status"), "job_id": job_id}
                 yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
                 break
             if idle_ticks > SSE_EVENT_IDLE_TICKS_MAX:
                 break
-            time.sleep(3)
+            await asyncio.sleep(3)
 
     return StreamingResponse(_event_gen(), media_type="text/event-stream")
 
