@@ -58,7 +58,6 @@ export type NotesWorkbenchContextValue = {
   notebookVisualByName: Record<string, NotebookCardVisual>;
   sharedBrowse: SharedBrowseContext | null;
   dismissNotesBlockingOverlays: () => void;
-  setHubView: Dispatch<SetStateAction<boolean>>;
   setSelectedNotebook: Dispatch<SetStateAction<string>>;
   setSharedBrowse: Dispatch<SetStateAction<SharedBrowseContext | null>>;
   openNotebook: (nb: string) => void;

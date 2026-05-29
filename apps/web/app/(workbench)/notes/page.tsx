@@ -1,7 +1,7 @@
 "use client";
 
-import NotesPageMain from "../../../components/notes/NotesPageMainDynamic";
+import NotesHubPage from "../../../components/notes/NotesHubPage";
 
 export default function NotesPage() {
-  return <NotesPageMain />;
+  return <NotesHubPage />;
 }

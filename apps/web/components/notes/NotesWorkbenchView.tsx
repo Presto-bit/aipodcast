@@ -77,7 +77,6 @@ export default function NotesWorkbenchView() {
     notebookVisualByName,
     sharedBrowse,
     dismissNotesBlockingOverlays,
-    setHubView,
     setSelectedNotebook,
     setSharedBrowse,
     openNotebook,
@@ -177,7 +176,6 @@ export default function NotesWorkbenchView() {
       userPrefersNotebookHubRef.current = true;
       setSharedBrowse(null);
       dismissNotesBlockingOverlays();
-      setHubView(true);
       setSelectedNotebook("");
       router.push("/notes");
     }}

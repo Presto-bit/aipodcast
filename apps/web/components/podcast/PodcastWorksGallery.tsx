@@ -469,58 +469,72 @@ export default function PodcastWorksGallery({
   const durationHydrationJobIdsKey = useMemo(() => workDurationHydrationJobIdsKey(items), [items]);
 
   useEffect(() => {
-    const allIds = durationHydrationJobIdsKey ? durationHydrationJobIdsKey.split(",") : [];
-    const pendingIds = allIds.filter(
-      (id) => !durationResolvedRef.current.has(id) && !durationFetchRef.current.has(id)
-    );
-    const batch = pendingIds.slice(0, 50);
-    if (!batch.length) return;
-
-    for (const id of batch) durationFetchRef.current.add(id);
     let canceled = false;
+    let cancelIdle: (() => void) | undefined;
 
-    void (async () => {
-      try {
-        let fromServer: Record<string, number> = {};
+    const hydrateDurations = () => {
+      if (canceled) return;
+      const allIds = durationHydrationJobIdsKey ? durationHydrationJobIdsKey.split(",") : [];
+      const pendingIds = allIds.filter(
+        (id) => !durationResolvedRef.current.has(id) && !durationFetchRef.current.has(id)
+      );
+      const batch = pendingIds.slice(0, 50);
+      if (!batch.length) return;
+
+      for (const id of batch) durationFetchRef.current.add(id);
+
+      void (async () => {
         try {
-          fromServer = await fetchJobsAudioDurationsBatch(batch, getAuthHeaders());
-        } catch {
-          fromServer = {};
-        }
-        if (canceled) return;
-
-        const withDuration = Object.entries(fromServer).filter(([, sec]) => typeof sec === "number" && sec > 0);
-        if (withDuration.length) {
-          setHydratedDurationSec((prev) => {
-            const next = { ...prev };
-            for (const [id, sec] of withDuration) {
-              next[id] = sec;
-              durationResolvedRef.current.add(id);
-            }
-            return next;
-          });
-        }
-
-        const needProbe = batch.filter((id) => !fromServer[id]).slice(0, 8);
-        for (const id of needProbe) {
-          if (canceled) return;
-          const sec = await probeJobAudioDurationSec(id, getAuthHeaders());
-          if (canceled) return;
-          if (typeof sec === "number" && sec > 0) {
-            setHydratedDurationSec((prev) => ({ ...prev, [id]: sec }));
+          let fromServer: Record<string, number> = {};
+          try {
+            fromServer = await fetchJobsAudioDurationsBatch(batch, getAuthHeaders());
+          } catch {
+            fromServer = {};
           }
-          durationResolvedRef.current.add(id);
+          if (canceled) return;
+
+          const withDuration = Object.entries(fromServer).filter(([, sec]) => typeof sec === "number" && sec > 0);
+          if (withDuration.length) {
+            setHydratedDurationSec((prev) => {
+              const next = { ...prev };
+              for (const [id, sec] of withDuration) {
+                next[id] = sec;
+                durationResolvedRef.current.add(id);
+              }
+              return next;
+            });
+          }
+
+          const needProbe = batch.filter((id) => !fromServer[id]).slice(0, 8);
+          for (const id of needProbe) {
+            if (canceled) return;
+            const sec = await probeJobAudioDurationSec(id, getAuthHeaders());
+            if (canceled) return;
+            if (typeof sec === "number" && sec > 0) {
+              setHydratedDurationSec((prev) => ({ ...prev, [id]: sec }));
+            }
+            durationResolvedRef.current.add(id);
+          }
+          for (const id of batch) {
+            durationResolvedRef.current.add(id);
+          }
+        } finally {
+          for (const id of batch) durationFetchRef.current.delete(id);
         }
-        for (const id of batch) {
-          durationResolvedRef.current.add(id);
-        }
-      } finally {
-        for (const id of batch) durationFetchRef.current.delete(id);
-      }
-    })();
+      })();
+    };
+
+    if (typeof requestIdleCallback !== "undefined") {
+      const idleId = requestIdleCallback(hydrateDurations, { timeout: 1200 });
+      cancelIdle = () => cancelIdleCallback(idleId);
+    } else {
+      const timer = window.setTimeout(hydrateDurations, 120);
+      cancelIdle = () => window.clearTimeout(timer);
+    }
 
     return () => {
       canceled = true;
+      cancelIdle?.();
     };
   }, [durationHydrationJobIdsKey, getAuthHeaders]);
 

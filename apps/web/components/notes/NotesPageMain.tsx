@@ -9,9 +9,7 @@ import InlineConfirmBar from "../ui/InlineConfirmBar";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import SmallPromptModal from "../ui/SmallPromptModal";
 import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
-import EmptyState from "../ui/EmptyState";
 import UserErrorBanner from "../ui/UserErrorBanner";
-import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
 const NotesPodcastRoomModal = dynamic(() => import("./NotesPodcastRoomModal"));
 const NotesArticleSocialForm = dynamic(
   () => import("./NotesArticleSocialForm").then((m) => ({ default: m.NotesArticleSocialForm })),
@@ -92,12 +90,11 @@ import {
   APP_SIDEBAR_TOGGLE_EVENT
 } from "../../lib/appSidebarCollapse";
 import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
-import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
+import { useAuth } from "../../lib/auth";
 import { useNotebooksHubQuery, fetchNotebooksHub, NOTEBOOKS_HUB_QUERY_KEY } from "../../lib/queries/notebooksQueries";
 import { useI18n } from "../../lib/I18nContext";
 import type { NotebookCoverMeta } from "../../lib/notebookCoverDisplay";
-import type { NotebookMeta, NotebookSharingRow, PopularNotebookItem } from "./notesNotebookTypes";
-import { HubMineNotebookCards, HubPopularNotebookGrid } from "./NotesHubCards";
+import type { NotebookMeta, NotebookSharingRow } from "./notesNotebookTypes";
 import { NotesWorkbenchProvider } from "./notesWorkbenchContext";
 import type { NotesWorkbenchContextValue, SharedBrowseContext } from "./notesWorkbenchTypes";
 import {
@@ -391,8 +388,6 @@ type PreviewResp = {
   parseGate?: string;
 };
 
-const card =
-  "rounded-2xl border border-line bg-surface p-4 shadow-soft";
 const inputCls =
   "rounded-lg border border-line bg-fill p-2 text-sm text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20";
 
@@ -539,7 +534,6 @@ function mapRetrieveStateLabel(state: string): string {
 
 
 const NOTEBOOK_VISUAL_STORAGE_KEY = "notes:notebook-visuals:v1";
-const POPULAR_PAGE_SIZE = 18;
 const NOTES_REUSE_TEMPLATE_KEY = "fym_reuse_template_notes_v1";
 
 function formatDisplayDate(value?: string): string {
@@ -550,18 +544,13 @@ function formatDisplayDate(value?: string): string {
   return new Date(ts).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
 }
 
-type NotesHubDiscoverTab = "mine" | "popular";
-
 type WorkbenchMobilePanel = "chat" | "sources";
-
-const WORKBENCH_SECTION_TITLE = "text-base font-semibold tracking-tight text-ink";
 
 export default function NotesPageMain({ initialNotebookId = null }: { initialNotebookId?: string | null }) {
   const router = useRouter();
   const pathname = usePathname() || "";
   const { t } = useI18n();
   const { user, phone, getAuthHeaders, ready } = useAuth();
-  const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const notebooksHubQuery = useNotebooksHubQuery(getAuthHeaders, ready);
   const queryClient = useQueryClient();
   /** 与 AuthProvider 中 userScopedStorage 同步；用于在切换账号时重载对话缓存 */
@@ -590,7 +579,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   const [notebookVisualByName, setNotebookVisualByName] = useState<Record<string, NotebookCardVisual>>({});
   const [notebookMetaByName, setNotebookMetaByName] = useState<Record<string, NotebookMeta>>({});
   const [selectedNotebook, setSelectedNotebook] = useState("");
-  const [hubView, setHubView] = useState(true);
   /** 用户主动回到笔记本卡片列表时为 true，避免再次自动进入工作台 */
   const userPrefersNotebookHubRef = useRef(false);
 
@@ -601,7 +589,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       if (!name) return;
       userPrefersNotebookHubRef.current = false;
       setSelectedNotebook(name);
-      setHubView(false);
     } catch {
       // ignore malformed segment
     }
@@ -666,14 +653,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   const [deleteNotebookTarget, setDeleteNotebookTarget] = useState<string | null>(null);
   const [noteMenuOpenId, setNoteMenuOpenId] = useState<string | null>(null);
   const [notesAskMenuOpen, setNotesAskMenuOpen] = useState(false);
-  const [notebookCardMenu, setNotebookCardMenu] = useState<string | null>(null);
-  const [hubDiscoverTab, setHubDiscoverTab] = useState<NotesHubDiscoverTab>("mine");
   const [workbenchMobilePanel, setWorkbenchMobilePanel] = useState<WorkbenchMobilePanel>("chat");
-  const [popularItems, setPopularItems] = useState<PopularNotebookItem[]>([]);
-  const [popularLoading, setPopularLoading] = useState(false);
-  const [popularLoadingMore, setPopularLoadingMore] = useState(false);
-  const [popularHasMore, setPopularHasMore] = useState(false);
-  const popularItemsLenRef = useRef(0);
   const [notebookSharingByName, setNotebookSharingByName] = useState<Record<string, NotebookSharingRow>>({});
   const [notebookCoversByName, setNotebookCoversByName] = useState<Record<string, NotebookCoverMeta>>({});
   const [showNotebookCoverModal, setShowNotebookCoverModal] = useState(false);
@@ -691,8 +671,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   const shareLinkHydratedRef = useRef(false);
   const buildNotebookShareUrl = useCallback((notebookName: string, ownerUserId: string, access: "read_only" | "edit") => {
     if (typeof window === "undefined") return "";
-    const u = new URL(`${window.location.origin}/notes`);
-    u.searchParams.set("notebook", notebookName);
+    const u = new URL(`${window.location.origin}/notes/${encodeURIComponent(notebookName)}`);
     u.searchParams.set("sharedFromOwnerUserId", ownerUserId);
     u.searchParams.set("shareAccess", access);
     return u.toString();
@@ -717,25 +696,21 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
 
   /** 仅用 Escape：不在 document 上监听 pointerdown，避免与侧栏导航同一事件管线冲突。 */
   useEffect(() => {
-    if (!notebookCardMenu && !noteMenuOpenId && !notesAskMenuOpen) return;
+    if (!noteMenuOpenId && !notesAskMenuOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      setNotebookCardMenu(null);
       setNoteMenuOpenId(null);
       setNotesAskMenuOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [notebookCardMenu, noteMenuOpenId, notesAskMenuOpen]);
+  }, [noteMenuOpenId, notesAskMenuOpen]);
 
   /** 仅在主内容 <main> 上冒泡关闭溢出菜单；点击侧栏时事件不会进入 main，故不会触发 setState。 */
   const onNotesMainPointerDown = useCallback(
     (e: PointerEvent<HTMLElement>) => {
       const t = e.target;
       if (!(t instanceof Element)) return;
-      if (notebookCardMenu && !t.closest("[data-notebook-card-overflow-menu]")) {
-        setNotebookCardMenu(null);
-      }
       if (noteMenuOpenId && !t.closest("[data-note-overflow-menu]")) {
         setNoteMenuOpenId(null);
       }
@@ -743,7 +718,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
         setNotesAskMenuOpen(false);
       }
     },
-    [notebookCardMenu, noteMenuOpenId, notesAskMenuOpen]
+    [noteMenuOpenId, notesAskMenuOpen]
   );
 
   const [draftSelectedNoteIds, setDraftSelectedNoteIds] = useState<string[]>([]);
@@ -758,7 +733,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
 
   useEffect(() => {
     const nb = selectedNotebook.trim();
-    if (!nb || hubView) {
+    if (!nb) {
       setNotebookDigestSummary("");
       return;
     }
@@ -778,7 +753,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
         setNotebookDigestSummary("");
       }
     })();
-  }, [selectedNotebook, hubView, pageFetch, pageAbortSignal]);
+  }, [selectedNotebook, pageFetch, pageAbortSignal]);
 
   useEffect(() => {
     setDraftSelectedNoteIds((prev) => (prev.length > noteRefCap ? prev.slice(0, noteRefCap) : prev));
@@ -1317,53 +1292,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     }
   }, [applyNotebooksPayload, getAuthHeaders, pageAbortSignal, queryClient]);
 
-  const loadPopularNotebooks = useCallback(
-    async (append: boolean) => {
-      if (append) {
-        setPopularLoadingMore(true);
-      } else {
-        setPopularLoading(true);
-      }
-      try {
-        const limit = POPULAR_PAGE_SIZE;
-        const offset = append ? popularItemsLenRef.current : 0;
-        const q = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-        const res = await pageFetch(`/api/notebooks/popular?${q.toString()}`, {
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { ...getAuthHeaders() }
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          success?: boolean;
-          items?: PopularNotebookItem[];
-          has_more?: boolean;
-        };
-        if (pageAbortSignal.aborted) return;
-        if (res.ok && data.success && Array.isArray(data.items)) {
-          setPopularItems((prev) => (append ? [...prev, ...data.items!] : data.items!));
-          setPopularHasMore(Boolean(data.has_more));
-        } else if (!append) {
-          setPopularHasMore(false);
-        }
-      } catch (err) {
-        if (isAbortError(err)) return;
-        // ignore
-      } finally {
-        if (pageAbortSignal.aborted) return;
-        if (append) {
-          setPopularLoadingMore(false);
-        } else {
-          setPopularLoading(false);
-        }
-      }
-    },
-    [getAuthHeaders, pageAbortSignal, pageFetch]
-  );
-
-  useEffect(() => {
-    popularItemsLenRef.current = popularItems.length;
-  }, [popularItems.length]);
-
   const loadNotebookMeta = useCallback(async () => {
     try {
       const res = await pageFetch("/api/notebooks/stats", {
@@ -1415,7 +1343,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     setShowRenameNotebook(false);
     setDeleteNotebookConfirm(false);
     setDeleteNotebookTarget(null);
-    setNotebookCardMenu(null);
     setNoteMenuOpenId(null);
     setNotesAskMenuOpen(false);
     setRenameNoteId(null);
@@ -1432,7 +1359,14 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     if (shareLinkHydratedRef.current) return;
     try {
       const sp = new URLSearchParams(window.location.search);
-      const nb = String(sp.get("notebook") || "").trim();
+      let nb = String(sp.get("notebook") || "").trim();
+      if (!nb && initialNotebookId) {
+        try {
+          nb = decodeURIComponent(initialNotebookId).trim();
+        } catch {
+          nb = "";
+        }
+      }
       const owner = String(sp.get("sharedFromOwnerUserId") || "").trim();
       if (!nb || !owner) return;
       shareLinkHydratedRef.current = true;
@@ -1445,12 +1379,11 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       const effectiveAcc: "read_only" | "edit" = loggedIn ? acc : "read_only";
       setSelectedNotebook(nb);
       setSharedBrowse({ ownerUserId: owner, access: effectiveAcc });
-      setHubView(false);
       userPrefersNotebookHubRef.current = false;
     } catch {
       // ignore
     }
-  }, [ready, user, phone]);
+  }, [ready, user, phone, initialNotebookId]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined" || !user) return;
@@ -1470,44 +1403,21 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     if (!notebooksReady) return;
     if (sharedBrowse) return;
     if (notebooks.length === 0) {
-      setSelectedNotebook("");
-      setHubView(true);
-      if (!isLoggedIn) {
-        setHubDiscoverTab("popular");
-      }
+      router.replace("/notes");
       return;
     }
     if (selectedNotebook && !notebooks.includes(selectedNotebook)) {
-      userPrefersNotebookHubRef.current = true;
-      setSelectedNotebook(notebooks[0] ?? "");
-      setHubView(true);
+      router.replace("/notes");
     }
-  }, [notebooks, selectedNotebook, notebooksReady, sharedBrowse, isLoggedIn]);
-
-  useEffect(() => {
-    if (!hubView || hubDiscoverTab === "mine") return;
-    void loadPopularNotebooks(false);
-  }, [hubView, hubDiscoverTab, loadPopularNotebooks]);
-
-  /** 「我的」⋯ 菜单挂在卡片上；切到「热门」后 DOM 消失但 state 可能仍非空。 */
-  useEffect(() => {
-    setNotebookCardMenu(null);
-  }, [hubDiscoverTab]);
-
-  /** 回到笔记本列表页时清掉工作台遗留的笔记 ⋯ 菜单状态。 */
-  useEffect(() => {
-    if (!hubView) return;
-    setNotebookCardMenu(null);
-    setNoteMenuOpenId(null);
-  }, [hubView]);
+  }, [notebooks, selectedNotebook, notebooksReady, sharedBrowse, router]);
 
   useEffect(() => {
     const onNavHub = () => {
       userPrefersNotebookHubRef.current = true;
       setSharedBrowse(null);
-      setHubView(true);
       setError("");
       dismissNotesBlockingOverlays();
+      router.push("/notes");
     };
     const onDismissOverlays = () => {
       dismissNotesBlockingOverlays();
@@ -1518,7 +1428,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       window.removeEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
       window.removeEventListener(NOTES_DISMISS_OVERLAYS_EVENT, onDismissOverlays);
     };
-  }, [dismissNotesBlockingOverlays]);
+  }, [dismissNotesBlockingOverlays, router]);
 
   /** 路由变化时关闭弹层，避免遮罩残留导致主区无法操作 */
   useEffect(() => {
@@ -1686,7 +1596,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       const nb = String(parsed.notes_notebook || "").trim();
       if (nb) {
         setSelectedNotebook(nb);
-        setHubView(false);
       }
       const txt = String(parsed.text || "").trim();
       if (txt) setArtText(txt);
@@ -1724,7 +1633,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
           const hit = data.notes.find((x) => x.noteId === nid);
           if (!hit) return;
           setSelectedNotebook(String(hit.notebook || "").trim());
-          setHubView(false);
         } catch (err) {
           if (isAbortError(err)) return;
           // ignore
@@ -1737,7 +1645,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
 
   useEffect(() => {
     const nid = pendingFocusNoteIdRef.current;
-    if (!nid || hubView || loading) return;
+    if (!nid || loading) return;
     const found = notes.some((n) => n.noteId === nid);
     if (!found) return;
     requestAnimationFrame(() => {
@@ -1750,18 +1658,16 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
         // ignore
       }
     });
-  }, [hubView, loading, notes]);
+  }, [loading, notes]);
 
   useEffect(() => {
-    if (!hubView && selectedNotebook.trim()) void loadNotes();
-  }, [loadNotes, hubView, selectedNotebook]);
+    if (selectedNotebook.trim()) void loadNotes();
+  }, [loadNotes, selectedNotebook]);
 
   useEffect(() => {
-    if (!notebooksReady) return;
-    if (!hubView && !selectedNotebook.trim() && notebooks.length > 0) {
-      setHubView(true);
-    }
-  }, [hubView, selectedNotebook, notebooks.length, notebooksReady]);
+    if (!notebooksReady || selectedNotebook.trim()) return;
+    router.replace("/notes");
+  }, [notebooksReady, selectedNotebook, router]);
 
   useEffect(() => {
     const nb = effectiveDraftNotebookKey.trim();
@@ -1915,14 +1821,14 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   });
 
   useEffect(() => {
-    if (hubView || !selectedNotebook.trim()) {
+    if (!selectedNotebook.trim()) {
       setPodcastWorks([]);
       setPodcastWorksLoading(false);
       return;
     }
     setPodcastWorksLoading(true);
     void fetchPodcastWorks();
-  }, [fetchPodcastWorks, hubView, selectedNotebook]);
+  }, [fetchPodcastWorks, selectedNotebook]);
 
   const onPodcastJobCreated = useCallback(
     (jobId: string) => {
@@ -1984,7 +1890,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       writeLastNotebookName(name);
       userPrefersNotebookHubRef.current = false;
       setSelectedNotebook(name);
-      setHubView(false);
       setNewNotebookName("");
       setShowNotebookModal(false);
       setError("");
@@ -2016,6 +1921,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       setNotebooks((prev) => mergeNotebookName(prev, name));
       await loadNotebooks();
       await loadNotebookMeta();
+      router.push(`/notes/${encodeURIComponent(name)}`);
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       setNotebookModalError(msg);
@@ -2208,8 +2114,8 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       });
       if (selectedNotebook === target) {
         userPrefersNotebookHubRef.current = true;
-        setSelectedNotebook("");
-        setHubView(true);
+        router.replace("/notes");
+        return;
       }
       await loadNotebooks();
       await loadNotebookMeta();
@@ -3535,26 +3441,13 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   }
 
   function openNotebook(name: string) {
-    setNotebookCardMenu(null);
     userPrefersNotebookHubRef.current = false;
     writeLastNotebookName(name);
     setSelectedNotebook(name);
     setSharedBrowse(null);
-    setHubView(false);
     setWorkbenchMobilePanel("chat");
     setError("");
     router.push(`/notes/${encodeURIComponent(name)}`);
-  }
-
-  function openSharedNotebookFromPopular(item: PopularNotebookItem) {
-    setNotebookCardMenu(null);
-    userPrefersNotebookHubRef.current = false;
-    const access: SharedBrowseContext["access"] = item.publicAccess === "edit" ? "edit" : "read_only";
-    setSelectedNotebook(item.notebook);
-    setSharedBrowse({ ownerUserId: item.ownerUserId, access });
-    setHubView(false);
-    setWorkbenchMobilePanel("chat");
-    setError("");
   }
 
   async function submitNotebookSharing() {
@@ -3588,7 +3481,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       }
       if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
-      void loadPopularNotebooks(false);
       setShowShareNotebookModal(false);
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
@@ -3628,7 +3520,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       }
       if (!res.ok || data.success === false) throw new Error(apiErrorMessage(data, "保存失败"));
       await loadNotebooks();
-      void loadPopularNotebooks(false);
       setShowShareNotebookModal(false);
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
@@ -3745,7 +3636,6 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     notebookVisualByName,
     sharedBrowse,
     dismissNotesBlockingOverlays,
-    setHubView,
     setSelectedNotebook,
     setSharedBrowse,
     openNotebook,
@@ -3888,154 +3778,17 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
 
   return (
     <main
-      data-notes-workbench={hubView ? undefined : ""}
-      className={
-        hubView
-          ? "mx-auto min-h-0 w-full max-w-[min(100%,1800px)] px-3 pb-10 sm:px-4"
-          : "min-h-0 w-full max-w-none pb-10"
-      }
+      data-notes-workbench=""
+      className="min-h-0 w-full max-w-none pb-10"
       onPointerDown={onNotesMainPointerDown}
     >
       {error ? (
         <UserErrorBanner className="mb-4" message={error} onDismiss={() => setError("")} />
       ) : null}
 
-      {hubView ? (
-        <>
-          <div
-            className="mb-4 flex gap-1 rounded-xl border border-line/60 bg-fill/35 p-1"
-            role="tablist"
-            aria-label="笔记本发现"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={hubDiscoverTab === "mine"}
-              className={`min-w-0 flex-1 rounded-lg border px-2 py-2.5 text-xs transition-colors sm:px-3 sm:text-sm ${
-                hubDiscoverTab === "mine"
-                  ? "border-brand/40 bg-surface font-semibold text-ink shadow-md ring-2 ring-brand/20"
-                  : "border-transparent font-medium text-muted hover:border-line/60 hover:bg-fill/50 hover:text-ink"
-              }`}
-              onClick={() => setHubDiscoverTab("mine")}
-            >
-              我的笔记本
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={hubDiscoverTab === "popular"}
-              className={`min-w-0 flex-1 rounded-lg border px-2 py-2.5 text-xs transition-colors sm:px-3 sm:text-sm ${
-                hubDiscoverTab === "popular"
-                  ? "border-brand/40 bg-surface font-semibold text-ink shadow-md ring-2 ring-brand/20"
-                  : "border-transparent font-medium text-muted hover:border-line/60 hover:bg-fill/50 hover:text-ink"
-              }`}
-              onClick={() => setHubDiscoverTab("popular")}
-            >
-              发现
-            </button>
-          </div>
-          <section className={card}>
-            {hubDiscoverTab === "mine" ? (
-              <>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <h2 className={WORKBENCH_SECTION_TITLE}>我的笔记本</h2>
-                  </div>
-                  {notebooksReady && notebooks.length === 0 ? (
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-brand-foreground shadow-soft transition-opacity hover:opacity-95"
-                      onClick={() => {
-                        setNotebookModalError("");
-                        setNewNotebookName("");
-                        setShowNotebookModal(true);
-                      }}
-                    >
-                      新建笔记本
-                    </button>
-                  ) : null}
-                </div>
-                {!notebooksReady ? (
-                  <div className="mt-4 space-y-3" aria-busy aria-label="加载笔记本列表">
-                    <SkeletonLine className="h-4 w-full max-w-md" />
-                    <div className="flex gap-3 overflow-x-auto pb-2">
-                      <SkeletonBlock className="h-36 w-44 shrink-0 rounded-2xl" />
-                      <SkeletonBlock className="h-36 w-44 shrink-0 rounded-2xl" />
-                      <SkeletonBlock className="h-36 w-44 shrink-0 rounded-2xl" />
-                    </div>
-                  </div>
-                ) : notebooks.length === 0 ? (
-                  <EmptyState
-                    title="还没有笔记本"
-                    description="新建后添加资料，即可在右侧提问或生成。"
-                    className="mt-4 border-dashed border-line bg-fill/40 py-8"
-                  />
-                ) : (
-                  <div className="mt-4">
-                    <HubMineNotebookCards
-                      notebooks={notebooks}
-                      notebookVisualByName={notebookVisualByName}
-                      notebookMetaByName={notebookMetaByName}
-                      notebookSharingByName={notebookSharingByName}
-                      notebookCoverByName={notebookCoversByName}
-                      notebookCardMenu={notebookCardMenu}
-                      setNotebookCardMenu={setNotebookCardMenu}
-                      onOpenNotebook={openNotebook}
-                      onRequestNewNotebook={() => {
-                        setNotebookModalError("");
-                        setShowNotebookModal(true);
-                        setNewNotebookName("");
-                      }}
-                      showNewTile={notebooks.length > 0}
-                      listClassName="flex gap-3 overflow-x-auto pb-2"
-                      onShareNotebook={(nb) => {
-                        const row = notebookSharingByName[nb];
-                        setShareTargetNotebook(nb);
-                        setShareFormAccess(row?.publicAccess === "edit" ? "edit" : "read_only");
-                        setShareModalError("");
-                        setShowShareNotebookModal(true);
-                      }}
-                      onRenameNotebook={(nb) => {
-                        setRenameNotebookOld(nb);
-                        setRenameNotebookNew("");
-                        setShowRenameNotebook(true);
-                      }}
-                      onDeleteNotebook={(nb) => {
-                        setDeleteNotebookTarget(nb);
-                        setDeleteNotebookConfirm(true);
-                      }}
-                      onNotebookCoverSettings={(nb) => {
-                        setNotebookCoverModalTarget(nb);
-                        setNotebookCoverModalErr("");
-                        setShowNotebookCoverModal(true);
-                      }}
-                    />
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <h2 className={WORKBENCH_SECTION_TITLE}>发现</h2>
-                <div className="mt-3 min-h-0 max-h-[min(85dvh,720px)] min-w-0 overflow-y-auto overscroll-y-contain pr-1 [-webkit-overflow-scrolling:touch]">
-                <HubPopularNotebookGrid
-                  popularLoading={popularLoading}
-                  popularItems={popularItems}
-                  onPick={openSharedNotebookFromPopular}
-                  showLoadMore
-                  popularHasMore={popularHasMore}
-                  popularLoadingMore={popularLoadingMore}
-                  onPopularLoadMore={() => void loadPopularNotebooks(true)}
-                />
-                </div>
-              </>
-            )}
-          </section>
-        </>
-      ) : (
-        <NotesWorkbenchProvider value={notesWorkbenchContextValue}>
-          <NotesWorkbenchViewLazy />
-        </NotesWorkbenchProvider>
-      )}
+      <NotesWorkbenchProvider value={notesWorkbenchContextValue}>
+        <NotesWorkbenchViewLazy />
+      </NotesWorkbenchProvider>
 
       <WorkspaceScrimModal
         open={showAddNoteModal}

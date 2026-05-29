@@ -43,6 +43,9 @@ export function warmWorkbenchRouteChunks(href: string) {
     warmChunk("notes-works-panel", () => import("../components/works/NotesWorkbenchWorksPanel"));
   }
   if (path === "/notes") {
+    warmChunk("notes-hub", () => import("../components/notes/NotesHubPage"));
+  }
+  if (pathMatchesNotes(path) && path !== "/notes") {
     warmChunk("notes-page-main", () => import("../components/notes/NotesPageMain"));
   }
   if (path === "/create" || pathMatchesRoot(path, "/podcast") || pathMatchesRoot(path, "/tts")) {

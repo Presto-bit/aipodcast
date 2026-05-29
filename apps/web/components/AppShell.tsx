@@ -257,6 +257,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarPortaled, setSidebarPortaled] = useState(false);
   const [createSubNavExpanded, setCreateSubNavExpanded] = useState(true);
   const [navPending, setNavPending] = useState(false);
+  const [routeRemountKey, setRouteRemountKey] = useState(0);
   const navPendingTargetRef = useRef<string | null>(null);
   const navPendingHrefRef = useRef<string | null>(null);
   const pathRef = useRef(path);
@@ -274,6 +275,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (!target || target === current) return;
     navPendingTargetRef.current = target;
     navPendingHrefRef.current = href;
+    setRouteRemountKey((k) => k + 1);
     setNavPending(true);
   }, []);
 
@@ -557,7 +559,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const pageShell = (
     <AnimatedPageShell>
-      <Suspense key={path} fallback={navPending ? null : <WorkbenchRouteFallback />}>
+      <Suspense key={`${path}-${routeRemountKey}`} fallback={navPending ? null : <WorkbenchRouteFallback />}>
         {children}
       </Suspense>
     </AnimatedPageShell>
