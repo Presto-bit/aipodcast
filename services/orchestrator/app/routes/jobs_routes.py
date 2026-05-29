@@ -70,6 +70,7 @@ from ..object_store import (
     is_object_not_found_error,
     iter_object_byte_range,
     iter_object_chunks,
+    object_key_from_storage_http_url,
     presigned_get_url,
     resolve_job_audio_object_key_from_result,
     strip_internal_object_store_http_url,
@@ -1264,6 +1265,45 @@ def download_job_artifact_api(job_id: str, artifact_id: str, request: Request):
 _JOB_COVER_CACHE_CONTROL = "private, max-age=604800, stale-while-revalidate=86400"
 
 
+def _resolve_job_cover_storage_key(result: dict[str, Any]) -> str:
+    key = str(result.get("cover_object_key") or "").strip()
+    if key:
+        return key
+    for field in ("cover_image", "coverImage"):
+        inferred = object_key_from_storage_http_url(str(result.get(field) or ""))
+        if inferred:
+            return inferred
+    return ""
+
+
+def _fetch_job_cover_http_fallback(result: dict[str, Any]) -> tuple[bytes, str] | None:
+    """对象未持久化或桶内缺失时，回退拉取 result 内外链封面。"""
+    cov = strip_internal_object_store_http_url(
+        str(result.get("cover_image") or result.get("coverImage") or "").strip()
+    )
+    if not cov.startswith(("http://", "https://")):
+        return None
+    try:
+        import requests
+
+        resp = requests.get(
+            cov,
+            timeout=20,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; Presto-CoverFetch/1.0)",
+                "Accept": "image/*,*/*",
+            },
+        )
+        resp.raise_for_status()
+        raw = resp.content
+        if not raw or len(raw) > _JOB_COVER_MAX_BYTES:
+            return None
+        ct = (resp.headers.get("content-type") or "image/jpeg").split(";")[0].strip() or "image/jpeg"
+        return raw, ct
+    except Exception:
+        return None
+
+
 def _resize_job_cover_to_max_edge(data: bytes, mime: str, max_edge_px: int) -> tuple[bytes, str]:
     """列表缩略图：限制最长边，统一输出 JPEG 以减小体积。失败时返回原字节。"""
     if max_edge_px < 64 or max_edge_px > 1200:
@@ -1322,25 +1362,39 @@ def download_job_cover_api(
             result = {}
     else:
         result = {}
-    key = str(result.get("cover_object_key") or "").strip()
-    if not key:
-        raise HTTPException(status_code=404, detail="cover_not_found")
+    key = _resolve_job_cover_storage_key(result)
     mime = str(result.get("cover_content_type") or "").strip() or "image/jpeg"
     if signed:
+        if not key:
+            cov = strip_internal_object_store_http_url(
+                str(result.get("cover_image") or result.get("coverImage") or "").strip()
+            )
+            if cov.startswith(("http://", "https://")):
+                return JSONResponse({"url": cov, "expires_in": expires_in, "content_type": mime})
+            raise HTTPException(status_code=404, detail="cover_not_found")
         try:
             url = presigned_get_url(key, expires_in=expires_in)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"cover_signed_url_failed:{exc}") from exc
         return JSONResponse({"url": url, "expires_in": expires_in, "content_type": mime})
-    try:
-        data = get_object_bytes(key)
-    except Exception as exc:
-        if is_object_not_found_error(exc):
-            raise HTTPException(status_code=404, detail="cover_not_found") from exc
-        raise HTTPException(status_code=502, detail=f"cover_fetch_failed:{exc}") from exc
-    out_data, out_mime = data, mime
+    out_data: bytes | None = None
+    out_mime = mime
+    if key:
+        try:
+            out_data = get_object_bytes(key)
+        except Exception as exc:
+            if is_object_not_found_error(exc):
+                out_data = None
+            else:
+                raise HTTPException(status_code=502, detail=f"cover_fetch_failed:{exc}") from exc
+    if out_data is None:
+        fb = _fetch_job_cover_http_fallback(result)
+        if fb:
+            out_data, out_mime = fb
+    if not out_data:
+        raise HTTPException(status_code=404, detail="cover_not_found")
     if int(w) >= 64:
-        out_data, out_mime = _resize_job_cover_to_max_edge(data, mime, int(w))
+        out_data, out_mime = _resize_job_cover_to_max_edge(out_data, out_mime, int(w))
     return Response(
         content=out_data,
         media_type=out_mime,

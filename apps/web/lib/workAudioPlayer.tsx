@@ -279,7 +279,35 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
     if (unusableInsecureHttpOnHttpsPage(directUrl)) {
       return null;
     }
-    if (remote.origin === window.location.origin) return directUrl;
+    if (remote.origin === window.location.origin) {
+      if (remote.pathname.includes("/work-audio")) {
+        try {
+          const r = await fetch(remote.toString(), { credentials: "same-origin", cache: "no-store" });
+          if (r.ok) {
+            const blob = await r.blob();
+            if (blob?.size) {
+              const ct = (blob.type || "").toLowerCase();
+              if (!ct.includes("text/html") && !ct.includes("application/json")) {
+                const prev = blobUrlByJobId.current[jobId];
+                if (prev) {
+                  try {
+                    URL.revokeObjectURL(prev);
+                  } catch {
+                    // ignore
+                  }
+                }
+                const obj = URL.createObjectURL(blob);
+                blobUrlByJobId.current[jobId] = obj;
+                return obj;
+              }
+            }
+          }
+        } catch {
+          // fall through to direct URL
+        }
+      }
+      return directUrl;
+    }
     const fallbackAfterFetchFailure = (): string | null => {
       if (unusableInsecureHttpOnHttpsPage(directUrl)) {
         return null;

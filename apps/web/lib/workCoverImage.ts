@@ -18,13 +18,19 @@ export function workCoverImageSrc(
   if (!u) return "";
   const jobId = String(stableJobId || "").trim();
   let base = "";
-  if (u.startsWith("data:") || u.startsWith("/")) {
+  if (u.startsWith("data:")) {
+    base = u;
+  } else if (/^https?:\/\//i.test(u)) {
+    // 外链封面走 image-proxy；勿在有 jobId 时强行打 /cover（多数作品未持久化 cover_object_key）
+    base = `/api/image-proxy?url=${encodeURIComponent(u)}`;
+  } else if (u.startsWith("/api/jobs/") && u.includes("/cover")) {
+    base = u;
+  } else if (u.startsWith("/")) {
     base = u;
   } else if (jobId) {
-    // 使用稳定同源地址作为缓存键，避免外链签名 URL 变化导致刷新后重复拉图。
     base = `/api/jobs/${encodeURIComponent(jobId)}/cover`;
   } else {
-    base = `/api/image-proxy?url=${encodeURIComponent(u)}`;
+    return "";
   }
   const lw = options?.listMaxWidth;
   if (lw != null && Number.isFinite(lw) && lw >= 64 && lw <= 1200 && base.includes("/api/jobs/") && base.includes("/cover")) {
