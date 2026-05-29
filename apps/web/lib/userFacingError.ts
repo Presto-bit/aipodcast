@@ -52,6 +52,14 @@ export function toUserFacingError(raw: string): UserFacingErrorParts {
   }
 
   // 单行裸英文 error code（无中文、无空格）：主文案收敛，原文放技术区
+  const bareCode = full.trim().toLowerCase();
+  if (bareCode === "rate_limited") {
+    return {
+      headline: "请求过于频繁，请稍等约 1 分钟后再试。",
+      technical: full,
+      requestId
+    };
+  }
   if (
     !full.includes("\n") &&
     full.length < 120 &&

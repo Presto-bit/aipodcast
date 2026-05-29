@@ -501,7 +501,7 @@ export default function PodcastWorksGallery({
           });
         }
 
-        const needProbe = batch.filter((id) => !fromServer[id]);
+        const needProbe = batch.filter((id) => !fromServer[id]).slice(0, 8);
         for (const id of needProbe) {
           if (canceled) return;
           const sec = await probeJobAudioDurationSec(id, getAuthHeaders());
@@ -509,6 +509,9 @@ export default function PodcastWorksGallery({
           if (typeof sec === "number" && sec > 0) {
             setHydratedDurationSec((prev) => ({ ...prev, [id]: sec }));
           }
+          durationResolvedRef.current.add(id);
+        }
+        for (const id of batch) {
           durationResolvedRef.current.add(id);
         }
       } finally {

@@ -13,8 +13,19 @@ const RATE_LIMIT_EXEMPT_POST_PATHS = new Set([
   "/api/note-upload",
   "/api/notes/import_url",
   "/api/notes/trash/purge",
-  "/api/notes/trash/restore"
+  "/api/notes/trash/restore",
+  "/api/jobs/audio-durations"
 ]);
+
+/** 作品列表首屏高频只读 GET：不计入全站 400/min，避免封面/列表/任务摘要误伤 */
+function isWorksGalleryReadApi(pathname: string, method: string): boolean {
+  if (method === "GET") {
+    if (pathname === "/api/works" || pathname === "/api/jobs") return true;
+    if (pathname === "/api/rss/publications") return true;
+    if (/^\/api\/jobs\/[^/]+\/cover$/.test(pathname)) return true;
+  }
+  return false;
+}
 
 /** 敏感工作台文档：禁止 CDN/浏览器长期缓存 HTML */
 const CACHE_PAGE = "private, no-cache, no-store, max-age=0, must-revalidate";
@@ -158,9 +169,15 @@ export function middleware(req: NextRequest) {
   if (req.method === "POST" && RATE_LIMIT_EXEMPT_POST_PATHS.has(pathname)) {
     return applyNotesAskApiCors(req, withCacheHeaders(NextResponse.next(), CACHE_API));
   }
+  if (isWorksGalleryReadApi(pathname, req.method)) {
+    return applyNotesAskApiCors(req, withCacheHeaders(NextResponse.next(), CACHE_API));
+  }
   const clientKey = clientRateLimitKey(req);
   if (!checkRateLimit(clientKey)) {
-    const r = withCacheHeaders(NextResponse.json({ error: "rate_limited" }, { status: 429 }), CACHE_API);
+    const r = withCacheHeaders(
+      NextResponse.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": "60" } }),
+      CACHE_API
+    );
     if (sensitiveApiPath(pathname)) applySensitiveSharedCacheVary(r, "api");
     return applyNotesAskApiCors(req, r);
   }
