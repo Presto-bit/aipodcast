@@ -8,7 +8,12 @@ import FormSheetModal from "../../../components/subscription/FormSheetModal";
 import { PricingHero } from "../../../components/subscription/PricingHero";
 import type { WalletTopupPayload } from "../../../components/subscription/types";
 import { parseSubscriptionErrorBody } from "../../../lib/subscriptionError";
-import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
+import {
+  useSubscriptionMeQuery,
+  useSubscriptionPlansQuery,
+  type PlansFetchResult,
+  type SubscriptionMeFetchResult
+} from "../../../lib/queries/subscriptionQueries";
 import { appendRechargeDebug, newRechargeDebugRequestId, summarizePayUrl } from "../../../lib/rechargeClientDebug";
 
 type RechargeRecordRow = {
@@ -37,13 +42,6 @@ type WalletRecordsPagination = {
   page?: number;
   page_size?: number;
   total?: number;
-};
-
-type LoadMeOverrides = {
-  filterSince?: string;
-  filterUntil?: string;
-  rechargePage?: number;
-  consumptionPage?: number;
 };
 
 type PlansPayload = {
@@ -160,8 +158,7 @@ type WalletCheckoutState = {
 
 export default function SubscriptionPage() {
   const { getAuthHeaders, refreshMe, user } = useAuth();
-  const pageAbortSignal = usePageAbortSignal();
-  const pageFetch = usePageFetch(pageAbortSignal);
+  const walletPayEnabled = isLoggedInAccountUser(user);
   const [walletTopupInfo, setWalletTopupInfo] = useState<PlansPayload["wallet_topup"]>(undefined);
   const [rechargeRecords, setRechargeRecords] = useState<RechargeRecordRow[]>([]);
   const [consumptionRecords, setConsumptionRecords] = useState<ConsumptionRecordRow[]>([]);
@@ -191,10 +188,29 @@ export default function SubscriptionPage() {
   const [rechargeTotal, setRechargeTotal] = useState(0);
   const [consumptionTotal, setConsumptionTotal] = useState(0);
 
-  /** 防止连续多次 loadPlans 返回顺序错乱，把旧响应写回 state */
-  const plansFetchSeqRef = useRef(0);
   const consumptionSinceDateRef = useRef<HTMLInputElement>(null);
   const consumptionUntilDateRef = useRef<HTMLInputElement>(null);
+
+  const meParams = useMemo(
+    () => ({
+      consumptionSince,
+      consumptionUntil,
+      rechargePage,
+      consumptionPage
+    }),
+    [consumptionSince, consumptionUntil, rechargePage, consumptionPage]
+  );
+
+  const plansQuery = useSubscriptionPlansQuery(getAuthHeaders, true);
+  const meQuery = useSubscriptionMeQuery(
+    getAuthHeaders,
+    walletPayEnabled,
+    meParams,
+    WALLET_RECORD_PAGE_SIZE,
+    walletPayEnabled ? 60_000 : false
+  );
+  const refetchMeRef = useRef(meQuery.refetch);
+  refetchMeRef.current = meQuery.refetch;
 
   const openConsumptionDatePicker = useCallback((el: HTMLInputElement | null) => {
     if (!el) return;
@@ -262,222 +278,163 @@ export default function SubscriptionPage() {
     [alipayRechargeUiEnabled, mergedWalletTopup.checkout_supported]
   );
 
-  const loadPlans = useCallback(async () => {
-    const seq = ++plansFetchSeqRef.current;
+  const applyPlansResult = useCallback((result: PlansFetchResult) => {
     setPlansLoadError("");
     if (!subscriptionPlansDebugEnabled()) setPlansLoadDiag(null);
-    try {
-      const pr = await pageFetch("/api/subscription/plans", { cache: "no-store", headers: { ...getAuthHeaders() } });
-      const pd = (await pr.json().catch(() => ({}))) as PlansPayload;
-      if (seq !== plansFetchSeqRef.current) {
-        const stale: PlansLoadDiag = {
-          ts: new Date().toISOString(),
-          branch: "stale_response_skipped",
-          http_ok: pr.ok,
-          http_status: pr.status,
-          hint_zh: buildPlansLoadHintZh({ ts: "", branch: "stale_response_skipped" })
-        };
-        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(stale);
-        return;
-      }
-      if (!pr.ok) {
-        setAlipayPageEnabled(false);
-        if (pr.status === 404) {
-          setPlansLoadError("未找到计费配置接口（HTTP 404）。已使用本站参考价目；请确认 Next BFF 已部署 /api/subscription/plans 且编排器可访问。");
-        } else {
-          setPlansLoadError(`暂时无法拉取计费配置（HTTP ${pr.status}），已显示参考价目。`);
-        }
-        const errDiag: PlansLoadDiag = {
-          ts: new Date().toISOString(),
-          branch: "http_error",
-          http_ok: pr.ok,
-          http_status: pr.status,
-          pd_success: typeof pd.success === "boolean" ? pd.success : undefined,
-          plans_load_error_message:
-            pr.status === 404
-              ? "HTTP 404：未找到计费配置接口"
-              : `HTTP ${pr.status}：暂时无法拉取计费配置`
-        };
-        errDiag.hint_zh = buildPlansLoadHintZh(errDiag);
-        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(errDiag);
-        return;
-      }
-      if (pd.success) {
-        const wtRaw = pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : {};
-        setWalletTopupInfo(wtRaw);
-        const wt = Object.keys(wtRaw).length ? (wtRaw as WalletTopupPayload) : null;
-        const fromChannel = isTruthyPaymentChannelEnabled(pd.payment_channels?.alipay_page?.enabled);
-        const fromWallet = walletPayloadImpliesAlipayOnly(wt);
-        const enabledNext = fromChannel || fromWallet;
-        setAlipayPageEnabled(enabledNext);
-        const wtKeys = Object.keys(wtRaw);
-        const csRaw = wt && typeof wt === "object" ? (wt as { checkout_supported?: unknown }).checkout_supported : undefined;
-        const okDiag: PlansLoadDiag = {
-          ts: new Date().toISOString(),
-          branch: "success_true",
-          http_ok: true,
-          http_status: pr.status,
-          pd_success: true,
-          payment_channels_alipay_page_enabled_raw: pd.payment_channels?.alipay_page?.enabled,
-          wallet_topup_checkout_supported_raw: csRaw,
-          wallet_topup_key_count: wtKeys.length,
-          wallet_topup_empty: wtKeys.length === 0,
-          from_channel_flag: fromChannel,
-          from_wallet_flag: fromWallet,
-          set_alipay_page_enabled_to: enabledNext
-        };
-        okDiag.hint_zh = buildPlansLoadHintZh(okDiag);
-        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(okDiag);
+    const { httpOk, httpStatus, payload: pd } = result;
+    if (!httpOk) {
+      setAlipayPageEnabled(false);
+      if (httpStatus === 404) {
+        setPlansLoadError("未找到计费配置接口（HTTP 404）。已使用本站参考价目；请确认 Next BFF 已部署 /api/subscription/plans 且编排器可访问。");
       } else {
-        setAlipayPageEnabled(false);
-        setPlansLoadError("计费接口返回异常，已显示参考价目，请稍后重试。");
-        const badDiag: PlansLoadDiag = {
-          ts: new Date().toISOString(),
-          branch: "success_false",
-          http_ok: true,
-          http_status: pr.status,
-          pd_success: false,
-          payment_channels_alipay_page_enabled_raw: pd.payment_channels?.alipay_page?.enabled,
-          plans_load_error_message: "success 不为 true"
-        };
-        badDiag.hint_zh = buildPlansLoadHintZh(badDiag);
-        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(badDiag);
+        setPlansLoadError(`暂时无法拉取计费配置（HTTP ${httpStatus}），已显示参考价目。`);
       }
-    } catch (e) {
-      if (isAbortError(e)) return;
-      if (seq === plansFetchSeqRef.current) {
-        const msg = String(e instanceof Error ? e.message : e);
-        setPlansLoadError(msg);
-        const netDiag: PlansLoadDiag = {
-          ts: new Date().toISOString(),
-          branch: "network_error",
-          plans_load_error_message: msg
-        };
-        netDiag.hint_zh = buildPlansLoadHintZh(netDiag);
-        if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(netDiag);
-      }
-    } finally {
-      if (seq === plansFetchSeqRef.current && !pageAbortSignal.aborted) {
-        setPlansConfigLoaded(true);
-      }
-    }
-  }, [getAuthHeaders, pageAbortSignal, pageFetch]);
-
-  const loadMe = useCallback(
-    async (overrides?: LoadMeOverrides) => {
-    const rid = newRechargeDebugRequestId();
-    try {
-      const sUse = overrides?.filterSince !== undefined ? overrides.filterSince : consumptionSince;
-      const tUse = overrides?.filterUntil !== undefined ? overrides.filterUntil : consumptionUntil;
-      const rPage = overrides?.rechargePage ?? rechargePage;
-      const cPage = overrides?.consumptionPage ?? consumptionPage;
-      const qs = new URLSearchParams();
-      if (sUse.trim()) qs.set("consumption_since", sUse.trim());
-      if (tUse.trim()) qs.set("consumption_until", tUse.trim());
-      qs.set("recharge_page", String(rPage));
-      qs.set("recharge_page_size", String(WALLET_RECORD_PAGE_SIZE));
-      qs.set("consumption_page", String(cPage));
-      qs.set("consumption_page_size", String(WALLET_RECORD_PAGE_SIZE));
-      const mePath = `/api/subscription/me?${qs.toString()}`;
-      const mr = await pageFetch(mePath, {
-        headers: { ...getAuthHeaders(), "x-request-id": rid },
-        cache: "no-store"
-      });
-      const md = (await mr.json().catch(() => ({}))) as {
-        success?: boolean;
-        recharge_records?: RechargeRecordRow[];
-        consumption_records?: ConsumptionRecordRow[];
-        recharge_pagination?: WalletRecordsPagination;
-        consumption_pagination?: WalletRecordsPagination;
-        consumption_filtered_wallet_total_cents?: number | null;
-        wallet_balance_cents?: number;
-        experience?: {
-          voice_minutes_remaining?: number;
-          asr_minutes_remaining?: number;
-          text_chars_remaining?: number;
-          voice_minutes_total?: number | null;
-          asr_minutes_total?: number | null;
-          text_chars_total?: number | null;
-        };
+      const errDiag: PlansLoadDiag = {
+        ts: new Date().toISOString(),
+        branch: "http_error",
+        http_ok: httpOk,
+        http_status: httpStatus,
+        pd_success: typeof pd.success === "boolean" ? pd.success : undefined,
+        plans_load_error_message:
+          httpStatus === 404 ? "HTTP 404：未找到计费配置接口" : `HTTP ${httpStatus}：暂时无法拉取计费配置`
       };
-      appendRechargeDebug(
-        "load_me",
-        {
-          path: mePath,
-          http_ok: mr.ok,
-          success: Boolean(md.success),
-          wallet_balance_cents: typeof md.wallet_balance_cents === "number" ? md.wallet_balance_cents : null,
-          recharge_records_len: Array.isArray(md.recharge_records) ? md.recharge_records.length : null,
-          recharge_total:
-            typeof md.recharge_pagination?.total === "number" ? md.recharge_pagination.total : null,
-          consumption_total:
-            typeof md.consumption_pagination?.total === "number" ? md.consumption_pagination.total : null
-        },
-        rid,
-        user
-      );
-      if (mr.ok && md.success) {
-        setRechargeRecords(Array.isArray(md.recharge_records) ? md.recharge_records : []);
-        setConsumptionRecords(Array.isArray(md.consumption_records) ? md.consumption_records : []);
-        const rp = md.recharge_pagination;
-        if (rp && typeof rp === "object") {
-          if (typeof rp.page === "number" && Number.isFinite(rp.page)) setRechargePage(rp.page);
-          if (typeof rp.total === "number" && Number.isFinite(rp.total)) setRechargeTotal(rp.total);
-        }
-        const cp = md.consumption_pagination;
-        if (cp && typeof cp === "object") {
-          if (typeof cp.page === "number" && Number.isFinite(cp.page)) setConsumptionPage(cp.page);
-          if (typeof cp.total === "number" && Number.isFinite(cp.total)) setConsumptionTotal(cp.total);
-        }
-        if (typeof md.consumption_filtered_wallet_total_cents === "number") {
-          setConsumptionFilteredTotalCents(md.consumption_filtered_wallet_total_cents);
-        } else {
-          setConsumptionFilteredTotalCents(null);
-        }
-        if (typeof md.wallet_balance_cents === "number") setWalletBalanceCents(md.wallet_balance_cents);
-        else setWalletBalanceCents(null);
-        const ex = md.experience;
-        if (ex && typeof ex === "object") {
-          if (typeof ex.voice_minutes_remaining === "number") setExperienceVoiceMin(ex.voice_minutes_remaining);
-          else setExperienceVoiceMin(null);
-          if (typeof ex.asr_minutes_remaining === "number") setExperienceAsrMin(ex.asr_minutes_remaining);
-          else setExperienceAsrMin(null);
-          if (typeof ex.text_chars_remaining === "number") setExperienceTextChars(ex.text_chars_remaining);
-          else setExperienceTextChars(null);
-          setExperienceVoiceTotal(typeof ex.voice_minutes_total === "number" ? ex.voice_minutes_total : null);
-          setExperienceAsrTotal(typeof ex.asr_minutes_total === "number" ? ex.asr_minutes_total : null);
-          setExperienceTextTotal(typeof ex.text_chars_total === "number" ? ex.text_chars_total : null);
-        } else {
-          setExperienceVoiceMin(null);
-          setExperienceAsrMin(null);
-          setExperienceTextChars(null);
-          setExperienceVoiceTotal(null);
-          setExperienceAsrTotal(null);
-          setExperienceTextTotal(null);
-        }
-      } else {
-        appendRechargeDebug(
-          "load_me_not_ok",
-          { path: mePath, http_ok: mr.ok, success: md.success, http_status: mr.status },
-          rid,
-          user
-        );
+      errDiag.hint_zh = buildPlansLoadHintZh(errDiag);
+      if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(errDiag);
+      return;
+    }
+    if (pd.success) {
+      const wtRaw = pd.wallet_topup && typeof pd.wallet_topup === "object" ? pd.wallet_topup : {};
+      setWalletTopupInfo(wtRaw);
+      const wt = Object.keys(wtRaw).length ? (wtRaw as WalletTopupPayload) : null;
+      const fromChannel = isTruthyPaymentChannelEnabled(pd.payment_channels?.alipay_page?.enabled);
+      const fromWallet = walletPayloadImpliesAlipayOnly(wt);
+      const enabledNext = fromChannel || fromWallet;
+      setAlipayPageEnabled(enabledNext);
+      const wtKeys = Object.keys(wtRaw);
+      const csRaw = wt && typeof wt === "object" ? (wt as { checkout_supported?: unknown }).checkout_supported : undefined;
+      const okDiag: PlansLoadDiag = {
+        ts: new Date().toISOString(),
+        branch: "success_true",
+        http_ok: true,
+        http_status: httpStatus,
+        pd_success: true,
+        payment_channels_alipay_page_enabled_raw: pd.payment_channels?.alipay_page?.enabled,
+        wallet_topup_checkout_supported_raw: csRaw,
+        wallet_topup_key_count: wtKeys.length,
+        wallet_topup_empty: wtKeys.length === 0,
+        from_channel_flag: fromChannel,
+        from_wallet_flag: fromWallet,
+        set_alipay_page_enabled_to: enabledNext
+      };
+      okDiag.hint_zh = buildPlansLoadHintZh(okDiag);
+      if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(okDiag);
+    } else {
+      setAlipayPageEnabled(false);
+      setPlansLoadError("计费接口返回异常，已显示参考价目，请稍后重试。");
+      const badDiag: PlansLoadDiag = {
+        ts: new Date().toISOString(),
+        branch: "success_false",
+        http_ok: true,
+        http_status: httpStatus,
+        pd_success: false,
+        payment_channels_alipay_page_enabled_raw: pd.payment_channels?.alipay_page?.enabled,
+        plans_load_error_message: "success 不为 true"
+      };
+      badDiag.hint_zh = buildPlansLoadHintZh(badDiag);
+      if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(badDiag);
+    }
+  }, []);
+
+  const applyMeResult = useCallback((result: SubscriptionMeFetchResult) => {
+    const { httpOk, httpStatus, path: mePath, payload: md, requestId: rid } = result;
+    appendRechargeDebug(
+      "load_me",
+      {
+        path: mePath,
+        http_ok: httpOk,
+        success: Boolean(md.success),
+        wallet_balance_cents: typeof md.wallet_balance_cents === "number" ? md.wallet_balance_cents : null,
+        recharge_records_len: Array.isArray(md.recharge_records) ? md.recharge_records.length : null,
+        recharge_total: typeof md.recharge_pagination?.total === "number" ? md.recharge_pagination.total : null,
+        consumption_total: typeof md.consumption_pagination?.total === "number" ? md.consumption_pagination.total : null
+      },
+      rid,
+      user
+    );
+    if (httpOk && md.success) {
+      setRechargeRecords(Array.isArray(md.recharge_records) ? (md.recharge_records as RechargeRecordRow[]) : []);
+      setConsumptionRecords(Array.isArray(md.consumption_records) ? (md.consumption_records as ConsumptionRecordRow[]) : []);
+      const rp = md.recharge_pagination;
+      if (rp && typeof rp === "object") {
+        if (typeof rp.page === "number" && Number.isFinite(rp.page)) setRechargePage(rp.page);
+        if (typeof rp.total === "number" && Number.isFinite(rp.total)) setRechargeTotal(rp.total);
       }
-    } catch (e) {
-      if (isAbortError(e)) return;
+      const cp = md.consumption_pagination;
+      if (cp && typeof cp === "object") {
+        if (typeof cp.page === "number" && Number.isFinite(cp.page)) setConsumptionPage(cp.page);
+        if (typeof cp.total === "number" && Number.isFinite(cp.total)) setConsumptionTotal(cp.total);
+      }
+      if (typeof md.consumption_filtered_wallet_total_cents === "number") {
+        setConsumptionFilteredTotalCents(md.consumption_filtered_wallet_total_cents);
+      } else {
+        setConsumptionFilteredTotalCents(null);
+      }
+      if (typeof md.wallet_balance_cents === "number") setWalletBalanceCents(md.wallet_balance_cents);
+      else setWalletBalanceCents(null);
+      const ex = md.experience;
+      if (ex && typeof ex === "object") {
+        if (typeof ex.voice_minutes_remaining === "number") setExperienceVoiceMin(ex.voice_minutes_remaining);
+        else setExperienceVoiceMin(null);
+        if (typeof ex.asr_minutes_remaining === "number") setExperienceAsrMin(ex.asr_minutes_remaining);
+        else setExperienceAsrMin(null);
+        if (typeof ex.text_chars_remaining === "number") setExperienceTextChars(ex.text_chars_remaining);
+        else setExperienceTextChars(null);
+        setExperienceVoiceTotal(typeof ex.voice_minutes_total === "number" ? ex.voice_minutes_total : null);
+        setExperienceAsrTotal(typeof ex.asr_minutes_total === "number" ? ex.asr_minutes_total : null);
+        setExperienceTextTotal(typeof ex.text_chars_total === "number" ? ex.text_chars_total : null);
+      } else {
+        setExperienceVoiceMin(null);
+        setExperienceAsrMin(null);
+        setExperienceTextChars(null);
+        setExperienceVoiceTotal(null);
+        setExperienceAsrTotal(null);
+        setExperienceTextTotal(null);
+      }
+    } else {
       appendRechargeDebug(
-        "load_me_error",
-        { message: String(e instanceof Error ? e.message : e) },
+        "load_me_not_ok",
+        { path: mePath, http_ok: httpOk, success: md.success, http_status: httpStatus },
         rid,
         user
       );
     }
-  },
-    [getAuthHeaders, consumptionSince, consumptionUntil, rechargePage, consumptionPage, user, pageFetch]
-  );
+  }, [user]);
 
-  const loadMeRef = useRef(loadMe);
-  loadMeRef.current = loadMe;
+  useEffect(() => {
+    if (plansQuery.data) applyPlansResult(plansQuery.data);
+  }, [plansQuery.data, applyPlansResult]);
+
+  useEffect(() => {
+    if (plansQuery.error) {
+      const msg = String(plansQuery.error instanceof Error ? plansQuery.error.message : plansQuery.error);
+      setPlansLoadError(msg);
+      const netDiag: PlansLoadDiag = {
+        ts: new Date().toISOString(),
+        branch: "network_error",
+        plans_load_error_message: msg
+      };
+      netDiag.hint_zh = buildPlansLoadHintZh(netDiag);
+      if (subscriptionPlansDebugEnabled()) setPlansLoadDiag(netDiag);
+    }
+  }, [plansQuery.error]);
+
+  useEffect(() => {
+    if (plansQuery.isFetched) setPlansConfigLoaded(true);
+  }, [plansQuery.isFetched]);
+
+  useEffect(() => {
+    if (meQuery.data) applyMeResult(meQuery.data);
+  }, [meQuery.data, applyMeResult]);
 
   const reconcileAlipayWalletTopup = useCallback(
     async (outTradeNo: string) => {
@@ -536,11 +493,6 @@ export default function SubscriptionPage() {
   const reconcileAlipayInFlightRef = useRef(false);
 
   useEffect(() => {
-    void loadPlans();
-    void loadMe();
-  }, [loadPlans, loadMe]);
-
-  useEffect(() => {
     if (typeof window === "undefined") return;
     const q = new URLSearchParams(window.location.search);
     if (!q.get("out_trade_no") && !q.get("trade_no")) return;
@@ -555,13 +507,11 @@ export default function SubscriptionPage() {
     );
     const otnUrl = (q.get("out_trade_no") || "").trim();
     if (otnUrl) void reconcileAlipayWalletTopup(otnUrl);
-    void loadMe();
+    void refetchMeRef.current();
     void refreshMe();
     setMsg("支付已完成或处理中，正在同步订单…");
     window.history.replaceState({}, "", window.location.pathname);
-  }, [loadMe, refreshMe, user, reconcileAlipayWalletTopup]);
-
-  const walletPayEnabled = isLoggedInAccountUser(user);
+  }, [refreshMe, user, reconcileAlipayWalletTopup]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -571,22 +521,6 @@ export default function SubscriptionPage() {
       window.history.replaceState({}, "", window.location.pathname + window.location.search);
     }
   }, []);
-
-  useEffect(() => {
-    if (!walletPayEnabled) return undefined;
-    const tick = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void loadMe();
-    }, 60_000);
-    const onVis = () => {
-      if (document.visibilityState === "visible") void loadMe();
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      window.clearInterval(tick);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [walletPayEnabled, loadMe]);
 
   /** 支付宝页付回跳后（return_url 常不带单号）：短时轮询 /me，待异步通知入账后几秒内刷新余额 */
   useEffect(() => {
@@ -696,7 +630,7 @@ export default function SubscriptionPage() {
       } catch {
         /* noop */
       }
-      void loadMeRef.current();
+      void refetchMeRef.current();
     };
     tick();
 
@@ -786,9 +720,9 @@ export default function SubscriptionPage() {
 
   useEffect(() => {
     if (!rechargeModalOpen || !walletPayEnabled) return;
-    void loadMe();
-    void loadPlans();
-  }, [rechargeModalOpen, walletPayEnabled, loadMe, loadPlans]);
+    void refetchMeRef.current();
+    void plansQuery.refetch();
+  }, [rechargeModalOpen, walletPayEnabled, plansQuery]);
 
   useEffect(() => {
     if (!showWalletRechargeSection) setRechargeModalOpen(false);
@@ -921,7 +855,8 @@ export default function SubscriptionPage() {
       );
       setMsg("余额已入账");
       setWalletCheckout(null);
-      await loadMe({ rechargePage: 1 });
+      setRechargePage(1);
+      await refetchMeRef.current();
       await refreshMe();
       setRechargeModalOpen(false);
     } catch (err) {
@@ -1202,7 +1137,6 @@ export default function SubscriptionPage() {
                   onClick={() => {
                     const p = Math.max(1, rechargePage - 1);
                     setRechargePage(p);
-                    void loadMe({ rechargePage: p });
                   }}
                 >
                   上一页
@@ -1215,7 +1149,6 @@ export default function SubscriptionPage() {
                     const p = Math.min(rechargeTotalPages, rechargePage + 1);
                     if (p === rechargePage) return;
                     setRechargePage(p);
-                    void loadMe({ rechargePage: p });
                   }}
                 >
                   下一页
@@ -1277,7 +1210,6 @@ export default function SubscriptionPage() {
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
               onClick={() => {
                 setConsumptionPage(1);
-                void loadMe({ consumptionPage: 1 });
               }}
             >
               应用筛选
@@ -1289,7 +1221,6 @@ export default function SubscriptionPage() {
                 setConsumptionSince("");
                 setConsumptionUntil("");
                 setConsumptionPage(1);
-                void loadMe({ filterSince: "", filterUntil: "", consumptionPage: 1 });
               }}
             >
               清除
@@ -1353,7 +1284,6 @@ export default function SubscriptionPage() {
                   onClick={() => {
                     const p = Math.max(1, consumptionPage - 1);
                     setConsumptionPage(p);
-                    void loadMe({ consumptionPage: p });
                   }}
                 >
                   上一页
@@ -1366,7 +1296,6 @@ export default function SubscriptionPage() {
                     const p = Math.min(consumptionTotalPages, consumptionPage + 1);
                     if (p === consumptionPage) return;
                     setConsumptionPage(p);
-                    void loadMe({ consumptionPage: p });
                   }}
                 >
                   下一页

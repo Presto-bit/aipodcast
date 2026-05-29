@@ -399,6 +399,47 @@ def get_job_status_lightweight(job_id: str, user_ref: str | None = None) -> dict
             return dict(row) if row else None
 
 
+def get_jobs_audio_duration_sec_batch(job_ids: list[str], user_ref: str | None = None) -> dict[str, float]:
+    """批量读取 result.audio_duration_sec（仅授权可见 job，最多 50 条）。"""
+    ids = [str(x).strip() for x in job_ids if str(x).strip()][:50]
+    if not ids:
+        return {}
+    out: dict[str, float] = {}
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            cur.execute(
+                """
+                SELECT j.id,
+                  CASE
+                    WHEN jsonb_typeof(j.result->'audio_duration_sec') = 'number'
+                      AND (j.result->'audio_duration_sec')::text::double precision > 0
+                      AND (j.result->'audio_duration_sec')::text::double precision < 864000
+                      THEN (j.result->'audio_duration_sec')::text::double precision
+                    WHEN j.result ? 'audio_duration_sec'
+                      AND NULLIF(TRIM(j.result->>'audio_duration_sec'), '') IS NOT NULL
+                      AND TRIM(j.result->>'audio_duration_sec') ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+                      AND (TRIM(j.result->>'audio_duration_sec'))::double precision > 0
+                      AND (TRIM(j.result->>'audio_duration_sec'))::double precision < 864000
+                      THEN (TRIM(j.result->>'audio_duration_sec'))::double precision
+                    ELSE NULL
+                  END AS audio_duration_sec
+                FROM jobs j
+                LEFT JOIN projects p ON p.id = j.project_id
+                WHERE j.id = ANY(%s)
+                  AND (%s::uuid IS NULL OR COALESCE(j.created_by, p.user_id) = %s::uuid)
+                """,
+                (ids, user_uuid, user_uuid),
+            )
+            for row in cur.fetchall():
+                rec = dict(row)
+                jid = str(rec.get("id") or "").strip()
+                dur = rec.get("audio_duration_sec")
+                if jid and isinstance(dur, (int, float)) and float(dur) > 0:
+                    out[jid] = float(dur)
+    return out
+
+
 def get_job_for_usage_billing(job_id: str) -> dict[str, Any] | None:
     """终态 usage 记账：仅投影 payload 与 result 计费所需字段。"""
     jid = (job_id or "").strip()

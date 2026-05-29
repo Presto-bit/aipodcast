@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import { hexToMp3DataUrl } from "../../lib/audioHex";
+import { fetchJobsAudioDurationsBatch } from "../../lib/jobsAudioDurations";
 import { unusableInsecureHttpOnHttpsPage } from "../../lib/insecureHttpOnHttpsPage";
 import { useAuth, userAccountRef } from "../../lib/auth";
 import { scheduleCloudPreferencesPush } from "../../lib/cloudPreferences";
@@ -466,6 +467,7 @@ export default function PodcastWorksGallery({
   }, [variant, compactCards, menuOpenId, items, publicationsByJobId]);
 
   useEffect(() => {
+    const pendingIds: string[] = [];
     for (const w of items) {
       const id = w.id;
       if (!id) continue;
@@ -478,61 +480,99 @@ export default function PodcastWorksGallery({
         durationResolvedRef.current.add(id);
         continue;
       }
-      if (typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0) continue;
+      if (typeof w.audioDurationSec === "number" && Number.isFinite(w.audioDurationSec) && w.audioDurationSec > 0) {
+        continue;
+      }
       if (durationResolvedRef.current.has(id)) continue;
       if (durationFetchRef.current.has(id)) continue;
-      durationFetchRef.current.add(id);
-      void (async () => {
-        try {
-          const res = await fetch(`/api/jobs/${id}`, { cache: "no-store", headers: { ...getAuthHeaders() } });
-          const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-          if (!res.ok) {
-            durationResolvedRef.current.add(id);
-            return;
-          }
-          const result = (row.result || {}) as Record<string, unknown>;
-          const ds = result.audio_duration_sec;
-          if (typeof ds === "number" && Number.isFinite(ds) && ds > 0) {
-            setHydratedDurationSec((prev) => ({ ...prev, [id]: ds }));
-            durationResolvedRef.current.add(id);
-            return;
-          }
-          const hex = String(result.audio_hex || "").trim();
-          const audioUrl = String(result.audio_url || "").trim();
-          if (!hex && !audioUrl) {
-            durationResolvedRef.current.add(id);
-            return;
-          }
-          if (!hex && audioUrl && unusableInsecureHttpOnHttpsPage(audioUrl)) {
-            durationResolvedRef.current.add(id);
-            return;
-          }
-          const a = document.createElement("audio");
-          a.preload = "metadata";
-          a.src = hex ? hexToMp3DataUrl(hex) : audioUrl;
-          await new Promise<void>((resolve) => {
-            const done = () => {
-              a.removeAttribute("src");
-              a.load();
-              resolve();
-            };
-            a.addEventListener("loadedmetadata", () => {
-              if (Number.isFinite(a.duration) && a.duration > 0) {
-                setHydratedDurationSec((prev) => ({ ...prev, [id]: a.duration }));
-              }
-              durationResolvedRef.current.add(id);
-              done();
-            });
-            a.addEventListener("error", () => {
-              durationResolvedRef.current.add(id);
-              done();
-            });
-          });
-        } finally {
-          durationFetchRef.current.delete(id);
-        }
-      })();
+      pendingIds.push(id);
     }
+    const batch = pendingIds.slice(0, 50);
+    if (!batch.length) return;
+
+    for (const id of batch) durationFetchRef.current.add(id);
+    let canceled = false;
+
+    void (async () => {
+      let fromServer: Record<string, number> = {};
+      try {
+        try {
+          fromServer = await fetchJobsAudioDurationsBatch(batch, getAuthHeaders());
+        } catch {
+          fromServer = {};
+        }
+        if (canceled) return;
+        const withDuration = Object.entries(fromServer).filter(([, sec]) => typeof sec === "number" && sec > 0);
+        if (withDuration.length) {
+          setHydratedDurationSec((prev) => {
+            const next = { ...prev };
+            for (const [id, sec] of withDuration) {
+              next[id] = sec;
+              durationResolvedRef.current.add(id);
+            }
+            return next;
+          });
+        }
+        const needProbe = batch.filter((id) => !fromServer[id]);
+        for (const id of needProbe) {
+          if (canceled) return;
+          try {
+            const res = await fetch(`/api/jobs/${id}`, { cache: "no-store", headers: { ...getAuthHeaders() } });
+            const row = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+            if (!res.ok) {
+              durationResolvedRef.current.add(id);
+              continue;
+            }
+            const result = (row.result || {}) as Record<string, unknown>;
+            const ds = result.audio_duration_sec;
+            if (typeof ds === "number" && Number.isFinite(ds) && ds > 0) {
+              setHydratedDurationSec((prev) => ({ ...prev, [id]: ds }));
+              durationResolvedRef.current.add(id);
+              continue;
+            }
+            const hex = String(result.audio_hex || "").trim();
+            const audioUrl = String(result.audio_url || "").trim();
+            if (!hex && !audioUrl) {
+              durationResolvedRef.current.add(id);
+              continue;
+            }
+            if (!hex && audioUrl && unusableInsecureHttpOnHttpsPage(audioUrl)) {
+              durationResolvedRef.current.add(id);
+              continue;
+            }
+            const a = document.createElement("audio");
+            a.preload = "metadata";
+            a.src = hex ? hexToMp3DataUrl(hex) : audioUrl;
+            await new Promise<void>((resolve) => {
+              const done = () => {
+                a.removeAttribute("src");
+                a.load();
+                resolve();
+              };
+              a.addEventListener("loadedmetadata", () => {
+                if (Number.isFinite(a.duration) && a.duration > 0) {
+                  setHydratedDurationSec((prev) => ({ ...prev, [id]: a.duration }));
+                }
+                durationResolvedRef.current.add(id);
+                done();
+              });
+              a.addEventListener("error", () => {
+                durationResolvedRef.current.add(id);
+                done();
+              });
+            });
+          } catch {
+            durationResolvedRef.current.add(id);
+          }
+        }
+      } finally {
+        for (const id of batch) durationFetchRef.current.delete(id);
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
   }, [items, getAuthHeaders]);
 
   useEffect(() => {

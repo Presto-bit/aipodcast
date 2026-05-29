@@ -44,6 +44,7 @@ from ..models import (
     ensure_jobs_trash_schema,
     get_job,
     get_job_status_lightweight,
+    get_jobs_audio_duration_sec_batch,
     get_job_artifact,
     get_job_via_podcast_template_visible_to_viewer,
     get_job_via_shared_notebook_visible_to_viewer,
@@ -931,6 +932,20 @@ def list_jobs_api(
         if _list_jobs_schema_error(exc):
             raise HTTPException(status_code=500, detail="jobs_schema_outdated") from exc
         raise HTTPException(status_code=500, detail="list_jobs_failed") from exc
+
+
+@router.post("/jobs/audio-durations")
+def jobs_audio_durations_batch_api(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    """批量读取 job.result.audio_duration_sec，避免 Gallery 对每条作品单独 GET /jobs/:id。"""
+    raw = body.get("job_ids") if isinstance(body, dict) else None
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="job_ids_required")
+    ids = [str(x).strip() for x in raw if str(x).strip()][:50]
+    if not ids:
+        return JSONResponse(jsonable_encoder({"success": True, "durations": {}}))
+    scope = _job_row_scope_ref(request)
+    durations = get_jobs_audio_duration_sec_batch(ids, user_ref=scope)
+    return JSONResponse(jsonable_encoder({"success": True, "durations": durations}))
 
 
 @router.get("/jobs/{job_id}")

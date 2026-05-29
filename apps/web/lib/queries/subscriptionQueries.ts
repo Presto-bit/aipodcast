@@ -1,11 +1,17 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { newRechargeDebugRequestId } from "../rechargeClientDebug";
 
 export type PlansPayload = {
   success?: boolean;
   plans?: unknown[];
   wallet_topup?: unknown;
+  payment_channels?: {
+    alipay_page?: { enabled?: unknown; label_zh?: string };
+  };
+  error?: string;
+  detail?: string;
   [key: string]: unknown;
 };
 
@@ -16,7 +22,42 @@ export type SubscriptionMeParams = {
   consumptionPage?: number;
 };
 
-function subscriptionMeQueryKey(params: SubscriptionMeParams) {
+export type PlansFetchResult = {
+  httpOk: boolean;
+  httpStatus: number;
+  payload: PlansPayload;
+};
+
+export type SubscriptionMePayload = {
+  success?: boolean;
+  recharge_records?: unknown[];
+  consumption_records?: unknown[];
+  recharge_pagination?: { page?: number; page_size?: number; total?: number };
+  consumption_pagination?: { page?: number; page_size?: number; total?: number };
+  consumption_filtered_wallet_total_cents?: number | null;
+  wallet_balance_cents?: number;
+  experience?: {
+    voice_minutes_remaining?: number;
+    asr_minutes_remaining?: number;
+    text_chars_remaining?: number;
+    voice_minutes_total?: number | null;
+    asr_minutes_total?: number | null;
+    text_chars_total?: number | null;
+  };
+  error?: string;
+  detail?: string;
+  [key: string]: unknown;
+};
+
+export type SubscriptionMeFetchResult = {
+  httpOk: boolean;
+  httpStatus: number;
+  path: string;
+  payload: SubscriptionMePayload;
+  requestId: string;
+};
+
+export function subscriptionMeQueryKey(params: SubscriptionMeParams) {
   return [
     "subscription-me",
     params.consumptionSince ?? "",
@@ -26,20 +67,18 @@ function subscriptionMeQueryKey(params: SubscriptionMeParams) {
   ] as const;
 }
 
-async function fetchSubscriptionPlans(headers: Record<string, string>): Promise<PlansPayload> {
+async function fetchSubscriptionPlans(headers: Record<string, string>): Promise<PlansFetchResult> {
   const res = await fetch("/api/subscription/plans", { cache: "no-store", headers });
-  const data = (await res.json().catch(() => ({}))) as PlansPayload;
-  if (!res.ok || data.success === false) {
-    throw new Error(String(data.error || data.detail || `加载套餐失败 ${res.status}`));
-  }
-  return data;
+  const payload = (await res.json().catch(() => ({}))) as PlansPayload;
+  return { httpOk: res.ok, httpStatus: res.status, payload };
 }
 
 async function fetchSubscriptionMe(
   headers: Record<string, string>,
   params: SubscriptionMeParams,
   pageSize: number
-): Promise<Record<string, unknown>> {
+): Promise<SubscriptionMeFetchResult> {
+  const requestId = newRechargeDebugRequestId();
   const qs = new URLSearchParams();
   const sUse = params.consumptionSince?.trim() ?? "";
   const tUse = params.consumptionUntil?.trim() ?? "";
@@ -50,12 +89,9 @@ async function fetchSubscriptionMe(
   qs.set("consumption_page", String(params.consumptionPage ?? 1));
   qs.set("consumption_page_size", String(pageSize));
   const path = `/api/subscription/me?${qs.toString()}`;
-  const res = await fetch(path, { cache: "no-store", headers });
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok || data.success === false) {
-    throw new Error(String(data.error || data.detail || `加载账户失败 ${res.status}`));
-  }
-  return data;
+  const res = await fetch(path, { cache: "no-store", headers: { ...headers, "x-request-id": requestId } });
+  const payload = (await res.json().catch(() => ({}))) as SubscriptionMePayload;
+  return { httpOk: res.ok, httpStatus: res.status, path, payload, requestId };
 }
 
 export function useSubscriptionPlansQuery(

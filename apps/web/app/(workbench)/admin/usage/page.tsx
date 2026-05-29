@@ -1,10 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useTableVirtualizer } from "../../../../components/ui/useTableVirtualizer";
 import { useAuth } from "../../../../lib/auth";
+import { isAbortError } from "../../../../lib/usePageAbortSignal";
+import {
+  useAdminUsageAlertsQuery,
+  useAdminUsageLedgerQuery,
+  useAdminUsageOrdersQuery,
+  useAdminUsageOverviewQuery,
+  useAdminUsageUsersQuery,
+  useAdminUsageWorksQuery
+} from "../../../../lib/queries/adminUsageQueries";
 
 type TabKey = "overview" | "ledger" | "orders" | "users" | "works" | "alerts";
 type JobTypeRow = { job_type?: string; events?: number; succeeded?: number; users?: number; cost_total_cny?: number };
@@ -210,34 +218,24 @@ export default function AdminUsagePage(): JSX.Element {
     return q.toString();
   }, [dateFrom, dateTo]);
 
-  const overviewQuery = useQuery({
-    queryKey: ["admin-usage-overview", query],
-    queryFn: async () => {
-      const res = await fetch(`/api/admin/usage/dashboard?${query}`, {
-        headers: getAuthHeaders(),
-        cache: "no-store"
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        overview?: Overview;
-        by_job_type?: JobTypeRow[];
-        by_input_type?: InputTypeRow[];
-        by_day?: DayRow[];
-        top_users?: TopUserRow[];
-        site_uv?: SiteUvStats;
-        source?: string;
-        error?: string;
-      };
-      if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
-      return data;
-    },
-    enabled: tab === "overview",
-    staleTime: 45_000
-  });
+  const overviewQuery = useAdminUsageOverviewQuery(getAuthHeaders, query, tab === "overview");
+  const ledgerQueryHook = useAdminUsageLedgerQuery(getAuthHeaders, ledgerQuery, tab === "ledger");
+  const ordersQuery = useAdminUsageOrdersQuery(getAuthHeaders, query, tab === "orders");
+  const usersQuery = useAdminUsageUsersQuery(getAuthHeaders, query, tab === "users");
+  const worksQuery = useAdminUsageWorksQuery(getAuthHeaders, query, tab === "works");
+  const alertsQuery = useAdminUsageAlertsQuery(getAuthHeaders, query, tab === "alerts");
 
   useEffect(() => {
     if (tab !== "overview" || !overviewQuery.data) return;
-    const data = overviewQuery.data;
+    const data = overviewQuery.data as {
+      overview?: Overview;
+      by_job_type?: JobTypeRow[];
+      by_input_type?: InputTypeRow[];
+      by_day?: DayRow[];
+      top_users?: TopUserRow[];
+      site_uv?: SiteUvStats;
+      source?: string;
+    };
     setOverview(data.overview || {});
     setJobRows(Array.isArray(data.by_job_type) ? data.by_job_type : []);
     setInputRows(Array.isArray(data.by_input_type) ? data.by_input_type : []);
@@ -249,95 +247,118 @@ export default function AdminUsagePage(): JSX.Element {
   }, [overviewQuery.data, tab]);
 
   useEffect(() => {
-    if (tab === "overview" && overviewQuery.isError) {
-      setErr(String(overviewQuery.error instanceof Error ? overviewQuery.error.message : overviewQuery.error));
-    }
-  }, [overviewQuery.error, overviewQuery.isError, tab]);
-
-  const load = useCallback(async () => {
+    if (tab !== "ledger" || !ledgerQueryHook.data) return;
+    const data = ledgerQueryHook.data as {
+      overview?: LedgerOverview;
+      notes?: LedgerNotes;
+      by_day?: LedgerDayRow[];
+      by_user_expense?: LedgerUserExpense[];
+      by_user_revenue?: LedgerUserRevenue[];
+      by_model_expense?: LedgerModelExpense[];
+      by_job_type_revenue?: LedgerJobTypeRevenue[];
+      by_tts_model_revenue?: LedgerTtsModelRevenue[];
+      expense_details?: LedgerExpenseDetail[];
+      revenue_details?: LedgerRevenueDetail[];
+    };
+    setLedgerOverview(data.overview || {});
+    setLedgerNotes(data.notes || {});
+    setLedgerByDay(Array.isArray(data.by_day) ? data.by_day : []);
+    setLedgerUserExpense(Array.isArray(data.by_user_expense) ? data.by_user_expense : []);
+    setLedgerUserRevenue(Array.isArray(data.by_user_revenue) ? data.by_user_revenue : []);
+    setLedgerModelExpense(Array.isArray(data.by_model_expense) ? data.by_model_expense : []);
+    setLedgerJobTypeRevenue(Array.isArray(data.by_job_type_revenue) ? data.by_job_type_revenue : []);
+    setLedgerTtsModelRevenue(Array.isArray(data.by_tts_model_revenue) ? data.by_tts_model_revenue : []);
+    setLedgerExpenseDetails(Array.isArray(data.expense_details) ? data.expense_details : []);
+    setLedgerRevenueDetails(Array.isArray(data.revenue_details) ? data.revenue_details : []);
     setErr("");
-    try {
-      if (tab === "overview") {
-        await overviewQuery.refetch();
-        return;
-      }
-      if (tab === "ledger") {
-        const res = await fetch(`/api/admin/usage/revenue-expense?${ledgerQuery}`, { headers: getAuthHeaders(), cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as {
-          success?: boolean;
-          overview?: LedgerOverview;
-          notes?: LedgerNotes;
-          by_day?: LedgerDayRow[];
-          by_user_expense?: LedgerUserExpense[];
-          by_user_revenue?: LedgerUserRevenue[];
-          by_model_expense?: LedgerModelExpense[];
-          by_job_type_revenue?: LedgerJobTypeRevenue[];
-          by_tts_model_revenue?: LedgerTtsModelRevenue[];
-          expense_details?: LedgerExpenseDetail[];
-          revenue_details?: LedgerRevenueDetail[];
-          error?: string;
-        };
-        if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
-        setLedgerOverview(data.overview || {});
-        setLedgerNotes(data.notes || {});
-        setLedgerByDay(Array.isArray(data.by_day) ? data.by_day : []);
-        setLedgerUserExpense(Array.isArray(data.by_user_expense) ? data.by_user_expense : []);
-        setLedgerUserRevenue(Array.isArray(data.by_user_revenue) ? data.by_user_revenue : []);
-        setLedgerModelExpense(Array.isArray(data.by_model_expense) ? data.by_model_expense : []);
-        setLedgerJobTypeRevenue(Array.isArray(data.by_job_type_revenue) ? data.by_job_type_revenue : []);
-        setLedgerTtsModelRevenue(Array.isArray(data.by_tts_model_revenue) ? data.by_tts_model_revenue : []);
-        setLedgerExpenseDetails(Array.isArray(data.expense_details) ? data.expense_details : []);
-        setLedgerRevenueDetails(Array.isArray(data.revenue_details) ? data.revenue_details : []);
-        return;
-      }
-      if (tab === "orders") {
-        const res = await fetch(`/api/admin/usage/orders?${query}`, { headers: getAuthHeaders(), cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as {
-          success?: boolean;
-          overview?: OrdersOverview;
-          by_status?: OrderStatusRow[];
-          by_provider?: OrderProviderRow[];
-          by_product?: OrderProductRow[];
-          by_day?: OrderDayRow[];
-          recent_orders?: RecentOrderRow[];
-          error?: string;
-        };
-        if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
-        setOrdersOverview(data.overview || {});
-        setOrdersByStatus(Array.isArray(data.by_status) ? data.by_status : []);
-        setOrdersByProvider(Array.isArray(data.by_provider) ? data.by_provider : []);
-        setOrdersByProduct(Array.isArray(data.by_product) ? data.by_product : []);
-        setOrdersByDay(Array.isArray(data.by_day) ? data.by_day : []);
-        setRecentOrders(Array.isArray(data.recent_orders) ? data.recent_orders : []);
-        return;
-      }
-      if (tab === "users") {
-        const res = await fetch(`/api/admin/usage/users?${query}&limit=100`, { headers: getAuthHeaders(), cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; rows?: UserRow[]; error?: string };
-        if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
-        setUserRows(Array.isArray(data.rows) ? data.rows : []);
-        return;
-      }
-      if (tab === "works") {
-        const res = await fetch(`/api/admin/usage/works?${query}`, { headers: getAuthHeaders(), cache: "no-store" });
-        const data = (await res.json().catch(() => ({}))) as { success?: boolean; overview?: WorksOverview; by_type?: WorksByType[]; error?: string };
-        if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
-        setWorksOverview(data.overview || {});
-        setWorksByType(Array.isArray(data.by_type) ? data.by_type : []);
-        return;
-      }
-      const res = await fetch(`/api/admin/usage/alerts?${query}`, { headers: getAuthHeaders(), cache: "no-store" });
-      const data = (await res.json().catch(() => ({}))) as { success?: boolean; alerts?: AlertItem[]; days?: AlertDay[]; error?: string };
-      if (!res.ok || !data.success) throw new Error(data.error || `加载失败 ${res.status}`);
-      setAlertItems(Array.isArray(data.alerts) ? data.alerts : []);
-      setAlertDays(Array.isArray(data.days) ? data.days : []);
-    } catch (e) {
+  }, [ledgerQueryHook.data, tab]);
+
+  useEffect(() => {
+    if (tab !== "orders" || !ordersQuery.data) return;
+    const data = ordersQuery.data as {
+      overview?: OrdersOverview;
+      by_status?: OrderStatusRow[];
+      by_provider?: OrderProviderRow[];
+      by_product?: OrderProductRow[];
+      by_day?: OrderDayRow[];
+      recent_orders?: RecentOrderRow[];
+    };
+    setOrdersOverview(data.overview || {});
+    setOrdersByStatus(Array.isArray(data.by_status) ? data.by_status : []);
+    setOrdersByProvider(Array.isArray(data.by_provider) ? data.by_provider : []);
+    setOrdersByProduct(Array.isArray(data.by_product) ? data.by_product : []);
+    setOrdersByDay(Array.isArray(data.by_day) ? data.by_day : []);
+    setRecentOrders(Array.isArray(data.recent_orders) ? data.recent_orders : []);
+    setErr("");
+  }, [ordersQuery.data, tab]);
+
+  useEffect(() => {
+    if (tab !== "users" || !usersQuery.data) return;
+    const data = usersQuery.data as { rows?: UserRow[] };
+    setUserRows(Array.isArray(data.rows) ? data.rows : []);
+    setErr("");
+  }, [usersQuery.data, tab]);
+
+  useEffect(() => {
+    if (tab !== "works" || !worksQuery.data) return;
+    const data = worksQuery.data as { overview?: WorksOverview; by_type?: WorksByType[] };
+    setWorksOverview(data.overview || {});
+    setWorksByType(Array.isArray(data.by_type) ? data.by_type : []);
+    setErr("");
+  }, [worksQuery.data, tab]);
+
+  useEffect(() => {
+    if (tab !== "alerts" || !alertsQuery.data) return;
+    const data = alertsQuery.data as { alerts?: AlertItem[]; days?: AlertDay[] };
+    setAlertItems(Array.isArray(data.alerts) ? data.alerts : []);
+    setAlertDays(Array.isArray(data.days) ? data.days : []);
+    setErr("");
+  }, [alertsQuery.data, tab]);
+
+  useEffect(() => {
+    const active =
+      tab === "overview"
+        ? overviewQuery
+        : tab === "ledger"
+          ? ledgerQueryHook
+          : tab === "orders"
+            ? ordersQuery
+            : tab === "users"
+              ? usersQuery
+              : tab === "works"
+                ? worksQuery
+                : alertsQuery;
+    if (active.isError) {
+      const e = active.error;
+      if (isAbortError(e)) return;
       setErr(String(e instanceof Error ? e.message : e));
     }
-  }, [getAuthHeaders, ledgerQuery, overviewQuery, query, tab]);
+  }, [
+    alertsQuery.error,
+    alertsQuery.isError,
+    ledgerQueryHook.error,
+    ledgerQueryHook.isError,
+    ordersQuery.error,
+    ordersQuery.isError,
+    overviewQuery.error,
+    overviewQuery.isError,
+    tab,
+    usersQuery.error,
+    usersQuery.isError,
+    worksQuery.error,
+    worksQuery.isError
+  ]);
+
+  const refresh = useCallback(() => {
+    if (tab === "overview") void overviewQuery.refetch();
+    else if (tab === "ledger") void ledgerQueryHook.refetch();
+    else if (tab === "orders") void ordersQuery.refetch();
+    else if (tab === "users") void usersQuery.refetch();
+    else if (tab === "works") void worksQuery.refetch();
+    else void alertsQuery.refetch();
+  }, [alertsQuery, ledgerQueryHook, ordersQuery, overviewQuery, tab, usersQuery, worksQuery]);
 
   useEffect(() => { setTab(initialTab); }, [initialTab]);
-  useEffect(() => { void load(); }, [load]);
 
   return (
     <main className="min-h-0 max-w-7xl">
@@ -367,7 +388,7 @@ export default function AdminUsagePage(): JSX.Element {
         <button type="button" className="rounded-lg border border-line px-3 py-1 text-sm text-ink hover:bg-fill" onClick={() => { const t = new Date(); setDateFrom(ymd(t)); setDateTo(ymd(t)); }}>今天</button>
         <button type="button" className="rounded-lg border border-line px-3 py-1 text-sm text-ink hover:bg-fill" onClick={() => { const t = new Date(); setDateFrom(ymd(shiftDays(t, -6))); setDateTo(ymd(t)); }}>近7天</button>
         <button type="button" className="rounded-lg border border-line px-3 py-1 text-sm text-ink hover:bg-fill" onClick={() => { const t = new Date(); setDateFrom(ymd(shiftDays(t, -29))); setDateTo(ymd(t)); }}>近30天</button>
-        <button type="button" className="rounded-lg border border-line px-3 py-1 text-sm text-ink hover:bg-fill" onClick={() => void load()}>刷新</button>
+        <button type="button" className="rounded-lg border border-line px-3 py-1 text-sm text-ink hover:bg-fill" onClick={() => refresh()}>刷新</button>
       </div>
 
       {err ? <p className="mt-4 text-sm text-danger-ink">{err}</p> : null}
