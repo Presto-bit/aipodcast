@@ -10,6 +10,7 @@ import SmallPromptModal from "../ui/SmallPromptModal";
 import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import EmptyState from "../ui/EmptyState";
 import UserErrorBanner from "../ui/UserErrorBanner";
+import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
 const NotesPodcastRoomModal = dynamic(() => import("./NotesPodcastRoomModal"));
 const NotesArticleSocialForm = dynamic(
   () => import("./NotesArticleSocialForm").then((m) => ({ default: m.NotesArticleSocialForm })),
@@ -1462,13 +1463,10 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     if (sharedBrowse) return;
     if (notebooks.length === 0) {
       setSelectedNotebook("");
-      // 访客无笔记本时仍留在 hub 并默认「热门笔记本」，便于一进知识库就看到热门（避免 hubView=false 导致不拉 /api/notebooks/popular）
+      setHubView(true);
       if (!isLoggedIn) {
-        setHubView(true);
         setHubDiscoverTab("popular");
-        return;
       }
-      setHubView(false);
       return;
     }
     if (selectedNotebook && !notebooks.includes(selectedNotebook)) {
@@ -1651,6 +1649,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   }, [selectedNotebook, sharedBrowse]);
 
   useEffect(() => {
+    if (!ready) return;
     void loadNotebooks();
     const runMeta = () => void loadNotebookMeta();
     if (typeof requestIdleCallback !== "undefined") {
@@ -1659,7 +1658,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     }
     const t = window.setTimeout(runMeta, 150);
     return () => window.clearTimeout(t);
-  }, [loadNotebookMeta, loadNotebooks]);
+  }, [ready, loadNotebookMeta, loadNotebooks]);
 
   useEffect(() => {
     try {
@@ -3929,7 +3928,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
                   <div className="min-w-0 flex-1">
                     <h2 className={WORKBENCH_SECTION_TITLE}>我的笔记本</h2>
                   </div>
-                  {notebooks.length === 0 ? (
+                  {notebooksReady && notebooks.length === 0 ? (
                     <button
                       type="button"
                       className="shrink-0 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-brand-foreground shadow-soft transition-opacity hover:opacity-95"
@@ -3943,53 +3942,63 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
                     </button>
                   ) : null}
                 </div>
-                {notebooks.length === 0 ? (
+                {!notebooksReady ? (
+                  <div className="mt-4 space-y-3" aria-busy aria-label="加载笔记本列表">
+                    <SkeletonLine className="h-4 w-full max-w-md" />
+                    <div className="flex gap-3 overflow-x-auto pb-2">
+                      <SkeletonBlock className="h-36 w-44 shrink-0 rounded-2xl" />
+                      <SkeletonBlock className="h-36 w-44 shrink-0 rounded-2xl" />
+                      <SkeletonBlock className="h-36 w-44 shrink-0 rounded-2xl" />
+                    </div>
+                  </div>
+                ) : notebooks.length === 0 ? (
                   <EmptyState
                     title="还没有笔记本"
                     description="新建后添加资料，即可在右侧提问或生成。"
                     className="mt-4 border-dashed border-line bg-fill/40 py-8"
                   />
-                ) : null}
-                <div className="mt-4">
-                  <HubMineNotebookCards
-                    notebooks={notebooks}
-                    notebookVisualByName={notebookVisualByName}
-                    notebookMetaByName={notebookMetaByName}
-                    notebookSharingByName={notebookSharingByName}
-                    notebookCoverByName={notebookCoversByName}
-                    notebookCardMenu={notebookCardMenu}
-                    setNotebookCardMenu={setNotebookCardMenu}
-                    onOpenNotebook={openNotebook}
-                    onRequestNewNotebook={() => {
-                      setNotebookModalError("");
-                      setShowNotebookModal(true);
-                      setNewNotebookName("");
-                    }}
-                    showNewTile={notebooks.length > 0}
-                    listClassName="flex gap-3 overflow-x-auto pb-2"
-                    onShareNotebook={(nb) => {
-                      const row = notebookSharingByName[nb];
-                      setShareTargetNotebook(nb);
-                      setShareFormAccess(row?.publicAccess === "edit" ? "edit" : "read_only");
-                      setShareModalError("");
-                      setShowShareNotebookModal(true);
-                    }}
-                    onRenameNotebook={(nb) => {
-                      setRenameNotebookOld(nb);
-                      setRenameNotebookNew("");
-                      setShowRenameNotebook(true);
-                    }}
-                    onDeleteNotebook={(nb) => {
-                      setDeleteNotebookTarget(nb);
-                      setDeleteNotebookConfirm(true);
-                    }}
-                    onNotebookCoverSettings={(nb) => {
-                      setNotebookCoverModalTarget(nb);
-                      setNotebookCoverModalErr("");
-                      setShowNotebookCoverModal(true);
-                    }}
-                  />
-                </div>
+                ) : (
+                  <div className="mt-4">
+                    <HubMineNotebookCards
+                      notebooks={notebooks}
+                      notebookVisualByName={notebookVisualByName}
+                      notebookMetaByName={notebookMetaByName}
+                      notebookSharingByName={notebookSharingByName}
+                      notebookCoverByName={notebookCoversByName}
+                      notebookCardMenu={notebookCardMenu}
+                      setNotebookCardMenu={setNotebookCardMenu}
+                      onOpenNotebook={openNotebook}
+                      onRequestNewNotebook={() => {
+                        setNotebookModalError("");
+                        setShowNotebookModal(true);
+                        setNewNotebookName("");
+                      }}
+                      showNewTile={notebooks.length > 0}
+                      listClassName="flex gap-3 overflow-x-auto pb-2"
+                      onShareNotebook={(nb) => {
+                        const row = notebookSharingByName[nb];
+                        setShareTargetNotebook(nb);
+                        setShareFormAccess(row?.publicAccess === "edit" ? "edit" : "read_only");
+                        setShareModalError("");
+                        setShowShareNotebookModal(true);
+                      }}
+                      onRenameNotebook={(nb) => {
+                        setRenameNotebookOld(nb);
+                        setRenameNotebookNew("");
+                        setShowRenameNotebook(true);
+                      }}
+                      onDeleteNotebook={(nb) => {
+                        setDeleteNotebookTarget(nb);
+                        setDeleteNotebookConfirm(true);
+                      }}
+                      onNotebookCoverSettings={(nb) => {
+                        setNotebookCoverModalTarget(nb);
+                        setNotebookCoverModalErr("");
+                        setShowNotebookCoverModal(true);
+                      }}
+                    />
+                  </div>
+                )}
               </>
             ) : (
               <>
