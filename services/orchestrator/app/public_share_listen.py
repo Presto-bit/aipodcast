@@ -212,9 +212,6 @@ def build_podcast_template_listen_bundle(job_id: str) -> dict[str, Any] | None:
     """
     已标记为全站创作模板的播客成片：匿名可试听，不含 payload / 全文稿。
     """
-    from .models import ensure_jobs_trash_schema
-
-    ensure_jobs_trash_schema()
     jid = (job_id or "").strip()
     if not jid:
         return None

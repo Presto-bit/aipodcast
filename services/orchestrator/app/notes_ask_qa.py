@@ -9,7 +9,7 @@ import os
 import re
 from typing import Any
 
-from .models import get_note_by_id
+from .models import get_note_by_id, get_notes_by_ids
 from .note_chapters import (
     COMPARE_QUERY_RE,
     _CHAPTER_QUERY_RE,
@@ -315,12 +315,13 @@ def resolve_notes_ask_plan(
 ) -> dict[str, Any]:
     """决定 qa_mode、路由片/章、grounding、覆盖率提示。"""
     ordered = _ordered_note_ids(note_ids)
-    rows: dict[str, dict[str, Any]] = {}
+    rows: dict[str, dict[str, Any]] = get_notes_by_ids(
+        ordered, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid
+    )
     bodies: dict[str, str] = {}
     for nid in ordered:
-        row = get_note_by_id(nid, user_ref=user_ref, project_owner_user_uuid=project_owner_user_uuid)
+        row = rows.get(nid)
         if row:
-            rows[nid] = row
             bodies[nid] = str(row.get("content_text") or "")
 
     total = _total_chars_for_notes(ordered, rows)

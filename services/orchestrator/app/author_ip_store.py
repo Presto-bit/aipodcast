@@ -26,7 +26,13 @@ def is_author_ip_notebook_name(name: str | None) -> bool:
     return str(name or "").startswith(NOTEBOOK_PREFIX)
 
 
+_author_ip_schema_ready = False
+
+
 def ensure_author_ip_schema() -> None:
+    global _author_ip_schema_ready
+    if _author_ip_schema_ready:
+        return
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
@@ -69,6 +75,7 @@ def ensure_author_ip_schema() -> None:
                 """
             )
             conn.commit()
+    _author_ip_schema_ready = True
 
 
 def _row_to_item(row: dict[str, Any], *, material_count: int = 0) -> dict[str, Any]:

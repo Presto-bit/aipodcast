@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -844,24 +845,18 @@ def clip_patch_project(project_id: str, request: Request, body: dict[str, Any] =
     return {"success": True, "project": _serialize_clip_row(row2 or {})}
 
 
-@router.post("/clip/projects/{project_id}/audio")
-async def clip_upload_audio(project_id: str, request: Request):
-    uid = _owner_uuid(request)
-    row = get_clip_project(project_id=project_id, user_uuid=uid)
-    if not row:
-        raise HTTPException(status_code=404, detail="工程不存在")
-    body = await request.body()
-    if not body or len(body) > _CLIP_MAX_BYTES:
-        raise HTTPException(status_code=400, detail=f"音频过大或为空（上限 {_CLIP_MAX_BYTES} 字节）")
-    fn_display = _clip_filename_from_header(request.headers.get("x-clip-filename"), "upload.mp3").strip()[:500]
-    if not fn_display:
-        fn_display = "upload.mp3"
+def _clip_upload_source_audio_sync(
+    *,
+    project_id: str,
+    uid: str | None,
+    body: bytes,
+    fn_display: str,
+    mime: str,
+) -> dict[str, Any]:
+    owner_seg = uid or "anon"
     base_name = Path(fn_display).name[:240] or "upload.mp3"
     ext = Path(base_name).suffix[:12] or ".mp3"
     safe_stem = _SAFE_NAME.sub("_", Path(base_name).stem).strip("._")[:120] or "upload"
-    mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
-    mime = _effective_audio_media_type(fn_display, mime_raw)
-    owner_seg = uid or "anon"
     key = f"clip/{owner_seg}/{project_id}/source_{uuid.uuid4().hex[:12]}_{safe_stem}{ext}"
     upload_bytes(key, body, mime)
     ok = update_clip_project_audio(
@@ -874,7 +869,7 @@ async def clip_upload_audio(project_id: str, request: Request):
     )
     if not ok:
         delete_object_key(key)
-        raise HTTPException(status_code=500, detail="更新工程音频字段失败")
+        raise ValueError("update_clip_project_audio_failed")
     try:
         suf = Path(fn_display).suffix or ".bin"
         with tempfile.NamedTemporaryFile(prefix="fyv_clip_probe_", suffix=suf, delete=True) as tf:
@@ -885,6 +880,33 @@ async def clip_upload_audio(project_id: str, request: Request):
         logger.exception("clip upload ffprobe channel_detect failed project_id=%s", project_id)
     row2 = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row2 or {})}
+
+
+@router.post("/clip/projects/{project_id}/audio")
+async def clip_upload_audio(project_id: str, request: Request):
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    body = await request.body()
+    if not body or len(body) > _CLIP_MAX_BYTES:
+        raise HTTPException(status_code=400, detail=f"音频过大或为空（上限 {_CLIP_MAX_BYTES} 字节）")
+    fn_display = _clip_filename_from_header(request.headers.get("x-clip-filename"), "upload.mp3").strip()[:500]
+    if not fn_display:
+        fn_display = "upload.mp3"
+    mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
+    mime = _effective_audio_media_type(fn_display, mime_raw)
+    try:
+        return await asyncio.to_thread(
+            _clip_upload_source_audio_sync,
+            project_id=project_id,
+            uid=uid,
+            body=body,
+            fn_display=fn_display,
+            mime=mime,
+        )
+    except ValueError:
+        raise HTTPException(status_code=500, detail="更新工程音频字段失败") from None
 
 
 @router.post("/clip/projects/{project_id}/audio/repair")
@@ -965,30 +987,19 @@ async def clip_repair_source_audio(project_id: str, request: Request, body: dict
     return {"success": True, "project": _serialize_clip_row(row2 or {})}
 
 
-@router.post("/clip/projects/{project_id}/audio/stage")
-async def clip_stage_audio_segment(project_id: str, request: Request):
-    """追加一段分段素材（写对象存储 + DB）。
-
-    同步路径主要耗时：整包读入内存、对象存储上传、DB 更新；若工程已转写成功还会做稿面重拼
-    （``_clip_retime_transcript_after_segments_change``）。多文件可并行请求以缩短总等待。
-    """
-    uid = _owner_uuid(request)
+def _clip_stage_audio_segment_sync(
+    *,
+    project_id: str,
+    uid: str | None,
+    body: bytes,
+    fn_display: str,
+    mime: str,
+) -> dict[str, Any]:
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
-        raise HTTPException(status_code=404, detail="工程不存在")
-    body = await request.body()
-    if not body or len(body) > _CLIP_STAGE_MAX_BYTES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"单段过大或为空（单段上限 {_CLIP_STAGE_MAX_BYTES // (1024 * 1024)}MB，且须符合录音识别产品总大小限制）",
-        )
-    fn_display = _clip_filename_from_header(request.headers.get("x-clip-filename"), "segment.mp3").strip()[:500]
-    if not fn_display:
-        fn_display = "segment.mp3"
+        raise ValueError("project_not_found")
     base_name = Path(fn_display).name[:240] or "segment.mp3"
     safe_tail = _SAFE_NAME.sub("_", base_name).strip("._")[:120] or "segment"
-    mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
-    mime = _effective_audio_media_type(fn_display, mime_raw)
     owner_seg = uid or "anon"
     sk = f"clip/{owner_seg}/{project_id}/stage_{uuid.uuid4().hex[:16]}_{safe_tail}"
     upload_bytes(sk, body, mime)
@@ -1012,10 +1023,48 @@ async def clip_stage_audio_segment(project_id: str, request: Request):
     )
     if not ok:
         delete_object_key(sk)
-        raise HTTPException(status_code=400, detail="无法追加分段（可能超过段数上限）")
+        raise ValueError("append_segment_failed")
     _clip_retime_transcript_after_segments_change(project_id=project_id, uid=uid)
     row2 = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row2 or {})}
+
+
+@router.post("/clip/projects/{project_id}/audio/stage")
+async def clip_stage_audio_segment(project_id: str, request: Request):
+    """追加一段分段素材（写对象存储 + DB）。
+
+    同步路径主要耗时：整包读入内存、对象存储上传、DB 更新；若工程已转写成功还会做稿面重拼
+    （``_clip_retime_transcript_after_segments_change``）。多文件可并行请求以缩短总等待。
+    """
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    body = await request.body()
+    if not body or len(body) > _CLIP_STAGE_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"单段过大或为空（单段上限 {_CLIP_STAGE_MAX_BYTES // (1024 * 1024)}MB，且须符合录音识别产品总大小限制）",
+        )
+    fn_display = _clip_filename_from_header(request.headers.get("x-clip-filename"), "segment.mp3").strip()[:500]
+    if not fn_display:
+        fn_display = "segment.mp3"
+    mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
+    mime = _effective_audio_media_type(fn_display, mime_raw)
+    try:
+        return await asyncio.to_thread(
+            _clip_stage_audio_segment_sync,
+            project_id=project_id,
+            uid=uid,
+            body=body,
+            fn_display=fn_display,
+            mime=mime,
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if msg == "project_not_found":
+            raise HTTPException(status_code=404, detail="工程不存在") from None
+        raise HTTPException(status_code=400, detail="无法追加分段（可能超过段数上限）") from None
 
 
 @router.post("/clip/projects/{project_id}/audio/staging/reorder")
@@ -1524,6 +1573,33 @@ def clip_put_studio_retakes(project_id: str, request: Request, body: dict[str, A
     return {"success": True, "project": _serialize_clip_row(row2 or {})}
 
 
+def _clip_upload_retake_take_sync(
+    *,
+    project_id: str,
+    uid: str | None,
+    retake_id: str,
+    body: bytes,
+    fn: str,
+    mime: str,
+) -> dict[str, Any]:
+    owner_seg = uid or "anon"
+    sk = f"clip/{owner_seg}/{project_id}/retake_{uuid.uuid4().hex[:14]}_{fn}"
+    upload_bytes(sk, body, mime)
+    ok = append_retake_take_slot(
+        project_id=project_id,
+        user_uuid=uid,
+        slot_id=retake_id,
+        object_key=sk,
+        filename=fn,
+        duration_ms=None,
+    )
+    if not ok:
+        delete_object_key(sk)
+        raise ValueError("retake_take_append_failed")
+    row2 = get_clip_project(project_id=project_id, user_uuid=uid)
+    return {"success": True, "object_key": sk, "project": _serialize_clip_row(row2 or {})}
+
+
 @router.post("/clip/projects/{project_id}/studio/retakes/{retake_id}/take")
 async def clip_upload_retake_take(project_id: str, retake_id: str, request: Request):
     """上传一条重录 take（原始字节，写入对象存储并挂到 manifest）。"""
@@ -1541,22 +1617,18 @@ async def clip_upload_retake_take(project_id: str, retake_id: str, request: Requ
     fn = _SAFE_NAME.sub("_", fn)[:240] or "retake.mp3"
     mime_raw = (request.headers.get("x-clip-mime") or "application/octet-stream").strip()[:120]
     mime = _effective_audio_media_type(fn, mime_raw)
-    owner_seg = uid or "anon"
-    sk = f"clip/{owner_seg}/{project_id}/retake_{uuid.uuid4().hex[:14]}_{fn}"
-    upload_bytes(sk, body, mime)
-    ok = append_retake_take_slot(
-        project_id=project_id,
-        user_uuid=uid,
-        slot_id=rid,
-        object_key=sk,
-        filename=fn,
-        duration_ms=None,
-    )
-    if not ok:
-        delete_object_key(sk)
-        raise HTTPException(status_code=400, detail="未找到对应重录槽或写入失败")
-    row2 = get_clip_project(project_id=project_id, user_uuid=uid)
-    return {"success": True, "object_key": sk, "project": _serialize_clip_row(row2 or {})}
+    try:
+        return await asyncio.to_thread(
+            _clip_upload_retake_take_sync,
+            project_id=project_id,
+            uid=uid,
+            retake_id=rid,
+            body=body,
+            fn=fn,
+            mime=mime,
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="未找到对应重录槽或写入失败") from None
 
 
 @router.post("/clip/projects/{project_id}/qc/analyze")

@@ -34,6 +34,11 @@ from ._core import (
 
 logger = logging.getLogger(__name__)
 
+_jobs_trash_schema_ready = False
+_user_wallet_schema_ready = False
+_site_traffic_schema_ready = False
+
+
 def ensure_default_project(project_name: str, created_by: str | None = None) -> str:
     """按 (name, user_id) 复用已有项目行，避免重复 INSERT 与孤立 project 行导致笔记上传异常。"""
     pn = (project_name or "").strip()
@@ -173,6 +178,9 @@ def ensure_notebooks_schema() -> None:
 
 
 def ensure_jobs_trash_schema() -> None:
+    global _jobs_trash_schema_ready
+    if _jobs_trash_schema_ready:
+        return
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ")
@@ -198,6 +206,7 @@ def ensure_jobs_trash_schema() -> None:
             except Exception:
                 pass
             conn.commit()
+    _jobs_trash_schema_ready = True
 
 
 def ensure_default_library_notebook(user_ref: str | None) -> None:
@@ -613,6 +622,9 @@ def ensure_user_experience_balance_schema() -> None:
             )
             conn.commit()
 def ensure_user_wallet_schema() -> None:
+    global _user_wallet_schema_ready
+    if _user_wallet_schema_ready:
+        return
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
@@ -669,6 +681,9 @@ def ensure_user_wallet_schema() -> None:
                 "CREATE INDEX IF NOT EXISTS idx_user_wallet_ledger_user_created ON user_wallet_ledger (user_id, created_at DESC)"
             )
             conn.commit()
+    _user_wallet_schema_ready = True
+
+
 def ensure_alipay_page_checkout_schema() -> None:
     """支付宝电脑网站支付待支付会话（与 out_trade_no 对齐，供异步通知验额与履约）。"""
     ensure_user_wallet_schema()
@@ -696,7 +711,10 @@ def ensure_alipay_page_checkout_schema() -> None:
 
 
 def ensure_site_traffic_schema() -> None:
-    """站点 PV/UV 原始事件表（与 042 迁移一致）。"""
+    """站点 UV 原始事件表（与 042 迁移一致；表名保留 site_page_views 兼容历史）。"""
+    global _site_traffic_schema_ready
+    if _site_traffic_schema_ready:
+        return
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
@@ -722,6 +740,7 @@ def ensure_site_traffic_schema() -> None:
                 "ON site_page_views(((created_at AT TIME ZONE 'Asia/Shanghai')::date))"
             )
             conn.commit()
+    _site_traffic_schema_ready = True
 
 
 def ensure_app_settings_schema() -> None:
