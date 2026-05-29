@@ -336,6 +336,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const navPendingTarget = navPending ? navPendingTargetRef.current : null;
   const showNavPendingOverlay = navPending && Boolean(navPendingTarget);
+  /** 一级入口（知识库/创作/作品）及跳转途中：渲染层强制宽轨，避免 collapsed 状态滞后一帧 */
+  const forceSidebarExpanded =
+    shouldKeepSidebarExpanded(path) ||
+    Boolean(navPendingTarget && shouldKeepSidebarExpanded(navPendingTarget));
+  const sidebarCollapsed = forceSidebarExpanded ? false : collapsed;
 
   /** 软路由长时间未切换时整页跳转，避免骨架屏消失后仍停在旧页。 */
   useEffect(() => {
@@ -441,7 +446,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [path, mobileLayout]);
 
   useEffect(() => {
-    const onRequestCollapse = () => setCollapsed(true);
+    const onRequestCollapse = () => {
+      if (shouldKeepSidebarExpanded(pathRef.current)) return;
+      setCollapsed(true);
+    };
     window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
     return () => window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
   }, []);
@@ -581,13 +589,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       document.documentElement.style.setProperty("--fym-app-sidebar-w", "0px");
       return;
     }
-    const px = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
+    const pending = navPendingTargetRef.current;
+    const forceExpanded =
+      shouldKeepSidebarExpanded(path) ||
+      Boolean(pending && shouldKeepSidebarExpanded(pending));
+    const effectiveCollapsed = forceExpanded ? false : collapsed;
+    const px = effectiveCollapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
     document.documentElement.style.setProperty("--fym-app-sidebar-w", `${px}px`);
     // 不在 cleanup 里 removeProperty：Strict Mode / 依赖重跑时会出现一帧变量缺失，
     // 全屏级 z-index 遮罩会短暂盖住侧栏；无壳场景由上面分支显式清除即可。
-  }, [collapsed, ready, path, mobileLayout]);
+  }, [collapsed, ready, path, mobileLayout, navPending]);
 
   const toggleCollapsed = useCallback(() => {
+    if (shouldKeepSidebarExpanded(path)) return;
     setCollapsed((c) => {
       const next = !c;
       try {
@@ -602,7 +616,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       }
       return next;
     });
-  }, []);
+  }, [path]);
 
   const pageShell = (
     <AnimatedPageShell>
@@ -664,7 +678,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
    */
   function renderSidebarNavItem(item: NavItem) {
     const active = linkActive(item);
-    const label = collapsed && item.short ? item.short : item.label;
+    const label = sidebarCollapsed && item.short ? item.short : item.label;
     const Ic = item.Icon;
     const tip = item.linkTitle ?? item.label;
     if (item.href === WORKBENCH_HOME_PATH) {
@@ -672,7 +686,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <a
           key={item.href}
           href={WORKBENCH_HOME_PATH}
-          className={navButtonClass(active, collapsed)}
+          className={navButtonClass(active, sidebarCollapsed)}
           title={tip}
           onPointerDown={() => {
             dispatchWorkbenchDismissOverlays();
@@ -683,7 +697,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <NavIconBox active={active}>
             <Ic />
           </NavIconBox>
-          {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
+          {!sidebarCollapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
         </a>
       );
     }
@@ -691,20 +705,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <SidebarNavLink
         key={item.href}
         href={item.href}
-        className={navButtonClass(active, collapsed)}
+        className={navButtonClass(active, sidebarCollapsed)}
         title={tip}
       >
         <NavIconBox active={active}>
           <Ic />
         </NavIconBox>
-        {!collapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
+        {!sidebarCollapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
       </SidebarNavLink>
     );
   }
 
   /** 始终挂载完整侧栏：48px 窄轨会隐藏作品/订阅等入口，易被误认为「导航点不动」 */
   const sidebarOffCanvas = mobileLayout && !mobileNavOpen;
-  const sidebarDrawerPx = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
+  const sidebarDrawerPx = sidebarCollapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
 
   const fullSidebarEl = (
     <aside
@@ -714,34 +728,39 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {...(sidebarOffCanvas ? ({ inert: true } as HTMLAttributes<HTMLElement>) : {})}
       onPointerDownCapture={() => dispatchWorkbenchDismissOverlays()}
       className={[
-        `fixed left-0 top-0 ${WORKBENCH_SIDEBAR_Z_CLASS} flex h-svh min-h-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm transition-[width,transform] duration-200 ease-out motion-reduce:transition-none`,
+        `fixed left-0 top-0 ${WORKBENCH_SIDEBAR_Z_CLASS} flex h-svh min-h-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm`,
+        forceSidebarExpanded
+          ? ""
+          : "transition-[width,transform] duration-200 ease-out motion-reduce:transition-none",
         sidebarOffCanvas ? "-translate-x-full pointer-events-none" : "translate-x-0 pointer-events-auto",
         mobileLayout ? "shadow-card" : ""
       ].join(" ")}
       style={{ width: `${sidebarDrawerPx}px` }}
     >
       <div
-        className={`flex w-full shrink-0 items-center border-b border-line py-2 ${collapsed ? "justify-center px-2" : "justify-between gap-2 px-2.5"}`}
+        className={`flex w-full shrink-0 items-center border-b border-line py-2 ${sidebarCollapsed ? "justify-center px-2" : "justify-between gap-2 px-2.5"}`}
       >
         <SidebarNavLink
           href="/"
           className={[
             "flex shrink-0 items-center rounded-lg p-0.5 outline-offset-2 ring-offset-canvas transition-colors hover:bg-fill/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35",
-            collapsed ? "justify-center" : ""
+            sidebarCollapsed ? "justify-center" : ""
           ].join(" ")}
           aria-label={t("nav.brandHomeLink")}
         >
           <BrandGlyph size={36} />
         </SidebarNavLink>
-        <button
-          type="button"
-          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
-          onClick={toggleCollapsed}
-          title={collapsed ? t("nav.expand") : t("nav.collapse")}
-          aria-label={collapsed ? t("nav.expand") : t("nav.collapse")}
-        >
-          <Chevron collapsed={collapsed} />
-        </button>
+        {forceSidebarExpanded ? null : (
+          <button
+            type="button"
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
+            onClick={toggleCollapsed}
+            title={sidebarCollapsed ? t("nav.expand") : t("nav.collapse")}
+            aria-label={sidebarCollapsed ? t("nav.expand") : t("nav.collapse")}
+          >
+            <Chevron collapsed={sidebarCollapsed} />
+          </button>
+        )}
       </div>
 
       <nav
@@ -758,11 +777,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         }}
       >
         {navPrimary.map(renderSidebarNavItem)}
-        <NavSectionHeader collapsed={collapsed}>{t("nav.products")}</NavSectionHeader>
+        <NavSectionHeader collapsed={sidebarCollapsed}>{t("nav.products")}</NavSectionHeader>
         {navProducts.map((item) =>
           item.href === "/create" ? (
             <Fragment key={item.href}>
-              {collapsed && !shouldKeepSidebarExpanded(path) ? (
+              {sidebarCollapsed ? (
                 renderSidebarNavItem(item)
               ) : (
                 <CreateStudioNavExpanded
@@ -778,14 +797,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               key={item.href}
               item={item}
               path={path}
-              collapsed={collapsed}
+              collapsed={sidebarCollapsed}
               NavIconBox={NavIconBox}
             />
           ) : (
             renderSidebarNavItem(item)
           )
         )}
-        <NavSectionHeader collapsed={collapsed}>{t("nav.library")}</NavSectionHeader>
+        <NavSectionHeader collapsed={sidebarCollapsed}>{t("nav.library")}</NavSectionHeader>
         {navLibrary.map(renderSidebarNavItem)}
       </nav>
 
