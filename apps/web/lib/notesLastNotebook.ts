@@ -6,6 +6,9 @@ export const NOTES_LAST_NOTEBOOK_KEY = "notes:last-notebook:v1";
 /** 侧栏再次点「知识库」且已在 /notes 时：回到笔记本卡片列表，不自动进入工作台 */
 export const NOTES_NAV_HUB_EVENT = "fym:notes-show-notebook-hub";
 
+/** 离开知识库或点击主导航时：关闭笔记本内全屏弹层（添加资料、播客房间等） */
+export const NOTES_DISMISS_OVERLAYS_EVENT = "fym:notes-dismiss-overlays";
+
 export const NOTES_NAV_WORKBENCH_EVENT = "fym:notes-open-workbench";
 
 export function readLastNotebookName(): string {
@@ -41,6 +44,11 @@ export function dispatchNotesOpenWorkbench(): void {
 export function dispatchNotesShowNotebookHub(): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NOTES_NAV_HUB_EVENT, { bubbles: false }));
+}
+
+export function dispatchNotesDismissOverlays(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(NOTES_DISMISS_OVERLAYS_EVENT, { bubbles: false }));
 }
 
 /** 知识库已进入具体笔记本工作台：主导航收起，由 AppShell 在左侧居中展示返回导航入口 */

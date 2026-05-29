@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useRouter, usePathname } from "next/navigation";
 import type { ChangeEvent, Dispatch, PointerEvent, SetStateAction } from "react";
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import InlineConfirmBar from "../ui/InlineConfirmBar";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import SmallPromptModal from "../ui/SmallPromptModal";
@@ -78,6 +79,7 @@ import type {
 import { buildNoteCoverageLine } from "../../lib/noteCoverageCopy";
 import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import {
+  NOTES_DISMISS_OVERLAYS_EVENT,
   NOTES_NAV_HUB_EVENT,
   writeLastNotebookName
 } from "../../lib/notesLastNotebook";
@@ -1394,9 +1396,11 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     setShowArticleModal(false);
     setArticleModalStep("pick");
     setShowAddNoteModal(false);
+    setShowSupportedFormatsModal(false);
     setShowShareNotebookModal(false);
     setShareModalError("");
     setShowNotebookModal(false);
+    setShowNotebookCoverModal(false);
     setNotebookModalError("");
     setNewNotebookName("");
     setShowRenameNotebook(false);
@@ -1493,14 +1497,42 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
       setError("");
       dismissNotesBlockingOverlays();
     };
+    const onDismissOverlays = () => {
+      dismissNotesBlockingOverlays();
+    };
     window.addEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
-    return () => window.removeEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
+    window.addEventListener(NOTES_DISMISS_OVERLAYS_EVENT, onDismissOverlays);
+    return () => {
+      window.removeEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
+      window.removeEventListener(NOTES_DISMISS_OVERLAYS_EVENT, onDismissOverlays);
+    };
   }, [dismissNotesBlockingOverlays]);
 
   /** 路由变化时关闭弹层，避免遮罩残留导致主区无法操作 */
   useEffect(() => {
     dismissNotesBlockingOverlays();
   }, [pathname, dismissNotesBlockingOverlays]);
+
+  const notesBlockingOverlayOpen =
+    showAddNoteModal ||
+    showPodcastGenreModal ||
+    showPodcastRoomModal ||
+    showArticleModal ||
+    showShareNotebookModal ||
+    showNotebookModal ||
+    showNotebookCoverModal ||
+    previewOpen ||
+    deleteNotebookConfirm;
+
+  useEffect(() => {
+    if (!notesBlockingOverlayOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      dismissNotesBlockingOverlays();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [notesBlockingOverlayOpen, dismissNotesBlockingOverlays]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !notebooksReady) return;
@@ -3998,33 +4030,33 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
         </NotesWorkbenchProvider>
       )}
 
-      {showAddNoteModal ? (
-        <div
-          className="fym-workspace-scrim z-[520] flex items-center justify-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="add-note-title"
-          onPointerDown={(e) => {
-            if (e.target === e.currentTarget && !importBusy && !uploading) setShowAddNoteModal(false);
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h2 id="add-note-title" className="text-base font-semibold text-ink">
-                添加资料
-              </h2>
-              <button
-                type="button"
-                className="text-sm text-muted hover:text-ink"
-                onClick={() => !importBusy && !uploading && setShowAddNoteModal(false)}
-                disabled={importBusy || uploading}
+      {showAddNoteModal && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fym-workspace-scrim z-[99990] flex items-center justify-center bg-black/40 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="add-note-title"
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) setShowAddNoteModal(false);
+              }}
+            >
+              <div
+                className="w-full max-w-md rounded-2xl border border-line bg-surface p-4 shadow-modal"
+                onPointerDown={(e) => e.stopPropagation()}
               >
-                关闭
-              </button>
-            </div>
+                <div className="flex items-center justify-between gap-2">
+                  <h2 id="add-note-title" className="text-base font-semibold text-ink">
+                    添加资料
+                  </h2>
+                  <button
+                    type="button"
+                    className="text-sm text-muted hover:text-ink"
+                    onClick={() => setShowAddNoteModal(false)}
+                  >
+                    关闭
+                  </button>
+                </div>
             <div className="mt-4 space-y-2">
               <label className="block text-xs text-ink">
                 网页链接
@@ -4113,8 +4145,10 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
               ) : null}
             </div>
           </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body
+          )
+        : null}
       
 
       {showNotebookCoverModal && notebookCoverModalTarget.trim() ? (

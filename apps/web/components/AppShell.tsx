@@ -45,7 +45,7 @@ import WorkAudioShell from "./WorkAudioShell";
 import ActiveJobsProvider from "./ActiveJobsProvider";
 import BrandGlyph from "./brand/BrandGlyph";
 const NotesNavExpanded = dynamic(() => import("./notes/NotesNavExpanded"), { ssr: false });
-import { dispatchNotesShowNotebookHub } from "../lib/notesLastNotebook";
+import { dispatchNotesShowNotebookHub, dispatchNotesDismissOverlays } from "../lib/notesLastNotebook";
 import {
   APP_SHELL_MOBILE_MEDIA_QUERY,
   NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
@@ -390,7 +390,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     closeMobileNav("blur");
-  }, [pathname, closeMobileNav]);
+    if (!matchesNotesWorkbench(path)) {
+      dispatchNotesDismissOverlays();
+    }
+  }, [pathname, closeMobileNav, path]);
 
   useEffect(() => {
     if (pathMatchesRoot(path, "/create")) setCreateSubNavExpanded(true);
@@ -668,6 +671,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <nav
         className="mx-1.5 mt-1 flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-0.5 py-1 [scrollbar-gutter:stable]"
         aria-label={t("nav.mainNavLabel")}
+        onClickCapture={(e) => {
+          const el = e.target as HTMLElement;
+          if (el.closest("a[href]")) dispatchNotesDismissOverlays();
+        }}
         onClick={(e) => {
           if (!mobileLayout || !mobileNavOpen) return;
           const el = e.target as HTMLElement;
@@ -712,7 +719,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         {navLibrary.map(renderSidebarNavItem)}
       </nav>
 
-      <div className="shrink-0 space-y-0.5 border-t border-line p-2">
+      <div
+        className="shrink-0 space-y-0.5 border-t border-line p-2"
+        onClickCapture={(e) => {
+          const el = e.target as HTMLElement;
+          if (el.closest("a[href]")) dispatchNotesDismissOverlays();
+        }}
+      >
         {navSubscription.map(renderSidebarNavItem)}
         {renderSidebarNavItem({
           href: "/me/profile",
