@@ -1,12 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import WorkbenchDynamicLoading from "../nav/WorkbenchDynamicLoading";
 import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
 
-/** 按需加载 NotesPageMain，首进知识库时先出 hub 骨架，避免软路由 URL 已变但主包未就绪白屏。 */
-export default dynamic(() => import("./NotesPageMain"), {
-  ssr: false,
-  loading: () => (
+function NotesHubLoadingSkeleton() {
+  return (
     <main
       className="mx-auto min-h-0 w-full max-w-[min(100%,1800px)] px-3 pb-10 sm:px-4"
       aria-busy
@@ -25,5 +24,15 @@ export default dynamic(() => import("./NotesPageMain"), {
         </div>
       </div>
     </main>
+  );
+}
+
+/** 按需加载 NotesPageMain，首进知识库时先出 hub 骨架，避免软路由 URL 已变但主包未就绪白屏。 */
+export default dynamic(() => import("./NotesPageMain"), {
+  ssr: false,
+  loading: () => (
+    <WorkbenchDynamicLoading>
+      <NotesHubLoadingSkeleton />
+    </WorkbenchDynamicLoading>
   )
 });

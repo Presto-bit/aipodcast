@@ -47,7 +47,7 @@ import NotesNavExpanded from "./notes/NotesNavExpanded";
 import SidebarNavLink from "./nav/SidebarNavLink";
 import WorkbenchRouteFallback from "./nav/WorkbenchRouteFallback";
 import { WorkbenchNavContext } from "../lib/WorkbenchNavContext";
-import { prefetchWorkbenchSidebarIdle } from "../lib/navPrefetch";
+import { prefetchWorkbenchRoute, prefetchWorkbenchSidebarIdle } from "../lib/navPrefetch";
 import {
   dispatchWorkbenchDismissOverlays,
   WORKBENCH_MOBILE_FAB_Z_CLASS,
@@ -286,7 +286,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const target = navPendingTargetRef.current;
     const current = normalizePathname(path);
     if (target && (current === target || current.startsWith(`${target}/`))) {
-      clearNavPending();
+      const timer = window.setTimeout(() => clearNavPending(), 180);
+      return () => window.clearTimeout(timer);
     }
   }, [path, navPending, clearNavPending]);
 
@@ -556,7 +557,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const pageShell = (
     <AnimatedPageShell>
-      <Suspense key={path} fallback={<WorkbenchRouteFallback />}>
+      <Suspense key={path} fallback={navPending ? null : <WorkbenchRouteFallback />}>
         {children}
       </Suspense>
     </AnimatedPageShell>
@@ -641,6 +642,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           title={tip}
           onPointerDown={() => {
             dispatchWorkbenchDismissOverlays();
+            prefetchWorkbenchRoute(router, WORKBENCH_HOME_PATH);
             beginWorkbenchNav(WORKBENCH_HOME_PATH);
           }}
         >

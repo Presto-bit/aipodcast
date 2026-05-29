@@ -3,14 +3,24 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import WorkbenchDynamicLoading from "../../../components/nav/WorkbenchDynamicLoading";
+import { SkeletonBlock, SkeletonLine } from "../../../components/ui/Skeleton";
 
 const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
   loading: () => (
-    <div
-      className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
-      aria-busy
-      aria-label="加载作品列表"
-    />
+    <WorkbenchDynamicLoading>
+      <div
+        className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40 p-4"
+        aria-busy
+        aria-label="加载作品列表"
+      >
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <SkeletonBlock className="h-36 rounded-2xl" />
+          <SkeletonBlock className="h-36 rounded-2xl" />
+          <SkeletonBlock className="h-36 rounded-2xl" />
+        </div>
+      </div>
+    </WorkbenchDynamicLoading>
   )
 });
 import WorksActiveJobsPanel from "../../../components/works/WorksActiveJobsPanel";
@@ -21,8 +31,13 @@ import { isTextOnlyWorkType, type WorkItem } from "../../../lib/worksTypes";
 import { isAudioGalleryWorkType } from "../../../lib/workGalleryDisplay";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
-import { isAbortError, usePageAbortSignal, usePageFetch } from "../../../lib/usePageAbortSignal";
+import { isAbortError, usePageAbortSignal } from "../../../lib/usePageAbortSignal";
 import { useActiveJobCount, useInvalidateActiveJobs } from "../../../lib/queries/activeJobsQuery";
+import {
+  fetchWorksPage,
+  useInvalidateWorksOnMutation,
+  useWorksListQuery
+} from "../../../lib/queries/worksQueries";
 
 const WORKS_LIMIT = 60;
 
@@ -47,14 +62,17 @@ export default function WorksPage() {
   const { getAuthHeaders, ready, user } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const pageAbortSignal = usePageAbortSignal();
-  const pageFetch = usePageFetch(pageAbortSignal);
   const activeJobCount = useActiveJobCount(isLoggedIn && ready);
   const invalidateActiveJobs = useInvalidateActiveJobs();
+  const invalidateWorks = useInvalidateWorksOnMutation();
+  const worksQuery = useWorksListQuery(getAuthHeaders, isLoggedIn && ready, {
+    limit: WORKS_LIMIT,
+    offset: 0
+  });
   const [ai, setAi] = useState<WorkItem[]>([]);
   const [tts, setTts] = useState<WorkItem[]>([]);
   const [notesBucket, setNotesBucket] = useState<WorkItem[]>([]);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
   const [worksView, setWorksView] = useState<WorksTab>("audio");
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -64,94 +82,60 @@ export default function WorksPage() {
   /** 文稿 Tab：体裁筛选 */
   const [scriptKindFilter, setScriptKindFilter] = useState<"all" | "article" | "social">("all");
 
+  useEffect(() => {
+    if (!worksQuery.data) return;
+    setAi(worksQuery.data.ai);
+    setTts(worksQuery.data.tts);
+    setNotesBucket(worksQuery.data.notes);
+    const total =
+      typeof worksQuery.data.total === "number"
+        ? worksQuery.data.total
+        : worksQuery.data.ai.length + worksQuery.data.tts.length;
+    setOffset(total);
+    setHasMore(Boolean(worksQuery.data.hasMore));
+  }, [worksQuery.data]);
+
+  useEffect(() => {
+    if (worksQuery.error) {
+      setError(worksQuery.error instanceof Error ? worksQuery.error.message : String(worksQuery.error));
+    }
+  }, [worksQuery.error]);
+
+  const loading = worksQuery.isLoading && !worksQuery.data;
+  const isRefreshing = worksQuery.isFetching && Boolean(worksQuery.data);
+
   const worksReturnTo = useMemo(() => {
     if (worksView === "active") return "/works?tab=active";
     if (worksView === "script") return "/works?tab=script";
     return "/works?tab=audio";
   }, [worksView]);
 
-  const fetchWorks = useCallback(
-    async (append: boolean) => {
-      setError("");
-      if (append) setLoadingMore(true);
-      else setLoading(true);
-      const o = append ? offset : 0;
-      try {
-        if (!isLoggedIn) {
-          if (!append) {
-            setAi([]);
-            setTts([]);
-            setNotesBucket([]);
-            setOffset(0);
-            setHasMore(false);
-          }
-          return;
-        }
-        if (!append) {
-          const res = await pageFetch(`/api/works?limit=${WORKS_LIMIT}&offset=0`, {
-            cache: "no-store",
-            headers: { ...getAuthHeaders() }
-          });
-          const data = (await res.json().catch(() => ({}))) as {
-            success?: boolean;
-            notes?: WorkItem[];
-            ai?: WorkItem[];
-            tts?: WorkItem[];
-            error?: string;
-            detail?: string;
-            total?: number;
-            has_more?: boolean;
-          };
-          if (pageAbortSignal.aborted) return;
-          if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-          setAi(Array.isArray(data.ai) ? data.ai : []);
-          setTts(Array.isArray(data.tts) ? data.tts : []);
-          setNotesBucket(Array.isArray(data.notes) ? data.notes : []);
-          const t = typeof data.total === "number" ? data.total : (data.ai?.length || 0) + (data.tts?.length || 0);
-          setOffset(t);
-          setHasMore(Boolean(data.has_more));
-        } else {
-          const res = await pageFetch(`/api/works?limit=${WORKS_LIMIT}&offset=${o}`, {
-            cache: "no-store",
-            headers: { ...getAuthHeaders() }
-          });
-          const data = (await res.json().catch(() => ({}))) as {
-            success?: boolean;
-            notes?: WorkItem[];
-            ai?: WorkItem[];
-            tts?: WorkItem[];
-            error?: string;
-            detail?: string;
-            total?: number;
-            has_more?: boolean;
-          };
-          if (pageAbortSignal.aborted) return;
-          if (!res.ok || !data.success) throw new Error(data.error || data.detail || `加载失败 ${res.status}`);
-          setAi((p) => mergeById(p, Array.isArray(data.ai) ? data.ai : []));
-          setTts((p) => mergeById(p, Array.isArray(data.tts) ? data.tts : []));
-          setNotesBucket((p) => mergeById(p, Array.isArray(data.notes) ? data.notes : []));
-          const t = typeof data.total === "number" ? data.total : (data.ai?.length || 0) + (data.tts?.length || 0);
-          setOffset(o + t);
-          setHasMore(Boolean(data.has_more));
-        }
-      } catch (err) {
-        if (isAbortError(err)) return;
-        setError(String(err instanceof Error ? err.message : err));
-      } finally {
-        if (!pageAbortSignal.aborted) {
-          setLoading(false);
-          setLoadingMore(false);
-        }
-      }
-    },
-    [offset, getAuthHeaders, isLoggedIn, pageAbortSignal, pageFetch]
-  );
+  const refreshWorks = useCallback(() => {
+    setError("");
+    void worksQuery.refetch();
+  }, [worksQuery]);
 
-  useEffect(() => {
-    if (!ready) return;
-    void fetchWorks(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, getAuthHeaders, user]);
+  const fetchWorksMore = useCallback(async () => {
+    if (!isLoggedIn) return;
+    setError("");
+    setLoadingMore(true);
+    try {
+      const data = await fetchWorksPage(getAuthHeaders(), { limit: WORKS_LIMIT, offset });
+      if (pageAbortSignal.aborted) return;
+      setAi((p) => mergeById(p, data.ai));
+      setTts((p) => mergeById(p, data.tts));
+      setNotesBucket((p) => mergeById(p, data.notes));
+      const total =
+        typeof data.total === "number" ? data.total : data.ai.length + data.tts.length;
+      setOffset((o) => o + total);
+      setHasMore(Boolean(data.hasMore));
+    } catch (err) {
+      if (isAbortError(err)) return;
+      setError(String(err instanceof Error ? err.message : err));
+    } finally {
+      if (!pageAbortSignal.aborted) setLoadingMore(false);
+    }
+  }, [getAuthHeaders, isLoggedIn, offset, pageAbortSignal]);
 
   useEffect(() => {
     setWorksView(parseWorksTab(searchParams?.get("tab") ?? null));
@@ -160,6 +144,11 @@ export default function WorksPage() {
   const onActiveJobsChanged = useCallback(() => {
     invalidateActiveJobs();
   }, [invalidateActiveJobs]);
+
+  const onWorkDeleted = useCallback(() => {
+    invalidateWorks();
+    refreshWorks();
+  }, [invalidateWorks, refreshWorks]);
 
   const routeForTab = useCallback((tab: WorksTab) => {
     if (tab === "audio") return "/works?tab=audio";
@@ -253,6 +242,7 @@ export default function WorksPage() {
           <p className="shrink-0 text-xs text-muted">
             已加载 <span className="font-medium tabular-nums text-ink">{totalLoaded}</span> 件
             {hasMore ? <span className="text-muted"> · 更多</span> : null}
+            {isRefreshing ? <span className="text-muted"> · 更新中</span> : null}
           </p>
         ) : null}
       </div>
@@ -343,7 +333,13 @@ export default function WorksPage() {
       ) : null}
 
       {(worksView === "audio" || worksView === "script") && loading ? (
-        <p className="py-6 text-center text-sm text-muted">{t("common.loading")}</p>
+        <div className="py-6" aria-busy aria-label="加载作品">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <SkeletonBlock className="h-36 rounded-2xl" />
+            <SkeletonBlock className="h-36 rounded-2xl" />
+            <SkeletonBlock className="h-36 rounded-2xl" />
+          </div>
+        </div>
       ) : null}
 
       {worksView === "audio" && !loading && emptyAudio ? (
@@ -351,11 +347,7 @@ export default function WorksPage() {
           title="暂无音频成片"
           description="播客、语音合成等任务完成后会出现在这里；进行中的任务请查看「进行中」Tab。"
           action={
-            <button
-              type="button"
-              className="text-sm text-brand underline"
-              onClick={() => void fetchWorks(false)}
-            >
+            <button type="button" className="text-sm text-brand underline" onClick={() => refreshWorks()}>
               {t("common.refresh")}
             </button>
           }
@@ -367,11 +359,7 @@ export default function WorksPage() {
           title="暂无文稿成品"
           description="在知识库生成文章或自媒体发布稿后，会集中显示在本 Tab。"
           action={
-            <button
-              type="button"
-              className="text-sm text-brand underline"
-              onClick={() => void fetchWorks(false)}
-            >
+            <button type="button" className="text-sm text-brand underline" onClick={() => refreshWorks()}>
               {t("common.refresh")}
             </button>
           }
@@ -385,7 +373,7 @@ export default function WorksPage() {
           loading={loading}
           fetchError={error}
           onDismissError={() => setError("")}
-          onWorkDeleted={() => void fetchWorks(false)}
+          onWorkDeleted={onWorkDeleted}
           enableBatchActions
           workDetailReturnTo={worksReturnTo}
         />
@@ -397,7 +385,7 @@ export default function WorksPage() {
           loading={loading}
           fetchError={error}
           onDismissError={() => setError("")}
-          onWorkDeleted={() => void fetchWorks(false)}
+          onWorkDeleted={onWorkDeleted}
           enableBatchActions
           workDetailReturnTo={worksReturnTo}
         />
@@ -411,7 +399,7 @@ export default function WorksPage() {
             type="button"
             disabled={loadingMore}
             className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-fill disabled:opacity-50"
-            onClick={() => void fetchWorks(true)}
+            onClick={() => void fetchWorksMore()}
           >
             {loadingMore ? "加载中…" : "加载更多"}
           </button>

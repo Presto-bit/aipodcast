@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useRouter, usePathname } from "next/navigation";
 import type { ChangeEvent, Dispatch, PointerEvent, SetStateAction } from "react";
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import InlineConfirmBar from "../ui/InlineConfirmBar";
 import InlineTextPrompt from "../ui/InlineTextPrompt";
 import SmallPromptModal from "../ui/SmallPromptModal";
@@ -92,6 +93,7 @@ import {
 } from "../../lib/appSidebarCollapse";
 import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
+import { useNotebooksHubQuery, fetchNotebooksHub, NOTEBOOKS_HUB_QUERY_KEY } from "../../lib/queries/notebooksQueries";
 import { useI18n } from "../../lib/I18nContext";
 import type { NotebookCoverMeta } from "../../lib/notebookCoverDisplay";
 import type { NotebookMeta, NotebookSharingRow, PopularNotebookItem } from "./notesNotebookTypes";
@@ -560,6 +562,8 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   const { t } = useI18n();
   const { user, phone, getAuthHeaders, ready } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
+  const notebooksHubQuery = useNotebooksHubQuery(getAuthHeaders, ready);
+  const queryClient = useQueryClient();
   /** 与 AuthProvider 中 userScopedStorage 同步；用于在切换账号时重载对话缓存 */
   const storageAccountScope = useMemo(() => accountKeyFromUser(user), [user]);
   const skipNotesAskSaveRef = useRef(true);
@@ -1271,21 +1275,13 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     return [...new Set([...list, name])].sort((a, b) => a.localeCompare(b, "zh-CN"));
   }, []);
 
-  const loadNotebooks = useCallback(async () => {
-    try {
-      const res = await pageFetch("/api/notebooks", {
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: { ...getAuthHeaders() }
-      });
-      const data = (await res.json()) as {
-        success?: boolean;
-        notebooks?: string[];
-        notebookSharing?: Record<string, NotebookSharingRow>;
-        notebookCovers?: Record<string, NotebookCoverMeta>;
-      };
-      if (pageAbortSignal.aborted) return;
-      if (res.ok && data.success && Array.isArray(data.notebooks)) {
+  const applyNotebooksPayload = useCallback(
+    (data: {
+      notebooks?: string[];
+      notebookSharing?: Record<string, NotebookSharingRow>;
+      notebookCovers?: Record<string, NotebookCoverMeta>;
+    }) => {
+      if (Array.isArray(data.notebooks)) {
         const currentNb = selectedNotebook.trim();
         const merged =
           currentNb &&
@@ -1295,19 +1291,31 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
             : data.notebooks;
         setNotebooks(merged);
       }
-      if (res.ok && data.success && data.notebookSharing && typeof data.notebookSharing === "object") {
+      if (data.notebookSharing && typeof data.notebookSharing === "object") {
         setNotebookSharingByName(data.notebookSharing);
       }
-      if (res.ok && data.success && data.notebookCovers && typeof data.notebookCovers === "object") {
+      if (data.notebookCovers && typeof data.notebookCovers === "object") {
         setNotebookCoversByName(data.notebookCovers);
       }
+    },
+    [mergeNotebookName, selectedNotebook]
+  );
+
+  const loadNotebooks = useCallback(async () => {
+    try {
+      const data = await queryClient.fetchQuery({
+        queryKey: NOTEBOOKS_HUB_QUERY_KEY,
+        queryFn: () => fetchNotebooksHub(getAuthHeaders())
+      });
+      if (pageAbortSignal.aborted) return;
+      applyNotebooksPayload(data);
     } catch (err) {
       if (isAbortError(err)) return;
       // ignore
     } finally {
       if (!pageAbortSignal.aborted) setNotebooksReady(true);
     }
-  }, [getAuthHeaders, mergeNotebookName, pageAbortSignal, pageFetch, selectedNotebook]);
+  }, [applyNotebooksPayload, getAuthHeaders, pageAbortSignal, queryClient]);
 
   const loadPopularNotebooks = useCallback(
     async (append: boolean) => {
@@ -1649,8 +1657,13 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   }, [selectedNotebook, sharedBrowse]);
 
   useEffect(() => {
+    if (!notebooksHubQuery.data) return;
+    applyNotebooksPayload(notebooksHubQuery.data);
+    setNotebooksReady(true);
+  }, [notebooksHubQuery.data, applyNotebooksPayload]);
+
+  useEffect(() => {
     if (!ready) return;
-    void loadNotebooks();
     const runMeta = () => void loadNotebookMeta();
     if (typeof requestIdleCallback !== "undefined") {
       const id = requestIdleCallback(runMeta, { timeout: 2500 });
@@ -1658,7 +1671,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     }
     const t = window.setTimeout(runMeta, 150);
     return () => window.clearTimeout(t);
-  }, [ready, loadNotebookMeta, loadNotebooks]);
+  }, [ready, loadNotebookMeta]);
 
   useEffect(() => {
     try {

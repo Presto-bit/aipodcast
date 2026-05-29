@@ -33,6 +33,9 @@ export default function SidebarNavLink({
 
   const handlePointerDown: SidebarNavLinkProps["onPointerDown"] = (e) => {
     dispatchWorkbenchDismissOverlays();
+    if (target !== current) {
+      prefetchWorkbenchRoute(router, hrefStr);
+    }
     onPointerDown?.(e);
   };
 

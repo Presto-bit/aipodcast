@@ -16,7 +16,7 @@ export type WorksListQueryOptions = {
   offset?: number;
 };
 
-async function fetchWorksPage(
+export async function fetchWorksPage(
   headers: Record<string, string>,
   opts: WorksListQueryOptions = {}
 ): Promise<WorksApiPayload> {
@@ -69,7 +69,7 @@ export function useWorksListQuery(
     queryKey: worksListQueryKey(limit, offset),
     queryFn: () => fetchWorksPage(getAuthHeaders(), { limit, offset }),
     enabled: loggedIn,
-    staleTime: 30_000
+    staleTime: 60_000
   });
 }
 

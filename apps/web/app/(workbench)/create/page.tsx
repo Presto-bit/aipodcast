@@ -7,44 +7,27 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { IconChevronDown, IconClip, IconMic, IconRotateCw, IconShownotes, IconTts } from "../../../components/icons";
 import type { PodcastStudioActivity } from "../../../components/studio/PodcastStudio";
 import type { TtsStudioActivity } from "../../../components/studio/TtsStudio";
+import WorkbenchDynamicLoading from "../../../components/nav/WorkbenchDynamicLoading";
+
+const studioLoadingShell = (label: string, minH: string) => (
+  <WorkbenchDynamicLoading>
+    <div className={`${minH} rounded-xl border border-line/50 bg-fill/40`} aria-busy aria-label={label} />
+  </WorkbenchDynamicLoading>
+);
 
 const PodcastStudio = dynamic(() => import("../../../components/studio/PodcastStudio"), {
-  loading: () => (
-    <div
-      className="min-h-[200px] rounded-xl border border-line/50 bg-fill/40"
-      aria-busy
-      aria-label="加载播客工作室"
-    />
-  )
+  loading: () => studioLoadingShell("加载播客工作室", "min-h-[200px]")
 });
 const TtsStudio = dynamic(() => import("../../../components/studio/TtsStudio"), {
-  loading: () => (
-    <div
-      className="min-h-[180px] rounded-xl border border-line/50 bg-fill/40"
-      aria-busy
-      aria-label="加载语音合成工作室"
-    />
-  )
+  loading: () => studioLoadingShell("加载语音合成工作室", "min-h-[180px]")
 });
 const PodcastWorksGallery = dynamic(() => import("../../../components/podcast/PodcastWorksGallery"), {
-  loading: () => (
-    <div
-      className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
-      aria-busy
-      aria-label="加载作品列表"
-    />
-  )
+  loading: () => studioLoadingShell("加载作品列表", "min-h-[120px] rounded-2xl")
 });
 const WorksGroupedGalleryPanel = dynamic(
   () => import("../../../components/works/WorksGroupedGalleryPanel"),
   {
-    loading: () => (
-      <div
-        className="min-h-[120px] rounded-2xl border border-line/50 bg-fill/40"
-        aria-busy
-        aria-label="加载作品列表"
-      />
-    )
+    loading: () => studioLoadingShell("加载作品列表", "min-h-[120px] rounded-2xl")
   }
 );
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
