@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AuthorIpCompactModal from "../author-ip/AuthorIpCompactModal";
-import { ensureAuthorIpForNotebook, patchAuthorIp, type AuthorIpItem } from "../../../lib/authorIp";
+import { renameAuthorIpForNotebook, type AuthorIpItem } from "../../../lib/authorIp";
 import {
   buildStyleSummaryChips,
   buildStyleSummaryText,
@@ -70,11 +70,13 @@ export default function NotebookStyleModal({
   }, [notebookName]);
 
   useEffect(() => {
+    if (!open || renaming) return;
     setRenameDraft(styleTitle);
-  }, [styleTitle, open]);
+  }, [styleTitle, open, renaming]);
 
   const renameBlocked = readOnly || Boolean(item?.isReadOnly);
   const renameDisabled = busy || loading || renameSaving;
+  const currentDisplayName = (item?.displayName || notebookName).trim() || notebookName;
 
   const submitRename = async () => {
     if (renameBlocked) return;
@@ -83,7 +85,7 @@ export default function NotebookStyleModal({
       setRenameError("名称不能为空");
       return;
     }
-    if (name === styleTitle) {
+    if (name === currentDisplayName) {
       setRenaming(false);
       setRenameError(null);
       return;
@@ -91,16 +93,7 @@ export default function NotebookStyleModal({
     setRenameError(null);
     setRenameSaving(true);
     try {
-      const nb = notebookName.trim();
-      let ip = item;
-      if (!ip?.id || (ip.notebookName || "").trim() !== nb) {
-        ip = await ensureAuthorIpForNotebook(nb);
-      }
-      if (ip.isReadOnly) {
-        setRenameError("该风格为只读，无法改名");
-        return;
-      }
-      const updated = await patchAuthorIp(ip.id, { displayName: name });
+      const updated = await renameAuthorIpForNotebook(notebookName.trim(), name);
       onItemUpdated(updated);
       setRenaming(false);
     } catch (e) {
@@ -162,7 +155,7 @@ export default function NotebookStyleModal({
                   if (e.key === "Enter") void submitRename();
                   if (e.key === "Escape") {
                     setRenaming(false);
-                    setRenameDraft(styleTitle);
+                    setRenameDraft(currentDisplayName);
                     setRenameError(null);
                   }
                 }}
@@ -183,7 +176,7 @@ export default function NotebookStyleModal({
                   disabled={renameDisabled}
                   onClick={() => {
                     setRenaming(false);
-                    setRenameDraft(styleTitle);
+                    setRenameDraft(currentDisplayName);
                     setRenameError(null);
                   }}
                 >
@@ -199,7 +192,10 @@ export default function NotebookStyleModal({
                   type="button"
                   className="shrink-0 text-xs text-muted hover:text-brand disabled:opacity-50"
                   disabled={renameDisabled}
-                  onClick={() => setRenaming(true)}
+                  onClick={() => {
+                    setRenameDraft(currentDisplayName);
+                    setRenaming(true);
+                  }}
                 >
                   改名
                 </button>

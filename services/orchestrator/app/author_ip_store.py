@@ -383,6 +383,28 @@ def ensure_author_ip_for_notebook(user_ref: str | None, notebook_name: str) -> d
     return item
 
 
+def rename_author_ip_for_notebook(
+    user_ref: str | None,
+    notebook_name: str,
+    display_name: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """按用户笔记本名更新绑定 IP 的 display_name（不存在则懒创建）。"""
+    nb = str(notebook_name or "").strip()
+    name = str(display_name or "").strip()
+    if not nb or is_author_ip_notebook_name(nb):
+        return None, "无效的笔记本"
+    if not name:
+        return None, "名称不能为空"
+    try:
+        item = ensure_author_ip_for_notebook(user_ref, nb)
+    except ValueError as exc:
+        return None, str(exc)
+    ip_id = str(item.get("id") or "").strip()
+    if not ip_id:
+        return None, "IP 不存在"
+    return patch_author_ip(user_ref, ip_id, display_name=name)
+
+
 def patch_author_ip(
     user_ref: str | None,
     ip_id: str,

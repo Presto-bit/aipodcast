@@ -22,3 +22,13 @@ export async function POST(req: NextRequest) {
     headers: { "content-type": "application/json", ...incomingAuthHeadersFrom(req) }
   });
 }
+
+export async function PATCH(req: NextRequest) {
+  const body = await req.text().catch(() => "{}");
+  return proxyJsonFromOrchestrator("/api/v1/author-ips/by-notebook", {
+    method: "PATCH",
+    payload: body || "{}",
+    body: body || "{}",
+    headers: { "content-type": "application/json", ...incomingAuthHeadersFrom(req) }
+  });
+}

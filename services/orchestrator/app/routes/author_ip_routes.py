@@ -9,6 +9,7 @@ from ..author_ip_store import (
     ensure_author_ip_for_notebook,
     get_author_ip_by_notebook,
     patch_author_ip,
+    rename_author_ip_for_notebook,
 )
 from ..security import verify_internal_signature
 
@@ -44,6 +45,13 @@ class AuthorIpPatchBody(BaseModel):
 
 class AuthorIpNotebookEnsureBody(BaseModel):
     notebook_name: str = Field(min_length=1, max_length=500, alias="notebookName")
+
+    model_config = {"populate_by_name": True}
+
+
+class AuthorIpNotebookRenameBody(BaseModel):
+    notebook_name: str = Field(min_length=1, max_length=500, alias="notebookName")
+    display_name: str = Field(min_length=1, max_length=120, alias="displayName")
 
     model_config = {"populate_by_name": True}
 
@@ -88,9 +96,31 @@ def ensure_author_ip_for_notebook_api(request: Request, body: AuthorIpNotebookEn
     return {"success": True, "item": item}
 
 
+@router.patch("/by-notebook")
+def rename_author_ip_for_notebook_api(request: Request, body: AuthorIpNotebookRenameBody):
+    user_ref = _current_user_ref_or_401(request)
+    item, err = rename_author_ip_for_notebook(
+        user_ref,
+        body.notebook_name,
+        body.display_name,
+    )
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    if not item:
+        raise HTTPException(status_code=404, detail="not_found")
+    return {"success": True, "item": item}
+
+
 @router.patch("/{ip_id}")
 def patch_author_ip_api(request: Request, ip_id: str, body: AuthorIpPatchBody):
     user_ref = _current_user_ref_or_401(request)
+    if (
+        body.display_name is None
+        and body.subtitle is None
+        and body.avatar_color is None
+        and body.is_default is None
+    ):
+        raise HTTPException(status_code=400, detail="无效的请求")
     item, err = patch_author_ip(
         user_ref,
         ip_id,

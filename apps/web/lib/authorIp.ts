@@ -84,6 +84,39 @@ export async function learnAuthorIp(
   return (data as { item: AuthorIpItem }).item;
 }
 
+/** 按笔记本名改名（不依赖 ipId，避免脏 id / 切换笔记本时 PATCH 错记录） */
+export async function renameAuthorIpForNotebook(
+  notebookName: string,
+  displayName: string
+): Promise<AuthorIpItem> {
+  const nb = String(notebookName || "").trim();
+  const name = String(displayName || "").trim();
+  if (!nb) {
+    throw new Error("请先选择笔记本");
+  }
+  if (!name) {
+    throw new Error("名称不能为空");
+  }
+  const res = await fetch("/api/author-ips/by-notebook", {
+    method: "PATCH",
+    credentials: "include",
+    headers: authHeaders(),
+    body: JSON.stringify({ notebookName: nb, displayName: name })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(apiErrorMessage(data, "保存失败"));
+  }
+  const item = (data as { item?: AuthorIpItem }).item;
+  if (!item?.id) {
+    throw new Error(apiErrorMessage(data, "保存失败：服务未返回有效数据"));
+  }
+  if ((item.displayName || "").trim() !== name) {
+    throw new Error("保存失败：名称未更新，请刷新后重试");
+  }
+  return item;
+}
+
 export async function patchAuthorIp(
   ipId: string,
   patch: { displayName?: string; isDefault?: boolean }
