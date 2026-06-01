@@ -84,10 +84,11 @@ export async function learnAuthorIp(
   return (data as { item: AuthorIpItem }).item;
 }
 
-/** 按笔记本名改名（不依赖 ipId，避免脏 id / 切换笔记本时 PATCH 错记录） */
+/** 按笔记本名改名；优先 PATCH by-notebook，编排器未升级时回退 ensure + patch ipId */
 export async function renameAuthorIpForNotebook(
   notebookName: string,
-  displayName: string
+  displayName: string,
+  opts?: { boundIpId?: string | null }
 ): Promise<AuthorIpItem> {
   const nb = String(notebookName || "").trim();
   const name = String(displayName || "").trim();
@@ -97,6 +98,7 @@ export async function renameAuthorIpForNotebook(
   if (!name) {
     throw new Error("名称不能为空");
   }
+
   const res = await fetch("/api/author-ips/by-notebook", {
     method: "PATCH",
     credentials: "include",
@@ -104,17 +106,41 @@ export async function renameAuthorIpForNotebook(
     body: JSON.stringify({ notebookName: nb, displayName: name })
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(apiErrorMessage(data, "保存失败"));
-  }
-  const item = (data as { item?: AuthorIpItem }).item;
-  if (!item?.id) {
+  if (res.ok) {
+    const item = (data as { item?: AuthorIpItem }).item;
+    if (item?.id) return item;
     throw new Error(apiErrorMessage(data, "保存失败：服务未返回有效数据"));
   }
-  if ((item.displayName || "").trim() !== name) {
-    throw new Error("保存失败：名称未更新，请刷新后重试");
+
+  const retryable =
+    res.status === 404 ||
+    res.status === 405 ||
+    res.status === 422 ||
+    res.status === 502 ||
+    res.status === 503 ||
+    res.status === 504 ||
+    res.status >= 500;
+  const upstreamMsg = apiErrorMessage(data, "保存失败");
+
+  if (!retryable) {
+    throw new Error(upstreamMsg);
   }
-  return item;
+
+  const boundId = String(opts?.boundIpId || "").trim();
+  if (boundId) {
+    try {
+      return await patchAuthorIp(boundId, { displayName: name });
+    } catch {
+      // ipId 可能已失效，继续 ensure 后重试
+    }
+  }
+
+  try {
+    const ensured = await ensureAuthorIpForNotebook(nb);
+    return await patchAuthorIp(ensured.id, { displayName: name });
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : upstreamMsg);
+  }
 }
 
 export async function patchAuthorIp(

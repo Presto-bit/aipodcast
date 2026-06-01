@@ -93,7 +93,10 @@ export default function NotebookStyleModal({
     setRenameError(null);
     setRenameSaving(true);
     try {
-      const updated = await renameAuthorIpForNotebook(notebookName.trim(), name);
+      const updated = await renameAuthorIpForNotebook(notebookName.trim(), name, {
+        boundIpId:
+          item && (item.notebookName || "").trim() === notebookName.trim() ? item.id : null
+      });
       onItemUpdated(updated);
       setRenaming(false);
     } catch (e) {

@@ -398,7 +398,12 @@ def rename_author_ip_for_notebook(
     try:
         item = ensure_author_ip_for_notebook(user_ref, nb)
     except ValueError as exc:
-        return None, str(exc)
+        code = str(exc)
+        if code == "not_logged_in":
+            return None, "未登录"
+        if code in ("invalid_notebook", "ip_create_failed"):
+            return None, "无效的笔记本"
+        return None, code
     ip_id = str(item.get("id") or "").strip()
     if not ip_id:
         return None, "IP 不存在"
