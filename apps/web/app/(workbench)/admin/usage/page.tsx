@@ -32,13 +32,14 @@ type Overview = {
   distinct_jobs?: number; llm_cost_cny?: number; tts_cost_cny?: number; image_cost_cny?: number; embedding_cost_cny?: number; cost_total_cny?: number;
   login_count?: number; login_users?: number; active_sessions?: number; session_users?: number;
 };
-type SiteUvYesterday = { day?: string; uv?: number };
-type SiteUvRange = { date_from?: string; date_to?: string; uv?: number };
+type SiteUvDayMetric = { day?: string; uv?: number; partial?: boolean };
+type SiteUvRange = { date_from?: string; date_to?: string; uv?: number; includes_today?: boolean };
 type SiteUvDayRow = { day?: string; uv?: number };
 type SiteUvStats = {
   timezone?: string;
-  t_plus_1_note?: string;
-  yesterday?: SiteUvYesterday;
+  note?: string;
+  today?: SiteUvDayMetric;
+  yesterday?: SiteUvDayMetric;
   range?: SiteUvRange;
   by_day?: SiteUvDayRow[];
 };
@@ -798,8 +799,9 @@ export default function AdminUsagePage(): JSX.Element {
       {tab === "overview" ? (
         <>
           <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <MetricCard title="昨日 UV（T+1）" value={num(siteUv.yesterday?.uv)} hint={siteUv.yesterday?.day ? `${siteUv.yesterday.day} · 设备 ID 去重` : "浏览器设备 ID；T+1"} />
-            <MetricCard title="区间 UV" value={num(siteUv.range?.uv)} hint={siteUv.range?.date_from && siteUv.range?.date_to ? `${siteUv.range.date_from} ~ ${siteUv.range.date_to} · 设备去重` : siteUv.t_plus_1_note || "不含当日"} />
+            <MetricCard title="今日 UV（实时）" value={num(siteUv.today?.uv)} hint={siteUv.today?.day ? `${siteUv.today.day} · 累计中` : siteUv.note || "上海时区当日"} />
+            <MetricCard title="昨日 UV" value={num(siteUv.yesterday?.uv)} hint={siteUv.yesterday?.day ? `${siteUv.yesterday.day} · 完整日` : "设备 ID 去重"} />
+            <MetricCard title="区间 UV" value={num(siteUv.range?.uv)} hint={siteUv.range?.date_from && siteUv.range?.date_to ? `${siteUv.range.date_from} ~ ${siteUv.range.date_to}${siteUv.range.includes_today ? " · 含今日" : ""}` : siteUv.note || ""} />
             <MetricCard title="总调用事件" value={num(overview.total_events)} />
             <MetricCard title="成功率" value={pct(overview.success_rate)} hint={`成功 ${num(overview.succeeded_events)} / 失败 ${num(overview.failed_events)}`} />
             <MetricCard title="活跃用户" value={num(overview.active_users)} hint={`登录用户 ${num(overview.login_users)} / 登录次数 ${num(overview.login_count)}`} />
@@ -820,7 +822,7 @@ export default function AdminUsagePage(): JSX.Element {
             <div className="overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">输入来源分布</div><table className="min-w-[420px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">输入类型</th><th className="px-3 py-2">次数</th></tr></thead><tbody>{inputRows.length === 0 ? <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : inputRows.map((r, i) => <tr key={`${r.input_type || "other"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.input_type || "other"}</td><td className="px-3 py-2">{num(r.events)}</td></tr>)}</tbody></table></div>
           </div>
           <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">按日趋势 + Top 用户</div><table className="min-w-[720px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">日期</th><th className="px-3 py-2">调用</th><th className="px-3 py-2">成功</th><th className="px-3 py-2">用户</th><th className="px-3 py-2">成本</th></tr></thead><tbody>{dayRows.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : dayRows.map((r, i) => <tr key={`${r.day || "day"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.day || "—"}</td><td className="px-3 py-2">{num(r.events)}</td><td className="px-3 py-2">{num(r.succeeded)}</td><td className="px-3 py-2">{num(r.users)}</td><td className="px-3 py-2">{money(r.cost_total_cny)}</td></tr>)}</tbody></table></div>
-          <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">站点 UV（T+1，按日，设备 ID）</div><table className="min-w-[360px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">日期</th><th className="px-3 py-2">UV</th></tr></thead><tbody>{!siteUv.by_day || siteUv.by_day.length === 0 ? <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : siteUv.by_day.map((r, i) => <tr key={`${r.day || "uv"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.day || "—"}</td><td className="px-3 py-2">{num(r.uv)}</td></tr>)}</tbody></table></div>
+          <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">站点 UV（按日，设备 ID；当日为 partial）</div><table className="min-w-[360px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">日期</th><th className="px-3 py-2">UV</th><th className="px-3 py-2">说明</th></tr></thead><tbody>{!siteUv.by_day || siteUv.by_day.length === 0 ? <tr><td colSpan={3} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : siteUv.by_day.map((r, i) => <tr key={`${r.day || "uv"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.day || "—"}</td><td className="px-3 py-2">{num(r.uv)}</td><td className="px-3 py-2 text-xs text-muted">{r.day === siteUv.today?.day ? "累计中" : "完整日"}</td></tr>)}</tbody></table></div>
           <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">高活跃用户（Top 20）</div><table className="min-w-[720px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">用户</th><th className="px-3 py-2">调用</th><th className="px-3 py-2">成功</th><th className="px-3 py-2">成本</th><th className="px-3 py-2">最近使用</th></tr></thead><tbody>{topUsers.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : topUsers.map((r, i) => <tr key={`${r.user_key || r.user_id || r.phone || "unknown"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2 font-mono text-xs"><span className="block">{r.phone || r.user_id || r.user_key || "(unknown)"}</span>{r.user_id && r.phone && r.user_id !== r.phone ? <span className="mt-0.5 block text-[10px] text-muted/90">id {r.user_id}</span> : null}</td><td className="px-3 py-2">{num(r.events)}</td><td className="px-3 py-2">{num(r.succeeded)}</td><td className="px-3 py-2">{money(r.cost_total_cny)}</td><td className="px-3 py-2 text-xs text-muted">{r.last_event_at || "—"}</td></tr>)}</tbody></table></div>
         </>
       ) : null}

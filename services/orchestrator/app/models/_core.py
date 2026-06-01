@@ -3800,17 +3800,17 @@ def site_traffic_uv_stats(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> dict[str, Any]:
-    """管理端 UV（Asia/Shanghai 日历日，T+1：不含当日）。"""
+    """管理端 UV（Asia/Shanghai 日历日，含当日 partial）。"""
     tz = ZoneInfo(_SITE_TRAFFIC_TZ)
     today_sh = datetime.now(tz).date()
     yesterday_sh = today_sh - timedelta(days=1)
 
     if date_from and date_to:
         range_start = date_from
-        range_end = min(date_to, yesterday_sh)
+        range_end = min(date_to, today_sh)
     else:
         d = max(1, min(365, int(days if days is not None else 30)))
-        range_end = yesterday_sh
+        range_end = today_sh
         range_start = range_end - timedelta(days=d - 1)
 
     if range_start > range_end:
@@ -3824,6 +3824,16 @@ def site_traffic_uv_stats(
     dedupe_expr = _SITE_TRAFFIC_DEDUPE_SQL
     with get_conn() as conn:
         with get_cursor(conn) as cur:
+            cur.execute(
+                f"""
+                SELECT COUNT(DISTINCT ({dedupe_expr}))::bigint AS uv
+                FROM site_page_views
+                WHERE ((created_at AT TIME ZONE %s)::date) = %s
+                """,
+                (_SITE_TRAFFIC_TZ, today_sh),
+            )
+            trow = dict(cur.fetchone() or {})
+
             cur.execute(
                 f"""
                 SELECT COUNT(DISTINCT ({dedupe_expr}))::bigint AS uv
@@ -3866,15 +3876,22 @@ def site_traffic_uv_stats(
     return {
         "timezone": _SITE_TRAFFIC_TZ,
         "dedupe": "device_visitor_id",
-        "t_plus_1_note": "不含当日（Asia/Shanghai）；UV 按浏览器设备 ID 去重，无设备 ID 时回退 Cookie visitor_id",
+        "note": "当日 UV 随访问实时累计（Asia/Shanghai）；历史日为完整自然日",
+        "today": {
+            "day": today_sh.isoformat(),
+            "uv": _safe_int(trow.get("uv")),
+            "partial": True,
+        },
         "yesterday": {
             "day": yesterday_sh.isoformat(),
             "uv": _safe_int(yrow.get("uv")),
+            "partial": False,
         },
         "range": {
             "date_from": range_start.isoformat(),
             "date_to": range_end.isoformat(),
             "uv": _safe_int(rrow.get("uv")),
+            "includes_today": range_end >= today_sh,
         },
         "by_day": by_day,
     }
