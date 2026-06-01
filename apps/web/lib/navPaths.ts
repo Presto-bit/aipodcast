@@ -73,6 +73,7 @@ export function pathNeedsWorkAudio(pathname: string): boolean {
   if (n === WORKBENCH_HOME_PATH) return true;
   if (matchesProductStudio(n)) return true;
   if (pathMatchesRoot(n, "/works")) return true;
+  if (pathMatchesRoot(n, "/admin/works")) return true;
   if (pathMatchesRoot(n, "/clip")) return true;
   if (pathMatchesRoot(n, "/voice")) return true;
   if (pathMatchesRoot(n, "/shownotes")) return true;
