@@ -3741,14 +3741,8 @@ def admin_usage_dashboard(
 
 
 _SITE_TRAFFIC_TZ = "Asia/Shanghai"
-_SITE_TRAFFIC_DEDUPE_SQL = "COALESCE(NULLIF(TRIM(device_visitor_id), ''), visitor_id)"
-
-
-def _site_traffic_dedupe_key(*, visitor_id: str, device_visitor_id: str | None) -> str:
-    dv = (device_visitor_id or "").strip()
-    if len(dv) >= 8:
-        return dv
-    return (visitor_id or "").strip()
+_SITE_TRAFFIC_DEVICE_SQL = "NULLIF(TRIM(device_visitor_id), '')"
+_SITE_TRAFFIC_DEVICE_FILTER = f"{_SITE_TRAFFIC_DEVICE_SQL} IS NOT NULL"
 
 
 def record_site_visitor(
@@ -3757,24 +3751,17 @@ def record_site_visitor(
     device_visitor_id: str | None = None,
     user_id: str | None = None,
 ) -> None:
-    """写入站点 UV：同一去重键（浏览器设备 ID 优先，否则 Cookie visitor_id）在上海日历日仅一条。"""
-    dedupe_key = _site_traffic_dedupe_key(
-        visitor_id=visitor_id,
-        device_visitor_id=device_visitor_id,
-    )
-    if len(dedupe_key) < 8:
+    """写入站点 UV：仅 device_visitor_id；同一设备在上海日历日仅一条。"""
+    device_vid = (device_visitor_id or "").strip()
+    if len(device_vid) < 8:
         return
-    cookie_vid = (visitor_id or "").strip()
-    if len(cookie_vid) < 8:
-        return
-    device_vid = (device_visitor_id or "").strip() or None
+    cookie_vid = (visitor_id or "").strip() or device_vid
     uid: str | None = None
     if user_id:
         try:
             uid = str(uuid.UUID(str(user_id)))
         except (ValueError, TypeError):
             uid = None
-    dedupe_expr = _SITE_TRAFFIC_DEDUPE_SQL
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
@@ -3784,12 +3771,12 @@ def record_site_visitor(
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM site_page_views
-                    WHERE ({dedupe_expr}) = %s
+                    WHERE {_SITE_TRAFFIC_DEVICE_SQL} = %s
                       AND ((created_at AT TIME ZONE %s)::date)
                           = ((NOW() AT TIME ZONE %s)::date)
                 )
                 """,
-                (cookie_vid, device_vid, uid, dedupe_key, _SITE_TRAFFIC_TZ, _SITE_TRAFFIC_TZ),
+                (cookie_vid, device_vid, uid, device_vid, _SITE_TRAFFIC_TZ, _SITE_TRAFFIC_TZ),
             )
             conn.commit()
 
@@ -3821,14 +3808,16 @@ def site_traffic_uv_stats(
             return val.isoformat()
         return str(val or "")
 
-    dedupe_expr = _SITE_TRAFFIC_DEDUPE_SQL
+    device_expr = _SITE_TRAFFIC_DEVICE_SQL
+    device_filter = _SITE_TRAFFIC_DEVICE_FILTER
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
                 f"""
-                SELECT COUNT(DISTINCT ({dedupe_expr}))::bigint AS uv
+                SELECT COUNT(DISTINCT ({device_expr}))::bigint AS uv
                 FROM site_page_views
-                WHERE ((created_at AT TIME ZONE %s)::date) = %s
+                WHERE {device_filter}
+                  AND ((created_at AT TIME ZONE %s)::date) = %s
                 """,
                 (_SITE_TRAFFIC_TZ, today_sh),
             )
@@ -3836,9 +3825,10 @@ def site_traffic_uv_stats(
 
             cur.execute(
                 f"""
-                SELECT COUNT(DISTINCT ({dedupe_expr}))::bigint AS uv
+                SELECT COUNT(DISTINCT ({device_expr}))::bigint AS uv
                 FROM site_page_views
-                WHERE ((created_at AT TIME ZONE %s)::date) = %s
+                WHERE {device_filter}
+                  AND ((created_at AT TIME ZONE %s)::date) = %s
                 """,
                 (_SITE_TRAFFIC_TZ, yesterday_sh),
             )
@@ -3846,9 +3836,10 @@ def site_traffic_uv_stats(
 
             cur.execute(
                 f"""
-                SELECT COUNT(DISTINCT ({dedupe_expr}))::bigint AS uv
+                SELECT COUNT(DISTINCT ({device_expr}))::bigint AS uv
                 FROM site_page_views
-                WHERE ((created_at AT TIME ZONE %s)::date) >= %s
+                WHERE {device_filter}
+                  AND ((created_at AT TIME ZONE %s)::date) >= %s
                   AND ((created_at AT TIME ZONE %s)::date) <= %s
                 """,
                 (_SITE_TRAFFIC_TZ, range_start, _SITE_TRAFFIC_TZ, range_end),
@@ -3858,9 +3849,10 @@ def site_traffic_uv_stats(
             cur.execute(
                 f"""
                 SELECT ((created_at AT TIME ZONE %s)::date) AS day,
-                       COUNT(DISTINCT ({dedupe_expr}))::bigint AS uv
+                       COUNT(DISTINCT ({device_expr}))::bigint AS uv
                 FROM site_page_views
-                WHERE ((created_at AT TIME ZONE %s)::date) >= %s
+                WHERE {device_filter}
+                  AND ((created_at AT TIME ZONE %s)::date) >= %s
                   AND ((created_at AT TIME ZONE %s)::date) <= %s
                 GROUP BY day
                 ORDER BY day ASC
@@ -3876,7 +3868,7 @@ def site_traffic_uv_stats(
     return {
         "timezone": _SITE_TRAFFIC_TZ,
         "dedupe": "device_visitor_id",
-        "note": "当日 UV 随访问实时累计（Asia/Shanghai）；历史日为完整自然日",
+        "note": "仅统计 device_visitor_id（不含 Cookie）；当日随访问累计",
         "today": {
             "day": today_sh.isoformat(),
             "uv": _safe_int(trow.get("uv")),

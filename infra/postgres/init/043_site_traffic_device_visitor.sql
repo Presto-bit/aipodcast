@@ -4,6 +4,6 @@ ALTER TABLE site_page_views
 
 CREATE INDEX IF NOT EXISTS idx_site_page_views_dedupe_sh_day
   ON site_page_views (
-    (COALESCE(NULLIF(TRIM(device_visitor_id), ''), visitor_id)),
+    (NULLIF(TRIM(device_visitor_id), '')),
     (((created_at AT TIME ZONE 'Asia/Shanghai')::date))
   );

@@ -799,7 +799,7 @@ export default function AdminUsagePage(): JSX.Element {
       {tab === "overview" ? (
         <>
           <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <MetricCard title="今日 UV（实时）" value={num(siteUv.today?.uv)} hint={siteUv.today?.day ? `${siteUv.today.day} · 累计中` : siteUv.note || "上海时区当日"} />
+            <MetricCard title="今日 UV（实时）" value={num(siteUv.today?.uv)} hint={siteUv.today?.day ? `${siteUv.today.day} · 仅设备 ID` : siteUv.note || "仅设备 ID"} />
             <MetricCard title="昨日 UV" value={num(siteUv.yesterday?.uv)} hint={siteUv.yesterday?.day ? `${siteUv.yesterday.day} · 完整日` : "设备 ID 去重"} />
             <MetricCard title="区间 UV" value={num(siteUv.range?.uv)} hint={siteUv.range?.date_from && siteUv.range?.date_to ? `${siteUv.range.date_from} ~ ${siteUv.range.date_to}${siteUv.range.includes_today ? " · 含今日" : ""}` : siteUv.note || ""} />
             <MetricCard title="总调用事件" value={num(overview.total_events)} />

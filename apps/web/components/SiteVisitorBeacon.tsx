@@ -67,17 +67,19 @@ function markUvSentToday(): void {
   }
 }
 
-/** 站点 UV 埋点：浏览器设备 ID 优先去重；每访客每 Shanghai 日历日最多上报一次。 */
+/** 站点 UV 埋点：仅设备 ID；每设备每 Shanghai 日历日最多上报一次。 */
 export default function SiteVisitorBeacon(): null {
   useEffect(() => {
     if (alreadySentUvToday()) return;
 
     const run = () => {
       void (async () => {
-        const visitorId = ensureVisitorId();
         const device = await getDeviceId();
-        const payload: Record<string, string> = { visitor_id: visitorId };
-        if (device) payload.device_visitor_id = device.deviceId;
+        if (!device) return;
+        const payload = {
+          visitor_id: ensureVisitorId(),
+          device_visitor_id: device.deviceId
+        };
         try {
           const res = await fetch("/api/analytics/visitor", {
             method: "POST",
