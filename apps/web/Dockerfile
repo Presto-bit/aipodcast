@@ -18,7 +18,6 @@ ARG NEXT_PUBLIC_NOTES_ASK_BFF_ORIGIN=
 ENV NEXT_PUBLIC_NOTES_ASK_BFF_ORIGIN=${NEXT_PUBLIC_NOTES_ASK_BFF_ORIGIN}
 ARG NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS=
 ENV NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS=${NEXT_PUBLIC_NOTES_ASK_CORS_ORIGINS}
-
 COPY apps/web/package.json /app/package.json
 # 多源回退：先试 NPM_REGISTRY，再国内镜像，最后官方（避免与首选重复时仍先试两遍 npmjs）
 # fetch-retry-* 收紧：单 tarball 在坏 DNS 上少耗时间，尽快进入下一 registry；每源最多约 10min（timeout）

@@ -3741,34 +3741,55 @@ def admin_usage_dashboard(
 
 
 _SITE_TRAFFIC_TZ = "Asia/Shanghai"
+_SITE_TRAFFIC_DEDUPE_SQL = "COALESCE(NULLIF(TRIM(device_visitor_id), ''), visitor_id)"
 
 
-def record_site_visitor(*, visitor_id: str, user_id: str | None = None) -> None:
-    """写入站点 UV：同一 visitor_id 在同一 Shanghai 日历日仅保留一条。"""
-    vid = (visitor_id or "").strip()
-    if len(vid) < 8:
+def _site_traffic_dedupe_key(*, visitor_id: str, device_visitor_id: str | None) -> str:
+    dv = (device_visitor_id or "").strip()
+    if len(dv) >= 8:
+        return dv
+    return (visitor_id or "").strip()
+
+
+def record_site_visitor(
+    *,
+    visitor_id: str,
+    device_visitor_id: str | None = None,
+    user_id: str | None = None,
+) -> None:
+    """写入站点 UV：同一去重键（浏览器设备 ID 优先，否则 Cookie visitor_id）在上海日历日仅一条。"""
+    dedupe_key = _site_traffic_dedupe_key(
+        visitor_id=visitor_id,
+        device_visitor_id=device_visitor_id,
+    )
+    if len(dedupe_key) < 8:
         return
+    cookie_vid = (visitor_id or "").strip()
+    if len(cookie_vid) < 8:
+        return
+    device_vid = (device_visitor_id or "").strip() or None
     uid: str | None = None
     if user_id:
         try:
             uid = str(uuid.UUID(str(user_id)))
         except (ValueError, TypeError):
             uid = None
+    dedupe_expr = _SITE_TRAFFIC_DEDUPE_SQL
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
-                """
-                INSERT INTO site_page_views (visitor_id, user_id, path)
-                SELECT %s, %s::uuid, '/'
+                f"""
+                INSERT INTO site_page_views (visitor_id, device_visitor_id, user_id, path)
+                SELECT %s, %s, %s::uuid, '/'
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM site_page_views
-                    WHERE visitor_id = %s
+                    WHERE ({dedupe_expr}) = %s
                       AND ((created_at AT TIME ZONE %s)::date)
                           = ((NOW() AT TIME ZONE %s)::date)
                 )
                 """,
-                (vid, uid, vid, _SITE_TRAFFIC_TZ, _SITE_TRAFFIC_TZ),
+                (cookie_vid, device_vid, uid, dedupe_key, _SITE_TRAFFIC_TZ, _SITE_TRAFFIC_TZ),
             )
             conn.commit()
 
@@ -3800,11 +3821,12 @@ def site_traffic_uv_stats(
             return val.isoformat()
         return str(val or "")
 
+    dedupe_expr = _SITE_TRAFFIC_DEDUPE_SQL
     with get_conn() as conn:
         with get_cursor(conn) as cur:
             cur.execute(
-                """
-                SELECT COUNT(DISTINCT visitor_id)::bigint AS uv
+                f"""
+                SELECT COUNT(DISTINCT ({dedupe_expr}))::bigint AS uv
                 FROM site_page_views
                 WHERE ((created_at AT TIME ZONE %s)::date) = %s
                 """,
@@ -3813,8 +3835,8 @@ def site_traffic_uv_stats(
             yrow = dict(cur.fetchone() or {})
 
             cur.execute(
-                """
-                SELECT COUNT(DISTINCT visitor_id)::bigint AS uv
+                f"""
+                SELECT COUNT(DISTINCT ({dedupe_expr}))::bigint AS uv
                 FROM site_page_views
                 WHERE ((created_at AT TIME ZONE %s)::date) >= %s
                   AND ((created_at AT TIME ZONE %s)::date) <= %s
@@ -3824,9 +3846,9 @@ def site_traffic_uv_stats(
             rrow = dict(cur.fetchone() or {})
 
             cur.execute(
-                """
+                f"""
                 SELECT ((created_at AT TIME ZONE %s)::date) AS day,
-                       COUNT(DISTINCT visitor_id)::bigint AS uv
+                       COUNT(DISTINCT ({dedupe_expr}))::bigint AS uv
                 FROM site_page_views
                 WHERE ((created_at AT TIME ZONE %s)::date) >= %s
                   AND ((created_at AT TIME ZONE %s)::date) <= %s
@@ -3843,7 +3865,8 @@ def site_traffic_uv_stats(
 
     return {
         "timezone": _SITE_TRAFFIC_TZ,
-        "t_plus_1_note": "不含当日（Asia/Shanghai）；完整日数据 T+1 可见",
+        "dedupe": "device_visitor_id",
+        "t_plus_1_note": "不含当日（Asia/Shanghai）；UV 按浏览器设备 ID 去重，无设备 ID 时回退 Cookie visitor_id",
         "yesterday": {
             "day": yesterday_sh.isoformat(),
             "uv": _safe_int(yrow.get("uv")),

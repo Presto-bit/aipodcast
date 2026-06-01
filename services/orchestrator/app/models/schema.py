@@ -722,11 +722,16 @@ def ensure_site_traffic_schema() -> None:
                 CREATE TABLE IF NOT EXISTS site_page_views (
                   id BIGSERIAL PRIMARY KEY,
                   visitor_id TEXT NOT NULL,
+                  device_visitor_id TEXT,
                   user_id UUID REFERENCES users(id) ON DELETE SET NULL,
                   path TEXT NOT NULL DEFAULT '/',
                   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
+            )
+            cur.execute(
+                "ALTER TABLE site_page_views "
+                "ADD COLUMN IF NOT EXISTS device_visitor_id TEXT"
             )
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_site_page_views_created ON site_page_views(created_at DESC)"
@@ -738,6 +743,13 @@ def ensure_site_traffic_schema() -> None:
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_site_page_views_sh_day "
                 "ON site_page_views(((created_at AT TIME ZONE 'Asia/Shanghai')::date))"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_site_page_views_dedupe_sh_day "
+                "ON site_page_views ("
+                "(COALESCE(NULLIF(TRIM(device_visitor_id), ''), visitor_id)), "
+                "(((created_at AT TIME ZONE 'Asia/Shanghai')::date))"
+                ")"
             )
             conn.commit()
     _site_traffic_schema_ready = True

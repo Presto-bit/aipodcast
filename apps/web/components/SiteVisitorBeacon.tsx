@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { getDeviceId } from "../lib/deviceId";
 
 const VISITOR_COOKIE = "_fym_vid";
 const VISITOR_STORAGE = "fym_visitor_id_v1";
@@ -66,32 +67,35 @@ function markUvSentToday(): void {
   }
 }
 
-/** 站点 UV 埋点：每个访客每个 Shanghai 日历日最多上报一次，不随路由切换重复请求。 */
+/** 站点 UV 埋点：浏览器设备 ID 优先去重；每访客每 Shanghai 日历日最多上报一次。 */
 export default function SiteVisitorBeacon(): null {
   useEffect(() => {
     if (alreadySentUvToday()) return;
 
-    const visitorId = ensureVisitorId();
-    const payload = JSON.stringify({ visitor_id: visitorId });
-    const send = () => {
-      void fetch("/api/analytics/visitor", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        credentials: "include",
-        body: payload,
-        keepalive: true
-      })
-        .then((res) => {
+    const run = () => {
+      void (async () => {
+        const visitorId = ensureVisitorId();
+        const device = await getDeviceId();
+        const payload: Record<string, string> = { visitor_id: visitorId };
+        if (device) payload.device_visitor_id = device.deviceId;
+        try {
+          const res = await fetch("/api/analytics/visitor", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify(payload),
+            keepalive: true
+          });
           if (res.ok) markUvSentToday();
-        })
-        .catch(() => {
+        } catch {
           // 埋点失败不影响主流程
-        });
+        }
+      })();
     };
     if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      window.requestIdleCallback(send, { timeout: 2000 });
+      window.requestIdleCallback(run, { timeout: 5000 });
     } else {
-      setTimeout(send, 300);
+      setTimeout(run, 300);
     }
   }, []);
 
