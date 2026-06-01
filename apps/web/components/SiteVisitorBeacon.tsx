@@ -5,7 +5,8 @@ import { getDeviceId } from "../lib/deviceId";
 
 const VISITOR_COOKIE = "_fym_vid";
 const VISITOR_STORAGE = "fym_visitor_id_v1";
-const UV_SENT_DAY_KEY = "fym_uv_sent_sh_day_v1";
+/** v2：仅 device_visitor_id 计 UV 后需重新上报（v1 可能已误标今日已发送） */
+const UV_SENT_DAY_KEY = "fym_uv_sent_sh_day_v2";
 const SITE_TRAFFIC_TZ = "Asia/Shanghai";
 
 function readCookie(name: string): string {
@@ -74,11 +75,10 @@ export default function SiteVisitorBeacon(): null {
 
     const run = () => {
       void (async () => {
-        const device = await getDeviceId();
-        if (!device) return;
+        const { deviceId } = await getDeviceId();
         const payload = {
           visitor_id: ensureVisitorId(),
-          device_visitor_id: device.deviceId
+          device_visitor_id: deviceId
         };
         try {
           const res = await fetch("/api/analytics/visitor", {
@@ -90,12 +90,12 @@ export default function SiteVisitorBeacon(): null {
           });
           if (res.ok) markUvSentToday();
         } catch {
-          // 埋点失败不影响主流程
+          // 埋点失败不影响主流程；未标记已发送，下次进页可重试
         }
       })();
     };
     if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      window.requestIdleCallback(run, { timeout: 5000 });
+      window.requestIdleCallback(run, { timeout: 8000 });
     } else {
       setTimeout(run, 300);
     }
