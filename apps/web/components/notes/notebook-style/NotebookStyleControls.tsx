@@ -124,6 +124,7 @@ export function NotebookStyleControls({
       setItem(null);
       return;
     }
+    setItem(null);
     setLoading(true);
     try {
       const found = await fetchAuthorIpByNotebook(nb);
@@ -137,6 +138,7 @@ export function NotebookStyleControls({
   }, [nb, onError]);
 
   useEffect(() => {
+    setModalOpen(false);
     void load();
   }, [load]);
 
@@ -220,6 +222,8 @@ export function NotebookStyleControls({
         syncStatus={syncStatus}
         selectedCount={selectedCount}
         busy={busy}
+        loading={loading}
+        readOnly={readOnly}
         onClose={() => setModalOpen(false)}
         onLearn={() => void runLearn()}
         onItemUpdated={(updated) => {

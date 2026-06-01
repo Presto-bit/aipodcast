@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AuthorIpCompactModal from "../author-ip/AuthorIpCompactModal";
-import { patchAuthorIp, type AuthorIpItem } from "../../../lib/authorIp";
+import { ensureAuthorIpForNotebook, patchAuthorIp, type AuthorIpItem } from "../../../lib/authorIp";
 import {
   buildStyleSummaryChips,
   buildStyleSummaryText,
@@ -19,6 +19,8 @@ type Props = {
   syncStatus: StyleSyncStatus;
   selectedCount: number;
   busy: boolean;
+  loading?: boolean;
+  readOnly?: boolean;
   onClose: () => void;
   onLearn: () => void;
   onItemUpdated: (item: AuthorIpItem) => void;
@@ -31,6 +33,8 @@ export default function NotebookStyleModal({
   syncStatus,
   selectedCount,
   busy,
+  loading = false,
+  readOnly = false,
   onClose,
   onLearn,
   onItemUpdated
@@ -61,11 +65,19 @@ export default function NotebookStyleModal({
   }, [open]);
 
   useEffect(() => {
+    setRenaming(false);
+    setRenameError(null);
+  }, [notebookName]);
+
+  useEffect(() => {
     setRenameDraft(styleTitle);
   }, [styleTitle, open]);
 
+  const renameBlocked = readOnly || Boolean(item?.isReadOnly);
+  const renameDisabled = busy || loading || renameSaving;
+
   const submitRename = async () => {
-    if (!item || item.isReadOnly) return;
+    if (renameBlocked) return;
     const name = renameDraft.trim();
     if (!name) {
       setRenameError("名称不能为空");
@@ -79,7 +91,16 @@ export default function NotebookStyleModal({
     setRenameError(null);
     setRenameSaving(true);
     try {
-      const updated = await patchAuthorIp(item.id, { displayName: name });
+      const nb = notebookName.trim();
+      let ip = item;
+      if (!ip?.id || (ip.notebookName || "").trim() !== nb) {
+        ip = await ensureAuthorIpForNotebook(nb);
+      }
+      if (ip.isReadOnly) {
+        setRenameError("该风格为只读，无法改名");
+        return;
+      }
+      const updated = await patchAuthorIp(ip.id, { displayName: name });
       onItemUpdated(updated);
       setRenaming(false);
     } catch (e) {
@@ -128,14 +149,14 @@ export default function NotebookStyleModal({
         </div>
 
         <div className="flex flex-wrap items-start justify-between gap-2">
-          {renaming && item && !item.isReadOnly ? (
+          {renaming && !renameBlocked ? (
             <div className="min-w-0 flex-1">
               <input
                 type="text"
                 className="w-full rounded-lg border border-line bg-fill px-2 py-1.5 text-sm text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
                 value={renameDraft}
                 maxLength={120}
-                disabled={busy || renameSaving}
+                disabled={renameDisabled}
                 onChange={(e) => setRenameDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void submitRename();
@@ -151,7 +172,7 @@ export default function NotebookStyleModal({
                 <button
                   type="button"
                   className="text-xs font-medium text-brand hover:underline disabled:opacity-50"
-                  disabled={busy || renameSaving}
+                  disabled={renameDisabled}
                   onClick={() => void submitRename()}
                 >
                   {renameSaving ? "保存中…" : "保存"}
@@ -159,7 +180,7 @@ export default function NotebookStyleModal({
                 <button
                   type="button"
                   className="text-xs text-muted hover:text-ink"
-                  disabled={busy || renameSaving}
+                  disabled={renameDisabled}
                   onClick={() => {
                     setRenaming(false);
                     setRenameDraft(styleTitle);
@@ -173,11 +194,11 @@ export default function NotebookStyleModal({
           ) : (
             <>
               <p className="min-w-0 flex-1 text-sm font-semibold text-ink">{styleTitle}</p>
-              {item && !item.isReadOnly ? (
+              {!renameBlocked ? (
                 <button
                   type="button"
-                  className="shrink-0 text-xs text-muted hover:text-brand"
-                  disabled={busy}
+                  className="shrink-0 text-xs text-muted hover:text-brand disabled:opacity-50"
+                  disabled={renameDisabled}
                   onClick={() => setRenaming(true)}
                 >
                   改名

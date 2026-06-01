@@ -409,6 +409,8 @@ def patch_author_ip(
             row = cur.fetchone()
             if not row:
                 return None, "IP 不存在"
+            if bool(row.get("is_read_only")):
+                return None, "该风格为只读，无法修改"
             if display_name is not None:
                 name = str(display_name).strip()
                 if not name:

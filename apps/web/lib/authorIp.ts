@@ -56,7 +56,11 @@ export async function ensureAuthorIpForNotebook(notebookName: string): Promise<A
   if (!res.ok) {
     throw new Error(String((data as { detail?: string }).detail || "创建风格失败"));
   }
-  return (data as { item: AuthorIpItem }).item;
+  const item = (data as { item?: AuthorIpItem }).item;
+  if (!item?.id) {
+    throw new Error(apiErrorMessage(data, "创建风格失败：服务未返回有效数据"));
+  }
+  return item;
 }
 
 export async function learnAuthorIp(
