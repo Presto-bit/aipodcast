@@ -555,16 +555,13 @@ export default function HomeComposerPage({
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-hidden">
           <div
-            className="flex min-h-0 w-full flex-1 flex-col overflow-hidden"
+            className={[
+              "flex min-h-0 w-full flex-1 flex-col overflow-hidden",
+              hasSent ? "" : "items-center justify-center gap-6"
+            ].join(" ")}
             style={{ maxWidth: COMPOSER_CONTENT_MAX_W }}
           >
-            {!hasSent ? (
-              <div className="flex flex-1 items-center justify-center pb-4">
-                <h1 className="w-full shrink-0 text-center text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
-                  聊想法，复制就能发
-                </h1>
-              </div>
-            ) : (
+            {hasSent ? (
               <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-4 pt-1">
                 {session.turns.map((turn) => (
                   <div key={turn.id} className="space-y-5">
@@ -597,15 +594,25 @@ export default function HomeComposerPage({
                   </div>
                 ))}
               </div>
+            ) : (
+              <h1 className="w-full shrink-0 text-center text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+                聊想法，复制就能发
+              </h1>
             )}
 
             {error ? (
-              <p className="mb-2 w-full shrink-0 text-sm text-danger-ink" role="alert">
+              <p className="w-full shrink-0 text-sm text-danger-ink" role="alert">
                 {error}
               </p>
             ) : null}
 
-            <div ref={composerRootRef} className="relative z-10 w-full shrink-0 overflow-visible pt-2">
+            <div
+              ref={composerRootRef}
+              className={[
+                "relative z-10 w-full shrink-0 overflow-visible",
+                hasSent ? "pt-2" : ""
+              ].join(" ")}
+            >
               <ComposerShell
                 value={input}
                 onChange={setInput}
