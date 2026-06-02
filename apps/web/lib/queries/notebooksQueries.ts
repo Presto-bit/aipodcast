@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { NotebookCoverMeta } from "../../components/notes/notesNotebookTypes";
 import type { NotebookSharingRow } from "../../components/notes/notesNotebookTypes";
 
@@ -42,7 +42,8 @@ export function useNotebooksHubQuery(getAuthHeaders: () => Record<string, string
     queryKey: NOTEBOOKS_HUB_QUERY_KEY,
     queryFn: () => fetchNotebooksHub(getAuthHeaders()),
     enabled,
-    staleTime: 60_000
+    staleTime: 60_000,
+    placeholderData: keepPreviousData
   });
 }
 

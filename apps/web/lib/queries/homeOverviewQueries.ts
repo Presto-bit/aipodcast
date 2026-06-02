@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiErrorMessage } from "../apiError";
 import { countUserVisibleActiveJobs } from "../activeJobsVisible";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../worksTypes";
@@ -110,7 +110,8 @@ export function useHomeOverviewQuery(
     queryKey: key,
     queryFn: () => fetchHomeOverview(getAuthHeaders()),
     enabled: enabled && Boolean(accountKey),
-    staleTime: 60_000
+    staleTime: 60_000,
+    placeholderData: keepPreviousData
   });
 }
 

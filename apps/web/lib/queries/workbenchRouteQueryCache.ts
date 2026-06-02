@@ -1,6 +1,7 @@
 "use client";
 
 import type { QueryClient } from "@tanstack/react-query";
+import { routeHasWarmChunks, routeIsPrefetched } from "../navPrefetch";
 import { matchesProductStudio, normalizePathname, WORKBENCH_HOME_PATH } from "../navPaths";
 import { NOTEBOOKS_HUB_QUERY_KEY } from "./notebooksQueries";
 import { worksListQueryKey } from "./worksQueries";
@@ -40,5 +41,26 @@ export function routeHasWarmQueryCache(queryClient: QueryClient, hrefOrPath: str
     return hasSuccess(["subscription-plans"]);
   }
 
+  if (path === "/drafts" || path.startsWith("/drafts/")) {
+    return routeIsPrefetched(path);
+  }
+
+  if (path === "/clip" || path.startsWith("/clip/")) {
+    return routeHasWarmChunks(path);
+  }
+
+  if (path === "/voice" || path.startsWith("/voice/")) {
+    return routeHasWarmChunks(path);
+  }
+
   return false;
+}
+
+/** 数据缓存、chunk 预取或路由 prefetch 任一就绪即视为可即时切换。 */
+export function routeHasWarmRouteCache(queryClient: QueryClient, hrefOrPath: string): boolean {
+  const path = normalizePathname(String(hrefOrPath || "").split("?")[0] || hrefOrPath);
+  if (!path) return false;
+  if (routeHasWarmQueryCache(queryClient, path)) return true;
+  if (routeHasWarmChunks(path)) return true;
+  return routeIsPrefetched(path);
 }

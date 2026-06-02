@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ComponentProps, MouseEvent } from "react";
-import { matchesNotesWorkbench, normalizePathname, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
+import { normalizePathname, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
 import { prefetchWorkbenchRoute } from "../../lib/navPrefetch";
 import { useWorkbenchNavOptional } from "../../lib/WorkbenchNavContext";
 import { dispatchWorkbenchDismissOverlays } from "../../lib/workbenchOverlays";
@@ -11,8 +11,7 @@ import { dispatchWorkbenchDismissOverlays } from "../../lib/workbenchOverlays";
 type SidebarNavLinkProps = Omit<ComponentProps<typeof Link>, "prefetch">;
 
 /**
- * 侧栏专用导航：pointerdown 先关遮罩；软路由点击即标记 navPending。
- * 离开知识库工作台时用原生 `<a>` 整页跳转——NotesPageMain 会阻塞 Next 软路由。
+ * 侧栏专用导航：pointerdown 先关遮罩；软路由点击即标记 navPending（有 warm cache 时由 AppShell 跳过 overlay）。
  */
 export default function SidebarNavLink({
   href,
@@ -29,7 +28,6 @@ export default function SidebarNavLink({
   const hrefStr = typeof href === "string" ? href : String(href);
   const target = normalizePathname(hrefStr.split("?")[0] || hrefStr);
   const current = normalizePathname(pathname);
-  const useNativeAnchor = matchesNotesWorkbench(pathname) && target !== current;
 
   const handlePointerDown: SidebarNavLinkProps["onPointerDown"] = (e) => {
     dispatchWorkbenchDismissOverlays();
@@ -54,25 +52,8 @@ export default function SidebarNavLink({
     if (e.defaultPrevented) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     if (target === current) return;
-    if (!useNativeAnchor) {
-      workbenchNav?.beginWorkbenchNav(hrefStr);
-    }
+    workbenchNav?.beginWorkbenchNav(hrefStr);
   };
-
-  if (useNativeAnchor) {
-    return (
-      <a
-        href={hrefStr}
-        onPointerDown={handlePointerDown}
-        onMouseEnter={handleMouseEnter}
-        onFocus={handleFocus}
-        onClick={onClick}
-        {...rest}
-      >
-        {children}
-      </a>
-    );
-  }
 
   return (
     <Link

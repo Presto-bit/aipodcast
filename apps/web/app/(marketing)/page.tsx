@@ -1,74 +1,14 @@
-"use client";
-
-import Image from "next/image";
 import Link from "next/link";
-import type { ReactNode } from "react";
-import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import BrandGlyph from "../../components/brand/BrandGlyph";
+import MarketingAuthNav from "../../components/marketing/MarketingAuthNav";
 import MarketingFeatureCard from "../../components/marketing/MarketingFeatureCard";
+import MarketingStaticImage from "../../components/marketing/MarketingStaticImage";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
-import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
-
-type FeatureCard = {
-  title: string;
-  imageSrc: string;
-  imageAlt: string;
-  body: ReactNode;
-};
-
-const FEATURE_CARDS: FeatureCard[] = [
-  {
-    title: "多源资料处理",
-    imageSrc: "/marketing/features/sources.webp",
-    imageAlt: "多源资料处理：电子书、文档、网页等汇入 PrestoAI，提炼要点并串联主题",
-    body: (
-      <>
-        常见格式一次接入，要点与主题自动串联；回答与延伸内容
-        <strong className="font-medium text-ink">严格 grounded 在你的资料</strong>，不凭空编造。
-      </>
-    )
-  },
-  {
-    title: "规避 AI 幻觉",
-    imageSrc: "/marketing/features/citation.webp",
-    imageAlt: "规避 AI 幻觉：回答附带 PDF、文档、网页等来源引用，便于核对",
-    body: (
-      <>
-        关键结论带可点击的<strong className="font-medium text-ink">来源标注</strong>
-        ，从生成到核对一条链路，把可解释性写进日常工作流。
-      </>
-    )
-  },
-  {
-    title: "多种输出格式",
-    imageSrc: "/marketing/features/formats.webp",
-    imageAlt: "多种输出格式：同一批资料可生成播客、Shownotes、文章与小红书等平台内容",
-    body: (
-      <>
-        同一批资料可分支为播客、Shownotes、长文与
-        <strong className="font-medium text-ink">小红书等平台博文</strong>，少在格式转换上反复折腾。
-      </>
-    )
-  },
-  {
-    title: "多角色与播客级成片",
-    imageSrc: "/marketing/features/podcast.webp",
-    imageAlt: "多角色与播客级成片：多轨配音、片头片尾与可发布成品",
-    body: (
-      <>
-        多角色配音与播客向编排，从「能写」到<strong className="font-medium text-ink">能听、能发</strong>
-        ；减少在多套工具间导出、重剪的来回。
-      </>
-    )
-  }
-];
+import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 
 const REGISTER_HREF = `/register?returnTo=${encodeURIComponent(WORKBENCH_HOME_PATH)}`;
 
 export default function MarketingLandingPage() {
-  const { ready, authRequired, user } = useAuth();
-  const loggedIn = ready && authRequired && isLoggedInAccountUser(user);
-
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-canvas text-ink">
       <div
@@ -84,40 +24,7 @@ export default function MarketingLandingPage() {
           <BrandGlyph size={56} className="rounded-xl shadow-soft" />
           <span className="text-base font-semibold tracking-tight sm:text-lg">灵感不设限，创作即刻起</span>
         </Link>
-        <nav className="flex flex-wrap items-center justify-end gap-2 sm:gap-3" aria-label="营销页导航">
-          <Link
-            href="/subscription"
-            prefetch={false}
-            className="text-sm font-medium text-muted transition hover:text-ink"
-          >
-            套餐与余额
-          </Link>
-          {loggedIn ? (
-            <Link
-              href={WORKBENCH_HOME_PATH}
-              className="inline-flex items-center rounded-lg bg-cta px-3.5 py-2 text-sm font-medium text-cta-foreground shadow-soft transition hover:bg-cta/90 sm:px-4"
-            >
-              进入工作台
-            </Link>
-          ) : (
-            <>
-              <Link
-                href={`/login?returnTo=${encodeURIComponent(WORKBENCH_HOME_PATH)}`}
-                prefetch={false}
-                className="text-sm font-medium text-muted transition hover:text-ink"
-              >
-                登录
-              </Link>
-              <Link
-                href={REGISTER_HREF}
-                prefetch={false}
-                className="inline-flex items-center rounded-lg bg-cta px-3.5 py-2 text-sm font-medium text-cta-foreground shadow-soft transition hover:bg-cta/90 sm:px-4"
-              >
-                注册
-              </Link>
-            </>
-          )}
-        </nav>
+        <MarketingAuthNav />
       </header>
 
       <main className="relative z-[1] mx-auto max-w-6xl px-4 pb-20 sm:px-6 sm:pb-28">
@@ -148,24 +55,15 @@ export default function MarketingLandingPage() {
                 工作台首页
               </Link>
             </div>
-
-            {!ready ? (
-              <p className="mt-6 text-xs text-muted lg:text-left" aria-live="polite">
-                正在加载账号状态…
-              </p>
-            ) : null}
           </div>
           <div className="mx-auto w-3/4 lg:mx-0 lg:w-full">
-            <Image
+            <MarketingStaticImage
               src="/marketing/hero.webp"
               alt="PrestoAI：多格式资料输入，经 AI 分析后输出文章、播客、摘要等内容"
               width={1200}
               height={658}
               priority
-              fetchPriority="high"
-              quality={85}
-              sizes="(max-width: 1024px) 75vw, 900px"
-              className="h-auto w-full rounded-2xl border border-line/90 bg-surface/95 shadow-[0_24px_48px_-12px_rgba(15,23,42,0.18)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.45)]"
+              className="rounded-2xl border border-line/90 bg-surface/95 shadow-[0_24px_48px_-12px_rgba(15,23,42,0.18)] dark:shadow-[0_24px_48px_-12px_rgba(0,0,0,0.45)]"
             />
           </div>
         </section>
@@ -182,17 +80,12 @@ export default function MarketingLandingPage() {
           </h2>
           <div className="mt-8 flex justify-center">
             <div className="w-full max-w-2xl sm:max-w-3xl lg:max-w-4xl">
-              <Image
+              <MarketingStaticImage
                 src="/marketing/scenario-cards.webp"
                 alt="典型场景：播客创作者、知识博主、个人知识库"
                 width={960}
                 height={407}
-                loading="lazy"
-                fetchPriority="low"
-                decoding="async"
-                quality={85}
-                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 896px"
-                className="h-auto w-full rounded-2xl border border-line/80 shadow-soft"
+                className="rounded-2xl border border-line/80 shadow-soft"
               />
             </div>
           </div>
@@ -206,15 +99,51 @@ export default function MarketingLandingPage() {
             核心能力
           </h2>
           <div className="mt-8 flex flex-col gap-12 sm:gap-14">
-            {FEATURE_CARDS.map((card) => (
-              <MarketingFeatureCard
-                key={card.title}
-                title={card.title}
-                body={card.body}
-                imageSrc={card.imageSrc}
-                imageAlt={card.imageAlt}
-              />
-            ))}
+            <MarketingFeatureCard
+              title="多源资料处理"
+              imageSrc="/marketing/features/sources.webp"
+              imageAlt="多源资料处理：电子书、文档、网页等汇入 PrestoAI，提炼要点并串联主题"
+              imagePriority
+              body={
+                <>
+                  常见格式一次接入，要点与主题自动串联；回答与延伸内容
+                  <strong className="font-medium text-ink">严格 grounded 在你的资料</strong>，不凭空编造。
+                </>
+              }
+            />
+            <MarketingFeatureCard
+              title="规避 AI 幻觉"
+              imageSrc="/marketing/features/citation.webp"
+              imageAlt="规避 AI 幻觉：回答附带 PDF、文档、网页等来源引用，便于核对"
+              body={
+                <>
+                  关键结论带可点击的<strong className="font-medium text-ink">来源标注</strong>
+                  ，从生成到核对一条链路，把可解释性写进日常工作流。
+                </>
+              }
+            />
+            <MarketingFeatureCard
+              title="多种输出格式"
+              imageSrc="/marketing/features/formats.webp"
+              imageAlt="多种输出格式：同一批资料可生成播客、Shownotes、文章与小红书等平台内容"
+              body={
+                <>
+                  同一批资料可分支为播客、Shownotes、长文与
+                  <strong className="font-medium text-ink">小红书等平台博文</strong>，少在格式转换上反复折腾。
+                </>
+              }
+            />
+            <MarketingFeatureCard
+              title="多角色与播客级成片"
+              imageSrc="/marketing/features/podcast.webp"
+              imageAlt="多角色与播客级成片：多轨配音、片头片尾与可发布成品"
+              body={
+                <>
+                  多角色配音与播客向编排，从「能写」到<strong className="font-medium text-ink">能听、能发</strong>
+                  ；减少在多套工具间导出、重剪的来回。
+                </>
+              }
+            />
           </div>
         </section>
       </main>

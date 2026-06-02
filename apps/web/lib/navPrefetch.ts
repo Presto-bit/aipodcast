@@ -20,8 +20,36 @@ export const WORKBENCH_SIDEBAR_IDLE_ROUTES = [
   "/trash"
 ] as const;
 
+/** 登录后立即预取的高频入口（不等 idle） */
+export const WORKBENCH_LOGIN_PREFETCH_ROUTES = [
+  WORKBENCH_HOME_PATH,
+  "/notes",
+  "/create",
+  "/works"
+] as const;
+
 const prefetchedRoutes = new Set<string>();
 const warmedChunkIds = new Set<string>();
+
+/** 路由是否已通过 router.prefetch 或 idle 预取标记 */
+export function routeIsPrefetched(hrefOrPath: string): boolean {
+  const path = normalizePathname(String(hrefOrPath || "").split("?")[0] || hrefOrPath);
+  return Boolean(path) && prefetchedRoutes.has(path);
+}
+
+/** 重 chunk 是否已 warm（用于跳过 navPending 全屏骨架） */
+const ROUTE_WARM_CHUNK_IDS: Record<string, readonly string[]> = {
+  "/clip": ["clip-hub"],
+  "/voice": ["voice-clone", "voice-my", "voice-persona"]
+};
+
+export function routeHasWarmChunks(hrefOrPath: string): boolean {
+  const path = normalizePathname(String(hrefOrPath || "").split("?")[0] || hrefOrPath);
+  if (!path) return false;
+  const chunkIds = ROUTE_WARM_CHUNK_IDS[path];
+  if (!chunkIds?.length) return routeIsPrefetched(path);
+  return chunkIds.every((id) => warmedChunkIds.has(id));
+}
 
 function warmChunk(id: string, loader: () => Promise<unknown>) {
   if (warmedChunkIds.has(id)) return;
@@ -54,6 +82,14 @@ export function warmWorkbenchRouteChunks(href: string) {
   }
   if (path === "/clip") {
     warmChunk("clip-hub", () => import("../components/clip/ClipHub"));
+  }
+  if (path === "/voice" || path.startsWith("/voice/")) {
+    warmChunk("voice-clone", () => import("../components/voice/VoiceClonePanel"));
+    warmChunk("voice-my", () => import("../components/voice/MyVoicesPanel"));
+    warmChunk("voice-persona", () => import("../components/voice/UserTemplatesPanel"));
+  }
+  if (path === "/drafts" || path.startsWith("/drafts/")) {
+    warmChunk("drafts-page", () => import("../app/(workbench)/drafts/page"));
   }
 }
 

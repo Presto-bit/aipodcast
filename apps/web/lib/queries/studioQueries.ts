@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { WorkItem } from "../worksTypes";
 import { useWorksListQuery } from "./worksQueries";
@@ -49,7 +49,8 @@ export function useStudioBootstrap(getAuthHeaders: () => Record<string, string>,
     queryKey: ["studio-bootstrap"],
     queryFn: () => fetchStudioBootstrap(getAuthHeaders()),
     enabled: loggedIn,
-    staleTime: 60_000
+    staleTime: 60_000,
+    placeholderData: keepPreviousData
   });
 }
 

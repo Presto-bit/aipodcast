@@ -11,5 +11,10 @@ export const metadata: Metadata = {
 export const revalidate = 3600;
 
 export default function MarketingLayout({ children }: { children: ReactNode }) {
-  return children;
+  return (
+    <>
+      <link rel="preload" as="image" href="/marketing/hero.webp" fetchPriority="high" />
+      {children}
+    </>
+  );
 }

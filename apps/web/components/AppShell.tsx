@@ -48,8 +48,8 @@ import NotesNavExpanded from "./notes/NotesNavExpanded";
 import SidebarNavLink from "./nav/SidebarNavLink";
 import WorkbenchRouteFallback from "./nav/WorkbenchRouteFallback";
 import { WorkbenchNavContext } from "../lib/WorkbenchNavContext";
-import { routeHasWarmQueryCache } from "../lib/queries/workbenchRouteQueryCache";
-import { prefetchWorkbenchRoute, prefetchWorkbenchSidebarIdle } from "../lib/navPrefetch";
+import { routeHasWarmRouteCache } from "../lib/queries/workbenchRouteQueryCache";
+import { prefetchWorkbenchRoute, prefetchWorkbenchSidebarIdle, WORKBENCH_LOGIN_PREFETCH_ROUTES } from "../lib/navPrefetch";
 import {
   dispatchWorkbenchDismissOverlays,
   WORKBENCH_MOBILE_FAB_Z_CLASS,
@@ -283,6 +283,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const navPendingHrefRef = useRef<string | null>(null);
   const pathRef = useRef(path);
   const sidebarIdlePrefetchedRef = useRef(false);
+  const loginPrefetchDoneRef = useRef(false);
 
   const clearNavPending = useCallback(() => {
     navPendingTargetRef.current = null;
@@ -312,11 +313,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       if (shouldKeepSidebarExpanded(target)) {
         expandSidebar();
       }
+      if (routeHasWarmRouteCache(queryClient, target)) {
+        return;
+      }
       navPendingTargetRef.current = target;
       navPendingHrefRef.current = href;
       setNavPending(true);
     },
-    [expandSidebar]
+    [expandSidebar, queryClient]
   );
 
   useEffect(() => {
@@ -328,14 +332,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const target = navPendingTargetRef.current;
     const current = normalizePathname(path);
     if (target && (current === target || current.startsWith(`${target}/`))) {
-      const delay = routeHasWarmQueryCache(queryClient, target) ? 0 : 180;
+      const delay = routeHasWarmRouteCache(queryClient, target) ? 0 : 180;
       const timer = window.setTimeout(() => clearNavPending(), delay);
       return () => window.clearTimeout(timer);
     }
   }, [path, navPending, clearNavPending, queryClient]);
 
   const navPendingTarget = navPending ? navPendingTargetRef.current : null;
-  const showNavPendingOverlay = navPending && Boolean(navPendingTarget);
+  const showNavPendingOverlay =
+    navPending &&
+    Boolean(navPendingTarget) &&
+    !routeHasWarmRouteCache(queryClient, navPendingTarget ?? "");
   /** 一级入口（知识库/创作/作品）及跳转途中：渲染层强制宽轨，避免 collapsed 状态滞后一帧 */
   const forceSidebarExpanded =
     shouldKeepSidebarExpanded(path) ||
@@ -365,6 +372,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }, 12_000);
     return () => window.clearTimeout(timer);
   }, [navPending, clearNavPending]);
+
+  useEffect(() => {
+    if (!ready || !loggedIn || loginPrefetchDoneRef.current) return;
+    loginPrefetchDoneRef.current = true;
+    for (const route of WORKBENCH_LOGIN_PREFETCH_ROUTES) {
+      prefetchWorkbenchRoute(router, route);
+    }
+  }, [ready, loggedIn, router]);
 
   useEffect(() => {
     if (!ready || isMarketingShellLessPath(path) || sidebarIdlePrefetchedRef.current) return;

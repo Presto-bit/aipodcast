@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { mergeUserFacingWorksByRecency, type WorkItem } from "../worksTypes";
 
 export type WorksApiPayload = {
@@ -69,7 +69,8 @@ export function useWorksListQuery(
     queryKey: worksListQueryKey(limit, offset),
     queryFn: () => fetchWorksPage(getAuthHeaders(), { limit, offset }),
     enabled: loggedIn,
-    staleTime: 60_000
+    staleTime: 60_000,
+    placeholderData: keepPreviousData
   });
 }
 
