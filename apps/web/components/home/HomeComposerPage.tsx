@@ -25,7 +25,7 @@ import {
   appendHomeComposerTurn,
   createHomeComposerSession,
   deleteHomeComposerSession,
-  loadHomeComposerStore,
+  openHomeComposerOnPageEntry,
   patchActiveHomeComposerSession,
   saveHomeComposerStore,
   selectHomeComposerSession,
@@ -53,6 +53,7 @@ import { fetchAuthorIpByNotebook } from "../../lib/authorIp";
 import { isUserPersonaStyleTemplateCategory } from "../../lib/creativeTemplates";
 import { listUserTemplates } from "../../lib/userTemplates";
 import { useNotebooksHubQuery } from "../../lib/queries/notebooksQueries";
+import { maxNotesForReference } from "../../lib/noteReferenceLimits";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../../lib/userScopedStorage";
 
 const HOME_COMPOSER_SIDEBAR_COLLAPSED_KEY = "fym_home_composer_sidebar_collapsed_v1";
@@ -139,10 +140,11 @@ export default function HomeComposerPage({
     [store?.activeSessionId]
   );
   const selectedStyle = styleTemplates.find((t) => t.id === prefs?.styleTemplateId) ?? null;
+  const styleUsesNotebookDefault = kbOn && !selectedStyle;
   const [notebookStylePrompt, setNotebookStylePrompt] = useState("");
 
   useEffect(() => {
-    setStore(loadHomeComposerStore());
+    setStore(openHomeComposerOnPageEntry());
   }, []);
 
   useEffect(() => {
@@ -179,7 +181,7 @@ export default function HomeComposerPage({
       return;
     }
     setNotesLoading(true);
-    const q = new URLSearchParams({ notebook: nb, limit: "120" });
+    const q = new URLSearchParams({ notebook: nb, limit: String(maxNotesForReference()) });
     void fetch(`/api/notes?${q}`, { credentials: "same-origin", headers: getAuthHeaders() })
       .then((res) => res.json())
       .then((data: { notes?: NoteRow[] }) => setNotes(Array.isArray(data.notes) ? data.notes : []))
@@ -215,14 +217,28 @@ export default function HomeComposerPage({
     });
   }, []);
 
+  useEffect(() => {
+    const nb = prefs?.notebook?.trim();
+    if (!nb || notesLoading || !store) return;
+    const allIds = notes.map((n) => n.noteId).filter(Boolean);
+    if (!allIds.length) {
+      if ((prefs?.noteIds?.length ?? 0) > 0) persistPrefs({ noteIds: [] });
+      return;
+    }
+    const cur = prefs?.noteIds ?? [];
+    const same = cur.length === allIds.length && allIds.every((id) => cur.includes(id));
+    if (!same) persistPrefs({ noteIds: allIds });
+  }, [prefs?.notebook, prefs?.noteIds, notes, notesLoading, store, persistPrefs]);
+
   const showCopyToast = useCallback((msg: string) => {
     setCopyToast(msg);
     window.setTimeout(() => setCopyToast(""), 2600);
   }, []);
 
   const resolveStylePrompt = useCallback(() => {
-    if (kbOn) return notebookStylePrompt;
-    return selectedStyle?.textPrefix?.trim() || "";
+    const templateStyle = selectedStyle?.textPrefix?.trim() || "";
+    if (kbOn) return templateStyle || notebookStylePrompt;
+    return templateStyle;
   }, [kbOn, notebookStylePrompt, selectedStyle]);
 
   const resolveAuthorPrompt = useCallback(() => {
@@ -247,16 +263,12 @@ export default function HomeComposerPage({
       askAbortRef.current = abort;
 
       const turnId = crypto.randomUUID();
-      const initialFormats: Partial<Record<HomeComposerFormat, HomeComposerFormatResult>> = {};
-      for (const f of prefs?.formats ?? []) {
-        initialFormats[f] = { status: "pending" };
-      }
 
       const turn: HomeComposerTurn = {
         id: turnId,
         userText: q,
         general: { content: "", streaming: true, streamingPhase: "正在连接…" },
-        formats: initialFormats,
+        formats: {},
         createdAt: Date.now()
       };
 
@@ -447,12 +459,6 @@ export default function HomeComposerPage({
     setOpenMenu("");
   }
 
-  function toggleNote(noteId: string) {
-    const cur = prefs?.noteIds ?? [];
-    const next = cur.includes(noteId) ? cur.filter((x) => x !== noteId) : [...cur, noteId];
-    persistPrefs({ noteIds: next });
-  }
-
   function savePersonal() {
     persistPrefs({
       personalProfile: { ...personalDraft },
@@ -506,11 +512,13 @@ export default function HomeComposerPage({
   if (prefs?.formats?.length) {
     statusParts.push(`输出格式 · ${prefs.formats.map((f) => HOME_COMPOSER_FORMAT_LABELS[f]).join("、")}`);
   }
-  if (kbOn && (prefs?.noteIds?.length ?? 0) > 0) {
-    statusParts.push(`知识库 · ${prefs!.notebook} · ${prefs!.noteIds.length} 条`);
+  if (kbOn) {
+    statusParts.push(`知识库 · ${prefs!.notebook} · 全部资料`);
   }
-  if (!kbOn && selectedStyle) {
+  if (selectedStyle) {
     statusParts.push(`写作风格 · ${selectedStyle.label}`);
+  } else if (styleUsesNotebookDefault) {
+    statusParts.push("写作风格 · 笔记本");
   }
   if (prefs?.personalEnabled && prefs.personalProfile) {
     statusParts.push("个人特色");
@@ -529,12 +537,12 @@ export default function HomeComposerPage({
 
   return (
     <main
-      className="relative mx-auto flex min-h-0 w-full flex-col px-3 pb-8 pt-2 sm:px-4"
+      className="relative mx-auto flex h-[calc(100svh-3.5rem)] min-h-0 w-full flex-col overflow-hidden px-3 pb-3 pt-2 sm:h-svh sm:max-h-svh sm:px-4 sm:pb-4"
       style={{ maxWidth: COMPOSER_OUTER_MAX_W }}
     >
       {copyToast ? <ComposerCopyToast message={copyToast} /> : null}
 
-      <div className="flex w-full min-h-0 flex-1 gap-3" style={{ minHeight: hasSent ? 420 : undefined }}>
+      <div className="flex min-h-0 w-full flex-1 gap-3">
         <SessionHistorySidebar
           collapsed={sidebarCollapsed}
           sessions={sessionListItems}
@@ -545,23 +553,19 @@ export default function HomeComposerPage({
           onDeleteSession={(id) => setStore(deleteHomeComposerSession(store, id))}
         />
 
-        <div
-          className={[
-            "flex min-w-0 flex-1 flex-col items-center overflow-visible",
-            hasSent ? "justify-end" : "justify-center"
-          ].join(" ")}
-          style={{ minHeight: hasSent ? 420 : "min(50vh, 420px)" }}
-        >
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-hidden">
           <div
-            className="flex w-full flex-col items-center overflow-visible"
-            style={{ maxWidth: COMPOSER_CONTENT_MAX_W, flex: hasSent ? 1 : undefined, minHeight: 0 }}
+            className="flex min-h-0 w-full flex-1 flex-col overflow-hidden"
+            style={{ maxWidth: COMPOSER_CONTENT_MAX_W }}
           >
             {!hasSent ? (
-              <h1 className="mb-6 w-full shrink-0 text-center text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
-                聊想法，复制就能发
-              </h1>
+              <div className="flex flex-1 items-center justify-center pb-4">
+                <h1 className="w-full shrink-0 text-center text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+                  聊想法，复制就能发
+                </h1>
+              </div>
             ) : (
-              <div className="mb-4 min-h-0 w-full flex-1 space-y-4 overflow-y-auto pb-2">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-4 pt-1">
                 {session.turns.map((turn) => (
                   <div key={turn.id} className="space-y-5">
                     <UserBubble text={turn.userText} />
@@ -580,7 +584,7 @@ export default function HomeComposerPage({
                     ) : null}
                     {(prefs?.formats ?? []).map((format) => {
                       const result = turn.formats[format];
-                      if (!result) return null;
+                      if (!result || result.status === "pending") return null;
                       return (
                         <HomeComposerFormatCard
                           key={`${turn.id}-${format}`}
@@ -596,12 +600,12 @@ export default function HomeComposerPage({
             )}
 
             {error ? (
-              <p className="mb-2 w-full text-sm text-danger-ink" role="alert">
+              <p className="mb-2 w-full shrink-0 text-sm text-danger-ink" role="alert">
                 {error}
               </p>
             ) : null}
 
-            <div ref={composerRootRef} className="relative z-10 w-full shrink-0 overflow-visible">
+            <div ref={composerRootRef} className="relative z-10 w-full shrink-0 overflow-visible pt-2">
               <ComposerShell
                 value={input}
                 onChange={setInput}
@@ -648,84 +652,60 @@ export default function HomeComposerPage({
                         <ComposerKbEmptyHint />
                       ) : (
                         notebooks.map((nb) => (
-                          <div key={nb} className="mb-2 last:mb-0">
-                            <button
-                              type="button"
-                              className={[
-                                "w-full rounded-lg px-2 py-1.5 text-left text-sm",
-                                prefs?.notebook === nb ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
-                              ].join(" ")}
-                              onClick={() => selectNotebook(nb)}
-                            >
-                              {nb}
-                            </button>
-                            {prefs?.notebook === nb ? (
-                              <div className="mt-1 space-y-1 pl-2">
-                                {notesLoading ? (
-                                  <p className="text-xs text-muted">加载资料…</p>
-                                ) : notes.length ? (
-                                  notes.map((n) => (
-                                    <label
-                                      key={n.noteId}
-                                      className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 text-xs hover:bg-fill"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        className="mt-0.5"
-                                        checked={prefs?.noteIds.includes(n.noteId) ?? false}
-                                        onChange={() => toggleNote(n.noteId)}
-                                      />
-                                      <span>{n.title || n.noteId.slice(0, 8)}</span>
-                                    </label>
-                                  ))
-                                ) : (
-                                  <p className="text-xs text-muted">该笔记本暂无资料</p>
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
+                          <button
+                            key={nb}
+                            type="button"
+                            className={[
+                              "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
+                              prefs?.notebook === nb ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
+                            ].join(" ")}
+                            onClick={() => selectNotebook(nb)}
+                          >
+                            {nb}
+                          </button>
                         ))
                       )}
                     </ComposerDropAnchor>
 
-                    {!kbOn ? (
-                      <ComposerDropAnchor
-                        title="写作风格"
-                        icon={<IconStyle />}
-                        open={openMenu === "style"}
-                        selected={Boolean(selectedStyle)}
-                        onToggle={() => openMenuOrToggle("style")}
-                        align="right"
-                        minWidth={148}
+                    <ComposerDropAnchor
+                      title="写作风格"
+                      icon={<IconStyle />}
+                      open={openMenu === "style"}
+                      selected={Boolean(selectedStyle) || styleUsesNotebookDefault}
+                      onToggle={() => openMenuOrToggle("style")}
+                      align="right"
+                      minWidth={168}
+                    >
+                      <button
+                        type="button"
+                        className={[
+                          "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
+                          styleUsesNotebookDefault ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
+                        ].join(" ")}
+                        onClick={() => {
+                          persistPrefs({ styleTemplateId: null });
+                          setOpenMenu("");
+                        }}
                       >
+                        {kbOn ? "笔记本风格（默认）" : "默认"}
+                      </button>
+                      {styleTemplates.map((t) => (
                         <button
+                          key={t.id}
                           type="button"
-                          className="block w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-fill"
+                          className={[
+                            "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
+                            prefs?.styleTemplateId === t.id ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
+                          ].join(" ")}
                           onClick={() => {
-                            persistPrefs({ styleTemplateId: null });
+                            persistPrefs({ styleTemplateId: t.id });
                             setOpenMenu("");
                           }}
                         >
-                          默认
+                          {t.label}
                         </button>
-                        {styleTemplates.map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            className={[
-                              "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
-                              prefs?.styleTemplateId === t.id ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
-                            ].join(" ")}
-                            onClick={() => {
-                              persistPrefs({ styleTemplateId: t.id });
-                              setOpenMenu("");
-                            }}
-                          >
-                            {t.label}
-                          </button>
-                        ))}
-                      </ComposerDropAnchor>
-                    ) : null}
+                      ))}
+                    </ComposerDropAnchor>
 
                     <IconToolBtn
                       title="个人特色"

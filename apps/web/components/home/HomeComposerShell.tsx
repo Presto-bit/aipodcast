@@ -410,15 +410,20 @@ export function ComposerShell({
 }) {
   const hasText = Boolean(value.trim());
   return (
-    <div className={["relative w-full shrink-0 overflow-visible", menuOpen ? "z-30" : "z-10"].join(" ")}>
+    <div
+      className={[
+        "relative w-full shrink-0 overflow-visible rounded-2xl border border-line bg-surface p-3 shadow-soft",
+        menuOpen ? "z-30" : "z-10"
+      ].join(" ")}
+    >
       <div className="relative w-full overflow-visible">
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="消息…"
           rows={2}
-          className="w-full min-h-[56px] max-h-[min(40vh,240px)] resize-none border-0 bg-transparent py-2 text-[15px] leading-relaxed text-ink outline-none ring-0 focus:outline-none focus:ring-0"
-          style={{ paddingRight: hasText ? 56 : 0 }}
+          className="w-full min-h-[56px] max-h-[min(32vh,200px)] resize-none border-0 bg-transparent py-1 text-[15px] leading-relaxed text-ink outline-none ring-0 focus:outline-none focus:ring-0"
+          style={{ paddingRight: hasText ? 60 : 0 }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -536,11 +541,17 @@ export function GeneralAnswerCard({
 }) {
   const mainText = content?.trim() ?? "";
   const supplementText = supplementContent?.trim() ?? "";
+  const phase =
+    streamingPhase && !streamingPhase.includes("排队") && !streamingPhase.includes("资料已就绪")
+      ? streamingPhase
+      : streamingPhase?.includes("资料") || streamingPhase?.includes("就绪")
+        ? "正在生成回答…"
+        : streamingPhase;
 
   return (
     <div className="w-full min-w-0">
       {streaming && !mainText ? (
-        <p className="text-sm text-muted">{streamingPhase || "正在生成回答…"}</p>
+        <p className="text-sm text-muted">{phase || "正在生成回答…"}</p>
       ) : null}
       {mainText ? (
         <>

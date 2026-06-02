@@ -1465,13 +1465,16 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                 (time.perf_counter() - req_t0) * 1000.0,
                 (time.perf_counter() - prep_t0) * 1000.0,
             )
+            answer_phase_msg = (
+                "正在生成回答…" if is_general else "资料已就绪，正在生成回答…"
+            )
             yield (
                 "data: "
                 + json.dumps(
                     {
                         "type": "phase",
                         "phase": "answering",
-                        "message": "资料已就绪，正在生成回答…",
+                        "message": answer_phase_msg,
                     },
                     ensure_ascii=False,
                 )

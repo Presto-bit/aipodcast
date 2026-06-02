@@ -23,8 +23,16 @@ function notesAskClientRequestId(): string {
   return `na-${Date.now().toString(36)}`;
 }
 
-function phaseUserMessage(phase?: string, message?: string): string {
+function phaseUserMessage(phase?: string, message?: string, mode?: "general" | "rag"): string {
   const msg = String(message || "").trim();
+  if (mode === "general") {
+    if (phase === "thinking" || msg.includes("整理对话")) return "正在整理上下文…";
+    if (phase === "answering" || msg.includes("资料已就绪") || msg.includes("生成回答")) {
+      return "正在生成回答…";
+    }
+    if (msg && !msg.includes("排队")) return msg;
+    return phase === "retrieving" ? "正在整理上下文…" : "正在生成回答…";
+  }
   if (msg) return msg;
   if (phase === "retrieving") return "正在检索资料…";
   if (phase === "thinking") return "正在整理上下文…";
@@ -138,7 +146,7 @@ export async function streamHomeComposerAsk(params: {
         }
         const type = String(ev.type || "");
         if (type === "phase") {
-          const msg = phaseUserMessage(String(ev.phase || ""), String(ev.message || ""));
+          const msg = phaseUserMessage(String(ev.phase || ""), String(ev.message || ""), params.mode);
           if (msg) params.callbacks?.onPhase?.(msg);
         } else if (type === "chunk") {
           const text = String(ev.text ?? "");

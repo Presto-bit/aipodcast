@@ -156,3 +156,13 @@ export function updateHomeComposerTurn(
 export function activeHomeComposerSession(store: HomeComposerStore): HomeComposerSession | null {
   return store.sessions.find((s) => s.id === store.activeSessionId) ?? store.sessions[0] ?? null;
 }
+
+/** 进入对话页：载入本地历史；若当前会话已有内容则新建空会话（继承偏好，格式清空）。 */
+export function openHomeComposerOnPageEntry(): HomeComposerStore {
+  const loaded = loadHomeComposerStore();
+  const active = activeHomeComposerSession(loaded);
+  if (active && active.turns.length === 0) {
+    return loaded;
+  }
+  return createHomeComposerSession(loaded, active?.prefs);
+}

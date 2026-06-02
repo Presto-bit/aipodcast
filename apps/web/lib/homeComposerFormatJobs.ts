@@ -52,7 +52,7 @@ async function waitForScriptDraftJob(params: {
     if (st === "failed" || st === "cancelled") {
       throw new Error(String(row.error_message || (st === "cancelled" ? "任务已取消" : "生成失败")));
     }
-    params.onProgress?.(st === "queued" ? "排队等待中" : "AI 撰写中");
+    params.onProgress?.(st === "queued" ? "云端排队中" : "AI 撰写中");
     await sleep(POLL_INTERVAL_MS);
   }
   throw new Error("生成超时，请稍后在作品页查看");
@@ -125,7 +125,7 @@ async function runSingleFormatJob(input: HomeComposerFormatJobInput): Promise<Ho
       });
       const jobId = String(job.id || "").trim();
       if (!jobId) throw new Error("创建任务失败");
-      input.onProgress?.("已提交队列…");
+      input.onProgress?.("已提交任务");
       const social = await waitForSocialPublishJob({
         jobId,
         platform,
@@ -178,7 +178,7 @@ async function runSingleFormatJob(input: HomeComposerFormatJobInput): Promise<Ho
     });
     const jobId = String(job.id || "").trim();
     if (!jobId) throw new Error("创建任务失败");
-    input.onProgress?.("已提交队列…");
+    input.onProgress?.("已提交任务");
     const scriptText = await waitForScriptDraftJob({
       jobId,
       authHeaders: input.authHeaders,

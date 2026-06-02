@@ -58,15 +58,19 @@ function CopyFooter({
   );
 }
 
+function formatJobProgressLabel(progress?: string): string {
+  const detail = (progress || "").trim();
+  if (!detail || detail === "准备中…") return "即将开始";
+  if (detail.includes("排队")) return "云端排队中";
+  if (detail.includes("提交") || detail.includes("队列")) return "已提交任务";
+  if (detail.includes("合并") || detail.includes("资料")) return "整理素材中";
+  if (detail.includes("模型") || detail.includes("撰写") || detail.includes("生成")) return "AI 撰写中";
+  return detail.replace(/…$/, "");
+}
+
 function RunningBlock({ format, progress }: { format: HomeComposerFormat; progress?: string }) {
   const label = HOME_COMPOSER_FORMAT_LABELS[format];
-  const detail = (progress || "").trim();
-  const status =
-    detail.includes("排队") || detail === "准备中…"
-      ? "排队等待中，通常很快开始"
-      : detail.includes("撰写") || detail.includes("生成")
-        ? "AI 撰写中"
-        : detail || "正在准备";
+  const status = formatJobProgressLabel(progress);
 
   return (
     <div className="w-full py-2" role="status" aria-live="polite">
@@ -76,7 +80,7 @@ function RunningBlock({ format, progress }: { format: HomeComposerFormat; progre
           aria-hidden
         />
         <span>
-          正在生成{label}… <span className="text-ink/80">{status}</span>
+          {label}成品生成中 · <span className="text-ink/80">{status}</span>
         </span>
       </div>
     </div>
