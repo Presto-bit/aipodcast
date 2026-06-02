@@ -313,14 +313,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       if (shouldKeepSidebarExpanded(target)) {
         expandSidebar();
       }
-      if (routeHasWarmRouteCache(queryClient, target)) {
-        return;
-      }
       navPendingTargetRef.current = target;
       navPendingHrefRef.current = href;
       setNavPending(true);
     },
-    [expandSidebar, queryClient]
+    [expandSidebar]
   );
 
   useEffect(() => {
