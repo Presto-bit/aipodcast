@@ -304,7 +304,7 @@ export function SessionHistorySidebar({
   if (collapsed) {
     return (
       <div
-        className="flex shrink-0 flex-col gap-1 self-start pt-1"
+        className="flex shrink-0 flex-col gap-1 self-stretch border-r border-line/60 bg-surface/40 py-3 pl-2 pr-1"
         style={{ width: COMPOSER_SIDEBAR_COLLAPSED_W, minWidth: COMPOSER_SIDEBAR_COLLAPSED_W }}
       >
         <div className="flex items-center gap-1">
@@ -323,8 +323,8 @@ export function SessionHistorySidebar({
 
   return (
     <aside
-      className="flex shrink-0 flex-col gap-2 self-stretch border-r border-line/60 pr-3"
-      style={{ width: COMPOSER_SIDEBAR_W, minWidth: COMPOSER_SIDEBAR_W, minHeight: 420 }}
+      className="flex shrink-0 flex-col gap-2 self-stretch border-r border-line/60 bg-surface/40 py-3 pl-3 pr-2"
+      style={{ width: COMPOSER_SIDEBAR_W, minWidth: COMPOSER_SIDEBAR_W }}
     >
       <div className="flex items-center gap-1.5">
         <button

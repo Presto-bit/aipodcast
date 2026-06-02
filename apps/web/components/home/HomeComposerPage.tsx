@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HomeComposerFormatCard from "./HomeComposerFormatCard";
 import {
   COMPOSER_CONTENT_MAX_W,
-  COMPOSER_OUTER_MAX_W,
   ComposerCopyToast,
   ComposerDropAnchor,
   ComposerKbEmptyHint,
@@ -526,10 +525,7 @@ export default function HomeComposerPage({
 
   if (!store || !session) {
     return (
-      <main
-        className="mx-auto flex min-h-[50vh] items-center justify-center px-4"
-        style={{ maxWidth: COMPOSER_OUTER_MAX_W }}
-      >
+      <main className="flex min-h-[50vh] w-full items-center justify-center px-4">
         <p className="text-sm text-muted">加载创作台…</p>
       </main>
     );
@@ -537,12 +533,11 @@ export default function HomeComposerPage({
 
   return (
     <main
-      className="relative mx-auto flex h-[calc(100svh-3.5rem)] min-h-0 w-full flex-col overflow-hidden px-3 pb-3 pt-2 sm:h-svh sm:max-h-svh sm:px-4 sm:pb-4"
-      style={{ maxWidth: COMPOSER_OUTER_MAX_W }}
+      className="relative flex h-[calc(100svh-3.5rem)] min-h-0 w-full flex-col overflow-hidden pb-3 sm:h-svh sm:max-h-svh"
     >
       {copyToast ? <ComposerCopyToast message={copyToast} /> : null}
 
-      <div className="flex min-h-0 w-full flex-1 gap-3">
+      <div className="flex min-h-0 w-full flex-1">
         <SessionHistorySidebar
           collapsed={sidebarCollapsed}
           sessions={sessionListItems}
@@ -553,7 +548,7 @@ export default function HomeComposerPage({
           onDeleteSession={(id) => setStore(deleteHomeComposerSession(store, id))}
         />
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-hidden px-3 pt-2 sm:px-4">
           <div
             className={[
               "flex min-h-0 w-full flex-1 flex-col overflow-hidden",

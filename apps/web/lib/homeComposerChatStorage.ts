@@ -94,6 +94,10 @@ export function patchActiveHomeComposerSession(
 }
 
 export function createHomeComposerSession(store: HomeComposerStore, inheritPrefs?: HomeComposerPrefs): HomeComposerStore {
+  const active = activeHomeComposerSession(store);
+  if (active && active.turns.length === 0) {
+    return store;
+  }
   const session = createSession(
     inheritPrefs
       ? {
