@@ -129,12 +129,13 @@ class NotesAskHintsRequest(BaseModel):
 
 
 class NotesAskRequest(BaseModel):
-    """对当前笔记本内已选笔记做轻量问答（基于正文摘录）。"""
+    """对当前笔记本内已选笔记做轻量问答（基于正文摘录）；mode=general 时不依赖 note_ids。"""
 
     model_config = ConfigDict(extra="ignore")
 
-    notebook: str = Field(min_length=1, max_length=120)
-    note_ids: list[str] = Field(min_length=1, max_length=BILLING_MAX_NOTE_REFS)
+    mode: Literal["rag", "general"] = Field(default="rag")
+    notebook: str = Field(default="", max_length=120)
+    note_ids: list[str] = Field(default_factory=list, max_length=BILLING_MAX_NOTE_REFS)
     question: str = Field(min_length=1, max_length=800)
     shared_from_owner_user_id: str | None = Field(
         default=None,
@@ -161,6 +162,16 @@ class NotesAskRequest(BaseModel):
         max_length=4000,
         validation_alias=AliasChoices("dialogue_style_prompt", "dialogueStylePrompt"),
     )
+    global_style_prompt: str | None = Field(
+        default=None,
+        max_length=4000,
+        validation_alias=AliasChoices("global_style_prompt", "globalStylePrompt"),
+    )
+    author_ip_prompt: str | None = Field(
+        default=None,
+        max_length=8000,
+        validation_alias=AliasChoices("author_ip_prompt", "authorIpPrompt"),
+    )
 
     @field_validator("note_ids")
     @classmethod
@@ -173,11 +184,19 @@ class NotesAskRequest(BaseModel):
                 continue
             seen.add(s)
             out.append(s)
-        if not out:
-            raise ValueError("note_ids_required")
         if len(out) > BILLING_MAX_NOTE_REFS:
             raise ValueError("too_many_notes")
         return out
+
+    @model_validator(mode="after")
+    def _validate_mode_fields(self) -> "NotesAskRequest":
+        if self.mode == "general":
+            return self
+        if not (self.notebook or "").strip():
+            raise ValueError("notebook_required")
+        if not self.note_ids:
+            raise ValueError("note_ids_required")
+        return self
 
     @field_validator("chat_history")
     @classmethod
@@ -472,7 +491,12 @@ class SocialPublishDraftRequest(BaseModel):
         nids = [str(x).strip() for x in (self.selected_note_ids or []) if str(x).strip()]
         if nids:
             return self
-        if len((self.material_text or "").strip()) < 40:
+        min_len = (
+            15
+            if str(self.source_type or "").strip() == "composer_prompt"
+            else 40
+        )
+        if len((self.material_text or "").strip()) < min_len:
             raise ValueError("material_too_short_or_no_notes")
         return self
 

@@ -103,7 +103,7 @@ from ..share_publish_llm import (
     resolve_script_body_for_share,
 )
 from ..provider_router import deepseek_text_config_ok
-from ..social_publish_draft import generate_social_publish_draft
+from ..social_publish_draft import generate_social_publish_draft, resolve_social_publish_material
 from ..social_viral_copy import generate_viral_social_copy
 from ..security import verify_internal_signature
 from ..subscription_manifest import BILLING_MAX_NOTE_REFS
@@ -1731,9 +1731,9 @@ async def stream_job_events(job_id: str, request: Request, after_id: int = 0):
 def _social_publish_error_detail(exc: Exception) -> tuple[int, str]:
     code = str(exc).strip()
     known_400 = {
-        "material_too_short": "勾选资料过短或尚未解析完成，请换选资料或稍后再试",
+        "material_too_short": "素材过短（至少约 40 字），请补充输入或通识回答后再试",
         "notes_material_empty": "勾选资料暂无可用正文，请确认资料已解析完成后再发布",
-        "material_too_short_or_no_notes": "请先勾选左侧参考资料",
+        "material_too_short_or_no_notes": "素材过短或未提供，请补充输入或勾选资料",
     }
     known_500 = {
         "social_publish_pack_failed": "发布稿组装失败，请减少勾选资料或稍后重试",
@@ -1765,35 +1765,27 @@ def social_publish_draft_api(req: SocialPublishDraftRequest, request: Request):
             detail="服务未配置文案模型（DEEPSEEK_API_KEY），请联系管理员",
         )
     note_ids = [str(x).strip() for x in (req.selected_note_ids or []) if str(x).strip()]
-    if note_ids:
-        from ..social_publish_draft import resolve_social_publish_material_from_notes
-
-        persona = req.options.get("persona") if isinstance(req.options.get("persona"), dict) else {}
-        hint = str(persona.get("otherRequirements") or "")[:500] if isinstance(persona, dict) else ""
-        try:
-            material = resolve_social_publish_material_from_notes(
-                user_ref,
-                selected_note_ids=note_ids,
-                notes_source_owner_user_id=req.notes_source_owner_user_id,
-                use_rag=req.use_rag,
-                rag_max_chars=req.rag_max_chars,
-                reference_rag_mode=req.reference_rag_mode,
-                material_hint=hint,
-            )
-        except RuntimeError as exc:
-            status, detail = _social_publish_error_detail(exc)
-            raise HTTPException(status_code=status, detail=detail) from exc
-        except Exception as exc:
-            logger.exception("social_publish: resolve material failed")
-            status, detail = _social_publish_error_detail(exc)
-            raise HTTPException(status_code=status, detail=detail) from exc
-    else:
-        material = (req.material_text or "").strip()
-        if len(material) < 40:
-            raise HTTPException(
-                status_code=400,
-                detail="请先勾选左侧参考资料",
-            )
+    persona = req.options.get("persona") if isinstance(req.options.get("persona"), dict) else {}
+    hint = str(persona.get("otherRequirements") or "")[:500] if isinstance(persona, dict) else ""
+    try:
+        material = resolve_social_publish_material(
+            user_ref,
+            selected_note_ids=note_ids,
+            material_text=req.material_text,
+            notes_source_owner_user_id=req.notes_source_owner_user_id,
+            use_rag=req.use_rag,
+            rag_max_chars=req.rag_max_chars,
+            reference_rag_mode=req.reference_rag_mode,
+            material_hint=hint,
+            source_type=req.source_type,
+        )
+    except RuntimeError as exc:
+        status, detail = _social_publish_error_detail(exc)
+        raise HTTPException(status_code=status, detail=detail) from exc
+    except Exception as exc:
+        logger.exception("social_publish: resolve material failed")
+        status, detail = _social_publish_error_detail(exc)
+        raise HTTPException(status_code=status, detail=detail) from exc
     try:
         pack = generate_social_publish_draft(
             material,

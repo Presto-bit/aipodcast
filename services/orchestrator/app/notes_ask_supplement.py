@@ -109,6 +109,8 @@ def should_run_supplement_stage(
     shared_read_only: bool = False,
 ) -> bool:
     """是否在资料作答后追加通识参考阶段（P1：扩大低置信 / 弱检索触发）。"""
+    if str(qa_plan.get("qaMode") or "").strip().lower() == "general":
+        return False
     if shared_read_only or not notes_ask_supplement_enabled():
         return False
     answer_len = len((corpus_answer or "").strip())

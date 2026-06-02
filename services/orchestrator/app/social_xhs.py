@@ -412,13 +412,13 @@ def normalize_xhs_llm_data(data: dict[str, Any]) -> dict[str, Any]:
     titles_raw = data.get("titles")
     titles: list[str] = []
     if isinstance(titles_raw, list):
-        titles = [str(t).strip()[:28] for t in titles_raw if str(t).strip()]
+        titles = [str(t).strip()[:20] for t in titles_raw if str(t).strip()]
     cover_hook = str(data.get("cover_hook") or data.get("coverHook") or "").strip()
     if cover_hook and cover_hook not in titles:
-        titles = [cover_hook[:28], *titles]
+        titles = [cover_hook[:20], *titles]
     t0 = str(data.get("title") or "").strip()
     if t0 and t0 not in titles:
-        titles = [t0[:28], *titles]
+        titles = [t0[:20], *titles]
     if not titles:
         titles = ["这篇干货我先收藏了"]
     titles = titles[:3]

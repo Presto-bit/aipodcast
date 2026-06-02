@@ -143,6 +143,13 @@ export function publishPresetBundle(platform: SocialPublishPlatform) {
 }
 
 export const XHS_TITLE_COUNT = 3;
+export const XHS_TITLE_MAX_CHARS = 20;
+
+function clampXhsTitle(title: string): string {
+  const t = title.trim();
+  if (t.length <= XHS_TITLE_MAX_CHARS) return t;
+  return t.slice(0, XHS_TITLE_MAX_CHARS);
+}
 
 export function toggleMultiSelect<T extends string>(
   current: T[],
@@ -209,7 +216,7 @@ export function interestLabels(
 }
 
 export function ensureXhsTitles(titles: string[]): [string, string, string] {
-  const base = titles.map((t) => t.trim()).filter(Boolean);
+  const base = titles.map((t) => clampXhsTitle(t)).filter(Boolean);
   const out = [...base];
   while (out.length < XHS_TITLE_COUNT) {
     out.push(out[0] || "标题备选");

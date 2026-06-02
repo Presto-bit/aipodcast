@@ -145,7 +145,7 @@ export async function renameAuthorIpForNotebook(
 
 export async function patchAuthorIp(
   ipId: string,
-  patch: { displayName?: string; isDefault?: boolean }
+  patch: { displayName?: string; isDefault?: boolean; profile?: Record<string, string> }
 ): Promise<AuthorIpItem> {
   const id = String(ipId || "").trim();
   if (!id) {
@@ -157,6 +157,9 @@ export async function patchAuthorIp(
   }
   if (patch.isDefault !== undefined) {
     body.isDefault = patch.isDefault;
+  }
+  if (patch.profile !== undefined) {
+    body.profile = patch.profile;
   }
   const res = await fetch(`/api/author-ips/${encodeURIComponent(id)}`, {
     method: "PATCH",

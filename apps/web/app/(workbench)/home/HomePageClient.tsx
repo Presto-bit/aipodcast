@@ -10,6 +10,7 @@ import { useI18n } from "../../../lib/I18nContext";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
 import NotebookShareDiagnosticsHomeBanner from "../../../components/notebook/NotebookShareDiagnosticsHomeBanner";
+import HomeComposerPage from "../../../components/home/HomeComposerPage";
 import { SkeletonBlock, SkeletonLine } from "../../../components/ui/Skeleton";
 import { useActiveJobCount } from "../../../lib/queries/activeJobsQuery";
 import {
@@ -390,6 +391,20 @@ export default function HomePageClient({
   }
 
   const isReturningVisitor = overview.worksCount > 0 || overview.activeJobsCount > 0;
+
+  if (searchParams?.get("legacy") !== "1") {
+    return (
+      <>
+        <NotebookShareDiagnosticsHomeBanner />
+        <HomeComposerPage
+          getAuthHeaders={getAuthHeaders}
+          isLoggedIn={isLoggedIn}
+          ready={ready}
+          createdByPhone={homeAccountKey || undefined}
+        />
+      </>
+    );
+  }
 
   const statLinkClass =
     "group block rounded-xl border border-transparent p-2 -m-1 transition-colors hover:border-line/80 hover:bg-fill/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40";

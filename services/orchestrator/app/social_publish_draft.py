@@ -12,6 +12,17 @@ from .social_xhs import build_persona_prompt_block, finalize_xhs_pack
 
 logger = logging.getLogger(__name__)
 
+SOCIAL_PUBLISH_MATERIAL_MIN_NOTES = 40
+SOCIAL_PUBLISH_MATERIAL_MIN_COMPOSER = 15
+# generate 入口下限（笔记路径在 resolve 阶段已保证 ≥40）
+SOCIAL_PUBLISH_MATERIAL_MIN_LLM = SOCIAL_PUBLISH_MATERIAL_MIN_COMPOSER
+
+
+def _material_min_chars(source_type: str | None) -> int:
+    if str(source_type or "").strip() == "composer_prompt":
+        return SOCIAL_PUBLISH_MATERIAL_MIN_COMPOSER
+    return SOCIAL_PUBLISH_MATERIAL_MIN_NOTES
+
 _INTENT_CN = {
     "zhongcao": "种草推荐",
     "dry_goods": "干货科普",
@@ -191,7 +202,7 @@ def _fallback_from_material(raw: str, platform: str) -> dict[str, Any]:
         for ln in excerpt.splitlines()
         if ln.strip() and not ln.strip().startswith(("【", "##", "---"))
     ]
-    headline = (lines[0] if lines else excerpt)[:28] or "资料要点整理"
+    headline = (lines[0] if lines else excerpt)[:20] or "资料要点整理"
     core = "\n".join(lines[1:12]) if len(lines) > 1 else excerpt
     core = core[:2400].strip() or excerpt[:1200]
     if platform == "wechat_mp":
@@ -285,7 +296,7 @@ def _mp_system_prompt(opt_block: str) -> str:
 {opt_block}
 
 结构硬性要求：
-1. cover_hook + titles 数组（恰好 3 个备选标题，每个≤28字）：信息明确、适合订阅号列表点击。
+1. cover_hook + titles 数组（恰好 3 个备选标题，每个≤20字）：信息明确、适合订阅号列表点击。
 2. opening_30：导读句，总字数≤30（含标点）。
 3. body：正文主体，可用 Markdown（## 小标题、列表）；勿把话题与文末引导写入 body。
 4. tags：5～8 个领域关键词，不带#（由系统并入正文末尾）。
@@ -305,7 +316,7 @@ def _xhs_system_prompt(opt_block: str) -> str:
 {opt_block}
 
 结构硬性要求：
-1. cover_hook + titles 数组（恰好 3 个备选标题，每个≤28字）：人群/场景 + 痛点 + 解法/情绪价值。
+1. cover_hook + titles 数组（恰好 3 个备选标题，每个≤20字）：人群/场景 + 痛点 + 解法/情绪价值。
 2. opening_30：正文开头句，总字数≤30（含标点）。
 3. body 或 sections：正文主体（干货/种草结构），段间 \\n\\n；勿把话题与互动句写入 body。
    sections 若使用数组，每项必须是 JSON 对象 {{"heading":"小标题","content":"段落"}}，禁止输出 Python 字典字面量字符串。
@@ -465,6 +476,39 @@ def resolve_social_publish_material_from_notes(
     return raw
 
 
+def resolve_social_publish_material(
+    user_ref: str | None,
+    *,
+    selected_note_ids: list[str] | None = None,
+    material_text: str | None = None,
+    notes_source_owner_user_id: str | None = None,
+    use_rag: bool = True,
+    rag_max_chars: int = 56_000,
+    reference_rag_mode: str = "truncate",
+    material_hint: str = "",
+    source_type: str | None = None,
+) -> str:
+    """合并素材：有勾选资料走 RAG；否则用 material_text（如首页 Composer 用户输入 + 通识回答）。"""
+    nids = [str(x).strip() for x in (selected_note_ids or []) if str(x).strip()]
+    if nids:
+        return resolve_social_publish_material_from_notes(
+            user_ref,
+            selected_note_ids=nids,
+            notes_source_owner_user_id=notes_source_owner_user_id,
+            use_rag=use_rag,
+            rag_max_chars=rag_max_chars,
+            reference_rag_mode=reference_rag_mode,
+            material_hint=material_hint,
+        )
+    raw = _strip_social_material_boilerplate((material_text or "").strip())
+    min_len = _material_min_chars(source_type)
+    if len(raw) < min_len:
+        raise RuntimeError("material_too_short")
+    if len(raw) > 48_000:
+        raw = raw[:48_000] + "…"
+    return raw
+
+
 def generate_social_publish_draft(
     material_text: str,
     *,
@@ -475,7 +519,7 @@ def generate_social_publish_draft(
     """platform: xiaohongshu | wechat_mp"""
     opts = _normalize_social_options(options if isinstance(options, dict) else {}, platform)
     raw = (material_text or "").strip()
-    if len(raw) < 40:
+    if len(raw) < SOCIAL_PUBLISH_MATERIAL_MIN_LLM:
         raise RuntimeError("material_too_short")
     if len(raw) > 48_000:
         raw = raw[:48_000] + "…"

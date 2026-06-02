@@ -831,7 +831,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             from .provider_router import deepseek_text_config_ok
             from .social_publish_draft import (
                 generate_social_publish_draft,
-                resolve_social_publish_material_from_notes,
+                resolve_social_publish_material,
             )
 
             if not deepseek_text_config_ok():
@@ -841,9 +841,11 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 raise RuntimeError("platform_must_be_xiaohongshu_or_wechat_mp")
             options = payload.get("options") if isinstance(payload.get("options"), dict) else {}
             nids = [str(x).strip() for x in (payload.get("selected_note_ids") or []) if str(x).strip()]
-            if not nids:
-                raise RuntimeError("material_too_short_or_no_notes")
-            append_job_event(job_id, "progress", "正在合并参考资料", {"progress": 18})
+            material_text = str(
+                payload.get("material_text") or payload.get("text") or ""
+            ).strip()
+            progress_msg = "正在合并参考资料" if nids else "正在整理创作素材"
+            append_job_event(job_id, "progress", progress_msg, {"progress": 18})
             if _guard_cancelled(job_id):
                 return {"status": "cancelled"}
             persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
@@ -854,14 +856,16 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             except (TypeError, ValueError):
                 rag_cap = 56_000
             mode = str(payload.get("reference_rag_mode") or "truncate").strip().lower()
-            material = resolve_social_publish_material_from_notes(
+            material = resolve_social_publish_material(
                 created_by,
                 selected_note_ids=nids,
+                material_text=material_text,
                 notes_source_owner_user_id=owner,
                 use_rag=bool(payload.get("use_rag", True)),
                 rag_max_chars=rag_cap,
                 reference_rag_mode=mode,
                 material_hint=hint,
+                source_type=str(payload.get("source_type") or ""),
             )
             append_job_event(job_id, "progress", "正在生成发布稿", {"progress": 55})
             if _guard_cancelled(job_id):

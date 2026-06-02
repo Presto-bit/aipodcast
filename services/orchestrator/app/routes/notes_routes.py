@@ -78,6 +78,7 @@ from ..note_document_extract import NoteParseResult
 from ..note_parse_quality import page_breaks_from_segments
 from ..object_store import delete_object_key, get_object_bytes, upload_bytes
 from ..notes_ask import (
+    _prepare_general_ask_messages,
     _prepare_notes_ask_messages,
     answer_notes_question,
     generate_notes_ask_hints,
@@ -1393,9 +1394,11 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
 
     rid = (request.headers.get("x-request-id") or "").strip() or str(uuid.uuid4())
     req_t0 = time.perf_counter()
+    is_general = body.mode == "general"
     _notes_startup_logger.info(
-        "notes_ask_stage stage=request_received request_id=%s notebook=%s note_count=%s question_len=%s",
+        "notes_ask_stage stage=request_received request_id=%s mode=%s notebook=%s note_count=%s question_len=%s",
         rid,
+        body.mode,
         body.notebook.strip(),
         len(body.note_ids or []),
         len((body.question or "").strip()),
@@ -1411,29 +1414,51 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
         )
         try:
             prep_t0 = time.perf_counter()
-            yield (
-                "data: "
-                + json.dumps(
-                    {
-                        "type": "phase",
-                        "phase": "retrieving",
-                        "message": "正在检索并整理勾选资料…",
-                    },
-                    ensure_ascii=False,
+            if is_general:
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "type": "phase",
+                            "phase": "thinking",
+                            "message": "正在整理对话上下文…",
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
                 )
-                + "\n\n"
-            )
-            prepared = _prepare_notes_ask_messages(
-                notebook=body.notebook.strip(),
-                note_ids=body.note_ids,
-                question=body.question.strip(),
-                user_ref=user_ref,
-                chat_history=body.chat_history,
-                session_state=body.session_state,
-                require_preprocess_ready=body.require_preprocess_ready,
-                project_owner_user_uuid=project_owner,
-                dialogue_style_prompt=body.dialogue_style_prompt,
-            )
+                prepared = _prepare_general_ask_messages(
+                    question=body.question.strip(),
+                    chat_history=body.chat_history,
+                    session_state=body.session_state,
+                    global_style_prompt=body.global_style_prompt,
+                    author_ip_prompt=body.author_ip_prompt,
+                    dialogue_style_prompt=body.dialogue_style_prompt,
+                )
+            else:
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "type": "phase",
+                            "phase": "retrieving",
+                            "message": "正在检索并整理勾选资料…",
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
+                )
+                prepared = _prepare_notes_ask_messages(
+                    notebook=body.notebook.strip(),
+                    note_ids=body.note_ids,
+                    question=body.question.strip(),
+                    user_ref=user_ref,
+                    chat_history=body.chat_history,
+                    session_state=body.session_state,
+                    require_preprocess_ready=body.require_preprocess_ready,
+                    project_owner_user_uuid=project_owner,
+                    dialogue_style_prompt=body.dialogue_style_prompt,
+                )
             _notes_startup_logger.info(
                 "notes_ask_stage stage=context_ready request_id=%s elapsed_ms=%.1f context_ms=%.1f",
                 rid,

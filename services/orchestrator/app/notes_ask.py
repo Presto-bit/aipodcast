@@ -567,6 +567,47 @@ def _prepare_notes_ask_messages(
     return messages, sources, qa_plan
 
 
+def _prepare_general_ask_messages(
+    *,
+    question: str,
+    chat_history: list[dict[str, str]] | None = None,
+    session_state: dict[str, Any] | None = None,
+    global_style_prompt: str | None = None,
+    author_ip_prompt: str | None = None,
+    dialogue_style_prompt: str | None = None,
+) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
+    """首页 Composer 通识对话：无 RAG，可选全局风格与个人特色。"""
+    q = (question or "").strip()
+    if not q:
+        raise ValueError("question_required")
+    if len(q) > _MAX_QUESTION_CHARS:
+        q = q[:_MAX_QUESTION_CHARS]
+
+    history_block = build_conversation_context_blocks(chat_history, session_state)
+    system_parts = [
+        "你是用户的创作对话助手，回答简洁、可直接复用，适合作为后续改写素材。",
+        "不要输出 Speaker 对话格式；不要编造具体数据或引用来源编号。",
+    ]
+    style = (dialogue_style_prompt or global_style_prompt or "").strip()
+    if style:
+        system_parts.append(f"【写作风格】\n{style}")
+    ip = (author_ip_prompt or "").strip()
+    if ip:
+        system_parts.append(f"【个人特色】\n{ip}")
+
+    user_parts: list[str] = []
+    if history_block:
+        user_parts.append(history_block)
+    user_parts.append(f"问题：{q}")
+
+    messages = [
+        {"role": "system", "content": "\n\n".join(system_parts)},
+        {"role": "user", "content": "\n\n".join(user_parts)},
+    ]
+    qa_plan: dict[str, Any] = {"qaMode": "general", "contextChars": 0}
+    return messages, [], qa_plan
+
+
 _NOTES_ASK_VALUE_ERROR_MESSAGES: dict[str, str] = {
     "empty_context": (
         "当前勾选资料尚无可用于问答的正文（可能仍在解析或索引中），本次无法基于资料作答，也不会生成通识参考。"

@@ -1,6 +1,8 @@
 """个人特色 IP API（v6 笔记本风格最小集）。"""
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
@@ -8,6 +10,7 @@ from ..author_ip_materials import learn_author_ip
 from ..author_ip_store import (
     ensure_author_ip_for_notebook,
     get_author_ip_by_notebook,
+    get_default_author_ip,
     patch_author_ip,
     rename_author_ip_for_notebook,
 )
@@ -39,6 +42,7 @@ class AuthorIpPatchBody(BaseModel):
     subtitle: str | None = Field(default=None, max_length=200)
     avatar_color: str | None = Field(default=None, max_length=40, alias="avatarColor")
     is_default: bool | None = Field(default=None, alias="isDefault")
+    profile: dict[str, Any] | None = Field(default=None)
 
     model_config = {"populate_by_name": True}
 
@@ -72,6 +76,15 @@ def _raise_value_error(exc: ValueError) -> None:
     if code in ("note_ids_required", "no_learning_materials", "invalid_notebook"):
         raise HTTPException(status_code=400, detail=code) from exc
     raise HTTPException(status_code=400, detail=code) from exc
+
+
+@router.get("/default")
+def get_default_author_ip_api(request: Request):
+    user_ref = _current_user_ref_or_401(request)
+    item = get_default_author_ip(user_ref)
+    if not item:
+        return {"success": True, "item": None}
+    return {"success": True, "item": item}
 
 
 @router.get("/by-notebook")
@@ -119,6 +132,7 @@ def patch_author_ip_api(request: Request, ip_id: str, body: AuthorIpPatchBody):
         and body.subtitle is None
         and body.avatar_color is None
         and body.is_default is None
+        and body.profile is None
     ):
         raise HTTPException(status_code=400, detail="无效的请求")
     item, err = patch_author_ip(
@@ -128,6 +142,7 @@ def patch_author_ip_api(request: Request, ip_id: str, body: AuthorIpPatchBody):
         subtitle=body.subtitle,
         avatar_color=body.avatar_color,
         is_default=body.is_default,
+        profile=body.profile,
     )
     if err:
         raise HTTPException(status_code=400, detail=err)

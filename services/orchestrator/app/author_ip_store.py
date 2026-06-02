@@ -295,6 +295,31 @@ def list_author_ips(user_ref: str | None, *, lightweight: bool = True) -> list[d
     ]
 
 
+def get_default_author_ip(user_ref: str | None) -> dict[str, Any] | None:
+    """返回用户默认 IP（含系统种子「我的 IP」）。"""
+    ensure_author_ip_schema()
+    ensure_default_author_ip(user_ref)
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            user_uuid = _resolve_user_uuid_or_none(cur, user_ref)
+            if not user_uuid:
+                return None
+            cur.execute(
+                """
+                SELECT * FROM author_ips
+                WHERE user_id = %s::uuid AND archived_at IS NULL
+                ORDER BY is_default DESC, is_system_seed DESC, created_at ASC
+                LIMIT 1
+                """,
+                (user_uuid,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            nb = str(row.get("notebook_name") or "")
+            return _row_to_item(row, material_count=_count_materials(user_ref, nb))
+
+
 def get_author_ip(user_ref: str | None, ip_id: str) -> dict[str, Any] | None:
     ensure_author_ip_schema()
     with get_conn() as conn:
@@ -418,6 +443,7 @@ def patch_author_ip(
     subtitle: str | None = None,
     avatar_color: str | None = None,
     is_default: bool | None = None,
+    profile: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     ensure_author_ip_schema()
     with get_conn() as conn:
@@ -461,6 +487,34 @@ def patch_author_ip(
                 cur.execute(
                     "UPDATE author_ips SET is_default = TRUE, updated_at = NOW() WHERE id = %s::uuid",
                     (ip_id,),
+                )
+            if profile is not None and isinstance(profile, dict):
+                cur.execute(
+                    "SELECT profile_json FROM author_ips WHERE id = %s::uuid",
+                    (ip_id,),
+                )
+                prow = cur.fetchone()
+                existing: dict[str, Any] = {}
+                if prow and prow.get("profile_json"):
+                    raw = prow.get("profile_json")
+                    if isinstance(raw, dict):
+                        existing = dict(raw)
+                    elif isinstance(raw, str):
+                        try:
+                            parsed = json.loads(raw)
+                            if isinstance(parsed, dict):
+                                existing = parsed
+                        except Exception:
+                            existing = {}
+                merged = {**existing}
+                for key, val in profile.items():
+                    if val is None:
+                        merged.pop(str(key), None)
+                    else:
+                        merged[str(key)] = val
+                cur.execute(
+                    "UPDATE author_ips SET profile_json = %s::jsonb, updated_at = NOW() WHERE id = %s::uuid",
+                    (Json(merged), ip_id),
                 )
             conn.commit()
     item = get_author_ip(user_ref, ip_id)
