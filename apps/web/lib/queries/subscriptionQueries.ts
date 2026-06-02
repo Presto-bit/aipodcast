@@ -67,7 +67,7 @@ export function subscriptionMeQueryKey(params: SubscriptionMeParams) {
   ] as const;
 }
 
-async function fetchSubscriptionPlans(headers: Record<string, string>): Promise<PlansFetchResult> {
+export async function fetchSubscriptionPlans(headers: Record<string, string>): Promise<PlansFetchResult> {
   const res = await fetch("/api/subscription/plans", { cache: "no-store", headers });
   const payload = (await res.json().catch(() => ({}))) as PlansPayload;
   return { httpOk: res.ok, httpStatus: res.status, payload };

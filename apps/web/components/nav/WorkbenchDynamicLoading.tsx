@@ -3,9 +3,12 @@
 import type { ReactNode } from "react";
 import { useWorkbenchNavOptional } from "../../lib/WorkbenchNavContext";
 
-/** 全屏 nav overlay 已展示骨架时隐藏内层 dynamic loading；progress-only 时仍显示局部骨架。 */
+/** 半温/即时切换时不重复显示 dynamic loading；cold 全屏 overlay 时亦隐藏内层。 */
 export function useSuppressWorkbenchDynamicLoading(): boolean {
-  return useWorkbenchNavOptional()?.navOverlayVisible ?? false;
+  const nav = useWorkbenchNavOptional();
+  if (!nav?.navPending) return false;
+  if (nav.navOverlayVisible) return true;
+  return nav.navWarmthTier !== "cold";
 }
 
 export default function WorkbenchDynamicLoading({ children }: { children: ReactNode }) {

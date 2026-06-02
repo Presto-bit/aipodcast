@@ -5,6 +5,7 @@ import { matchesProductStudio, normalizePathname, WORKBENCH_HOME_PATH } from "./
 import { fetchHomeOverview, homeOverviewQueryKey } from "./queries/homeOverviewQueries";
 import { fetchNotebooksHub, NOTEBOOKS_HUB_QUERY_KEY } from "./queries/notebooksQueries";
 import { fetchStudioBootstrap } from "./queries/studioQueries";
+import { fetchSubscriptionPlans } from "./queries/subscriptionQueries";
 import { fetchWorksPage, worksListQueryKey } from "./queries/worksQueries";
 
 const WORKS_PREFETCH_LIMIT = 60;
@@ -64,6 +65,11 @@ export function prefetchWorkbenchRouteData(
     prefetchQuery(queryClient, worksListQueryKey(CREATE_WORKS_LIMIT, 0), () =>
       fetchWorksPage(headers, { limit: CREATE_WORKS_LIMIT, offset: 0 })
     );
+    return;
+  }
+
+  if (path === "/subscription" || path.startsWith("/subscription/")) {
+    prefetchQuery(queryClient, ["subscription-plans"], () => fetchSubscriptionPlans(headers));
   }
 }
 

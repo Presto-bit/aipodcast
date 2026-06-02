@@ -23,7 +23,16 @@ export const WORKBENCH_SIDEBAR_IDLE_ROUTES = [
   "/shownotes",
   "/voice",
   "/subscription",
-  "/trash"
+  "/notes/trash"
+] as const;
+
+/** 登录后 idle 分批预取的次级侧栏路由（不阻塞首屏）。 */
+export const WORKBENCH_LOGIN_PREFETCH_ROUTES_SECONDARY = [
+  "/drafts",
+  "/clip",
+  "/shownotes",
+  "/voice",
+  "/subscription"
 ] as const;
 
 /** 登录后立即预取的高频入口（不等 idle） */
@@ -46,7 +55,10 @@ export function routeIsPrefetched(hrefOrPath: string): boolean {
 /** 重 chunk 是否已 warm（用于跳过 navPending 全屏骨架） */
 const ROUTE_WARM_CHUNK_IDS: Record<string, readonly string[]> = {
   "/clip": ["clip-hub"],
-  "/voice": ["voice-clone", "voice-my", "voice-persona"]
+  "/voice": ["voice-clone", "voice-my", "voice-persona"],
+  "/drafts": ["drafts-page"],
+  "/shownotes": ["shownotes-landing"],
+  "/notes/trash": ["notes-trash"]
 };
 
 export function routeHasWarmChunks(hrefOrPath: string): boolean {
@@ -79,7 +91,7 @@ export function warmWorkbenchRouteChunks(href: string) {
   if (path === "/notes") {
     warmChunk("notes-hub", () => import("../components/notes/NotesHubPage"));
   }
-  if (pathMatchesNotes(path) && path !== "/notes") {
+  if (pathMatchesNotes(path) && path !== "/notes" && path !== "/notes/trash") {
     warmChunk("notes-page-main", () => import("../components/notes/NotesPageMain"));
   }
   if (path === "/create" || pathMatchesRoot(path, "/podcast") || pathMatchesRoot(path, "/tts")) {
@@ -96,6 +108,12 @@ export function warmWorkbenchRouteChunks(href: string) {
   }
   if (path === "/drafts" || path.startsWith("/drafts/")) {
     warmChunk("drafts-page", () => import("../app/(workbench)/drafts/page"));
+  }
+  if (path === "/shownotes" || path.startsWith("/shownotes/")) {
+    warmChunk("shownotes-landing", () => import("../components/shownotes/ShownotesLandingClient"));
+  }
+  if (path === "/notes/trash") {
+    warmChunk("notes-trash", () => import("../app/(workbench)/notes/trash/page"));
   }
 }
 

@@ -47,10 +47,16 @@ import BrandGlyph from "./brand/BrandGlyph";
 import NotesNavExpanded from "./notes/NotesNavExpanded";
 import SidebarNavLink from "./nav/SidebarNavLink";
 import WorkbenchRouteFallback from "./nav/WorkbenchRouteFallback";
+import WorkbenchRouteSuspenseFallback from "./nav/WorkbenchRouteSuspenseFallback";
 import WorkbenchNavProgress from "./nav/WorkbenchNavProgress";
 import { WorkbenchNavContext } from "../lib/WorkbenchNavContext";
-import { routeHasWarmRouteCache } from "../lib/queries/workbenchRouteQueryCache";
-import { prefetchWorkbenchRoute, prefetchWorkbenchSidebarIdle, WORKBENCH_LOGIN_PREFETCH_ROUTES, type PrefetchWorkbenchRouteOptions } from "../lib/navPrefetch";
+import {
+  resolveWorkbenchNavWarmthTier,
+  workbenchNavClearPendingDelayMs,
+  workbenchNavHardJumpMs,
+  type WorkbenchNavWarmthTier
+} from "../lib/workbenchNavWarmth";
+import { prefetchWorkbenchRoute, prefetchWorkbenchSidebarIdle, WORKBENCH_LOGIN_PREFETCH_ROUTES, WORKBENCH_LOGIN_PREFETCH_ROUTES_SECONDARY, type PrefetchWorkbenchRouteOptions } from "../lib/navPrefetch";
 import {
   dispatchWorkbenchDismissOverlays,
   WORKBENCH_MOBILE_FAB_Z_CLASS,
@@ -295,6 +301,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const sidebarIdlePrefetchedRef = useRef(false);
   const loginPrefetchDoneRef = useRef(false);
   const navPendingWarmRef = useRef(false);
+  const navPendingTierRef = useRef<WorkbenchNavWarmthTier>("cold");
 
   const clearNavPending = useCallback(() => {
     navPendingTargetRef.current = null;
@@ -324,7 +331,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       if (shouldKeepSidebarExpanded(target)) {
         expandSidebar();
       }
-      navPendingWarmRef.current = routeHasWarmRouteCache(queryClient, target);
+      const tier = resolveWorkbenchNavWarmthTier(queryClient, target);
+      navPendingTierRef.current = tier;
+      navPendingWarmRef.current = tier !== "cold";
       navPendingTargetRef.current = target;
       navPendingHrefRef.current = href;
       setNavPending(true);
@@ -341,17 +350,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const target = navPendingTargetRef.current;
     const current = normalizePathname(path);
     if (target && (current === target || current.startsWith(`${target}/`))) {
-      const delay = routeHasWarmRouteCache(queryClient, target) ? 0 : 180;
+      const delay = workbenchNavClearPendingDelayMs(navPendingTierRef.current);
       const timer = window.setTimeout(() => clearNavPending(), delay);
       return () => window.clearTimeout(timer);
     }
-  }, [path, navPending, clearNavPending, queryClient]);
+  }, [path, navPending, clearNavPending]);
 
   const navPendingTarget = navPending ? navPendingTargetRef.current : null;
+  const navPendingTier: WorkbenchNavWarmthTier | null = navPending ? navPendingTierRef.current : null;
   const showNavPendingOverlay =
-    navPending &&
-    Boolean(navPendingTarget) &&
-    !routeHasWarmRouteCache(queryClient, navPendingTarget ?? "");
+    navPending && Boolean(navPendingTarget) && navPendingTier === "cold";
   const showNavPendingProgress =
     navPending && Boolean(navPendingTarget) && !showNavPendingOverlay;
   /** 一级入口（知识库/创作/作品）及跳转途中：渲染层强制宽轨，避免 collapsed 状态滞后一帧 */
@@ -372,7 +380,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       if (current === target || current.startsWith(`${target}/`)) return;
       if (normalizePathname(pathRef.current) !== startedAt) return;
       window.location.assign(href);
-    }, navPendingWarmRef.current ? 400 : 900);
+    }, workbenchNavHardJumpMs(navPendingTierRef.current));
     return () => window.clearTimeout(timer);
   }, [navPending, path]);
 
@@ -390,6 +398,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     for (const route of WORKBENCH_LOGIN_PREFETCH_ROUTES) {
       prefetchWorkbenchRoute(router, route, routePrefetchOpts);
     }
+    const prefetchSecondary = () => {
+      for (const route of WORKBENCH_LOGIN_PREFETCH_ROUTES_SECONDARY) {
+        prefetchWorkbenchRoute(router, route, routePrefetchOpts);
+      }
+    };
+    if (typeof requestIdleCallback !== "undefined") {
+      requestIdleCallback(prefetchSecondary, { timeout: 1500 });
+    } else {
+      window.setTimeout(prefetchSecondary, 120);
+    }
   }, [ready, loggedIn, router, routePrefetchOpts]);
 
   useEffect(() => {
@@ -399,8 +417,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [ready, path, router, routePrefetchOpts]);
 
   const workbenchNavContextValue = useMemo(
-    () => ({ navPending, navOverlayVisible: showNavPendingOverlay, beginWorkbenchNav }),
-    [navPending, showNavPendingOverlay, beginWorkbenchNav]
+    () => ({ navPending, navWarmthTier: navPendingTier, navOverlayVisible: showNavPendingOverlay, beginWorkbenchNav }),
+    [navPending, navPendingTier, showNavPendingOverlay, beginWorkbenchNav]
   );
 
   const navPrimary = useMemo<NavItem[]>(
@@ -640,7 +658,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const pageShell = (
     <AnimatedPageShell>
-      <Suspense key={path} fallback={<WorkbenchRouteFallback />}>
+      <Suspense key={path} fallback={<WorkbenchRouteSuspenseFallback />}>
         {children}
       </Suspense>
     </AnimatedPageShell>
