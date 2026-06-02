@@ -1,7 +1,13 @@
 "use client";
 
 import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import {
+  prefetchWorkbenchRouteData,
+  type PrefetchWorkbenchRouteOptions
+} from "./prefetchWorkbenchRouteData";
 import { normalizePathname, WORKBENCH_HOME_PATH } from "./navPaths";
+
+export type { PrefetchWorkbenchRouteOptions };
 
 /** 默认关闭 Link prefetch，避免弱网时与当前页导航争抢带宽；hover / idle 时再预取。 */
 export const WORKBENCH_LINK_PREFETCH = false;
@@ -103,7 +109,11 @@ function pathMatchesRoot(pathname: string, base: string): boolean {
   return n === b || n.startsWith(`${b}/`);
 }
 
-export function prefetchWorkbenchRoute(router: AppRouterInstance, href: string) {
+export function prefetchWorkbenchRoute(
+  router: AppRouterInstance,
+  href: string,
+  opts?: PrefetchWorkbenchRouteOptions
+) {
   const path = String(href || "").split("?")[0]?.trim() || "";
   if (!path) return;
   if (!prefetchedRoutes.has(path)) {
@@ -115,22 +125,28 @@ export function prefetchWorkbenchRoute(router: AppRouterInstance, href: string) 
     }
   }
   warmWorkbenchRouteChunks(path);
+  if (opts?.queryClient && opts.headers) {
+    prefetchWorkbenchRouteData(opts.queryClient, path, opts.headers, opts.accountKey);
+  }
 }
 
 /** AppShell 空闲时分批预取侧栏高频路由与重 chunk。 */
-export function prefetchWorkbenchSidebarIdle(router: AppRouterInstance) {
+export function prefetchWorkbenchSidebarIdle(
+  router: AppRouterInstance,
+  opts?: PrefetchWorkbenchRouteOptions
+) {
   const routes = WORKBENCH_SIDEBAR_IDLE_ROUTES;
   let index = 0;
 
   const step = () => {
     if (index >= routes.length) return;
-    prefetchWorkbenchRoute(router, routes[index]!);
+    prefetchWorkbenchRoute(router, routes[index]!, opts);
     index += 1;
     if (index < routes.length) {
       if (typeof requestIdleCallback !== "undefined") {
-        requestIdleCallback(step, { timeout: 2500 });
+        requestIdleCallback(step, { timeout: 200 });
       } else {
-        window.setTimeout(step, 180);
+        window.setTimeout(step, 40);
       }
     }
   };

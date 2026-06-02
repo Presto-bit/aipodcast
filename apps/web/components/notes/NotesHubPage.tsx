@@ -106,6 +106,7 @@ export default function NotesHubPage() {
   const { user, getAuthHeaders, ready } = useAuth();
   const isLoggedIn = isLoggedInAccountUser(user);
   const notebooksHubQuery = useNotebooksHubQuery(getAuthHeaders, ready);
+  const notebooksHubFetching = notebooksHubQuery.isFetching && Boolean(notebooksHubQuery.data);
   const queryClient = useQueryClient();
   const invalidateNotebooksHub = useInvalidateNotebooksHub();
   const pageAbortSignal = usePageAbortSignal();
@@ -692,7 +693,12 @@ export default function NotesHubPage() {
           <>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <h2 className={WORKBENCH_SECTION_TITLE}>我的笔记本</h2>
+                <h2 className={WORKBENCH_SECTION_TITLE}>
+                  我的笔记本
+                  {notebooksHubFetching ? (
+                    <span className="ml-2 text-xs font-normal text-muted">更新中…</span>
+                  ) : null}
+                </h2>
               </div>
               {notebooksReady && notebooks.length === 0 ? (
                 <button

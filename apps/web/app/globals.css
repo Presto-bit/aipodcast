@@ -230,6 +230,15 @@ body {
   }
 }
 
+@keyframes fym-nav-progress {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
 .fym-page-enter {
   animation: fym-fade-in 0.24s ease-out both;
 }
@@ -237,6 +246,10 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .fym-page-enter {
     animation: none;
+  }
+  .animate-\[fym-nav-progress_0\.85s_ease-in-out_infinite\] {
+    animation: none;
+    width: 100%;
   }
 }
 

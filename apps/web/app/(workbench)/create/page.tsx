@@ -180,16 +180,17 @@ export default function CreatePage() {
       setWorksErr("");
       return;
     }
-    setWorksLoading(worksQuery.isLoading);
+    const hasWorks = Boolean(worksQuery.filteredWorks?.length || worksQuery.data);
+    setWorksLoading(worksQuery.isLoading && !hasWorks);
     if (worksQuery.filteredWorks) {
       setHomeWorks(worksQuery.filteredWorks);
       setWorksErr("");
     }
-    if (worksQuery.isError) {
+    if (worksQuery.isError && !hasWorks) {
       setWorksErr(String(worksQuery.error instanceof Error ? worksQuery.error.message : worksQuery.error));
       setHomeWorks([]);
     }
-  }, [isLoggedIn, worksQuery.filteredWorks, worksQuery.error, worksQuery.isError, worksQuery.isLoading]);
+  }, [isLoggedIn, worksQuery.filteredWorks, worksQuery.data, worksQuery.error, worksQuery.isError, worksQuery.isLoading]);
 
   const refreshPodcastTemplates = useCallback(async () => {
     setTemplatesErr("");

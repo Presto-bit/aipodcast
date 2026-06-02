@@ -238,7 +238,7 @@ export default function WorksPage() {
           <h1 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">我的作品</h1>
           <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">播客音频、文稿成品与进行中任务</p>
         </div>
-        {(worksView === "audio" || worksView === "script") && !loading ? (
+        {(worksView === "audio" || worksView === "script") && (totalLoaded > 0 || isRefreshing) ? (
           <p className="shrink-0 text-xs text-muted">
             已加载 <span className="font-medium tabular-nums text-ink">{totalLoaded}</span> 件
             {hasMore ? <span className="text-muted"> · 更多</span> : null}

@@ -13,7 +13,7 @@ export type StudioBootstrapPack = {
   notebooks?: string[];
 };
 
-async function fetchStudioBootstrap(headers: Record<string, string>): Promise<StudioBootstrapPack> {
+export async function fetchStudioBootstrap(headers: Record<string, string>): Promise<StudioBootstrapPack> {
   const r = await fetch("/api/studio-bootstrap", {
     cache: "no-store",
     credentials: "same-origin",
