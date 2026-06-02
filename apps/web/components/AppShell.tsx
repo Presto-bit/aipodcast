@@ -384,7 +384,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   const navPrimary = useMemo<NavItem[]>(
-    () => [{ href: WORKBENCH_HOME_PATH, label: t("nav.home"), short: "首", Icon: IconHome }],
+    () => [{ href: WORKBENCH_HOME_PATH, label: t("nav.home"), short: "话", Icon: IconHome }],
     [t]
   );
   const navProducts = useMemo<NavItem[]>(
@@ -743,7 +743,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         }}
       >
         {navPrimary.map(renderSidebarNavItem)}
-        <NavSectionHeader collapsed={sidebarCollapsed}>{t("nav.products")}</NavSectionHeader>
         {navProducts.map((item) =>
           item.href === "/create" ? (
             <Fragment key={item.href}>
