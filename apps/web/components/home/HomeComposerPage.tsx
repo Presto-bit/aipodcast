@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HomeComposerFormatCard from "./HomeComposerFormatCard";
 import {
@@ -56,11 +55,6 @@ import { useNotebooksHubQuery } from "../../lib/queries/notebooksQueries";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../../lib/userScopedStorage";
 
 const HOME_COMPOSER_SIDEBAR_COLLAPSED_KEY = "fym_home_composer_sidebar_collapsed_v1";
-
-const NotesAskAnswerMarkdownBody = dynamic(
-  () => import("../notes/NotesAskAnswerMarkdownBody").then((m) => ({ default: m.default })),
-  { loading: () => <p className="text-sm text-muted">加载回答…</p> }
-);
 
 type NoteRow = { noteId: string; title?: string };
 
@@ -592,16 +586,8 @@ export default function HomeComposerPage({
                           <GeneralAnswerCard
                             streaming={turn.general.streaming}
                             streamingPhase={turn.general.streamingPhase}
-                            body={
-                              turn.general.content ? (
-                                <NotesAskAnswerMarkdownBody text={turn.general.content} />
-                              ) : undefined
-                            }
-                            supplement={
-                              turn.general.supplementContent ? (
-                                <NotesAskAnswerMarkdownBody text={turn.general.supplementContent} />
-                              ) : undefined
-                            }
+                            content={turn.general.content}
+                            supplementContent={turn.general.supplementContent}
                             onCopy={
                               turn.general.content && !turn.general.streaming
                                 ? () => void copyGeneralAnswer(turn.general!.content)

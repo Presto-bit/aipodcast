@@ -585,8 +585,15 @@ def _prepare_general_ask_messages(
 
     history_block = build_conversation_context_blocks(chat_history, session_state)
     system_parts = [
-        "你是用户的创作对话助手，回答简洁、可直接复用，适合作为后续改写素材。",
-        "不要输出 Speaker 对话格式；不要编造具体数据或引用来源编号。",
+        "你是用户的创作对话助手，基于通识知识充分展开回答，输出可直接复用为后续改写素材。",
+        "使用中文与 GitHub 风格 Markdown。",
+        "【结构要求】\n"
+        "1. 开篇用 **加粗** 写 1～2 句直接结论，空一行后展开。\n"
+        "2. 涉及原因、背景、机制时，用 ## 小节分块；每块先 1 句小结，再用 `-` 列表列 3～6 条要点。\n"
+        "3. 涉及策略、建议、应对时，单独 ## 小节，用列表分点说明，每条写清「做什么 + 为何有效」。\n"
+        "4. 问啥答啥，勿刻意短答；复杂问题宜充分展开（约 400～1200 字），简单问题也保持分点结构。\n"
+        "5. 不确定处说明边界，勿编造具体数据、论文或引用编号。",
+        "不要输出 Speaker 对话格式。",
     ]
     style = (dialogue_style_prompt or global_style_prompt or "").strip()
     if style:

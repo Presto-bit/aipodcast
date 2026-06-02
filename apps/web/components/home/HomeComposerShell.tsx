@@ -1,7 +1,13 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import type { ReactNode } from "react";
+
+const NotesAskAnswerMarkdownBody = dynamic(
+  () => import("../notes/NotesAskAnswerMarkdownBody").then((m) => ({ default: m.default })),
+  { loading: () => <p className="text-sm text-muted">加载回答…</p> }
+);
 
 export const COMPOSER_INPUT_H = 56;
 export const COMPOSER_TOOL_H = 28;
@@ -483,36 +489,60 @@ export function PersonalProfileCard({
 export function GeneralAnswerCard({
   streaming,
   streamingPhase,
-  body,
-  supplement,
+  content,
+  supplementContent,
   onCopy
 }: {
   streaming?: boolean;
   streamingPhase?: string;
-  body?: ReactNode;
-  supplement?: ReactNode;
+  content?: string;
+  supplementContent?: string;
   onCopy?: () => void;
 }) {
+  const mainText = content?.trim() ?? "";
+  const supplementText = supplementContent?.trim() ?? "";
+  const showMain = Boolean(mainText) || streaming;
+
   return (
-    <div className="w-full rounded-xl border border-line bg-fill/35 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-ink">通识对话</p>
-        {body && onCopy ? (
+    <article className="w-full overflow-hidden rounded-2xl border border-line/80 bg-surface shadow-sm">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 bg-fill/25 px-4 py-2.5 sm:px-5">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-ink">通识对话</p>
+          {streaming ? <p className="mt-0.5 text-xs text-muted">{streamingPhase || "生成中…"}</p> : null}
+        </div>
+        {mainText && onCopy && !streaming ? (
           <button
             type="button"
-            className="rounded-lg bg-brand px-2.5 py-1 text-xs font-medium text-brand-foreground hover:bg-brand/90"
+            className="shrink-0 rounded-lg bg-brand px-2.5 py-1 text-xs font-medium text-brand-foreground hover:bg-brand/90"
             onClick={onCopy}
           >
             复制回答
           </button>
         ) : null}
-      </div>
-      {streaming ? <p className="mt-2 text-sm text-muted">{streamingPhase || "生成中…"}</p> : null}
-      {body ? <div className="mt-2 text-sm leading-relaxed text-ink">{body}</div> : null}
-      {supplement ? (
-        <div className="mt-3 border-t border-line/60 pt-3 text-sm leading-relaxed text-muted">{supplement}</div>
+      </header>
+
+      {showMain ? (
+        <div className="notes-ask-answer min-w-0 px-4 py-3.5 sm:px-5 sm:py-4">
+          {mainText ? (
+            <NotesAskAnswerMarkdownBody text={mainText} />
+          ) : (
+            <p className="text-sm text-muted">正在生成回答…</p>
+          )}
+        </div>
       ) : null}
-    </div>
+
+      {supplementText ? (
+        <section
+          className="border-t border-line/70 bg-fill/15 px-4 py-3.5 sm:px-5 sm:py-4"
+          aria-label="补充说明"
+        >
+          <p className="mb-2.5 text-[11px] font-medium tracking-wide text-muted">补充说明</p>
+          <div className="notes-ask-answer min-w-0">
+            <NotesAskAnswerMarkdownBody text={supplementText} />
+          </div>
+        </section>
+      ) : null}
+    </article>
   );
 }
 
