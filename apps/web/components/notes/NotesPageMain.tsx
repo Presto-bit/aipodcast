@@ -87,11 +87,10 @@ import {
 import { matchesNotesWorkbench, normalizePathname } from "../../lib/navPaths";
 import { readDraftSourceIdsForNotebook, writeDraftSourceIdsForNotebook } from "../../lib/notesDraftSourcesStorage";
 import {
-  APP_SIDEBAR_COLLAPSED_KEY,
   APP_SIDEBAR_COLLAPSE_EVENT,
   APP_SIDEBAR_TOGGLE_EVENT
 } from "../../lib/appSidebarCollapse";
-import { SIDEBAR_COLLAPSED_STORAGE } from "../../lib/appShellLayout";
+import { isAppShellSidebarCollapsed } from "../../lib/appShellLayout";
 import { useAuth } from "../../lib/auth";
 import { useNotebooksHubQuery, fetchNotebooksHub, NOTEBOOKS_HUB_QUERY_KEY } from "../../lib/queries/notebooksQueries";
 import { useI18n } from "../../lib/I18nContext";
@@ -796,6 +795,14 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   const [notesAskBusy, setNotesAskBusy] = useState(false);
   const [notesAskError, setNotesAskError] = useState("");
   const notesAskScrollRef = useRef<HTMLDivElement | null>(null);
+  const notesAskStickToBottomRef = useRef(true);
+  const NOTES_ASK_SCROLL_PIN_THRESHOLD_PX = 96;
+  const syncNotesAskScrollPin = useCallback(() => {
+    const el = notesAskScrollRef.current;
+    if (!el) return;
+    const remaining = el.scrollHeight - el.clientHeight - el.scrollTop;
+    notesAskStickToBottomRef.current = remaining <= NOTES_ASK_SCROLL_PIN_THRESHOLD_PX;
+  }, []);
   const notesAskTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const syncNotesAskTextareaHeight = useCallback(() => {
     const el = notesAskTextareaRef.current;
@@ -833,22 +840,15 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   const [appNavCollapsed, setAppNavCollapsed] = useState(false);
 
   useEffect(() => {
-    function syncAppNavCollapsedFromStorage() {
-      try {
-        const v = readLocalStorageScoped(APP_SIDEBAR_COLLAPSED_KEY);
-        setAppNavCollapsed(v === SIDEBAR_COLLAPSED_STORAGE);
-      } catch {
-        setAppNavCollapsed(false);
-      }
+    function syncAppNavCollapsedFromShell() {
+      setAppNavCollapsed(isAppShellSidebarCollapsed());
     }
-    syncAppNavCollapsedFromStorage();
-    window.addEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncAppNavCollapsedFromStorage);
-    window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncAppNavCollapsedFromStorage);
-    window.addEventListener("storage", syncAppNavCollapsedFromStorage);
+    syncAppNavCollapsedFromShell();
+    window.addEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncAppNavCollapsedFromShell);
+    window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncAppNavCollapsedFromShell);
     return () => {
-      window.removeEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncAppNavCollapsedFromStorage);
-      window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncAppNavCollapsedFromStorage);
-      window.removeEventListener("storage", syncAppNavCollapsedFromStorage);
+      window.removeEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncAppNavCollapsedFromShell);
+      window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncAppNavCollapsedFromShell);
     };
   }, [storageAccountScope]);
 
@@ -929,6 +929,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     notesAskStreamAbortRef.current?.abort();
     setNotesAskBusy(false);
     setNotesAskError("");
+    notesAskStickToBottomRef.current = true;
     setNotesAskMessages([]);
     setNotesAskSessionState(null);
     notesAskSessionStateRef.current = null;
@@ -962,7 +963,20 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
   useEffect(() => {
     const el = notesAskScrollRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    const onScroll = () => syncNotesAskScrollPin();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    syncNotesAskScrollPin();
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [syncNotesAskScrollPin, notesAskMessages.length, selectedNotebook]);
+
+  useEffect(() => {
+    const el = notesAskScrollRef.current;
+    if (!el || !notesAskStickToBottomRef.current) return;
+    const streaming = notesAskMessages.some((m) => m.streaming);
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: streaming ? "auto" : "smooth"
+    });
   }, [notesAskMessages]);
 
   useEffect(() => {
@@ -2275,6 +2289,7 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     );
     setNotesAskError("");
     setNotesAskBusy(true);
+    notesAskStickToBottomRef.current = true;
     setNotesAskMessages((prev) => [
       ...prev,
       { id: userMsgId, role: "user", content: q },

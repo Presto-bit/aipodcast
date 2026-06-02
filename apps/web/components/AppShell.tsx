@@ -35,7 +35,6 @@ import {
 } from "./icons";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../lib/auth";
 import {
-  APP_SIDEBAR_COLLAPSED_KEY as COLLAPSE_KEY,
   APP_SIDEBAR_COLLAPSE_EVENT,
   APP_SIDEBAR_TOGGLE_EVENT
 } from "../lib/appSidebarCollapse";
@@ -66,8 +65,6 @@ import {
   APP_SHELL_MOBILE_MEDIA_QUERY,
   NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
   NAV_SECTION_LABEL_CLASS,
-  SIDEBAR_COLLAPSED_STORAGE,
-  SIDEBAR_EXPANDED_STORAGE,
   SIDEBAR_WIDTH_COLLAPSED_PX,
   SIDEBAR_WIDTH_EXPANDED_PX
 } from "../lib/appShellLayout";
@@ -78,10 +75,8 @@ import {
   normalizePathname,
   pathMatchesRoot,
   pathNeedsWorkAudio,
-  shouldKeepSidebarExpanded,
   WORKBENCH_HOME_PATH
 } from "../lib/navPaths";
-import { readLocalStorageScoped, writeLocalStorageScoped } from "../lib/userScopedStorage";
 import { reportFrontendGlobalError } from "../lib/frontendGlobalErrorClient";
 
 type NavItem = {
@@ -94,25 +89,6 @@ type NavItem = {
   /** 自定义高亮（例如子路由需与父入口同时高亮） */
   activeMatch?: (pathname: string) => boolean;
 };
-
-/** 一级入口路由强制宽轨；其余页读 localStorage。须在首帧 resolve，避免先窄后宽的闪烁。 */
-function resolveSidebarCollapsed(pathname: string, mobile: boolean): boolean {
-  if (mobile) return false;
-  if (shouldKeepSidebarExpanded(pathname)) return false;
-  try {
-    return readLocalStorageScoped(COLLAPSE_KEY) === SIDEBAR_COLLAPSED_STORAGE;
-  } catch {
-    return false;
-  }
-}
-
-function readSidebarCollapsedForCurrentLocation(): boolean {
-  if (typeof window === "undefined") return false;
-  return resolveSidebarCollapsed(
-    normalizePathname(window.location.pathname),
-    window.matchMedia(APP_SHELL_MOBILE_MEDIA_QUERY).matches
-  );
-}
 
 function Chevron({ collapsed }: { collapsed: boolean }) {
   return <IconChevronSidebar collapsed={collapsed} />;
@@ -282,7 +258,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [loggedIn, ready, queryClient, getAuthHeaders, user]);
 
   const { t } = useI18n();
-  const [collapsed, setCollapsed] = useState(readSidebarCollapsedForCurrentLocation);
+  const [collapsed, setCollapsed] = useState(false);
   /** 与 APP_SHELL_MOBILE_MEDIA_QUERY 一致（窄于 1024px）：侧栏改为抽屉，主区全宽 */
   const [mobileLayout, setMobileLayout] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -309,18 +285,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setNavPending(false);
   }, []);
 
-  const expandSidebar = useCallback(() => {
-    setCollapsed(false);
-    try {
-      writeLocalStorageScoped(COLLAPSE_KEY, SIDEBAR_EXPANDED_STORAGE);
-    } catch {
-      // ignore
-    }
-    if (typeof window !== "undefined") {
-      queueMicrotask(() => {
-        window.dispatchEvent(new CustomEvent(APP_SIDEBAR_TOGGLE_EVENT));
-      });
-    }
+  const dispatchSidebarToggle = useCallback(() => {
+    if (typeof window === "undefined") return;
+    queueMicrotask(() => {
+      window.dispatchEvent(new CustomEvent(APP_SIDEBAR_TOGGLE_EVENT));
+    });
   }, []);
 
   const beginWorkbenchNav = useCallback(
@@ -328,9 +297,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       const target = normalizePathname(String(href || "").split("?")[0] || href);
       const current = normalizePathname(pathRef.current);
       if (!target || target === current) return;
-      if (shouldKeepSidebarExpanded(target)) {
-        expandSidebar();
-      }
       const tier = resolveWorkbenchNavWarmthTier(queryClient, target);
       navPendingTierRef.current = tier;
       navPendingWarmRef.current = tier !== "cold";
@@ -338,7 +304,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       navPendingHrefRef.current = href;
       setNavPending(true);
     },
-    [expandSidebar, queryClient]
+    [queryClient]
   );
 
   useEffect(() => {
@@ -362,11 +328,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     navPending && Boolean(navPendingTarget) && navPendingTier === "cold";
   const showNavPendingProgress =
     navPending && Boolean(navPendingTarget) && !showNavPendingOverlay;
-  /** 一级入口（知识库/创作/作品）及跳转途中：渲染层强制宽轨，避免 collapsed 状态滞后一帧 */
-  const forceSidebarExpanded =
-    shouldKeepSidebarExpanded(path) ||
-    Boolean(navPendingTarget && shouldKeepSidebarExpanded(navPendingTarget));
-  const sidebarCollapsed = forceSidebarExpanded ? false : collapsed;
+  const sidebarCollapsed = collapsed;
 
   /** 软路由长时间未切换时整页跳转，避免骨架屏消失后仍停在旧页。 */
   useEffect(() => {
@@ -471,26 +433,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     [t]
   );
 
-  useLayoutEffect(() => {
-    const next = resolveSidebarCollapsed(path, mobileLayout);
-    setCollapsed(next);
-    if (shouldKeepSidebarExpanded(path) && !next) {
-      try {
-        writeLocalStorageScoped(COLLAPSE_KEY, SIDEBAR_EXPANDED_STORAGE);
-      } catch {
-        // ignore
-      }
-    }
-  }, [path, mobileLayout]);
-
   useEffect(() => {
     const onRequestCollapse = () => {
-      if (shouldKeepSidebarExpanded(pathRef.current)) return;
       setCollapsed(true);
+      dispatchSidebarToggle();
     };
     window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
     return () => window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, onRequestCollapse);
-  }, []);
+  }, [dispatchSidebarToggle]);
 
   useLayoutEffect(() => {
     if (typeof window === "undefined") return;
@@ -533,11 +483,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
     setCollapsed(false);
-    try {
-      writeLocalStorageScoped(COLLAPSE_KEY, SIDEBAR_EXPANDED_STORAGE);
-    } catch {
-      // ignore
-    }
     setMobileNavOpen(true);
   }, [closeMobileNav, mobileNavOpen]);
 
@@ -627,34 +572,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       document.documentElement.style.setProperty("--fym-app-sidebar-w", "0px");
       return;
     }
-    const pending = navPendingTargetRef.current;
-    const forceExpanded =
-      shouldKeepSidebarExpanded(path) ||
-      Boolean(pending && shouldKeepSidebarExpanded(pending));
-    const effectiveCollapsed = forceExpanded ? false : collapsed;
-    const px = effectiveCollapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
+    const px = collapsed ? SIDEBAR_WIDTH_COLLAPSED_PX : SIDEBAR_WIDTH_EXPANDED_PX;
     document.documentElement.style.setProperty("--fym-app-sidebar-w", `${px}px`);
     // 不在 cleanup 里 removeProperty：Strict Mode / 依赖重跑时会出现一帧变量缺失，
     // 全屏级 z-index 遮罩会短暂盖住侧栏；无壳场景由上面分支显式清除即可。
-  }, [collapsed, ready, path, mobileLayout, navPending]);
+  }, [collapsed, ready, path, mobileLayout]);
 
   const toggleCollapsed = useCallback(() => {
-    if (shouldKeepSidebarExpanded(path)) return;
-    setCollapsed((c) => {
-      const next = !c;
-      try {
-        writeLocalStorageScoped(COLLAPSE_KEY, next ? SIDEBAR_COLLAPSED_STORAGE : SIDEBAR_EXPANDED_STORAGE);
-      } catch {
-        // ignore
-      }
-      if (typeof window !== "undefined") {
-        queueMicrotask(() => {
-          window.dispatchEvent(new CustomEvent(APP_SIDEBAR_TOGGLE_EVENT));
-        });
-      }
-      return next;
-    });
-  }, [path]);
+    setCollapsed((c) => !c);
+    dispatchSidebarToggle();
+  }, [dispatchSidebarToggle]);
 
   const pageShell = (
     <AnimatedPageShell>
@@ -767,16 +694,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       onPointerDownCapture={() => dispatchWorkbenchDismissOverlays()}
       className={[
         `fixed left-0 top-0 ${WORKBENCH_SIDEBAR_Z_CLASS} flex h-svh min-h-0 flex-col border-r border-line bg-surface/95 backdrop-blur-sm`,
-        forceSidebarExpanded
-          ? ""
-          : "transition-[width,transform] duration-200 ease-out motion-reduce:transition-none",
+        "transition-[width,transform] duration-200 ease-out motion-reduce:transition-none",
         sidebarOffCanvas ? "-translate-x-full pointer-events-none" : "translate-x-0 pointer-events-auto",
         mobileLayout ? "shadow-card" : ""
       ].join(" ")}
       style={{ width: `${sidebarDrawerPx}px` }}
     >
       <div
-        className={`flex w-full shrink-0 items-center border-b border-line py-2 ${sidebarCollapsed ? "justify-center px-2" : "justify-between gap-2 px-2.5"}`}
+        className={[
+          "flex w-full shrink-0 border-b border-line",
+          sidebarCollapsed
+            ? "flex-col items-center gap-1 px-1 py-2"
+            : "flex-row items-center justify-between gap-2 px-2.5 py-2"
+        ].join(" ")}
       >
         <SidebarNavLink
           href="/"
@@ -786,19 +716,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           ].join(" ")}
           aria-label={t("nav.brandHomeLink")}
         >
-          <BrandGlyph size={36} />
+          <BrandGlyph size={sidebarCollapsed ? 32 : 36} />
         </SidebarNavLink>
-        {forceSidebarExpanded ? null : (
-          <button
-            type="button"
-            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
-            onClick={toggleCollapsed}
-            title={sidebarCollapsed ? t("nav.expand") : t("nav.collapse")}
-            aria-label={sidebarCollapsed ? t("nav.expand") : t("nav.collapse")}
-          >
-            <Chevron collapsed={sidebarCollapsed} />
-          </button>
-        )}
+        <button
+          type="button"
+          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
+          onClick={toggleCollapsed}
+          title={sidebarCollapsed ? t("nav.expand") : t("nav.collapse")}
+          aria-label={sidebarCollapsed ? t("nav.expand") : t("nav.collapse")}
+        >
+          <Chevron collapsed={sidebarCollapsed} />
+        </button>
       </div>
 
       <nav

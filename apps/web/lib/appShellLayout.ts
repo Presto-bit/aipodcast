@@ -25,6 +25,20 @@ export function isAppShellMobileLayout(): boolean {
 export const SIDEBAR_COLLAPSED_STORAGE = "1";
 export const SIDEBAR_EXPANDED_STORAGE = "0";
 
+/** 读取 AppShell 写入的 `--fym-app-sidebar-w`（SSR 默认展开宽度）。 */
+export function readAppShellSidebarWidthPx(): number {
+  if (typeof document === "undefined") return SIDEBAR_WIDTH_EXPANDED_PX;
+  const raw = getComputedStyle(document.documentElement).getPropertyValue("--fym-app-sidebar-w").trim();
+  const px = Number.parseInt(raw, 10);
+  return Number.isFinite(px) ? px : SIDEBAR_WIDTH_EXPANDED_PX;
+}
+
+/** 主导航是否处于折叠窄轨（移动端抽屉为 0px 时不视为折叠）。 */
+export function isAppShellSidebarCollapsed(): boolean {
+  const w = readAppShellSidebarWidthPx();
+  return w > 0 && w <= SIDEBAR_WIDTH_COLLAPSED_PX;
+}
+
 export const NAV_SECTION_LABEL_CLASS =
   "px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-muted/90";
 

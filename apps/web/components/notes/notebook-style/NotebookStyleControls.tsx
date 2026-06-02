@@ -235,7 +235,11 @@ export function NotebookStyleControls({
   );
 }
 
-/** C：参考资料标题行 — 风格已就绪 / 可提炼风格芯片 */
+/** 参考资料标题行「可提炼写作风格」芯片悬停说明 */
+export const NOTEBOOK_STYLE_LEARN_CHIP_HINT =
+  "可提炼勾选资料的写作风格，模仿写作风格重新创作";
+
+/** C：参考资料标题行 — 风格已就绪 / 可提炼写作风格芯片 */
 export function NotebookStyleHeaderChip() {
   const { syncStatus, loading, busy, readOnly, disabled, openModal } = useNotebookStyleContext();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -253,15 +257,17 @@ export function NotebookStyleHeaderChip() {
   if (syncStatus === "none") return null;
 
   const isPending = syncStatus === "pending";
-  const chipLabel = isPending ? "可提炼风格" : "风格已就绪";
+  const chipLabel = isPending ? "可提炼写作风格" : "风格已就绪";
   const chipClass = "border-brand/35 bg-brand/8 text-brand";
+  const chipTitle = isPending ? NOTEBOOK_STYLE_LEARN_CHIP_HINT : "写作风格已提炼完成，可在对话中选择「本笔记本风格」";
 
   return (
     <div id="notebook-style-header-chip" className="relative shrink-0" ref={menuRef}>
       <button
         type="button"
         disabled={disabled || readOnly || loading}
-        className={`inline-flex max-w-[7.5rem] items-center gap-0.5 truncate rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 ${chipClass}`}
+        title={chipTitle}
+        className={`inline-flex max-w-[9.5rem] items-center gap-0.5 truncate rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 ${chipClass}`}
         aria-expanded={menuOpen}
         aria-haspopup="menu"
         onClick={() => setMenuOpen((v) => !v)}

@@ -14,22 +14,12 @@ import { hexToMp3DataUrl } from "./audioHex";
 import { coerceJobResult } from "./coerceJobResult";
 import { unusableInsecureHttpOnHttpsPage } from "./insecureHttpOnHttpsPage";
 import { useAuth } from "./auth";
-import { APP_SIDEBAR_COLLAPSED_KEY, APP_SIDEBAR_COLLAPSE_EVENT, APP_SIDEBAR_TOGGLE_EVENT } from "./appSidebarCollapse";
-import { readLocalStorageScoped } from "./userScopedStorage";
-import { SIDEBAR_COLLAPSED_STORAGE } from "./appShellLayout";
+import { APP_SIDEBAR_COLLAPSE_EVENT, APP_SIDEBAR_TOGGLE_EVENT } from "./appSidebarCollapse";
+import { readAppShellSidebarWidthPx, SIDEBAR_WIDTH_EXPANDED_PX } from "./appShellLayout";
 import { IconChevronDown, IconChevronUp, IconPause, IconPlayFilled, IconX } from "../components/icons";
 
-const APP_NAV_SIDEBAR_PX_EXPANDED = 232;
-const APP_NAV_SIDEBAR_PX_COLLAPSED = 72;
-
 function readAppNavSidebarInsetPx(): number {
-  try {
-    return readLocalStorageScoped(APP_SIDEBAR_COLLAPSED_KEY) === SIDEBAR_COLLAPSED_STORAGE
-      ? APP_NAV_SIDEBAR_PX_COLLAPSED
-      : APP_NAV_SIDEBAR_PX_EXPANDED;
-  } catch {
-    return APP_NAV_SIDEBAR_PX_EXPANDED;
-  }
+  return readAppShellSidebarWidthPx();
 }
 
 function formatClock(sec: number): string {
@@ -203,7 +193,7 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
   const activeDisplayTitleRef = useRef("");
   /** 新开始播放或切换曲目时默认为收起 */
   const [dockExpanded, setDockExpanded] = useState(false);
-  const [dockInsetLeftPx, setDockInsetLeftPx] = useState(APP_NAV_SIDEBAR_PX_EXPANDED);
+  const [dockInsetLeftPx, setDockInsetLeftPx] = useState(SIDEBAR_WIDTH_EXPANDED_PX);
 
   useEffect(() => {
     activeJobIdRef.current = activeJobId;
@@ -382,11 +372,9 @@ export function WorkAudioPlayerProvider({ children }: { children: ReactNode }) {
     syncDockInset();
     window.addEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncDockInset);
     window.addEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncDockInset);
-    window.addEventListener("storage", syncDockInset);
     return () => {
       window.removeEventListener(APP_SIDEBAR_TOGGLE_EVENT, syncDockInset);
       window.removeEventListener(APP_SIDEBAR_COLLAPSE_EVENT, syncDockInset);
-      window.removeEventListener("storage", syncDockInset);
     };
   }, []);
 
