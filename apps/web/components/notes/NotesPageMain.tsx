@@ -81,8 +81,10 @@ import { NOTES_PODCAST_PROJECT_NAME } from "../../lib/notesProject";
 import {
   NOTES_DISMISS_OVERLAYS_EVENT,
   NOTES_NAV_HUB_EVENT,
+  NOTES_NAV_TEARDOWN_EVENT,
   writeLastNotebookName
 } from "../../lib/notesLastNotebook";
+import { matchesNotesWorkbench, normalizePathname } from "../../lib/navPaths";
 import { readDraftSourceIdsForNotebook, writeDraftSourceIdsForNotebook } from "../../lib/notesDraftSourcesStorage";
 import {
   APP_SIDEBAR_COLLAPSED_KEY,
@@ -1422,13 +1424,25 @@ export default function NotesPageMain({ initialNotebookId = null }: { initialNot
     const onDismissOverlays = () => {
       dismissNotesBlockingOverlays();
     };
+    const onNavTeardown = () => {
+      notesAskStreamAbortRef.current?.abort();
+      dismissNotesBlockingOverlays();
+    };
     window.addEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
     window.addEventListener(NOTES_DISMISS_OVERLAYS_EVENT, onDismissOverlays);
+    window.addEventListener(NOTES_NAV_TEARDOWN_EVENT, onNavTeardown);
     return () => {
       window.removeEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
       window.removeEventListener(NOTES_DISMISS_OVERLAYS_EVENT, onDismissOverlays);
+      window.removeEventListener(NOTES_NAV_TEARDOWN_EVENT, onNavTeardown);
     };
   }, [dismissNotesBlockingOverlays, router]);
+
+  useEffect(() => {
+    if (matchesNotesWorkbench(pathname)) return;
+    notesAskStreamAbortRef.current?.abort();
+    dismissNotesBlockingOverlays();
+  }, [pathname, dismissNotesBlockingOverlays]);
 
   /** 路由变化时关闭弹层，避免遮罩残留导致主区无法操作 */
   useEffect(() => {

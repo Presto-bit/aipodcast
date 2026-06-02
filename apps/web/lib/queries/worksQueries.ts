@@ -14,6 +14,7 @@ export type WorksApiPayload = {
 export type WorksListQueryOptions = {
   limit?: number;
   offset?: number;
+  initialData?: WorksApiPayload;
 };
 
 export async function fetchWorksPage(
@@ -70,7 +71,8 @@ export function useWorksListQuery(
     queryFn: () => fetchWorksPage(getAuthHeaders(), { limit, offset }),
     enabled: loggedIn,
     staleTime: 60_000,
-    placeholderData: keepPreviousData
+    placeholderData: keepPreviousData,
+    initialData: opts.initialData
   });
 }
 

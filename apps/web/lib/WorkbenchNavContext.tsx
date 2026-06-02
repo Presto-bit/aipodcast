@@ -4,6 +4,8 @@ import { createContext, useContext } from "react";
 
 export type WorkbenchNavContextValue = {
   navPending: boolean;
+  /** 全屏骨架 overlay 是否可见（progress-only 时为 false） */
+  navOverlayVisible: boolean;
   beginWorkbenchNav: (href: string) => void;
 };
 

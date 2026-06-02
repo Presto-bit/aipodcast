@@ -20,7 +20,8 @@ import {
   fetchNotebooksHub,
   NOTEBOOKS_HUB_QUERY_KEY,
   useInvalidateNotebooksHub,
-  useNotebooksHubQuery
+  useNotebooksHubQuery,
+  type NotebooksHubPayload
 } from "../../lib/queries/notebooksQueries";
 import { useNotebooksMetaQuery } from "../../lib/queries/notebooksMetaQueries";
 import { runWhenIdle } from "../../lib/runWhenIdle";
@@ -28,6 +29,7 @@ import { readLocalStorageScoped, writeLocalStorageScoped } from "../../lib/userS
 import {
   NOTES_DISMISS_OVERLAYS_EVENT,
   NOTES_NAV_HUB_EVENT,
+  NOTES_NAV_TEARDOWN_EVENT,
   writeLastNotebookName
 } from "../../lib/notesLastNotebook";
 
@@ -101,11 +103,11 @@ function buildSharedNotebookWorkbenchHref(
   return `/notes/${encodeURIComponent(notebook)}?${q.toString()}`;
 }
 
-export default function NotesHubPage() {
+export default function NotesHubPage({ initialHub = null }: { initialHub?: NotebooksHubPayload | null }) {
   const router = useRouter();
   const { user, getAuthHeaders, ready } = useAuth();
   const isLoggedIn = isLoggedInAccountUser(user);
-  const notebooksHubQuery = useNotebooksHubQuery(getAuthHeaders, ready);
+  const notebooksHubQuery = useNotebooksHubQuery(getAuthHeaders, ready, initialHub ?? undefined);
   const notebooksHubFetching = notebooksHubQuery.isFetching && Boolean(notebooksHubQuery.data);
   const queryClient = useQueryClient();
   const invalidateNotebooksHub = useInvalidateNotebooksHub();
@@ -196,11 +198,14 @@ export default function NotesHubPage() {
       dismissHubOverlays();
     };
     const onDismissOverlays = () => dismissHubOverlays();
+    const onNavTeardown = () => dismissHubOverlays();
     window.addEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
     window.addEventListener(NOTES_DISMISS_OVERLAYS_EVENT, onDismissOverlays);
+    window.addEventListener(NOTES_NAV_TEARDOWN_EVENT, onNavTeardown);
     return () => {
       window.removeEventListener(NOTES_NAV_HUB_EVENT, onNavHub);
       window.removeEventListener(NOTES_DISMISS_OVERLAYS_EVENT, onDismissOverlays);
+      window.removeEventListener(NOTES_NAV_TEARDOWN_EVENT, onNavTeardown);
     };
   }, [dismissHubOverlays]);
 

@@ -10,6 +10,15 @@ export const NOTES_NAV_HUB_EVENT = "fym:notes-show-notebook-hub";
 /** 离开知识库或点击主导航时：关闭笔记本内全屏弹层（与全站 WORKBENCH 事件同源） */
 export const NOTES_DISMISS_OVERLAYS_EVENT = WORKBENCH_DISMISS_OVERLAYS_EVENT;
 
+/** 侧栏离开知识库前：中止 stream / 弹层，便于 Next 软路由切换 */
+export const NOTES_NAV_TEARDOWN_EVENT = "fym:notes-nav-teardown";
+
+export function dispatchNotesNavTeardown(): void {
+  if (typeof window === "undefined") return;
+  dispatchWorkbenchDismissOverlays();
+  window.dispatchEvent(new CustomEvent(NOTES_NAV_TEARDOWN_EVENT, { bubbles: false }));
+}
+
 export const NOTES_NAV_WORKBENCH_EVENT = "fym:notes-open-workbench";
 
 export function readLastNotebookName(): string {

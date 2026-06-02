@@ -38,12 +38,15 @@ const PodcastWorksGallery = dynamic(() => import("../podcast/PodcastWorksGallery
     />
   )
 });
-import CreativeTemplatePicker from "./CreativeTemplatePicker";
+const CreativeTemplatePicker = dynamic(() => import("./CreativeTemplatePicker"), {
+  ssr: false,
+  loading: () => <div className="min-h-[2rem] animate-pulse rounded-lg bg-fill/40" aria-hidden />
+});
+const BgmControlRow = dynamic(() => import("./BgmControlRow"), { ssr: false });
+const IntroOutroPresetBar = dynamic(() => import("./IntroOutroPresetBar"), { ssr: false });
 import { chipClass } from "./chipStyles";
 import { IconPlayFilled, IconStopFilled } from "../icons";
 import { VoiceSelect, type VoiceOpt } from "./VoiceSelect";
-import BgmControlRow from "./BgmControlRow";
-import IntroOutroPresetBar from "./IntroOutroPresetBar";
 import { bgmSegmentPayloadFromState, type BgmUiMode } from "../../lib/bgmUpload";
 import { buildIntroOutroSnapshot, type IntroOutroSnapshotV1 } from "../../lib/introOutroSnapshot";
 import { DEFAULT_INTRO_LINE, DEFAULT_OUTRO_LINE } from "../../lib/introOutroDefaults";

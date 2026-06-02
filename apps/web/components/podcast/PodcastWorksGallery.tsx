@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -37,8 +38,6 @@ import {
   type WorkGalleryRowLayout
 } from "./workGalleryListContext";
 import { WorkGalleryListItem } from "./WorkGalleryListItem";
-import { WorkGalleryVirtualGrid } from "./WorkGalleryVirtualGrid";
-import { ScriptQuickReadDrawer } from "./ScriptQuickReadDrawer";
 import { useWorkGalleryGridColumnCount } from "./useWorkGalleryGridColumnCount";
 import { buildWorkDetailHref } from "./workGalleryNav";
 import {
@@ -48,6 +47,15 @@ import {
   workGalleryRowMutationsLocked,
   workIsPodcastTemplateNonOwner
 } from "./workGalleryListShared";
+
+const WorkGalleryVirtualGrid = dynamic(
+  () => import("./WorkGalleryVirtualGrid").then((m) => ({ default: m.WorkGalleryVirtualGrid })),
+  { ssr: false, loading: () => <div className="min-h-[120px] animate-pulse rounded-2xl bg-fill/50" aria-busy /> }
+);
+const ScriptQuickReadDrawer = dynamic(
+  () => import("./ScriptQuickReadDrawer").then((m) => ({ default: m.ScriptQuickReadDrawer })),
+  { ssr: false }
+);
 
 function workDownloadAllowed(w: Pick<WorkItem, "downloadAllowed">): boolean {
   return w.downloadAllowed === true;

@@ -399,8 +399,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [ready, path, router, routePrefetchOpts]);
 
   const workbenchNavContextValue = useMemo(
-    () => ({ navPending, beginWorkbenchNav }),
-    [navPending, beginWorkbenchNav]
+    () => ({ navPending, navOverlayVisible: showNavPendingOverlay, beginWorkbenchNav }),
+    [navPending, showNavPendingOverlay, beginWorkbenchNav]
   );
 
   const navPrimary = useMemo<NavItem[]>(
@@ -693,8 +693,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
    * 侧栏主导航：
    * - 「工作台首页」用原生 a[href]（登录回跳等场景可靠）。
    * - 「知识库」见 NotesNavExpanded（与 CreateStudioNavExpanded 同模式）。
-   * - 离开知识库时 SidebarNavLink 降级为原生 a[href] 整页离开。
-   * - 其余：Next Link 软路由 + hover 预取。
+   * - 其余：Next Link 软路由 + hover 预取；离开知识库前 dispatchNotesNavTeardown。
    */
   function renderSidebarNavItem(item: NavItem) {
     const active = linkActive(item);

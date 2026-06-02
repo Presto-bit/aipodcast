@@ -11,7 +11,7 @@ const AUTH_CONFIG_TIMEOUT_MS = 8_000;
 
 type CookieStore = Awaited<ReturnType<typeof cookies>>;
 
-function authHeadersFromCookieStore(store: CookieStore): Record<string, string> {
+export function authHeadersFromCookieStore(store: CookieStore): Record<string, string> {
   const token = store.get(SESSION_COOKIE_NAME)?.value?.trim();
   if (token) return { authorization: `Bearer ${token}` };
   return {};

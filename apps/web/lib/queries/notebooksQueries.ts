@@ -37,13 +37,18 @@ export async function fetchNotebooksHub(headers: Record<string, string>): Promis
   };
 }
 
-export function useNotebooksHubQuery(getAuthHeaders: () => Record<string, string>, enabled: boolean) {
+export function useNotebooksHubQuery(
+  getAuthHeaders: () => Record<string, string>,
+  enabled: boolean,
+  initialData?: NotebooksHubPayload
+) {
   return useQuery({
     queryKey: NOTEBOOKS_HUB_QUERY_KEY,
     queryFn: () => fetchNotebooksHub(getAuthHeaders()),
     enabled,
     staleTime: 60_000,
-    placeholderData: keepPreviousData
+    placeholderData: keepPreviousData,
+    initialData
   });
 }
 
