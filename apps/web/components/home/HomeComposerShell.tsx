@@ -90,23 +90,22 @@ function IconNewSession() {
   );
 }
 
-function IconSidebarOpen() {
+/** 侧栏折叠/展开：圆角外框 + 左侧竖线（PanelLeft） */
+function IconSidebarToggle() {
   return (
     <Svg>
-      <rect x="2.5" y="3" width="4" height="10" rx="1" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M9 6.5h4.5M9 9.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" />
+      <path d="M5.5 2.5v11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
     </Svg>
   );
 }
 
+function IconSidebarOpen() {
+  return <IconSidebarToggle />;
+}
+
 function IconSidebarClose() {
-  return (
-    <Svg>
-      <rect x="2.5" y="3" width="4" height="10" rx="1" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M9 8h4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-      <path d="M11.5 6.5 13 8l-1.5 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
+  return <IconSidebarToggle />;
 }
 
 function IconDeleteSession() {
