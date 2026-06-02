@@ -110,6 +110,18 @@ export function selectHomeComposerSession(store: HomeComposerStore, sessionId: s
   return { ...store, activeSessionId: sessionId };
 }
 
+/** 删除会话；若删的是最后一条则新建空会话。 */
+export function deleteHomeComposerSession(store: HomeComposerStore, sessionId: string): HomeComposerStore {
+  const remaining = store.sessions.filter((s) => s.id !== sessionId);
+  if (!remaining.length) {
+    const session = createSession();
+    return { v: 1, activeSessionId: session.id, sessions: [session] };
+  }
+  const activeSessionId =
+    store.activeSessionId === sessionId ? remaining[0]!.id : store.activeSessionId;
+  return { ...store, activeSessionId, sessions: remaining };
+}
+
 export function appendHomeComposerTurn(
   store: HomeComposerStore,
   turn: HomeComposerTurn,

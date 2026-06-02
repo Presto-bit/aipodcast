@@ -9,16 +9,16 @@ const NotesAskAnswerMarkdownBody = dynamic(
   { loading: () => <p className="text-sm text-muted">加载回答…</p> }
 );
 
-export const COMPOSER_INPUT_H = 56;
-export const COMPOSER_TOOL_H = 28;
+export const COMPOSER_INPUT_MIN_H = 56;
+export const COMPOSER_TOOL_H = 56;
 export const COMPOSER_SIDEBAR_W = 208;
-export const COMPOSER_SIDEBAR_COLLAPSED_W = 64;
-export const COMPOSER_CONTENT_MAX_W = 680;
-export const COMPOSER_OUTER_MAX_W = 960;
+export const COMPOSER_SIDEBAR_COLLAPSED_W = 80;
+export const COMPOSER_CONTENT_MAX_W = 820;
+export const COMPOSER_OUTER_MAX_W = 1120;
 
 function Svg({ children }: { children: ReactNode }) {
   return (
-    <svg width={14} height={14} viewBox="0 0 16 16" fill="none" aria-hidden className="shrink-0">
+    <svg width={28} height={28} viewBox="0 0 16 16" fill="none" aria-hidden className="shrink-0">
       {children}
     </svg>
   );
@@ -35,7 +35,7 @@ export function IconFormat() {
 
 export function IconNotes() {
   return (
-    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden stroke="currentColor" strokeWidth={2}>
+    <svg width={28} height={28} viewBox="0 0 24 24" fill="none" aria-hidden stroke="currentColor" strokeWidth={2}>
       <path
         d="M7 8.5h10a2 2 0 0 1 2 2v7.5a1.5 1.5 0 0 1-1.5 1.5H8.5A1.5 1.5 0 0 1 7 18V8.5z"
         strokeLinejoin="round"
@@ -70,7 +70,7 @@ export function IconUser() {
 
 export function IconSend() {
   return (
-    <svg width={15} height={15} viewBox="0 0 16 16" fill="none" aria-hidden>
+    <svg width={30} height={30} viewBox="0 0 16 16" fill="none" aria-hidden>
       <path
         d="M8 3v10M8 3l4 4M8 3L4 7"
         stroke="currentColor"
@@ -105,6 +105,15 @@ function IconSidebarClose() {
       <rect x="2.5" y="3" width="4" height="10" rx="1" stroke="currentColor" strokeWidth="1.2" />
       <path d="M9 8h4.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
       <path d="M11.5 6.5 13 8l-1.5 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+function IconDeleteSession() {
+  return (
+    <Svg>
+      <path d="M4.5 4.5h7M6 4.5V3.8h4V4.5M6.2 7v4.8M9.8 7v4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <path d="M5.2 4.5 5.8 12.2h4.4l.6-7.7" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
     </Svg>
   );
 }
@@ -219,9 +228,7 @@ export function ComposerCopyToast({ message }: { message: string }) {
 export function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex w-full justify-end">
-      <p className="max-w-[88%] whitespace-pre-wrap rounded-xl bg-fill px-3 py-2 text-sm leading-relaxed text-ink">
-        {text}
-      </p>
+      <p className="max-w-[92%] whitespace-pre-wrap text-[15px] leading-[1.72] text-ink">{text}</p>
     </div>
   );
 }
@@ -239,13 +246,53 @@ export function sessionTimeGroup(updatedAt: number): "今天" | "昨天" | null 
   return null;
 }
 
+function SessionRow({
+  session,
+  active,
+  onSelect,
+  onDelete
+}: {
+  session: SessionListItem;
+  active: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="group flex min-w-0 items-center gap-0.5">
+      <button
+        type="button"
+        className={[
+          "min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-left text-sm transition",
+          active ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
+        ].join(" ")}
+        onClick={onSelect}
+      >
+        {session.title || "新对话"}
+      </button>
+      <button
+        type="button"
+        title="删除对话"
+        aria-label={`删除对话：${session.title || "新对话"}`}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted opacity-0 transition hover:bg-fill hover:text-danger-ink group-hover:opacity-100"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+      >
+        <IconDeleteSession />
+      </button>
+    </div>
+  );
+}
+
 export function SessionHistorySidebar({
   collapsed,
   sessions,
   activeSessionId,
   onToggleCollapse,
   onNewSession,
-  onSelectSession
+  onSelectSession,
+  onDeleteSession
 }: {
   collapsed: boolean;
   sessions: SessionListItem[];
@@ -253,6 +300,7 @@ export function SessionHistorySidebar({
   onToggleCollapse: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
+  onDeleteSession: (id: string) => void;
 }) {
   if (collapsed) {
     return (
@@ -276,7 +324,7 @@ export function SessionHistorySidebar({
 
   return (
     <aside
-      className="flex shrink-0 flex-col gap-2 self-stretch rounded-2xl border border-line bg-surface p-3"
+      className="flex shrink-0 flex-col gap-2 self-stretch border-r border-line/60 pr-3"
       style={{ width: COMPOSER_SIDEBAR_W, minWidth: COMPOSER_SIDEBAR_W, minHeight: 420 }}
     >
       <div className="flex items-center gap-1.5">
@@ -291,7 +339,7 @@ export function SessionHistorySidebar({
           type="button"
           title="折叠会话栏"
           aria-label="折叠会话栏"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
           onClick={onToggleCollapse}
         >
           <IconSidebarClose />
@@ -306,17 +354,13 @@ export function SessionHistorySidebar({
               <p className="mb-1 text-xs text-muted">{group}</p>
               <div className="space-y-0.5">
                 {items.map((s) => (
-                  <button
+                  <SessionRow
                     key={s.id}
-                    type="button"
-                    className={[
-                      "block w-full truncate rounded-lg px-2 py-1.5 text-left text-sm transition",
-                      s.id === activeSessionId ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
-                    ].join(" ")}
-                    onClick={() => onSelectSession(s.id)}
-                  >
-                    {s.title || "新对话"}
-                  </button>
+                    session={s}
+                    active={s.id === activeSessionId}
+                    onSelect={() => onSelectSession(s.id)}
+                    onDelete={() => onDeleteSession(s.id)}
+                  />
                 ))}
               </div>
             </div>
@@ -329,17 +373,13 @@ export function SessionHistorySidebar({
               {sessions
                 .filter((s) => !sessionTimeGroup(s.updatedAt))
                 .map((s) => (
-                  <button
+                  <SessionRow
                     key={s.id}
-                    type="button"
-                    className={[
-                      "block w-full truncate rounded-lg px-2 py-1.5 text-left text-sm transition",
-                      s.id === activeSessionId ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
-                    ].join(" ")}
-                    onClick={() => onSelectSession(s.id)}
-                  >
-                    {s.title || "新对话"}
-                  </button>
+                    session={s}
+                    active={s.id === activeSessionId}
+                    onSelect={() => onSelectSession(s.id)}
+                    onDelete={() => onDeleteSession(s.id)}
+                  />
                 ))}
             </div>
           </div>
@@ -370,20 +410,15 @@ export function ComposerShell({
 }) {
   const hasText = Boolean(value.trim());
   return (
-    <div
-      className={[
-        "relative w-full shrink-0 overflow-visible rounded-2xl border border-line bg-surface p-3",
-        menuOpen ? "z-30" : "z-10"
-      ].join(" ")}
-    >
-      <div className="relative w-full overflow-visible" style={{ height: COMPOSER_INPUT_H, minHeight: COMPOSER_INPUT_H }}>
+    <div className={["relative w-full shrink-0 overflow-visible", menuOpen ? "z-30" : "z-10"].join(" ")}>
+      <div className="relative w-full overflow-visible">
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="消息…"
           rows={2}
-          className="h-full w-full resize-none border-0 bg-transparent py-0 text-sm text-ink outline-none"
-          style={{ paddingRight: hasText ? 36 : 0 }}
+          className="w-full min-h-[56px] max-h-[min(40vh,240px)] resize-none border-0 bg-transparent py-2 text-[15px] leading-relaxed text-ink outline-none ring-0 focus:outline-none focus:ring-0"
+          style={{ paddingRight: hasText ? 56 : 0 }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -398,13 +433,13 @@ export function ComposerShell({
             aria-label="发送"
             disabled={busy}
             onClick={onSend}
-            className="absolute bottom-0 right-0 flex h-7 w-7 items-center justify-center rounded-full bg-ink text-canvas transition hover:opacity-90 disabled:opacity-50"
+            className="absolute bottom-1 right-0 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-canvas transition hover:opacity-90 disabled:opacity-50"
           >
             <IconSend />
           </button>
         ) : null}
       </div>
-      <div className="relative mt-2 min-h-[28px] overflow-visible" style={{ zIndex: menuOpen ? 10 : 1 }}>
+      <div className="relative mt-1 min-h-[56px] overflow-visible" style={{ zIndex: menuOpen ? 10 : 1 }}>
         <div className="flex w-full items-center justify-between gap-1 overflow-visible">
           {formatControl}
           {contextControls}
@@ -501,48 +536,38 @@ export function GeneralAnswerCard({
 }) {
   const mainText = content?.trim() ?? "";
   const supplementText = supplementContent?.trim() ?? "";
-  const showMain = Boolean(mainText) || streaming;
 
   return (
-    <article className="w-full overflow-hidden rounded-2xl border border-line/80 bg-surface shadow-sm">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 bg-fill/25 px-4 py-2.5 sm:px-5">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-ink">通识对话</p>
-          {streaming ? <p className="mt-0.5 text-xs text-muted">{streamingPhase || "生成中…"}</p> : null}
-        </div>
-        {mainText && onCopy && !streaming ? (
-          <button
-            type="button"
-            className="shrink-0 rounded-lg bg-brand px-2.5 py-1 text-xs font-medium text-brand-foreground hover:bg-brand/90"
-            onClick={onCopy}
-          >
-            复制回答
-          </button>
-        ) : null}
-      </header>
-
-      {showMain ? (
-        <div className="notes-ask-answer min-w-0 px-4 py-3.5 sm:px-5 sm:py-4">
-          {mainText ? (
-            <NotesAskAnswerMarkdownBody text={mainText} />
-          ) : (
-            <p className="text-sm text-muted">正在生成回答…</p>
-          )}
-        </div>
+    <div className="w-full min-w-0">
+      {streaming && !mainText ? (
+        <p className="text-sm text-muted">{streamingPhase || "正在生成回答…"}</p>
       ) : null}
-
+      {mainText ? (
+        <>
+          <div className="notes-ask-answer min-w-0 [&_.notes-ask-answer-md]:max-w-none">
+            <NotesAskAnswerMarkdownBody text={mainText} />
+          </div>
+          {onCopy && !streaming ? (
+            <div className="mt-4 flex justify-end border-t border-line/50 pt-3">
+              <button
+                type="button"
+                className="text-sm text-muted underline decoration-dotted underline-offset-4 hover:text-ink"
+                onClick={onCopy}
+              >
+                复制回答
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : null}
       {supplementText ? (
-        <section
-          className="border-t border-line/70 bg-fill/15 px-4 py-3.5 sm:px-5 sm:py-4"
-          aria-label="补充说明"
-        >
-          <p className="mb-2.5 text-[11px] font-medium tracking-wide text-muted">补充说明</p>
-          <div className="notes-ask-answer min-w-0">
+        <section className="mt-6 border-t border-line/60 pt-4" aria-label="补充说明">
+          <div className="notes-ask-answer min-w-0 [&_.notes-ask-answer-md]:max-w-none">
             <NotesAskAnswerMarkdownBody text={supplementText} />
           </div>
         </section>
       ) : null}
-    </article>
+    </div>
   );
 }
 

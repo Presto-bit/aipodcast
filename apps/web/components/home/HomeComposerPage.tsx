@@ -24,6 +24,7 @@ import {
   activeHomeComposerSession,
   appendHomeComposerTurn,
   createHomeComposerSession,
+  deleteHomeComposerSession,
   loadHomeComposerStore,
   patchActiveHomeComposerSession,
   saveHomeComposerStore,
@@ -341,7 +342,7 @@ export default function HomeComposerPage({
         if (formats.length) {
           nextStore = updateHomeComposerTurn(nextStore, turnId, (t) => {
             const fm = { ...t.formats };
-            for (const f of formats) fm[f] = { status: "running", progress: "准备中…" };
+            for (const f of formats) fm[f] = { status: "running", progress: "正在准备任务…" };
             return { ...t, formats: fm };
           });
           setStore(nextStore);
@@ -429,12 +430,6 @@ export default function HomeComposerPage({
 
   function handleSend() {
     void runTurn(input);
-  }
-
-  function handleRegenLast() {
-    const last = session?.turns[session.turns.length - 1];
-    if (!last?.userText.trim()) return;
-    void runTurn(last.userText, { replaceLast: true });
   }
 
   function toggleFormat(id: HomeComposerFormat) {
@@ -547,6 +542,7 @@ export default function HomeComposerPage({
           onToggleCollapse={toggleSidebarCollapsed}
           onNewSession={() => setStore(createHomeComposerSession(store, session.prefs))}
           onSelectSession={(id) => setStore(selectHomeComposerSession(store, id))}
+          onDeleteSession={(id) => setStore(deleteHomeComposerSession(store, id))}
         />
 
         <div
@@ -567,46 +563,35 @@ export default function HomeComposerPage({
             ) : (
               <div className="mb-4 min-h-0 w-full flex-1 space-y-4 overflow-y-auto pb-2">
                 {session.turns.map((turn) => (
-                  <div key={turn.id} className="space-y-4">
+                  <div key={turn.id} className="space-y-5">
                     <UserBubble text={turn.userText} />
-                    {formatSelected
-                      ? (prefs?.formats ?? []).map((format) => {
-                          const result = turn.formats[format];
-                          if (!result) return null;
-                          return (
-                            <HomeComposerFormatCard
-                              key={`${turn.id}-${format}`}
-                              format={format}
-                              result={result}
-                              onCopyToast={showCopyToast}
-                            />
-                          );
-                        })
-                      : turn.general ? (
-                          <GeneralAnswerCard
-                            streaming={turn.general.streaming}
-                            streamingPhase={turn.general.streamingPhase}
-                            content={turn.general.content}
-                            supplementContent={turn.general.supplementContent}
-                            onCopy={
-                              turn.general.content && !turn.general.streaming
-                                ? () => void copyGeneralAnswer(turn.general!.content)
-                                : undefined
-                            }
-                          />
-                        ) : null}
+                    {turn.general ? (
+                      <GeneralAnswerCard
+                        streaming={turn.general.streaming}
+                        streamingPhase={turn.general.streamingPhase}
+                        content={turn.general.content}
+                        supplementContent={turn.general.supplementContent}
+                        onCopy={
+                          turn.general.content && !turn.general.streaming
+                            ? () => void copyGeneralAnswer(turn.general!.content)
+                            : undefined
+                        }
+                      />
+                    ) : null}
+                    {(prefs?.formats ?? []).map((format) => {
+                      const result = turn.formats[format];
+                      if (!result) return null;
+                      return (
+                        <HomeComposerFormatCard
+                          key={`${turn.id}-${format}`}
+                          format={format}
+                          result={result}
+                          onCopyToast={showCopyToast}
+                        />
+                      );
+                    })}
                   </div>
                 ))}
-                <div className="flex justify-center pt-2">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    className="rounded-lg border border-line px-3 py-1.5 text-xs text-muted hover:bg-fill disabled:opacity-50"
-                    onClick={handleRegenLast}
-                  >
-                    重新生成最后一轮
-                  </button>
-                </div>
               </div>
             )}
 
