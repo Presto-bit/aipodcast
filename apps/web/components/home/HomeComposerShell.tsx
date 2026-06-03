@@ -298,12 +298,41 @@ export function ComposerDropAnchor({
   );
 }
 
-export function ComposerStatusBar({ parts }: { parts: string[] }) {
-  if (!parts.length) return null;
+const WORKFLOW_PILL: Record<string, string> = {
+  chat: "border-line bg-fill/40 text-muted",
+  standby: "border-line bg-fill/40 text-muted",
+  resolution: "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+  executing: "border-brand/40 bg-brand/10 text-brand",
+  review: "border-emerald-500/40 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100"
+};
+
+export function ComposerStatusBar({
+  parts,
+  workflowLabel,
+  workflowPhase
+}: {
+  parts: string[];
+  workflowLabel?: string;
+  workflowPhase?: string;
+}) {
+  if (!parts.length && !workflowLabel) return null;
+  const pillClass = WORKFLOW_PILL[workflowPhase ?? "chat"] ?? WORKFLOW_PILL.chat;
   return (
-    <p className="mt-2 w-full border-t border-line/80 pt-2 text-xs leading-relaxed text-muted">
-      {parts.join(" · ")}
-    </p>
+    <div className="mt-2 w-full border-t border-line/80 pt-2">
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-muted">
+        {workflowLabel ? (
+          <span
+            className={[
+              "inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+              pillClass
+            ].join(" ")}
+          >
+            {workflowLabel}
+          </span>
+        ) : null}
+        {parts.length ? <span>{parts.join(" · ")}</span> : null}
+      </p>
+    </div>
   );
 }
 

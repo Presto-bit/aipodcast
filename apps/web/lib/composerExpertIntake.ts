@@ -437,6 +437,14 @@ export function intakeFieldHint(expertId: PlatformExpertId, intake: Record<strin
   return undefined;
 }
 
+/** Resolution 卡推断摘要（与确认页展示一致） */
+export function formatIntakeInferenceSummary(
+  expertId: PlatformExpertId,
+  intake: Record<string, string | string[]>
+): string[] {
+  return formatIntakeSelectionsForDisplay(expertId, intake);
+}
+
 /** 确认页仅展示用户已选 intake（无值字段省略） */
 export function formatIntakeSelectionsForDisplay(
   expertId: PlatformExpertId,

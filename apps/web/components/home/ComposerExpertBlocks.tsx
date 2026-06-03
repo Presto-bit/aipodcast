@@ -9,6 +9,8 @@ import ConfirmEditForm from "./composer/ConfirmEditForm";
 
 type IntakeStepBlock = Extract<AssistantBlock, { kind: "intake_step" }>;
 type ConfirmBlock = Extract<AssistantBlock, { kind: "confirm" }>;
+type ClarificationBlock = Extract<AssistantBlock, { kind: "clarification" }>;
+type ReviewBlock = Extract<AssistantBlock, { kind: "review" }>;
 type ProgressBlock = Extract<AssistantBlock, { kind: "progress" }>;
 type FeedbackBlock = Extract<AssistantBlock, { kind: "feedback" }>;
 
@@ -133,14 +135,15 @@ function IntakeStepPanel({
   );
 }
 
-function ConfirmPanel({
+function ResolutionPanel({
   block,
   expertId,
   disabled,
   onStartGenerate,
   onConfirmUpdate,
   onExitChat,
-  onEditFeature
+  onEditFeature,
+  onEditIntake
 }: {
   block: ConfirmBlock;
   expertId: PlatformExpertId;
@@ -149,10 +152,15 @@ function ConfirmPanel({
   onConfirmUpdate: (taskSentence: string, intake: Record<string, string | string[]>) => void;
   onExitChat: () => void;
   onEditFeature: () => void;
+  onEditIntake?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const mp = block.materialPlan;
-  const intakeLines = formatIntakeSelectionsForDisplay(expertId, block.intake as Record<string, string | string[]>);
+  const inferenceLines =
+    block.inferenceSummary?.length
+      ? block.inferenceSummary
+      : formatIntakeSelectionsForDisplay(expertId, block.intake as Record<string, string | string[]>);
+  const isClarification = block.resolutionMode === "clarification";
 
   if (editing && !disabled) {
     return (
@@ -173,15 +181,28 @@ function ConfirmPanel({
 
   return (
     <div className="rounded-2xl border border-brand/25 bg-surface p-4 shadow-soft">
-      <p className="text-sm font-semibold text-ink">确认 · {EXPERT_DISPLAY_NAMES[expertId]}</p>
-      <p className="mt-2 text-sm text-ink">{block.summary}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm font-semibold text-ink">
+          {isClarification ? "澄清需求" : "需求确认"} · {EXPERT_DISPLAY_NAMES[expertId]}
+        </p>
+        <span className="rounded-full border border-amber-500/35 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-900 dark:text-amber-100">
+          Resolution
+        </span>
+      </div>
 
-      {intakeLines.length ? (
-        <ul className="mt-3 space-y-1 rounded-xl border border-line/80 bg-fill/20 p-3 text-xs text-muted">
-          {intakeLines.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
+      <p className="mt-3 text-sm leading-relaxed text-ink">{block.summary}</p>
+
+      {block.hint ? <p className="mt-2 text-xs text-brand">💡 {block.hint}</p> : null}
+
+      {inferenceLines.length ? (
+        <div className="mt-3 rounded-xl border border-line/80 bg-fill/20 p-3">
+          <p className="text-xs font-medium text-muted">推断选项（可编辑）</p>
+          <ul className="mt-2 space-y-1 text-xs text-ink">
+            {inferenceLines.map((line) => (
+              <li key={line}>· {line}</li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       {mp?.notebook ? (
@@ -214,13 +235,93 @@ function ConfirmPanel({
             className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-foreground hover:bg-brand/90"
             onClick={onStartGenerate}
           >
-            开始生成
+            确认并开始生成
           </button>
           <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={() => setEditing(true)}>
             编辑需求
           </button>
+          {onEditIntake ? (
+            <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={onEditIntake}>
+              改选项
+            </button>
+          ) : null}
           <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={onExitChat}>
-            改聊一下
+            这是聊天，不是开工
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ClarificationPanel({
+  block,
+  disabled,
+  onStartTask,
+  onContinueChat
+}: {
+  block: ClarificationBlock;
+  disabled?: boolean;
+  onStartTask: () => void;
+  onContinueChat: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-4 shadow-soft">
+      <p className="text-sm font-medium text-ink">需要确认一下</p>
+      <p className="mt-2 text-sm text-muted">{block.message}</p>
+      {!disabled ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-foreground hover:bg-brand/90"
+            onClick={onStartTask}
+          >
+            按任务开工
+          </button>
+          <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={onContinueChat}>
+            这只是聊天
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReviewPanel({
+  block,
+  expertId,
+  disabled,
+  onAccept,
+  onRedirect
+}: {
+  block: ReviewBlock;
+  expertId: PlatformExpertId;
+  disabled?: boolean;
+  onAccept: () => void;
+  onRedirect: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 shadow-soft">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm font-semibold text-ink">交付复核 · {EXPERT_DISPLAY_NAMES[expertId]}</p>
+        <span className="rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:text-emerald-100">
+          Review
+        </span>
+      </div>
+      <p className="mt-2 text-sm text-muted">
+        {block.summaryLine ?? "成品已就绪。确认可用后归档；若要换方向可回到需求确认。"}
+      </p>
+      {!disabled ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-foreground hover:bg-brand/90"
+            onClick={onAccept}
+          >
+            这版能发
+          </button>
+          <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={onRedirect}>
+            换方向重做
           </button>
         </div>
       ) : null}
@@ -232,6 +333,7 @@ export default function ComposerExpertBlocks({
   blocks,
   expertId,
   archived,
+  flowFrozen,
   draft,
   onIntakeChange,
   onIntakeNext,
@@ -240,6 +342,11 @@ export default function ComposerExpertBlocks({
   onConfirmUpdate,
   onExitChat,
   onEditFeature,
+  onEditIntake,
+  onClarifyStartTask,
+  onClarifyContinueChat,
+  onReviewAccept,
+  onReviewRedirect,
   onCopyToast,
   featureCoreComplete = 0,
   onFeedbackPatch,
@@ -248,6 +355,8 @@ export default function ComposerExpertBlocks({
   blocks: AssistantBlock[];
   expertId: PlatformExpertId;
   archived?: boolean;
+  /** 任务流已离开该 turn（Resolution/Review 冻结，但不影响成品反馈） */
+  flowFrozen?: boolean;
   draft?: ExpertTaskDraft;
   onIntakeChange: (fieldId: string, value: string | string[], multi: boolean) => void;
   onIntakeNext: () => void;
@@ -256,12 +365,19 @@ export default function ComposerExpertBlocks({
   onConfirmUpdate: (taskSentence: string, intake: Record<string, string | string[]>) => void;
   onExitChat: () => void;
   onEditFeature: () => void;
+  onEditIntake?: () => void;
+  onClarifyStartTask?: () => void;
+  onClarifyContinueChat?: () => void;
+  onReviewAccept?: () => void;
+  onReviewRedirect?: () => void;
   onCopyToast?: (message: string) => void;
   featureCoreComplete?: number;
   onFeedbackPatch?: (patch: Partial<FeedbackBlock>) => void;
   outputContextParts?: string[];
 }) {
   if (!blocks.length) return null;
+
+  const panelsDisabled = archived || flowFrozen;
 
   const feedbackBlock = blocks.find((b): b is FeedbackBlock => b.kind === "feedback");
   const expertStrip = blocks.find((b) => b.kind === "expert_strip");
@@ -285,7 +401,7 @@ export default function ComposerExpertBlocks({
             <IntakeStepPanel
               key={`intake-${block.step}`}
               block={block}
-              disabled={archived}
+              disabled={panelsDisabled}
               onChange={onIntakeChange}
               onNext={onIntakeNext}
               onConfirmDirect={onIntakeConfirmDirect}
@@ -294,20 +410,49 @@ export default function ComposerExpertBlocks({
         }
         if (block.kind === "confirm") {
           return (
-            <ConfirmPanel
+            <ResolutionPanel
               key="confirm"
               block={block}
               expertId={expertId}
-              disabled={archived}
+              disabled={panelsDisabled}
               onStartGenerate={onConfirmStart}
               onConfirmUpdate={onConfirmUpdate}
               onExitChat={onExitChat}
               onEditFeature={onEditFeature}
+              onEditIntake={draft?.phase === "confirm" ? onEditIntake : undefined}
+            />
+          );
+        }
+        if (block.kind === "clarification") {
+          return (
+            <ClarificationPanel
+              key="clarification"
+              block={block}
+              disabled={panelsDisabled}
+              onStartTask={onClarifyStartTask ?? (() => {})}
+              onContinueChat={onClarifyContinueChat ?? onExitChat}
+            />
+          );
+        }
+        if (block.kind === "review") {
+          return (
+            <ReviewPanel
+              key="review"
+              block={block}
+              expertId={expertId}
+              disabled={panelsDisabled}
+              onAccept={onReviewAccept ?? (() => {})}
+              onRedirect={onReviewRedirect ?? (() => {})}
             />
           );
         }
         if (block.kind === "progress") {
-          return <ProgressPanel key={`progress-${idx}`} block={block} expertId={expertId} />;
+          return (
+            <div key={`progress-${idx}`} className="space-y-2">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-brand">Execution</p>
+              <ProgressPanel block={block} expertId={expertId} />
+            </div>
+          );
         }
         if (block.kind === "deliverable") {
           return (

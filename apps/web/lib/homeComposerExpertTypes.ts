@@ -6,7 +6,7 @@ export type ComposerExpertSelection =
   | { mode: "none" }
   | { mode: "platform"; expertId: PlatformExpertId };
 
-export type TaskPhase = "idle" | "intake" | "confirm" | "generate" | "deliver" | "revise";
+export type TaskPhase = "idle" | "intake" | "confirm" | "generate" | "deliver" | "review" | "revise";
 
 export type ExpertTaskDraft = {
   expertId: PlatformExpertId;
@@ -163,6 +163,21 @@ export type AssistantBlock =
       materialPlan?: MaterialPlan;
       featureStrip?: { enabled: boolean; summary?: string; warning?: string };
       disclaimer?: string;
+      /** WorkBuddy 式 Resolution：confirmation 单卡 / clarification 澄清 */
+      resolutionMode?: "confirmation" | "clarification";
+      inferenceSummary?: string[];
+      hint?: string;
+    }
+  | {
+      kind: "clarification";
+      message: string;
+      expertId?: PlatformExpertId;
+      taskSentence?: string;
+    }
+  | {
+      kind: "review";
+      deliverableId?: string;
+      summaryLine?: string;
     }
   | { kind: "progress"; steps: Array<{ label: string; status: "done" | "active" | "pending" }> }
   | {

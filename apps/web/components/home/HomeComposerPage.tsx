@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HomeComposerFormatCard from "./HomeComposerFormatCard";
 import ComposerExpertBlocks from "./ComposerExpertBlocks";
 import ComposerFeatureNudgeBar from "./composer/ComposerFeatureNudgeBar";
+import ComposerIntentSuggestBar from "./composer/ComposerIntentSuggestBar";
 import {
   COMPOSER_CONTENT_MAX_W,
   ComposerCopyToast,
@@ -44,16 +45,30 @@ import { fetchComposerExpertIntake } from "../../lib/homeComposerIntakeApi";
 import {
   blocksForConfirmPhase,
   blocksForIntakePhase,
+  blocksForResolutionPhase,
+  buildClarificationBlock,
   buildDeliverableBlock,
   buildExpertOutputContextParts,
   buildFeedbackBlock,
   buildProgressBlock,
+  buildReviewBlock,
   canComposerSubmitTask,
   composerInputPlaceholder,
-  createExpertTaskDraft
+  createExpertTaskDraft,
+  rebuildBlocksFromDraft,
+  shouldSkipToResolution
 } from "../../lib/homeComposerExpertFlow";
 import { expertStripBlock } from "../../lib/composerExpertIntake";
 import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
+import {
+  classifyUtterance,
+  detectCreationIntent,
+  type CreationIntent
+} from "../../lib/composerUtteranceClassify";
+import {
+  composerWorkflowLabel,
+  resolveComposerWorkflowPhase
+} from "../../lib/composerWorkflowState";
 import { trackComposerExpertEvent } from "../../lib/composerExpertAnalytics";
 import {
   getExpertEverSelected,
@@ -151,6 +166,7 @@ export default function HomeComposerPage({
   const [personalOpen, setPersonalOpen] = useState(false);
   const [featureNudgeVisible, setFeatureNudgeVisible] = useState(false);
   const [featureNudgeExpertId, setFeatureNudgeExpertId] = useState<PlatformExpertId | null>(null);
+  const [intentSuggest, setIntentSuggest] = useState<CreationIntent | null>(null);
   const [personalDraft, setPersonalDraft] = useState<HomeComposerPersonalProfile>(EMPTY_HOME_COMPOSER_PERSONAL);
   const [featureCoreDraft, setFeatureCoreDraft] = useState<FeatureCore>(EMPTY_FEATURE_CORE);
   const [defaultIpId, setDefaultIpId] = useState<string | null>(null);
@@ -506,10 +522,16 @@ export default function HomeComposerPage({
 
   const patchTaskDraftTurn = useCallback(
     (turnId: string, draft: ExpertTaskDraft, prefsSnapshot: NonNullable<typeof prefs>) => {
-      const blocks =
-        draft.phase === "confirm"
-          ? blocksForConfirmPhase(draft.expertId, draft.taskSentence, draft.intake, prefsSnapshot)
-          : blocksForIntakePhase(draft.expertId, draft.intakeStep, draft.intake, draft.taskSentence);
+      let blocks: AssistantBlock[];
+      if (draft.phase === "confirm") {
+        blocks = blocksForConfirmPhase(draft.expertId, draft.taskSentence, draft.intake, prefsSnapshot);
+      } else if (draft.phase === "intake") {
+        blocks = blocksForIntakePhase(draft.expertId, draft.intakeStep, draft.intake, draft.taskSentence);
+      } else if (draft.phase === "review") {
+        blocks = rebuildBlocksFromDraft(draft, prefsSnapshot);
+      } else {
+        blocks = [expertStripBlock(draft.expertId)];
+      }
       setStore((prev) => {
         if (!prev) return prev;
         const withDraft = patchActiveHomeComposerSession(prev, (s) => ({
@@ -542,7 +564,10 @@ export default function HomeComposerPage({
 
       let intake = inferIntakePreselection(expertId, q).intake;
       let skipStep2 = inferIntakePreselection(expertId, q).skipStep2;
-      let blocks = blocksForIntakePhase(expertId, 0, intake, q);
+      let skipToResolution = shouldSkipToResolution(expertId, q, intake, skipStep2);
+      let blocks: AssistantBlock[] = skipToResolution
+        ? blocksForResolutionPhase(expertId, q, intake, prefs)
+        : blocksForIntakePhase(expertId, 0, intake, q);
 
       try {
         try {
@@ -561,7 +586,10 @@ export default function HomeComposerPage({
           );
           intake = { ...intake, ...api.preselected };
           skipStep2 = api.skipStep2;
-          blocks = [api.expertStrip, api.intakeStep];
+          skipToResolution = shouldSkipToResolution(expertId, q, intake, skipStep2);
+          blocks = skipToResolution
+            ? blocksForResolutionPhase(expertId, q, intake, prefs, inferIntakePreselection(expertId, q).hint)
+            : [api.expertStrip, api.intakeStep];
         } catch {
           // 后端不可用时走客户端规则 fallback
         }
@@ -572,7 +600,7 @@ export default function HomeComposerPage({
           turnId,
           intake,
           intakeStep: 0,
-          phase: "intake"
+          phase: skipToResolution ? "confirm" : "intake"
         });
         draft.skipStep2 = skipStep2;
 
@@ -599,6 +627,49 @@ export default function HomeComposerPage({
       }
     },
     [store, session, prefs, isLoggedIn, getAuthHeaders]
+  );
+
+  const runExpertClarify = useCallback(
+    async (userText: string) => {
+      if (!store || !session || !prefs || prefs.expert.mode !== "platform") return;
+      if (!isLoggedIn) {
+        setError("请先登录后再发送");
+        return;
+      }
+      const q = userText.trim();
+      if (!q) return;
+
+      setError("");
+      setBusy(true);
+      const turnId = crypto.randomUUID();
+      const expertId = prefs.expert.expertId;
+      const blocks: AssistantBlock[] = [
+        expertStripBlock(expertId),
+        buildClarificationBlock(
+          "已选专家，但这句话更像「讨论/解释」还是「要交付成品」？选错不会自动开工。",
+          expertId,
+          q
+        )
+      ];
+
+      try {
+        const turn: HomeComposerTurn = {
+          id: turnId,
+          userText: q,
+          formats: {},
+          blocks,
+          expertId,
+          createdAt: Date.now()
+        };
+        setStore(appendHomeComposerTurn(store, turn));
+        setInput("");
+      } catch (err) {
+        setError(String(err instanceof Error ? err.message : err));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [store, session, prefs, isLoggedIn]
   );
 
   const goToConfirm = useCallback(
@@ -649,6 +720,18 @@ export default function HomeComposerPage({
     if (!draft) return;
     goToConfirm(draft.turnId, draft);
   }, [goToConfirm, prefs?.taskDraft]);
+
+  const handleEditIntakeFromConfirm = useCallback(() => {
+    const draft = prefs?.taskDraft;
+    if (!draft || draft.phase !== "confirm" || !prefs) return;
+    const nextDraft: ExpertTaskDraft = {
+      ...draft,
+      phase: "intake",
+      intakeStep: 0,
+      updatedAt: new Date().toISOString()
+    };
+    patchTaskDraftTurn(draft.turnId, nextDraft, prefs);
+  }, [patchTaskDraftTurn, prefs]);
 
   const handleConfirmUpdate = useCallback(
     (taskSentence: string, intake: Record<string, string | string[]>) => {
@@ -722,22 +805,28 @@ export default function HomeComposerPage({
     });
 
     if (result.status === "done") {
+      const reviewDraft: ExpertTaskDraft = {
+        ...draft,
+        phase: "review",
+        updatedAt: new Date().toISOString()
+      };
       setStore((prev) => {
         if (!prev) return prev;
-        const withCleared = patchActiveHomeComposerSession(prev, (s) => ({
+        const withReview = patchActiveHomeComposerSession(prev, (s) => ({
           ...s,
-          prefs: { ...s.prefs, taskDraft: undefined, lastDeliverableId: result.jobId }
+          prefs: { ...s.prefs, taskDraft: reviewDraft, lastDeliverableId: result.jobId }
         }));
-        return updateHomeComposerTurn(withCleared, draft.turnId, {
+        return updateHomeComposerTurn(withReview, draft.turnId, {
           blocks: [
             expertStripBlock(expertId),
             buildDeliverableBlock(expertId, result.deliverable),
-            buildFeedbackBlock(result.jobId, expertId, hasNotes)
+            buildFeedbackBlock(result.jobId, expertId, hasNotes),
+            buildReviewBlock(result.jobId, "成品已就绪：确认可用后归档，或换方向回到需求确认")
           ],
           expertJobId: result.jobId
         });
       });
-      showCopyToast("内容成品已生成");
+      showCopyToast("内容成品已生成，请复核");
     } else {
       setError(result.error);
       setStore((prev) => {
@@ -847,6 +936,71 @@ export default function HomeComposerPage({
     setOpenMenu("");
   }, [prefs?.taskDraft]);
 
+  const handleReviewAccept = useCallback(() => {
+    const draft = prefs?.taskDraft;
+    if (!draft || draft.phase !== "review") return;
+    setStore((prev) => {
+      if (!prev) return prev;
+      let next = updateHomeComposerTurn(prev, draft.turnId, { taskFlowArchived: true });
+      next = patchActiveHomeComposerSession(next, (s) => ({
+        ...s,
+        prefs: { ...s.prefs, taskDraft: undefined }
+      }));
+      return next;
+    });
+    showCopyToast("已确认，任务归档");
+  }, [prefs?.taskDraft, showCopyToast]);
+
+  const handleReviewRedirect = useCallback(() => {
+    const draft = prefs?.taskDraft;
+    if (!draft || draft.phase !== "review" || !prefs) return;
+    const nextDraft: ExpertTaskDraft = {
+      ...draft,
+      phase: "confirm",
+      updatedAt: new Date().toISOString()
+    };
+    setStore((prev) => {
+      if (!prev) return prev;
+      const sessionSnap = activeHomeComposerSession(prev);
+      const turn = sessionSnap?.turns.find((t) => t.id === draft.turnId);
+      const kept =
+        turn?.blocks?.filter((b) => b.kind === "deliverable" || b.kind === "feedback") ?? [];
+      const resolutionBlocks = blocksForConfirmPhase(
+        draft.expertId,
+        draft.taskSentence,
+        draft.intake,
+        prefs
+      );
+      const withDraft = patchActiveHomeComposerSession(prev, (s) => ({
+        ...s,
+        prefs: { ...s.prefs, taskDraft: nextDraft }
+      }));
+      return updateHomeComposerTurn(withDraft, draft.turnId, {
+        blocks: [...resolutionBlocks, ...kept]
+      });
+    });
+  }, [prefs]);
+
+  const handleClarifyStartTask = useCallback(
+    (taskSentence: string) => {
+      void runExpertTurn(taskSentence);
+    },
+    [runExpertTurn]
+  );
+
+  const handleClarifyContinueChat = useCallback(
+    (taskSentence: string) => {
+      void runTurn(taskSentence);
+    },
+    [runTurn]
+  );
+
+  const handleIntentSwitchExpert = useCallback(() => {
+    if (!intentSuggest) return;
+    selectExpert({ mode: "platform", expertId: intentSuggest.expertId });
+    setIntentSuggest(null);
+  }, [intentSuggest]);
+
   useEffect(() => {
     if (!prefs?.taskDraft || prefs.taskDraft.phase !== "generate") return;
     const draft = prefs.taskDraft;
@@ -859,12 +1013,42 @@ export default function HomeComposerPage({
   }, [store?.activeSessionId]);
 
   function handleSend() {
-    if (prefs?.expert.mode === "platform" && canComposerSubmitTask(prefs.taskDraft)) {
-      void runExpertTurn(input);
+    const q = input.trim();
+    if (!q) return;
+    if (!canComposerSubmitTask(prefs?.taskDraft)) return;
+
+    const expertOn = prefs?.expert.mode === "platform";
+
+    if (!expertOn) {
+      const intent = detectCreationIntent(q);
+      setIntentSuggest(intent);
+      void runTurn(q);
       return;
     }
-    if (!canComposerSubmitTask(prefs?.taskDraft)) return;
-    void runTurn(input);
+
+    const hasDeliverable =
+      Boolean(prefs?.lastDeliverableId) ||
+      prefs?.taskDraft?.phase === "review" ||
+      prefs?.taskDraft?.phase === "deliver";
+
+    const { kind } = classifyUtterance(q, {
+      expertSelected: true,
+      hasDeliverableInSession: hasDeliverable
+    });
+
+    if (kind === "chat") {
+      void runTurn(q);
+      return;
+    }
+    if (kind === "clarify") {
+      void runExpertClarify(q);
+      return;
+    }
+    if (kind === "revise" && hasDeliverable) {
+      void runTurn(q);
+      return;
+    }
+    void runExpertTurn(q);
   }
 
   function togglePersonalEnabled() {
@@ -884,6 +1068,7 @@ export default function HomeComposerPage({
     const isFirstPlatform = next.mode === "platform" && !getExpertEverSelected();
     const prevDraft = prefs?.taskDraft;
 
+    setIntentSuggest(null);
     setStore((prev) => {
       if (!prev) return prev;
       let nextStore = patchActiveHomeComposerSession(prev, (s) => ({
@@ -1039,6 +1224,9 @@ export default function HomeComposerPage({
 
   const expertChipLabel = prefs?.expert ? expertDisplayLabel(prefs.expert) : undefined;
 
+  const workflowPhase = resolveComposerWorkflowPhase(prefs?.expert, prefs?.taskDraft);
+  const workflowLabel = composerWorkflowLabel(prefs?.expert, prefs?.taskDraft);
+
   const statusParts: string[] = [];
   if (expertSelected && prefs?.expert.mode === "platform") {
     statusParts.push(`专家 · ${EXPERT_DISPLAY_NAMES[prefs.expert.expertId]}`);
@@ -1098,6 +1286,11 @@ export default function HomeComposerPage({
                         : null);
                   const showExpertBlocks = Boolean(turn.blocks?.length && turnExpertId);
                   const turnArchived = Boolean(turn.taskFlowArchived);
+                  const expertFlowFrozen =
+                    Boolean(turn.blocks?.some((b) =>
+                      ["intake_step", "confirm", "progress", "clarification", "review"].includes(b.kind)
+                    )) &&
+                    !isActiveExpertTurn;
                   const turnContextParts =
                     isActiveExpertTurn && expertOutputContext
                       ? expertOutputContext
@@ -1111,7 +1304,8 @@ export default function HomeComposerPage({
                       <ComposerExpertBlocks
                         blocks={turn.blocks!}
                         expertId={turnExpertId}
-                        archived={turnArchived || turn.taskFlowArchived}
+                        archived={turnArchived}
+                        flowFrozen={expertFlowFrozen}
                         draft={isActiveExpertTurn ? prefs?.taskDraft : undefined}
                         onIntakeChange={handleIntakeFieldChange}
                         onIntakeNext={handleIntakeNext}
@@ -1120,6 +1314,11 @@ export default function HomeComposerPage({
                         onConfirmUpdate={handleConfirmUpdate}
                         onExitChat={handleExitExpertTask}
                         onEditFeature={togglePersonalPanel}
+                        onEditIntake={handleEditIntakeFromConfirm}
+                        onClarifyStartTask={() => handleClarifyStartTask(turn.userText)}
+                        onClarifyContinueChat={() => handleClarifyContinueChat(turn.userText)}
+                        onReviewAccept={handleReviewAccept}
+                        onReviewRedirect={handleReviewRedirect}
                         onCopyToast={showCopyToast}
                         featureCoreComplete={activeFeatureCoreComplete}
                         outputContextParts={turnContextParts}
@@ -1189,13 +1388,20 @@ export default function HomeComposerPage({
                   onSkip={() => dismissFeatureNudge(true)}
                 />
               ) : null}
+              {!expertSelected && intentSuggest ? (
+                <ComposerIntentSuggestBar
+                  intent={intentSuggest}
+                  onSwitchExpert={handleIntentSwitchExpert}
+                  onContinueChat={() => setIntentSuggest(null)}
+                />
+              ) : null}
               <ComposerShell
                 value={input}
                 onChange={setInput}
                 onSend={handleSend}
                 busy={busy}
                 menuOpen={Boolean(openMenu)}
-                placeholder={composerInputPlaceholder(prefs?.taskDraft)}
+                placeholder={composerInputPlaceholder(prefs?.taskDraft, expertSelected)}
                 sendDisabled={!canComposerSubmitTask(prefs?.taskDraft)}
                 formatControl={
                   <ComposerDropAnchor
@@ -1383,7 +1589,13 @@ export default function HomeComposerPage({
                     </IconToolBtn>
                   </div>
                 }
-                statusBar={<ComposerStatusBar parts={statusParts} />}
+                statusBar={
+                  <ComposerStatusBar
+                    parts={statusParts}
+                    workflowLabel={expertSelected || prefs?.taskDraft ? workflowLabel : undefined}
+                    workflowPhase={workflowPhase}
+                  />
+                }
               />
             </div>
 

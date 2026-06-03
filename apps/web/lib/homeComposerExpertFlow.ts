@@ -12,10 +12,12 @@ import { featureCoreStatusSummary, isFeatureCoreComplete } from "./homeComposerF
 import {
   buildIntakeStepBlock,
   expertStripBlock,
+  formatIntakeInferenceSummary,
   inferIntakePreselection,
   intakeFieldHint,
   intakeTotalSteps
 } from "./composerExpertIntake";
+import { inferResolutionConfidence } from "./composerUtteranceClassify";
 
 export function createExpertTaskDraft(params: {
   expertId: PlatformExpertId;
@@ -71,7 +73,9 @@ export function buildConfirmBlock(
     kind: "confirm",
     summary: taskSentence,
     intake,
-    toolchain
+    toolchain,
+    resolutionMode: "confirmation",
+    inferenceSummary: formatIntakeInferenceSummary(expertId, intake)
   };
 
   if (materialPlan) block.materialPlan = materialPlan;
@@ -101,6 +105,41 @@ export function buildExpertOutputContextParts(params: {
   return parts;
 }
 
+export function buildClarificationBlock(
+  message: string,
+  expertId?: PlatformExpertId,
+  taskSentence?: string
+): Extract<AssistantBlock, { kind: "clarification" }> {
+  return { kind: "clarification", message, expertId, taskSentence };
+}
+
+export function buildReviewBlock(
+  deliverableId?: string,
+  summaryLine?: string
+): Extract<AssistantBlock, { kind: "review" }> {
+  return { kind: "review", deliverableId, summaryLine };
+}
+
+export function blocksForResolutionPhase(
+  expertId: PlatformExpertId,
+  taskSentence: string,
+  intake: Record<string, string | string[]>,
+  prefs: HomeComposerPrefs,
+  hint?: string
+): AssistantBlock[] {
+  const confirm = buildConfirmBlock(expertId, taskSentence, intake, prefs);
+  confirm.hint = hint;
+  confirm.inferenceSummary = formatIntakeInferenceSummary(expertId, intake);
+  return [expertStripBlock(expertId), confirm];
+}
+
+export function shouldSkipToResolution(expertId: PlatformExpertId, taskSentence: string, intake: Record<string, string | string[]>, skipStep2?: boolean): boolean {
+  if (skipStep2 && inferResolutionConfidence(taskSentence, Object.keys(intake).length > 4) === "high") {
+    return true;
+  }
+  return inferResolutionConfidence(taskSentence, Object.keys(intake).length > 3) === "high";
+}
+
 export function blocksForIntakePhase(
   expertId: PlatformExpertId,
   intakeStep: number,
@@ -117,12 +156,18 @@ export function blocksForConfirmPhase(
   intake: Record<string, string | string[]>,
   prefs: HomeComposerPrefs
 ): AssistantBlock[] {
-  return [expertStripBlock(expertId), buildConfirmBlock(expertId, taskSentence, intake, prefs)];
+  return blocksForResolutionPhase(expertId, taskSentence, intake, prefs);
 }
 
 export function rebuildBlocksFromDraft(draft: ExpertTaskDraft, prefs: HomeComposerPrefs): AssistantBlock[] {
   if (draft.phase === "confirm") {
-    return blocksForConfirmPhase(draft.expertId, draft.taskSentence, draft.intake, prefs);
+    return blocksForResolutionPhase(draft.expertId, draft.taskSentence, draft.intake, prefs);
+  }
+  if (draft.phase === "review") {
+    return [
+      expertStripBlock(draft.expertId),
+      buildReviewBlock(prefs.lastDeliverableId, "成品已就绪，确认后归档或换方向重做")
+    ];
   }
   if (draft.phase === "intake") {
     return blocksForIntakePhase(draft.expertId, draft.intakeStep, draft.intake, draft.taskSentence);
@@ -132,15 +177,21 @@ export function rebuildBlocksFromDraft(draft: ExpertTaskDraft, prefs: HomeCompos
 
 export function canComposerSubmitTask(draft: ExpertTaskDraft | undefined): boolean {
   if (!draft) return true;
-  return draft.phase === "deliver" || draft.phase === "revise" || draft.phase === "idle";
+  return draft.phase === "deliver" || draft.phase === "review" || draft.phase === "revise" || draft.phase === "idle";
 }
 
-export function composerInputPlaceholder(draft: ExpertTaskDraft | undefined): string {
+export function composerInputPlaceholder(draft: ExpertTaskDraft | undefined, expertSelected?: boolean): string {
+  if (expertSelected && !draft) {
+    return "描述要发的内容，或直接提问…";
+  }
   if (draft?.phase === "intake" || draft?.phase === "confirm") {
-    return "先完成上方选项，或点「改聊一下」";
+    return "先完成上方确认，或点「这是聊天不是开工」";
   }
   if (draft?.phase === "generate") {
     return "正在生成…";
+  }
+  if (draft?.phase === "review") {
+    return "确认这版能用，或描述换方向…";
   }
   return "消息…";
 }
