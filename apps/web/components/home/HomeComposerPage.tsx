@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import HomeComposerFormatCard from "./HomeComposerFormatCard";
 import ComposerExpertBlocks from "./ComposerExpertBlocks";
 import ComposerFeatureNudgeBar from "./composer/ComposerFeatureNudgeBar";
@@ -12,13 +13,10 @@ import {
   ComposerKbEmptyHint,
   ComposerShell,
   ComposerStatusBar,
+  ComposerTextToolBtn,
   FeatureProfilePanel,
   GeneralAnswerCard,
-  IconExpert,
-  IconNotes,
-  IconStyle,
-  IconToolBtn,
-  IconUser,
+  IconXiaohongshu,
   SessionHistorySidebar,
   UserBubble
 } from "./HomeComposerShell";
@@ -156,7 +154,6 @@ export default function HomeComposerPage({
   const [featureNudgeVisible, setFeatureNudgeVisible] = useState(false);
   const [featureNudgeExpertId, setFeatureNudgeExpertId] = useState<PlatformExpertId | null>(null);
   const [intentSuggest, setIntentSuggest] = useState<CreationIntent | null>(null);
-  const [featurePanelPlacement, setFeaturePanelPlacement] = useState<"top" | "bottom">("bottom");
   const [personalDraft, setPersonalDraft] = useState<HomeComposerPersonalProfile>(EMPTY_HOME_COMPOSER_PERSONAL);
   const [featureCoreDraft, setFeatureCoreDraft] = useState<FeatureCore>(EMPTY_FEATURE_CORE);
   const [defaultIpId, setDefaultIpId] = useState<string | null>(null);
@@ -191,15 +188,6 @@ export default function HomeComposerPage({
   const session = useMemo(() => (store ? activeHomeComposerSession(store) : null), [store]);
   const prefs = session?.prefs;
   const hasSent = (session?.turns.length ?? 0) > 0;
-
-  useLayoutEffect(() => {
-    if (!personalOpen || !composerRootRef.current) return;
-    const rect = composerRootRef.current.getBoundingClientRect();
-    const panelEstimate = Math.min(window.innerHeight * 0.58, 480);
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    setFeaturePanelPlacement(spaceBelow < panelEstimate && spaceAbove > spaceBelow ? "top" : "bottom");
-  }, [personalOpen, hasSent, store?.activeSessionId]);
 
   const kbOn = Boolean(prefs?.notebook?.trim());
   const styleTemplates = useMemo(
@@ -781,7 +769,7 @@ export default function HomeComposerPage({
     const draft = prefs?.taskDraft;
     if (!draft || draft.phase !== "confirm" || !prefs || prefs.expert.mode !== "platform") return;
     if (!EXPERT_DELIVERABLE_READY[draft.expertId]) {
-      setError(`${EXPERT_DISPLAY_NAMES[draft.expertId]} 生成能力即将上线，请先使用红书搭子`);
+      setError(`${EXPERT_DISPLAY_NAMES[draft.expertId]} 生成能力即将上线，请先使用小红书运营专家`);
       return;
     }
     if (!isLoggedIn) {
@@ -1090,6 +1078,15 @@ export default function HomeComposerPage({
     mode: "neutral" | "notebook" | "template" | "off",
     templateId: string | null = null
   ) {
+    const sameMode =
+      mode === "template"
+        ? prefs?.writingHabitMode === "template" && prefs?.styleTemplateId === templateId
+        : prefs?.writingHabitMode === mode;
+    if (sameMode) {
+      persistPrefs({ writingHabitMode: "off", styleTemplateId: null });
+      setOpenMenu("");
+      return;
+    }
     persistPrefs({
       writingHabitMode: mode,
       styleTemplateId: mode === "template" ? templateId : null
@@ -1204,7 +1201,9 @@ export default function HomeComposerPage({
     kbOn
   ]);
 
-  const expertChipLabel = prefs?.expert ? expertDisplayLabel(prefs.expert) : undefined;
+  const expertChipLabel = expertSelected && prefs?.expert.mode === "platform" ? expertDisplayLabel(prefs.expert) : undefined;
+  const kbChipLabel = kbOn ? prefs!.notebook : undefined;
+  const styleChipLabel = prefs?.writingHabitMode && prefs.writingHabitMode !== "off" ? writingHabitLabel : undefined;
 
   const workflowPhase = resolveComposerWorkflowPhase(prefs?.expert, prefs?.taskDraft);
   const workflowLabel = composerWorkflowLabel(prefs?.expert, prefs?.taskDraft);
@@ -1345,7 +1344,7 @@ export default function HomeComposerPage({
               </div>
             ) : (
               <h1 className="w-full shrink-0 text-center text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
-                聊想法，复制就能发
+                你的写作搭子
               </h1>
             )}
 
@@ -1362,26 +1361,6 @@ export default function HomeComposerPage({
                 hasSent ? "pt-2 pb-1" : ""
               ].join(" ")}
             >
-              {personalOpen && featurePanelPlacement === "top" ? (
-                <div className="absolute bottom-full left-0 right-0 z-30 mb-2">
-                  <FeatureProfilePanel
-                    open={personalOpen}
-                    placement="top"
-                    hasSaved={hasPersonalSaved || featureCoreFilled}
-                    personalEnabled={Boolean(prefs?.personalEnabled)}
-                    onToggleEnabled={togglePersonalEnabled}
-                    onClose={() => setPersonalOpen(false)}
-                    onSave={savePersonal}
-                    featureCore={featureCoreDraft}
-                    onFeatureCoreChange={(key, value) => setFeatureCoreDraft((prev) => ({ ...prev, [key]: value }))}
-                    supplementalFields={PERSONAL_SUPPLEMENT_FIELDS}
-                    supplementalDraft={personalDraft as Record<string, string>}
-                    onSupplementalFieldChange={(key, value) =>
-                      setPersonalDraft((prev) => ({ ...prev, [key as keyof HomeComposerPersonalProfile]: value }))
-                    }
-                  />
-                </div>
-              ) : null}
               {featureNudgeVisible && featureNudgeExpertId ? (
                 <ComposerFeatureNudgeBar
                   expertId={featureNudgeExpertId}
@@ -1407,7 +1386,8 @@ export default function HomeComposerPage({
                 formatControl={
                   <ComposerDropAnchor
                     title="专家"
-                    icon={<IconExpert />}
+                    controlLabel="专家"
+                    icon={<IconXiaohongshu />}
                     open={openMenu === "expert"}
                     selected={expertSelected}
                     chipLabel={expertChipLabel}
@@ -1416,15 +1396,12 @@ export default function HomeComposerPage({
                     minWidth={300}
                   >
                     <p className="pointer-events-none px-2 pb-1 pt-0.5 text-[11px] text-muted">
-                      选专家走发布全流程；不选则自由问答
+                      选择运营专家，走笔记发布全流程
                     </p>
                     {COMPOSER_EXPERT_OPTIONS.map((opt) => {
                       const selected =
-                        opt.id === "none"
-                          ? prefs?.expert?.mode === "none"
-                          : prefs?.expert?.mode === "platform" && prefs.expert.expertId === opt.id;
-                      const ready =
-                        opt.id !== "none" ? EXPERT_DELIVERABLE_READY[opt.id as PlatformExpertId] : undefined;
+                        prefs?.expert?.mode === "platform" && prefs.expert.expertId === opt.id;
+                      const ready = EXPERT_DELIVERABLE_READY[opt.id as PlatformExpertId];
                       return (
                         <div key={opt.id} className="border-b border-line/50 last:border-0">
                           <button
@@ -1433,13 +1410,13 @@ export default function HomeComposerPage({
                               "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition",
                               selected ? "bg-brand/10 ring-1 ring-brand/25" : "hover:bg-fill"
                             ].join(" ")}
-                            onClick={() =>
-                              selectExpert(
-                                opt.id === "none"
-                                  ? { mode: "none" }
-                                  : { mode: "platform", expertId: opt.id as PlatformExpertId }
-                              )
-                            }
+                            onClick={() => {
+                              if (selected) {
+                                selectExpert({ mode: "none" });
+                                return;
+                              }
+                              selectExpert({ mode: "platform", expertId: opt.id as PlatformExpertId });
+                            }}
                           >
                             <span
                               className={[
@@ -1452,16 +1429,17 @@ export default function HomeComposerPage({
                             </span>
                             <span className="min-w-0 flex-1">
                               <span className="flex flex-wrap items-center gap-1.5">
+                                <IconXiaohongshu />
                                 <span className={["text-sm", selected ? "font-semibold text-ink" : "font-medium text-ink"].join(" ")}>
                                   {opt.name}
                                 </span>
-                                {ready === true ? (
+                                {ready ? (
                                   <span className="rounded-full bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
                                     可生成
                                   </span>
-                                ) : ready === false ? (
+                                ) : (
                                   <span className="rounded-full bg-fill px-1.5 py-0.5 text-[10px] text-muted">即将上线</span>
-                                ) : null}
+                                )}
                               </span>
                               <span className="mt-0.5 block text-xs leading-snug text-muted">{opt.description}</span>
                             </span>
@@ -1492,9 +1470,10 @@ export default function HomeComposerPage({
                   <div className="flex items-center gap-1">
                     <ComposerDropAnchor
                       title="资料"
-                      icon={<IconNotes />}
+                      controlLabel="资料"
                       open={openMenu === "kb"}
                       selected={kbOn}
+                      chipLabel={kbChipLabel}
                       onToggle={() => openMenuOrToggle("kb")}
                       align="right"
                       minWidth={220}
@@ -1520,9 +1499,10 @@ export default function HomeComposerPage({
 
                     <ComposerDropAnchor
                       title="写作习惯"
-                      icon={<IconStyle />}
+                      controlLabel="写作习惯"
                       open={openMenu === "style"}
                       selected={prefs?.writingHabitMode !== "off"}
+                      chipLabel={styleChipLabel}
                       onToggle={() => openMenuOrToggle("style")}
                       align="right"
                       minWidth={188}
@@ -1579,15 +1559,13 @@ export default function HomeComposerPage({
                       </button>
                     </ComposerDropAnchor>
 
-                    <IconToolBtn
-                      title="我的特色 · 我是谁"
+                    <ComposerTextToolBtn
+                      label="我的特色"
                       selected={Boolean(prefs?.personalEnabled && featureCoreFilled)}
                       dashed={!featureCoreFilled}
                       badgeDot={Boolean(prefs?.personalEnabled && featureCoreFilled)}
                       onClick={togglePersonalPanel}
-                    >
-                      <IconUser />
-                    </IconToolBtn>
+                    />
                   </div>
                 }
                 statusBar={
@@ -1598,28 +1576,30 @@ export default function HomeComposerPage({
                   />
                 }
               />
-              {personalOpen && featurePanelPlacement === "bottom" ? (
-                <FeatureProfilePanel
-                  open={personalOpen}
-                  placement="bottom"
-                  hasSaved={hasPersonalSaved || featureCoreFilled}
-                  personalEnabled={Boolean(prefs?.personalEnabled)}
-                  onToggleEnabled={togglePersonalEnabled}
-                  onClose={() => setPersonalOpen(false)}
-                  onSave={savePersonal}
-                  featureCore={featureCoreDraft}
-                  onFeatureCoreChange={(key, value) => setFeatureCoreDraft((prev) => ({ ...prev, [key]: value }))}
-                  supplementalFields={PERSONAL_SUPPLEMENT_FIELDS}
-                  supplementalDraft={personalDraft as Record<string, string>}
-                  onSupplementalFieldChange={(key, value) =>
-                    setPersonalDraft((prev) => ({ ...prev, [key as keyof HomeComposerPersonalProfile]: value }))
-                  }
-                />
-              ) : null}
             </div>
           </div>
         </div>
       </div>
+      <WorkspaceScrimModal open={personalOpen} onClose={() => setPersonalOpen(false)} labelledBy="composer-feature-profile-title">
+        <div className="w-full max-w-lg">
+          <FeatureProfilePanel
+            open={personalOpen}
+            modal
+            hasSaved={hasPersonalSaved || featureCoreFilled}
+            personalEnabled={Boolean(prefs?.personalEnabled)}
+            onToggleEnabled={togglePersonalEnabled}
+            onClose={() => setPersonalOpen(false)}
+            onSave={savePersonal}
+            featureCore={featureCoreDraft}
+            onFeatureCoreChange={(key, value) => setFeatureCoreDraft((prev) => ({ ...prev, [key]: value }))}
+            supplementalFields={PERSONAL_SUPPLEMENT_FIELDS}
+            supplementalDraft={personalDraft as Record<string, string>}
+            onSupplementalFieldChange={(key, value) =>
+              setPersonalDraft((prev) => ({ ...prev, [key as keyof HomeComposerPersonalProfile]: value }))
+            }
+          />
+        </div>
+      </WorkspaceScrimModal>
     </main>
   );
 }

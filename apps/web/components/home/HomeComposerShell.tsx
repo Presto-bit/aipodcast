@@ -26,6 +26,18 @@ function Svg({ children }: { children: ReactNode }) {
   );
 }
 
+export function IconXiaohongshu() {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" aria-hidden className="shrink-0">
+      <rect x="1" y="1" width="22" height="22" rx="6" fill="#FF2442" />
+      <path
+        d="M7.2 16.2V7.8h2.1l2.2 4.8 2.2-4.8h2.1v8.4h-1.8V10.4l-2.4 5.2h-1.2l-2.4-5.2v5.8H7.2z"
+        fill="#fff"
+      />
+    </svg>
+  );
+}
+
 export function IconExpert() {
   return (
     <Svg>
@@ -130,6 +142,50 @@ function IconDeleteSession() {
       <path d="M4.5 4.5h7M6 4.5V3.8h4V4.5M6.2 7v4.8M9.8 7v4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
       <path d="M5.2 4.5 5.8 12.2h4.4l.6-7.7" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
     </Svg>
+  );
+}
+
+export function ComposerTextToolBtn({
+  label,
+  active,
+  selected,
+  dashed,
+  badgeDot,
+  onClick
+}: {
+  label: string;
+  active?: boolean;
+  selected?: boolean;
+  dashed?: boolean;
+  badgeDot?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      className={[
+        "relative flex h-14 shrink-0 items-center justify-center rounded-full px-3.5 text-xs font-medium transition",
+        dashed
+          ? "border border-dashed border-brand/45 bg-transparent text-muted hover:border-brand/70 hover:text-ink"
+          : active
+            ? "bg-brand text-brand-foreground"
+            : selected
+              ? "border border-brand/40 bg-brand/8 text-ink"
+              : "border border-line/60 bg-fill/80 text-muted hover:border-line hover:bg-fill hover:text-ink"
+      ].join(" ")}
+      style={{ minHeight: COMPOSER_TOOL_H }}
+    >
+      {label}
+      {badgeDot ? (
+        <span
+          className="absolute right-2 top-2 h-2 w-2 rounded-full bg-brand ring-2 ring-surface"
+          aria-hidden
+        />
+      ) : null}
+    </button>
   );
 }
 
@@ -275,6 +331,7 @@ export function ComposerDropMenu({
 
 export function ComposerDropAnchor({
   title,
+  controlLabel,
   icon,
   open,
   selected,
@@ -285,10 +342,12 @@ export function ComposerDropAnchor({
   children
 }: {
   title: string;
-  icon: ReactNode;
+  /** 控件区展示的文字标签 */
+  controlLabel: string;
+  icon?: ReactNode;
   open: boolean;
   selected?: boolean;
-  /** 选中态在按钮上展示的短标签（如专家名） */
+  /** 选中态替换 controlLabel 的短标签（如专家名、笔记本名） */
   chipLabel?: string;
   onToggle: () => void;
   align: "left" | "right";
@@ -296,37 +355,32 @@ export function ComposerDropAnchor({
   children: ReactNode;
 }) {
   const anchorRef = useRef<HTMLDivElement>(null);
-  const showChip = Boolean(chipLabel?.trim());
+  const displayLabel = chipLabel?.trim() || controlLabel;
+  const showLeadingIcon = Boolean(icon && chipLabel?.trim());
   return (
     <div
       ref={anchorRef}
       className="relative shrink-0 overflow-visible"
       style={{ height: COMPOSER_TOOL_H, zIndex: open ? 1100 : 1 }}
     >
-      {showChip ? (
-        <button
-          type="button"
-          title={title}
-          aria-label={chipLabel ? `${title}：${chipLabel}` : title}
-          aria-expanded={open}
-          onClick={onToggle}
-          className={[
-            "flex h-14 max-w-[9.5rem] items-center gap-1 rounded-full border px-2 transition",
-            open
-              ? "border-brand bg-brand/10 text-ink"
-              : selected
-                ? "border-brand/45 bg-brand/8 text-ink"
-                : "border-line/60 bg-fill/80 text-muted hover:border-line hover:bg-fill hover:text-ink"
-          ].join(" ")}
-        >
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center">{icon}</span>
-          <span className="min-w-0 truncate text-xs font-medium">{chipLabel}</span>
-        </button>
-      ) : (
-        <IconToolBtn title={title} active={open} selected={selected} onClick={onToggle}>
-          {icon}
-        </IconToolBtn>
-      )}
+      <button
+        type="button"
+        title={title}
+        aria-label={chipLabel ? `${title}：${chipLabel}` : title}
+        aria-expanded={open}
+        onClick={onToggle}
+        className={[
+          "flex h-14 max-w-[10.5rem] items-center gap-1.5 rounded-full border px-3 transition",
+          open
+            ? "border-brand bg-brand/10 text-ink"
+            : selected
+              ? "border-brand/45 bg-brand/8 text-ink"
+              : "border-line/60 bg-fill/80 text-muted hover:border-line hover:bg-fill hover:text-ink"
+        ].join(" ")}
+      >
+        {showLeadingIcon ? <span className="flex shrink-0 items-center justify-center">{icon}</span> : null}
+        <span className="min-w-0 truncate text-xs font-medium">{displayLabel}</span>
+      </button>
       <ComposerDropMenu open={open} align={align} minWidth={minWidth} anchorRef={anchorRef}>
         {children}
       </ComposerDropMenu>
@@ -696,7 +750,9 @@ export function FeatureProfilePanel({
   supplementalFields,
   supplementalDraft,
   onSupplementalFieldChange,
-  placement = "bottom"
+  /** @deprecated 居中弹窗模式下不再使用 */
+  placement = "bottom",
+  modal = false
 }: {
   open: boolean;
   hasSaved: boolean;
@@ -709,8 +765,9 @@ export function FeatureProfilePanel({
   supplementalFields: { key: string; label: string; rows: number; placeholder?: string }[];
   supplementalDraft: Record<string, string>;
   onSupplementalFieldChange: (key: string, value: string) => void;
-  /** 输入框贴底时向上展开，避免被视口裁切 */
   placement?: "top" | "bottom";
+  /** 页面居中弹窗：去掉贴输入框的 margin */
+  modal?: boolean;
 }) {
   const [supplementOpen, setSupplementOpen] = useState(false);
   if (!open) return null;
@@ -719,11 +776,14 @@ export function FeatureProfilePanel({
     <div
       className={[
         "relative z-30 w-full shrink-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-soft",
-        placement === "bottom" ? "mt-2.5" : ""
+        !modal && placement === "bottom" ? "mt-2.5" : "",
+        modal ? "max-h-[min(85vh,640px)]" : ""
       ].join(" ")}
     >
       <div className="flex items-center justify-between border-b border-line/80 px-4 py-3">
-        <h2 className="text-sm font-semibold text-ink">{hasSaved ? "编辑我的特色" : "填写我的特色 · 我是谁"}</h2>
+        <h2 id="composer-feature-profile-title" className="text-sm font-semibold text-ink">
+          {hasSaved ? "编辑我的特色" : "填写我的特色 · 我是谁"}
+        </h2>
         <button
           type="button"
           title="关闭"

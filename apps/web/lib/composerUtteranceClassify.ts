@@ -80,7 +80,7 @@ const INTENT_RULES: Array<{
 }> = [
   {
     expertId: "xhs_ops",
-    label: "红书搭子",
+    label: "小红书运营专家",
     message: "看起来要发小红书笔记",
     pattern: /小红书|红书|笔记|种草|话题|tag|#|薯/i
   },
@@ -121,7 +121,7 @@ export function detectCreationIntent(text: string): CreationIntent | null {
   if (TASK_VERBS.test(q)) {
     return {
       expertId: "xhs_ops",
-      label: "红书搭子",
+      label: "小红书运营专家",
       message: "看起来要做一篇可发布的内容"
     };
   }
