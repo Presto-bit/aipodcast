@@ -13,6 +13,84 @@ logger = logging.getLogger(__name__)
 
 PLAYBOOK_VERSION = "xhs_ops@1"
 
+_FALLBACK_XHS_TAGS = ["干货分享", "真实体验", "知识整理", "避坑指南", "收藏推荐"]
+
+_XHS_LENGTH_CHARS = {"short": 400, "medium": 600, "long": 1200}
+_XHS_TONE = {"casual": "casual", "pro": "pro", "sharp": "pro"}
+_XHS_AUDIENCE = {"newcomer": "beginner", "peers": "pro", "general": "general"}
+_XHS_NOTE_INTENT = {
+    "howto": "dry_goods",
+    "story": "story",
+    "listicle": "checklist",
+}
+
+
+def _looks_like_material_fallback(content: dict[str, Any], task_sentence: str) -> bool:
+    body = str(content.get("body") or "")
+    if "📌 先说结论" not in body:
+        return False
+    task_head = task_sentence.strip()[:28]
+    if task_head and task_head in body:
+        return True
+    tags = content.get("hashtags") or []
+    if isinstance(tags, list) and tags == _FALLBACK_XHS_TAGS:
+        return True
+    interaction = str(content.get("interaction") or "")
+    if "你觉得哪一点最有用" in interaction:
+        return True
+    return False
+
+
+def _intake_to_social_options(intake: dict[str, Any], task_sentence: str) -> dict[str, Any]:
+    options: dict[str, Any] = {"platform": "xiaohongshu", "source_type": "composer_prompt"}
+    tone = str(intake.get("tone") or "").strip()
+    if tone in _XHS_TONE:
+        options["tone"] = _XHS_TONE[tone]
+    length = str(intake.get("length") or "").strip()
+    if length in _XHS_LENGTH_CHARS:
+        options["target_chars"] = _XHS_LENGTH_CHARS[length]
+    audience_raw = intake.get("audience")
+    aud_ids = audience_raw if isinstance(audience_raw, list) else [audience_raw]
+    for aid in aud_ids:
+        key = str(aid or "").strip()
+        if key in _XHS_AUDIENCE:
+            options["audience"] = _XHS_AUDIENCE[key]
+            break
+    note_type = str(intake.get("noteType") or "").strip()
+    if note_type in _XHS_NOTE_INTENT:
+        options["intent"] = _XHS_NOTE_INTENT[note_type]
+    purpose_raw = intake.get("purpose")
+    purposes = purpose_raw if isinstance(purpose_raw, list) else [purpose_raw]
+    if "acquire" in [str(p) for p in purposes]:
+        options["intent"] = "zhongcao"
+    options["userNote"] = task_sentence[:500]
+    return options
+
+
+def _compose_expert_material_text(
+    *,
+    task_sentence: str,
+    intake: dict[str, Any],
+    style_prompt: str,
+    author_prompt: str,
+    feature_summary: str,
+) -> str:
+    parts = [
+        "请根据以下创作任务，撰写一篇完整、可直接发布的小红书种草/推广笔记。",
+        "必须包含：产品或主题卖点、目标用户痛点、使用场景、行动引导。",
+        "禁止把任务描述原文套进「先说结论/展开」模板；禁止输出空泛占位话术。",
+        f"【任务描述】\n{task_sentence.strip()}",
+    ]
+    if intake:
+        parts.append(f"【创作偏好】\n{_intake_summary(intake)}")
+    if feature_summary.strip():
+        parts.append(f"【作者特色】\n{feature_summary.strip()}")
+    if style_prompt.strip():
+        parts.append(f"【写作习惯】\n{style_prompt.strip()[:600]}")
+    if author_prompt.strip():
+        parts.append(f"【风格补充】\n{author_prompt.strip()[:600]}")
+    return "\n\n".join(parts)
+
 
 def _intake_summary(intake: dict[str, Any]) -> str:
     if not intake:
@@ -280,15 +358,24 @@ def run_composer_expert_deliverable_job(
     style_bits = [
         str(payload.get("style_prompt") or payload.get("stylePrompt") or "").strip(),
         str(payload.get("author_prompt") or payload.get("authorPrompt") or "").strip(),
-        _intake_summary(intake),
     ]
-    other_req = "\n".join(x for x in style_bits if x)
-    options: dict[str, Any] = {"platform": "xiaohongshu"}
+    style_prompt = style_bits[0]
+    author_prompt = style_bits[1]
+    feature_core = payload.get("featureCore") if isinstance(payload.get("featureCore"), dict) else {}
+    feature_summary = " · ".join(
+        str(feature_core.get(k) or "").strip()
+        for k in ("who", "remember", "avoid")
+        if str(feature_core.get(k) or "").strip()
+    )[:80]
+    options = _intake_to_social_options(intake, task_sentence)
+    other_req = "\n".join(x for x in [*style_bits, _intake_summary(intake)] if x)
     if other_req:
-        options["persona"] = {"otherRequirements": other_req[:1200]}
+        persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+        persona["otherRequirements"] = other_req[:1200]
+        options["persona"] = persona
 
     if on_progress:
-        on_progress("正在检索资料…", 20.0)
+        on_progress("正在检索资料…" if nids else "正在准备创作任务…", 20.0 if nids else 12.0)
 
     hint = other_req[:500]
     owner = str(payload.get("notes_source_owner_user_id") or "").strip() or None
@@ -310,21 +397,21 @@ def run_composer_expert_deliverable_job(
             source_type=str(payload.get("source_type") or "notes_rag"),
         )
     else:
-        material = task_sentence
+        material = _compose_expert_material_text(
+            task_sentence=task_sentence,
+            intake=intake,
+            style_prompt=style_prompt,
+            author_prompt=author_prompt,
+            feature_summary=feature_summary,
+        )
         if len(material.strip()) < 8:
             raise RuntimeError("material_too_short")
-
-    feature_core = payload.get("featureCore") if isinstance(payload.get("featureCore"), dict) else {}
-    feature_summary = " · ".join(
-        str(feature_core.get(k) or "").strip()
-        for k in ("who", "remember", "avoid")
-        if str(feature_core.get(k) or "").strip()
-    )[:80]
 
     if on_progress:
         on_progress("正在生成内容成品与发布傻瓜包…", 55.0)
 
     last_errors: list[str] = []
+    quality_retry = False
     for attempt in range(2):
         try:
             deliverable = generate_xhs_expert_deliverable(
@@ -338,6 +425,19 @@ def run_composer_expert_deliverable_job(
                 feature_summary=feature_summary,
                 validation_errors=last_errors or None,
             )
+            content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
+            if (
+                not used_rag
+                and _looks_like_material_fallback(content, task_sentence)
+                and not quality_retry
+            ):
+                quality_retry = True
+                last_errors = [
+                    "正文疑似模板回退，须根据任务撰写完整推广笔记，包含卖点与场景，禁止照抄任务句"
+                ]
+                if on_progress:
+                    on_progress("初稿质量不足，正在重写…", 72.0)
+                continue
             if on_progress:
                 on_progress("内容成品就绪", 100.0)
             return {"success": True, "deliverable": deliverable, "playbookVersion": PLAYBOOK_VERSION}

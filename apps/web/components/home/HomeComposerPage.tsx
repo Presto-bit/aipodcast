@@ -45,6 +45,7 @@ import {
   blocksForConfirmPhase,
   blocksForIntakePhase,
   buildDeliverableBlock,
+  buildExpertOutputContextParts,
   buildFeedbackBlock,
   buildProgressBlock,
   canComposerSubmitTask,
@@ -75,7 +76,6 @@ import type {
 import {
   COMPOSER_EXPERT_OPTIONS,
   defaultComposerExpertSelection,
-  expertDisplayLabel,
   resolveActiveFormats
 } from "../../lib/composerExperts";
 import {
@@ -663,6 +663,7 @@ export default function HomeComposerPage({
     setBusy(true);
     trackComposerExpertEvent("confirm_start", { expertId: draft.expertId });
     const expertId = draft.expertId;
+    const hasNotes = Boolean(prefs.noteIds.length > 0 && prefs.notebook.trim());
     const generateDraft: ExpertTaskDraft = {
       ...draft,
       phase: "generate",
@@ -676,7 +677,7 @@ export default function HomeComposerPage({
         prefs: { ...s.prefs, taskDraft: generateDraft }
       }));
       return updateHomeComposerTurn(withDraft, draft.turnId, {
-        blocks: [expertStripBlock(expertId), buildProgressBlock("正在启动…", 8)]
+        blocks: [expertStripBlock(expertId), buildProgressBlock("正在启动…", 8, hasNotes)]
       });
     });
 
@@ -695,7 +696,7 @@ export default function HomeComposerPage({
         setStore((prev) =>
           prev
             ? updateHomeComposerTurn(prev, draft.turnId, {
-                blocks: [expertStripBlock(expertId), buildProgressBlock(msg, prog ?? 55)]
+                blocks: [expertStripBlock(expertId), buildProgressBlock(msg, prog ?? 55, hasNotes)]
               })
             : prev
         );
@@ -713,7 +714,7 @@ export default function HomeComposerPage({
           blocks: [
             expertStripBlock(expertId),
             buildDeliverableBlock(expertId, result.deliverable),
-            buildFeedbackBlock(result.jobId, expertId)
+            buildFeedbackBlock(result.jobId, expertId, hasNotes)
           ],
           expertJobId: result.jobId
         });
@@ -781,7 +782,6 @@ export default function HomeComposerPage({
           sentiment: "positive",
           deliverableId
         });
-        showCopyToast("谢谢反馈");
       } else if (patch.submitted === "negative") {
         trackComposerExpertEvent("feedback", {
           expertId,
@@ -789,21 +789,15 @@ export default function HomeComposerPage({
           reason: patch.negativeReason,
           deliverableId
         });
-        showCopyToast("已记录，重生成将在后续版本接入");
       } else if (patch.selectedChip) {
         trackComposerExpertEvent("feedback", {
           expertId,
           chip: patch.selectedChip,
           deliverableId
         });
-        if (patch.selectedChip === "自定义") {
-          showCopyToast("请在输入框描述想改的地方（修订流程即将支持）");
-        } else {
-          showCopyToast("已记录，快捷修订即将支持");
-        }
       }
     },
-    [patchTurnFeedback, showCopyToast]
+    [patchTurnFeedback]
   );
 
   function dismissFeatureNudge(skip: boolean) {
@@ -1007,18 +1001,33 @@ export default function HomeComposerPage({
 
   const selectedExpertId = prefs?.expert.mode === "platform" ? prefs.expert.expertId : null;
 
+  const expertOutputContext = useMemo(() => {
+    if (!selectedExpertId || !prefs) return undefined;
+    return buildExpertOutputContextParts({
+      expertId: selectedExpertId,
+      writingHabitLabel,
+      featureSummary: featureSummary || undefined,
+      featureEnabled: Boolean(prefs.personalEnabled && featureCoreFilled),
+      notebook: kbOn ? prefs.notebook : undefined
+    });
+  }, [
+    selectedExpertId,
+    prefs,
+    writingHabitLabel,
+    featureSummary,
+    featureCoreFilled,
+    kbOn
+  ]);
+
   const statusParts: string[] = [];
-  if (expertSelected) {
-    statusParts.push(`专家 · ${expertDisplayLabel(prefs!.expert)}`);
-  }
-  if (kbOn) {
-    statusParts.push(`资料 · ${prefs!.notebook} · 全部`);
-  }
-  statusParts.push(`写作习惯 · ${writingHabitLabel}`);
-  if (prefs?.personalEnabled && featureSummary) {
-    statusParts.push(`我的特色 · ${featureSummary}`);
-  } else if (!featureCoreFilled) {
-    statusParts.push("我的特色 · 未填写");
+  if (!expertSelected) {
+    if (kbOn) {
+      statusParts.push(`资料 · ${prefs!.notebook} · 全部`);
+    }
+    statusParts.push(`写作习惯 · ${writingHabitLabel}`);
+    if (prefs?.personalEnabled && featureSummary) {
+      statusParts.push(`我的特色 · ${featureSummary}`);
+    }
   }
 
   if (!store || !session) {
@@ -1085,6 +1094,7 @@ export default function HomeComposerPage({
                         onEditFeature={togglePersonalPanel}
                         onCopyToast={showCopyToast}
                         featureCoreComplete={activeFeatureCoreComplete}
+                        outputContextParts={expertOutputContext}
                         onFeedbackPatch={(patch) => {
                           const fb = turn.blocks?.find((b) => b.kind === "feedback");
                           handleExpertFeedback(

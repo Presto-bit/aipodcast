@@ -11,15 +11,17 @@ import {
 } from "../../../lib/homeComposerExpertJob";
 import DeliverablePreviewFrame from "./DeliverablePreviewFrame";
 import OpsPlaybookPanel from "./OpsPlaybookPanel";
+import DeliverableFeedbackInline from "./DeliverableFeedbackInline";
 import { trackComposerExpertEvent } from "../../../lib/composerExpertAnalytics";
 
 type DeliverableBlock = Extract<AssistantBlock, { kind: "deliverable" }>;
+type FeedbackBlock = Extract<AssistantBlock, { kind: "feedback" }>;
 type TabId = "product" | "ops" | "provenance";
 
 const COVERAGE_LABELS = {
   full: "资料覆盖完整",
   partial: "资料部分覆盖",
-  none: "未使用资料 · 通识生成"
+  none: "基于任务描述生成"
 } as const;
 
 async function copyText(
@@ -99,12 +101,18 @@ function XhsProductPanel({
   block,
   titleIndex,
   onTitleIndexChange,
-  onCopyToast
+  onCopyToast,
+  feedbackBlock,
+  feedbackDisabled,
+  onFeedbackPatch
 }: {
   block: DeliverableBlock;
   titleIndex: number;
   onTitleIndexChange: (idx: number) => void;
   onCopyToast?: (msg: string) => void;
+  feedbackBlock?: FeedbackBlock;
+  feedbackDisabled?: boolean;
+  onFeedbackPatch?: (patch: Partial<FeedbackBlock>) => void;
 }) {
   if (!isXhsContent(block.content)) return null;
   const content = block.content;
@@ -166,43 +174,53 @@ function XhsProductPanel({
         ) : null}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-fill"
-          onClick={() =>
-            void copyText(deliverableTitleText(deliverable, titleIndex), onCopyToast, "已复制标题", {
-              expertId: block.expertId,
-              target: "title"
-            })
-          }
-        >
-          复制标题
-        </button>
-        <button
-          type="button"
-          className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-fill"
-          onClick={() =>
-            void copyText(deliverableBodyText(deliverable), onCopyToast, "已复制正文", {
-              expertId: block.expertId,
-              target: "body"
-            })
-          }
-        >
-          复制正文
-        </button>
-        <button
-          type="button"
-          className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground hover:bg-brand/90"
-          onClick={() =>
-            void copyText(deliverablePreviewText(deliverable), onCopyToast, "已复制全文含 tag", {
-              expertId: block.expertId,
-              target: "full"
-            })
-          }
-        >
-          复制全文含 tag
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-fill"
+            onClick={() =>
+              void copyText(deliverableTitleText(deliverable, titleIndex), onCopyToast, "已复制标题", {
+                expertId: block.expertId,
+                target: "title"
+              })
+            }
+          >
+            复制标题
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-fill"
+            onClick={() =>
+              void copyText(deliverableBodyText(deliverable), onCopyToast, "已复制正文", {
+                expertId: block.expertId,
+                target: "body"
+              })
+            }
+          >
+            复制正文
+          </button>
+          <button
+            type="button"
+            className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground hover:bg-brand/90"
+            onClick={() =>
+              void copyText(deliverablePreviewText(deliverable), onCopyToast, "已复制全文含 tag", {
+                expertId: block.expertId,
+                target: "full"
+              })
+            }
+          >
+            复制全文含 tag
+          </button>
+        </div>
+        {feedbackBlock && onFeedbackPatch ? (
+          <DeliverableFeedbackInline
+            block={feedbackBlock}
+            disabled={feedbackDisabled}
+            onPatch={onFeedbackPatch}
+            onNotify={() => undefined}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -212,12 +230,18 @@ export default function DeliverableCard({
   block,
   expertId,
   featureCoreComplete = 0,
-  onCopyToast
+  onCopyToast,
+  feedbackBlock,
+  feedbackDisabled,
+  onFeedbackPatch
 }: {
   block: DeliverableBlock;
   expertId: PlatformExpertId;
   featureCoreComplete?: number;
   onCopyToast?: (msg: string) => void;
+  feedbackBlock?: FeedbackBlock;
+  feedbackDisabled?: boolean;
+  onFeedbackPatch?: (patch: Partial<FeedbackBlock>) => void;
 }) {
   const [tab, setTab] = useState<TabId>("product");
   const [titleIndex, setTitleIndex] = useState(0);
@@ -294,6 +318,9 @@ export default function DeliverableCard({
               titleIndex={titleIndex}
               onTitleIndexChange={setTitleIndex}
               onCopyToast={onCopyToast}
+              feedbackBlock={feedbackBlock}
+              feedbackDisabled={feedbackDisabled}
+              onFeedbackPatch={onFeedbackPatch}
             />
           ) : (
             <div className="space-y-3">

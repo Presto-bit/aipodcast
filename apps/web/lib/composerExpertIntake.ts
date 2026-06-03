@@ -328,3 +328,24 @@ export function intakeFieldHint(expertId: PlatformExpertId, intake: Record<strin
   }
   return undefined;
 }
+
+/** 确认页仅展示用户已选 intake（无值字段省略） */
+export function formatIntakeSelectionsForDisplay(
+  expertId: PlatformExpertId,
+  intake: Record<string, string | string[]>
+): string[] {
+  const lines: string[] = [];
+  for (const step of intakeStepsForExpert(expertId)) {
+    for (const field of step.fields) {
+      const raw = intake[field.fieldId];
+      if (raw == null || raw === "") continue;
+      const ids = Array.isArray(raw) ? raw : [raw];
+      const labels = ids
+        .map((id) => field.options.find((o) => o.id === id)?.label ?? String(id))
+        .filter(Boolean);
+      if (!labels.length) continue;
+      lines.push(`${field.prompt} ${labels.join("、")}`);
+    }
+  }
+  return lines;
+}

@@ -36,15 +36,9 @@ export function createExpertTaskDraft(params: {
   };
 }
 
-export function buildMaterialPlan(prefs: HomeComposerPrefs): MaterialPlan {
+export function buildMaterialPlan(prefs: HomeComposerPrefs): MaterialPlan | undefined {
   const notebook = prefs.notebook.trim();
-  if (!notebook) {
-    return {
-      notebook: "",
-      noteCount: 0,
-      disclaimer: "未选资料 · 将按通识生成"
-    };
-  }
+  if (!notebook) return undefined;
   const noteCount = prefs.noteIds.length;
   return {
     notebook,
@@ -64,24 +58,47 @@ export function buildConfirmBlock(
   const materialPlan = buildMaterialPlan(prefs);
   const featureSummary = featureCoreStatusSummary(prefs.featureCore);
   const featureEnabled = Boolean(prefs.personalEnabled && isFeatureCoreComplete(prefs.featureCore));
-  const kbOn = Boolean(prefs.notebook.trim());
+  const kbOn = Boolean(materialPlan?.notebook);
 
   const toolchain: string[] = [];
-  if (kbOn) toolchain.push(`你的 ${materialPlan.noteCount || "全部"} 篇资料`);
+  if (kbOn && materialPlan) {
+    toolchain.push(`你的 ${materialPlan.noteCount || "全部"} 篇资料`);
+  }
   toolchain.push(EXPERT_DISPLAY_NAMES[expertId]);
-  toolchain.push(kbOn ? "资料不足处通识补充" : "通识生成");
+  if (kbOn) toolchain.push("资料不足处补充");
 
-  return {
+  const block: Extract<AssistantBlock, { kind: "confirm" }> = {
     kind: "confirm",
     summary: taskSentence,
     intake,
-    toolchain,
-    materialPlan,
-    featureStrip: featureEnabled
-      ? { enabled: true, summary: featureSummary }
-      : { enabled: false, warning: "未填我的特色 · 成稿可能像「通用运营文」" },
-    disclaimer: !kbOn ? "未选资料时成品可能缺少你的真实案例与数据" : undefined
+    toolchain
   };
+
+  if (materialPlan) block.materialPlan = materialPlan;
+
+  if (featureEnabled && featureSummary) {
+    block.featureStrip = { enabled: true, summary: featureSummary };
+  }
+
+  return block;
+}
+
+export function buildExpertOutputContextParts(params: {
+  expertId: PlatformExpertId;
+  writingHabitLabel: string;
+  featureSummary?: string;
+  featureEnabled?: boolean;
+  notebook?: string;
+}): string[] {
+  const parts = [EXPERT_DISPLAY_NAMES[params.expertId]];
+  if (params.notebook?.trim()) {
+    parts.push(`资料 · ${params.notebook.trim()}`);
+  }
+  parts.push(`写作习惯 · ${params.writingHabitLabel}`);
+  if (params.featureEnabled && params.featureSummary?.trim()) {
+    parts.push(`我的特色 · ${params.featureSummary.trim()}`);
+  }
+  return parts;
 }
 
 export function blocksForIntakePhase(
@@ -139,24 +156,31 @@ export function featureStripLine(featureCore: FeatureCore | undefined, enabled: 
   return featureCoreStatusSummary(featureCore);
 }
 
-export function buildProgressBlock(message: string, progress = 0): Extract<AssistantBlock, { kind: "progress" }> {
-  const materialDone = progress >= 20;
-  const contentActive = progress >= 55 && progress < 100;
+export function buildProgressBlock(
+  message: string,
+  progress = 0,
+  hasNotes = false
+): Extract<AssistantBlock, { kind: "progress" }> {
+  const steps: Extract<AssistantBlock, { kind: "progress" }>["steps"] = [];
+  if (hasNotes) {
+    const materialDone = progress >= 20;
+    steps.push({
+      label: "检索资料",
+      status: materialDone ? "done" : progress > 0 ? "active" : "pending"
+    });
+  }
   const contentDone = progress >= 100;
-  return {
-    kind: "progress",
-    steps: [
-      { label: "检索资料", status: materialDone ? "done" : progress > 0 ? "active" : "pending" },
-      {
-        label: "生成内容成品",
-        status: contentDone ? "done" : contentActive ? "active" : materialDone ? "pending" : "pending"
-      },
-      {
-        label: "生成发布傻瓜包（7 步）",
-        status: contentDone ? "done" : contentActive ? "active" : "pending"
-      }
-    ]
-  };
+  const contentActive = progress >= (hasNotes ? 55 : 8);
+  const opsActive = progress >= 55 && progress < 100;
+  steps.push({
+    label: "生成内容成品",
+    status: contentDone ? "done" : contentActive ? "active" : "pending"
+  });
+  steps.push({
+    label: "生成发布傻瓜包（7 步）",
+    status: contentDone ? "done" : opsActive ? "active" : "pending"
+  });
+  return { kind: "progress", steps };
 }
 
 export function buildDeliverableBlock(
@@ -181,12 +205,17 @@ export const EXPERT_FEEDBACK_CHIPS: Record<PlatformExpertId, string[]> = {
 
 export function buildFeedbackBlock(
   deliverableId: string,
-  expertId: PlatformExpertId
+  expertId: PlatformExpertId,
+  hasNotes = false
 ): Extract<AssistantBlock, { kind: "feedback" }> {
+  let chips = EXPERT_FEEDBACK_CHIPS[expertId] ?? ["换标题", "缩短", "更口语"];
+  if (!hasNotes) {
+    chips = chips.filter((c) => c !== "更贴我的材料");
+  }
   return {
     kind: "feedback",
     deliverableId,
-    chips: EXPERT_FEEDBACK_CHIPS[expertId] ?? ["换标题", "缩短", "更口语"]
+    chips
   };
 }
 

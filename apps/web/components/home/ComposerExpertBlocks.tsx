@@ -2,8 +2,8 @@
 
 import type { AssistantBlock, ExpertTaskDraft, PlatformExpertId } from "../../lib/homeComposerExpertTypes";
 import { EXPERT_DISPLAY_NAMES } from "../../lib/composerExperts";
+import { formatIntakeSelectionsForDisplay } from "../../lib/composerExpertIntake";
 import DeliverableCard from "./composer/DeliverableCard";
-import FeedbackBar from "./composer/FeedbackBar";
 
 type IntakeStepBlock = Extract<AssistantBlock, { kind: "intake_step" }>;
 type ConfirmBlock = Extract<AssistantBlock, { kind: "confirm" }>;
@@ -149,35 +149,32 @@ function ConfirmPanel({
   onEditFeature: () => void;
 }) {
   const mp = block.materialPlan;
+  const intakeLines = formatIntakeSelectionsForDisplay(expertId, block.intake as Record<string, string | string[]>);
+
   return (
     <div className="rounded-2xl border border-brand/25 bg-surface p-4 shadow-soft">
       <p className="text-sm font-semibold text-ink">确认 · {EXPERT_DISPLAY_NAMES[expertId]}</p>
       <p className="mt-2 text-sm text-ink">{block.summary}</p>
 
-      {mp ? (
+      {intakeLines.length ? (
+        <ul className="mt-3 space-y-1 rounded-xl border border-line/80 bg-fill/20 p-3 text-xs text-muted">
+          {intakeLines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
+
+      {mp?.notebook ? (
         <div className="mt-4 rounded-xl border border-line/80 bg-fill/30 p-3 text-sm">
           <p className="font-medium text-ink">📎 资料计划</p>
-          {mp.notebook ? (
-            <>
-              <p className="mt-1 text-muted">将检索：{mp.notebook} · 全部 {mp.noteCount} 篇</p>
-              {mp.intendedUse ? <p className="mt-1 text-muted">预计用于：{mp.intendedUse}</p> : null}
-              {mp.coverageEstimate ? (
-                <p className="mt-1 text-muted">覆盖预估：{mp.coverageEstimate}</p>
-              ) : null}
-            </>
-          ) : (
-            <p className="mt-1 text-amber-800 dark:text-amber-100">⚠ {mp.disclaimer ?? "未选资料 · 将按通识生成"}</p>
-          )}
+          <p className="mt-1 text-muted">将检索：{mp.notebook} · 全部 {mp.noteCount} 篇</p>
+          {mp.intendedUse ? <p className="mt-1 text-muted">预计用于：{mp.intendedUse}</p> : null}
         </div>
       ) : null}
 
-      {block.featureStrip ? (
+      {block.featureStrip?.enabled && block.featureStrip.summary ? (
         <div className="mt-3 rounded-xl border border-line/80 bg-fill/20 p-3 text-sm">
-          {block.featureStrip.enabled && block.featureStrip.summary ? (
-            <p className="text-ink">🙋 本次会用你的特色：{block.featureStrip.summary}</p>
-          ) : (
-            <p className="text-amber-800 dark:text-amber-100">⚠ {block.featureStrip.warning}</p>
-          )}
+          <p className="text-ink">🙋 本次会用你的特色：{block.featureStrip.summary}</p>
           {!disabled ? (
             <button type="button" className="mt-2 text-xs text-brand underline" onClick={onEditFeature}>
               编辑特色
@@ -186,7 +183,9 @@ function ConfirmPanel({
         </div>
       ) : null}
 
-      <p className="mt-3 text-xs text-muted">工具链：{block.toolchain.join(" · ")}</p>
+      {block.toolchain.length ? (
+        <p className="mt-3 text-xs text-muted">工具链：{block.toolchain.join(" · ")}</p>
+      ) : null}
 
       {!disabled ? (
         <div className="mt-4 flex flex-wrap gap-2">
@@ -223,7 +222,8 @@ export default function ComposerExpertBlocks({
   onEditFeature,
   onCopyToast,
   featureCoreComplete = 0,
-  onFeedbackPatch
+  onFeedbackPatch,
+  outputContextParts
 }: {
   blocks: AssistantBlock[];
   expertId: PlatformExpertId;
@@ -239,8 +239,11 @@ export default function ComposerExpertBlocks({
   onCopyToast?: (message: string) => void;
   featureCoreComplete?: number;
   onFeedbackPatch?: (patch: Partial<FeedbackBlock>) => void;
+  outputContextParts?: string[];
 }) {
   if (!blocks.length) return null;
+
+  const feedbackBlock = blocks.find((b): b is FeedbackBlock => b.kind === "feedback");
 
   return (
     <div className="space-y-3">
@@ -250,12 +253,15 @@ export default function ComposerExpertBlocks({
       {blocks.map((block, idx) => {
         if (block.kind === "expert_strip") {
           return (
-            <div key={`strip-${idx}`} className="rounded-xl border border-line/70 bg-fill/20 px-3 py-2 text-xs text-muted">
-              <span className="font-medium text-ink">{EXPERT_DISPLAY_NAMES[expertId]}</span>
-              <span className="mx-1">·</span>
-              {block.persona}
-              <span className="mx-1">·</span>
-              {block.methodology}
+            <div key={`strip-${idx}`} className="rounded-xl border border-line/70 bg-fill/20 px-3 py-2">
+              {outputContextParts?.length ? (
+                <p className="text-xs font-medium text-ink">{outputContextParts.join(" · ")}</p>
+              ) : (
+                <p className="text-xs font-medium text-ink">{EXPERT_DISPLAY_NAMES[expertId]}</p>
+              )}
+              <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                {block.persona} · {block.methodology}
+              </p>
             </div>
           );
         }
@@ -296,23 +302,14 @@ export default function ComposerExpertBlocks({
               expertId={expertId}
               featureCoreComplete={featureCoreComplete}
               onCopyToast={onCopyToast}
+              feedbackBlock={feedbackBlock}
+              feedbackDisabled={archived || !onFeedbackPatch}
+              onFeedbackPatch={onFeedbackPatch}
             />
           );
         }
         if (block.kind === "feedback") {
-          return (
-            <FeedbackBar
-              key="feedback"
-              block={block}
-              disabled={archived || !onFeedbackPatch}
-              onPositive={() => onFeedbackPatch?.({ submitted: "positive" })}
-              onNegative={(reason) =>
-                onFeedbackPatch?.({ submitted: "negative", negativeReason: reason })
-              }
-              onChip={(chip) => onFeedbackPatch?.({ selectedChip: chip })}
-              onCustom={() => onFeedbackPatch?.({ selectedChip: "自定义" })}
-            />
-          );
+          return null;
         }
         return null;
       })}
