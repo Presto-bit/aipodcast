@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HomeComposerFormatCard from "./HomeComposerFormatCard";
+import ComposerExpertBlocks from "./ComposerExpertBlocks";
+import ComposerFeatureNudgeBar from "./composer/ComposerFeatureNudgeBar";
 import {
   COMPOSER_CONTENT_MAX_W,
   ComposerCopyToast,
@@ -9,13 +11,13 @@ import {
   ComposerKbEmptyHint,
   ComposerShell,
   ComposerStatusBar,
+  FeatureProfilePanel,
   GeneralAnswerCard,
-  IconFormat,
+  IconExpert,
   IconNotes,
   IconStyle,
   IconToolBtn,
   IconUser,
-  PersonalProfileCard,
   SessionHistorySidebar,
   UserBubble
 } from "./HomeComposerShell";
@@ -35,13 +37,55 @@ import { homeComposerTurnsToMemoryTurns, streamHomeComposerAsk } from "../../lib
 import { runHomeComposerFormatJobs } from "../../lib/homeComposerFormatJobs";
 import {
   EMPTY_HOME_COMPOSER_PERSONAL,
-  HOME_COMPOSER_FORMATS,
-  HOME_COMPOSER_FORMAT_LABELS,
-  type HomeComposerFormat,
-  type HomeComposerFormatResult,
   type HomeComposerPersonalProfile,
   type HomeComposerTurn
 } from "../../lib/homeComposerTypes";
+import { fetchComposerExpertIntake } from "../../lib/homeComposerIntakeApi";
+import {
+  blocksForConfirmPhase,
+  blocksForIntakePhase,
+  buildDeliverableBlock,
+  buildFeedbackBlock,
+  buildProgressBlock,
+  canComposerSubmitTask,
+  composerInputPlaceholder,
+  createExpertTaskDraft
+} from "../../lib/homeComposerExpertFlow";
+import { expertStripBlock } from "../../lib/composerExpertIntake";
+import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
+import { trackComposerExpertEvent } from "../../lib/composerExpertAnalytics";
+import {
+  getExpertEverSelected,
+  incrementFeatureNudgeSkipCount,
+  markExpertEverSelected,
+  shouldShowFeatureNudge
+} from "../../lib/composerExpertFeatureNudge";
+import {
+  inferIntakePreselection,
+  intakeTotalSteps,
+  mergeIntakeField
+} from "../../lib/composerExpertIntake";
+import type {
+  AssistantBlock,
+  ComposerExpertSelection,
+  ExpertTaskDraft,
+  FeatureCore,
+  PlatformExpertId
+} from "../../lib/homeComposerExpertTypes";
+import {
+  COMPOSER_EXPERT_OPTIONS,
+  defaultComposerExpertSelection,
+  expertDisplayLabel,
+  resolveActiveFormats
+} from "../../lib/composerExperts";
+import {
+  backfillFeatureCoreFromProfile,
+  EMPTY_FEATURE_CORE,
+  featureCoreComplete,
+  featureCoreStatusSummary,
+  featureCoreToPrompt,
+  shouldAutoEnablePersonalFeature
+} from "../../lib/homeComposerFeatureCore";
 import {
   fetchDefaultAuthorIp,
   personalProfileFromAuthorIp,
@@ -83,7 +127,7 @@ function useClickOutside(refs: React.RefObject<HTMLElement | null>[], onOutside:
   }, [active, onOutside, refs]);
 }
 
-type MenuKey = "format" | "kb" | "style" | "";
+type MenuKey = "expert" | "kb" | "style" | "";
 
 export default function HomeComposerPage({
   getAuthHeaders,
@@ -100,7 +144,10 @@ export default function HomeComposerPage({
   const [input, setInput] = useState("");
   const [openMenu, setOpenMenu] = useState<MenuKey | "">("");
   const [personalOpen, setPersonalOpen] = useState(false);
+  const [featureNudgeVisible, setFeatureNudgeVisible] = useState(false);
+  const [featureNudgeExpertId, setFeatureNudgeExpertId] = useState<PlatformExpertId | null>(null);
   const [personalDraft, setPersonalDraft] = useState<HomeComposerPersonalProfile>(EMPTY_HOME_COMPOSER_PERSONAL);
+  const [featureCoreDraft, setFeatureCoreDraft] = useState<FeatureCore>(EMPTY_FEATURE_CORE);
   const [defaultIpId, setDefaultIpId] = useState<string | null>(null);
   const [notes, setNotes] = useState<NoteRow[]>([]);
   const [notesLoading, setNotesLoading] = useState(false);
@@ -163,8 +210,13 @@ export default function HomeComposerPage({
           if (!prev) return prev;
           const active = activeHomeComposerSession(prev);
           if (!active || active.prefs.personalProfile) return prev;
+          const featureCore = backfillFeatureCoreFromProfile(active.prefs.featureCore, profile);
           return patchActiveHomeComposerSession(prev, {
-            prefs: { ...active.prefs, personalProfile: profile }
+            prefs: {
+              ...active.prefs,
+              personalProfile: profile,
+              featureCore
+            }
           });
         });
       })
@@ -235,15 +287,23 @@ export default function HomeComposerPage({
   }, []);
 
   const resolveStylePrompt = useCallback(() => {
+    if (prefs?.writingHabitMode === "off") return "";
     const templateStyle = selectedStyle?.textPrefix?.trim() || "";
+    if (prefs?.writingHabitMode === "template") return templateStyle;
+    if (prefs?.writingHabitMode === "notebook" || styleUsesNotebookDefault) {
+      return templateStyle || notebookStylePrompt;
+    }
+    if (prefs?.writingHabitMode === "neutral") return templateStyle;
     if (kbOn) return templateStyle || notebookStylePrompt;
     return templateStyle;
-  }, [kbOn, notebookStylePrompt, selectedStyle]);
+  }, [kbOn, notebookStylePrompt, prefs?.writingHabitMode, selectedStyle, styleUsesNotebookDefault]);
 
   const resolveAuthorPrompt = useCallback(() => {
-    if (!prefs?.personalEnabled || !prefs.personalProfile) return "";
-    return personalProfileToPrompt(prefs.personalProfile);
-  }, [prefs?.personalEnabled, prefs?.personalProfile]);
+    if (!prefs?.personalEnabled) return "";
+    const corePrompt = featureCoreToPrompt(prefs.featureCore);
+    const supplemental = prefs.personalProfile ? personalProfileToPrompt(prefs.personalProfile) : "";
+    return [corePrompt, supplemental].filter(Boolean).join("\n\n");
+  }, [prefs?.featureCore, prefs?.personalEnabled, prefs?.personalProfile]);
 
   const runTurn = useCallback(
     async (userText: string, opts?: { replaceLast?: boolean }) => {
@@ -349,18 +409,18 @@ export default function HomeComposerPage({
         nextStore = patchActiveHomeComposerSession(nextStore, { sessionState });
         setStore(nextStore);
 
-        const formats = prefs?.formats ?? [];
-        if (formats.length) {
+        const activeFormats = resolveActiveFormats(prefs);
+        if (activeFormats.length) {
           nextStore = updateHomeComposerTurn(nextStore, turnId, (t) => {
             const fm = { ...t.formats };
-            for (const f of formats) fm[f] = { status: "running", progress: "正在准备任务…" };
+            for (const f of activeFormats) fm[f] = { status: "running", progress: "正在准备任务…" };
             return { ...t, formats: fm };
           });
           setStore(nextStore);
 
           const noteTitleById = Object.fromEntries(notes.map((n) => [n.noteId, n.title || ""]));
           const results = await runHomeComposerFormatJobs(
-            formats,
+            activeFormats,
             {
               userPrompt: q,
               generalAnswer: askDone.answer,
@@ -439,14 +499,423 @@ export default function HomeComposerPage({
     ]
   );
 
+  const patchTaskDraftTurn = useCallback(
+    (turnId: string, draft: ExpertTaskDraft, prefsSnapshot: NonNullable<typeof prefs>) => {
+      const blocks =
+        draft.phase === "confirm"
+          ? blocksForConfirmPhase(draft.expertId, draft.taskSentence, draft.intake, prefsSnapshot)
+          : blocksForIntakePhase(draft.expertId, draft.intakeStep, draft.intake, draft.taskSentence);
+      setStore((prev) => {
+        if (!prev) return prev;
+        const withDraft = patchActiveHomeComposerSession(prev, (s) => ({
+          ...s,
+          prefs: { ...s.prefs, taskDraft: draft }
+        }));
+        return updateHomeComposerTurn(withDraft, turnId, { blocks });
+      });
+    },
+    []
+  );
+
+  const runExpertTurn = useCallback(
+    async (userText: string) => {
+      if (!store || !session || !prefs || prefs.expert.mode !== "platform") return;
+      if (!isLoggedIn) {
+        setError("请先登录后再发送");
+        return;
+      }
+      const q = userText.trim();
+      if (!q) return;
+
+      setError("");
+      setBusy(true);
+      const turnId = crypto.randomUUID();
+      const expertId = prefs.expert.expertId;
+
+      let intake = inferIntakePreselection(expertId, q).intake;
+      let skipStep2 = inferIntakePreselection(expertId, q).skipStep2;
+      let blocks = blocksForIntakePhase(expertId, 0, intake, q);
+
+      try {
+        try {
+          const api = await fetchComposerExpertIntake(
+            {
+              expertId,
+              taskSentence: q,
+              intakeStep: 0,
+              intake: {},
+              notebook: prefs.notebook,
+              noteCount: prefs.noteIds.length,
+              featureCore: prefs.featureCore,
+              personalEnabled: prefs.personalEnabled
+            },
+            getAuthHeaders()
+          );
+          intake = { ...intake, ...api.preselected };
+          skipStep2 = api.skipStep2;
+          blocks = [api.expertStrip, api.intakeStep];
+        } catch {
+          // 后端不可用时走客户端规则 fallback
+        }
+
+        const draft = createExpertTaskDraft({
+          expertId,
+          taskSentence: q,
+          turnId,
+          intake,
+          intakeStep: 0,
+          phase: "intake"
+        });
+        draft.skipStep2 = skipStep2;
+
+        const turn: HomeComposerTurn = {
+          id: turnId,
+          userText: q,
+          formats: {},
+          blocks,
+          createdAt: Date.now()
+        };
+
+        let nextStore = appendHomeComposerTurn(store, turn);
+        nextStore = patchActiveHomeComposerSession(nextStore, (s) => ({
+          ...s,
+          prefs: { ...s.prefs, taskDraft: draft }
+        }));
+        setStore(nextStore);
+        setInput("");
+      } catch (err) {
+        setError(String(err instanceof Error ? err.message : err));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [store, session, prefs, isLoggedIn, getAuthHeaders]
+  );
+
+  const goToConfirm = useCallback(
+    (turnId: string, draft: ExpertTaskDraft) => {
+      if (!prefs) return;
+      const nextDraft: ExpertTaskDraft = {
+        ...draft,
+        phase: "confirm",
+        updatedAt: new Date().toISOString()
+      };
+      patchTaskDraftTurn(turnId, nextDraft, prefs);
+    },
+    [patchTaskDraftTurn, prefs]
+  );
+
+  const handleIntakeFieldChange = useCallback(
+    (fieldId: string, value: string | string[], multi: boolean) => {
+      const draft = prefs?.taskDraft;
+      if (!draft || draft.phase !== "intake") return;
+      const intake = mergeIntakeField(draft.intake, fieldId, value, multi);
+      const nextDraft: ExpertTaskDraft = { ...draft, intake, updatedAt: new Date().toISOString() };
+      patchTaskDraftTurn(draft.turnId, nextDraft, prefs!);
+    },
+    [patchTaskDraftTurn, prefs]
+  );
+
+  const handleIntakeNext = useCallback(() => {
+    const draft = prefs?.taskDraft;
+    if (!draft || draft.phase !== "intake" || !prefs) return;
+    const total = intakeTotalSteps(draft.expertId);
+    const nextStep = draft.intakeStep + 1;
+    if (draft.skipStep2 || nextStep >= total) {
+      goToConfirm(draft.turnId, draft);
+      return;
+    }
+    const nextDraft: ExpertTaskDraft = {
+      ...draft,
+      intakeStep: nextStep,
+      updatedAt: new Date().toISOString()
+    };
+    patchTaskDraftTurn(draft.turnId, nextDraft, prefs);
+  }, [goToConfirm, patchTaskDraftTurn, prefs]);
+
+  const handleIntakeConfirmDirect = useCallback(() => {
+    const draft = prefs?.taskDraft;
+    if (!draft) return;
+    goToConfirm(draft.turnId, draft);
+  }, [goToConfirm, prefs?.taskDraft]);
+
+  const handleConfirmEditIntake = useCallback(() => {
+    const draft = prefs?.taskDraft;
+    if (!draft || !prefs) return;
+    const nextDraft: ExpertTaskDraft = {
+      ...draft,
+      phase: "intake",
+      intakeStep: 0,
+      updatedAt: new Date().toISOString()
+    };
+    patchTaskDraftTurn(draft.turnId, nextDraft, prefs);
+  }, [patchTaskDraftTurn, prefs]);
+
+  const handleConfirmStartGenerate = useCallback(async () => {
+    const draft = prefs?.taskDraft;
+    if (!draft || draft.phase !== "confirm" || !prefs || prefs.expert.mode !== "platform") return;
+    if (!isLoggedIn) {
+      setError("请先登录后再生成");
+      return;
+    }
+
+    setError("");
+    setBusy(true);
+    trackComposerExpertEvent("confirm_start", { expertId: draft.expertId });
+    const expertId = draft.expertId;
+    const generateDraft: ExpertTaskDraft = {
+      ...draft,
+      phase: "generate",
+      updatedAt: new Date().toISOString()
+    };
+
+    setStore((prev) => {
+      if (!prev) return prev;
+      const withDraft = patchActiveHomeComposerSession(prev, (s) => ({
+        ...s,
+        prefs: { ...s.prefs, taskDraft: generateDraft }
+      }));
+      return updateHomeComposerTurn(withDraft, draft.turnId, {
+        blocks: [expertStripBlock(expertId), buildProgressBlock("正在启动…", 8)]
+      });
+    });
+
+    const result = await runComposerExpertDeliverableJob({
+      expertId: draft.expertId,
+      taskSentence: draft.taskSentence,
+      intake: draft.intake,
+      notebook: prefs.notebook,
+      noteIds: prefs.noteIds,
+      featureCore: prefs.featureCore,
+      stylePrompt: resolveStylePrompt(),
+      authorPrompt: resolveAuthorPrompt(),
+      authHeaders: getAuthHeaders(),
+      createdBy: createdByPhone,
+      onProgress: (msg, prog) => {
+        setStore((prev) =>
+          prev
+            ? updateHomeComposerTurn(prev, draft.turnId, {
+                blocks: [expertStripBlock(expertId), buildProgressBlock(msg, prog ?? 55)]
+              })
+            : prev
+        );
+      }
+    });
+
+    if (result.status === "done") {
+      setStore((prev) => {
+        if (!prev) return prev;
+        const withCleared = patchActiveHomeComposerSession(prev, (s) => ({
+          ...s,
+          prefs: { ...s.prefs, taskDraft: undefined, lastDeliverableId: result.jobId }
+        }));
+        return updateHomeComposerTurn(withCleared, draft.turnId, {
+          blocks: [
+            expertStripBlock(expertId),
+            buildDeliverableBlock(expertId, result.deliverable),
+            buildFeedbackBlock(result.jobId, expertId)
+          ],
+          expertJobId: result.jobId
+        });
+      });
+      showCopyToast("内容成品已生成");
+    } else {
+      setError(result.error);
+      setStore((prev) => {
+        if (!prev) return prev;
+        const backConfirm: ExpertTaskDraft = {
+          ...draft,
+          phase: "confirm",
+          updatedAt: new Date().toISOString()
+        };
+        const withDraft = patchActiveHomeComposerSession(prev, (s) => ({
+          ...s,
+          prefs: { ...s.prefs, taskDraft: backConfirm }
+        }));
+        return updateHomeComposerTurn(withDraft, draft.turnId, {
+          blocks: blocksForConfirmPhase(expertId, draft.taskSentence, draft.intake, prefs)
+        });
+      });
+    }
+    setBusy(false);
+  }, [
+    prefs,
+    isLoggedIn,
+    getAuthHeaders,
+    createdByPhone,
+    resolveStylePrompt,
+    resolveAuthorPrompt,
+    showCopyToast
+  ]);
+
+  const activeFeatureCoreComplete =
+    prefs?.personalEnabled && prefs.featureCore ? featureCoreComplete(prefs.featureCore) : 0;
+
+  type FeedbackPatch = Partial<Extract<AssistantBlock, { kind: "feedback" }>>;
+
+  const patchTurnFeedback = useCallback(
+    (turnId: string, patch: FeedbackPatch) => {
+      setStore((prev) => {
+        if (!prev) return prev;
+        const session = activeHomeComposerSession(prev);
+        const turn = session?.turns.find((t) => t.id === turnId);
+        if (!turn?.blocks?.length) return prev;
+        const blocks = turn.blocks.map((b) => (b.kind === "feedback" ? { ...b, ...patch } : b));
+        return updateHomeComposerTurn(prev, turnId, { blocks });
+      });
+    },
+    []
+  );
+
+  const handleExpertFeedback = useCallback(
+    (
+      turnId: string,
+      expertId: PlatformExpertId,
+      patch: FeedbackPatch,
+      deliverableId?: string
+    ) => {
+      patchTurnFeedback(turnId, patch);
+      if (patch.submitted === "positive") {
+        trackComposerExpertEvent("feedback", {
+          expertId,
+          sentiment: "positive",
+          deliverableId
+        });
+        showCopyToast("谢谢反馈");
+      } else if (patch.submitted === "negative") {
+        trackComposerExpertEvent("feedback", {
+          expertId,
+          sentiment: "negative",
+          reason: patch.negativeReason,
+          deliverableId
+        });
+        showCopyToast("已记录，重生成将在后续版本接入");
+      } else if (patch.selectedChip) {
+        trackComposerExpertEvent("feedback", {
+          expertId,
+          chip: patch.selectedChip,
+          deliverableId
+        });
+        if (patch.selectedChip === "自定义") {
+          showCopyToast("请在输入框描述想改的地方（修订流程即将支持）");
+        } else {
+          showCopyToast("已记录，快捷修订即将支持");
+        }
+      }
+    },
+    [patchTurnFeedback, showCopyToast]
+  );
+
+  function dismissFeatureNudge(skip: boolean) {
+    if (skip) incrementFeatureNudgeSkipCount();
+    setFeatureNudgeVisible(false);
+    setFeatureNudgeExpertId(null);
+  }
+
+  function openFeatureFromNudge() {
+    dismissFeatureNudge(false);
+    setPersonalOpen(true);
+  }
+
+  const handleExitExpertTask = useCallback(() => {
+    const draft = prefs?.taskDraft;
+    if (!draft) return;
+    setStore((prev) => {
+      if (!prev) return prev;
+      let next = updateHomeComposerTurn(prev, draft.turnId, { taskFlowArchived: true });
+      next = patchActiveHomeComposerSession(next, {
+        prefs: {
+          ...activeHomeComposerSession(next)!.prefs,
+          expert: defaultComposerExpertSelection(),
+          taskDraft: undefined
+        }
+      });
+      return next;
+    });
+    setOpenMenu("");
+  }, [prefs?.taskDraft]);
+
+  useEffect(() => {
+    if (!prefs?.taskDraft || prefs.taskDraft.phase !== "generate") return;
+    const draft = prefs.taskDraft;
+    persistPrefs({
+      taskDraft: { ...draft, phase: "confirm", updatedAt: new Date().toISOString() }
+    });
+    patchTaskDraftTurn(draft.turnId, { ...draft, phase: "confirm" }, prefs);
+    showCopyToast("上次未完成生成，已回到确认页");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅会话切换时恢复中断态
+  }, [store?.activeSessionId]);
+
   function handleSend() {
+    if (prefs?.expert.mode === "platform" && canComposerSubmitTask(prefs.taskDraft)) {
+      void runExpertTurn(input);
+      return;
+    }
+    if (!canComposerSubmitTask(prefs?.taskDraft)) return;
     void runTurn(input);
   }
 
-  function toggleFormat(id: HomeComposerFormat) {
-    const cur = prefs?.formats ?? [];
-    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
-    persistPrefs({ formats: next });
+  function togglePersonalEnabled() {
+    const nextEnabled = !prefs?.personalEnabled;
+    persistPrefs({
+      personalEnabled: nextEnabled,
+      personalDisabledByUser: nextEnabled ? false : true
+    });
+  }
+
+  function fillExpertExample(text: string) {
+    setInput(text);
+    setOpenMenu("");
+  }
+
+  function selectExpert(next: ComposerExpertSelection) {
+    const isFirstPlatform = next.mode === "platform" && !getExpertEverSelected();
+
+    setStore((prev) => {
+      if (!prev) return prev;
+      const active = activeHomeComposerSession(prev);
+      const draft = active?.prefs.taskDraft;
+      let nextStore = draft
+        ? updateHomeComposerTurn(prev, draft.turnId, { taskFlowArchived: true })
+        : prev;
+      return patchActiveHomeComposerSession(nextStore, (s) => ({
+        ...s,
+        prefs: { ...s.prefs, expert: next, formats: [], taskDraft: undefined }
+      }));
+    });
+    setOpenMenu("");
+
+    if (next.mode === "platform") {
+      trackComposerExpertEvent("expert_selected", { expertId: next.expertId });
+      if (isFirstPlatform) {
+        markExpertEverSelected();
+        if (
+          shouldShowFeatureNudge({
+            isFirstExpertSelect: true,
+            featureCore: prefs?.featureCore,
+            personalEnabled: Boolean(prefs?.personalEnabled),
+            personalProfile: prefs?.personalProfile
+          })
+        ) {
+          setFeatureNudgeVisible(true);
+          setFeatureNudgeExpertId(next.expertId);
+        }
+      }
+    } else {
+      setFeatureNudgeVisible(false);
+      setFeatureNudgeExpertId(null);
+    }
+  }
+
+  function applyWritingHabit(
+    mode: "neutral" | "notebook" | "template" | "off",
+    templateId: string | null = null
+  ) {
+    persistPrefs({
+      writingHabitMode: mode,
+      styleTemplateId: mode === "template" ? templateId : null
+    });
+    setOpenMenu("");
   }
 
   function selectNotebook(name: string) {
@@ -459,13 +928,21 @@ export default function HomeComposerPage({
   }
 
   function savePersonal() {
+    const featureCore = {
+      who: featureCoreDraft.who.trim(),
+      remember: featureCoreDraft.remember.trim(),
+      avoid: featureCoreDraft.avoid.trim()
+    };
+    const personalProfile = { ...personalDraft };
+    const autoEnable = shouldAutoEnablePersonalFeature(featureCore, prefs?.personalDisabledByUser);
     persistPrefs({
-      personalProfile: { ...personalDraft },
-      personalEnabled: true
+      personalProfile,
+      featureCore,
+      personalEnabled: autoEnable ? true : Boolean(prefs?.personalEnabled)
     });
     setPersonalOpen(false);
     if (defaultIpId) {
-      void saveDefaultAuthorIpProfile(defaultIpId, personalDraft).catch(() => {
+      void saveDefaultAuthorIpProfile(defaultIpId, personalProfile).catch(() => {
         // 本地已保存，云端失败不阻塞
       });
     }
@@ -482,7 +959,9 @@ export default function HomeComposerPage({
       setPersonalOpen(false);
       return;
     }
-    setPersonalDraft(prefs?.personalProfile ?? EMPTY_HOME_COMPOSER_PERSONAL);
+    const profile = prefs?.personalProfile ?? EMPTY_HOME_COMPOSER_PERSONAL;
+    setPersonalDraft(profile);
+    setFeatureCoreDraft(backfillFeatureCoreFromProfile(prefs?.featureCore, profile));
     setPersonalOpen(true);
     setOpenMenu("");
   }
@@ -497,30 +976,49 @@ export default function HomeComposerPage({
   }
 
   const sessionListItems = useMemo(
-    () => store?.sessions.map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt })) ?? [],
+    () =>
+      store?.sessions.map((s) => ({
+        id: s.id,
+        title: s.title,
+        updatedAt: s.updatedAt,
+        empty: s.turns.length === 0
+      })) ?? [],
     [store?.sessions]
   );
 
+  const featureCoreFilled = featureCoreComplete(prefs?.featureCore) > 0;
+  const featureSummary = featureCoreStatusSummary(prefs?.featureCore);
+  const expertSelected = prefs?.expert?.mode === "platform";
+  const activeFormats = resolveActiveFormats(prefs);
+
   const hasPersonalSaved = Boolean(
-    prefs?.personalProfile && Object.values(prefs.personalProfile).some((v) => v.trim())
+    featureCoreFilled ||
+      (prefs?.personalProfile && Object.values(prefs.personalProfile).some((v) => v.trim()))
   );
 
-  const formatSelected = (prefs?.formats?.length ?? 0) > 0;
+  const writingHabitLabel = useMemo(() => {
+    if (prefs?.writingHabitMode === "off") return "不套用";
+    if (prefs?.writingHabitMode === "neutral") return "通用客观";
+    if (prefs?.writingHabitMode === "template" && selectedStyle) return selectedStyle.label;
+    if (prefs?.writingHabitMode === "notebook" || styleUsesNotebookDefault) return kbOn ? "笔记本风格" : "通用客观";
+    if (selectedStyle) return selectedStyle.label;
+    return "通用客观";
+  }, [kbOn, prefs?.writingHabitMode, selectedStyle, styleUsesNotebookDefault]);
+
+  const selectedExpertId = prefs?.expert.mode === "platform" ? prefs.expert.expertId : null;
 
   const statusParts: string[] = [];
-  if (prefs?.formats?.length) {
-    statusParts.push(`输出格式 · ${prefs.formats.map((f) => HOME_COMPOSER_FORMAT_LABELS[f]).join("、")}`);
+  if (expertSelected) {
+    statusParts.push(`专家 · ${expertDisplayLabel(prefs!.expert)}`);
   }
   if (kbOn) {
-    statusParts.push(`知识库 · ${prefs!.notebook} · 全部资料`);
+    statusParts.push(`资料 · ${prefs!.notebook} · 全部`);
   }
-  if (selectedStyle) {
-    statusParts.push(`写作风格 · ${selectedStyle.label}`);
-  } else if (styleUsesNotebookDefault) {
-    statusParts.push("写作风格 · 笔记本");
-  }
-  if (prefs?.personalEnabled && prefs.personalProfile) {
-    statusParts.push("个人特色");
+  statusParts.push(`写作习惯 · ${writingHabitLabel}`);
+  if (prefs?.personalEnabled && featureSummary) {
+    statusParts.push(`我的特色 · ${featureSummary}`);
+  } else if (!featureCoreFilled) {
+    statusParts.push("我的特色 · 未填写");
   }
 
   if (!store || !session) {
@@ -558,9 +1056,46 @@ export default function HomeComposerPage({
           >
             {hasSent ? (
               <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-4 pt-1">
-                {session.turns.map((turn) => (
+                {session.turns.map((turn) => {
+                  const isActiveExpertTurn = prefs?.taskDraft?.turnId === turn.id;
+                  const deliverableBlock = turn.blocks?.find((b) => b.kind === "deliverable");
+                  const expertId =
+                    deliverableBlock && deliverableBlock.kind === "deliverable"
+                      ? deliverableBlock.expertId
+                      : isActiveExpertTurn && prefs?.taskDraft
+                        ? prefs.taskDraft.expertId
+                        : prefs?.expert.mode === "platform"
+                          ? prefs.expert.expertId
+                          : null;
+                  return (
                   <div key={turn.id} className="space-y-5">
                     <UserBubble text={turn.userText} />
+                    {turn.blocks?.length && expertId ? (
+                      <ComposerExpertBlocks
+                        blocks={turn.blocks}
+                        expertId={expertId}
+                        archived={turn.taskFlowArchived}
+                        draft={isActiveExpertTurn ? prefs?.taskDraft : undefined}
+                        onIntakeChange={handleIntakeFieldChange}
+                        onIntakeNext={handleIntakeNext}
+                        onIntakeConfirmDirect={handleIntakeConfirmDirect}
+                        onConfirmStart={handleConfirmStartGenerate}
+                        onConfirmEditIntake={handleConfirmEditIntake}
+                        onExitChat={handleExitExpertTask}
+                        onEditFeature={togglePersonalPanel}
+                        onCopyToast={showCopyToast}
+                        featureCoreComplete={activeFeatureCoreComplete}
+                        onFeedbackPatch={(patch) => {
+                          const fb = turn.blocks?.find((b) => b.kind === "feedback");
+                          handleExpertFeedback(
+                            turn.id,
+                            expertId,
+                            patch,
+                            fb?.kind === "feedback" ? fb.deliverableId : undefined
+                          );
+                        }}
+                      />
+                    ) : null}
                     {turn.general ? (
                       <GeneralAnswerCard
                         streaming={turn.general.streaming}
@@ -574,7 +1109,7 @@ export default function HomeComposerPage({
                         }
                       />
                     ) : null}
-                    {(prefs?.formats ?? []).map((format) => {
+                    {activeFormats.map((format) => {
                       const result = turn.formats[format];
                       if (!result || result.status === "pending") return null;
                       return (
@@ -587,7 +1122,8 @@ export default function HomeComposerPage({
                       );
                     })}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <h1 className="w-full shrink-0 text-center text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
@@ -608,41 +1144,83 @@ export default function HomeComposerPage({
                 hasSent ? "pt-2" : ""
               ].join(" ")}
             >
+              {featureNudgeVisible && featureNudgeExpertId ? (
+                <ComposerFeatureNudgeBar
+                  expertId={featureNudgeExpertId}
+                  onFillFeature={openFeatureFromNudge}
+                  onSkip={() => dismissFeatureNudge(true)}
+                />
+              ) : null}
               <ComposerShell
                 value={input}
                 onChange={setInput}
                 onSend={handleSend}
                 busy={busy}
                 menuOpen={Boolean(openMenu)}
+                placeholder={composerInputPlaceholder(prefs?.taskDraft)}
+                sendDisabled={!canComposerSubmitTask(prefs?.taskDraft)}
                 formatControl={
                   <ComposerDropAnchor
-                    title="输出格式"
-                    icon={<IconFormat />}
-                    open={openMenu === "format"}
-                    selected={formatSelected}
-                    onToggle={() => openMenuOrToggle("format")}
+                    title="专家"
+                    icon={<IconExpert />}
+                    open={openMenu === "expert"}
+                    selected={expertSelected}
+                    onToggle={() => openMenuOrToggle("expert")}
                     align="left"
-                    minWidth={132}
+                    minWidth={280}
                   >
-                    {HOME_COMPOSER_FORMATS.map((f) => (
-                      <label
-                        key={f.id}
-                        className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-fill"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={prefs?.formats.includes(f.id) ?? false}
-                          onChange={() => toggleFormat(f.id)}
-                        />
-                        {f.label}
-                      </label>
-                    ))}
+                    {COMPOSER_EXPERT_OPTIONS.map((opt) => {
+                      const selected =
+                        opt.id === "none"
+                          ? prefs?.expert?.mode === "none"
+                          : prefs?.expert?.mode === "platform" && prefs.expert.expertId === opt.id;
+                      return (
+                        <div key={opt.id} className="border-b border-line/50 last:border-0">
+                          <button
+                            type="button"
+                            className={[
+                              "block w-full rounded-lg px-2 py-1.5 text-left",
+                              selected ? "bg-brand/10" : "hover:bg-fill"
+                            ].join(" ")}
+                            onClick={() =>
+                              selectExpert(
+                                opt.id === "none"
+                                  ? { mode: "none" }
+                                  : { mode: "platform", expertId: opt.id as PlatformExpertId }
+                              )
+                            }
+                          >
+                            <span className={["block text-sm", selected ? "font-medium text-ink" : "text-ink"].join(" ")}>
+                              {opt.name}
+                            </span>
+                            <span className="mt-0.5 block text-xs text-muted">{opt.description}</span>
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {selectedExpertId ? (
+                      <div className="mt-2 border-t border-line/70 pt-2">
+                        <p className="px-1 text-[11px] font-medium text-muted">试试这样写</p>
+                        {(COMPOSER_EXPERT_OPTIONS.find((o) => o.id === selectedExpertId)?.examples ?? []).map(
+                          (example) => (
+                            <button
+                              key={example}
+                              type="button"
+                              className="mt-1 block w-full rounded-lg px-2 py-1.5 text-left text-xs text-ink hover:bg-fill"
+                              onClick={() => fillExpertExample(example)}
+                            >
+                              {example}
+                            </button>
+                          )
+                        )}
+                      </div>
+                    ) : null}
                   </ComposerDropAnchor>
                 }
                 contextControls={
                   <div className="flex items-center gap-1">
                     <ComposerDropAnchor
-                      title="知识库资料"
+                      title="资料"
                       icon={<IconNotes />}
                       open={openMenu === "kb"}
                       selected={kbOn}
@@ -670,48 +1248,71 @@ export default function HomeComposerPage({
                     </ComposerDropAnchor>
 
                     <ComposerDropAnchor
-                      title="写作风格"
+                      title="写作习惯"
                       icon={<IconStyle />}
                       open={openMenu === "style"}
-                      selected={Boolean(selectedStyle) || styleUsesNotebookDefault}
+                      selected={prefs?.writingHabitMode !== "off"}
                       onToggle={() => openMenuOrToggle("style")}
                       align="right"
-                      minWidth={168}
+                      minWidth={188}
                     >
+                      <p className="pointer-events-none px-2 py-1 text-xs text-muted">管写法，不管你是谁</p>
                       <button
                         type="button"
                         className={[
                           "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
-                          styleUsesNotebookDefault ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
+                          prefs?.writingHabitMode === "neutral" ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
                         ].join(" ")}
-                        onClick={() => {
-                          persistPrefs({ styleTemplateId: null });
-                          setOpenMenu("");
-                        }}
+                        onClick={() => applyWritingHabit("neutral")}
                       >
-                        {kbOn ? "笔记本风格（默认）" : "默认"}
+                        通用客观
                       </button>
+                      {kbOn ? (
+                        <button
+                          type="button"
+                          className={[
+                            "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
+                            prefs?.writingHabitMode === "notebook" || styleUsesNotebookDefault
+                              ? "bg-brand/10 font-medium text-ink"
+                              : "text-ink hover:bg-fill"
+                          ].join(" ")}
+                          onClick={() => applyWritingHabit("notebook")}
+                        >
+                          笔记本风格
+                        </button>
+                      ) : null}
                       {styleTemplates.map((t) => (
                         <button
                           key={t.id}
                           type="button"
                           className={[
                             "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
-                            prefs?.styleTemplateId === t.id ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
+                            prefs?.writingHabitMode === "template" && prefs?.styleTemplateId === t.id
+                              ? "bg-brand/10 font-medium text-ink"
+                              : "text-ink hover:bg-fill"
                           ].join(" ")}
-                          onClick={() => {
-                            persistPrefs({ styleTemplateId: t.id });
-                            setOpenMenu("");
-                          }}
+                          onClick={() => applyWritingHabit("template", t.id)}
                         >
                           {t.label}
                         </button>
                       ))}
+                      <button
+                        type="button"
+                        className={[
+                          "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
+                          prefs?.writingHabitMode === "off" ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
+                        ].join(" ")}
+                        onClick={() => applyWritingHabit("off")}
+                      >
+                        不套用习惯
+                      </button>
                     </ComposerDropAnchor>
 
                     <IconToolBtn
-                      title="个人特色"
-                      selected={Boolean(prefs?.personalEnabled)}
+                      title="我的特色 · 我是谁"
+                      selected={Boolean(prefs?.personalEnabled && featureCoreFilled)}
+                      dashed={!featureCoreFilled}
+                      badgeDot={Boolean(prefs?.personalEnabled && featureCoreFilled)}
                       onClick={togglePersonalPanel}
                     >
                       <IconUser />
@@ -722,16 +1323,18 @@ export default function HomeComposerPage({
               />
             </div>
 
-            <PersonalProfileCard
+            <FeatureProfilePanel
               open={personalOpen}
-              hasSaved={hasPersonalSaved}
+              hasSaved={hasPersonalSaved || featureCoreFilled}
               personalEnabled={Boolean(prefs?.personalEnabled)}
-              onToggleEnabled={() => persistPrefs({ personalEnabled: !prefs?.personalEnabled })}
+              onToggleEnabled={togglePersonalEnabled}
               onClose={() => setPersonalOpen(false)}
               onSave={savePersonal}
-              fields={PERSONAL_FIELDS.map(({ key, label, rows }) => ({ key, label, rows }))}
-              draft={personalDraft as Record<string, string>}
-              onFieldChange={(key, value) =>
+              featureCore={featureCoreDraft}
+              onFeatureCoreChange={(key, value) => setFeatureCoreDraft((prev) => ({ ...prev, [key]: value }))}
+              supplementalFields={PERSONAL_FIELDS.map(({ key, label, rows }) => ({ key, label, rows }))}
+              supplementalDraft={personalDraft as Record<string, string>}
+              onSupplementalFieldChange={(key, value) =>
                 setPersonalDraft((prev) => ({ ...prev, [key as keyof HomeComposerPersonalProfile]: value }))
               }
             />

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 const NotesAskAnswerMarkdownBody = dynamic(
   () => import("../notes/NotesAskAnswerMarkdownBody").then((m) => ({ default: m.default })),
@@ -21,6 +21,20 @@ function Svg({ children }: { children: ReactNode }) {
     <svg width={28} height={28} viewBox="0 0 16 16" fill="none" aria-hidden className="shrink-0">
       {children}
     </svg>
+  );
+}
+
+export function IconExpert() {
+  return (
+    <Svg>
+      <path
+        d="M8 2.5l1.2 2.4 2.6.4-1.9 1.8.45 2.6L8 8.6 5.65 9.7l.45-2.6L4.2 5.3l2.6-.4L8 2.5z"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+      <path d="M4.5 12.5h7" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+    </Svg>
   );
 }
 
@@ -121,12 +135,16 @@ export function IconToolBtn({
   title,
   active,
   selected,
+  dashed,
+  badgeDot,
   onClick,
   children
 }: {
   title: string;
   active?: boolean;
   selected?: boolean;
+  dashed?: boolean;
+  badgeDot?: boolean;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -137,16 +155,24 @@ export function IconToolBtn({
       aria-label={title}
       onClick={onClick}
       className={[
-        "flex shrink-0 items-center justify-center rounded-full transition",
-        active
-          ? "bg-brand text-brand-foreground"
-          : selected
-            ? "border border-brand/40 bg-brand/8 text-ink"
-            : "bg-fill/80 text-muted hover:bg-fill hover:text-ink"
+        "relative flex shrink-0 items-center justify-center rounded-full transition",
+        dashed
+          ? "border border-dashed border-brand/45 bg-transparent text-muted hover:border-brand/70 hover:text-ink"
+          : active
+            ? "bg-brand text-brand-foreground"
+            : selected
+              ? "border border-brand/40 bg-brand/8 text-ink"
+              : "bg-fill/80 text-muted hover:bg-fill hover:text-ink"
       ].join(" ")}
       style={{ width: COMPOSER_TOOL_H, height: COMPOSER_TOOL_H, minWidth: COMPOSER_TOOL_H }}
     >
       {children}
+      {badgeDot ? (
+        <span
+          className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-brand ring-2 ring-surface"
+          aria-hidden
+        />
+      ) : null}
     </button>
   );
 }
@@ -232,7 +258,7 @@ export function UserBubble({ text }: { text: string }) {
   );
 }
 
-export type SessionListItem = { id: string; title: string; updatedAt: number };
+export type SessionListItem = { id: string; title: string; updatedAt: number; empty: boolean };
 
 export function sessionTimeGroup(updatedAt: number): "今天" | "昨天" | null {
   const now = new Date();
@@ -268,18 +294,20 @@ function SessionRow({
       >
         {session.title || "新对话"}
       </button>
-      <button
-        type="button"
-        title="删除对话"
-        aria-label={`删除对话：${session.title || "新对话"}`}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted opacity-0 transition hover:bg-fill hover:text-danger-ink group-hover:opacity-100"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete();
-        }}
-      >
-        <IconDeleteSession />
-      </button>
+      {!session.empty ? (
+        <button
+          type="button"
+          title="删除对话"
+          aria-label={`删除对话：${session.title || "新对话"}`}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted opacity-0 transition hover:bg-fill hover:text-danger-ink group-hover:opacity-100"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+        >
+          <IconDeleteSession />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -396,7 +424,9 @@ export function ComposerShell({
   menuOpen,
   formatControl,
   contextControls,
-  statusBar
+  statusBar,
+  placeholder = "消息…",
+  sendDisabled = false
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -406,8 +436,11 @@ export function ComposerShell({
   formatControl: ReactNode;
   contextControls: ReactNode;
   statusBar?: ReactNode;
+  placeholder?: string;
+  sendDisabled?: boolean;
 }) {
   const hasText = Boolean(value.trim());
+  const canSend = hasText && !busy && !sendDisabled;
   return (
     <div
       className={[
@@ -419,14 +452,14 @@ export function ComposerShell({
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="消息…"
+          placeholder={placeholder}
           rows={2}
           className="w-full min-h-[56px] max-h-[min(32vh,200px)] resize-none border-0 bg-transparent py-1 text-[15px] leading-relaxed text-ink outline-none ring-0 focus:outline-none focus:ring-0"
           style={{ paddingRight: hasText ? 60 : 0 }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              if (!busy && value.trim()) onSend();
+              if (canSend) onSend();
             }
           }}
         />
@@ -435,7 +468,7 @@ export function ComposerShell({
             type="button"
             title="发送"
             aria-label="发送"
-            disabled={busy}
+            disabled={!canSend}
             onClick={onSend}
             className="absolute bottom-1 right-0 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-canvas transition hover:opacity-90 disabled:opacity-50"
           >
@@ -475,11 +508,76 @@ export function PersonalProfileCard({
   draft: Record<string, string>;
   onFieldChange: (key: string, value: string) => void;
 }) {
+  return (
+    <FeatureProfilePanel
+      open={open}
+      hasSaved={hasSaved}
+      personalEnabled={personalEnabled}
+      onToggleEnabled={onToggleEnabled}
+      onClose={onClose}
+      onSave={onSave}
+      supplementalFields={fields}
+      supplementalDraft={draft}
+      onSupplementalFieldChange={onFieldChange}
+      featureCore={{ who: "", remember: "", avoid: "" }}
+      onFeatureCoreChange={() => undefined}
+    />
+  );
+}
+
+export function FeatureProfilePanel({
+  open,
+  hasSaved,
+  personalEnabled,
+  onToggleEnabled,
+  onClose,
+  onSave,
+  featureCore,
+  onFeatureCoreChange,
+  supplementalFields,
+  supplementalDraft,
+  onSupplementalFieldChange
+}: {
+  open: boolean;
+  hasSaved: boolean;
+  personalEnabled: boolean;
+  onToggleEnabled: () => void;
+  onClose: () => void;
+  onSave: () => void;
+  featureCore: { who: string; remember: string; avoid: string };
+  onFeatureCoreChange: (key: "who" | "remember" | "avoid", value: string) => void;
+  supplementalFields: { key: string; label: string; rows: number }[];
+  supplementalDraft: Record<string, string>;
+  onSupplementalFieldChange: (key: string, value: string) => void;
+}) {
+  const [supplementOpen, setSupplementOpen] = useState(false);
   if (!open) return null;
+
+  const coreFields = [
+    {
+      key: "who" as const,
+      label: "你是谁、常写给谁看？",
+      placeholder: "产品经理，写给准备转产品的人",
+      rows: 2
+    },
+    {
+      key: "remember" as const,
+      label: "你希望读者记住你什么？",
+      placeholder: "复盘真实踩坑，不灌鸡汤",
+      rows: 2
+    },
+    {
+      key: "avoid" as const,
+      label: "千万别写成什么样？",
+      placeholder: "绝对化承诺、编造数据",
+      rows: 2
+    }
+  ];
+
   return (
     <div className="relative z-10 mt-2.5 w-full shrink-0 overflow-hidden rounded-2xl border border-line bg-surface">
       <div className="flex items-center justify-between border-b border-line/80 px-4 py-3">
-        <h2 className="text-sm font-semibold text-ink">{hasSaved ? "编辑个人特色" : "填写个人特色"}</h2>
+        <h2 className="text-sm font-semibold text-ink">{hasSaved ? "编辑我的特色" : "填写我的特色 · 我是谁"}</h2>
         <button
           type="button"
           title="关闭"
@@ -490,24 +588,56 @@ export function PersonalProfileCard({
           ✕
         </button>
       </div>
-      <div className="max-h-[min(50vh,420px)] space-y-3 overflow-y-auto p-4">
+      <div className="max-h-[min(58vh,480px)] space-y-3 overflow-y-auto p-4">
+        <p className="rounded-lg bg-fill/60 px-3 py-2 text-xs leading-relaxed text-muted">
+          我的特色 — 身份、经历、底线。换专家也不变。
+          <br />
+          写作习惯 — 句式、结构。在「写作习惯 ▾」里随时换。
+        </p>
         {hasSaved ? (
           <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
             <input type="checkbox" checked={personalEnabled} onChange={onToggleEnabled} />
-            在本对话中使用个人特色
+            在本对话中使用我的特色
           </label>
         ) : null}
-        {fields.map(({ key, label, rows }) => (
+        {coreFields.map(({ key, label, placeholder, rows }) => (
           <label key={key} className="block">
-            <span className="text-xs font-medium text-muted">{label}</span>
+            <span className="text-xs font-medium text-ink">{label}</span>
             <textarea
               rows={rows}
-              value={draft[key] ?? ""}
-              onChange={(e) => onFieldChange(key, e.target.value)}
+              value={featureCore[key]}
+              placeholder={placeholder}
+              onChange={(e) => onFeatureCoreChange(key, e.target.value)}
               className="mt-1 w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink outline-none focus:border-brand/40"
             />
           </label>
         ))}
+        <div className="border-t border-line/70 pt-2">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-xs font-medium text-muted hover:text-ink"
+            onClick={() => setSupplementOpen((v) => !v)}
+          >
+            <span>补充，可选</span>
+            <span aria-hidden>{supplementOpen ? "▴" : "▾"}</span>
+          </button>
+          {supplementOpen ? (
+            <div className="mt-2 space-y-3">
+              <p className="text-xs text-muted">填了会更像你，不填也能用。</p>
+              {supplementalFields.map(({ key, label, rows }) => (
+                <label key={key} className="block">
+                  <span className="text-xs font-medium text-muted">{label}</span>
+                  <textarea
+                    rows={rows}
+                    value={supplementalDraft[key] ?? ""}
+                    onChange={(e) => onSupplementalFieldChange(key, e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink outline-none focus:border-brand/40"
+                  />
+                </label>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={onClose}>
             关闭

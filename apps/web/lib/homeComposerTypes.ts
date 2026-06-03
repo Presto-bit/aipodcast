@@ -1,5 +1,15 @@
 import type { NotesAskSessionState } from "./notesAskMemoryTypes";
 import type { SocialPublishDraft } from "./socialPublishTypes";
+import type {
+  ComposerExpertSelection,
+  ExpertTaskDraft,
+  FeatureCore,
+  PersonalFeaturePreferences,
+  WritingHabitMode,
+  AssistantBlock
+} from "./homeComposerExpertTypes";
+import { defaultComposerExpertSelection } from "./composerExperts";
+import { EMPTY_FEATURE_CORE } from "./homeComposerFeatureCore";
 
 export type HomeComposerFormat = "xhs" | "mp" | "voice" | "podcast";
 
@@ -41,17 +51,31 @@ export type HomeComposerTurn = {
     streaming?: boolean;
     streamingPhase?: string;
   };
+  /** @deprecated PR-2 起由专家 deliverable 替代；PR-0/1 保留兼容旧 format Job */
   formats: Partial<Record<HomeComposerFormat, HomeComposerFormatResult>>;
+  /** 专家任务流块（intake / confirm / progress / deliverable） */
+  blocks?: AssistantBlock[];
+  /** 用户点「改聊一下」后归档，块只读展示 */
+  taskFlowArchived?: boolean;
+  expertJobId?: string;
   createdAt: number;
 };
 
 export type HomeComposerPrefs = {
+  /** @deprecated 由 expert 单选替代；迁移期仍可读 */
   formats: HomeComposerFormat[];
+  expert: ComposerExpertSelection;
   notebook: string;
   noteIds: string[];
   styleTemplateId: string | null;
+  writingHabitMode: WritingHabitMode;
   personalEnabled: boolean;
   personalProfile: HomeComposerPersonalProfile | null;
+  featureCore: FeatureCore;
+  personalDisabledByUser?: boolean;
+  personalFeaturePreferences?: PersonalFeaturePreferences;
+  taskDraft?: ExpertTaskDraft;
+  lastDeliverableId?: string;
 };
 
 export type HomeComposerSession = {
@@ -64,7 +88,7 @@ export type HomeComposerSession = {
 };
 
 export type HomeComposerStore = {
-  v: 1;
+  v: 1 | 2;
   activeSessionId: string;
   sessions: HomeComposerSession[];
 };
@@ -86,10 +110,14 @@ export const HOME_COMPOSER_FORMATS: { id: HomeComposerFormat; label: string }[] 
 export function defaultHomeComposerPrefs(): HomeComposerPrefs {
   return {
     formats: [],
+    expert: defaultComposerExpertSelection(),
     notebook: "",
     noteIds: [],
     styleTemplateId: null,
+    writingHabitMode: "neutral",
     personalEnabled: false,
-    personalProfile: null
+    personalProfile: null,
+    featureCore: { ...EMPTY_FEATURE_CORE },
+    personalFeaturePreferences: { learnedTraits: [] }
   };
 }

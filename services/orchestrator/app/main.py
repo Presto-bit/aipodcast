@@ -47,6 +47,7 @@ from .routes import (
     analytics_routes,
     auth_routes,
     clip_routes,
+    composer_expert_routes,
     e2e_smoke_routes,
     health,
     jobs_routes,
@@ -389,6 +390,7 @@ app.include_router(clip_routes.router)
 app.include_router(jobs_routes.router)
 app.include_router(notes_routes.router)
 app.include_router(author_ip_routes.router)
+app.include_router(composer_expert_routes.router)
 app.include_router(voice_routes.router)
 app.include_router(subscription_routes.router)
 app.include_router(admin_routes.router)

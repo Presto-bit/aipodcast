@@ -827,6 +827,34 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             append_job_event(job_id, "complete", "风格特征已缓存", {"progress": 100})
             return out
 
+        if job_type == "composer_expert_deliverable":
+            from .composer_expert.generate import run_composer_expert_deliverable_job
+
+            payload_dict = payload if isinstance(payload, dict) else {}
+
+            def _expert_progress(msg: str, prog: float) -> None:
+                append_job_event(job_id, "progress", msg, {"progress": prog})
+
+            append_job_event(job_id, "progress", "专家任务启动", {"progress": 8})
+            if _guard_cancelled(job_id):
+                return {"status": "cancelled"}
+            try:
+                out = run_composer_expert_deliverable_job(
+                    payload=payload_dict,
+                    user_ref=created_by,
+                    on_progress=_expert_progress,
+                )
+            except Exception as exc:
+                err = str(exc)[:500]
+                if finalize_job_terminal_unless_cancelled(job_id, "failed", progress=100, error_message=err):
+                    append_job_event(job_id, "error", err, {"progress": 100})
+                return {"status": "failed", "error": err}
+            if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=out):
+                append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
+                return {"status": "cancelled"}
+            append_job_event(job_id, "complete", "专家交付物已生成", {"progress": 100})
+            return out
+
         if job_type == "social_publish_draft":
             from .provider_router import deepseek_text_config_ok
             from .social_publish_draft import (

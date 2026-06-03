@@ -43,6 +43,7 @@
 | [author-ip-product-v5.md](./author-ip-product-v5.md) | **（历史）个人特色 IP v5.2**：独立工作台方案；**现行以 [v6](./author-ip-product-v6.md) 为准** |
 | [author-ip-product-v6.md](./author-ip-product-v6.md) | **个人特色 IP（v6.2，现行）**：笔记本即 IP；一键提炼；三端默认本笔记本风格 |
 | [author-ip-execution-schedule.md](./author-ip-execution-schedule.md) | **（历史排期）** v5 迭代 1～15；独立工作台/API 已下线，见 v6 |
+| [home-composer-experts.md](./home-composer-experts.md) | **首页 Composer 创作专家（v1）**：人设+方法论+工具链、下拉开选、我的专家×个人风格、任务问卷 |
 
 ---
 

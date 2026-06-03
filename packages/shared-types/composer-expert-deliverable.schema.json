@@ -1,0 +1,181 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "composer-expert-deliverable.schema.json",
+  "title": "ExpertDeliverable",
+  "type": "object",
+  "required": ["expertId", "content", "ops", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "expertId": {
+      "type": "string",
+      "enum": ["xhs_ops", "mp_ops", "voice_gen", "podcast_plan"]
+    },
+    "content": {
+      "oneOf": [
+        { "$ref": "#/definitions/XhsContent" },
+        { "$ref": "#/definitions/MpContent" },
+        { "$ref": "#/definitions/VoiceContent" },
+        { "$ref": "#/definitions/PodcastContent" }
+      ]
+    },
+    "ops": { "$ref": "#/definitions/OpsPlaybook" },
+    "meta": { "$ref": "#/definitions/DeliverableMeta" }
+  },
+  "definitions": {
+    "XhsCoverSpec": {
+      "type": "object",
+      "required": ["headline", "layout", "slides"],
+      "properties": {
+        "headline": { "type": "string", "minLength": 1 },
+        "subline": { "type": "string" },
+        "layout": {
+          "type": "string",
+          "enum": ["text_top", "text_center", "screenshot_plus_banner"]
+        },
+        "palette": {
+          "type": "object",
+          "properties": {
+            "background": { "type": "string" },
+            "text": { "type": "string" }
+          }
+        },
+        "slides": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["role", "description"],
+            "properties": {
+              "role": { "type": "string", "enum": ["cover", "inner"] },
+              "description": { "type": "string", "minLength": 1 },
+              "onImageText": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "XhsContent": {
+      "type": "object",
+      "required": ["titles", "body", "hashtags", "cover"],
+      "properties": {
+        "titles": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "body": { "type": "string", "minLength": 1 },
+        "hashtags": { "type": "array", "items": { "type": "string" } },
+        "cover": { "$ref": "#/definitions/XhsCoverSpec" }
+      }
+    },
+    "MpContent": {
+      "type": "object",
+      "required": ["title", "summary", "bodyMarkdown"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1 },
+        "bodyMarkdown": { "type": "string", "minLength": 1 }
+      }
+    },
+    "VoiceContent": {
+      "type": "object",
+      "required": ["durationHint", "wordCount", "scriptTimeline"],
+      "properties": {
+        "durationHint": { "type": "string", "minLength": 1 },
+        "wordCount": { "type": "number", "minimum": 1 },
+        "scriptTimeline": { "type": "string", "minLength": 1 }
+      }
+    },
+    "PodcastContent": {
+      "type": "object",
+      "required": ["showTitle", "durationHint", "outline"],
+      "properties": {
+        "showTitle": { "type": "string", "minLength": 1 },
+        "durationHint": { "type": "string", "minLength": 1 },
+        "outline": { "type": "string", "minLength": 1 },
+        "scriptExcerpt": { "type": "string" }
+      }
+    },
+    "OpsPlaybookStep": {
+      "type": "object",
+      "required": ["stepNo", "title", "objective", "actions", "tier", "defaultExpanded"],
+      "properties": {
+        "stepNo": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "objective": { "type": "string", "minLength": 1 },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "copyBlocks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["label", "text"],
+            "properties": {
+              "label": { "type": "string" },
+              "text": { "type": "string" }
+            }
+          }
+        },
+        "timing": { "type": "string" },
+        "metrics": { "type": "array", "items": { "type": "string" } },
+        "tier": {
+          "type": "string",
+          "enum": ["must_do", "nice_to_have", "after_publish"]
+        },
+        "defaultExpanded": { "type": "boolean" },
+        "collapsedSummary": { "type": "string" }
+      }
+    },
+    "OpsPlaybook": {
+      "type": "object",
+      "required": ["expertId", "steps", "recapStepNo"],
+      "properties": {
+        "expertId": {
+          "type": "string",
+          "enum": ["xhs_ops", "mp_ops", "voice_gen", "podcast_plan"]
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/OpsPlaybookStep" }
+        },
+        "recapStepNo": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ProvenanceBar": {
+      "type": "object",
+      "required": ["corpusCoverage"],
+      "properties": {
+        "corpusCoverage": {
+          "type": "string",
+          "enum": ["full", "partial", "none"]
+        },
+        "materialLabels": { "type": "array", "items": { "type": "string" } },
+        "corpusSegments": { "type": "array", "items": { "type": "string" } },
+        "supplementSegments": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "DeliverableMeta": {
+      "type": "object",
+      "required": ["rationale", "expectedEffect", "provenance", "playbookVersion"],
+      "properties": {
+        "rationale": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "expectedEffect": { "type": "string", "minLength": 1 },
+        "provenance": { "$ref": "#/definitions/ProvenanceBar" },
+        "playbookVersion": { "type": "string", "minLength": 1 },
+        "featureUsage": {
+          "type": "object",
+          "required": ["applied", "summaryLine"],
+          "properties": {
+            "applied": { "type": "boolean" },
+            "summaryLine": { "type": "string" },
+            "items": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}
