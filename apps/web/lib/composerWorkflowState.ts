@@ -20,6 +20,7 @@ export function resolveComposerWorkflowPhase(
     case "generate":
       return "executing";
     case "deliver":
+      return "review";
     case "review":
       return "review";
     case "revise":

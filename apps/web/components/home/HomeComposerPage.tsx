@@ -52,11 +52,9 @@ import {
   buildExpertOutputContextParts,
   buildFeedbackBlock,
   buildProgressBlock,
-  buildReviewBlock,
   canComposerSubmitTask,
   composerInputPlaceholder,
   createExpertTaskDraft,
-  rebuildBlocksFromDraft,
   shouldSkipToResolution
 } from "../../lib/homeComposerExpertFlow";
 import { expertStripBlock } from "../../lib/composerExpertIntake";
@@ -529,8 +527,6 @@ export default function HomeComposerPage({
         blocks = blocksForConfirmPhase(draft.expertId, draft.taskSentence, draft.intake, prefsSnapshot);
       } else if (draft.phase === "intake") {
         blocks = blocksForIntakePhase(draft.expertId, draft.intakeStep, draft.intake, draft.taskSentence);
-      } else if (draft.phase === "review") {
-        blocks = rebuildBlocksFromDraft(draft, prefsSnapshot);
       } else {
         blocks = [expertStripBlock(draft.expertId)];
       }
@@ -838,28 +834,27 @@ export default function HomeComposerPage({
     });
 
     if (result.status === "done") {
-      const reviewDraft: ExpertTaskDraft = {
+      const deliverDraft: ExpertTaskDraft = {
         ...draft,
-        phase: "review",
+        phase: "deliver",
         updatedAt: new Date().toISOString()
       };
       setStore((prev) => {
         if (!prev) return prev;
-        const withReview = patchActiveHomeComposerSession(prev, (s) => ({
+        const withDeliver = patchActiveHomeComposerSession(prev, (s) => ({
           ...s,
-          prefs: { ...s.prefs, taskDraft: reviewDraft, lastDeliverableId: result.jobId }
+          prefs: { ...s.prefs, taskDraft: deliverDraft, lastDeliverableId: result.jobId }
         }));
-        return updateHomeComposerTurn(withReview, draft.turnId, {
+        return updateHomeComposerTurn(withDeliver, draft.turnId, {
           blocks: [
             expertStripBlock(expertId),
             buildDeliverableBlock(expertId, result.deliverable),
-            buildFeedbackBlock(result.jobId, expertId, hasNotes),
-            buildReviewBlock(result.jobId, "成品已就绪：确认可用后归档，或换方向回到需求确认")
+            buildFeedbackBlock(result.jobId, expertId, hasNotes)
           ],
           expertJobId: result.jobId
         });
       });
-      showCopyToast("内容成品已生成，请复核");
+      showCopyToast("内容成品已生成");
     } else {
       setError(result.error);
       setStore((prev) => {
@@ -969,51 +964,6 @@ export default function HomeComposerPage({
     setOpenMenu("");
   }, [prefs?.taskDraft]);
 
-  const handleReviewAccept = useCallback(() => {
-    const draft = prefs?.taskDraft;
-    if (!draft || draft.phase !== "review") return;
-    setStore((prev) => {
-      if (!prev) return prev;
-      let next = updateHomeComposerTurn(prev, draft.turnId, { taskFlowArchived: true });
-      next = patchActiveHomeComposerSession(next, (s) => ({
-        ...s,
-        prefs: { ...s.prefs, taskDraft: undefined }
-      }));
-      return next;
-    });
-    showCopyToast("已确认，任务归档");
-  }, [prefs?.taskDraft, showCopyToast]);
-
-  const handleReviewRedirect = useCallback(() => {
-    const draft = prefs?.taskDraft;
-    if (!draft || draft.phase !== "review" || !prefs) return;
-    const nextDraft: ExpertTaskDraft = {
-      ...draft,
-      phase: "confirm",
-      updatedAt: new Date().toISOString()
-    };
-    setStore((prev) => {
-      if (!prev) return prev;
-      const sessionSnap = activeHomeComposerSession(prev);
-      const turn = sessionSnap?.turns.find((t) => t.id === draft.turnId);
-      const kept =
-        turn?.blocks?.filter((b) => b.kind === "deliverable" || b.kind === "feedback") ?? [];
-      const resolutionBlocks = blocksForConfirmPhase(
-        draft.expertId,
-        draft.taskSentence,
-        draft.intake,
-        prefs
-      );
-      const withDraft = patchActiveHomeComposerSession(prev, (s) => ({
-        ...s,
-        prefs: { ...s.prefs, taskDraft: nextDraft }
-      }));
-      return updateHomeComposerTurn(withDraft, draft.turnId, {
-        blocks: [...resolutionBlocks, ...kept]
-      });
-    });
-  }, [prefs]);
-
   const handleClarifyStartTask = useCallback(
     (taskSentence: string) => {
       void runExpertTurn(taskSentence);
@@ -1061,7 +1011,6 @@ export default function HomeComposerPage({
 
     const hasDeliverable =
       Boolean(prefs?.lastDeliverableId) ||
-      prefs?.taskDraft?.phase === "review" ||
       prefs?.taskDraft?.phase === "deliver";
 
     const { kind } = classifyUtterance(q, {
@@ -1321,7 +1270,7 @@ export default function HomeComposerPage({
                   const turnArchived = Boolean(turn.taskFlowArchived);
                   const expertFlowFrozen =
                     Boolean(turn.blocks?.some((b) =>
-                      ["intake_step", "confirm", "progress", "clarification", "review"].includes(b.kind)
+                      ["intake_step", "confirm", "progress", "clarification"].includes(b.kind)
                     )) &&
                     !isActiveExpertTurn;
                   const turnContextParts =
@@ -1351,8 +1300,6 @@ export default function HomeComposerPage({
                         onEditIntake={handleEditIntakeFromConfirm}
                         onClarifyStartTask={() => handleClarifyStartTask(turn.userText)}
                         onClarifyContinueChat={() => handleClarifyContinueChat(turn.userText)}
-                        onReviewAccept={handleReviewAccept}
-                        onReviewRedirect={handleReviewRedirect}
                         onCopyToast={showCopyToast}
                         featureCoreComplete={activeFeatureCoreComplete}
                         outputContextParts={turnContextParts}

@@ -15,7 +15,6 @@ import QuestionCardPanel from "./composer/QuestionCardPanel";
 type IntakeStepBlock = Extract<AssistantBlock, { kind: "intake_step" }>;
 type ConfirmBlock = Extract<AssistantBlock, { kind: "confirm" }>;
 type ClarificationBlock = Extract<AssistantBlock, { kind: "clarification" }>;
-type ReviewBlock = Extract<AssistantBlock, { kind: "review" }>;
 type ProgressBlock = Extract<AssistantBlock, { kind: "progress" }>;
 type FeedbackBlock = Extract<AssistantBlock, { kind: "feedback" }>;
 
@@ -292,48 +291,6 @@ function ClarificationPanel({
   );
 }
 
-function ReviewPanel({
-  block,
-  expertId,
-  disabled,
-  onAccept,
-  onRedirect
-}: {
-  block: ReviewBlock;
-  expertId: PlatformExpertId;
-  disabled?: boolean;
-  onAccept: () => void;
-  onRedirect: () => void;
-}) {
-  return (
-    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 shadow-soft">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-sm font-semibold text-ink">交付复核 · {EXPERT_DISPLAY_NAMES[expertId]}</p>
-        <span className="rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:text-emerald-100">
-          Review
-        </span>
-      </div>
-      <p className="mt-2 text-sm text-muted">
-        {block.summaryLine ?? "成品已就绪。确认可用后归档；若要换方向可回到需求确认。"}
-      </p>
-      {!disabled ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-brand-foreground hover:bg-brand/90"
-            onClick={onAccept}
-          >
-            这版能发
-          </button>
-          <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={onRedirect}>
-            换方向重做
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 export default function ComposerExpertBlocks({
   blocks,
   expertId,
@@ -351,8 +308,6 @@ export default function ComposerExpertBlocks({
   onEditIntake,
   onClarifyStartTask,
   onClarifyContinueChat,
-  onReviewAccept,
-  onReviewRedirect,
   onCopyToast,
   featureCoreComplete = 0,
   onFeedbackPatch,
@@ -361,7 +316,7 @@ export default function ComposerExpertBlocks({
   blocks: AssistantBlock[];
   expertId: PlatformExpertId;
   archived?: boolean;
-  /** 任务流已离开该 turn（Resolution/Review 冻结，但不影响成品反馈） */
+  /** 任务流已离开该 turn（Resolution 等冻结，但不影响成品反馈） */
   flowFrozen?: boolean;
   draft?: ExpertTaskDraft;
   onIntakeChange: (fieldId: string, value: string | string[], multi: boolean) => void;
@@ -375,8 +330,6 @@ export default function ComposerExpertBlocks({
   onEditIntake?: () => void;
   onClarifyStartTask?: () => void;
   onClarifyContinueChat?: () => void;
-  onReviewAccept?: () => void;
-  onReviewRedirect?: () => void;
   onCopyToast?: (message: string) => void;
   featureCoreComplete?: number;
   onFeedbackPatch?: (patch: Partial<FeedbackBlock>) => void;
@@ -452,18 +405,6 @@ export default function ComposerExpertBlocks({
               disabled={panelsDisabled}
               onStartTask={onClarifyStartTask ?? (() => {})}
               onContinueChat={onClarifyContinueChat ?? onExitChat}
-            />
-          );
-        }
-        if (block.kind === "review") {
-          return (
-            <ReviewPanel
-              key="review"
-              block={block}
-              expertId={expertId}
-              disabled={panelsDisabled}
-              onAccept={onReviewAccept ?? (() => {})}
-              onRedirect={onReviewRedirect ?? (() => {})}
             />
           );
         }

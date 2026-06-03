@@ -59,6 +59,8 @@ export function normalizeHomeComposerPrefs(raw: Partial<HomeComposerPrefs> | und
     ? normalizePersonalProfile(raw.personalProfile) ?? base.personalProfile
     : base.personalProfile;
   const featureCore = backfillFeatureCoreFromProfile(raw.featureCore ?? base.featureCore, personalProfile);
+  const taskDraft =
+    raw.taskDraft?.phase === "review" ? { ...raw.taskDraft, phase: "deliver" as const } : raw.taskDraft;
 
   return {
     ...base,
@@ -74,7 +76,7 @@ export function normalizeHomeComposerPrefs(raw: Partial<HomeComposerPrefs> | und
     featureCore,
     personalDisabledByUser: raw.personalDisabledByUser,
     personalFeaturePreferences: raw.personalFeaturePreferences ?? base.personalFeaturePreferences,
-    taskDraft: raw.taskDraft,
+    taskDraft,
     lastDeliverableId: raw.lastDeliverableId
   };
 }
@@ -132,7 +134,7 @@ export function loadHomeComposerStore(): HomeComposerStore {
       const session = createSession();
       return { v: 2, activeSessionId: session.id, sessions: [session] };
     }
-    return normalizeHomeComposerStore(JSON.parse(raw));
+    return dedupeEmptySessions(normalizeHomeComposerStore(JSON.parse(raw)));
   } catch {
     const session = createSession();
     return { v: 2, activeSessionId: session.id, sessions: [session] };
@@ -164,10 +166,30 @@ export function patchActiveHomeComposerSession(
   return { ...store, v: 2, sessions };
 }
 
+/** 列表里只保留一个空会话，避免侧栏出现多个「新对话」。 */
+function dedupeEmptySessions(store: HomeComposerStore): HomeComposerStore {
+  const emptySessions = store.sessions.filter((s) => s.turns.length === 0);
+  if (emptySessions.length <= 1) return store;
+
+  const keepEmpty =
+    emptySessions.find((s) => s.id === store.activeSessionId) ??
+    emptySessions.sort((a, b) => b.updatedAt - a.updatedAt)[0]!;
+  const sessions = store.sessions.filter((s) => s.turns.length > 0 || s.id === keepEmpty.id);
+  const activeSessionId = sessions.some((s) => s.id === store.activeSessionId)
+    ? store.activeSessionId
+    : keepEmpty.id;
+  return { ...store, activeSessionId, sessions };
+}
+
 export function createHomeComposerSession(store: HomeComposerStore, inheritPrefs?: HomeComposerPrefs): HomeComposerStore {
-  const active = activeHomeComposerSession(store);
+  const normalized = dedupeEmptySessions(store);
+  const active = activeHomeComposerSession(normalized);
   if (active && active.turns.length === 0) {
-    return store;
+    return normalized;
+  }
+  const existingEmpty = normalized.sessions.find((s) => s.turns.length === 0);
+  if (existingEmpty) {
+    return { ...normalized, activeSessionId: existingEmpty.id };
   }
   const session = createSession(
     inheritPrefs
@@ -178,7 +200,7 @@ export function createHomeComposerSession(store: HomeComposerStore, inheritPrefs
         }
       : undefined
   );
-  return upsertHomeComposerSession(store, session);
+  return dedupeEmptySessions(upsertHomeComposerSession(normalized, session));
 }
 
 export function selectHomeComposerSession(store: HomeComposerStore, sessionId: string): HomeComposerStore {
@@ -233,9 +255,9 @@ export function activeHomeComposerSession(store: HomeComposerStore): HomeCompose
   return store.sessions.find((s) => s.id === store.activeSessionId) ?? store.sessions[0] ?? null;
 }
 
-/** 进入对话页：载入本地历史；若当前会话已有内容则新建空会话（继承偏好，格式清空）。 */
+/** 进入对话页：载入本地历史；若当前会话已有内容则切到/新建空会话（继承偏好，格式清空）。 */
 export function openHomeComposerOnPageEntry(): HomeComposerStore {
-  const loaded = loadHomeComposerStore();
+  const loaded = dedupeEmptySessions(loadHomeComposerStore());
   const active = activeHomeComposerSession(loaded);
   if (active && active.turns.length === 0) {
     return loaded;

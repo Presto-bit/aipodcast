@@ -383,7 +383,9 @@ export function ComposerCopyToast({ message }: { message: string }) {
 export function UserBubble({ text }: { text: string }) {
   return (
     <div className="flex w-full justify-end">
-      <p className="max-w-[92%] whitespace-pre-wrap text-[15px] leading-[1.72] text-ink">{text}</p>
+      <div className="max-w-[92%] rounded-2xl border border-line/70 bg-fill/25 px-4 py-3 shadow-soft">
+        <p className="whitespace-pre-wrap text-[15px] leading-[1.72] text-ink">{text}</p>
+      </div>
     </div>
   );
 }

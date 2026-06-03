@@ -4,9 +4,7 @@ import { useMemo, useState } from "react";
 import type { AssistantBlock, PlatformExpertId } from "../../../lib/homeComposerExpertTypes";
 import { EXPERT_DISPLAY_NAMES } from "../../../lib/composerExperts";
 import {
-  deliverableBodyText,
-  deliverablePreviewText,
-  deliverableTitleText,
+  deliverableFullCopyText,
   isXhsContent
 } from "../../../lib/homeComposerExpertJob";
 import DeliverablePreviewFrame from "./DeliverablePreviewFrame";
@@ -167,44 +165,18 @@ function XhsProductPanel({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-fill"
-            onClick={() =>
-              void copyText(deliverableTitleText(deliverable, titleIndex), onCopyToast, "已复制标题", {
-                expertId: block.expertId,
-                target: "title"
-              })
-            }
-          >
-            复制标题
-          </button>
-          <button
-            type="button"
-            className="rounded-lg border border-line px-3 py-1.5 text-xs text-ink hover:bg-fill"
-            onClick={() =>
-              void copyText(deliverableBodyText(deliverable), onCopyToast, "已复制正文", {
-                expertId: block.expertId,
-                target: "body"
-              })
-            }
-          >
-            复制正文
-          </button>
-          <button
-            type="button"
-            className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground hover:bg-brand/90"
-            onClick={() =>
-              void copyText(deliverablePreviewText(deliverable), onCopyToast, "已复制全文含 tag", {
-                expertId: block.expertId,
-                target: "full"
-              })
-            }
-          >
-            复制全文含 tag
-          </button>
-        </div>
+        <button
+          type="button"
+          className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground hover:bg-brand/90"
+          onClick={() =>
+            void copyText(deliverableFullCopyText(deliverable, titleIndex), onCopyToast, "已复制全文", {
+              expertId: block.expertId,
+              target: "full"
+            })
+          }
+        >
+          复制全文
+        </button>
         {feedbackBlock && onFeedbackPatch ? (
           <DeliverableFeedbackInline
             block={feedbackBlock}
@@ -303,13 +275,13 @@ export default function DeliverableCard({
           type="button"
           className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-ink hover:bg-fill"
           onClick={() =>
-            void copyText(deliverablePreviewText(deliverable), onCopyToast, "已复制全部", {
+            void copyText(deliverableFullCopyText(deliverable, titleIndex), onCopyToast, "已复制全文", {
               expertId,
-              target: "all"
+              target: "full"
             })
           }
         >
-          复制全部
+          复制全文
         </button>
       </div>
 
@@ -359,13 +331,13 @@ export default function DeliverableCard({
                 type="button"
                 className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground"
                 onClick={() =>
-                  void copyText(deliverablePreviewText(deliverable), onCopyToast, "已复制", {
+                  void copyText(deliverableFullCopyText(deliverable), onCopyToast, "已复制全文", {
                     expertId: block.expertId,
-                    target: "json"
+                    target: "full"
                   })
                 }
               >
-                复制内容
+                复制全文
               </button>
             </div>
           )

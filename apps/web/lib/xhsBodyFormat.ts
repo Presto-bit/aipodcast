@@ -2,6 +2,24 @@
 
 const MAX_PARA_CHARS = 88;
 
+/** 去掉 Markdown 语法，输出适合小红书发布的纯文本 */
+export function xhsBodyPlainText(body: string): string {
+  let text = (body || "").replace(/\r\n/g, "\n").trim();
+  if (!text) return "";
+
+  text = text.replace(/^#{1,6}\s+/gm, "");
+  text = text.replace(/\*\*([^*]+)\*\*/g, "$1");
+  text = text.replace(/\*([^*]+)\*/g, "$1");
+  text = text.replace(/__([^_]+)__/g, "$1");
+  text = text.replace(/_([^_]+)_/g, "$1");
+  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  text = text.replace(/`([^`]+)`/g, "$1");
+  text = text.replace(/^[\-*+]\s+/gm, "· ");
+  text = text.replace(/^\d+\.\s+/gm, (m) => m);
+
+  return text.trim();
+}
+
 function splitLongParagraph(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed || trimmed.length <= MAX_PARA_CHARS) {
@@ -25,7 +43,7 @@ function splitLongParagraph(text: string): string[] {
 
 /** 将正文拆为适合 UI 渲染的段落列表 */
 export function xhsBodyDisplayParagraphs(body: string): string[] {
-  const normalized = (body || "").replace(/\r\n/g, "\n").trim();
+  const normalized = xhsBodyPlainText(body);
   if (!normalized) return [];
 
   const blocks = normalized.split(/\n{2,}/);
@@ -33,12 +51,8 @@ export function xhsBodyDisplayParagraphs(body: string): string[] {
   for (const block of blocks) {
     const line = block.trim();
     if (!line) continue;
-    if (line.startsWith("##")) {
-      out.push(line.replace(/^#+\s*/, "").trim());
-      continue;
-    }
     if (line.startsWith("·") || line.startsWith("-") || line.startsWith("•")) {
-      out.push(line);
+      out.push(line.replace(/^[\-*•]\s*/, "· "));
       continue;
     }
     out.push(...splitLongParagraph(line));

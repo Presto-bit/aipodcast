@@ -118,13 +118,6 @@ export function buildClarificationBlock(
   return { kind: "clarification", message, expertId, taskSentence };
 }
 
-export function buildReviewBlock(
-  deliverableId?: string,
-  summaryLine?: string
-): Extract<AssistantBlock, { kind: "review" }> {
-  return { kind: "review", deliverableId, summaryLine };
-}
-
 export function blocksForResolutionPhase(
   expertId: PlatformExpertId,
   taskSentence: string,
@@ -183,12 +176,6 @@ export function rebuildBlocksFromDraft(draft: ExpertTaskDraft, prefs: HomeCompos
     const intake = finalizeExpertIntake(draft.expertId, draft.intake, draft.taskSentence);
     return blocksForResolutionPhase(draft.expertId, draft.taskSentence, intake, prefs);
   }
-  if (draft.phase === "review") {
-    return [
-      expertStripBlock(draft.expertId),
-      buildReviewBlock(prefs.lastDeliverableId, "成品已就绪，确认后归档或换方向重做")
-    ];
-  }
   if (draft.phase === "intake") {
     return blocksForIntakePhase(draft.expertId, draft.intakeStep, draft.intake, draft.taskSentence);
   }
@@ -197,7 +184,7 @@ export function rebuildBlocksFromDraft(draft: ExpertTaskDraft, prefs: HomeCompos
 
 export function canComposerSubmitTask(draft: ExpertTaskDraft | undefined): boolean {
   if (!draft) return true;
-  return draft.phase === "deliver" || draft.phase === "review" || draft.phase === "revise" || draft.phase === "idle";
+  return draft.phase === "deliver" || draft.phase === "revise" || draft.phase === "idle";
 }
 
 export function composerInputPlaceholder(draft: ExpertTaskDraft | undefined, expertSelected?: boolean): string {
@@ -210,8 +197,8 @@ export function composerInputPlaceholder(draft: ExpertTaskDraft | undefined, exp
   if (draft?.phase === "generate") {
     return "正在生成…";
   }
-  if (draft?.phase === "review") {
-    return "确认这版能用，或描述换方向…";
+  if (draft?.phase === "deliver") {
+    return "描述修改意见，或继续提问…";
   }
   return "消息…";
 }

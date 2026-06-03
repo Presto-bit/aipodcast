@@ -9,6 +9,7 @@ import type {
 } from "./homeComposerExpertTypes";
 import type { FeatureCore } from "./homeComposerExpertTypes";
 import { parseExpertDeliverable, validateExpertDeliverable } from "./validateExpertDeliverable";
+import { xhsBodyPlainText } from "./xhsBodyFormat";
 
 const POLL_INTERVAL_MS = 2500;
 const POLL_MAX_MS = 20 * 60 * 1000;
@@ -132,13 +133,26 @@ export async function runComposerExpertDeliverableJob(
   }
 }
 
-export function deliverablePreviewText(deliverable: ExpertDeliverable): string {
+export function deliverableFullCopyText(deliverable: ExpertDeliverable, titleIndex = 0): string {
   if (deliverable.expertId === "xhs_ops" && "body" in deliverable.content) {
     const c = deliverable.content;
-    const tags = c.hashtags?.length ? `\n\n${c.hashtags.map((t) => `#${t.replace(/^#/, "")}`).join(" ")}` : "";
-    return `${c.body.trim()}${tags}`;
+    const title = deliverableTitleText(deliverable, titleIndex);
+    const body = xhsBodyPlainText(c.body);
+    const tags = c.hashtags?.length
+      ? c.hashtags.map((t) => `#${t.replace(/^#/, "")}`).join(" ")
+      : "";
+    return [title, body, tags].filter(Boolean).join("\n\n");
+  }
+  if (deliverable.expertId === "mp_ops" && "title" in deliverable.content) {
+    const c = deliverable.content;
+    const summary = c.summary?.trim();
+    return [c.title.trim(), summary, c.bodyMarkdown.trim()].filter(Boolean).join("\n\n");
   }
   return JSON.stringify(deliverable.content, null, 2);
+}
+
+export function deliverablePreviewText(deliverable: ExpertDeliverable, titleIndex = 0): string {
+  return deliverableFullCopyText(deliverable, titleIndex);
 }
 
 export function deliverableTitleText(deliverable: ExpertDeliverable, index = 0): string {
@@ -154,7 +168,7 @@ export function deliverableTitleText(deliverable: ExpertDeliverable, index = 0):
 
 export function deliverableBodyText(deliverable: ExpertDeliverable): string {
   if (deliverable.expertId === "xhs_ops" && "body" in deliverable.content) {
-    return deliverable.content.body.trim();
+    return xhsBodyPlainText(deliverable.content.body);
   }
   if (deliverable.expertId === "mp_ops" && "bodyMarkdown" in deliverable.content) {
     return deliverable.content.bodyMarkdown.trim();
@@ -185,7 +199,7 @@ export function opsTierSummary(steps: OpsPlaybookStep[]): {
 }
 
 export function xhsBodyPreviewLines(body: string, maxLines = 5): string {
-  return body
+  return xhsBodyPlainText(body)
     .split("\n")
     .map((line) => line.trimEnd())
     .filter((line, idx, arr) => line.length > 0 || (idx > 0 && idx < arr.length - 1))
