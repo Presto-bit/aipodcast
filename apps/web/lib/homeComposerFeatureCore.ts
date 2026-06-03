@@ -1,37 +1,14 @@
 import type { FeatureCore } from "./homeComposerExpertTypes";
 import type { HomeComposerPersonalProfile } from "./homeComposerTypes";
+import { FEATURE_CORE_FIELDS, featureCorePromptLabel } from "./homeComposerPersonalFields";
+
+export { FEATURE_CORE_FIELDS };
 
 export const EMPTY_FEATURE_CORE: FeatureCore = {
   who: "",
   remember: "",
   avoid: ""
 };
-
-export const FEATURE_CORE_FIELDS: {
-  key: keyof FeatureCore;
-  label: string;
-  placeholder: string;
-  rows: number;
-}[] = [
-  {
-    key: "who",
-    label: "你是谁、常写给谁看？",
-    placeholder: "产品经理，写给准备转产品的人",
-    rows: 2
-  },
-  {
-    key: "remember",
-    label: "你希望读者记住你什么？",
-    placeholder: "复盘真实踩坑，不灌鸡汤",
-    rows: 2
-  },
-  {
-    key: "avoid",
-    label: "千万别写成什么样？",
-    placeholder: "绝对化承诺、编造数据",
-    rows: 2
-  }
-];
 
 export function featureCoreComplete(core: FeatureCore | undefined | null): number {
   if (!core) return 0;
@@ -50,16 +27,16 @@ export function backfillFeatureCoreFromProfile(
   const base = { ...EMPTY_FEATURE_CORE, ...(core ?? {}) };
   if (!profile) return base;
 
-  const whoParts = [profile.identity.trim(), profile.currentDoing.trim()].filter(Boolean);
+  const whoParts = [profile.professionalMindset.trim(), profile.impressionVsReality.trim()].filter(Boolean);
   if (!base.who.trim() && whoParts.length) {
-    base.who = whoParts.join(" · ").slice(0, 80);
+    base.who = whoParts.join(" · ").slice(0, 120);
   }
-  if (!base.remember.trim() && profile.remember.trim()) {
-    base.remember = profile.remember.trim();
+  if (!base.remember.trim() && profile.obsessivePassion.trim()) {
+    base.remember = profile.obsessivePassion.trim();
   }
   if (!base.avoid.trim()) {
-    if (profile.values.trim()) base.avoid = profile.values.trim();
-    else if (profile.other.trim()) base.avoid = profile.other.trim().slice(0, 80);
+    if (profile.nonConsensusView.trim()) base.avoid = profile.nonConsensusView.trim();
+    else if (profile.acceptedImperfection.trim()) base.avoid = profile.acceptedImperfection.trim().slice(0, 120);
   }
   return base;
 }
@@ -81,10 +58,10 @@ export function shouldAutoEnablePersonalFeature(
 
 export function featureCoreToPrompt(core: FeatureCore | undefined | null): string {
   if (!core) return "";
-  const lines = [
-    core.who.trim() ? `你是谁、常写给谁看：${core.who.trim()}` : "",
-    core.remember.trim() ? `希望读者记住：${core.remember.trim()}` : "",
-    core.avoid.trim() ? `千万别写成：${core.avoid.trim()}` : ""
-  ].filter(Boolean);
-  return lines.join("\n");
+  return FEATURE_CORE_FIELDS.map(({ key }) => {
+    const val = core[key].trim();
+    return val ? `${featureCorePromptLabel(key)}：${val}` : "";
+  })
+    .filter(Boolean)
+    .join("\n");
 }

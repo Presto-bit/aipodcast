@@ -1,6 +1,7 @@
 import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
 import { expertSelectionFromLegacyFormats } from "./composerExperts";
 import { backfillFeatureCoreFromProfile } from "./homeComposerFeatureCore";
+import { normalizePersonalProfile } from "./homeComposerPersonalFields";
 import {
   defaultHomeComposerPrefs,
   type HomeComposerFormat,
@@ -54,7 +55,9 @@ export function normalizeHomeComposerPrefs(raw: Partial<HomeComposerPrefs> | und
   const base = defaultHomeComposerPrefs();
   if (!raw || typeof raw !== "object") return base;
 
-  const personalProfile = raw.personalProfile ?? base.personalProfile;
+  const personalProfile = raw.personalProfile
+    ? normalizePersonalProfile(raw.personalProfile) ?? base.personalProfile
+    : base.personalProfile;
   const featureCore = backfillFeatureCoreFromProfile(raw.featureCore ?? base.featureCore, personalProfile);
 
   return {

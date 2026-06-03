@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { FEATURE_CORE_FIELDS } from "../../lib/homeComposerPersonalFields";
 
 const NotesAskAnswerMarkdownBody = dynamic(
   () => import("../notes/NotesAskAnswerMarkdownBody").then((m) => ({ default: m.default })),
@@ -619,6 +620,33 @@ export function PersonalProfileCard({
   );
 }
 
+function PersonalFeatureField({
+  label,
+  rows,
+  placeholder,
+  value,
+  onChange
+}: {
+  label: string;
+  rows: number;
+  placeholder?: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium leading-snug text-ink">{label}</span>
+      <textarea
+        rows={rows}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1.5 w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink outline-none placeholder:text-muted/80 focus:border-brand/40"
+      />
+    </label>
+  );
+}
+
 export function FeatureProfilePanel({
   open,
   hasSaved,
@@ -640,33 +668,12 @@ export function FeatureProfilePanel({
   onSave: () => void;
   featureCore: { who: string; remember: string; avoid: string };
   onFeatureCoreChange: (key: "who" | "remember" | "avoid", value: string) => void;
-  supplementalFields: { key: string; label: string; rows: number }[];
+  supplementalFields: { key: string; label: string; rows: number; placeholder?: string }[];
   supplementalDraft: Record<string, string>;
   onSupplementalFieldChange: (key: string, value: string) => void;
 }) {
   const [supplementOpen, setSupplementOpen] = useState(false);
   if (!open) return null;
-
-  const coreFields = [
-    {
-      key: "who" as const,
-      label: "你是谁、常写给谁看？",
-      placeholder: "产品经理，写给准备转产品的人",
-      rows: 2
-    },
-    {
-      key: "remember" as const,
-      label: "你希望读者记住你什么？",
-      placeholder: "复盘真实踩坑，不灌鸡汤",
-      rows: 2
-    },
-    {
-      key: "avoid" as const,
-      label: "千万别写成什么样？",
-      placeholder: "绝对化承诺、编造数据",
-      rows: 2
-    }
-  ];
 
   return (
     <div className="relative z-10 mt-2.5 w-full shrink-0 overflow-hidden rounded-2xl border border-line bg-surface">
@@ -684,7 +691,7 @@ export function FeatureProfilePanel({
       </div>
       <div className="max-h-[min(58vh,480px)] space-y-3 overflow-y-auto p-4">
         <p className="rounded-lg bg-fill/60 px-3 py-2 text-xs leading-relaxed text-muted">
-          我的特色 — 身份、经历、底线。换专家也不变。
+          共 14 题：先完成核心三问（必填），补充题填了会更像你。换专家也不变。
           <br />
           写作习惯 — 句式、结构。在「写作习惯 ▾」里随时换。
         </p>
@@ -694,17 +701,16 @@ export function FeatureProfilePanel({
             在本对话中使用我的特色
           </label>
         ) : null}
-        {coreFields.map(({ key, label, placeholder, rows }) => (
-          <label key={key} className="block">
-            <span className="text-xs font-medium text-ink">{label}</span>
-            <textarea
-              rows={rows}
-              value={featureCore[key]}
-              placeholder={placeholder}
-              onChange={(e) => onFeatureCoreChange(key, e.target.value)}
-              className="mt-1 w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink outline-none focus:border-brand/40"
-            />
-          </label>
+        <p className="text-xs font-medium text-muted">核心三问（必填）</p>
+        {FEATURE_CORE_FIELDS.map(({ key, label, placeholder, rows }) => (
+          <PersonalFeatureField
+            key={key}
+            label={label}
+            rows={rows}
+            placeholder={placeholder}
+            value={featureCore[key]}
+            onChange={(value) => onFeatureCoreChange(key, value)}
+          />
         ))}
         <div className="border-t border-line/70 pt-2">
           <button
@@ -712,22 +718,21 @@ export function FeatureProfilePanel({
             className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-xs font-medium text-muted hover:text-ink"
             onClick={() => setSupplementOpen((v) => !v)}
           >
-            <span>补充，可选</span>
+            <span>补充 11 题，可选</span>
             <span aria-hidden>{supplementOpen ? "▴" : "▾"}</span>
           </button>
           {supplementOpen ? (
             <div className="mt-2 space-y-3">
-              <p className="text-xs text-muted">填了会更像你，不填也能用。</p>
-              {supplementalFields.map(({ key, label, rows }) => (
-                <label key={key} className="block">
-                  <span className="text-xs font-medium text-muted">{label}</span>
-                  <textarea
-                    rows={rows}
-                    value={supplementalDraft[key] ?? ""}
-                    onChange={(e) => onSupplementalFieldChange(key, e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink outline-none focus:border-brand/40"
-                  />
-                </label>
+              <p className="text-xs text-muted">第 4–14 题，填了会更像你，不填也能用。</p>
+              {supplementalFields.map(({ key, label, rows, placeholder }) => (
+                <PersonalFeatureField
+                  key={key}
+                  label={label}
+                  rows={rows}
+                  placeholder={placeholder}
+                  value={supplementalDraft[key] ?? ""}
+                  onChange={(value) => onSupplementalFieldChange(key, value)}
+                />
               ))}
             </div>
           ) : null}

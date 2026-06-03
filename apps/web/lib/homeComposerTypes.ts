@@ -15,28 +15,20 @@ import { EMPTY_FEATURE_CORE } from "./homeComposerFeatureCore";
 export type HomeComposerFormat = "xhs" | "mp" | "voice" | "podcast";
 
 export type HomeComposerPersonalProfile = {
-  identity: string;
-  currentDoing: string;
-  pastExperience: string;
-  difficulties: string;
-  choices: string;
-  results: string;
-  remember: string;
-  values: string;
-  other: string;
+  atypicalExperience: string;
+  lifeTurningPoint: string;
+  obsessivePassion: string;
+  dailyRitual: string;
+  catchphrase: string;
+  sensoryMemory: string;
+  nonConsensusView: string;
+  impressionVsReality: string;
+  professionalMindset: string;
+  acceptedImperfection: string;
+  lowPointRecovery: string;
 };
 
-export const EMPTY_HOME_COMPOSER_PERSONAL: HomeComposerPersonalProfile = {
-  identity: "",
-  currentDoing: "",
-  pastExperience: "",
-  difficulties: "",
-  choices: "",
-  results: "",
-  remember: "",
-  values: "",
-  other: ""
-};
+export { EMPTY_HOME_COMPOSER_PERSONAL } from "./homeComposerPersonalFields";
 
 export type HomeComposerFormatResult =
   | { status: "pending" | "running"; progress?: string; jobId?: string }

@@ -41,6 +41,7 @@ import {
   type HomeComposerPersonalProfile,
   type HomeComposerTurn
 } from "../../lib/homeComposerTypes";
+import { PERSONAL_SUPPLEMENT_FIELDS } from "../../lib/homeComposerPersonalFields";
 import { fetchComposerExpertIntake } from "../../lib/homeComposerIntakeApi";
 import {
   blocksForConfirmPhase,
@@ -120,18 +121,6 @@ import { readLocalStorageScoped, writeLocalStorageScoped } from "../../lib/userS
 const HOME_COMPOSER_SIDEBAR_COLLAPSED_KEY = "fym_home_composer_sidebar_collapsed_v1";
 
 type NoteRow = { noteId: string; title?: string };
-
-const PERSONAL_FIELDS: { key: keyof HomeComposerPersonalProfile; label: string; rows: number }[] = [
-  { key: "identity", label: "1. 我的身份/职业", rows: 2 },
-  { key: "currentDoing", label: "2. 我目前在做什么", rows: 2 },
-  { key: "pastExperience", label: "3. 我过去的重要经历", rows: 2 },
-  { key: "difficulties", label: "4. 我经历过的关键困难/低谷/失败", rows: 2 },
-  { key: "choices", label: "5. 我做过的重要选择", rows: 2 },
-  { key: "results", label: "6. 我拿到过的结果/成绩/反馈", rows: 2 },
-  { key: "remember", label: "7. 我最想让别人记住我的点", rows: 2 },
-  { key: "values", label: "8. 我想传递的价值观", rows: 2 },
-  { key: "other", label: "9. 其他", rows: 2 }
-];
 
 function useClickOutside(refs: React.RefObject<HTMLElement | null>[], onOutside: () => void, active: boolean) {
   useEffect(() => {
@@ -1608,7 +1597,7 @@ export default function HomeComposerPage({
               onSave={savePersonal}
               featureCore={featureCoreDraft}
               onFeatureCoreChange={(key, value) => setFeatureCoreDraft((prev) => ({ ...prev, [key]: value }))}
-              supplementalFields={PERSONAL_FIELDS.map(({ key, label, rows }) => ({ key, label, rows }))}
+              supplementalFields={PERSONAL_SUPPLEMENT_FIELDS}
               supplementalDraft={personalDraft as Record<string, string>}
               onSupplementalFieldChange={(key, value) =>
                 setPersonalDraft((prev) => ({ ...prev, [key as keyof HomeComposerPersonalProfile]: value }))
