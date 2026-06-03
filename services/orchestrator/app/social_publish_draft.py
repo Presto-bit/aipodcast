@@ -141,6 +141,14 @@ _MP_GENERIC_MARKERS = (
     "如果你最近也在关注这个话题，这篇值得读完",
 )
 
+_XHS_GENERIC_MARKERS = (
+    "📌 先说结论",
+    "💡 其次，选温和提亮",
+    "先把作息和防晒稳住",
+    "你是不是也一到下午就脸垮",
+    "打工人熬夜党！百元搞定暗沉",
+)
+
 
 def _is_generic_social_placeholder(data: dict[str, Any], platform: str) -> bool:
     """识别 LLM/静态回退的通用占位稿，避免当作成稿返回。"""
@@ -159,6 +167,12 @@ def _is_generic_social_placeholder(data: dict[str, Any], platform: str) -> bool:
         if marker_hits >= 3:
             return True
         if "要点一" in body and "要点二" in body and "先把最重要的信息说清楚" in body:
+            return True
+    else:
+        marker_hits = sum(1 for m in _XHS_GENERIC_MARKERS if m in f"{opening}\n{body}")
+        if marker_hits >= 2:
+            return True
+        if "📌 先说结论" in body and "💡" in body:
             return True
     return False
 
@@ -228,7 +242,13 @@ def _fallback_from_material(raw: str, platform: str) -> dict[str, Any]:
             ],
             "theme": "基于勾选资料整理的公众号稿",
         }
-    body = f"📌 先说结论\n\n{core[:700]}\n\n💡 展开\n\n{core[700:1600] if len(core) > 700 else ''}".strip()
+    body = (
+        "\n\n".join(lines[1:10]).strip()
+        if len(lines) > 1
+        else core[:1600].strip()
+    )
+    if not body:
+        body = core[:1600].strip() or excerpt[:1200]
     return {
         "titles": [
             headline,
@@ -528,13 +548,24 @@ def generate_social_publish_draft(
     max_tokens = _social_llm_max_tokens(opts)
     material_rule = (
         "硬性要求：正文必须引用素材中的具体事实、数据、步骤或观点，禁止输出与素材无关的通用模板"
-        "（如「要点一/要点二」「先把最重要的信息说清楚」等空泛占位）。"
+        "（如「要点一/要点二」「先把最重要的信息说清楚」「📌先说结论/💡展开」等空泛占位）。"
     )
     llm_material = _trim_material_for_llm(_strip_social_material_boilerplate(raw))
+    is_composer = str(opts.get("source_type") or "").strip() == "composer_prompt"
 
     if platform == "xiaohongshu":
         system = _xhs_system_prompt(opt_block)
-        user = f"{material_rule}\n\n请根据下列素材重写为上述 JSON。\n\n【素材】\n{llm_material}"
+        if is_composer:
+            user = (
+                f"{material_rule}\n\n"
+                "你是首页 Composer 红书搭子。用户已在【创作任务】中描述具体产品/主题/场景，"
+                "须围绕该任务写可发布的小红书笔记 JSON，正文像真人种草而非填空模板。\n"
+                "禁止：📌先说结论/💡展开/✅最后 分段、要点一二三、与任务无关的通用案例、复述【创作任务】标签。\n"
+                "正文用自然段表达，可带 1～2 个小标题，每段须含任务相关的具体信息。\n\n"
+                f"请根据下列素材输出 JSON。\n\n【素材】\n{llm_material}"
+            )
+        else:
+            user = f"{material_rule}\n\n请根据下列素材重写为上述 JSON。\n\n【素材】\n{llm_material}"
     else:
         system = _mp_system_prompt(opt_block)
         user = f"{material_rule}\n\n请根据下列素材改写为上述 JSON。\n\n【素材】\n{llm_material}"

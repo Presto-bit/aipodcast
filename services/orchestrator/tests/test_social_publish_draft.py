@@ -39,6 +39,26 @@ def test_fallback_from_material_uses_excerpt_not_generic_mp() -> None:
     assert "先把最重要的信息说清楚" not in body
 
 
+def test_fallback_from_material_uses_excerpt_not_generic_xhs() -> None:
+    raw = "AI 播客工具测评\n" + "多角色对话和一键导出是核心卖点。" * 20
+    pack = _fallback_from_material(raw, "xiaohongshu")
+    body = str(pack.get("body") or "")
+    assert "AI 播客" in body or "多角色" in body
+    assert "📌 先说结论" not in body
+    assert "💡 展开" not in body
+
+
+def test_is_generic_social_placeholder_detects_xhs_template() -> None:
+    from app.social_publish_draft import _fallback_xhs
+
+    assert _is_generic_social_placeholder(_fallback_xhs(), "xiaohongshu") is True
+    generic = {
+        "body": "📌 先说结论\n\n先把作息和防晒稳住。\n\n💡 其次，选温和提亮。",
+        "opening_30": "你是不是也一到下午就脸垮？",
+    }
+    assert _is_generic_social_placeholder(generic, "xiaohongshu") is True
+
+
 def test_is_generic_social_placeholder_detects_mp_template() -> None:
     from app.social_publish_draft import _fallback_mp
 

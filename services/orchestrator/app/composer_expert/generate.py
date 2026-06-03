@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any, Callable
 
+from ..social_llm_utils import invoke_and_parse_social_json
 from ..social_publish_draft import generate_social_publish_draft, resolve_social_publish_material
 from .schema import validate_expert_deliverable
 
@@ -76,22 +77,73 @@ def _compose_expert_writer_instructions(*, task_sentence: str, intake: dict[str,
     return "\n".join(hints)
 
 
-def _looks_like_material_fallback(content: dict[str, Any], task_sentence: str) -> bool:
+def _looks_like_xhs_template_body(content: dict[str, Any], task_sentence: str) -> bool:
+    """识别模板回退或 LLM 空泛骨架稿（Composer 质量重试用）。"""
     body = str(content.get("body") or "")
-    if "📌 先说结论" in body:
-        if "请根据以下创作任务" in body or "【创作任务】" in body:
-            return True
-        task_head = task_sentence.strip()[:28]
-        if task_head and task_head in body:
-            return True
-        tags = content.get("hashtags") or []
-        if isinstance(tags, list) and tags == _FALLBACK_XHS_TAGS:
-            return True
-        if "你觉得哪一点最有用" in body:
-            return True
-    if "请根据以下创作任务" in body or "撰写一篇完整、可直接" in body:
+    if not body.strip():
+        return True
+    template_markers = (
+        "📌 先说结论",
+        "💡 展开",
+        "💡 其次",
+        "✅ 最后",
+        "要点一",
+        "要点二",
+        "先把最重要的信息说清楚",
+        "请根据以下创作任务",
+        "【创作任务】",
+        "【创作偏好】",
+        "撰写一篇完整、可直接",
+        "你是不是也一到下午就脸垮",
+        "先把作息和防晒稳住",
+        "打工人熬夜党！百元搞定暗沉",
+    )
+    hits = sum(1 for m in template_markers if m in body)
+    if hits >= 2:
+        return True
+    if hits >= 1 and any(x in body for x in ("📌 先说结论", "💡 展开", "💡 其次", "✅ 最后")):
+        return True
+    if "📌" in body and "💡" in body and len(body) < 500:
+        return True
+    task_head = task_sentence.strip()[:24]
+    if task_head and len(task_head) >= 10 and task_head in body:
+        return True
+    tags = content.get("hashtags") or []
+    if isinstance(tags, list) and tags == _FALLBACK_XHS_TAGS:
+        return True
+    if "你觉得哪一点最有用" in body and "📌" in body:
         return True
     return False
+
+
+def _looks_like_material_fallback(content: dict[str, Any], task_sentence: str) -> bool:
+    return _looks_like_xhs_template_body(content, task_sentence)
+
+
+_XHS_NOTE_SKELETON = {
+    "howto": "story_seed",
+    "story": "story_seed",
+    "listicle": "checklist",
+}
+
+
+def _composer_anti_template_extras(intake: dict[str, Any]) -> dict[str, Any]:
+    note_type = str(intake.get("noteType") or "").strip()
+    extras: dict[str, Any] = {
+        "avoid": [
+            "📌先说结论、💡展开、✅最后 等固定 emoji 分段",
+            "首先/其次/最后 机械排比",
+            "要点一/要点二 空泛占位",
+            "与创作任务无关的通用护肤/熬夜等案例",
+            "复述【创作任务】标签或说明文字",
+        ],
+        "emojiLevel": "light",
+        "openingMode": "scene" if note_type == "story" else "pain_question",
+    }
+    skeleton = _XHS_NOTE_SKELETON.get(note_type)
+    if skeleton:
+        extras["bodySkeleton"] = skeleton
+    return extras
 
 
 def _intake_to_social_options(intake: dict[str, Any], task_sentence: str) -> dict[str, Any]:
@@ -117,6 +169,7 @@ def _intake_to_social_options(intake: dict[str, Any], task_sentence: str) -> dic
     if "acquire" in [str(p) for p in purposes]:
         options["intent"] = "zhongcao"
     options["userNote"] = task_sentence[:500]
+    options["extras"] = _composer_anti_template_extras(intake)
     return options
 
 
@@ -175,67 +228,231 @@ def _corpus_coverage(note_count: int, used_rag: bool) -> str:
     return "partial"
 
 
-def _build_xhs_ops_steps(intake: dict[str, Any], headline: str) -> list[dict[str, Any]]:
-    tone = str(intake.get("tone") or "casual")
-    with_tags = str(intake.get("withHashtags") or "yes") != "no"
-    tone_label = "口语亲切" if tone == "casual" else "专业克制"
+_XHS_OPS_STEP_TITLES = ("做图", "标题", "正文", "Tag", "发布", "互动", "复盘")
+_XHS_OPS_TIER_BY_STEP = {
+    1: "must_do",
+    2: "must_do",
+    3: "must_do",
+    4: "must_do",
+    5: "must_do",
+    6: "nice_to_have",
+    7: "after_publish",
+}
+_XHS_OPS_EXPANDED_BY_STEP = {1: True, 2: True, 3: True, 4: True, 5: False, 6: False, 7: False}
+
+_XHS_OPS_LLM_SYSTEM = """你是小红书发布教练。根据已生成的笔记成品，输出 7 步发布傻瓜包 JSON。
+每一步须引用成品中的具体标题、正文片段、话题、封面/配图说明，禁止空泛通用话术。
+输出纯 JSON 对象，不要 markdown 代码块：
+{
+  "steps": [
+    {
+      "stepNo": 1,
+      "title": "做图",
+      "objective": "一句说明本步目标",
+      "actions": ["至少 2 条，须引用成品具体内容"],
+      "tier": "must_do",
+      "defaultExpanded": true,
+      "copyBlocks": [{"label": "可复制的标签", "text": "可复制正文"}],
+      "collapsedSummary": "折叠时一行摘要（可选）"
+    }
+  ]
+}
+固定 7 步，stepNo 1～7，title 依次为：做图、标题、正文、Tag、发布、互动、复盘。
+tier：1～5 步 must_do；第 6 步 nice_to_have；第 7 步 after_publish。
+defaultExpanded：1～4 步 true，5～7 步 false。
+第 2 步 copyBlocks 须含各备选标题；第 4 步 copyBlocks 须含一行话题；第 6 步 copyBlocks 须含首评与 1～2 条回复模板。"""
+
+
+def _body_excerpt(body: str, max_chars: int = 80) -> str:
+    text = body.strip().replace("\n\n", " ").replace("\n", " ")
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "…"
+
+
+def _slides_from_pack(pack: dict[str, Any], headline: str) -> list[dict[str, str]]:
+    imgs = pack.get("imageSuggestions")
+    slides: list[dict[str, str]] = []
+    if isinstance(imgs, list):
+        for i, item in enumerate(imgs[:6]):
+            desc = str(item).strip()
+            if not desc:
+                continue
+            role = "cover" if i == 0 else "inner"
+            slides.append({"role": role, "description": desc})
+    if slides:
+        return slides
     return [
+        {"role": "cover", "description": f"封面大字：{headline}"},
+        {"role": "inner", "description": "干货要点截图或清单卡片"},
+    ]
+
+
+def _normalize_ops_step(raw: dict[str, Any], step_no: int) -> dict[str, Any]:
+    title = str(raw.get("title") or _XHS_OPS_STEP_TITLES[step_no - 1]).strip()
+    objective = str(raw.get("objective") or "").strip()
+    actions_raw = raw.get("actions")
+    actions = [str(a).strip() for a in actions_raw if str(a).strip()] if isinstance(actions_raw, list) else []
+    if not objective:
+        objective = f"完成「{title}」相关发布准备"
+    if len(actions) < 2:
+        actions = [f"按本步目标处理「{title}」", "对照成品 Tab 核对细节"]
+    copy_blocks_raw = raw.get("copyBlocks")
+    copy_blocks: list[dict[str, str]] = []
+    if isinstance(copy_blocks_raw, list):
+        for block in copy_blocks_raw:
+            if not isinstance(block, dict):
+                continue
+            label = str(block.get("label") or "").strip()
+            text = str(block.get("text") or "").strip()
+            if label and text:
+                copy_blocks.append({"label": label, "text": text})
+    step: dict[str, Any] = {
+        "stepNo": step_no,
+        "title": title,
+        "objective": objective,
+        "actions": actions[:8],
+        "tier": _XHS_OPS_TIER_BY_STEP.get(step_no, "must_do"),
+        "defaultExpanded": _XHS_OPS_EXPANDED_BY_STEP.get(step_no, False),
+    }
+    collapsed = str(raw.get("collapsedSummary") or "").strip()
+    if collapsed:
+        step["collapsedSummary"] = collapsed
+    elif step_no >= 5:
+        step["collapsedSummary"] = objective[:40]
+    if copy_blocks:
+        step["copyBlocks"] = copy_blocks[:6]
+    return step
+
+
+def _normalize_ops_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    if len(steps) != 7:
+        return None
+    by_no: dict[int, dict[str, Any]] = {}
+    for item in steps:
+        if not isinstance(item, dict):
+            return None
+        step_no = item.get("stepNo")
+        if not isinstance(step_no, int) or step_no < 1 or step_no > 7:
+            return None
+        by_no[step_no] = _normalize_ops_step(item, step_no)
+    if set(by_no) != set(range(1, 8)):
+        return None
+    return [by_no[i] for i in range(1, 8)]
+
+
+def _build_xhs_ops_from_content(
+    content: dict[str, Any],
+    pack: dict[str, Any],
+    intake: dict[str, Any],
+) -> list[dict[str, Any]]:
+    titles = [str(t).strip() for t in (content.get("titles") or []) if str(t).strip()]
+    body = str(content.get("body") or "").strip()
+    hashtags = [str(t).strip().lstrip("#") for t in (content.get("hashtags") or []) if str(t).strip()]
+    cover = content.get("cover") if isinstance(content.get("cover"), dict) else {}
+    headline = str(cover.get("headline") or (titles[0] if titles else "")).strip()
+    slides = cover.get("slides") if isinstance(cover.get("slides"), list) else []
+    interaction = str(pack.get("interaction") or "").strip()
+    tone = str(intake.get("tone") or "casual")
+    tone_label = "口语亲切" if tone == "casual" else "专业克制"
+
+    slide_actions: list[str] = []
+    for slide in slides[:5]:
+        if not isinstance(slide, dict):
+            continue
+        role = "封面" if slide.get("role") == "cover" else "内页"
+        desc = str(slide.get("description") or "").strip()
+        if desc:
+            slide_actions.append(f"{role}：{desc}")
+    if not slide_actions:
+        slide_actions = [f"封面大字写「{headline[:12]}」", "竖版 3:4，背景简洁"]
+
+    title_actions = [f"备选 {idx + 1}：{title[:28]}" for idx, title in enumerate(titles[:3])]
+    title_actions.append("选与封面大字、首段价值最匹配的一条")
+    title_copy = [{"label": f"标题 {idx + 1}", "text": title} for idx, title in enumerate(titles[:3])]
+
+    body_lines = [line.strip() for line in body.split("\n") if line.strip()]
+    body_actions: list[str] = []
+    if body_lines:
+        body_actions.append(f"首段要点：{_body_excerpt(body_lines[0], 72)}")
+    if len(body_lines) > 1:
+        body_actions.append(f"正文共 {len(body_lines)} 段，发布前通读并微调{tone_label}度")
+    body_actions.append("确认无编造数据、绝对化承诺与敏感表述")
+    body_copy = [{"label": "正文全文", "text": body}] if body else []
+
+    tag_line = " ".join(f"#{tag}" for tag in hashtags[:8])
+    tag_actions: list[str] = []
+    if hashtags:
+        tag_actions.append(f"本稿话题：{'、'.join(hashtags[:6])}")
+    tag_actions.append("复制下方一行到发布页话题栏")
+    tag_copy = [{"label": "话题一行", "text": tag_line}] if tag_line else []
+
+    publish_actions = [
+        f"封面 headline「{headline[:16]}」与所选标题一致",
+        "检查封面、标题、正文无错别字",
+        "建议工作日 12:00–13:30 或 20:00–22:00 发布",
+    ]
+
+    interact_actions = [
+        "发布后立即自评一条，引导收藏/评论",
+        f"回复评论时保持{tone_label}",
+        "准备共鸣、质疑、求资料三类回复",
+    ]
+    interact_copy: list[dict[str, str]] = []
+    if interaction:
+        interact_copy.append({"label": "首评/互动引导", "text": interaction})
+    if body_lines:
+        interact_copy.append(
+            {"label": "共鸣回复示例", "text": f"同感！{_body_excerpt(body_lines[-1], 48)}"}
+        )
+
+    recap_actions = [
+        "24h 看曝光、点击率；7d 看赞藏评",
+        "数据一般：优先换封面或首段",
+        f"记录本次选题「{headline[:16]}」效果，下次同类任务复用",
+    ]
+
+    raw_steps = [
         {
             "stepNo": 1,
             "title": "做图",
-            "objective": "准备小红书封面与内页图",
-            "actions": [
-                f"封面大字写「{headline[:12]}」",
-                "竖版 3:4，背景简洁，可用醒图/稿定",
-                "内页图：截图标注或清单卡片 2～3 张",
-            ],
+            "objective": f"按本稿封面「{headline[:16]}」准备 {len(slides) or 2} 张配图",
+            "actions": slide_actions,
             "tier": "must_do",
             "defaultExpanded": True,
         },
         {
             "stepNo": 2,
             "title": "标题",
-            "objective": "选择最适合本次受众的标题",
-            "actions": [
-                "对比 3 个标题，选点击意图最明确的",
-                "避免绝对化承诺与编造数据",
-                "标题与封面大字保持一致",
-            ],
+            "objective": "从本稿备选标题中选最适合的一条",
+            "actions": title_actions,
             "tier": "must_do",
             "defaultExpanded": True,
+            "copyBlocks": title_copy,
         },
         {
             "stepNo": 3,
             "title": "正文",
-            "objective": "发布前通读并微调口语度",
-            "actions": [
-                "首段 3 秒内交代价值",
-                "中间干货分点，每点不超过 2 行",
-                "结尾留一句互动或行动引导",
-            ],
+            "objective": "发布前通读本稿正文并微调口语度",
+            "actions": body_actions,
             "tier": "must_do",
             "defaultExpanded": True,
+            "copyBlocks": body_copy,
         },
         {
             "stepNo": 4,
             "title": "Tag",
-            "objective": "添加话题提升发现率",
-            "actions": [
-                "核心 tag 2～3 个 + 流量 tag 2～3 个" if with_tags else "按需添加 3～5 个话题",
-                "复制一行话题格式到发布页",
-            ],
+            "objective": "添加本稿话题提升发现率",
+            "actions": tag_actions,
             "tier": "must_do",
             "defaultExpanded": True,
+            "copyBlocks": tag_copy,
         },
         {
             "stepNo": 5,
             "title": "发布",
             "objective": "发布前最后检查",
-            "actions": [
-                "检查封面、标题、正文无错别字",
-                "建议工作日 12:00–13:30 或 20:00–22:00 发布",
-                "首发布置可见范围：公开",
-            ],
+            "actions": publish_actions,
             "tier": "must_do",
             "defaultExpanded": False,
             "collapsedSummary": "发布前 checklist + 时段建议",
@@ -244,29 +461,92 @@ def _build_xhs_ops_steps(intake: dict[str, Any], headline: str) -> list[dict[str
             "stepNo": 6,
             "title": "互动",
             "objective": "发布后 30 分钟内完成首轮互动",
-            "actions": [
-                "发布后立即自评一条「求反馈/求收藏」首评",
-                "准备 3 类评论回复：求资料 / 质疑 / 共鸣",
-                f"语气保持{tone_label}",
-            ],
+            "actions": interact_actions,
             "tier": "nice_to_have",
             "defaultExpanded": False,
             "collapsedSummary": "首评 + 评论回复模板",
+            "copyBlocks": interact_copy,
         },
         {
             "stepNo": 7,
             "title": "复盘",
             "objective": "24h / 7d 看数据并迭代",
-            "actions": [
-                "24h 看曝光、点击率；7d 看赞藏评",
-                "数据一般：优先换封面或首段",
-                "记录本次 intake 效果，下次同类任务复用",
-            ],
+            "actions": recap_actions,
             "tier": "after_publish",
             "defaultExpanded": False,
             "collapsedSummary": "24h/7d 指标 + 优化动作",
         },
     ]
+    return [_normalize_ops_step(step, step["stepNo"]) for step in raw_steps]
+
+
+def _try_llm_xhs_ops_steps(
+    *,
+    content: dict[str, Any],
+    pack: dict[str, Any],
+    intake: dict[str, Any],
+    task_sentence: str,
+) -> list[dict[str, Any]] | None:
+    payload = {
+        "titles": content.get("titles"),
+        "body": content.get("body"),
+        "hashtags": content.get("hashtags"),
+        "cover": content.get("cover"),
+        "interaction": pack.get("interaction"),
+        "theme": pack.get("theme"),
+        "intakeSummary": _intake_human_summary(intake),
+    }
+    user = (
+        f"任务：{task_sentence.strip()[:300]}\n"
+        f"成品 JSON：\n{json.dumps(payload, ensure_ascii=False)[:4500]}"
+    )
+    parsed, _ = invoke_and_parse_social_json(_XHS_OPS_LLM_SYSTEM, user, max_tokens=2200)
+    if not isinstance(parsed, dict):
+        return None
+    steps_raw = parsed.get("steps")
+    if not isinstance(steps_raw, list):
+        return None
+    steps_in: list[dict[str, Any]] = [s for s in steps_raw if isinstance(s, dict)]
+    normalized = _normalize_ops_steps(steps_in)
+    if normalized is None:
+        logger.warning("xhs ops llm returned invalid step count: %s", len(steps_in))
+    return normalized
+
+
+def _generate_xhs_ops_steps(
+    *,
+    content: dict[str, Any],
+    pack: dict[str, Any],
+    intake: dict[str, Any],
+    task_sentence: str,
+) -> list[dict[str, Any]]:
+    llm_steps = _try_llm_xhs_ops_steps(
+        content=content,
+        pack=pack,
+        intake=intake,
+        task_sentence=task_sentence,
+    )
+    if llm_steps:
+        return llm_steps
+    return _build_xhs_ops_from_content(content, pack, intake)
+
+
+def _deliverable_body_from_pack(pack: dict[str, Any], hashtags: list[str]) -> str:
+    """从 pack 全量 body 去掉末尾话题行与互动句，避免 UI 重复展示。"""
+    body = str(pack.get("body") or "").strip()
+    interaction = str(pack.get("interaction") or "").strip()
+    if interaction and body.endswith(interaction):
+        body = body[: -len(interaction)].rstrip()
+    if hashtags:
+        tag_line = " ".join(f"#{h.lstrip('#')}" for h in hashtags[:8])
+        if tag_line and body.endswith(tag_line):
+            body = body[: -len(tag_line)].rstrip()
+        lines = body.split("\n")
+        if lines:
+            last = lines[-1].strip()
+            if last.startswith("#") and last.count("#") >= 2:
+                body = "\n".join(lines[:-1]).rstrip()
+    return body.strip() or str(pack.get("body") or "").strip()
 
 
 def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
@@ -283,6 +563,7 @@ def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
     body = str(pack.get("body") or "").strip()
     hashtags = _extract_hashtags(pack, body)
     headline = titles[0][:12]
+    body = _deliverable_body_from_pack(pack, hashtags)
     return {
         "titles": titles[:5],
         "body": body or titles[0],
@@ -290,10 +571,7 @@ def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
         "cover": {
             "headline": headline,
             "layout": "text_center",
-            "slides": [
-                {"role": "cover", "description": f"封面大字：{headline}"},
-                {"role": "inner", "description": "干货要点截图或清单卡片"},
-            ],
+            "slides": _slides_from_pack(pack, headline),
         },
     }
 
@@ -348,8 +626,12 @@ def _assemble_xhs_deliverable(
     feature_summary: str,
 ) -> dict[str, Any]:
     content = _pack_to_xhs_content(pack)
-    headline = str(content["cover"]["headline"])
-    ops_steps = _build_xhs_ops_steps(intake, headline)
+    ops_steps = _generate_xhs_ops_steps(
+        content=content,
+        pack=pack,
+        intake=intake,
+        task_sentence=task_sentence,
+    )
     coverage = _corpus_coverage(note_count, used_rag)
     material_labels = [f"{notebook} · {note_count} 篇"] if notebook and note_count else []
 
@@ -515,8 +797,8 @@ def run_composer_expert_deliverable_job(
         on_progress("正在生成内容成品与发布傻瓜包…", 55.0)
 
     last_errors: list[str] = []
-    quality_retry = False
-    for attempt in range(2):
+    max_attempts = 3
+    for attempt in range(max_attempts):
         try:
             deliverable = generate_xhs_expert_deliverable(
                 task_sentence=task_sentence,
@@ -530,17 +812,22 @@ def run_composer_expert_deliverable_job(
                 validation_errors=last_errors or None,
             )
             content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
-            if (
-                not used_rag
-                and _looks_like_material_fallback(content, task_sentence)
-                and not quality_retry
-            ):
-                quality_retry = True
+            if _looks_like_xhs_template_body(content, task_sentence) and attempt < max_attempts - 1:
                 last_errors = [
-                    "正文不得包含「请根据以下创作任务」等指令语或模板回退；须输出完整种草/推广笔记"
+                    "正文须为围绕【创作任务】的具体种草/推广笔记；"
+                    "禁止📌先说结论/💡展开等模板分段、要点一二三、与任务无关的通用占位"
                 ]
+                persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+                retry_note = "【重试】上次正文像通用模板，须重写：引用任务中的产品/场景/卖点，用自然段表达。"
+                persona["otherRequirements"] = f"{persona.get('otherRequirements') or ''}\n{retry_note}"[:1600]
+                options["persona"] = persona
+                extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
+                avoid = list(extras.get("avoid") or [])
+                avoid.append("任何与任务无关的虚构案例")
+                extras["avoid"] = avoid
+                options["extras"] = extras
                 if on_progress:
-                    on_progress("初稿质量不足，正在重写…", 72.0)
+                    on_progress("初稿偏模板化，正在重写…", 72.0)
                 continue
             if on_progress:
                 on_progress("内容成品就绪", 100.0)
@@ -549,7 +836,7 @@ def run_composer_expert_deliverable_job(
             msg = str(exc)
             if msg.startswith("validation_failed:"):
                 last_errors = msg.split(":", 1)[1].split("|")
-                if attempt == 0:
+                if attempt < max_attempts - 1:
                     if on_progress:
                         on_progress("校验未通过，正在重试…", 70.0)
                     continue

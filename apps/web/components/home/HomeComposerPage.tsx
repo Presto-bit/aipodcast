@@ -76,7 +76,9 @@ import type {
 import {
   COMPOSER_EXPERT_OPTIONS,
   defaultComposerExpertSelection,
+  EXPERT_DELIVERABLE_READY,
   EXPERT_DISPLAY_NAMES,
+  expertDisplayLabel,
   resolveActiveFormats
 } from "../../lib/composerExperts";
 import {
@@ -120,7 +122,9 @@ function useClickOutside(refs: React.RefObject<HTMLElement | null>[], onOutside:
   useEffect(() => {
     if (!active) return;
     function onDoc(e: MouseEvent) {
-      if (refs.some((ref) => ref.current?.contains(e.target as Node))) return;
+      const target = e.target as Node;
+      if (refs.some((ref) => ref.current?.contains(target))) return;
+      if (target instanceof Element && target.closest("[data-composer-dropdown]")) return;
       onOutside();
     }
     document.addEventListener("mousedown", onDoc);
@@ -662,6 +666,10 @@ export default function HomeComposerPage({
   const handleConfirmStartGenerate = useCallback(async () => {
     const draft = prefs?.taskDraft;
     if (!draft || draft.phase !== "confirm" || !prefs || prefs.expert.mode !== "platform") return;
+    if (!EXPERT_DELIVERABLE_READY[draft.expertId]) {
+      setError(`${EXPERT_DISPLAY_NAMES[draft.expertId]} 生成能力即将上线，请先使用红书搭子`);
+      return;
+    }
     if (!isLoggedIn) {
       setError("请先登录后再生成");
       return;
@@ -872,13 +880,18 @@ export default function HomeComposerPage({
 
   function selectExpert(next: ComposerExpertSelection) {
     const isFirstPlatform = next.mode === "platform" && !getExpertEverSelected();
+    const prevDraft = prefs?.taskDraft;
 
     setStore((prev) => {
       if (!prev) return prev;
-      return patchActiveHomeComposerSession(prev, (s) => ({
+      let nextStore = patchActiveHomeComposerSession(prev, (s) => ({
         ...s,
         prefs: { ...s.prefs, expert: next, formats: [], taskDraft: undefined }
       }));
+      if (prevDraft?.turnId) {
+        nextStore = updateHomeComposerTurn(nextStore, prevDraft.turnId, { taskFlowArchived: true });
+      }
+      return nextStore;
     });
     setOpenMenu("");
 
@@ -1022,15 +1035,18 @@ export default function HomeComposerPage({
     kbOn
   ]);
 
+  const expertChipLabel = prefs?.expert ? expertDisplayLabel(prefs.expert) : undefined;
+
   const statusParts: string[] = [];
-  if (!expertSelected) {
-    if (kbOn) {
-      statusParts.push(`资料 · ${prefs!.notebook} · 全部`);
-    }
-    statusParts.push(`写作习惯 · ${writingHabitLabel}`);
-    if (prefs?.personalEnabled && featureSummary) {
-      statusParts.push(`我的特色 · ${featureSummary}`);
-    }
+  if (expertSelected && prefs?.expert.mode === "platform") {
+    statusParts.push(`专家 · ${EXPERT_DISPLAY_NAMES[prefs.expert.expertId]}`);
+  }
+  if (kbOn) {
+    statusParts.push(`资料 · ${prefs!.notebook} · 全部`);
+  }
+  statusParts.push(`写作习惯 · ${writingHabitLabel}`);
+  if (prefs?.personalEnabled && featureSummary) {
+    statusParts.push(`我的特色 · ${featureSummary}`);
   }
 
   if (!store || !session) {
@@ -1185,22 +1201,28 @@ export default function HomeComposerPage({
                     icon={<IconExpert />}
                     open={openMenu === "expert"}
                     selected={expertSelected}
+                    chipLabel={expertChipLabel}
                     onToggle={() => openMenuOrToggle("expert")}
                     align="left"
-                    minWidth={280}
+                    minWidth={300}
                   >
+                    <p className="pointer-events-none px-2 pb-1 pt-0.5 text-[11px] text-muted">
+                      选专家走发布全流程；不选则自由问答
+                    </p>
                     {COMPOSER_EXPERT_OPTIONS.map((opt) => {
                       const selected =
                         opt.id === "none"
                           ? prefs?.expert?.mode === "none"
                           : prefs?.expert?.mode === "platform" && prefs.expert.expertId === opt.id;
+                      const ready =
+                        opt.id !== "none" ? EXPERT_DELIVERABLE_READY[opt.id as PlatformExpertId] : undefined;
                       return (
                         <div key={opt.id} className="border-b border-line/50 last:border-0">
                           <button
                             type="button"
                             className={[
-                              "block w-full rounded-lg px-2 py-1.5 text-left",
-                              selected ? "bg-brand/10" : "hover:bg-fill"
+                              "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition",
+                              selected ? "bg-brand/10 ring-1 ring-brand/25" : "hover:bg-fill"
                             ].join(" ")}
                             onClick={() =>
                               selectExpert(
@@ -1210,10 +1232,30 @@ export default function HomeComposerPage({
                               )
                             }
                           >
-                            <span className={["block text-sm", selected ? "font-medium text-ink" : "text-ink"].join(" ")}>
-                              {opt.name}
+                            <span
+                              className={[
+                                "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px]",
+                                selected ? "border-brand bg-brand text-brand-foreground" : "border-line text-transparent"
+                              ].join(" ")}
+                              aria-hidden
+                            >
+                              ✓
                             </span>
-                            <span className="mt-0.5 block text-xs text-muted">{opt.description}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <span className={["text-sm", selected ? "font-semibold text-ink" : "font-medium text-ink"].join(" ")}>
+                                  {opt.name}
+                                </span>
+                                {ready === true ? (
+                                  <span className="rounded-full bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
+                                    可生成
+                                  </span>
+                                ) : ready === false ? (
+                                  <span className="rounded-full bg-fill px-1.5 py-0.5 text-[10px] text-muted">即将上线</span>
+                                ) : null}
+                              </span>
+                              <span className="mt-0.5 block text-xs leading-snug text-muted">{opt.description}</span>
+                            </span>
                           </button>
                         </div>
                       );

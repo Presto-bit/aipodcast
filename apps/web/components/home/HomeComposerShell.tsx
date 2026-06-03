@@ -220,14 +220,15 @@ export function ComposerDropMenu({
 
   return createPortal(
     <div
-      className="fixed z-[2000] max-h-[min(14rem,40vh)] overflow-y-auto rounded-[10px] border border-line bg-surface p-2 shadow-card"
+      data-composer-dropdown=""
+      className="fixed z-[2000] max-h-[min(24rem,52vh)] overflow-y-auto rounded-[10px] border border-line bg-surface p-2 shadow-card"
       style={{
         top: pos.top,
         left: pos.left,
         right: pos.right,
         minWidth,
         width: "max-content",
-        maxWidth: 260
+        maxWidth: 320
       }}
     >
       {children}
@@ -241,6 +242,7 @@ export function ComposerDropAnchor({
   icon,
   open,
   selected,
+  chipLabel,
   onToggle,
   align,
   minWidth,
@@ -250,21 +252,45 @@ export function ComposerDropAnchor({
   icon: ReactNode;
   open: boolean;
   selected?: boolean;
+  /** 选中态在按钮上展示的短标签（如专家名） */
+  chipLabel?: string;
   onToggle: () => void;
   align: "left" | "right";
   minWidth?: number;
   children: ReactNode;
 }) {
   const anchorRef = useRef<HTMLDivElement>(null);
+  const showChip = Boolean(chipLabel?.trim());
   return (
     <div
       ref={anchorRef}
       className="relative shrink-0 overflow-visible"
-      style={{ width: COMPOSER_TOOL_H, height: COMPOSER_TOOL_H, zIndex: open ? 1100 : 1 }}
+      style={{ height: COMPOSER_TOOL_H, zIndex: open ? 1100 : 1 }}
     >
-      <IconToolBtn title={title} active={open} selected={selected} onClick={onToggle}>
-        {icon}
-      </IconToolBtn>
+      {showChip ? (
+        <button
+          type="button"
+          title={title}
+          aria-label={chipLabel ? `${title}：${chipLabel}` : title}
+          aria-expanded={open}
+          onClick={onToggle}
+          className={[
+            "flex h-14 max-w-[9.5rem] items-center gap-1 rounded-full border px-2 transition",
+            open
+              ? "border-brand bg-brand/10 text-ink"
+              : selected
+                ? "border-brand/45 bg-brand/8 text-ink"
+                : "border-line/60 bg-fill/80 text-muted hover:border-line hover:bg-fill hover:text-ink"
+          ].join(" ")}
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center">{icon}</span>
+          <span className="min-w-0 truncate text-xs font-medium">{chipLabel}</span>
+        </button>
+      ) : (
+        <IconToolBtn title={title} active={open} selected={selected} onClick={onToggle}>
+          {icon}
+        </IconToolBtn>
+      )}
       <ComposerDropMenu open={open} align={align} minWidth={minWidth} anchorRef={anchorRef}>
         {children}
       </ComposerDropMenu>

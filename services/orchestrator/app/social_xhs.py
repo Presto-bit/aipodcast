@@ -216,7 +216,9 @@ def _resolve_occupation_labels(persona: dict[str, Any], platform: str = "xiaohon
     return "、".join(out) if out else "泛读者人群"
 
 
-def _emoji_prompt_line(persona: dict[str, Any], extras: dict[str, Any]) -> str:
+def _emoji_prompt_line(persona: dict[str, Any], extras: dict[str, Any], *, composer_mode: bool = False) -> str:
+    if composer_mode:
+        return "Emoji：适度点缀即可，禁止用 📌💡✅ 作固定分段标题"
     styles = _persona_id_list(persona, "emojiStyles", "")
     if not styles and isinstance(extras.get("emojiStyles"), list):
         styles = [str(x).strip() for x in extras["emojiStyles"] if str(x).strip()]
@@ -239,6 +241,7 @@ def _emoji_prompt_line(persona: dict[str, Any], extras: dict[str, Any]) -> str:
 def build_persona_prompt_block(options: dict[str, Any]) -> str:
     persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
     platform = str(options.get("platform") or "xiaohongshu").strip()
+    composer_mode = str(options.get("source_type") or "").strip() == "composer_prompt"
     other_req = str(
         persona.get("otherRequirements") or options.get("userNote") or ""
     ).strip()[:500]
@@ -278,7 +281,7 @@ def build_persona_prompt_block(options: dict[str, Any]) -> str:
             lines.append("【写作人设】未指定，请根据素材推断合适口吻")
         if platform == "wechat_mp":
             lines.append("正文可用 Markdown（## 小标题、列表、引用），语气适合公众号深度阅读与转发")
-        lines.append(_emoji_prompt_line(persona, extras))
+        lines.append(_emoji_prompt_line(persona, extras, composer_mode=composer_mode))
         if other_req:
             lines.append(f"【其他要求】{other_req}")
     else:
@@ -298,14 +301,22 @@ def build_persona_prompt_block(options: dict[str, Any]) -> str:
             lines.append(f"文案关键词（须自然融入标题与开头）：{'、'.join(kw)}")
         if other_req:
             lines.append(f"【其他要求】{other_req}")
-        lines.append(_emoji_prompt_line(persona, extras))
+        lines.append(_emoji_prompt_line(persona, extras, composer_mode=composer_mode))
     extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
     sk = _SKELETON_CN.get(str(extras.get("bodySkeleton") or "dry_goods"), _SKELETON_CN["dry_goods"])
     hook = _HOOK_CN.get(str(extras.get("coverHookStyle") or "pain"), "痛点型")
     op = _OPENING_CN.get(str(extras.get("openingMode") or "pain_question"), "痛点问句")
     lines.append(f"封面钩子风格：{hook}（公式：人群/场景+痛点+解法/情绪价值）")
     lines.append(f"开头模式：{op}（opening_30 总字数≤30，含标点）")
-    lines.append(f"正文骨架：{sk}")
+    if composer_mode:
+        lines.append(
+            f"正文结构：{sk}；用自然段表达，避免「首先/其次/最后」机械排比与 emoji 分段标题"
+        )
+        lines.append(
+            "【Composer 专家】正文须围绕用户【创作任务】写具体种草/推广内容，禁止通用占位与复述任务标签"
+        )
+    else:
+        lines.append(f"正文骨架：{sk}")
     cta = extras.get("ctaTypes") if isinstance(extras.get("ctaTypes"), list) else []
     if cta:
         lines.append(f"结尾CTA：{', '.join(str(x) for x in cta[:4])}")

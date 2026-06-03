@@ -94,6 +94,14 @@ export function findExpertOption(id: PlatformExpertId | "none"): ComposerExpertO
   return COMPOSER_EXPERT_OPTIONS.find((o) => o.id === id);
 }
 
+/** P0 已接通生成 Job 的专家；其余可选但确认页会提示即将上线 */
+export const EXPERT_DELIVERABLE_READY: Record<PlatformExpertId, boolean> = {
+  xhs_ops: true,
+  mp_ops: false,
+  voice_gen: false,
+  podcast_plan: false
+};
+
 export function resolveActiveFormats(prefs: {
   formats?: HomeComposerFormat[];
   expert?: ComposerExpertSelection;

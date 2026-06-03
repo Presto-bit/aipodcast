@@ -17,7 +17,7 @@ import { trackComposerExpertEvent } from "../../../lib/composerExpertAnalytics";
 
 type DeliverableBlock = Extract<AssistantBlock, { kind: "deliverable" }>;
 type FeedbackBlock = Extract<AssistantBlock, { kind: "feedback" }>;
-type TabId = "product" | "ops" | "provenance";
+type TabId = "product" | "preview" | "ops" | "provenance";
 
 const COVERAGE_LABELS = {
   full: "资料覆盖完整",
@@ -211,9 +211,22 @@ function XhsProductPanel({
         ) : null}
       </div>
 
+    </div>
+  );
+}
+
+function XhsPreviewPanel({ block }: { block: DeliverableBlock }) {
+  if (!isXhsContent(block.content)) return null;
+  const content = block.content;
+
+  return (
+    <div className="space-y-4">
+      <DeliverablePreviewFrame content={content} />
       {content.cover.slides.length ? (
         <details className="rounded-lg border border-line/60 bg-fill/10 px-3 py-2 text-xs">
-          <summary className="cursor-pointer font-medium text-muted">内页图说明（{content.cover.slides.length} 张）</summary>
+          <summary className="cursor-pointer font-medium text-muted">
+            配图说明（{content.cover.slides.length} 张）
+          </summary>
           <ul className="mt-2 space-y-1 text-muted">
             {content.cover.slides.map((slide) => (
               <li key={`${slide.role}-${slide.description}`}>
@@ -223,8 +236,6 @@ function XhsProductPanel({
           </ul>
         </details>
       ) : null}
-
-      <DeliverablePreviewFrame content={content} />
     </div>
   );
 }
@@ -261,6 +272,21 @@ export default function DeliverableCard({
 
   const mustDoCount = block.ops.steps.filter((s) => s.tier === "must_do").length;
   const showFeatureBadge = featureCoreComplete >= 3;
+  const showPreviewTab = expertId === "xhs_ops" && isXhsContent(block.content);
+
+  const tabs = useMemo(() => {
+    const items: Array<{ id: TabId; label: string; badge?: string }> = [
+      { id: "product", label: "成品", badge: showFeatureBadge ? "已用你的特色" : undefined }
+    ];
+    if (showPreviewTab) {
+      items.push({ id: "preview", label: "预览" });
+    }
+    items.push(
+      { id: "ops", label: "发布清单", badge: mustDoCount ? `${mustDoCount} 步必做` : undefined },
+      { id: "provenance", label: "依据" }
+    );
+    return items;
+  }, [showFeatureBadge, showPreviewTab, mustDoCount]);
 
   return (
     <div className="w-full min-w-0 rounded-2xl border-2 border-brand/25 bg-surface shadow-soft">
@@ -284,13 +310,7 @@ export default function DeliverableCard({
       </div>
 
       <div className="flex gap-1 border-b border-line/60 px-3 pt-2">
-        {(
-          [
-            { id: "product" as const, label: "成品", badge: showFeatureBadge ? "已用你的特色" : undefined },
-            { id: "ops" as const, label: "发布清单", badge: mustDoCount ? `${mustDoCount} 步必做` : undefined },
-            { id: "provenance" as const, label: "依据", badge: undefined }
-          ]
-        ).map(({ id, label, badge }) => (
+        {tabs.map(({ id, label, badge }) => (
           <button
             key={id}
             type="button"
@@ -346,6 +366,7 @@ export default function DeliverableCard({
             </div>
           )
         ) : null}
+        {tab === "preview" && showPreviewTab ? <XhsPreviewPanel block={block} /> : null}
         {tab === "ops" ? <OpsPlaybookPanel ops={block.ops} onCopyToast={onCopyToast} /> : null}
         {tab === "provenance" ? <ProvenancePanel block={block} /> : null}
       </div>
