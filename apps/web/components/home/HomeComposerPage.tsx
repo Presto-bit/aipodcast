@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import HomeComposerFormatCard from "./HomeComposerFormatCard";
 import ComposerExpertBlocks from "./ComposerExpertBlocks";
 import ComposerFeatureNudgeBar from "./composer/ComposerFeatureNudgeBar";
@@ -80,7 +80,9 @@ import {
 import {
   inferIntakePreselection,
   intakeTotalSteps,
-  mergeIntakeField
+  mergeIntakeField,
+  intakeStepsForExpert,
+  finalizeExpertIntake
 } from "../../lib/composerExpertIntake";
 import type {
   AssistantBlock,
@@ -156,6 +158,7 @@ export default function HomeComposerPage({
   const [featureNudgeVisible, setFeatureNudgeVisible] = useState(false);
   const [featureNudgeExpertId, setFeatureNudgeExpertId] = useState<PlatformExpertId | null>(null);
   const [intentSuggest, setIntentSuggest] = useState<CreationIntent | null>(null);
+  const [featurePanelPlacement, setFeaturePanelPlacement] = useState<"top" | "bottom">("bottom");
   const [personalDraft, setPersonalDraft] = useState<HomeComposerPersonalProfile>(EMPTY_HOME_COMPOSER_PERSONAL);
   const [featureCoreDraft, setFeatureCoreDraft] = useState<FeatureCore>(EMPTY_FEATURE_CORE);
   const [defaultIpId, setDefaultIpId] = useState<string | null>(null);
@@ -190,6 +193,16 @@ export default function HomeComposerPage({
   const session = useMemo(() => (store ? activeHomeComposerSession(store) : null), [store]);
   const prefs = session?.prefs;
   const hasSent = (session?.turns.length ?? 0) > 0;
+
+  useLayoutEffect(() => {
+    if (!personalOpen || !composerRootRef.current) return;
+    const rect = composerRootRef.current.getBoundingClientRect();
+    const panelEstimate = Math.min(window.innerHeight * 0.58, 480);
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    setFeaturePanelPlacement(spaceBelow < panelEstimate && spaceAbove > spaceBelow ? "top" : "bottom");
+  }, [personalOpen, hasSent, store?.activeSessionId]);
+
   const kbOn = Boolean(prefs?.notebook?.trim());
   const styleTemplates = useMemo(
     () => listUserTemplates().filter((t) => isUserPersonaStyleTemplateCategory(t.category)),
@@ -555,7 +568,7 @@ export default function HomeComposerPage({
       let skipStep2 = inferIntakePreselection(expertId, q).skipStep2;
       let skipToResolution = shouldSkipToResolution(expertId, q, intake, skipStep2);
       let blocks: AssistantBlock[] = skipToResolution
-        ? blocksForResolutionPhase(expertId, q, intake, prefs)
+        ? blocksForResolutionPhase(expertId, q, finalizeExpertIntake(expertId, intake, q), prefs)
         : blocksForIntakePhase(expertId, 0, intake, q);
 
       try {
@@ -577,8 +590,8 @@ export default function HomeComposerPage({
           skipStep2 = api.skipStep2;
           skipToResolution = shouldSkipToResolution(expertId, q, intake, skipStep2);
           blocks = skipToResolution
-            ? blocksForResolutionPhase(expertId, q, intake, prefs, inferIntakePreselection(expertId, q).hint)
-            : [api.expertStrip, api.intakeStep];
+            ? blocksForResolutionPhase(expertId, q, finalizeExpertIntake(expertId, intake, q), prefs, inferIntakePreselection(expertId, q).hint)
+            : blocksForIntakePhase(expertId, 0, intake, q);
         } catch {
           // 后端不可用时走客户端规则 fallback
         }
@@ -587,7 +600,7 @@ export default function HomeComposerPage({
           expertId,
           taskSentence: q,
           turnId,
-          intake,
+          intake: skipToResolution ? finalizeExpertIntake(expertId, intake, q) : intake,
           intakeStep: 0,
           phase: skipToResolution ? "confirm" : "intake"
         });
@@ -664,9 +677,11 @@ export default function HomeComposerPage({
   const goToConfirm = useCallback(
     (turnId: string, draft: ExpertTaskDraft) => {
       if (!prefs) return;
+      const intake = finalizeExpertIntake(draft.expertId, draft.intake, draft.taskSentence);
       const nextDraft: ExpertTaskDraft = {
         ...draft,
         phase: "confirm",
+        intake,
         updatedAt: new Date().toISOString()
       };
       patchTaskDraftTurn(turnId, nextDraft, prefs);
@@ -691,13 +706,42 @@ export default function HomeComposerPage({
     const total = intakeTotalSteps(draft.expertId);
     const nextStep = draft.intakeStep + 1;
     const reachedEnd = nextStep >= total;
-    const skipLastStep = Boolean(draft.skipStep2) && nextStep === total - 1;
+    const skipLastStep = Boolean(draft.skipStep2) && nextStep >= total - 1;
     if (reachedEnd || skipLastStep) {
       goToConfirm(draft.turnId, draft);
       return;
     }
     const nextDraft: ExpertTaskDraft = {
       ...draft,
+      intakeStep: nextStep,
+      updatedAt: new Date().toISOString()
+    };
+    patchTaskDraftTurn(draft.turnId, nextDraft, prefs);
+  }, [goToConfirm, patchTaskDraftTurn, prefs]);
+
+  const handleIntakeSkip = useCallback(() => {
+    const draft = prefs?.taskDraft;
+    if (!draft || draft.phase !== "intake" || !prefs) return;
+    const inferred = inferIntakePreselection(draft.expertId, draft.taskSentence).intake;
+    const stepDef = intakeStepsForExpert(draft.expertId)[draft.intakeStep];
+    let intake = { ...draft.intake };
+    for (const field of stepDef?.fields ?? []) {
+      const cur = intake[field.fieldId];
+      const empty = cur == null || cur === "" || (Array.isArray(cur) && !cur.length);
+      if (empty && inferred[field.fieldId] != null) {
+        intake[field.fieldId] = inferred[field.fieldId]!;
+      }
+    }
+    const total = intakeTotalSteps(draft.expertId);
+    const nextStep = draft.intakeStep + 1;
+    const skipLastStep = Boolean(draft.skipStep2) && nextStep >= total - 1;
+    if (nextStep >= total || skipLastStep) {
+      goToConfirm(draft.turnId, { ...draft, intake });
+      return;
+    }
+    const nextDraft: ExpertTaskDraft = {
+      ...draft,
+      intake,
       intakeStep: nextStep,
       updatedAt: new Date().toISOString()
     };
@@ -1298,6 +1342,7 @@ export default function HomeComposerPage({
                         draft={isActiveExpertTurn ? prefs?.taskDraft : undefined}
                         onIntakeChange={handleIntakeFieldChange}
                         onIntakeNext={handleIntakeNext}
+                        onIntakeSkip={handleIntakeSkip}
                         onIntakeConfirmDirect={handleIntakeConfirmDirect}
                         onConfirmStart={handleConfirmStartGenerate}
                         onConfirmUpdate={handleConfirmUpdate}
@@ -1370,6 +1415,26 @@ export default function HomeComposerPage({
                 hasSent ? "pt-2 pb-1" : ""
               ].join(" ")}
             >
+              {personalOpen && featurePanelPlacement === "top" ? (
+                <div className="absolute bottom-full left-0 right-0 z-30 mb-2">
+                  <FeatureProfilePanel
+                    open={personalOpen}
+                    placement="top"
+                    hasSaved={hasPersonalSaved || featureCoreFilled}
+                    personalEnabled={Boolean(prefs?.personalEnabled)}
+                    onToggleEnabled={togglePersonalEnabled}
+                    onClose={() => setPersonalOpen(false)}
+                    onSave={savePersonal}
+                    featureCore={featureCoreDraft}
+                    onFeatureCoreChange={(key, value) => setFeatureCoreDraft((prev) => ({ ...prev, [key]: value }))}
+                    supplementalFields={PERSONAL_SUPPLEMENT_FIELDS}
+                    supplementalDraft={personalDraft as Record<string, string>}
+                    onSupplementalFieldChange={(key, value) =>
+                      setPersonalDraft((prev) => ({ ...prev, [key as keyof HomeComposerPersonalProfile]: value }))
+                    }
+                  />
+                </div>
+              ) : null}
               {featureNudgeVisible && featureNudgeExpertId ? (
                 <ComposerFeatureNudgeBar
                   expertId={featureNudgeExpertId}
@@ -1586,23 +1651,25 @@ export default function HomeComposerPage({
                   />
                 }
               />
+              {personalOpen && featurePanelPlacement === "bottom" ? (
+                <FeatureProfilePanel
+                  open={personalOpen}
+                  placement="bottom"
+                  hasSaved={hasPersonalSaved || featureCoreFilled}
+                  personalEnabled={Boolean(prefs?.personalEnabled)}
+                  onToggleEnabled={togglePersonalEnabled}
+                  onClose={() => setPersonalOpen(false)}
+                  onSave={savePersonal}
+                  featureCore={featureCoreDraft}
+                  onFeatureCoreChange={(key, value) => setFeatureCoreDraft((prev) => ({ ...prev, [key]: value }))}
+                  supplementalFields={PERSONAL_SUPPLEMENT_FIELDS}
+                  supplementalDraft={personalDraft as Record<string, string>}
+                  onSupplementalFieldChange={(key, value) =>
+                    setPersonalDraft((prev) => ({ ...prev, [key as keyof HomeComposerPersonalProfile]: value }))
+                  }
+                />
+              ) : null}
             </div>
-
-            <FeatureProfilePanel
-              open={personalOpen}
-              hasSaved={hasPersonalSaved || featureCoreFilled}
-              personalEnabled={Boolean(prefs?.personalEnabled)}
-              onToggleEnabled={togglePersonalEnabled}
-              onClose={() => setPersonalOpen(false)}
-              onSave={savePersonal}
-              featureCore={featureCoreDraft}
-              onFeatureCoreChange={(key, value) => setFeatureCoreDraft((prev) => ({ ...prev, [key]: value }))}
-              supplementalFields={PERSONAL_SUPPLEMENT_FIELDS}
-              supplementalDraft={personalDraft as Record<string, string>}
-              onSupplementalFieldChange={(key, value) =>
-                setPersonalDraft((prev) => ({ ...prev, [key as keyof HomeComposerPersonalProfile]: value }))
-              }
-            />
           </div>
         </div>
       </div>

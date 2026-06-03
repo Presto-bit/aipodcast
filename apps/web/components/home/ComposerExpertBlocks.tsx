@@ -3,9 +3,14 @@
 import { useState } from "react";
 import type { AssistantBlock, ExpertTaskDraft, PlatformExpertId } from "../../lib/homeComposerExpertTypes";
 import { EXPERT_DISPLAY_NAMES } from "../../lib/composerExperts";
-import { formatIntakeSelectionsForDisplay } from "../../lib/composerExpertIntake";
+import {
+  formatIntakeSelectionsForDisplay,
+  isIntakeStepComplete,
+  usesQuestionCardIntake
+} from "../../lib/composerExpertIntake";
 import DeliverableCard from "./composer/DeliverableCard";
 import ConfirmEditForm from "./composer/ConfirmEditForm";
+import QuestionCardPanel from "./composer/QuestionCardPanel";
 
 type IntakeStepBlock = Extract<AssistantBlock, { kind: "intake_step" }>;
 type ConfirmBlock = Extract<AssistantBlock, { kind: "confirm" }>;
@@ -196,7 +201,7 @@ function ResolutionPanel({
 
       {inferenceLines.length ? (
         <div className="mt-3 rounded-xl border border-line/80 bg-fill/20 p-3">
-          <p className="text-xs font-medium text-muted">推断选项（可编辑）</p>
+          <p className="text-xs font-medium text-muted">你已确认</p>
           <ul className="mt-2 space-y-1 text-xs text-ink">
             {inferenceLines.map((line) => (
               <li key={line}>· {line}</li>
@@ -337,6 +342,7 @@ export default function ComposerExpertBlocks({
   draft,
   onIntakeChange,
   onIntakeNext,
+  onIntakeSkip,
   onIntakeConfirmDirect,
   onConfirmStart,
   onConfirmUpdate,
@@ -360,6 +366,7 @@ export default function ComposerExpertBlocks({
   draft?: ExpertTaskDraft;
   onIntakeChange: (fieldId: string, value: string | string[], multi: boolean) => void;
   onIntakeNext: () => void;
+  onIntakeSkip?: () => void;
   onIntakeConfirmDirect: () => void;
   onConfirmStart: () => void;
   onConfirmUpdate: (taskSentence: string, intake: Record<string, string | string[]>) => void;
@@ -397,6 +404,20 @@ export default function ComposerExpertBlocks({
           return null;
         }
         if (block.kind === "intake_step") {
+          if (usesQuestionCardIntake(expertId)) {
+            return (
+              <QuestionCardPanel
+                key={`intake-${block.step}`}
+                block={block}
+                expertId={expertId}
+                disabled={panelsDisabled}
+                intake={draft?.intake ?? {}}
+                onChange={onIntakeChange}
+                onComplete={onIntakeNext}
+                onSkip={onIntakeSkip ?? onIntakeConfirmDirect}
+              />
+            );
+          }
           return (
             <IntakeStepPanel
               key={`intake-${block.step}`}

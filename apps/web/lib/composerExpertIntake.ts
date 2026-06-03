@@ -43,7 +43,64 @@ export const EXPERT_META: Record<
   }
 };
 
-const XHS_INTAKE_STEPS: IntakeStepDef[] = [
+const XHS_QUESTION_BATCHES: IntakeStepDef[] = [
+  {
+    step: 0,
+    theme: "内容与受众",
+    fields: [
+      {
+        fieldId: "contentAngle",
+        prompt: "这篇笔记的风格偏好？",
+        multi: false,
+        options: [
+          { id: "review", label: "真实体验型" },
+          { id: "tutorial", label: "场景种草型" },
+          { id: "listicle", label: "清单推荐型" }
+        ]
+      },
+      {
+        fieldId: "audience",
+        prompt: "目标受众是谁？",
+        multi: false,
+        options: [
+          { id: "newcomer", label: "刚入门的小白/新人" },
+          { id: "buyer", label: "有购买/决策意向" },
+          { id: "general", label: "泛流量/路人" }
+        ]
+      }
+    ]
+  },
+  {
+    step: 1,
+    theme: "目标与语气",
+    fields: [
+      {
+        fieldId: "publishGoal",
+        prompt: "这篇发出去，最想达成什么？",
+        multi: false,
+        options: [
+          { id: "expose", label: "曝光破圈" },
+          { id: "save", label: "高收藏" },
+          { id: "comment", label: "评论互动" },
+          { id: "dm", label: "引导私信" }
+        ]
+      },
+      {
+        fieldId: "tone",
+        prompt: "整体语气？",
+        multi: false,
+        options: [
+          { id: "casual", label: "口语亲切" },
+          { id: "pro", label: "专业克制" },
+          { id: "sharp", label: "观点鲜明" }
+        ]
+      }
+    ]
+  }
+];
+
+/** @deprecated 仅用于 ConfirmEditForm 等全量编辑；交互主路径为 XHS_QUESTION_BATCHES */
+const XHS_INTAKE_STEPS_LEGACY: IntakeStepDef[] = [
   {
     step: 0,
     theme: "读者与内容定位",
@@ -226,7 +283,7 @@ const MP_INTAKE_STEPS: IntakeStepDef[] = [
 ];
 
 export const EXPERT_INTAKE_STEPS: Partial<Record<PlatformExpertId, IntakeStepDef[]>> = {
-  xhs_ops: XHS_INTAKE_STEPS,
+  xhs_ops: XHS_QUESTION_BATCHES,
   mp_ops: MP_INTAKE_STEPS,
   voice_gen: [
     {
@@ -286,7 +343,75 @@ export const EXPERT_INTAKE_STEPS: Partial<Record<PlatformExpertId, IntakeStepDef
 };
 
 export function intakeStepsForExpert(expertId: PlatformExpertId): IntakeStepDef[] {
-  return EXPERT_INTAKE_STEPS[expertId] ?? XHS_INTAKE_STEPS;
+  return EXPERT_INTAKE_STEPS[expertId] ?? XHS_QUESTION_BATCHES;
+}
+
+/** 问题卡 UI 的专家（WorkBuddy 式澄清批） */
+export function usesQuestionCardIntake(expertId: PlatformExpertId): boolean {
+  return expertId === "xhs_ops";
+}
+
+/** Resolution 摘要仅展示用户在问题卡中确认的关键项 */
+export const RESOLUTION_SUMMARY_FIELD_IDS: Partial<Record<PlatformExpertId, string[]>> = {
+  xhs_ops: ["contentAngle", "audience", "publishGoal", "tone"]
+};
+
+export function isIntakeStepComplete(
+  expertId: PlatformExpertId,
+  stepIndex: number,
+  intake: Record<string, string | string[]>
+): boolean {
+  const step = intakeStepsForExpert(expertId)[stepIndex];
+  if (!step) return true;
+  for (const field of step.fields) {
+    const raw = intake[field.fieldId];
+    if (field.multi) {
+      const selected = Array.isArray(raw) ? raw : raw ? [raw] : [];
+      if (selected.filter(Boolean).length < (field.minSelect ?? 1)) return false;
+    } else if (!raw || raw === "") {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** 补齐问题卡未问到的红书 intake 字段（生成 Job 仍用全量 schema） */
+export function finalizeExpertIntake(
+  expertId: PlatformExpertId,
+  intake: Record<string, string | string[]>,
+  taskSentence: string
+): Record<string, string | string[]> {
+  if (expertId !== "xhs_ops") return intake;
+  const inferred = inferIntakePreselection(expertId, taskSentence).intake;
+  const next: Record<string, string | string[]> = { ...inferred, ...intake };
+
+  if (typeof next.audience === "string" && next.audience) {
+    next.audience = [next.audience];
+  }
+  if (typeof next.publishGoal === "string" && next.publishGoal) {
+    next.publishGoal = [next.publishGoal];
+  }
+
+  if (next.contentAngle === "listicle") next.noteType = "listicle";
+  else if (next.contentAngle === "story") next.noteType = "story";
+  else next.noteType = "howto";
+
+  if (!next.structure) {
+    next.structure =
+      next.contentAngle === "listicle"
+        ? "bullet"
+        : next.contentAngle === "story"
+          ? "story_arc"
+          : next.contentAngle === "review"
+            ? "compare"
+            : "steps";
+  }
+  return next;
+}
+
+export function intakeStepsForExpertEdit(expertId: PlatformExpertId): IntakeStepDef[] {
+  if (expertId === "xhs_ops") return XHS_QUESTION_BATCHES;
+  return intakeStepsForExpert(expertId);
 }
 
 export function intakeTotalSteps(expertId: PlatformExpertId): number {
@@ -308,7 +433,13 @@ export function inferIntakePreselection(
     if (/同行|从业者|内行|产品经理|运营/.test(taskSentence)) audience.push("peers");
     if (/购买|下单|种草|测评/.test(taskSentence)) audience.push("buyer");
     if (!audience.length) audience.push("general");
-    intake.audience = audience;
+    intake.audience = audience.includes("buyer")
+      ? "buyer"
+      : audience.includes("newcomer")
+        ? "newcomer"
+        : audience.includes("peers")
+          ? "peers"
+          : audience[0]!;
 
     intake.accountStage = /品牌|官方|企业/.test(taskSentence)
       ? "brand"
@@ -337,7 +468,13 @@ export function inferIntakePreselection(
     if (/私信|咨询|联系/.test(taskSentence)) goals.push("dm");
     if (/涨粉|关注/.test(taskSentence)) goals.push("follow");
     if (!goals.length) goals.push("expose");
-    intake.publishGoal = goals;
+    intake.publishGoal = goals.includes("save")
+      ? "save"
+      : goals.includes("comment")
+        ? "comment"
+        : goals.includes("dm")
+          ? "dm"
+          : goals[0]!;
     intake.purpose = /复盘|总结|回顾/.test(taskSentence) ? ["retain"] : ["acquire"];
 
     intake.hookStyle = /数字|\d+步|\d+天/.test(taskSentence)
@@ -371,7 +508,10 @@ export function inferIntakePreselection(
   }
 
   const detailed = taskSentence.trim().length >= 32;
-  const skipStep2 = expertId === "xhs_ops" && detailed && Boolean(intake.tone) && Boolean(intake.contentAngle);
+  const hasStyle = Boolean(intake.contentAngle);
+  const hasAudience = Boolean(intake.audience);
+  const skipStep2 =
+    expertId === "xhs_ops" && detailed && hasStyle && hasAudience && Boolean(intake.tone) && Boolean(intake.publishGoal);
   return { intake, skipStep2, hint };
 }
 
@@ -383,9 +523,9 @@ export function buildIntakeStepBlock(
 ): Extract<AssistantBlock, { kind: "intake_step" }> {
   const steps = intakeStepsForExpert(expertId);
   const def = steps[stepIndex] ?? steps[0]!;
-  const preselectedForField = (fieldId: string): string[] => {
+  const preselectedForField = (fieldId: string, multi: boolean): string[] => {
     const val = intake[fieldId];
-    if (Array.isArray(val)) return val.map(String);
+    if (Array.isArray(val)) return multi ? val.map(String) : val.length ? [String(val[0])] : [];
     if (typeof val === "string" && val) return [val];
     return [];
   };
@@ -397,7 +537,7 @@ export function buildIntakeStepBlock(
     theme: def.theme,
     fields: def.fields.map((f, idx) => ({
       ...f,
-      preselected: preselectedForField(f.fieldId),
+      preselected: preselectedForField(f.fieldId, f.multi),
       ...(idx === 0 && hint ? { hint } : {})
     }))
   };
@@ -430,22 +570,45 @@ export function mergeIntakeField(
 
 export function intakeFieldHint(expertId: PlatformExpertId, intake: Record<string, string | string[]>): string | undefined {
   if (expertId !== "xhs_ops") return undefined;
-  const audience = Array.isArray(intake.audience) ? intake.audience : [intake.audience].filter(Boolean);
+  const audienceRaw = intake.audience;
+  const audience = Array.isArray(audienceRaw) ? audienceRaw : audienceRaw ? [audienceRaw] : [];
   if (audience.includes("peers") && (intake.noteType === "story" || intake.purpose?.toString().includes("retain"))) {
     return "选「同行+复盘/故事」更适合深度案例体";
   }
   return undefined;
 }
 
-/** Resolution 卡推断摘要（与确认页展示一致） */
+/** Resolution 卡推断摘要（仅展示问题卡关键确认项） */
 export function formatIntakeInferenceSummary(
   expertId: PlatformExpertId,
   intake: Record<string, string | string[]>
 ): string[] {
-  return formatIntakeSelectionsForDisplay(expertId, intake);
+  return formatResolutionSummary(expertId, intake);
 }
 
-/** 确认页仅展示用户已选 intake（无值字段省略） */
+export function formatResolutionSummary(
+  expertId: PlatformExpertId,
+  intake: Record<string, string | string[]>
+): string[] {
+  const fieldIds = RESOLUTION_SUMMARY_FIELD_IDS[expertId];
+  const lines: string[] = [];
+  for (const step of intakeStepsForExpert(expertId)) {
+    for (const field of step.fields) {
+      if (fieldIds && !fieldIds.includes(field.fieldId)) continue;
+      const raw = intake[field.fieldId];
+      if (raw == null || raw === "") continue;
+      const ids = Array.isArray(raw) ? raw : [raw];
+      const labels = ids
+        .map((id) => field.options.find((o) => o.id === id)?.label ?? String(id))
+        .filter(Boolean);
+      if (!labels.length) continue;
+      lines.push(`${field.prompt} ${labels.join("、")}`);
+    }
+  }
+  return lines;
+}
+
+/** 确认页全量 intake 展示（编辑表单用） */
 export function formatIntakeSelectionsForDisplay(
   expertId: PlatformExpertId,
   intake: Record<string, string | string[]>

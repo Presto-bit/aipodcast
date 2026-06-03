@@ -18,6 +18,11 @@ import {
   intakeTotalSteps
 } from "./composerExpertIntake";
 import { inferResolutionConfidence } from "./composerUtteranceClassify";
+import {
+  finalizeExpertIntake,
+  isIntakeStepComplete,
+  usesQuestionCardIntake
+} from "./composerExpertIntake";
 
 export function createExpertTaskDraft(params: {
   expertId: PlatformExpertId;
@@ -133,11 +138,34 @@ export function blocksForResolutionPhase(
   return [expertStripBlock(expertId), confirm];
 }
 
-export function shouldSkipToResolution(expertId: PlatformExpertId, taskSentence: string, intake: Record<string, string | string[]>, skipStep2?: boolean): boolean {
+export function shouldSkipToResolution(
+  expertId: PlatformExpertId,
+  taskSentence: string,
+  intake: Record<string, string | string[]>,
+  skipStep2?: boolean
+): boolean {
+  if (usesQuestionCardIntake(expertId)) {
+    const step0 = isIntakeStepComplete(expertId, 0, intake);
+    const step1 = isIntakeStepComplete(expertId, 1, intake);
+    const high = inferResolutionConfidence(taskSentence, step0 && (step1 || Boolean(skipStep2))) === "high";
+    if (!high) return false;
+    if (skipStep2) return step0;
+    return step0 && step1;
+  }
   if (skipStep2 && inferResolutionConfidence(taskSentence, Object.keys(intake).length > 4) === "high") {
     return true;
   }
   return inferResolutionConfidence(taskSentence, Object.keys(intake).length > 3) === "high";
+}
+
+export function blocksForConfirmPhase(
+  expertId: PlatformExpertId,
+  taskSentence: string,
+  intake: Record<string, string | string[]>,
+  prefs: HomeComposerPrefs
+): AssistantBlock[] {
+  const finalized = finalizeExpertIntake(expertId, intake, taskSentence);
+  return blocksForResolutionPhase(expertId, taskSentence, finalized, prefs);
 }
 
 export function blocksForIntakePhase(
@@ -150,18 +178,10 @@ export function blocksForIntakePhase(
   return [expertStripBlock(expertId), buildIntakeStepBlock(expertId, intakeStep, intake, hint)];
 }
 
-export function blocksForConfirmPhase(
-  expertId: PlatformExpertId,
-  taskSentence: string,
-  intake: Record<string, string | string[]>,
-  prefs: HomeComposerPrefs
-): AssistantBlock[] {
-  return blocksForResolutionPhase(expertId, taskSentence, intake, prefs);
-}
-
 export function rebuildBlocksFromDraft(draft: ExpertTaskDraft, prefs: HomeComposerPrefs): AssistantBlock[] {
   if (draft.phase === "confirm") {
-    return blocksForResolutionPhase(draft.expertId, draft.taskSentence, draft.intake, prefs);
+    const intake = finalizeExpertIntake(draft.expertId, draft.intake, draft.taskSentence);
+    return blocksForResolutionPhase(draft.expertId, draft.taskSentence, intake, prefs);
   }
   if (draft.phase === "review") {
     return [
@@ -185,7 +205,7 @@ export function composerInputPlaceholder(draft: ExpertTaskDraft | undefined, exp
     return "描述要发的内容，或直接提问…";
   }
   if (draft?.phase === "intake" || draft?.phase === "confirm") {
-    return "先完成上方确认，或点「这是聊天不是开工」";
+    return "先完成上方问题，或点「跳过」/「这是聊天不是开工」";
   }
   if (draft?.phase === "generate") {
     return "正在生成…";

@@ -179,6 +179,37 @@ export function IconToolBtn({
   );
 }
 
+const COMPOSER_DROP_GAP = 6;
+
+function composerDropMaxHeight(): number {
+  return Math.min(384, window.innerHeight * 0.52);
+}
+
+function computeComposerDropPos(
+  rect: DOMRect,
+  align: "left" | "right"
+): { top?: number; bottom?: number; left?: number; right?: number; maxHeight: number } {
+  const maxMenuH = composerDropMaxHeight();
+  const spaceBelow = window.innerHeight - rect.bottom - COMPOSER_DROP_GAP;
+  const spaceAbove = rect.top - COMPOSER_DROP_GAP;
+  const openUpward = spaceBelow < maxMenuH && spaceAbove > spaceBelow;
+  const available = openUpward ? spaceAbove : spaceBelow;
+  const maxHeight = Math.max(120, Math.min(maxMenuH, available - 8));
+
+  if (openUpward) {
+    return {
+      bottom: window.innerHeight - rect.top + COMPOSER_DROP_GAP,
+      maxHeight,
+      ...(align === "left" ? { left: rect.left } : { right: window.innerWidth - rect.right })
+    };
+  }
+  return {
+    top: rect.bottom + COMPOSER_DROP_GAP,
+    maxHeight,
+    ...(align === "left" ? { left: rect.left } : { right: window.innerWidth - rect.right })
+  };
+}
+
 export function ComposerDropMenu({
   open,
   align,
@@ -192,7 +223,13 @@ export function ComposerDropMenu({
   anchorRef: RefObject<HTMLElement | null>;
   children: ReactNode;
 }) {
-  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
+  const [pos, setPos] = useState<{
+    top?: number;
+    bottom?: number;
+    left?: number;
+    right?: number;
+    maxHeight: number;
+  } | null>(null);
 
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) {
@@ -202,11 +239,7 @@ export function ComposerDropMenu({
     const update = () => {
       const el = anchorRef.current;
       if (!el) return;
-      const rect = el.getBoundingClientRect();
-      setPos({
-        top: rect.bottom + 6,
-        ...(align === "left" ? { left: rect.left } : { right: window.innerWidth - rect.right })
-      });
+      setPos(computeComposerDropPos(el.getBoundingClientRect(), align));
     };
     update();
     window.addEventListener("scroll", update, true);
@@ -215,21 +248,23 @@ export function ComposerDropMenu({
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [open, align, anchorRef]);
+  }, [open, align, anchorRef, children]);
 
   if (!open || !pos) return null;
 
   return createPortal(
     <div
       data-composer-dropdown=""
-      className="fixed z-[2000] max-h-[min(24rem,52vh)] overflow-y-auto rounded-[10px] border border-line bg-surface p-2 shadow-card"
+      className="fixed z-[2000] overflow-y-auto rounded-[10px] border border-line bg-surface p-2 shadow-card"
       style={{
         top: pos.top,
+        bottom: pos.bottom,
         left: pos.left,
         right: pos.right,
         minWidth,
         width: "max-content",
-        maxWidth: 320
+        maxWidth: 320,
+        maxHeight: pos.maxHeight
       }}
     >
       {children}
@@ -658,7 +693,8 @@ export function FeatureProfilePanel({
   onFeatureCoreChange,
   supplementalFields,
   supplementalDraft,
-  onSupplementalFieldChange
+  onSupplementalFieldChange,
+  placement = "bottom"
 }: {
   open: boolean;
   hasSaved: boolean;
@@ -671,12 +707,19 @@ export function FeatureProfilePanel({
   supplementalFields: { key: string; label: string; rows: number; placeholder?: string }[];
   supplementalDraft: Record<string, string>;
   onSupplementalFieldChange: (key: string, value: string) => void;
+  /** 输入框贴底时向上展开，避免被视口裁切 */
+  placement?: "top" | "bottom";
 }) {
   const [supplementOpen, setSupplementOpen] = useState(false);
   if (!open) return null;
 
   return (
-    <div className="relative z-10 mt-2.5 w-full shrink-0 overflow-hidden rounded-2xl border border-line bg-surface">
+    <div
+      className={[
+        "relative z-30 w-full shrink-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-soft",
+        placement === "bottom" ? "mt-2.5" : ""
+      ].join(" ")}
+    >
       <div className="flex items-center justify-between border-b border-line/80 px-4 py-3">
         <h2 className="text-sm font-semibold text-ink">{hasSaved ? "编辑我的特色" : "填写我的特色 · 我是谁"}</h2>
         <button
