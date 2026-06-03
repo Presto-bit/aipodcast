@@ -24,19 +24,72 @@ _XHS_NOTE_INTENT = {
     "listicle": "checklist",
 }
 
+_XHS_FIELD_LABELS: dict[str, dict[str, str]] = {
+    "audience": {"newcomer": "产品/行业新人", "peers": "同行从业者", "general": "泛用户/路人"},
+    "noteType": {"howto": "干货教程", "story": "故事经历", "listicle": "清单体"},
+    "purpose": {"acquire": "获客拉新", "retain": "复盘沉淀", "brand": "建立个人品牌"},
+    "tone": {"casual": "口语亲切", "pro": "专业克制", "sharp": "观点鲜明"},
+    "length": {"short": "短（约300字内）", "medium": "中（300–600字）", "long": "长（600字以上）"},
+    "titleCount": {"1": "1个标题", "3": "3个标题", "5": "5个标题"},
+    "withHashtags": {"yes": "要带话题", "no": "不要话题"},
+}
+
+
+def _intake_label(field: str, value: str) -> str:
+    return _XHS_FIELD_LABELS.get(field, {}).get(value, value)
+
+
+def _intake_human_summary(intake: dict[str, Any]) -> str:
+    if not intake:
+        return ""
+    lines: list[str] = []
+    field_prompts = {
+        "audience": "受众",
+        "noteType": "笔记类型",
+        "purpose": "目的",
+        "tone": "语气",
+        "length": "长度",
+        "titleCount": "标题数",
+        "withHashtags": "话题",
+    }
+    for field, label in field_prompts.items():
+        raw = intake.get(field)
+        if raw is None or raw == "":
+            continue
+        ids = raw if isinstance(raw, list) else [raw]
+        text = "、".join(_intake_label(field, str(v)) for v in ids if str(v).strip())
+        if text:
+            lines.append(f"{label}：{text}")
+    return "；".join(lines)
+
+
+def _compose_expert_writer_instructions(*, task_sentence: str, intake: dict[str, Any]) -> str:
+    hints = [
+        "你是小红书种草/推广笔记写手。根据用户任务与偏好，撰写完整、可直接发布的笔记 JSON。",
+        "必须写出具体产品卖点、目标用户痛点、使用场景与行动引导，禁止空泛占位。",
+        "禁止把任务描述或本说明文字照抄进正文；禁止输出「请先结论/展开」类模板结构。",
+        f"任务核心：{task_sentence.strip()[:300]}",
+    ]
+    human = _intake_human_summary(intake)
+    if human:
+        hints.append(f"用户偏好：{human}")
+    return "\n".join(hints)
+
 
 def _looks_like_material_fallback(content: dict[str, Any], task_sentence: str) -> bool:
     body = str(content.get("body") or "")
-    if "📌 先说结论" not in body:
-        return False
-    task_head = task_sentence.strip()[:28]
-    if task_head and task_head in body:
-        return True
-    tags = content.get("hashtags") or []
-    if isinstance(tags, list) and tags == _FALLBACK_XHS_TAGS:
-        return True
-    interaction = str(content.get("interaction") or "")
-    if "你觉得哪一点最有用" in interaction:
+    if "📌 先说结论" in body:
+        if "请根据以下创作任务" in body or "【创作任务】" in body:
+            return True
+        task_head = task_sentence.strip()[:28]
+        if task_head and task_head in body:
+            return True
+        tags = content.get("hashtags") or []
+        if isinstance(tags, list) and tags == _FALLBACK_XHS_TAGS:
+            return True
+        if "你觉得哪一点最有用" in body:
+            return True
+    if "请根据以下创作任务" in body or "撰写一篇完整、可直接" in body:
         return True
     return False
 
@@ -75,14 +128,11 @@ def _compose_expert_material_text(
     author_prompt: str,
     feature_summary: str,
 ) -> str:
-    parts = [
-        "请根据以下创作任务，撰写一篇完整、可直接发布的小红书种草/推广笔记。",
-        "必须包含：产品或主题卖点、目标用户痛点、使用场景、行动引导。",
-        "禁止把任务描述原文套进「先说结论/展开」模板；禁止输出空泛占位话术。",
-        f"【任务描述】\n{task_sentence.strip()}",
-    ]
-    if intake:
-        parts.append(f"【创作偏好】\n{_intake_summary(intake)}")
+    """仅用户事实（【】段落），不含 LLM 指令，避免 fallback 泄漏到正文。"""
+    parts = [f"【创作任务】\n{task_sentence.strip()}"]
+    human = _intake_human_summary(intake)
+    if human:
+        parts.append(f"【创作偏好】\n{human}")
     if feature_summary.strip():
         parts.append(f"【作者特色】\n{feature_summary.strip()}")
     if style_prompt.strip():
@@ -248,6 +298,45 @@ def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_rationale_lines(
+    *,
+    task_sentence: str,
+    intake: dict[str, Any],
+    used_rag: bool,
+    feature_summary: str,
+    pack: dict[str, Any],
+) -> list[str]:
+    lines: list[str] = []
+    human = _intake_human_summary(intake)
+    if human:
+        lines.append(f"按你的选项：{human}")
+    else:
+        lines.append("未选 intake 时按任务句推断结构与语气")
+    if used_rag:
+        lines.append("正文优先引用所选资料中的事实与案例")
+    else:
+        lines.append("基于你的任务描述扩写，发布前请核对产品细节")
+    if feature_summary.strip():
+        lines.append(f"已融入你的特色：{feature_summary[:60]}")
+    theme = str(pack.get("theme") or "").strip()
+    if theme:
+        lines.append(f"成稿定位：{theme[:80]}")
+    hook = str(pack.get("cover_hook") or "").strip()
+    if hook:
+        lines.append(f"封面/标题钩子方向：{hook[:40]}")
+    return lines[:6]
+
+
+def _expected_effect_line(intake: dict[str, Any]) -> str:
+    purposes = intake.get("purpose")
+    ids = purposes if isinstance(purposes, list) else [purposes]
+    if "acquire" in [str(p) for p in ids]:
+        return "适合信息流快刷场景，强调痛点与转化引导；发布后 24h 重点看点击与私信"
+    if "retain" in [str(p) for p in ids]:
+        return "偏复盘沉淀，适合收藏向；发布后关注收藏率与完读"
+    return "提升可复制发布效率；发布后关注赞藏与评论互动"
+
+
 def _assemble_xhs_deliverable(
     *,
     pack: dict[str, Any],
@@ -265,11 +354,14 @@ def _assemble_xhs_deliverable(
     material_labels = [f"{notebook} · {note_count} 篇"] if notebook and note_count else []
 
     meta: dict[str, Any] = {
-        "rationale": [
-            f"任务：{task_sentence[:120]}",
-            f"intake：{_intake_summary(intake)[:200]}" if intake else "按任务句默认推断",
-        ],
-        "expectedEffect": "提升可复制发布效率，降低漏步骤风险",
+        "rationale": _build_rationale_lines(
+            task_sentence=task_sentence,
+            intake=intake,
+            used_rag=used_rag,
+            feature_summary=feature_summary,
+            pack=pack,
+        ),
+        "expectedEffect": _expected_effect_line(intake),
         "provenance": {
             "corpusCoverage": coverage,
             "materialLabels": material_labels,
@@ -368,11 +460,23 @@ def run_composer_expert_deliverable_job(
         if str(feature_core.get(k) or "").strip()
     )[:80]
     options = _intake_to_social_options(intake, task_sentence)
-    other_req = "\n".join(x for x in [*style_bits, _intake_summary(intake)] if x)
+    writer_instructions = _compose_expert_writer_instructions(task_sentence=task_sentence, intake=intake)
+    other_req = "\n\n".join(
+        x
+        for x in [writer_instructions, *style_bits, _intake_human_summary(intake)]
+        if x
+    )
     if other_req:
         persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
-        persona["otherRequirements"] = other_req[:1200]
+        persona["otherRequirements"] = other_req[:1600]
         options["persona"] = persona
+    extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
+    extras["mustInclude"] = [
+        "产品或主题的核心卖点",
+        "目标用户痛点或使用场景",
+        "可执行的行动引导（如试用/关注/评论）",
+    ]
+    options["extras"] = extras
 
     if on_progress:
         on_progress("正在检索资料…" if nids else "正在准备创作任务…", 20.0 if nids else 12.0)
@@ -433,7 +537,7 @@ def run_composer_expert_deliverable_job(
             ):
                 quality_retry = True
                 last_errors = [
-                    "正文疑似模板回退，须根据任务撰写完整推广笔记，包含卖点与场景，禁止照抄任务句"
+                    "正文不得包含「请根据以下创作任务」等指令语或模板回退；须输出完整种草/推广笔记"
                 ]
                 if on_progress:
                     on_progress("初稿质量不足，正在重写…", 72.0)

@@ -5,6 +5,7 @@ import type {
   ExpertTaskDraft,
   FeatureCore,
   PersonalFeaturePreferences,
+  PlatformExpertId,
   WritingHabitMode,
   AssistantBlock
 } from "./homeComposerExpertTypes";
@@ -57,6 +58,8 @@ export type HomeComposerTurn = {
   blocks?: AssistantBlock[];
   /** 用户点「改聊一下」后归档，块只读展示 */
   taskFlowArchived?: boolean;
+  /** 本 turn 启动时选中的专家（换专家后仍正确展示历史） */
+  expertId?: PlatformExpertId;
   expertJobId?: string;
   createdAt: number;
 };

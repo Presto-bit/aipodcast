@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import type { AssistantBlock, ExpertTaskDraft, PlatformExpertId } from "../../lib/homeComposerExpertTypes";
 import { EXPERT_DISPLAY_NAMES } from "../../lib/composerExperts";
 import { formatIntakeSelectionsForDisplay } from "../../lib/composerExpertIntake";
 import DeliverableCard from "./composer/DeliverableCard";
+import ConfirmEditForm from "./composer/ConfirmEditForm";
 
 type IntakeStepBlock = Extract<AssistantBlock, { kind: "intake_step" }>;
 type ConfirmBlock = Extract<AssistantBlock, { kind: "confirm" }>;
@@ -136,7 +138,7 @@ function ConfirmPanel({
   expertId,
   disabled,
   onStartGenerate,
-  onEditIntake,
+  onConfirmUpdate,
   onExitChat,
   onEditFeature
 }: {
@@ -144,12 +146,30 @@ function ConfirmPanel({
   expertId: PlatformExpertId;
   disabled?: boolean;
   onStartGenerate: () => void;
-  onEditIntake: () => void;
+  onConfirmUpdate: (taskSentence: string, intake: Record<string, string | string[]>) => void;
   onExitChat: () => void;
   onEditFeature: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const mp = block.materialPlan;
   const intakeLines = formatIntakeSelectionsForDisplay(expertId, block.intake as Record<string, string | string[]>);
+
+  if (editing && !disabled) {
+    return (
+      <div className="rounded-2xl border border-brand/25 bg-surface p-4 shadow-soft">
+        <ConfirmEditForm
+          expertId={expertId}
+          taskSentence={block.summary}
+          intake={block.intake as Record<string, string | string[]>}
+          onSave={(task, intake) => {
+            onConfirmUpdate(task, intake);
+            setEditing(false);
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-brand/25 bg-surface p-4 shadow-soft">
@@ -196,8 +216,8 @@ function ConfirmPanel({
           >
             开始生成
           </button>
-          <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={onEditIntake}>
-            改一项
+          <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={() => setEditing(true)}>
+            编辑需求
           </button>
           <button type="button" className="rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-fill" onClick={onExitChat}>
             改聊一下
@@ -217,7 +237,7 @@ export default function ComposerExpertBlocks({
   onIntakeNext,
   onIntakeConfirmDirect,
   onConfirmStart,
-  onConfirmEditIntake,
+  onConfirmUpdate,
   onExitChat,
   onEditFeature,
   onCopyToast,
@@ -233,7 +253,7 @@ export default function ComposerExpertBlocks({
   onIntakeNext: () => void;
   onIntakeConfirmDirect: () => void;
   onConfirmStart: () => void;
-  onConfirmEditIntake: () => void;
+  onConfirmUpdate: (taskSentence: string, intake: Record<string, string | string[]>) => void;
   onExitChat: () => void;
   onEditFeature: () => void;
   onCopyToast?: (message: string) => void;
@@ -285,7 +305,7 @@ export default function ComposerExpertBlocks({
               expertId={expertId}
               disabled={archived}
               onStartGenerate={onConfirmStart}
-              onEditIntake={onConfirmEditIntake}
+              onConfirmUpdate={onConfirmUpdate}
               onExitChat={onExitChat}
               onEditFeature={onEditFeature}
             />

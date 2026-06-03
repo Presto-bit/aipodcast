@@ -12,6 +12,7 @@ import {
 import DeliverablePreviewFrame from "./DeliverablePreviewFrame";
 import OpsPlaybookPanel from "./OpsPlaybookPanel";
 import DeliverableFeedbackInline from "./DeliverableFeedbackInline";
+import DeliverableConsiderationPanel from "./DeliverableConsiderationPanel";
 import { trackComposerExpertEvent } from "../../../lib/composerExpertAnalytics";
 
 type DeliverableBlock = Extract<AssistantBlock, { kind: "deliverable" }>;
@@ -126,20 +127,7 @@ function XhsProductPanel({
 
   return (
     <div className="space-y-4">
-      <DeliverablePreviewFrame content={content} />
-
-      {content.cover.slides.length ? (
-        <details className="rounded-lg border border-line/60 bg-fill/10 px-3 py-2 text-xs">
-          <summary className="cursor-pointer font-medium text-muted">内页图说明（{content.cover.slides.length} 张）</summary>
-          <ul className="mt-2 space-y-1 text-muted">
-            {content.cover.slides.map((slide) => (
-              <li key={`${slide.role}-${slide.description}`}>
-                {slide.role === "cover" ? "封面" : "内页"} · {slide.description}
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
+      <DeliverableConsiderationPanel meta={block.meta} />
 
       <div>
         <p className="text-xs font-medium text-muted">标题备选</p>
@@ -222,6 +210,21 @@ function XhsProductPanel({
           />
         ) : null}
       </div>
+
+      {content.cover.slides.length ? (
+        <details className="rounded-lg border border-line/60 bg-fill/10 px-3 py-2 text-xs">
+          <summary className="cursor-pointer font-medium text-muted">内页图说明（{content.cover.slides.length} 张）</summary>
+          <ul className="mt-2 space-y-1 text-muted">
+            {content.cover.slides.map((slide) => (
+              <li key={`${slide.role}-${slide.description}`}>
+                {slide.role === "cover" ? "封面" : "内页"} · {slide.description}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      <DeliverablePreviewFrame content={content} />
     </div>
   );
 }

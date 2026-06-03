@@ -2,7 +2,8 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 
 const NotesAskAnswerMarkdownBody = dynamic(
   () => import("../notes/NotesAskAnswerMarkdownBody").then((m) => ({ default: m.default })),
@@ -181,24 +182,57 @@ export function ComposerDropMenu({
   open,
   align,
   minWidth = 148,
+  anchorRef,
   children
 }: {
   open: boolean;
   align: "left" | "right";
   minWidth?: number;
+  anchorRef: RefObject<HTMLElement | null>;
   children: ReactNode;
 }) {
-  if (!open) return null;
-  return (
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open || !anchorRef.current) {
+      setPos(null);
+      return;
+    }
+    const update = () => {
+      const el = anchorRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setPos({
+        top: rect.bottom + 6,
+        ...(align === "left" ? { left: rect.left } : { right: window.innerWidth - rect.right })
+      });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open, align, anchorRef]);
+
+  if (!open || !pos) return null;
+
+  return createPortal(
     <div
-      className={[
-        "absolute z-[1100] max-h-56 overflow-y-auto rounded-[10px] border border-line bg-surface p-2 shadow-card",
-        align === "left" ? "left-0" : "right-0"
-      ].join(" ")}
-      style={{ top: COMPOSER_TOOL_H + 6, minWidth, width: "max-content", maxWidth: 260 }}
+      className="fixed z-[2000] max-h-[min(14rem,40vh)] overflow-y-auto rounded-[10px] border border-line bg-surface p-2 shadow-card"
+      style={{
+        top: pos.top,
+        left: pos.left,
+        right: pos.right,
+        minWidth,
+        width: "max-content",
+        maxWidth: 260
+      }}
     >
       {children}
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -221,12 +255,17 @@ export function ComposerDropAnchor({
   minWidth?: number;
   children: ReactNode;
 }) {
+  const anchorRef = useRef<HTMLDivElement>(null);
   return (
-    <div className="relative shrink-0 overflow-visible" style={{ width: COMPOSER_TOOL_H, height: COMPOSER_TOOL_H, zIndex: open ? 1100 : 1 }}>
+    <div
+      ref={anchorRef}
+      className="relative shrink-0 overflow-visible"
+      style={{ width: COMPOSER_TOOL_H, height: COMPOSER_TOOL_H, zIndex: open ? 1100 : 1 }}
+    >
       <IconToolBtn title={title} active={open} selected={selected} onClick={onToggle}>
         {icon}
       </IconToolBtn>
-      <ComposerDropMenu open={open} align={align} minWidth={minWidth}>
+      <ComposerDropMenu open={open} align={align} minWidth={minWidth} anchorRef={anchorRef}>
         {children}
       </ComposerDropMenu>
     </div>
@@ -445,7 +484,7 @@ export function ComposerShell({
     <div
       className={[
         "relative w-full shrink-0 overflow-visible rounded-2xl border border-line bg-surface p-3 shadow-soft",
-        menuOpen ? "z-30" : "z-10"
+        menuOpen ? "z-40" : "z-20"
       ].join(" ")}
     >
       <div className="relative w-full overflow-visible">

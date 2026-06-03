@@ -76,6 +76,7 @@ import type {
 import {
   COMPOSER_EXPERT_OPTIONS,
   defaultComposerExpertSelection,
+  EXPERT_DISPLAY_NAMES,
   resolveActiveFormats
 } from "../../lib/composerExperts";
 import {
@@ -511,7 +512,10 @@ export default function HomeComposerPage({
           ...s,
           prefs: { ...s.prefs, taskDraft: draft }
         }));
-        return updateHomeComposerTurn(withDraft, turnId, { blocks });
+        return updateHomeComposerTurn(withDraft, turnId, {
+          blocks,
+          ...(draft.phase === "confirm" ? { userText: draft.taskSentence } : {})
+        });
       });
     },
     []
@@ -573,6 +577,7 @@ export default function HomeComposerPage({
           userText: q,
           formats: {},
           blocks,
+          expertId,
           createdAt: Date.now()
         };
 
@@ -639,17 +644,20 @@ export default function HomeComposerPage({
     goToConfirm(draft.turnId, draft);
   }, [goToConfirm, prefs?.taskDraft]);
 
-  const handleConfirmEditIntake = useCallback(() => {
-    const draft = prefs?.taskDraft;
-    if (!draft || !prefs) return;
-    const nextDraft: ExpertTaskDraft = {
-      ...draft,
-      phase: "intake",
-      intakeStep: 0,
-      updatedAt: new Date().toISOString()
-    };
-    patchTaskDraftTurn(draft.turnId, nextDraft, prefs);
-  }, [patchTaskDraftTurn, prefs]);
+  const handleConfirmUpdate = useCallback(
+    (taskSentence: string, intake: Record<string, string | string[]>) => {
+      const draft = prefs?.taskDraft;
+      if (!draft || draft.phase !== "confirm" || !prefs) return;
+      const nextDraft: ExpertTaskDraft = {
+        ...draft,
+        taskSentence: taskSentence.trim(),
+        intake,
+        updatedAt: new Date().toISOString()
+      };
+      patchTaskDraftTurn(draft.turnId, nextDraft, prefs);
+    },
+    [patchTaskDraftTurn, prefs]
+  );
 
   const handleConfirmStartGenerate = useCallback(async () => {
     const draft = prefs?.taskDraft;
@@ -867,12 +875,7 @@ export default function HomeComposerPage({
 
     setStore((prev) => {
       if (!prev) return prev;
-      const active = activeHomeComposerSession(prev);
-      const draft = active?.prefs.taskDraft;
-      let nextStore = draft
-        ? updateHomeComposerTurn(prev, draft.turnId, { taskFlowArchived: true })
-        : prev;
-      return patchActiveHomeComposerSession(nextStore, (s) => ({
+      return patchActiveHomeComposerSession(prev, (s) => ({
         ...s,
         prefs: { ...s.prefs, expert: next, formats: [], taskDraft: undefined }
       }));
@@ -1068,38 +1071,45 @@ export default function HomeComposerPage({
                 {session.turns.map((turn) => {
                   const isActiveExpertTurn = prefs?.taskDraft?.turnId === turn.id;
                   const deliverableBlock = turn.blocks?.find((b) => b.kind === "deliverable");
-                  const expertId =
-                    deliverableBlock && deliverableBlock.kind === "deliverable"
+                  const turnExpertId =
+                    turn.expertId ??
+                    (deliverableBlock && deliverableBlock.kind === "deliverable"
                       ? deliverableBlock.expertId
                       : isActiveExpertTurn && prefs?.taskDraft
                         ? prefs.taskDraft.expertId
-                        : prefs?.expert.mode === "platform"
-                          ? prefs.expert.expertId
-                          : null;
+                        : null);
+                  const showExpertBlocks = Boolean(turn.blocks?.length && turnExpertId);
+                  const turnArchived = Boolean(showExpertBlocks && !isActiveExpertTurn);
+                  const turnContextParts =
+                    isActiveExpertTurn && expertOutputContext
+                      ? expertOutputContext
+                      : turnExpertId
+                        ? [EXPERT_DISPLAY_NAMES[turnExpertId]]
+                        : undefined;
                   return (
                   <div key={turn.id} className="space-y-5">
                     <UserBubble text={turn.userText} />
-                    {turn.blocks?.length && expertId ? (
+                    {showExpertBlocks && turnExpertId ? (
                       <ComposerExpertBlocks
-                        blocks={turn.blocks}
-                        expertId={expertId}
-                        archived={turn.taskFlowArchived}
+                        blocks={turn.blocks!}
+                        expertId={turnExpertId}
+                        archived={turnArchived || turn.taskFlowArchived}
                         draft={isActiveExpertTurn ? prefs?.taskDraft : undefined}
                         onIntakeChange={handleIntakeFieldChange}
                         onIntakeNext={handleIntakeNext}
                         onIntakeConfirmDirect={handleIntakeConfirmDirect}
                         onConfirmStart={handleConfirmStartGenerate}
-                        onConfirmEditIntake={handleConfirmEditIntake}
+                        onConfirmUpdate={handleConfirmUpdate}
                         onExitChat={handleExitExpertTask}
                         onEditFeature={togglePersonalPanel}
                         onCopyToast={showCopyToast}
                         featureCoreComplete={activeFeatureCoreComplete}
-                        outputContextParts={expertOutputContext}
+                        outputContextParts={turnContextParts}
                         onFeedbackPatch={(patch) => {
                           const fb = turn.blocks?.find((b) => b.kind === "feedback");
                           handleExpertFeedback(
                             turn.id,
-                            expertId,
+                            turnExpertId,
                             patch,
                             fb?.kind === "feedback" ? fb.deliverableId : undefined
                           );
@@ -1150,8 +1160,8 @@ export default function HomeComposerPage({
             <div
               ref={composerRootRef}
               className={[
-                "relative z-10 w-full shrink-0 overflow-visible",
-                hasSent ? "pt-2" : ""
+                "relative z-20 w-full shrink-0 overflow-visible",
+                hasSent ? "pt-2 pb-1" : ""
               ].join(" ")}
             >
               {featureNudgeVisible && featureNudgeExpertId ? (
