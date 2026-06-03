@@ -630,7 +630,9 @@ export default function HomeComposerPage({
     if (!draft || draft.phase !== "intake" || !prefs) return;
     const total = intakeTotalSteps(draft.expertId);
     const nextStep = draft.intakeStep + 1;
-    if (draft.skipStep2 || nextStep >= total) {
+    const reachedEnd = nextStep >= total;
+    const skipLastStep = Boolean(draft.skipStep2) && nextStep === total - 1;
+    if (reachedEnd || skipLastStep) {
       goToConfirm(draft.turnId, draft);
       return;
     }
@@ -1095,7 +1097,7 @@ export default function HomeComposerPage({
                         ? prefs.taskDraft.expertId
                         : null);
                   const showExpertBlocks = Boolean(turn.blocks?.length && turnExpertId);
-                  const turnArchived = Boolean(showExpertBlocks && !isActiveExpertTurn);
+                  const turnArchived = Boolean(turn.taskFlowArchived);
                   const turnContextParts =
                     isActiveExpertTurn && expertOutputContext
                       ? expertOutputContext

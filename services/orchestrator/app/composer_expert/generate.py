@@ -26,13 +26,57 @@ _XHS_NOTE_INTENT = {
 }
 
 _XHS_FIELD_LABELS: dict[str, dict[str, str]] = {
-    "audience": {"newcomer": "产品/行业新人", "peers": "同行从业者", "general": "泛用户/路人"},
+    "accountStage": {
+        "cold_start": "新号起号",
+        "steady": "稳定更新",
+        "convert": "转化变现",
+        "brand": "品牌/企业号",
+    },
+    "audience": {
+        "newcomer": "入门小白",
+        "peers": "同行从业者",
+        "buyer": "决策购买用户",
+        "general": "泛流量路人",
+    },
+    "contentAngle": {
+        "review": "测评种草",
+        "tutorial": "教程SOP",
+        "listicle": "避坑清单",
+        "story": "经历故事",
+        "opinion": "观点态度",
+    },
+    "publishGoal": {
+        "expose": "曝光破圈",
+        "save": "高收藏",
+        "comment": "评论互动",
+        "dm": "引导私信",
+        "follow": "涨粉关注",
+    },
+    "hookStyle": {
+        "pain_question": "痛点提问",
+        "number": "数字结果",
+        "contrast": "反常识对比",
+        "scene": "场景代入",
+    },
+    "structure": {
+        "bullet": "分点清单",
+        "steps": "步骤教程",
+        "story_arc": "故事线",
+        "compare": "对比测评",
+    },
     "noteType": {"howto": "干货教程", "story": "故事经历", "listicle": "清单体"},
     "purpose": {"acquire": "获客拉新", "retain": "复盘沉淀", "brand": "建立个人品牌"},
     "tone": {"casual": "口语亲切", "pro": "专业克制", "sharp": "观点鲜明"},
-    "length": {"short": "短（约300字内）", "medium": "中（300–600字）", "long": "长（600字以上）"},
+    "length": {"short": "短（约250字内）", "medium": "中（250–500字）", "long": "长（500字以上）"},
     "titleCount": {"1": "1个标题", "3": "3个标题", "5": "5个标题"},
     "withHashtags": {"yes": "要带话题", "no": "不要话题"},
+    "ctaStyle": {"save": "求收藏", "comment": "求评论", "soft_dm": "软引导私信", "none": "弱CTA"},
+    "visualStyle": {
+        "big_type": "大字报封面",
+        "photo": "实拍场景",
+        "screenshot": "截图标注",
+        "infographic": "信息图",
+    },
 }
 
 
@@ -45,13 +89,20 @@ def _intake_human_summary(intake: dict[str, Any]) -> str:
         return ""
     lines: list[str] = []
     field_prompts = {
-        "audience": "受众",
+        "accountStage": "账号阶段",
+        "audience": "读者",
+        "contentAngle": "切入角度",
+        "publishGoal": "发布目标",
+        "hookStyle": "开头钩子",
+        "structure": "正文结构",
         "noteType": "笔记类型",
         "purpose": "目的",
         "tone": "语气",
         "length": "长度",
         "titleCount": "标题数",
         "withHashtags": "话题",
+        "ctaStyle": "行动引导",
+        "visualStyle": "配图风格",
     }
     for field, label in field_prompts.items():
         raw = intake.get(field)
@@ -69,6 +120,8 @@ def _compose_expert_writer_instructions(*, task_sentence: str, intake: dict[str,
         "你是小红书种草/推广笔记写手。根据用户任务与偏好，撰写完整、可直接发布的笔记 JSON。",
         "必须写出具体产品卖点、目标用户痛点、使用场景与行动引导，禁止空泛占位。",
         "禁止把任务描述或本说明文字照抄进正文；禁止输出「请先结论/展开」类模板结构。",
+        "正文须分段：每段不超过 80 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
+        "优先用 sections 数组（小标题+短段），或 body 内用 \\n\\n 分段。",
         f"任务核心：{task_sentence.strip()[:300]}",
     ]
     human = _intake_human_summary(intake)
@@ -136,6 +189,7 @@ def _composer_anti_template_extras(intake: dict[str, Any]) -> dict[str, Any]:
             "要点一/要点二 空泛占位",
             "与创作任务无关的通用护肤/熬夜等案例",
             "复述【创作任务】标签或说明文字",
+            "单段超过80字的密集文字墙",
         ],
         "emojiLevel": "light",
         "openingMode": "scene" if note_type == "story" else "pain_question",
@@ -162,6 +216,16 @@ def _intake_to_social_options(intake: dict[str, Any], task_sentence: str) -> dic
             options["audience"] = _XHS_AUDIENCE[key]
             break
     note_type = str(intake.get("noteType") or "").strip()
+    angle = str(intake.get("contentAngle") or "").strip()
+    if not note_type and angle:
+        angle_to_note = {
+            "listicle": "listicle",
+            "story": "story",
+            "review": "howto",
+            "tutorial": "howto",
+            "opinion": "howto",
+        }
+        note_type = angle_to_note.get(angle, "howto")
     if note_type in _XHS_NOTE_INTENT:
         options["intent"] = _XHS_NOTE_INTENT[note_type]
     purpose_raw = intake.get("purpose")
@@ -169,7 +233,9 @@ def _intake_to_social_options(intake: dict[str, Any], task_sentence: str) -> dic
     if "acquire" in [str(p) for p in purposes]:
         options["intent"] = "zhongcao"
     options["userNote"] = task_sentence[:500]
-    options["extras"] = _composer_anti_template_extras(intake)
+    extras = _composer_anti_template_extras(intake)
+    extras = _apply_intake_visual_extras(intake, extras)
+    options["extras"] = extras
     return options
 
 
@@ -260,7 +326,8 @@ _XHS_OPS_LLM_SYSTEM = """你是小红书发布教练。根据已生成的笔记�
 固定 7 步，stepNo 1～7，title 依次为：做图、标题、正文、Tag、发布、互动、复盘。
 tier：1～5 步 must_do；第 6 步 nice_to_have；第 7 步 after_publish。
 defaultExpanded：1～4 步 true，5～7 步 false。
-第 2 步 copyBlocks 须含各备选标题；第 4 步 copyBlocks 须含一行话题；第 6 步 copyBlocks 须含首评与 1～2 条回复模板。"""
+第 2 步 copyBlocks 须含各备选标题；第 4 步 copyBlocks 须含一行话题；第 6 步 copyBlocks 须含首评与 1～2 条回复模板。
+actions 与 copyBlocks 勿重复粘贴同一全文；每步 actions 最多 3 条，要短。"""
 
 
 def _body_excerpt(body: str, max_chars: int = 80) -> str:
@@ -311,7 +378,7 @@ def _normalize_ops_step(raw: dict[str, Any], step_no: int) -> dict[str, Any]:
         "stepNo": step_no,
         "title": title,
         "objective": objective,
-        "actions": actions[:8],
+        "actions": actions[:3],
         "tier": _XHS_OPS_TIER_BY_STEP.get(step_no, "must_do"),
         "defaultExpanded": _XHS_OPS_EXPANDED_BY_STEP.get(step_no, False),
     }
@@ -341,6 +408,64 @@ def _normalize_ops_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]] | 
     return [by_no[i] for i in range(1, 8)]
 
 
+def _format_xhs_body_readable(body: str, *, max_para_chars: int = 80) -> str:
+    """拆过长段落，提升小红书正文可读性。"""
+    text = (body or "").replace("\r\n", "\n").strip()
+    if not text:
+        return text
+    blocks = re.split(r"\n{2,}", text)
+    out_blocks: list[str] = []
+    for block in blocks:
+        chunk = block.strip()
+        if not chunk:
+            continue
+        if chunk.startswith("#") or chunk.startswith("·") or chunk.startswith("-"):
+            out_blocks.append(chunk)
+            continue
+        if len(chunk) <= max_para_chars:
+            out_blocks.append(chunk)
+            continue
+        sentences = re.split(r"(?<=[。！？；])\s*", chunk)
+        buf = ""
+        for sent in sentences:
+            s = sent.strip()
+            if not s:
+                continue
+            if len(buf) + len(s) > max_para_chars and buf:
+                out_blocks.append(buf.strip())
+                buf = s
+            else:
+                buf = f"{buf}{s}" if buf else s
+        if buf.strip():
+            out_blocks.append(buf.strip())
+    return "\n\n".join(out_blocks)
+
+
+def _apply_intake_visual_extras(intake: dict[str, Any], extras: dict[str, Any]) -> dict[str, Any]:
+    hook = str(intake.get("hookStyle") or "").strip()
+    hook_map = {
+        "pain_question": "pain_question",
+        "number": "number",
+        "contrast": "contrast",
+        "scene": "scene",
+    }
+    if hook in hook_map:
+        extras["openingMode"] = hook_map[hook]
+    struct = str(intake.get("structure") or "").strip()
+    struct_map = {
+        "bullet": "checklist",
+        "steps": "dry_goods",
+        "story_arc": "story_seed",
+        "compare": "dry_goods",
+    }
+    if struct in struct_map:
+        extras["bodySkeleton"] = struct_map[struct]
+    visual = str(intake.get("visualStyle") or "").strip()
+    if visual == "big_type":
+        extras["coverHookStyle"] = "pain"
+    return extras
+
+
 def _build_xhs_ops_from_content(
     content: dict[str, Any],
     pack: dict[str, Any],
@@ -367,65 +492,32 @@ def _build_xhs_ops_from_content(
     if not slide_actions:
         slide_actions = [f"封面大字写「{headline[:12]}」", "竖版 3:4，背景简洁"]
 
-    title_actions = [f"备选 {idx + 1}：{title[:28]}" for idx, title in enumerate(titles[:3])]
-    title_actions.append("选与封面大字、首段价值最匹配的一条")
-    title_copy = [{"label": f"标题 {idx + 1}", "text": title} for idx, title in enumerate(titles[:3])]
+    if not slide_actions:
+        slide_actions = [f"封面 headline「{headline[:12]}」", "竖版 3:4"]
 
-    body_lines = [line.strip() for line in body.split("\n") if line.strip()]
-    body_actions: list[str] = []
-    if body_lines:
-        body_actions.append(f"首段要点：{_body_excerpt(body_lines[0], 72)}")
-    if len(body_lines) > 1:
-        body_actions.append(f"正文共 {len(body_lines)} 段，发布前通读并微调{tone_label}度")
-    body_actions.append("确认无编造数据、绝对化承诺与敏感表述")
+    title_copy = [{"label": f"标题 {idx + 1}", "text": title} for idx, title in enumerate(titles[:3])]
+    tag_line = " ".join(f"#{tag}" for tag in hashtags[:8])
+    tag_copy = [{"label": "话题一行", "text": tag_line}] if tag_line else []
     body_copy = [{"label": "正文全文", "text": body}] if body else []
 
-    tag_line = " ".join(f"#{tag}" for tag in hashtags[:8])
-    tag_actions: list[str] = []
-    if hashtags:
-        tag_actions.append(f"本稿话题：{'、'.join(hashtags[:6])}")
-    tag_actions.append("复制下方一行到发布页话题栏")
-    tag_copy = [{"label": "话题一行", "text": tag_line}] if tag_line else []
-
-    publish_actions = [
-        f"封面 headline「{headline[:16]}」与所选标题一致",
-        "检查封面、标题、正文无错别字",
-        "建议工作日 12:00–13:30 或 20:00–22:00 发布",
-    ]
-
-    interact_actions = [
-        "发布后立即自评一条，引导收藏/评论",
-        f"回复评论时保持{tone_label}",
-        "准备共鸣、质疑、求资料三类回复",
-    ]
     interact_copy: list[dict[str, str]] = []
     if interaction:
         interact_copy.append({"label": "首评/互动引导", "text": interaction})
-    if body_lines:
-        interact_copy.append(
-            {"label": "共鸣回复示例", "text": f"同感！{_body_excerpt(body_lines[-1], 48)}"}
-        )
-
-    recap_actions = [
-        "24h 看曝光、点击率；7d 看赞藏评",
-        "数据一般：优先换封面或首段",
-        f"记录本次选题「{headline[:16]}」效果，下次同类任务复用",
-    ]
 
     raw_steps = [
         {
             "stepNo": 1,
             "title": "做图",
-            "objective": f"按本稿封面「{headline[:16]}」准备 {len(slides) or 2} 张配图",
-            "actions": slide_actions,
+            "objective": f"按封面「{headline[:14]}」准备配图",
+            "actions": slide_actions[:3],
             "tier": "must_do",
             "defaultExpanded": True,
         },
         {
             "stepNo": 2,
             "title": "标题",
-            "objective": "从本稿备选标题中选最适合的一条",
-            "actions": title_actions,
+            "objective": "从备选标题中选一条发布",
+            "actions": ["选点击意图最明确的一条", "与封面 headline 一致"],
             "tier": "must_do",
             "defaultExpanded": True,
             "copyBlocks": title_copy,
@@ -433,8 +525,8 @@ def _build_xhs_ops_from_content(
         {
             "stepNo": 3,
             "title": "正文",
-            "objective": "发布前通读本稿正文并微调口语度",
-            "actions": body_actions,
+            "objective": "通读并微调语气后发布",
+            "actions": ["核对事实与表述", f"保持{tone_label}"],
             "tier": "must_do",
             "defaultExpanded": True,
             "copyBlocks": body_copy,
@@ -442,8 +534,8 @@ def _build_xhs_ops_from_content(
         {
             "stepNo": 4,
             "title": "Tag",
-            "objective": "添加本稿话题提升发现率",
-            "actions": tag_actions,
+            "objective": "添加本稿话题",
+            "actions": ["复制下方一行到发布页"],
             "tier": "must_do",
             "defaultExpanded": True,
             "copyBlocks": tag_copy,
@@ -452,29 +544,35 @@ def _build_xhs_ops_from_content(
             "stepNo": 5,
             "title": "发布",
             "objective": "发布前最后检查",
-            "actions": publish_actions,
+            "actions": [
+                "封面/标题/正文无错别字",
+                "建议 12:00–13:30 或 20:00–22:00 发布",
+            ],
             "tier": "must_do",
             "defaultExpanded": False,
-            "collapsedSummary": "发布前 checklist + 时段建议",
+            "collapsedSummary": "发布前 checklist",
         },
         {
             "stepNo": 6,
             "title": "互动",
-            "objective": "发布后 30 分钟内完成首轮互动",
-            "actions": interact_actions,
+            "objective": "发布后 30 分钟内首轮互动",
+            "actions": ["发自评引导收藏/评论", f"回复保持{tone_label}"],
             "tier": "nice_to_have",
             "defaultExpanded": False,
-            "collapsedSummary": "首评 + 评论回复模板",
+            "collapsedSummary": "首评 + 回复",
             "copyBlocks": interact_copy,
         },
         {
             "stepNo": 7,
             "title": "复盘",
             "objective": "24h / 7d 看数据并迭代",
-            "actions": recap_actions,
+            "actions": [
+                "24h 看曝光/点击率，7d 看赞藏评",
+                "数据弱则优先换封面或首段",
+            ],
             "tier": "after_publish",
             "defaultExpanded": False,
-            "collapsedSummary": "24h/7d 指标 + 优化动作",
+            "collapsedSummary": "数据复盘",
         },
     ]
     return [_normalize_ops_step(step, step["stepNo"]) for step in raw_steps]
@@ -563,7 +661,7 @@ def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
     body = str(pack.get("body") or "").strip()
     hashtags = _extract_hashtags(pack, body)
     headline = titles[0][:12]
-    body = _deliverable_body_from_pack(pack, hashtags)
+    body = _format_xhs_body_readable(_deliverable_body_from_pack(pack, hashtags))
     return {
         "titles": titles[:5],
         "body": body or titles[0],
@@ -757,6 +855,7 @@ def run_composer_expert_deliverable_job(
         "产品或主题的核心卖点",
         "目标用户痛点或使用场景",
         "可执行的行动引导（如试用/关注/评论）",
+        "正文分段，每段不超过80字",
     ]
     options["extras"] = extras
 

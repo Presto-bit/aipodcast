@@ -12,8 +12,8 @@ import {
 import DeliverablePreviewFrame from "./DeliverablePreviewFrame";
 import OpsPlaybookPanel from "./OpsPlaybookPanel";
 import DeliverableFeedbackInline from "./DeliverableFeedbackInline";
-import DeliverableConsiderationPanel from "./DeliverableConsiderationPanel";
 import { trackComposerExpertEvent } from "../../../lib/composerExpertAnalytics";
+import { xhsBodyDisplayParagraphs } from "../../../lib/xhsBodyFormat";
 
 type DeliverableBlock = Extract<AssistantBlock, { kind: "deliverable" }>;
 type FeedbackBlock = Extract<AssistantBlock, { kind: "feedback" }>;
@@ -127,8 +127,6 @@ function XhsProductPanel({
 
   return (
     <div className="space-y-4">
-      <DeliverableConsiderationPanel meta={block.meta} />
-
       <div>
         <p className="text-xs font-medium text-muted">标题备选</p>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -154,7 +152,13 @@ function XhsProductPanel({
       </div>
 
       <div className="rounded-xl border border-line/80 bg-fill/20 p-3">
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">{content.body}</p>
+        <div className="space-y-2.5 text-sm leading-relaxed text-ink">
+          {xhsBodyDisplayParagraphs(content.body).map((para, idx) => (
+            <p key={idx} className="whitespace-pre-wrap">
+              {para}
+            </p>
+          ))}
+        </div>
         {content.hashtags.length ? (
           <p className="mt-3 text-xs text-muted">
             {content.hashtags.map((t) => `#${t.replace(/^#/, "")}`).join(" ")}

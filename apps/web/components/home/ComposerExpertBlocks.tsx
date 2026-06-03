@@ -264,32 +264,21 @@ export default function ComposerExpertBlocks({
   if (!blocks.length) return null;
 
   const feedbackBlock = blocks.find((b): b is FeedbackBlock => b.kind === "feedback");
+  const expertStrip = blocks.find((b) => b.kind === "expert_strip");
+  const hasDeliverable = blocks.some((b) => b.kind === "deliverable");
 
   return (
     <div className="space-y-3">
-      {archived ? (
-        <p className="text-xs text-muted">已退出专家任务 · 上方选项仅供回顾</p>
+      {expertStrip && !hasDeliverable ? (
+        <p className="text-xs leading-relaxed text-muted">
+          <span className="font-medium text-ink">{EXPERT_DISPLAY_NAMES[expertId]}</span>
+          {" · "}
+          {expertStrip.persona} · {expertStrip.methodology}
+        </p>
       ) : null}
       {blocks.map((block, idx) => {
         if (block.kind === "expert_strip") {
-          return (
-            <div
-              key={`strip-${idx}`}
-              className="rounded-xl border border-brand/20 bg-gradient-to-br from-brand/5 to-fill/30 px-3 py-2.5"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-brand/15 px-2 py-0.5 text-xs font-semibold text-brand">
-                  {EXPERT_DISPLAY_NAMES[expertId]}
-                </span>
-                {outputContextParts?.length ? (
-                  <span className="text-[11px] text-muted">{outputContextParts.join(" · ")}</span>
-                ) : null}
-              </div>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
-                {block.persona} · {block.methodology}
-              </p>
-            </div>
-          );
+          return null;
         }
         if (block.kind === "intake_step") {
           return (
