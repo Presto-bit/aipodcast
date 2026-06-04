@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { IconCreate, IconGrid, IconHome, IconNotes } from "../icons";
+import { IconGrid, IconHome, IconMic, IconNotes } from "../icons";
 import BrandGlyph from "../brand/BrandGlyph";
 import { dispatchNotesShowNotebookHub } from "../../lib/notesLastNotebook";
 import { WORKBENCH_HOME_PATH, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
@@ -16,7 +16,7 @@ type Props = {
   toolsLabel: string;
 };
 
-/** 笔记本工作台：48px 图标轨（桌面）；与主侧栏心智对齐：话 / 料 / 作 / 具 */
+/** 笔记本工作台：48px 图标轨（桌面）；与主侧栏心智对齐：话 / 料 / 作 / 播客 */
 export default function NotesWorkbenchMinimalRail({ homeLabel, notesLabel, worksLabel, toolsLabel }: Props) {
   return (
     <aside
@@ -69,7 +69,7 @@ export default function NotesWorkbenchMinimalRail({ homeLabel, notesLabel, works
           title={toolsLabel}
           aria-label={toolsLabel}
         >
-          <IconCreate width={20} height={20} aria-hidden />
+          <IconMic width={20} height={20} aria-hidden />
         </Link>
       </nav>
     </aside>

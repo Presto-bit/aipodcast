@@ -21,10 +21,10 @@ import {
 import {
   IconChevronLeft,
   IconChevronSidebar,
-  IconCreate,
   IconGrid,
   IconHome,
   IconMenu,
+  IconMic,
   IconNotes,
   IconSubscription,
   IconUser
@@ -173,19 +173,14 @@ function StudioToolsNavExpanded({
     pathMatchesRoot(path, "/voice") && (voiceTab === null || voiceTab === "clone");
   const onCreateRoute = matchesProductStudio(path);
   const createModeNorm = String(createModeQuery || readCreateModeQuery() || "").trim().toLowerCase();
-  const podcastStudioActive = onCreateRoute && createModeNorm !== "tts";
+  const podcastStudioActive =
+    (onCreateRoute && createModeNorm !== "tts") || pathMatchesRoot(path, "/podcast");
   const ttsStudioActive = onCreateRoute && createModeNorm === "tts";
 
-  const parentRouteActive = matchesWorkbenchTools(path);
-  const parentTip = t("nav.tools");
-  const parentClass = navButtonClass(parentRouteActive, collapsed);
+  const parentTip = t("nav.podcastNav");
+  const parentClass = navButtonClass(podcastStudioActive, collapsed);
 
   const subs: { href: string; label: string; active: boolean }[] = [
-    {
-      href: "/create?mode=podcast",
-      label: t("nav.toolPodcast"),
-      active: podcastStudioActive || pathMatchesRoot(path, "/podcast")
-    },
     {
       href: "/create?mode=tts",
       label: t("nav.toolTts"),
@@ -202,10 +197,10 @@ function StudioToolsNavExpanded({
         href="/create?mode=podcast"
         className={parentClass}
         title={parentTip}
-        aria-current={parentRouteActive ? "page" : undefined}
+        aria-current={podcastStudioActive ? "page" : undefined}
       >
-        <NavIconBox active={parentRouteActive}>
-          <IconCreate />
+        <NavIconBox active={podcastStudioActive}>
+          <IconMic />
         </NavIconBox>
       </SidebarNavLink>
     );
@@ -213,19 +208,20 @@ function StudioToolsNavExpanded({
 
   return (
     <div className="flex w-full flex-col gap-0.5">
-      <button
-        type="button"
+      <SidebarNavLink
+        href="/create?mode=podcast"
         className={parentClass}
         title={parentTip}
+        aria-current={podcastStudioActive ? "page" : undefined}
         aria-expanded={toolsSubNavExpanded}
         aria-controls="fym-studio-tools-subnav"
-        onClick={() => setToolsSubNavExpanded((v) => !v)}
+        onClick={() => setToolsSubNavExpanded(true)}
       >
-        <NavIconBox active={parentRouteActive}>
-          <IconCreate />
+        <NavIconBox active={podcastStudioActive}>
+          <IconMic />
         </NavIconBox>
-        <span className="min-w-0 flex-1 truncate text-left leading-snug">{t("nav.tools")}</span>
-      </button>
+        <span className="min-w-0 flex-1 truncate text-left leading-snug">{t("nav.podcastNav")}</span>
+      </SidebarNavLink>
       {toolsSubNavExpanded ? (
         <div
           id="fym-studio-tools-subnav"
