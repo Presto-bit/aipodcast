@@ -4,12 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
-import {
-  createStudioWork,
-  deleteStudioWork,
-  findDraftStudioWork,
-  listStudioWorks
-} from "../../lib/studioWorkStorage";
+import { createStudioWork, deleteStudioWork, listStudioWorks } from "../../lib/studioWorkStorage";
 import type { StudioWork } from "../../lib/studioWorkTypes";
 import { workStatusLabel } from "../../lib/studioWorkTypes";
 
@@ -24,23 +19,12 @@ export default function StudioSessionRail({
 }) {
   const router = useRouter();
   const [works, setWorks] = useState<StudioWork[]>([]);
-  const draft = findDraftStudioWork();
-  const canCreateNew = !draft;
 
   const refresh = useCallback(() => setWorks(listStudioWorks()), []);
 
   useEffect(() => {
     refresh();
   }, [refresh, activeWorkId]);
-
-  function onNewAgent() {
-    if (draft) {
-      router.push(`${WORKBENCH_STUDIO_PATH}/${draft.id}`);
-      return;
-    }
-    const w = createStudioWork();
-    router.push(`${WORKBENCH_STUDIO_PATH}/${w.id}`);
-  }
 
   function onDeleteWork(e: MouseEvent, id: string) {
     e.preventDefault();
@@ -57,10 +41,6 @@ export default function StudioSessionRail({
     router.replace(`${WORKBENCH_STUDIO_PATH}/${w.id}`);
   }
 
-  const newAgentTitle = canCreateNew
-    ? "New Agent"
-    : "已有未开始的任务，请先在当前任务中继续";
-
   if (collapsed) {
     return (
       <aside className="flex w-10 shrink-0 flex-col items-center gap-2 border-r border-line bg-fill/20 py-2">
@@ -72,31 +52,14 @@ export default function StudioSessionRail({
         >
           »
         </button>
-        <button
-          type="button"
-          title={newAgentTitle}
-          disabled={!canCreateNew}
-          className="rounded-md bg-brand/10 p-1.5 text-brand hover:bg-brand/20 disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={onNewAgent}
-        >
-          +
-        </button>
       </aside>
     );
   }
 
   return (
     <aside className="flex w-52 shrink-0 flex-col border-r border-line bg-fill/15">
-      <div className="flex items-center gap-1 border-b border-line px-2 py-2">
-        <button
-          type="button"
-          disabled={!canCreateNew}
-          title={newAgentTitle}
-          className="flex-1 rounded-lg bg-brand px-2 py-1.5 text-xs font-medium text-brand-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={onNewAgent}
-        >
-          New Agent
-        </button>
+      <div className="flex items-center border-b border-line px-2 py-2">
+        <p className="flex-1 text-xs font-medium text-ink">任务</p>
         <button
           type="button"
           className="rounded p-1 text-muted hover:bg-fill"
@@ -143,7 +106,7 @@ export default function StudioSessionRail({
           );
         })}
         {works.length === 0 ? (
-          <p className="px-1 text-[11px] text-muted">暂无任务，点 New Agent 开始</p>
+          <p className="px-1 text-[11px] text-muted">暂无任务，请从侧栏「创作」进入</p>
         ) : null}
       </div>
     </aside>

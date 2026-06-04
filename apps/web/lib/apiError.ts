@@ -21,6 +21,7 @@ const NOTES_ASK_CODE_MAP: Record<string, string> = {
   notebook_required: "请先选择笔记本。",
   note_ids_required: "请至少勾选一条资料后再提问。",
   question_required: "请输入问题。",
+  invalid_request_body: "请求格式校验失败，请缩短输入或刷新后重试。",
   too_many_notes: "勾选的资料条数超过上限，请减少勾选后再试。",
   note_notebook_mismatch: "勾选资料与当前笔记本不一致，请刷新后重选。",
   hints_llm_output_invalid: "导读模型返回格式异常，请稍后重试或换一批资料。",

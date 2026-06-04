@@ -91,6 +91,7 @@ export function createStudioWork(params?: {
     shipChecks: {},
     agentTurns: [],
     agentSessionState: null,
+    agentRuns: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   };

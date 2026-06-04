@@ -3,7 +3,8 @@
 import type { ReactNode } from "react";
 import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
 import { getComposerPrefsFeatureCore } from "../../lib/studioWorkStorage";
-import type { ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
+import { studioToolLabel } from "../../lib/studioOrchestrator";
+import type { ManuscriptVersion, StudioRun, StudioWork } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
 
 /** 输出区：解释在对话区；此处仅「须确认」与「产物」 */
@@ -200,10 +201,12 @@ export default function StudioAgentOutputCards({
     );
   }
 
-  if (!actionCards.length && !artifactCards.length) return null;
+  const trail = <StudioOrchestratorTrail work={work} />;
+  if (!trail && !actionCards.length && !artifactCards.length) return null;
 
   return (
     <div className="space-y-3 py-2">
+      {trail}
       {actionCards.length ? (
         <section>
           <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
@@ -263,6 +266,51 @@ function EvidenceSummary({
       </p>
       {risks.length ? <p className="text-warning-ink">{risks.join(" · ")}</p> : null}
     </div>
+  );
+}
+
+function StudioOrchestratorTrail({ work }: { work: StudioWork }) {
+  const note = work.lastOrchestratorNote?.trim();
+  const runs = (work.agentRuns ?? []).slice(-4);
+  if (!note && runs.length === 0) return null;
+
+  return (
+    <section>
+      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+        编排
+      </p>
+      <div className="rounded-lg border border-line/70 bg-fill/15 px-3 py-2 text-[11px] text-muted">
+        {note ? <p className="text-ink/80">{note}</p> : null}
+        {runs.length ? (
+          <ul className={`space-y-0.5 ${note ? "mt-1.5 border-t border-line/50 pt-1.5" : ""}`}>
+            {runs.map((run) => (
+              <li key={run.id} className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                <span className="font-medium text-ink/70">{studioToolLabel(run.tool)}</span>
+                <RunStatusDot status={run.status} />
+                <span>{run.summary}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function RunStatusDot({ status }: { status: StudioRun["status"] }) {
+  const label =
+    status === "running" ? "进行中" : status === "done" ? "完成" : "失败";
+  const color =
+    status === "running"
+      ? "bg-brand"
+      : status === "done"
+        ? "bg-success-soft"
+        : "bg-danger-soft";
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${color}`} aria-hidden />
+      <span className="text-[10px]">{label}</span>
+    </span>
   );
 }
 

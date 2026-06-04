@@ -71,6 +71,7 @@ export async function buildPlanForWork(
     ...work,
     title,
     brief: taskSentence,
+    workRules: taskSentence.slice(0, 800),
     intake,
     plan,
     status: "planned",

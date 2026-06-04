@@ -1,10 +1,11 @@
 import type { NotesAskMemoryTurn } from "./notesAskMemoryTypes";
 import {
-  buildStudioStyleRulesPrompt,
+  buildStudioLayeredRulesPrompt,
   buildStudioWorkMemoryPrompt,
   corpusBindingLine,
   manuscriptVersionToPrompt
 } from "./studioAgentContext";
+import type { StudioAskContextFlags } from "./studioOrchestrator";
 import type { ManuscriptVersion, StudioAgentIntent, StudioAgentTurn, StudioWork } from "./studioWorkTypes";
 import { hasTaskContext, taskSentenceFromWork } from "./studioWorkTask";
 
@@ -98,21 +99,26 @@ function intentSystemPrompt(intent: StudioAgentIntent): string {
   }
 }
 
-export function buildStudioAgentQuestion(
+const ASK_QUESTION_MAX = 800;
+const ASK_DIALOGUE_STYLE_MAX = 4000;
+const ASK_AUTHOR_IP_MAX = 8000;
+
+/** 注入 BFF 的 Studio 上下文（禁止放入 question，避免超过 800 字校验） */
+export function buildStudioAskContext(
   work: StudioWork,
-  userMessage: string,
   intent: StudioAgentIntent,
-  activeVersion?: ManuscriptVersion | null
+  activeVersion?: ManuscriptVersion | null,
+  askFlags?: StudioAskContextFlags
 ): string {
   const task = taskSentenceFromWork(work);
-  const needManuscript =
-    intent === "manuscript_coach" || intent === "revise_coach" || work.status === "ready";
-  const manuscript = needManuscript ? manuscriptVersionToPrompt(activeVersion ?? null) : "";
+  const flags = askFlags ?? { includeManuscript: false, includeMemory: true };
+  const manuscript =
+    flags.includeManuscript ? manuscriptVersionToPrompt(activeVersion ?? null) : "";
 
   const lines = [
     intentSystemPrompt(intent),
-    buildStudioStyleRulesPrompt(work),
-    buildStudioWorkMemoryPrompt(work),
+    buildStudioLayeredRulesPrompt(work),
+    flags.includeMemory ? buildStudioWorkMemoryPrompt(work) : "",
     `【当前意图】${studioAgentIntentLabel(intent)}`,
     `任务状态：${work.status}`,
     task ? `任务要点：${task}` : "任务：用户尚未描述清楚",
@@ -121,7 +127,51 @@ export function buildStudioAgentQuestion(
     manuscript
   ].filter(Boolean);
 
-  return `${lines.join("\n\n")}\n\n---\n用户：\n${userMessage.trim()}`;
+  return lines.join("\n\n");
+}
+
+export function buildStudioAskPayload(params: {
+  work: StudioWork;
+  userMessage: string;
+  intent: StudioAgentIntent;
+  activeVersion?: ManuscriptVersion | null;
+  authorIpExtra?: string;
+  askFlags?: StudioAskContextFlags;
+  mode: "general" | "rag";
+}): {
+  question: string;
+  dialogueStylePrompt?: string;
+  authorIpPrompt?: string;
+} {
+  const q = params.userMessage.trim().slice(0, ASK_QUESTION_MAX);
+  const ctx = buildStudioAskContext(
+    params.work,
+    params.intent,
+    params.activeVersion,
+    params.askFlags
+  );
+  const merged = [ctx, params.authorIpExtra?.trim()].filter(Boolean).join("\n\n");
+
+  if (params.mode === "rag") {
+    return {
+      question: q,
+      dialogueStylePrompt: merged.slice(0, ASK_DIALOGUE_STYLE_MAX) || undefined
+    };
+  }
+  return {
+    question: q,
+    authorIpPrompt: merged.slice(0, ASK_AUTHOR_IP_MAX) || undefined
+  };
+}
+
+/** @deprecated 仅测试；线上请用 buildStudioAskPayload */
+export function buildStudioAgentQuestion(
+  work: StudioWork,
+  userMessage: string,
+  intent: StudioAgentIntent,
+  activeVersion?: ManuscriptVersion | null
+): string {
+  return `${buildStudioAskContext(work, intent, activeVersion, { includeManuscript: true, includeMemory: true })}\n\n---\n用户：\n${userMessage.trim()}`;
 }
 
 export { hasTaskContext, taskSentenceFromWork };

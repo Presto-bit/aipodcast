@@ -3,46 +3,68 @@ import {
   isFeatureCoreComplete
 } from "./homeComposerFeatureCore";
 import { personalProfileToPrompt } from "./homeComposerProfile";
+import { buildStudioPlatformRulesPrompt } from "./studioPlatformRules";
 import { manuscriptCopyAll } from "./studioDeliverable";
 import { getComposerPrefsFeatureCore, getStudioComposerPrefs } from "./studioWorkStorage";
 import type { ManuscriptVersion, StudioWork } from "./studioWorkTypes";
-
-/** Cursor 式 Rules：我的特色 + 创作约束（对话页配置，Studio 只读注入） */
-export function buildStudioStyleRulesPrompt(work: StudioWork): string {
+/** 用户级 Rules（对话页「我的特色」，Studio 只读） */
+export function buildStudioUserRulesPrompt(): string {
   const prefs = getStudioComposerPrefs();
-  const lines: string[] = [
-    "【Studio 对话规则】",
-    "· 本区仅输出解释、追问与修改方向，不要贴可直接发布的完整成稿。",
-    "· 成稿、改版预览、确认按钮在下方「产物」区，由用户确认后执行。",
-    work.allowModelFallback
-      ? "· 未绑资料时允许通识补充，须在回答中标注「待核实」。"
-      : "· 未绑资料时不要编造具体事实。"
-  ];
-
+  const lines: string[] = [];
   const core = getComposerPrefsFeatureCore();
   const coreText = featureCoreToPrompt(core);
+
   if (prefs.personalEnabled && coreText) {
-    lines.push("", "【我的特色 · Rules】", coreText);
+    lines.push("【用户 Rules · 我的特色】", coreText);
   } else if (!isFeatureCoreComplete(core)) {
-    lines.push(
-      "",
-      "【我的特色】尚未填写完整；勿虚构人设。用户可在对话页「我的特色」补充，成稿后系统会引导。"
-    );
+    lines.push("【用户 Rules】我的特色未填完整；勿虚构人设。");
   }
 
   if (prefs.personalEnabled && prefs.personalProfile) {
     const sup = personalProfileToPrompt(prefs.personalProfile);
-    if (sup) lines.push("", "【特色补充】", sup);
+    if (sup) lines.push("【用户 Rules · 补充】", sup);
   }
 
   if (prefs.styleTemplateId) {
-    lines.push("", `【写作习惯】模板 id：${prefs.styleTemplateId}`);
+    lines.push(`【写作习惯】模板：${prefs.styleTemplateId}`);
   }
 
   return lines.join("\n");
 }
 
-/** 本 Work 会话记忆（轮次摘要 + NotesAsk sessionState facts/prefs） */
+/** 本 Work 任务级 Rules（计划目标等，无单独输入 UI） */
+export function buildStudioWorkRulesPrompt(work: StudioWork): string {
+  const lines: string[] = [];
+  if (work.workRules?.trim()) {
+    lines.push("【任务 Rules】", work.workRules.trim());
+  }
+  if (work.plan?.goal?.trim()) {
+    lines.push("【任务范围】", work.plan.goal.trim());
+  }
+  if (work.allowModelFallback) {
+    lines.push("【任务约束】允许在未绑资料时使用通识补充，须标注待核实。");
+  } else {
+    lines.push("【任务约束】未绑资料时不要编造具体事实。");
+  }
+  return lines.filter(Boolean).join("\n");
+}
+
+/** 分层 Rules：平台 + 用户 + 任务 */
+export function buildStudioLayeredRulesPrompt(work: StudioWork): string {
+  return [
+    buildStudioPlatformRulesPrompt(),
+    buildStudioUserRulesPrompt(),
+    buildStudioWorkRulesPrompt(work)
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** @deprecated 使用 buildStudioLayeredRulesPrompt */
+export function buildStudioStyleRulesPrompt(work: StudioWork): string {
+  return buildStudioLayeredRulesPrompt(work);
+}
+
 export function buildStudioWorkMemoryPrompt(work: StudioWork): string {
   const lines: string[] = ["【本任务记忆】"];
   const turns = (work.agentTurns ?? []).filter((t) => !t.streaming && t.content.trim());
@@ -50,8 +72,7 @@ export function buildStudioWorkMemoryPrompt(work: StudioWork): string {
   if (recent.length) {
     for (const t of recent) {
       const role = t.role === "user" ? "用户" : "助手";
-      const snippet = t.content.trim().slice(0, 400);
-      lines.push(`${role}：${snippet}`);
+      lines.push(`${role}：${t.content.trim().slice(0, 400)}`);
     }
   } else {
     lines.push("（尚无对话）");
@@ -65,7 +86,6 @@ export function buildStudioWorkMemoryPrompt(work: StudioWork): string {
   return lines.join("\n");
 }
 
-/** 当前稿件全文，供解读/改版意图注入（等同 Cursor @ 当前文件） */
 export function manuscriptVersionToPrompt(version: ManuscriptVersion | null): string {
   if (!version?.blocks.length) return "";
   return [
@@ -78,5 +98,5 @@ export function corpusBindingLine(work: StudioWork): string {
   if (work.binding.notebook.trim() && work.binding.noteIds.length > 0) {
     return `资料：${work.binding.notebook} · ${work.binding.noteIds.length} 篇（RAG）`;
   }
-  return "资料：未绑定（回答须标注依据不足或待核实）";
+  return "资料：未绑定";
 }

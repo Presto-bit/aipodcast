@@ -1,15 +1,18 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { IconSend } from "../home/HomeComposerShell";
 
-/** 与 Home ComposerShell 一致的输入框样式 */
+/** 与 Home ComposerShell 一致的输入框；资料等控件在框内右下 */
 export default function StudioAgentComposer({
   value,
   onChange,
   onSend,
   busy,
   disabled,
-  placeholder
+  placeholder,
+  footerRight,
+  menuOpen = false
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -17,12 +20,19 @@ export default function StudioAgentComposer({
   busy: boolean;
   disabled: boolean;
   placeholder: string;
+  footerRight?: ReactNode;
+  menuOpen?: boolean;
 }) {
   const hasText = Boolean(value.trim());
   const canSend = hasText && !busy && !disabled;
 
   return (
-    <div className="relative w-full shrink-0 overflow-visible rounded-2xl border border-line bg-surface p-3 shadow-soft">
+    <div
+      className={[
+        "relative w-full shrink-0 overflow-visible rounded-2xl border border-line bg-surface p-3 shadow-soft",
+        menuOpen ? "z-40" : "z-20"
+      ].join(" ")}
+    >
       <div className="relative w-full overflow-visible">
         <textarea
           value={value}
@@ -52,6 +62,14 @@ export default function StudioAgentComposer({
           </button>
         ) : null}
       </div>
+      {footerRight ? (
+        <div
+          className="relative mt-2 flex w-full items-center justify-end overflow-visible pt-0.5"
+          style={{ zIndex: menuOpen ? 10 : 1 }}
+        >
+          {footerRight}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
 import { buildPlanForWork } from "../../lib/studioWorkPlan";
 import { getComposerPrefsFeatureCore, getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
+import { appendStudioRun, finishStudioRun } from "../../lib/studioOrchestrator";
 import { taskSentenceFromWork } from "../../lib/studioWorkTask";
 import type { StudioWork } from "../../lib/studioWorkTypes";
 import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
@@ -66,14 +67,18 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     const task = taskSentenceFromWork(work);
     if (!task.trim()) return;
     setBusy(true);
+    const { work: withRun, runId } = appendStudioRun(work, "plan", "生成计划中…");
+    persist(withRun);
     try {
       const { work: planned } = await buildPlanForWork(
-        { ...work, allowModelFallback: true },
+        { ...withRun, allowModelFallback: true },
         getAuthHeaders()
       );
-      persist(planned);
+      persist(finishStudioRun(planned, runId, "done", "计划已就绪"));
     } catch (err) {
-      persist({ ...work, error: String(err instanceof Error ? err.message : err) });
+      persist(
+        finishStudioRun(withRun, runId, "error", String(err instanceof Error ? err.message : err))
+      );
     } finally {
       setBusy(false);
     }
@@ -84,8 +89,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     const taskSentence = taskSentenceFromWork(work) || work.plan?.goal || "";
     if (!taskSentence.trim()) return;
     setBusy(true);
+    const { work: withRun, runId } = appendStudioRun(work, "generate", "生成稿件中…");
     persist({
-      ...work,
+      ...withRun,
       status: "generating",
       runPhase: "排队中…",
       error: undefined,
@@ -111,7 +117,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const cur = getStudioWork(workId);
       if (!cur) return;
       if (result.status !== "done") {
-        persist({ ...cur, status: "planned", error: result.error, runPhase: undefined });
+        persist(
+          finishStudioRun(
+            { ...cur, status: "planned", error: result.error, runPhase: undefined },
+            runId,
+            "error",
+            result.error ?? "生成失败"
+          )
+        );
         return;
       }
       const blocks = deliverableToManuscriptBlocks(result.deliverable);
@@ -123,19 +136,31 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         blocks,
         jobId: result.jobId
       };
-      persist({
-        ...cur,
-        status: "ready",
-        versions: [...cur.versions, version],
-        activeVersionId: versionId,
-        lastJobId: result.jobId,
-        pendingPatch: undefined,
-        runPhase: undefined,
-        error: undefined
-      });
+      persist(
+        finishStudioRun(
+          {
+            ...cur,
+            status: "ready",
+            versions: [...cur.versions, version],
+            activeVersionId: versionId,
+            lastJobId: result.jobId,
+            pendingPatch: undefined,
+            runPhase: undefined,
+            error: undefined
+          },
+          runId,
+          "done",
+          "稿件已生成"
+        )
+      );
     } catch (err) {
       const cur = getStudioWork(workId);
-      if (cur) persist({ ...cur, status: "planned", error: String(err instanceof Error ? err.message : err) });
+      const msg = String(err instanceof Error ? err.message : err);
+      if (cur) {
+        persist(
+          finishStudioRun({ ...cur, status: "planned", error: msg, runPhase: undefined }, runId, "error", msg)
+        );
+      }
     } finally {
       setBusy(false);
     }
@@ -148,7 +173,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     setBusy(true);
     const baseTask = taskSentenceFromWork(work) || work.plan?.goal || "";
     const taskSentence = `${baseTask}\n\n改版意见：${reviseText.trim()}`;
-    persist({ ...work, status: "generating", runPhase: "改版生成中…", error: undefined });
+    const { work: withRun, runId } = appendStudioRun(work, "revise", "改版生成中…");
+    persist({ ...withRun, status: "generating", runPhase: "改版生成中…", error: undefined });
     try {
       const result = await runComposerExpertDeliverableJob({
         expertId: "xhs_ops",
@@ -165,19 +191,30 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       if (!cur || result.status !== "done") {
         if (cur) {
           const err = result.status === "error" ? result.error : "改版失败";
-          persist({ ...cur, status: "ready", error: err });
+          persist(finishStudioRun({ ...cur, status: "ready", error: err }, runId, "error", err));
         }
         return;
       }
       const proposed = deliverableToManuscriptBlocks(result.deliverable);
       const keys = diffBlockKeys(base.blocks, proposed);
-      persist({
-        ...cur,
-        status: "ready",
-        pendingPatch: { fromVersionId: base.id, proposedBlocks: proposed, summary: `${keys.size} 处块有变更` },
-        runPhase: undefined,
-        error: undefined
-      });
+      persist(
+        finishStudioRun(
+          {
+            ...cur,
+            status: "ready",
+            pendingPatch: {
+              fromVersionId: base.id,
+              proposedBlocks: proposed,
+              summary: `${keys.size} 处块有变更`
+            },
+            runPhase: undefined,
+            error: undefined
+          },
+          runId,
+          "done",
+          `改版提议 · ${keys.size} 处变更`
+        )
+      );
       setReviseText("");
     } finally {
       setBusy(false);

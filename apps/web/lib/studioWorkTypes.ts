@@ -56,6 +56,16 @@ export type PendingPatch = {
   summary: string;
 };
 
+export type StudioRun = {
+  id: string;
+  tool: "ask" | "plan" | "generate" | "revise";
+  status: "running" | "done" | "error";
+  summary: string;
+  startedAt: number;
+  finishedAt?: number;
+  jobId?: string;
+};
+
 export type StudioWork = {
   id: string;
   channel: StudioChannel;
@@ -79,6 +89,12 @@ export type StudioWork = {
   agentSessionState?: NotesAskSessionState | null;
   /** 成稿后「我的特色」引导已关闭 */
   featureNudgeDismissed?: boolean;
+  /** 任务级补充规则（可选，无输入 UI 时由计划等写入） */
+  workRules?: string;
+  /** 子任务轨迹（plan / generate / revise） */
+  agentRuns?: StudioRun[];
+  /** 最近一次编排说明 */
+  lastOrchestratorNote?: string;
   updatedAt: number;
   createdAt: number;
 };

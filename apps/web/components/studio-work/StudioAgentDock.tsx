@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  buildStudioAgentQuestion,
-  hasTaskContext,
-  inferStudioAgentIntent,
+  buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
+import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
+import { formatStudioAskError } from "../../lib/studioAskError";
 import { featureCoreToPrompt } from "../../lib/homeComposerFeatureCore";
 import { personalProfileToPrompt } from "../../lib/homeComposerProfile";
 import { getComposerPrefsFeatureCore, getStudioComposerPrefs } from "../../lib/studioWorkStorage";
@@ -28,14 +28,26 @@ const QUICK_PROMPTS = [
   "开头钩子怎么写更抓人"
 ] as const;
 
-const CONFIRM_TASK_RE =
-  /^(确认任务|确认|就按这个|就这样|可以了|开始生成|生成计划)/;
-
 function agentPlaceholder(status: WorkStatus): string {
   if (status === "generating") return "生成中…";
   if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
   if (status === "planned") return "可继续补充说明，或点下方「确认执行」…";
   return "描述你想创作的内容与目标…";
+}
+
+function workAfterTruncateTurns(work: StudioWork, prefixTurns: StudioAgentTurn[]): StudioWork {
+  let next: StudioWork = {
+    ...work,
+    agentTurns: prefixTurns,
+    error: undefined,
+    pendingPatch: undefined
+  };
+  if (prefixTurns.length === 0) {
+    next = { ...next, plan: undefined, status: "briefing" };
+  } else if (work.status === "planned" || work.status === "briefing") {
+    next = { ...next, plan: undefined, status: "briefing" };
+  }
+  return syncWorkTitleFromTurns(next, prefixTurns);
 }
 
 export default function StudioAgentDock({
@@ -85,14 +97,15 @@ export default function StudioAgentDock({
   const [input, setInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
   const [phase, setPhase] = useState("");
+  const [corpusMenuOpen, setCorpusMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const turns = work.agentTurns ?? [];
   const readOnly = work.status === "generating" || parentBusy;
   const canChat = isLoggedIn && ready && !readOnly;
-  const canPlan = hasTaskContext(work, turns);
   const showQuickPrompts = turns.length === 0 && work.status === "briefing";
+  const canEditTurns = canChat && !agentBusy;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -102,6 +115,7 @@ export default function StudioAgentDock({
     work.plan,
     work.status,
     work.runPhase,
+    work.error,
     work.pendingPatch,
     activeVersion?.id,
     activeVersion?.blocks.length
@@ -126,18 +140,17 @@ export default function StudioAgentDock({
     onPersist({ ...work, agentTurns: nextTurns });
   }
 
-  async function handleSend(overrideText?: string) {
-    const q = (overrideText ?? input).trim();
+  async function runAgentTurn(
+    prefixTurns: StudioAgentTurn[],
+    userText: string,
+    workBase: StudioWork,
+    route: StudioRouteDecision
+  ) {
+    const q = userText.trim();
     if (!q || !canChat || agentBusy) return;
 
-    const intent = inferStudioAgentIntent(q, work);
+    const intent = route.intent;
 
-    const userTurn: StudioAgentTurn = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: q,
-      createdAt: Date.now()
-    };
     const assistantId = crypto.randomUUID();
     const streamingTurn: StudioAgentTurn = {
       id: assistantId,
@@ -147,9 +160,8 @@ export default function StudioAgentDock({
       streaming: true,
       intent
     };
-    const baseTurns = [...turns, userTurn, streamingTurn];
+    const baseTurns = [...prefixTurns, streamingTurn];
     applyDialogExtract(baseTurns);
-    setInput("");
     setAgentBusy(true);
     setPhase("");
 
@@ -157,30 +169,40 @@ export default function StudioAgentDock({
     const ac = new AbortController();
     abortRef.current = ac;
 
-    const memoryFromStudio = studioTurnsToMemoryTurns([...turns, userTurn]);
-    const hasCorpus = Boolean(work.binding.notebook.trim() && work.binding.noteIds.length > 0);
+    const memoryFromStudio = studioTurnsToMemoryTurns(prefixTurns);
+    const hasCorpus = Boolean(workBase.binding.notebook.trim() && workBase.binding.noteIds.length > 0);
     const ragMode = hasCorpus ? ("rag" as const) : ("general" as const);
+
+    const prefs = getStudioComposerPrefs();
+    const corePrompt = featureCoreToPrompt(getComposerPrefsFeatureCore());
+    const profilePrompt =
+      prefs.personalEnabled && prefs.personalProfile
+        ? personalProfileToPrompt(prefs.personalProfile)
+        : "";
+    const authorIpExtra = [corePrompt, profilePrompt].filter(Boolean).join("\n\n");
+    const askPayload = buildStudioAskPayload({
+      work: workBase,
+      userMessage: q,
+      intent,
+      activeVersion,
+      authorIpExtra,
+      askFlags: route.askContext,
+      mode: ragMode
+    });
 
     let answerBuf = "";
     let supplementBuf = "";
 
     try {
-      const prefs = getStudioComposerPrefs();
-      const corePrompt = featureCoreToPrompt(getComposerPrefsFeatureCore());
-      const profilePrompt =
-        prefs.personalEnabled && prefs.personalProfile
-          ? personalProfileToPrompt(prefs.personalProfile)
-          : "";
-      const authorIpPrompt = [corePrompt, profilePrompt].filter(Boolean).join("\n\n");
-
       const done = await streamHomeComposerAsk({
-        question: buildStudioAgentQuestion(work, q, intent, activeVersion),
+        question: askPayload.question,
         mode: ragMode,
-        notebook: work.binding.notebook,
-        noteIds: work.binding.noteIds,
+        notebook: workBase.binding.notebook,
+        noteIds: workBase.binding.noteIds,
         memoryTurns: memoryFromStudio,
-        sessionState: work.agentSessionState ?? null,
-        authorIpPrompt: authorIpPrompt || undefined,
+        sessionState: workBase.agentSessionState ?? null,
+        dialogueStylePrompt: askPayload.dialogueStylePrompt,
+        authorIpPrompt: askPayload.authorIpPrompt,
         authHeaders: getAuthHeaders(),
         signal: ac.signal,
         callbacks: {
@@ -211,25 +233,15 @@ export default function StudioAgentDock({
           : t
       );
       applyDialogExtract(finalTurns, done.sessionState);
-      if (
-        onGeneratePlan &&
-        !work.plan &&
-        work.status === "briefing" &&
-        CONFIRM_TASK_RE.test(q) &&
-        canPlan
-      ) {
-        void onGeneratePlan();
-      }
+      onPersist({ ...workBase, agentTurns: finalTurns, error: undefined });
     } catch (err) {
       if (ac.signal.aborted) return;
-      const msg = String(err instanceof Error ? err.message : err);
-      applyDialogExtract(
-        baseTurns.map((t) =>
-          t.id === assistantId
-            ? { ...t, content: `出错了：${msg}`, streaming: false, intent }
-            : t
-        )
-      );
+      const friendly = formatStudioAskError(String(err instanceof Error ? err.message : err));
+      onPersist({
+        ...workBase,
+        agentTurns: baseTurns.filter((t) => t.id !== assistantId),
+        error: friendly
+      });
     } finally {
       setAgentBusy(false);
       setPhase("");
@@ -237,14 +249,85 @@ export default function StudioAgentDock({
     }
   }
 
+  async function handleSend(overrideText?: string) {
+    const q = (overrideText ?? input).trim();
+    if (!q || !canChat || agentBusy) return;
+    setInput("");
+
+    const route = routeStudioAction(work, q, turns);
+    const userTurn: StudioAgentTurn = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: q,
+      createdAt: Date.now()
+    };
+    const prefixWithUser = [...turns, userTurn];
+    const base = syncWorkTitleFromTurns(
+      {
+        ...work,
+        agentTurns: prefixWithUser,
+        lastOrchestratorNote: route.note,
+        error: undefined,
+        allowModelFallback: true
+      },
+      prefixWithUser
+    );
+    onPersist(base);
+
+    if (route.tool === "plan" && onGeneratePlan) {
+      await onGeneratePlan();
+      return;
+    }
+    if (route.tool === "generate" && onConfirmGenerate) {
+      await onConfirmGenerate();
+      return;
+    }
+
+    await runAgentTurn(prefixWithUser, q, base, route);
+  }
+
+  function handleEditUserTurn(turnId: string, newText: string) {
+    abortRef.current?.abort();
+    const idx = turns.findIndex((t) => t.id === turnId);
+    if (idx < 0 || turns[idx]?.role !== "user") return;
+    const prefix = turns.slice(0, idx);
+    const truncated = workAfterTruncateTurns(work, prefix);
+    onPersist(truncated);
+    const route = routeStudioAction(truncated, newText, prefix);
+    const userTurn: StudioAgentTurn = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: newText.trim(),
+      createdAt: Date.now()
+    };
+    const prefixWithUser = [...prefix, userTurn];
+    const base = syncWorkTitleFromTurns(
+      { ...truncated, agentTurns: prefixWithUser, lastOrchestratorNote: route.note },
+      prefixWithUser
+    );
+    onPersist(base);
+    if (route.tool === "plan" && onGeneratePlan) {
+      void onGeneratePlan();
+      return;
+    }
+    if (route.tool === "generate" && onConfirmGenerate) {
+      void onConfirmGenerate();
+      return;
+    }
+    void runAgentTurn(prefixWithUser, newText, base, route);
+  }
+
+  function handleRollbackFromTurn(turnId: string) {
+    abortRef.current?.abort();
+    const idx = turns.findIndex((t) => t.id === turnId);
+    if (idx < 0) return;
+    const prefix = turns.slice(0, idx);
+    onPersist(workAfterTruncateTurns(work, prefix));
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div ref={scrollRef} className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-y-auto px-3 py-3">
-        {turns.length === 0 && work.status === "briefing" ? (
-          <p className="mb-2 text-[11px] text-muted">
-            上方为对话解释；下方「产物」区展示计划确认与成稿。说清楚后回复「确认任务」。
-          </p>
-        ) : null}
         {turns.length > 0 ? (
           <div className="mb-1">
             <p className="text-[10px] font-medium uppercase tracking-wide text-muted">对话 · 解释</p>
@@ -254,6 +337,9 @@ export default function StudioAgentDock({
                   key={turn.id}
                   turn={turn}
                   streamingPhase={turn.streaming ? phase : undefined}
+                  canEdit={canEditTurns}
+                  onEditUserTurn={handleEditUserTurn}
+                  onRollbackFromTurn={handleRollbackFromTurn}
                 />
               ))}
             </div>
@@ -284,7 +370,7 @@ export default function StudioAgentDock({
         />
       </div>
 
-      <div className="shrink-0 border-t border-line bg-surface px-3 pb-3 pt-2">
+      <div className="shrink-0 bg-surface px-3 pb-3 pt-1">
         <div className="mx-auto w-full max-w-3xl">
           {!isLoggedIn && ready ? (
             <p className="mb-2 text-xs text-warning-ink">
@@ -292,11 +378,6 @@ export default function StudioAgentDock({
                 登录
               </Link>
               后可用
-            </p>
-          ) : null}
-          {showQuickPrompts ? (
-            <p className="mb-1.5 text-[10px] text-muted">
-              可先点示例；绑资料后回答会带「资料」依据。
             </p>
           ) : null}
           {showQuickPrompts ? (
@@ -321,13 +402,18 @@ export default function StudioAgentDock({
             busy={agentBusy}
             disabled={!canChat}
             placeholder={agentPlaceholder(work.status)}
-          />
-          <StudioCorpusBar
-            work={work}
-            isLoggedIn={isLoggedIn}
-            ready={ready}
-            getAuthHeaders={getAuthHeaders}
-            onPersist={onPersist}
+            menuOpen={corpusMenuOpen}
+            footerRight={
+              <StudioCorpusBar
+                work={work}
+                isLoggedIn={isLoggedIn}
+                ready={ready}
+                getAuthHeaders={getAuthHeaders}
+                onPersist={onPersist}
+                menuOpen={corpusMenuOpen}
+                onMenuOpenChange={setCorpusMenuOpen}
+              />
+            }
           />
         </div>
       </div>
