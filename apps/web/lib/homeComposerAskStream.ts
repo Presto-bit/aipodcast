@@ -59,6 +59,8 @@ export async function streamHomeComposerAsk(params: {
   authHeaders: Record<string, string>;
   signal?: AbortSignal;
   callbacks?: HomeComposerAskCallbacks;
+  /** Studio 结构化 silent 时允许空 answer */
+  allowEmptyAnswer?: boolean;
 }): Promise<HomeComposerAskDone> {
   const q = params.question.trim();
   if (!q) throw new Error("请输入内容");
@@ -189,7 +191,9 @@ export async function streamHomeComposerAsk(params: {
   }
 
   const answer = doneAnswer || answerAcc.trim();
-  if (!answer) throw new Error("模型未返回有效正文，请稍后重试");
+  if (!answer && !params.allowEmptyAnswer) {
+    throw new Error("模型未返回有效正文，请稍后重试");
+  }
 
   return {
     answer,

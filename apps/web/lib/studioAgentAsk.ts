@@ -85,7 +85,7 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
         ? "围绕已生成稿件回答澄清类问题；勿再提示「确认任务」或生成计划。"
         : [
             "你帮助澄清用户想创作的内容（形式、受众、结构、语气、资料怎么用）。",
-            "用简短追问收敛；任务清楚后请用户回复「确认任务」。",
+            "缺 blocking 信息时用 ask_user 问一句；任务清楚后提示回复「确认任务」，勿长篇追问。",
             "不要输出可直接发布的完整成稿。"
           ].join("\n");
     case "manuscript_coach":
@@ -93,7 +93,7 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
         "你解读【当前稿件】：结构、语气、与资料/我的特色是否一致、发布注意点。",
         "引用稿件中的具体句子说明，不要重复粘贴全文（全文已在上下文）。",
         work.status === "ready" || work.status === "shipped"
-          ? "成稿后：可简短追问或建议下一步（如微调标题）；勿要求再次确认执行或生成计划。"
+          ? "成稿后：仅回答用户所问；无明确问题时输出 silent，勿主动点评或建议下一步。"
           : ""
       ]
         .filter(Boolean)

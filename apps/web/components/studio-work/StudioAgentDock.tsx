@@ -26,6 +26,11 @@ import { syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
 import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
 import { streamHomeComposerAsk } from "../../lib/homeComposerAskStream";
+import { streamStudioAgentAsk } from "../../lib/studioAgentAskStream";
+import {
+  STUDIO_STRUCTURED_OUTPUT_ENABLED,
+  studioStructuredAddsAssistantTurn
+} from "../../lib/studioAgentStructured";
 import type { ManuscriptVersion, StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
 import StudioAgentMessage from "./StudioAgentMessage";
@@ -245,7 +250,8 @@ export default function StudioAgentDock({
     let supplementBuf = "";
 
     try {
-      const done = await streamHomeComposerAsk({
+      const done = await streamStudioAgentAsk({
+        work: workBase,
         question: askPayload.question,
         mode: ragMode,
         notebook: workBase.binding.notebook,
@@ -262,10 +268,12 @@ export default function StudioAgentDock({
             if (role === "reasoning") return;
             if (section === "supplement") supplementBuf += text;
             else answerBuf += text;
-            const content = answerBuf.trim() || supplementBuf.trim();
+            const preview = STUDIO_STRUCTURED_OUTPUT_ENABLED
+              ? "…"
+              : answerBuf.trim() || supplementBuf.trim();
             patchTurnsStreaming(
               baseTurns.map((t) =>
-                t.id === assistantId ? { ...t, content, streaming: true, intent } : t
+                t.id === assistantId ? { ...t, content: preview, streaming: true, intent } : t
               ),
               workBase
             );
@@ -273,7 +281,17 @@ export default function StudioAgentDock({
         }
       });
 
+      if (
+        STUDIO_STRUCTURED_OUTPUT_ENABLED &&
+        !studioStructuredAddsAssistantTurn(done.structured)
+      ) {
+        applyDialogExtract(prefixTurns, done.sessionState, workBase);
+        onPersist({ ...workBase, agentTurns: prefixTurns, error: undefined });
+        return;
+      }
+
       const finalContent =
+        done.displayText.trim() ||
         done.answer.trim() ||
         supplementBuf.trim() ||
         answerBuf.trim() ||
