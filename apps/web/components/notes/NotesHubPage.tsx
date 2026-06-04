@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { PointerEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -15,6 +16,8 @@ import type { NotebookCoverMeta, NotebookMeta, NotebookSharingRow, PopularNotebo
 import { stableNotebookVisualFromName, type NotebookCardVisual } from "../../lib/notebookCardThemes";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { apiErrorMessage } from "../../lib/apiError";
+import { useI18n } from "../../lib/I18nContext";
+import { WORKS_TRASH_PATH } from "../../lib/navPaths";
 import { isAbortError, usePageAbortSignal, usePageFetch } from "../../lib/usePageAbortSignal";
 import {
   fetchNotebooksHub,
@@ -105,6 +108,7 @@ function buildSharedNotebookWorkbenchHref(
 
 export default function NotesHubPage({ initialHub = null }: { initialHub?: NotebooksHubPayload | null }) {
   const router = useRouter();
+  const { t } = useI18n();
   const { user, getAuthHeaders, ready } = useAuth();
   const isLoggedIn = isLoggedInAccountUser(user);
   const notebooksHubQuery = useNotebooksHubQuery(getAuthHeaders, ready, initialHub ?? undefined);
@@ -659,6 +663,19 @@ export default function NotesHubPage({ initialHub = null }: { initialHub?: Noteb
       {error ? (
         <UserErrorBanner className="mb-4" message={error} onDismiss={() => setError("")} />
       ) : null}
+
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">{t("nav.notes")}</h1>
+          <p className="mt-1 text-xs leading-snug text-muted">{t("notes.pageSubtitle")}</p>
+        </div>
+        <Link
+          href={`${WORKS_TRASH_PATH}?section=notes`}
+          className="shrink-0 text-sm text-muted underline decoration-dotted underline-offset-4 transition-colors hover:text-ink"
+        >
+          {t("notes.trashLink")}
+        </Link>
+      </div>
 
       <div
         className="mb-4 flex gap-1 rounded-xl border border-line/60 bg-fill/35 p-1"

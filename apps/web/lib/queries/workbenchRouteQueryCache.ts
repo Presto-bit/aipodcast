@@ -45,11 +45,11 @@ export function routeHasWarmQueryCache(queryClient: QueryClient, hrefOrPath: str
     return routeHasWarmChunks(path);
   }
 
-  if (path === "/shownotes" || path.startsWith("/shownotes/")) {
-    return routeHasWarmChunks(path);
+  if (path === "/works/trash" || path === "/notes/trash") {
+    return routeHasWarmChunks("/works/trash");
   }
 
-  if (path === "/notes/trash") {
+  if (path === "/shownotes" || path.startsWith("/shownotes/")) {
     return routeHasWarmChunks(path);
   }
 

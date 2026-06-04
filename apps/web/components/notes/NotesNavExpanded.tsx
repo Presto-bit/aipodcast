@@ -28,7 +28,7 @@ type Props = {
   NavIconBox: (p: { active: boolean; children: ReactNode }) => ReactNode;
 };
 
-/** 知识库一级导航：与 CreateStudioNavExpanded 相同——站外软路由进 /notes，已在 hub 时 preventDefault 回卡片列表。 */
+/** 知识库一级导航：已在资料页时 soft 路由回 hub。 */
 export default function NotesNavExpanded({ item, path, collapsed, NavIconBox }: Props) {
   const n = normalizePathname(path);
   const active = n === "/notes" || n.startsWith("/notes/");

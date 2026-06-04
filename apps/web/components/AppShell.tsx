@@ -11,12 +11,10 @@ import {
   useMemo,
   useRef,
   useState,
-  Fragment,
   Suspense,
   type ComponentType,
   type HTMLAttributes,
   type Dispatch,
-  type MouseEvent,
   type ReactNode,
   type SetStateAction
 } from "react";
@@ -24,13 +22,11 @@ import {
   IconChevronLeft,
   IconChevronSidebar,
   IconCreate,
-  IconDraft,
   IconGrid,
   IconHome,
   IconMenu,
   IconNotes,
   IconSubscription,
-  IconTrash,
   IconUser
 } from "./icons";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../lib/auth";
@@ -72,6 +68,8 @@ import {
   isMarketingShellLessPath,
   matchesNotesWorkbench,
   matchesProductStudio,
+  matchesWorkbenchTools,
+  matchesWorksTrash,
   normalizePathname,
   pathMatchesRoot,
   pathNeedsWorkAudio,
@@ -151,74 +149,97 @@ function readVoiceTabQuery(): string | null {
   }
 }
 
-type CreateStudioNavExpandedProps = {
-  item: NavItem;
+type StudioToolsNavExpandedProps = {
   path: string;
-  createSubNavExpanded: boolean;
-  setCreateSubNavExpanded: Dispatch<SetStateAction<boolean>>;
+  collapsed: boolean;
+  toolsSubNavExpanded: boolean;
+  setToolsSubNavExpanded: Dispatch<SetStateAction<boolean>>;
 };
 
-function CreateStudioNavExpanded({
-  item,
+function readCreateModeQuery(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return new URLSearchParams(window.location.search).get("mode");
+  } catch {
+    return null;
+  }
+}
+
+function StudioToolsNavExpanded({
   path,
-  createSubNavExpanded,
-  setCreateSubNavExpanded
-}: CreateStudioNavExpandedProps) {
+  collapsed,
+  toolsSubNavExpanded,
+  setToolsSubNavExpanded
+}: StudioToolsNavExpandedProps) {
   const { t } = useI18n();
   const [voiceTab, setVoiceTab] = useState<string | null>(null);
+  const [createMode, setCreateMode] = useState<string | null>(null);
+
   useEffect(() => {
     setVoiceTab(readVoiceTabQuery());
+    setCreateMode(readCreateModeQuery());
   }, [path]);
+
   const voiceManageActive =
     pathMatchesRoot(path, "/voice") && (voiceTab === null || voiceTab === "clone");
+  const onCreateRoute = matchesProductStudio(path);
+  const createModeNorm = String(createMode || "").trim().toLowerCase();
+  const podcastStudioActive = onCreateRoute && createModeNorm !== "tts";
+  const ttsStudioActive = onCreateRoute && createModeNorm === "tts";
 
-  /** 策略 A：仅「创作工作室」路由（/create、/podcast、/tts）父行高亮；在 /clip、/shownotes、/voice 等仅子项高亮。 */
-  const parentRouteActive = Boolean(item.activeMatch?.(path));
-  const Ic = item.Icon;
-  const parentTip = item.linkTitle ?? item.label;
-
-  const parentInner = (
-    <>
-      <NavIconBox active={parentRouteActive}>
-        <Ic />
-      </NavIconBox>
-      <span className="min-w-0 flex-1 truncate text-left leading-snug">{item.label}</span>
-    </>
-  );
-
-  const parentClass = navButtonClass(parentRouteActive, false);
-
-  const onParentClick = (e: MouseEvent<HTMLAnchorElement>) => {
-    const onStudioRoute = matchesProductStudio(path);
-    if (!onStudioRoute) {
-      // 从作品/知识库等页进入创作：不拦截，允许 Link 正常跳转 /create
-      return;
-    }
-    e.preventDefault();
-    setCreateSubNavExpanded((v) => !v);
-  };
+  const parentRouteActive = matchesWorkbenchTools(path);
+  const parentTip = t("nav.tools");
+  const parentClass = navButtonClass(parentRouteActive, collapsed);
 
   const subs: { href: string; label: string; active: boolean }[] = [
+    {
+      href: "/create?mode=podcast",
+      label: t("nav.toolPodcast"),
+      active: podcastStudioActive || pathMatchesRoot(path, "/podcast")
+    },
+    {
+      href: "/create?mode=tts",
+      label: t("nav.toolTts"),
+      active: ttsStudioActive || pathMatchesRoot(path, "/tts")
+    },
     { href: "/clip", label: t("create.quickLink.clip"), active: pathMatchesRoot(path, "/clip") },
     { href: "/shownotes", label: t("create.quickLink.shownotes"), active: pathMatchesRoot(path, "/shownotes") },
     { href: "/voice", label: t("create.quickLink.voiceClone"), active: voiceManageActive }
   ];
 
-  return (
-    <div className="flex w-full flex-col gap-0.5">
+  if (collapsed) {
+    return (
       <SidebarNavLink
-        href="/create"
+        href="/create?mode=podcast"
         className={parentClass}
         title={parentTip}
-        aria-expanded={createSubNavExpanded}
-        aria-controls="fym-create-studio-subnav"
-        onClick={onParentClick}
+        aria-current={parentRouteActive ? "page" : undefined}
       >
-        {parentInner}
+        <NavIconBox active={parentRouteActive}>
+          <IconCreate />
+        </NavIconBox>
       </SidebarNavLink>
-      {createSubNavExpanded ? (
+    );
+  }
+
+  return (
+    <div className="flex w-full flex-col gap-0.5">
+      <button
+        type="button"
+        className={parentClass}
+        title={parentTip}
+        aria-expanded={toolsSubNavExpanded}
+        aria-controls="fym-studio-tools-subnav"
+        onClick={() => setToolsSubNavExpanded((v) => !v)}
+      >
+        <NavIconBox active={parentRouteActive}>
+          <IconCreate />
+        </NavIconBox>
+        <span className="min-w-0 flex-1 truncate text-left leading-snug">{t("nav.tools")}</span>
+      </button>
+      {toolsSubNavExpanded ? (
         <div
-          id="fym-create-studio-subnav"
+          id="fym-studio-tools-subnav"
           role="group"
           aria-label={t("nav.createSubNavGroup")}
           className="ml-10 flex flex-col gap-0.5"
@@ -269,7 +290,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
    * 曾出现「只有个别侧栏项可点」的命中错乱）。
    */
   const [sidebarPortaled, setSidebarPortaled] = useState(false);
-  const [createSubNavExpanded, setCreateSubNavExpanded] = useState(true);
+  const [toolsSubNavExpanded, setToolsSubNavExpanded] = useState(false);
   const [navPending, setNavPending] = useState(false);
   const navPendingTargetRef = useRef<string | null>(null);
   const navPendingHrefRef = useRef<string | null>(null);
@@ -383,40 +404,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     [navPending, navPendingTier, showNavPendingOverlay, beginWorkbenchNav]
   );
 
-  const navPrimary = useMemo<NavItem[]>(
-    () => [{ href: WORKBENCH_HOME_PATH, label: t("nav.home"), short: "话", Icon: IconHome }],
-    [t]
-  );
-  const navProducts = useMemo<NavItem[]>(
+  const navCore = useMemo<NavItem[]>(
     () => [
+      { href: WORKBENCH_HOME_PATH, label: t("nav.home"), short: "话", Icon: IconHome },
       {
         href: "/notes",
         label: t("nav.notes"),
-        short: "笔",
+        short: t("nav.notesShort"),
+        linkTitle: t("nav.notesLinkTitle"),
         Icon: IconNotes,
         activeMatch: (p) => matchesNotesWorkbench(p)
       },
       {
-        href: "/create",
-        label: t("nav.create"),
-        short: t("nav.createShort"),
-        Icon: IconCreate,
-        activeMatch: (p) => matchesProductStudio(p)
+        href: "/works",
+        label: t("nav.works"),
+        short: "作",
+        Icon: IconGrid,
+        activeMatch: (p) => pathMatchesRoot(p, "/works") && !matchesWorksTrash(p)
       }
-    ],
-    [t]
-  );
-  const navLibrary = useMemo<NavItem[]>(
-    () => [
-      { href: "/works", label: t("nav.works"), short: "作", Icon: IconGrid },
-      {
-        href: "/drafts",
-        label: t("nav.drafts"),
-        short: "本",
-        Icon: IconDraft,
-        activeMatch: (p) => pathMatchesRoot(p, "/drafts")
-      },
-      { href: "/notes/trash", label: t("nav.trash"), short: "删", Icon: IconTrash }
     ],
     [t]
   );
@@ -492,7 +497,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [pathname, closeMobileNav]);
 
   useEffect(() => {
-    if (pathMatchesRoot(path, "/create")) setCreateSubNavExpanded(true);
+    if (matchesWorkbenchTools(path)) setToolsSubNavExpanded(true);
   }, [path]);
 
   useEffect(() => {
@@ -742,22 +747,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           if (el.closest("a, [href]")) closeMobileNav("blur");
         }}
       >
-        {navPrimary.map(renderSidebarNavItem)}
-        {navProducts.map((item) =>
-          item.href === "/create" ? (
-            <Fragment key={item.href}>
-              {sidebarCollapsed ? (
-                renderSidebarNavItem(item)
-              ) : (
-                <CreateStudioNavExpanded
-                  item={item}
-                  path={path}
-                  createSubNavExpanded={createSubNavExpanded}
-                  setCreateSubNavExpanded={setCreateSubNavExpanded}
-                />
-              )}
-            </Fragment>
-          ) : item.href === "/notes" ? (
+        {navCore.map((item) =>
+          item.href === "/notes" ? (
             <NotesNavExpanded
               key={item.href}
               item={item}
@@ -769,8 +760,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             renderSidebarNavItem(item)
           )
         )}
-        <NavSectionHeader collapsed={sidebarCollapsed}>{t("nav.library")}</NavSectionHeader>
-        {navLibrary.map(renderSidebarNavItem)}
+        <NavSectionHeader collapsed={sidebarCollapsed}>{t("nav.tools")}</NavSectionHeader>
+        <StudioToolsNavExpanded
+          path={path}
+          collapsed={sidebarCollapsed}
+          toolsSubNavExpanded={toolsSubNavExpanded}
+          setToolsSubNavExpanded={setToolsSubNavExpanded}
+        />
       </nav>
 
       <div

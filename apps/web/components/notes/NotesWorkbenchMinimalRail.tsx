@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { IconCreate, IconHome, IconNotes } from "../icons";
+import { IconCreate, IconGrid, IconHome, IconNotes } from "../icons";
 import BrandGlyph from "../brand/BrandGlyph";
 import { dispatchNotesShowNotebookHub } from "../../lib/notesLastNotebook";
 import { WORKBENCH_HOME_PATH, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
@@ -12,11 +12,12 @@ const RAIL_BTN =
 type Props = {
   homeLabel: string;
   notesLabel: string;
-  createLabel: string;
+  worksLabel: string;
+  toolsLabel: string;
 };
 
-/** 笔记本工作台：48px 图标轨（桌面）；返回列表由页内顶栏「知识库」承担 */
-export default function NotesWorkbenchMinimalRail({ homeLabel, notesLabel, createLabel }: Props) {
+/** 笔记本工作台：48px 图标轨（桌面）；与主侧栏心智对齐：话 / 料 / 作 / 具 */
+export default function NotesWorkbenchMinimalRail({ homeLabel, notesLabel, worksLabel, toolsLabel }: Props) {
   return (
     <aside
       id="fym-app-sidebar-root"
@@ -53,11 +54,20 @@ export default function NotesWorkbenchMinimalRail({ homeLabel, notesLabel, creat
           <IconNotes width={20} height={20} aria-hidden />
         </button>
         <Link
-          href="/create"
+          href="/works"
           prefetch={WORKBENCH_NAV_PREFETCH}
           className={RAIL_BTN}
-          title={createLabel}
-          aria-label={createLabel}
+          title={worksLabel}
+          aria-label={worksLabel}
+        >
+          <IconGrid width={20} height={20} aria-hidden />
+        </Link>
+        <Link
+          href="/create?mode=podcast"
+          prefetch={WORKBENCH_NAV_PREFETCH}
+          className={RAIL_BTN}
+          title={toolsLabel}
+          aria-label={toolsLabel}
         >
           <IconCreate width={20} height={20} aria-hidden />
         </Link>

@@ -10,6 +10,7 @@ export const WORKBENCH_NAV_PREFETCH = false;
 
 export const NOTES_TEMPLATES_PREFIX = "/notes/templates";
 export const NOTES_TRASH_PREFIX = "/notes/trash";
+export const WORKS_TRASH_PATH = "/works/trash";
 
 const PRODUCT_STUDIO_ROOTS = ["/create", "/podcast", "/tts"] as const;
 
@@ -45,6 +46,20 @@ export function matchesProductStudio(pathname: string): boolean {
   return PRODUCT_STUDIO_ROOTS.some((r) => pathMatchesRoot(pathname, r));
 }
 
+/** 创作工具折叠组：工作室 + 后期工具路由。 */
+export function matchesWorkbenchTools(pathname: string): boolean {
+  const n = normalizePathname(pathname);
+  if (matchesProductStudio(n)) return true;
+  if (pathMatchesRoot(n, "/clip")) return true;
+  if (pathMatchesRoot(n, "/shownotes")) return true;
+  if (pathMatchesRoot(n, "/voice")) return true;
+  return false;
+}
+
+export function matchesWorksTrash(pathname: string): boolean {
+  return pathMatchesRoot(pathname, WORKS_TRASH_PATH);
+}
+
 export function matchesNotesWorkbench(pathname: string): boolean {
   return (
     pathMatchesRoot(pathname, "/notes") &&
@@ -53,12 +68,11 @@ export function matchesNotesWorkbench(pathname: string): boolean {
   );
 }
 
-/** 侧栏一级入口（知识库 / 创作播客 / 我的作品）：进入时保持 232px 宽轨，不收成 72px 窄轨 */
+/** 侧栏一级入口（对话 / 资料 / 作品）：进入子页时保持 232px 宽轨。 */
 export function shouldKeepSidebarExpanded(pathname: string): boolean {
   const n = normalizePathname(pathname);
-  if (pathMatchesRoot(n, "/notes")) return true;
-  if (matchesProductStudio(n)) return true;
-  if (pathMatchesRoot(n, "/works")) return true;
+  if (pathMatchesRoot(n, "/notes") && n !== "/notes") return true;
+  if (pathMatchesRoot(n, "/works") && n !== "/works") return true;
   return false;
 }
 
@@ -73,6 +87,7 @@ export function pathNeedsWorkAudio(pathname: string): boolean {
   if (n === WORKBENCH_HOME_PATH) return true;
   if (matchesProductStudio(n)) return true;
   if (pathMatchesRoot(n, "/works")) return true;
+  if (matchesWorksTrash(n)) return true;
   if (pathMatchesRoot(n, "/admin/works")) return true;
   if (pathMatchesRoot(n, "/clip")) return true;
   if (pathMatchesRoot(n, "/voice")) return true;

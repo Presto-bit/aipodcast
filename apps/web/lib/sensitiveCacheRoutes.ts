@@ -19,7 +19,6 @@ const SENSITIVE_DOCUMENT_PREFIXES: readonly string[] = [
   "/voice",
   "/tts",
   "/podcast",
-  "/drafts",
   "/settings"
 ];
 

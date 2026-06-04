@@ -26,7 +26,6 @@ import { rssPublicationJobIdsKey, workDurationHydrationJobIdsKey } from "../../l
 import { useI18n } from "../../lib/I18nContext";
 import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
 import { copyWorkManuscriptToClipboard } from "../../lib/copyWorkManuscript";
-import { insertPodcastDraftAtTop, setDraftsNavigationFocusDraftId } from "../../lib/podcastDrafts";
 import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { useAppNotice } from "../../lib/AppNoticeContext";
 import UserErrorBanner from "../ui/UserErrorBanner";
@@ -1011,17 +1010,7 @@ export default function PodcastWorksGallery({
         const result = (row.result || {}) as Record<string, unknown>;
 
         if (isPodcastManuscriptDraftTarget(jobType)) {
-          /** 正文在 result.script_text / script 工件；勿用 payload.text（多为原始素材）。 */
-          const text = (await resolveJobScriptBodyText(id, row, getAuthHeaders())).trim();
-          if (!text) {
-            showError("暂无文稿可复制");
-            return;
-          }
-          const titleFromJob = String((row as { title?: unknown }).title || payload.title || "").trim();
-          const draftTitle = (sanitizeShareEpisodeTitle(titleFromJob, "") || titleFromJob || "播客文稿").slice(0, 200);
-          const newId = insertPodcastDraftAtTop({ title: draftTitle, text });
-          setDraftsNavigationFocusDraftId(newId);
-          router.push("/drafts");
+          await requestCopyManuscript(id, row as Pick<WorkItem, "scriptText" | "scriptCharCount" | "status">);
           return;
         }
 
@@ -1076,7 +1065,7 @@ export default function PodcastWorksGallery({
         }));
       }
     },
-    [getAuthHeaders, router, showError]
+    [getAuthHeaders, requestCopyManuscript, router, showError]
   );
 
   const toggleSelect = useCallback((id: string) => {

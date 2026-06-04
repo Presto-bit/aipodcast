@@ -8,7 +8,7 @@
 
 **Presto AI Podcast（FindingYourVoice）**：面向内容创作的 AI 工作台，核心路径包括「笔记 / 素材 → 播客与语音产物 → 作品管理与分发相关能力」，配套登录鉴权、订阅与用量。
 
-一句话：**降低从想法到可发布音频与视频制片稿（及延伸形态）的流水线成本**，在质量、配额与合规（如商用授权）之间可分层。
+一句话：**带着自己的资料，在对话里说一句话，拿走能发的成品**；播客等重出口可一键试听或送进工作室精修。详见 [composer-first-product-architecture.md](./composer-first-product-architecture.md)。
 
 ---
 
@@ -43,7 +43,8 @@
 | [author-ip-product-v5.md](./author-ip-product-v5.md) | **（历史）个人特色 IP v5.2**：独立工作台方案；**现行以 [v6](./author-ip-product-v6.md) 为准** |
 | [author-ip-product-v6.md](./author-ip-product-v6.md) | **个人特色 IP（v6.2，现行）**：笔记本即 IP；一键提炼；三端默认本笔记本风格 |
 | [author-ip-execution-schedule.md](./author-ip-execution-schedule.md) | **（历史排期）** v5 迭代 1～15；独立工作台/API 已下线，见 v6 |
-| [home-composer-experts.md](./home-composer-experts.md) | **首页 Composer 创作专家（v1）**：人设+方法论+工具链、下拉开选、我的专家×个人风格、任务问卷 |
+| [composer-first-product-architecture.md](./composer-first-product-architecture.md) | **（现行方向）对话主入口 v1.1**：四支柱、侧栏 IA（无 drafts/侧栏回收站）、handoff、排期 |
+| [home-composer-experts.md](./home-composer-experts.md) | **首页 Composer 创作专家（v3）**：专家任务流、资料计划；实现须与 architecture 文档对齐 |
 
 ---
 

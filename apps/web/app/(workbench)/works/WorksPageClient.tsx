@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -31,6 +32,7 @@ import { isTextOnlyWorkType, type WorkItem } from "../../../lib/worksTypes";
 import { isAudioGalleryWorkType } from "../../../lib/workGalleryDisplay";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
+import { WORKS_TRASH_PATH } from "../../../lib/navPaths";
 import { isAbortError, usePageAbortSignal } from "../../../lib/usePageAbortSignal";
 import { useActiveJobCount, useInvalidateActiveJobs } from "../../../lib/queries/activeJobsQuery";
 import {
@@ -237,16 +239,24 @@ export default function WorksPageClient({ initialWorks = null }: { initialWorks?
     <main className="mx-auto min-h-0 w-full max-w-6xl px-3 pb-8 pt-2 sm:px-4">
       <div className="mb-2 flex flex-col gap-1 border-b border-line/80 pb-2 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">我的作品</h1>
+          <h1 className="text-lg font-semibold tracking-tight text-ink sm:text-xl">{t("nav.works")}</h1>
           <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted">播客音频、文稿成品与进行中任务</p>
         </div>
-        {(worksView === "audio" || worksView === "script") && (totalLoaded > 0 || isRefreshing) ? (
-          <p className="shrink-0 text-xs text-muted">
-            已加载 <span className="font-medium tabular-nums text-ink">{totalLoaded}</span> 件
-            {hasMore ? <span className="text-muted"> · 更多</span> : null}
-            {isRefreshing ? <span className="text-muted"> · 更新中</span> : null}
-          </p>
-        ) : null}
+        <div className="flex shrink-0 flex-wrap items-center gap-3">
+          {(worksView === "audio" || worksView === "script") && (totalLoaded > 0 || isRefreshing) ? (
+            <p className="text-xs text-muted">
+              已加载 <span className="font-medium tabular-nums text-ink">{totalLoaded}</span> 件
+              {hasMore ? <span className="text-muted"> · 更多</span> : null}
+              {isRefreshing ? <span className="text-muted"> · 更新中</span> : null}
+            </p>
+          ) : null}
+          <Link
+            href={WORKS_TRASH_PATH}
+            className="text-sm text-muted underline decoration-dotted underline-offset-4 transition-colors hover:text-ink"
+          >
+            {t("works.trashLink")}
+          </Link>
+        </div>
       </div>
 
       <div className="mb-2 flex flex-wrap items-center gap-1.5 gap-y-2">
