@@ -10,7 +10,8 @@ import {
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
 import { featureCoreToPrompt } from "../../lib/homeComposerFeatureCore";
-import { getComposerPrefsFeatureCore } from "../../lib/studioWorkStorage";
+import { personalProfileToPrompt } from "../../lib/homeComposerProfile";
+import { getComposerPrefsFeatureCore, getStudioComposerPrefs } from "../../lib/studioWorkStorage";
 import { syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
 import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
@@ -164,14 +165,22 @@ export default function StudioAgentDock({
     let supplementBuf = "";
 
     try {
+      const prefs = getStudioComposerPrefs();
+      const corePrompt = featureCoreToPrompt(getComposerPrefsFeatureCore());
+      const profilePrompt =
+        prefs.personalEnabled && prefs.personalProfile
+          ? personalProfileToPrompt(prefs.personalProfile)
+          : "";
+      const authorIpPrompt = [corePrompt, profilePrompt].filter(Boolean).join("\n\n");
+
       const done = await streamHomeComposerAsk({
-        question: buildStudioAgentQuestion(work, q, intent),
+        question: buildStudioAgentQuestion(work, q, intent, activeVersion),
         mode: ragMode,
         notebook: work.binding.notebook,
         noteIds: work.binding.noteIds,
         memoryTurns: memoryFromStudio,
         sessionState: work.agentSessionState ?? null,
-        authorIpPrompt: featureCoreToPrompt(getComposerPrefsFeatureCore()),
+        authorIpPrompt: authorIpPrompt || undefined,
         authHeaders: getAuthHeaders(),
         signal: ac.signal,
         callbacks: {
@@ -231,15 +240,23 @@ export default function StudioAgentDock({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div ref={scrollRef} className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-y-auto px-3 py-3">
+        {turns.length === 0 && work.status === "briefing" ? (
+          <p className="mb-2 text-[11px] text-muted">
+            上方为对话解释；下方「产物」区展示计划确认与成稿。说清楚后回复「确认任务」。
+          </p>
+        ) : null}
         {turns.length > 0 ? (
-          <div className="space-y-3">
-            {turns.map((turn) => (
-              <StudioAgentMessage
-                key={turn.id}
-                turn={turn}
-                streamingPhase={turn.streaming ? phase : undefined}
-              />
-            ))}
+          <div className="mb-1">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-muted">对话 · 解释</p>
+            <div className="mt-2 space-y-3">
+              {turns.map((turn) => (
+                <StudioAgentMessage
+                  key={turn.id}
+                  turn={turn}
+                  streamingPhase={turn.streaming ? phase : undefined}
+                />
+              ))}
+            </div>
           </div>
         ) : null}
 
@@ -275,6 +292,11 @@ export default function StudioAgentDock({
                 登录
               </Link>
               后可用
+            </p>
+          ) : null}
+          {showQuickPrompts ? (
+            <p className="mb-1.5 text-[10px] text-muted">
+              可先点示例；绑资料后回答会带「资料」依据。
             </p>
           ) : null}
           {showQuickPrompts ? (

@@ -1,6 +1,11 @@
 import type { FeatureCore } from "./homeComposerExpertTypes";
 import { EMPTY_FEATURE_CORE } from "./homeComposerFeatureCore";
-import { activeHomeComposerSession, loadHomeComposerStore } from "./homeComposerChatStorage";
+import {
+  activeHomeComposerSession,
+  loadHomeComposerStore,
+  normalizeHomeComposerPrefs
+} from "./homeComposerChatStorage";
+import type { HomeComposerPrefs } from "./homeComposerTypes";
 import { readStudioWorksBlob, writeStudioWorksBlob } from "./studioWorkCloud";
 import type { StudioWork, WorkStatus } from "./studioWorkTypes";
 import { isStudioWorkDraft } from "./studioWorkTask";
@@ -38,6 +43,12 @@ export function findDraftStudioWork(): StudioWork | null {
 
 export function getComposerPrefsFeatureCore(): FeatureCore {
   return inheritFromComposerPrefs().featureCore;
+}
+
+export function getStudioComposerPrefs(): HomeComposerPrefs {
+  const store = loadHomeComposerStore();
+  const session = activeHomeComposerSession(store);
+  return normalizeHomeComposerPrefs(session?.prefs);
 }
 
 export function getStudioWork(id: string): StudioWork | null {

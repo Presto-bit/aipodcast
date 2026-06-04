@@ -1,5 +1,11 @@
 import type { NotesAskMemoryTurn } from "./notesAskMemoryTypes";
-import type { StudioAgentIntent, StudioAgentTurn, StudioWork } from "./studioWorkTypes";
+import {
+  buildStudioStyleRulesPrompt,
+  buildStudioWorkMemoryPrompt,
+  corpusBindingLine,
+  manuscriptVersionToPrompt
+} from "./studioAgentContext";
+import type { ManuscriptVersion, StudioAgentIntent, StudioAgentTurn, StudioWork } from "./studioWorkTypes";
 import { hasTaskContext, taskSentenceFromWork } from "./studioWorkTask";
 
 export type { StudioAgentIntent };
@@ -60,36 +66,34 @@ export function studioTurnsToMemoryTurns(turns: StudioAgentTurn[]): NotesAskMemo
   return out;
 }
 
-function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string {
+function intentSystemPrompt(intent: StudioAgentIntent): string {
   switch (intent) {
     case "ops_strategy":
       return [
         "你是内容运营策略顾问，按用户提出的渠道与目标作答（勿默认假定平台）。",
-        "用户问运营、增长、发布节奏、互动、数据复盘、起号、对标时：给出可执行、分点的建议，并结合对话与资料。",
-        "禁止回复「我无法做运营策略/不能回答运营」等推脱；这是你的主职责之一。",
-        "不要代替「确认执行」产出完整成稿；若用户要成稿，提示先说明清楚需求后回复「确认任务」。"
+        "用户问运营、增长、发布节奏、互动、数据复盘、起号、对标时：给出可执行、分点的建议。",
+        "禁止推脱；不要代替「确认执行」产出完整成稿；需成稿时提示回复「确认任务」。"
       ].join("\n");
     case "brief_clarify":
       return [
-        "你帮助澄清用户想创作的内容（形式、受众、结构、语气、资料怎么用）；需求由用户提出，勿替用户选定渠道或体裁。",
-        "用简短追问收敛任务；任务清楚后请用户回复「确认任务」以进入执行确认。",
+        "你帮助澄清用户想创作的内容（形式、受众、结构、语气、资料怎么用）。",
+        "用简短追问收敛；任务清楚后请用户回复「确认任务」。",
         "不要输出可直接发布的完整成稿。"
       ].join("\n");
     case "manuscript_coach":
       return [
-        "你解读当前稿件版本：结构是否合理、与资料是否一致、发布注意点。",
-        "不要无故拒绝；仅当问题超出创作/运营范畴（如实时私密数据、违法）时简短说明限制。"
+        "你解读【当前稿件】：结构、语气、与资料/我的特色是否一致、发布注意点。",
+        "引用稿件中的具体句子说明，不要重复粘贴全文（全文已在上下文）。"
       ].join("\n");
     case "revise_coach":
       return [
-        "你根据用户改版意见，说明建议改哪些块（标题/正文/话题），并给出可粘贴的修改方向。",
-        "若需执行 Job 改版，提示在输出区「提交改版」输入框提交。"
+        "根据用户改版意见与【当前稿件】，说明建议改哪些块（标题/正文/话题）及方向。",
+        "若需 Job 执行改版，提示在产物区「提交改版」输入框提交。"
       ].join("\n");
     default:
       return [
-        "你是写作 Studio 创作助手，围绕本 Work 的用户任务作答（渠道与体裁以用户描述为准）。",
-        "尽力作答；不要默认拒绝。仅在大模型/平台确实无法做到时（如未授权实时数据、违法内容）简短说明。",
-        "涉及成稿生成时提醒：任务清楚后请用户回复「确认任务」，再在输出区「确认执行」。"
+        "你是写作 Studio 创作助手，围绕本 Work 的用户任务作答。",
+        "涉及成稿：提示「确认任务」→ 输出区「确认执行」。"
       ].join("\n");
   }
 }
@@ -97,22 +101,27 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
 export function buildStudioAgentQuestion(
   work: StudioWork,
   userMessage: string,
-  intent: StudioAgentIntent
+  intent: StudioAgentIntent,
+  activeVersion?: ManuscriptVersion | null
 ): string {
   const task = taskSentenceFromWork(work);
+  const needManuscript =
+    intent === "manuscript_coach" || intent === "revise_coach" || work.status === "ready";
+  const manuscript = needManuscript ? manuscriptVersionToPrompt(activeVersion ?? null) : "";
+
   const lines = [
-    intentSystemPrompt(intent, work),
+    intentSystemPrompt(intent),
+    buildStudioStyleRulesPrompt(work),
+    buildStudioWorkMemoryPrompt(work),
     `【当前意图】${studioAgentIntentLabel(intent)}`,
     `任务状态：${work.status}`,
-    task ? `对话中的任务要点：${task}` : "任务：用户尚未描述清楚",
-    work.binding.notebook
-      ? `资料：${work.binding.notebook} · ${work.binding.noteIds.length} 篇`
-      : "资料：未绑定",
-    work.allowModelFallback ? "允许通识兜底：是" : "允许通识兜底：否",
-    work.plan?.goal ? `计划目标：${work.plan.goal}` : ""
+    task ? `任务要点：${task}` : "任务：用户尚未描述清楚",
+    corpusBindingLine(work),
+    work.plan?.goal ? `计划目标：${work.plan.goal}` : "",
+    manuscript
   ].filter(Boolean);
 
-  return `${lines.join("\n")}\n\n---\n用户：\n${userMessage.trim()}`;
+  return `${lines.join("\n\n")}\n\n---\n用户：\n${userMessage.trim()}`;
 }
 
 export { hasTaskContext, taskSentenceFromWork };
