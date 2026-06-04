@@ -1,11 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { studioAgentIntentLabel } from "../../lib/studioAgentAsk";
 import type { StudioAgentTurn } from "../../lib/studioWorkTypes";
 
 const NotesAskAnswerMarkdownBody = dynamic(
   () => import("../notes/NotesAskAnswerMarkdownBody").then((m) => ({ default: m.default })),
-  { loading: () => <p className="text-sm text-muted">…</p> }
+  { loading: () => <span className="text-muted">…</span> }
 );
 
 export default function StudioAgentMessage({
@@ -17,31 +18,26 @@ export default function StudioAgentMessage({
 }) {
   if (turn.role === "user") {
     return (
-      <div className="flex justify-end py-1">
-        <div className="max-w-[85%] rounded-xl bg-fill/60 px-3 py-2 text-[13px] leading-relaxed text-ink">
-          <p className="whitespace-pre-wrap">{turn.content}</p>
-        </div>
+      <div className="flex justify-end">
+        <p className="max-w-[90%] whitespace-pre-wrap rounded-lg bg-fill/50 px-2.5 py-1 text-[12px] leading-relaxed text-ink">
+          {turn.content}
+        </p>
       </div>
     );
   }
 
   const text = turn.content.trim();
-  const streaming = turn.streaming;
+  const label = turn.intent ? studioAgentIntentLabel(turn.intent) : "Agent";
 
   return (
-    <div className="group py-1.5">
-      <div className="mb-1 flex items-center gap-2">
-        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-brand/10 text-[10px] font-semibold text-brand">
-          A
-        </span>
-        <span className="text-[11px] font-medium text-muted">Agent</span>
-        {streaming && streamingPhase ? (
-          <span className="text-[11px] text-brand">{streamingPhase}</span>
-        ) : null}
+    <div className="py-0.5">
+      <div className="mb-0.5 flex items-center gap-1.5 text-[10px] text-muted">
+        <span className="font-medium text-brand">{label}</span>
+        {turn.streaming && streamingPhase ? <span>{streamingPhase}</span> : null}
       </div>
-      <div className="pl-7 text-[13px] leading-relaxed text-ink">
-        {streaming && !text ? (
-          <span className="inline-block h-4 w-4 animate-pulse rounded bg-fill" aria-hidden />
+      <div className="text-[12px] leading-relaxed text-ink">
+        {turn.streaming && !text ? (
+          <span className="inline-block h-3 w-12 animate-pulse rounded bg-fill" aria-hidden />
         ) : text ? (
           <NotesAskAnswerMarkdownBody text={text} />
         ) : null}

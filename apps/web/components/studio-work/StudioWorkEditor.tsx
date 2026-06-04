@@ -6,8 +6,7 @@ import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { deliverableToManuscriptBlocks, diffBlockKeys, mergeBlocks, nextVersionLabel } from "../../lib/studioDeliverable";
 import { useNotebooksHubQuery } from "../../lib/queries/notebooksQueries";
 import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
-import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
-import { FEATURE_CORE_FIELDS } from "../../lib/homeComposerPersonalFields";
+import { voiceProgressLabel } from "../../lib/studioVoiceFromChat";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
 import { buildPlanForWork } from "../../lib/studioWorkPlan";
 import { getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
@@ -36,7 +35,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const [selectedPatchKeys, setSelectedPatchKeys] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notesBusy, setNotesBusy] = useState(false);
-  const [mobilePanel, setMobilePanel] = useState<"manuscript" | "corpus" | "agent">("manuscript");
+  const [mobilePanel, setMobilePanel] = useState<"manuscript" | "corpus">("manuscript");
   const notebooksQuery = useNotebooksHubQuery(getAuthHeaders, isLoggedIn && ready);
 
   const load = useCallback(() => {
@@ -238,10 +237,15 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           {activeVersion ? (
             <span className="text-[11px] text-muted">{activeVersion.label}</span>
           ) : null}
-          <span className="text-[11px] text-muted">
-            资料{work.binding.noteIds.length || "0"} · {work.plan?.voiceEnabled ? "Voice✓" : "Voice—"}
+          {work.brief.trim() ? (
+            <span className="hidden max-w-[12rem] truncate text-[11px] text-muted sm:inline" title={work.brief}>
+              {work.brief}
+            </span>
+          ) : null}
+          <span className="text-[11px] text-muted lg:hidden">
+            料{work.binding.noteIds.length || "0"}
           </span>
-          <div className="ml-auto flex flex-wrap gap-2">
+          <div className="ml-auto flex flex-wrap gap-1.5">
             {work.status === "briefing" || work.status === "planned" ? (
               <button
                 type="button"
@@ -277,12 +281,11 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         {work.error ? <p className="mt-1 text-xs text-danger-ink">{work.error}</p> : null}
       </header>
 
-      <div className="flex shrink-0 gap-1 border-b border-line px-3 py-2 lg:hidden">
+      <div className="flex shrink-0 gap-1 border-b border-line px-3 py-1.5 lg:hidden">
         {(
           [
-            ["manuscript", "稿件"],
-            ["corpus", "资料"],
-            ["agent", "助手"]
+            ["manuscript", "创作"],
+            ["corpus", "资料"]
           ] as const
         ).map(([id, label]) => (
           <button
@@ -302,7 +305,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <aside
           className={[
-            "w-full shrink-0 border-r border-line bg-fill/20 p-3 lg:block lg:w-56",
+            "w-full shrink-0 border-r border-line bg-fill/15 p-2.5 lg:block lg:w-48",
             mobilePanel === "corpus" ? "block" : "hidden lg:block"
           ].join(" ")}
         >
@@ -353,94 +356,31 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             />
             允许通识兜底
           </label>
-          <div className="mt-4 border-t border-line pt-3">
-            <p className="text-xs font-medium text-ink">
-              Voice / 我的特色
-              {isFeatureCoreComplete(work.featureCore) ? (
-                <span className="ml-1 text-brand">✓</span>
-              ) : (
-                <span className="ml-1 text-warning-ink">未填全</span>
-              )}
-            </p>
-            {FEATURE_CORE_FIELDS.map(({ key, label, placeholder, rows }) => (
-              <label key={key} className="mt-2 block text-[11px] text-muted">
-                <span className="line-clamp-2">{label}</span>
-                <textarea
-                  className="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-ink"
-                  rows={Math.min(rows, 2)}
-                  value={work.featureCore[key]}
-                  placeholder={placeholder}
-                  onChange={(e) =>
-                    persist({
-                      ...work,
-                      featureCore: { ...work.featureCore, [key]: e.target.value }
-                    })
-                  }
-                />
-              </label>
-            ))}
-          </div>
+          <p className="mt-3 text-[10px] leading-relaxed text-muted">
+            {voiceProgressLabel(work.featureCore)} · 在底部 Agent 对话中自动收集，无需填表
+          </p>
         </aside>
 
         <section
           className={[
             "flex min-h-0 min-w-0 flex-1 flex-col",
-            mobilePanel === "manuscript" || mobilePanel === "agent" ? "flex" : "hidden lg:flex"
+            mobilePanel === "manuscript" ? "flex" : "hidden lg:flex"
           ].join(" ")}
         >
-          <div
-            className={[
-              "min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4",
-              mobilePanel === "agent" ? "hidden lg:block" : ""
-            ].join(" ")}
-          >
-          {(work.status === "briefing" || work.status === "planned") && !work.plan ? (
-            <div className="mb-4 rounded-xl border border-line bg-fill/30 p-4">
-              <label className="block text-sm font-medium text-ink">任务说明（Brief）</label>
-              <textarea
-                className="mt-2 min-h-[100px] w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink"
-                value={work.brief}
-                onChange={(e) => persist({ ...work, brief: e.target.value, title: e.target.value.slice(0, 48) || work.title })}
-                placeholder="例如：把 Q1 产品复盘写成可发的小红书，要 3 个标题…"
-              />
-              {!isLoggedIn && ready ? (
-                <p className="mt-2 text-xs text-warning-ink">登录后可生成计划与稿件</p>
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 sm:px-3">
+          {showPlan && work.plan ? (
+            <div className="mb-2 rounded-lg border border-brand/25 bg-brand/5 px-2.5 py-2 text-[11px]">
+              <p className="font-medium text-ink">{work.plan.goal}</p>
+              {work.plan.risks.length ? (
+                <p className="mt-1 text-warning-ink">{work.plan.risks.join(" · ")}</p>
               ) : null}
             </div>
           ) : null}
 
-          {showPlan && work.plan ? (
-            <div className="mb-4 rounded-xl border border-brand/30 bg-brand/5 p-4">
-              <h2 className="text-sm font-semibold text-ink">计划</h2>
-              <p className="mt-1 text-sm text-ink">{work.plan.goal}</p>
-              <ul className="mt-2 list-inside list-disc text-xs text-muted">
-                {work.plan.outline.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-              {work.plan.inferenceSummary.length ? (
-                <p className="mt-2 text-xs text-muted">
-                  推断：{work.plan.inferenceSummary.join(" · ")}
-                </p>
-              ) : null}
-              {work.plan.risks.length ? (
-                <ul className="mt-2 text-xs text-warning-ink">
-                  {work.plan.risks.map((r) => (
-                    <li key={r}>⚠ {r}</li>
-                  ))}
-                </ul>
-              ) : null}
-              {work.status === "planned" ? (
-                <button
-                  type="button"
-                  disabled={busy || !isLoggedIn}
-                  className="mt-3 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-foreground disabled:opacity-50"
-                  onClick={() => void onConfirmGenerate()}
-                >
-                  确认生成
-                </button>
-              ) : null}
-            </div>
+          {!work.brief.trim() && (work.status === "briefing" || work.status === "planned") && !work.plan ? (
+            <p className="mb-2 text-[11px] text-muted">
+              在底部 Agent 描述需求；Voice 三问会在对话里追问。收敛后点「写入 Brief」→「生成计划」。
+            </p>
           ) : null}
 
           <StudioManuscriptPanel
@@ -465,134 +405,69 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           />
 
           {work.pendingPatch ? (
-            <div className="mt-2 shrink-0 rounded-xl border border-brand/40 bg-brand/5 p-3">
-              <p className="text-xs text-ink">
-                {work.pendingPatch.summary} · 勾选要采纳的块
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground"
-                  onClick={() => onApplyPatch(true)}
-                >
-                  采纳所选 ({selectedPatchKeys.size})
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg border border-line px-3 py-1.5 text-xs"
-                  onClick={() => onApplyPatch(false)}
-                >
-                  全部采纳
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg border border-line px-3 py-1.5 text-xs text-muted"
-                  onClick={() => persist({ ...work, pendingPatch: undefined })}
-                >
-                  放弃
-                </button>
-              </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-brand/30 bg-brand/5 px-2 py-1.5 text-[11px]">
+              <span className="text-ink">{work.pendingPatch.summary}</span>
+              <button
+                type="button"
+                className="rounded bg-brand px-2 py-0.5 text-brand-foreground"
+                onClick={() => onApplyPatch(true)}
+              >
+                采纳({selectedPatchKeys.size})
+              </button>
+              <button type="button" className="rounded border border-line px-2 py-0.5" onClick={() => onApplyPatch(false)}>
+                全采纳
+              </button>
+              <button
+                type="button"
+                className="text-muted"
+                onClick={() => persist({ ...work, pendingPatch: undefined })}
+              >
+                放弃
+              </button>
             </div>
           ) : null}
 
           {work.status === "ready" && !work.pendingPatch ? (
-            <div className="mt-2 shrink-0 border-t border-line pt-3">
-              <label className="text-xs text-muted">对 {activeVersion?.label || "当前版"} 改：</label>
-              <div className="mt-1 flex gap-2">
-                <input
-                  className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-sm"
-                  value={reviseText}
-                  onChange={(e) => setReviseText(e.target.value)}
-                  placeholder="例如：标题更短更狠，正文别动"
-                  onKeyDown={(e) => e.key === "Enter" && !busy && void onRevise()}
-                />
-                <button
-                  type="button"
-                  disabled={busy || !reviseText.trim()}
-                  className="shrink-0 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-foreground disabled:opacity-50"
-                  onClick={() => void onRevise()}
-                >
-                  提交改版
-                </button>
-              </div>
-            </div>
-          ) : null}
-          </div>
-
-          <div className={mobilePanel === "agent" ? "hidden lg:contents" : "contents"}>
-            <StudioAgentDock
-              work={work}
-              isLoggedIn={isLoggedIn}
-              ready={ready}
-              parentBusy={busy}
-              getAuthHeaders={getAuthHeaders}
-              onPersist={persist}
-              onWriteBrief={(brief) => {
-                const t = brief.trim();
-                if (!t) return;
-                persist({
-                  ...work,
-                  brief: t,
-                  title: t.slice(0, 48) || work.title,
-                  status: work.status === "shipped" ? work.status : "briefing"
-                });
-              }}
-              onGeneratePlan={() => onGeneratePlan()}
-            />
-          </div>
-          {mobilePanel === "agent" ? (
-            <div className="flex min-h-0 flex-1 flex-col lg:hidden">
-              <StudioAgentDock
-                expanded
-                work={work}
-                isLoggedIn={isLoggedIn}
-                ready={ready}
-                parentBusy={busy}
-                getAuthHeaders={getAuthHeaders}
-                onPersist={persist}
-                onWriteBrief={(brief) => {
-                  const t = brief.trim();
-                  if (!t) return;
-                  persist({
-                    ...work,
-                    brief: t,
-                    title: t.slice(0, 48) || work.title,
-                    status: work.status === "shipped" ? work.status : "briefing"
-                  });
-                }}
-                onGeneratePlan={() => onGeneratePlan()}
+            <div className="mt-2 flex gap-1.5">
+              <input
+                className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-[12px]"
+                value={reviseText}
+                onChange={(e) => setReviseText(e.target.value)}
+                placeholder={`改版 ${activeVersion?.label || ""}：标题更短…`}
+                onKeyDown={(e) => e.key === "Enter" && !busy && void onRevise()}
               />
+              <button
+                type="button"
+                disabled={busy || !reviseText.trim()}
+                className="shrink-0 rounded-lg bg-brand px-2.5 py-1.5 text-[11px] font-medium text-brand-foreground disabled:opacity-50"
+                onClick={() => void onRevise()}
+              >
+                改版
+              </button>
             </div>
           ) : null}
-        </section>
+          </div>
 
-        <aside
-          className={[
-            "w-full shrink-0 border-l border-line p-3 xl:block xl:w-72",
-            mobilePanel === "agent" ? "hidden" : "hidden xl:block"
-          ].join(" ")}
-        >
-          <p className="text-xs font-medium text-ink">Plan / Runs</p>
-          {work.plan ? (
-            <div className="mt-2 rounded-lg border border-line bg-fill/20 p-2 text-[11px] text-muted">
-              <p className="font-medium text-ink">{work.plan.goal}</p>
-              <ul className="mt-1 list-inside list-disc">
-                {work.plan.outline.slice(0, 4).map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <p className="mt-2 text-[11px] text-muted">生成计划后在此查看摘要；需求澄清请用中栏底部 Agent。</p>
-          )}
-          <p className="mt-3 text-[11px] leading-relaxed text-muted">
-            纯问答无 Work 时用{" "}
-            <Link href="/chat" className="text-brand">
-              经典对话
-            </Link>
-            。
-          </p>
-        </aside>
+          <StudioAgentDock
+            work={work}
+            isLoggedIn={isLoggedIn}
+            ready={ready}
+            parentBusy={busy}
+            getAuthHeaders={getAuthHeaders}
+            onPersist={persist}
+            onWriteBrief={(brief) => {
+              const t = brief.trim();
+              if (!t) return;
+              persist({
+                ...work,
+                brief: t,
+                title: t.slice(0, 48) || work.title,
+                status: work.status === "shipped" ? work.status : "briefing"
+              });
+            }}
+            onGeneratePlan={() => onGeneratePlan()}
+          />
+        </section>
       </div>
     </main>
   );

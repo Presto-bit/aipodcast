@@ -3,12 +3,20 @@
 import type { FeatureCore } from "./homeComposerExpertTypes";
 import type { NotesAskSessionState } from "./notesAskMemoryTypes";
 
+export type StudioAgentIntent =
+  | "brief_clarify"
+  | "ops_strategy"
+  | "manuscript_coach"
+  | "revise_coach"
+  | "general";
+
 export type StudioAgentTurn = {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: number;
   streaming?: boolean;
+  intent?: StudioAgentIntent;
 };
 
 export type StudioChannel = "xhs";
