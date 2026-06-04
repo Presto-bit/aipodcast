@@ -250,17 +250,19 @@ function StudioToolsNavExpanded({
   );
 }
 
+function StudioToolsNavExpandedWithQuery(
+  props: Omit<StudioToolsNavExpandedProps, "createModeQuery">
+) {
+  const searchParams = useSearchParams();
+  const createModeQuery = searchParams?.get("mode") ?? null;
+  return <StudioToolsNavExpanded {...props} createModeQuery={createModeQuery} />;
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const router = useRouter();
   const queryClient = useQueryClient();
   const path = pathname ?? "";
-  const createModeQuery = searchParams?.get("mode") ?? null;
-  const pageSuspenseKey =
-    normalizePathname(path) === "/create"
-      ? `/create?${searchParams?.toString() ?? ""}`
-      : path;
   const { ready, user, getAuthHeaders } = useAuth();
   const loggedIn = isLoggedInAccountUser(user);
 
@@ -585,7 +587,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const pageShell = (
     <AnimatedPageShell>
-      <Suspense key={pageSuspenseKey} fallback={<WorkbenchRouteSuspenseFallback />}>
+      <Suspense key={path} fallback={<WorkbenchRouteSuspenseFallback />}>
         {children}
       </Suspense>
     </AnimatedPageShell>
@@ -755,13 +757,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             renderSidebarNavItem(item)
           )
         )}
-        <StudioToolsNavExpanded
-          path={path}
-          createModeQuery={createModeQuery}
-          collapsed={sidebarCollapsed}
-          toolsSubNavExpanded={toolsSubNavExpanded}
-          setToolsSubNavExpanded={setToolsSubNavExpanded}
-        />
+        <Suspense
+          fallback={
+            <StudioToolsNavExpanded
+              path={path}
+              createModeQuery={readCreateModeQuery()}
+              collapsed={sidebarCollapsed}
+              toolsSubNavExpanded={toolsSubNavExpanded}
+              setToolsSubNavExpanded={setToolsSubNavExpanded}
+            />
+          }
+        >
+          <StudioToolsNavExpandedWithQuery
+            path={path}
+            collapsed={sidebarCollapsed}
+            toolsSubNavExpanded={toolsSubNavExpanded}
+            setToolsSubNavExpanded={setToolsSubNavExpanded}
+          />
+        </Suspense>
       </nav>
 
       <div
