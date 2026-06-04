@@ -3,11 +3,23 @@
 import type { ReactNode } from "react";
 import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
 import { getComposerPrefsFeatureCore } from "../../lib/studioWorkStorage";
-import { studioToolLabel } from "../../lib/studioOrchestrator";
-import type { ManuscriptVersion, StudioRun, StudioWork } from "../../lib/studioWorkTypes";
+import type { ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
 
-/** 输出区：解释在对话区；此处仅「须确认」与「产物」 */
+function outputHeading(work: StudioWork, activeVersion: ManuscriptVersion | null, compareMode: boolean): string | null {
+  if (compareMode) return "改版预览";
+  if (work.status === "generating") return "生成中";
+  if (work.status === "planned" && work.plan) return "计划";
+  if (
+    activeVersion &&
+    (work.status === "ready" || work.status === "shipped" || work.pendingPatch)
+  ) {
+    return `稿件 · ${activeVersion.label}`;
+  }
+  return null;
+}
+
+/** 输出区：单标题 + 扁平产物；须确认类提示在文末 */
 export default function StudioAgentOutputCards({
   work,
   busy,
@@ -46,8 +58,6 @@ export default function StudioAgentOutputCards({
   onDismissFeatureNudge: () => void;
 }) {
   const plan = work.plan;
-  const actionCards: ReactNode[] = [];
-  const artifactCards: ReactNode[] = [];
   const compareMode = Boolean(work.pendingPatch);
   const manuscriptBlocks =
     compareMode && work.pendingPatch
@@ -57,314 +67,205 @@ export default function StudioAgentOutputCards({
     manuscriptBlocks.length > 0 &&
     (work.status === "ready" || work.status === "shipped" || compareMode);
   const styleReady = isFeatureCoreComplete(getComposerPrefsFeatureCore());
+  const heading = outputHeading(work, activeVersion, compareMode);
 
-  if (work.status === "planned" && plan && onConfirmGenerate) {
-    actionCards.push(
-      <OutputCard key="confirm-exec" title="确认执行">
+  const body: ReactNode[] = [];
+  const footnotes: ReactNode[] = [];
+
+  if (work.error) {
+    body.push(
+      <p key="err" className="text-[13px] text-danger-ink">
+        {work.error}
+      </p>
+    );
+  }
+
+  if (work.status === "generating") {
+    body.push(
+      <p key="gen" className="text-[13px] text-brand">
+        {work.runPhase || "处理中…"}
+      </p>
+    );
+    if (work.binding.noteIds.length) {
+      body.push(
+        <p key="gen-hint" className="text-[11px] text-muted">
+          结合 {work.binding.noteIds.length} 篇资料生成，完成后显示在下方。
+        </p>
+      );
+    }
+  }
+
+  if (work.status === "planned" && plan) {
+    body.push(
+      <div key="plan" className="space-y-2 text-[13px]">
         <p className="font-medium text-ink">{plan.goal}</p>
         {plan.outline.length ? (
-          <ul className="mt-1.5 list-inside list-disc text-muted">
+          <ul className="list-inside list-disc text-muted">
             {plan.outline.map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ul>
         ) : null}
-        <EvidenceSummary
-          materialLabels={plan.materialLabels}
-          materialCount={plan.materialCount}
-          inferenceSummary={plan.inferenceSummary}
-          voiceEnabled={plan.voiceEnabled}
-          voiceSummary={plan.voiceSummary}
-          styleReady={styleReady}
-          risks={plan.risks}
-        />
-        <p className="mt-2 text-muted">请确认以上任务后开始生成稿件。</p>
-        <ActionRow>
-          <PrimaryButton disabled={busy || !isLoggedIn} onClick={onConfirmGenerate}>
-            确认执行
-          </PrimaryButton>
-        </ActionRow>
-      </OutputCard>
+        <PlanMeta plan={plan} styleReady={styleReady} />
+      </div>
     );
-  }
-
-  if (work.error) {
-    actionCards.push(
-      <OutputCard key="err" title="提示">
-        <p className="text-danger-ink">{work.error}</p>
-      </OutputCard>
+    footnotes.push(
+      <p key="confirm-plan" className="text-[11px] text-muted">
+        计划已就绪。回复「确认」或「确认执行」开始生成
+        {onConfirmGenerate ? (
+          <>
+            {" "}
+            ·{" "}
+            <button
+              type="button"
+              disabled={busy || !isLoggedIn}
+              className="text-brand underline disabled:opacity-50"
+              onClick={onConfirmGenerate}
+            >
+              点此执行
+            </button>
+          </>
+        ) : null}
+      </p>
     );
   }
 
   if (work.pendingPatch && onApplyPatch && onDiscardPatch) {
-    actionCards.push(
-      <OutputCard key="patch" title="改版提议">
-        <p className="text-ink">{work.pendingPatch.summary}</p>
-        <p className="mt-1 text-muted">在下方产物区勾选要采纳的块后确认。</p>
-        <ActionRow>
-          <PrimaryButton disabled={busy} onClick={() => onApplyPatch(true)}>
-            采纳所选 ({selectedPatchKeys.size})
-          </PrimaryButton>
-          <GhostButton disabled={busy} onClick={() => onApplyPatch(false)}>
-            全部采纳
-          </GhostButton>
-          <GhostButton disabled={busy} onClick={onDiscardPatch}>
-            放弃
-          </GhostButton>
-        </ActionRow>
-      </OutputCard>
+    body.push(
+      <p key="patch-sum" className="text-[13px] text-ink">
+        {work.pendingPatch.summary} — 勾选下方变更块后采纳。
+      </p>
     );
-  }
-
-  if (work.status === "ready" && !work.pendingPatch && onRevise) {
-    actionCards.push(
-      <OutputCard key="revise" title="提交改版">
-        <div className="flex gap-2">
-          <input
-            className="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1.5 text-sm"
-            value={reviseText}
-            onChange={(e) => onReviseTextChange(e.target.value)}
-            placeholder="例如：标题更短更狠，正文别动"
-            onKeyDown={(e) => e.key === "Enter" && !busy && onRevise()}
-          />
-          <PrimaryButton disabled={busy || !reviseText.trim()} onClick={onRevise}>
-            提交
-          </PrimaryButton>
-        </div>
-      </OutputCard>
-    );
-  }
-
-  if (work.status === "ready" && onMarkShipped) {
-    actionCards.push(
-      <OutputCard key="ship" title="完成">
-        <ActionRow>
-          <GhostButton onClick={onMarkShipped}>标记已发布</GhostButton>
-        </ActionRow>
-      </OutputCard>
-    );
-  }
-
-  if (showFeatureNudge) {
-    actionCards.push(
-      <OutputCard key="feature-nudge" title="我的特色">
-        <p className="text-ink">这篇已经写好。下一篇想更像你自己，可以补充「我的特色」。</p>
-        <p className="mt-1 text-muted">
-          填写路径：对话页 → 输入框下方「我的特色」→ 保存后回到创作（Rules 会自动生效）。
-        </p>
-        <ActionRow>
-          <PrimaryButton onClick={onFillFeature}>去填写我的特色</PrimaryButton>
-          <GhostButton onClick={onDismissFeatureNudge}>暂不</GhostButton>
-        </ActionRow>
-      </OutputCard>
-    );
-  }
-
-  if (work.status === "generating") {
-    artifactCards.push(
-      <OutputCard key="gen" title="生成中">
-        <p className="text-brand">{work.runPhase || "处理中…"}</p>
-        <p className="mt-1 text-[10px] text-muted">
-          {work.binding.noteIds.length
-            ? `将结合 ${work.binding.noteIds.length} 篇资料生成，完成后显示在下方。`
-            : "未绑资料时将结合通识生成，块标签可能为「补充」或「待核实」。"}
-        </p>
-      </OutputCard>
+    footnotes.push(
+      <div key="patch-actions" className="flex flex-wrap gap-2 text-[11px]">
+        <button
+          type="button"
+          disabled={busy}
+          className="rounded-md bg-brand px-2 py-1 text-brand-foreground disabled:opacity-50"
+          onClick={() => onApplyPatch(true)}
+        >
+          采纳所选 ({selectedPatchKeys.size})
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          className="rounded-md border border-line px-2 py-1 hover:bg-fill disabled:opacity-50"
+          onClick={() => onApplyPatch(false)}
+        >
+          全部采纳
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          className="rounded-md border border-line px-2 py-1 hover:bg-fill disabled:opacity-50"
+          onClick={onDiscardPatch}
+        >
+          放弃
+        </button>
+      </div>
     );
   }
 
   if (showManuscript) {
-    artifactCards.push(
-      <OutputCard
-        key="manuscript"
-        title={
-          compareMode
-            ? "改版预览"
-            : activeVersion
-              ? `稿件 · ${activeVersion.label}`
-              : "稿件"
-        }
-      >
-        <p className="mb-2 text-[10px] text-muted">
-          产物区 · 块角标：<span className="text-brand">资料</span> /{" "}
-          <span className="text-warning-ink">待核实</span> / 补充
-        </p>
-        <StudioOutputManuscript
-          version={compareMode ? null : activeVersion}
-          compareBlocks={compareMode ? work.pendingPatch?.proposedBlocks : undefined}
-          compareMode={compareMode}
-          selectedKeys={selectedPatchKeys}
-          changedKeys={changedKeys}
-          onToggleKey={onTogglePatchKey}
-        />
-      </OutputCard>
+    body.push(
+      <StudioOutputManuscript
+        key="ms"
+        version={compareMode ? null : activeVersion}
+        compareBlocks={compareMode ? work.pendingPatch?.proposedBlocks : undefined}
+        compareMode={compareMode}
+        selectedKeys={selectedPatchKeys}
+        changedKeys={changedKeys}
+        onToggleKey={onTogglePatchKey}
+      />
     );
   }
 
-  const trail = <StudioOrchestratorTrail work={work} />;
-  if (!trail && !actionCards.length && !artifactCards.length) return null;
-
-  return (
-    <div className="space-y-3 py-2">
-      {trail}
-      {actionCards.length ? (
-        <section>
-          <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-            须确认
-          </p>
-          <div className="space-y-2">{actionCards}</div>
-        </section>
-      ) : null}
-      {artifactCards.length ? (
-        <section>
-          <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-            产物
-          </p>
-          <div className="space-y-2">{artifactCards}</div>
-        </section>
-      ) : null}
-    </div>
-  );
-}
-
-function EvidenceSummary({
-  materialLabels,
-  materialCount,
-  inferenceSummary,
-  voiceEnabled,
-  voiceSummary,
-  styleReady,
-  risks
-}: {
-  materialLabels: string[];
-  materialCount: number;
-  inferenceSummary: string[];
-  voiceEnabled: boolean;
-  voiceSummary: string;
-  styleReady: boolean;
-  risks: string[];
-}) {
-  return (
-    <div className="mt-2 space-y-1 rounded-md border border-line/60 bg-surface/50 px-2 py-1.5 text-[10px] text-muted">
-      <p>
-        <span className="font-medium text-ink">依据：</span>
-        {materialCount > 0
-          ? materialLabels.join(" · ") || `${materialCount} 篇资料`
-          : "未绑资料（通识兜底）"}
-      </p>
-      {inferenceSummary.length ? (
-        <p>
-          <span className="font-medium text-ink">推断：</span>
-          {inferenceSummary.join(" · ")}
-        </p>
-      ) : null}
-      <p>
-        <span className="font-medium text-ink">风格 Rules：</span>
-        {styleReady || voiceEnabled
-          ? voiceSummary || "已启用我的特色"
-          : "未填完整 · 成稿后可去对话页补充"}
-      </p>
-      {risks.length ? <p className="text-warning-ink">{risks.join(" · ")}</p> : null}
-    </div>
-  );
-}
-
-function StudioOrchestratorTrail({ work }: { work: StudioWork }) {
-  const note = work.lastOrchestratorNote?.trim();
-  const runs = (work.agentRuns ?? []).slice(-4);
-  if (!note && runs.length === 0) return null;
-
-  return (
-    <section>
-      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-        编排
-      </p>
-      <div className="rounded-lg border border-line/70 bg-fill/15 px-3 py-2 text-[11px] text-muted">
-        {note ? <p className="text-ink/80">{note}</p> : null}
-        {runs.length ? (
-          <ul className={`space-y-0.5 ${note ? "mt-1.5 border-t border-line/50 pt-1.5" : ""}`}>
-            {runs.map((run) => (
-              <li key={run.id} className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                <span className="font-medium text-ink/70">{studioToolLabel(run.tool)}</span>
-                <RunStatusDot status={run.status} />
-                <span>{run.summary}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+  if (work.status === "ready" && !work.pendingPatch && onRevise) {
+    footnotes.push(
+      <div key="revise" className="flex gap-2 text-[12px]">
+        <input
+          className="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1 text-ink"
+          value={reviseText}
+          onChange={(e) => onReviseTextChange(e.target.value)}
+          placeholder="改版意见，如：标题更短更狠，正文别动"
+          onKeyDown={(e) => e.key === "Enter" && !busy && onRevise()}
+        />
+        <button
+          type="button"
+          disabled={busy || !reviseText.trim()}
+          className="shrink-0 rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-brand-foreground disabled:opacity-50"
+          onClick={onRevise}
+        >
+          提交改版
+        </button>
       </div>
-    </section>
-  );
-}
+    );
+  }
 
-function RunStatusDot({ status }: { status: StudioRun["status"] }) {
-  const label =
-    status === "running" ? "进行中" : status === "done" ? "完成" : "失败";
-  const color =
-    status === "running"
-      ? "bg-brand"
-      : status === "done"
-        ? "bg-success-soft"
-        : "bg-danger-soft";
-  return (
-    <span className="inline-flex items-center gap-1">
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${color}`} aria-hidden />
-      <span className="text-[10px]">{label}</span>
-    </span>
-  );
-}
+  if (work.status === "ready" && onMarkShipped) {
+    footnotes.push(
+      <p key="ship" className="text-[11px] text-muted">
+        <button type="button" className="text-brand underline" onClick={onMarkShipped}>
+          标记已发布
+        </button>
+      </p>
+    );
+  }
 
-function OutputCard({ title, children }: { title: string; children: ReactNode }) {
+  if (showFeatureNudge) {
+    footnotes.push(
+      <p key="feature" className="text-[11px] text-muted">
+        成稿完成。下一篇想更像自己，可去对话页填写「我的特色」。
+        <button type="button" className="ml-1 text-brand underline" onClick={onFillFeature}>
+          去填写
+        </button>
+        <button type="button" className="ml-2 text-muted underline" onClick={onDismissFeatureNudge}>
+          暂不
+        </button>
+      </p>
+    );
+  }
+
+  const orchestratorLine = work.lastOrchestratorNote?.trim();
+  if (orchestratorLine && work.status !== "planned") {
+    footnotes.push(
+      <p key="orch" className="text-[10px] text-muted/80">
+        {orchestratorLine}
+      </p>
+    );
+  }
+
+  if (!heading && !body.length && !footnotes.length) return null;
+
   return (
-    <div className="rounded-lg border border-line bg-fill/25 px-3 py-2.5 text-[13px]">
-      <p className="text-[11px] font-medium text-muted">{title}</p>
-      <div className="mt-1.5">{children}</div>
+    <div className="space-y-2 py-2">
+      {heading ? (
+        <p className="text-xs font-medium text-ink">{heading}</p>
+      ) : null}
+      {body.length ? <div className="space-y-2">{body}</div> : null}
+      {footnotes.length ? (
+        <div className="space-y-2 border-t border-line/50 pt-2">{footnotes}</div>
+      ) : null}
     </div>
   );
 }
 
-function ActionRow({ children }: { children: ReactNode }) {
-  return <div className="mt-2 flex flex-wrap gap-2">{children}</div>;
-}
-
-function PrimaryButton({
-  children,
-  disabled,
-  onClick
+function PlanMeta({
+  plan,
+  styleReady
 }: {
-  children: ReactNode;
-  disabled?: boolean;
-  onClick?: () => void;
+  plan: NonNullable<StudioWork["plan"]>;
+  styleReady: boolean;
 }) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      className="rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground disabled:opacity-50"
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
+  const bits: string[] = [];
+  if (plan.materialCount > 0) {
+    bits.push(`资料 ${plan.materialLabels.join(" · ") || `${plan.materialCount} 篇`}`);
+  } else {
+    bits.push("未绑资料");
+  }
+  if (plan.inferenceSummary.length) bits.push(plan.inferenceSummary.join(" · "));
+  bits.push(styleReady || plan.voiceEnabled ? plan.voiceSummary || "已启用我的特色" : "我的特色未填完整");
+  if (plan.risks.length) bits.push(plan.risks.join(" · "));
 
-function GhostButton({
-  children,
-  disabled,
-  onClick
-}: {
-  children: React.ReactNode;
-  disabled?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      className="rounded-md border border-line px-3 py-1.5 text-xs hover:bg-fill disabled:opacity-50"
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
+  return <p className="text-[11px] text-muted">{bits.join(" · ")}</p>;
 }

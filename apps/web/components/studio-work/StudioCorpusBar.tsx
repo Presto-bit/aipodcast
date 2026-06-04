@@ -43,6 +43,7 @@ export default function StudioCorpusBar({
       : work.binding.notebook || undefined;
 
   return (
+    <div data-studio-corpus-anchor="" className="inline-flex">
     <ComposerDropAnchor
       title="资料"
       controlLabel="资料"
@@ -93,5 +94,6 @@ export default function StudioCorpusBar({
       ) : null}
       <p className="mt-2 px-1 text-[10px] text-muted">未绑资料时使用通识参考</p>
     </ComposerDropAnchor>
+    </div>
   );
 }

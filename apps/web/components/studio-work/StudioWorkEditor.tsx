@@ -85,11 +85,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   }
 
   async function onConfirmGenerate() {
-    if (!work || !isLoggedIn) return;
-    const taskSentence = taskSentenceFromWork(work) || work.plan?.goal || "";
+    const latest = getStudioWork(workId) ?? work;
+    if (!latest || !isLoggedIn) return;
+    const taskSentence = taskSentenceFromWork(latest) || latest.plan?.goal || "";
     if (!taskSentence.trim()) return;
     setBusy(true);
-    const { work: withRun, runId } = appendStudioRun(work, "generate", "生成稿件中…");
+    const { work: withRun, runId } = appendStudioRun(latest, "generate", "生成稿件中…");
     persist({
       ...withRun,
       status: "generating",
@@ -102,9 +103,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const result = await runComposerExpertDeliverableJob({
         expertId: "xhs_ops",
         taskSentence,
-        intake: work.intake,
-        notebook: work.binding.notebook,
-        noteIds: work.binding.noteIds,
+        intake: latest.intake,
+        notebook: latest.binding.notebook,
+        noteIds: latest.binding.noteIds,
         featureCore: getComposerPrefsFeatureCore(),
         authHeaders: getAuthHeaders(),
         createdBy: user?.phone,
@@ -146,7 +147,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             lastJobId: result.jobId,
             pendingPatch: undefined,
             runPhase: undefined,
-            error: undefined
+            error: undefined,
+            postDoneFollowUpPending: !cur.postDoneFollowUpDone
           },
           runId,
           "done",

@@ -67,7 +67,7 @@ export function studioTurnsToMemoryTurns(turns: StudioAgentTurn[]): NotesAskMemo
   return out;
 }
 
-function intentSystemPrompt(intent: StudioAgentIntent): string {
+function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string {
   switch (intent) {
     case "ops_strategy":
       return [
@@ -84,8 +84,13 @@ function intentSystemPrompt(intent: StudioAgentIntent): string {
     case "manuscript_coach":
       return [
         "你解读【当前稿件】：结构、语气、与资料/我的特色是否一致、发布注意点。",
-        "引用稿件中的具体句子说明，不要重复粘贴全文（全文已在上下文）。"
-      ].join("\n");
+        "引用稿件中的具体句子说明，不要重复粘贴全文（全文已在上下文）。",
+        work.status === "ready" || work.status === "shipped"
+          ? "成稿后：可简短追问或建议下一步（如微调标题）；勿要求再次确认执行或生成计划。"
+          : ""
+      ]
+        .filter(Boolean)
+        .join("\n");
     case "revise_coach":
       return [
         "根据用户改版意见与【当前稿件】，说明建议改哪些块（标题/正文/话题）及方向。",
@@ -116,7 +121,7 @@ export function buildStudioAskContext(
     flags.includeManuscript ? manuscriptVersionToPrompt(activeVersion ?? null) : "";
 
   const lines = [
-    intentSystemPrompt(intent),
+    intentSystemPrompt(intent, work),
     buildStudioLayeredRulesPrompt(work),
     flags.includeMemory ? buildStudioWorkMemoryPrompt(work) : "",
     `【当前意图】${studioAgentIntentLabel(intent)}`,

@@ -27,7 +27,8 @@ export type StudioRouteDecision = {
 const CONFIRM_PLAN_RE =
   /^(确认任务|确认|就按这个|就这样|可以了|开始生成|生成计划)/;
 
-const CONFIRM_GENERATE_RE = /^(确认执行|开始成稿|生成稿件|确认生成)/;
+const CONFIRM_GENERATE_RE =
+  /^(确认执行|开始成稿|生成稿件|确认生成|确认|就按这个|就这样|可以了)$/;
 
 const MAX_RUNS = 12;
 

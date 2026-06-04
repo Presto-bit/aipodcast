@@ -95,6 +95,9 @@ export type StudioWork = {
   agentRuns?: StudioRun[];
   /** 最近一次编排说明 */
   lastOrchestratorNote?: string;
+  /** 成稿后触发一次对话区解读追问 */
+  postDoneFollowUpPending?: boolean;
+  postDoneFollowUpDone?: boolean;
   updatedAt: number;
   createdAt: number;
 };

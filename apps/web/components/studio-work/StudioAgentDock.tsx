@@ -7,6 +7,11 @@ import {
   buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
+import {
+  buildPostDoneFollowUpRoute,
+  STUDIO_POST_DONE_AUTHOR_EXTRA,
+  STUDIO_POST_DONE_INTERNAL_QUESTION
+} from "../../lib/studioPostDoneFollowUp";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
 import { formatStudioAskError } from "../../lib/studioAskError";
 import { featureCoreToPrompt } from "../../lib/homeComposerFeatureCore";
@@ -31,7 +36,7 @@ const QUICK_PROMPTS = [
 function agentPlaceholder(status: WorkStatus): string {
   if (status === "generating") return "生成中…";
   if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
-  if (status === "planned") return "可继续补充说明，或点下方「确认执行」…";
+  if (status === "planned") return "可继续补充，或回复「确认」开始生成…";
   return "描述你想创作的内容与目标…";
 }
 
@@ -100,6 +105,7 @@ export default function StudioAgentDock({
   const [corpusMenuOpen, setCorpusMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const postDoneStartedRef = useRef(false);
 
   const turns = work.agentTurns ?? [];
   const readOnly = work.status === "generating" || parentBusy;
@@ -123,6 +129,36 @@ export default function StudioAgentDock({
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  useEffect(() => {
+    postDoneStartedRef.current = false;
+  }, [work.id]);
+
+  useEffect(() => {
+    if (!corpusMenuOpen) return;
+    function onDoc(e: MouseEvent) {
+      const target = e.target as Node;
+      if (target instanceof Element && target.closest("[data-composer-dropdown]")) return;
+      if (target instanceof Element && target.closest("[data-studio-corpus-anchor]")) return;
+      setCorpusMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [corpusMenuOpen]);
+
+  useEffect(() => {
+    if (!work.postDoneFollowUpPending || work.postDoneFollowUpDone) return;
+    if (!canChat || agentBusy || parentBusy) return;
+    if (postDoneStartedRef.current) return;
+    postDoneStartedRef.current = true;
+    onPersist({
+      ...work,
+      postDoneFollowUpPending: false,
+      postDoneFollowUpDone: true,
+      lastOrchestratorNote: "成稿后解读与下一步"
+    });
+    void runPostDoneFollowUp(work);
+  }, [work.id, work.postDoneFollowUpPending, work.postDoneFollowUpDone, canChat, agentBusy, parentBusy]);
+
   function applyDialogExtract(
     nextTurns: StudioAgentTurn[],
     sessionState: typeof work.agentSessionState = work.agentSessionState ?? null
@@ -144,10 +180,12 @@ export default function StudioAgentDock({
     prefixTurns: StudioAgentTurn[],
     userText: string,
     workBase: StudioWork,
-    route: StudioRouteDecision
+    route: StudioRouteDecision,
+    options?: { authorIpExtra?: string }
   ) {
     const q = userText.trim();
-    if (!q || !canChat || agentBusy) return;
+    if (!q || agentBusy) return;
+    if (!options?.authorIpExtra && !canChat) return;
 
     const intent = route.intent;
 
@@ -179,7 +217,9 @@ export default function StudioAgentDock({
       prefs.personalEnabled && prefs.personalProfile
         ? personalProfileToPrompt(prefs.personalProfile)
         : "";
-    const authorIpExtra = [corePrompt, profilePrompt].filter(Boolean).join("\n\n");
+    const authorIpExtra = [corePrompt, profilePrompt, options?.authorIpExtra]
+      .filter(Boolean)
+      .join("\n\n");
     const askPayload = buildStudioAskPayload({
       work: workBase,
       userMessage: q,
@@ -249,6 +289,13 @@ export default function StudioAgentDock({
     }
   }
 
+  async function runPostDoneFollowUp(workBase: StudioWork) {
+    const route = buildPostDoneFollowUpRoute();
+    await runAgentTurn(workBase.agentTurns ?? [], STUDIO_POST_DONE_INTERNAL_QUESTION, workBase, route, {
+      authorIpExtra: STUDIO_POST_DONE_AUTHOR_EXTRA
+    });
+  }
+
   async function handleSend(overrideText?: string) {
     const q = (overrideText ?? input).trim();
     if (!q || !canChat || agentBusy) return;
@@ -279,6 +326,7 @@ export default function StudioAgentDock({
       return;
     }
     if (route.tool === "generate" && onConfirmGenerate) {
+      onPersist({ ...base, status: "generating", runPhase: "排队中…", error: undefined });
       await onConfirmGenerate();
       return;
     }
@@ -311,6 +359,7 @@ export default function StudioAgentDock({
       return;
     }
     if (route.tool === "generate" && onConfirmGenerate) {
+      onPersist({ ...base, status: "generating", runPhase: "排队中…", error: undefined });
       void onConfirmGenerate();
       return;
     }

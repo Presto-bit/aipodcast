@@ -29,7 +29,7 @@ export default function StudioAgentComposer({
   return (
     <div
       className={[
-        "relative w-full shrink-0 overflow-visible rounded-2xl border border-line bg-surface p-3 shadow-soft",
+        "relative w-full shrink-0 overflow-visible rounded-2xl border border-line bg-surface p-2 shadow-soft",
         menuOpen ? "z-40" : "z-20"
       ].join(" ")}
     >
@@ -39,9 +39,9 @@ export default function StudioAgentComposer({
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
           placeholder={placeholder}
-          rows={2}
-          className="w-full min-h-[56px] max-h-[min(32vh,200px)] resize-none border-0 bg-transparent py-1 text-[15px] leading-relaxed text-ink outline-none ring-0 placeholder:text-muted/70 focus:outline-none focus:ring-0 disabled:opacity-50"
-          style={{ paddingRight: hasText ? 60 : 0 }}
+          rows={1}
+          className="w-full min-h-[42px] max-h-[min(24vh,150px)] resize-none border-0 bg-transparent py-0.5 text-[14px] leading-relaxed text-ink outline-none ring-0 placeholder:text-muted/70 focus:outline-none focus:ring-0 disabled:opacity-50"
+          style={{ paddingRight: hasText ? 44 : 0 }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -56,7 +56,7 @@ export default function StudioAgentComposer({
             aria-label="发送"
             disabled={!canSend}
             onClick={onSend}
-            className="absolute bottom-1 right-0 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-canvas transition hover:opacity-90 disabled:opacity-50"
+            className="absolute bottom-0.5 right-0 flex h-10 w-10 items-center justify-center rounded-full bg-ink text-canvas transition hover:opacity-90 disabled:opacity-50"
           >
             <IconSend />
           </button>
@@ -64,7 +64,7 @@ export default function StudioAgentComposer({
       </div>
       {footerRight ? (
         <div
-          className="relative mt-2 flex w-full items-center justify-end overflow-visible pt-0.5"
+          className="relative mt-1.5 flex w-full items-center justify-end overflow-visible"
           style={{ zIndex: menuOpen ? 10 : 1 }}
         >
           {footerRight}
