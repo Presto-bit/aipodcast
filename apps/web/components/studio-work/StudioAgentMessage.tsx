@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { studioAgentIntentLabel } from "../../lib/studioAgentAsk";
 import type { StudioAgentTurn } from "../../lib/studioWorkTypes";
 
 const NotesAskAnswerMarkdownBody = dynamic(
@@ -27,14 +26,11 @@ export default function StudioAgentMessage({
   }
 
   const text = turn.content.trim();
-  const label = turn.intent ? studioAgentIntentLabel(turn.intent) : "Agent";
-
   return (
     <div className="py-0.5">
-      <div className="mb-0.5 flex items-center gap-1.5 text-[10px] text-muted">
-        <span className="font-medium text-brand">{label}</span>
-        {turn.streaming && streamingPhase ? <span>{streamingPhase}</span> : null}
-      </div>
+      {turn.streaming && streamingPhase ? (
+        <p className="mb-0.5 text-[10px] text-brand">{streamingPhase}</p>
+      ) : null}
       <div className="text-[12px] leading-relaxed text-ink">
         {turn.streaming && !text ? (
           <span className="inline-block h-3 w-12 animate-pulse rounded bg-fill" aria-hidden />

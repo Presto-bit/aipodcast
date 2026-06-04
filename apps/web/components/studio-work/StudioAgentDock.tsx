@@ -1,39 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   buildStudioAgentQuestion,
   inferStudioAgentIntent,
   mergeBriefIntoWork,
-  studioAgentIntentLabel,
   studioTurnsToMemoryTurns,
   suggestBriefFromTurns
 } from "../../lib/studioAgentAsk";
 import { featureCoreToPrompt } from "../../lib/homeComposerFeatureCore";
-import { mergeVoiceIntoWork, voiceProgressLabel } from "../../lib/studioVoiceFromChat";
+import { mergeVoiceIntoWork } from "../../lib/studioVoiceFromChat";
 import { streamHomeComposerAsk } from "../../lib/homeComposerAskStream";
-import type { StudioAgentIntent, StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
+import type { StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
 import StudioAgentMessage from "./StudioAgentMessage";
-import StudioAgentTaskPins from "./StudioAgentTaskPins";
+import StudioAgentOutputCards from "./StudioAgentOutputCards";
+import StudioCorpusBar from "./StudioCorpusBar";
 
 const QUICK_PROMPTS = [
   "我想写一篇清单体小红书，受众是产品新人",
   "这篇笔记发布节奏和互动策略怎么定",
-  "帮我定一下 Voice：我是谁、读者该记住什么"
+  "开头钩子怎么写更抓人"
 ] as const;
-
-const PANEL_MIN = 120;
-const PANEL_MAX = 420;
-const PANEL_DEFAULT = 240;
 
 function agentPlaceholder(status: WorkStatus): string {
   if (status === "generating") return "生成中…";
-  if (status === "ready" || status === "shipped") {
-    return "问运营、解读稿件，或说改版意见…";
-  }
-  return "描述本篇小红书想写什么…";
+  if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
+  return "Plan, @ for context — 描述想写的笔记…";
 }
 
 export default function StudioAgentDock({
@@ -45,7 +39,13 @@ export default function StudioAgentDock({
   onPersist,
   onGeneratePlan,
   onConfirmGenerate,
-  primary = false
+  reviseText,
+  onReviseTextChange,
+  onRevise,
+  onApplyPatch,
+  onDiscardPatch,
+  selectedPatchCount,
+  onMarkShipped
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
@@ -55,18 +55,19 @@ export default function StudioAgentDock({
   onPersist: (next: StudioWork) => void;
   onGeneratePlan?: () => void | Promise<void>;
   onConfirmGenerate?: () => void | Promise<void>;
-  /** Agent 为主工作区（Cursor 心智） */
-  primary?: boolean;
+  reviseText: string;
+  onReviseTextChange: (v: string) => void;
+  onRevise?: () => void;
+  onApplyPatch?: (partial: boolean) => void;
+  onDiscardPatch?: () => void;
+  selectedPatchCount?: number;
+  onMarkShipped?: () => void;
 }) {
   const [input, setInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
   const [phase, setPhase] = useState("");
-  const [activeIntent, setActiveIntent] = useState<StudioAgentIntent | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
-  const [panelHeight, setPanelHeight] = useState(PANEL_DEFAULT);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
 
   const turns = work.agentTurns ?? [];
   const readOnly = work.status === "generating" || parentBusy;
@@ -74,34 +75,10 @@ export default function StudioAgentDock({
   const canPlan = Boolean(suggestBriefFromTurns(work, turns).trim() || work.brief.trim());
 
   useEffect(() => {
-    if (!collapsed) {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-    }
-  }, [turns.length, turns[turns.length - 1]?.content, collapsed, work.brief, work.plan]);
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [turns.length, turns[turns.length - 1]?.content, work.brief, work.plan, work.status, work.runPhase]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
-
-  const onResizeMove = useCallback((e: MouseEvent) => {
-    if (primary) return;
-    const drag = dragRef.current;
-    if (!drag) return;
-    const delta = drag.startY - e.clientY;
-    setPanelHeight(Math.min(PANEL_MAX, Math.max(PANEL_MIN, drag.startH + delta)));
-  }, [primary]);
-
-  const onResizeEnd = useCallback(() => {
-    dragRef.current = null;
-    window.removeEventListener("mousemove", onResizeMove);
-    window.removeEventListener("mouseup", onResizeEnd);
-  }, [onResizeMove]);
-
-  function startResize(e: React.MouseEvent) {
-    if (primary) return;
-    e.preventDefault();
-    dragRef.current = { startY: e.clientY, startH: panelHeight };
-    window.addEventListener("mousemove", onResizeMove);
-    window.addEventListener("mouseup", onResizeEnd);
-  }
 
   function applyDialogExtract(
     nextTurns: StudioAgentTurn[],
@@ -110,7 +87,8 @@ export default function StudioAgentDock({
     let next: StudioWork = {
       ...work,
       agentTurns: nextTurns,
-      agentSessionState: sessionState ?? null
+      agentSessionState: sessionState ?? null,
+      allowModelFallback: true
     };
     const withBrief = mergeBriefIntoWork(next, nextTurns);
     if (withBrief) next = withBrief;
@@ -128,7 +106,6 @@ export default function StudioAgentDock({
     if (!q || !canChat || agentBusy) return;
 
     const intent = inferStudioAgentIntent(q, work);
-    setActiveIntent(intent);
 
     const userTurn: StudioAgentTurn = {
       id: crypto.randomUUID(),
@@ -148,7 +125,6 @@ export default function StudioAgentDock({
     const baseTurns = [...turns, userTurn, streamingTurn];
     applyDialogExtract(baseTurns);
     setInput("");
-    setCollapsed(false);
     setAgentBusy(true);
     setPhase("");
 
@@ -219,63 +195,17 @@ export default function StudioAgentDock({
     }
   }
 
-  const modeLabel = activeIntent ? studioAgentIntentLabel(activeIntent) : undefined;
-  const threadStyle = primary
-    ? { flex: collapsed ? "0 0 0" : "1 1 auto", minHeight: collapsed ? 0 : undefined }
-    : { height: collapsed ? 0 : panelHeight };
-
   return (
-    <div
-      className={[
-        "flex min-h-0 flex-col border-line bg-surface",
-        primary ? "min-h-0 flex-1 border-t-0" : "shrink-0 border-t"
-      ].join(" ")}
-    >
-      <div className="flex h-8 shrink-0 items-center gap-2 px-2.5 text-[10px]">
-        {!primary ? (
-          <button
-            type="button"
-            className="h-1 w-6 shrink-0 cursor-ns-resize rounded-full bg-line"
-            aria-label="调整高度"
-            onMouseDown={startResize}
-          />
-        ) : null}
-        <span className="font-medium text-ink">Agent</span>
-        {modeLabel ? <span className="text-brand">{modeLabel}</span> : null}
-        <span className="text-muted">{voiceProgressLabel(work.featureCore)}</span>
-        {phase ? <span className="truncate text-muted">{phase}</span> : null}
-        <button
-          type="button"
-          className="ml-auto text-muted hover:text-ink"
-          onClick={() => setCollapsed((c) => !c)}
-        >
-          {collapsed ? "展开" : "收起"}
-        </button>
-      </div>
-
-      <div
-        ref={scrollRef}
-        className="flex min-h-0 flex-col overflow-y-auto px-2.5"
-        style={threadStyle}
-        hidden={collapsed && !primary}
-      >
-        <StudioAgentTaskPins
-          work={work}
-          busy={agentBusy || parentBusy}
-          canPlan={canPlan}
-          canGenerate={isLoggedIn}
-          onGeneratePlan={onGeneratePlan}
-          onConfirmGenerate={onConfirmGenerate}
-        />
-
+    <div className="flex min-h-0 flex-1 flex-col bg-surface">
+      <div ref={scrollRef} className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-y-auto px-3 py-3">
         {turns.length === 0 ? (
-          <div className="flex flex-wrap gap-1 pb-2">
+          <div className="mb-3 flex flex-wrap gap-1.5">
             {QUICK_PROMPTS.map((p) => (
               <button
                 key={p}
                 type="button"
                 disabled={!canChat}
-                className="rounded border border-line px-2 py-0.5 text-[10px] text-ink hover:bg-fill disabled:opacity-50"
+                className="rounded-full border border-line px-3 py-1 text-xs text-ink hover:bg-fill disabled:opacity-50"
                 onClick={() => void handleSend(p)}
               >
                 {p}
@@ -283,7 +213,7 @@ export default function StudioAgentDock({
             ))}
           </div>
         ) : (
-          <div className="space-y-1 pb-1">
+          <div className="space-y-3">
             {turns.map((turn) => (
               <StudioAgentMessage
                 key={turn.id}
@@ -293,27 +223,50 @@ export default function StudioAgentDock({
             ))}
           </div>
         )}
+
+        <StudioAgentOutputCards
+          work={work}
+          busy={agentBusy || parentBusy}
+          isLoggedIn={isLoggedIn}
+          canPlan={canPlan}
+          reviseText={reviseText}
+          onReviseTextChange={onReviseTextChange}
+          onGeneratePlan={onGeneratePlan}
+          onConfirmGenerate={onConfirmGenerate}
+          onRevise={onRevise}
+          onApplyPatch={onApplyPatch}
+          onDiscardPatch={onDiscardPatch}
+          selectedPatchCount={selectedPatchCount}
+          onMarkShipped={onMarkShipped}
+        />
       </div>
 
-      <div className="shrink-0 px-2.5 pb-2 pt-1">
-        {!isLoggedIn && ready ? (
-          <p className="mb-1 text-[10px] text-warning-ink">
-            <Link href="/login" className="text-brand underline">
-              登录
-            </Link>
-            后可用
-          </p>
-        ) : null}
-        <StudioAgentComposer
-          work={work}
-          value={input}
-          onChange={setInput}
-          onSend={() => void handleSend()}
-          busy={agentBusy}
-          disabled={!canChat}
-          placeholder={agentPlaceholder(work.status)}
-          modeLabel={modeLabel}
-        />
+      <div className="shrink-0 border-t border-line bg-surface px-3 pb-3 pt-2">
+        <div className="mx-auto w-full max-w-3xl">
+          {!isLoggedIn && ready ? (
+            <p className="mb-2 text-xs text-warning-ink">
+              <Link href="/login" className="text-brand underline">
+                登录
+              </Link>
+              后可用
+            </p>
+          ) : null}
+          <StudioAgentComposer
+            value={input}
+            onChange={setInput}
+            onSend={() => void handleSend()}
+            busy={agentBusy}
+            disabled={!canChat}
+            placeholder={agentPlaceholder(work.status)}
+          />
+          <StudioCorpusBar
+            work={work}
+            isLoggedIn={isLoggedIn}
+            ready={ready}
+            getAuthHeaders={getAuthHeaders}
+            onPersist={onPersist}
+          />
+        </div>
       </div>
     </div>
   );

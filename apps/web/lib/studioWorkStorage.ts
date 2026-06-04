@@ -64,7 +64,7 @@ export function createStudioWork(params?: {
     status: brief ? "briefing" : "briefing",
     binding: inherited.binding,
     featureCore: params?.featureCore ?? inherited.featureCore,
-    allowModelFallback: false,
+    allowModelFallback: true,
     intake: {},
     versions: [],
     activeVersionId: "",

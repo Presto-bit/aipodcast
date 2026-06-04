@@ -43,11 +43,8 @@ export async function buildPlanForWork(
       : [];
 
   const risks: string[] = [];
-  if (materialCount === 0 && !work.allowModelFallback) {
-    risks.push("未绑定资料：请勾选「允许通识兜底」或绑定笔记本");
-  }
-  if (!isFeatureCoreComplete(work.featureCore)) {
-    risks.push("我的特色未填全：成稿可能偏通用模板");
+  if (materialCount === 0) {
+    risks.push("未绑定资料：将结合通识参考生成");
   }
 
   const outline = [

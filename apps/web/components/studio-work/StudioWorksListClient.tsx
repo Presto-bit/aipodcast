@@ -24,8 +24,6 @@ function WorkRow({ work }: { work: StudioWork }) {
     work.binding.noteIds.length > 0
       ? `资料·${work.binding.notebook || "笔记本"}(${work.binding.noteIds.length})`
       : "资料未绑定";
-  const voice = work.plan?.voiceEnabled ? "Voice✓" : "Voice未填";
-
   return (
     <Link
       href={`${WORKBENCH_STUDIO_PATH}/${work.id}`}
@@ -50,7 +48,7 @@ function WorkRow({ work }: { work: StudioWork }) {
         </span>
       </div>
       <p className="mt-1.5 text-xs text-muted">
-        {material} · {versionLabel} · {voice}
+        {material} · {versionLabel}
       </p>
       {work.status === "generating" && work.runPhase ? (
         <p className="mt-1 text-xs text-brand">{work.runPhase}</p>

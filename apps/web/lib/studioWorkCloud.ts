@@ -12,7 +12,8 @@ function normalizeStudioWork(w: StudioWork): StudioWork {
   return {
     ...w,
     agentTurns: Array.isArray(w.agentTurns) ? w.agentTurns : [],
-    agentSessionState: w.agentSessionState ?? null
+    agentSessionState: w.agentSessionState ?? null,
+    allowModelFallback: w.allowModelFallback !== false
   };
 }
 
