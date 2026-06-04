@@ -1,7 +1,7 @@
 "use client";
 
 import type { QueryClient } from "@tanstack/react-query";
-import { matchesProductStudio, normalizePathname, WORKBENCH_HOME_PATH } from "./navPaths";
+import { matchesProductStudio, normalizePathname, WORKBENCH_HOME_PATH, WORKBENCH_STUDIO_PATH, pathMatchesRoot } from "./navPaths";
 import { fetchHomeOverview, homeOverviewQueryKey } from "./queries/homeOverviewQueries";
 import { fetchNotebooksHub, NOTEBOOKS_HUB_QUERY_KEY } from "./queries/notebooksQueries";
 import { fetchStudioBootstrap } from "./queries/studioQueries";
@@ -56,6 +56,11 @@ export function prefetchWorkbenchRouteData(
   }
 
   if (path === "/notes" || (path.startsWith("/notes/") && path !== "/notes/trash")) {
+    prefetchQuery(queryClient, NOTEBOOKS_HUB_QUERY_KEY, () => fetchNotebooksHub(headers));
+    return;
+  }
+
+  if (path === WORKBENCH_STUDIO_PATH || pathMatchesRoot(path, WORKBENCH_STUDIO_PATH)) {
     prefetchQuery(queryClient, NOTEBOOKS_HUB_QUERY_KEY, () => fetchNotebooksHub(headers));
     return;
   }

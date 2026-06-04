@@ -5298,6 +5298,7 @@ ALLOWED_USER_PREF_KEYS: frozenset[str] = frozenset(
         "fym_favorite_voice_ids_v1",
         # 订阅页「选用套餐」意向（付费档不落库生效，仅支付回调改档）
         "subscription_checkout_intent_v1",
+        "fym_studio_works_v1",
     }
 )
 MAX_USER_PREFERENCES_JSON_BYTES = 480_000

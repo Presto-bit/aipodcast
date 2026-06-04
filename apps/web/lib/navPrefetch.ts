@@ -5,7 +5,7 @@ import {
   prefetchWorkbenchRouteData,
   type PrefetchWorkbenchRouteOptions
 } from "./prefetchWorkbenchRouteData";
-import { normalizePathname, WORKBENCH_HOME_PATH } from "./navPaths";
+import { normalizePathname, WORKBENCH_HOME_PATH, WORKBENCH_STUDIO_PATH } from "./navPaths";
 
 export type { PrefetchWorkbenchRouteOptions };
 
@@ -14,6 +14,7 @@ export const WORKBENCH_LINK_PREFETCH = false;
 
 /** 侧栏 idle 预取的高频工作台路由 */
 export const WORKBENCH_SIDEBAR_IDLE_ROUTES = [
+  WORKBENCH_STUDIO_PATH,
   WORKBENCH_HOME_PATH,
   "/works",
   "/notes",
@@ -36,6 +37,7 @@ export const WORKBENCH_LOGIN_PREFETCH_ROUTES_SECONDARY = [
 
 /** 登录后立即预取的高频入口（不等 idle） */
 export const WORKBENCH_LOGIN_PREFETCH_ROUTES = [
+  WORKBENCH_STUDIO_PATH,
   WORKBENCH_HOME_PATH,
   "/notes",
   "/create",
@@ -53,6 +55,7 @@ export function routeIsPrefetched(hrefOrPath: string): boolean {
 
 /** 重 chunk 是否已 warm（用于跳过 navPending 全屏骨架） */
 const ROUTE_WARM_CHUNK_IDS: Record<string, readonly string[]> = {
+  "/studio": ["studio-works-list"],
   "/clip": ["clip-hub"],
   "/voice": ["voice-clone", "voice-my", "voice-persona"],
   "/shownotes": ["shownotes-landing"],
@@ -81,6 +84,12 @@ export function warmWorkbenchRouteChunks(href: string) {
   const path = normalizePathname(String(href || "").split("?")[0] || href);
   if (!path) return;
 
+  if (path === WORKBENCH_STUDIO_PATH) {
+    warmChunk("studio-works-list", () => import("../components/studio-work/StudioWorksListClient"));
+  }
+  if (pathMatchesRoot(path, WORKBENCH_STUDIO_PATH) && path !== WORKBENCH_STUDIO_PATH) {
+    warmChunk("studio-work-editor", () => import("../components/studio-work/StudioWorkEditor"));
+  }
   if (path === "/works" || path === WORKBENCH_HOME_PATH || path === "/create") {
     warmChunk("podcast-works-gallery", () => import("../components/podcast/PodcastWorksGallery"));
   }

@@ -24,7 +24,8 @@ export const CLOUD_PREF_KEYS = [
   "minimax_aipodcast_enabled_preset_voices",
   "minimax_aipodcast_speaker_default_voice_keys",
   "minimax_aipodcast_speaker_cloned_voice_ids",
-  "fym_favorite_voice_ids_v1"
+  "fym_favorite_voice_ids_v1",
+  "fym_studio_works_v1"
 ] as const;
 
 let cloudPrefsSyncEnabled = false;

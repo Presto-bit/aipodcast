@@ -4,7 +4,7 @@ type Props = {
   searchParams?: Record<string, string | string[] | undefined>;
 };
 
-/** 旧路径：/home → /chat（保留 query） */
+/** 旧路径：/home → /studio（保留 query） */
 export default function HomeRedirectPage({ searchParams }: Props) {
   const qs = new URLSearchParams();
   if (searchParams) {
@@ -18,5 +18,5 @@ export default function HomeRedirectPage({ searchParams }: Props) {
     }
   }
   const q = qs.toString();
-  redirect(q ? `/chat?${q}` : "/chat");
+  redirect(q ? `/studio?${q}` : "/studio");
 }

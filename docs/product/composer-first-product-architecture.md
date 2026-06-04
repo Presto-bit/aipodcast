@@ -1,8 +1,17 @@
 # 对话主入口 · 产品架构收口（v1.1）
 
-> **状态**：产品规格（待评审）  
+> **状态**：产品规格（待评审）；**创作主入口已被 [writing-cursor-studio.md](./writing-cursor-studio.md) supersede（2026-06-04 五决策冻结）**  
 > **日期**：2026-06-04  
-> **关联**：[home-composer-experts.md](./home-composer-experts.md) · [author-ip-product-v6.md](./author-ip-product-v6.md) · UI 参考 `HomeComposerFirstScreenDemo.tsx` · 导航 Demo [composer-first-architecture.canvas.tsx](/Users/mark/.cursor/projects/Users-mark-minimax-aipodcast/canvases/composer-first-architecture.canvas.tsx)
+> **关联**：[writing-cursor-studio.md](./writing-cursor-studio.md)（**现行：Studio `/studio`、创作侧栏、Work 实体**）· [home-composer-experts.md](./home-composer-experts.md) · [author-ip-product-v6.md](./author-ip-product-v6.md) · UI 参考 `HomeComposerFirstScreenDemo.tsx` · 导航 Demo [composer-first-architecture.canvas.tsx](/Users/mark/.cursor/projects/Users-mark-minimax-aipodcast/canvases/composer-first-architecture.canvas.tsx)
+
+### Supersede 摘要（仍沿用本文 §2 资料/作品/创作工具时）
+
+| 项 | v1.1 本文 | Studio 路线（以 writing-cursor-studio 为准） |
+|----|-----------|-----------------------------------------------|
+| 创作主入口 | 对话 `/home`→`/chat` | **创作 `/studio`** |
+| 主实体 | 对话 turn | **Work + Manuscript** |
+| 侧栏一级「话」 | 对话 | **「创」→ Studio** |
+| `/chat` | 主入口 | **经典对话**，二级 |
 
 ---
 
@@ -620,5 +629,6 @@ flowchart TB
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v1.1a | 2026-06-04 | 顶部 supersede：创作主入口改 Studio，见 writing-cursor-studio |
 | v1.1 | 2026-06-04 | §2 工作台侧栏 v1.1：删除本地文稿、回收站归作品域、创作工具折叠 |
 | v1.0 | 2026-06-04 | 初版：四支柱收口、三类 persona、handoff、P0/P1 排期 |

@@ -2,8 +2,17 @@
  * 主导航路径匹配与鉴权白名单（与 AppShell 一致，供复用）。
  */
 
-/** 工作台对话页（原 `/home`，旧路径 301 式重定向至此） */
-export const WORKBENCH_HOME_PATH = "/chat";
+/** 写作 Studio 创作主入口（writing-cursor-studio） */
+export const WORKBENCH_STUDIO_PATH = "/studio";
+
+/** 经典对话 Composer（原 `/home` 重定向至此） */
+export const WORKBENCH_CHAT_PATH = "/chat";
+
+/** 登录后默认工作台路径 */
+export const WORKBENCH_DEFAULT_PATH = WORKBENCH_STUDIO_PATH;
+
+/** @deprecated 使用 WORKBENCH_CHAT_PATH；保留别名避免大范围替换 */
+export const WORKBENCH_HOME_PATH = WORKBENCH_CHAT_PATH;
 
 /** 播客 / 语音合成工作室侧栏入口（独立 pathname，避免 /create 仅改 query 时软路由不刷新） */
 export const WORKBENCH_PODCAST_STUDIO_PATH = "/podcast";
@@ -60,7 +69,15 @@ export function isAuthPublicPath(pathname: string): boolean {
   if (n === "/forgot-password" || n === "/reset-password" || n === "/verify-email") return true;
   if (n === "/help") return true;
   if (n.startsWith("/legal/")) return true;
-  if (n === "/" || n === WORKBENCH_HOME_PATH || n === "/me" || n === "/settings") return true;
+  if (
+    n === "/" ||
+    n === WORKBENCH_CHAT_PATH ||
+    n === WORKBENCH_STUDIO_PATH ||
+    n === "/me" ||
+    n === "/settings"
+  ) {
+    return true;
+  }
   /** 套餐/余额页：允许未登录浏览价目与说明；充值等仍依赖登录态由页面内控制 */
   if (n === "/subscription" || n.startsWith("/subscription/")) return true;
   return pathname.startsWith("/me/") || pathname.startsWith("/settings/");
@@ -97,6 +114,7 @@ export function shouldKeepSidebarExpanded(pathname: string): boolean {
   const n = normalizePathname(pathname);
   if (pathMatchesRoot(n, "/notes") && n !== "/notes") return true;
   if (pathMatchesRoot(n, "/works") && n !== "/works") return true;
+  if (pathMatchesRoot(n, WORKBENCH_STUDIO_PATH) && n !== WORKBENCH_STUDIO_PATH) return true;
   return false;
 }
 

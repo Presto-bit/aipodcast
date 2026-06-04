@@ -8,7 +8,7 @@
 
 **Presto AI Podcast（FindingYourVoice）**：面向内容创作的 AI 工作台，核心路径包括「笔记 / 素材 → 播客与语音产物 → 作品管理与分发相关能力」，配套登录鉴权、订阅与用量。
 
-一句话：**带着自己的资料，在对话里说一句话，拿走能发的成品**；播客等重出口可一键试听或送进工作室精修。详见 [composer-first-product-architecture.md](./composer-first-product-architecture.md)。
+一句话（**创作主入口，2026-06-04 起**）：**在你的资料库里，用可审阅的 AI 改动把稿件做到能发** — 见 [writing-cursor-studio.md](./writing-cursor-studio.md)。播客等重出口仍从作品/创作工具进。经典对话路径见 [composer-first-product-architecture.md](./composer-first-product-architecture.md)。
 
 ---
 
@@ -17,7 +17,8 @@
 | 场景 | 说明 | 主要入口（Web） |
 | ---- | ---- | ---------------- |
 | 营销首页 | 产品介绍（无工作台侧栏） | `/` |
-| 工作台首页 | 登录后总览与快捷入口 | `/home` |
+| 创作 Studio（**目标主入口**） | Works 列表 + 稿件编辑（写作 Cursor） | `/studio`（规格已冻结，待实现） |
+| 经典对话 | 流式问答 + 过渡期 Composer | `/chat`（原 `/home` 重定向） |
 | 笔记 | 笔记创作、笔记本风格 IP、回收站 | `/notes`、`/notes/trash` |
 | 播客 | AI 播客流程、正文模板等 | `/podcast` |
 | 文稿剪辑 | 上传干声、豆包词级转写、点词剪辑、导出 MP3 | `/clip` |
@@ -43,8 +44,10 @@
 | [author-ip-product-v5.md](./author-ip-product-v5.md) | **（历史）个人特色 IP v5.2**：独立工作台方案；**现行以 [v6](./author-ip-product-v6.md) 为准** |
 | [author-ip-product-v6.md](./author-ip-product-v6.md) | **个人特色 IP（v6.2，现行）**：笔记本即 IP；一键提炼；三端默认本笔记本风格 |
 | [author-ip-execution-schedule.md](./author-ip-execution-schedule.md) | **（历史排期）** v5 迭代 1～15；独立工作台/API 已下线，见 v6 |
-| [composer-first-product-architecture.md](./composer-first-product-architecture.md) | **（现行方向）对话主入口 v1.1**：四支柱、侧栏 IA（无 drafts/侧栏回收站）、handoff、排期 |
-| [home-composer-experts.md](./home-composer-experts.md) | **首页 Composer 创作专家（v3）**：专家任务流、资料计划；实现须与 architecture 文档对齐 |
+| [writing-cursor-studio.md](./writing-cursor-studio.md) | **（现行创作主入口）** 五决策冻结；§12 竞品、§13 Cursor/Claude、§16 UI |
+| [writing-cursor-studio-wireframes.md](./writing-cursor-studio-wireframes.md) | **Studio 线框图（Lo-Fi ASCII）**：Works、三栏 Studio、稿件/Compare/发布包、播客态 |
+| [composer-first-product-architecture.md](./composer-first-product-architecture.md) | **对话/四支柱 v1.1**：资料·作品·工具仍有效；一级「对话」已由 Studio 文档 supersede |
+| [home-composer-experts.md](./home-composer-experts.md) | **Composer 专家任务流（v3）**：**非 Studio MVP 路径**；Job/Playbook 可复用 |
 
 ---
 

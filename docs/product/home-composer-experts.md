@@ -1,6 +1,7 @@
 # 首页 Composer · 创作向专家模式
 
 > 状态：**产品规格（v3.0）** — 新增 **§16 产品排期**；v2.9 交付卡 UI。  
+> **Studio 路线**：[writing-cursor-studio.md](./writing-cursor-studio.md) 已冻结五决策；**MVP 主路径为 `/studio`，不复刻本专家 intake 流**；本文 Ops/交付 schema/Job 仍可复用。  
 > 交互原型：[home-composer-experts.canvas.tsx](/Users/mark/.cursor/projects/Users-mark-minimax-aipodcast/canvases/home-composer-experts.canvas.tsx)  
 > UI 参考：`HomeComposerPage` + `ComposerShell`（**控件行映射**）；成品卡样式可参考 `HomeComposerFirstScreenDemo.tsx`（**非**整页布局替换）
 

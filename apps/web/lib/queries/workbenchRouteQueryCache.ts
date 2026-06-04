@@ -2,7 +2,7 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import { routeHasWarmChunks } from "../navPrefetch";
-import { matchesProductStudio, normalizePathname, WORKBENCH_HOME_PATH } from "../navPaths";
+import { matchesProductStudio, normalizePathname, WORKBENCH_HOME_PATH, WORKBENCH_STUDIO_PATH, pathMatchesRoot } from "../navPaths";
 import { NOTEBOOKS_HUB_QUERY_KEY } from "./notebooksQueries";
 import { worksListQueryKey } from "./worksQueries";
 
@@ -23,6 +23,10 @@ export function routeHasWarmQueryCache(queryClient: QueryClient, hrefOrPath: str
 
   if (path === "/works") {
     return hasSuccess(worksListQueryKey(WORKS_PAGE_LIMIT, 0));
+  }
+
+  if (path === WORKBENCH_STUDIO_PATH || pathMatchesRoot(path, WORKBENCH_STUDIO_PATH)) {
+    return hasSuccess(NOTEBOOKS_HUB_QUERY_KEY) || routeHasWarmChunks(path);
   }
 
   if (path === "/notes") {

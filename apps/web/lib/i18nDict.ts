@@ -3,6 +3,8 @@ export type Lang = "zh" | "en";
 export const I18N_DICT: Record<Lang, Record<string, string>> = {
   zh: {
     "nav.home": "对话",
+    "nav.studio": "创作",
+    "nav.studioShort": "创",
     "nav.jobs": "创作记录",
     "nav.notes": "资料",
     "nav.notesShort": "料",
@@ -676,6 +678,8 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
   },
   en: {
     "nav.home": "Home",
+    "nav.studio": "Studio",
+    "nav.studioShort": "Studio",
     "nav.jobs": "Activity",
     "nav.notes": "Materials",
     "nav.notesShort": "Mat",
