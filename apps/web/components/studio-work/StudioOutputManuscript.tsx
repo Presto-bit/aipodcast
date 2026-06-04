@@ -1,11 +1,7 @@
 "use client";
 
-import type { BlockEvidence, ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
+import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
-
-function blockKey(b: ManuscriptBlock): string {
-  return b.kind === "title" ? `${b.kind}:${b.id}` : b.kind;
-}
 
 function IconCopy({ className }: { className?: string }) {
   return (
@@ -39,99 +35,7 @@ function CopyIconButton({ title, onClick }: { title: string; onClick: () => void
   );
 }
 
-function EvidenceTag({ evidence }: { evidence?: BlockEvidence }) {
-  if (!evidence || evidence === "model") return null;
-  const label = evidence === "corpus" ? "资料" : "待核实";
-  const cls = evidence === "corpus" ? "text-brand" : "text-warning-ink";
-  return <span className={`text-[10px] font-medium ${cls}`}>{label}</span>;
-}
-
-function kindLabel(kind: ManuscriptBlock["kind"]): string {
-  switch (kind) {
-    case "title":
-      return "标题";
-    case "body":
-      return "正文";
-    case "hashtags":
-      return "话题";
-    default:
-      return "封面说明";
-  }
-}
-
-function blockSurface(kind: ManuscriptBlock["kind"], changed: boolean): string {
-  const base =
-    kind === "title"
-      ? "bg-brand/6"
-      : kind === "body"
-        ? "bg-fill/50"
-        : "bg-surface";
-  const border = changed ? "border-brand/45" : "border-line/50";
-  return `rounded-md border px-2.5 py-2 ${base} ${border}`;
-}
-
-function BlockRow({
-  block,
-  compareMode,
-  selected,
-  changed,
-  onToggle,
-  onCopy
-}: {
-  block: ManuscriptBlock;
-  compareMode?: boolean;
-  selected?: boolean;
-  changed?: boolean;
-  onToggle?: () => void;
-  onCopy: () => void;
-}) {
-  return (
-    <div className={blockSurface(block.kind, Boolean(changed))}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          {compareMode && changed && onToggle ? (
-            <input
-              type="checkbox"
-              checked={selected}
-              onChange={onToggle}
-              className="rounded border-line"
-            />
-          ) : null}
-          <span className="text-[10px] font-medium text-muted">{kindLabel(block.kind)}</span>
-          {block.kind !== "hashtags" && block.kind !== "coverBrief" ? (
-            <EvidenceTag evidence={block.evidence} />
-          ) : null}
-        </div>
-        <CopyIconButton title={`复制${kindLabel(block.kind)}`} onClick={onCopy} />
-      </div>
-      {block.kind === "title" || block.kind === "body" ? (
-        <p className="mt-1 whitespace-pre-wrap text-[14px] leading-relaxed text-ink">{block.text}</p>
-      ) : null}
-      {block.kind === "hashtags" ? (
-        <p className="mt-1 text-sm text-ink">
-          {block.tags.map((t) => (
-            <span key={t} className="mr-2 text-brand">
-              #{t.replace(/^#/, "")}
-            </span>
-          ))}
-        </p>
-      ) : null}
-      {block.kind === "coverBrief" ? (
-        <p className="mt-1 text-sm text-ink">{block.text}</p>
-      ) : null}
-    </div>
-  );
-}
-
-function copyBlock(b: ManuscriptBlock) {
-  if (b.kind === "hashtags") {
-    void navigator.clipboard.writeText(b.tags.map((t) => `#${t}`).join(" "));
-  } else if (b.kind === "title" || b.kind === "body" || b.kind === "coverBrief") {
-    void navigator.clipboard.writeText(b.text);
-  }
-}
-
-/** 输出区内的稿件（扁平文本 + 色块，复制为图标） */
+/** 输出区稿件：单块展示标题/正文/话题等 */
 export default function StudioOutputManuscript({
   version,
   compareBlocks,
@@ -150,24 +54,64 @@ export default function StudioOutputManuscript({
   const blocks = compareMode && compareBlocks ? compareBlocks : version?.blocks ?? [];
   if (!blocks.length) return null;
 
+  const title = blocks.find((b) => b.kind === "title");
+  const body = blocks.find((b) => b.kind === "body");
+  const hashtags = blocks.find((b) => b.kind === "hashtags");
+  const cover = blocks.find((b) => b.kind === "coverBrief");
+
   return (
-    <div className="space-y-2">
-      {blocks.map((b) => {
-        const key = blockKey(b);
-        return (
-          <BlockRow
-            key={key}
-            block={b}
-            compareMode={compareMode}
-            changed={changedKeys?.has(key)}
-            selected={selectedKeys?.has(key)}
-            onToggle={onToggleKey ? () => onToggleKey(key) : undefined}
-            onCopy={() => copyBlock(b)}
-          />
-        );
-      })}
+    <div className="rounded-md border border-line/50 bg-fill/35 px-3 py-2.5">
+      {compareMode ? (
+        <p className="mb-2 text-[10px] text-muted">勾选要采纳的变更段落</p>
+      ) : null}
+      <div className="space-y-3 text-[14px] leading-relaxed text-ink">
+        {title && title.kind === "title" ? (
+          <section>
+            {compareMode && changedKeys?.has(`title:${title.id}`) && onToggleKey ? (
+              <label className="mb-1 flex items-center gap-1.5 text-[10px] text-muted">
+                <input
+                  type="checkbox"
+                  checked={selectedKeys?.has(`title:${title.id}`)}
+                  onChange={() => onToggleKey(`title:${title.id}`)}
+                  className="rounded border-line"
+                />
+                标题变更
+              </label>
+            ) : null}
+            <p className="font-medium">{title.text}</p>
+          </section>
+        ) : null}
+        {body && body.kind === "body" ? (
+          <section>
+            {compareMode && changedKeys?.has("body") && onToggleKey ? (
+              <label className="mb-1 flex items-center gap-1.5 text-[10px] text-muted">
+                <input
+                  type="checkbox"
+                  checked={selectedKeys?.has("body")}
+                  onChange={() => onToggleKey("body")}
+                  className="rounded border-line"
+                />
+                正文变更
+              </label>
+            ) : null}
+            <p className="whitespace-pre-wrap">{body.text}</p>
+          </section>
+        ) : null}
+        {hashtags && hashtags.kind === "hashtags" ? (
+          <p className="text-sm">
+            {hashtags.tags.map((t) => (
+              <span key={t} className="mr-2 text-brand">
+                #{t.replace(/^#/, "")}
+              </span>
+            ))}
+          </p>
+        ) : null}
+        {cover && cover.kind === "coverBrief" ? (
+          <p className="text-[13px] text-muted">{cover.text}</p>
+        ) : null}
+      </div>
       {version && !compareMode ? (
-        <div className="flex justify-end pt-0.5">
+        <div className="mt-2 flex justify-end border-t border-line/40 pt-2">
           <CopyIconButton
             title="复制全部（含话题）"
             onClick={() => void navigator.clipboard.writeText(manuscriptCopyAll(version.blocks))}

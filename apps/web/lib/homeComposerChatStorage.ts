@@ -237,6 +237,21 @@ export function appendHomeComposerTurn(
   });
 }
 
+/** 编辑某条用户消息前：删除该条及之后所有轮次 */
+export function truncateHomeComposerTurnsFrom(
+  store: HomeComposerStore,
+  turnId: string
+): HomeComposerStore | null {
+  const session = activeHomeComposerSession(store);
+  if (!session) return null;
+  const idx = session.turns.findIndex((t) => t.id === turnId);
+  if (idx < 0) return null;
+  return patchActiveHomeComposerSession(store, (s) => ({
+    ...s,
+    turns: s.turns.slice(0, idx)
+  }));
+}
+
 export function updateHomeComposerTurn(
   store: HomeComposerStore,
   turnId: string,

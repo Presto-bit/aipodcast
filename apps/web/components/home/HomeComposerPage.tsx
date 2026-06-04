@@ -27,6 +27,7 @@ import {
   patchActiveHomeComposerSession,
   saveHomeComposerStore,
   selectHomeComposerSession,
+  truncateHomeComposerTurnsFrom,
   updateHomeComposerTurn
 } from "../../lib/homeComposerChatStorage";
 import type { HomeComposerStore } from "../../lib/homeComposerTypes";
@@ -303,8 +304,10 @@ export default function HomeComposerPage({
   }, [prefs?.featureCore, prefs?.personalEnabled, prefs?.personalProfile]);
 
   const runTurn = useCallback(
-    async (userText: string, opts?: { replaceLast?: boolean }) => {
-      if (!store || !session) return;
+    async (userText: string, opts?: { replaceLast?: boolean; storeOverride?: HomeComposerStore }) => {
+      const activeStore = opts?.storeOverride ?? store;
+      const activeSession = activeStore ? activeHomeComposerSession(activeStore) : null;
+      if (!activeStore || !activeSession) return;
       if (!isLoggedIn) {
         setError("请先登录后再发送");
         return;
@@ -328,7 +331,7 @@ export default function HomeComposerPage({
         createdAt: Date.now()
       };
 
-      let nextStore = appendHomeComposerTurn(store, turn, { replaceLast: opts?.replaceLast });
+      let nextStore = appendHomeComposerTurn(activeStore, turn, { replaceLast: opts?.replaceLast });
       setStore(nextStore);
       setInput("");
 
@@ -337,7 +340,7 @@ export default function HomeComposerPage({
       );
 
       const useRag = Boolean(prefs?.notebook?.trim() && (prefs?.noteIds?.length ?? 0) > 0);
-      let sessionState = session.sessionState;
+      let sessionState = activeSession.sessionState;
 
       try {
         const askDone = await streamHomeComposerAsk({
@@ -485,7 +488,6 @@ export default function HomeComposerPage({
     },
     [
       store,
-      session,
       isLoggedIn,
       prefs,
       notes,
@@ -494,6 +496,30 @@ export default function HomeComposerPage({
       resolveStylePrompt,
       resolveAuthorPrompt
     ]
+  );
+
+  const handleEditUserTurn = useCallback(
+    (turnId: string, newText: string) => {
+      if (!store || busy) return;
+      const q = newText.trim();
+      if (!q) return;
+      askAbortRef.current?.abort();
+      const truncated = truncateHomeComposerTurnsFrom(store, turnId);
+      if (!truncated) return;
+      setStore(truncated);
+      void runTurn(q, { storeOverride: truncated });
+    },
+    [store, busy, runTurn]
+  );
+
+  const handleRollbackFromTurn = useCallback(
+    (turnId: string) => {
+      if (!store) return;
+      askAbortRef.current?.abort();
+      const truncated = truncateHomeComposerTurnsFrom(store, turnId);
+      if (truncated) setStore(truncated);
+    },
+    [store]
   );
 
   const patchTaskDraftTurn = useCallback(
@@ -1245,7 +1271,12 @@ export default function HomeComposerPage({
                         : undefined;
                   return (
                   <div key={turn.id} className="space-y-5">
-                    <UserBubble text={turn.userText} />
+                    <UserBubble
+                      text={turn.userText}
+                      canEdit={isLoggedIn && !busy}
+                      onEdit={(newText) => handleEditUserTurn(turn.id, newText)}
+                      onRollback={() => handleRollbackFromTurn(turn.id)}
+                    />
                     {showExpertBlocks && turnExpertId ? (
                       <ComposerExpertBlocks
                         blocks={turn.blocks!}

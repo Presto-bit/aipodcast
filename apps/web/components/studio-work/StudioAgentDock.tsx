@@ -16,7 +16,11 @@ import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrc
 import { formatStudioAskError } from "../../lib/studioAskError";
 import { featureCoreToPrompt } from "../../lib/homeComposerFeatureCore";
 import { personalProfileToPrompt } from "../../lib/homeComposerProfile";
-import { getComposerPrefsFeatureCore, getStudioComposerPrefs } from "../../lib/studioWorkStorage";
+import {
+  getComposerPrefsFeatureCore,
+  getStudioComposerPrefs,
+  getStudioWork
+} from "../../lib/studioWorkStorage";
 import { syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
 import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
@@ -36,7 +40,7 @@ const QUICK_PROMPTS = [
 function agentPlaceholder(status: WorkStatus): string {
   if (status === "generating") return "生成中…";
   if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
-  if (status === "planned") return "可继续补充，或回复「确认」开始生成…";
+  if (status === "planned") return "正在根据计划写稿…";
   return "描述你想创作的内容与目标…";
 }
 
@@ -64,16 +68,13 @@ export default function StudioAgentDock({
   onPersist,
   onGeneratePlan,
   onConfirmGenerate,
+  onReviseFromChat,
   activeVersion,
-  reviseText,
-  onReviseTextChange,
-  onRevise,
   onApplyPatch,
   onDiscardPatch,
   selectedPatchKeys,
   changedKeys,
   onTogglePatchKey,
-  onMarkShipped,
   showFeatureNudge,
   onDismissFeatureNudge
 }: {
@@ -85,16 +86,13 @@ export default function StudioAgentDock({
   onPersist: (next: StudioWork) => void;
   onGeneratePlan?: () => void | Promise<void>;
   onConfirmGenerate?: () => void | Promise<void>;
+  onReviseFromChat?: (opinion: string) => void | Promise<void>;
   activeVersion: ManuscriptVersion | null;
-  reviseText: string;
-  onReviseTextChange: (v: string) => void;
-  onRevise?: () => void;
   onApplyPatch?: (partial: boolean) => void;
   onDiscardPatch?: () => void;
   selectedPatchKeys: Set<string>;
   changedKeys: Set<string>;
   onTogglePatchKey: (key: string) => void;
-  onMarkShipped?: () => void;
   showFeatureNudge: boolean;
   onDismissFeatureNudge: () => void;
 }) {
@@ -124,7 +122,9 @@ export default function StudioAgentDock({
     work.error,
     work.pendingPatch,
     activeVersion?.id,
-    activeVersion?.blocks.length
+    activeVersion?.blocks.length,
+    work.postDoneCoach,
+    work.postDoneCoachStreaming
   ]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -154,9 +154,11 @@ export default function StudioAgentDock({
       ...work,
       postDoneFollowUpPending: false,
       postDoneFollowUpDone: true,
-      lastOrchestratorNote: "成稿后解读与下一步"
+      postDoneCoach: "",
+      postDoneCoachStreaming: true,
+      lastOrchestratorNote: undefined
     });
-    void runPostDoneFollowUp(work);
+    void runPostDoneCoach(work);
   }, [work.id, work.postDoneFollowUpPending, work.postDoneFollowUpDone, canChat, agentBusy, parentBusy]);
 
   function applyDialogExtract(
@@ -289,11 +291,88 @@ export default function StudioAgentDock({
     }
   }
 
-  async function runPostDoneFollowUp(workBase: StudioWork) {
+  async function runPostDoneCoach(workBase: StudioWork) {
     const route = buildPostDoneFollowUpRoute();
-    await runAgentTurn(workBase.agentTurns ?? [], STUDIO_POST_DONE_INTERNAL_QUESTION, workBase, route, {
-      authorIpExtra: STUDIO_POST_DONE_AUTHOR_EXTRA
+    const q = STUDIO_POST_DONE_INTERNAL_QUESTION;
+    setAgentBusy(true);
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    const hasCorpus = Boolean(workBase.binding.notebook.trim() && workBase.binding.noteIds.length > 0);
+    const ragMode = hasCorpus ? ("rag" as const) : ("general" as const);
+    const prefs = getStudioComposerPrefs();
+    const corePrompt = featureCoreToPrompt(getComposerPrefsFeatureCore());
+    const profilePrompt =
+      prefs.personalEnabled && prefs.personalProfile
+        ? personalProfileToPrompt(prefs.personalProfile)
+        : "";
+    const authorIpExtra = [corePrompt, profilePrompt, STUDIO_POST_DONE_AUTHOR_EXTRA]
+      .filter(Boolean)
+      .join("\n\n");
+    const askPayload = buildStudioAskPayload({
+      work: workBase,
+      userMessage: q,
+      intent: route.intent,
+      activeVersion,
+      authorIpExtra,
+      askFlags: route.askContext,
+      mode: ragMode
     });
+
+    let answerBuf = "";
+    let supplementBuf = "";
+
+    try {
+      const done = await streamHomeComposerAsk({
+        question: askPayload.question,
+        mode: ragMode,
+        notebook: workBase.binding.notebook,
+        noteIds: workBase.binding.noteIds,
+        memoryTurns: studioTurnsToMemoryTurns(workBase.agentTurns ?? []),
+        sessionState: workBase.agentSessionState ?? null,
+        dialogueStylePrompt: askPayload.dialogueStylePrompt,
+        authorIpPrompt: askPayload.authorIpPrompt,
+        authHeaders: getAuthHeaders(),
+        signal: ac.signal,
+        callbacks: {
+          onChunk: (text, role, section) => {
+            if (role === "reasoning") return;
+            if (section === "supplement") supplementBuf += text;
+            else answerBuf += text;
+            const content = answerBuf.trim() || supplementBuf.trim();
+            const cur = getStudioWork(work.id) ?? workBase;
+            onPersist({
+              ...cur,
+              postDoneCoach: content,
+              postDoneCoachStreaming: true
+            });
+          }
+        }
+      });
+
+      const finalContent =
+        done.answer.trim() ||
+        supplementBuf.trim() ||
+        answerBuf.trim() ||
+        "";
+      const cur = getStudioWork(work.id) ?? workBase;
+      onPersist({
+        ...cur,
+        postDoneCoach: finalContent,
+        postDoneCoachStreaming: false,
+        agentSessionState: done.sessionState ?? cur.agentSessionState ?? null
+      });
+    } catch {
+      const cur = getStudioWork(work.id) ?? workBase;
+      onPersist({
+        ...cur,
+        postDoneCoachStreaming: false
+      });
+    } finally {
+      setAgentBusy(false);
+      abortRef.current = null;
+    }
   }
 
   async function handleSend(overrideText?: string) {
@@ -326,8 +405,13 @@ export default function StudioAgentDock({
       return;
     }
     if (route.tool === "generate" && onConfirmGenerate) {
-      onPersist({ ...base, status: "generating", runPhase: "排队中…", error: undefined });
       await onConfirmGenerate();
+      return;
+    }
+    if (route.tool === "revise" && onReviseFromChat) {
+      const userTurnAlready = prefixWithUser;
+      onPersist({ ...base, agentTurns: userTurnAlready });
+      await onReviseFromChat(q);
       return;
     }
 
@@ -359,8 +443,11 @@ export default function StudioAgentDock({
       return;
     }
     if (route.tool === "generate" && onConfirmGenerate) {
-      onPersist({ ...base, status: "generating", runPhase: "排队中…", error: undefined });
       void onConfirmGenerate();
+      return;
+    }
+    if (route.tool === "revise" && onReviseFromChat) {
+      void onReviseFromChat(newText.trim());
       return;
     }
     void runAgentTurn(prefixWithUser, newText, base, route);
@@ -398,18 +485,12 @@ export default function StudioAgentDock({
         <StudioAgentOutputCards
           work={work}
           busy={agentBusy || parentBusy}
-          isLoggedIn={isLoggedIn}
           activeVersion={activeVersion}
-          reviseText={reviseText}
-          onReviseTextChange={onReviseTextChange}
-          onConfirmGenerate={onConfirmGenerate}
-          onRevise={onRevise}
           onApplyPatch={onApplyPatch}
           onDiscardPatch={onDiscardPatch}
           selectedPatchKeys={selectedPatchKeys}
           changedKeys={changedKeys}
           onTogglePatchKey={onTogglePatchKey}
-          onMarkShipped={onMarkShipped}
           showFeatureNudge={showFeatureNudge}
           onFillFeature={() => {
             markOpenComposerFeature();

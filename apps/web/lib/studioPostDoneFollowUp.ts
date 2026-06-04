@@ -1,21 +1,21 @@
 import type { StudioRouteDecision } from "./studioOrchestrator";
 
-/** 成稿后自动追问（仅 API，不在对话区展示用户句） */
+/** 成稿后温和附言（仅 API，不在对话区展示用户句） */
 export const STUDIO_POST_DONE_INTERNAL_QUESTION =
-  "成稿刚完成。请用2-4句话解读标题与正文亮点，各给1条可选下一步（如微调标题），勿重复全文，勿要求再次确认任务或确认执行。";
+  "稿件刚写好。请像同事一样用简短、温和口语和用户聊几句：顺带说说这篇最好的一点，再提一个她可以自己做的小调整。不要列小标题，不要写「亮点解读」「可选下一步」等字样，不要重复粘贴全文。";
 
 export const STUDIO_POST_DONE_AUTHOR_EXTRA = [
-  "【成稿后引导】",
-  "稿件已生成。用2-4句话解读亮点，各给1条可选下一步；",
-  "勿重复粘贴全文；勿要求用户再次「确认任务」或「确认执行」；",
-  "若用户要改版，提示在产物区输入改版意见后提交。"
+  "【语气】自然、温和、口语化，像在任务后面顺便聊两句。",
+  "不要用小标题、编号或「亮点」「下一步」等标签。",
+  "勿要求再次确认任务或开始生成。",
+  "若她想改稿，提醒在下方输入框直接说即可。"
 ].join("\n");
 
 export function buildPostDoneFollowUpRoute(): StudioRouteDecision {
   return {
     tool: "ask",
     intent: "manuscript_coach",
-    note: "成稿后解读与下一步",
+    note: "",
     askContext: { includeManuscript: true, includeMemory: false }
   };
 }

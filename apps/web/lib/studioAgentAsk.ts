@@ -94,7 +94,7 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
     case "revise_coach":
       return [
         "根据用户改版意见与【当前稿件】，说明建议改哪些块（标题/正文/话题）及方向。",
-        "若需 Job 执行改版，提示在产物区「提交改版」输入框提交。"
+        "若需实际改稿，提示用户在下方输入框直接说改版要求（将自动执行）。"
       ].join("\n");
     default:
       return [

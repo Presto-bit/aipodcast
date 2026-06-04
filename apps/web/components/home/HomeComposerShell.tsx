@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { FEATURE_CORE_FIELDS } from "../../lib/homeComposerPersonalFields";
 
@@ -457,11 +457,139 @@ export function ComposerCopyToast({ message }: { message: string }) {
   );
 }
 
-export function UserBubble({ text }: { text: string }) {
+export function UserBubble({
+  text,
+  canEdit,
+  onEdit,
+  onRollback
+}: {
+  text: string;
+  canEdit?: boolean;
+  onEdit?: (newText: string) => void;
+  onRollback?: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(text);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!editing) setDraft(text);
+  }, [text, editing]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus();
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [editing]);
+
+  function commitEdit() {
+    const next = draft.trim();
+    if (!next || !onEdit) return;
+    if (next === text.trim()) {
+      setEditing(false);
+      return;
+    }
+    setEditing(false);
+    onEdit(next);
+  }
+
+  function cancelEdit() {
+    setDraft(text);
+    setEditing(false);
+  }
+
+  function handleBlur() {
+    const next = draft.trim();
+    if (!next) {
+      cancelEdit();
+      return;
+    }
+    if (next !== text.trim()) commitEdit();
+    else cancelEdit();
+  }
+
+  const editable = Boolean(canEdit && onEdit);
+
+  if (editing && editable) {
+    return (
+      <div className="flex w-full justify-end">
+        <div className="max-w-[92%] min-w-[10rem]">
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              const el = e.target;
+              el.style.height = "auto";
+              el.style.height = `${el.scrollHeight}px`;
+            }}
+            rows={1}
+            className="w-full resize-none overflow-hidden whitespace-pre-wrap rounded-2xl border border-brand/35 bg-fill/25 px-4 py-3 text-[15px] leading-[1.72] text-ink outline-none ring-1 ring-brand/20 shadow-soft"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                commitEdit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancelEdit();
+              }
+            }}
+            onBlur={() => handleBlur()}
+          />
+          <p className="mt-1 text-right text-[10px] text-muted">Enter 发送 · Esc 取消</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex w-full justify-end">
-      <div className="max-w-[92%] rounded-2xl border border-line/70 bg-fill/25 px-4 py-3 shadow-soft">
-        <p className="whitespace-pre-wrap text-[15px] leading-[1.72] text-ink">{text}</p>
+    <div className="group flex w-full justify-end">
+      <div className="relative max-w-[92%]">
+        {editable ? (
+          <div className="mb-1 flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+            <button
+              type="button"
+              className="text-[10px] text-muted hover:text-brand"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setEditing(true)}
+            >
+              编辑
+            </button>
+            {onRollback ? (
+              <button
+                type="button"
+                className="text-[10px] text-muted hover:text-danger-ink"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={onRollback}
+              >
+                回滚
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        <div
+          role={editable ? "button" : undefined}
+          tabIndex={editable ? 0 : undefined}
+          className={[
+            "rounded-2xl border border-line/70 bg-fill/25 px-4 py-3 shadow-soft",
+            editable ? "cursor-text hover:ring-1 hover:ring-brand/25" : ""
+          ].join(" ")}
+          onClick={() => editable && setEditing(true)}
+          onKeyDown={(e) => {
+            if (!editable) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setEditing(true);
+            }
+          }}
+        >
+          <p className="whitespace-pre-wrap text-[15px] leading-[1.72] text-ink">{text}</p>
+        </div>
       </div>
     </div>
   );

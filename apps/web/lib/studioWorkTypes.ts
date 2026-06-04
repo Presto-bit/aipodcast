@@ -98,6 +98,9 @@ export type StudioWork = {
   /** 成稿后触发一次对话区解读追问 */
   postDoneFollowUpPending?: boolean;
   postDoneFollowUpDone?: boolean;
+  /** 成稿后附在稿件下方的温和说明（不在对话区） */
+  postDoneCoach?: string;
+  postDoneCoachStreaming?: boolean;
   updatedAt: number;
   createdAt: number;
 };

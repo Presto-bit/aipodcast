@@ -102,7 +102,7 @@ export default function StudioWorksListClient() {
           新建小红书任务
         </button>
       </div>
-      <p className="mt-1 text-sm text-muted">在资料库里改稿，确认后再生成，支持版本对比与部分采纳。</p>
+      <p className="mt-1 text-sm text-muted">说清楚需求后自动写稿，支持对话澄清、版本对比与部分采纳。</p>
 
       <div className="mt-6 flex flex-col gap-3">
         {works.length === 0 ? (

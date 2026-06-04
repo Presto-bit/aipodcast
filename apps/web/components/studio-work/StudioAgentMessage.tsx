@@ -45,6 +45,10 @@ export default function StudioAgentMessage({
   function commitEdit() {
     const text = draft.trim();
     if (!text || !onEditUserTurn) return;
+    if (text === turn.content.trim()) {
+      setEditing(false);
+      return;
+    }
     setEditing(false);
     onEditUserTurn(turn.id, text);
   }
@@ -52,6 +56,16 @@ export default function StudioAgentMessage({
   function cancelEdit() {
     setDraft(turn.content);
     setEditing(false);
+  }
+
+  function handleBlur() {
+    const text = draft.trim();
+    if (!text) {
+      cancelEdit();
+      return;
+    }
+    if (text !== turn.content.trim()) commitEdit();
+    else cancelEdit();
   }
 
   if (turn.role === "user") {
@@ -81,8 +95,9 @@ export default function StudioAgentMessage({
                 cancelEdit();
               }
             }}
-            onBlur={() => cancelEdit()}
+            onBlur={() => handleBlur()}
           />
+          <p className="mt-1 text-right text-[10px] text-muted">Enter 发送 · Esc 取消</p>
         </div>
       );
     }
@@ -90,16 +105,27 @@ export default function StudioAgentMessage({
     return (
       <div className="group flex justify-end">
         <div className="relative max-w-[90%]">
-          {showRollback ? (
-            <div className="mb-0.5 flex justify-end opacity-0 transition group-hover:opacity-100">
+          {editable ? (
+            <div className="mb-0.5 flex justify-end gap-2 opacity-0 transition group-hover:opacity-100">
               <button
                 type="button"
-                className="text-[10px] text-muted hover:text-danger-ink"
-                onClick={() => onRollbackFromTurn(turn.id)}
-                title="删除本条及之后对话"
+                className="text-[10px] text-muted hover:text-brand"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setEditing(true)}
               >
-                回滚
+                编辑
               </button>
+              {showRollback ? (
+                <button
+                  type="button"
+                  className="text-[10px] text-muted hover:text-danger-ink"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => onRollbackFromTurn!(turn.id)}
+                  title="删除本条及之后对话"
+                >
+                  回滚
+                </button>
+              ) : null}
             </div>
           ) : null}
           <p

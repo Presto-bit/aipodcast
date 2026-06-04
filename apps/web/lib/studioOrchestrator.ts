@@ -52,6 +52,19 @@ export function routeStudioAction(
   }
 
   if (
+    (work.status === "ready" || work.status === "shipped") &&
+    work.versions.length > 0 &&
+    /改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改/.test(q)
+  ) {
+    return {
+      tool: "revise",
+      intent: "revise_coach",
+      note: "将按输入执行改版",
+      askContext: { includeManuscript: true, includeMemory: true }
+    };
+  }
+
+  if (
     work.status === "planned" &&
     work.plan &&
     CONFIRM_GENERATE_RE.test(q)
@@ -59,7 +72,7 @@ export function routeStudioAction(
     return {
       tool: "generate",
       intent,
-      note: "将执行成稿子任务（产物区）",
+      note: "开始生成稿件",
       askContext: { includeManuscript: false, includeMemory: false }
     };
   }
@@ -137,7 +150,27 @@ export function finishStudioRun(
         }
       : r
   );
-  return { ...work, agentRuns: runs };
+  const note = summary?.trim();
+  return {
+    ...work,
+    agentRuns: runs,
+    ...(note ? { lastOrchestratorNote: note } : {})
+  };
+}
+
+/** 生成/改版进行中：同步 runPhase 与轨迹文案，避免一直停在「生成稿件中…」 */
+export function patchStudioGeneratePhase(
+  work: StudioWork,
+  runId: string | undefined,
+  phase: string
+): StudioWork {
+  const msg = phase.trim() || "处理中…";
+  const runs = runId
+    ? (work.agentRuns ?? []).map((r) =>
+        r.id === runId && r.status === "running" ? { ...r, summary: msg } : r
+      )
+    : work.agentRuns;
+  return { ...work, runPhase: msg, agentRuns: runs, lastOrchestratorNote: msg };
 }
 
 export function studioToolLabel(tool: StudioTool): string {
