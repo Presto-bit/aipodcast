@@ -16,7 +16,7 @@ const studioLoadingShell = (label: string, minH: string) => (
 );
 
 const PodcastStudio = dynamic(() => import("../../../components/studio/PodcastStudio"), {
-  loading: () => studioLoadingShell("加载播客工作室", "min-h-[200px]")
+  loading: () => studioLoadingShell("加载创作播客", "min-h-[200px]")
 });
 const TtsStudio = dynamic(() => import("../../../components/studio/TtsStudio"), {
   loading: () => studioLoadingShell("加载语音合成工作室", "min-h-[180px]")
@@ -257,15 +257,17 @@ export default function CreatePage() {
     if (mode !== "podcast") setLibraryPreview("");
   }, [mode]);
 
-  const act = mode === "podcast" ? podcastAct : mode === "tts" ? ttsAct : null;
+  const studioMode = urlMode ?? mode;
+
+  const act = studioMode === "podcast" ? podcastAct : studioMode === "tts" ? ttsAct : null;
   /** 与 TtsStudio 内嵌一致：仅有 phase、无 progress 数字时也要展示（如校验提示、润色/接口错误文案） */
   const showProgress = Boolean(
     act && (act.busy || (act.phase ?? "").trim().length > 0 || act.progressPct > 0)
   );
 
   const createPageEyebrow = t("create.pageEyebrow").trim();
-  const isTtsPage = urlMode === "tts" || mode === "tts";
-  const isPodcastPage = urlMode === "podcast" || mode === "podcast";
+  const isTtsPage = studioMode === "tts";
+  const isPodcastPage = studioMode === "podcast";
   const pageTitle = isTtsPage
     ? t("create.tts.pageTitle")
     : isPodcastPage
@@ -360,7 +362,7 @@ export default function CreatePage() {
         ) : null}
       </header>
 
-      <div className={mode ? "mb-3 w-full" : ""}>
+      <div className={studioMode ? "mb-3 w-full" : ""}>
         <div className="w-full max-w-3xl">
             <section className="fym-surface-card overflow-visible">
         <div className="p-4 sm:p-5">
@@ -435,9 +437,9 @@ export default function CreatePage() {
             ) : null}
           </div>
 
-          {!mode ? null : (
+          {!studioMode ? null : (
             <div className="mt-4">
-              {mode === "podcast" ? (
+              {studioMode === "podcast" ? (
                 loadHeavyStudio ? (
                   <PodcastStudio
                     key="podcast-studio"
@@ -473,7 +475,7 @@ export default function CreatePage() {
           )}
         </div>
 
-        {mode && showProgress && act ? (
+        {studioMode && showProgress && act ? (
           <div className="bg-fill/60 px-4 py-3 sm:px-5">
             <p className="text-xs font-medium text-muted">状态</p>
             <p className="mt-1 text-sm text-ink">

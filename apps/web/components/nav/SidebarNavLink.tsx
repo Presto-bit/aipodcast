@@ -88,11 +88,14 @@ function SidebarNavLinkInner({
     onClick?.(e);
     if (e.defaultPrevented) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-    if (sameDestination) return;
+    if (sameDestination) {
+      e.preventDefault();
+      return;
+    }
     if (target === current) {
       e.preventDefault();
-      workbenchNav?.beginWorkbenchNav(hrefStr);
-      router.push(hrefStr);
+      router.replace(hrefStr, { scroll: false });
+      router.refresh();
       return;
     }
     workbenchNav?.beginWorkbenchNav(hrefStr);

@@ -1188,6 +1188,87 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       </>
                     )}
                   </span>
+                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="voice" className="relative inline-block align-top">
+                    <button type="button" className={chipClass(activePanel === "voice")} onClick={() => setActivePanel((p) => (p === "voice" ? null : "voice"))}>
+                      {voiceSummary}
+                    </button>
+                    {renderFloatingPanel(
+                      "voice",
+                      panelClassAnchorMobile,
+                      panelClassAnchor,
+                      "音色设置",
+                      <>
+                        <p className="mb-1 text-sm font-medium">音色</p>
+                        {voiceOptions.length === 0 ? (
+                          <p className="text-xs text-warning-ink">加载音色中…</p>
+                        ) : null}
+                        {speakerMode === "single" ? (
+                          <label className="block text-xs">
+                            主音色
+                            <VoiceSelect voiceOptions={voiceOptions} value={voiceKey1} onChange={setVoiceKey1} />
+                          </label>
+                        ) : (
+                          <div className="space-y-2">
+                            <label className="block text-xs">
+                              Speaker1
+                              <VoiceSelect voiceOptions={voiceOptions} value={voiceKey1} onChange={setVoiceKey1} />
+                            </label>
+                            <label className="block text-xs">
+                              Speaker2
+                              <VoiceSelect voiceOptions={voiceOptions} value={voiceKey2} onChange={setVoiceKey2} />
+                            </label>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </span>
+                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="duration" className="relative inline-block align-top">
+                    <button type="button" className={chipClass(activePanel === "duration")} onClick={() => setActivePanel((p) => (p === "duration" ? null : "duration"))}>
+                      {durationLabel}
+                    </button>
+                    {renderFloatingPanel(
+                      "duration",
+                      panelClassAnchorMobile,
+                      panelClassAnchor,
+                      "时长",
+                      <>
+                        <p className="mb-2 text-sm font-medium">时长</p>
+                        <div className="flex flex-wrap gap-2">
+                          {DURATION_PRESETS.map((p) => (
+                            <button
+                              key={p.chars}
+                              type="button"
+                              className={`rounded-lg border px-3 py-2 text-left text-sm ${durationPresetHighlight && scriptTargetChars === p.chars ? "border-brand bg-fill" : "border-line"}`}
+                              onClick={() => setScriptTargetChars(p.chars)}
+                            >
+                              {p.label}
+                              <span className="block text-xs text-muted">{p.hint}</span>
+                            </button>
+                          ))}
+                        </div>
+                        <label className="mt-3 block text-xs">
+                          <span>字数（200–50000，以套餐为准）</span>
+                          <input
+                            type="number"
+                            min={200}
+                            max={50000}
+                            className="mt-1 w-full rounded-lg border border-line bg-surface p-2"
+                            value={scriptTargetCharsInput}
+                            onChange={(e) => setScriptTargetCharsInput(e.target.value)}
+                            onFocus={(e) => e.currentTarget.select()}
+                            onBlur={commitScriptTargetCharsInput}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitScriptTargetCharsInput();
+                                setActivePanel(null);
+                              }
+                            }}
+                          />
+                        </label>
+                      </>
+                    )}
+                  </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="lang" className="relative inline-block align-top">
                     <button type="button" className={chipClass(activePanel === "lang")} onClick={() => setActivePanel((p) => (p === "lang" ? null : "lang"))}>
                       {scriptLanguage}
@@ -1325,87 +1406,6 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                           </div>
                         </div>
                       </div>
-                    )}
-                  </span>
-                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="voice" className="relative inline-block align-top">
-                    <button type="button" className={chipClass(activePanel === "voice")} onClick={() => setActivePanel((p) => (p === "voice" ? null : "voice"))}>
-                      {voiceSummary}
-                    </button>
-                    {renderFloatingPanel(
-                      "voice",
-                      panelClassAnchorMobile,
-                      panelClassAnchor,
-                      "音色设置",
-                      <>
-                        <p className="mb-1 text-sm font-medium">音色</p>
-                        {voiceOptions.length === 0 ? (
-                          <p className="text-xs text-warning-ink">加载音色中…</p>
-                        ) : null}
-                        {speakerMode === "single" ? (
-                          <label className="block text-xs">
-                            主音色
-                            <VoiceSelect voiceOptions={voiceOptions} value={voiceKey1} onChange={setVoiceKey1} />
-                          </label>
-                        ) : (
-                          <div className="space-y-2">
-                            <label className="block text-xs">
-                              Speaker1
-                              <VoiceSelect voiceOptions={voiceOptions} value={voiceKey1} onChange={setVoiceKey1} />
-                            </label>
-                            <label className="block text-xs">
-                              Speaker2
-                              <VoiceSelect voiceOptions={voiceOptions} value={voiceKey2} onChange={setVoiceKey2} />
-                            </label>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </span>
-                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="duration" className="relative inline-block align-top">
-                    <button type="button" className={chipClass(activePanel === "duration")} onClick={() => setActivePanel((p) => (p === "duration" ? null : "duration"))}>
-                      {durationLabel}
-                    </button>
-                    {renderFloatingPanel(
-                      "duration",
-                      panelClassAnchorMobile,
-                      panelClassAnchor,
-                      "时长",
-                      <>
-                        <p className="mb-2 text-sm font-medium">时长</p>
-                        <div className="flex flex-wrap gap-2">
-                          {DURATION_PRESETS.map((p) => (
-                            <button
-                              key={p.chars}
-                              type="button"
-                              className={`rounded-lg border px-3 py-2 text-left text-sm ${durationPresetHighlight && scriptTargetChars === p.chars ? "border-brand bg-fill" : "border-line"}`}
-                              onClick={() => setScriptTargetChars(p.chars)}
-                            >
-                              {p.label}
-                              <span className="block text-xs text-muted">{p.hint}</span>
-                            </button>
-                          ))}
-                        </div>
-                        <label className="mt-3 block text-xs">
-                          <span>字数（200–50000，以套餐为准）</span>
-                          <input
-                            type="number"
-                            min={200}
-                            max={50000}
-                            className="mt-1 w-full rounded-lg border border-line bg-surface p-2"
-                            value={scriptTargetCharsInput}
-                            onChange={(e) => setScriptTargetCharsInput(e.target.value)}
-                            onFocus={(e) => e.currentTarget.select()}
-                            onBlur={commitScriptTargetCharsInput}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                commitScriptTargetCharsInput();
-                                setActivePanel(null);
-                              }
-                            }}
-                          />
-                        </label>
-                      </>
                     )}
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">

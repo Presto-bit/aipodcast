@@ -966,6 +966,34 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                       </>
                     )}
                   </span>
+                  <span data-tts-toolbar-chip className="relative inline-flex max-w-full align-top">
+                    <button
+                      type="button"
+                      className={chipClass(aiPolish || polishing)}
+                      aria-pressed={aiPolish}
+                      onClick={(e) => {
+                        if (e.shiftKey) {
+                          void runAiPolish();
+                          return;
+                        }
+                        setAiPolish((v) => !v);
+                      }}
+                      disabled={polishing}
+                      title="开启后会改动内容，让文字更口语化。开：合成前口语润色。Shift+点：仅润色正文"
+                    >
+                      {polishing ? "润色中…" : "口语润色"}
+                    </button>
+                  </span>
+                  <span data-tts-toolbar-chip className="relative inline-block align-top">
+                    <button
+                      type="button"
+                      className={chipClass(generateCover)}
+                      aria-pressed={generateCover}
+                      onClick={() => setGenerateCover((v) => !v)}
+                    >
+                      生成封面
+                    </button>
+                  </span>
                   <span data-tts-toolbar-chip data-tts-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
                         <button
                           type="button"
@@ -1087,34 +1115,6 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                         </div>
                       </>
                     )}
-                  </span>
-                  <span data-tts-toolbar-chip className="relative inline-flex max-w-full align-top">
-                    <button
-                      type="button"
-                      className={chipClass(aiPolish || polishing)}
-                      aria-pressed={aiPolish}
-                      onClick={(e) => {
-                        if (e.shiftKey) {
-                          void runAiPolish();
-                          return;
-                        }
-                        setAiPolish((v) => !v);
-                      }}
-                      disabled={polishing}
-                      title="开启后会改动内容，让文字更口语化。开：合成前口语润色。Shift+点：仅润色正文"
-                    >
-                      {polishing ? "润色中…" : "口语润色"}
-                    </button>
-                  </span>
-                  <span data-tts-toolbar-chip className="relative inline-block align-top">
-                    <button
-                      type="button"
-                      className={chipClass(generateCover)}
-                      aria-pressed={generateCover}
-                      onClick={() => setGenerateCover((v) => !v)}
-                    >
-                      生成封面
-                    </button>
                   </span>
                 </div>
               </div>
