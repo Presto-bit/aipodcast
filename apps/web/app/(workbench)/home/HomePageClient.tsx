@@ -113,8 +113,8 @@ export default function HomePageClient({
       },
       {
         href: "/create?mode=tts",
-        title: "文本转语音",
-        desc: "在创作页使用文本转语音合成",
+        title: "语音合成",
+        desc: "粘贴文字，快速合成自然语音",
         Icon: IconTts
       },
       {

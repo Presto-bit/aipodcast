@@ -2,6 +2,16 @@ import type { WorkItem } from "./worksTypes";
 import { isTextOnlyWorkType } from "./worksTypes";
 import { worksNavPrimaryKind } from "./worksNavMetaLine";
 
+const TTS_WORK_TYPES = new Set(["text_to_speech", "tts"]);
+
+export function isTtsWorkType(type: string | undefined): boolean {
+  return TTS_WORK_TYPES.has(String(type || "").trim());
+}
+
+export function filterTtsWorks(works: WorkItem[]): WorkItem[] {
+  return works.filter((w) => isTtsWorkType(String(w.type || "")));
+}
+
 /** 全站「音频」Tab：可播放类成片（含 TTS、短视频） */
 export function isAudioGalleryWorkType(type: string | undefined): boolean {
   const t = String(type || "").trim();
@@ -87,10 +97,17 @@ export function inferPreferredWorksGalleryTab(input: {
   return "audio";
 }
 
-export function buildWorksTabHref(tab: WorksGalleryTab, returnTo?: string): string {
+export type WorksAudioKindFilter = "tts";
+
+export function buildWorksTabHref(
+  tab: WorksGalleryTab,
+  returnTo?: string,
+  opts?: { kind?: WorksAudioKindFilter }
+): string {
   const q = new URLSearchParams({ tab });
   const rt = String(returnTo || "").trim();
   if (rt) q.set("returnTo", rt);
+  if (opts?.kind === "tts") q.set("kind", "tts");
   return `/works?${q.toString()}`;
 }
 

@@ -41,6 +41,8 @@ import { messageSuggestsBillingTopUpOrSubscription } from "../../../lib/billingS
 import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
 import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../../components/studio/CreateStudioIdleShell";
 import { marketingSiteUrl } from "../../../lib/marketingSiteUrl";
+import { consumeComposerHandoff, type ComposerHandoff } from "../../../lib/composerHandoff";
+import { buildWorksTabHref, filterTtsWorks } from "../../../lib/workGalleryDisplay";
 
 type HotTopicAssistantItem = { label: string; text: string };
 
@@ -50,11 +52,24 @@ type CreateMode = "podcast" | "tts";
 
 const HOME_WORKS_LIMIT = 80;
 
-const DRAFT_PLACEHOLDER = "输入主题或正文";
+function parseUrlMode(raw: string | null | undefined): CreateMode | null {
+  const m = String(raw || "").trim().toLowerCase();
+  if (m === "tts") return "tts";
+  if (m === "podcast") return "podcast";
+  return null;
+}
+
+function createReturnPath(mode: CreateMode | null): string {
+  if (mode === "tts") return "/create?mode=tts";
+  if (mode === "podcast") return "/create?mode=podcast";
+  return "/create";
+}
 
 export default function CreatePage() {
   const { t } = useI18n();
   const searchParams = useSearchParams();
+  const urlMode = parseUrlMode(searchParams?.get("mode"));
+  const isHandoffEntry = searchParams?.get("handoff") === "1";
   const { user, getAuthHeaders } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const pageAbortSignal = usePageAbortSignal();
@@ -64,13 +79,21 @@ export default function CreatePage() {
 
   const [draftText, setDraftText] = useState("");
   const [libraryPreview, setLibraryPreview] = useState("");
-  const [mode, setMode] = useState<CreateMode | null>("podcast");
+  const [mode, setMode] = useState<CreateMode | null>(urlMode);
+  const [handoffCtx, setHandoffCtx] = useState<ComposerHandoff | null>(null);
 
   useLayoutEffect(() => {
-    const m = (searchParams?.get("mode") || "").trim().toLowerCase();
-    if (m === "tts") setMode("tts");
-    else if (m === "podcast") setMode("podcast");
-  }, [searchParams]);
+    setMode(urlMode);
+  }, [urlMode]);
+
+  useEffect(() => {
+    if (!isHandoffEntry) return;
+    const pkg = consumeComposerHandoff();
+    if (!pkg) return;
+    setHandoffCtx(pkg);
+    const script = String(pkg.scriptText || "").trim();
+    if (script) setDraftText(script);
+  }, [isHandoffEntry]);
   /**
    * 访客首屏先渲染轻量工具条壳，再在浏览器空闲时挂载真实 Studio，兼顾「看得见工具条」与进页轻量。
    */
@@ -220,10 +243,11 @@ export default function CreatePage() {
     }
   }, [getAuthHeaders, pageAbortSignal, pageFetch]);
 
-  /** 全站播客模板列表公开可读；未登录也可拉取展示 */
+  /** 全站播客模板列表公开可读；TTS 页不需要模板 */
   useEffect(() => {
+    if (urlMode === "tts" || mode === "tts") return;
     void refreshPodcastTemplates();
-  }, [refreshPodcastTemplates]);
+  }, [refreshPodcastTemplates, urlMode, mode]);
 
   useEffect(() => {
     setCreateWorksTabOverride(null);
@@ -240,17 +264,56 @@ export default function CreatePage() {
   );
 
   const createPageEyebrow = t("create.pageEyebrow").trim();
-  const createPageSubtitle = t("create.pageSubtitle").trim();
+  const isTtsPage = urlMode === "tts" || mode === "tts";
+  const isPodcastPage = urlMode === "podcast" || mode === "podcast";
+  const pageTitle = isTtsPage
+    ? t("create.tts.pageTitle")
+    : isPodcastPage
+      ? t("create.podcast.pageTitle")
+      : t("create.pageTitle");
+  const pageSubtitle = isTtsPage
+    ? t("create.tts.pageSubtitle")
+    : isPodcastPage
+      ? t("create.podcast.pageSubtitle")
+      : t("create.pageSubtitle").trim();
+  const draftPlaceholder = isTtsPage
+    ? t("create.tts.placeholder")
+    : isPodcastPage
+      ? t("create.podcast.placeholder")
+      : t("create.podcast.placeholder");
+  const showModeChips = urlMode !== "tts";
+  const showHotTopicAssistant = !isTtsPage;
+  const showTemplatesTab = !isTtsPage;
+  const createReturnTo = createReturnPath(urlMode ?? mode);
+
+  useEffect(() => {
+    document.title = `${pageTitle} · Presto`;
+  }, [pageTitle]);
 
   const createWorksGalleryTab: CreateWorksTab =
-    createWorksTabOverride ??
-    (!isLoggedIn
-      ? "templates"
-      : worksLoading
-        ? "recent"
-        : homeWorks.length > 0
-          ? "recent"
-          : "templates");
+    !showTemplatesTab
+      ? "recent"
+      : createWorksTabOverride ??
+        (!isLoggedIn
+          ? "templates"
+          : worksLoading
+            ? "recent"
+            : homeWorks.length > 0
+              ? "recent"
+              : "templates");
+
+  const galleryRecentWorks = useMemo(
+    () => (isTtsPage ? filterTtsWorks(homeWorks) : homeWorks),
+    [homeWorks, isTtsPage]
+  );
+
+  const worksViewAllHref = useMemo(
+    () =>
+      isTtsPage
+        ? buildWorksTabHref("audio", createReturnTo, { kind: "tts" })
+        : buildWorksTabHref("audio", createReturnTo),
+    [createReturnTo, isTtsPage]
+  );
 
   const templateGalleryWorks = useMemo(() => [...serverPodcastTemplates], [serverPodcastTemplates]);
 
@@ -271,6 +334,14 @@ export default function CreatePage() {
         ].join(" ")}
       >
       <header className="mb-6 sm:mb-10">
+        {handoffCtx ? (
+          <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2 text-sm">
+            <span className="font-medium text-brand">{t("create.handoff.banner")}</span>
+            <Link href={handoffCtx.returnTo || "/home"} className="text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90">
+              {t("create.handoff.back")}
+            </Link>
+          </div>
+        ) : null}
         {createPageEyebrow ? (
           <p className="text-xs font-semibold uppercase tracking-wider text-muted">{createPageEyebrow}</p>
         ) : null}
@@ -281,10 +352,10 @@ export default function CreatePage() {
               : "text-2xl font-semibold tracking-tight text-ink sm:text-3xl"
           }
         >
-          {t("create.pageTitle")}
+          {pageTitle}
         </h1>
-        {createPageSubtitle ? (
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">{createPageSubtitle}</p>
+        {pageSubtitle ? (
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">{pageSubtitle}</p>
         ) : null}
       </header>
 
@@ -293,7 +364,7 @@ export default function CreatePage() {
             <section className="fym-surface-card overflow-visible">
         <div className="p-4 sm:p-5">
           <label className="sr-only" htmlFor="create-draft">
-            输入主题或正文
+            {draftPlaceholder}
           </label>
           <div className="overflow-hidden rounded-xl bg-fill ring-brand/20 focus-within:ring-2">
             <div className="relative">
@@ -303,7 +374,7 @@ export default function CreatePage() {
                   "min-h-[min(22vh,140px)] w-full resize-y border-0 bg-transparent p-4 text-sm leading-relaxed text-ink placeholder:text-muted focus:outline-none focus:ring-0 md:min-h-[160px]",
                   libraryPreview.trim() ? "pb-14 sm:pb-16" : "pb-4"
                 ].join(" ")}
-                placeholder={DRAFT_PLACEHOLDER}
+                placeholder={draftPlaceholder}
                 value={draftText}
                 onChange={(e) => setDraftText(e.target.value)}
               />
@@ -317,32 +388,64 @@ export default function CreatePage() {
                 </div>
               ) : null}
             </div>
+            {!isTtsPage ? (
             <div className="flex flex-wrap items-center gap-2 bg-surface/95 px-3 py-2.5 backdrop-blur-sm">
-              {(
-                [
-                  { id: "podcast" as const, title: t("create.card.podcast.title"), Icon: IconMic },
-                  { id: "tts" as const, title: t("create.card.tts.title"), Icon: IconTts }
-                ] as const
-              ).map((row) => {
-                const on = mode === row.id;
-                return (
-                  <button
-                    key={row.id}
-                    type="button"
-                    onClick={() => setMode((m) => (m === row.id ? null : row.id))}
-                    className={[
-                      "inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition sm:text-sm",
-                      on ? "border-brand/50 bg-brand/10 text-brand" : "border-line bg-surface text-ink hover:border-brand/30 hover:bg-fill"
-                    ].join(" ")}
-                  >
-                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                      <row.Icon width={16} height={16} />
-                    </span>
-                    {row.title}
-                  </button>
-                );
-              })}
-              {mode ? null : (
+              {showModeChips
+                ? (
+                    [
+                      { id: "podcast" as const, title: t("create.card.podcast.title"), Icon: IconMic },
+                      { id: "tts" as const, title: t("create.card.tts.title"), Icon: IconTts }
+                    ] as const
+                  ).map((row) => {
+                    const on = mode === row.id;
+                    const lockedPodcast = urlMode === "podcast";
+                    if (lockedPodcast && row.id === "tts") {
+                      return (
+                        <Link
+                          key={row.id}
+                          href="/create?mode=tts"
+                          className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
+                        >
+                          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                            <row.Icon width={16} height={16} />
+                          </span>
+                          {row.title}
+                        </Link>
+                      );
+                    }
+                    if (lockedPodcast && row.id === "podcast") {
+                      return (
+                        <span
+                          key={row.id}
+                          className="inline-flex items-center gap-2 rounded-lg border border-brand/50 bg-brand/10 px-2.5 py-1.5 text-xs font-medium text-brand sm:text-sm"
+                          aria-current="true"
+                        >
+                          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                            <row.Icon width={16} height={16} />
+                          </span>
+                          {row.title}
+                        </span>
+                      );
+                    }
+                    return (
+                      <button
+                        key={row.id}
+                        type="button"
+                        onClick={() => setMode((m) => (m === row.id ? null : row.id))}
+                        className={[
+                          "inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition sm:text-sm",
+                          on ? "border-brand/50 bg-brand/10 text-brand" : "border-line bg-surface text-ink hover:border-brand/30 hover:bg-fill"
+                        ].join(" ")}
+                      >
+                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                          <row.Icon width={16} height={16} />
+                        </span>
+                        {row.title}
+                      </button>
+                    );
+                  })
+                : null}
+              {showModeChips && mode ? null : showModeChips && !mode ? (
                 <>
                   <Link href="/clip" className={createQuickLinkClass}>
                     <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
@@ -357,8 +460,9 @@ export default function CreatePage() {
                     {t("create.quickLink.shownotes")}
                   </a>
                 </>
-              )}
+              ) : null}
             </div>
+            ) : null}
           </div>
 
           {!mode ? null : (
@@ -426,6 +530,7 @@ export default function CreatePage() {
         ) : null}
       </section>
 
+      {showHotTopicAssistant ? (
       <section className="mt-6 overflow-hidden rounded-xl border border-line bg-fill/25">
         <button
           type="button"
@@ -509,6 +614,7 @@ export default function CreatePage() {
           </div>
         </div>
       </section>
+      ) : null}
 
         </div>
       </div>
@@ -517,7 +623,8 @@ export default function CreatePage() {
       <section className="mt-8">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
           <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <h2 className="text-lg font-semibold text-ink">最近成品</h2>
+            <h2 className="text-lg font-semibold text-ink">{isTtsPage ? t("create.tts.recentTitle") : "最近成品"}</h2>
+            {showTemplatesTab ? (
             <div
               role="tablist"
               aria-label="成品来源"
@@ -552,9 +659,10 @@ export default function CreatePage() {
                 模板
               </button>
             </div>
+            ) : null}
           </div>
           <Link
-            href="/works?tab=audio&returnTo=/create"
+            href={worksViewAllHref}
             className="text-xs font-medium text-brand hover:underline sm:shrink-0"
           >
             查看全部
@@ -571,16 +679,29 @@ export default function CreatePage() {
           </p>
         ) : null}
         {createWorksGalleryTab === "recent" ? (
+          isTtsPage ? (
+            <PodcastWorksGallery
+              variant="tts"
+              works={galleryRecentWorks}
+              loading={worksLoading}
+              fetchError={worksErr}
+              onDismissError={() => setWorksErr("")}
+              onWorkDeleted={() => void refreshWorks()}
+              workDetailReturnTo={createReturnTo}
+              sidebarMaxItems={4}
+            />
+          ) : (
           <WorksGroupedGalleryPanel
-            works={homeWorks}
+            works={galleryRecentWorks}
             loading={worksLoading}
             fetchError={worksErr}
             onDismissError={() => setWorksErr("")}
             onWorkDeleted={() => void refreshWorks()}
-            returnTo="/create"
+            returnTo={createReturnTo}
             maxPerGroup={4}
             emptyHint="暂无成片；完成播客或语音合成后将显示在这里（不含知识库笔记本内产出）。"
           />
+          )
         ) : (
           <PodcastWorksGallery
             key="templates"
@@ -590,12 +711,12 @@ export default function CreatePage() {
             fetchError={templatesErr}
             onDismissError={() => setTemplatesErr("")}
             onWorkDeleted={() => void refreshWorks()}
-            workDetailReturnTo="/create"
+            workDetailReturnTo={createReturnTo}
             emptyStateFooter={
               <div className="flex flex-wrap justify-center gap-x-4 gap-y-2">
                 {!isLoggedIn ? (
                   <Link
-                    href={`/login?returnTo=${encodeURIComponent("/create")}`}
+                    href={`/login?returnTo=${encodeURIComponent(createReturnTo)}`}
                     className="font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90"
                   >
                     登录后保存与查看成片

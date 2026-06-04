@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 
 export const metadata = {
-  title: "生成播客 · Presto",
-  description: "输入主题或正文，生成播客或文本转语音"
+  title: "创作 · Presto",
+  description: "播客工作室与语音合成：输入主题或正文，生成播客或文本转语音"
 };
 
 export default function CreateLayout({ children }: { children: React.ReactNode }) {

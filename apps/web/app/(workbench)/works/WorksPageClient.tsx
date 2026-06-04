@@ -29,7 +29,7 @@ import { chipClass } from "../../../components/studio/chipStyles";
 import EmptyState from "../../../components/ui/EmptyState";
 import UserErrorBanner from "../../../components/ui/UserErrorBanner";
 import { isTextOnlyWorkType, type WorkItem } from "../../../lib/worksTypes";
-import { isAudioGalleryWorkType } from "../../../lib/workGalleryDisplay";
+import { isAudioGalleryWorkType, isTtsWorkType } from "../../../lib/workGalleryDisplay";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { useI18n } from "../../../lib/I18nContext";
 import { WORKS_TRASH_PATH } from "../../../lib/navPaths";
@@ -85,6 +85,11 @@ export default function WorksPageClient({ initialWorks = null }: { initialWorks?
   const [recentOnly, setRecentOnly] = useState(false);
   /** 文稿 Tab：体裁筛选 */
   const [scriptKindFilter, setScriptKindFilter] = useState<"all" | "article" | "social">("all");
+
+  const audioKindFilter = useMemo(() => {
+    const k = String(searchParams?.get("kind") || "").trim().toLowerCase();
+    return k === "tts" ? ("tts" as const) : null;
+  }, [searchParams]);
 
   useEffect(() => {
     if (!worksQuery.data) return;
@@ -217,10 +222,13 @@ export default function WorksPageClient({ initialWorks = null }: { initialWorks?
     [keyword, recentOnly, recentThresholdMs]
   );
 
-  const filteredAudioWorks = useMemo(
-    () => audioFinishedWorks.filter(matchesFilter),
-    [audioFinishedWorks, matchesFilter]
-  );
+  const filteredAudioWorks = useMemo(() => {
+    let list = audioFinishedWorks.filter(matchesFilter);
+    if (audioKindFilter === "tts") {
+      list = list.filter((w) => isTtsWorkType(String(w.type || "")));
+    }
+    return list;
+  }, [audioFinishedWorks, matchesFilter, audioKindFilter]);
   const filteredScriptWorks = useMemo(() => {
     let list = scriptFinishedWorks.filter(matchesFilter);
     if (scriptKindFilter === "article") {
