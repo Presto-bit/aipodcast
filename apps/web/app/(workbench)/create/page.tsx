@@ -439,7 +439,7 @@ export default function CreatePage() {
           </div>
 
           {!studioMode ? null : (
-            <div className="mt-4">
+            <div className="mt-4" key={studioMode}>
               {studioMode === "podcast" ? (
                 loadHeavyStudio ? (
                   <PodcastStudio

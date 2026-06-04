@@ -94,8 +94,7 @@ function SidebarNavLinkInner({
     }
     if (target === current) {
       e.preventDefault();
-      router.replace(hrefStr, { scroll: false });
-      router.refresh();
+      router.push(hrefStr, { scroll: false });
       return;
     }
     workbenchNav?.beginWorkbenchNav(hrefStr);

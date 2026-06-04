@@ -5,6 +5,10 @@
 /** 工作台对话页（原 `/home`，旧路径 301 式重定向至此） */
 export const WORKBENCH_HOME_PATH = "/chat";
 
+/** 播客 / 语音合成工作室侧栏入口（独立 pathname，避免 /create 仅改 query 时软路由不刷新） */
+export const WORKBENCH_PODCAST_STUDIO_PATH = "/podcast";
+export const WORKBENCH_TTS_STUDIO_PATH = "/tts";
+
 /** 工作台侧栏 Link prefetch：改为 hover 预取，见 WorkbenchLink / navPrefetch.ts */
 export const WORKBENCH_NAV_PREFETCH = false;
 

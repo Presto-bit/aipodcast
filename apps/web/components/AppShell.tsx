@@ -71,7 +71,9 @@ import {
   normalizePathname,
   pathMatchesRoot,
   pathNeedsWorkAudio,
-  WORKBENCH_HOME_PATH
+  WORKBENCH_HOME_PATH,
+  WORKBENCH_PODCAST_STUDIO_PATH,
+  WORKBENCH_TTS_STUDIO_PATH
 } from "../lib/navPaths";
 import { reportFrontendGlobalError } from "../lib/frontendGlobalErrorClient";
 
@@ -178,7 +180,7 @@ function StudioToolsNavExpanded({
 
   const subs: { href: string; label: string; active: boolean }[] = [
     {
-      href: "/create?mode=tts",
+      href: WORKBENCH_TTS_STUDIO_PATH,
       label: t("nav.toolTts"),
       active: ttsStudioActive || pathMatchesRoot(path, "/tts")
     },
@@ -190,7 +192,7 @@ function StudioToolsNavExpanded({
   if (collapsed) {
     return (
       <SidebarNavLink
-        href="/create?mode=podcast"
+        href={WORKBENCH_PODCAST_STUDIO_PATH}
         className={parentClass}
         title={parentTip}
         aria-current={podcastStudioActive ? "page" : undefined}
@@ -205,7 +207,7 @@ function StudioToolsNavExpanded({
   return (
     <div className="flex w-full flex-col gap-0.5">
       <SidebarNavLink
-        href="/create?mode=podcast"
+        href={WORKBENCH_PODCAST_STUDIO_PATH}
         className={parentClass}
         title={parentTip}
         aria-current={podcastStudioActive ? "page" : undefined}
