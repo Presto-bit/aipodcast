@@ -81,9 +81,7 @@ export default function StudioAgentOutputCards({
     );
   }
 
-  const showPlanArtifact =
-    work.status === "planned" && Boolean(plan) && work.versions.length === 0;
-  if (showPlanArtifact) {
+  if (work.status === "planned" && plan && work.versions.length === 0) {
     body.push(
       <div key="plan" className="space-y-2 text-[13px]">
         <p className="font-medium text-ink">{plan.goal}</p>
