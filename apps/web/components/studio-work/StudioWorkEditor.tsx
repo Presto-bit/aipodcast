@@ -11,20 +11,16 @@ import { buildPlanForWork } from "../../lib/studioWorkPlan";
 import { getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
 import type { StudioWork } from "../../lib/studioWorkTypes";
 import StudioAgentDock from "./StudioAgentDock";
-import StudioArtifactPanel from "./StudioArtifactPanel";
 import StudioSessionRail from "./StudioSessionRail";
 
 export default function StudioWorkEditor({ workId }: { workId: string }) {
   const { ready, user, getAuthHeaders } = useAuth();
   const isLoggedIn = isLoggedInAccountUser(user);
   const [work, setWork] = useState<StudioWork | null>(null);
-  const [tab, setTab] = useState<"manuscript" | "ship">("manuscript");
   const [reviseText, setReviseText] = useState("");
   const [selectedPatchKeys, setSelectedPatchKeys] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
-  const [mobilePanel, setMobilePanel] = useState<"chat" | "artifact">("chat");
 
   const load = useCallback(() => {
     const w = getStudioWork(workId);
@@ -125,7 +121,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         runPhase: undefined,
         error: undefined
       });
-      setRightCollapsed(false);
     } catch (err) {
       const cur = getStudioWork(workId);
       if (cur) persist({ ...cur, status: "planned", error: String(err instanceof Error ? err.message : err) });
@@ -171,7 +166,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         error: undefined
       });
       setReviseText("");
-      setRightCollapsed(false);
     } finally {
       setBusy(false);
     }
@@ -209,9 +203,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     );
   }
 
-  const hasArtifact =
-    work.versions.length > 0 || work.status === "generating" || Boolean(work.pendingPatch);
-  const readOnly = work.status === "generating";
   return (
     <main className="flex h-[calc(100svh-3.5rem)] min-h-0 overflow-hidden">
       <div className="hidden lg:contents">
@@ -223,111 +214,34 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex shrink-0 gap-1 border-b border-line px-2 py-1 lg:hidden">
-          <button
-            type="button"
-            className={mobilePanel === "chat" ? "text-xs font-medium text-brand" : "text-xs text-muted"}
-            onClick={() => setMobilePanel("chat")}
-          >
-            对话
-          </button>
-          {hasArtifact ? (
-            <button
-              type="button"
-              className={
-                mobilePanel === "artifact" ? "text-xs font-medium text-brand" : "text-xs text-muted"
-              }
-              onClick={() => setMobilePanel("artifact")}
-            >
-              稿件
-            </button>
-          ) : null}
-        </div>
-
-        <div
-          className={[
-            "flex min-h-0 flex-1 flex-col",
-            mobilePanel === "chat" ? "flex" : "hidden lg:flex"
-          ].join(" ")}
-        >
-          <StudioAgentDock
-            work={work}
-            isLoggedIn={isLoggedIn}
-            ready={ready}
-            parentBusy={busy}
-            getAuthHeaders={getAuthHeaders}
-            onPersist={persist}
-            onGeneratePlan={() => onGeneratePlan()}
-            onConfirmGenerate={() => void onConfirmGenerate()}
-            reviseText={reviseText}
-            onReviseTextChange={setReviseText}
-            onRevise={() => void onRevise()}
-            onApplyPatch={onApplyPatch}
-            onDiscardPatch={() => persist({ ...work, pendingPatch: undefined })}
-            selectedPatchCount={selectedPatchKeys.size}
-            onMarkShipped={() => persist({ ...work, status: "shipped" })}
-          />
-        </div>
-
-        {hasArtifact ? (
-          <div
-            className={[
-              "min-h-0 flex-1 lg:hidden",
-              mobilePanel === "artifact" ? "flex flex-col" : "hidden"
-            ].join(" ")}
-          >
-            <StudioArtifactPanel
-              work={work}
-              tab={tab}
-              onTabChange={setTab}
-              version={activeVersion ?? null}
-              compareBlocks={work.pendingPatch?.proposedBlocks}
-              compareMode={Boolean(work.pendingPatch)}
-              selectedKeys={selectedPatchKeys}
-              changedKeys={changedKeys}
-              onToggleKey={(key) => {
-                setSelectedPatchKeys((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(key)) next.delete(key);
-                  else next.add(key);
-                  return next;
-                });
-              }}
-              onShipCheck={(id, v) => persist({ ...work, shipChecks: { ...work.shipChecks, [id]: v } })}
-              readOnly={readOnly}
-              collapsed={false}
-              onToggleCollapse={() => undefined}
-            />
-          </div>
-        ) : null}
+        <StudioAgentDock
+          work={work}
+          isLoggedIn={isLoggedIn}
+          ready={ready}
+          parentBusy={busy}
+          getAuthHeaders={getAuthHeaders}
+          onPersist={persist}
+          onGeneratePlan={() => onGeneratePlan()}
+          onConfirmGenerate={() => void onConfirmGenerate()}
+          activeVersion={activeVersion ?? null}
+          reviseText={reviseText}
+          onReviseTextChange={setReviseText}
+          onRevise={() => void onRevise()}
+          onApplyPatch={onApplyPatch}
+          onDiscardPatch={() => persist({ ...work, pendingPatch: undefined })}
+          selectedPatchKeys={selectedPatchKeys}
+          changedKeys={changedKeys}
+          onTogglePatchKey={(key) => {
+            setSelectedPatchKeys((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            });
+          }}
+          onMarkShipped={() => persist({ ...work, status: "shipped" })}
+        />
       </div>
-
-      {hasArtifact ? (
-        <div className="hidden lg:flex">
-          <StudioArtifactPanel
-            work={work}
-            tab={tab}
-            onTabChange={setTab}
-            version={activeVersion ?? null}
-            compareBlocks={work.pendingPatch?.proposedBlocks}
-            compareMode={Boolean(work.pendingPatch)}
-            selectedKeys={selectedPatchKeys}
-            changedKeys={changedKeys}
-            onToggleKey={(key) => {
-              setSelectedPatchKeys((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              });
-            }}
-            onShipCheck={(id, v) => persist({ ...work, shipChecks: { ...work.shipChecks, [id]: v } })}
-            readOnly={readOnly}
-            collapsed={rightCollapsed}
-            onToggleCollapse={() => setRightCollapsed((c) => !c)}
-          />
-        </div>
-      ) : null}
     </main>
   );
 }

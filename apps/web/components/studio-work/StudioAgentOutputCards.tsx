@@ -1,36 +1,51 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { StudioWork } from "../../lib/studioWorkTypes";
+import type { ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
+import StudioOutputManuscript from "./StudioOutputManuscript";
 
-/** 输出区：仅在计划就绪后展示任务确认与执行；对话阶段不展示 Brief */
+/** 输出区：任务确认、生成进度、稿件与改版等统一展示 */
 export default function StudioAgentOutputCards({
   work,
   busy,
   isLoggedIn,
+  activeVersion,
   reviseText,
   onReviseTextChange,
   onConfirmGenerate,
   onRevise,
   onApplyPatch,
   onDiscardPatch,
-  selectedPatchCount,
+  selectedPatchKeys,
+  changedKeys,
+  onTogglePatchKey,
   onMarkShipped
 }: {
   work: StudioWork;
   busy: boolean;
   isLoggedIn: boolean;
+  activeVersion: ManuscriptVersion | null;
   reviseText: string;
   onReviseTextChange: (v: string) => void;
   onConfirmGenerate?: () => void;
   onRevise?: () => void;
   onApplyPatch?: (partial: boolean) => void;
   onDiscardPatch?: () => void;
-  selectedPatchCount?: number;
+  selectedPatchKeys: Set<string>;
+  changedKeys: Set<string>;
+  onTogglePatchKey: (key: string) => void;
   onMarkShipped?: () => void;
 }) {
   const plan = work.plan;
   const cards: ReactNode[] = [];
+  const compareMode = Boolean(work.pendingPatch);
+  const manuscriptBlocks =
+    compareMode && work.pendingPatch
+      ? work.pendingPatch.proposedBlocks
+      : activeVersion?.blocks ?? [];
+  const showManuscript =
+    manuscriptBlocks.length > 0 &&
+    (work.status === "ready" || work.status === "shipped" || compareMode);
 
   if (work.status === "planned" && plan && onConfirmGenerate) {
     cards.push(
@@ -72,14 +87,38 @@ export default function StudioAgentOutputCards({
     );
   }
 
+  if (showManuscript) {
+    cards.push(
+      <OutputCard
+        key="manuscript"
+        title={
+          compareMode
+            ? "改版预览"
+            : activeVersion
+              ? `稿件 · ${activeVersion.label}`
+              : "稿件"
+        }
+      >
+        <StudioOutputManuscript
+          version={compareMode ? null : activeVersion}
+          compareBlocks={compareMode ? work.pendingPatch?.proposedBlocks : undefined}
+          compareMode={compareMode}
+          selectedKeys={selectedPatchKeys}
+          changedKeys={changedKeys}
+          onToggleKey={onTogglePatchKey}
+        />
+      </OutputCard>
+    );
+  }
+
   if (work.pendingPatch && onApplyPatch && onDiscardPatch) {
     cards.push(
       <OutputCard key="patch" title="改版提议">
         <p className="text-ink">{work.pendingPatch.summary}</p>
-        <p className="mt-1 text-muted">在右侧稿件区勾选块后，在此确认采纳。</p>
+        <p className="mt-1 text-muted">在上方勾选要采纳的块后确认。</p>
         <ActionRow>
           <PrimaryButton disabled={busy} onClick={() => onApplyPatch(true)}>
-            采纳所选 ({selectedPatchCount ?? 0})
+            采纳所选 ({selectedPatchKeys.size})
           </PrimaryButton>
           <GhostButton disabled={busy} onClick={() => onApplyPatch(false)}>
             全部采纳
@@ -113,7 +152,7 @@ export default function StudioAgentOutputCards({
 
   if (work.status === "ready" && onMarkShipped) {
     cards.push(
-      <OutputCard key="ship" title="发布">
+      <OutputCard key="ship" title="完成">
         <ActionRow>
           <GhostButton onClick={onMarkShipped}>标记已发布</GhostButton>
         </ActionRow>

@@ -12,7 +12,7 @@ import {
 import { featureCoreToPrompt } from "../../lib/homeComposerFeatureCore";
 import { mergeVoiceIntoWork } from "../../lib/studioVoiceFromChat";
 import { streamHomeComposerAsk } from "../../lib/homeComposerAskStream";
-import type { StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
+import type { ManuscriptVersion, StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
 import StudioAgentMessage from "./StudioAgentMessage";
 import StudioAgentOutputCards from "./StudioAgentOutputCards";
@@ -43,12 +43,15 @@ export default function StudioAgentDock({
   onPersist,
   onGeneratePlan,
   onConfirmGenerate,
+  activeVersion,
   reviseText,
   onReviseTextChange,
   onRevise,
   onApplyPatch,
   onDiscardPatch,
-  selectedPatchCount,
+  selectedPatchKeys,
+  changedKeys,
+  onTogglePatchKey,
   onMarkShipped
 }: {
   work: StudioWork;
@@ -59,12 +62,15 @@ export default function StudioAgentDock({
   onPersist: (next: StudioWork) => void;
   onGeneratePlan?: () => void | Promise<void>;
   onConfirmGenerate?: () => void | Promise<void>;
+  activeVersion: ManuscriptVersion | null;
   reviseText: string;
   onReviseTextChange: (v: string) => void;
   onRevise?: () => void;
   onApplyPatch?: (partial: boolean) => void;
   onDiscardPatch?: () => void;
-  selectedPatchCount?: number;
+  selectedPatchKeys: Set<string>;
+  changedKeys: Set<string>;
+  onTogglePatchKey: (key: string) => void;
   onMarkShipped?: () => void;
 }) {
   const [input, setInput] = useState("");
@@ -81,7 +87,17 @@ export default function StudioAgentDock({
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [turns.length, turns[turns.length - 1]?.content, work.brief, work.plan, work.status, work.runPhase]);
+  }, [
+    turns.length,
+    turns[turns.length - 1]?.content,
+    work.brief,
+    work.plan,
+    work.status,
+    work.runPhase,
+    work.pendingPatch,
+    activeVersion?.id,
+    activeVersion?.blocks.length
+  ]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -228,13 +244,16 @@ export default function StudioAgentDock({
           work={work}
           busy={agentBusy || parentBusy}
           isLoggedIn={isLoggedIn}
+          activeVersion={activeVersion}
           reviseText={reviseText}
           onReviseTextChange={onReviseTextChange}
           onConfirmGenerate={onConfirmGenerate}
           onRevise={onRevise}
           onApplyPatch={onApplyPatch}
           onDiscardPatch={onDiscardPatch}
-          selectedPatchCount={selectedPatchCount}
+          selectedPatchKeys={selectedPatchKeys}
+          changedKeys={changedKeys}
+          onTogglePatchKey={onTogglePatchKey}
           onMarkShipped={onMarkShipped}
         />
       </div>

@@ -2,9 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
-import { createStudioWork, listStudioWorks } from "../../lib/studioWorkStorage";
+import {
+  createStudioWork,
+  deleteStudioWork,
+  listStudioWorks
+} from "../../lib/studioWorkStorage";
 import type { StudioWork } from "../../lib/studioWorkTypes";
 import { workStatusLabel } from "../../lib/studioWorkTypes";
 
@@ -29,6 +33,22 @@ export default function StudioSessionRail({
   function onNewAgent() {
     const w = createStudioWork();
     router.push(`${WORKBENCH_STUDIO_PATH}/${w.id}`);
+  }
+
+  function onDeleteWork(e: MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.confirm("删除此任务？删除后无法恢复。")) return;
+    deleteStudioWork(id);
+    const remaining = listStudioWorks();
+    setWorks(remaining);
+    if (id !== activeWorkId) return;
+    if (remaining[0]) {
+      router.replace(`${WORKBENCH_STUDIO_PATH}/${remaining[0].id}`);
+      return;
+    }
+    const w = createStudioWork();
+    router.replace(`${WORKBENCH_STUDIO_PATH}/${w.id}`);
   }
 
   if (collapsed) {
@@ -77,20 +97,36 @@ export default function StudioSessionRail({
         {works.map((w) => {
           const active = w.id === activeWorkId;
           return (
-            <Link
+            <div
               key={w.id}
-              href={`${WORKBENCH_STUDIO_PATH}/${w.id}`}
               className={[
-                "mb-1 block rounded-lg px-2 py-1.5 text-xs transition",
-                active ? "bg-brand/10 text-brand" : "text-ink hover:bg-fill/60"
+                "group relative mb-1 rounded-lg transition",
+                active ? "bg-brand/10" : "hover:bg-fill/60"
               ].join(" ")}
             >
-              <p className="truncate font-medium">{w.title || "新任务"}</p>
-              <p className="mt-0.5 truncate text-[10px] text-muted">
-                {workStatusLabel(w.status)}
-                {w.binding.noteIds.length ? ` · ${w.binding.noteIds.length}篇` : ""}
-              </p>
-            </Link>
+              <Link
+                href={`${WORKBENCH_STUDIO_PATH}/${w.id}`}
+                className={[
+                  "block rounded-lg px-2 py-1.5 pr-7 text-xs",
+                  active ? "text-brand" : "text-ink"
+                ].join(" ")}
+              >
+                <p className="truncate font-medium">{w.title || "新任务"}</p>
+                <p className="mt-0.5 truncate text-[10px] text-muted">
+                  {workStatusLabel(w.status)}
+                  {w.binding.noteIds.length ? ` · ${w.binding.noteIds.length}篇` : ""}
+                </p>
+              </Link>
+              <button
+                type="button"
+                title="删除任务"
+                aria-label="删除任务"
+                className="absolute right-1 top-1.5 rounded p-0.5 text-[10px] text-muted opacity-0 transition hover:bg-fill hover:text-danger-ink group-hover:opacity-100"
+                onClick={(e) => onDeleteWork(e, w.id)}
+              >
+                ✕
+              </button>
+            </div>
           );
         })}
         {works.length === 0 ? (
