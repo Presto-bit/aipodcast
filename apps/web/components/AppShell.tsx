@@ -740,19 +740,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           if (el.closest("a, [href]")) closeMobileNav("blur");
         }}
       >
-        {navCore.map((item) =>
-          item.href === "/notes" ? (
-            <NotesNavExpanded
-              key={item.href}
-              item={item}
-              path={path}
-              collapsed={sidebarCollapsed}
-              NavIconBox={NavIconBox}
-            />
-          ) : (
-            renderSidebarNavItem(item)
-          )
-        )}
+        {navCore
+          .filter((item) => item.href !== "/works")
+          .map((item) =>
+            item.href === "/notes" ? (
+              <NotesNavExpanded
+                key={item.href}
+                item={item}
+                path={path}
+                collapsed={sidebarCollapsed}
+                NavIconBox={NavIconBox}
+              />
+            ) : (
+              renderSidebarNavItem(item)
+            )
+          )}
         <Suspense
           fallback={
             <StudioToolsNavExpanded
@@ -771,6 +773,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             setToolsSubNavExpanded={setToolsSubNavExpanded}
           />
         </Suspense>
+        {navCore
+          .filter((item) => item.href === "/works")
+          .map((item) => renderSidebarNavItem(item))}
       </nav>
 
       <div
