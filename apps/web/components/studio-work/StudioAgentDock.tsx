@@ -10,6 +10,7 @@ import {
 import {
   buildPostDoneFollowUpRoute,
   STUDIO_POST_DONE_AUTHOR_EXTRA,
+  STUDIO_POST_DONE_COACH_ENABLED,
   STUDIO_POST_DONE_INTERNAL_QUESTION
 } from "../../lib/studioPostDoneFollowUp";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
@@ -99,11 +100,17 @@ export default function StudioAgentDock({
   const router = useRouter();
   const [input, setInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
+  const agentBusyRef = useRef(false);
   const [phase, setPhase] = useState("");
   const [corpusMenuOpen, setCorpusMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const postDoneStartedRef = useRef(false);
+
+  function setAgentBusyState(next: boolean) {
+    agentBusyRef.current = next;
+    setAgentBusy(next);
+  }
 
   const turns = work.agentTurns ?? [];
   const readOnly = work.status === "generating" || parentBusy;
@@ -146,8 +153,9 @@ export default function StudioAgentDock({
   }, [corpusMenuOpen]);
 
   useEffect(() => {
+    if (!STUDIO_POST_DONE_COACH_ENABLED) return;
     if (!work.postDoneFollowUpPending || work.postDoneFollowUpDone) return;
-    if (!canChat || agentBusy || parentBusy) return;
+    if (!canChat || parentBusy) return;
     if (postDoneStartedRef.current) return;
     postDoneStartedRef.current = true;
     onPersist({
@@ -159,7 +167,7 @@ export default function StudioAgentDock({
       lastOrchestratorNote: undefined
     });
     void runPostDoneCoach(work);
-  }, [work.id, work.postDoneFollowUpPending, work.postDoneFollowUpDone, canChat, agentBusy, parentBusy]);
+  }, [work.id, work.postDoneFollowUpPending, work.postDoneFollowUpDone, canChat, parentBusy]);
 
   function applyDialogExtract(
     nextTurns: StudioAgentTurn[],
@@ -187,7 +195,7 @@ export default function StudioAgentDock({
     options?: { authorIpExtra?: string }
   ) {
     const q = userText.trim();
-    if (!q || agentBusy) return;
+    if (!q || agentBusyRef.current) return;
     if (!options?.authorIpExtra && !canChat) return;
 
     const intent = route.intent;
@@ -203,7 +211,7 @@ export default function StudioAgentDock({
     };
     const baseTurns = [...prefixTurns, streamingTurn];
     applyDialogExtract(baseTurns, workBase.agentSessionState ?? null, workBase);
-    setAgentBusy(true);
+    setAgentBusyState(true);
     setPhase("");
 
     abortRef.current?.abort();
@@ -287,7 +295,7 @@ export default function StudioAgentDock({
         error: friendly
       });
     } finally {
-      setAgentBusy(false);
+      setAgentBusyState(false);
       setPhase("");
       abortRef.current = null;
     }
@@ -296,7 +304,6 @@ export default function StudioAgentDock({
   async function runPostDoneCoach(workBase: StudioWork) {
     const route = buildPostDoneFollowUpRoute();
     const q = STUDIO_POST_DONE_INTERNAL_QUESTION;
-    setAgentBusy(true);
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -372,15 +379,14 @@ export default function StudioAgentDock({
         postDoneCoachStreaming: false
       });
     } finally {
-      setAgentBusy(false);
       abortRef.current = null;
     }
   }
 
-  function interruptAgentStreams() {
+  function abortBackgroundStreams() {
     abortRef.current?.abort();
     abortRef.current = null;
-    setAgentBusy(false);
+    setAgentBusyState(false);
     setPhase("");
     if (work.postDoneCoachStreaming) {
       onPersist({ ...work, postDoneCoachStreaming: false });
@@ -390,7 +396,7 @@ export default function StudioAgentDock({
   async function handleSend(overrideText?: string) {
     const q = (overrideText ?? input).trim();
     if (!q || !canChat) return;
-    if (agentBusy) interruptAgentStreams();
+    abortBackgroundStreams();
     setInput("");
 
     const route = routeStudioAction(work, q, turns);
@@ -432,7 +438,7 @@ export default function StudioAgentDock({
   }
 
   function handleEditUserTurn(turnId: string, newText: string) {
-    abortRef.current?.abort();
+    abortBackgroundStreams();
     const idx = turns.findIndex((t) => t.id === turnId);
     if (idx < 0 || turns[idx]?.role !== "user") return;
     const prefix = turns.slice(0, idx);
@@ -467,7 +473,7 @@ export default function StudioAgentDock({
   }
 
   function handleRollbackFromTurn(turnId: string) {
-    abortRef.current?.abort();
+    abortBackgroundStreams();
     const idx = turns.findIndex((t) => t.id === turnId);
     if (idx < 0) return;
     const prefix = turns.slice(0, idx);

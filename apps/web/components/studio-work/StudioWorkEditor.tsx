@@ -141,7 +141,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             pendingPatch: undefined,
             runPhase: undefined,
             error: undefined,
-            postDoneFollowUpPending: !cur.postDoneFollowUpDone,
+            postDoneFollowUpPending: false,
             lastOrchestratorNote: undefined
           },
           runId,

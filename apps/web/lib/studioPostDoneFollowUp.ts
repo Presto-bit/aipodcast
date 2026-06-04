@@ -1,5 +1,8 @@
 import type { StudioRouteDecision } from "./studioOrchestrator";
 
+/** 成稿后自动附言（稿件下流式点评）— 已关闭：易呈现「刚看完你这篇」等第三方口吻 */
+export const STUDIO_POST_DONE_COACH_ENABLED = false;
+
 /** 成稿后温和附言（仅 API，不在对话区展示用户句） */
 export const STUDIO_POST_DONE_INTERNAL_QUESTION =
   "稿件刚写好。请像同事一样用简短、温和口语和用户聊几句：顺带说说这篇最好的一点，再提一个她可以自己做的小调整。不要列小标题，不要写「亮点解读」「可选下一步」等字样，不要重复粘贴全文。";

@@ -121,6 +121,7 @@ def _compose_expert_writer_instructions(*, task_sentence: str, intake: dict[str,
         "必须写出具体产品卖点、目标用户痛点、使用场景与行动引导，禁止空泛占位。",
         "禁止把任务描述或本说明文字照抄进正文；禁止输出「请先结论/展开」类模板结构。",
         "正文须分段：每段不超过 80 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
+        "标题中的数量承诺（如「3个坑」「三大误区」）须与正文分点条数完全一致，禁止标题写 3 条正文列 4 条。",
         "优先用 sections 数组（小标题+短段），或 body 内用 \\n\\n 分段。",
         f"任务核心：{task_sentence.strip()[:300]}",
     ]
@@ -171,6 +172,69 @@ def _looks_like_xhs_template_body(content: dict[str, Any], task_sentence: str) -
 
 def _looks_like_material_fallback(content: dict[str, Any], task_sentence: str) -> bool:
     return _looks_like_xhs_template_body(content, task_sentence)
+
+
+_CN_COUNT_CHAR = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+_LIST_ITEM_LINE_RE = re.compile(
+    r"^(?:[①②③④⑤⑥⑦⑧⑨⑩]|"
+    r"[1-9]\d{0,1}[\.、)\]]\s*|"
+    r"[·•\-]\s+)"
+)
+
+
+def _promised_list_count_from_title(title: str) -> int | None:
+    t = title.strip()
+    patterns = (
+        r"(\d+)\s*个",
+        r"(\d+)\s*条",
+        r"(\d+)\s*点",
+        r"(\d+)\s*招",
+        r"([一二两三四五六七八九十])\s*个",
+        r"([一二两三四五六七八九十])\s*条",
+        r"([一二两三四五六七八九十])\s*点",
+    )
+    for pat in patterns:
+        m = re.search(pat, t)
+        if not m:
+            continue
+        raw = m.group(1)
+        if raw.isdigit():
+            n = int(raw)
+        else:
+            n = _CN_COUNT_CHAR.get(raw)
+        if n is not None and 2 <= n <= 12:
+            return n
+    return None
+
+
+def _count_body_list_items(body: str) -> int:
+    lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+    marked = sum(1 for ln in lines if _LIST_ITEM_LINE_RE.match(ln))
+    if marked >= 2:
+        return marked
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", body) if b.strip()]
+    if 2 <= len(blocks) <= 12:
+        return len(blocks)
+    return marked
+
+
+def _xhs_title_body_count_errors(content: dict[str, Any]) -> list[str]:
+    """标题数量承诺与正文分点不一致时触发重试。"""
+    titles = content.get("titles")
+    if not isinstance(titles, list) or not titles:
+        return []
+    primary = str(titles[0] or "").strip()
+    promised = _promised_list_count_from_title(primary)
+    if promised is None:
+        return []
+    body = str(content.get("body") or "")
+    actual = _count_body_list_items(body)
+    if actual < 2 or actual == promised:
+        return []
+    return [
+        f"标题承诺 {promised} 条要点，正文清单为 {actual} 条；须改标题或改正文使数量一致"
+    ]
 
 
 _XHS_NOTE_SKELETON = {
@@ -801,6 +865,10 @@ def generate_xhs_expert_deliverable(
     errors = validate_expert_deliverable(deliverable)
     if errors:
         raise ValueError("validation_failed:" + "|".join(errors[:6]))
+    content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
+    count_errors = _xhs_title_body_count_errors(content)
+    if count_errors:
+        raise ValueError("validation_failed:" + "|".join(count_errors[:4]))
     return deliverable
 
 
@@ -927,6 +995,16 @@ def run_composer_expert_deliverable_job(
                 options["extras"] = extras
                 if on_progress:
                     on_progress("初稿偏模板化，正在重写…", 72.0)
+                continue
+            count_errors = _xhs_title_body_count_errors(content)
+            if count_errors and attempt < max_attempts - 1:
+                last_errors = count_errors
+                persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+                retry_note = "【重试】标题数量与正文分点须一致（如标题写3个坑则正文恰好3条）。"
+                persona["otherRequirements"] = f"{persona.get('otherRequirements') or ''}\n{retry_note}"[:1600]
+                options["persona"] = persona
+                if on_progress:
+                    on_progress("标题与正文条数不一致，正在重写…", 72.0)
                 continue
             if on_progress:
                 on_progress("内容成品就绪", 100.0)

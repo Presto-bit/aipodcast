@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
+import { STUDIO_POST_DONE_COACH_ENABLED } from "../../lib/studioPostDoneFollowUp";
 import type { ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
 
@@ -59,7 +60,8 @@ export default function StudioAgentOutputCards({
     manuscriptBlocks.length > 0 &&
     (work.status === "ready" || work.status === "shipped" || compareMode);
   const coachText = work.postDoneCoach?.trim();
-  const showCoach = Boolean(coachText || work.postDoneCoachStreaming);
+  const showCoach =
+    STUDIO_POST_DONE_COACH_ENABLED && Boolean(coachText || work.postDoneCoachStreaming);
   const heading = outputHeading(work, compareMode);
 
   const body: ReactNode[] = [];
