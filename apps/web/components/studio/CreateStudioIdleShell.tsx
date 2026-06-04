@@ -13,16 +13,22 @@ export function CreatePodcastStudioIdleShell() {
               <span className={chipClass(false)}>单人</span>
             </span>
             <span className="pointer-events-none inline-block align-top opacity-80">
-              <span className={chipClass(false)}>语言 · 中文</span>
+              <span className={chipClass(false)}>中文</span>
             </span>
             <span className="pointer-events-none inline-block align-top opacity-80">
-              <span className={chipClass(false)}>人设风格 · 闲聊</span>
+              <span className={chipClass(false)}>闲聊</span>
             </span>
             <span className="pointer-events-none inline-block align-top opacity-80">
               <span className={chipClass(false)}>上传文件</span>
             </span>
             <span className="pointer-events-none inline-block align-top opacity-80">
-              <span className={chipClass(false)}>展开高级设置</span>
+              <span className={chipClass(false)}>默认</span>
+            </span>
+            <span className="pointer-events-none inline-block align-top opacity-80">
+              <span className={chipClass(false)}>短</span>
+            </span>
+            <span className="pointer-events-none inline-block align-top opacity-80">
+              <span className={chipClass(false)}>开场/结尾</span>
             </span>
           </div>
           <p className="text-[11px] leading-snug text-muted">正在加载完整工作台（轻量预览，不阻塞进页）…</p>

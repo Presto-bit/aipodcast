@@ -214,7 +214,6 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
   const [voiceKey2, setVoiceKey2] = useState("max");
   const [activePanel, setActivePanel] = useState<PanelId>(null);
   useWorkbenchOverlayDismiss(activePanel !== null, () => setActivePanel(null));
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [partialRedoMeta, setPartialRedoMeta] = useState<PartialRedoMeta | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -273,8 +272,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     try {
       const raw = readLocalStorageScoped(PODCAST_PREFS_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as { defaultExpandAdvanced?: boolean; defaultScriptTargetChars?: number };
-      if (typeof parsed.defaultExpandAdvanced === "boolean") setShowAdvanced(parsed.defaultExpandAdvanced);
+      const parsed = JSON.parse(raw) as { defaultScriptTargetChars?: number };
       if (typeof parsed.defaultScriptTargetChars === "number" && Number.isFinite(parsed.defaultScriptTargetChars)) {
         const n = Math.max(200, Math.min(50000, Math.round(parsed.defaultScriptTargetChars)));
         setScriptTargetChars(n);
@@ -989,19 +987,26 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     speakerMode === "single"
       ? voiceOptions.find((v) => v.key === voiceKey1)?.name ?? "音色"
       : `${voiceOptions.find((v) => v.key === voiceKey1)?.name ?? "1"}·${voiceOptions.find((v) => v.key === voiceKey2)?.name ?? "2"}`;
-  const introSummary =
-    introText.trim() ||
-    outroText.trim() ||
+  const introOutroConfigured =
+    introText.trim() !== DEFAULT_INTRO_LINE.trim() ||
+    outroText.trim() !== DEFAULT_OUTRO_LINE.trim() ||
     introBgm1Mode !== "none" ||
     introBgm2Mode !== "none" ||
     outroBgm3Mode !== "none" ||
+    Boolean(introBgm1File || introBgm2File || outroBgm3File) ||
+    Boolean(introBgm1StoredHex || introBgm2StoredHex || outroBgm3StoredHex) ||
     !introVoiceFollow ||
-    !outroVoiceFollow
-      ? "已设"
-      : "未设";
+    !outroVoiceFollow;
   const creativeSummary = formatCreativeTemplateChip(creativeTemplateValue);
-  const librarySummary =
-    selectedNoteIds.length > 0 ? `笔记${selectedNoteIds.length ? "1" : "0"}` : "";
+  const selectedNoteTitle = useMemo(() => {
+    const id0 = selectedNoteIds[0];
+    if (!id0) return "";
+    const note = notesList.find((n) => n.noteId === id0);
+    const title = String(note?.title || "").trim();
+    return title || id0;
+  }, [selectedNoteIds, notesList]);
+  const libraryChipLabel = selectedNoteTitle || "上传文件";
+  const libraryChipActive = Boolean(selectedNoteTitle);
 
   useEffect(() => {
     const parts: string[] = [];
@@ -1185,7 +1190,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="lang" className="relative inline-block align-top">
                     <button type="button" className={chipClass(activePanel === "lang")} onClick={() => setActivePanel((p) => (p === "lang" ? null : "lang"))}>
-                      语言 · {scriptLanguage}
+                      {scriptLanguage}
                     </button>
                     {renderFloatingPanel(
                       "lang",
@@ -1211,7 +1216,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="creative" className="relative inline-flex max-w-full align-top">
                     {!roomFeaturesOk ? (
-                      <LockedToolbarChipPill label={<>人设风格 · {creativeSummary}</>} upgradeTitle="该能力未开启（由服务器配置控制）" />
+                      <LockedToolbarChipPill label={<>{creativeSummary}</>} upgradeTitle="该能力未开启（由服务器配置控制）" />
                     ) : (
                       <>
                         <button
@@ -1220,7 +1225,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                           title={CREATIVE_CHIP_HOVER_HINT}
                           onClick={() => setActivePanel((p) => (p === "creative" ? null : "creative"))}
                         >
-                          人设风格 · {creativeSummary}
+                          {creativeSummary}
                         </button>
                         {renderFloatingPanel(
                           "creative",
@@ -1232,9 +1237,14 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       </>
                     )}
                   </span>
-                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="library" className="relative inline-block align-top">
-                    <button type="button" className={chipClass(activePanel === "library")} onClick={() => setActivePanel((p) => (p === "library" ? null : "library"))}>
-                      {librarySummary ? `上传文件 · ${librarySummary}` : "上传文件"}
+                  <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="library" className="relative inline-flex max-w-full align-top">
+                    <button
+                      type="button"
+                      className={[chipClass(activePanel === "library" || libraryChipActive), "max-w-[min(100%,14rem)] truncate"].join(" ")}
+                      title={libraryChipLabel}
+                      onClick={() => setActivePanel((p) => (p === "library" ? null : "library"))}
+                    >
+                      {libraryChipLabel}
                     </button>
                     {renderFloatingPanel(
                       "library",
@@ -1317,18 +1327,9 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       </div>
                     )}
                   </span>
-                  <button
-                    type="button"
-                    className={chipClass(showAdvanced)}
-                    onClick={() => setShowAdvanced((v) => !v)}
-                  >
-                    {showAdvanced ? "收起高级设置" : "展开高级设置"}
-                  </button>
-                  {showAdvanced ? (
-                    <>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="voice" className="relative inline-block align-top">
                     <button type="button" className={chipClass(activePanel === "voice")} onClick={() => setActivePanel((p) => (p === "voice" ? null : "voice"))}>
-                      音色 · {voiceSummary}
+                      {voiceSummary}
                     </button>
                     {renderFloatingPanel(
                       "voice",
@@ -1362,7 +1363,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="duration" className="relative inline-block align-top">
                     <button type="button" className={chipClass(activePanel === "duration")} onClick={() => setActivePanel((p) => (p === "duration" ? null : "duration"))}>
-                      时长 · {durationLabel}
+                      {durationLabel}
                     </button>
                     {renderFloatingPanel(
                       "duration",
@@ -1409,15 +1410,15 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                   </span>
                   <span data-podcast-toolbar-chip data-podcast-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
                     {!roomFeaturesOk ? (
-                      <LockedToolbarChipPill label={<>开场/结尾 · {introSummary}</>} upgradeTitle="该能力未开启（由服务器配置控制）" />
+                      <LockedToolbarChipPill label="开场/结尾" upgradeTitle="该能力未开启（由服务器配置控制）" />
                     ) : (
                       <>
                         <button
                           type="button"
-                          className={chipClass(activePanel === "intro")}
+                          className={chipClass(activePanel === "intro" || introOutroConfigured)}
                           onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}
                         >
-                          开场/结尾 · {introSummary}
+                          开场/结尾
                         </button>
                         {renderFloatingPanel(
                           "intro",
@@ -1535,8 +1536,6 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       </>
                     )}
                   </span>
-                    </>
-                  ) : null}
                 </div>
               </div>
 

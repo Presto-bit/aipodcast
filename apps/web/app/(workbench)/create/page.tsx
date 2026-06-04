@@ -281,8 +281,9 @@ export default function CreatePage() {
     : isPodcastPage
       ? t("create.podcast.placeholder")
       : t("create.podcast.placeholder");
-  const showModeChips = urlMode !== "tts";
-  const showHotTopicAssistant = !isTtsPage;
+  const isLockedStudioPage = urlMode === "podcast" || urlMode === "tts";
+  const showModeChips = !isLockedStudioPage;
+  const showHotTopicAssistant = urlMode !== "podcast" && !isTtsPage;
   const showTemplatesTab = !isTtsPage;
   const createReturnTo = createReturnPath(urlMode ?? mode);
 
@@ -388,64 +389,33 @@ export default function CreatePage() {
                 </div>
               ) : null}
             </div>
-            {!isTtsPage ? (
+            {showModeChips ? (
             <div className="flex flex-wrap items-center gap-2 bg-surface/95 px-3 py-2.5 backdrop-blur-sm">
-              {showModeChips
-                ? (
-                    [
-                      { id: "podcast" as const, title: t("create.card.podcast.title"), Icon: IconMic },
-                      { id: "tts" as const, title: t("create.card.tts.title"), Icon: IconTts }
-                    ] as const
-                  ).map((row) => {
-                    const on = mode === row.id;
-                    const lockedPodcast = urlMode === "podcast";
-                    if (lockedPodcast && row.id === "tts") {
-                      return (
-                        <Link
-                          key={row.id}
-                          href="/create?mode=tts"
-                          className="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink transition hover:border-brand/30 hover:bg-fill sm:text-sm"
-                        >
-                          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                            <row.Icon width={16} height={16} />
-                          </span>
-                          {row.title}
-                        </Link>
-                      );
-                    }
-                    if (lockedPodcast && row.id === "podcast") {
-                      return (
-                        <span
-                          key={row.id}
-                          className="inline-flex items-center gap-2 rounded-lg border border-brand/50 bg-brand/10 px-2.5 py-1.5 text-xs font-medium text-brand sm:text-sm"
-                          aria-current="true"
-                        >
-                          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                            <row.Icon width={16} height={16} />
-                          </span>
-                          {row.title}
-                        </span>
-                      );
-                    }
-                    return (
-                      <button
-                        key={row.id}
-                        type="button"
-                        onClick={() => setMode((m) => (m === row.id ? null : row.id))}
-                        className={[
-                          "inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition sm:text-sm",
-                          on ? "border-brand/50 bg-brand/10 text-brand" : "border-line bg-surface text-ink hover:border-brand/30 hover:bg-fill"
-                        ].join(" ")}
-                      >
-                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
-                          <row.Icon width={16} height={16} />
-                        </span>
-                        {row.title}
-                      </button>
-                    );
-                  })
-                : null}
-              {showModeChips && mode ? null : showModeChips && !mode ? (
+              {(
+                [
+                  { id: "podcast" as const, title: t("create.card.podcast.title"), Icon: IconMic },
+                  { id: "tts" as const, title: t("create.card.tts.title"), Icon: IconTts }
+                ] as const
+              ).map((row) => {
+                const on = mode === row.id;
+                return (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => setMode((m) => (m === row.id ? null : row.id))}
+                    className={[
+                      "inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition sm:text-sm",
+                      on ? "border-brand/50 bg-brand/10 text-brand" : "border-line bg-surface text-ink hover:border-brand/30 hover:bg-fill"
+                    ].join(" ")}
+                  >
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
+                      <row.Icon width={16} height={16} />
+                    </span>
+                    {row.title}
+                  </button>
+                );
+              })}
+              {!mode ? (
                 <>
                   <Link href="/clip" className={createQuickLinkClass}>
                     <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
