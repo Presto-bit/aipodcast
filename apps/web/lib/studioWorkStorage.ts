@@ -3,6 +3,7 @@ import { EMPTY_FEATURE_CORE } from "./homeComposerFeatureCore";
 import { activeHomeComposerSession, loadHomeComposerStore } from "./homeComposerChatStorage";
 import { readStudioWorksBlob, writeStudioWorksBlob } from "./studioWorkCloud";
 import type { StudioWork, WorkStatus } from "./studioWorkTypes";
+import { isStudioWorkDraft } from "./studioWorkTask";
 
 function inheritFromComposerPrefs(): Pick<StudioWork, "featureCore" | "binding"> {
   const store = loadHomeComposerStore();
@@ -29,6 +30,14 @@ function saveAll(works: StudioWork[]): void {
 
 export function listStudioWorks(): StudioWork[] {
   return loadAll().sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export function findDraftStudioWork(): StudioWork | null {
+  return listStudioWorks().find(isStudioWorkDraft) ?? null;
+}
+
+export function getComposerPrefsFeatureCore(): FeatureCore {
+  return inheritFromComposerPrefs().featureCore;
 }
 
 export function getStudioWork(id: string): StudioWork | null {

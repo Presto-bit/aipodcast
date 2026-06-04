@@ -74,9 +74,11 @@ export type StudioWork = {
   lastJobId?: string;
   runPhase?: string;
   error?: string;
-  /** 底部 Agent 对话（需求澄清；不替代 Brief/Plan 门禁） */
+  /** 底部 Agent 对话 */
   agentTurns: StudioAgentTurn[];
   agentSessionState?: NotesAskSessionState | null;
+  /** 成稿后「我的特色」引导已关闭 */
+  featureNudgeDismissed?: boolean;
   updatedAt: number;
   createdAt: number;
 };

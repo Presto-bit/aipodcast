@@ -2,15 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   buildStudioAgentQuestion,
+  hasTaskContext,
   inferStudioAgentIntent,
-  mergeBriefIntoWork,
-  studioTurnsToMemoryTurns,
-  suggestBriefFromTurns
+  studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
 import { featureCoreToPrompt } from "../../lib/homeComposerFeatureCore";
-import { mergeVoiceIntoWork } from "../../lib/studioVoiceFromChat";
+import { getComposerPrefsFeatureCore } from "../../lib/studioWorkStorage";
+import { syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
+import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
+import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
 import { streamHomeComposerAsk } from "../../lib/homeComposerAskStream";
 import type { ManuscriptVersion, StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
@@ -52,7 +55,9 @@ export default function StudioAgentDock({
   selectedPatchKeys,
   changedKeys,
   onTogglePatchKey,
-  onMarkShipped
+  onMarkShipped,
+  showFeatureNudge,
+  onDismissFeatureNudge
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
@@ -72,7 +77,10 @@ export default function StudioAgentDock({
   changedKeys: Set<string>;
   onTogglePatchKey: (key: string) => void;
   onMarkShipped?: () => void;
+  showFeatureNudge: boolean;
+  onDismissFeatureNudge: () => void;
 }) {
+  const router = useRouter();
   const [input, setInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
   const [phase, setPhase] = useState("");
@@ -82,7 +90,7 @@ export default function StudioAgentDock({
   const turns = work.agentTurns ?? [];
   const readOnly = work.status === "generating" || parentBusy;
   const canChat = isLoggedIn && ready && !readOnly;
-  const canPlan = Boolean(suggestBriefFromTurns(work, turns).trim() || work.brief.trim());
+  const canPlan = hasTaskContext(work, turns);
   const showQuickPrompts = turns.length === 0 && work.status === "briefing";
 
   useEffect(() => {
@@ -90,7 +98,6 @@ export default function StudioAgentDock({
   }, [
     turns.length,
     turns[turns.length - 1]?.content,
-    work.brief,
     work.plan,
     work.status,
     work.runPhase,
@@ -111,11 +118,7 @@ export default function StudioAgentDock({
       agentSessionState: sessionState ?? null,
       allowModelFallback: true
     };
-    const withBrief = mergeBriefIntoWork(next, nextTurns);
-    if (withBrief) next = withBrief;
-    const withVoice = mergeVoiceIntoWork(next, nextTurns);
-    if (withVoice) next = withVoice;
-    onPersist(next);
+    onPersist(syncWorkTitleFromTurns(next, nextTurns));
   }
 
   function patchTurnsStreaming(nextTurns: StudioAgentTurn[]) {
@@ -168,7 +171,7 @@ export default function StudioAgentDock({
         noteIds: work.binding.noteIds,
         memoryTurns: memoryFromStudio,
         sessionState: work.agentSessionState ?? null,
-        authorIpPrompt: featureCoreToPrompt(work.featureCore),
+        authorIpPrompt: featureCoreToPrompt(getComposerPrefsFeatureCore()),
         authHeaders: getAuthHeaders(),
         signal: ac.signal,
         callbacks: {
@@ -255,6 +258,12 @@ export default function StudioAgentDock({
           changedKeys={changedKeys}
           onTogglePatchKey={onTogglePatchKey}
           onMarkShipped={onMarkShipped}
+          showFeatureNudge={showFeatureNudge}
+          onFillFeature={() => {
+            markOpenComposerFeature();
+            router.push(WORKBENCH_CHAT_PATH);
+          }}
+          onDismissFeatureNudge={onDismissFeatureNudge}
         />
       </div>
 

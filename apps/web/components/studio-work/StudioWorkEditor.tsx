@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { deliverableToManuscriptBlocks, diffBlockKeys, mergeBlocks, nextVersionLabel } from "../../lib/studioDeliverable";
-import { mergeBriefIntoWork } from "../../lib/studioAgentAsk";
 import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
 import { buildPlanForWork } from "../../lib/studioWorkPlan";
-import { getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
+import { getComposerPrefsFeatureCore, getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
+import { taskSentenceFromWork } from "../../lib/studioWorkTask";
 import type { StudioWork } from "../../lib/studioWorkTypes";
+import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
 import StudioAgentDock from "./StudioAgentDock";
 import StudioSessionRail from "./StudioSessionRail";
 
@@ -47,6 +48,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     setSelectedPatchKeys(new Set(changedKeys));
   }, [work?.pendingPatch, changedKeys]);
 
+  const showFeatureNudge = useMemo(() => {
+    if (!work) return false;
+    if (work.featureNudgeDismissed) return false;
+    if (work.versions.length === 0) return false;
+    if (work.status !== "ready" && work.status !== "shipped") return false;
+    return !isFeatureCoreComplete(getComposerPrefsFeatureCore());
+  }, [work]);
+
   function persist(next: StudioWork) {
     upsertStudioWork({ ...next, allowModelFallback: true });
     setWork(next);
@@ -54,11 +63,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
   async function onGeneratePlan() {
     if (!work || !isLoggedIn) return;
+    const task = taskSentenceFromWork(work);
+    if (!task.trim()) return;
     setBusy(true);
     try {
-      const synced = mergeBriefIntoWork(work, work.agentTurns ?? []) ?? work;
       const { work: planned } = await buildPlanForWork(
-        { ...synced, brief: synced.brief.trim(), allowModelFallback: true },
+        { ...work, allowModelFallback: true },
         getAuthHeaders()
       );
       persist(planned);
@@ -71,15 +81,17 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
   async function onConfirmGenerate() {
     if (!work || !isLoggedIn) return;
+    const taskSentence = taskSentenceFromWork(work) || work.plan?.goal || "";
+    if (!taskSentence.trim()) return;
     setBusy(true);
     persist({
       ...work,
       status: "generating",
       runPhase: "排队中…",
       error: undefined,
-      allowModelFallback: true
+      allowModelFallback: true,
+      brief: taskSentence
     });
-    const taskSentence = work.brief.trim();
     try {
       const result = await runComposerExpertDeliverableJob({
         expertId: "xhs_ops",
@@ -87,7 +99,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         intake: work.intake,
         notebook: work.binding.notebook,
         noteIds: work.binding.noteIds,
-        featureCore: work.featureCore,
+        featureCore: getComposerPrefsFeatureCore(),
         authHeaders: getAuthHeaders(),
         createdBy: user?.phone,
         onProgress: (msg) => {
@@ -134,7 +146,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     const base = activeVersion;
     if (!base) return;
     setBusy(true);
-    const taskSentence = `${work.brief.trim()}\n\n改版意见：${reviseText.trim()}`;
+    const baseTask = taskSentenceFromWork(work) || work.plan?.goal || "";
+    const taskSentence = `${baseTask}\n\n改版意见：${reviseText.trim()}`;
     persist({ ...work, status: "generating", runPhase: "改版生成中…", error: undefined });
     try {
       const result = await runComposerExpertDeliverableJob({
@@ -143,7 +156,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         intake: work.intake,
         notebook: work.binding.notebook,
         noteIds: work.binding.noteIds,
-        featureCore: work.featureCore,
+        featureCore: getComposerPrefsFeatureCore(),
         authHeaders: getAuthHeaders(),
         createdBy: user?.phone,
         onProgress: (msg) => patchStudioWork(workId, { runPhase: msg })
@@ -224,6 +237,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           onGeneratePlan={() => onGeneratePlan()}
           onConfirmGenerate={() => void onConfirmGenerate()}
           activeVersion={activeVersion ?? null}
+          showFeatureNudge={showFeatureNudge}
+          onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
           reviseText={reviseText}
           onReviseTextChange={setReviseText}
           onRevise={() => void onRevise()}

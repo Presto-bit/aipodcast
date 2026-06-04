@@ -19,7 +19,10 @@ export default function StudioAgentOutputCards({
   selectedPatchKeys,
   changedKeys,
   onTogglePatchKey,
-  onMarkShipped
+  onMarkShipped,
+  showFeatureNudge,
+  onFillFeature,
+  onDismissFeatureNudge
 }: {
   work: StudioWork;
   busy: boolean;
@@ -35,6 +38,9 @@ export default function StudioAgentOutputCards({
   changedKeys: Set<string>;
   onTogglePatchKey: (key: string) => void;
   onMarkShipped?: () => void;
+  showFeatureNudge: boolean;
+  onFillFeature: () => void;
+  onDismissFeatureNudge: () => void;
 }) {
   const plan = work.plan;
   const cards: ReactNode[] = [];
@@ -155,6 +161,21 @@ export default function StudioAgentOutputCards({
       <OutputCard key="ship" title="完成">
         <ActionRow>
           <GhostButton onClick={onMarkShipped}>标记已发布</GhostButton>
+        </ActionRow>
+      </OutputCard>
+    );
+  }
+
+  if (showFeatureNudge) {
+    cards.push(
+      <OutputCard key="feature-nudge" title="我的特色">
+        <p className="text-ink">这篇已经写好。要下一篇更像你自己，可以填「我的特色」。</p>
+        <p className="mt-1 text-muted">
+          填写路径：进入「对话」页 → 输入框下方点「我的特色」→ 保存后回到创作继续。
+        </p>
+        <ActionRow>
+          <PrimaryButton onClick={onFillFeature}>去填写我的特色</PrimaryButton>
+          <GhostButton onClick={onDismissFeatureNudge}>暂不</GhostButton>
         </ActionRow>
       </OutputCard>
     );

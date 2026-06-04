@@ -110,6 +110,7 @@ import {
 import { fetchAuthorIpByNotebook } from "../../lib/authorIp";
 import { useNotebooksHubQuery } from "../../lib/queries/notebooksQueries";
 import { maxNotesForReference } from "../../lib/noteReferenceLimits";
+import { consumeOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../../lib/userScopedStorage";
 
 const HOME_COMPOSER_SIDEBAR_COLLAPSED_KEY = "fym_home_composer_sidebar_collapsed_v1";
@@ -165,6 +166,10 @@ export default function HomeComposerPage({
   useEffect(() => {
     const raw = readLocalStorageScoped(HOME_COMPOSER_SIDEBAR_COLLAPSED_KEY);
     if (raw === "0") setSidebarCollapsed(false);
+  }, []);
+
+  useEffect(() => {
+    if (consumeOpenComposerFeature()) setPersonalOpen(true);
   }, []);
 
   const toggleSidebarCollapsed = useCallback(() => {

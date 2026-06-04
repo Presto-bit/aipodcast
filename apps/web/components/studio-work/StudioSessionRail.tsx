@@ -7,6 +7,7 @@ import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
 import {
   createStudioWork,
   deleteStudioWork,
+  findDraftStudioWork,
   listStudioWorks
 } from "../../lib/studioWorkStorage";
 import type { StudioWork } from "../../lib/studioWorkTypes";
@@ -23,6 +24,8 @@ export default function StudioSessionRail({
 }) {
   const router = useRouter();
   const [works, setWorks] = useState<StudioWork[]>([]);
+  const draft = findDraftStudioWork();
+  const canCreateNew = !draft;
 
   const refresh = useCallback(() => setWorks(listStudioWorks()), []);
 
@@ -31,6 +34,10 @@ export default function StudioSessionRail({
   }, [refresh, activeWorkId]);
 
   function onNewAgent() {
+    if (draft) {
+      router.push(`${WORKBENCH_STUDIO_PATH}/${draft.id}`);
+      return;
+    }
     const w = createStudioWork();
     router.push(`${WORKBENCH_STUDIO_PATH}/${w.id}`);
   }
@@ -38,7 +45,6 @@ export default function StudioSessionRail({
   function onDeleteWork(e: MouseEvent, id: string) {
     e.preventDefault();
     e.stopPropagation();
-    if (!window.confirm("删除此任务？删除后无法恢复。")) return;
     deleteStudioWork(id);
     const remaining = listStudioWorks();
     setWorks(remaining);
@@ -50,6 +56,10 @@ export default function StudioSessionRail({
     const w = createStudioWork();
     router.replace(`${WORKBENCH_STUDIO_PATH}/${w.id}`);
   }
+
+  const newAgentTitle = canCreateNew
+    ? "New Agent"
+    : "已有未开始的任务，请先在当前任务中继续";
 
   if (collapsed) {
     return (
@@ -64,8 +74,9 @@ export default function StudioSessionRail({
         </button>
         <button
           type="button"
-          title="New Agent"
-          className="rounded-md bg-brand/10 p-1.5 text-brand hover:bg-brand/20"
+          title={newAgentTitle}
+          disabled={!canCreateNew}
+          className="rounded-md bg-brand/10 p-1.5 text-brand hover:bg-brand/20 disabled:cursor-not-allowed disabled:opacity-40"
           onClick={onNewAgent}
         >
           +
@@ -79,7 +90,9 @@ export default function StudioSessionRail({
       <div className="flex items-center gap-1 border-b border-line px-2 py-2">
         <button
           type="button"
-          className="flex-1 rounded-lg bg-brand px-2 py-1.5 text-xs font-medium text-brand-foreground hover:opacity-90"
+          disabled={!canCreateNew}
+          title={newAgentTitle}
+          className="flex-1 rounded-lg bg-brand px-2 py-1.5 text-xs font-medium text-brand-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           onClick={onNewAgent}
         >
           New Agent

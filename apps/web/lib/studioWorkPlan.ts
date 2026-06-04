@@ -2,12 +2,13 @@ import { finalizeExpertIntake, formatIntakeInferenceSummary, inferIntakePreselec
 import { featureCoreStatusSummary, isFeatureCoreComplete } from "./homeComposerFeatureCore";
 import { fetchComposerExpertIntake } from "./homeComposerIntakeApi";
 import type { StudioPlan, StudioWork } from "./studioWorkTypes";
+import { taskSentenceFromWork } from "./studioWorkTask";
 
 export async function buildPlanForWork(
   work: StudioWork,
   authHeaders: Record<string, string>
 ): Promise<{ work: StudioWork; plan: StudioPlan }> {
-  const taskSentence = work.brief.trim();
+  const taskSentence = taskSentenceFromWork(work);
   let intake = { ...work.intake };
   let hint: string | undefined;
 
@@ -69,6 +70,7 @@ export async function buildPlanForWork(
   const nextWork: StudioWork = {
     ...work,
     title,
+    brief: taskSentence,
     intake,
     plan,
     status: "planned",
