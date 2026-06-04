@@ -94,7 +94,7 @@ export function buildConfirmBlock(
 
 export function buildExpertOutputContextParts(params: {
   expertId: PlatformExpertId;
-  writingHabitLabel: string;
+  writingStyleLabel: string;
   featureSummary?: string;
   featureEnabled?: boolean;
   notebook?: string;
@@ -103,7 +103,7 @@ export function buildExpertOutputContextParts(params: {
   if (params.notebook?.trim()) {
     parts.push(`资料 · ${params.notebook.trim()}`);
   }
-  parts.push(`写作习惯 · ${params.writingHabitLabel}`);
+  parts.push(`写作风格 · ${params.writingStyleLabel}`);
   if (params.featureEnabled && params.featureSummary?.trim()) {
     parts.push(`我的特色 · ${params.featureSummary.trim()}`);
   }

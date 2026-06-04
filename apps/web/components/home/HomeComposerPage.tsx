@@ -13,10 +13,8 @@ import {
   ComposerKbEmptyHint,
   ComposerShell,
   ComposerStatusBar,
-  ComposerTextToolBtn,
   FeatureProfilePanel,
   GeneralAnswerCard,
-  IconXiaohongshu,
   SessionHistorySidebar,
   UserBubble
 } from "./HomeComposerShell";
@@ -110,8 +108,6 @@ import {
   saveDefaultAuthorIpProfile
 } from "../../lib/homeComposerProfile";
 import { fetchAuthorIpByNotebook } from "../../lib/authorIp";
-import { isUserPersonaStyleTemplateCategory } from "../../lib/creativeTemplates";
-import { listUserTemplates } from "../../lib/userTemplates";
 import { useNotebooksHubQuery } from "../../lib/queries/notebooksQueries";
 import { maxNotesForReference } from "../../lib/noteReferenceLimits";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "../../lib/userScopedStorage";
@@ -134,7 +130,7 @@ function useClickOutside(refs: React.RefObject<HTMLElement | null>[], onOutside:
   }, [active, onOutside, refs]);
 }
 
-type MenuKey = "expert" | "kb" | "style" | "";
+type MenuKey = "expert" | "kb" | "personal" | "";
 
 export default function HomeComposerPage({
   getAuthHeaders,
@@ -190,12 +186,6 @@ export default function HomeComposerPage({
   const hasSent = (session?.turns.length ?? 0) > 0;
 
   const kbOn = Boolean(prefs?.notebook?.trim());
-  const styleTemplates = useMemo(
-    () => listUserTemplates().filter((t) => isUserPersonaStyleTemplateCategory(t.category)),
-    [store?.activeSessionId]
-  );
-  const selectedStyle = styleTemplates.find((t) => t.id === prefs?.styleTemplateId) ?? null;
-  const styleUsesNotebookDefault = kbOn && !selectedStyle;
   const [notebookStylePrompt, setNotebookStylePrompt] = useState("");
 
   useEffect(() => {
@@ -296,16 +286,9 @@ export default function HomeComposerPage({
   }, []);
 
   const resolveStylePrompt = useCallback(() => {
-    if (prefs?.writingHabitMode === "off") return "";
-    const templateStyle = selectedStyle?.textPrefix?.trim() || "";
-    if (prefs?.writingHabitMode === "template") return templateStyle;
-    if (prefs?.writingHabitMode === "notebook" || styleUsesNotebookDefault) {
-      return templateStyle || notebookStylePrompt;
-    }
-    if (prefs?.writingHabitMode === "neutral") return templateStyle;
-    if (kbOn) return templateStyle || notebookStylePrompt;
-    return templateStyle;
-  }, [kbOn, notebookStylePrompt, prefs?.writingHabitMode, selectedStyle, styleUsesNotebookDefault]);
+    if (kbOn && notebookStylePrompt) return notebookStylePrompt;
+    return "";
+  }, [kbOn, notebookStylePrompt]);
 
   const resolveAuthorPrompt = useCallback(() => {
     if (!prefs?.personalEnabled) return "";
@@ -1074,26 +1057,6 @@ export default function HomeComposerPage({
     }
   }
 
-  function applyWritingHabit(
-    mode: "neutral" | "notebook" | "template" | "off",
-    templateId: string | null = null
-  ) {
-    const sameMode =
-      mode === "template"
-        ? prefs?.writingHabitMode === "template" && prefs?.styleTemplateId === templateId
-        : prefs?.writingHabitMode === mode;
-    if (sameMode) {
-      persistPrefs({ writingHabitMode: "off", styleTemplateId: null });
-      setOpenMenu("");
-      return;
-    }
-    persistPrefs({
-      writingHabitMode: mode,
-      styleTemplateId: mode === "template" ? templateId : null
-    });
-    setOpenMenu("");
-  }
-
   function selectNotebook(name: string) {
     if (prefs?.notebook === name) {
       persistPrefs({ notebook: "", noteIds: [] });
@@ -1124,22 +1087,18 @@ export default function HomeComposerPage({
     }
   }
 
-  function openMenuOrToggle(key: MenuKey) {
-    if (!key) return;
-    setPersonalOpen(false);
-    setOpenMenu((m) => (m === key ? "" : key));
-  }
-
-  function togglePersonalPanel() {
-    if (personalOpen) {
-      setPersonalOpen(false);
-      return;
-    }
+  function openPersonalEditor() {
     const profile = prefs?.personalProfile ?? EMPTY_HOME_COMPOSER_PERSONAL;
     setPersonalDraft(profile);
     setFeatureCoreDraft(backfillFeatureCoreFromProfile(prefs?.featureCore, profile));
     setPersonalOpen(true);
     setOpenMenu("");
+  }
+
+  function openMenuOrToggle(key: MenuKey) {
+    if (!key) return;
+    setPersonalOpen(false);
+    setOpenMenu((m) => (m === key ? "" : key));
   }
 
   async function copyGeneralAnswer(text: string) {
@@ -1172,14 +1131,10 @@ export default function HomeComposerPage({
       (prefs?.personalProfile && Object.values(prefs.personalProfile).some((v) => v.trim()))
   );
 
-  const writingHabitLabel = useMemo(() => {
-    if (prefs?.writingHabitMode === "off") return "不套用";
-    if (prefs?.writingHabitMode === "neutral") return "通用客观";
-    if (prefs?.writingHabitMode === "template" && selectedStyle) return selectedStyle.label;
-    if (prefs?.writingHabitMode === "notebook" || styleUsesNotebookDefault) return kbOn ? "笔记本风格" : "通用客观";
-    if (selectedStyle) return selectedStyle.label;
+  const writingStyleLabel = useMemo(() => {
+    if (kbOn && notebookStylePrompt) return prefs?.notebook?.trim() || "笔记本风格";
     return "通用客观";
-  }, [kbOn, prefs?.writingHabitMode, selectedStyle, styleUsesNotebookDefault]);
+  }, [kbOn, notebookStylePrompt, prefs?.notebook]);
 
   const selectedExpertId = prefs?.expert.mode === "platform" ? prefs.expert.expertId : null;
 
@@ -1187,7 +1142,7 @@ export default function HomeComposerPage({
     if (!selectedExpertId || !prefs) return undefined;
     return buildExpertOutputContextParts({
       expertId: selectedExpertId,
-      writingHabitLabel,
+      writingStyleLabel,
       featureSummary: featureSummary || undefined,
       featureEnabled: Boolean(prefs.personalEnabled && featureCoreFilled),
       notebook: kbOn ? prefs.notebook : undefined
@@ -1195,7 +1150,7 @@ export default function HomeComposerPage({
   }, [
     selectedExpertId,
     prefs,
-    writingHabitLabel,
+    writingStyleLabel,
     featureSummary,
     featureCoreFilled,
     kbOn
@@ -1203,7 +1158,12 @@ export default function HomeComposerPage({
 
   const expertChipLabel = expertSelected && prefs?.expert.mode === "platform" ? expertDisplayLabel(prefs.expert) : undefined;
   const kbChipLabel = kbOn ? prefs!.notebook : undefined;
-  const styleChipLabel = prefs?.writingHabitMode && prefs.writingHabitMode !== "off" ? writingHabitLabel : undefined;
+  const personalChipLabel =
+    featureCoreFilled && prefs?.personalEnabled
+      ? featureSummary || "已启用"
+      : featureCoreFilled
+        ? "已保存"
+        : undefined;
 
   const workflowPhase = resolveComposerWorkflowPhase(prefs?.expert, prefs?.taskDraft);
   const workflowLabel = composerWorkflowLabel(prefs?.expert, prefs?.taskDraft);
@@ -1215,7 +1175,7 @@ export default function HomeComposerPage({
   if (kbOn) {
     statusParts.push(`资料 · ${prefs!.notebook} · 全部`);
   }
-  statusParts.push(`写作习惯 · ${writingHabitLabel}`);
+  statusParts.push(`写作风格 · ${writingStyleLabel}`);
   if (prefs?.personalEnabled && featureSummary) {
     statusParts.push(`我的特色 · ${featureSummary}`);
   }
@@ -1295,7 +1255,7 @@ export default function HomeComposerPage({
                         onConfirmStart={handleConfirmStartGenerate}
                         onConfirmUpdate={handleConfirmUpdate}
                         onExitChat={handleExitExpertTask}
-                        onEditFeature={togglePersonalPanel}
+                        onEditFeature={openPersonalEditor}
                         onEditIntake={handleEditIntakeFromConfirm}
                         onClarifyStartTask={() => handleClarifyStartTask(turn.userText)}
                         onClarifyContinueChat={() => handleClarifyContinueChat(turn.userText)}
@@ -1387,13 +1347,12 @@ export default function HomeComposerPage({
                   <ComposerDropAnchor
                     title="专家"
                     controlLabel="专家"
-                    icon={<IconXiaohongshu />}
                     open={openMenu === "expert"}
                     selected={expertSelected}
                     chipLabel={expertChipLabel}
                     onToggle={() => openMenuOrToggle("expert")}
                     align="left"
-                    minWidth={300}
+                    minWidth={240}
                   >
                     <p className="pointer-events-none px-2 pb-1 pt-0.5 text-[11px] text-muted">
                       选择运营专家，走笔记发布全流程
@@ -1403,48 +1362,39 @@ export default function HomeComposerPage({
                         prefs?.expert?.mode === "platform" && prefs.expert.expertId === opt.id;
                       const ready = EXPERT_DELIVERABLE_READY[opt.id as PlatformExpertId];
                       return (
-                        <div key={opt.id} className="border-b border-line/50 last:border-0">
-                          <button
-                            type="button"
+                        <button
+                          key={opt.id}
+                          type="button"
+                          className={[
+                            "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition",
+                            selected ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
+                          ].join(" ")}
+                          onClick={() => {
+                            if (selected) {
+                              selectExpert({ mode: "none" });
+                              return;
+                            }
+                            selectExpert({ mode: "platform", expertId: opt.id as PlatformExpertId });
+                          }}
+                        >
+                          <span
                             className={[
-                              "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition",
-                              selected ? "bg-brand/10 ring-1 ring-brand/25" : "hover:bg-fill"
+                              "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px]",
+                              selected ? "border-brand bg-brand text-brand-foreground" : "border-line text-transparent"
                             ].join(" ")}
-                            onClick={() => {
-                              if (selected) {
-                                selectExpert({ mode: "none" });
-                                return;
-                              }
-                              selectExpert({ mode: "platform", expertId: opt.id as PlatformExpertId });
-                            }}
+                            aria-hidden
                           >
-                            <span
-                              className={[
-                                "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px]",
-                                selected ? "border-brand bg-brand text-brand-foreground" : "border-line text-transparent"
-                              ].join(" ")}
-                              aria-hidden
-                            >
-                              ✓
+                            ✓
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm">{opt.name}</span>
+                          {ready ? (
+                            <span className="shrink-0 rounded-full bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
+                              可生成
                             </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="flex flex-wrap items-center gap-1.5">
-                                <IconXiaohongshu />
-                                <span className={["text-sm", selected ? "font-semibold text-ink" : "font-medium text-ink"].join(" ")}>
-                                  {opt.name}
-                                </span>
-                                {ready ? (
-                                  <span className="rounded-full bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand">
-                                    可生成
-                                  </span>
-                                ) : (
-                                  <span className="rounded-full bg-fill px-1.5 py-0.5 text-[10px] text-muted">即将上线</span>
-                                )}
-                              </span>
-                              <span className="mt-0.5 block text-xs leading-snug text-muted">{opt.description}</span>
-                            </span>
-                          </button>
-                        </div>
+                          ) : (
+                            <span className="shrink-0 rounded-full bg-fill px-1.5 py-0.5 text-[10px] text-muted">即将上线</span>
+                          )}
+                        </button>
                       );
                     })}
                     {selectedExpertId ? (
@@ -1467,7 +1417,7 @@ export default function HomeComposerPage({
                   </ComposerDropAnchor>
                 }
                 contextControls={
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
                     <ComposerDropAnchor
                       title="资料"
                       controlLabel="资料"
@@ -1476,7 +1426,7 @@ export default function HomeComposerPage({
                       chipLabel={kbChipLabel}
                       onToggle={() => openMenuOrToggle("kb")}
                       align="right"
-                      minWidth={220}
+                      minWidth={200}
                     >
                       {notebooks.length === 0 ? (
                         <ComposerKbEmptyHint />
@@ -1498,74 +1448,45 @@ export default function HomeComposerPage({
                     </ComposerDropAnchor>
 
                     <ComposerDropAnchor
-                      title="写作习惯"
-                      controlLabel="写作习惯"
-                      open={openMenu === "style"}
-                      selected={prefs?.writingHabitMode !== "off"}
-                      chipLabel={styleChipLabel}
-                      onToggle={() => openMenuOrToggle("style")}
-                      align="right"
-                      minWidth={188}
-                    >
-                      <p className="pointer-events-none px-2 py-1 text-xs text-muted">管写法，不管你是谁</p>
-                      <button
-                        type="button"
-                        className={[
-                          "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
-                          prefs?.writingHabitMode === "neutral" ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
-                        ].join(" ")}
-                        onClick={() => applyWritingHabit("neutral")}
-                      >
-                        通用客观
-                      </button>
-                      {kbOn ? (
-                        <button
-                          type="button"
-                          className={[
-                            "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
-                            prefs?.writingHabitMode === "notebook" || styleUsesNotebookDefault
-                              ? "bg-brand/10 font-medium text-ink"
-                              : "text-ink hover:bg-fill"
-                          ].join(" ")}
-                          onClick={() => applyWritingHabit("notebook")}
-                        >
-                          笔记本风格
-                        </button>
-                      ) : null}
-                      {styleTemplates.map((t) => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          className={[
-                            "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
-                            prefs?.writingHabitMode === "template" && prefs?.styleTemplateId === t.id
-                              ? "bg-brand/10 font-medium text-ink"
-                              : "text-ink hover:bg-fill"
-                          ].join(" ")}
-                          onClick={() => applyWritingHabit("template", t.id)}
-                        >
-                          {t.label}
-                        </button>
-                      ))}
-                      <button
-                        type="button"
-                        className={[
-                          "block w-full rounded-lg px-2 py-1.5 text-left text-sm",
-                          prefs?.writingHabitMode === "off" ? "bg-brand/10 font-medium text-ink" : "text-ink hover:bg-fill"
-                        ].join(" ")}
-                        onClick={() => applyWritingHabit("off")}
-                      >
-                        不套用习惯
-                      </button>
-                    </ComposerDropAnchor>
-
-                    <ComposerTextToolBtn
-                      label="我的特色"
+                      title="我的特色"
+                      controlLabel="我的特色"
+                      open={openMenu === "personal"}
                       selected={Boolean(prefs?.personalEnabled && featureCoreFilled)}
                       dashed={!featureCoreFilled}
                       badgeDot={Boolean(prefs?.personalEnabled && featureCoreFilled)}
-                      onClick={togglePersonalPanel}
-                    />
+                      chipLabel={personalChipLabel}
+                      onToggle={() => openMenuOrToggle("personal")}
+                      align="right"
+                      minWidth={200}
+                    >
+                      {featureCoreFilled ? (
+                        <div className="mb-2 rounded-lg border border-line/70 bg-fill/30 px-2.5 py-2 text-[11px] leading-relaxed text-muted">
+                          <p className="font-medium text-ink">已保存的个人特色</p>
+                          <p className="mt-1 line-clamp-2">{featureSummary || prefs?.featureCore?.who}</p>
+                        </div>
+                      ) : (
+                        <p className="pointer-events-none px-1 pb-1 text-[11px] text-muted">
+                          填写核心三问，让成品更像你本人。
+                        </p>
+                      )}
+                      {hasPersonalSaved ? (
+                        <label className="mb-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-ink hover:bg-fill">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(prefs?.personalEnabled)}
+                            onChange={togglePersonalEnabled}
+                          />
+                          在本对话中使用
+                        </label>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="block w-full rounded-lg px-2 py-1.5 text-left text-sm text-ink hover:bg-fill"
+                        onClick={openPersonalEditor}
+                      >
+                        {featureCoreFilled ? "查看 / 编辑" : "创建我的特色"}
+                      </button>
+                    </ComposerDropAnchor>
                   </div>
                 }
                 statusBar={

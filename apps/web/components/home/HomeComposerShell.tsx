@@ -329,12 +329,24 @@ export function ComposerDropMenu({
   );
 }
 
+function ComposerChipChevron({ open }: { open: boolean }) {
+  return (
+    <span
+      className={["ml-0.5 inline-block shrink-0 text-[10px] text-muted transition", open ? "rotate-180" : ""].join(" ")}
+      aria-hidden
+    >
+      ▾
+    </span>
+  );
+}
+
 export function ComposerDropAnchor({
   title,
   controlLabel,
-  icon,
   open,
   selected,
+  dashed,
+  badgeDot,
   chipLabel,
   onToggle,
   align,
@@ -344,10 +356,11 @@ export function ComposerDropAnchor({
   title: string;
   /** 控件区展示的文字标签 */
   controlLabel: string;
-  icon?: ReactNode;
   open: boolean;
   selected?: boolean;
-  /** 选中态替换 controlLabel 的短标签（如专家名、笔记本名） */
+  dashed?: boolean;
+  badgeDot?: boolean;
+  /** 选中态在 controlLabel 后展示的短值（如专家名、笔记本名） */
   chipLabel?: string;
   onToggle: () => void;
   align: "left" | "right";
@@ -355,31 +368,41 @@ export function ComposerDropAnchor({
   children: ReactNode;
 }) {
   const anchorRef = useRef<HTMLDivElement>(null);
-  const displayLabel = chipLabel?.trim() || controlLabel;
-  const showLeadingIcon = Boolean(icon && chipLabel?.trim());
+  const valueLabel = chipLabel?.trim();
+  const ariaLabel = valueLabel ? `${title}：${valueLabel}` : title;
   return (
-    <div
-      ref={anchorRef}
-      className="relative shrink-0 overflow-visible"
-      style={{ height: COMPOSER_TOOL_H, zIndex: open ? 1100 : 1 }}
-    >
+    <div ref={anchorRef} className="relative shrink-0 overflow-visible" style={{ zIndex: open ? 1100 : 1 }}>
       <button
         type="button"
         title={title}
-        aria-label={chipLabel ? `${title}：${chipLabel}` : title}
+        aria-label={ariaLabel}
         aria-expanded={open}
         onClick={onToggle}
         className={[
-          "flex h-14 max-w-[10.5rem] items-center gap-1.5 rounded-full border px-3 transition",
+          "relative flex max-w-[11rem] items-center rounded-lg border px-2.5 py-1.5 text-left text-xs font-medium transition",
           open
-            ? "border-brand bg-brand/10 text-ink"
+            ? "border-brand/45 bg-brand/8 text-ink"
             : selected
               ? "border-brand/45 bg-brand/8 text-ink"
-              : "border-line/60 bg-fill/80 text-muted hover:border-line hover:bg-fill hover:text-ink"
+              : dashed
+                ? "border-dashed border-brand/40 bg-transparent text-muted hover:border-brand/55 hover:text-ink"
+                : "border-line bg-fill/40 text-ink hover:bg-fill"
         ].join(" ")}
       >
-        {showLeadingIcon ? <span className="flex shrink-0 items-center justify-center">{icon}</span> : null}
-        <span className="min-w-0 truncate text-xs font-medium">{displayLabel}</span>
+        <span className="truncate text-muted">{controlLabel}</span>
+        {valueLabel ? (
+          <>
+            <span className="mx-1 shrink-0 text-muted/60">·</span>
+            <span className="min-w-0 truncate">{valueLabel}</span>
+          </>
+        ) : null}
+        <ComposerChipChevron open={open} />
+        {badgeDot ? (
+          <span
+            className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-brand ring-2 ring-surface"
+            aria-hidden
+          />
+        ) : null}
       </button>
       <ComposerDropMenu open={open} align={align} minWidth={minWidth} anchorRef={anchorRef}>
         {children}
@@ -662,8 +685,8 @@ export function ComposerShell({
           </button>
         ) : null}
       </div>
-      <div className="relative mt-1 min-h-[56px] overflow-visible" style={{ zIndex: menuOpen ? 10 : 1 }}>
-        <div className="flex w-full items-center justify-between gap-1 overflow-visible">
+      <div className="relative mt-2 overflow-visible pt-0.5" style={{ zIndex: menuOpen ? 10 : 1 }}>
+        <div className="flex w-full flex-wrap items-center justify-between gap-1.5 overflow-visible">
           {formatControl}
           {contextControls}
         </div>
@@ -798,7 +821,7 @@ export function FeatureProfilePanel({
         <p className="rounded-lg bg-fill/60 px-3 py-2 text-xs leading-relaxed text-muted">
           共 14 题：先完成核心三问（必填），补充题填了会更像你。换专家也不变。
           <br />
-          写作习惯 — 句式、结构。在「写作习惯 ▾」里随时换。
+          写作风格来自所选资料；未提炼时默认通用客观写法。
         </p>
         {hasSaved ? (
           <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
