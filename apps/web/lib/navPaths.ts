@@ -2,8 +2,8 @@
  * 主导航路径匹配与鉴权白名单（与 AppShell 一致，供复用）。
  */
 
-/** 工作台聚合首页（原根路径 `/`）；公开营销落地页仍为 `/`。 */
-export const WORKBENCH_HOME_PATH = "/home";
+/** 工作台对话页（原 `/home`，旧路径 301 式重定向至此） */
+export const WORKBENCH_HOME_PATH = "/chat";
 
 /** 工作台侧栏 Link prefetch：改为 hover 预取，见 WorkbenchLink / navPrefetch.ts */
 export const WORKBENCH_NAV_PREFETCH = false;

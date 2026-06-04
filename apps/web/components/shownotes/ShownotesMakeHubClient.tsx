@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
 import type { ClipProjectRow } from "../../lib/clipTypes";
@@ -52,7 +53,7 @@ export default function ShownotesMakeHubClient() {
     return (
       <main className="mx-auto max-w-3xl px-4 py-10">
         <p className="text-sm text-muted">请先登录。</p>
-        <Link href="/home" className="mt-4 inline-block text-sm font-medium text-brand hover:underline">
+        <Link href={WORKBENCH_HOME_PATH} className="mt-4 inline-block text-sm font-medium text-brand hover:underline">
           前往工作台
         </Link>
       </main>

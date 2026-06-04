@@ -14,6 +14,15 @@ function chromeSvg(props: ChromeIconProps, strokeWidth = ICON_STROKE) {
   };
 }
 
+export function IconSidebarPanelToggle({ className }: { className?: string }) {
+  return (
+    <svg width={18} height={18} viewBox="0 0 16 16" fill="none" aria-hidden className={className}>
+      <rect x="2" y="2.5" width="12" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" />
+      <path d="M5.5 2.5v11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function IconChevronSidebar({ collapsed, className }: { collapsed: boolean; className?: string }) {
   return (
     <svg width={18} height={18} className={className} {...chromeSvg({})}>

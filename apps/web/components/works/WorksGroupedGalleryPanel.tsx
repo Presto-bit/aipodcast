@@ -19,7 +19,7 @@ type Props = {
   fetchError: string;
   onDismissError: () => void;
   onWorkDeleted: () => void;
-  /** 详情返回路径，如 /home、/create、/notes */
+  /** 详情返回路径，如 /chat、/create、/notes */
   returnTo: string;
   /** 每组最多展示条数；0 表示不限制 */
   maxPerGroup?: number;

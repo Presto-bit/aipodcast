@@ -42,6 +42,7 @@ import { BillingShortfallLinks } from "../../../components/subscription/BillingS
 import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../../components/studio/CreateStudioIdleShell";
 import { marketingSiteUrl } from "../../../lib/marketingSiteUrl";
 import { consumeComposerHandoff, type ComposerHandoff } from "../../../lib/composerHandoff";
+import { WORKBENCH_HOME_PATH } from "../../../lib/navPaths";
 import { buildWorksTabHref, filterTtsWorks } from "../../../lib/workGalleryDisplay";
 
 type HotTopicAssistantItem = { label: string; text: string };
@@ -340,7 +341,7 @@ export default function CreatePage() {
         {handoffCtx ? (
           <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2 text-sm">
             <span className="font-medium text-brand">{t("create.handoff.banner")}</span>
-            <Link href={handoffCtx.returnTo || "/home"} className="text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90">
+            <Link href={handoffCtx.returnTo || WORKBENCH_HOME_PATH} className="text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90">
               {t("create.handoff.back")}
             </Link>
           </div>

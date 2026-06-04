@@ -20,12 +20,12 @@ import {
 } from "react";
 import {
   IconChevronLeft,
-  IconChevronSidebar,
   IconGrid,
   IconHome,
   IconMenu,
   IconMic,
   IconNotes,
+  IconSidebarPanelToggle,
   IconSubscription,
   IconUser
 } from "./icons";
@@ -85,10 +85,6 @@ type NavItem = {
   /** 自定义高亮（例如子路由需与父入口同时高亮） */
   activeMatch?: (pathname: string) => boolean;
 };
-
-function Chevron({ collapsed }: { collapsed: boolean }) {
-  return <IconChevronSidebar collapsed={collapsed} />;
-}
 
 function MobileMenuGlyph({ open }: { open: boolean }) {
   return <IconMenu open={open} />;
@@ -700,30 +696,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     >
       <div
         className={[
-          "flex w-full shrink-0 border-b border-line",
-          sidebarCollapsed
-            ? "flex-col items-center gap-1 px-1 py-2"
-            : "flex-row items-center justify-between gap-2 px-2.5 py-2"
+          "flex w-full min-w-0 shrink-0 flex-row flex-nowrap items-center gap-1 px-1.5 py-2",
+          sidebarCollapsed ? "justify-center" : "justify-between px-2.5"
         ].join(" ")}
       >
         <SidebarNavLink
           href="/"
           className={[
-            "flex shrink-0 items-center rounded-lg p-0.5 outline-offset-2 ring-offset-canvas transition-colors hover:bg-fill/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35",
+            "flex min-w-0 shrink-0 items-center rounded-lg p-0.5 outline-offset-2 ring-offset-canvas transition-colors hover:bg-fill/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/35",
             sidebarCollapsed ? "justify-center" : ""
           ].join(" ")}
           aria-label={t("nav.brandHomeLink")}
         >
-          <BrandGlyph size={sidebarCollapsed ? 32 : 36} />
+          <BrandGlyph size={sidebarCollapsed ? 28 : 36} />
         </SidebarNavLink>
         <button
           type="button"
-          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink"
+          className={[
+            "flex shrink-0 items-center justify-center rounded-lg text-muted hover:bg-fill hover:text-ink",
+            sidebarCollapsed ? "h-8 w-8" : "h-9 w-9"
+          ].join(" ")}
           onClick={toggleCollapsed}
           title={sidebarCollapsed ? t("nav.expand") : t("nav.collapse")}
           aria-label={sidebarCollapsed ? t("nav.expand") : t("nav.collapse")}
         >
-          <Chevron collapsed={sidebarCollapsed} />
+          <IconSidebarPanelToggle />
         </button>
       </div>
 

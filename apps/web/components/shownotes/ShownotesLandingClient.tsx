@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
 import { Plus } from "../icons";
 import { useRef, useState } from "react";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
@@ -107,7 +108,7 @@ export default function ShownotesLandingClient() {
       <main className="mx-auto max-w-6xl px-4 py-10">
         <ShownotesBrandHeading />
         <p className="mt-3 text-sm text-muted">请先登录工作台后再使用。</p>
-        <Link href="/home" className="mt-6 inline-flex rounded-lg bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground shadow-soft">
+        <Link href={WORKBENCH_HOME_PATH} className="mt-6 inline-flex rounded-lg bg-cta px-4 py-2.5 text-sm font-medium text-cta-foreground shadow-soft">
           前往登录
         </Link>
       </main>

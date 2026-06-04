@@ -18,6 +18,7 @@ import {
   useInvalidateHomeOverview,
   type HomeOverviewMetrics
 } from "../../../lib/queries/homeOverviewQueries";
+import { WORKBENCH_HOME_PATH } from "../../../lib/navPaths";
 
 const NotesWorkbenchWorksPanel = dynamic(
   () => import("../../../components/works/NotesWorkbenchWorksPanel"),
@@ -561,7 +562,7 @@ export default function HomePageClient({
             </div>
           </div>
           <Link
-            href="/works?returnTo=/home"
+            href={`/works?returnTo=${encodeURIComponent(WORKBENCH_HOME_PATH)}`}
             className="text-sm font-medium text-brand hover:underline"
           >
             去我的作品
@@ -574,7 +575,7 @@ export default function HomePageClient({
             fetchError={worksFetchErr}
             onDismissError={() => void homeOverviewQuery.refetch()}
             onWorkDeleted={onHomeWorkDeleted}
-            returnTo="/home"
+            returnTo={WORKBENCH_HOME_PATH}
             scope="global"
             showActiveTab={false}
           />

@@ -7,7 +7,8 @@
 
 /** 登录态或强个性化文档：前缀匹配（含自身路径，如 /notes 与 /notes/xxx） */
 const SENSITIVE_DOCUMENT_PREFIXES: readonly string[] = [
-  "/home", // 工作台聚合首页
+  "/chat", // 工作台对话页
+  "/home", // 旧路径，重定向至 /chat
   "/subscription",
   "/me",
   "/notes",

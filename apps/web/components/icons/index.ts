@@ -44,7 +44,7 @@ export {
   IconShareClipboard,
   IconShareCheck
 } from "./utility/actions";
-export { IconChevronSidebar, IconMenu } from "./utility/chrome";
+export { IconChevronSidebar, IconMenu, IconSidebarPanelToggle } from "./utility/chrome";
 export {
   IconX,
   IconStar,
