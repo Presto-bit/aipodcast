@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   buildStudioAgentQuestion,
   inferStudioAgentIntent,
+  mergeBriefIntoWork,
   studioAgentIntentLabel,
   studioTurnsToMemoryTurns,
   suggestBriefFromTurns
@@ -15,23 +16,24 @@ import { streamHomeComposerAsk } from "../../lib/homeComposerAskStream";
 import type { StudioAgentIntent, StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
 import StudioAgentMessage from "./StudioAgentMessage";
+import StudioAgentTaskPins from "./StudioAgentTaskPins";
 
 const QUICK_PROMPTS = [
-  "清单体教程复盘，受众产品新人",
+  "我想写一篇清单体小红书，受众是产品新人",
   "这篇笔记发布节奏和互动策略怎么定",
   "帮我定一下 Voice：我是谁、读者该记住什么"
 ] as const;
 
-const PANEL_MIN = 96;
-const PANEL_MAX = 360;
-const PANEL_DEFAULT = 168;
+const PANEL_MIN = 120;
+const PANEL_MAX = 420;
+const PANEL_DEFAULT = 240;
 
 function agentPlaceholder(status: WorkStatus): string {
   if (status === "generating") return "生成中…";
   if (status === "ready" || status === "shipped") {
-    return "问运营策略、解读稿件，或描述改版意见…";
+    return "问运营、解读稿件，或说改版意见…";
   }
-  return "描述想写的笔记，或问运营/结构建议…";
+  return "描述本篇小红书想写什么…";
 }
 
 export default function StudioAgentDock({
@@ -41,8 +43,9 @@ export default function StudioAgentDock({
   parentBusy,
   getAuthHeaders,
   onPersist,
-  onWriteBrief,
-  onGeneratePlan
+  onGeneratePlan,
+  onConfirmGenerate,
+  primary = false
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
@@ -50,8 +53,10 @@ export default function StudioAgentDock({
   parentBusy: boolean;
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
-  onWriteBrief: (brief: string) => void;
-  onGeneratePlan: () => void | Promise<void>;
+  onGeneratePlan?: () => void | Promise<void>;
+  onConfirmGenerate?: () => void | Promise<void>;
+  /** Agent 为主工作区（Cursor 心智） */
+  primary?: boolean;
 }) {
   const [input, setInput] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
@@ -66,21 +71,23 @@ export default function StudioAgentDock({
   const turns = work.agentTurns ?? [];
   const readOnly = work.status === "generating" || parentBusy;
   const canChat = isLoggedIn && ready && !readOnly;
+  const canPlan = Boolean(suggestBriefFromTurns(work, turns).trim() || work.brief.trim());
 
   useEffect(() => {
     if (!collapsed) {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
-  }, [turns.length, turns[turns.length - 1]?.content, collapsed]);
+  }, [turns.length, turns[turns.length - 1]?.content, collapsed, work.brief, work.plan]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const onResizeMove = useCallback((e: MouseEvent) => {
+    if (primary) return;
     const drag = dragRef.current;
     if (!drag) return;
     const delta = drag.startY - e.clientY;
     setPanelHeight(Math.min(PANEL_MAX, Math.max(PANEL_MIN, drag.startH + delta)));
-  }, []);
+  }, [primary]);
 
   const onResizeEnd = useCallback(() => {
     dragRef.current = null;
@@ -89,14 +96,31 @@ export default function StudioAgentDock({
   }, [onResizeMove]);
 
   function startResize(e: React.MouseEvent) {
+    if (primary) return;
     e.preventDefault();
     dragRef.current = { startY: e.clientY, startH: panelHeight };
     window.addEventListener("mousemove", onResizeMove);
     window.addEventListener("mouseup", onResizeEnd);
   }
 
-  function patchTurns(nextTurns: StudioAgentTurn[], sessionState = work.agentSessionState ?? null) {
-    onPersist({ ...work, agentTurns: nextTurns, agentSessionState: sessionState });
+  function applyDialogExtract(
+    nextTurns: StudioAgentTurn[],
+    sessionState: typeof work.agentSessionState = work.agentSessionState ?? null
+  ) {
+    let next: StudioWork = {
+      ...work,
+      agentTurns: nextTurns,
+      agentSessionState: sessionState ?? null
+    };
+    const withBrief = mergeBriefIntoWork(next, nextTurns);
+    if (withBrief) next = withBrief;
+    const withVoice = mergeVoiceIntoWork(next, nextTurns);
+    if (withVoice) next = withVoice;
+    onPersist(next);
+  }
+
+  function patchTurnsStreaming(nextTurns: StudioAgentTurn[]) {
+    onPersist({ ...work, agentTurns: nextTurns });
   }
 
   async function handleSend(overrideText?: string) {
@@ -122,7 +146,7 @@ export default function StudioAgentDock({
       intent
     };
     const baseTurns = [...turns, userTurn, streamingTurn];
-    patchTurns(baseTurns);
+    applyDialogExtract(baseTurns);
     setInput("");
     setCollapsed(false);
     setAgentBusy(true);
@@ -157,7 +181,7 @@ export default function StudioAgentDock({
             if (section === "supplement") supplementBuf += text;
             else answerBuf += text;
             const content = answerBuf.trim() || supplementBuf.trim();
-            patchTurns(
+            patchTurnsStreaming(
               baseTurns.map((t) =>
                 t.id === assistantId ? { ...t, content, streaming: true, intent } : t
               )
@@ -177,13 +201,11 @@ export default function StudioAgentDock({
           ? { ...t, content: finalContent, streaming: false, intent }
           : t
       );
-      patchTurns(finalTurns, done.sessionState);
-      const withVoice = mergeVoiceIntoWork(work, finalTurns);
-      if (withVoice) onPersist(withVoice);
+      applyDialogExtract(finalTurns, done.sessionState);
     } catch (err) {
       if (ac.signal.aborted) return;
       const msg = String(err instanceof Error ? err.message : err);
-      patchTurns(
+      applyDialogExtract(
         baseTurns.map((t) =>
           t.id === assistantId
             ? { ...t, content: `出错了：${msg}`, streaming: false, intent }
@@ -197,45 +219,30 @@ export default function StudioAgentDock({
     }
   }
 
-  const showBriefActions =
-    (work.status === "briefing" || work.status === "planned") && !readOnly;
-  const canWriteBrief = Boolean(suggestBriefFromTurns(work, turns).trim());
-  const threadHeight = collapsed ? 0 : panelHeight;
   const modeLabel = activeIntent ? studioAgentIntentLabel(activeIntent) : undefined;
-
-  const footerActions =
-    showBriefActions && turns.some((t) => t.role === "assistant" && !t.streaming) ? (
-      <>
-        <button
-          type="button"
-          disabled={!canWriteBrief}
-          className="rounded border border-line px-2 py-0.5 text-[10px] hover:bg-fill disabled:opacity-50"
-          onClick={() => onWriteBrief(suggestBriefFromTurns(work, turns))}
-        >
-          写入 Brief
-        </button>
-        <button
-          type="button"
-          disabled={agentBusy || parentBusy || !work.brief.trim()}
-          className="rounded bg-brand px-2 py-0.5 text-[10px] text-brand-foreground disabled:opacity-50"
-          onClick={() => void onGeneratePlan()}
-        >
-          生成计划
-        </button>
-      </>
-    ) : null;
+  const threadStyle = primary
+    ? { flex: collapsed ? "0 0 0" : "1 1 auto", minHeight: collapsed ? 0 : undefined }
+    : { height: collapsed ? 0 : panelHeight };
 
   return (
-    <div className="flex min-h-0 shrink-0 flex-col border-t border-line bg-surface">
+    <div
+      className={[
+        "flex min-h-0 flex-col border-line bg-surface",
+        primary ? "min-h-0 flex-1 border-t-0" : "shrink-0 border-t"
+      ].join(" ")}
+    >
       <div className="flex h-8 shrink-0 items-center gap-2 px-2.5 text-[10px]">
-        <button
-          type="button"
-          className="h-1 w-6 shrink-0 cursor-ns-resize rounded-full bg-line"
-          aria-label="调整高度"
-          onMouseDown={startResize}
-        />
+        {!primary ? (
+          <button
+            type="button"
+            className="h-1 w-6 shrink-0 cursor-ns-resize rounded-full bg-line"
+            aria-label="调整高度"
+            onMouseDown={startResize}
+          />
+        ) : null}
         <span className="font-medium text-ink">Agent</span>
         {modeLabel ? <span className="text-brand">{modeLabel}</span> : null}
+        <span className="text-muted">{voiceProgressLabel(work.featureCore)}</span>
         {phase ? <span className="truncate text-muted">{phase}</span> : null}
         <button
           type="button"
@@ -248,10 +255,19 @@ export default function StudioAgentDock({
 
       <div
         ref={scrollRef}
-        className="overflow-y-auto px-2.5"
-        style={{ height: threadHeight }}
-        hidden={collapsed}
+        className="flex min-h-0 flex-col overflow-y-auto px-2.5"
+        style={threadStyle}
+        hidden={collapsed && !primary}
       >
+        <StudioAgentTaskPins
+          work={work}
+          busy={agentBusy || parentBusy}
+          canPlan={canPlan}
+          canGenerate={isLoggedIn}
+          onGeneratePlan={onGeneratePlan}
+          onConfirmGenerate={onConfirmGenerate}
+        />
+
         {turns.length === 0 ? (
           <div className="flex flex-wrap gap-1 pb-2">
             {QUICK_PROMPTS.map((p) => (
@@ -279,7 +295,7 @@ export default function StudioAgentDock({
         )}
       </div>
 
-      <div className="shrink-0 px-2.5 pb-2">
+      <div className="shrink-0 px-2.5 pb-2 pt-1">
         {!isLoggedIn && ready ? (
           <p className="mb-1 text-[10px] text-warning-ink">
             <Link href="/login" className="text-brand underline">
@@ -297,7 +313,6 @@ export default function StudioAgentDock({
           disabled={!canChat}
           placeholder={agentPlaceholder(work.status)}
           modeLabel={modeLabel}
-          footerActions={footerActions}
         />
       </div>
     </div>

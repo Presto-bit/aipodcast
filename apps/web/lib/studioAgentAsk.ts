@@ -77,7 +77,7 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
     case "brief_clarify":
       return [
         "你帮助澄清本篇笔记的创作需求（受众、结构、语气、资料怎么用）。",
-        "用简短追问 + 建议 Brief 要点；可提示用户点「写入 Brief」与「生成计划」。",
+        "用简短追问收敛任务；对话会自动记录为 Brief，无需用户填表；任务清楚后提示点「生成计划」。",
         "不要输出可直接发布的完整成稿。",
         studioVoiceAgentInstructions(work)
       ].join("\n");
@@ -116,7 +116,7 @@ export function buildStudioAgentQuestion(
     intentSystemPrompt(intent, work),
     `【当前意图】${studioAgentIntentLabel(intent)}`,
     `任务状态：${work.status}`,
-    work.brief.trim() ? `Brief：${work.brief.trim()}` : "Brief：（空，可由对话写入）",
+    work.brief.trim() ? `Brief（对话已记录）：${work.brief.trim()}` : "Brief：尚未从对话收敛",
     work.binding.notebook
       ? `资料：${work.binding.notebook} · ${work.binding.noteIds.length} 篇`
       : "资料：未绑定",
@@ -129,20 +129,31 @@ export function buildStudioAgentQuestion(
   return `${lines.join("\n")}\n\n---\n用户：\n${userMessage.trim()}`;
 }
 
-/** 从对话收敛 Brief 草稿（写入 Brief 按钮） */
+/** 从对话收敛 Brief（自动同步，不在表单展示） */
 export function suggestBriefFromTurns(work: StudioWork, turns: StudioAgentTurn[]): string {
+  const texts = turns
+    .filter((t) => !t.streaming && t.content.trim())
+    .map((t) => t.content)
+    .join("\n");
+  const briefLine = texts.match(/Brief[：:]\s*([^\n]+)/i);
+  if (briefLine?.[1]) return briefLine[1].trim().slice(0, 800);
+
   const users = turns
     .filter((t) => t.role === "user" && !t.streaming)
     .map((t) => t.content.trim())
     .filter(Boolean);
   if (users.length) return users.join("；").slice(0, 800);
 
-  const lastAssistant = [...turns]
-    .reverse()
-    .find((t) => t.role === "assistant" && !t.streaming && t.content.trim());
-  if (lastAssistant) {
-    const m = lastAssistant.content.match(/Brief[：:]\s*([^\n]+)/i);
-    if (m?.[1]) return m[1].trim().slice(0, 800);
-  }
   return work.brief.trim();
+}
+
+export function mergeBriefIntoWork(work: StudioWork, turns: StudioAgentTurn[]): StudioWork | null {
+  const draft = suggestBriefFromTurns(work, turns).trim();
+  if (!draft || draft === work.brief.trim()) return null;
+  return {
+    ...work,
+    brief: draft,
+    title: draft.slice(0, 48) || work.title,
+    status: work.status === "shipped" ? work.status : work.status === "ready" ? work.status : "briefing"
+  };
 }

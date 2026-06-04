@@ -8,6 +8,7 @@ import { useNotebooksHubQuery } from "../../lib/queries/notebooksQueries";
 import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
 import { voiceProgressLabel } from "../../lib/studioVoiceFromChat";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
+import { suggestBriefFromTurns, mergeBriefIntoWork } from "../../lib/studioAgentAsk";
 import { buildPlanForWork } from "../../lib/studioWorkPlan";
 import { getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
 import type { ManuscriptBlock, StudioWork } from "../../lib/studioWorkTypes";
@@ -35,7 +36,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const [selectedPatchKeys, setSelectedPatchKeys] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notesBusy, setNotesBusy] = useState(false);
-  const [mobilePanel, setMobilePanel] = useState<"manuscript" | "corpus">("manuscript");
+  const [mobilePanel, setMobilePanel] = useState<"agent" | "corpus" | "manuscript">("agent");
   const notebooksQuery = useNotebooksHubQuery(getAuthHeaders, isLoggedIn && ready);
 
   const load = useCallback(() => {
@@ -72,8 +73,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     if (!work || !isLoggedIn) return;
     setBusy(true);
     try {
+      const synced = mergeBriefIntoWork(work, work.agentTurns ?? []) ?? work;
       const { work: planned } = await buildPlanForWork(
-        { ...work, brief: work.brief.trim() },
+        { ...synced, brief: synced.brief.trim() },
         getAuthHeaders()
       );
       persist(planned);
@@ -220,8 +222,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     );
   }
 
-  const showPlan = work.status === "planned" || (work.status === "briefing" && work.plan);
   const readOnly = work.status === "generating";
+  const hasArtifact =
+    work.versions.length > 0 ||
+    work.status === "generating" ||
+    Boolean(work.pendingPatch);
+  const canPlan = Boolean(
+    suggestBriefFromTurns(work, work.agentTurns ?? []).trim() || work.brief.trim()
+  );
 
   return (
     <main className="flex h-[calc(100svh-3.5rem)] min-h-0 flex-col overflow-hidden">
@@ -237,11 +245,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           {activeVersion ? (
             <span className="text-[11px] text-muted">{activeVersion.label}</span>
           ) : null}
-          {work.brief.trim() ? (
-            <span className="hidden max-w-[12rem] truncate text-[11px] text-muted sm:inline" title={work.brief}>
-              {work.brief}
-            </span>
-          ) : null}
           <span className="text-[11px] text-muted lg:hidden">
             料{work.binding.noteIds.length || "0"}
           </span>
@@ -249,7 +252,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             {work.status === "briefing" || work.status === "planned" ? (
               <button
                 type="button"
-                disabled={busy || !work.brief.trim()}
+                disabled={busy || !canPlan}
                 className="rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-fill disabled:opacity-50"
                 onClick={() => void onGeneratePlan()}
               >
@@ -284,7 +287,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       <div className="flex shrink-0 gap-1 border-b border-line px-3 py-1.5 lg:hidden">
         {(
           [
-            ["manuscript", "创作"],
+            ["agent", "对话"],
+            ...(hasArtifact ? ([["manuscript", "稿件"]] as const) : []),
             ["corpus", "资料"]
           ] as const
         ).map(([id, label]) => (
@@ -357,32 +361,38 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             允许通识兜底
           </label>
           <p className="mt-3 text-[10px] leading-relaxed text-muted">
-            {voiceProgressLabel(work.featureCore)} · 在底部 Agent 对话中自动收集，无需填表
+            任务与 {voiceProgressLabel(work.featureCore)} 均在「对话」里完成
           </p>
         </aside>
 
-        <section
-          className={[
-            "flex min-h-0 min-w-0 flex-1 flex-col",
-            mobilePanel === "manuscript" ? "flex" : "hidden lg:flex"
-          ].join(" ")}
-        >
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 sm:px-3">
-          {showPlan && work.plan ? (
-            <div className="mb-2 rounded-lg border border-brand/25 bg-brand/5 px-2.5 py-2 text-[11px]">
-              <p className="font-medium text-ink">{work.plan.goal}</p>
-              {work.plan.risks.length ? (
-                <p className="mt-1 text-warning-ink">{work.plan.risks.join(" · ")}</p>
-              ) : null}
-            </div>
-          ) : null}
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            className={[
+              "flex min-h-0 flex-1 flex-col",
+              mobilePanel === "agent" ? "flex" : "hidden lg:flex"
+            ].join(" ")}
+          >
+            <StudioAgentDock
+              primary
+              work={work}
+              isLoggedIn={isLoggedIn}
+              ready={ready}
+              parentBusy={busy}
+              getAuthHeaders={getAuthHeaders}
+              onPersist={persist}
+              onGeneratePlan={() => onGeneratePlan()}
+              onConfirmGenerate={() => void onConfirmGenerate()}
+            />
+          </div>
 
-          {!work.brief.trim() && (work.status === "briefing" || work.status === "planned") && !work.plan ? (
-            <p className="mb-2 text-[11px] text-muted">
-              在底部 Agent 描述需求；Voice 三问会在对话里追问。收敛后点「写入 Brief」→「生成计划」。
-            </p>
-          ) : null}
-
+          {hasArtifact ? (
+            <div
+              className={[
+                "flex min-h-0 flex-col border-t border-line lg:max-h-[42vh]",
+                mobilePanel === "manuscript" ? "flex flex-1" : "hidden lg:flex"
+              ].join(" ")}
+            >
+              <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 sm:px-3">
           <StudioManuscriptPanel
             tab={tab}
             onTabChange={setTab}
@@ -446,27 +456,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               </button>
             </div>
           ) : null}
-          </div>
-
-          <StudioAgentDock
-            work={work}
-            isLoggedIn={isLoggedIn}
-            ready={ready}
-            parentBusy={busy}
-            getAuthHeaders={getAuthHeaders}
-            onPersist={persist}
-            onWriteBrief={(brief) => {
-              const t = brief.trim();
-              if (!t) return;
-              persist({
-                ...work,
-                brief: t,
-                title: t.slice(0, 48) || work.title,
-                status: work.status === "shipped" ? work.status : "briefing"
-              });
-            }}
-            onGeneratePlan={() => onGeneratePlan()}
-          />
+              </div>
+            </div>
+          ) : null}
         </section>
       </div>
     </main>

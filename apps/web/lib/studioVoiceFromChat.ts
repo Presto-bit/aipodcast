@@ -32,8 +32,8 @@ export function studioVoiceAgentInstructions(work: StudioWork): string {
     `当前缺：${missing.map((k) => FEATURE_CORE_FIELDS.find((f) => f.key === k)?.key).join("、")}`,
     "每次最多追问 1 个 Voice 问题，语气口语、简短。",
     field ? `本轮优先问：${field.label}` : "",
-    "从用户回答中提炼后，在回复末尾附一行（有则写，无则省略）：",
-    "Voice·who：… / Voice·remember：… / Voice·avoid：…（只写本轮新确认项）"
+    "从用户回答中提炼后，在回复末尾附行（有则写）：",
+    "Brief：一句话任务；Voice·who/remember/avoid：本轮新确认项"
   ].filter(Boolean);
   return lines.join("\n");
 }

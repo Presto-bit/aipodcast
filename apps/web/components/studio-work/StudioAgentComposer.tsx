@@ -1,6 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { IconSend } from "../home/HomeComposerShell";
 import { voiceProgressLabel } from "../../lib/studioVoiceFromChat";
 import type { StudioWork } from "../../lib/studioWorkTypes";
@@ -13,8 +12,7 @@ export default function StudioAgentComposer({
   busy,
   disabled,
   placeholder,
-  modeLabel,
-  footerActions
+  modeLabel
 }: {
   work: StudioWork;
   value: string;
@@ -24,7 +22,6 @@ export default function StudioAgentComposer({
   disabled: boolean;
   placeholder: string;
   modeLabel?: string;
-  footerActions?: ReactNode;
 }) {
   const hasText = Boolean(value.trim());
   const canSend = hasText && !busy && !disabled;
@@ -37,7 +34,6 @@ export default function StudioAgentComposer({
 
   return (
     <div className="w-full">
-      {footerActions ? <div className="mb-1.5 flex flex-wrap gap-1">{footerActions}</div> : null}
       <div className="overflow-hidden rounded-lg border border-line bg-surface">
         <div className="flex items-center gap-2 border-b border-line/60 px-2.5 py-1 text-[10px] text-muted">
           {modeLabel ? (
@@ -46,11 +42,6 @@ export default function StudioAgentComposer({
           <span>小红书</span>
           <span>{voiceProgressLabel(work.featureCore)}</span>
           {corpus ? <span className="truncate">{corpus}</span> : null}
-          {work.brief.trim() ? (
-            <span className="ml-auto max-w-[40%] truncate" title={work.brief}>
-              Brief
-            </span>
-          ) : null}
         </div>
         <div className="relative px-2.5 py-1.5">
           <textarea
