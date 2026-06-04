@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useQueryClient } from "@tanstack/react-query";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import {
   useCallback,
@@ -59,8 +59,6 @@ import {
 } from "../lib/workbenchOverlays";
 import {
   APP_SHELL_MOBILE_MEDIA_QUERY,
-  NAV_SECTION_DIVIDER_COLLAPSED_CLASS,
-  NAV_SECTION_LABEL_CLASS,
   SIDEBAR_WIDTH_COLLAPSED_PX,
   SIDEBAR_WIDTH_EXPANDED_PX
 } from "../lib/appShellLayout";
@@ -109,15 +107,6 @@ function navButtonClass(active: boolean, collapsed: boolean): string {
   ].join(" ");
 }
 
-function NavSectionHeader({ collapsed, children }: { collapsed: boolean; children: React.ReactNode }) {
-  if (collapsed) return <div className={NAV_SECTION_DIVIDER_COLLAPSED_CLASS} aria-hidden />;
-  return (
-    <p className={NAV_SECTION_LABEL_CLASS} role="presentation">
-      {children}
-    </p>
-  );
-}
-
 function NavIconBox({ active, children }: { active: boolean; children: ReactNode }) {
   return (
     <span
@@ -151,6 +140,7 @@ function readVoiceTabQuery(): string | null {
 
 type StudioToolsNavExpandedProps = {
   path: string;
+  createModeQuery: string | null;
   collapsed: boolean;
   toolsSubNavExpanded: boolean;
   setToolsSubNavExpanded: Dispatch<SetStateAction<boolean>>;
@@ -167,23 +157,22 @@ function readCreateModeQuery(): string | null {
 
 function StudioToolsNavExpanded({
   path,
+  createModeQuery,
   collapsed,
   toolsSubNavExpanded,
   setToolsSubNavExpanded
 }: StudioToolsNavExpandedProps) {
   const { t } = useI18n();
   const [voiceTab, setVoiceTab] = useState<string | null>(null);
-  const [createMode, setCreateMode] = useState<string | null>(null);
 
   useEffect(() => {
     setVoiceTab(readVoiceTabQuery());
-    setCreateMode(readCreateModeQuery());
   }, [path]);
 
   const voiceManageActive =
     pathMatchesRoot(path, "/voice") && (voiceTab === null || voiceTab === "clone");
   const onCreateRoute = matchesProductStudio(path);
-  const createModeNorm = String(createMode || "").trim().toLowerCase();
+  const createModeNorm = String(createModeQuery || readCreateModeQuery() || "").trim().toLowerCase();
   const podcastStudioActive = onCreateRoute && createModeNorm !== "tts";
   const ttsStudioActive = onCreateRoute && createModeNorm === "tts";
 
@@ -263,9 +252,15 @@ function StudioToolsNavExpanded({
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const queryClient = useQueryClient();
   const path = pathname ?? "";
+  const createModeQuery = searchParams?.get("mode") ?? null;
+  const pageSuspenseKey =
+    normalizePathname(path) === "/create"
+      ? `/create?${searchParams?.toString() ?? ""}`
+      : path;
   const { ready, user, getAuthHeaders } = useAuth();
   const loggedIn = isLoggedInAccountUser(user);
 
@@ -590,7 +585,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const pageShell = (
     <AnimatedPageShell>
-      <Suspense key={path} fallback={<WorkbenchRouteSuspenseFallback />}>
+      <Suspense key={pageSuspenseKey} fallback={<WorkbenchRouteSuspenseFallback />}>
         {children}
       </Suspense>
     </AnimatedPageShell>
@@ -760,9 +755,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             renderSidebarNavItem(item)
           )
         )}
-        <NavSectionHeader collapsed={sidebarCollapsed}>{t("nav.tools")}</NavSectionHeader>
         <StudioToolsNavExpanded
           path={path}
+          createModeQuery={createModeQuery}
           collapsed={sidebarCollapsed}
           toolsSubNavExpanded={toolsSubNavExpanded}
           setToolsSubNavExpanded={setToolsSubNavExpanded}

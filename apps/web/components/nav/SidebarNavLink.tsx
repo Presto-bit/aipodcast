@@ -1,11 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ComponentProps, MouseEvent } from "react";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../lib/auth";
-import { matchesNotesWorkbench, normalizePathname, WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
+import {
+  isSameWorkbenchNavDestination,
+  matchesNotesWorkbench,
+  normalizePathname,
+  parseWorkbenchNavHref,
+  WORKBENCH_NAV_PREFETCH
+} from "../../lib/navPaths";
 import { prefetchWorkbenchRoute, type PrefetchWorkbenchRouteOptions } from "../../lib/navPrefetch";
 import { dispatchNotesNavTeardown } from "../../lib/notesLastNotebook";
 import { useWorkbenchNavOptional } from "../../lib/WorkbenchNavContext";
@@ -32,11 +38,14 @@ export default function SidebarNavLink({
   const router = useRouter();
   const queryClient = useQueryClient();
   const pathname = usePathname() ?? "";
+  const searchParams = useSearchParams();
+  const currentQuery = searchParams?.toString() ?? "";
   const { getAuthHeaders, user, ready } = useAuth();
   const workbenchNav = useWorkbenchNavOptional();
   const hrefStr = typeof href === "string" ? href : String(href);
-  const target = normalizePathname(hrefStr.split("?")[0] || hrefStr);
+  const { path: target } = parseWorkbenchNavHref(hrefStr);
   const current = normalizePathname(pathname);
+  const sameDestination = isSameWorkbenchNavDestination(hrefStr, pathname, currentQuery);
   const leavingNotes = matchesNotesWorkbench(pathname) && target !== current;
   const loggedIn = isLoggedInAccountUser(user);
   const prefetchOpts =
@@ -59,7 +68,7 @@ export default function SidebarNavLink({
     } else {
       dispatchWorkbenchDismissOverlays();
     }
-    if (target !== current) {
+    if (!sameDestination) {
       runPrefetch();
     }
     onPointerDown?.(e);
@@ -79,7 +88,13 @@ export default function SidebarNavLink({
     onClick?.(e);
     if (e.defaultPrevented) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-    if (target === current) return;
+    if (sameDestination) return;
+    if (target === current) {
+      e.preventDefault();
+      workbenchNav?.beginWorkbenchNav(hrefStr);
+      router.push(hrefStr);
+      return;
+    }
     workbenchNav?.beginWorkbenchNav(hrefStr);
   };
 

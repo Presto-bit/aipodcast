@@ -275,16 +275,16 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
     ttsMode === "single"
       ? voiceOptions.find((v) => v.key === voiceKey1)?.name ?? "音色"
       : `${voiceOptions.find((v) => v.key === voiceKey1)?.name ?? "1"}·${voiceOptions.find((v) => v.key === voiceKey2)?.name ?? "2"}`;
-  const introSummary =
-    introText.trim() ||
-    outroText.trim() ||
+  const introOutroConfigured =
+    introText.trim() !== DEFAULT_INTRO_LINE.trim() ||
+    outroText.trim() !== DEFAULT_OUTRO_LINE.trim() ||
     introBgm1Mode !== "none" ||
     introBgm2Mode !== "none" ||
     outroBgm3Mode !== "none" ||
+    Boolean(introBgm1File || introBgm2File || outroBgm3File) ||
+    Boolean(introBgm1StoredHex || introBgm2StoredHex || outroBgm3StoredHex) ||
     !introVoiceFollow ||
-    !outroVoiceFollow
-      ? "已设"
-      : "未选";
+    !outroVoiceFollow;
 
   const fetchTtsWorks = useCallback(async () => {
     setWorksError("");
@@ -934,7 +934,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                   </span>
                   <span data-tts-toolbar-chip data-tts-toolbar-chip-id="voice" className="relative inline-block align-top">
                     <button type="button" className={chipClass(activePanel === "voice")} onClick={() => setActivePanel((p) => (p === "voice" ? null : "voice"))}>
-                      音色 · {voiceSummary}
+                      {voiceSummary}
                     </button>
                     {renderFloatingPanel(
                       "voice",
@@ -969,10 +969,10 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
                   <span data-tts-toolbar-chip data-tts-toolbar-chip-id="intro" className="relative inline-flex max-w-full align-top">
                         <button
                           type="button"
-                          className={chipClass(activePanel === "intro")}
+                          className={chipClass(introOutroConfigured)}
                           onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}
                         >
-                          开场/结尾 · {introSummary}
+                          开场/结尾
                         </button>
                         {renderFloatingPanel(
                           "intro",

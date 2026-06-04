@@ -57,10 +57,16 @@ export function CreateTtsStudioIdleShell() {
               <span className={chipClass(false)}>单人</span>
             </span>
             <span className="pointer-events-none inline-block align-top opacity-80">
-              <span className={chipClass(false)}>音色 · 默认</span>
+              <span className={chipClass(false)}>默认</span>
             </span>
             <span className="pointer-events-none inline-block align-top opacity-80">
-              <span className={chipClass(false)}>开场/结尾 · 默认</span>
+              <span className={chipClass(false)}>开场/结尾</span>
+            </span>
+            <span className="pointer-events-none inline-block align-top opacity-80">
+              <span className={chipClass(false)}>口语润色</span>
+            </span>
+            <span className="pointer-events-none inline-block align-top opacity-80">
+              <span className={chipClass(false)}>生成封面</span>
             </span>
           </div>
           <p className="text-[11px] leading-snug text-muted">正在加载完整工作台…</p>

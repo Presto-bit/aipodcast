@@ -440,6 +440,7 @@ export default function CreatePage() {
               {mode === "podcast" ? (
                 loadHeavyStudio ? (
                   <PodcastStudio
+                    key="podcast-studio"
                     embedded
                     blendOuterCard
                     contentText={draftText}
@@ -455,6 +456,7 @@ export default function CreatePage() {
                 )
               ) : loadHeavyStudio ? (
                 <TtsStudio
+                  key="tts-studio"
                   embedded
                   blendOuterCard
                   contentText={draftText}

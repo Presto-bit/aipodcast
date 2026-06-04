@@ -1415,7 +1415,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
                       <>
                         <button
                           type="button"
-                          className={chipClass(activePanel === "intro" || introOutroConfigured)}
+                          className={chipClass(introOutroConfigured)}
                           onClick={() => setActivePanel((p) => (p === "intro" ? null : "intro"))}
                         >
                           开场/结尾

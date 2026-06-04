@@ -19,6 +19,26 @@ export function normalizePathname(p: string): string {
   return p;
 }
 
+/** 侧栏 / 软路由：比较 path + query，避免同 pathname 不同 query（如 create mode）被误判为同页。 */
+export function parseWorkbenchNavHref(href: string): { path: string; query: string } {
+  const [pathPart, queryPart = ""] = href.split("?");
+  return {
+    path: normalizePathname(pathPart || href),
+    query: queryPart.trim()
+  };
+}
+
+export function isSameWorkbenchNavDestination(
+  href: string,
+  pathname: string,
+  currentQuery: string
+): boolean {
+  const target = parseWorkbenchNavHref(href);
+  const currentPath = normalizePathname(pathname);
+  const q = currentQuery.replace(/^\?/, "").trim();
+  return target.path === currentPath && target.query === q;
+}
+
 export function pathMatchesRoot(pathname: string, base: string): boolean {
   const n = normalizePathname(pathname);
   const b = normalizePathname(base);
