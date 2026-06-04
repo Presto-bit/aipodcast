@@ -13,6 +13,7 @@ import { buildPlanForWork } from "../../lib/studioWorkPlan";
 import { getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
 import type { ManuscriptBlock, StudioWork } from "../../lib/studioWorkTypes";
 import { workStatusLabel } from "../../lib/studioWorkTypes";
+import StudioAgentDock from "./StudioAgentDock";
 import StudioManuscriptPanel from "./StudioManuscriptPanel";
 
 async function fetchNotebookNoteIds(
@@ -383,10 +384,16 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
         <section
           className={[
-            "flex min-h-0 min-w-0 flex-1 flex-col px-3 py-3 sm:px-4",
-            mobilePanel === "manuscript" ? "flex" : "hidden lg:flex"
+            "flex min-h-0 min-w-0 flex-1 flex-col",
+            mobilePanel === "manuscript" || mobilePanel === "agent" ? "flex" : "hidden lg:flex"
           ].join(" ")}
         >
+          <div
+            className={[
+              "min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4",
+              mobilePanel === "agent" ? "hidden lg:block" : ""
+            ].join(" ")}
+          >
           {(work.status === "briefing" || work.status === "planned") && !work.plan ? (
             <div className="mb-4 rounded-xl border border-line bg-fill/30 p-4">
               <label className="block text-sm font-medium text-ink">任务说明（Brief）</label>
@@ -510,17 +517,76 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               </div>
             </div>
           ) : null}
+          </div>
+
+          <div className={mobilePanel === "agent" ? "hidden lg:contents" : "contents"}>
+            <StudioAgentDock
+              work={work}
+              isLoggedIn={isLoggedIn}
+              ready={ready}
+              parentBusy={busy}
+              getAuthHeaders={getAuthHeaders}
+              onPersist={persist}
+              onWriteBrief={(brief) => {
+                const t = brief.trim();
+                if (!t) return;
+                persist({
+                  ...work,
+                  brief: t,
+                  title: t.slice(0, 48) || work.title,
+                  status: work.status === "shipped" ? work.status : "briefing"
+                });
+              }}
+              onGeneratePlan={() => onGeneratePlan()}
+            />
+          </div>
+          {mobilePanel === "agent" ? (
+            <div className="flex min-h-0 flex-1 flex-col lg:hidden">
+              <StudioAgentDock
+                expanded
+                work={work}
+                isLoggedIn={isLoggedIn}
+                ready={ready}
+                parentBusy={busy}
+                getAuthHeaders={getAuthHeaders}
+                onPersist={persist}
+                onWriteBrief={(brief) => {
+                  const t = brief.trim();
+                  if (!t) return;
+                  persist({
+                    ...work,
+                    brief: t,
+                    title: t.slice(0, 48) || work.title,
+                    status: work.status === "shipped" ? work.status : "briefing"
+                  });
+                }}
+                onGeneratePlan={() => onGeneratePlan()}
+              />
+            </div>
+          ) : null}
         </section>
 
         <aside
           className={[
             "w-full shrink-0 border-l border-line p-3 xl:block xl:w-72",
-            mobilePanel === "agent" ? "block" : "hidden xl:block"
+            mobilePanel === "agent" ? "hidden" : "hidden xl:block"
           ].join(" ")}
         >
-          <p className="text-xs font-medium text-muted">助手</p>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
-            Plan 与生成进度见中栏。需要纯聊天请用{" "}
+          <p className="text-xs font-medium text-ink">Plan / Runs</p>
+          {work.plan ? (
+            <div className="mt-2 rounded-lg border border-line bg-fill/20 p-2 text-[11px] text-muted">
+              <p className="font-medium text-ink">{work.plan.goal}</p>
+              <ul className="mt-1 list-inside list-disc">
+                {work.plan.outline.slice(0, 4).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="mt-2 text-[11px] text-muted">生成计划后在此查看摘要；需求澄清请用中栏底部 Agent。</p>
+          )}
+          <p className="mt-3 text-[11px] leading-relaxed text-muted">
+            纯问答无 Work 时用{" "}
             <Link href="/chat" className="text-brand">
               经典对话
             </Link>

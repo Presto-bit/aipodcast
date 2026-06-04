@@ -1,6 +1,15 @@
 /** 写作 Studio — Work / Manuscript 类型（对齐 docs/product/writing-cursor-studio.md） */
 
 import type { FeatureCore } from "./homeComposerExpertTypes";
+import type { NotesAskSessionState } from "./notesAskMemoryTypes";
+
+export type StudioAgentTurn = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+  streaming?: boolean;
+};
 
 export type StudioChannel = "xhs";
 
@@ -57,6 +66,9 @@ export type StudioWork = {
   lastJobId?: string;
   runPhase?: string;
   error?: string;
+  /** 底部 Agent 对话（需求澄清；不替代 Brief/Plan 门禁） */
+  agentTurns: StudioAgentTurn[];
+  agentSessionState?: NotesAskSessionState | null;
   updatedAt: number;
   createdAt: number;
 };

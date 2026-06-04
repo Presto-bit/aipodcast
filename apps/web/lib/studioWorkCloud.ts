@@ -8,12 +8,20 @@ import type { StudioWork } from "./studioWorkTypes";
 
 export const STUDIO_WORKS_STORAGE_KEY = "fym_studio_works_v1";
 
+function normalizeStudioWork(w: StudioWork): StudioWork {
+  return {
+    ...w,
+    agentTurns: Array.isArray(w.agentTurns) ? w.agentTurns : [],
+    agentSessionState: w.agentSessionState ?? null
+  };
+}
+
 export function readStudioWorksBlob(): StudioWork[] {
   const raw = readLocalStorageScoped(STUDIO_WORKS_STORAGE_KEY);
   if (!raw?.trim()) return [];
   try {
     const parsed = JSON.parse(raw) as StudioWork[];
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.map(normalizeStudioWork) : [];
   } catch {
     return [];
   }

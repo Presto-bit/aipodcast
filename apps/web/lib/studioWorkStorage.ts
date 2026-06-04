@@ -69,6 +69,8 @@ export function createStudioWork(params?: {
     versions: [],
     activeVersionId: "",
     shipChecks: {},
+    agentTurns: [],
+    agentSessionState: null,
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
