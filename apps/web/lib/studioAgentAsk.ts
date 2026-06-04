@@ -70,17 +70,24 @@ export function studioTurnsToMemoryTurns(turns: StudioAgentTurn[]): NotesAskMemo
 function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string {
   switch (intent) {
     case "ops_strategy":
-      return [
-        "你是内容运营策略顾问，按用户提出的渠道与目标作答（勿默认假定平台）。",
-        "用户问运营、增长、发布节奏、互动、数据复盘、起号、对标时：给出可执行、分点的建议。",
-        "禁止推脱；不要代替「确认执行」产出完整成稿；需成稿时提示回复「确认任务」。"
-      ].join("\n");
+      return work.status === "ready" || work.status === "shipped"
+        ? [
+            "你是内容运营策略顾问，结合当前稿件与渠道作答。",
+            "勿提示「确认任务」、生成计划或确认执行。"
+          ].join("\n")
+        : [
+            "你是内容运营策略顾问，按用户提出的渠道与目标作答（勿默认假定平台）。",
+            "用户问运营、增长、发布节奏、互动、数据复盘、起号、对标时：给出可执行、分点的建议。",
+            "禁止推脱；不要代替 Job 产出完整成稿；任务清楚后提示回复「确认任务」。"
+          ].join("\n");
     case "brief_clarify":
-      return [
-        "你帮助澄清用户想创作的内容（形式、受众、结构、语气、资料怎么用）。",
-        "用简短追问收敛；任务清楚后请用户回复「确认任务」。",
-        "不要输出可直接发布的完整成稿。"
-      ].join("\n");
+      return work.status === "ready" || work.status === "shipped"
+        ? "围绕已生成稿件回答澄清类问题；勿再提示「确认任务」或生成计划。"
+        : [
+            "你帮助澄清用户想创作的内容（形式、受众、结构、语气、资料怎么用）。",
+            "用简短追问收敛；任务清楚后请用户回复「确认任务」。",
+            "不要输出可直接发布的完整成稿。"
+          ].join("\n");
     case "manuscript_coach":
       return [
         "你解读【当前稿件】：结构、语气、与资料/我的特色是否一致、发布注意点。",
@@ -97,10 +104,12 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
         "若需实际改稿，提示用户在下方输入框直接说改版要求（将自动执行）。"
       ].join("\n");
     default:
-      return [
-        "你是写作 Studio 创作助手，围绕本 Work 的用户任务作答。",
-        "涉及成稿：提示「确认任务」→ 输出区「确认执行」。"
-      ].join("\n");
+      return work.status === "ready" || work.status === "shipped"
+        ? "你是写作 Studio 创作助手，围绕本 Work 与当前稿件作答；勿提示确认任务或生成计划。"
+        : [
+            "你是写作 Studio 创作助手，围绕本 Work 的用户任务作答。",
+            "需成稿时提示用户回复「确认任务」，系统将自动计划并写稿。"
+          ].join("\n");
   }
 }
 
@@ -128,7 +137,7 @@ export function buildStudioAskContext(
     `任务状态：${work.status}`,
     task ? `任务要点：${task}` : "任务：用户尚未描述清楚",
     corpusBindingLine(work),
-    work.plan?.goal ? `计划目标：${work.plan.goal}` : "",
+    work.status === "planned" && work.plan?.goal ? `计划目标：${work.plan.goal}` : "",
     manuscript
   ].filter(Boolean);
 

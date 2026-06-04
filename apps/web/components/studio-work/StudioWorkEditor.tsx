@@ -77,6 +77,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         {
           ...withRun,
           status: "generating",
+          plan: undefined,
           error: undefined,
           allowModelFallback: true,
           brief: taskSentence
@@ -133,6 +134,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           {
             ...cur,
             status: "ready",
+            plan: undefined,
             versions: [...cur.versions, version],
             activeVersionId: versionId,
             lastJobId: result.jobId,

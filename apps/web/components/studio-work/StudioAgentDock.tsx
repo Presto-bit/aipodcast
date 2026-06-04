@@ -163,10 +163,11 @@ export default function StudioAgentDock({
 
   function applyDialogExtract(
     nextTurns: StudioAgentTurn[],
-    sessionState: typeof work.agentSessionState = work.agentSessionState ?? null
+    sessionState: typeof work.agentSessionState = work.agentSessionState ?? null,
+    workBase: StudioWork = work
   ) {
     let next: StudioWork = {
-      ...work,
+      ...workBase,
       agentTurns: nextTurns,
       agentSessionState: sessionState ?? null,
       allowModelFallback: true
@@ -174,8 +175,8 @@ export default function StudioAgentDock({
     onPersist(syncWorkTitleFromTurns(next, nextTurns));
   }
 
-  function patchTurnsStreaming(nextTurns: StudioAgentTurn[]) {
-    onPersist({ ...work, agentTurns: nextTurns });
+  function patchTurnsStreaming(nextTurns: StudioAgentTurn[], workBase: StudioWork = work) {
+    onPersist({ ...workBase, agentTurns: nextTurns });
   }
 
   async function runAgentTurn(
@@ -201,7 +202,7 @@ export default function StudioAgentDock({
       intent
     };
     const baseTurns = [...prefixTurns, streamingTurn];
-    applyDialogExtract(baseTurns);
+    applyDialogExtract(baseTurns, workBase.agentSessionState ?? null, workBase);
     setAgentBusy(true);
     setPhase("");
 
@@ -257,7 +258,8 @@ export default function StudioAgentDock({
             patchTurnsStreaming(
               baseTurns.map((t) =>
                 t.id === assistantId ? { ...t, content, streaming: true, intent } : t
-              )
+              ),
+              workBase
             );
           }
         }
@@ -274,7 +276,7 @@ export default function StudioAgentDock({
           ? { ...t, content: finalContent, streaming: false, intent }
           : t
       );
-      applyDialogExtract(finalTurns, done.sessionState);
+      applyDialogExtract(finalTurns, done.sessionState, workBase);
       onPersist({ ...workBase, agentTurns: finalTurns, error: undefined });
     } catch (err) {
       if (ac.signal.aborted) return;
@@ -375,9 +377,20 @@ export default function StudioAgentDock({
     }
   }
 
+  function interruptAgentStreams() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setAgentBusy(false);
+    setPhase("");
+    if (work.postDoneCoachStreaming) {
+      onPersist({ ...work, postDoneCoachStreaming: false });
+    }
+  }
+
   async function handleSend(overrideText?: string) {
     const q = (overrideText ?? input).trim();
-    if (!q || !canChat || agentBusy) return;
+    if (!q || !canChat) return;
+    if (agentBusy) interruptAgentStreams();
     setInput("");
 
     const route = routeStudioAction(work, q, turns);

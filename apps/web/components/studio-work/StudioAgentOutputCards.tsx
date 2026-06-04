@@ -13,7 +13,7 @@ const NotesAskAnswerMarkdownBody = dynamic(
 function outputHeading(work: StudioWork, compareMode: boolean): string | null {
   if (compareMode) return "改版预览";
   if (work.status === "generating") return "生成中";
-  if (work.status === "planned" && work.plan) return "计划";
+  if (work.status === "planned" && work.plan && work.versions.length === 0) return "计划";
   if (
     work.versions.length > 0 &&
     (work.status === "ready" || work.status === "shipped" || work.pendingPatch)
@@ -81,7 +81,9 @@ export default function StudioAgentOutputCards({
     );
   }
 
-  if (work.status === "planned" && plan && !busy) {
+  const showPlanArtifact =
+    work.status === "planned" && Boolean(plan) && work.versions.length === 0;
+  if (showPlanArtifact) {
     body.push(
       <div key="plan" className="space-y-2 text-[13px]">
         <p className="font-medium text-ink">{plan.goal}</p>

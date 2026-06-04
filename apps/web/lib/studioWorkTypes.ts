@@ -120,7 +120,7 @@ export function workStatusLabel(status: WorkStatus): string {
     case "briefing":
       return "撰写需求";
     case "planned":
-      return "待确认计划";
+      return "准备写稿";
     case "generating":
       return "生成中";
     case "ready":
