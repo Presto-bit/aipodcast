@@ -59,7 +59,7 @@ export function createStudioWork(params?: {
   const work: StudioWork = {
     id,
     channel: "xhs",
-    title: brief.slice(0, 40) || "新小红书任务",
+    title: brief.slice(0, 40) || "新任务",
     brief,
     status: brief ? "briefing" : "briefing",
     binding: inherited.binding,

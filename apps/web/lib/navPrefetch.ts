@@ -85,7 +85,7 @@ export function warmWorkbenchRouteChunks(href: string) {
   if (!path) return;
 
   if (path === WORKBENCH_STUDIO_PATH) {
-    warmChunk("studio-works-list", () => import("../components/studio-work/StudioWorksListClient"));
+    warmChunk("studio-work-editor", () => import("../components/studio-work/StudioWorkEditor"));
   }
   if (pathMatchesRoot(path, WORKBENCH_STUDIO_PATH) && path !== WORKBENCH_STUDIO_PATH) {
     warmChunk("studio-work-editor", () => import("../components/studio-work/StudioWorkEditor"));

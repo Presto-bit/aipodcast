@@ -50,13 +50,6 @@ export default function StudioSessionRail({
         >
           +
         </button>
-        <Link
-          href={WORKBENCH_STUDIO_PATH}
-          title="全部"
-          className="rounded-md p-1.5 text-[10px] text-muted hover:text-brand"
-        >
-          ≡
-        </Link>
       </aside>
     );
   }
@@ -103,11 +96,6 @@ export default function StudioSessionRail({
         {works.length === 0 ? (
           <p className="px-1 text-[11px] text-muted">暂无任务，点 New Agent 开始</p>
         ) : null}
-      </div>
-      <div className="border-t border-line p-2">
-        <Link href={WORKBENCH_STUDIO_PATH} className="text-[11px] text-muted hover:text-brand">
-          创作首页
-        </Link>
       </div>
     </aside>
   );

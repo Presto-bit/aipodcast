@@ -19,15 +19,19 @@ import StudioAgentOutputCards from "./StudioAgentOutputCards";
 import StudioCorpusBar from "./StudioCorpusBar";
 
 const QUICK_PROMPTS = [
-  "我想写一篇清单体小红书，受众是产品新人",
-  "这篇笔记发布节奏和互动策略怎么定",
+  "我想写一篇清单体内容，受众是产品新人",
+  "帮我理清这篇要写什么、结构怎么搭",
   "开头钩子怎么写更抓人"
 ] as const;
+
+const CONFIRM_TASK_RE =
+  /^(确认任务|确认|就按这个|就这样|可以了|开始生成|生成计划)/;
 
 function agentPlaceholder(status: WorkStatus): string {
   if (status === "generating") return "生成中…";
   if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
-  return "Plan, @ for context — 描述想写的笔记…";
+  if (status === "planned") return "可继续补充说明，或点下方「确认执行」…";
+  return "描述你想创作的内容与目标…";
 }
 
 export default function StudioAgentDock({
@@ -73,6 +77,7 @@ export default function StudioAgentDock({
   const readOnly = work.status === "generating" || parentBusy;
   const canChat = isLoggedIn && ready && !readOnly;
   const canPlan = Boolean(suggestBriefFromTurns(work, turns).trim() || work.brief.trim());
+  const showQuickPrompts = turns.length === 0 && work.status === "briefing";
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -178,6 +183,15 @@ export default function StudioAgentDock({
           : t
       );
       applyDialogExtract(finalTurns, done.sessionState);
+      if (
+        onGeneratePlan &&
+        !work.plan &&
+        work.status === "briefing" &&
+        CONFIRM_TASK_RE.test(q) &&
+        canPlan
+      ) {
+        void onGeneratePlan();
+      }
     } catch (err) {
       if (ac.signal.aborted) return;
       const msg = String(err instanceof Error ? err.message : err);
@@ -198,21 +212,7 @@ export default function StudioAgentDock({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div ref={scrollRef} className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-y-auto px-3 py-3">
-        {turns.length === 0 ? (
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            {QUICK_PROMPTS.map((p) => (
-              <button
-                key={p}
-                type="button"
-                disabled={!canChat}
-                className="rounded-full border border-line px-3 py-1 text-xs text-ink hover:bg-fill disabled:opacity-50"
-                onClick={() => void handleSend(p)}
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-        ) : (
+        {turns.length > 0 ? (
           <div className="space-y-3">
             {turns.map((turn) => (
               <StudioAgentMessage
@@ -222,16 +222,14 @@ export default function StudioAgentDock({
               />
             ))}
           </div>
-        )}
+        ) : null}
 
         <StudioAgentOutputCards
           work={work}
           busy={agentBusy || parentBusy}
           isLoggedIn={isLoggedIn}
-          canPlan={canPlan}
           reviseText={reviseText}
           onReviseTextChange={onReviseTextChange}
-          onGeneratePlan={onGeneratePlan}
           onConfirmGenerate={onConfirmGenerate}
           onRevise={onRevise}
           onApplyPatch={onApplyPatch}
@@ -250,6 +248,21 @@ export default function StudioAgentDock({
               </Link>
               后可用
             </p>
+          ) : null}
+          {showQuickPrompts ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {QUICK_PROMPTS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  disabled={!canChat}
+                  className="rounded-full border border-line px-3 py-1 text-xs text-ink hover:bg-fill disabled:opacity-50"
+                  onClick={() => void handleSend(p)}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
           ) : null}
           <StudioAgentComposer
             value={input}

@@ -55,7 +55,7 @@ export async function buildPlanForWork(
   ].filter(Boolean);
 
   const plan: StudioPlan = {
-    goal: taskSentence || "可发的小红书笔记",
+    goal: taskSentence || "待用户描述的创作任务",
     outline,
     materialLabels,
     materialCount,

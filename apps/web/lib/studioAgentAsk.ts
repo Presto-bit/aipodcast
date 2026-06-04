@@ -62,22 +62,21 @@ export function studioTurnsToMemoryTurns(turns: StudioAgentTurn[]): NotesAskMemo
 }
 
 function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string {
-  const channel = "小红书";
   switch (intent) {
     case "ops_strategy":
       return [
-        `你是${channel}运营策略顾问（本 Work 的渠道顾问）。`,
-        "用户问运营、增长、发布节奏、互动、数据复盘、起号、对标时：给出可执行、分点的建议，并结合下方 Brief/资料/Voice。",
+        "你是内容运营策略顾问，按用户提出的渠道与目标作答（勿默认假定平台）。",
+        "用户问运营、增长、发布节奏、互动、数据复盘、起号、对标时：给出可执行、分点的建议，并结合下方任务记录/资料/Voice。",
         "禁止回复「我无法做运营策略/不能回答运营」等推脱；这是你的主职责之一。",
-        "不要代替「确认生成」产出完整替代稿；若用户要成稿，提示先收敛 Brief 再点顶栏「确认生成」。",
+        "不要代替「确认执行」产出完整成稿；若用户要成稿，提示先收敛任务后回复「确认任务」。",
         isFeatureCoreComplete(work.featureCore) ? "" : studioVoiceAgentInstructions(work)
       ]
         .filter(Boolean)
         .join("\n");
     case "brief_clarify":
       return [
-        "你帮助澄清本篇笔记的创作需求（受众、结构、语气、资料怎么用）。",
-        "用简短追问收敛任务；对话会自动记录为 Brief，无需用户填表；任务清楚后提示点「生成计划」。",
+        "你帮助澄清用户想创作的内容（形式、受众、结构、语气、资料怎么用）；需求由用户提出，勿替用户选定渠道或体裁。",
+        "用简短追问收敛任务；对话会自动记录，无需用户填表；任务清楚后请用户回复「确认任务」以进入执行确认。",
         "不要输出可直接发布的完整成稿。",
         studioVoiceAgentInstructions(work)
       ].join("\n");
@@ -93,9 +92,9 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
       ].join("\n");
     default:
       return [
-        "你是写作 Studio 创作助手，围绕本 Work 的小红书任务回答问题。",
+        "你是写作 Studio 创作助手，围绕本 Work 的用户任务作答（渠道与体裁以用户描述为准）。",
         "尽力作答；不要默认拒绝。仅在大模型/平台确实无法做到时（如未授权实时数据、违法内容）简短说明。",
-        "涉及成稿生成时提醒：需用户确认计划后点「确认生成」。",
+        "涉及成稿生成时提醒：任务清楚后请用户回复「确认任务」，再在输出区「确认执行」。",
         studioVoiceAgentInstructions(work)
       ].join("\n");
   }

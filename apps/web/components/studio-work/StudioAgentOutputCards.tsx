@@ -2,17 +2,14 @@
 
 import type { ReactNode } from "react";
 import type { StudioWork } from "../../lib/studioWorkTypes";
-import { suggestBriefFromTurns } from "../../lib/studioAgentAsk";
 
-/** Cursor 风格：确认、计划、进度、改版等均在输出区以卡片呈现 */
+/** 输出区：仅在计划就绪后展示任务确认与执行；对话阶段不展示 Brief */
 export default function StudioAgentOutputCards({
   work,
   busy,
   isLoggedIn,
-  canPlan,
   reviseText,
   onReviseTextChange,
-  onGeneratePlan,
   onConfirmGenerate,
   onRevise,
   onApplyPatch,
@@ -23,10 +20,8 @@ export default function StudioAgentOutputCards({
   work: StudioWork;
   busy: boolean;
   isLoggedIn: boolean;
-  canPlan: boolean;
   reviseText: string;
   onReviseTextChange: (v: string) => void;
-  onGeneratePlan?: () => void;
   onConfirmGenerate?: () => void;
   onRevise?: () => void;
   onApplyPatch?: (partial: boolean) => void;
@@ -34,58 +29,27 @@ export default function StudioAgentOutputCards({
   selectedPatchCount?: number;
   onMarkShipped?: () => void;
 }) {
-  const brief = work.brief.trim();
   const plan = work.plan;
   const cards: ReactNode[] = [];
 
-  if (brief) {
+  if (work.status === "planned" && plan && onConfirmGenerate) {
     cards.push(
-      <OutputCard key="brief" title="任务摘要">
-        <p className="leading-relaxed text-ink">{brief}</p>
-      </OutputCard>
-    );
-  }
-
-  if (plan) {
-    cards.push(
-      <OutputCard key="plan" title="计划">
+      <OutputCard key="confirm-exec" title="确认执行">
         <p className="font-medium text-ink">{plan.goal}</p>
-        <ul className="mt-1.5 list-inside list-disc text-muted">
-          {plan.outline.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
+        {plan.outline.length ? (
+          <ul className="mt-1.5 list-inside list-disc text-muted">
+            {plan.outline.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        ) : null}
         {plan.risks.length ? (
           <p className="mt-2 text-warning-ink">{plan.risks.join(" · ")}</p>
         ) : null}
-      </OutputCard>
-    );
-  }
-
-  if ((work.status === "briefing" || work.status === "planned") && !plan && onGeneratePlan) {
-    const draft = suggestBriefFromTurns(work, work.agentTurns ?? []);
-    cards.push(
-      <OutputCard key="plan-cta" title="下一步">
-        <p className="text-muted">对话已足够时，可生成结构化计划。</p>
-        {draft && !brief ? (
-          <p className="mt-1 text-ink">{draft}</p>
-        ) : null}
-        <ActionRow>
-          <PrimaryButton disabled={busy || !canPlan || !isLoggedIn} onClick={onGeneratePlan}>
-            生成计划
-          </PrimaryButton>
-        </ActionRow>
-      </OutputCard>
-    );
-  }
-
-  if (work.status === "planned" && onConfirmGenerate) {
-    cards.push(
-      <OutputCard key="confirm-gen" title="确认生成">
-        <p className="text-muted">请确认计划后再生成稿件（将产生可编辑版本）。</p>
+        <p className="mt-2 text-muted">请确认以上任务后开始生成稿件。</p>
         <ActionRow>
           <PrimaryButton disabled={busy || !isLoggedIn} onClick={onConfirmGenerate}>
-            确认生成
+            确认执行
           </PrimaryButton>
         </ActionRow>
       </OutputCard>

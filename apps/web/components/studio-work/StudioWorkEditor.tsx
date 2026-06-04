@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { deliverableToManuscriptBlocks, diffBlockKeys, mergeBlocks, nextVersionLabel } from "../../lib/studioDeliverable";
-import { suggestBriefFromTurns, mergeBriefIntoWork } from "../../lib/studioAgentAsk";
+import { mergeBriefIntoWork } from "../../lib/studioAgentAsk";
 import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
 import { buildPlanForWork } from "../../lib/studioWorkPlan";
@@ -212,8 +212,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const hasArtifact =
     work.versions.length > 0 || work.status === "generating" || Boolean(work.pendingPatch);
   const readOnly = work.status === "generating";
-  const canPlan = Boolean(suggestBriefFromTurns(work, work.agentTurns ?? []).trim() || work.brief.trim());
-
   return (
     <main className="flex h-[calc(100svh-3.5rem)] min-h-0 overflow-hidden">
       <div className="hidden lg:contents">
