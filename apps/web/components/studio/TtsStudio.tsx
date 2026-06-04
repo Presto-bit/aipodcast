@@ -155,7 +155,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
   const [introBgm2StoredHex, setIntroBgm2StoredHex] = useState<string | null>(null);
   const [outroBgm3StoredHex, setOutroBgm3StoredHex] = useState<string | null>(null);
   const [introOutroHydrated, setIntroOutroHydrated] = useState(false);
-  const [generateCover, setGenerateCover] = useState(true);
+  const [generateCover, setGenerateCover] = useState(false);
   /** 默认关闭：仅用户打开开关时才会在任务 payload 中携带 ai_polish；不会在未点击「口语润色」时自动润色 */
   const [aiPolish, setAiPolish] = useState(false);
   const [busy, setBusy] = useState(false);
