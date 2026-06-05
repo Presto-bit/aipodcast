@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..composer_expert.manuscript_stream import iter_studio_manuscript_stream
+from ..studio.agent_stream import iter_studio_agent_stream
 from ..security import verify_internal_signature
 
 router = APIRouter(
@@ -45,6 +46,51 @@ class StudioManuscriptStreamBody(BaseModel):
     source_type: str = Field(default="composer_prompt", alias="sourceType")
 
     model_config = {"populate_by_name": True}
+
+
+class StudioAgentStreamBody(BaseModel):
+    message: str = ""
+    user_message: str = Field(default="", alias="userMessage")
+    agent_turns: list[dict[str, Any]] = Field(default_factory=list, alias="agentTurns")
+    status: str = "draft"
+    version_count: int = Field(default=0, alias="versionCount")
+    task_sentence: str = Field(default="", alias="taskSentence")
+    intake: dict[str, Any] = Field(default_factory=dict)
+    notebook: str = ""
+    note_ids: list[str] = Field(default_factory=list, alias="noteIds")
+    feature_core: dict[str, Any] = Field(default_factory=dict, alias="featureCore")
+    style_prompt: str = Field(default="", alias="stylePrompt")
+    author_prompt: str = Field(default="", alias="authorPrompt")
+    use_rag: bool = Field(default=True, alias="useRag")
+    rag_max_chars: int = Field(default=56000, alias="ragMaxChars")
+    source_type: str = Field(default="composer_prompt", alias="sourceType")
+
+    model_config = {"populate_by_name": True}
+
+
+@router.post("/agent/stream")
+def studio_agent_stream_api(body: StudioAgentStreamBody, request: Request):
+    """Studio 单 Agent SSE：session | reply | phase | block_delta | done | error。"""
+    user_ref = _current_user_ref_or_401(request)
+    payload = body.model_dump(by_alias=True)
+    if not payload.get("message"):
+        payload["message"] = payload.get("userMessage") or ""
+
+    def gen():
+        try:
+            yield from iter_studio_agent_stream(payload=payload, user_ref=user_ref)
+        except Exception as exc:
+            yield "data: " + json.dumps({"type": "error", "message": str(exc)[:500]}, ensure_ascii=False) + "\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/manuscript/stream")

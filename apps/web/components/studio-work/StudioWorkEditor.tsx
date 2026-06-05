@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import {
-  deliverableToManuscriptBlocks,
   diffBlockKeys,
   mergeBlocks,
   manuscriptCopyAll,
@@ -27,13 +26,28 @@ import {
   patchStudioGeneratePhase
 } from "../../lib/studioOrchestrator";
 import { resolveJobAnchorTurnId } from "../../lib/studioTimeline";
-import { streamStudioManuscript } from "../../lib/studioManuscriptStream";
+import { streamStudioAgent } from "../../lib/studioAgentStream";
+import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
 import { taskSentenceFromWork } from "../../lib/studioWorkTask";
-import type { ManuscriptBlock, StudioWork } from "../../lib/studioWorkTypes";
+import type {
+  ManuscriptBlock,
+  ManuscriptVersion,
+  PendingPatch,
+  StudioAgentTurn,
+  StudioWork,
+  WorkStatus
+} from "../../lib/studioWorkTypes";
 import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
 import StudioAgentDock from "./StudioAgentDock";
 import StudioDraftCanvas from "./StudioDraftCanvas";
 import StudioSessionRail from "./StudioSessionRail";
+
+type CanvasSnapshot = {
+  versions: ManuscriptVersion[];
+  activeVersionId: string;
+  pendingPatch?: PendingPatch;
+  status: WorkStatus;
+};
 
 export default function StudioWorkEditor({ workId }: { workId: string }) {
   const router = useRouter();
@@ -47,6 +61,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const reviseQueueRef = useRef<string[]>([]);
   const jobRunningRef = useRef(false);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const canvasSnapshotsRef = useRef<Map<string, CanvasSnapshot>>(new Map());
+  const undoStackRef = useRef<ManuscriptBlock[][]>([]);
+  const [canUndoPatch, setCanUndoPatch] = useState(false);
 
   const load = useCallback(() => {
     const w = getStudioWork(workId);
@@ -89,77 +106,202 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     return saved;
   }
 
-  const runStreamManuscript = useCallback(
-    async (taskSentence: string, runTool: "generate" | "revise", anchorTool: "generate" | "revise") => {
+  const cancelAgentStream = useCallback(() => {
+    streamAbortRef.current?.abort();
+  }, []);
+
+  const restoreCanvasBeforeTurn = useCallback(
+    (turnId: string) => {
+      const snap = canvasSnapshotsRef.current.get(turnId);
+      const cur = getStudioWork(workId);
+      if (!snap || !cur) return;
+      persist({
+        ...cur,
+        versions: snap.versions,
+        activeVersionId: snap.activeVersionId,
+        pendingPatch: snap.pendingPatch,
+        status: snap.status,
+        error: undefined,
+        runPhase: undefined
+      });
+      setStreamingBlocks(null);
+    },
+    [workId]
+  );
+
+  const runAgentStream = useCallback(
+    async (params: {
+      userText: string;
+      prefixTurns: StudioAgentTurn[];
+      userTurnId: string;
+    }) => {
       const cur = getStudioWork(workId);
       if (!cur || !isLoggedIn) return;
 
+      canvasSnapshotsRef.current.set(params.userTurnId, {
+        versions: cur.versions,
+        activeVersionId: cur.activeVersionId,
+        pendingPatch: cur.pendingPatch,
+        status: cur.status
+      });
+
+      const taskSentence = taskSentenceFromWork({ ...cur, agentTurns: params.prefixTurns });
       const intake = buildStudioJobIntake(taskSentence, cur.intake);
       const authorPrompt = buildStudioAuthorPrompt(taskSentenceFromWork(cur) || taskSentence);
-      const latest = persist({ ...cur, intake, brief: taskSentenceFromWork(cur) || taskSentence });
 
-      const anchorTurnId = resolveJobAnchorTurnId(latest.agentTurns, anchorTool);
-      const { work: withRun, runId } = appendStudioRun(latest, runTool, runTool === "generate" ? "写稿中" : "改版中…", "running", {
-        anchorTurnId
-      });
-      persist(
-        patchStudioGeneratePhase(
-          {
-            ...withRun,
-            status: "generating",
-            plan: undefined,
-            error: undefined,
-            pendingPatch: undefined,
-            allowModelFallback: true
-          },
-          runId,
-          runTool === "generate" ? "写稿中" : "改版中…"
-        )
-      );
+      const baseVersion =
+        cur.versions.find((v) => v.id === cur.activeVersionId) ?? cur.versions.at(-1);
+      const isReviseIntent =
+        Boolean(baseVersion) &&
+        /改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化/.test(
+          params.userText
+        );
+      const effectiveTaskSentence =
+        isReviseIntent && baseVersion
+          ? buildStudioReviseTaskSentence(
+              taskSentence,
+              manuscriptCopyAll(baseVersion.blocks, baseVersion.primaryTitleIndex ?? 0),
+              params.userText
+            )
+          : taskSentence;
 
       streamAbortRef.current?.abort();
       const ac = new AbortController();
       streamAbortRef.current = ac;
-      setStreamingBlocks([]);
+
+      let runId = "";
+      let runTool: "generate" | "revise" = "generate";
+      let ackAppended = false;
+
+      const ensureComposeRun = (tool: "generate" | "revise") => {
+        if (ackAppended) return;
+        ackAppended = true;
+        runTool = tool;
+        const live = getStudioWork(workId);
+        if (!live) return;
+        const anchorTool = tool === "generate" ? "generate" : "revise";
+        const anchorTurnId = resolveJobAnchorTurnId(live.agentTurns, anchorTool);
+        const ackTurns = [
+          ...params.prefixTurns,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant" as const,
+            content: tool === "generate" ? STUDIO_ACK_GENERATE : STUDIO_ACK_REVISE,
+            createdAt: Date.now()
+          }
+        ];
+        const { work: withRun, runId: rid } = appendStudioRun(live, tool, tool === "generate" ? "写稿中" : "改版中…", "running", {
+          anchorTurnId
+        });
+        runId = rid;
+        persist(
+          patchStudioGeneratePhase(
+            {
+              ...withRun,
+              agentTurns: ackTurns,
+              status: "generating",
+              plan: undefined,
+              error: undefined,
+              pendingPatch: undefined,
+              allowModelFallback: true
+            },
+            runId,
+            tool === "generate" ? "写稿中" : "改版中…"
+          )
+        );
+        setStreamingBlocks([]);
+      };
 
       try {
-        const result = await streamStudioManuscript({
-          taskSentence,
+        const result = await streamStudioAgent({
+          message: params.userText,
+          agentTurns: params.prefixTurns,
+          status: cur.status,
+          versionCount: cur.versions.length,
+          taskSentence: effectiveTaskSentence,
           intake,
-          notebook: latest.binding.notebook,
-          noteIds: latest.binding.noteIds,
+          notebook: cur.binding.notebook,
+          noteIds: cur.binding.noteIds,
           featureCore: getComposerPrefsFeatureCore() as unknown as Record<string, unknown>,
           authorPrompt,
           authHeaders: getAuthHeaders(),
           signal: ac.signal,
-          onPhase: (msg) => {
+          onReply: (text) => {
             const live = getStudioWork(workId);
             if (!live) return;
+            const assistantTurn: StudioAgentTurn = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: text,
+              createdAt: Date.now()
+            };
+            persist({
+              ...live,
+              agentTurns: [...params.prefixTurns, assistantTurn],
+              error: undefined
+            });
+          },
+          onPhase: (msg, tool) => {
+            ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            const live = getStudioWork(workId);
+            if (!live || !runId) return;
             persist(patchStudioGeneratePhase(live, runId, msg));
           },
-          onBlocks: (blocks) => setStreamingBlocks(blocks)
+          onBlockDelta: (blocks, tool) => {
+            ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            setStreamingBlocks(blocks);
+          }
         });
 
-        const after = getStudioWork(workId);
-        if (!after) return;
-        if (result.status !== "done") {
-          persist(
-            finishStudioRun(
-              {
-                ...after,
-                status: runTool === "generate" ? "draft" : "ready",
-                error: result.error,
-                runPhase: undefined
-              },
-              runId,
-              "error",
-              result.error ?? "生成失败"
-            )
-          );
+        if (ac.signal.aborted || result.status === "aborted") {
+          const live = getStudioWork(workId);
+          if (live && runId) {
+            persist(
+              finishStudioRun(
+                {
+                  ...live,
+                  status: runTool === "generate" ? "draft" : live.versions.length ? "ready" : "draft",
+                  runPhase: undefined,
+                  error: undefined
+                },
+                runId,
+                "error",
+                "已取消"
+              )
+            );
+          }
           return;
         }
 
-        const blocks = deliverableToManuscriptBlocks(result.deliverable);
+        const after = getStudioWork(workId);
+        if (!after) return;
+
+        if (result.status === "reply") {
+          return;
+        }
+
+        if (result.status === "error") {
+          if (runId) {
+            persist(
+              finishStudioRun(
+                {
+                  ...after,
+                  status: runTool === "generate" ? "draft" : "ready",
+                  error: result.error,
+                  runPhase: undefined
+                },
+                runId,
+                "error",
+                result.error
+              )
+            );
+          } else {
+            persist({ ...after, error: result.error });
+          }
+          return;
+        }
+
+        const blocks = result.blocks;
         const bodyText = blocks.find((b) => b.kind === "body")?.text ?? "";
         if (!blocks.length || deliverableBodyLooksLikeIntakeEcho(bodyText)) {
           persist(
@@ -167,8 +309,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               {
                 ...after,
                 status: runTool === "generate" ? "draft" : "ready",
-                error:
-                  "成稿像是通用模板，缺少具体卖点。请补充受众、产品卖点、使用场景后重试。",
+                error: "成稿像是通用模板，请补充受众、卖点与使用场景后重试。",
                 runPhase: undefined
               },
               runId,
@@ -179,7 +320,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           return;
         }
 
-        if (runTool === "revise") {
+        if (result.tool === "revise") {
           const base =
             after.versions.find((v) => v.id === after.activeVersionId) ?? after.versions.at(-1);
           if (!base) {
@@ -187,45 +328,29 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             return;
           }
           const keys = diffBlockKeys(base.blocks, blocks);
-          const merged = mergeBlocks(base.blocks, blocks, keys);
-          const versionId = crypto.randomUUID();
           persist(
             finishStudioRun(
               {
                 ...after,
                 status: "ready",
-                versions: [
-                  ...after.versions,
-                  {
-                    id: versionId,
-                    label: nextVersionLabel(after.versions),
-                    createdAt: Date.now(),
-                    blocks: merged,
-                    sourceRunId: runId
-                  }
-                ],
-                activeVersionId: versionId,
-                pendingPatch: undefined,
+                pendingPatch: {
+                  fromVersionId: base.id,
+                  proposedBlocks: blocks,
+                  summary: `改版待确认 · ${keys.size} 处变更`,
+                  sourceRunId: runId
+                },
                 runPhase: undefined,
                 error: undefined
               },
               runId,
               "done",
-              `改版已应用 · ${keys.size} 处变更`
+              `改版待确认 · ${keys.size} 处变更`
             )
           );
           return;
         }
 
         const versionId = crypto.randomUUID();
-        const version = {
-          id: versionId,
-          label: nextVersionLabel(after.versions),
-          createdAt: Date.now(),
-          blocks,
-          primaryTitleIndex: 0,
-          sourceRunId: runId
-        };
         persist(
           finishStudioRun(
             {
@@ -233,7 +358,17 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               status: "ready",
               plan: undefined,
               intake,
-              versions: [...after.versions, version],
+              versions: [
+                ...after.versions,
+                {
+                  id: versionId,
+                  label: nextVersionLabel(after.versions),
+                  createdAt: Date.now(),
+                  blocks,
+                  primaryTitleIndex: 0,
+                  sourceRunId: runId
+                }
+              ],
               activeVersionId: versionId,
               pendingPatch: undefined,
               runPhase: undefined,
@@ -249,7 +384,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         if (ac.signal.aborted) return;
         const failed = getStudioWork(workId);
         const msg = String(err instanceof Error ? err.message : err);
-        if (failed) {
+        if (failed && runId) {
           persist(
             finishStudioRun(
               { ...failed, status: runTool === "generate" ? "draft" : "ready", error: msg, runPhase: undefined },
@@ -258,6 +393,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               msg
             )
           );
+        } else if (failed) {
+          persist({ ...failed, error: msg });
         }
       } finally {
         setStreamingBlocks(null);
@@ -267,14 +404,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     [workId, isLoggedIn, getAuthHeaders]
   );
 
-  const runConfirmGenerate = useCallback(async () => {
-    const cur = getStudioWork(workId);
-    if (!cur || !isLoggedIn) return;
-    const taskSentence = taskSentenceFromWork(cur);
-    if (!taskSentence.trim()) return;
-    await runStreamManuscript(taskSentence, "generate", "generate");
-  }, [workId, isLoggedIn, runStreamManuscript]);
-
   const runReviseJob = useCallback(
     async (opinion: string) => {
       const latest = getStudioWork(workId) ?? work;
@@ -283,13 +412,18 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         latest.versions.find((v) => v.id === latest.activeVersionId) ?? latest.versions.at(-1);
       if (!base) return;
 
-      const baseTask = taskSentenceFromWork(latest);
-      const patchOpinion = buildBlockPatchOpinion(opinion);
-      const manuscriptPlain = manuscriptCopyAll(base.blocks, base.primaryTitleIndex ?? 0);
-      const taskSentence = buildStudioReviseTaskSentence(baseTask, manuscriptPlain, patchOpinion);
-      await runStreamManuscript(taskSentence, "revise", "revise");
+      const text = buildBlockPatchOpinion(opinion);
+      const userTurn: StudioAgentTurn = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: text,
+        createdAt: Date.now()
+      };
+      const prefix = [...(latest.agentTurns ?? []), userTurn];
+      persist({ ...latest, agentTurns: prefix, error: undefined });
+      await runAgentStream({ userText: text, prefixTurns: prefix, userTurnId: userTurn.id });
     },
-    [workId, work, isLoggedIn, runStreamManuscript]
+    [workId, work, isLoggedIn, runAgentStream]
   );
 
   const runJobExclusive = useCallback(
@@ -313,12 +447,21 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     [load, runReviseJob]
   );
 
-  async function onGenerate() {
-    await runJobExclusive(runConfirmGenerate);
-  }
-
   async function onReviseFromChat(opinion: string) {
     await runJobExclusive(() => runReviseJob(opinion));
+  }
+
+  function onUndoPatch() {
+    const prev = undoStackRef.current.pop();
+    if (!prev || !work || !activeVersion) return;
+    persist({
+      ...work,
+      versions: work.versions.map((v) =>
+        v.id === activeVersion.id ? { ...v, blocks: prev } : v
+      ),
+      pendingPatch: undefined
+    });
+    setCanUndoPatch(undoStackRef.current.length > 0);
   }
 
   function onQueueRevise(opinion: string) {
@@ -327,8 +470,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     reviseQueueRef.current.push(text);
   }
 
+  function cloneBlocks(blocks: ManuscriptBlock[]): ManuscriptBlock[] {
+    return blocks.map((b) => (b.kind === "hashtags" ? { ...b, tags: [...b.tags] } : { ...b }));
+  }
+
   function onApplyPatch(partial: boolean) {
     if (!work?.pendingPatch || !activeVersion) return;
+    undoStackRef.current.push(cloneBlocks(activeVersion.blocks));
+    setCanUndoPatch(true);
     const keys = partial ? selectedPatchKeys : changedKeys;
     const merged = mergeBlocks(activeVersion.blocks, work.pendingPatch.proposedBlocks, keys);
     const versionId = crypto.randomUUID();
@@ -422,6 +571,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion))
             }
             onWowRevise={(opinion) => void onReviseFromChat(opinion)}
+            onCancelStream={cancelAgentStream}
           />
         </div>
 
@@ -434,9 +584,18 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             canvasMode
             getAuthHeaders={getAuthHeaders}
             onPersist={persist}
-            onGenerate={() => void onGenerate()}
-            onReviseFromChat={(opinion) => void onReviseFromChat(opinion)}
+            onAgentRun={async ({ userText, prefixTurns, userTurnId }) => {
+              await runJobExclusive(() =>
+                runAgentStream({ userText, prefixTurns, userTurnId })
+              );
+            }}
             onQueueRevise={onQueueRevise}
+            onRestoreCanvasBeforeTurn={restoreCanvasBeforeTurn}
+            onCancelStream={cancelAgentStream}
+            hasPendingPatch={Boolean(work.pendingPatch)}
+            onAcceptPatch={() => onApplyPatch(false)}
+            onUndoPatch={onUndoPatch}
+            canUndoPatch={canUndoPatch}
             activeVersion={activeVersion ?? null}
             showFeatureNudge={false}
             onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}

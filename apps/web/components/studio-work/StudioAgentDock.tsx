@@ -97,9 +97,16 @@ export default function StudioAgentDock({
   jobBusy,
   getAuthHeaders,
   onPersist,
+  onAgentRun,
   onGenerate,
   onReviseFromChat,
   onQueueRevise,
+  onRestoreCanvasBeforeTurn,
+  onCancelStream,
+  hasPendingPatch = false,
+  onAcceptPatch,
+  onUndoPatch,
+  canUndoPatch = false,
   activeVersion,
   onApplyPatch,
   onDiscardPatch,
@@ -122,9 +129,21 @@ export default function StudioAgentDock({
   canvasMode?: boolean;
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
+  /** canvasMode：统一 Agent SSE（reply | compose | revise） */
+  onAgentRun?: (params: {
+    userText: string;
+    prefixTurns: StudioAgentTurn[];
+    userTurnId: string;
+  }) => void | Promise<void>;
   onGenerate?: () => void | Promise<void>;
   onReviseFromChat?: (opinion: string) => void | Promise<void>;
   onQueueRevise?: (opinion: string) => void;
+  onRestoreCanvasBeforeTurn?: (turnId: string) => void;
+  onCancelStream?: () => void;
+  hasPendingPatch?: boolean;
+  onAcceptPatch?: () => void;
+  onUndoPatch?: () => void;
+  canUndoPatch?: boolean;
   activeVersion: ManuscriptVersion | null;
   onApplyPatch?: (partial: boolean) => void;
   onDiscardPatch?: () => void;
@@ -529,27 +548,53 @@ export default function StudioAgentDock({
       createdAt: Date.now()
     };
     const prefixWithUser = [...turns, userTurn];
-    const route = routeStudioAction(
-      { ...work, agentTurns: prefixWithUser },
-      q,
-      prefixWithUser
-    );
     const base = syncWorkTitleFromTurns(
       {
         ...work,
         agentTurns: prefixWithUser,
-        lastOrchestratorNote: route.note,
         error: undefined,
         allowModelFallback: true
       },
       prefixWithUser
     );
     onPersist(base);
-    await dispatchRoutedSend(prefixWithUser, q, route, base);
+
+    if (canvasMode && onAgentRun) {
+      if (jobRunning && /改版|改一下|改标题|改正文|缩短|加长|重写|润色|优化/.test(q)) {
+        onQueueRevise?.(q);
+        setEphemeralHint("已加入改版队列，当前任务完成后执行");
+        onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
+        return;
+      }
+      setAgentBusyState(true);
+      try {
+        await onAgentRun({ userText: q, prefixTurns: prefixWithUser, userTurnId: userTurn.id });
+      } finally {
+        setAgentBusyState(false);
+        setEphemeralHint("");
+      }
+      return;
+    }
+
+    const route = routeStudioAction(
+      { ...work, agentTurns: prefixWithUser },
+      q,
+      prefixWithUser
+    );
+    const routedBase = syncWorkTitleFromTurns(
+      {
+        ...base,
+        lastOrchestratorNote: route.note
+      },
+      prefixWithUser
+    );
+    onPersist(routedBase);
+    await dispatchRoutedSend(prefixWithUser, q, route, routedBase);
   }
 
   async function handleEditUserTurn(turnId: string, newText: string) {
     abortBackgroundStreams();
+    onRestoreCanvasBeforeTurn?.(turnId);
     const idx = turns.findIndex((t) => t.id === turnId);
     if (idx < 0 || turns[idx]?.role !== "user") return;
     const prefix = turns.slice(0, idx);
@@ -563,6 +608,22 @@ export default function StudioAgentDock({
       createdAt: Date.now()
     };
     const prefixWithUser = [...prefix, userTurn];
+
+    if (canvasMode && onAgentRun) {
+      const base = syncWorkTitleFromTurns(
+        { ...truncated, agentTurns: prefixWithUser, error: undefined },
+        prefixWithUser
+      );
+      onPersist(base);
+      setAgentBusyState(true);
+      try {
+        await onAgentRun({ userText: newText.trim(), prefixTurns: prefixWithUser, userTurnId: userTurn.id });
+      } finally {
+        setAgentBusyState(false);
+      }
+      return;
+    }
+
     const route = routeStudioAction(
       { ...truncated, agentTurns: prefixWithUser },
       newText.trim(),
@@ -661,6 +722,11 @@ export default function StudioAgentDock({
             disabled={!canChat}
             placeholder={agentPlaceholder(work.status)}
             menuOpen={corpusMenuOpen}
+            generating={jobRunning}
+            onCancel={jobRunning ? onCancelStream : undefined}
+            hasPendingPatch={hasPendingPatch}
+            onAcceptPatch={hasPendingPatch ? onAcceptPatch : undefined}
+            onUndoPatch={canUndoPatch ? onUndoPatch : undefined}
             footerRight={
               <StudioCorpusBar
                 work={work}

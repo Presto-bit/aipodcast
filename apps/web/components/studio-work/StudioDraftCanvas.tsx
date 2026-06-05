@@ -25,10 +25,12 @@ function tabLabel(tab: CanvasTab): string {
 
 function GeneratingProgressBanner({
   runPhase,
-  mode
+  mode,
+  onCancel
 }: {
   runPhase?: string;
   mode: "progress" | "hold-existing";
+  onCancel?: () => void;
 }) {
   const label = runPhase?.trim() || "写稿中…";
   return (
@@ -38,9 +40,20 @@ function GeneratingProgressBanner({
         mode === "hold-existing" ? "mb-3" : ""
       ].join(" ")}
     >
-      <div className="flex items-center gap-2 text-sm text-ink">
-        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
-        <span>{label}</span>
+      <div className="flex items-center justify-between gap-2 text-sm text-ink">
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
+          <span>{label}</span>
+        </div>
+        {onCancel ? (
+          <button
+            type="button"
+            className="rounded-md border border-line px-2 py-0.5 text-[11px] text-muted hover:bg-fill hover:text-ink"
+            onClick={onCancel}
+          >
+            停止
+          </button>
+        ) : null}
       </div>
       {mode === "hold-existing" ? (
         <p className="mt-1 text-[11px] text-muted">下方为当前稿件，完成后将展示改版结果</p>
@@ -71,7 +84,8 @@ export default function StudioDraftCanvas({
   onBlocksChange,
   onSelectionRevise,
   embedded = false,
-  streamingBlocks = null
+  streamingBlocks = null,
+  onCancelStream
 }: {
   work: StudioWork;
   busy: boolean;
@@ -93,6 +107,7 @@ export default function StudioDraftCanvas({
   embedded?: boolean;
   /** P0-核：流式写画布时的增量 blocks */
   streamingBlocks?: ManuscriptBlock[] | null;
+  onCancelStream?: () => void;
 }) {
   const compareMode = Boolean(work.pendingPatch);
   const generatingMode = studioGeneratingUiMode(work, activeVersion);
@@ -194,11 +209,15 @@ export default function StudioDraftCanvas({
       {work.error ? <p className="text-[13px] text-danger-ink">{work.error}</p> : null}
 
       {isGenerating && generatingMode && !showStreamingDraft ? (
-        <GeneratingProgressBanner runPhase={work.runPhase} mode={generatingMode} />
+        <GeneratingProgressBanner runPhase={work.runPhase} mode={generatingMode} onCancel={onCancelStream} />
       ) : null}
 
       {isGenerating && showStreamingDraft ? (
-        <GeneratingProgressBanner runPhase={work.runPhase || "正文写入中…"} mode="progress" />
+        <GeneratingProgressBanner
+          runPhase={work.runPhase || "正文写入中…"}
+          mode="progress"
+          onCancel={onCancelStream}
+        />
       ) : null}
 
       {isGenerating && generatingMode === "hold-existing" && tab === "document" && activeVersion ? (

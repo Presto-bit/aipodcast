@@ -12,7 +12,12 @@ export default function StudioAgentComposer({
   disabled,
   placeholder,
   footerRight,
-  menuOpen = false
+  menuOpen = false,
+  generating = false,
+  onCancel,
+  hasPendingPatch = false,
+  onAcceptPatch,
+  onUndoPatch
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -22,9 +27,15 @@ export default function StudioAgentComposer({
   placeholder: string;
   footerRight?: ReactNode;
   menuOpen?: boolean;
+  generating?: boolean;
+  onCancel?: () => void;
+  hasPendingPatch?: boolean;
+  onAcceptPatch?: () => void;
+  onUndoPatch?: () => void;
 }) {
   const hasText = Boolean(value.trim());
   const canSend = hasText && !busy && !disabled;
+  const showHints = generating || hasPendingPatch || Boolean(onUndoPatch);
 
   return (
     <div
@@ -43,6 +54,16 @@ export default function StudioAgentComposer({
           className="w-full min-h-[32px] max-h-[min(18vh,112px)] resize-none border-0 bg-transparent py-0.5 text-[14px] leading-relaxed text-ink outline-none ring-0 placeholder:text-muted/70 focus:outline-none focus:ring-0 disabled:opacity-50"
           style={{ paddingRight: hasText ? 44 : 0 }}
           onKeyDown={(e) => {
+            if (e.key === "Escape" && generating && onCancel) {
+              e.preventDefault();
+              onCancel();
+              return;
+            }
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && hasPendingPatch && onAcceptPatch) {
+              e.preventDefault();
+              onAcceptPatch();
+              return;
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               if (canSend) onSend();
@@ -62,6 +83,20 @@ export default function StudioAgentComposer({
           </button>
         ) : null}
       </div>
+      {showHints ? (
+        <p className="mt-1 px-0.5 text-[10px] text-muted">
+          {generating ? "Esc 停止生成" : null}
+          {hasPendingPatch ? " · ⌘↵ 接受改版" : null}
+          {onUndoPatch ? (
+            <>
+              {" · "}
+              <button type="button" className="text-brand underline" onClick={onUndoPatch}>
+                撤销
+              </button>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {footerRight ? (
         <div
           className="relative mt-1.5 flex w-full items-center justify-end overflow-visible"

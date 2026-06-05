@@ -22,6 +22,24 @@ from .generate import (
 )
 
 
+def deliverable_to_manuscript_blocks_dict(deliverable: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expert deliverable → 前端 ManuscriptBlock 列表（Studio Agent done 事件）。"""
+    content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
+    titles = content.get("titles") if isinstance(content.get("titles"), list) else []
+    body = str(content.get("body") or "").strip()
+    tags = content.get("hashtags") if isinstance(content.get("hashtags"), list) else []
+    cover = content.get("cover") if isinstance(content.get("cover"), dict) else {}
+    cover_hook = str(cover.get("headline") or cover.get("hook") or "").strip()
+    return partial_social_to_manuscript_blocks(
+        {
+            "titles": titles,
+            "body": body,
+            "tags": tags,
+            "cover_hook": cover_hook,
+        }
+    )
+
+
 def partial_social_to_manuscript_blocks(partial: dict[str, Any]) -> list[dict[str, Any]]:
     """将流式 JSON 片段转为前端 ManuscriptBlock 形状。"""
     blocks: list[dict[str, Any]] = []
