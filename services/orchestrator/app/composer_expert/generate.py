@@ -227,6 +227,10 @@ def _looks_like_xhs_template_body(content: dict[str, Any], task_sentence: str) -
     task_head = task_sentence.strip()[:24]
     if task_head and len(task_head) >= 10 and task_head in body:
         return True
+    if "账号阶段：" in body and "读者：" in body:
+        return True
+    if "正文须为围绕【创作任务】" in body or "禁止📌先说结论" in body:
+        return True
     tags = content.get("hashtags") or []
     if isinstance(tags, list) and tags == _FALLBACK_XHS_TAGS:
         return True

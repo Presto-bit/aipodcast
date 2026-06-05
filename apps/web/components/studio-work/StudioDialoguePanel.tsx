@@ -44,14 +44,14 @@ export default function StudioDialoguePanel({
   if (!turns.length && !statusLine && !emptyHint) return null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <p className={`${STUDIO_DIALOGUE_SECTION} shrink-0 px-0.5`}>对话</p>
-      <div ref={scrollRef} className="mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <div className="px-0.5">
+      <p className={`${STUDIO_DIALOGUE_SECTION} shrink-0`}>对话</p>
+      <div className="mt-2">
         {!turns.length && emptyHint ? (
-          <p className="px-0.5 py-6 text-center text-sm text-muted">{emptyHint}</p>
+          <p className="py-6 text-center text-sm text-muted">{emptyHint}</p>
         ) : null}
         {!turns.length && statusLine ? (
-          <p className={`${STUDIO_DIALOGUE_STATUS} px-0.5 pb-1`}>{statusLine}</p>
+          <p className={`${STUDIO_DIALOGUE_STATUS} pb-1`}>{statusLine}</p>
         ) : null}
         {virtualizeHistory ? (
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
@@ -66,19 +66,19 @@ export default function StudioDialoguePanel({
                   className="absolute left-0 top-0 w-full pb-3"
                   style={{ transform: `translateY(${row.start}px)` }}
                 >
-                    <StudioTurnGroupBlock
-                      userTurn={group.userTurn}
-                      assistantTurns={group.assistantTurns}
-                      userAnchor="history"
-                      canEdit={canEdit}
-                      onEditUserTurn={onEditUserTurn}
-                    />
+                  <StudioTurnGroupBlock
+                    userTurn={group.userTurn}
+                    assistantTurns={group.assistantTurns}
+                    userAnchor="history"
+                    canEdit={canEdit}
+                    onEditUserTurn={onEditUserTurn}
+                  />
                 </div>
               );
             })}
           </div>
         ) : (
-          <div className="space-y-4 pb-2">
+          <div className="space-y-4">
             {history.map((group) => (
               <StudioTurnGroupBlock
                 key={group.id}
@@ -93,11 +93,10 @@ export default function StudioDialoguePanel({
         )}
 
         {active ? (
-          <div className="pb-2 pt-1">
+          <div className="pt-1">
             <StudioTurnGroupBlock
               userTurn={active.userTurn}
               assistantTurns={active.assistantTurns}
-              stickyUser
               userAnchor="active"
               streamingPhase={streamingPhase}
               canEdit={canEdit}
@@ -105,7 +104,9 @@ export default function StudioDialoguePanel({
             />
           </div>
         ) : null}
-        {statusLine ? <p className={`${STUDIO_DIALOGUE_STATUS} px-0.5 pb-1`}>{statusLine}</p> : null}
+        {statusLine && turns.length ? (
+          <p className={`${STUDIO_DIALOGUE_STATUS} pb-1`}>{statusLine}</p>
+        ) : null}
       </div>
     </div>
   );

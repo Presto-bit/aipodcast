@@ -430,7 +430,9 @@ export function inferIntakePreselection(
   if (expertId === "xhs_ops") {
     const audience: string[] = [];
     if (/新人|小白|入门|初学者/.test(taskSentence)) audience.push("newcomer");
-    if (/同行|从业者|内行|产品经理|运营/.test(taskSentence)) audience.push("peers");
+    if (/同行|从业者|内行|产品经理|运营|职场|白领|上班族|打工人/.test(taskSentence)) {
+      audience.push("peers");
+    }
     if (/购买|下单|种草|测评/.test(taskSentence)) audience.push("buyer");
     if (!audience.length) audience.push("general");
     intake.audience = audience.includes("buyer")

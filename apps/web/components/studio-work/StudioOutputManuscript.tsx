@@ -151,7 +151,7 @@ export default function StudioOutputManuscript({
 
       {showWow ? (
         <div className="mt-3 border-t border-line/40 pt-2">
-          <p className="mb-1.5 text-[10px] text-muted">惊艳重写</p>
+          <p className="mb-1.5 text-[10px] text-muted">优化调整</p>
           <div className="flex flex-wrap gap-1.5">
             {STUDIO_WOW_REVISE_PRESETS.map((preset) => (
               <button

@@ -1,4 +1,4 @@
-/** 产物区「惊艳重写」预设 — 走 revise Job，块级 patch */
+/** 产物区「优化调整」预设 — 走 revise Job，块级 patch */
 export const STUDIO_WOW_REVISE_PRESETS = [
   {
     id: "sharp",

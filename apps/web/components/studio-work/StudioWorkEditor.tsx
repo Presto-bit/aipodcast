@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { deliverableToManuscriptBlocks, diffBlockKeys, mergeBlocks, nextVersionLabel } from "../../lib/studioDeliverable";
+import { deliverableBodyLooksLikeIntakeEcho } from "../../lib/studioDeliverableQuality";
 import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
-import { finalizeExpertIntake, inferIntakePreselection } from "../../lib/composerExpertIntake";
 import { buildBlockPatchOpinion } from "../../lib/studioBlockPatch";
-import { getComposerPrefsFeatureCore, getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
+import { buildStudioAuthorPrompt, buildStudioJobIntake } from "../../lib/studioWorkIntake";
+import { getComposerPrefsFeatureCore, getStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
 import {
   appendStudioRun,
   finishStudioRun,
@@ -61,25 +62,23 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     return !isFeatureCoreComplete(getComposerPrefsFeatureCore());
   }, [work]);
 
-  function persist(next: StudioWork) {
-    upsertStudioWork({ ...next, allowModelFallback: true });
-    setWork(next);
+  function persist(next: StudioWork): StudioWork {
+    const saved = upsertStudioWork({ ...next, allowModelFallback: true });
+    setWork(saved);
+    return saved;
   }
 
   const runConfirmGenerate = useCallback(async () => {
-    const cur = getStudioWork(workId) ?? work;
+    const cur = getStudioWork(workId);
     if (!cur || !isLoggedIn) return;
     const taskSentence = taskSentenceFromWork(cur);
     if (!taskSentence.trim()) return;
 
-    let intake = { ...cur.intake };
-    if (!intake.contentAngle && !intake.noteType) {
-      const inferred = inferIntakePreselection("xhs_ops", taskSentence);
-      intake = finalizeExpertIntake("xhs_ops", { ...intake, ...inferred.intake }, taskSentence);
-    }
-    const latest = { ...cur, intake };
+    const intake = buildStudioJobIntake(taskSentence, cur.intake);
+    const authorPrompt = buildStudioAuthorPrompt(taskSentence);
+    const latest = persist({ ...cur, intake, brief: taskSentence });
 
-    const { work: withRun, runId } = appendStudioRun(latest, "generate", "排队中…");
+    const { work: withRun, runId } = appendStudioRun(latest, "generate", "写稿中");
     persist(
       patchStudioGeneratePhase(
         {
@@ -87,11 +86,10 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           status: "generating",
           plan: undefined,
           error: undefined,
-          allowModelFallback: true,
-          brief: taskSentence
+          allowModelFallback: true
         },
         runId,
-        "排队中…"
+        "写稿中"
       )
     );
 
@@ -99,27 +97,26 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const result = await runComposerExpertDeliverableJob({
         expertId: "xhs_ops",
         taskSentence,
-        intake: latest.intake,
+        intake,
         notebook: latest.binding.notebook,
         noteIds: latest.binding.noteIds,
         featureCore: getComposerPrefsFeatureCore(),
+        authorPrompt,
         authHeaders: getAuthHeaders(),
         createdBy: user?.phone,
         onProgress: (msg) => {
-          const cur = getStudioWork(workId);
-          if (!cur) return;
-          const next = patchStudioGeneratePhase(cur, runId, msg);
-          patchStudioWork(workId, next);
-          setWork(next);
+          const live = getStudioWork(workId);
+          if (!live) return;
+          persist(patchStudioGeneratePhase(live, runId, msg));
         }
       });
 
-      const cur = getStudioWork(workId);
-      if (!cur) return;
+      const after = getStudioWork(workId);
+      if (!after) return;
       if (result.status !== "done") {
         persist(
           finishStudioRun(
-            { ...cur, status: "draft", error: result.error, runPhase: undefined },
+            { ...after, status: "draft", error: result.error, runPhase: undefined },
             runId,
             "error",
             result.error ?? "生成失败"
@@ -129,10 +126,28 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       }
 
       const blocks = deliverableToManuscriptBlocks(result.deliverable);
+      const bodyText = blocks.find((b) => b.kind === "body")?.text ?? "";
+      if (!blocks.length || deliverableBodyLooksLikeIntakeEcho(bodyText)) {
+        persist(
+          finishStudioRun(
+            {
+              ...after,
+              status: "draft",
+              error: "成稿内容异常（疑似偏好标签回显），请重试或补充产品卖点",
+              runPhase: undefined
+            },
+            runId,
+            "error",
+            "成稿校验失败"
+          )
+        );
+        return;
+      }
+
       const versionId = crypto.randomUUID();
       const version = {
         id: versionId,
-        label: nextVersionLabel(cur.versions),
+        label: nextVersionLabel(after.versions),
         createdAt: Date.now(),
         blocks,
         jobId: result.jobId,
@@ -141,10 +156,11 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       persist(
         finishStudioRun(
           {
-            ...cur,
+            ...after,
             status: "ready",
             plan: undefined,
-            versions: [...cur.versions, version],
+            intake,
+            versions: [...after.versions, version],
             activeVersionId: versionId,
             lastJobId: result.jobId,
             pendingPatch: undefined,
@@ -158,12 +174,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         )
       );
     } catch (err) {
-      const cur = getStudioWork(workId);
+      const failed = getStudioWork(workId);
       const msg = String(err instanceof Error ? err.message : err);
-      if (cur) {
+      if (failed) {
         persist(
           finishStudioRun(
-            { ...cur, status: "draft", error: msg, runPhase: undefined },
+            { ...failed, status: "draft", error: msg, runPhase: undefined },
             runId,
             "error",
             msg
@@ -171,7 +187,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         );
       }
     }
-  }, [work, workId, isLoggedIn, getAuthHeaders, user?.phone]);
+  }, [workId, isLoggedIn, getAuthHeaders, user?.phone]);
 
   async function onGenerate() {
     setBusy(true);
@@ -179,6 +195,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       await runConfirmGenerate();
     } finally {
       setBusy(false);
+      load();
     }
   }
 
@@ -211,11 +228,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         authHeaders: getAuthHeaders(),
         createdBy: user?.phone,
         onProgress: (msg) => {
-          const cur = getStudioWork(workId);
-          if (!cur) return;
-          const next = patchStudioGeneratePhase(cur, runId, msg);
-          patchStudioWork(workId, next);
-          setWork(next);
+          const live = getStudioWork(workId);
+          if (!live) return;
+          persist(patchStudioGeneratePhase(live, runId, msg));
         }
       });
 

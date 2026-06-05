@@ -6,7 +6,6 @@ import StudioAgentMessage from "./StudioAgentMessage";
 export default function StudioTurnGroupBlock({
   userTurn,
   assistantTurns,
-  stickyUser,
   userAnchor,
   streamingPhase,
   canEdit,
@@ -14,7 +13,6 @@ export default function StudioTurnGroupBlock({
 }: {
   userTurn: StudioAgentTurn;
   assistantTurns: StudioAgentTurn[];
-  stickyUser?: boolean;
   userAnchor?: "active" | "history";
   streamingPhase?: string;
   canEdit?: boolean;
@@ -24,7 +22,6 @@ export default function StudioTurnGroupBlock({
     <div className="space-y-1" data-studio-turn-group={userTurn.id}>
       <StudioAgentMessage
         turn={userTurn}
-        stickyUser={stickyUser}
         userAnchor={userAnchor}
         canEdit={canEdit}
         onEditUserTurn={onEditUserTurn}

@@ -1,4 +1,5 @@
 import { inferStudioAgentIntent } from "./studioAgentAsk";
+import { normalizeStudioRunPhase } from "./studioRunPhase";
 import { hasTaskContext } from "./studioWorkTask";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type {
@@ -188,12 +189,18 @@ export function patchStudioGeneratePhase(
   phase: string
 ): StudioWork {
   const msg = phase.trim() || "处理中…";
+  const uiPhase = normalizeStudioRunPhase(msg);
   const runs = runId
     ? (work.agentRuns ?? []).map((r) =>
         r.id === runId && r.status === "running" ? { ...r, summary: msg } : r
       )
     : work.agentRuns;
-  return { ...work, runPhase: msg, agentRuns: runs, lastOrchestratorNote: msg };
+  return {
+    ...work,
+    runPhase: uiPhase,
+    agentRuns: runs,
+    ...(uiPhase ? { lastOrchestratorNote: uiPhase } : {})
+  };
 }
 
 export function studioToolLabel(tool: StudioTool): string {

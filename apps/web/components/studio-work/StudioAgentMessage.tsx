@@ -1,12 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import {
-  STUDIO_ASSISTANT_BODY,
-  STUDIO_USER_PROMPT,
-  STUDIO_USER_PROMPT_STICKY
-} from "../../lib/studioOutputTypography";
+import { STUDIO_ASSISTANT_BODY, STUDIO_USER_PROMPT } from "../../lib/studioOutputTypography";
+
+const STUDIO_USER_RING = "rounded-lg px-3 py-2 ring-1 ring-line/55";
+const STUDIO_USER_RING_EDIT = "rounded-lg px-3 py-2 ring-1 ring-brand/40";
 import type { NotesAskSource } from "../../lib/notesAskCitation";
 import type { StudioAgentTurn } from "../../lib/studioWorkTypes";
 import StudioAskCitationModal from "./StudioAskCitationModal";
@@ -19,26 +18,104 @@ const NotesAskAnswerMarkdownBody = dynamic(
 export default function StudioAgentMessage({
   turn,
   streamingPhase,
-  stickyUser,
-  userAnchor
+  userAnchor,
+  canEdit,
+  onEditUserTurn
 }: {
   turn: StudioAgentTurn;
   streamingPhase?: string;
-  stickyUser?: boolean;
   userAnchor?: "active" | "history";
   canEdit?: boolean;
   onEditUserTurn?: (turnId: string, newText: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(turn.content);
   const [citationSource, setCitationSource] = useState<NotesAskSource | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const skipBlurRef = useRef(false);
   const sources = turn.askSources;
 
+  useEffect(() => {
+    if (!editing) setDraft(turn.content);
+  }, [turn.content, editing]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus();
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [editing]);
+
+  function commitEdit() {
+    const text = draft.trim();
+    if (!text || !onEditUserTurn) return;
+    skipBlurRef.current = true;
+    if (text === turn.content.trim()) {
+      setEditing(false);
+      return;
+    }
+    setEditing(false);
+    onEditUserTurn(turn.id, text);
+  }
+
+  function cancelEdit() {
+    setDraft(turn.content);
+    setEditing(false);
+  }
+
   if (turn.role === "user") {
+    const editable = Boolean(canEdit && !turn.streaming && onEditUserTurn);
+
+    if (editing && editable) {
+      return (
+        <div data-studio-user-anchor={userAnchor} className={STUDIO_USER_RING_EDIT}>
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              const el = e.target;
+              el.style.height = "auto";
+              el.style.height = `${el.scrollHeight}px`;
+            }}
+            rows={1}
+            className={`w-full resize-none overflow-hidden border-0 bg-transparent p-0 outline-none ring-0 focus:outline-none focus:ring-0 ${STUDIO_USER_PROMPT}`}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                commitEdit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancelEdit();
+              }
+            }}
+            onBlur={() => {
+              if (skipBlurRef.current) {
+                skipBlurRef.current = false;
+                return;
+              }
+              cancelEdit();
+            }}
+          />
+        </div>
+      );
+    }
+
     return (
-      <div
-        data-studio-user-anchor={userAnchor}
-        className={stickyUser ? STUDIO_USER_PROMPT_STICKY : undefined}
-      >
-        <p className={`whitespace-pre-wrap ${STUDIO_USER_PROMPT}`}>{turn.content}</p>
+      <div data-studio-user-anchor={userAnchor} className={STUDIO_USER_RING}>
+        <p
+          className={`whitespace-pre-wrap ${STUDIO_USER_PROMPT} ${editable ? "cursor-text" : ""}`}
+          onClick={() => {
+            if (!editable) return;
+            setEditing(true);
+          }}
+        >
+          {turn.content}
+        </p>
       </div>
     );
   }

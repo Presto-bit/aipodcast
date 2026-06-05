@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { resolvePrimaryTitleIndex } from "../../lib/studioManuscriptView";
+import { STUDIO_DIALOGUE_SECTION } from "../../lib/studioOutputTypography";
 import type { ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
 import StudioXhsPhonePreview from "./StudioXhsPhonePreview";
@@ -35,7 +36,8 @@ export default function StudioDraftCanvas({
   onFillFeature,
   onDismissFeatureNudge,
   onTitleIndexChange,
-  onWowRevise
+  onWowRevise,
+  embedded = false
 }: {
   work: StudioWork;
   busy: boolean;
@@ -50,6 +52,8 @@ export default function StudioDraftCanvas({
   onDismissFeatureNudge: () => void;
   onTitleIndexChange?: (index: number) => void;
   onWowRevise?: (opinion: string) => void;
+  /** 嵌入对话流：无独立卡片/内滚动，随主区域一体下滑 */
+  embedded?: boolean;
 }) {
   const compareMode = Boolean(work.pendingPatch);
   const manuscriptBlocks =
@@ -76,31 +80,30 @@ export default function StudioDraftCanvas({
 
   const showGenerating = work.status === "generating";
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-line/60 bg-fill/20">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 px-3 py-2">
-        <div className="flex gap-1">
-          {availableTabs.map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={
-                tab === t
-                  ? "rounded-md bg-fill px-2.5 py-1 text-xs font-medium text-ink"
-                  : "rounded-md px-2.5 py-1 text-xs text-muted hover:bg-fill/60 hover:text-ink"
-              }
-              onClick={() => setTab(t)}
-            >
-              {tabLabel(t)}
-            </button>
-          ))}
-        </div>
-        {showGenerating ? (
-          <span className="truncate text-xs text-muted">{work.runPhase || "生成中…"}</span>
-        ) : null}
+  const tabRow = (
+    <div className="flex items-center justify-between gap-2 py-1">
+      <div className="flex gap-1">
+        {availableTabs.map((t) => (
+          <button
+            key={t}
+            type="button"
+            className={
+              tab === t
+                ? "rounded-md bg-fill px-2.5 py-1 text-xs font-medium text-ink"
+                : "rounded-md px-2.5 py-1 text-xs text-muted hover:bg-fill/60 hover:text-ink"
+            }
+            onClick={() => setTab(t)}
+          >
+            {tabLabel(t)}
+          </button>
+        ))}
       </div>
+      {showGenerating ? <span className="truncate text-xs text-muted">写稿中</span> : null}
+    </div>
+  );
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
+  const body = (
+    <>
         {work.error ? (
           <p className="text-[13px] text-danger-ink">{work.error}</p>
         ) : null}
@@ -108,7 +111,7 @@ export default function StudioDraftCanvas({
         {showGenerating && !showManuscript ? (
           <div className="flex items-center gap-2 py-6 text-sm text-muted">
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
-            {work.runPhase || "正在写稿…"}
+            写稿中
           </div>
         ) : null}
 
@@ -148,10 +151,13 @@ export default function StudioDraftCanvas({
             onToggleKey={onTogglePatchKey}
           />
         ) : null}
-      </div>
+    </>
+  );
 
+  const footnotes = (
+    <>
       {work.pendingPatch && onApplyPatch && onDiscardPatch ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-line/50 px-3 py-2 text-[11px]">
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
           <span className="text-muted">{work.pendingPatch.summary}</span>
           <button
             type="button"
@@ -181,7 +187,7 @@ export default function StudioDraftCanvas({
       ) : null}
 
       {showFeatureNudge ? (
-        <p className="shrink-0 border-t border-line/50 px-3 py-2 text-[11px] text-muted">
+        <p className="mt-3 text-[11px] text-muted">
           下一篇想更像自己，可去对话页填写「我的特色」。
           <button type="button" className="ml-1 text-brand underline" onClick={onFillFeature}>
             去填写
@@ -191,6 +197,29 @@ export default function StudioDraftCanvas({
           </button>
         </p>
       ) : null}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <section className="mt-6 px-0.5 pb-4">
+        <p className={STUDIO_DIALOGUE_SECTION}>稿件</p>
+        <div className="mt-2">
+          {tabRow}
+          <div className="mt-2">{body}</div>
+          {footnotes}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-line/60 bg-fill/20">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line/50 px-3 py-2">
+        {tabRow}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">{body}</div>
+      <div className="shrink-0 px-3 pb-2">{footnotes}</div>
     </div>
   );
 }

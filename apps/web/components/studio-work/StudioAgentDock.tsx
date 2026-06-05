@@ -494,7 +494,11 @@ export default function StudioAgentDock({
 
     if (route.tool === "generate" && onGenerate) {
       onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "generate") });
-      await onGenerate();
+      try {
+        await onGenerate();
+      } finally {
+        setEphemeralHint("");
+      }
       return;
     }
     if (route.tool === "revise" && onReviseFromChat) {
@@ -550,9 +554,21 @@ export default function StudioAgentDock({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-3 py-3">
-        {showCanvas ? (
-          <div className="mb-2 min-h-0 flex-1 overflow-hidden">
+        <div
+          ref={dialogueScrollRef}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        >
+          <StudioDialoguePanel
+            turns={dialogueTurns}
+            streamingPhase={phase}
+            scrollRef={dialogueScrollRef}
+            canEdit={canEditTurns}
+            onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
+            emptyHint={dialogueEmptyHint}
+          />
+          {showCanvas ? (
             <StudioDraftCanvas
+              embedded
               work={work}
               busy={agentBusy || parentBusy}
               activeVersion={activeVersion}
@@ -570,27 +586,7 @@ export default function StudioAgentDock({
               onTitleIndexChange={onTitleIndexChange}
               onWowRevise={onWowRevise}
             />
-          </div>
-        ) : null}
-
-        <div
-          className={
-            showCanvas
-              ? "max-h-[min(28vh,200px)] shrink-0 overflow-hidden border-t border-line/40 pt-2"
-              : "min-h-0 flex-1"
-          }
-        >
-          <StudioDialoguePanel
-            turns={dialogueTurns}
-            streamingPhase={phase}
-            statusLine={
-              work.status === "generating" ? work.runPhase || "处理中…" : undefined
-            }
-            scrollRef={dialogueScrollRef}
-            canEdit={canEditTurns}
-            onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
-            emptyHint={dialogueEmptyHint}
-          />
+          ) : null}
         </div>
       </div>
 
