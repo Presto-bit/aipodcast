@@ -2,13 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
-import { manuscriptTitleBlocks } from "../../lib/studioManuscriptView";
 import {
-  STUDIO_STREAM_BODY,
-  STUDIO_STREAM_CURSOR,
-  STUDIO_STREAM_META,
-  STUDIO_STREAM_TITLE
-} from "../../lib/studioOutputTypography";
+  flattenManuscriptDisplayText,
+  manuscriptTitleBlocks,
+  studioTitleDirectionLabel
+} from "../../lib/studioManuscriptView";
+import { STUDIO_STREAM_BODY, STUDIO_STREAM_CURSOR } from "../../lib/studioOutputTypography";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
 
@@ -17,6 +16,10 @@ function StreamCursor() {
 }
 
 export type StudioStreamingVariant = "idle" | "active" | "ready" | "diff";
+
+function hashtagLine(tags: string[]): string {
+  return tags.map((t) => `#${t.replace(/^#/, "")}`).join(" ");
+}
 
 /** Cursor 式 Agent 输出面：流式 / 成稿（flowLayout 时参与页面全局滚动） */
 export default function StudioStreamingSurface({
@@ -91,14 +94,12 @@ export default function StudioStreamingSurface({
   if (flowLayout) {
     if (!hasContent) {
       return (
-        <div className="space-y-2 text-left">
-          {streamLines.map((line) => (
-            <p key={line} className="text-[13px] leading-relaxed text-muted">
-              {line}
-            </p>
-          ))}
+        <div className="text-left">
+          {streamLines.length ? (
+            <p className="text-[13px] leading-relaxed text-muted">{streamLines.join(" · ")}</p>
+          ) : null}
           {isActive ? (
-            <p className={`${STUDIO_STREAM_BODY} text-muted/70`}>
+            <p className={`mt-2 ${STUDIO_STREAM_BODY} text-muted/70`}>
               <StreamCursor />
             </p>
           ) : (
@@ -108,44 +109,67 @@ export default function StudioStreamingSurface({
       );
     }
 
-    const primaryTitle = titles[0];
+    const flowParts: string[] = [];
+    if (titles.length <= 1 && titles[0]?.text) {
+      flowParts.push(titles[0].text);
+    }
+    if (displayBody) {
+      flowParts.push(flattenManuscriptDisplayText(displayBody));
+    }
+    if (hashtags && hashtags.kind === "hashtags" && hashtags.tags.length) {
+      flowParts.push(hashtagLine(hashtags.tags));
+    }
+    if (cover && cover.kind === "coverBrief" && cover.text.trim()) {
+      flowParts.push(`封面：${flattenManuscriptDisplayText(cover.text)}`);
+    }
+    const flowText = flowParts.join(" ");
 
     return (
-      <article className="space-y-3 text-left">
-        {streamLines.length > 1
-          ? streamLines.slice(-2).map((line) => (
-              <p key={line} className="text-[11px] leading-snug text-muted/90">
-                {line}
-              </p>
-            ))
-          : null}
-        {primaryTitle ? <h1 className={STUDIO_STREAM_TITLE}>{primaryTitle.text}</h1> : null}
-        {displayBody ? (
-          <p className={`whitespace-pre-wrap ${STUDIO_STREAM_BODY}`}>
-            {displayBody}
+      <article className="text-left">
+        {streamLines.length > 1 ? (
+          <p className="mb-2 text-[11px] leading-snug text-muted/90">
+            {streamLines.slice(-2).join(" · ")}
+          </p>
+        ) : null}
+
+        {titles.length > 1 ? (
+          <div className="mb-3">
+            <p className="text-[11px] font-medium tracking-wide text-muted">
+              best of {titles.length}
+            </p>
+            <div className="mt-2 flex flex-col gap-2">
+              {titles.map((t, i) => (
+                <div
+                  key={t.id}
+                  className={`rounded-lg border px-3 py-2 ${
+                    i === 0 ? "border-brand/60 bg-brand/5" : "border-line/40"
+                  }`}
+                >
+                  <span className="text-[10px] font-medium text-muted">
+                    {studioTitleDirectionLabel(i)}
+                  </span>
+                  <span className="mt-0.5 block text-sm text-ink">{t.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {flowText ? (
+          <p className={STUDIO_STREAM_BODY}>
+            {flowText}
             {isActive ? <StreamCursor /> : null}
           </p>
         ) : isActive ? (
-          <p className={`whitespace-pre-wrap ${STUDIO_STREAM_BODY} text-muted/70`}>
+          <p className={`${STUDIO_STREAM_BODY} text-muted/70`}>
             <StreamCursor />
           </p>
         ) : null}
-        {hashtags && hashtags.kind === "hashtags" && hashtags.tags.length ? (
-          <p className={STUDIO_STREAM_META}>
-            {hashtags.tags.map((t) => (
-              <span key={t} className="mr-2 text-brand">
-                #{t.replace(/^#/, "")}
-              </span>
-            ))}
-          </p>
-        ) : null}
-        {cover && cover.kind === "coverBrief" && cover.text ? (
-          <p className={STUDIO_STREAM_META}>封面 · {cover.text}</p>
-        ) : null}
+
         {onCancel && isActive ? (
           <button
             type="button"
-            className="text-[11px] text-muted underline hover:text-ink"
+            className="mt-2 text-[11px] text-muted underline hover:text-ink"
             onClick={onCancel}
           >
             停止

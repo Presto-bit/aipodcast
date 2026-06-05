@@ -22,9 +22,7 @@ export default function StudioDraftCanvas({
   onFillFeature,
   onDismissFeatureNudge,
   onTitleIndexChange,
-  onWowRevise,
   onBlocksChange,
-  onSelectionRevise,
   embedded = false,
   streamingBlocks = null,
   streamingBodyText = null,
@@ -46,9 +44,7 @@ export default function StudioDraftCanvas({
   onFillFeature: () => void;
   onDismissFeatureNudge: () => void;
   onTitleIndexChange?: (index: number) => void;
-  onWowRevise?: (opinion: string) => void;
   onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
-  onSelectionRevise?: (selectedText: string, opinion: string) => void;
   embedded?: boolean;
   streamingBlocks?: ManuscriptBlock[] | null;
   streamingBodyText?: string | null;

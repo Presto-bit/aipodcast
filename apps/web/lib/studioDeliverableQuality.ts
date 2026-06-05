@@ -31,3 +31,14 @@ export function deliverableBodyLooksLikeIntakeEcho(body: string): boolean {
 
   return false;
 }
+
+/** 首稿 compose 校验模板回显；revise 在已有版本上迭代，跳过模板启发式 */
+export function shouldRejectDeliverableBody(
+  tool: "compose" | "revise" | string,
+  body: string
+): boolean {
+  const text = body.trim();
+  if (!text) return true;
+  if (tool === "revise") return false;
+  return deliverableBodyLooksLikeIntakeEcho(text);
+}

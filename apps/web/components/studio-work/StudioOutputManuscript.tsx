@@ -8,9 +8,10 @@ import {
   STUDIO_MANUSCRIPT_TITLE
 } from "../../lib/studioOutputTypography";
 import {
-  bodyHasCorpusAnchors,
+  flattenManuscriptDisplayText,
   manuscriptTitleBlocks,
-  resolvePrimaryTitleIndex
+  resolvePrimaryTitleIndex,
+  studioTitleDirectionLabel
 } from "../../lib/studioManuscriptView";
 import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
@@ -75,7 +76,44 @@ function AutoGrowTextarea({
   );
 }
 
-/** 输出区稿件：标题 + 正文 + 话题，连续排版（无内嵌滚动与卡片分割） */
+function BestOfTitlePicker({
+  titles,
+  titleIndex,
+  onTitleIndexChange
+}: {
+  titles: ReturnType<typeof manuscriptTitleBlocks>;
+  titleIndex: number;
+  onTitleIndexChange: (index: number) => void;
+}) {
+  return (
+    <div className="mb-3">
+      <p className="text-[11px] font-medium tracking-wide text-muted">best of {titles.length}</p>
+      <div className="mt-2 flex flex-col gap-2">
+        {titles.map((t, i) => (
+          <button
+            key={t.id}
+            type="button"
+            className={`rounded-lg border px-3 py-2 text-left transition ${
+              i === titleIndex
+                ? "border-brand bg-brand/5"
+                : "border-line/40 hover:border-line/70"
+            }`}
+            onClick={() => onTitleIndexChange(i)}
+          >
+            <span className="text-[10px] font-medium text-muted">{studioTitleDirectionLabel(i)}</span>
+            <span className="mt-0.5 block text-sm text-ink">{t.text}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function hashtagLine(tags: string[]): string {
+  return tags.map((t) => `#${t.replace(/^#/, "")}`).join(" ");
+}
+
+/** 输出区稿件：best of N 标题 + 正文/话题连续排版（无内嵌滚动与区块分割） */
 export default function StudioOutputManuscript({
   version,
   onTitleIndexChange,
@@ -136,16 +174,14 @@ export default function StudioOutputManuscript({
   if (generatingPhase) {
     const label = generatingPhase.trim() || "写稿中…";
     return (
-      <div className="space-y-2 text-left">
+      <div className="text-left">
         <p className="flex items-center gap-2 text-sm text-ink">
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
           {label}
         </p>
-        {streamLines.map((line) => (
-          <p key={line} className={`text-sm leading-relaxed text-ink/85 ${STUDIO_MANUSCRIPT_BODY}`}>
-            {line}
-          </p>
-        ))}
+        {streamLines.length ? (
+          <p className={`mt-2 ${STUDIO_MANUSCRIPT_BODY}`}>{streamLines.join(" · ")}</p>
+        ) : null}
       </div>
     );
   }
@@ -159,6 +195,7 @@ export default function StudioOutputManuscript({
   const body = blocks.find((b) => b.kind === "body");
   const hashtags = blocks.find((b) => b.kind === "hashtags");
   const cover = blocks.find((b) => b.kind === "coverBrief");
+  const showBestOf = titles.length > 1 && Boolean(onTitleIndexChange);
 
   function patchBlock(nextBlock: ManuscriptBlock) {
     const next = draftBlocks.map((b) => {
@@ -171,90 +208,72 @@ export default function StudioOutputManuscript({
     scheduleSave(next);
   }
 
+  const flowParts: string[] = [];
+  if (!showBestOf && primaryTitle?.text) flowParts.push(primaryTitle.text);
+  if (body && body.kind === "body" && body.text.trim()) {
+    flowParts.push(flattenManuscriptDisplayText(body.text));
+  }
+  if (hashtags && hashtags.kind === "hashtags" && hashtags.tags.length) {
+    flowParts.push(hashtagLine(hashtags.tags));
+  }
+  if (cover && cover.kind === "coverBrief" && cover.text.trim()) {
+    flowParts.push(`封面：${flattenManuscriptDisplayText(cover.text)}`);
+  }
+  const flowText = flowParts.join(" ");
+
   return (
-    <article className="min-w-0 space-y-3 text-left">
-      {primaryTitle ? (
-        editable ? (
-          <AutoGrowTextarea
-            className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_TITLE}`}
-            value={primaryTitle.text}
-            onChange={(text) => patchBlock({ ...primaryTitle, text })}
-          />
-        ) : (
-          <h1 className={STUDIO_MANUSCRIPT_TITLE}>{primaryTitle.text}</h1>
-        )
+    <article className="min-w-0 text-left">
+      {showBestOf ? (
+        <BestOfTitlePicker
+          titles={titles}
+          titleIndex={titleIndex}
+          onTitleIndexChange={onTitleIndexChange!}
+        />
       ) : null}
 
-      {titles.length > 1 && onTitleIndexChange ? (
-        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
-          {titles.map((t, i) => (
-            <button
-              key={t.id}
-              type="button"
-              className={i === titleIndex ? "text-brand underline" : "underline hover:text-ink"}
-              onClick={() => onTitleIndexChange(i)}
-            >
-              标题 {i + 1}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {body && body.kind === "body" ? (
-        <>
-          {body.evidence === "corpus" || bodyHasCorpusAnchors(body.text) ? (
-            <p className="text-[10px] text-brand/85">正文含资料锚点</p>
+      {editable ? (
+        <div className="space-y-2">
+          {!showBestOf && primaryTitle ? (
+            <AutoGrowTextarea
+              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_TITLE}`}
+              value={primaryTitle.text}
+              onChange={(text) => patchBlock({ ...primaryTitle, text })}
+            />
           ) : null}
-          {editable ? (
+          {body && body.kind === "body" ? (
             <AutoGrowTextarea
               className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_BODY}`}
               value={body.text}
               onChange={(text) => patchBlock({ ...body, text })}
             />
-          ) : (
-            <p className={`whitespace-pre-wrap ${STUDIO_MANUSCRIPT_BODY}`}>{body.text}</p>
-          )}
-        </>
-      ) : null}
-
-      {hashtags && hashtags.kind === "hashtags" ? (
-        editable ? (
-          <input
-            className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_HASHTAGS}`}
-            value={hashtags.tags.map((t) => `#${t.replace(/^#/, "")}`).join(" ")}
-            onChange={(e) => {
-              const tags = e.target.value
-                .split(/[\s,#]+/)
-                .map((t) => t.replace(/^#/, "").trim())
-                .filter(Boolean);
-              patchBlock({ ...hashtags, tags });
-            }}
-          />
-        ) : (
-          <p className={STUDIO_MANUSCRIPT_HASHTAGS}>
-            {hashtags.tags.map((t) => (
-              <span key={t} className="mr-2">
-                #{t.replace(/^#/, "")}
-              </span>
-            ))}
-          </p>
-        )
-      ) : null}
-
-      {cover && cover.kind === "coverBrief" ? (
-        editable ? (
-          <input
-            className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_META}`}
-            value={cover.text}
-            onChange={(e) => patchBlock({ ...cover, text: e.target.value })}
-          />
-        ) : (
-          <p className={STUDIO_MANUSCRIPT_META}>封面：{cover.text}</p>
-        )
+          ) : null}
+          {hashtags && hashtags.kind === "hashtags" ? (
+            <input
+              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_HASHTAGS}`}
+              value={hashtagLine(hashtags.tags)}
+              onChange={(e) => {
+                const tags = e.target.value
+                  .split(/[\s,#]+/)
+                  .map((t) => t.replace(/^#/, "").trim())
+                  .filter(Boolean);
+                patchBlock({ ...hashtags, tags });
+              }}
+            />
+          ) : null}
+          {cover && cover.kind === "coverBrief" ? (
+            <input
+              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_META}`}
+              value={cover.text}
+              onChange={(e) => patchBlock({ ...cover, text: e.target.value })}
+            />
+          ) : null}
+        </div>
+      ) : flowText ? (
+        <p className={STUDIO_MANUSCRIPT_BODY}>{flowText}</p>
       ) : null}
 
       {version ? (
-        <div className="flex justify-start pt-1">
+        <div className="mt-2 flex justify-start">
           <button
             type="button"
             title="复制全部（含话题）"

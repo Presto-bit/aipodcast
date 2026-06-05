@@ -30,3 +30,15 @@ export function splitXhsBodyParagraphs(text: string): string[] {
     .map((p) => p.trim())
     .filter(Boolean);
 }
+
+/** 与生成 prompt 约定的 3 个标题方向（痛点 / 好奇 / 数字） */
+export const STUDIO_TITLE_DIRECTION_LABELS = ["痛点向", "好奇向", "数字向"] as const;
+
+export function studioTitleDirectionLabel(index: number): string {
+  return STUDIO_TITLE_DIRECTION_LABELS[index] ?? `方向 ${index + 1}`;
+}
+
+/** 展示用：折叠换行为空格，避免成稿被段落/区块拆开 */
+export function flattenManuscriptDisplayText(text: string): string {
+  return text.replace(/\s*\n+\s*/g, " ").trim();
+}

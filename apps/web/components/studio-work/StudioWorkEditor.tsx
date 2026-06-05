@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { manuscriptCopyAll, nextVersionLabel } from "../../lib/studioDeliverable";
-import { deliverableBodyLooksLikeIntakeEcho } from "../../lib/studioDeliverableQuality";
+import { shouldRejectDeliverableBody } from "../../lib/studioDeliverableQuality";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
 import { buildBlockPatchOpinion } from "../../lib/studioBlockPatch";
 import {
@@ -288,7 +288,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
         const blocks = result.blocks;
         const bodyText = blocks.find((b) => b.kind === "body")?.text ?? "";
-        if (!blocks.length || deliverableBodyLooksLikeIntakeEcho(bodyText)) {
+        if (!blocks.length || shouldRejectDeliverableBody(result.tool, bodyText)) {
           persist(
             finishStudioRun(
               {
