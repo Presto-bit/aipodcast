@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -24,7 +24,7 @@ import {
 } from "../../lib/studioWorkStorage";
 import { firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
 import { suggestStudioWorkTitleLlm } from "../../lib/studioWorkTitleSuggest";
-import { STUDIO_DIALOGUE_SECTION } from "../../lib/studioOutputTypography";
+import { buildStudioDialogueTurnGroups } from "../../lib/studioDialogueTurnGroups";
 import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
 import { streamHomeComposerAsk } from "../../lib/homeComposerAskStream";
@@ -35,8 +35,8 @@ import {
 } from "../../lib/studioAgentStructured";
 import type { ManuscriptVersion, StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
-import StudioAgentMessage from "./StudioAgentMessage";
 import StudioAgentOutputCards from "./StudioAgentOutputCards";
+import StudioDialoguePanel from "./StudioDialoguePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
 import StudioEphemeralHint from "./StudioEphemeralHint";
 
@@ -46,26 +46,34 @@ const QUICK_PROMPTS = [
   "开头钩子怎么写更抓人"
 ] as const;
 
+function studioDockHasArtifact(work: StudioWork, activeVersion: ManuscriptVersion | null): boolean {
+  if (work.error || work.status === "generating") return true;
+  const compareMode = Boolean(work.pendingPatch);
+  const blocks =
+    compareMode && work.pendingPatch
+      ? work.pendingPatch.proposedBlocks
+      : activeVersion?.blocks ?? [];
+  if (
+    blocks.length > 0 &&
+    (work.status === "ready" || work.status === "shipped" || compareMode)
+  ) {
+    return true;
+  }
+  if (work.pendingPatch) return true;
+  if (
+    STUDIO_POST_DONE_COACH_ENABLED &&
+    Boolean(work.postDoneCoach?.trim() || work.postDoneCoachStreaming)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function agentPlaceholder(status: WorkStatus): string {
   if (status === "generating") return "生成中…";
   if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
   if (status === "planned") return "正在根据计划写稿…";
   return "描述你想创作的内容与目标…";
-}
-
-function workAfterTruncateTurns(work: StudioWork, prefixTurns: StudioAgentTurn[]): StudioWork {
-  let next: StudioWork = {
-    ...work,
-    agentTurns: prefixTurns,
-    error: undefined,
-    pendingPatch: undefined
-  };
-  if (prefixTurns.length === 0) {
-    next = { ...next, plan: undefined, status: "briefing" };
-  } else if (work.status === "planned" || work.status === "briefing") {
-    next = { ...next, plan: undefined, status: "briefing" };
-  }
-  return syncWorkTitleFromTurns(next, prefixTurns);
 }
 
 export default function StudioAgentDock({
@@ -112,7 +120,9 @@ export default function StudioAgentDock({
   const [phase, setPhase] = useState("");
   const [corpusMenuOpen, setCorpusMenuOpen] = useState(false);
   const [ephemeralHint, setEphemeralHint] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const dialogueScrollRef = useRef<HTMLDivElement>(null);
+  const artifactScrollRef = useRef<HTMLDivElement>(null);
+  const lastUserAnchorIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const postDoneStartedRef = useRef(false);
   const titleSuggestAbortRef = useRef<AbortController | null>(null);
@@ -127,23 +137,24 @@ export default function StudioAgentDock({
   const readOnly = work.status === "generating" || parentBusy;
   const canChat = isLoggedIn && ready && !readOnly;
   const showQuickPrompts = turns.length === 0 && work.status === "briefing";
-  const canEditTurns = canChat && !agentBusy;
+  const hasArtifact = studioDockHasArtifact(work, activeVersion);
+
+  const scrollToActiveUser = useCallback(() => {
+    dialogueScrollRef.current
+      ?.querySelector('[data-studio-user-anchor="active"]')
+      ?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, []);
+
+  const activeUserTurnId = useMemo(() => {
+    const groups = buildStudioDialogueTurnGroups(turns);
+    return groups[groups.length - 1]?.userTurn.id ?? null;
+  }, [turns]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [
-    turns.length,
-    turns[turns.length - 1]?.content,
-    work.plan,
-    work.status,
-    work.runPhase,
-    work.error,
-    work.pendingPatch,
-    activeVersion?.id,
-    activeVersion?.blocks.length,
-    work.postDoneCoach,
-    work.postDoneCoachStreaming
-  ]);
+    if (!activeUserTurnId || activeUserTurnId === lastUserAnchorIdRef.current) return;
+    lastUserAnchorIdRef.current = activeUserTurnId;
+    requestAnimationFrame(() => scrollToActiveUser());
+  }, [activeUserTurnId, scrollToActiveUser]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -503,86 +514,50 @@ export default function StudioAgentDock({
     await runAgentTurn(prefixWithUser, q, base, route);
   }
 
-  function handleEditUserTurn(turnId: string, newText: string) {
-    abortBackgroundStreams();
-    const idx = turns.findIndex((t) => t.id === turnId);
-    if (idx < 0 || turns[idx]?.role !== "user") return;
-    const prefix = turns.slice(0, idx);
-    const truncated = workAfterTruncateTurns(work, prefix);
-    onPersist(truncated);
-    const route = routeStudioAction(truncated, newText, prefix);
-    const userTurn: StudioAgentTurn = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: newText.trim(),
-      createdAt: Date.now()
-    };
-    const prefixWithUser = [...prefix, userTurn];
-    const base = syncWorkTitleFromTurns(
-      { ...truncated, agentTurns: prefixWithUser, lastOrchestratorNote: route.note },
-      prefixWithUser
-    );
-    onPersist(base);
-    if (route.tool === "plan" && onGeneratePlan) {
-      void onGeneratePlan();
-      return;
-    }
-    if (route.tool === "generate" && onConfirmGenerate) {
-      void onConfirmGenerate();
-      return;
-    }
-    if (route.tool === "revise" && onReviseFromChat) {
-      void onReviseFromChat(newText.trim());
-      return;
-    }
-    void runAgentTurn(prefixWithUser, newText, base, route);
-  }
-
-  function handleRollbackFromTurn(turnId: string) {
-    abortBackgroundStreams();
-    const idx = turns.findIndex((t) => t.id === turnId);
-    if (idx < 0) return;
-    const prefix = turns.slice(0, idx);
-    onPersist(workAfterTruncateTurns(work, prefix));
-  }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
-      <div ref={scrollRef} className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-y-auto px-3 py-3">
+      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-3 py-3">
         {turns.length > 0 ? (
-          <div className="mb-1">
-            <p className={STUDIO_DIALOGUE_SECTION}>对话 · 解释</p>
-            <div className="mt-2 space-y-3">
-              {turns.map((turn) => (
-                <StudioAgentMessage
-                  key={turn.id}
-                  turn={turn}
-                  streamingPhase={turn.streaming ? phase : undefined}
-                  canEdit={canEditTurns}
-                  onEditUserTurn={handleEditUserTurn}
-                  onRollbackFromTurn={handleRollbackFromTurn}
-                />
-              ))}
-            </div>
+          <div
+            className={
+              hasArtifact
+                ? "mb-2 flex min-h-[120px] max-h-[min(42vh,360px)] shrink-0 flex-col"
+                : "mb-2 flex min-h-0 flex-1 flex-col"
+            }
+          >
+            <StudioDialoguePanel
+              turns={turns}
+              streamingPhase={phase}
+              scrollRef={dialogueScrollRef}
+            />
           </div>
         ) : null}
 
-        <StudioAgentOutputCards
-          work={work}
-          busy={agentBusy || parentBusy}
-          activeVersion={activeVersion}
-          onApplyPatch={onApplyPatch}
-          onDiscardPatch={onDiscardPatch}
-          selectedPatchKeys={selectedPatchKeys}
-          changedKeys={changedKeys}
-          onTogglePatchKey={onTogglePatchKey}
-          showFeatureNudge={showFeatureNudge}
-          onFillFeature={() => {
-            markOpenComposerFeature();
-            router.push(WORKBENCH_CHAT_PATH);
-          }}
-          onDismissFeatureNudge={onDismissFeatureNudge}
-        />
+        <div
+          ref={artifactScrollRef}
+          className={
+            hasArtifact
+              ? "min-h-0 flex-1 overflow-y-auto overscroll-contain"
+              : "shrink-0"
+          }
+        >
+          <StudioAgentOutputCards
+            work={work}
+            busy={agentBusy || parentBusy}
+            activeVersion={activeVersion}
+            onApplyPatch={onApplyPatch}
+            onDiscardPatch={onDiscardPatch}
+            selectedPatchKeys={selectedPatchKeys}
+            changedKeys={changedKeys}
+            onTogglePatchKey={onTogglePatchKey}
+            showFeatureNudge={showFeatureNudge}
+            onFillFeature={() => {
+              markOpenComposerFeature();
+              router.push(WORKBENCH_CHAT_PATH);
+            }}
+            onDismissFeatureNudge={onDismissFeatureNudge}
+          />
+        </div>
       </div>
 
       <div className="shrink-0 bg-surface px-3 pb-3 pt-1">

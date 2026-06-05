@@ -9,5 +9,8 @@ export const STUDIO_ARTIFACT_HEADING = "text-sm font-semibold text-ink";
 export const STUDIO_RUN_PHASE = "text-[11px] text-brand/90";
 
 export const STUDIO_DIALOGUE_SECTION = "text-[10px] font-medium uppercase tracking-wide text-muted/90";
-export const STUDIO_USER_BUBBLE = "text-xs leading-relaxed text-ink";
+/** Cursor 式用户指令：左对齐、全宽、无气泡 */
+export const STUDIO_USER_PROMPT = "text-sm leading-relaxed text-ink w-full";
+export const STUDIO_USER_PROMPT_STICKY =
+  "sticky top-0 z-10 -mx-3 border-b border-line/40 bg-surface/95 px-3 py-2 backdrop-blur-sm";
 export const STUDIO_ASSISTANT_BODY = "text-xs leading-relaxed text-ink";
