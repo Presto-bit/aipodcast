@@ -64,7 +64,8 @@ export default function StudioStreamingSurface({
   versions = [],
   activeVersionId,
   onVersionChange,
-  footer
+  footer,
+  flowLayout = false
 }: {
   phase?: string;
   taskSentence?: string;
@@ -87,6 +88,8 @@ export default function StudioStreamingSurface({
   activeVersionId?: string;
   onVersionChange?: (versionId: string) => void;
   footer?: ReactNode;
+  /** 嵌入统一滚动区：稿件与对话同屏，不再单独占满高度 */
+  flowLayout?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [streamLines, setStreamLines] = useState<string[]>([]);
@@ -125,8 +128,9 @@ export default function StudioStreamingSurface({
   }, [phase, taskSentence, isReadyLike]);
 
   useEffect(() => {
+    if (flowLayout) return;
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [displayBody, titles.length, hashtags, cover, variant]);
+  }, [displayBody, titles.length, hashtags, cover, variant, flowLayout]);
 
   const phaseLabel =
     phase?.trim() ||
@@ -156,8 +160,13 @@ export default function StudioStreamingSurface({
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-surface">
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line/40 px-4 py-2.5">
+    <div className={flowLayout ? "w-full bg-surface" : "flex min-h-0 flex-1 flex-col bg-surface"}>
+      <div
+        className={[
+          "flex shrink-0 items-center justify-between gap-3 border-b border-line/40 px-4 py-2.5",
+          flowLayout ? "sticky top-0 z-10 bg-surface/95 backdrop-blur-sm supports-[backdrop-filter]:bg-surface/90" : ""
+        ].join(" ")}
+      >
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {headerDot}
           <p className={`truncate ${STUDIO_STREAM_PHASE}`}>{phaseLabel}</p>
@@ -206,8 +215,20 @@ export default function StudioStreamingSurface({
         </div>
       </div>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto w-full max-w-2xl px-4 py-5 sm:px-6 sm:py-6">
+      <div
+        ref={flowLayout ? undefined : scrollRef}
+        className={
+          flowLayout
+            ? "w-full"
+            : "min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        }
+      >
+        <div
+          className={[
+            "mx-auto w-full max-w-2xl px-4 sm:px-6",
+            flowLayout ? "py-4" : "py-5 sm:py-6"
+          ].join(" ")}
+        >
           {isReadyLike ? (
             <StudioOutputManuscript
               version={variant === "diff" ? null : version}
@@ -225,10 +246,18 @@ export default function StudioStreamingSurface({
               borderless
             />
           ) : variant === "idle" && !hasContent ? (
-            <div className="flex min-h-[min(42vh,360px)] flex-col justify-center">
+            <div
+              className={
+                flowLayout
+                  ? "py-2"
+                  : "flex min-h-[min(42vh,360px)] flex-col justify-center"
+              }
+            >
               <p className={`${STUDIO_STREAM_BODY} text-ink/90`}>在这里流式写稿</p>
               <p className="mt-3 max-w-md text-[13px] leading-relaxed text-muted">
-                在下方描述主题、受众与形式。信息足够后，标题与正文会在此逐字出现；纯提问则只在对话区回复。
+                {flowLayout
+                  ? "在页面底部描述主题、受众与形式。信息足够后，标题与正文会在此逐字出现；纯提问则只在对话区回复。"
+                  : "在下方描述主题、受众与形式。信息足够后，标题与正文会在此逐字出现；纯提问则只在对话区回复。"}
               </p>
               {taskSentence?.trim() ? (
                 <p className="mt-4 border-l-2 border-brand/20 pl-3 text-[13px] text-muted">

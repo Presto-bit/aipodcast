@@ -29,7 +29,8 @@ export default function StudioDraftCanvas({
   streamingBlocks = null,
   streamingBodyText = null,
   generatingTaskSentence,
-  onCancelStream
+  onCancelStream,
+  flowLayout = false
 }: {
   work: StudioWork;
   busy: boolean;
@@ -53,6 +54,7 @@ export default function StudioDraftCanvas({
   streamingBodyText?: string | null;
   generatingTaskSentence?: string;
   onCancelStream?: () => void;
+  flowLayout?: boolean;
 }) {
   const compareMode = Boolean(work.pendingPatch);
   const isGenerating = work.status === "generating";
@@ -173,6 +175,7 @@ export default function StudioDraftCanvas({
           />
         ) : null)
       }
+      flowLayout={flowLayout}
     />
   );
 
@@ -187,7 +190,9 @@ export default function StudioDraftCanvas({
     );
   }
 
-  return (
+  return flowLayout ? (
+    surface
+  ) : (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface">{surface}</div>
   );
 }

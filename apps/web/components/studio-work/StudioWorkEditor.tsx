@@ -27,8 +27,11 @@ import {
 } from "../../lib/studioOrchestrator";
 import { resolveJobAnchorTurnId } from "../../lib/studioTimeline";
 import { streamStudioAgent } from "../../lib/studioAgentStream";
+import { studioAgentRouteHint } from "../../lib/studioAgentToolSchema";
+import { getStudioAgentMode, setStudioAgentMode } from "../../lib/studioAgentMode";
+import { upsertAgentStep, type StudioAgentStep } from "../../lib/studioAgentSteps";
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
-import { taskSentenceFromWork } from "../../lib/studioWorkTask";
+import { composeTaskSentenceFromTurns, taskSentenceFromWork } from "../../lib/studioWorkTask";
 import type {
   ManuscriptBlock,
   ManuscriptVersion,
@@ -65,6 +68,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const canvasSnapshotsRef = useRef<Map<string, CanvasSnapshot>>(new Map());
   const undoStackRef = useRef<ManuscriptBlock[][]>([]);
   const [canUndoPatch, setCanUndoPatch] = useState(false);
+  const [agentRouteHint, setAgentRouteHint] = useState("");
+  const [agentSteps, setAgentSteps] = useState<StudioAgentStep[]>([]);
 
   const load = useCallback(() => {
     const w = getStudioWork(workId);
@@ -152,9 +157,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         status: cur.status
       });
 
-      const taskSentence = taskSentenceFromWork({ ...cur, agentTurns: params.prefixTurns });
-      const intake = buildStudioJobIntake(taskSentence, cur.intake);
-      const authorPrompt = buildStudioAuthorPrompt(taskSentenceFromWork(cur) || taskSentence);
+      const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
+      const intake = buildStudioJobIntake(composeTask, cur.intake);
+      const authorPrompt = buildStudioAuthorPrompt(composeTask);
 
       const baseVersion =
         cur.versions.find((v) => v.id === cur.activeVersionId) ?? cur.versions.at(-1);
@@ -166,15 +171,17 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const effectiveTaskSentence =
         isReviseIntent && baseVersion
           ? buildStudioReviseTaskSentence(
-              taskSentence,
+              composeTask,
               manuscriptCopyAll(baseVersion.blocks, baseVersion.primaryTitleIndex ?? 0),
               params.userText
             )
-          : taskSentence;
+          : composeTask;
 
       streamAbortRef.current?.abort();
       const ac = new AbortController();
       streamAbortRef.current = ac;
+      setAgentRouteHint("");
+      setAgentSteps([]);
 
       let runId = "";
       let runTool: "generate" | "revise" = "generate";
@@ -220,6 +227,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         setStreamingBodyText("");
       };
 
+      const manuscriptBlocks = baseVersion?.blocks ?? [];
+
       try {
         const result = await streamStudioAgent({
           message: params.userText,
@@ -232,8 +241,13 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           noteIds: cur.binding.noteIds,
           featureCore: getComposerPrefsFeatureCore() as unknown as Record<string, unknown>,
           authorPrompt,
+          agentMode: getStudioAgentMode(),
+          manuscriptBlocks,
           authHeaders: getAuthHeaders(),
           signal: ac.signal,
+          onStep: (step) => setAgentSteps((prev) => upsertAgentStep(prev, step)),
+          onRoute: (route) =>
+            setAgentRouteHint(studioAgentRouteHint(route, getStudioAgentMode())),
           onReply: (text) => {
             const live = getStudioWork(workId);
             if (!live) return;
@@ -410,6 +424,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         }
       } finally {
         clearStreamingSurface();
+        setAgentRouteHint("");
+        setAgentSteps([]);
         if (streamAbortRef.current === ac) streamAbortRef.current = null;
       }
     },
@@ -540,116 +556,113 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <StudioDraftCanvas
-            work={work}
-            busy={jobBusy}
-            activeVersion={activeVersion ?? null}
-            versions={work.versions}
-            streamingBlocks={streamingBlocks}
-            streamingBodyText={streamingBodyText}
-            generatingTaskSentence={taskSentenceFromWork(work)}
-            showFeatureNudge={showFeatureNudge}
-            onFillFeature={() => {
-              markOpenComposerFeature();
-              router.push(WORKBENCH_CHAT_PATH);
-            }}
-            onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
-            onApplyPatch={onApplyPatch}
-            onDiscardPatch={() => persist({ ...work, pendingPatch: undefined })}
-            selectedPatchKeys={selectedPatchKeys}
-            changedKeys={changedKeys}
-            onTogglePatchKey={(key) => {
-              setSelectedPatchKeys((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              });
-            }}
-            onTitleIndexChange={(index) => {
-              if (!work || !activeVersion) return;
-              persist({
-                ...work,
-                versions: work.versions.map((v) =>
-                  v.id === activeVersion.id ? { ...v, primaryTitleIndex: index } : v
-                )
-              });
-            }}
-            onVersionChange={(versionId) => {
-              if (!work.versions.some((v) => v.id === versionId)) return;
-              persist({ ...work, activeVersionId: versionId, pendingPatch: undefined });
-            }}
-            onBlocksChange={onManuscriptBlocksChange}
-            onSelectionRevise={(selectedText, opinion) =>
-              void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion))
-            }
-            onWowRevise={(opinion) => void onReviseFromChat(opinion)}
-            onCancelStream={cancelAgentStream}
-          />
-        </div>
-
-        <div
-          className={[
-            "min-h-[168px] shrink-0 border-t border-line",
-            work.status === "generating" ? "max-h-[min(28vh,220px)]" : "max-h-[min(38vh,300px)]"
-          ].join(" ")}
-        >
-          <StudioAgentDock
-            work={work}
-            isLoggedIn={isLoggedIn}
-            ready={ready}
-            jobBusy={jobBusy}
-            canvasMode
-            getAuthHeaders={getAuthHeaders}
-            onPersist={persist}
-            onAgentRun={async ({ userText, prefixTurns, userTurnId }) => {
-              await runJobExclusive(() =>
-                runAgentStream({ userText, prefixTurns, userTurnId })
-              );
-            }}
-            onQueueRevise={onQueueRevise}
-            onRestoreCanvasBeforeTurn={restoreCanvasBeforeTurn}
-            onCancelStream={cancelAgentStream}
-            hasPendingPatch={Boolean(work.pendingPatch)}
-            onAcceptPatch={() => onApplyPatch(false)}
-            onUndoPatch={onUndoPatch}
-            canUndoPatch={canUndoPatch}
-            activeVersion={activeVersion ?? null}
-            showFeatureNudge={false}
-            onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
-            onApplyPatch={onApplyPatch}
-            onDiscardPatch={() => persist({ ...work, pendingPatch: undefined })}
-            selectedPatchKeys={selectedPatchKeys}
-            changedKeys={changedKeys}
-            onTogglePatchKey={(key) => {
-              setSelectedPatchKeys((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              });
-            }}
-            onTitleIndexChange={(index) => {
-              if (!work || !activeVersion) return;
-              persist({
-                ...work,
-                versions: work.versions.map((v) =>
-                  v.id === activeVersion.id ? { ...v, primaryTitleIndex: index } : v
-                )
-              });
-            }}
-            onVersionChange={(versionId) => {
-              if (!work.versions.some((v) => v.id === versionId)) return;
-              persist({ ...work, activeVersionId: versionId, pendingPatch: undefined });
-            }}
-            onBlocksChange={onManuscriptBlocksChange}
-            onSelectionRevise={(selectedText, opinion) =>
-              void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion))
-            }
-            onWowRevise={(opinion) => void onReviseFromChat(opinion)}
-          />
-        </div>
+        <StudioAgentDock
+          work={work}
+          isLoggedIn={isLoggedIn}
+          ready={ready}
+          jobBusy={jobBusy}
+          canvasMode
+          agentRouteHint={agentRouteHint}
+          agentSteps={agentSteps}
+          canvasSlot={
+            <StudioDraftCanvas
+              flowLayout
+              work={work}
+              busy={jobBusy}
+              activeVersion={activeVersion ?? null}
+              versions={work.versions}
+              streamingBlocks={streamingBlocks}
+              streamingBodyText={streamingBodyText}
+              generatingTaskSentence={taskSentenceFromWork(work)}
+              showFeatureNudge={showFeatureNudge}
+              onFillFeature={() => {
+                markOpenComposerFeature();
+                router.push(WORKBENCH_CHAT_PATH);
+              }}
+              onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
+              onApplyPatch={onApplyPatch}
+              onDiscardPatch={() => persist({ ...work, pendingPatch: undefined })}
+              selectedPatchKeys={selectedPatchKeys}
+              changedKeys={changedKeys}
+              onTogglePatchKey={(key) => {
+                setSelectedPatchKeys((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(key)) next.delete(key);
+                  else next.add(key);
+                  return next;
+                });
+              }}
+              onTitleIndexChange={(index) => {
+                if (!work || !activeVersion) return;
+                persist({
+                  ...work,
+                  versions: work.versions.map((v) =>
+                    v.id === activeVersion.id ? { ...v, primaryTitleIndex: index } : v
+                  )
+                });
+              }}
+              onVersionChange={(versionId) => {
+                if (!work.versions.some((v) => v.id === versionId)) return;
+                persist({ ...work, activeVersionId: versionId, pendingPatch: undefined });
+              }}
+              onBlocksChange={onManuscriptBlocksChange}
+              onSelectionRevise={(selectedText, opinion) => {
+                setStudioAgentMode("write");
+                void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion));
+              }}
+              onWowRevise={(opinion) => void onReviseFromChat(opinion)}
+              onCancelStream={cancelAgentStream}
+            />
+          }
+          getAuthHeaders={getAuthHeaders}
+          onPersist={persist}
+          onAgentRun={async ({ userText, prefixTurns, userTurnId }) => {
+            await runJobExclusive(() =>
+              runAgentStream({ userText, prefixTurns, userTurnId })
+            );
+          }}
+          onQueueRevise={onQueueRevise}
+          onRestoreCanvasBeforeTurn={restoreCanvasBeforeTurn}
+          onCancelStream={cancelAgentStream}
+          hasPendingPatch={Boolean(work.pendingPatch)}
+          onAcceptPatch={() => onApplyPatch(false)}
+          onUndoPatch={onUndoPatch}
+          canUndoPatch={canUndoPatch}
+          activeVersion={activeVersion ?? null}
+          showFeatureNudge={false}
+          onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
+          onApplyPatch={onApplyPatch}
+          onDiscardPatch={() => persist({ ...work, pendingPatch: undefined })}
+          selectedPatchKeys={selectedPatchKeys}
+          changedKeys={changedKeys}
+          onTogglePatchKey={(key) => {
+            setSelectedPatchKeys((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            });
+          }}
+          onTitleIndexChange={(index) => {
+            if (!work || !activeVersion) return;
+            persist({
+              ...work,
+              versions: work.versions.map((v) =>
+                v.id === activeVersion.id ? { ...v, primaryTitleIndex: index } : v
+              )
+            });
+          }}
+          onVersionChange={(versionId) => {
+            if (!work.versions.some((v) => v.id === versionId)) return;
+            persist({ ...work, activeVersionId: versionId, pendingPatch: undefined });
+          }}
+          onBlocksChange={onManuscriptBlocksChange}
+          onSelectionRevise={(selectedText, opinion) => {
+            setStudioAgentMode("write");
+            void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion));
+          }}
+          onWowRevise={(opinion) => void onReviseFromChat(opinion)}
+        />
       </div>
     </main>
   );

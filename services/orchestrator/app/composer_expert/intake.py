@@ -224,7 +224,10 @@ def _infer_xhs(task_sentence: str) -> tuple[dict[str, Any], bool, str | None]:
     else:
         intake["accountStage"] = "steady"
 
-    if re.search(r"清单|list|几条|几点|避坑", text, re.I):
+    if re.search(r"推广|种草|带货", text):
+        intake["contentAngle"] = "story"
+        intake["noteType"] = "story"
+    elif re.search(r"清单|list|几条|几点|避坑", text, re.I):
         intake["contentAngle"] = "listicle"
         intake["noteType"] = "listicle"
     elif re.search(r"故事|经历|复盘", text):

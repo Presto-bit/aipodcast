@@ -50,7 +50,7 @@ export function isInsufficientBrief(userMessage: string): boolean {
   if (!text) return true;
   if (text.length < 8) return true;
   if (needsPromoBriefClarification(text)) return true;
-  const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇/.test(text);
+  const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作/.test(text);
   const hasTopicOrForm = TOPIC_FORM_SIGNAL.test(text);
   if (hasWriteIntent && hasTopicOrForm) return false;
   if (hasWriteIntent && text.length >= 14) return false;
@@ -61,7 +61,7 @@ export function isInsufficientBrief(userMessage: string): boolean {
 
 /** 纯问答（无写稿意图）时不触发自动 generate */
 function isAskOnlyMessage(q: string, intent: StudioAgentIntent): boolean {
-  const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇/.test(q);
+  const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作/.test(q);
   if (intent === "manuscript_coach") return true;
   if (intent === "ops_strategy" && !hasWriteIntent) return true;
   if (hasWriteIntent) return false;

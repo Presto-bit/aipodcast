@@ -13,9 +13,9 @@ export function buildStudioJobIntake(
   );
 
   if (/推广|种草|带货|杯子|产品|新品|保温杯/.test(taskSentence)) {
-    intake.contentAngle = "tutorial";
-    intake.noteType = "howto";
-    intake.structure = "steps";
+    intake.contentAngle = "story";
+    intake.noteType = "story";
+    intake.structure = "story_arc";
     intake.publishGoal = "expose";
     intake.hookStyle = /提醒|喝水|杯子/.test(taskSentence) ? "scene" : "pain_question";
   }

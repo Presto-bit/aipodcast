@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -29,6 +29,13 @@ import {
 import { buildStudioDialogueTurnGroups } from "../../lib/studioDialogueTurnGroups";
 import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
+import {
+  getStudioAgentMode,
+  setStudioAgentMode,
+  studioAgentModePlaceholder,
+  type StudioAgentMode
+} from "../../lib/studioAgentMode";
+import type { StudioAgentStep } from "../../lib/studioAgentSteps";
 import { streamStudioAgentAsk } from "../../lib/studioAgentAskStream";
 import {
   STUDIO_STRUCTURED_OUTPUT_ENABLED,
@@ -44,6 +51,8 @@ import type {
   WorkStatus
 } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
+import StudioAgentModeToggle from "./StudioAgentModeToggle";
+import StudioAgentStepBar from "./StudioAgentStepBar";
 import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
 import StudioEphemeralHint from "./StudioEphemeralHint";
@@ -68,10 +77,8 @@ function workAfterTruncateTurns(work: StudioWork, prefixTurns: StudioAgentTurn[]
   return syncWorkTitleFromTurns(next, prefixTurns);
 }
 
-function agentPlaceholder(status: WorkStatus): string {
-  if (status === "generating") return "写稿进行中，仍可提问或描述下一步改版…";
-  if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
-  return "描述你想创作的内容与目标…";
+function agentPlaceholder(status: WorkStatus, mode: StudioAgentMode): string {
+  return studioAgentModePlaceholder(mode, status);
 }
 
 function appendToolAckTurn(
@@ -120,13 +127,21 @@ export default function StudioAgentDock({
   onBlocksChange,
   onSelectionRevise,
   onWowRevise,
-  canvasMode = false
+  canvasMode = false,
+  canvasSlot,
+  agentRouteHint = "",
+  agentSteps = []
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
   ready: boolean;
   jobBusy: boolean;
   canvasMode?: boolean;
+  /** canvasMode：稿件嵌入同一滚动区，位于对话上方 */
+  canvasSlot?: ReactNode;
+  /** 单 Agent 路由提示（reply / compose / revise） */
+  agentRouteHint?: string;
+  agentSteps?: StudioAgentStep[];
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
   /** canvasMode：统一 Agent SSE（reply | compose | revise） */
@@ -165,6 +180,7 @@ export default function StudioAgentDock({
   const [phase, setPhase] = useState("");
   const [corpusMenuOpen, setCorpusMenuOpen] = useState(false);
   const [ephemeralHint, setEphemeralHint] = useState("");
+  const [agentMode, setAgentModeState] = useState<StudioAgentMode>("write");
   const dialogueScrollRef = useRef<HTMLDivElement>(null);
   const lastUserAnchorIdRef = useRef<string | null>(null);
   const phaseRef = useRef("");
@@ -188,9 +204,11 @@ export default function StudioAgentDock({
   const showQuickPrompts = turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
   const canEditTurns = canChat && !agentBusy;
   const dialogueEmptyHint =
-    turns.length === 0 && isDraftLikeStatus(work.status) && work.status !== "generating"
-      ? "描述你想创作的内容，够信息后会自动开始写稿"
-      : undefined;
+    canvasSlot
+      ? undefined
+      : turns.length === 0 && isDraftLikeStatus(work.status) && work.status !== "generating"
+        ? "描述你想创作的内容，够信息后会自动开始写稿"
+        : undefined;
 
   const scrollToActiveUser = useCallback(() => {
     dialogueScrollRef.current
@@ -208,6 +226,15 @@ export default function StudioAgentDock({
     lastUserAnchorIdRef.current = activeUserTurnId;
     requestAnimationFrame(() => scrollToActiveUser());
   }, [activeUserTurnId, scrollToActiveUser]);
+
+  useEffect(() => {
+    setAgentModeState(getStudioAgentMode());
+  }, [work.id]);
+
+  function updateAgentMode(next: StudioAgentMode) {
+    setStudioAgentMode(next);
+    setAgentModeState(next);
+  }
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -645,11 +672,12 @@ export default function StudioAgentDock({
 
   return (
     <div className={["flex min-h-0 flex-col bg-surface", canvasMode ? "h-full" : "flex-1"].join(" ")}>
-      <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-3 py-2">
+      <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col px-3 py-2">
         <div
           ref={dialogueScrollRef}
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
+          {canvasSlot ? <div className="shrink-0">{canvasSlot}</div> : null}
           <StudioTimelinePanel
             work={work}
             turns={dialogueTurns}
@@ -679,8 +707,8 @@ export default function StudioAgentDock({
         </div>
       </div>
 
-      <div className="shrink-0 bg-surface px-3 pb-2 pt-1">
-        <div className="mx-auto w-full max-w-3xl">
+      <div className="sticky bottom-0 z-20 shrink-0 border-t border-line/40 bg-surface/95 px-3 pb-2 pt-1 backdrop-blur-sm supports-[backdrop-filter]:bg-surface/90">
+        <div className="mx-auto w-full max-w-2xl">
           {!isLoggedIn && ready ? (
             <p className="mb-2 text-xs text-warning-ink">
               <Link href="/login" className="text-brand underline">
@@ -694,9 +722,10 @@ export default function StudioAgentDock({
               {orchestratorHint}
             </p>
           ) : null}
-          {ephemeralHint ? (
+          {canvasMode && agentSteps.length ? <StudioAgentStepBar steps={agentSteps} /> : null}
+          {agentRouteHint || ephemeralHint ? (
             <div className="mb-2">
-              <StudioEphemeralHint text={ephemeralHint} />
+              <StudioEphemeralHint text={agentRouteHint || ephemeralHint} />
             </div>
           ) : null}
           {showQuickPrompts ? (
@@ -714,13 +743,20 @@ export default function StudioAgentDock({
               ))}
             </div>
           ) : null}
+          {canvasMode ? (
+            <StudioAgentModeToggle
+              mode={agentMode}
+              onChange={updateAgentMode}
+              disabled={!canChat || agentBusy || jobRunning}
+            />
+          ) : null}
           <StudioAgentComposer
             value={input}
             onChange={setInput}
             onSend={() => void handleSend()}
             busy={agentBusy || (jobRunning && Boolean(input.trim()))}
             disabled={!canChat}
-            placeholder={agentPlaceholder(work.status)}
+            placeholder={agentPlaceholder(work.status, canvasMode ? agentMode : "write")}
             menuOpen={corpusMenuOpen}
             generating={jobRunning}
             onCancel={jobRunning ? onCancelStream : undefined}

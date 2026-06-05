@@ -22,22 +22,31 @@ from ..composer_expert.manuscript_stream import (
 )
 from ..social_llm_utils import extract_partial_social_json_fields, invoke_social_llm
 from .agent_route import (
-    build_task_sentence_from_turns,
+    build_compose_task_sentence,
     is_insufficient_brief,
     reply_for_blocking,
-    route_studio_agent,
 )
+from .agent_loop import run_agent_tool_loop
+from .agent_tool_schema import normalize_agent_mode
 
 
-def _short_coach_reply(message: str, *, has_manuscript: bool) -> str:
+def _short_coach_reply(
+    message: str,
+    *,
+    has_manuscript: bool,
+    manuscript_excerpt: str = "",
+) -> str:
     system = (
         "你是小红书创作助手。用不超过120字中文直接回答用户问题。"
         "不要输出完整笔记正文；不要 JSON。若用户应改稿，提示其在输入框描述改版意见。"
     )
-    if has_manuscript:
-        system += "当前已有稿件在画布，可结合改稿建议作答。"
+    if has_manuscript or manuscript_excerpt:
+        system += "当前已有稿件在画布，请结合稿件内容作答。"
+    user = message.strip()[:800]
+    if manuscript_excerpt.strip():
+        user = f"【当前稿件摘要】\n{manuscript_excerpt.strip()[:2400]}\n\n用户问题：{user}"
     try:
-        raw, _ = invoke_social_llm(system, message.strip()[:800], max_tokens=220)
+        raw, _ = invoke_social_llm(system, user, max_tokens=220)
         text = str(raw or "").strip()
         if text:
             return text[:480]
@@ -60,20 +69,63 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
     turns = payload.get("agentTurns") if isinstance(payload.get("agentTurns"), list) else []
     status = str(payload.get("status") or "draft").strip()
     version_count = int(payload.get("versionCount") or 0)
-    task_sentence = str(payload.get("taskSentence") or "").strip() or build_task_sentence_from_turns(turns)
+    agent_mode = normalize_agent_mode(
+        str(payload.get("agentMode") or payload.get("agent_mode") or "write")
+    )
 
-    tool = route_studio_agent(
+    pending_steps: list[dict[str, Any]] = []
+
+    def emit_step(step_id: str, label: str, status: str, tool: str | None) -> None:
+        pending_steps.append(
+            {
+                "type": "step",
+                "id": step_id,
+                "label": label,
+                "status": status,
+                "tool": tool or "",
+                "requestId": rid,
+            }
+        )
+
+    loop_result = run_agent_tool_loop(
         message=message,
         status=status,
         version_count=version_count,
-        task_sentence=task_sentence,
+        turns=turns,
+        payload={**payload, "agentMode": agent_mode},
+        emit_step=emit_step,
     )
+    for step_ev in pending_steps:
+        yield _sse(step_ev)
+
+    decision = loop_result.decision
+    tool = decision.tool
+    manuscript_excerpt = loop_result.manuscript_excerpt
+
+    tool_call_payload = {
+        "type": "tool_call",
+        "tool": tool,
+        "brief": decision.brief[:500] if decision.brief else "",
+        "reply": decision.reply_text[:480] if decision.reply_text else "",
+        "source": decision.source,
+        "reason": decision.reason[:200],
+        "mode": agent_mode,
+        "requestId": rid,
+    }
+    yield _sse(tool_call_payload)
+    yield _sse({**tool_call_payload, "type": "route"})
 
     if tool == "reply":
-        if is_insufficient_brief(message) and version_count == 0:
+        if decision.reply_text:
+            text = decision.reply_text
+        elif is_insufficient_brief(message) and version_count == 0:
             text = reply_for_blocking(message)
         else:
-            text = _short_coach_reply(message, has_manuscript=version_count > 0)
+            text = _short_coach_reply(
+                message,
+                has_manuscript=version_count > 0,
+                manuscript_excerpt=manuscript_excerpt,
+            )
         yield _sse({"type": "reply", "text": text, "requestId": rid})
         yield _sse(
             {
@@ -86,18 +138,21 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         return
 
     intake_raw = payload.get("intake") if isinstance(payload.get("intake"), dict) else {}
-    intake = _ensure_intake_from_task(intake_raw, task_sentence or message)
+    if tool == "revise":
+        task_sentence = str(payload.get("taskSentence") or decision.brief or message).strip() or message
+    elif tool == "compose":
+        task_sentence = decision.brief.strip() or build_compose_task_sentence(
+            turns, current_message=message
+        )
+    else:
+        task_sentence = decision.brief.strip() or message
+    intake = _ensure_intake_from_task(intake_raw, task_sentence)
     feature_core = payload.get("featureCore") if isinstance(payload.get("featureCore"), dict) else {}
     feature_summary = " · ".join(
         str(feature_core.get(k) or "").strip()
         for k in ("who", "remember", "avoid")
         if str(feature_core.get(k) or "").strip()
     )[:80]
-
-    if tool == "revise":
-        task_sentence = str(payload.get("taskSentence") or task_sentence).strip() or message
-    elif not task_sentence.strip():
-        task_sentence = message
 
     stream_payload = {
         **payload,
@@ -112,6 +167,16 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         stream_payload["notes_notebook"] = stream_payload.get("notebook") or ""
 
     yield _sse({"type": "phase", "message": "开始写稿…", "requestId": rid, "tool": tool})
+    yield _sse(
+        {
+            "type": "step",
+            "id": "compose_stream",
+            "label": "流式写稿" if tool == "compose" else "流式改版",
+            "status": "running",
+            "tool": tool,
+            "requestId": rid,
+        }
+    )
 
     try:
         material, options, notebook, note_count, used_rag = _prepare_material(
@@ -202,6 +267,16 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         elif kind == "done":
             data = item if isinstance(item, dict) else {}
             blocks = data.get("blocks") if isinstance(data.get("blocks"), list) else []
+            yield _sse(
+                {
+                    "type": "step",
+                    "id": "compose_stream",
+                    "label": "流式写稿" if tool == "compose" else "流式改版",
+                    "status": "done",
+                    "tool": tool,
+                    "requestId": rid,
+                }
+            )
             yield _sse(
                 {
                     "type": "done",

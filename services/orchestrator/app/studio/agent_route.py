@@ -14,7 +14,7 @@ PROMO_DETAIL_SIGNAL = re.compile(
 )
 REVISE_SIGNAL = re.compile(r"改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化")
 BLOCK_PATCH_SIGNAL = re.compile(r"【块级改版】|块级改版")
-WRITE_INTENT = re.compile(r"生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇")
+WRITE_INTENT = re.compile(r"生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作")
 ASK_SIGNAL = re.compile(r"[?？]$|怎么(写|改|搭)|如何(写|改)|钩子|开头|结构|^(帮我)?(分析|解读|看看|讲讲)")
 
 
@@ -99,3 +99,27 @@ def build_task_sentence_from_turns(turns: list[dict[str, Any]]) -> str:
         if text:
             parts.append(text)
     return "\n\n".join(parts)[:2000]
+
+
+def build_compose_task_sentence(
+    turns: list[dict[str, Any]],
+    *,
+    current_message: str = "",
+) -> str:
+    """成稿任务句：剔除纯问答轮次，避免「怎么写钩子」污染推广成稿。"""
+    parts: list[str] = []
+    for t in turns:
+        if str(t.get("role") or "") != "user":
+            continue
+        text = str(t.get("content") or "").strip()
+        if text and not is_ask_only(text, has_manuscript=False):
+            parts.append(text)
+    cur = current_message.strip()
+    if cur and not is_ask_only(cur, has_manuscript=False):
+        if not parts or parts[-1] != cur:
+            parts.append(cur)
+    if parts:
+        return "\n\n".join(parts)[:2000]
+    if cur:
+        return cur[:2000]
+    return build_task_sentence_from_turns(turns)

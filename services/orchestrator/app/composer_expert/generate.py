@@ -178,6 +178,7 @@ def _compose_expert_writer_instructions(
     hints = [
         "你是小红书种草/推广笔记写手。根据用户任务与偏好，撰写完整、可直接发布的笔记 JSON。",
         "必须写出具体产品卖点、目标用户痛点、使用场景与行动引导，禁止空泛占位。",
+        "输出必须是可直接发布的种草/推广笔记正文，禁止写「怎么写钩子/步骤拆解/同行可套用/今天拆解写法」类创作课或方法论。",
         "禁止把任务描述或本说明文字照抄进正文；禁止输出「请先结论/展开」类模板结构。",
         "正文须分段：每段不超过 80 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
         "标题中的数量承诺（如「3个坑」「三大误区」）须与正文分点条数完全一致，禁止标题写 3 条正文列 4 条。",
@@ -235,6 +236,17 @@ def _looks_like_xhs_template_body(content: dict[str, Any], task_sentence: str) -
     if isinstance(tags, list) and tags == _FALLBACK_XHS_TAGS:
         return True
     if "你觉得哪一点最有用" in body and "📌" in body:
+        return True
+    tutorial_meta = (
+        "今天拆解",
+        "同行可直接套用",
+        "第一步：",
+        "第二步：",
+        "第三步：",
+        "开头钩子写法",
+        "试试这个公式",
+    )
+    if sum(1 for m in tutorial_meta if m in body) >= 2:
         return True
     return False
 

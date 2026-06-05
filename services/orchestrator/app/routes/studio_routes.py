@@ -64,6 +64,8 @@ class StudioAgentStreamBody(BaseModel):
     use_rag: bool = Field(default=True, alias="useRag")
     rag_max_chars: int = Field(default=56000, alias="ragMaxChars")
     source_type: str = Field(default="composer_prompt", alias="sourceType")
+    agent_mode: str = Field(default="write", alias="agentMode")
+    manuscript_blocks: list[dict[str, Any]] = Field(default_factory=list, alias="manuscriptBlocks")
 
     model_config = {"populate_by_name": True}
 

@@ -16,6 +16,7 @@ import {
 import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
+import StudioSelectionToolbar from "./StudioSelectionToolbar";
 
 function IconCopy({ className }: { className?: string }) {
   return (
@@ -84,7 +85,6 @@ export default function StudioOutputManuscript({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bodySectionRef = useRef<HTMLElement | null>(null);
   const [selectionUi, setSelectionUi] = useState<{ text: string } | null>(null);
-  const [selectionOpinion, setSelectionOpinion] = useState("");
   const [streamLines, setStreamLines] = useState<string[]>([]);
 
   useEffect(() => {
@@ -185,7 +185,13 @@ export default function StudioOutputManuscript({
       return;
     }
     setSelectionUi({ text });
-    setSelectionOpinion("");
+  }
+
+  function handleSelectionRevise(opinion: string) {
+    if (!selectionUi || !onSelectionRevise) return;
+    onSelectionRevise(selectionUi.text, opinion);
+    setSelectionUi(null);
+    window.getSelection()?.removeAllRanges();
   }
 
   return (
@@ -260,6 +266,9 @@ export default function StudioOutputManuscript({
 
         {body && body.kind === "body" ? (
           <section ref={bodySectionRef} onMouseUp={onBodySelection}>
+            {onSelectionRevise && !compareMode ? (
+              <p className="mb-1 text-[10px] text-muted">选中正文片段，使用浮动工具条快速改版</p>
+            ) : null}
             {compareMode && changedKeys?.has("body") && onToggleKey ? (
               <label className="mb-1 flex items-center gap-1.5 text-[10px] text-muted">
                 <input
@@ -284,38 +293,17 @@ export default function StudioOutputManuscript({
             ) : (
               <p className={`whitespace-pre-wrap ${STUDIO_MANUSCRIPT_BODY}`}>{body.text}</p>
             )}
-            {selectionUi && onSelectionRevise ? (
-              <div className="mt-2 rounded-lg border border-line/60 bg-surface px-2.5 py-2 shadow-soft">
-                <p className="mb-1 text-[10px] text-muted">优化选中片段</p>
-                <input
-                  className="mb-2 w-full rounded-md border border-line/60 bg-fill/30 px-2 py-1 text-xs text-ink outline-none"
-                  placeholder="例如：更口语、保留数据"
-                  value={selectionOpinion}
-                  onChange={(e) => setSelectionOpinion(e.target.value)}
-                />
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="rounded-md bg-brand px-2 py-1 text-[11px] text-brand-foreground"
-                    onClick={() => {
-                      onSelectionRevise(selectionUi.text, selectionOpinion);
-                      setSelectionUi(null);
-                      window.getSelection()?.removeAllRanges();
-                    }}
-                  >
-                    优化这段
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md border border-line px-2 py-1 text-[11px] text-muted"
-                    onClick={() => setSelectionUi(null)}
-                  >
-                    取消
-                  </button>
-                </div>
-              </div>
-            ) : null}
           </section>
+        ) : null}
+
+        {selectionUi && onSelectionRevise ? (
+          <StudioSelectionToolbar
+            anchorRef={bodySectionRef}
+            selectedText={selectionUi.text}
+            onRevise={handleSelectionRevise}
+            onDismiss={() => setSelectionUi(null)}
+            busy={wowReviseBusy}
+          />
         ) : null}
 
         {hashtags && hashtags.kind === "hashtags" ? (
