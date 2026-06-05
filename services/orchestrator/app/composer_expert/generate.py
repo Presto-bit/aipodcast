@@ -301,17 +301,49 @@ def _count_body_list_items(body: str) -> int:
     return marked
 
 
+def _expand_bodies_to_three(bodies: list[str], titles: list[str], fallback: str) -> list[str]:
+    """模型常只回 1 个 body：用 titles 方向补齐 3 套，避免校验失败。"""
+    cleaned = [str(b).strip() for b in bodies if str(b).strip()]
+    seed = cleaned[0] if cleaned else str(fallback or "").strip()
+    if not seed:
+        return []
+    title_list = [str(t).strip() for t in titles if str(t).strip()][:3]
+    while len(title_list) < 3:
+        title_list.append(title_list[0] if title_list else "")
+    out: list[str] = []
+    for i in range(3):
+        if i < len(cleaned):
+            out.append(cleaned[i])
+            continue
+        title = title_list[i]
+        if i == 0:
+            out.append(seed)
+        elif title and title not in seed[: min(len(title) + 8, len(seed))]:
+            out.append(f"{title} {seed}")
+        else:
+            out.append(seed)
+    return out[:3]
+
+
 def _xhs_bodies_count_errors(content: dict[str, Any]) -> list[str]:
-    """best-of-3 须有三套正文变体。"""
+    """成稿硬校验：pack 已补齐 3 套，仅无正文时失败。"""
+    bodies = content.get("bodies")
+    if not isinstance(bodies, list):
+        return ["bodies 须为数组"]
+    filled = [str(b).strip() for b in bodies if str(b).strip()]
+    if not filled:
+        return ["bodies 不能为空"]
+    return []
+
+
+def _xhs_bodies_need_retry(content: dict[str, Any]) -> list[str]:
+    """模型未输出 3 个变体时触发重试（最后一轮由 pack 自动补齐）。"""
     titles = content.get("titles")
     if not isinstance(titles, list) or len([str(t).strip() for t in titles if str(t).strip()]) < 3:
         return []
-    bodies = content.get("bodies")
-    if not isinstance(bodies, list):
-        return ["bodies 须为恰好 3 个正文变体，与 titles 方向一一对应"]
-    filled = [str(b).strip() for b in bodies if str(b).strip()]
-    if len(filled) < 3:
-        return [f"bodies 须恰好 3 个，当前 {len(filled)} 个"]
+    raw = content.get("_rawBodiesCount")
+    if isinstance(raw, int) and raw < 3:
+        return [f"bodies 须恰好 3 个，当前 {raw} 个"]
     return []
 
 
@@ -831,19 +863,25 @@ def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
     single_body = _format_xhs_body_readable(_deliverable_body_from_pack(pack, hashtags))
 
     formatted_bodies: list[str] = []
+    raw_bodies_count = 0
     bodies_raw = pack.get("bodies")
     if isinstance(bodies_raw, list):
+        raw_bodies_count = len([str(b).strip() for b in bodies_raw if str(b).strip()])
         for item in bodies_raw[:3]:
             b = _format_single_xhs_body(str(item or ""))
             if b:
                 formatted_bodies.append(b)
     if not formatted_bodies and single_body:
         formatted_bodies = [single_body]
+        if raw_bodies_count == 0:
+            raw_bodies_count = 1
+    formatted_bodies = _expand_bodies_to_three(formatted_bodies, titles[:3], single_body)
     primary_body = formatted_bodies[0] if formatted_bodies else single_body or titles[0]
     return {
         "titles": titles[:3],
         "body": primary_body,
         "bodies": formatted_bodies[:3],
+        "_rawBodiesCount": raw_bodies_count or len(formatted_bodies),
         "hashtags": hashtags,
         "cover": {
             "headline": headline,
@@ -1144,7 +1182,7 @@ def run_composer_expert_deliverable_job(
                 if on_progress:
                     on_progress("标题备选不足，正在补全…", 73.0)
                 continue
-            bodies_errors = _xhs_bodies_count_errors(content)
+            bodies_errors = _xhs_bodies_need_retry(content)
             if bodies_errors and attempt < max_attempts - 1:
                 last_errors = bodies_errors
                 persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
@@ -1176,6 +1214,8 @@ def run_composer_expert_deliverable_job(
                 continue
             if on_progress:
                 on_progress("内容成品就绪", 100.0)
+            if isinstance(content, dict):
+                content.pop("_rawBodiesCount", None)
             return {"success": True, "deliverable": deliverable, "playbookVersion": PLAYBOOK_VERSION}
         except ValueError as exc:
             msg = str(exc)

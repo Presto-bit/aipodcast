@@ -25,6 +25,7 @@ from .generate import (
 def deliverable_to_manuscript_blocks_dict(deliverable: dict[str, Any]) -> list[dict[str, Any]]:
     """Expert deliverable → 前端 ManuscriptBlock 列表（Studio Agent done 事件）。"""
     content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
+    content.pop("_rawBodiesCount", None)
     titles = content.get("titles") if isinstance(content.get("titles"), list) else []
     body = str(content.get("body") or "").strip()
     tags = content.get("hashtags") if isinstance(content.get("hashtags"), list) else []
