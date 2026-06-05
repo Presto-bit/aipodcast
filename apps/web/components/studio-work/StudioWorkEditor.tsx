@@ -540,7 +540,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 overflow-hidden px-2 py-2 sm:px-3">
+        <div className="min-h-0 flex-1 overflow-hidden">
           <StudioDraftCanvas
             work={work}
             busy={jobBusy}

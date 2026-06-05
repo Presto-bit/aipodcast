@@ -27,7 +27,8 @@ export default function StudioStreamingSurface({
   taskSentence,
   blocks,
   bodyText,
-  onCancel
+  onCancel,
+  variant = "active"
 }: {
   phase?: string;
   taskSentence?: string;
@@ -35,6 +36,8 @@ export default function StudioStreamingSurface({
   /** SSE body_delta 优先于 blocks 内 body */
   bodyText?: string | null;
   onCancel?: () => void;
+  /** idle：空稿等待；active：生成中流式 */
+  variant?: "idle" | "active";
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [streamLines, setStreamLines] = useState<string[]>([]);
@@ -66,19 +69,26 @@ export default function StudioStreamingSurface({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [displayBody, titles.length, hashtags, cover]);
 
-  const phaseLabel = phase?.trim() || "正在写稿…";
+  const phaseLabel =
+    phase?.trim() ||
+    (variant === "idle" ? "输出区 · 信息足够后开始流式写稿" : "正在写稿…");
+  const isActive = variant === "active";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line/40 px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="relative flex h-2 w-2 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand/40 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
-          </span>
+          {isActive ? (
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand/40 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+            </span>
+          ) : (
+            <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-line" aria-hidden />
+          )}
           <p className={`truncate ${STUDIO_STREAM_PHASE}`}>{phaseLabel}</p>
         </div>
-        {onCancel ? (
+        {onCancel && isActive ? (
           <button
             type="button"
             className="shrink-0 rounded-md border border-line/80 px-2.5 py-1 text-[11px] text-muted transition hover:bg-fill hover:text-ink"
@@ -91,7 +101,19 @@ export default function StudioStreamingSurface({
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="mx-auto w-full max-w-2xl px-4 py-5 sm:px-6 sm:py-6">
-          {!hasContent ? (
+          {variant === "idle" && !hasContent ? (
+            <div className="flex min-h-[min(42vh,360px)] flex-col justify-center">
+              <p className={`${STUDIO_STREAM_BODY} text-ink/90`}>在这里流式写稿</p>
+              <p className="mt-3 max-w-md text-[13px] leading-relaxed text-muted">
+                在下方描述主题、受众与形式。信息足够后，标题与正文会在此逐字出现；纯提问则只在对话区回复。
+              </p>
+              {taskSentence?.trim() ? (
+                <p className="mt-4 border-l-2 border-brand/20 pl-3 text-[13px] text-muted">
+                  任务 · {taskSentence.trim().slice(0, 160)}
+                </p>
+              ) : null}
+            </div>
+          ) : !hasContent ? (
             <div className="space-y-4">
               {streamLines.length ? (
                 <div className="space-y-1.5 border-l-2 border-brand/25 pl-3">
@@ -154,10 +176,10 @@ export default function StudioStreamingSurface({
                 <section>
                   <p className={`whitespace-pre-wrap ${STUDIO_STREAM_BODY}`}>
                     {displayBody}
-                    <StreamCursor />
+                    {isActive ? <StreamCursor /> : null}
                   </p>
                 </section>
-              ) : !titles.length ? (
+              ) : !titles.length && isActive ? (
                 <p className={`whitespace-pre-wrap ${STUDIO_STREAM_BODY} text-muted/70`}>
                   <StreamCursor />
                 </p>

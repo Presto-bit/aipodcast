@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { studioGeneratingUiMode } from "../../lib/studioDockLayout";
 import { resolvePrimaryTitleIndex } from "../../lib/studioManuscriptView";
 import { STUDIO_DIALOGUE_SECTION } from "../../lib/studioOutputTypography";
@@ -75,57 +76,83 @@ export default function StudioDraftCanvas({
 }) {
   const compareMode = Boolean(work.pendingPatch);
   const isGenerating = work.status === "generating";
-  const showStreamingCanvas = isGenerating && !compareMode;
   const generatingMode = studioGeneratingUiMode(work, activeVersion);
   const [tab, setTab] = useState<CanvasTab>("document");
+
+  const manuscriptBlocksEarly =
+    compareMode && work.pendingPatch
+      ? work.pendingPatch.proposedBlocks
+      : activeVersion?.blocks ?? [];
+  const hasManuscript =
+    manuscriptBlocksEarly.length > 0 &&
+    (work.status === "ready" || work.status === "shipped" || compareMode);
+
+  const showActiveStreaming =
+    !compareMode &&
+    (isGenerating ||
+      (busy && Boolean(streamingBlocks?.length || streamingBodyText?.trim())));
+
+  const showIdleAgentCanvas =
+    !embedded && !compareMode && !hasManuscript && isDraftLikeStatus(work.status);
 
   useEffect(() => {
     if (compareMode) setTab("diff");
     else setTab((cur) => (cur === "diff" ? "document" : cur));
   }, [compareMode, work.pendingPatch?.fromVersionId, generatingMode]);
 
-  if (showStreamingCanvas) {
-    const streamingShell = (
+  function renderAgentShell(surface: ReactNode, options?: { embeddedSection?: boolean }) {
+    if (options?.embeddedSection || embedded) {
+      return (
+        <section className="mt-6 px-0.5 pb-4">
+          <p className={STUDIO_DIALOGUE_SECTION}>稿件</p>
+          <div className="mt-2 min-h-[240px] overflow-hidden rounded-xl border border-line/60">
+            {surface}
+          </div>
+        </section>
+      );
+    }
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface">{surface}</div>
+    );
+  }
+
+  if (showActiveStreaming) {
+    return renderAgentShell(
       <StudioStreamingSurface
-        phase={work.runPhase}
+        variant="active"
+        phase={work.runPhase || (busy ? "准备写稿…" : undefined)}
         taskSentence={generatingTaskSentence || work.brief}
         blocks={streamingBlocks}
         bodyText={streamingBodyText}
         onCancel={onCancelStream}
       />
     );
-    if (embedded) {
-      return (
-        <section className="mt-6 px-0.5 pb-4">
-          <p className={STUDIO_DIALOGUE_SECTION}>稿件</p>
-          <div className="mt-2 min-h-[240px] overflow-hidden rounded-xl border border-line/60">
-            {streamingShell}
-          </div>
-        </section>
-      );
-    }
-    return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-line/60 bg-surface shadow-sm">
-        {streamingShell}
-      </div>
+  }
+
+  if (showIdleAgentCanvas) {
+    return renderAgentShell(
+      <StudioStreamingSurface
+        variant="idle"
+        taskSentence={generatingTaskSentence || work.brief}
+        blocks={null}
+        bodyText={null}
+      />
     );
   }
 
-  const showFinalTabs = true;
-
-  const manuscriptBlocks =
-    compareMode && work.pendingPatch
-      ? work.pendingPatch.proposedBlocks
-      : activeVersion?.blocks ?? [];
-  const liveBlocks = manuscriptBlocks;
-  const showManuscript =
-    liveBlocks.length > 0 && (work.status === "ready" || work.status === "shipped" || compareMode);
+  const showFinalTabs = hasManuscript;
+  const liveBlocks = manuscriptBlocksEarly;
+  const showManuscript = hasManuscript;
   const titleIndex = resolvePrimaryTitleIndex(
     compareMode ? null : activeVersion,
     liveBlocks.filter((b) => b.kind === "title").length
   );
 
-  const availableTabs: CanvasTab[] = compareMode ? ["document", "preview", "diff"] : ["document", "preview"];
+  const availableTabs: CanvasTab[] = compareMode
+    ? ["document", "preview", "diff"]
+    : showFinalTabs
+      ? ["document", "preview"]
+      : [];
 
   const editable =
     work.status === "ready" && !compareMode && !busy && Boolean(onBlocksChange);
@@ -152,7 +179,7 @@ export default function StudioDraftCanvas({
     ) : null;
 
   const tabRow =
-    availableTabs.length > 0 ? (
+    showFinalTabs && availableTabs.length > 0 ? (
       <div className="flex items-center justify-between gap-2 py-1">
         <div className="flex gap-1">
           {availableTabs.map((t) => (
@@ -186,7 +213,7 @@ export default function StudioDraftCanvas({
       ) : null}
 
       {showManuscript && showFinalTabs && tab === "preview" && compareMode ? (
-        <StudioXhsPhonePreview version={null} blocks={manuscriptBlocks} titleIndex={0} />
+        <StudioXhsPhonePreview version={null} blocks={liveBlocks} titleIndex={0} />
       ) : null}
 
       {showManuscript && showFinalTabs && tab === "document" ? (
@@ -204,12 +231,6 @@ export default function StudioDraftCanvas({
           onBlocksChange={onBlocksChange}
           onSelectionRevise={work.status === "ready" && !compareMode ? onSelectionRevise : undefined}
         />
-      ) : null}
-
-      {!showManuscript && work.status === "draft" ? (
-        <p className="py-12 text-center text-sm text-muted">
-          在下方描述创作需求；信息足够后将在此流式写稿
-        </p>
       ) : null}
 
       {showManuscript && showFinalTabs && tab === "diff" && compareMode && work.pendingPatch ? (
