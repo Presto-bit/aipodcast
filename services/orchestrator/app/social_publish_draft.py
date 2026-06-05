@@ -307,6 +307,28 @@ def _finalize_draft_pack(
                 platform,
                 exc,
             )
+    if platform == "xiaohongshu":
+        excerpt = (material_text or "").strip()[:1200] or "基于创作任务整理的笔记"
+        hook = excerpt[:20] or "本篇干货"
+        rescue = {
+            "cover_hook": hook,
+            "titles": [hook, (excerpt[20:38] or "备选标题")[:20], "收藏备用"],
+            "opening_30": excerpt[:30] or "这篇值得你花两分钟看完",
+            "body": excerpt[:3500],
+            "tags": ["干货分享", "真实体验", "避坑指南", "收藏推荐", "生活记录"],
+            "interaction": "觉得有用吗？评论区聊聊～",
+            "imageSuggestions": ["封面：标题大字", "内页：清单要点"],
+            "theme": "创作任务稿",
+        }
+        try:
+            return finalize_xhs_pack(
+                rescue,
+                options=options,
+                trace_id=trace_id,
+                compliance_max_llm_passes=0,
+            )
+        except Exception as exc:
+            logger.warning("social_publish rescue pack failed: %s", exc)
     raise RuntimeError("social_publish_pack_failed")
 
 

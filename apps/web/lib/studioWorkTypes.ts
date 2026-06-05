@@ -2,6 +2,7 @@
 
 import type { FeatureCore } from "./homeComposerExpertTypes";
 import type { NotesAskSessionState } from "./notesAskMemoryTypes";
+import type { NotesAskSource } from "./notesAskCitation";
 
 export type StudioAgentIntent =
   | "brief_clarify"
@@ -17,6 +18,8 @@ export type StudioAgentTurn = {
   createdAt: number;
   streaming?: boolean;
   intent?: StudioAgentIntent;
+  /** RAG 问答角标来源（对话区 [n] 点击预览） */
+  askSources?: NotesAskSource[];
 };
 
 export type StudioChannel = "xhs";
@@ -70,6 +73,8 @@ export type StudioWork = {
   id: string;
   channel: StudioChannel;
   title: string;
+  /** 已用于 LLM 命名的首条用户句（避免重复请求） */
+  titleLlmSource?: string;
   brief: string;
   status: WorkStatus;
   binding: { notebook: string; noteIds: string[] };

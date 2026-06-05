@@ -1,4 +1,5 @@
 import type { StudioAgentTurn, StudioWork } from "./studioWorkTypes";
+import { fallbackStudioWorkTitle } from "./studioWorkTitleSuggest";
 
 /** 未开始计划/成稿的空任务（全局只允许一个） */
 export function isStudioWorkDraft(work: StudioWork): boolean {
@@ -19,14 +20,24 @@ export function hasTaskContext(work: StudioWork, turns?: StudioAgentTurn[]): boo
   return Boolean(taskSentenceFromWork({ ...work, agentTurns: turns ?? work.agentTurns }).trim());
 }
 
-/** 用首条用户消息更新任务标题 */
+/** 用首条用户消息更新任务标题（同步 fallback；LLM 标题由 Dock 异步覆盖） */
 export function syncWorkTitleFromTurns(work: StudioWork, turns: StudioAgentTurn[]): StudioWork {
   const first = turns
     .filter((t) => t.role === "user" && !t.streaming)
     .map((t) => t.content.trim())
     .find(Boolean);
   if (!first) return work;
-  const title = first.slice(0, 48);
-  if (title === work.title) return work;
-  return { ...work, title };
+  if (work.titleLlmSource === first) return work;
+  const title = fallbackStudioWorkTitle(first);
+  if (title === work.title && !work.titleLlmSource) return work;
+  return { ...work, title, titleLlmSource: undefined };
+}
+
+export function firstUserSentenceFromTurns(turns: StudioAgentTurn[]): string {
+  return (
+    turns
+      .filter((t) => t.role === "user" && !t.streaming)
+      .map((t) => t.content.trim())
+      .find(Boolean) ?? ""
+  );
 }

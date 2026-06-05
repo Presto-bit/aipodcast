@@ -11,6 +11,7 @@ import type { StudioWork } from "./studioWorkTypes";
 export type StudioAgentAskDone = HomeComposerAskDone & {
   structured: ReturnType<typeof parseStudioAgentStructuredResponse>;
   displayText: string;
+  sources?: HomeComposerAskDone["sources"];
 };
 
 /** Studio 专用 ask：强制 JSON 结构化输出，silent 时不占位助手消息 */
@@ -91,6 +92,7 @@ export async function streamStudioAgentAsk(params: {
     answer: raw,
     sessionState,
     structured,
-    displayText
+    displayText,
+    sources: done.sources
   };
 }

@@ -1,4 +1,5 @@
 import { inferStudioAgentIntent } from "./studioAgentAsk";
+import { isConfirmPlanMessage } from "./studioWorkConfirm";
 import { hasTaskContext } from "./studioWorkTask";
 import type {
   StudioAgentIntent,
@@ -23,9 +24,6 @@ export type StudioRouteDecision = {
   note: string;
   askContext: StudioAskContextFlags;
 };
-
-const CONFIRM_PLAN_RE =
-  /^(确认任务|确认|就按这个|就这样|可以了|开始生成|生成计划)/;
 
 const CONFIRM_GENERATE_RE =
   /^(确认执行|开始成稿|生成稿件|确认生成|确认|就按这个|就这样|可以了)$/;
@@ -81,7 +79,7 @@ export function routeStudioAction(
     work.status === "briefing" &&
     !work.plan &&
     taskReady &&
-    CONFIRM_PLAN_RE.test(q)
+    isConfirmPlanMessage(q)
   ) {
     return {
       tool: "plan",

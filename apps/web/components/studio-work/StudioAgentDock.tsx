@@ -22,7 +22,9 @@ import {
   getStudioComposerPrefs,
   getStudioWork
 } from "../../lib/studioWorkStorage";
-import { syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
+import { firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
+import { suggestStudioWorkTitleLlm } from "../../lib/studioWorkTitleSuggest";
+import { STUDIO_DIALOGUE_SECTION } from "../../lib/studioOutputTypography";
 import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
 import { streamHomeComposerAsk } from "../../lib/homeComposerAskStream";
@@ -36,6 +38,7 @@ import StudioAgentComposer from "./StudioAgentComposer";
 import StudioAgentMessage from "./StudioAgentMessage";
 import StudioAgentOutputCards from "./StudioAgentOutputCards";
 import StudioCorpusBar from "./StudioCorpusBar";
+import StudioEphemeralHint from "./StudioEphemeralHint";
 
 const QUICK_PROMPTS = [
   "我想写一篇清单体内容，受众是产品新人",
@@ -108,9 +111,12 @@ export default function StudioAgentDock({
   const agentBusyRef = useRef(false);
   const [phase, setPhase] = useState("");
   const [corpusMenuOpen, setCorpusMenuOpen] = useState(false);
+  const [ephemeralHint, setEphemeralHint] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const postDoneStartedRef = useRef(false);
+  const titleSuggestAbortRef = useRef<AbortController | null>(null);
+  const titleSuggestKeyRef = useRef("");
 
   function setAgentBusyState(next: boolean) {
     agentBusyRef.current = next;
@@ -143,7 +149,37 @@ export default function StudioAgentDock({
 
   useEffect(() => {
     postDoneStartedRef.current = false;
+    titleSuggestKeyRef.current = "";
   }, [work.id]);
+
+  useEffect(() => {
+    if (!isLoggedIn || !ready) return;
+    const first = firstUserSentenceFromTurns(turns);
+    if (!first || first.length < 4) return;
+    if (work.titleLlmSource === first) return;
+    if (titleSuggestKeyRef.current === first) return;
+    titleSuggestKeyRef.current = first;
+
+    titleSuggestAbortRef.current?.abort();
+    const ac = new AbortController();
+    titleSuggestAbortRef.current = ac;
+
+    void (async () => {
+      try {
+        const title = await suggestStudioWorkTitleLlm(first, getAuthHeaders(), ac.signal);
+        if (ac.signal.aborted || !title) return;
+        const cur = getStudioWork(work.id) ?? work;
+        if (firstUserSentenceFromTurns(cur.agentTurns ?? []) !== first) return;
+        onPersist({ ...cur, title, titleLlmSource: first });
+      } catch {
+        // 保留 fallback 标题
+      } finally {
+        if (titleSuggestAbortRef.current === ac) titleSuggestAbortRef.current = null;
+      }
+    })();
+  }, [turns, work.id, work.titleLlmSource, isLoggedIn, ready, getAuthHeaders, onPersist, work]);
+
+  useEffect(() => () => titleSuggestAbortRef.current?.abort(), []);
 
   useEffect(() => {
     if (!corpusMenuOpen) return;
@@ -299,7 +335,13 @@ export default function StudioAgentDock({
 
       const finalTurns = baseTurns.map((t) =>
         t.id === assistantId
-          ? { ...t, content: finalContent, streaming: false, intent }
+          ? {
+              ...t,
+              content: finalContent,
+              streaming: false,
+              intent,
+              askSources: done.sources?.length ? done.sources : undefined
+            }
           : t
       );
       applyDialogExtract(finalTurns, done.sessionState, workBase);
@@ -437,6 +479,12 @@ export default function StudioAgentDock({
     );
     onPersist(base);
 
+    if (route.tool === "plan") {
+      setEphemeralHint("已确认范围，正在整理并写稿…");
+    } else if (route.tool === "revise") {
+      setEphemeralHint("正在按你的意见改版…");
+    }
+
     if (route.tool === "plan" && onGeneratePlan) {
       await onGeneratePlan();
       return;
@@ -503,7 +551,7 @@ export default function StudioAgentDock({
       <div ref={scrollRef} className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-y-auto px-3 py-3">
         {turns.length > 0 ? (
           <div className="mb-1">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-muted">对话 · 解释</p>
+            <p className={STUDIO_DIALOGUE_SECTION}>对话 · 解释</p>
             <div className="mt-2 space-y-3">
               {turns.map((turn) => (
                 <StudioAgentMessage
@@ -546,6 +594,11 @@ export default function StudioAgentDock({
               </Link>
               后可用
             </p>
+          ) : null}
+          {ephemeralHint ? (
+            <div className="mb-2">
+              <StudioEphemeralHint text={ephemeralHint} />
+            </div>
           ) : null}
           {showQuickPrompts ? (
             <div className="mb-2 flex flex-wrap gap-1.5">

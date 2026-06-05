@@ -2,6 +2,7 @@ import { formatNotesAskStreamError } from "./apiError";
 import { packNotesAskMemory } from "./notesAskMemoryPack";
 import type { NotesAskMemoryTurn, NotesAskSessionState } from "./notesAskMemoryTypes";
 import { notesAskBffUrl, notesAskFetchCredentials } from "./notesAskBffOrigin";
+import { normalizeNotesAskSources, type NotesAskSource } from "./notesAskCitation";
 import { updateNotesAskSessionState } from "./notesAskSessionState";
 
 export type HomeComposerAskDone = {
@@ -9,6 +10,7 @@ export type HomeComposerAskDone = {
   supplementAnswer?: string;
   sessionState: NotesAskSessionState | null;
   qaMode?: string;
+  sources?: NotesAskSource[];
 };
 
 export type HomeComposerAskCallbacks = {
@@ -127,6 +129,7 @@ export async function streamHomeComposerAsk(params: {
   let doneSupplement = "";
   let doneSessionState = params.sessionState;
   let qaMode: string | undefined;
+  let doneSources: NotesAskSource[] | undefined;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -165,6 +168,7 @@ export async function streamHomeComposerAsk(params: {
           const supRaw = String(ev.supplementAnswer ?? supplementAcc).trim();
           doneSupplement = isDismissedSupplement(supRaw) ? "" : supRaw || supplementAcc.trim();
           qaMode = ev.qaMode ? String(ev.qaMode) : undefined;
+          doneSources = normalizeNotesAskSources(ev.sources);
           doneSessionState = updateNotesAskSessionState(
             params.sessionState,
             [
@@ -199,7 +203,8 @@ export async function streamHomeComposerAsk(params: {
     answer,
     supplementAnswer: doneSupplement || undefined,
     sessionState: doneSessionState,
-    qaMode
+    qaMode,
+    sources: doneSources
   };
 }
 

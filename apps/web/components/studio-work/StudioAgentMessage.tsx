@@ -3,7 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { studioAgentIntentLabel } from "../../lib/studioAgentAsk";
+import {
+  STUDIO_ASSISTANT_BODY,
+  STUDIO_USER_BUBBLE
+} from "../../lib/studioOutputTypography";
+import type { NotesAskSource } from "../../lib/notesAskCitation";
 import type { StudioAgentTurn } from "../../lib/studioWorkTypes";
+import StudioAskCitationModal from "./StudioAskCitationModal";
 
 const NotesAskAnswerMarkdownBody = dynamic(
   () => import("../notes/NotesAskAnswerMarkdownBody").then((m) => ({ default: m.default })),
@@ -25,7 +31,9 @@ export default function StudioAgentMessage({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(turn.content);
+  const [citationSource, setCitationSource] = useState<NotesAskSource | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sources = turn.askSources;
 
   useEffect(() => {
     if (!editing) setDraft(turn.content);
@@ -132,7 +140,7 @@ export default function StudioAgentMessage({
             role={editable ? "button" : undefined}
             tabIndex={editable ? 0 : undefined}
             className={[
-              "whitespace-pre-wrap rounded-lg bg-fill/50 px-2.5 py-1 text-[12px] leading-relaxed text-ink",
+              `whitespace-pre-wrap rounded-lg bg-fill/50 px-2.5 py-1 ${STUDIO_USER_BUBBLE}`,
               editable ? "cursor-text hover:ring-1 hover:ring-brand/25" : ""
             ].join(" ")}
             onClick={() => {
@@ -171,15 +179,27 @@ export default function StudioAgentMessage({
           <span className="text-[10px] text-brand">{streamingPhase}</span>
         ) : null}
       </div>
-      <div className={`text-[12px] leading-relaxed ${isErrorBubble ? "text-danger-ink" : "text-ink"}`}>
+      <div className={`${STUDIO_ASSISTANT_BODY} ${isErrorBubble ? "text-danger-ink" : "text-ink"}`}>
         {turn.streaming && !text ? (
           <span className="inline-block h-3 w-12 animate-pulse rounded bg-fill" aria-hidden />
         ) : text && !isErrorBubble ? (
-          <NotesAskAnswerMarkdownBody text={text} />
+          <NotesAskAnswerMarkdownBody
+            text={text}
+            sources={sources}
+            onCitationClick={(index) => {
+              const src = sources?.find((s) => s.index === index);
+              if (src) setCitationSource(src);
+            }}
+          />
         ) : text ? (
           <p>{text}</p>
         ) : null}
       </div>
+      <StudioAskCitationModal
+        source={citationSource}
+        open={Boolean(citationSource)}
+        onClose={() => setCitationSource(null)}
+      />
     </div>
   );
 }

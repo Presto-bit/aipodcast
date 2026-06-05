@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  STUDIO_MANUSCRIPT_BODY,
+  STUDIO_MANUSCRIPT_HASHTAGS,
+  STUDIO_MANUSCRIPT_META,
+  STUDIO_MANUSCRIPT_TITLE
+} from "../../lib/studioOutputTypography";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
 
@@ -64,7 +70,7 @@ export default function StudioOutputManuscript({
       {compareMode ? (
         <p className="mb-2 text-[10px] text-muted">勾选要采纳的变更段落</p>
       ) : null}
-      <div className="space-y-3 text-[14px] leading-relaxed text-ink">
+      <div className="space-y-3">
         {title && title.kind === "title" ? (
           <section>
             {compareMode && changedKeys?.has(`title:${title.id}`) && onToggleKey ? (
@@ -78,7 +84,7 @@ export default function StudioOutputManuscript({
                 标题变更
               </label>
             ) : null}
-            <p className="font-medium">{title.text}</p>
+            <p className={STUDIO_MANUSCRIPT_TITLE}>{title.text}</p>
           </section>
         ) : null}
         {body && body.kind === "body" ? (
@@ -94,20 +100,20 @@ export default function StudioOutputManuscript({
                 正文变更
               </label>
             ) : null}
-            <p className="whitespace-pre-wrap">{body.text}</p>
+            <p className={`whitespace-pre-wrap ${STUDIO_MANUSCRIPT_BODY}`}>{body.text}</p>
           </section>
         ) : null}
         {hashtags && hashtags.kind === "hashtags" ? (
-          <p className="text-sm">
+          <p className={STUDIO_MANUSCRIPT_HASHTAGS}>
             {hashtags.tags.map((t) => (
-              <span key={t} className="mr-2 text-brand">
+              <span key={t} className="mr-2">
                 #{t.replace(/^#/, "")}
               </span>
             ))}
           </p>
         ) : null}
         {cover && cover.kind === "coverBrief" ? (
-          <p className="text-[13px] text-muted">{cover.text}</p>
+          <p className={STUDIO_MANUSCRIPT_META}>{cover.text}</p>
         ) : null}
       </div>
       {version && !compareMode ? (
