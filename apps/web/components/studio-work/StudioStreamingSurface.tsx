@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
 import {
-  flattenManuscriptDisplayText,
+  buildManuscriptFlowText,
   manuscriptTitleBlocks,
+  resolveBodyForTitleIndex,
   studioTitleDirectionLabel
 } from "../../lib/studioManuscriptView";
 import { STUDIO_STREAM_BODY, STUDIO_STREAM_CURSOR } from "../../lib/studioOutputTypography";
@@ -16,10 +17,6 @@ function StreamCursor() {
 }
 
 export type StudioStreamingVariant = "idle" | "active" | "ready" | "diff";
-
-function hashtagLine(tags: string[]): string {
-  return tags.map((t) => `#${t.replace(/^#/, "")}`).join(" ");
-}
 
 /** Cursor 式 Agent 输出面：流式 / 成稿（flowLayout 时参与页面全局滚动） */
 export default function StudioStreamingSurface({
@@ -48,6 +45,7 @@ export default function StudioStreamingSurface({
   flowLayout?: boolean;
 }) {
   const [streamLines, setStreamLines] = useState<string[]>([]);
+  const [previewIndex, setPreviewIndex] = useState(0);
 
   const isActive = variant === "active";
   const isReadyLike = variant === "ready";
@@ -56,13 +54,19 @@ export default function StudioStreamingSurface({
     return version?.blocks ?? [];
   }, [blocks, version?.blocks]);
 
-  const blockBody = displayBlocks.find((b) => b.kind === "body")?.text ?? "";
+  const blockBody = resolveBodyForTitleIndex(displayBlocks, previewIndex)?.text ?? "";
   const targetBody = (bodyText ?? blockBody).trim();
   const displayBody = isReadyLike ? blockBody.trim() : targetBody;
   const titles = useMemo(() => manuscriptTitleBlocks(displayBlocks), [displayBlocks]);
   const hashtags = displayBlocks.find((b) => b.kind === "hashtags");
   const cover = displayBlocks.find((b) => b.kind === "coverBrief");
   const hasContent = Boolean(displayBody || titles.length);
+  const titleIndex = version ? (version.primaryTitleIndex ?? previewIndex) : previewIndex;
+  const activeIndex = onTitleIndexChange ? titleIndex : previewIndex;
+
+  useEffect(() => {
+    if (previewIndex >= titles.length) setPreviewIndex(0);
+  }, [previewIndex, titles.length]);
 
   useEffect(() => {
     if (isReadyLike) return;
@@ -109,20 +113,15 @@ export default function StudioStreamingSurface({
       );
     }
 
-    const flowParts: string[] = [];
-    if (titles.length <= 1 && titles[0]?.text) {
-      flowParts.push(titles[0].text);
-    }
-    if (displayBody) {
-      flowParts.push(flattenManuscriptDisplayText(displayBody));
-    }
-    if (hashtags && hashtags.kind === "hashtags" && hashtags.tags.length) {
-      flowParts.push(hashtagLine(hashtags.tags));
-    }
-    if (cover && cover.kind === "coverBrief" && cover.text.trim()) {
-      flowParts.push(`封面：${flattenManuscriptDisplayText(cover.text)}`);
-    }
-    const flowText = flowParts.join(" ");
+    const primaryTitle = titles[activeIndex] ?? titles[0];
+    const variantBody =
+      resolveBodyForTitleIndex(displayBlocks, activeIndex)?.text ?? displayBody;
+    const flowText = buildManuscriptFlowText({
+      title: primaryTitle?.text,
+      body: variantBody,
+      hashtags: hashtags && hashtags.kind === "hashtags" ? hashtags.tags : undefined,
+      cover: cover && cover.kind === "coverBrief" ? cover.text : undefined
+    });
 
     return (
       <article className="text-left">
@@ -133,25 +132,26 @@ export default function StudioStreamingSurface({
         ) : null}
 
         {titles.length > 1 ? (
-          <div className="mb-3">
-            <p className="text-[11px] font-medium tracking-wide text-muted">
-              best of {titles.length}
-            </p>
-            <div className="mt-2 flex flex-col gap-2">
-              {titles.map((t, i) => (
-                <div
-                  key={t.id}
-                  className={`rounded-lg border px-3 py-2 ${
-                    i === 0 ? "border-brand/60 bg-brand/5" : "border-line/40"
-                  }`}
-                >
-                  <span className="text-[10px] font-medium text-muted">
-                    {studioTitleDirectionLabel(i)}
-                  </span>
-                  <span className="mt-0.5 block text-sm text-ink">{t.text}</span>
-                </div>
-              ))}
-            </div>
+          <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="text-[10px] text-muted">best of {titles.length}</span>
+            {titles.map((t, i) => (
+              <button
+                key={t.id}
+                type="button"
+                title={t.text}
+                className={`text-[11px] transition ${
+                  i === activeIndex
+                    ? "font-medium text-brand underline decoration-brand underline-offset-4"
+                    : "text-muted hover:text-ink"
+                }`}
+                onClick={() => {
+                  setPreviewIndex(i);
+                  onTitleIndexChange?.(i);
+                }}
+              >
+                {studioTitleDirectionLabel(i)}
+              </button>
+            ))}
           </div>
         ) : null}
 

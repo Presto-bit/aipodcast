@@ -183,8 +183,9 @@ def _compose_expert_writer_instructions(
         "正文须分段：每段不超过 80 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
         "标题中的数量承诺（如「3个坑」「三大误区」）须与正文分点条数完全一致，禁止标题写 3 条正文列 4 条。",
         "titles 数组须恰好 3 个备选标题（痛点型/好奇型/数字型各一，每个≤20字）。",
+        "bodies 数组须恰好 3 个正文变体，与 titles 顺序一一对应（痛点向/好奇向/数字向），每篇角度与写法须明显不同。",
         "开头前两行须有强钩子：具体场景、痛点问句、数字结果或反常识，禁止「很多人/近年来」式空泛开场。",
-        "优先用 sections 数组（小标题+短段），或 body 内用 \\n\\n 分段。",
+        "正文段内用句号衔接，避免连续空行；可用 sections 或 body，但优先输出 bodies 数组。",
         f"任务核心：{task_sentence.strip()[:300]}",
     ]
     if used_rag:
@@ -298,6 +299,20 @@ def _count_body_list_items(body: str) -> int:
     if 2 <= len(blocks) <= 12:
         return len(blocks)
     return marked
+
+
+def _xhs_bodies_count_errors(content: dict[str, Any]) -> list[str]:
+    """best-of-3 须有三套正文变体。"""
+    titles = content.get("titles")
+    if not isinstance(titles, list) or len([str(t).strip() for t in titles if str(t).strip()]) < 3:
+        return []
+    bodies = content.get("bodies")
+    if not isinstance(bodies, list):
+        return ["bodies 须为恰好 3 个正文变体，与 titles 方向一一对应"]
+    filled = [str(b).strip() for b in bodies if str(b).strip()]
+    if len(filled) < 3:
+        return [f"bodies 须恰好 3 个，当前 {len(filled)} 个"]
+    return []
 
 
 def _xhs_title_body_count_errors(content: dict[str, Any]) -> list[str]:
@@ -792,6 +807,13 @@ def _deliverable_body_from_pack(pack: dict[str, Any], hashtags: list[str]) -> st
     return body.strip() or str(pack.get("body") or "").strip()
 
 
+def _format_single_xhs_body(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    return _format_xhs_body_readable(text)
+
+
 def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
     titles_raw = pack.get("titles")
     titles: list[str] = []
@@ -806,10 +828,22 @@ def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
     body = str(pack.get("body") or "").strip()
     hashtags = _extract_hashtags(pack, body)
     headline = titles[0][:12]
-    body = _format_xhs_body_readable(_deliverable_body_from_pack(pack, hashtags))
+    single_body = _format_xhs_body_readable(_deliverable_body_from_pack(pack, hashtags))
+
+    formatted_bodies: list[str] = []
+    bodies_raw = pack.get("bodies")
+    if isinstance(bodies_raw, list):
+        for item in bodies_raw[:3]:
+            b = _format_single_xhs_body(str(item or ""))
+            if b:
+                formatted_bodies.append(b)
+    if not formatted_bodies and single_body:
+        formatted_bodies = [single_body]
+    primary_body = formatted_bodies[0] if formatted_bodies else single_body or titles[0]
     return {
-        "titles": titles[:5],
-        "body": body or titles[0],
+        "titles": titles[:3],
+        "body": primary_body,
+        "bodies": formatted_bodies[:3],
         "hashtags": hashtags,
         "cover": {
             "headline": headline,
@@ -950,6 +984,9 @@ def generate_xhs_expert_deliverable(
     count_errors = _xhs_title_body_count_errors(content)
     if count_errors:
         raise ValueError("validation_failed:" + "|".join(count_errors[:4]))
+    bodies_errors = _xhs_bodies_count_errors(content)
+    if bodies_errors:
+        raise ValueError("validation_failed:" + "|".join(bodies_errors[:2]))
     hook_errors = _xhs_opening_hook_errors(content)
     if hook_errors:
         raise ValueError("validation_failed:" + "|".join(hook_errors[:2]))
@@ -1106,6 +1143,16 @@ def run_composer_expert_deliverable_job(
                 options["persona"] = persona
                 if on_progress:
                     on_progress("标题备选不足，正在补全…", 73.0)
+                continue
+            bodies_errors = _xhs_bodies_count_errors(content)
+            if bodies_errors and attempt < max_attempts - 1:
+                last_errors = bodies_errors
+                persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+                retry_note = "【重试】bodies 须恰好 3 个正文变体，与 titles 痛点/好奇/数字方向一一对应。"
+                persona["otherRequirements"] = f"{persona.get('otherRequirements') or ''}\n{retry_note}"[:1600]
+                options["persona"] = persona
+                if on_progress:
+                    on_progress("正文变体不足，正在补全…", 73.5)
                 continue
             hook_errors = _xhs_opening_hook_errors(content)
             if hook_errors and attempt < max_attempts - 1:

@@ -1,6 +1,7 @@
 import type { ExpertDeliverable } from "./homeComposerExpertTypes";
 import type { ManuscriptBlock } from "./studioWorkTypes";
 import { xhsBodyPlainText } from "./xhsBodyFormat";
+import { resolveBodyForTitleIndex } from "./studioManuscriptView";
 
 export function deliverableToManuscriptBlocks(deliverable: ExpertDeliverable): ManuscriptBlock[] {
   if (deliverable.expertId !== "xhs_ops" || !("titles" in deliverable.content)) {
@@ -12,17 +13,32 @@ export function deliverableToManuscriptBlocks(deliverable: ExpertDeliverable): M
     const text = String(t || "").trim();
     if (text) blocks.push({ id: `title-${i}`, kind: "title", text, evidence: "model" });
   });
-  const body = xhsBodyPlainText(c.body);
+  const variantBodies = (c.bodies ?? [])
+    .map((b) => xhsBodyPlainText(b))
+    .filter(Boolean)
+    .slice(0, 3);
   const corpusEvidence =
     deliverable.meta?.provenance?.corpusCoverage === "full" ||
     deliverable.meta?.provenance?.corpusCoverage === "partial";
-  if (body) {
-    blocks.push({
-      id: "body",
-      kind: "body",
-      text: body,
-      evidence: corpusEvidence ? "corpus" : "model"
+  if (variantBodies.length) {
+    variantBodies.forEach((text, i) => {
+      blocks.push({
+        id: `body-${i}`,
+        kind: "body",
+        text,
+        evidence: corpusEvidence ? "corpus" : "model"
+      });
     });
+  } else {
+    const body = xhsBodyPlainText(c.body);
+    if (body) {
+      blocks.push({
+        id: "body-0",
+        kind: "body",
+        text: body,
+        evidence: corpusEvidence ? "corpus" : "model"
+      });
+    }
   }
   const tags = (c.hashtags || []).map((t) => String(t).replace(/^#/, "").trim()).filter(Boolean);
   if (tags.length) blocks.push({ id: "hashtags", kind: "hashtags", tags });
@@ -39,10 +55,10 @@ export function deliverableToManuscriptBlocks(deliverable: ExpertDeliverable): M
 
 export function manuscriptCopyAll(blocks: ManuscriptBlock[], titleIndex = 0): string {
   const titles = blocks.filter((b): b is Extract<ManuscriptBlock, { kind: "title" }> => b.kind === "title");
-  const body = blocks.find((b) => b.kind === "body");
+  const body = resolveBodyForTitleIndex(blocks, titleIndex);
   const tags = blocks.find((b) => b.kind === "hashtags");
   const title = titles[titleIndex]?.text || titles[0]?.text || "";
-  const bodyText = body && body.kind === "body" ? body.text : "";
+  const bodyText = body?.text ?? "";
   const tagLine =
     tags && tags.kind === "hashtags" ? tags.tags.map((t) => `#${t}`).join(" ") : "";
   return [title, bodyText, tagLine].filter(Boolean).join("\n\n");

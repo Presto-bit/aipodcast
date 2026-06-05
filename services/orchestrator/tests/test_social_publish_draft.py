@@ -102,11 +102,13 @@ def test_generate_succeeds_with_colloquial_first_material() -> None:
 def test_extract_partial_social_json_fields_from_stream() -> None:
     raw = (
         '{"titles":["标题一","标题二"],'
+        '"bodies":["正文一","正文二"],'
         '"theme":"测试主题",'
         '"body":"这是正在生成的正文片段'
     )
     partial = extract_partial_social_json_fields(raw)
     assert partial.get("titles") == ["标题一", "标题二"]
+    assert partial.get("bodies") == ["正文一", "正文二"]
     assert partial.get("theme") == "测试主题"
     assert partial.get("body") == "这是正在生成的正文片段"
 

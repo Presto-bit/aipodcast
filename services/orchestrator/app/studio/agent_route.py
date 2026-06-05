@@ -101,6 +101,26 @@ def build_task_sentence_from_turns(turns: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts)[:2000]
 
 
+def refine_compose_task_sentence(text: str) -> str:
+    """纠错与合并碎片 brief，避免用户输入小错误阻断成稿。"""
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"[\u200b-\u200d\ufeff]", "", s)
+    for old, new in (
+        ("小红树", "小红书"),
+        ("小虹书", "小红书"),
+        ("保温杯杯", "保温杯"),
+    ):
+        s = s.replace(old, new)
+    lines = [re.sub(r"\s+", " ", ln).strip() for ln in s.split("\n") if ln.strip()]
+    if len(lines) > 1 and all(len(ln) <= 36 and not re.search(r"[。！？.!?]$", ln) for ln in lines):
+        s = "，".join(lines)
+    else:
+        s = "\n\n".join(lines)
+    return s[:2000]
+
+
 def build_compose_task_sentence(
     turns: list[dict[str, Any]],
     *,
@@ -119,7 +139,7 @@ def build_compose_task_sentence(
         if not parts or parts[-1] != cur:
             parts.append(cur)
     if parts:
-        return "\n\n".join(parts)[:2000]
+        return refine_compose_task_sentence("\n\n".join(parts))
     if cur:
-        return cur[:2000]
-    return build_task_sentence_from_turns(turns)
+        return refine_compose_task_sentence(cur)
+    return refine_compose_task_sentence(build_task_sentence_from_turns(turns))

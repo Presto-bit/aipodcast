@@ -262,6 +262,9 @@ def extract_partial_social_json_fields(acc: str) -> dict[str, Any]:
     titles = _extract_json_string_array(text, "titles", limit=3)
     if titles:
         out["titles"] = titles
+    bodies = _extract_json_string_array(text, "bodies", limit=3)
+    if bodies:
+        out["bodies"] = bodies
     tags = _extract_json_string_array(text, "tags", limit=12)
     if tags:
         out["tags"] = tags

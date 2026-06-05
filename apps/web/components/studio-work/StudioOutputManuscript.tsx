@@ -8,8 +8,9 @@ import {
   STUDIO_MANUSCRIPT_TITLE
 } from "../../lib/studioOutputTypography";
 import {
-  flattenManuscriptDisplayText,
+  buildManuscriptFlowText,
   manuscriptTitleBlocks,
+  resolveBodyForTitleIndex,
   resolvePrimaryTitleIndex,
   studioTitleDirectionLabel
 } from "../../lib/studioManuscriptView";
@@ -76,7 +77,7 @@ function AutoGrowTextarea({
   );
 }
 
-function BestOfTitlePicker({
+function BestOfTabs({
   titles,
   titleIndex,
   onTitleIndexChange
@@ -86,25 +87,23 @@ function BestOfTitlePicker({
   onTitleIndexChange: (index: number) => void;
 }) {
   return (
-    <div className="mb-3">
-      <p className="text-[11px] font-medium tracking-wide text-muted">best of {titles.length}</p>
-      <div className="mt-2 flex flex-col gap-2">
-        {titles.map((t, i) => (
-          <button
-            key={t.id}
-            type="button"
-            className={`rounded-lg border px-3 py-2 text-left transition ${
-              i === titleIndex
-                ? "border-brand bg-brand/5"
-                : "border-line/40 hover:border-line/70"
-            }`}
-            onClick={() => onTitleIndexChange(i)}
-          >
-            <span className="text-[10px] font-medium text-muted">{studioTitleDirectionLabel(i)}</span>
-            <span className="mt-0.5 block text-sm text-ink">{t.text}</span>
-          </button>
-        ))}
-      </div>
+    <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <span className="text-[10px] text-muted">best of {titles.length}</span>
+      {titles.map((t, i) => (
+        <button
+          key={t.id}
+          type="button"
+          title={t.text}
+          className={`text-[11px] transition ${
+            i === titleIndex
+              ? "font-medium text-brand underline decoration-brand underline-offset-4"
+              : "text-muted hover:text-ink"
+          }`}
+          onClick={() => onTitleIndexChange(i)}
+        >
+          {studioTitleDirectionLabel(i)}
+        </button>
+      ))}
     </div>
   );
 }
@@ -113,7 +112,7 @@ function hashtagLine(tags: string[]): string {
   return tags.map((t) => `#${t.replace(/^#/, "")}`).join(" ");
 }
 
-/** 输出区稿件：best of N 标题 + 正文/话题连续排版（无内嵌滚动与区块分割） */
+/** 输出区稿件：横向 best of N + 对应正文连续排版（无区块与空行） */
 export default function StudioOutputManuscript({
   version,
   onTitleIndexChange,
@@ -192,39 +191,33 @@ export default function StudioOutputManuscript({
   const titles = manuscriptTitleBlocks(blocks);
   const titleIndex = resolvePrimaryTitleIndex(version, titles.length);
   const primaryTitle = titles[titleIndex] ?? titles[0];
-  const body = blocks.find((b) => b.kind === "body");
+  const body = resolveBodyForTitleIndex(blocks, titleIndex);
   const hashtags = blocks.find((b) => b.kind === "hashtags");
   const cover = blocks.find((b) => b.kind === "coverBrief");
   const showBestOf = titles.length > 1 && Boolean(onTitleIndexChange);
 
   function patchBlock(nextBlock: ManuscriptBlock) {
     const next = draftBlocks.map((b) => {
-      if (b.kind === nextBlock.kind && (b.kind !== "title" || b.id === nextBlock.id)) {
-        return nextBlock;
+      if (nextBlock.kind === "title" || nextBlock.kind === "body") {
+        return b.id === nextBlock.id ? nextBlock : b;
       }
-      return b;
+      return b.kind === nextBlock.kind ? nextBlock : b;
     });
     setDraftBlocks(next);
     scheduleSave(next);
   }
 
-  const flowParts: string[] = [];
-  if (!showBestOf && primaryTitle?.text) flowParts.push(primaryTitle.text);
-  if (body && body.kind === "body" && body.text.trim()) {
-    flowParts.push(flattenManuscriptDisplayText(body.text));
-  }
-  if (hashtags && hashtags.kind === "hashtags" && hashtags.tags.length) {
-    flowParts.push(hashtagLine(hashtags.tags));
-  }
-  if (cover && cover.kind === "coverBrief" && cover.text.trim()) {
-    flowParts.push(`封面：${flattenManuscriptDisplayText(cover.text)}`);
-  }
-  const flowText = flowParts.join(" ");
+  const flowText = buildManuscriptFlowText({
+    title: primaryTitle?.text,
+    body: body?.text,
+    hashtags: hashtags && hashtags.kind === "hashtags" ? hashtags.tags : undefined,
+    cover: cover && cover.kind === "coverBrief" ? cover.text : undefined
+  });
 
   return (
     <article className="min-w-0 text-left">
       {showBestOf ? (
-        <BestOfTitlePicker
+        <BestOfTabs
           titles={titles}
           titleIndex={titleIndex}
           onTitleIndexChange={onTitleIndexChange!}
@@ -240,7 +233,7 @@ export default function StudioOutputManuscript({
               onChange={(text) => patchBlock({ ...primaryTitle, text })}
             />
           ) : null}
-          {body && body.kind === "body" ? (
+          {body ? (
             <AutoGrowTextarea
               className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_BODY}`}
               value={body.text}

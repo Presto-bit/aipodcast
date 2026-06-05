@@ -1,3 +1,4 @@
+import { normalizeStudioComposeBrief } from "./studioComposeBrief";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type { StudioAgentTurn, StudioWork } from "./studioWorkTypes";
 import { fallbackStudioWorkTitle } from "./studioWorkTitleSuggest";
@@ -44,14 +45,15 @@ export function composeTaskSentenceFromTurns(
   if (cur && !isAskOnlyUserTurn(cur)) {
     if (!parts.length || parts[parts.length - 1] !== cur) parts.push(cur);
   }
-  if (parts.length) return parts.join("\n\n").slice(0, 2000);
-  if (cur) return cur.slice(0, 2000);
-  return turns
-    .filter((t) => t.role === "user" && !t.streaming)
-    .map((t) => t.content.trim())
-    .filter(Boolean)
-    .join("\n\n")
-    .slice(0, 2000);
+  if (parts.length) return normalizeStudioComposeBrief(parts.join("\n\n"));
+  if (cur) return normalizeStudioComposeBrief(cur);
+  return normalizeStudioComposeBrief(
+    turns
+      .filter((t) => t.role === "user" && !t.streaming)
+      .map((t) => t.content.trim())
+      .filter(Boolean)
+      .join("\n\n")
+  );
 }
 
 export function hasTaskContext(work: StudioWork, turns?: StudioAgentTurn[]): boolean {

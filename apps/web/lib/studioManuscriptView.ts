@@ -1,9 +1,28 @@
 import type { ManuscriptBlock } from "./studioWorkTypes";
 
 export type TitleBlock = Extract<ManuscriptBlock, { kind: "title" }>;
+export type BodyBlock = Extract<ManuscriptBlock, { kind: "body" }>;
 
 export function manuscriptTitleBlocks(blocks: ManuscriptBlock[]): TitleBlock[] {
   return blocks.filter((b): b is TitleBlock => b.kind === "title");
+}
+
+export function manuscriptBodyBlocks(blocks: ManuscriptBlock[]): BodyBlock[] {
+  return blocks.filter((b): b is BodyBlock => b.kind === "body");
+}
+
+/** 按 best-of 下标取对应正文；兼容旧稿单 body 块 */
+export function resolveBodyForTitleIndex(
+  blocks: ManuscriptBlock[],
+  titleIndex: number
+): BodyBlock | undefined {
+  const indexed = blocks.find(
+    (b): b is BodyBlock => b.kind === "body" && b.id === `body-${titleIndex}`
+  );
+  if (indexed) return indexed;
+  const bodies = manuscriptBodyBlocks(blocks);
+  if (bodies.length > 1) return bodies[titleIndex] ?? bodies[0];
+  return bodies[0];
 }
 
 export function resolvePrimaryTitleIndex(version: { primaryTitleIndex?: number } | null, titleCount: number): number {
@@ -41,4 +60,22 @@ export function studioTitleDirectionLabel(index: number): string {
 /** 展示用：折叠换行为空格，避免成稿被段落/区块拆开 */
 export function flattenManuscriptDisplayText(text: string): string {
   return text.replace(/\s*\n+\s*/g, " ").trim();
+}
+
+export function buildManuscriptFlowText(parts: {
+  title?: string;
+  body?: string;
+  hashtags?: string[];
+  cover?: string;
+}): string {
+  const segments: string[] = [];
+  if (parts.title?.trim()) segments.push(parts.title.trim());
+  if (parts.body?.trim()) segments.push(flattenManuscriptDisplayText(parts.body));
+  if (parts.hashtags?.length) {
+    segments.push(parts.hashtags.map((t) => `#${t.replace(/^#/, "")}`).join(" "));
+  }
+  if (parts.cover?.trim()) {
+    segments.push(`封面：${flattenManuscriptDisplayText(parts.cover)}`);
+  }
+  return segments.join(" ");
 }

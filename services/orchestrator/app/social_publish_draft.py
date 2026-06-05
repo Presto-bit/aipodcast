@@ -360,16 +360,17 @@ def _xhs_system_prompt(opt_block: str) -> str:
 结构硬性要求：
 1. cover_hook + titles 数组（恰好 3 个备选标题，每个≤20字）：人群/场景 + 痛点 + 解法/情绪价值。
 2. opening_30：正文开头句，总字数≤30（含标点）。
-3. body 或 sections：正文主体（干货/种草结构），段间 \\n\\n；勿把话题与互动句写入 body。
-   sections 若使用数组，每项必须是 JSON 对象 {{"heading":"小标题","content":"段落"}}，禁止输出 Python 字典字面量字符串。
-4. tags：5～8 个垂类话题词，不带#（由系统并入正文末尾）。
-5. interaction：1～2 句互动引导（由系统并入正文末尾）。
-6. imageSuggestions：2～4 条图片制作建议，每项为简短字符串（如「封面：大字标题+实拍」），不要用嵌套 JSON 对象。
+3. bodies 数组（恰好 3 个字符串）：与 titles 顺序一一对应，分别为痛点向/好奇向/数字向的完整正文变体，写法与角度须明显不同；勿把话题与互动句写入 bodies。
+   若无 bodies 则可用 body 或 sections；sections 每项必须是 JSON 对象 {{"heading":"小标题","content":"段落"}}，禁止 Python 字典字面量字符串。
+4. body（可选）：与 bodies[0] 一致的主正文；段内用句号衔接，避免连续空行。
+5. tags：5～8 个垂类话题词，不带#（由系统并入正文末尾）。
+6. interaction：1～2 句互动引导（由系统并入正文末尾）。
+7. imageSuggestions：2～4 条图片制作建议，每项为简短字符串（如「封面：大字标题+实拍」），不要用嵌套 JSON 对象。
 
 禁止：Speaker 对话格式、连续照抄 18 字以上、绝对化/医疗化/硬引流用语。
 
 只输出一个 JSON 对象，不要 markdown 代码块。键：
-cover_hook, titles, opening_30, body（或 sections 数组）, interaction, tags, imageSuggestions, theme"""
+cover_hook, titles, opening_30, bodies（3 个正文变体）, body（或 sections 数组）, interaction, tags, imageSuggestions, theme"""
 
 
 _MERGE_PLACEHOLDER = "请介绍 AI Native 应用架构"

@@ -30,9 +30,11 @@ def deliverable_to_manuscript_blocks_dict(deliverable: dict[str, Any]) -> list[d
     tags = content.get("hashtags") if isinstance(content.get("hashtags"), list) else []
     cover = content.get("cover") if isinstance(content.get("cover"), dict) else {}
     cover_hook = str(cover.get("headline") or cover.get("hook") or "").strip()
+    bodies = content.get("bodies") if isinstance(content.get("bodies"), list) else []
     return partial_social_to_manuscript_blocks(
         {
             "titles": titles,
+            "bodies": bodies,
             "body": body,
             "tags": tags,
             "cover_hook": cover_hook,
@@ -49,9 +51,16 @@ def partial_social_to_manuscript_blocks(partial: dict[str, Any]) -> list[dict[st
             text = str(raw or "").strip()
             if text:
                 blocks.append({"id": f"title-{i}", "kind": "title", "text": text, "evidence": "model"})
-    body = str(partial.get("body") or "").strip()
-    if body:
-        blocks.append({"id": "body", "kind": "body", "text": body, "evidence": "model"})
+    bodies_raw = partial.get("bodies")
+    if isinstance(bodies_raw, list) and any(str(b).strip() for b in bodies_raw):
+        for i, raw in enumerate(bodies_raw[:3]):
+            text = str(raw or "").strip()
+            if text:
+                blocks.append({"id": f"body-{i}", "kind": "body", "text": text, "evidence": "model"})
+    else:
+        body = str(partial.get("body") or "").strip()
+        if body:
+            blocks.append({"id": "body-0", "kind": "body", "text": body, "evidence": "model"})
     tags_raw = partial.get("tags")
     if isinstance(tags_raw, list):
         tags = [str(t).replace("#", "").strip() for t in tags_raw if str(t).strip()]

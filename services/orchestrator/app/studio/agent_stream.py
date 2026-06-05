@@ -198,7 +198,12 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         partial = extract_partial_social_json_fields(acc)
         if not partial:
             return
-        body = str(partial.get("body") or "")
+        bodies = partial.get("bodies")
+        body = ""
+        if isinstance(bodies, list) and bodies:
+            body = str(bodies[0] or "")
+        if not body:
+            body = str(partial.get("body") or "")
         if body and body != last_body[0]:
             last_body[0] = body
             event_q.put(("body_delta", body))

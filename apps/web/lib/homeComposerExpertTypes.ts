@@ -49,6 +49,8 @@ export type XhsCoverSpec = {
 export type XhsContent = {
   titles: string[];
   body: string;
+  /** best-of-3 正文变体，与 titles 一一对应 */
+  bodies?: string[];
   hashtags: string[];
   cover: XhsCoverSpec;
 };
