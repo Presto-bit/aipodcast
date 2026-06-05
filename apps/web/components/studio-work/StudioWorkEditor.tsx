@@ -1,19 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
-import {
-  diffBlockKeys,
-  mergeBlocks,
-  manuscriptCopyAll,
-  nextVersionLabel
-} from "../../lib/studioDeliverable";
+import { manuscriptCopyAll, nextVersionLabel } from "../../lib/studioDeliverable";
 import { deliverableBodyLooksLikeIntakeEcho } from "../../lib/studioDeliverableQuality";
-import { WORKBENCH_CHAT_PATH, WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
-import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
-import { buildBlockPatchOpinion, buildSelectionPatchOpinion } from "../../lib/studioBlockPatch";
+import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
+import { buildBlockPatchOpinion } from "../../lib/studioBlockPatch";
 import {
   buildStudioAuthorPrompt,
   buildStudioJobIntake,
@@ -29,32 +22,27 @@ import { streamStudioAgent } from "../../lib/studioAgentStream";
 import { studioAgentRouteHint } from "../../lib/studioAgentToolSchema";
 import { upsertAgentStep, type StudioAgentStep } from "../../lib/studioAgentSteps";
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
-import { composeTaskSentenceFromTurns, taskSentenceFromWork } from "../../lib/studioWorkTask";
+import { composeTaskSentenceFromTurns } from "../../lib/studioWorkTask";
 import type {
   ManuscriptBlock,
   ManuscriptVersion,
-  PendingPatch,
   StudioAgentTurn,
   StudioWork,
   WorkStatus
 } from "../../lib/studioWorkTypes";
-import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
 import StudioAgentDock from "./StudioAgentDock";
 import StudioSessionRail from "./StudioSessionRail";
 
 type CanvasSnapshot = {
   versions: ManuscriptVersion[];
   activeVersionId: string;
-  pendingPatch?: PendingPatch;
   status: WorkStatus;
 };
 
 export default function StudioWorkEditor({ workId }: { workId: string }) {
-  const router = useRouter();
   const { ready, user, getAuthHeaders } = useAuth();
   const isLoggedIn = isLoggedInAccountUser(user);
   const [work, setWork] = useState<StudioWork | null>(null);
-  const [selectedPatchKeys, setSelectedPatchKeys] = useState<Set<string>>(new Set());
   const [streamingBlocks, setStreamingBlocks] = useState<ManuscriptBlock[] | null>(null);
   const [streamingBodyText, setStreamingBodyText] = useState<string | null>(null);
   const [jobBusy, setJobBusy] = useState(false);
@@ -63,8 +51,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const jobRunningRef = useRef(false);
   const streamAbortRef = useRef<AbortController | null>(null);
   const canvasSnapshotsRef = useRef<Map<string, CanvasSnapshot>>(new Map());
-  const undoStackRef = useRef<ManuscriptBlock[][]>([]);
-  const [canUndoPatch, setCanUndoPatch] = useState(false);
   const [agentRouteHint, setAgentRouteHint] = useState("");
   const [agentSteps, setAgentSteps] = useState<StudioAgentStep[]>([]);
 
@@ -85,24 +71,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     [work]
   );
 
-  const changedKeys = useMemo(() => {
-    if (!work?.pendingPatch || !activeVersion) return new Set<string>();
-    return diffBlockKeys(activeVersion.blocks, work.pendingPatch.proposedBlocks);
-  }, [work, activeVersion]);
-
-  useEffect(() => {
-    if (!work?.pendingPatch) return;
-    setSelectedPatchKeys(new Set(changedKeys));
-  }, [work?.pendingPatch, changedKeys]);
-
-  const showFeatureNudge = useMemo(() => {
-    if (!work) return false;
-    if (work.featureNudgeDismissed) return false;
-    if (work.versions.length === 0) return false;
-    if (work.status !== "ready" && work.status !== "shipped") return false;
-    return !isFeatureCoreComplete(getComposerPrefsFeatureCore());
-  }, [work]);
-
   function persist(next: StudioWork): StudioWork {
     const saved = upsertStudioWork({ ...next, allowModelFallback: true });
     setWork(saved);
@@ -122,10 +90,10 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         ...cur,
         versions: snap.versions,
         activeVersionId: snap.activeVersionId,
-        pendingPatch: snap.pendingPatch,
         status: snap.status,
         error: undefined,
-        runPhase: undefined
+        runPhase: undefined,
+        pendingPatch: undefined
       });
       setStreamingBlocks(null);
       setStreamingBodyText(null);
@@ -150,7 +118,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       canvasSnapshotsRef.current.set(params.userTurnId, {
         versions: cur.versions,
         activeVersionId: cur.activeVersionId,
-        pendingPatch: cur.pendingPatch,
         status: cur.status
       });
 
@@ -338,44 +305,24 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           return;
         }
 
-        if (result.tool === "revise") {
-          const base =
-            after.versions.find((v) => v.id === after.activeVersionId) ?? after.versions.at(-1);
-          if (!base) {
-            persist(finishStudioRun({ ...after, status: "ready", runPhase: undefined }, runId, "error", "无基准版本"));
-            return;
-          }
-          const keys = diffBlockKeys(base.blocks, blocks);
-          persist(
-            finishStudioRun(
-              {
-                ...after,
-                status: "ready",
-                pendingPatch: {
-                  fromVersionId: base.id,
-                  proposedBlocks: blocks,
-                  summary: `改版待确认 · ${keys.size} 处变更`,
-                  sourceRunId: runId
-                },
-                runPhase: undefined,
-                error: undefined
-              },
-              runId,
-              "done",
-              `改版待确认 · ${keys.size} 处变更`
-            )
-          );
+        const versionId = crypto.randomUUID();
+        const base =
+          result.tool === "revise"
+            ? after.versions.find((v) => v.id === after.activeVersionId) ?? after.versions.at(-1)
+            : null;
+
+        if (result.tool === "revise" && !base) {
+          persist(finishStudioRun({ ...after, status: "ready", runPhase: undefined }, runId, "error", "无基准版本"));
           return;
         }
 
-        const versionId = crypto.randomUUID();
         persist(
           finishStudioRun(
             {
               ...after,
               status: "ready",
-              plan: undefined,
-              intake,
+              plan: result.tool === "compose" ? undefined : after.plan,
+              intake: result.tool === "compose" ? intake : after.intake,
               versions: [
                 ...after.versions,
                 {
@@ -383,7 +330,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
                   label: nextVersionLabel(after.versions),
                   createdAt: Date.now(),
                   blocks,
-                  primaryTitleIndex: 0,
+                  primaryTitleIndex: base?.primaryTitleIndex ?? 0,
                   sourceRunId: runId
                 }
               ],
@@ -395,7 +342,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             },
             runId,
             "done",
-            "稿件已生成"
+            result.tool === "revise" ? "改版完成" : "稿件已生成"
           )
         );
       } catch (err) {
@@ -421,7 +368,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         if (streamAbortRef.current === ac) streamAbortRef.current = null;
       }
     },
-    [workId, isLoggedIn, getAuthHeaders]
+    [workId, isLoggedIn, getAuthHeaders, clearStreamingSurface]
   );
 
   const runReviseJob = useCallback(
@@ -467,59 +414,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     [load, runReviseJob]
   );
 
-  async function onReviseFromChat(opinion: string) {
-    await runJobExclusive(() => runReviseJob(opinion));
-  }
-
-  function onUndoPatch() {
-    const prev = undoStackRef.current.pop();
-    if (!prev || !work || !activeVersion) return;
-    persist({
-      ...work,
-      versions: work.versions.map((v) =>
-        v.id === activeVersion.id ? { ...v, blocks: prev } : v
-      ),
-      pendingPatch: undefined
-    });
-    setCanUndoPatch(undoStackRef.current.length > 0);
-  }
-
   function onQueueRevise(opinion: string) {
     const text = opinion.trim();
     if (!text) return;
     reviseQueueRef.current.push(text);
   }
 
-  function cloneBlocks(blocks: ManuscriptBlock[]): ManuscriptBlock[] {
-    return blocks.map((b) => (b.kind === "hashtags" ? { ...b, tags: [...b.tags] } : { ...b }));
-  }
-
-  function onApplyPatch(partial: boolean) {
-    if (!work?.pendingPatch || !activeVersion) return;
-    undoStackRef.current.push(cloneBlocks(activeVersion.blocks));
-    setCanUndoPatch(true);
-    const keys = partial ? selectedPatchKeys : changedKeys;
-    const merged = mergeBlocks(activeVersion.blocks, work.pendingPatch.proposedBlocks, keys);
-    const versionId = crypto.randomUUID();
-    persist({
-      ...work,
-      versions: [
-        ...work.versions,
-        {
-          id: versionId,
-          label: nextVersionLabel(work.versions),
-          createdAt: Date.now(),
-          blocks: merged,
-          sourceRunId: work.pendingPatch?.sourceRunId
-        }
-      ],
-      activeVersionId: versionId,
-      pendingPatch: undefined
-    });
-  }
-
   function onManuscriptBlocksChange(blocks: ManuscriptBlock[]) {
-    if (!work || !activeVersion || work.status !== "ready" || work.pendingPatch) return;
+    if (!work || !activeVersion || work.status !== "ready") return;
     persist({
       ...work,
       versions: work.versions.map((v) => (v.id === activeVersion.id ? { ...v, blocks } : v))
@@ -568,25 +470,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           onQueueRevise={onQueueRevise}
           onRestoreCanvasBeforeTurn={restoreCanvasBeforeTurn}
           onCancelStream={cancelAgentStream}
-          hasPendingPatch={Boolean(work.pendingPatch)}
-          onAcceptPatch={() => onApplyPatch(false)}
-          onUndoPatch={onUndoPatch}
-          canUndoPatch={canUndoPatch}
-          activeVersion={activeVersion ?? null}
           showFeatureNudge={false}
           onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
-          onApplyPatch={onApplyPatch}
-          onDiscardPatch={() => persist({ ...work, pendingPatch: undefined })}
-          selectedPatchKeys={selectedPatchKeys}
-          changedKeys={changedKeys}
-          onTogglePatchKey={(key) => {
-            setSelectedPatchKeys((prev) => {
-              const next = new Set(prev);
-              if (next.has(key)) next.delete(key);
-              else next.add(key);
-              return next;
-            });
-          }}
           onTitleIndexChange={(index) => {
             if (!work || !activeVersion) return;
             persist({
@@ -596,15 +481,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               )
             });
           }}
-          onVersionChange={(versionId) => {
-            if (!work.versions.some((v) => v.id === versionId)) return;
-            persist({ ...work, activeVersionId: versionId, pendingPatch: undefined });
-          }}
           onBlocksChange={onManuscriptBlocksChange}
-          onSelectionRevise={(selectedText, opinion) =>
-            void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion))
-          }
-          onWowRevise={(opinion) => void onReviseFromChat(opinion)}
         />
       </div>
     </main>

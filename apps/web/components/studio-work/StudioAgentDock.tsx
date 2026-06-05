@@ -105,23 +105,10 @@ export default function StudioAgentDock({
   onQueueRevise,
   onRestoreCanvasBeforeTurn,
   onCancelStream,
-  hasPendingPatch = false,
-  onAcceptPatch,
-  onUndoPatch,
-  canUndoPatch = false,
-  activeVersion,
-  onApplyPatch,
-  onDiscardPatch,
-  selectedPatchKeys,
-  changedKeys,
-  onTogglePatchKey,
   showFeatureNudge,
   onDismissFeatureNudge,
   onTitleIndexChange,
-  onVersionChange,
   onBlocksChange,
-  onSelectionRevise,
-  onWowRevise,
   canvasMode = false,
   agentRouteHint = "",
   agentSteps = [],
@@ -151,23 +138,10 @@ export default function StudioAgentDock({
   onQueueRevise?: (opinion: string) => void;
   onRestoreCanvasBeforeTurn?: (turnId: string) => void;
   onCancelStream?: () => void;
-  hasPendingPatch?: boolean;
-  onAcceptPatch?: () => void;
-  onUndoPatch?: () => void;
-  canUndoPatch?: boolean;
-  activeVersion: ManuscriptVersion | null;
-  onApplyPatch?: (partial: boolean) => void;
-  onDiscardPatch?: () => void;
-  selectedPatchKeys: Set<string>;
-  changedKeys: Set<string>;
-  onTogglePatchKey: (key: string) => void;
   showFeatureNudge: boolean;
   onDismissFeatureNudge: () => void;
   onTitleIndexChange?: (index: number) => void;
-  onVersionChange?: (versionId: string) => void;
   onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
-  onSelectionRevise?: (selectedText: string, opinion: string) => void;
-  onWowRevise?: (opinion: string) => void;
 }) {
   const router = useRouter();
   const [input, setInput] = useState("");
@@ -178,6 +152,7 @@ export default function StudioAgentDock({
   const [ephemeralHint, setEphemeralHint] = useState("");
   const [quickPromptsOpen, setQuickPromptsOpen] = useState(false);
   const dialogueScrollRef = useRef<HTMLDivElement>(null);
+  const scrollEndRef = useRef<HTMLDivElement>(null);
   const lastUserAnchorIdRef = useRef<string | null>(null);
   const phaseRef = useRef("");
   const streamRafRef = useRef(0);
@@ -194,6 +169,10 @@ export default function StudioAgentDock({
   }
 
   const turns = work.agentTurns ?? [];
+  const activeVersion = useMemo(
+    () => work.versions.find((v) => v.id === work.activeVersionId) ?? work.versions.at(-1) ?? null,
+    [work.activeVersionId, work.versions]
+  );
   const dialogueTurns = streamOverlay ?? turns;
   const jobRunning = work.status === "generating" || jobBusy;
   const canChat = isLoggedIn && ready;
@@ -212,6 +191,10 @@ export default function StudioAgentDock({
       ?.scrollIntoView({ block: "start", behavior: "smooth" });
   }, []);
 
+  const scrollOutputToEnd = useCallback((behavior: ScrollBehavior = "smooth") => {
+    scrollEndRef.current?.scrollIntoView({ block: "end", behavior });
+  }, []);
+
   const activeUserTurnId = useMemo(() => {
     const groups = buildStudioDialogueTurnGroups(turns);
     return groups[groups.length - 1]?.userTurn.id ?? null;
@@ -222,6 +205,24 @@ export default function StudioAgentDock({
     lastUserAnchorIdRef.current = activeUserTurnId;
     requestAnimationFrame(() => scrollToActiveUser());
   }, [activeUserTurnId, scrollToActiveUser]);
+
+  useEffect(() => {
+    if (centerEmptyComposer) return;
+    const id = requestAnimationFrame(() => scrollOutputToEnd());
+    return () => cancelAnimationFrame(id);
+  }, [
+    turns.length,
+    streamingBlocks,
+    streamingBodyText,
+    agentSteps.length,
+    agentRouteHint,
+    ephemeralHint,
+    phase,
+    jobRunning,
+    agentBusy,
+    centerEmptyComposer,
+    scrollOutputToEnd
+  ]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -711,9 +712,6 @@ export default function StudioAgentDock({
       menuOpen={corpusMenuOpen}
       generating={jobRunning}
       onCancel={jobRunning ? onCancelStream : undefined}
-      hasPendingPatch={hasPendingPatch}
-      onAcceptPatch={hasPendingPatch ? onAcceptPatch : undefined}
-      onUndoPatch={canUndoPatch ? onUndoPatch : undefined}
       footerRight={
         <StudioCorpusBar
           work={work}
@@ -752,15 +750,8 @@ export default function StudioAgentDock({
       streamingBlocks={streamingBlocks}
       streamingBodyText={streamingBodyText}
       activeAgentStatus={agentOutputStatus}
-      selectedPatchKeys={selectedPatchKeys}
-      changedKeys={changedKeys}
-      onTogglePatchKey={onTogglePatchKey}
-      onApplyPatch={onApplyPatch}
-      onDiscardPatch={onDiscardPatch}
       onTitleIndexChange={onTitleIndexChange}
       onBlocksChange={onBlocksChange}
-      onSelectionRevise={onSelectionRevise}
-      onWowRevise={onWowRevise}
       showFeatureNudge={showFeatureNudge}
       onFillFeature={() => {
         markOpenComposerFeature();
@@ -792,9 +783,10 @@ export default function StudioAgentDock({
       <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-3 py-2">
         <div
           ref={dialogueScrollRef}
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          className="min-h-0 flex-1 overflow-y-auto pb-36"
         >
           {timelinePanel}
+          <div ref={scrollEndRef} className="h-px w-full shrink-0" aria-hidden />
         </div>
       </div>
 

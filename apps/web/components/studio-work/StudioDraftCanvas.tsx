@@ -140,41 +140,20 @@ export default function StudioDraftCanvas({
 
   const surface = (
     <StudioStreamingSurface
-      variant={variant}
+      variant={variant === "diff" ? "ready" : variant}
       phase={
         variant === "active"
           ? work.runPhase || (busy ? "准备写稿…" : undefined)
           : undefined
       }
       taskSentence={generatingTaskSentence || work.brief}
-      blocks={variant === "active" ? streamingBlocks : variant === "ready" ? manuscriptBlocks : null}
+      blocks={variant === "active" ? streamingBlocks : variant === "ready" || variant === "diff" ? manuscriptBlocks : null}
       bodyText={variant === "active" ? streamingBodyText : null}
       onCancel={variant === "active" ? onCancelStream : undefined}
-      version={variant === "ready" ? activeVersion : null}
-      compareBlocks={variant === "diff" ? work.pendingPatch?.proposedBlocks ?? null : null}
+      version={variant === "ready" || variant === "diff" ? activeVersion : null}
       editable={editable}
       onBlocksChange={onBlocksChange}
       onTitleIndexChange={onTitleIndexChange}
-      onSelectionRevise={onSelectionRevise}
-      onWowRevise={onWowRevise}
-      wowReviseBusy={busy}
-      selectedKeys={selectedPatchKeys}
-      changedKeys={changedKeys}
-      onToggleKey={onTogglePatchKey}
-      versions={versions}
-      activeVersionId={work.activeVersionId}
-      onVersionChange={onVersionChange}
-      footer={
-        footer || (variantsNeedMobileVersion(variant, versions) ? (
-          <MobileVersionRow
-            versions={versions}
-            activeVersionId={work.activeVersionId}
-            open={mobileVersionOpen}
-            onOpenChange={setMobileVersionOpen}
-            onVersionChange={onVersionChange}
-          />
-        ) : null)
-      }
       flowLayout={flowLayout}
     />
   );

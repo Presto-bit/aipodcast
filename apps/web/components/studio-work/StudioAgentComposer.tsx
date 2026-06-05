@@ -14,10 +14,7 @@ export default function StudioAgentComposer({
   footerRight,
   menuOpen = false,
   generating = false,
-  onCancel,
-  hasPendingPatch = false,
-  onAcceptPatch,
-  onUndoPatch
+  onCancel
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -29,13 +26,9 @@ export default function StudioAgentComposer({
   menuOpen?: boolean;
   generating?: boolean;
   onCancel?: () => void;
-  hasPendingPatch?: boolean;
-  onAcceptPatch?: () => void;
-  onUndoPatch?: () => void;
 }) {
   const hasText = Boolean(value.trim());
   const canSend = hasText && !busy && !disabled;
-  const showHints = generating || hasPendingPatch || Boolean(onUndoPatch);
 
   return (
     <div
@@ -59,11 +52,6 @@ export default function StudioAgentComposer({
               onCancel();
               return;
             }
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && hasPendingPatch && onAcceptPatch) {
-              e.preventDefault();
-              onAcceptPatch();
-              return;
-            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               if (canSend) onSend();
@@ -83,19 +71,8 @@ export default function StudioAgentComposer({
           </button>
         ) : null}
       </div>
-      {showHints ? (
-        <p className="mt-1 px-0.5 text-[10px] text-muted">
-          {generating ? "Esc 停止生成" : null}
-          {hasPendingPatch ? " · ⌘↵ 接受改版" : null}
-          {onUndoPatch ? (
-            <>
-              {" · "}
-              <button type="button" className="text-brand underline" onClick={onUndoPatch}>
-                撤销
-              </button>
-            </>
-          ) : null}
-        </p>
+      {generating ? (
+        <p className="mt-1 px-0.5 text-[10px] text-muted">Esc 停止生成</p>
       ) : null}
       {footerRight ? (
         <div
