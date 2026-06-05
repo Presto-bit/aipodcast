@@ -93,8 +93,11 @@ export default function StudioStreamingSurface({
 
   const isActive = variant === "active";
   const isReadyLike = variant === "ready" || variant === "diff";
-  const displayBlocks =
-    variant === "diff" && compareBlocks ? compareBlocks : blocks ?? version?.blocks ?? [];
+  const displayBlocks = useMemo(() => {
+    if (variant === "diff" && compareBlocks) return compareBlocks;
+    if (blocks?.length) return blocks;
+    return version?.blocks ?? [];
+  }, [variant, compareBlocks, blocks, version?.blocks]);
 
   const blockBody = displayBlocks.find((b) => b.kind === "body")?.text ?? "";
   const targetBody = (bodyText ?? blockBody).trim();
