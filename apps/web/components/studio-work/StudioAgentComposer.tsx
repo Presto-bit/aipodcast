@@ -14,7 +14,8 @@ export default function StudioAgentComposer({
   footerRight,
   menuOpen = false,
   generating = false,
-  onCancel
+  onCancel,
+  progressLabel
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -26,6 +27,7 @@ export default function StudioAgentComposer({
   menuOpen?: boolean;
   generating?: boolean;
   onCancel?: () => void;
+  progressLabel?: string;
 }) {
   const hasText = Boolean(value.trim());
   const canSend = hasText && !busy && !disabled;
@@ -72,7 +74,23 @@ export default function StudioAgentComposer({
         ) : null}
       </div>
       {generating ? (
-        <p className="mt-1 px-0.5 text-[10px] text-muted">Esc 停止生成</p>
+        <div className="mt-1 flex items-center justify-between gap-2 px-0.5">
+          <p className="flex min-w-0 items-center gap-1.5 text-[11px] text-brand">
+            <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-brand" aria-hidden />
+            <span className="truncate">{progressLabel || "写稿中…"}</span>
+          </p>
+          {onCancel ? (
+            <button
+              type="button"
+              className="shrink-0 text-[10px] text-muted underline hover:text-ink"
+              onClick={onCancel}
+            >
+              停止
+            </button>
+          ) : (
+            <span className="shrink-0 text-[10px] text-muted">Esc 停止</span>
+          )}
+        </div>
       ) : null}
       {footerRight ? (
         <div

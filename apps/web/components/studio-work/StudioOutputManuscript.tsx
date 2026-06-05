@@ -15,6 +15,8 @@ import {
   studioTitleDirectionLabel
 } from "../../lib/studioManuscriptView";
 import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
+import { studioComposeProgressLabel } from "../../lib/studioComposeProgress";
+import { normalizeStudioRunPhase } from "../../lib/studioRunPhase";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
 
@@ -171,16 +173,26 @@ export default function StudioOutputManuscript({
   );
 
   if (generatingPhase) {
-    const label = generatingPhase.trim() || "写稿中…";
+    const label =
+      studioComposeProgressLabel({ runPhase: generatingPhase }) ||
+      normalizeStudioRunPhase(generatingPhase) ||
+      generatingPhase.trim() ||
+      "写稿中…";
     return (
       <div className="text-left">
-        <p className="flex items-center gap-2 text-sm text-ink">
+        <p className="flex items-center gap-2 text-sm text-brand">
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
           {label}
         </p>
         {streamLines.length ? (
-          <p className={`mt-2 ${STUDIO_MANUSCRIPT_BODY}`}>{streamLines.join(" · ")}</p>
-        ) : null}
+          <p className={`mt-1.5 text-[11px] text-muted ${STUDIO_MANUSCRIPT_BODY}`}>
+            {streamLines.slice(-2).join(" · ")}
+          </p>
+        ) : (
+          <p className={`mt-1.5 text-[11px] text-muted ${STUDIO_MANUSCRIPT_BODY}`}>
+            通常需要 30 秒到 2 分钟，成稿会出现在下方
+          </p>
+        )}
       </div>
     );
   }

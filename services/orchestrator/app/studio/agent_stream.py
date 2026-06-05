@@ -179,13 +179,22 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
     )
 
     try:
+        prep_phases: list[str] = []
+
+        def prep_progress(msg: str) -> None:
+            text = str(msg or "").strip()
+            if text:
+                prep_phases.append(text)
+
         material, options, notebook, note_count, used_rag = _prepare_material(
             payload=stream_payload,
             user_ref=user_ref,
             task_sentence=task_sentence,
             intake=intake,
-            on_progress=lambda _m: None,
+            on_progress=prep_progress,
         )
+        for msg in prep_phases:
+            yield _sse({"type": "phase", "message": msg, "requestId": rid, "tool": tool})
     except Exception as exc:
         yield _sse({"type": "error", "message": str(exc)[:500], "requestId": rid})
         return

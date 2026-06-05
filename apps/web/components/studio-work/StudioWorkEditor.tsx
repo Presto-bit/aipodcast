@@ -345,6 +345,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             result.tool === "revise" ? "改版完成" : "稿件已生成"
           )
         );
+        setAgentRouteHint(result.tool === "revise" ? "改版完成" : "写稿完成");
+        clearStreamingSurface();
       } catch (err) {
         if (ac.signal.aborted) return;
         const failed = getStudioWork(workId);
@@ -363,8 +365,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         }
       } finally {
         clearStreamingSurface();
-        setAgentRouteHint("");
-        setAgentSteps([]);
         if (streamAbortRef.current === ac) streamAbortRef.current = null;
       }
     },

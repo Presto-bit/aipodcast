@@ -7,6 +7,7 @@ import {
   buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
+import { studioComposeProgressLabel } from "../../lib/studioComposeProgress";
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
 import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
@@ -183,7 +184,19 @@ export default function StudioAgentDock({
     canvasMode && turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
   const showAgentOutputStatus =
     canvasMode &&
-    (agentSteps.length > 0 || Boolean(agentRouteHint) || Boolean(ephemeralHint) || agentBusy);
+    (agentSteps.length > 0 ||
+      Boolean(agentRouteHint) ||
+      Boolean(ephemeralHint) ||
+      agentBusy ||
+      jobRunning);
+  const composeProgressLabel = studioComposeProgressLabel({
+    runPhase: work.runPhase,
+    hasStream: Boolean(streamingBlocks?.length || streamingBodyText?.trim()),
+    isRevise: Boolean(work.agentRuns?.find((r) => r.status === "running" && r.tool === "revise"))
+  });
+  const dockPhase =
+    phase ||
+    (jobRunning ? composeProgressLabel : undefined);
 
   const scrollToActiveUser = useCallback(() => {
     dialogueScrollRef.current
@@ -711,6 +724,7 @@ export default function StudioAgentDock({
       placeholder={agentPlaceholder(work.status)}
       menuOpen={corpusMenuOpen}
       generating={jobRunning}
+      progressLabel={jobRunning ? composeProgressLabel : undefined}
       onCancel={jobRunning ? onCancelStream : undefined}
       footerRight={
         <StudioCorpusBar
@@ -732,7 +746,14 @@ export default function StudioAgentDock({
       {agentRouteHint || ephemeralHint ? (
         <StudioEphemeralHint text={agentRouteHint || ephemeralHint} />
       ) : null}
-      {agentBusy && phase ? <p className="text-[11px] text-brand">{phase}</p> : null}
+      {jobRunning ? (
+        <p className="flex items-center gap-1.5 text-[11px] text-brand">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand" aria-hidden />
+          {composeProgressLabel}
+        </p>
+      ) : agentBusy && dockPhase ? (
+        <p className="text-[11px] text-brand">{dockPhase}</p>
+      ) : null}
     </div>
   ) : null;
 
@@ -740,7 +761,7 @@ export default function StudioAgentDock({
     <StudioTimelinePanel
       work={work}
       turns={dialogueTurns}
-      streamingPhase={phase}
+      streamingPhase={dockPhase}
       scrollRef={dialogueScrollRef}
       canEdit={canEditTurns}
       onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
