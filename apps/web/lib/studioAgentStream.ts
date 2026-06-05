@@ -21,6 +21,7 @@ export type StudioAgentStreamInput = {
   onReply?: (text: string) => void;
   onPhase?: (message: string, tool: StudioAgentTool) => void;
   onBlockDelta?: (blocks: ManuscriptBlock[], tool: StudioAgentTool) => void;
+  onBodyDelta?: (body: string, tool: StudioAgentTool) => void;
 };
 
 export type StudioAgentStreamResult =
@@ -106,6 +107,10 @@ export async function streamStudioAgent(
         } else if (type === "phase") {
           const msg = String(ev.message || "").trim();
           if (msg) input.onPhase?.(msg, tool === "revise" ? "revise" : "compose");
+        } else if (type === "body_delta") {
+          if (!firstDeltaAt) firstDeltaAt = Date.now();
+          const body = String(ev.body || "");
+          if (body) input.onBodyDelta?.(body, tool === "revise" ? "revise" : "compose");
         } else if (type === "block_delta") {
           if (!firstDeltaAt) firstDeltaAt = Date.now();
           const blocks = normalizeStreamManuscriptBlocks(ev.blocks);

@@ -127,11 +127,16 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
 
     event_q: queue.Queue[tuple[str, Any]] = queue.Queue()
     last_sig = [""]
+    last_body = [""]
 
     def on_stream_delta(acc: str) -> None:
         partial = extract_partial_social_json_fields(acc)
         if not partial:
             return
+        body = str(partial.get("body") or "")
+        if body and body != last_body[0]:
+            last_body[0] = body
+            event_q.put(("body_delta", body))
         blocks = partial_social_to_manuscript_blocks(partial)
         if not blocks:
             return
@@ -187,6 +192,8 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
             return
         if kind == "phase":
             yield _sse({"type": "phase", "message": str(item), "requestId": rid, "tool": tool})
+        elif kind == "body_delta":
+            yield _sse({"type": "body_delta", "body": str(item), "requestId": rid, "tool": tool})
         elif kind == "block_delta":
             yield _sse({"type": "block_delta", "blocks": item, "requestId": rid, "tool": tool})
         elif kind == "error":

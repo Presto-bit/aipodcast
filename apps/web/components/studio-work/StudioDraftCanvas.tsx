@@ -6,6 +6,7 @@ import { resolvePrimaryTitleIndex } from "../../lib/studioManuscriptView";
 import { STUDIO_DIALOGUE_SECTION } from "../../lib/studioOutputTypography";
 import type { ManuscriptBlock, ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
+import StudioStreamingSurface from "./StudioStreamingSurface";
 import StudioXhsPhonePreview from "./StudioXhsPhonePreview";
 
 type CanvasTab = "preview" | "document" | "diff";
@@ -23,48 +24,7 @@ function tabLabel(tab: CanvasTab): string {
   }
 }
 
-function GeneratingProgressBanner({
-  runPhase,
-  mode,
-  onCancel
-}: {
-  runPhase?: string;
-  mode: "progress" | "hold-existing";
-  onCancel?: () => void;
-}) {
-  const label = runPhase?.trim() || "写稿中…";
-  return (
-    <div
-      className={[
-        "rounded-lg border border-brand/25 bg-brand/5 px-3 py-2.5",
-        mode === "hold-existing" ? "mb-3" : ""
-      ].join(" ")}
-    >
-      <div className="flex items-center justify-between gap-2 text-sm text-ink">
-        <div className="flex items-center gap-2">
-          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
-          <span>{label}</span>
-        </div>
-        {onCancel ? (
-          <button
-            type="button"
-            className="rounded-md border border-line px-2 py-0.5 text-[11px] text-muted hover:bg-fill hover:text-ink"
-            onClick={onCancel}
-          >
-            停止
-          </button>
-        ) : null}
-      </div>
-      {mode === "hold-existing" ? (
-        <p className="mt-1 text-[11px] text-muted">下方为当前稿件，完成后将展示改版结果</p>
-      ) : (
-        <p className="mt-1 text-[11px] text-muted">完成后将在此展示预览与文档</p>
-      )}
-    </div>
-  );
-}
-
-/** v3 主画布：预览 / 文档 / 对比（有 pendingPatch 时） */
+/** v3 主画布：流式写作面 / 预览 / 文档 / 对比 */
 export default function StudioDraftCanvas({
   work,
   busy,
@@ -85,6 +45,8 @@ export default function StudioDraftCanvas({
   onSelectionRevise,
   embedded = false,
   streamingBlocks = null,
+  streamingBodyText = null,
+  generatingTaskSentence,
   onCancelStream
 }: {
   work: StudioWork;
@@ -107,62 +69,69 @@ export default function StudioDraftCanvas({
   embedded?: boolean;
   /** P0-核：流式写画布时的增量 blocks */
   streamingBlocks?: ManuscriptBlock[] | null;
+  streamingBodyText?: string | null;
+  generatingTaskSentence?: string;
   onCancelStream?: () => void;
 }) {
   const compareMode = Boolean(work.pendingPatch);
-  const generatingMode = studioGeneratingUiMode(work, activeVersion);
   const isGenerating = work.status === "generating";
-  const showFinalTabs = !isGenerating || compareMode || Boolean(streamingBlocks?.length);
+
+  if (isGenerating && !compareMode) {
+    const streamingShell = (
+      <StudioStreamingSurface
+        phase={work.runPhase}
+        taskSentence={generatingTaskSentence || work.brief}
+        blocks={streamingBlocks}
+        bodyText={streamingBodyText}
+        onCancel={onCancelStream}
+      />
+    );
+    if (embedded) {
+      return (
+        <section className="mt-6 px-0.5 pb-4">
+          <p className={STUDIO_DIALOGUE_SECTION}>稿件</p>
+          <div className="mt-2 min-h-[240px] overflow-hidden rounded-xl border border-line/60">
+            {streamingShell}
+          </div>
+        </section>
+      );
+    }
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-line/60 bg-surface shadow-sm">
+        {streamingShell}
+      </div>
+    );
+  }
+
+  const generatingMode = studioGeneratingUiMode(work, activeVersion);
+  const showFinalTabs = true;
 
   const manuscriptBlocks =
     compareMode && work.pendingPatch
       ? work.pendingPatch.proposedBlocks
       : activeVersion?.blocks ?? [];
-  const liveBlocks =
-    streamingBlocks && streamingBlocks.length > 0 ? streamingBlocks : manuscriptBlocks;
-  const showStreamingDraft = isGenerating && Boolean(streamingBlocks?.length);
+  const liveBlocks = manuscriptBlocks;
   const showManuscript =
-    liveBlocks.length > 0 &&
-    (work.status === "ready" || work.status === "shipped" || compareMode || showStreamingDraft);
+    liveBlocks.length > 0 && (work.status === "ready" || work.status === "shipped" || compareMode);
   const titleIndex = resolvePrimaryTitleIndex(
-    compareMode || showStreamingDraft ? null : activeVersion,
+    compareMode ? null : activeVersion,
     liveBlocks.filter((b) => b.kind === "title").length
   );
 
-  const streamDisplayVersion: ManuscriptVersion | null = showStreamingDraft
-    ? {
-        id: "__streaming__",
-        label: "流式成稿",
-        createdAt: Date.now(),
-        blocks: streamingBlocks ?? []
-      }
-    : null;
-
-  const availableTabs: CanvasTab[] = compareMode
-    ? ["document", "preview", "diff"]
-    : showFinalTabs
-      ? ["document", "preview"]
-      : isGenerating
-        ? ["document"]
-        : [];
+  const availableTabs: CanvasTab[] = compareMode ? ["document", "preview", "diff"] : ["document", "preview"];
 
   const [tab, setTab] = useState<CanvasTab>("document");
 
   useEffect(() => {
     if (compareMode) setTab("diff");
-    else if (isGenerating) setTab("document");
     else if (tab === "diff") setTab("document");
-  }, [compareMode, work.pendingPatch?.fromVersionId, isGenerating, generatingMode]);
+  }, [compareMode, work.pendingPatch?.fromVersionId, generatingMode]);
 
   const editable =
-    work.status === "ready" &&
-    !compareMode &&
-    !isGenerating &&
-    !busy &&
-    Boolean(onBlocksChange);
+    work.status === "ready" && !compareMode && !busy && Boolean(onBlocksChange);
 
   const versionRow =
-    versions.length > 1 && onVersionChange && !compareMode && !isGenerating ? (
+    versions.length > 1 && onVersionChange && !compareMode ? (
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <span className="text-[10px] text-muted">版本</span>
         {versions.map((v) => (
@@ -208,29 +177,9 @@ export default function StudioDraftCanvas({
     <>
       {work.error ? <p className="text-[13px] text-danger-ink">{work.error}</p> : null}
 
-      {isGenerating && generatingMode && !showStreamingDraft ? (
-        <GeneratingProgressBanner runPhase={work.runPhase} mode={generatingMode} onCancel={onCancelStream} />
-      ) : null}
-
-      {isGenerating && showStreamingDraft ? (
-        <GeneratingProgressBanner
-          runPhase={work.runPhase || "正文写入中…"}
-          mode="progress"
-          onCancel={onCancelStream}
-        />
-      ) : null}
-
-      {isGenerating && generatingMode === "hold-existing" && tab === "document" && activeVersion ? (
-        <StudioOutputManuscript
-          version={activeVersion}
-          editable={false}
-          onWowRevise={undefined}
-        />
-      ) : null}
-
       {showManuscript && showFinalTabs && tab === "preview" && !compareMode ? (
         <StudioXhsPhonePreview
-          version={streamDisplayVersion ?? activeVersion}
+          version={activeVersion}
           blocks={liveBlocks}
           titleIndex={titleIndex}
         />
@@ -242,24 +191,22 @@ export default function StudioDraftCanvas({
 
       {showManuscript && showFinalTabs && tab === "document" ? (
         <StudioOutputManuscript
-          version={streamDisplayVersion ?? (compareMode ? null : activeVersion)}
+          version={compareMode ? null : activeVersion}
           compareBlocks={undefined}
           compareMode={false}
           selectedKeys={selectedPatchKeys}
           changedKeys={changedKeys}
           onToggleKey={onTogglePatchKey}
-          onTitleIndexChange={compareMode || showStreamingDraft ? undefined : onTitleIndexChange}
-          onWowRevise={compareMode || work.status !== "ready" || showStreamingDraft ? undefined : onWowRevise}
+          onTitleIndexChange={compareMode ? undefined : onTitleIndexChange}
+          onWowRevise={compareMode || work.status !== "ready" ? undefined : onWowRevise}
           wowReviseBusy={busy}
           editable={editable}
           onBlocksChange={onBlocksChange}
-          onSelectionRevise={
-            work.status === "ready" && !compareMode && !isGenerating ? onSelectionRevise : undefined
-          }
+          onSelectionRevise={work.status === "ready" && !compareMode ? onSelectionRevise : undefined}
         />
       ) : null}
 
-      {!showManuscript && !isGenerating && work.status === "draft" ? (
+      {!showManuscript && work.status === "draft" ? (
         <p className="py-12 text-center text-sm text-muted">
           在下方描述创作需求；信息足够后将在此流式写稿
         </p>

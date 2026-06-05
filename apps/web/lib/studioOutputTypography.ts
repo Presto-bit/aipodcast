@@ -17,3 +17,11 @@ export const STUDIO_USER_PROMPT_STICKY =
   "sticky top-0 z-10 -mx-3 bg-surface/95 px-3 py-2 backdrop-blur-sm";
 export const STUDIO_ASSISTANT_BODY = "text-xs leading-relaxed text-ink";
 export const STUDIO_DIALOGUE_STATUS = "text-[11px] text-brand/90";
+
+/** Cursor 式流式写作面 */
+export const STUDIO_STREAM_PHASE = "text-[13px] font-medium text-ink";
+export const STUDIO_STREAM_TITLE = "text-lg font-semibold leading-snug tracking-tight text-ink sm:text-xl";
+export const STUDIO_STREAM_BODY = "text-[15px] leading-[1.75] text-ink sm:text-base sm:leading-7";
+export const STUDIO_STREAM_META = "text-xs text-muted";
+export const STUDIO_STREAM_CURSOR =
+  "ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[0.12em] animate-pulse bg-brand align-baseline";

@@ -56,6 +56,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const [work, setWork] = useState<StudioWork | null>(null);
   const [selectedPatchKeys, setSelectedPatchKeys] = useState<Set<string>>(new Set());
   const [streamingBlocks, setStreamingBlocks] = useState<ManuscriptBlock[] | null>(null);
+  const [streamingBodyText, setStreamingBodyText] = useState<string | null>(null);
   const [jobBusy, setJobBusy] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const reviseQueueRef = useRef<string[]>([]);
@@ -125,9 +126,15 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         runPhase: undefined
       });
       setStreamingBlocks(null);
+      setStreamingBodyText(null);
     },
     [workId]
   );
+
+  const clearStreamingSurface = useCallback(() => {
+    setStreamingBlocks(null);
+    setStreamingBodyText(null);
+  }, []);
 
   const runAgentStream = useCallback(
     async (params: {
@@ -210,6 +217,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           )
         );
         setStreamingBlocks([]);
+        setStreamingBodyText("");
       };
 
       try {
@@ -250,6 +258,10 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           onBlockDelta: (blocks, tool) => {
             ensureComposeRun(tool === "revise" ? "revise" : "generate");
             setStreamingBlocks(blocks);
+          },
+          onBodyDelta: (body, tool) => {
+            ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            setStreamingBodyText(body);
           }
         });
 
@@ -397,7 +409,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           persist({ ...failed, error: msg });
         }
       } finally {
-        setStreamingBlocks(null);
+        clearStreamingSurface();
         if (streamAbortRef.current === ac) streamAbortRef.current = null;
       }
     },
@@ -535,6 +547,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             activeVersion={activeVersion ?? null}
             versions={work.versions}
             streamingBlocks={streamingBlocks}
+            streamingBodyText={streamingBodyText}
+            generatingTaskSentence={taskSentenceFromWork(work)}
             showFeatureNudge={showFeatureNudge}
             onFillFeature={() => {
               markOpenComposerFeature();
@@ -575,7 +589,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           />
         </div>
 
-        <div className="max-h-[min(38vh,300px)] min-h-[168px] shrink-0 border-t border-line">
+        <div
+          className={[
+            "min-h-[168px] shrink-0 border-t border-line",
+            work.status === "generating" ? "max-h-[min(28vh,220px)]" : "max-h-[min(38vh,300px)]"
+          ].join(" ")}
+        >
           <StudioAgentDock
             work={work}
             isLoggedIn={isLoggedIn}
