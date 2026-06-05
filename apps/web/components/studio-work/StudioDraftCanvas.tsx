@@ -75,8 +75,16 @@ export default function StudioDraftCanvas({
 }) {
   const compareMode = Boolean(work.pendingPatch);
   const isGenerating = work.status === "generating";
+  const showStreamingCanvas = isGenerating && !compareMode;
+  const generatingMode = studioGeneratingUiMode(work, activeVersion);
+  const [tab, setTab] = useState<CanvasTab>("document");
 
-  if (isGenerating && !compareMode) {
+  useEffect(() => {
+    if (compareMode) setTab("diff");
+    else setTab((cur) => (cur === "diff" ? "document" : cur));
+  }, [compareMode, work.pendingPatch?.fromVersionId, generatingMode]);
+
+  if (showStreamingCanvas) {
     const streamingShell = (
       <StudioStreamingSurface
         phase={work.runPhase}
@@ -103,7 +111,6 @@ export default function StudioDraftCanvas({
     );
   }
 
-  const generatingMode = studioGeneratingUiMode(work, activeVersion);
   const showFinalTabs = true;
 
   const manuscriptBlocks =
@@ -119,13 +126,6 @@ export default function StudioDraftCanvas({
   );
 
   const availableTabs: CanvasTab[] = compareMode ? ["document", "preview", "diff"] : ["document", "preview"];
-
-  const [tab, setTab] = useState<CanvasTab>("document");
-
-  useEffect(() => {
-    if (compareMode) setTab("diff");
-    else if (tab === "diff") setTab("document");
-  }, [compareMode, work.pendingPatch?.fromVersionId, generatingMode]);
 
   const editable =
     work.status === "ready" && !compareMode && !busy && Boolean(onBlocksChange);
