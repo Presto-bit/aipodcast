@@ -19,6 +19,7 @@ import {
   finishStudioRun,
   patchStudioGeneratePhase
 } from "../../lib/studioOrchestrator";
+import { resolveJobAnchorTurnId } from "../../lib/studioTimeline";
 import { taskSentenceFromWork } from "../../lib/studioWorkTask";
 import type { ManuscriptBlock, StudioWork } from "../../lib/studioWorkTypes";
 import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
@@ -84,7 +85,10 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     const authorPrompt = buildStudioAuthorPrompt(taskSentence);
     const latest = persist({ ...cur, intake, brief: taskSentence });
 
-    const { work: withRun, runId } = appendStudioRun(latest, "generate", "写稿中");
+    const anchorTurnId = resolveJobAnchorTurnId(latest.agentTurns, "generate");
+    const { work: withRun, runId } = appendStudioRun(latest, "generate", "写稿中", "running", {
+      anchorTurnId
+    });
     persist(
       patchStudioGeneratePhase(
         {
@@ -157,7 +161,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         createdAt: Date.now(),
         blocks,
         jobId: result.jobId,
-        primaryTitleIndex: 0
+        primaryTitleIndex: 0,
+        sourceRunId: runId
       };
       persist(
         finishStudioRun(
@@ -210,7 +215,10 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const authorPrompt = buildStudioAuthorPrompt(baseTask);
       const intake = buildStudioJobIntake(baseTask, latest.intake);
 
-      const { work: withRun, runId } = appendStudioRun(latest, "revise", "改版中…");
+      const anchorTurnId = resolveJobAnchorTurnId(latest.agentTurns, "revise");
+      const { work: withRun, runId } = appendStudioRun(latest, "revise", "改版中…", "running", {
+        anchorTurnId
+      });
       persist(
         patchStudioGeneratePhase(
           { ...withRun, status: "generating", error: undefined, pendingPatch: undefined },
@@ -273,11 +281,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             {
               ...cur,
               status: "ready",
-              pendingPatch: {
-                fromVersionId: base.id,
-                proposedBlocks: proposed,
-                summary: `${keys.size} 处块有变更`
-              },
+            pendingPatch: {
+              fromVersionId: base.id,
+              proposedBlocks: proposed,
+              summary: `${keys.size} 处块有变更`,
+              sourceRunId: runId
+            },
               runPhase: undefined,
               error: undefined,
               lastOrchestratorNote: undefined
@@ -348,7 +357,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           id: versionId,
           label: nextVersionLabel(work.versions),
           createdAt: Date.now(),
-          blocks: merged
+          blocks: merged,
+          sourceRunId: work.pendingPatch?.sourceRunId
         }
       ],
       activeVersionId: versionId,
@@ -397,7 +407,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           onReviseFromChat={(opinion) => void onReviseFromChat(opinion)}
           onQueueRevise={onQueueRevise}
           activeVersion={activeVersion ?? null}
-          versions={work.versions}
           showFeatureNudge={showFeatureNudge}
           onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
           onApplyPatch={onApplyPatch}

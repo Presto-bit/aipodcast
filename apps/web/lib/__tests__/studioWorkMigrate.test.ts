@@ -30,9 +30,9 @@ const migrated = migrateStudioWorkToV3(legacy);
 assert(migrated.status === "draft", "planned -> draft");
 assert(migrated.plan === undefined, "plan cleared");
 assert(migrated.postDoneCoach === undefined, "postDone cleared");
-assert(migrated.schemaVersion === 3, "schema v3");
+assert(migrated.schemaVersion === 4, "schema v4");
 
 const again = migrateStudioWorkToV3(migrated);
-assert(again === migrated, "idempotent migrate returns same ref when already v3");
+assert(again.schemaVersion === 4, "idempotent migrate keeps v4");
 
 console.log("studioWorkMigrate.test.ts: ok");

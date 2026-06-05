@@ -140,7 +140,7 @@ export function appendStudioRun(
   tool: StudioTool,
   summary: string,
   status: StudioRunStatus = "running",
-  extra?: Partial<Pick<StudioRun, "jobId" | "finishedAt">>
+  extra?: Partial<Pick<StudioRun, "jobId" | "finishedAt" | "anchorTurnId">>
 ): { work: StudioWork; runId: string } {
   const runId = crypto.randomUUID();
   const run: StudioRun = {

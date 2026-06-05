@@ -49,6 +49,8 @@ export type ManuscriptVersion = {
   jobId?: string;
   /** 多标题备选时，预览/复制使用的下标（默认 0） */
   primaryTitleIndex?: number;
+  /** 纵向时间线：对应 generate/revise Run */
+  sourceRunId?: string;
 };
 
 export type StudioPlan = {
@@ -66,6 +68,8 @@ export type PendingPatch = {
   fromVersionId: string;
   proposedBlocks: ManuscriptBlock[];
   summary: string;
+  /** 纵向时间线：触发此次改版的 Run */
+  sourceRunId?: string;
 };
 
 export type StudioRun = {
@@ -76,6 +80,8 @@ export type StudioRun = {
   startedAt: number;
   finishedAt?: number;
   jobId?: string;
+  /** 纵向时间线：锚定在「收到，开始写稿/改版…」助手句 */
+  anchorTurnId?: string;
 };
 
 export type StudioWork = {

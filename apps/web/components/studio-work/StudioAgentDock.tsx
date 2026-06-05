@@ -7,7 +7,7 @@ import {
   buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
-import { shouldShowStudioManuscriptSection } from "../../lib/studioDockLayout";
+import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
 import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
 import { formatStudioAskError } from "../../lib/studioAskError";
@@ -43,8 +43,7 @@ import type {
   WorkStatus
 } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
-import StudioDraftCanvas from "./StudioDraftCanvas";
-import StudioDialoguePanel from "./StudioDialoguePanel";
+import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
 import StudioEphemeralHint from "./StudioEphemeralHint";
 
@@ -78,7 +77,7 @@ function appendToolAckTurn(
   turns: StudioAgentTurn[],
   tool: "generate" | "revise"
 ): StudioAgentTurn[] {
-  const content = tool === "generate" ? "收到，开始写稿…" : "收到，按你的意见改版…";
+  const content = tool === "generate" ? STUDIO_ACK_GENERATE : STUDIO_ACK_REVISE;
   return [
     ...turns,
     {
@@ -101,7 +100,6 @@ export default function StudioAgentDock({
   onReviseFromChat,
   onQueueRevise,
   activeVersion,
-  versions = [],
   onApplyPatch,
   onDiscardPatch,
   selectedPatchKeys,
@@ -125,7 +123,6 @@ export default function StudioAgentDock({
   onReviseFromChat?: (opinion: string) => void | Promise<void>;
   onQueueRevise?: (opinion: string) => void;
   activeVersion: ManuscriptVersion | null;
-  versions?: ManuscriptVersion[];
   onApplyPatch?: (partial: boolean) => void;
   onDiscardPatch?: () => void;
   selectedPatchKeys: Set<string>;
@@ -168,9 +165,6 @@ export default function StudioAgentDock({
   const canChat = isLoggedIn && ready;
   const showQuickPrompts = turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
   const canEditTurns = canChat && !agentBusy;
-  const showManuscriptSection = shouldShowStudioManuscriptSection(work, activeVersion, {
-    showFeatureNudge
-  });
   const dialogueEmptyHint =
     turns.length === 0 && isDraftLikeStatus(work.status) && work.status !== "generating"
       ? "描述你想创作的内容，够信息后会自动开始写稿"
@@ -587,39 +581,32 @@ export default function StudioAgentDock({
           ref={dialogueScrollRef}
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          <StudioDialoguePanel
+          <StudioTimelinePanel
+            work={work}
             turns={dialogueTurns}
             streamingPhase={phase}
             scrollRef={dialogueScrollRef}
             canEdit={canEditTurns}
             onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
             emptyHint={dialogueEmptyHint}
+            busy={agentBusy || jobBusy}
+            selectedPatchKeys={selectedPatchKeys}
+            changedKeys={changedKeys}
+            onTogglePatchKey={onTogglePatchKey}
+            onApplyPatch={onApplyPatch}
+            onDiscardPatch={onDiscardPatch}
+            onTitleIndexChange={onTitleIndexChange}
+            onBlocksChange={onBlocksChange}
+            onSelectionRevise={onSelectionRevise}
+            onWowRevise={onWowRevise}
+            onVersionActivate={onVersionChange}
+            showFeatureNudge={showFeatureNudge}
+            onFillFeature={() => {
+              markOpenComposerFeature();
+              router.push(WORKBENCH_CHAT_PATH);
+            }}
+            onDismissFeatureNudge={onDismissFeatureNudge}
           />
-          {showManuscriptSection ? (
-            <StudioDraftCanvas
-              embedded
-              work={work}
-              busy={agentBusy || jobBusy}
-              activeVersion={activeVersion}
-              versions={versions}
-              onVersionChange={onVersionChange}
-              onApplyPatch={onApplyPatch}
-              onDiscardPatch={onDiscardPatch}
-              selectedPatchKeys={selectedPatchKeys}
-              changedKeys={changedKeys}
-              onTogglePatchKey={onTogglePatchKey}
-              showFeatureNudge={showFeatureNudge}
-              onFillFeature={() => {
-                markOpenComposerFeature();
-                router.push(WORKBENCH_CHAT_PATH);
-              }}
-              onDismissFeatureNudge={onDismissFeatureNudge}
-              onTitleIndexChange={onTitleIndexChange}
-              onBlocksChange={onBlocksChange}
-              onSelectionRevise={onSelectionRevise}
-              onWowRevise={onWowRevise}
-            />
-          ) : null}
         </div>
       </div>
 
