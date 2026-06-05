@@ -57,7 +57,8 @@ export default function StudioOutputManuscript({
   onBlocksChange,
   onSelectionRevise,
   generatingPhase,
-  generatingTask
+  generatingTask,
+  borderless = false
 }: {
   version: ManuscriptVersion | null;
   compareBlocks?: ManuscriptBlock[] | null;
@@ -75,6 +76,8 @@ export default function StudioOutputManuscript({
   editable?: boolean;
   onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
   onSelectionRevise?: (selectedText: string, opinion: string) => void;
+  /** 嵌入流式写作面时去掉外层卡片 */
+  borderless?: boolean;
 }) {
   const sourceBlocks = compareMode && compareBlocks ? compareBlocks : version?.blocks ?? [];
   const [draftBlocks, setDraftBlocks] = useState<ManuscriptBlock[]>(() => cloneBlocks(sourceBlocks));
@@ -186,7 +189,11 @@ export default function StudioOutputManuscript({
   }
 
   return (
-    <div className="rounded-md border border-line/50 bg-fill/35 px-3 py-2.5">
+    <div
+      className={
+        borderless ? "min-w-0" : "rounded-md border border-line/50 bg-fill/35 px-3 py-2.5"
+      }
+    >
       {compareMode ? (
         <p className="mb-2 text-[10px] text-muted">勾选要采纳的变更段落</p>
       ) : null}

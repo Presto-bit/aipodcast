@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { manuscriptCopyAll } from "../../lib/studioDeliverable";
 import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
-import { manuscriptTitleBlocks } from "../../lib/studioManuscriptView";
+import {
+  bodyHasCorpusAnchors,
+  manuscriptTitleBlocks,
+  resolvePrimaryTitleIndex
+} from "../../lib/studioManuscriptView";
 import {
   STUDIO_STREAM_BODY,
   STUDIO_STREAM_CURSOR,
@@ -10,47 +15,98 @@ import {
   STUDIO_STREAM_PHASE,
   STUDIO_STREAM_TITLE
 } from "../../lib/studioOutputTypography";
-import type { ManuscriptBlock } from "../../lib/studioWorkTypes";
+import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
+import StudioOutputManuscript from "./StudioOutputManuscript";
 
 function StreamCursor() {
+  return <span className={STUDIO_STREAM_CURSOR} aria-hidden />;
+}
+
+function IconCopy({ className }: { className?: string }) {
   return (
-    <span
-      className={STUDIO_STREAM_CURSOR}
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
       aria-hidden
-    />
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
   );
 }
 
-/** Cursor 式流式写作面：单栏、进度条、正文增量、闪烁光标 */
+export type StudioStreamingVariant = "idle" | "active" | "ready" | "diff";
+
+/** Cursor 式 Agent 输出面：空稿 / 流式 / 成稿 / 改版对比 */
 export default function StudioStreamingSurface({
   phase,
   taskSentence,
   blocks,
   bodyText,
   onCancel,
-  variant = "active"
+  variant = "active",
+  version = null,
+  compareBlocks = null,
+  editable = false,
+  onBlocksChange,
+  onTitleIndexChange,
+  onSelectionRevise,
+  onWowRevise,
+  wowReviseBusy = false,
+  selectedKeys,
+  changedKeys,
+  onToggleKey,
+  versions = [],
+  activeVersionId,
+  onVersionChange,
+  footer
 }: {
   phase?: string;
   taskSentence?: string;
   blocks: ManuscriptBlock[] | null;
-  /** SSE body_delta 优先于 blocks 内 body */
   bodyText?: string | null;
   onCancel?: () => void;
-  /** idle：空稿等待；active：生成中流式 */
-  variant?: "idle" | "active";
+  variant?: StudioStreamingVariant;
+  version?: ManuscriptVersion | null;
+  compareBlocks?: ManuscriptBlock[] | null;
+  editable?: boolean;
+  onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
+  onTitleIndexChange?: (index: number) => void;
+  onSelectionRevise?: (selectedText: string, opinion: string) => void;
+  onWowRevise?: (opinion: string) => void;
+  wowReviseBusy?: boolean;
+  selectedKeys?: Set<string>;
+  changedKeys?: Set<string>;
+  onToggleKey?: (key: string) => void;
+  versions?: ManuscriptVersion[];
+  activeVersionId?: string;
+  onVersionChange?: (versionId: string) => void;
+  footer?: ReactNode;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [streamLines, setStreamLines] = useState<string[]>([]);
 
-  const blockBody = blocks?.find((b) => b.kind === "body")?.text ?? "";
+  const isActive = variant === "active";
+  const isReadyLike = variant === "ready" || variant === "diff";
+  const displayBlocks =
+    variant === "diff" && compareBlocks ? compareBlocks : blocks ?? version?.blocks ?? [];
+
+  const blockBody = displayBlocks.find((b) => b.kind === "body")?.text ?? "";
   const targetBody = (bodyText ?? blockBody).trim();
-  const displayBody = targetBody;
-  const titles = useMemo(() => manuscriptTitleBlocks(blocks ?? []), [blocks]);
-  const hashtags = blocks?.find((b) => b.kind === "hashtags");
-  const cover = blocks?.find((b) => b.kind === "coverBrief");
+  const displayBody = isReadyLike ? blockBody.trim() : targetBody;
+  const titles = useMemo(() => manuscriptTitleBlocks(displayBlocks), [displayBlocks]);
+  const hashtags = displayBlocks.find((b) => b.kind === "hashtags");
+  const cover = displayBlocks.find((b) => b.kind === "coverBrief");
   const hasContent = Boolean(displayBody || titles.length);
+  const titleIndex = resolvePrimaryTitleIndex(version, titles.length);
 
   useEffect(() => {
+    if (isReadyLike) return;
     const label = phase?.trim();
     if (!label) return;
     const taskLine = taskSentence?.trim()
@@ -63,45 +119,109 @@ export default function StudioStreamingSurface({
       if (!next.includes(phaseLine)) next.push(phaseLine);
       return next.slice(-6);
     });
-  }, [phase, taskSentence]);
+  }, [phase, taskSentence, isReadyLike]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [displayBody, titles.length, hashtags, cover]);
+  }, [displayBody, titles.length, hashtags, cover, variant]);
 
   const phaseLabel =
     phase?.trim() ||
-    (variant === "idle" ? "输出区 · 信息足够后开始流式写稿" : "正在写稿…");
-  const isActive = variant === "active";
+    (variant === "idle"
+      ? "输出区 · 信息足够后开始流式写稿"
+      : variant === "ready"
+        ? version?.label
+          ? `稿件 · ${version.label}`
+          : "稿件"
+        : variant === "diff"
+          ? "改版待确认"
+          : "正在写稿…");
+
+  const headerDot = isActive ? (
+    <span className="relative flex h-2 w-2 shrink-0">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand/40 opacity-75" />
+      <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
+    </span>
+  ) : (
+    <span
+      className={[
+        "inline-flex h-2 w-2 shrink-0 rounded-full",
+        variant === "diff" ? "bg-brand" : "bg-line"
+      ].join(" ")}
+      aria-hidden
+    />
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line/40 px-4 py-2.5">
-        <div className="flex min-w-0 items-center gap-2">
-          {isActive ? (
-            <span className="relative flex h-2 w-2 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand/40 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-brand" />
-            </span>
-          ) : (
-            <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-line" aria-hidden />
-          )}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {headerDot}
           <p className={`truncate ${STUDIO_STREAM_PHASE}`}>{phaseLabel}</p>
+          {variant === "ready" && versions.length > 1 && onVersionChange ? (
+            <div className="ml-2 hidden min-w-0 flex-wrap items-center gap-1 sm:flex">
+              {versions.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  className={
+                    v.id === activeVersionId
+                      ? "rounded-md bg-fill px-2 py-0.5 text-[10px] font-medium text-ink"
+                      : "rounded-md px-2 py-0.5 text-[10px] text-muted hover:bg-fill/60 hover:text-ink"
+                  }
+                  onClick={() => onVersionChange(v.id)}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
-        {onCancel && isActive ? (
-          <button
-            type="button"
-            className="shrink-0 rounded-md border border-line/80 px-2.5 py-1 text-[11px] text-muted transition hover:bg-fill hover:text-ink"
-            onClick={onCancel}
-          >
-            停止
-          </button>
-        ) : null}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {variant === "ready" && version && displayBlocks.length ? (
+            <button
+              type="button"
+              title="复制全部"
+              aria-label="复制全部"
+              className="rounded p-1.5 text-muted hover:bg-fill hover:text-ink"
+              onClick={() =>
+                void navigator.clipboard.writeText(manuscriptCopyAll(displayBlocks, titleIndex))
+              }
+            >
+              <IconCopy />
+            </button>
+          ) : null}
+          {onCancel && isActive ? (
+            <button
+              type="button"
+              className="rounded-md border border-line/80 px-2.5 py-1 text-[11px] text-muted transition hover:bg-fill hover:text-ink"
+              onClick={onCancel}
+            >
+              停止
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="mx-auto w-full max-w-2xl px-4 py-5 sm:px-6 sm:py-6">
-          {variant === "idle" && !hasContent ? (
+          {isReadyLike ? (
+            <StudioOutputManuscript
+              version={variant === "diff" ? null : version}
+              compareBlocks={variant === "diff" ? compareBlocks : undefined}
+              compareMode={variant === "diff"}
+              selectedKeys={selectedKeys}
+              changedKeys={changedKeys}
+              onToggleKey={onToggleKey}
+              onTitleIndexChange={onTitleIndexChange}
+              onWowRevise={variant === "ready" ? onWowRevise : undefined}
+              wowReviseBusy={wowReviseBusy}
+              editable={editable && variant === "ready"}
+              onBlocksChange={onBlocksChange}
+              onSelectionRevise={variant === "ready" ? onSelectionRevise : undefined}
+              borderless
+            />
+          ) : variant === "idle" && !hasContent ? (
             <div className="flex min-h-[min(42vh,360px)] flex-col justify-center">
               <p className={`${STUDIO_STREAM_BODY} text-ink/90`}>在这里流式写稿</p>
               <p className="mt-3 max-w-md text-[13px] leading-relaxed text-muted">
@@ -196,14 +316,16 @@ export default function StudioStreamingSurface({
               ) : null}
 
               {cover && cover.kind === "coverBrief" && cover.text ? (
-                <p className={`opacity-90 ${STUDIO_STREAM_META}`}>
-                  封面 · {cover.text}
-                </p>
+                <p className={`opacity-90 ${STUDIO_STREAM_META}`}>封面 · {cover.text}</p>
               ) : null}
             </article>
           )}
         </div>
       </div>
+
+      {footer ? (
+        <div className="shrink-0 border-t border-line/40 px-4 py-2.5">{footer}</div>
+      ) : null}
     </div>
   );
 }
