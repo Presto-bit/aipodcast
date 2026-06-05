@@ -66,7 +66,8 @@ function runsByAnchor(work: StudioWork): Map<string, StudioRun[]> {
 /** 对话组 + 锚定稿件卡 → 纵向时间线 */
 export function buildStudioTimeline(
   work: StudioWork,
-  turns: StudioAgentTurn[] = work.agentTurns
+  turns: StudioAgentTurn[] = work.agentTurns,
+  options?: { hideManuscript?: boolean }
 ): StudioTimelineItem[] {
   const groups = buildStudioDialogueTurnGroups(turns);
   const anchors = runsByAnchor(work);
@@ -82,6 +83,7 @@ export function buildStudioTimeline(
     });
 
     for (const assistantTurn of group.assistantTurns) {
+      if (options?.hideManuscript) continue;
       const runs = anchors.get(assistantTurn.id) ?? [];
       for (const run of runs) {
         if (run.tool !== "generate" && run.tool !== "revise") continue;

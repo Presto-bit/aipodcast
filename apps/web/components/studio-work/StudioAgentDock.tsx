@@ -10,6 +10,7 @@ import {
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
 import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
+import { studioOrchestratorHint } from "../../lib/studioOrchestratorHints";
 import { formatStudioAskError } from "../../lib/studioAskError";
 import { featureCoreToPrompt } from "../../lib/homeComposerFeatureCore";
 import { personalProfileToPrompt } from "../../lib/homeComposerProfile";
@@ -111,12 +112,14 @@ export default function StudioAgentDock({
   onVersionChange,
   onBlocksChange,
   onSelectionRevise,
-  onWowRevise
+  onWowRevise,
+  canvasMode = false
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
   ready: boolean;
   jobBusy: boolean;
+  canvasMode?: boolean;
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
   onGenerate?: () => void | Promise<void>;
@@ -365,9 +368,9 @@ export default function StudioAgentDock({
             if (role === "reasoning") return;
             if (section === "supplement") supplementBuf += text;
             else answerBuf += text;
-            if (STUDIO_STRUCTURED_OUTPUT_ENABLED) return;
             const preview = answerBuf.trim() || supplementBuf.trim();
-            if (preview) flushStreamOverlayFrame(assistantId, preview, baseTurns, intent);
+            if (!preview) return;
+            flushStreamOverlayFrame(assistantId, preview, baseTurns, intent);
           }
         }
       });
@@ -486,7 +489,7 @@ export default function StudioAgentDock({
     }
 
     if (route.tool === "generate") {
-      setEphemeralHint("正在写稿…");
+      setEphemeralHint("信息够了，正在流式写稿…");
     } else if (route.tool === "revise") {
       setEphemeralHint("正在按你的意见改版…");
     }
@@ -574,9 +577,14 @@ export default function StudioAgentDock({
     await dispatchRoutedSend(prefixWithUser, newText.trim(), route, base);
   }
 
+  const orchestratorHint = useMemo(
+    () => studioOrchestratorHint(work, input),
+    [work, input]
+  );
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-surface">
-      <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-3 py-3">
+    <div className={["flex min-h-0 flex-col bg-surface", canvasMode ? "h-full" : "flex-1"].join(" ")}>
+      <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-3 py-2">
         <div
           ref={dialogueScrollRef}
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
@@ -590,6 +598,7 @@ export default function StudioAgentDock({
             onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
             emptyHint={dialogueEmptyHint}
             busy={agentBusy || jobBusy}
+            hideManuscript={canvasMode}
             selectedPatchKeys={selectedPatchKeys}
             changedKeys={changedKeys}
             onTogglePatchKey={onTogglePatchKey}
@@ -599,7 +608,6 @@ export default function StudioAgentDock({
             onBlocksChange={onBlocksChange}
             onSelectionRevise={onSelectionRevise}
             onWowRevise={onWowRevise}
-            onVersionActivate={onVersionChange}
             showFeatureNudge={showFeatureNudge}
             onFillFeature={() => {
               markOpenComposerFeature();
@@ -610,7 +618,7 @@ export default function StudioAgentDock({
         </div>
       </div>
 
-      <div className="shrink-0 bg-surface px-3 pb-3 pt-1">
+      <div className="shrink-0 bg-surface px-3 pb-2 pt-1">
         <div className="mx-auto w-full max-w-3xl">
           {!isLoggedIn && ready ? (
             <p className="mb-2 text-xs text-warning-ink">
@@ -618,6 +626,11 @@ export default function StudioAgentDock({
                 登录
               </Link>
               后可用
+            </p>
+          ) : null}
+          {orchestratorHint ? (
+            <p className="mb-2 rounded-lg border border-brand/20 bg-brand/5 px-2.5 py-1.5 text-[11px] text-ink">
+              {orchestratorHint}
             </p>
           ) : null}
           {ephemeralHint ? (

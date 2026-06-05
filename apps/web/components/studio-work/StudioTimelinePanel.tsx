@@ -2,13 +2,7 @@
 
 import type { RefObject } from "react";
 import { buildStudioTimeline } from "../../lib/studioTimeline";
-import { STUDIO_DIALOGUE_SECTION } from "../../lib/studioOutputTypography";
-import type {
-  ManuscriptBlock,
-  ManuscriptVersion,
-  StudioAgentTurn,
-  StudioWork
-} from "../../lib/studioWorkTypes";
+import type { ManuscriptBlock, StudioAgentTurn, StudioWork } from "../../lib/studioWorkTypes";
 import StudioTurnGroupBlock from "./StudioTurnGroupBlock";
 import StudioTimelineManuscriptCard from "./StudioTimelineManuscriptCard";
 
@@ -21,6 +15,7 @@ export default function StudioTimelinePanel({
   onEditUserTurn,
   emptyHint,
   busy,
+  hideManuscript,
   selectedPatchKeys,
   changedKeys,
   onTogglePatchKey,
@@ -30,7 +25,6 @@ export default function StudioTimelinePanel({
   onWowRevise,
   onBlocksChange,
   onSelectionRevise,
-  onVersionActivate,
   showFeatureNudge,
   onFillFeature,
   onDismissFeatureNudge
@@ -43,6 +37,7 @@ export default function StudioTimelinePanel({
   onEditUserTurn?: (turnId: string, newText: string) => void;
   emptyHint?: string;
   busy: boolean;
+  hideManuscript?: boolean;
   selectedPatchKeys: Set<string>;
   changedKeys: Set<string>;
   onTogglePatchKey: (key: string) => void;
@@ -52,23 +47,20 @@ export default function StudioTimelinePanel({
   onWowRevise?: (opinion: string) => void;
   onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
   onSelectionRevise?: (selectedText: string, opinion: string) => void;
-  onVersionActivate?: (versionId: string) => void;
   showFeatureNudge: boolean;
   onFillFeature: () => void;
   onDismissFeatureNudge: () => void;
 }) {
   void scrollRef;
-  const items = buildStudioTimeline(work, turns);
+  const items = buildStudioTimeline(work, turns, { hideManuscript: hideManuscript });
 
   return (
     <div className="px-0.5 pb-4">
-      <p className={STUDIO_DIALOGUE_SECTION}>创作时间线</p>
-
       {!turns.length && emptyHint ? (
         <p className="py-6 text-center text-sm text-muted">{emptyHint}</p>
       ) : null}
 
-      <div className="mt-3 space-y-5">
+      <div className="space-y-5">
         {items.map((item, index) => {
           if (item.kind === "turn-group") {
             return (
@@ -104,9 +96,6 @@ export default function StudioTimelinePanel({
               onWowRevise={onWowRevise}
               onBlocksChange={onBlocksChange}
               onSelectionRevise={onSelectionRevise}
-              onActivate={() => {
-                if (item.version) onVersionActivate?.(item.version.id);
-              }}
             />
           );
         })}

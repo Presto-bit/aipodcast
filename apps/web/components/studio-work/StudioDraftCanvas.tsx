@@ -70,7 +70,8 @@ export default function StudioDraftCanvas({
   onWowRevise,
   onBlocksChange,
   onSelectionRevise,
-  embedded = false
+  embedded = false,
+  streamingBlocks = null
 }: {
   work: StudioWork;
   busy: boolean;
@@ -90,23 +91,37 @@ export default function StudioDraftCanvas({
   onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
   onSelectionRevise?: (selectedText: string, opinion: string) => void;
   embedded?: boolean;
+  /** P0-核：流式写画布时的增量 blocks */
+  streamingBlocks?: ManuscriptBlock[] | null;
 }) {
   const compareMode = Boolean(work.pendingPatch);
   const generatingMode = studioGeneratingUiMode(work, activeVersion);
   const isGenerating = work.status === "generating";
-  const showFinalTabs = !isGenerating || compareMode;
+  const showFinalTabs = !isGenerating || compareMode || Boolean(streamingBlocks?.length);
 
   const manuscriptBlocks =
     compareMode && work.pendingPatch
       ? work.pendingPatch.proposedBlocks
       : activeVersion?.blocks ?? [];
+  const liveBlocks =
+    streamingBlocks && streamingBlocks.length > 0 ? streamingBlocks : manuscriptBlocks;
+  const showStreamingDraft = isGenerating && Boolean(streamingBlocks?.length);
   const showManuscript =
-    manuscriptBlocks.length > 0 &&
-    (work.status === "ready" || work.status === "shipped" || compareMode);
+    liveBlocks.length > 0 &&
+    (work.status === "ready" || work.status === "shipped" || compareMode || showStreamingDraft);
   const titleIndex = resolvePrimaryTitleIndex(
-    compareMode ? null : activeVersion,
-    manuscriptBlocks.filter((b) => b.kind === "title").length
+    compareMode || showStreamingDraft ? null : activeVersion,
+    liveBlocks.filter((b) => b.kind === "title").length
   );
+
+  const streamDisplayVersion: ManuscriptVersion | null = showStreamingDraft
+    ? {
+        id: "__streaming__",
+        label: "流式成稿",
+        createdAt: Date.now(),
+        blocks: streamingBlocks ?? []
+      }
+    : null;
 
   const availableTabs: CanvasTab[] = compareMode
     ? ["document", "preview", "diff"]
@@ -178,8 +193,12 @@ export default function StudioDraftCanvas({
     <>
       {work.error ? <p className="text-[13px] text-danger-ink">{work.error}</p> : null}
 
-      {isGenerating && generatingMode ? (
+      {isGenerating && generatingMode && !showStreamingDraft ? (
         <GeneratingProgressBanner runPhase={work.runPhase} mode={generatingMode} />
+      ) : null}
+
+      {isGenerating && showStreamingDraft ? (
+        <GeneratingProgressBanner runPhase={work.runPhase || "正文写入中…"} mode="progress" />
       ) : null}
 
       {isGenerating && generatingMode === "hold-existing" && tab === "document" && activeVersion ? (
@@ -192,8 +211,8 @@ export default function StudioDraftCanvas({
 
       {showManuscript && showFinalTabs && tab === "preview" && !compareMode ? (
         <StudioXhsPhonePreview
-          version={activeVersion}
-          blocks={manuscriptBlocks}
+          version={streamDisplayVersion ?? activeVersion}
+          blocks={liveBlocks}
           titleIndex={titleIndex}
         />
       ) : null}
@@ -204,14 +223,14 @@ export default function StudioDraftCanvas({
 
       {showManuscript && showFinalTabs && tab === "document" ? (
         <StudioOutputManuscript
-          version={compareMode ? null : activeVersion}
+          version={streamDisplayVersion ?? (compareMode ? null : activeVersion)}
           compareBlocks={undefined}
           compareMode={false}
           selectedKeys={selectedPatchKeys}
           changedKeys={changedKeys}
           onToggleKey={onTogglePatchKey}
-          onTitleIndexChange={compareMode ? undefined : onTitleIndexChange}
-          onWowRevise={compareMode || work.status !== "ready" ? undefined : onWowRevise}
+          onTitleIndexChange={compareMode || showStreamingDraft ? undefined : onTitleIndexChange}
+          onWowRevise={compareMode || work.status !== "ready" || showStreamingDraft ? undefined : onWowRevise}
           wowReviseBusy={busy}
           editable={editable}
           onBlocksChange={onBlocksChange}
@@ -219,6 +238,12 @@ export default function StudioDraftCanvas({
             work.status === "ready" && !compareMode && !isGenerating ? onSelectionRevise : undefined
           }
         />
+      ) : null}
+
+      {!showManuscript && !isGenerating && work.status === "draft" ? (
+        <p className="py-12 text-center text-sm text-muted">
+          在下方描述创作需求；信息足够后将在此流式写稿
+        </p>
       ) : null}
 
       {showManuscript && showFinalTabs && tab === "diff" && compareMode && work.pendingPatch ? (

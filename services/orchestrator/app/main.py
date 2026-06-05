@@ -54,6 +54,7 @@ from .routes import (
     author_ip_routes,
     notes_routes,
     rss_routes,
+    studio_routes,
     subscription_routes,
     user_prefs_routes,
     voice_routes,
@@ -391,6 +392,7 @@ app.include_router(jobs_routes.router)
 app.include_router(notes_routes.router)
 app.include_router(author_ip_routes.router)
 app.include_router(composer_expert_routes.router)
+app.include_router(studio_routes.router)
 app.include_router(voice_routes.router)
 app.include_router(subscription_routes.router)
 app.include_router(admin_routes.router)
