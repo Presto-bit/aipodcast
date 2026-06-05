@@ -27,6 +27,23 @@ export type StudioRouteDecision = {
 
 const MAX_RUNS = 12;
 
+const TOPIC_FORM_SIGNAL =
+  /清单|小红书|笔记|教程|测评|好物|干货|故事|攻略|标题|正文|受众|新人|职场|产品|运营|清单体|种草|周报|总结/;
+
+/** 需求过短/过模糊时不自动成稿，改走 ask 澄清 */
+export function isInsufficientBrief(userMessage: string): boolean {
+  const text = userMessage.trim();
+  if (!text) return true;
+  if (text.length < 8) return true;
+  const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇/.test(text);
+  const hasTopicOrForm = TOPIC_FORM_SIGNAL.test(text);
+  if (hasWriteIntent && hasTopicOrForm) return false;
+  if (hasWriteIntent && text.length >= 14) return false;
+  if (hasTopicOrForm && text.length >= 12) return false;
+  if (/^(帮我想|写点|想做|来点|整点|搞个|随便)/.test(text) && !hasTopicOrForm) return true;
+  return text.length < 14 && !hasTopicOrForm && !hasWriteIntent;
+}
+
 /** 纯问答（无写稿意图）时不触发自动 generate */
 function isAskOnlyMessage(q: string, intent: StudioAgentIntent): boolean {
   const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇/.test(q);
@@ -37,6 +54,15 @@ function isAskOnlyMessage(q: string, intent: StudioAgentIntent): boolean {
   if (/怎么(写|改|搭)|如何(写|改)|钩子|开头|结构/.test(q)) return true;
   if (/^(帮我)?(分析|解读|看看|讲讲)/.test(q)) return true;
   return false;
+}
+
+/** 当前输入是否足以触发自动成稿（与 routeStudioAction 同源） */
+export function wouldAutoGenerate(
+  work: StudioWork,
+  userMessage: string,
+  turns?: StudioAgentTurn[]
+): boolean {
+  return routeStudioAction(work, userMessage, turns).tool === "generate";
 }
 
 /** 主编排：决定走对话(ask) 还是子任务工具(generate/revise) */
@@ -60,7 +86,7 @@ export function routeStudioAction(
 
   if (
     (work.status === "ready" || work.status === "shipped") &&
-    work.versions.length > 0 &&
+    (work.versions?.length ?? 0) > 0 &&
     /改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改/.test(q)
   ) {
     return {
@@ -74,8 +100,9 @@ export function routeStudioAction(
   if (
     isDraftLikeStatus(work.status) &&
     taskReady &&
-    work.versions.length === 0 &&
-    !isAskOnlyMessage(q, intent)
+    (work.versions?.length ?? 0) === 0 &&
+    !isAskOnlyMessage(q, intent) &&
+    !isInsufficientBrief(q)
   ) {
     return {
       tool: "generate",
@@ -90,7 +117,9 @@ export function routeStudioAction(
     intent === "revise_coach" ||
     (work.status === "ready" || work.status === "shipped");
 
-  const corpusBound = Boolean(work.binding.notebook.trim() && work.binding.noteIds.length > 0);
+  const corpusBound = Boolean(
+    work.binding?.notebook?.trim() && (work.binding?.noteIds?.length ?? 0) > 0
+  );
   const noteParts = [
     "对话解释",
     corpusBound ? "已绑资料" : "未绑资料",

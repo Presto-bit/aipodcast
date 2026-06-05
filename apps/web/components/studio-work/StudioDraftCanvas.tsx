@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { resolvePrimaryTitleIndex } from "../../lib/studioManuscriptView";
-import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import type { ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
 import StudioXhsPhonePreview from "./StudioXhsPhonePreview";
@@ -75,11 +74,7 @@ export default function StudioDraftCanvas({
     else if (tab === "diff") setTab("preview");
   }, [compareMode, work.pendingPatch?.fromVersionId]);
 
-  const showEmptyDraft =
-    !showManuscript && !work.error && isDraftLikeStatus(work.status) && work.status !== "generating";
   const showGenerating = work.status === "generating";
-  const showCanvasPlaceholder =
-    !showManuscript && !work.error && !showEmptyDraft && !showGenerating;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-line/60 bg-fill/20">
@@ -108,14 +103,6 @@ export default function StudioDraftCanvas({
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
         {work.error ? (
           <p className="text-[13px] text-danger-ink">{work.error}</p>
-        ) : null}
-
-        {showEmptyDraft ? (
-          <p className="text-sm text-muted">输入创作需求，将自动开始写稿</p>
-        ) : null}
-
-        {showCanvasPlaceholder ? (
-          <p className="py-8 text-center text-sm text-muted">稿件将显示在这里</p>
         ) : null}
 
         {showGenerating && !showManuscript ? (

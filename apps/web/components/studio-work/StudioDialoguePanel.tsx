@@ -19,7 +19,8 @@ export default function StudioDialoguePanel({
   statusLine,
   scrollRef,
   canEdit,
-  onEditUserTurn
+  onEditUserTurn,
+  emptyHint
 }: {
   turns: StudioAgentTurn[];
   streamingPhase?: string;
@@ -27,6 +28,7 @@ export default function StudioDialoguePanel({
   scrollRef: RefObject<HTMLDivElement>;
   canEdit?: boolean;
   onEditUserTurn?: (turnId: string, newText: string) => void;
+  emptyHint?: string;
 }) {
   const groups = buildStudioDialogueTurnGroups(turns);
   const { history, active } = splitActiveDialogueGroups(groups);
@@ -39,12 +41,15 @@ export default function StudioDialoguePanel({
     overscan: 4
   });
 
-  if (!turns.length && !statusLine) return null;
+  if (!turns.length && !statusLine && !emptyHint) return null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <p className={`${STUDIO_DIALOGUE_SECTION} shrink-0 px-0.5`}>对话</p>
       <div ref={scrollRef} className="mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {!turns.length && emptyHint ? (
+          <p className="px-0.5 py-6 text-center text-sm text-muted">{emptyHint}</p>
+        ) : null}
         {!turns.length && statusLine ? (
           <p className={`${STUDIO_DIALOGUE_STATUS} px-0.5 pb-1`}>{statusLine}</p>
         ) : null}

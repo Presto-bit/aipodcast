@@ -45,6 +45,13 @@ const askOnly = routeStudioAction(
 );
 assert(askOnly.tool === "ask", `question-only should ask, got ${askOnly.tool}`);
 
+const vague = routeStudioAction(
+  baseWork({ status: "draft", agentTurns: [{ id: "u1", role: "user", content: "帮我想想", createdAt: 1 }] }),
+  "帮我想想",
+  [{ id: "u1", role: "user" as const, content: "帮我想想", createdAt: 1 }]
+);
+assert(vague.tool === "ask", `vague brief should ask, got ${vague.tool}`);
+
 const revise = routeStudioAction(
   baseWork({
     status: "ready",

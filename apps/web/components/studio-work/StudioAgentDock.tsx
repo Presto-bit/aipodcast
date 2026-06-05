@@ -7,6 +7,7 @@ import {
   buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
+import { shouldShowStudioCanvas } from "../../lib/studioDockLayout";
 import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
 import { formatStudioAskError } from "../../lib/studioAskError";
@@ -30,6 +31,7 @@ import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
 import { streamStudioAgentAsk } from "../../lib/studioAgentAskStream";
 import {
   STUDIO_STRUCTURED_OUTPUT_ENABLED,
+  draftAskFallbackText,
   resolveStudioStructuredResponse,
   studioStructuredAddsAssistantTurn
 } from "../../lib/studioAgentStructured";
@@ -64,6 +66,22 @@ function agentPlaceholder(status: WorkStatus): string {
   if (status === "generating") return "生成中…";
   if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
   return "描述你想创作的内容与目标…";
+}
+
+function appendToolAckTurn(
+  turns: StudioAgentTurn[],
+  tool: "generate" | "revise"
+): StudioAgentTurn[] {
+  const content = tool === "generate" ? "收到，开始写稿…" : "收到，按你的意见改版…";
+  return [
+    ...turns,
+    {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content,
+      createdAt: Date.now()
+    }
+  ];
 }
 
 export default function StudioAgentDock({
@@ -134,8 +152,11 @@ export default function StudioAgentDock({
   const canChat = isLoggedIn && ready && !readOnly;
   const showQuickPrompts = turns.length === 0 && isDraftLikeStatus(work.status);
   const canEditTurns = canChat && !agentBusy;
-  const showCommandRail =
-    dialogueTurns.length > 0 || work.status === "generating" || Boolean(phase);
+  const showCanvas = shouldShowStudioCanvas(work, activeVersion, { showFeatureNudge });
+  const dialogueEmptyHint =
+    turns.length === 0 && isDraftLikeStatus(work.status) && work.status !== "generating"
+      ? "描述你想创作的内容，够信息后会自动开始写稿"
+      : undefined;
 
   const scrollToActiveUser = useCallback(() => {
     dialogueScrollRef.current
@@ -344,12 +365,35 @@ export default function StudioAgentDock({
         streamRafRef.current = 0;
       }
 
-      const resolvedStructured = resolveStudioStructuredResponse(workBase, done.structured);
+      const resolvedStructured = resolveStudioStructuredResponse(workBase, done.structured, q);
 
       if (
         STUDIO_STRUCTURED_OUTPUT_ENABLED &&
         !studioStructuredAddsAssistantTurn(resolvedStructured)
       ) {
+        const rawFallback =
+          done.displayText.trim() ||
+          done.answer.trim() ||
+          supplementBuf.trim() ||
+          answerBuf.trim();
+        const clarify = draftAskFallbackText(workBase, q, rawFallback);
+        if (clarify) {
+          const finalTurns = baseTurns.map((t) =>
+            t.id === assistantId
+              ? {
+                  ...t,
+                  content: clarify,
+                  streaming: false,
+                  intent,
+                  askSources: done.sources?.length ? done.sources : undefined
+                }
+              : t
+          );
+          setStreamOverlay(null);
+          applyDialogExtract(finalTurns, done.sessionState, workBase);
+          onPersist({ ...workBase, agentTurns: finalTurns, error: undefined });
+          return;
+        }
         setStreamOverlay(null);
         applyDialogExtract(prefixTurns, done.sessionState, workBase);
         onPersist({ ...workBase, agentTurns: prefixTurns, error: undefined });
@@ -445,12 +489,12 @@ export default function StudioAgentDock({
     }
 
     if (route.tool === "generate" && onGenerate) {
+      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "generate") });
       await onGenerate();
       return;
     }
     if (route.tool === "revise" && onReviseFromChat) {
-      const userTurnAlready = prefixWithUser;
-      onPersist({ ...base, agentTurns: userTurnAlready });
+      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
       await onReviseFromChat(q);
       return;
     }
@@ -482,10 +526,12 @@ export default function StudioAgentDock({
 
     if (route.tool === "generate" && onGenerate) {
       setEphemeralHint("正在写稿…");
+      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "generate") });
       await onGenerate();
       return;
     }
     if (route.tool === "revise" && onReviseFromChat) {
+      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
       await onReviseFromChat(newText.trim());
       return;
     }
@@ -496,41 +542,48 @@ export default function StudioAgentDock({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-3 py-3">
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <StudioDraftCanvas
-            work={work}
-            busy={agentBusy || parentBusy}
-            activeVersion={activeVersion}
-            onApplyPatch={onApplyPatch}
-            onDiscardPatch={onDiscardPatch}
-            selectedPatchKeys={selectedPatchKeys}
-            changedKeys={changedKeys}
-            onTogglePatchKey={onTogglePatchKey}
-            showFeatureNudge={showFeatureNudge}
-            onFillFeature={() => {
-              markOpenComposerFeature();
-              router.push(WORKBENCH_CHAT_PATH);
-            }}
-            onDismissFeatureNudge={onDismissFeatureNudge}
-            onTitleIndexChange={onTitleIndexChange}
-            onWowRevise={onWowRevise}
-          />
-        </div>
-
-        {showCommandRail ? (
-          <div className="mt-2 max-h-[min(24vh,180px)] shrink-0 overflow-hidden border-t border-line/40 pt-2">
-            <StudioDialoguePanel
-              turns={dialogueTurns}
-              streamingPhase={phase}
-              statusLine={
-                work.status === "generating" ? work.runPhase || "处理中…" : undefined
-              }
-              scrollRef={dialogueScrollRef}
-              canEdit={canEditTurns}
-              onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
+        {showCanvas ? (
+          <div className="mb-2 min-h-0 flex-1 overflow-hidden">
+            <StudioDraftCanvas
+              work={work}
+              busy={agentBusy || parentBusy}
+              activeVersion={activeVersion}
+              onApplyPatch={onApplyPatch}
+              onDiscardPatch={onDiscardPatch}
+              selectedPatchKeys={selectedPatchKeys}
+              changedKeys={changedKeys}
+              onTogglePatchKey={onTogglePatchKey}
+              showFeatureNudge={showFeatureNudge}
+              onFillFeature={() => {
+                markOpenComposerFeature();
+                router.push(WORKBENCH_CHAT_PATH);
+              }}
+              onDismissFeatureNudge={onDismissFeatureNudge}
+              onTitleIndexChange={onTitleIndexChange}
+              onWowRevise={onWowRevise}
             />
           </div>
         ) : null}
+
+        <div
+          className={
+            showCanvas
+              ? "max-h-[min(28vh,200px)] shrink-0 overflow-hidden border-t border-line/40 pt-2"
+              : "min-h-0 flex-1"
+          }
+        >
+          <StudioDialoguePanel
+            turns={dialogueTurns}
+            streamingPhase={phase}
+            statusLine={
+              work.status === "generating" ? work.runPhase || "处理中…" : undefined
+            }
+            scrollRef={dialogueScrollRef}
+            canEdit={canEditTurns}
+            onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
+            emptyHint={dialogueEmptyHint}
+          />
+        </div>
       </div>
 
       <div className="shrink-0 bg-surface px-3 pb-3 pt-1">

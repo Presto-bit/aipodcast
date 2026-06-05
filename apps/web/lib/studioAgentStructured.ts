@@ -1,5 +1,5 @@
+import { wouldAutoGenerate } from "./studioOrchestrator";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
-import { hasTaskContext } from "./studioWorkTask";
 import type { StudioWork } from "./studioWorkTypes";
 
 /** Studio 对话区 ask：Cursor 式结构化收尾（仅 JSON，无自由附言） */
@@ -30,7 +30,7 @@ export function buildStudioStructuredOutputPrompt(work: StudioWork): string {
     "- text / question 内勿重复粘贴完整稿件全文。",
     ready
       ? "- 稿件已在产物区：用户未明确提问时用 silent；不要主动点评或建议下一步。"
-      : "- 信息已够开工时优先 silent；仅当用户明确提问时用 reply 简答，勿提示「确认任务」式流程话术。"
+      : "- 信息不足（缺主题/形式/受众任一项）必须用 ask_user 追问一句，禁止 silent；信息已够开工时才 silent；用户明确提问用 reply 简答。"
   ].join("\n");
 }
 
@@ -84,13 +84,35 @@ export function studioStructuredAddsAssistantTurn(res: StudioAgentStructuredResp
   return res.kind !== "silent";
 }
 
-/** 草稿态且已有任务上下文时，将非 blocking 的 ask_user 降为 silent */
+/**
+ * 草稿态：仅当编排会 auto-generate 时，才把 ask_user 降为 silent；
+ * 信息不足走 ask 时须保留追问。
+ */
 export function resolveStudioStructuredResponse(
   work: StudioWork,
-  structured: StudioAgentStructuredResponse
+  structured: StudioAgentStructuredResponse,
+  latestUserMessage?: string
 ): StudioAgentStructuredResponse {
   if (structured.kind !== "ask_user") return structured;
   if (!isDraftLikeStatus(work.status)) return structured;
-  if (!hasTaskContext(work)) return structured;
+  const q = latestUserMessage?.trim();
+  if (!q) return structured;
+  if (!wouldAutoGenerate(work, q)) return structured;
   return { kind: "silent" };
+}
+
+const DRAFT_CLARIFY_FALLBACK =
+  "可以先说说想写什么主题、给谁看、用什么形式吗？";
+
+/** 信息不足且模型返回 silent 时，给用户可见的兜底追问 */
+export function draftAskFallbackText(
+  work: StudioWork,
+  latestUserMessage: string,
+  rawAnswer?: string
+): string | null {
+  if (!isDraftLikeStatus(work.status)) return null;
+  if (wouldAutoGenerate(work, latestUserMessage)) return null;
+  const trimmed = rawAnswer?.trim();
+  if (trimmed && !trimmed.startsWith("{")) return trimmed;
+  return DRAFT_CLARIFY_FALLBACK;
 }
