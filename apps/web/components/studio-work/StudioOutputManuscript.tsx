@@ -13,6 +13,7 @@ import {
   manuscriptTitleBlocks,
   resolvePrimaryTitleIndex
 } from "../../lib/studioManuscriptView";
+import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
 
@@ -55,13 +56,16 @@ export default function StudioOutputManuscript({
   editable = false,
   onBlocksChange,
   onSelectionRevise,
-  generatingPhase
+  generatingPhase,
+  generatingTask
 }: {
   version: ManuscriptVersion | null;
   compareBlocks?: ManuscriptBlock[] | null;
   compareMode?: boolean;
   /** 写稿中：在输出区展示进度与文字占位（非预览） */
   generatingPhase?: string;
+  /** 写稿中：展示当前任务句，组成输出流 */
+  generatingTask?: string;
   selectedKeys?: Set<string>;
   changedKeys?: Set<string>;
   onToggleKey?: (key: string) => void;
@@ -78,10 +82,28 @@ export default function StudioOutputManuscript({
   const bodySectionRef = useRef<HTMLElement | null>(null);
   const [selectionUi, setSelectionUi] = useState<{ text: string } | null>(null);
   const [selectionOpinion, setSelectionOpinion] = useState("");
+  const [streamLines, setStreamLines] = useState<string[]>([]);
 
   useEffect(() => {
     setDraftBlocks(cloneBlocks(sourceBlocks));
   }, [version?.id, compareMode, compareBlocks]);
+
+  useEffect(() => {
+    if (!generatingPhase) {
+      setStreamLines([]);
+      return;
+    }
+    const taskLine = generatingTask?.trim()
+      ? `任务：${generatingTask.trim().slice(0, 160)}`
+      : null;
+    const phaseLine = phaseToGenerateStreamLine(generatingPhase);
+    setStreamLines((prev) => {
+      const next = [...prev];
+      if (taskLine && !next.includes(taskLine)) next.unshift(taskLine);
+      if (!next.includes(phaseLine)) next.push(phaseLine);
+      return next;
+    });
+  }, [generatingPhase, generatingTask]);
 
   const scheduleSave = useCallback(
     (next: ManuscriptBlock[]) => {
@@ -107,12 +129,19 @@ export default function StudioOutputManuscript({
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
           <span>{label}</span>
         </div>
-        <p className="mt-2 text-sm text-muted">正在撰写正文，成稿后将显示完整文档</p>
+        {streamLines.length ? (
+          <div className="mt-3 space-y-1.5 border-t border-line/30 pt-2">
+            {streamLines.map((line) => (
+              <p key={line} className={`text-sm leading-relaxed text-ink/85 ${STUDIO_MANUSCRIPT_BODY}`}>
+                {line}
+              </p>
+            ))}
+          </div>
+        ) : null}
         <div className="mt-3 space-y-2" aria-hidden>
-          <div className={`h-4 rounded bg-fill/80 ${STUDIO_MANUSCRIPT_TITLE}`} />
-          <div className={`h-3 rounded bg-fill/70 ${STUDIO_MANUSCRIPT_BODY}`} />
-          <div className={`h-3 w-[94%] rounded bg-fill/60 ${STUDIO_MANUSCRIPT_BODY}`} />
-          <div className={`h-3 w-[88%] rounded bg-fill/50 ${STUDIO_MANUSCRIPT_BODY}`} />
+          <div className={`h-4 animate-pulse rounded bg-fill/80`} />
+          <div className={`h-3 animate-pulse rounded bg-fill/70`} />
+          <div className={`h-3 w-[94%] animate-pulse rounded bg-fill/60`} />
         </div>
       </div>
     );

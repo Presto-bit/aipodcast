@@ -1,4 +1,5 @@
-import { wouldAutoGenerate } from "./studioOrchestrator";
+import { promoBriefClarifyText } from "./studioGenerateStream";
+import { needsPromoBriefClarification, wouldAutoGenerate } from "./studioOrchestrator";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type { StudioWork } from "./studioWorkTypes";
 
@@ -114,5 +115,6 @@ export function draftAskFallbackText(
   if (wouldAutoGenerate(work, latestUserMessage)) return null;
   const trimmed = rawAnswer?.trim();
   if (trimmed && !trimmed.startsWith("{")) return trimmed;
+  if (needsPromoBriefClarification(latestUserMessage)) return promoBriefClarifyText();
   return DRAFT_CLARIFY_FALLBACK;
 }
