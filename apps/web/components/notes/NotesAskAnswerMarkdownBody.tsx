@@ -22,6 +22,8 @@ export type NotesAskAnswerMarkdownBodyProps = {
   webSources?: NotesAskWebSource[];
   onCitationClick?: (index: string) => void;
   onWebCitationClick?: () => void;
+  /** Studio 等场景：代码块全量展开，不参与局部滚动 */
+  expandCodeBlocks?: boolean;
 };
 
 function fencePlainText(children: ReactNode): string {
@@ -35,7 +37,15 @@ function fencePlainText(children: ReactNode): string {
   return String(children);
 }
 
-function FenceCodeBlock({ className, children }: { className?: string; children?: ReactNode }) {
+function FenceCodeBlock({
+  className,
+  children,
+  expandCodeBlocks = false
+}: {
+  className?: string;
+  children?: ReactNode;
+  expandCodeBlocks?: boolean;
+}) {
   const text = fencePlainText(children).replace(/\n$/, "");
   const [copied, setCopied] = useState(false);
   const langMatch = /language-([\w-]+)/.exec(className || "");
@@ -74,7 +84,12 @@ function FenceCodeBlock({ className, children }: { className?: string; children?
           )}
         </button>
       </div>
-      <pre className="m-0 max-h-[min(70vh,28rem)] overflow-x-auto overflow-y-auto p-3 font-mono text-[12px] leading-relaxed text-ink">
+      <pre
+        className={[
+          "m-0 p-3 font-mono text-[12px] leading-relaxed text-ink",
+          expandCodeBlocks ? "overflow-x-auto whitespace-pre-wrap break-words" : "max-h-[min(70vh,28rem)] overflow-x-auto overflow-y-auto"
+        ].join(" ")}
+      >
         <code className={className}>{children}</code>
       </pre>
     </div>
@@ -89,7 +104,8 @@ export default function NotesAskAnswerMarkdownBody({
   sources,
   webSources,
   onCitationClick,
-  onWebCitationClick
+  onWebCitationClick,
+  expandCodeBlocks = false
 }: NotesAskAnswerMarkdownBodyProps) {
   const normalized = normalizeNotesAskAnswerForDisplay(text);
   const md = linkifyWebCitationMarkers(linkifyCitationMarkers(normalized, sources), webSources);
@@ -233,7 +249,11 @@ export default function NotesAskAnswerMarkdownBody({
                 </code>
               );
             }
-            return <FenceCodeBlock className={className}>{children}</FenceCodeBlock>;
+            return (
+              <FenceCodeBlock className={className} expandCodeBlocks={expandCodeBlocks}>
+                {children}
+              </FenceCodeBlock>
+            );
           }
         }}
       >

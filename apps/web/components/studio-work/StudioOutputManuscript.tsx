@@ -41,6 +41,40 @@ function cloneBlocks(blocks: ManuscriptBlock[]): ManuscriptBlock[] {
   });
 }
 
+function AutoGrowTextarea({
+  value,
+  onChange,
+  className
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  className: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      rows={1}
+      className={`${className} resize-none overflow-hidden`}
+      onChange={(e) => {
+        onChange(e.target.value);
+        const el = e.target;
+        el.style.height = "auto";
+        el.style.height = `${el.scrollHeight}px`;
+      }}
+    />
+  );
+}
+
 /** 输出区稿件：标题 + 正文 + 话题，连续排版（无内嵌滚动与卡片分割） */
 export default function StudioOutputManuscript({
   version,
@@ -102,7 +136,7 @@ export default function StudioOutputManuscript({
   if (generatingPhase) {
     const label = generatingPhase.trim() || "写稿中…";
     return (
-      <div className="space-y-2">
+      <div className="space-y-2 text-left">
         <p className="flex items-center gap-2 text-sm text-ink">
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
           {label}
@@ -138,14 +172,13 @@ export default function StudioOutputManuscript({
   }
 
   return (
-    <article className="min-w-0 space-y-3">
+    <article className="min-w-0 space-y-3 text-left">
       {primaryTitle ? (
         editable ? (
-          <textarea
-            className={`w-full resize-none border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_TITLE}`}
-            rows={2}
+          <AutoGrowTextarea
+            className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_TITLE}`}
             value={primaryTitle.text}
-            onChange={(e) => patchBlock({ ...primaryTitle, text: e.target.value })}
+            onChange={(text) => patchBlock({ ...primaryTitle, text })}
           />
         ) : (
           <h1 className={STUDIO_MANUSCRIPT_TITLE}>{primaryTitle.text}</h1>
@@ -173,11 +206,10 @@ export default function StudioOutputManuscript({
             <p className="text-[10px] text-brand/85">正文含资料锚点</p>
           ) : null}
           {editable ? (
-            <textarea
-              className={`w-full resize-none border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_BODY}`}
-              rows={12}
+            <AutoGrowTextarea
+              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_BODY}`}
               value={body.text}
-              onChange={(e) => patchBlock({ ...body, text: e.target.value })}
+              onChange={(text) => patchBlock({ ...body, text })}
             />
           ) : (
             <p className={`whitespace-pre-wrap ${STUDIO_MANUSCRIPT_BODY}`}>{body.text}</p>
@@ -222,7 +254,7 @@ export default function StudioOutputManuscript({
       ) : null}
 
       {version ? (
-        <div className="flex justify-end pt-1">
+        <div className="flex justify-start pt-1">
           <button
             type="button"
             title="复制全部（含话题）"

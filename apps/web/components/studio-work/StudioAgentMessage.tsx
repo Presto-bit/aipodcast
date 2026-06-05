@@ -135,6 +135,7 @@ export default function StudioAgentMessage({
           <NotesAskAnswerMarkdownBody
             text={text}
             sources={sources}
+            expandCodeBlocks
             onCitationClick={(index) => {
               const src = sources?.find((s) => s.index === index);
               if (src) setCitationSource(src);

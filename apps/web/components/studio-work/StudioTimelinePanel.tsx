@@ -47,7 +47,7 @@ export default function StudioTimelinePanel({
   const items = buildStudioTimeline(work, turns, { hideManuscript: hideManuscript });
 
   return (
-    <div className="px-0.5">
+    <div className="px-0.5 text-left">
       {!turns.length && emptyHint ? (
         <p className="py-6 text-center text-sm text-muted">{emptyHint}</p>
       ) : null}

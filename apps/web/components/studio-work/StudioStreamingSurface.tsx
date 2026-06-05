@@ -91,7 +91,7 @@ export default function StudioStreamingSurface({
   if (flowLayout) {
     if (!hasContent) {
       return (
-        <div className="space-y-2">
+        <div className="space-y-2 text-left">
           {streamLines.map((line) => (
             <p key={line} className="text-[13px] leading-relaxed text-muted">
               {line}
@@ -111,7 +111,7 @@ export default function StudioStreamingSurface({
     const primaryTitle = titles[0];
 
     return (
-      <article className="space-y-3">
+      <article className="space-y-3 text-left">
         {streamLines.length > 1
           ? streamLines.slice(-2).map((line) => (
               <p key={line} className="text-[11px] leading-snug text-muted/90">
@@ -156,12 +156,10 @@ export default function StudioStreamingSurface({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <StudioOutputManuscript
-        version={null}
-        generatingPhase={phase || "写稿中…"}
-        generatingTask={taskSentence}
-      />
-    </div>
+    <StudioOutputManuscript
+      version={null}
+      generatingPhase={phase || "写稿中…"}
+      generatingTask={taskSentence}
+    />
   );
 }

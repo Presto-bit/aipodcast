@@ -780,11 +780,11 @@ export default function StudioAgentDock({
 
   return (
     <div className={["flex min-h-0 flex-col bg-surface", canvasMode ? "h-full" : "flex-1"].join(" ")}>
-      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-3 py-2">
-        <div
-          ref={dialogueScrollRef}
-          className="min-h-0 flex-1 overflow-y-auto pb-36"
-        >
+      <div
+        ref={dialogueScrollRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-y-auto px-3 py-2 pb-36 text-left"
+      >
+        <div className="mx-auto w-full max-w-3xl">
           {timelinePanel}
           <div ref={scrollEndRef} className="h-px w-full shrink-0" aria-hidden />
         </div>
