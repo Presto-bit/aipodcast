@@ -1,6 +1,6 @@
 "use client";
 
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import { buildStudioTimeline } from "../../lib/studioTimeline";
 import type { ManuscriptBlock, StudioAgentTurn, StudioWork } from "../../lib/studioWorkTypes";
 import StudioTurnGroupBlock from "./StudioTurnGroupBlock";
@@ -29,7 +29,8 @@ export default function StudioTimelinePanel({
   onFillFeature,
   onDismissFeatureNudge,
   streamingBlocks = null,
-  streamingBodyText = null
+  streamingBodyText = null,
+  activeAgentStatus = null
 }: {
   work: StudioWork;
   turns: StudioAgentTurn[];
@@ -54,6 +55,7 @@ export default function StudioTimelinePanel({
   onDismissFeatureNudge: () => void;
   streamingBlocks?: ManuscriptBlock[] | null;
   streamingBodyText?: string | null;
+  activeAgentStatus?: ReactNode;
 }) {
   void scrollRef;
   const items = buildStudioTimeline(work, turns, { hideManuscript: hideManuscript });
@@ -77,6 +79,9 @@ export default function StudioTimelinePanel({
                   canEdit={canEdit}
                   onEditUserTurn={onEditUserTurn}
                 />
+                {item.isActive && activeAgentStatus ? (
+                  <div className="mt-2">{activeAgentStatus}</div>
+                ) : null}
               </div>
             );
           }

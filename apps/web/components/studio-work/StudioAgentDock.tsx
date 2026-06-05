@@ -200,6 +200,11 @@ export default function StudioAgentDock({
   const showQuickPrompts = turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
   const canEditTurns = canChat && !agentBusy;
   const dialogueEmptyHint = undefined;
+  const centerEmptyComposer =
+    canvasMode && turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
+  const showAgentOutputStatus =
+    canvasMode &&
+    (agentSteps.length > 0 || Boolean(agentRouteHint) || Boolean(ephemeralHint) || agentBusy);
 
   const scrollToActiveUser = useCallback(() => {
     dialogueScrollRef.current
@@ -652,6 +657,136 @@ export default function StudioAgentDock({
     [work, input]
   );
 
+  const quickPromptsBlock = showQuickPrompts ? (
+    <div className={centerEmptyComposer ? "mt-3" : "mb-2"}>
+      <button
+        type="button"
+        className="text-[11px] text-muted underline hover:text-ink"
+        onClick={() => setQuickPromptsOpen((open) => !open)}
+      >
+        {quickPromptsOpen ? "收起示例" : "试试这些"}
+      </button>
+      {quickPromptsOpen ? (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {QUICK_PROMPTS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              disabled={!canChat}
+              className="rounded-full border border-line px-3 py-1 text-xs text-ink hover:bg-fill disabled:opacity-50"
+              onClick={() => void handleSend(p)}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const loginNotice =
+    !isLoggedIn && ready ? (
+      <p className="mb-2 text-xs text-warning-ink">
+        <Link href="/login" className="text-brand underline">
+          登录
+        </Link>
+        后可用
+      </p>
+    ) : null;
+
+  const orchestratorHintBlock = orchestratorHint ? (
+    <p className="mb-2 rounded-lg border border-brand/20 bg-brand/5 px-2.5 py-1.5 text-[11px] text-ink">
+      {orchestratorHint}
+    </p>
+  ) : null;
+
+  const composer = (
+    <StudioAgentComposer
+      value={input}
+      onChange={setInput}
+      onSend={() => void handleSend()}
+      busy={agentBusy || (jobRunning && Boolean(input.trim()))}
+      disabled={!canChat}
+      placeholder={agentPlaceholder(work.status)}
+      menuOpen={corpusMenuOpen}
+      generating={jobRunning}
+      onCancel={jobRunning ? onCancelStream : undefined}
+      hasPendingPatch={hasPendingPatch}
+      onAcceptPatch={hasPendingPatch ? onAcceptPatch : undefined}
+      onUndoPatch={canUndoPatch ? onUndoPatch : undefined}
+      footerRight={
+        <StudioCorpusBar
+          work={work}
+          isLoggedIn={isLoggedIn}
+          ready={ready}
+          getAuthHeaders={getAuthHeaders}
+          onPersist={onPersist}
+          menuOpen={corpusMenuOpen}
+          onMenuOpenChange={setCorpusMenuOpen}
+        />
+      }
+    />
+  );
+
+  const agentOutputStatus = showAgentOutputStatus ? (
+    <div className="space-y-2">
+      {agentSteps.length ? <StudioAgentStepBar steps={agentSteps} /> : null}
+      {agentRouteHint || ephemeralHint ? (
+        <StudioEphemeralHint text={agentRouteHint || ephemeralHint} />
+      ) : null}
+      {agentBusy && phase ? <p className="text-[11px] text-brand">{phase}</p> : null}
+    </div>
+  ) : null;
+
+  const timelinePanel = (
+    <StudioTimelinePanel
+      work={work}
+      turns={dialogueTurns}
+      streamingPhase={phase}
+      scrollRef={dialogueScrollRef}
+      canEdit={canEditTurns}
+      onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
+      emptyHint={dialogueEmptyHint}
+      busy={agentBusy || jobBusy}
+      hideManuscript={false}
+      streamingBlocks={streamingBlocks}
+      streamingBodyText={streamingBodyText}
+      activeAgentStatus={agentOutputStatus}
+      selectedPatchKeys={selectedPatchKeys}
+      changedKeys={changedKeys}
+      onTogglePatchKey={onTogglePatchKey}
+      onApplyPatch={onApplyPatch}
+      onDiscardPatch={onDiscardPatch}
+      onTitleIndexChange={onTitleIndexChange}
+      onBlocksChange={onBlocksChange}
+      onSelectionRevise={onSelectionRevise}
+      onWowRevise={onWowRevise}
+      showFeatureNudge={showFeatureNudge}
+      onFillFeature={() => {
+        markOpenComposerFeature();
+        router.push(WORKBENCH_CHAT_PATH);
+      }}
+      onDismissFeatureNudge={onDismissFeatureNudge}
+    />
+  );
+
+  if (centerEmptyComposer) {
+    return (
+      <div className={["flex min-h-0 flex-col bg-surface", canvasMode ? "h-full" : "flex-1"].join(" ")}>
+        <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-3 py-4">
+          {loginNotice}
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center pb-8">
+            <div className="w-full">
+              {orchestratorHintBlock}
+              {composer}
+              {quickPromptsBlock}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={["flex min-h-0 flex-col bg-surface", canvasMode ? "h-full" : "flex-1"].join(" ")}>
       <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-3 py-2">
@@ -659,109 +794,15 @@ export default function StudioAgentDock({
           ref={dialogueScrollRef}
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          <StudioTimelinePanel
-            work={work}
-            turns={dialogueTurns}
-            streamingPhase={phase}
-            scrollRef={dialogueScrollRef}
-            canEdit={canEditTurns}
-            onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
-            emptyHint={dialogueEmptyHint}
-            busy={agentBusy || jobBusy}
-            hideManuscript={false}
-            streamingBlocks={streamingBlocks}
-            streamingBodyText={streamingBodyText}
-            selectedPatchKeys={selectedPatchKeys}
-            changedKeys={changedKeys}
-            onTogglePatchKey={onTogglePatchKey}
-            onApplyPatch={onApplyPatch}
-            onDiscardPatch={onDiscardPatch}
-            onTitleIndexChange={onTitleIndexChange}
-            onBlocksChange={onBlocksChange}
-            onSelectionRevise={onSelectionRevise}
-            onWowRevise={onWowRevise}
-            showFeatureNudge={showFeatureNudge}
-            onFillFeature={() => {
-              markOpenComposerFeature();
-              router.push(WORKBENCH_CHAT_PATH);
-            }}
-            onDismissFeatureNudge={onDismissFeatureNudge}
-          />
+          {timelinePanel}
         </div>
       </div>
 
       <div className="sticky bottom-0 z-20 shrink-0 border-t border-line/40 bg-surface/95 px-3 pb-2 pt-1 backdrop-blur-sm supports-[backdrop-filter]:bg-surface/90">
         <div className="mx-auto w-full max-w-3xl">
-          {!isLoggedIn && ready ? (
-            <p className="mb-2 text-xs text-warning-ink">
-              <Link href="/login" className="text-brand underline">
-                登录
-              </Link>
-              后可用
-            </p>
-          ) : null}
-          {orchestratorHint ? (
-            <p className="mb-2 rounded-lg border border-brand/20 bg-brand/5 px-2.5 py-1.5 text-[11px] text-ink">
-              {orchestratorHint}
-            </p>
-          ) : null}
-          {canvasMode && agentSteps.length ? <StudioAgentStepBar steps={agentSteps} /> : null}
-          {agentRouteHint || ephemeralHint ? (
-            <div className="mb-2">
-              <StudioEphemeralHint text={agentRouteHint || ephemeralHint} />
-            </div>
-          ) : null}
-          {showQuickPrompts ? (
-            <div className="mb-2">
-              <button
-                type="button"
-                className="text-[11px] text-muted underline hover:text-ink"
-                onClick={() => setQuickPromptsOpen((open) => !open)}
-              >
-                {quickPromptsOpen ? "收起示例" : "试试这些"}
-              </button>
-              {quickPromptsOpen ? (
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {QUICK_PROMPTS.map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      disabled={!canChat}
-                      className="rounded-full border border-line px-3 py-1 text-xs text-ink hover:bg-fill disabled:opacity-50"
-                      onClick={() => void handleSend(p)}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <StudioAgentComposer
-            value={input}
-            onChange={setInput}
-            onSend={() => void handleSend()}
-            busy={agentBusy || (jobRunning && Boolean(input.trim()))}
-            disabled={!canChat}
-            placeholder={agentPlaceholder(work.status)}
-            menuOpen={corpusMenuOpen}
-            generating={jobRunning}
-            onCancel={jobRunning ? onCancelStream : undefined}
-            hasPendingPatch={hasPendingPatch}
-            onAcceptPatch={hasPendingPatch ? onAcceptPatch : undefined}
-            onUndoPatch={canUndoPatch ? onUndoPatch : undefined}
-            footerRight={
-              <StudioCorpusBar
-                work={work}
-                isLoggedIn={isLoggedIn}
-                ready={ready}
-                getAuthHeaders={getAuthHeaders}
-                onPersist={onPersist}
-                menuOpen={corpusMenuOpen}
-                onMenuOpenChange={setCorpusMenuOpen}
-              />
-            }
-          />
+          {loginNotice}
+          {orchestratorHintBlock}
+          {composer}
         </div>
       </div>
     </div>

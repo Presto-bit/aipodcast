@@ -25,7 +25,6 @@ import {
   finishStudioRun,
   patchStudioGeneratePhase
 } from "../../lib/studioOrchestrator";
-import { resolveJobAnchorTurnId } from "../../lib/studioTimeline";
 import { streamStudioAgent } from "../../lib/studioAgentStream";
 import { studioAgentRouteHint } from "../../lib/studioAgentToolSchema";
 import { upsertAgentStep, type StudioAgentStep } from "../../lib/studioAgentSteps";
@@ -191,19 +190,15 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         runTool = tool;
         const live = getStudioWork(workId);
         if (!live) return;
-        const anchorTool = tool === "generate" ? "generate" : "revise";
-        const anchorTurnId = resolveJobAnchorTurnId(live.agentTurns, anchorTool);
-        const ackTurns = [
-          ...params.prefixTurns,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant" as const,
-            content: tool === "generate" ? STUDIO_ACK_GENERATE : STUDIO_ACK_REVISE,
-            createdAt: Date.now()
-          }
-        ];
+        const ackTurn: StudioAgentTurn = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: tool === "generate" ? STUDIO_ACK_GENERATE : STUDIO_ACK_REVISE,
+          createdAt: Date.now()
+        };
+        const ackTurns = [...params.prefixTurns, ackTurn];
         const { work: withRun, runId: rid } = appendStudioRun(live, tool, tool === "generate" ? "写稿中" : "改版中…", "running", {
-          anchorTurnId
+          anchorTurnId: ackTurn.id
         });
         runId = rid;
         persist(
