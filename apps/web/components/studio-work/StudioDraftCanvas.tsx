@@ -109,20 +109,19 @@ export default function StudioDraftCanvas({
   );
 
   const availableTabs: CanvasTab[] = compareMode
-    ? ["preview", "document", "diff"]
+    ? ["document", "preview", "diff"]
     : showFinalTabs
-      ? ["preview", "document"]
-      : generatingMode === "hold-existing"
+      ? ["document", "preview"]
+      : isGenerating
         ? ["document"]
         : [];
 
-  const [tab, setTab] = useState<CanvasTab>("preview");
+  const [tab, setTab] = useState<CanvasTab>("document");
 
   useEffect(() => {
     if (compareMode) setTab("diff");
-    else if (isGenerating && generatingMode === "hold-existing") setTab("document");
-    else if (isGenerating && generatingMode === "progress") setTab("document");
-    else if (tab === "diff") setTab("preview");
+    else if (isGenerating) setTab("document");
+    else if (tab === "diff") setTab("document");
   }, [compareMode, work.pendingPatch?.fromVersionId, isGenerating, generatingMode]);
 
   const editable =

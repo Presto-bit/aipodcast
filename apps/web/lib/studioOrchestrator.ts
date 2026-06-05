@@ -31,11 +31,25 @@ const MAX_RUNS = 12;
 const TOPIC_FORM_SIGNAL =
   /清单|小红书|笔记|教程|测评|好物|干货|故事|攻略|标题|正文|受众|新人|职场|产品|运营|清单体|种草|周报|总结/;
 
+const PROMO_DETAIL_SIGNAL =
+  /受众|人群|读者|卖点|场景|功能|材质|主打|痛点|提醒|便携|保温|职场|新人|白领|品牌|价格|差异化|清单体|教程|测评|故事/;
+
+/** 推广/种草句仅有品类名、缺受众或卖点时先走 ask 确认需求 */
+export function needsPromoBriefClarification(userMessage: string): boolean {
+  const text = userMessage.trim();
+  const isPromoTask =
+    /推广|种草|带货/.test(text) ||
+    (/水杯|杯子|保温杯|产品|新品/.test(text) && /小红书|笔记|写篇|写一篇/.test(text));
+  if (!isPromoTask) return false;
+  return !PROMO_DETAIL_SIGNAL.test(text);
+}
+
 /** 需求过短/过模糊时不自动成稿，改走 ask 澄清 */
 export function isInsufficientBrief(userMessage: string): boolean {
   const text = userMessage.trim();
   if (!text) return true;
   if (text.length < 8) return true;
+  if (needsPromoBriefClarification(text)) return true;
   const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇/.test(text);
   const hasTopicOrForm = TOPIC_FORM_SIGNAL.test(text);
   if (hasWriteIntent && hasTopicOrForm) return false;

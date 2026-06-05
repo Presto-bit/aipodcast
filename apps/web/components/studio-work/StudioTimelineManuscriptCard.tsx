@@ -14,21 +14,6 @@ import type {
 import StudioOutputManuscript from "./StudioOutputManuscript";
 import StudioXhsPhonePreview from "./StudioXhsPhonePreview";
 
-type CardTab = "preview" | "document" | "diff";
-
-function tabLabel(tab: CardTab): string {
-  switch (tab) {
-    case "preview":
-      return "预览";
-    case "document":
-      return "文档";
-    case "diff":
-      return "对比";
-    default:
-      return tab;
-  }
-}
-
 export default function StudioTimelineManuscriptCard({
   work,
   run,
@@ -68,7 +53,7 @@ export default function StudioTimelineManuscriptCard({
 }) {
   const isRunning = run.status === "running" && work.status === "generating";
   const compareMode = Boolean(pendingPatch);
-  const showFinal = !isRunning || compareMode;
+  const showPreview = !isRunning && !compareMode && Boolean(version?.blocks.length);
 
   const displayBlocks =
     compareMode && pendingPatch
@@ -84,21 +69,11 @@ export default function StudioTimelineManuscriptCard({
       ? diffBlockKeys(baseVersion.blocks, pendingPatch.proposedBlocks)
       : changedKeys;
 
-  const availableTabs: CardTab[] = compareMode
-    ? ["preview", "document", "diff"]
-    : showFinal
-      ? ["preview", "document"]
-      : run.tool === "revise" && baseVersion
-        ? ["document"]
-        : [];
-
-  const [tab, setTab] = useState<CardTab>("preview");
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
-    if (compareMode) setTab("diff");
-    else if (isRunning && run.tool === "revise") setTab("document");
-    else if (tab === "diff") setTab("preview");
-  }, [compareMode, isRunning, run.tool, pendingPatch?.fromVersionId]);
+    if (!showPreview) setPreviewOpen(false);
+  }, [showPreview]);
 
   const editable =
     isActiveVersion &&
@@ -109,6 +84,10 @@ export default function StudioTimelineManuscriptCard({
     Boolean(onBlocksChange && version);
 
   const headerLabel = version?.label ?? (run.tool === "revise" ? "改版" : "成稿");
+  const generatingPhase =
+    isRunning && !compareMode && run.tool === "generate"
+      ? work.runPhase || run.summary || "写稿中…"
+      : undefined;
 
   return (
     <div
@@ -129,51 +108,23 @@ export default function StudioTimelineManuscriptCard({
           稿件 · {headerLabel}
         </button>
         <span className="text-[10px] text-muted">{studioToolLabel(run.tool)}</span>
-        {isRunning ? (
-          <span className="text-[10px] text-brand">{work.runPhase || run.summary || "写稿中…"}</span>
-        ) : null}
       </div>
 
       <div className="rounded-lg border border-line/50 bg-fill/20 px-3 py-2.5">
-        {isRunning && !compareMode ? (
-          <div className="mb-2 flex items-center gap-2 text-sm text-ink">
-            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
-            <span>{work.runPhase || run.summary || "写稿中…"}</span>
-          </div>
-        ) : null}
-
-        {availableTabs.length > 0 ? (
-          <div className="mb-2 flex gap-1">
-            {availableTabs.map((t) => (
-              <button
-                key={t}
-                type="button"
-                className={
-                  tab === t
-                    ? "rounded-md bg-fill px-2.5 py-1 text-xs font-medium text-ink"
-                    : "rounded-md px-2.5 py-1 text-xs text-muted hover:bg-fill/60 hover:text-ink"
-                }
-                onClick={() => setTab(t)}
-              >
-                {tabLabel(t)}
-              </button>
-            ))}
-          </div>
-        ) : null}
-
-        {isRunning && run.tool === "revise" && baseVersion && tab === "document" ? (
+        {generatingPhase ? (
+          <StudioOutputManuscript version={null} generatingPhase={generatingPhase} />
+        ) : isRunning && run.tool === "revise" && baseVersion ? (
           <StudioOutputManuscript version={baseVersion} />
-        ) : null}
-
-        {showFinal && displayBlocks.length > 0 && tab === "preview" ? (
-          <StudioXhsPhonePreview
-            version={compareMode ? null : version}
-            blocks={displayBlocks}
-            titleIndex={titleIndex}
+        ) : compareMode && pendingPatch ? (
+          <StudioOutputManuscript
+            version={null}
+            compareBlocks={pendingPatch.proposedBlocks}
+            compareMode
+            selectedKeys={selectedPatchKeys}
+            changedKeys={patchChangedKeys}
+            onToggleKey={onTogglePatchKey}
           />
-        ) : null}
-
-        {showFinal && displayBlocks.length > 0 && tab === "document" && !compareMode && version ? (
+        ) : version ? (
           <StudioOutputManuscript
             version={version}
             onTitleIndexChange={isActiveVersion ? onTitleIndexChange : undefined}
@@ -185,26 +136,29 @@ export default function StudioTimelineManuscriptCard({
           />
         ) : null}
 
-        {showFinal && compareMode && pendingPatch && tab === "document" ? (
-          <StudioOutputManuscript
-            version={null}
-            compareBlocks={pendingPatch.proposedBlocks}
-            compareMode
-            selectedKeys={selectedPatchKeys}
-            changedKeys={patchChangedKeys}
-            onToggleKey={onTogglePatchKey}
-          />
-        ) : null}
-
-        {showFinal && compareMode && pendingPatch && tab === "diff" ? (
-          <StudioOutputManuscript
-            version={null}
-            compareBlocks={pendingPatch.proposedBlocks}
-            compareMode
-            selectedKeys={selectedPatchKeys}
-            changedKeys={patchChangedKeys}
-            onToggleKey={onTogglePatchKey}
-          />
+        {showPreview ? (
+          <div className="mt-3 border-t border-line/40 pt-2">
+            <button
+              type="button"
+              className={
+                previewOpen
+                  ? "rounded-md bg-fill px-2.5 py-1 text-xs font-medium text-ink"
+                  : "rounded-md px-2.5 py-1 text-xs text-muted hover:bg-fill/60 hover:text-ink"
+              }
+              onClick={() => setPreviewOpen((o) => !o)}
+            >
+              预览
+            </button>
+            {previewOpen && version ? (
+              <div className="mt-2">
+                <StudioXhsPhonePreview
+                  version={version}
+                  blocks={displayBlocks}
+                  titleIndex={titleIndex}
+                />
+              </div>
+            ) : null}
+          </div>
         ) : null}
 
         {run.status === "error" && work.error ? (

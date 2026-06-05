@@ -54,11 +54,14 @@ export default function StudioOutputManuscript({
   wowReviseBusy,
   editable = false,
   onBlocksChange,
-  onSelectionRevise
+  onSelectionRevise,
+  generatingPhase
 }: {
   version: ManuscriptVersion | null;
   compareBlocks?: ManuscriptBlock[] | null;
   compareMode?: boolean;
+  /** 写稿中：在输出区展示进度与文字占位（非预览） */
+  generatingPhase?: string;
   selectedKeys?: Set<string>;
   changedKeys?: Set<string>;
   onToggleKey?: (key: string) => void;
@@ -95,6 +98,25 @@ export default function StudioOutputManuscript({
     },
     []
   );
+
+  if (generatingPhase) {
+    const label = generatingPhase.trim() || "写稿中…";
+    return (
+      <div className="rounded-md border border-line/50 bg-fill/35 px-3 py-2.5">
+        <div className="flex items-center gap-2 text-sm text-ink">
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
+          <span>{label}</span>
+        </div>
+        <p className="mt-2 text-sm text-muted">正在撰写正文，成稿后将显示完整文档</p>
+        <div className="mt-3 space-y-2" aria-hidden>
+          <div className={`h-4 rounded bg-fill/80 ${STUDIO_MANUSCRIPT_TITLE}`} />
+          <div className={`h-3 rounded bg-fill/70 ${STUDIO_MANUSCRIPT_BODY}`} />
+          <div className={`h-3 w-[94%] rounded bg-fill/60 ${STUDIO_MANUSCRIPT_BODY}`} />
+          <div className={`h-3 w-[88%] rounded bg-fill/50 ${STUDIO_MANUSCRIPT_BODY}`} />
+        </div>
+      </div>
+    );
+  }
 
   const blocks = editable && !compareMode ? draftBlocks : sourceBlocks;
   if (!blocks.length) return null;
@@ -157,7 +179,6 @@ export default function StudioOutputManuscript({
                 ].join(" ")}
                 onClick={() => onTitleIndexChange?.(i)}
               >
-                <span className="mr-1 text-[10px] text-muted">{i + 1}</span>
                 {editable ? (
                   <input
                     className="w-full min-w-[8rem] border-0 bg-transparent p-0 text-xs text-ink outline-none"

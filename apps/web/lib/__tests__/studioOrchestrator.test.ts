@@ -41,6 +41,15 @@ const autoGen = routeStudioAction(
 );
 assert(autoGen.tool === "generate", `promo brief should generate, got ${autoGen.tool}`);
 
+const cupOnlyMsg = "我想写一篇小红书推广水杯";
+const cupTurns = [{ id: "u2", role: "user" as const, content: cupOnlyMsg, createdAt: 1 }];
+const cupClarify = routeStudioAction(
+  baseWork({ status: "draft", agentTurns: cupTurns }),
+  cupOnlyMsg,
+  cupTurns
+);
+assert(cupClarify.tool === "ask", `cup-only promo should ask first, got ${cupClarify.tool}`);
+
 const askOnly = routeStudioAction(
   baseWork({ status: "draft", agentTurns: turns }),
   "开头钩子怎么写更抓人？",
